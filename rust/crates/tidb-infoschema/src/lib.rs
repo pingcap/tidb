@@ -63,6 +63,7 @@ impl CatalogTableKey {
 }
 
 pub mod infoschema_errors;
+pub mod masking_policy;
 pub mod metric_table_def;
 pub mod session_tables;
 pub mod virtual_tables;
@@ -225,6 +226,12 @@ pub struct InfoSchema {
     /// Go `infoschema`'s resource groups by lowercase name, `default`
     /// always among them.
     resource_groups: HashMap<String, tidb_model::ResourceGroupInfo>,
+    /// Go infoSchema masking policies, shared by session views of this version.
+    masking_policies: Arc<masking_policy::MaskingPolicyCache>,
+    /// Go infoSchema.ts, the snapshot used to build this image.
+    schema_ts: u64,
+    /// Go Builder.enableV2: selects the owning masking-cache invalidation path.
+    uses_infoschema_v2: bool,
     /// Sticky indication that a table with a foreign key has existed in
     /// this catalog. DML asks this on every write; keeping the bit avoids
     /// walking and inspecting every table in the common no-FK case. It is
@@ -396,18 +403,39 @@ impl SessionExtendedInfoSchema {
         // metric storage is absent) -- mirrored here as empty MemTables of the
         // same shape (oracle g-is).
         type Tables = HashMap<String, Arc<TableEntry>>;
-        let tables = |build: fn() -> Tables| if with_memory_tables { build() } else { Tables::new() };
+        let tables = |build: fn() -> Tables| {
+            if with_memory_tables {
+                build()
+            } else {
+                Tables::new()
+            }
+        };
         let schemas = [
             // Go `autoid.InformationSchemaDBID`, `MetricSchemaDBID` and
             // `PerformanceSchemaDBID`: a memory schema's id has the system
             // flag, so it can never be a stored schema's id.
-            ((1 << 62) | 1, "information_schema", "INFORMATION_SCHEMA", tables(crate::infoschema_meta::tables)),
-            ((1 << 62) | 20000, "metrics_schema", "METRICS_SCHEMA", tables(crate::metricsschema::tables)),
+            (
+                (1 << 62) | 1,
+                "information_schema",
+                "INFORMATION_SCHEMA",
+                tables(crate::infoschema_meta::tables),
+            ),
+            (
+                (1 << 62) | 20000,
+                "metrics_schema",
+                "METRICS_SCHEMA",
+                tables(crate::metricsschema::tables),
+            ),
             (
                 (1 << 62) | 10000,
                 "performance_schema",
                 "PERFORMANCE_SCHEMA",
-                tables(|| PERFORMANCE_SCHEMA_TABLES.get().map(|tables| tables()).unwrap_or_default()),
+                tables(|| {
+                    PERFORMANCE_SCHEMA_TABLES
+                        .get()
+                        .map(|tables| tables())
+                        .unwrap_or_default()
+                }),
             ),
         ];
         let mut databases = HashMap::new();
@@ -430,6 +458,9 @@ impl SessionExtendedInfoSchema {
                 ),
                 policies: HashMap::new(),
                 resource_groups: HashMap::new(),
+                masking_policies: Arc::default(),
+                schema_ts: 0,
+                uses_infoschema_v2: false,
                 version: 0,
                 metadata_version: next_metadata_version(),
                 schema_meta_version: 0,
@@ -1054,12 +1085,107 @@ impl SessionExtendedInfoSchema {
     /// builder builds its tables.
     #[must_use]
     pub fn metadata_copy(&self) -> Self {
-        Self::init_with_db_infos(
+        let mut copied = Self::init_with_db_infos(
             self.stored_schemas(),
             self.policies().cloned().collect(),
             self.resource_groups().cloned().collect(),
             self.schema_meta_version(),
-        )
+        );
+        copied.schema.schema_ts = self.schema.schema_ts;
+        copied.schema.uses_infoschema_v2 = self.schema.uses_infoschema_v2;
+        copied.schema.masking_policies = Arc::new(self.schema.masking_policies.clone_for_builder());
+        copied
+    }
+
+    /// Go `Builder.enableV2`, used by the masking policy cache's builder path.
+    pub fn uses_infoschema_v2(&self) -> bool {
+        self.schema.uses_infoschema_v2
+    }
+
+    /// Go `NewBuilder(..., useV2)`.
+    pub fn set_uses_infoschema_v2(&mut self, use_v2: bool) {
+        self.schema.uses_infoschema_v2 = use_v2;
+    }
+
+    /// Go `Builder.Build(schemaTS)`.
+    pub fn set_schema_ts(&mut self, ts: u64) {
+        self.schema.schema_ts = ts;
+        let mut cache = self.schema.masking_policies.clone_for_builder();
+        cache.set_snapshot_ts(ts);
+        self.schema.masking_policies = Arc::new(cache);
+    }
+
+    /// Go `infoSchema.ts`.
+    pub fn schema_ts(&self) -> u64 {
+        self.schema.schema_ts
+    }
+
+    /// Go `Builder.factory` for lazy system-table reads on this image.
+    pub fn set_masking_policy_factory(
+        &mut self,
+        factory: masking_policy::MaskingPolicySessionFactory,
+    ) {
+        self.schema.masking_policies = Arc::new(
+            self.schema
+                .masking_policies
+                .clone_for_builder()
+                .with_factory_and_ts(Some(factory), self.schema.schema_ts),
+        );
+    }
+
+    /// Go's table builder retains the schema's cache when building table objects.
+    pub fn inherit_masking_policy_cache(&mut self, source: &Self) {
+        self.schema.masking_policies = Arc::clone(&source.schema.masking_policies);
+        self.schema.schema_ts = source.schema.schema_ts;
+        self.schema.uses_infoschema_v2 = source.schema.uses_infoschema_v2;
+    }
+
+    /// Go `infoSchema.resetMaskingPolicyCache` on a new schema image.
+    pub fn reset_masking_policy_cache(&mut self) {
+        let mut cache = self.schema.masking_policies.clone_for_builder();
+        cache.reset_masking_policy_cache();
+        self.schema.masking_policies = Arc::new(cache);
+    }
+
+    /// Go `infoSchema.CloneMaskingPoliciesByTableColumn`.
+    pub fn clone_masking_policies_by_table_column(
+        &self,
+    ) -> std::collections::BTreeMap<
+        i64,
+        std::collections::BTreeMap<i64, tidb_model::MaskingPolicyInfo>,
+    > {
+        self.schema
+            .masking_policies
+            .clone_masking_policies_by_table_column()
+    }
+
+    /// Go `infoSchema.MaskingPolicyByTableColumn`.
+    pub fn masking_policy_by_table_column(
+        &self,
+        table_id: i64,
+        column_id: i64,
+    ) -> Option<tidb_model::MaskingPolicyInfo> {
+        self.schema
+            .masking_policies
+            .masking_policy_by_table_column(table_id, column_id)
+    }
+
+    /// Go `infoSchema.MaskingPolicyByID`.
+    pub fn masking_policy_by_id(&self, id: i64) -> Option<tidb_model::MaskingPolicyInfo> {
+        self.schema.masking_policies.masking_policy_by_id(id)
+    }
+
+    /// Go `infoSchema.MaskingPolicyByName`.
+    pub fn masking_policy_by_name(
+        &self,
+        name: &tidb_ast::CiString,
+    ) -> Option<tidb_model::MaskingPolicyInfo> {
+        self.schema.masking_policies.masking_policy_by_name(name)
+    }
+
+    /// Go `infoSchema.AllMaskingPolicies`.
+    pub fn all_masking_policies(&self) -> Vec<tidb_model::MaskingPolicyInfo> {
+        self.schema.masking_policies.all_masking_policies()
     }
 
     /// Go `InfoSchema.SchemaByID`: the schema with `id`, stored or memory.

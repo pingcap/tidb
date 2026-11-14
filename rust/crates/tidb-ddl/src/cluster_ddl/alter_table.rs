@@ -120,615 +120,294 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
     multi_schema: bool,
     tiflash_stores: &dyn Fn() -> Result<u64, String>,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    if !is_alter_table_statement(statement) {
-        return Ok(None);
-    }
-    let mut warnings = Vec::new();
-    // Go's placement jobs lock the policy they name, shared.
-    let mut shared_policy: Option<String> = None;
-    let (action, schema, table, args) = match statement {
-        // Go `AlterTableEngineAttribute`; the attribute was validated at
-        // lowering.
+    match statement {
         DdlStatement::ModifyEngineAttribute {
             schema,
             table,
             engine_attribute,
-        } => (
-            ActionType::ACTION_MODIFY_ENGINE_ATTRIBUTE,
+        } => alter_table_engine_attribute(
+            snapshot,
+            catalog,
             schema,
             table,
-            JobArgsValue::ModifyTableEngineAttribute(Some(GoShared::new(
-                tidb_model::ModifyTableEngineAttributeArgs {
-                    engine_attribute: GoField::new(engine_attribute.clone().into()),
-                },
-            ))),
+            engine_attribute,
+            job_context,
+            multi_schema,
+            tiflash_stores,
         ),
-        // Go `AlterTableComment`; the length was validated at lowering.
         DdlStatement::ModifyTableComment {
             schema,
             table,
             comment,
-        } => (
-            ActionType::ACTION_MODIFY_TABLE_COMMENT,
+        } => alter_table_comment(
+            snapshot,
+            catalog,
             schema,
             table,
-            JobArgsValue::ModifyTableComment(Some(GoShared::new(
-                tidb_model::ModifyTableCommentArgs {
-                    comment: GoField::new(comment.clone().into()),
-                },
-            ))),
+            comment,
+            job_context,
+            multi_schema,
+            tiflash_stores,
         ),
-        // Go `AlterIndexVisibility` -> `validateAlterIndexVisibility`.
         DdlStatement::AlterIndexVisibility {
             schema,
             table,
             index,
             invisible,
-        } => {
-            let (_, stored) = locate_table(&catalog, schema, table)?;
-            let stored = stored.read();
-            let mut probe = stored.clone_like_go();
-            // Go `validateAlterIndexVisibility` early-returns on an unchanged
-            // visibility only outside a multi-schema change; inside one the
-            // sub-job is always built, so `checkMultiSchemaInfo` sees it.
-            if let AlterColumnOutcome::AlreadySatisfied(detail) =
-                apply_index_visibility(&mut probe, schema, table, index, *invisible)?
-            {
-                if !multi_schema {
-                    return Ok(already_satisfied(detail));
-                }
-            }
-            (
-                ActionType::ACTION_ALTER_INDEX_VISIBILITY,
-                schema,
-                table,
-                JobArgsValue::AlterIndexVisibility(Some(GoShared::new(
-                    tidb_model::AlterIndexVisibilityArgs {
-                        index_name: GoField::new(CiString::new(index.clone())),
-                        invisible: GoField::new(*invisible),
-                    },
-                ))),
-            )
-        }
-        // Go `RenameIndex` -> `ValidateRenameIndex`.
+        } => alter_index_visibility(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            index,
+            invisible,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
         DdlStatement::RenameIndex {
             schema,
             table,
             from,
             to,
-        } => {
-            let (_, stored) = locate_table(&catalog, schema, table)?;
-            let stored = stored.read();
-            check_rename_index_cache(&stored)?;
-            let mut probe = stored.clone_like_go();
-            if let AlterColumnOutcome::AlreadySatisfied(detail) =
-                apply_rename_index(&mut probe, schema, table, from, to)?
-            {
-                return Ok(already_satisfied(detail));
-            }
-            (
-                ActionType::ACTION_RENAME_INDEX,
-                schema,
-                table,
-                JobArgsValue::ModifyIndex(Some(GoShared::new(tidb_model::ModifyIndexArgs {
-                    index_args: vec![
-                        tidb_model::IndexArg {
-                            index_name: CiString::new(from.clone()),
-                            ..tidb_model::IndexArg::default()
-                        },
-                        tidb_model::IndexArg {
-                            index_name: CiString::new(to.clone()),
-                            ..tidb_model::IndexArg::default()
-                        },
-                    ]
-                    .into(),
-                    ..tidb_model::ModifyIndexArgs::default()
-                }))),
-            )
-        }
-        // Go `DropForeignKey`.
+        } => rename_index(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            from,
+            to,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
         DdlStatement::DropForeignKey {
             schema,
             table,
             name,
-        } => {
-            let (_, stored) = locate_table(&catalog, schema, table)?;
-            let stored = stored.read();
-            if !stored
-                .foreign_keys
-                .iter_deref()
-                .any(|fk| fk.read().name.lowercase() == name.go_to_lower())
-            {
-                return Err(foreign_key_not_exists(name));
-            }
-            (
-                ActionType::ACTION_DROP_FOREIGN_KEY,
-                schema,
-                table,
-                JobArgsValue::DropForeignKey(Some(GoShared::new(tidb_model::DropForeignKeyArgs {
-                    foreign_key_name: GoField::new(CiString::new(name.clone())),
-                }))),
-            )
-        }
-        // Go `AlterTableCharsetAndCollate` -> `checkAlterTableCharset`.
+        } => drop_foreign_key(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            name,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
         DdlStatement::ModifyTableCharsetAndCollate {
             schema,
             table,
             charset,
             collate,
             overwrite_columns,
-        } => {
-            check_table_charset_named(charset, collate)?;
-            let (_, stored) = locate_table(&catalog, schema, table)?;
-            let stored = stored.read();
-            let mut probe = stored.clone_like_go();
-            if let AlterColumnOutcome::AlreadySatisfied(detail) = apply_table_charset_and_collate(
-                &catalog,
-                schema,
-                table,
-                &mut probe,
-                charset,
-                collate,
-                *overwrite_columns,
-            )? {
-                return Ok(already_satisfied(detail));
-            }
-            (
-                ActionType::ACTION_MODIFY_TABLE_CHARSET_AND_COLLATE,
-                schema,
-                table,
-                JobArgsValue::ModifyTableCharsetAndCollate(Some(GoShared::new(
-                    tidb_model::ModifyTableCharsetAndCollateArgs {
-                        to_charset: GoField::new(probe.charset.clone().into()),
-                        to_collate: GoField::new(probe.collate.clone().into()),
-                        needs_overwrite_columns: GoField::new(*overwrite_columns),
-                    },
-                ))),
-            )
-        }
-        // Go `AlterColumn`: the column with its new default.
+        } => alter_table_charset_and_collate(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            charset,
+            collate,
+            overwrite_columns,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
         DdlStatement::SetColumnDefault {
             schema,
             table,
             column,
             default_value,
             context,
-        } => {
-            let (_, stored) = locate_table(&catalog, schema, table)?;
-            let stored = stored.read();
-            let mut probe = stored.clone_like_go();
-            apply_set_column_default(
-                &mut probe,
-                table,
-                column,
-                default_value.as_deref(),
-                &context.0,
-            )?;
-            let changed = tidb_model::column::find_column_info(&probe.columns, column)
-                .expect("the default was set on this column")
-                .read()
-                .clone_like_go();
-            (
-                ActionType::ACTION_SET_DEFAULT_VALUE,
-                schema,
-                table,
-                JobArgsValue::SetDefaultValue(Some(GoShared::new(
-                    tidb_model::SetDefaultValueArgs {
-                        column: GoField::new(Some(GoShared::new(changed))),
-                    },
-                ))),
-            )
-        }
-        // Go `ShardRowID`, in its order.
+        } => alter_column(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            column,
+            default_value,
+            context,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
         DdlStatement::ShardRowId {
             schema,
             table,
             bits,
-        } => {
-            let (_, stored) = locate_table(&catalog, schema, table)?;
-            let stored = stored.read();
-            if stored.temp_table_type != tidb_model::TempTableType::NONE {
-                return Err(coded_refusal(
-                    &tidb_dbterror::ERR_OPT_ON_TEMPORARY_TABLE,
-                    "`shard_row_id_bits` is unsupported on temporary tables.".to_owned(),
-                ));
-            }
-            if *bits == stored.shard_row_id_bits {
-                return Ok(already_satisfied(format!(
-                    "`{schema}`.`{table}` already has SHARD_ROW_ID_BITS = {bits}"
-                )));
-            }
-            if *bits > 0 && (stored.pk_is_handle || stored.is_common_handle) {
-                return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
-                    &tidb_dbterror::ERR_UNSUPPORTED_SHARD_ROW_ID_BITS
-                        .gen_with_stack_by_args(&[]),
-                )));
-            }
-            (
-                ActionType::ACTION_SHARD_ROW_ID,
-                schema,
-                table,
-                JobArgsValue::ShardRowId(Some(GoShared::new(tidb_model::ShardRowIDArgs {
-                    shard_row_id_bits: GoField::new(*bits),
-                }))),
-            )
-        }
-        // Go `AlterTableAutoIDCache`.
+        } => shard_row_id(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            bits,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
         DdlStatement::ModifyAutoIdCache {
             schema,
             table,
             new_cache,
-        } => {
-            let (_, stored) = locate_table(&catalog, schema, table)?;
-            let stored = stored.read();
-            if (*new_cache == 1) != (stored.auto_id_cache == 1) {
-                return Err(DdlPlanError::Unsupported(
-                    "Can't Alter AUTO_ID_CACHE between 1 and non-1, the underlying implementation is different"
-                        .to_owned(),
-                ));
-            }
-            (
-                ActionType::ACTION_MODIFY_TABLE_AUTO_IDCACHE,
-                schema,
-                table,
-                JobArgsValue::ModifyTableAutoIdCache(Some(GoShared::new(
-                    tidb_model::ModifyTableAutoIDCacheArgs {
-                        new_cache: GoField::new(*new_cache),
-                    },
-                ))),
-            )
-        }
-        // Go `executor.RebaseAutoID` for the auto-increment allocator.
+        } => alter_table_auto_id_cache(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            new_cache,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
         DdlStatement::RebaseAutoIncrementId {
             schema,
             table,
             new_base,
             force,
-        } => {
-            let (schema_id, stored) = locate_table(catalog, schema, table)?;
-            let stored = stored.read();
-            let mut new_base = *new_base;
-            if !*force {
-                let adjusted = adjust_new_base_to_next_global_id(
-                    snapshot,
-                    AutoIdKind::Increment,
-                    schema_id,
-                    &stored,
-                    new_base,
-                )?;
-                if adjusted != new_base {
-                    warnings.push(tidb_context::SqlWarn::with_code(
-                        WarningLevel::Warning,
-                        tidb_mysql::errors::errcode::ErrUnknown,
-                        cant_reset_auto_increment(new_base, adjusted),
-                    ));
-                }
-                new_base = adjusted;
-            }
-            (
-                ActionType::ACTION_REBASE_AUTO_ID,
-                schema,
-                table,
-                JobArgsValue::RebaseAutoId(Some(GoShared::new(tidb_model::RebaseAutoIDArgs {
-                    new_base: GoField::new(new_base),
-                    force: GoField::new(*force),
-                }))),
-            )
-        }
-        // Go `executor.RebaseAutoID` for the auto-random allocator.
+        } => rebase_auto_id(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            new_base,
+            force,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
         DdlStatement::RebaseAutoRandom {
             schema,
             table,
             next,
             force,
-        } => {
-            let (schema_id, stored) = locate_table(catalog, schema, table)?;
-            let stored = stored.read();
-            if stored.auto_random_bits == 0 || stored.get_pk_col_info().is_none() {
-                return Err(DdlPlanError::from(
-                    tidb_dbterror::ERR_INVALID_AUTO_RANDOM.gen_with_stack_by_args(&[
-                        ("alter auto_random_base of a non auto_random table".to_owned()).into(),
-                    ]),
-                ));
-            }
-            let unsigned = stored.is_auto_random_bit_col_unsigned();
-            let range_bits = if stored.auto_random_range_bits == 0 {
-                64
-            } else {
-                stored.auto_random_range_bits
-            };
-            let incremental_bits = range_bits - stored.auto_random_bits - u64::from(!unsigned);
-            let maximum = (1_u64 << incremental_bits) - 1;
-            let requested = *next as u64;
-            if *next < 0 || requested & maximum != requested {
-                return Err(DdlPlanError::from(tidb_dbterror::ERR_INVALID_AUTO_RANDOM.gen_with_stack_by_args(&[(format!(
-                    "alter auto_random_base to {next} overflows the incremental bits, max allowed base is {maximum}"
-                )).into()])));
-            }
-            let mut new_base = *next;
-            if !*force {
-                let adjusted = adjust_new_base_to_next_global_id(
-                    snapshot,
-                    AutoIdKind::Random,
-                    schema_id,
-                    &stored,
-                    new_base,
-                )?;
-                if adjusted != new_base {
-                    warnings.push(tidb_context::SqlWarn::with_code(
-                        WarningLevel::Warning,
-                        tidb_mysql::errors::errcode::ErrUnknown,
-                        cant_reset_auto_increment(new_base, adjusted),
-                    ));
-                }
-                new_base = adjusted;
-            }
-            (
-                ActionType::ACTION_REBASE_AUTO_RANDOM_BASE,
-                schema,
-                table,
-                JobArgsValue::RebaseAutoId(Some(GoShared::new(tidb_model::RebaseAutoIDArgs {
-                    new_base: GoField::new(new_base),
-                    force: GoField::new(*force),
-                }))),
-            )
-        }
-        // Go `executor.AlterTableTTLInfoOrEnable`.
+        } => rebase_auto_random_id(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            next,
+            force,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
         DdlStatement::AlterTtl {
             schema,
             table,
             ttl_info,
             enable,
             job_interval,
-        } => {
-            let (_, stored) = locate_table(catalog, schema, table)?;
-            let stored = stored.read();
-            match ttl_info {
-                Some(ttl) => {
-                    let mut candidate = stored.clone_like_go();
-                    candidate.ttl_info = Some(GoShared::new((**ttl).clone()));
-                    let referred = !crate::foreign_key_build::get_table_referred_foreign_keys(
-                        catalog, schema, table,
-                    )
-                    .is_empty();
-                    tidb_ddl_build::table_info_build::check_ttl_info_valid(&candidate, referred)
-                        .map_err(DdlPlanError::from_mysql_error)?;
-                }
-                None if stored.ttl_info.is_none() => {
-                    let option = if enable.is_some() {
-                        "TTL_ENABLE"
-                    } else {
-                        "TTL_JOB_INTERVAL"
-                    };
-                    let error = tidb_terror::MysqlError::from_terror(
-                        &tidb_dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
-                            .gen_with_stack_by_args(&[option.to_string().into()]),
-                    );
-                    return Err(DdlPlanError::from_mysql_error(error));
-                }
-                None => {}
-            }
-            (
-                ActionType::ACTION_ALTER_TTLINFO,
-                schema,
-                table,
-                JobArgsValue::AlterTtlInfo(Some(GoShared::new(tidb_model::AlterTTLInfoArgs {
-                    ttl_info: ttl_info.as_ref().map(|ttl| GoShared::new((**ttl).clone())),
-                    ttl_enable: *enable,
-                    ttl_cron_job_schedule: job_interval.clone(),
-                }))),
-            )
-        }
-        // Go `executor.AlterTableRemoveTTL`: no job for a table without TTL.
-        DdlStatement::RemoveTtl { schema, table } => {
-            let (_, stored) = locate_table(catalog, schema, table)?;
-            let stored = stored.read();
-            if stored.ttl_info.is_none() {
-                return Ok(already_satisfied(format!(
-                    "`{schema}`.`{table}` has no TTL"
-                )));
-            }
-            (
-                ActionType::ACTION_ALTER_TTLREMOVE,
-                schema,
-                table,
-                tidb_model::EmptyArgs::into_job_args_value(Some(GoShared::new(
-                    tidb_model::EmptyArgs::default(),
-                ))),
-            )
-        }
-        // Go `executor.AlterTablePlacement`.
+        } => alter_table_ttl_info(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            ttl_info,
+            enable,
+            job_interval,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
+        DdlStatement::RemoveTtl { schema, table } => alter_table_remove_ttl(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
         DdlStatement::AlterTablePlacement {
             schema,
             table,
             policy,
-        } => {
-            let (_, stored) = locate_table(catalog, schema, table)?;
-            if let Some(ignored) = check_ignore_placement_ddl(job_context) {
-                return Ok(Some(ignored));
-            }
-            let stored = stored.read();
-            if stored.temp_table_type != tidb_model::TempTableType::NONE {
-                return Err(coded_refusal(
-                    &tidb_dbterror::ERR_OPT_ON_TEMPORARY_TABLE,
-                    "`placement` is unsupported on temporary tables.".to_owned(),
-                ));
-            }
-            let reference = check_and_normalize_placement_policy(snapshot, policy)?;
-            shared_policy = reference
-                .as_ref()
-                .map(|reference| reference.read().name.lowercase().to_owned());
-            (
-                ActionType::ACTION_ALTER_TABLE_PLACEMENT,
-                schema,
-                table,
-                JobArgsValue::AlterTablePlacement(Some(GoShared::new(
-                    tidb_model::AlterTablePlacementArgs {
-                        placement_policy_ref: reference,
-                    },
-                ))),
-            )
-        }
-        // Go `executor.AlterTablePartitionPlacement`.
+        } => alter_table_placement(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            policy,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
         DdlStatement::AlterTablePartitionPlacement {
             schema,
             table,
             partition,
             policy,
-        } => {
-            let (_, stored) = locate_table(catalog, schema, table)?;
-            let stored = stored.read();
-            let partition_id = find_partition_id(&stored, partition)?;
-            if let Some(ignored) = check_ignore_placement_ddl(job_context) {
-                return Ok(Some(ignored));
-            }
-            let reference = check_and_normalize_placement_policy(snapshot, policy)?;
-            shared_policy = reference
-                .as_ref()
-                .map(|reference| reference.read().name.lowercase().to_owned());
-            (
-                ActionType::ACTION_ALTER_TABLE_PARTITION_PLACEMENT,
-                schema,
-                table,
-                JobArgsValue::AlterTablePartition(Some(GoShared::new(
-                    tidb_model::AlterTablePartitionArgs {
-                        partition_id: GoField::new(partition_id),
-                        policy_ref_info: GoField::new(reference),
-                        ..tidb_model::AlterTablePartitionArgs::default()
-                    },
-                ))),
-            )
-        }
-        // Go `executor.AlterTableAttributes`: the rule over the table and
-        // every partition.
+        } => alter_table_partition_placement(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            partition,
+            policy,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
         DdlStatement::AlterTableAttributes {
             schema,
             table,
             attributes,
-        } => {
-            let Some(database) = find_database(catalog, schema) else {
-                return Err(DdlPlanError::from(
-                    tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                        .gen_with_stack_by_args(&[(schema.clone()).into()]),
-                ));
-            };
-            let (_, stored) = locate_table(catalog, schema, table)?;
-            let stored = stored.read();
-            let rule = label_rules::table_attributes_rule(
-                attributes,
-                database.read().name.lowercase(),
-                &LabelRuleTable::from_table_info(&stored),
-            )
-            .map_err(invalid_attributes_spec)?;
-            (
-                ActionType::ACTION_ALTER_TABLE_ATTRIBUTES,
-                schema,
-                table,
-                JobArgsValue::AlterTableAttributes(Some(GoShared::new(
-                    tidb_model::AlterTableAttributesArgs {
-                        label_rule: Some(GoShared::new(label_rule_json(&rule)?)),
-                    },
-                ))),
-            )
-        }
-        // Go `executor.AlterTablePartitionAttributes`.
+        } => alter_table_attributes(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            attributes,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
         DdlStatement::AlterTablePartitionAttributes {
             schema,
             table,
             partition,
             attributes,
-        } => {
-            let Some(database) = find_database(catalog, schema) else {
-                return Err(DdlPlanError::from(
-                    tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                        .gen_with_stack_by_args(&[(schema.clone()).into()]),
-                ));
-            };
-            let (_, stored) = locate_table(catalog, schema, table)?;
-            let stored = stored.read();
-            let partition_id = find_partition_id(&stored, partition)?;
-            let rule = label_rules::partition_attributes_rule(
-                attributes,
-                database.read().name.lowercase(),
-                stored.name.lowercase(),
-                &partition.go_to_lower(),
-                partition_id,
-            )
-            .map_err(invalid_attributes_spec)?;
-            (
-                ActionType::ACTION_ALTER_TABLE_PARTITION_ATTRIBUTES,
-                schema,
-                table,
-                JobArgsValue::AlterTablePartition(Some(GoShared::new(
-                    tidb_model::AlterTablePartitionArgs {
-                        partition_id: GoField::new(partition_id),
-                        label_rule: GoField::new(Some(GoShared::new(label_rule_json(&rule)?))),
-                        ..tidb_model::AlterTablePartitionArgs::default()
-                    },
-                ))),
-            )
-        }
-        // Go `executor.AlterTableAffinity`.
+        } => alter_table_partition_attributes(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            partition,
+            attributes,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
         DdlStatement::AlterTableAffinity {
             schema,
             table,
             level,
-        } => {
-            let (_, stored) = locate_table(catalog, schema, table)?;
-            let stored = stored.read();
-            refuse_non_base_table(&stored, schema, table)?;
-            let affinity = tidb_ddl_build::table_affinity(level).map_err(driver_refusal)?;
-            tidb_ddl_build::validate_table_affinity(
-                stored.temp_table_type != tidb_model::TempTableType::NONE,
-                stored.get_partition_info().is_some(),
-                affinity.as_ref(),
-            )
-            .map_err(driver_refusal)?;
-            (
-                ActionType::ACTION_ALTER_TABLE_AFFINITY,
-                schema,
-                table,
-                JobArgsValue::AlterTableAffinity(Some(GoShared::new(
-                    tidb_model::AlterTableAffinityArgs {
-                        affinity: affinity.map(GoShared::new),
-                    },
-                ))),
-            )
-        }
-        // Go `executor.AlterTableSetRegionSplitPolicy`.
+        } => alter_table_affinity(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            level,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
         DdlStatement::AlterTableSetRegionSplitPolicy {
             schema,
             table,
             target,
             option,
-        } => {
-            let (_, stored) = locate_table(catalog, schema, table)?;
-            let stored = stored.read();
-            let target = match target {
-                tidb_ast::SplitTarget::Table => tidb_ddl_build::split_region::SplitPolicyTarget::Table,
-                tidb_ast::SplitTarget::PrimaryKey => {
-                    tidb_ddl_build::split_region::SplitPolicyTarget::PrimaryKey
-                }
-                tidb_ast::SplitTarget::Index(name) => {
-                    tidb_ddl_build::split_region::SplitPolicyTarget::Index(name)
-                }
-            };
-            let (index_name, policy) =
-                tidb_ddl_build::split_region::normalize_split_policy(target, option, &stored)
-                    .map_err(driver_refusal)?;
-            (
-                ActionType::ACTION_ALTER_TABLE_SET_REGION_SPLIT_POLICY,
-                schema,
-                table,
-                JobArgsValue::AlterTableSetRegionSplitPolicy(Some(GoShared::new(
-                    tidb_model::AlterTableSetRegionSplitPolicyArgs {
-                        index_name,
-                        policy: Some(GoShared::new(policy)),
-                    },
-                ))),
-            )
-        }
-        // Go `executor.AlterTableSetTiFlashReplica`.
+        } => alter_table_set_region_split_policy(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            target,
+            option,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
         DdlStatement::SetTiFlashReplica {
             schema,
             table,
@@ -736,15 +415,1074 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             labels,
             reset_available,
             hypo,
-        } => {
-            let (_, stored) = locate_table(catalog, schema, table)?;
-            let stored = stored.read();
-            // Go's rule repair (`refreshTiFlashPlacementRules`) submits its
-            // reset job directly (`doDDLJob2`), past the statement's checks.
-            if !*reset_available {
+        } => alter_table_set_ti_flash_replica(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            count,
+            labels,
+            reset_available,
+            hypo,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
+        DdlStatement::UpdateTiFlashReplicaStatus {
+            table_id,
+            available,
+        } => update_table_replica_info(
+            snapshot,
+            catalog,
+            table_id,
+            available,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
+        DdlStatement::AlterTableCache {
+            schema,
+            table,
+            cache,
+        } => alter_table_cache(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            cache,
+            job_context,
+            multi_schema,
+            tiflash_stores,
+        ),
+        _ => Ok(None),
+    }
+}
+
+/// Go `executor.AlterTableEngineAttribute`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn alter_table_engine_attribute<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    engine_attribute: &String,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = (
+        ActionType::ACTION_MODIFY_ENGINE_ATTRIBUTE,
+        schema,
+        table,
+        JobArgsValue::ModifyTableEngineAttribute(Some(GoShared::new(
+            tidb_model::ModifyTableEngineAttributeArgs {
+                engine_attribute: GoField::new(engine_attribute.clone().into()),
+            },
+        ))),
+    );
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.AlterTableComment`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn alter_table_comment<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    comment: &String,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = (
+        ActionType::ACTION_MODIFY_TABLE_COMMENT,
+        schema,
+        table,
+        JobArgsValue::ModifyTableComment(Some(GoShared::new(tidb_model::ModifyTableCommentArgs {
+            comment: GoField::new(comment.clone().into()),
+        }))),
+    );
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.AlterIndexVisibility`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn alter_index_visibility<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    index: &String,
+    invisible: &bool,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        let (_, stored) = locate_table(&catalog, schema, table)?;
+        let stored = stored.read();
+        let mut probe = stored.clone_like_go();
+        // Go `validateAlterIndexVisibility` early-returns on an unchanged
+        // visibility only outside a multi-schema change; inside one the
+        // sub-job is always built, so `checkMultiSchemaInfo` sees it.
+        if let AlterColumnOutcome::AlreadySatisfied(detail) =
+            apply_index_visibility(&mut probe, schema, table, index, *invisible)?
+        {
+            if !multi_schema {
+                return Ok(already_satisfied(detail));
+            }
+        }
+        (
+            ActionType::ACTION_ALTER_INDEX_VISIBILITY,
+            schema,
+            table,
+            JobArgsValue::AlterIndexVisibility(Some(GoShared::new(
+                tidb_model::AlterIndexVisibilityArgs {
+                    index_name: GoField::new(CiString::new(index.clone())),
+                    invisible: GoField::new(*invisible),
+                },
+            ))),
+        )
+    };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.RenameIndex`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn rename_index<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    from: &String,
+    to: &String,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        let (_, stored) = locate_table(&catalog, schema, table)?;
+        let stored = stored.read();
+        check_rename_index_cache(&stored)?;
+        let mut probe = stored.clone_like_go();
+        if let AlterColumnOutcome::AlreadySatisfied(detail) =
+            apply_rename_index(&mut probe, schema, table, from, to)?
+        {
+            return Ok(already_satisfied(detail));
+        }
+        (
+            ActionType::ACTION_RENAME_INDEX,
+            schema,
+            table,
+            JobArgsValue::ModifyIndex(Some(GoShared::new(tidb_model::ModifyIndexArgs {
+                index_args: vec![
+                    tidb_model::IndexArg {
+                        index_name: CiString::new(from.clone()),
+                        ..tidb_model::IndexArg::default()
+                    },
+                    tidb_model::IndexArg {
+                        index_name: CiString::new(to.clone()),
+                        ..tidb_model::IndexArg::default()
+                    },
+                ]
+                .into(),
+                ..tidb_model::ModifyIndexArgs::default()
+            }))),
+        )
+    };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.DropForeignKey`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn drop_foreign_key<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    name: &String,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        let (_, stored) = locate_table(&catalog, schema, table)?;
+        let stored = stored.read();
+        if !stored
+            .foreign_keys
+            .iter_deref()
+            .any(|fk| fk.read().name.lowercase() == name.go_to_lower())
+        {
+            return Err(foreign_key_not_exists(name));
+        }
+        (
+            ActionType::ACTION_DROP_FOREIGN_KEY,
+            schema,
+            table,
+            JobArgsValue::DropForeignKey(Some(GoShared::new(tidb_model::DropForeignKeyArgs {
+                foreign_key_name: GoField::new(CiString::new(name.clone())),
+            }))),
+        )
+    };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.AlterTableCharsetAndCollate`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn alter_table_charset_and_collate<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    charset: &String,
+    collate: &String,
+    overwrite_columns: &bool,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        check_table_charset_named(charset, collate)?;
+        let (_, stored) = locate_table(&catalog, schema, table)?;
+        let stored = stored.read();
+        let mut probe = stored.clone_like_go();
+        if let AlterColumnOutcome::AlreadySatisfied(detail) = apply_table_charset_and_collate(
+            &catalog,
+            schema,
+            table,
+            &mut probe,
+            charset,
+            collate,
+            *overwrite_columns,
+        )? {
+            return Ok(already_satisfied(detail));
+        }
+        (
+            ActionType::ACTION_MODIFY_TABLE_CHARSET_AND_COLLATE,
+            schema,
+            table,
+            JobArgsValue::ModifyTableCharsetAndCollate(Some(GoShared::new(
+                tidb_model::ModifyTableCharsetAndCollateArgs {
+                    to_charset: GoField::new(probe.charset.clone().into()),
+                    to_collate: GoField::new(probe.collate.clone().into()),
+                    needs_overwrite_columns: GoField::new(*overwrite_columns),
+                },
+            ))),
+        )
+    };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.AlterColumn`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn alter_column<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    column: &String,
+    default_value: &Option<Box<tidb_ast::Expr>>,
+    context: &DdlStatementContext,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        let (_, stored) = locate_table(&catalog, schema, table)?;
+        let stored = stored.read();
+        let mut probe = stored.clone_like_go();
+        apply_set_column_default(
+            &mut probe,
+            table,
+            column,
+            default_value.as_deref(),
+            &context.0,
+        )?;
+        let changed = tidb_model::column::find_column_info(&probe.columns, column)
+            .expect("the default was set on this column")
+            .read()
+            .clone_like_go();
+        (
+            ActionType::ACTION_SET_DEFAULT_VALUE,
+            schema,
+            table,
+            JobArgsValue::SetDefaultValue(Some(GoShared::new(tidb_model::SetDefaultValueArgs {
+                column: GoField::new(Some(GoShared::new(changed))),
+            }))),
+        )
+    };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.ShardRowID`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn shard_row_id<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    bits: &u64,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        let (_, stored) = locate_table(&catalog, schema, table)?;
+        let stored = stored.read();
+        if stored.temp_table_type != tidb_model::TempTableType::NONE {
+            return Err(coded_refusal(
+                &tidb_dbterror::ERR_OPT_ON_TEMPORARY_TABLE,
+                "`shard_row_id_bits` is unsupported on temporary tables.".to_owned(),
+            ));
+        }
+        if *bits == stored.shard_row_id_bits {
+            return Ok(already_satisfied(format!(
+                "`{schema}`.`{table}` already has SHARD_ROW_ID_BITS = {bits}"
+            )));
+        }
+        if *bits > 0 && (stored.pk_is_handle || stored.is_common_handle) {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
+                &tidb_dbterror::ERR_UNSUPPORTED_SHARD_ROW_ID_BITS.gen_with_stack_by_args(&[]),
+            )));
+        }
+        (
+            ActionType::ACTION_SHARD_ROW_ID,
+            schema,
+            table,
+            JobArgsValue::ShardRowId(Some(GoShared::new(tidb_model::ShardRowIDArgs {
+                shard_row_id_bits: GoField::new(*bits),
+            }))),
+        )
+    };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.AlterTableAutoIDCache`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn alter_table_auto_id_cache<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    new_cache: &i64,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        let (_, stored) = locate_table(&catalog, schema, table)?;
+        let stored = stored.read();
+        if (*new_cache == 1) != (stored.auto_id_cache == 1) {
+            return Err(DdlPlanError::Unsupported(
+                    "Can't Alter AUTO_ID_CACHE between 1 and non-1, the underlying implementation is different"
+                        .to_owned(),
+                ));
+        }
+        (
+            ActionType::ACTION_MODIFY_TABLE_AUTO_IDCACHE,
+            schema,
+            table,
+            JobArgsValue::ModifyTableAutoIdCache(Some(GoShared::new(
+                tidb_model::ModifyTableAutoIDCacheArgs {
+                    new_cache: GoField::new(*new_cache),
+                },
+            ))),
+        )
+    };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.RebaseAutoID`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn rebase_auto_id<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    new_base: &i64,
+    force: &bool,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        let (schema_id, stored) = locate_table(catalog, schema, table)?;
+        let stored = stored.read();
+        let mut new_base = *new_base;
+        if !*force {
+            let adjusted = adjust_new_base_to_next_global_id(
+                snapshot,
+                AutoIdKind::Increment,
+                schema_id,
+                &stored,
+                new_base,
+            )?;
+            if adjusted != new_base {
+                warnings.push(tidb_context::SqlWarn::with_code(
+                    WarningLevel::Warning,
+                    tidb_mysql::errors::errcode::ErrUnknown,
+                    cant_reset_auto_increment(new_base, adjusted),
+                ));
+            }
+            new_base = adjusted;
+        }
+        (
+            ActionType::ACTION_REBASE_AUTO_ID,
+            schema,
+            table,
+            JobArgsValue::RebaseAutoId(Some(GoShared::new(tidb_model::RebaseAutoIDArgs {
+                new_base: GoField::new(new_base),
+                force: GoField::new(*force),
+            }))),
+        )
+    };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.RebaseAutoID`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn rebase_auto_random_id<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    next: &i64,
+    force: &bool,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        let (schema_id, stored) = locate_table(catalog, schema, table)?;
+        let stored = stored.read();
+        if stored.auto_random_bits == 0 || stored.get_pk_col_info().is_none() {
+            return Err(DdlPlanError::from(
+                tidb_dbterror::ERR_INVALID_AUTO_RANDOM.gen_with_stack_by_args(&[
+                    ("alter auto_random_base of a non auto_random table".to_owned()).into(),
+                ]),
+            ));
+        }
+        let unsigned = stored.is_auto_random_bit_col_unsigned();
+        let range_bits = if stored.auto_random_range_bits == 0 {
+            64
+        } else {
+            stored.auto_random_range_bits
+        };
+        let incremental_bits = range_bits - stored.auto_random_bits - u64::from(!unsigned);
+        let maximum = (1_u64 << incremental_bits) - 1;
+        let requested = *next as u64;
+        if *next < 0 || requested & maximum != requested {
+            return Err(DdlPlanError::from(tidb_dbterror::ERR_INVALID_AUTO_RANDOM.gen_with_stack_by_args(&[(format!(
+                    "alter auto_random_base to {next} overflows the incremental bits, max allowed base is {maximum}"
+                )).into()])));
+        }
+        let mut new_base = *next;
+        if !*force {
+            let adjusted = adjust_new_base_to_next_global_id(
+                snapshot,
+                AutoIdKind::Random,
+                schema_id,
+                &stored,
+                new_base,
+            )?;
+            if adjusted != new_base {
+                warnings.push(tidb_context::SqlWarn::with_code(
+                    WarningLevel::Warning,
+                    tidb_mysql::errors::errcode::ErrUnknown,
+                    cant_reset_auto_increment(new_base, adjusted),
+                ));
+            }
+            new_base = adjusted;
+        }
+        (
+            ActionType::ACTION_REBASE_AUTO_RANDOM_BASE,
+            schema,
+            table,
+            JobArgsValue::RebaseAutoId(Some(GoShared::new(tidb_model::RebaseAutoIDArgs {
+                new_base: GoField::new(new_base),
+                force: GoField::new(*force),
+            }))),
+        )
+    };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.AlterTableTTLInfoOrEnable`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn alter_table_ttl_info<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    ttl_info: &Option<Box<tidb_model::TTLInfo>>,
+    enable: &Option<bool>,
+    job_interval: &Option<String>,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        let (_, stored) = locate_table(catalog, schema, table)?;
+        let stored = stored.read();
+        match ttl_info {
+            Some(ttl) => {
+                let mut candidate = stored.clone_like_go();
+                candidate.ttl_info = Some(GoShared::new((**ttl).clone()));
+                let referred = !crate::foreign_key_build::get_table_referred_foreign_keys(
+                    catalog, schema, table,
+                )
+                .is_empty();
+                tidb_ddl_build::table_info_build::check_ttl_info_valid(&candidate, referred)
+                    .map_err(DdlPlanError::from_mysql_error)?;
+            }
+            None if stored.ttl_info.is_none() => {
+                let option = if enable.is_some() {
+                    "TTL_ENABLE"
+                } else {
+                    "TTL_JOB_INTERVAL"
+                };
+                let error = tidb_terror::MysqlError::from_terror(
+                    &tidb_dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
+                        .gen_with_stack_by_args(&[option.to_string().into()]),
+                );
+                return Err(DdlPlanError::from_mysql_error(error));
+            }
+            None => {}
+        }
+        (
+            ActionType::ACTION_ALTER_TTLINFO,
+            schema,
+            table,
+            JobArgsValue::AlterTtlInfo(Some(GoShared::new(tidb_model::AlterTTLInfoArgs {
+                ttl_info: ttl_info.as_ref().map(|ttl| GoShared::new((**ttl).clone())),
+                ttl_enable: *enable,
+                ttl_cron_job_schedule: job_interval.clone(),
+            }))),
+        )
+    };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.AlterTableRemoveTTL`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn alter_table_remove_ttl<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        let (_, stored) = locate_table(catalog, schema, table)?;
+        let stored = stored.read();
+        if stored.ttl_info.is_none() {
+            return Ok(already_satisfied(format!(
+                "`{schema}`.`{table}` has no TTL"
+            )));
+        }
+        (
+            ActionType::ACTION_ALTER_TTLREMOVE,
+            schema,
+            table,
+            tidb_model::EmptyArgs::into_job_args_value(Some(GoShared::new(
+                tidb_model::EmptyArgs::default(),
+            ))),
+        )
+    };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.AlterTablePlacement`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn alter_table_placement<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    policy: &String,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        let (_, stored) = locate_table(catalog, schema, table)?;
+        if let Some(ignored) = check_ignore_placement_ddl(job_context) {
+            return Ok(Some(ignored));
+        }
+        let stored = stored.read();
+        if stored.temp_table_type != tidb_model::TempTableType::NONE {
+            return Err(coded_refusal(
+                &tidb_dbterror::ERR_OPT_ON_TEMPORARY_TABLE,
+                "`placement` is unsupported on temporary tables.".to_owned(),
+            ));
+        }
+        let reference = check_and_normalize_placement_policy(snapshot, policy)?;
+        shared_policy = reference
+            .as_ref()
+            .map(|reference| reference.read().name.lowercase().to_owned());
+        (
+            ActionType::ACTION_ALTER_TABLE_PLACEMENT,
+            schema,
+            table,
+            JobArgsValue::AlterTablePlacement(Some(GoShared::new(
+                tidb_model::AlterTablePlacementArgs {
+                    placement_policy_ref: reference,
+                },
+            ))),
+        )
+    };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.AlterTablePartitionPlacement`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn alter_table_partition_placement<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    partition: &String,
+    policy: &String,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        let (_, stored) = locate_table(catalog, schema, table)?;
+        let stored = stored.read();
+        let partition_id = find_partition_id(&stored, partition)?;
+        if let Some(ignored) = check_ignore_placement_ddl(job_context) {
+            return Ok(Some(ignored));
+        }
+        let reference = check_and_normalize_placement_policy(snapshot, policy)?;
+        shared_policy = reference
+            .as_ref()
+            .map(|reference| reference.read().name.lowercase().to_owned());
+        (
+            ActionType::ACTION_ALTER_TABLE_PARTITION_PLACEMENT,
+            schema,
+            table,
+            JobArgsValue::AlterTablePartition(Some(GoShared::new(
+                tidb_model::AlterTablePartitionArgs {
+                    partition_id: GoField::new(partition_id),
+                    policy_ref_info: GoField::new(reference),
+                    ..tidb_model::AlterTablePartitionArgs::default()
+                },
+            ))),
+        )
+    };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.AlterTableAttributes`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn alter_table_attributes<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    attributes: &tidb_ast::AttributesSpec,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        let Some(database) = find_database(catalog, schema) else {
+            return Err(DdlPlanError::from(
+                tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
+                    .gen_with_stack_by_args(&[(schema.clone()).into()]),
+            ));
+        };
+        let (_, stored) = locate_table(catalog, schema, table)?;
+        let stored = stored.read();
+        let rule = label_rules::table_attributes_rule(
+            attributes,
+            database.read().name.lowercase(),
+            &LabelRuleTable::from_table_info(&stored),
+        )
+        .map_err(invalid_attributes_spec)?;
+        (
+            ActionType::ACTION_ALTER_TABLE_ATTRIBUTES,
+            schema,
+            table,
+            JobArgsValue::AlterTableAttributes(Some(GoShared::new(
+                tidb_model::AlterTableAttributesArgs {
+                    label_rule: Some(GoShared::new(label_rule_json(&rule)?)),
+                },
+            ))),
+        )
+    };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.AlterTablePartitionAttributes`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn alter_table_partition_attributes<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    partition: &String,
+    attributes: &Option<String>,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        let Some(database) = find_database(catalog, schema) else {
+            return Err(DdlPlanError::from(
+                tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
+                    .gen_with_stack_by_args(&[(schema.clone()).into()]),
+            ));
+        };
+        let (_, stored) = locate_table(catalog, schema, table)?;
+        let stored = stored.read();
+        let partition_id = find_partition_id(&stored, partition)?;
+        let rule = label_rules::partition_attributes_rule(
+            attributes,
+            database.read().name.lowercase(),
+            stored.name.lowercase(),
+            &partition.go_to_lower(),
+            partition_id,
+        )
+        .map_err(invalid_attributes_spec)?;
+        (
+            ActionType::ACTION_ALTER_TABLE_PARTITION_ATTRIBUTES,
+            schema,
+            table,
+            JobArgsValue::AlterTablePartition(Some(GoShared::new(
+                tidb_model::AlterTablePartitionArgs {
+                    partition_id: GoField::new(partition_id),
+                    label_rule: GoField::new(Some(GoShared::new(label_rule_json(&rule)?))),
+                    ..tidb_model::AlterTablePartitionArgs::default()
+                },
+            ))),
+        )
+    };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.AlterTableAffinity`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn alter_table_affinity<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    level: &String,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        let (_, stored) = locate_table(catalog, schema, table)?;
+        let stored = stored.read();
+        refuse_non_base_table(&stored, schema, table)?;
+        let affinity = tidb_ddl_build::table_affinity(level).map_err(driver_refusal)?;
+        tidb_ddl_build::validate_table_affinity(
+            stored.temp_table_type != tidb_model::TempTableType::NONE,
+            stored.get_partition_info().is_some(),
+            affinity.as_ref(),
+        )
+        .map_err(driver_refusal)?;
+        (
+            ActionType::ACTION_ALTER_TABLE_AFFINITY,
+            schema,
+            table,
+            JobArgsValue::AlterTableAffinity(Some(GoShared::new(
+                tidb_model::AlterTableAffinityArgs {
+                    affinity: affinity.map(GoShared::new),
+                },
+            ))),
+        )
+    };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.AlterTableSetRegionSplitPolicy`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn alter_table_set_region_split_policy<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    target: &tidb_ast::SplitTarget,
+    option: &tidb_ast::SplitOption,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        let (_, stored) = locate_table(catalog, schema, table)?;
+        let stored = stored.read();
+        let target = match target {
+            tidb_ast::SplitTarget::Table => tidb_ddl_build::split_region::SplitPolicyTarget::Table,
+            tidb_ast::SplitTarget::PrimaryKey => {
+                tidb_ddl_build::split_region::SplitPolicyTarget::PrimaryKey
+            }
+            tidb_ast::SplitTarget::Index(name) => {
+                tidb_ddl_build::split_region::SplitPolicyTarget::Index(name)
+            }
+        };
+        let (index_name, policy) =
+            tidb_ddl_build::split_region::normalize_split_policy(target, option, &stored)
+                .map_err(driver_refusal)?;
+        (
+            ActionType::ACTION_ALTER_TABLE_SET_REGION_SPLIT_POLICY,
+            schema,
+            table,
+            JobArgsValue::AlterTableSetRegionSplitPolicy(Some(GoShared::new(
+                tidb_model::AlterTableSetRegionSplitPolicyArgs {
+                    index_name,
+                    policy: Some(GoShared::new(policy)),
+                },
+            ))),
+        )
+    };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.AlterTableSetTiFlashReplica`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn alter_table_set_ti_flash_replica<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    count: &u64,
+    labels: &Vec<String>,
+    reset_available: &bool,
+    hypo: &bool,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        let (_, stored) = locate_table(catalog, schema, table)?;
+        let stored = stored.read();
+        // Go's rule repair (`refreshTiFlashPlacementRules`) submits its
+        // reset job directly (`doDDLJob2`), past the statement's checks.
+        if !*reset_available {
             tidb_ddl_build::ddl_executor::is_table_tiflash_supported(schema, &stored)
                 .map_err(DdlPlanError::from_mysql_error)?;
-            let current = stored.tiflash_replica.as_ref().map(|replica| replica.read().clone());
+            let current = stored
+                .tiflash_replica
+                .as_ref()
+                .map(|replica| replica.read().clone());
             if !tidb_ddl_build::ddl_executor::should_modify_tiflash_replica(
                 current.as_ref(),
                 *count,
@@ -768,8 +1506,8 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             // Go `checkTiFlashReplicaCount`: with TiFlash enabled, no more
             // replicas than PD's TiFlash stores.
             check_tiflash_replica_count(*count, tiflash_stores)?;
-            }
-            (
+        }
+        (
             ActionType::ACTION_SET_TI_FLASH_REPLICA,
             schema,
             table,
@@ -784,115 +1522,165 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                     ..tidb_model::SetTiFlashReplicaArgs::default()
                 },
             ))),
-            )
+        )
+    };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+/// Go `executor.UpdateTableReplicaInfo`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn update_table_replica_info<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    table_id: &i64,
+    available: &bool,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+
+    let schemas = catalog.stored_schemas();
+    let Some((database, stored)) = schemas.iter().find_map(|database| {
+        database
+            .read()
+            .deprecated_tables
+            .iter_deref()
+            .find(|stored| {
+                let stored = stored.read();
+                stored.id == *table_id || partition_of(&stored, *table_id)
+            })
+            .map(|stored| (database, stored))
+    }) else {
+        return Err(DdlPlanError::from(
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                .gen_with_stack(format!("Table which ID = {table_id} does not exist.")),
+        ));
+    };
+    let stored = stored.read();
+    let unchanged = stored.tiflash_replica.as_ref().is_none_or(|replica| {
+        let replica = replica.read();
+        if stored.id == *table_id {
+            replica.available == *available
+        } else {
+            replica.is_partition_available(*table_id) == *available
         }
-        // Go `executor.UpdateTableReplicaInfo`: no job once the status
-        // already holds.
-        DdlStatement::UpdateTiFlashReplicaStatus {
-            table_id,
-            available,
-        } => {
-            let schemas = catalog.stored_schemas();
-            let Some((database, stored)) = schemas.iter().find_map(|database| {
-                database
-                    .read().deprecated_tables
-                    .iter_deref()
-                    .find(|stored| {
-                        let stored = stored.read();
-                        stored.id == *table_id || partition_of(&stored, *table_id)
-                    })
-                    .map(|stored| (database, stored))
-            }) else {
-                return Err(DdlPlanError::from(
-                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                        .gen_with_stack(format!("Table which ID = {table_id} does not exist.")),
-                ));
-            };
-            let stored = stored.read();
-            let unchanged = stored.tiflash_replica.as_ref().is_none_or(|replica| {
-                let replica = replica.read();
-                if stored.id == *table_id {
-                    replica.available == *available
-                } else {
-                    replica.is_partition_available(*table_id) == *available
-                }
-            });
-            if unchanged {
-                return Ok(already_satisfied(
-                    "TiFlash replica status already matches".to_owned(),
-                ));
-            }
-            let mut job = session_job(
-                job_context,
-                ActionType::ACTION_UPDATE_TI_FLASH_REPLICA_STATUS,
-            );
-            job.schema_id = database.read().id;
-            job.table_id = stored.id;
-            job.schema_name = database.read().name.lowercase().to_owned().into();
-            job.table_name = stored.name.lowercase().to_owned().into();
-            return Ok(Some(AddIndexSubmission::Job(
-                Box::new(tidb_ddl_jobsubmit::JobSpec {
-                    job,
-                    args: JobArgsValue::UpdateTiFlashReplicaStatus(Some(GoShared::new(
-                        tidb_model::UpdateTiFlashReplicaStatusArgs {
-                            available: *available,
-                            physical_id: *table_id,
-                        },
-                    ))),
-                    id_allocated: true,
-                }),
-                warnings,
+    });
+    if unchanged {
+        return Ok(already_satisfied(
+            "TiFlash replica status already matches".to_owned(),
+        ));
+    }
+    let mut job = session_job(
+        job_context,
+        ActionType::ACTION_UPDATE_TI_FLASH_REPLICA_STATUS,
+    );
+    job.schema_id = database.read().id;
+    job.table_id = stored.id;
+    job.schema_name = database.read().name.lowercase().to_owned().into();
+    job.table_name = stored.name.lowercase().to_owned().into();
+    return Ok(Some(AddIndexSubmission::Job(
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
+            job,
+            args: JobArgsValue::UpdateTiFlashReplicaStatus(Some(GoShared::new(
+                tidb_model::UpdateTiFlashReplicaStatusArgs {
+                    available: *available,
+                    physical_id: *table_id,
+                },
+            ))),
+            id_allocated: true,
+        }),
+        warnings,
+    )));
+}
+
+/// Go `executor.AlterTableCache`: the typed arguments through job construction.
+#[allow(unused_variables, unused_mut, clippy::too_many_arguments)]
+pub(crate) fn alter_table_cache<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    cache: &bool,
+    job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut warnings = Vec::new();
+    let mut shared_policy: Option<String> = None;
+    let (action, schema, table, args) = {
+        let (_, stored) = locate_table(catalog, schema, table)?;
+        let stored = stored.read();
+        let wanted = if *cache {
+            tidb_model::TableCacheStatusType::ENABLE
+        } else {
+            tidb_model::TableCacheStatusType::DISABLE
+        };
+        if stored.table_cache_status_type == wanted {
+            return Ok(already_satisfied(format!(
+                "`{schema}`.`{table}` is already {}",
+                if *cache { "cached" } else { "not cached" }
             )));
         }
-        // Go `executor.AlterTableCache` / `AlterTableNoCache`; the size
-        // check and the `table_cache_meta` row come at submission.
-        DdlStatement::AlterTableCache {
+        if *cache {
+            if tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+                return Err(coded_refusal(
+                    &tidb_dbterror::ERR_UNSUPPORTED_ALTER_CACHE_FOR_SYS_TABLE,
+                    "ALTER table cache for tables in system database is currently unsupported",
+                ));
+            }
+            if stored.temp_table_type != tidb_model::TempTableType::NONE {
+                return Err(alter_temporary_table_cache());
+            }
+            if stored.partition.is_some() {
+                return Err(partition_mode_on_cache_table());
+            }
+        }
+        (
+            if *cache {
+                ActionType::ACTION_ALTER_CACHE_TABLE
+            } else {
+                ActionType::ACTION_ALTER_NO_CACHE_TABLE
+            },
             schema,
             table,
-            cache,
-        } => {
-            let (_, stored) = locate_table(catalog, schema, table)?;
-            let stored = stored.read();
-            let wanted = if *cache {
-                tidb_model::TableCacheStatusType::ENABLE
-            } else {
-                tidb_model::TableCacheStatusType::DISABLE
-            };
-            if stored.table_cache_status_type == wanted {
-                return Ok(already_satisfied(format!(
-                    "`{schema}`.`{table}` is already {}",
-                    if *cache { "cached" } else { "not cached" }
-                )));
-            }
-            if *cache {
-                if tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
-                    return Err(coded_refusal(
-                        &tidb_dbterror::ERR_UNSUPPORTED_ALTER_CACHE_FOR_SYS_TABLE,
-                        "ALTER table cache for tables in system database is currently unsupported",
-                    ));
-                }
-                if stored.temp_table_type != tidb_model::TempTableType::NONE {
-                    return Err(alter_temporary_table_cache());
-                }
-                if stored.partition.is_some() {
-                    return Err(partition_mode_on_cache_table());
-                }
-            }
-            (
-                if *cache {
-                    ActionType::ACTION_ALTER_CACHE_TABLE
-                } else {
-                    ActionType::ACTION_ALTER_NO_CACHE_TABLE
-                },
-                schema,
-                table,
-                tidb_model::EmptyArgs::into_job_args_value(Some(GoShared::new(
-                    tidb_model::EmptyArgs::default(),
-                ))),
-            )
-        }
-        _ => unreachable!("checked by is_alter_table_statement"),
+            tidb_model::EmptyArgs::into_job_args_value(Some(GoShared::new(
+                tidb_model::EmptyArgs::default(),
+            ))),
+        )
     };
+    finish_alter_table_job(
+        catalog,
+        job_context,
+        action,
+        schema,
+        table,
+        args,
+        warnings,
+        shared_policy,
+    )
+}
+
+fn finish_alter_table_job(
+    catalog: &SessionExtendedInfoSchema,
+    job_context: &dyn DdlSessionContext,
+    action: ActionType,
+    schema: &str,
+    table: &str,
+    args: JobArgsValue,
+    warnings: Vec<tidb_context::SqlWarn>,
+    shared_policy: Option<String>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
     let stored = stored.read();
     let mut job = session_job(job_context, action);
@@ -1249,9 +2037,8 @@ pub(super) fn plan_persisted_alter_table_job_step(
     let mut bundles = Vec::new();
     let mut label_steps = Vec::new();
     let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
-    let placement_error = |error: tidb_placement::PlacementError| {
-        DdlPlanError::plain_refusal(error.to_string())
-    };
+    let placement_error =
+        |error: tidb_placement::PlacementError| DdlPlanError::plain_refusal(error.to_string());
     match active.job.type_ {
         ActionType::ACTION_MODIFY_TABLE_COMMENT => {
             let args = tidb_model::get_modify_table_comment_args(&mut active.job)
@@ -1272,8 +2059,10 @@ pub(super) fn plan_persisted_alter_table_job_step(
                 .ok_or_else(|| nil_args(active))?;
             let engine_attribute = args.read().engine_attribute.get().to_string();
             let settings =
-                tidb_ddl_build::storage_class::get_storage_class_settings_from_table_info(&engine_attribute)
-                    .map_err(|error| cancel_ddl_job(active, driver_refusal(error)))?;
+                tidb_ddl_build::storage_class::get_storage_class_settings_from_table_info(
+                    &engine_attribute,
+                )
+                .map_err(|error| cancel_ddl_job(active, driver_refusal(error)))?;
             if let Some(step) = revertible_point(active) {
                 return Ok(step);
             }
@@ -1337,14 +2126,13 @@ pub(super) fn plan_persisted_alter_table_job_step(
                 let adjusted =
                     adjust_new_base_to_next_global_id(txn, kind, schema_id, &info, new_base)?;
                 if adjusted != new_base {
-                    active.job.warning =
-                        Some(GoShared::new(tidb_terror::TerrorError::synthesize(
-                            tidb_terror::TerrorClass::Ddl,
-                            tidb_terror::TerrorCode::new(isize::from(
-                                tidb_mysql::errors::errcode::ErrUnknown as i16,
-                            )),
-                            cant_reset_auto_increment(new_base, adjusted),
-                        )));
+                    active.job.warning = Some(GoShared::new(tidb_terror::TerrorError::synthesize(
+                        tidb_terror::TerrorClass::Ddl,
+                        tidb_terror::TerrorCode::new(isize::from(
+                            tidb_mysql::errors::errcode::ErrUnknown as i16,
+                        )),
+                        cant_reset_auto_increment(new_base, adjusted),
+                    )));
                 }
                 new_base = adjusted;
             }
@@ -1475,7 +2263,7 @@ pub(super) fn plan_persisted_alter_table_job_step(
                 .map_err(|error| args_error(active, error))?
                 .ok_or_else(|| nil_args(active))?;
             let name = args.read().foreign_key_name.get();
-            drop_foreign_key(&mut info, name.original())
+            super::drop_foreign_key(&mut info, name.original())
                 .map_err(|error| cancel_ddl_job(active, error))?;
             finished_state = SchemaState::NONE;
         }
@@ -1517,8 +2305,7 @@ pub(super) fn plan_persisted_alter_table_job_step(
                 .ok_or_else(|| nil_args(active))?
                 .read()
                 .clone_like_go();
-            if let Some(step) = revertible_point_with_table(txn, active, &info, true, start_ts)?
-            {
+            if let Some(step) = revertible_point_with_table(txn, active, &info, true, start_ts)? {
                 return Ok(step);
             }
             // Go `updateColumnDefaultValue`: the default fields onto the
@@ -1715,14 +2502,15 @@ pub(super) fn plan_persisted_alter_table_job_step(
                     active,
                     DdlPlanError::from(
                         tidb_infoschema::infoschema_errors::ERR_KEY_NOT_EXISTS
-                            .gen_with_stack_by_args(&[
-                                index_name.into(),
-                                (table.clone()).into(),
-                            ]),
+                            .gen_with_stack_by_args(&[index_name.into(), (table.clone()).into()]),
                     ),
                 ));
             }
-            tidb_ddl_build::table_info_build::set_region_split_policy(&mut info, &index_name, policy);
+            tidb_ddl_build::table_info_build::set_region_split_policy(
+                &mut info,
+                &index_name,
+                policy,
+            );
         }
         // Go `onSetTableFlashReplica`.
         ActionType::ACTION_SET_TI_FLASH_REPLICA => {
@@ -1735,8 +2523,7 @@ pub(super) fn plan_persisted_alter_table_job_step(
             };
             if tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string().go_to_lower()) {
                 return Err(DdlPlanError::from(
-                    tidb_dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_SYS_OR_MEM_TABLE
-                        .clone(),
+                    tidb_dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_SYS_OR_MEM_TABLE.clone(),
                 ));
             }
             // Go `w.checkTiFlashReplicaCount` over a session of `w.sessPool`;
@@ -1749,17 +2536,27 @@ pub(super) fn plan_persisted_alter_table_job_step(
                         .tiflash_store_count()
                         .map_err(|error| error.message.to_string())
                 };
-                check_tiflash_replica_count(spec.count, &stores).map_err(|error| cancel_ddl_job(active, error))?;
+                check_tiflash_replica_count(spec.count, &stores)
+                    .map_err(|error| cancel_ddl_job(active, error))?;
             }
             // Go: the PD rules before the table info; a refusal cancels.
             let labels = spec.labels.clone().unwrap_or_default();
             if let Some(partition) = info.get_partition_info() {
                 let (definitions, adding) = {
                     let partition = partition.read();
-                    (partition.definitions.snapshot(), partition.adding_definitions.snapshot())
+                    (
+                        partition.definitions.snapshot(),
+                        partition.adding_definitions.snapshot(),
+                    )
                 };
-                configure_tiflash_pd_for_partitions(false, &definitions, spec.count, &labels, info.id)
-                    .map_err(|error| cancel_ddl_job(active, error))?;
+                configure_tiflash_pd_for_partitions(
+                    false,
+                    &definitions,
+                    spec.count,
+                    &labels,
+                    info.id,
+                )
+                .map_err(|error| cancel_ddl_job(active, error))?;
                 configure_tiflash_pd_for_partitions(true, &adding, spec.count, &labels, info.id)
                     .map_err(|error| cancel_ddl_job(active, error))?;
             } else {
@@ -1780,7 +2577,9 @@ pub(super) fn plan_persisted_alter_table_job_step(
             } else {
                 if info.tiflash_replica.is_some() {
                     // Go `infosync.DeleteTiFlashTableSyncProgress`.
-                    tidb_domain_infosync::tiflash_manager::delete_tiflash_table_sync_progress(&info);
+                    tidb_domain_infosync::tiflash_manager::delete_tiflash_table_sync_progress(
+                        &info,
+                    );
                 }
                 info.tiflash_replica = None;
             }
@@ -1878,23 +2677,22 @@ pub(super) fn plan_persisted_alter_table_job_step(
             if info.table_cache_status_type == from {
                 info.table_cache_status_type = tidb_model::TableCacheStatusType::SWITCHING;
                 check_table_info_valid(&info)?;
-                let write = update_version_and_table_info(txn, active, schema_id, &info, true, start_ts)?;
+                let write =
+                    update_version_and_table_info(txn, active, schema_id, &info, true, start_ts)?;
                 return Ok(action_step(write));
             }
             if info.table_cache_status_type != tidb_model::TableCacheStatusType::SWITCHING {
                 let status = format!("{:?}", info.table_cache_status_type);
                 return Err(cancel_ddl_job(
                     active,
-                    DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_STATE.generate(
-                        format!(
-                            "invalid {} state {status}",
-                            if cache {
-                                "alter table cache"
-                            } else {
-                                "alter table no cache"
-                            }
-                        ),
-                    )),
+                    DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_STATE.generate(format!(
+                        "invalid {} state {status}",
+                        if cache {
+                            "alter table cache"
+                        } else {
+                            "alter table no cache"
+                        }
+                    ))),
                 ));
             }
             info.table_cache_status_type = target;

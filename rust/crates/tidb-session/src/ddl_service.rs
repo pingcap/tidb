@@ -18,13 +18,12 @@
 //! transaction, builds a job, hands it to the `ddl` package and then copies the
 //! job's outcome (warnings, the last-DDL record, a dropped current database)
 //! back onto the session. Here the statement kinds that reach the cluster's
-//! stored schema are lowered to a [`DdlStatement`] and published through a
+//! stored schema call their Go-named executor methods through a
 //! [`DdlService`]; this module owns everything around that call, so that the
 //! production node, and later the in-process tier, differ only in the service
 //! they hand in and in how they commit the open transaction.
 
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
-use tidb_ddl::cluster_ddl::DdlStatement;
 use tidb_ddl::real_tikv_ddl::ClusterDdlReport;
 use tidb_driver_error::DriverError;
 use tidb_sessionctx::StmtContext;
@@ -33,7 +32,7 @@ use crate::Session;
 use tidb_hack::GoCaseCompare;
 use tidb_hack::go_to_lower;
 
-/// Go `ddl.DDL.DoDDLJob` for one lowered statement: publishes the change,
+/// Go `ddl.Executor` for one parsed statement: publishes the change,
 /// then brings the caller's own catalog up to it before answering.
 ///
 /// The two halves are one method because a caller that published without
@@ -42,10 +41,38 @@ use tidb_hack::go_to_lower;
 /// session into the job: the statement text (`Job.Query`), SQL mode and
 /// `tidb_cdc_write_source`.
 pub trait DdlService {
-    /// Runs one lowered DDL statement to completion.
-    fn execute(
+    /// Go `executor.AlterTableSetTiFlashReplica` for a database-level change.
+    fn set_tiflash_replica(
         &self,
-        statement: &DdlStatement,
+        schema: &str,
+        table: &str,
+        count: u64,
+        labels: &[String],
+        context: &StmtContext,
+    ) -> Result<ClusterDdlReport, DriverError>;
+
+    /// Go `executor.CreateView` with the preprocessed view definition.
+    fn create_view(
+        &self,
+        schema: &str,
+        name: &str,
+        or_replace: bool,
+        info: &tidb_model::TableInfo,
+        context: &StmtContext,
+    ) -> Result<ClusterDdlReport, DriverError>;
+
+    /// Go `executor.DoDDLJobWrapper`.
+    fn do_ddl_job_wrapper(
+        &self,
+        context: &StmtContext,
+        job: tidb_ddl::JobWrapper,
+    ) -> Result<ClusterDdlReport, DriverError>;
+
+    /// Go `DDLExec.Next` calling the DDL executor for the parsed statement.
+    fn execute_ddl(
+        &self,
+        statement: &tidb_ast::Stmt,
+        current_db: &str,
         job_context: &StmtContext,
     ) -> Result<ClusterDdlReport, DriverError>;
 
@@ -78,6 +105,14 @@ pub trait DdlService {
 }
 
 impl Session {
+    /// Go `preprocessor.Enter`: inPrepare sets inCreateOrDropTable for
+    /// ALTER TABLE and CREATE INDEX, so neither records a resolved name.
+    pub(crate) fn ddl_names_skipped_in_prepare(&self, stmt: &tidb_ast::Stmt) -> bool {
+        (self.in_prepare || self.binary_prepared_execution)
+            && matches!(stmt, tidb_ast::Stmt::Ddl(ddl)
+                if matches!(&**ddl, tidb_ast::DdlStmt::AlterTable(_) | tidb_ast::DdlStmt::CreateIndex(_)))
+    }
+
     /// Go's preprocessor name resolution for a DDL (`tableByName`, masked
     /// as a privilege error for an account that holds nothing on the table,
     /// and `checkCreateTableGrammar`'s LIKE source), part of `Compile`: it
@@ -88,6 +123,9 @@ impl Session {
         stmt: &tidb_ast::Stmt,
     ) -> Result<(), DriverError> {
         use tidb_ast::{AlterTableAction, DdlStmt};
+        if self.ddl_names_skipped_in_prepare(stmt) {
+            return Ok(());
+        }
         let tidb_ast::Stmt::Ddl(ddl) = stmt else {
             return Ok(());
         };
@@ -126,7 +164,7 @@ impl Session {
     /// The executor's target checks Go makes before a DDL is built into a
     /// job, after `Compile` ([`Session::compile_statement`]): `SchemaByName`
     /// for CREATE TABLE, the LIKE source's kind, ALTER's base-table check.
-    /// Lowering builds the table and validates its definitions, so running
+    /// The executor builds the table and validates its definitions, so running
     /// it first answered build errors where Go answers 1049/1347.
     pub fn ddl_target_checks(&mut self, stmt: &tidb_ast::Stmt) -> Result<(), DriverError> {
         use tidb_ast::DdlStmt;
@@ -280,43 +318,137 @@ impl Session {
         self.validate_snapshot_write(parsed)
     }
 
-    /// Everything after the implicit commit: the reference checks, the table
-    /// lock job, the service call, and the copy of the outcome back onto the
-    /// session. The caller has already run [`Self::begin_ddl_statement`] and
-    /// committed any open transaction. Answers the id an applied job
-    /// created, which Go's executor pre-splits after a CREATE TABLE.
-    pub fn run_ddl_statement(
+    /// Go `DDLExec.Next`: the statement calls its DDL executor method
+    /// after `NewTxnInStmt`, with the session context carried through the job.
+    pub fn run_executor_statement(
         &mut self,
         sql: &str,
         parsed: &tidb_ast::Stmt,
-        statement: &DdlStatement,
         service: &dyn DdlService,
     ) -> Result<Option<i64>, DriverError> {
-        // Go `executeDropDatabase`: the bootstrap schema is never dropped,
-        // with or without IF EXISTS.
-        if let DdlStatement::DropDatabase { name, .. } = statement {
-            if name.go_lower_eq("mysql") {
-                return Err(DriverError::from(
-                    (&tidb_dbterror::ERR_FORBIDDEN_DDL)
-                        .gen_with_stack("Drop 'mysql' database is forbidden".to_owned()),
-                ));
-            }
+        let current_db = self.vars.current_db.clone();
+        self.run_executor_call(sql, parsed, service, None, |service, context| {
+            service.execute_ddl(parsed, &current_db, context)
+        })
+    }
+
+    /// Go `executor.ModifySchemaSetTiFlashReplica` calling its per-table method.
+    pub fn run_set_tiflash_replica(
+        &mut self,
+        sql: &str,
+        parsed: &tidb_ast::Stmt,
+        schema: &str,
+        table: &str,
+        count: u64,
+        labels: &[String],
+        service: &dyn DdlService,
+    ) -> Result<Option<i64>, DriverError> {
+        self.run_executor_call(sql, parsed, service, None, |service, context| {
+            service.set_tiflash_replica(schema, table, count, labels, context)
+        })
+    }
+
+    /// Go `DDLExec.executeCreateView` calling the owning DDL method.
+    pub fn run_create_view(
+        &mut self,
+        sql: &str,
+        parsed: &tidb_ast::Stmt,
+        schema: &str,
+        name: &str,
+        or_replace: bool,
+        info: &tidb_model::TableInfo,
+        service: &dyn DdlService,
+    ) -> Result<Option<i64>, DriverError> {
+        self.run_executor_call(sql, parsed, service, None, |service, context| {
+            service.create_view(schema, name, or_replace, info, context)
+        })
+    }
+
+    /// Go `executor.DoDDLJobWrapper` with the statement's session effects.
+    pub fn run_ddl_job_wrapper(
+        &mut self,
+        sql: &str,
+        parsed: &tidb_ast::Stmt,
+        job: tidb_ddl::JobWrapper,
+        service: &dyn DdlService,
+    ) -> Result<Option<i64>, DriverError> {
+        let locks = match &job.args {
+            tidb_model::JobArgsValue::LockTables(Some(args)) => Some(args.read().clone()),
+            _ => None,
+        };
+        let result =
+            self.run_executor_call(sql, parsed, service, locks.as_ref(), |service, context| {
+                service.do_ddl_job_wrapper(context, job)
+            });
+        result
+    }
+
+    /// Go `DDLExec.Next`: common context and session effects around an executor call.
+    fn run_executor_call(
+        &mut self,
+        sql: &str,
+        parsed: &tidb_ast::Stmt,
+        service: &dyn DdlService,
+        locks: Option<&tidb_model::LockTablesArgs>,
+        execute: impl FnOnce(&dyn DdlService, &StmtContext) -> Result<ClusterDdlReport, DriverError>,
+    ) -> Result<Option<i64>, DriverError> {
+        let drop_database = match parsed {
+            tidb_ast::Stmt::Ddl(ddl) => match &**ddl {
+                tidb_ast::DdlStmt::DropDatabase { name, .. } => Some(name.as_str()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if drop_database.is_some_and(|name| name.go_lower_eq("mysql")) {
+            return Err(DriverError::from(
+                tidb_dbterror::ERR_FORBIDDEN_DDL
+                    .gen_with_stack("Drop 'mysql' database is forbidden".to_owned()),
+            ));
         }
         service.check_cached_table_ddl(parsed, &self.vars.current_db)?;
-        self.validate_persistent_ddl_references(statement)?;
-        let lock_effect = self.cluster_ddl_lock_effect(statement);
-        self.begin_cluster_lock_job(statement);
-        // Go `Job.Query` is the statement's original text.
-        let job_context = self.ddl_statement_context().with_ddl_query(sql);
-        let report = service.execute(statement, &job_context);
-        // Go appends plan-time warnings to the session's statement context
-        // before it submits the job, so they precede the job's own.
-        if let Some(context) = statement.statement_context() {
-            for warning in context.take_warnings() {
-                self.append_sql_warning(warning);
-            }
-            self.drain_fold_stash();
+        self.validate_executor_ddl_references(parsed)?;
+        if let Some(args) = locks {
+            self.begin_lock_tables_args(args);
         }
+        let lock_effect = self.cluster_executor_lock_effect(parsed);
+        let context = self.ddl_statement_context().with_ddl_query(sql);
+        let report = execute(service, &context);
+        self.finish_ddl_statement_context(&context);
+        self.drain_fold_stash();
+        let (created_id, applied, warnings) = match report? {
+            ClusterDdlReport::Applied {
+                created_id,
+                warnings,
+                ..
+            } => (created_id, true, warnings),
+            ClusterDdlReport::AlreadySatisfied { warnings, .. } => (None, false, warnings),
+        };
+        if let Some(args) = locks {
+            self.finish_lock_tables_args(args);
+        }
+        self.finish_cluster_ddl_lock_effect(lock_effect, created_id);
+        if applied {
+            self.record_last_ddl_info(sql);
+        }
+        for warning in warnings {
+            self.append_sql_warning(warning);
+        }
+        if drop_database.is_some_and(|name| self.current_database().go_lower_eq(name)) {
+            self.deselect_database();
+            self.vars.set_system(
+                "character_set_database",
+                tidb_mysql::DefaultCharset.to_owned(),
+            )?;
+            self.vars.set_system(
+                "collation_database",
+                tidb_mysql::DefaultCollationName.to_owned(),
+            )?;
+        }
+        Ok(created_id)
+    }
+
+    /// Go `executor` changes the issuing statement's context while building its job.
+    fn finish_ddl_statement_context(&mut self, job_context: &StmtContext) {
         // What the executor functions noted while building the job (Go's
         // `StmtCtx.AppendNote` as each runs) stays whether or not the
         // statement then fails.
@@ -336,42 +468,5 @@ impl Session {
                 replicas.set(&schema, &table, add);
             }
         }
-        let report = report?;
-        self.finish_cluster_lock_job(statement);
-        let (created_id, applied, warnings) = match report {
-            ClusterDdlReport::Applied {
-                created_id,
-                warnings,
-                ..
-            } => (created_id, true, warnings),
-            ClusterDdlReport::AlreadySatisfied { warnings, .. } => (None, false, warnings),
-        };
-        // Go `recordLastDDLInfo`: a statement that ran a job leaves its query
-        // and the job's sequence number on the session.
-        if applied {
-            self.record_last_ddl_info(sql);
-        }
-        self.finish_cluster_ddl_lock_effect(lock_effect, created_id);
-        // Go raises an applied job's `job.Warning` via `AppendWarning` and an
-        // `IF [NOT] EXISTS` suppression via `AppendNote`, on the session's
-        // own statement context so `SHOW WARNINGS` reports what the change
-        // did differently from what was written.
-        for warning in warnings {
-            self.append_sql_warning(warning);
-        }
-        // Go `executeDropDatabase`: dropping the current database clears it
-        // (the next unqualified statement answers 1046 until a fresh `USE`)
-        // and resets `character_set_database` / `collation_database` to the
-        // server defaults.
-        if let DdlStatement::DropDatabase { name, .. } = statement {
-            if self.current_database().go_lower_eq(name) {
-                self.deselect_database();
-                self.vars
-                    .set_system("character_set_database", tidb_mysql::DefaultCharset.to_owned())?;
-                self.vars
-                    .set_system("collation_database", tidb_mysql::DefaultCollationName.to_owned())?;
-            }
-        }
-        Ok(created_id)
     }
 }

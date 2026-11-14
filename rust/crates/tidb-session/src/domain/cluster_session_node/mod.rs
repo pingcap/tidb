@@ -186,6 +186,7 @@ use tidb_infoschema_issyncer::catalog_watch::InfoCache;
 use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot;
 use tidb_infoschema_isvalidator::SchemaValidator;
+#[cfg(test)]
 use tidb_ddl::cluster_ddl::DdlStatement;
 use tidb_executor::cluster_analyze::AnalyzeStatement;
 use tidb_stats_handle_storage::cluster_load_stats::prepare_cluster_load_stats_parsed;
@@ -512,24 +513,31 @@ impl ClusterServerSession<'_> {
         // runs through the cluster job, never the in-process catalog the
         // driver session would otherwise edit when it drops.
         if tidb_config::config_tree::config::table_lock_enabled() {
-            if let Some(statement) = self.session.cluster_unlock_tables_statement() {
-                if self
-                    .node
-                    .domain
-                    .ddl
-                    .execute(&statement, &self.session.ddl_statement_context())
-                    .is_err()
-                {
-                    // Go `session.Close` logs the connection, not the error.
-                    tidb_logutil::bg_logger().error(
-                        "release table lock failed",
-                        &[tidb_log::Field::new(
-                            "conn",
-                            tidb_log::Value::U64(self.session.connection_id()),
-                        )],
-                    );
+            let failed = match self.session.cluster_unlock_tables_job() {
+                Ok(Some(job)) => {
+                    let args = match &job.args {
+                        tidb_model::JobArgsValue::LockTables(Some(args)) => args.read().clone(),
+                        _ => unreachable!("UnlockTables carries LockTablesArgs"),
+                    };
+                    let result = self
+                        .node
+                        .domain
+                        .ddl
+                        .do_ddl_job_wrapper(&self.session.ddl_statement_context(), job);
+                    self.session.finish_lock_tables_args(&args);
+                    result.is_err()
                 }
-                self.session.finish_cluster_lock_job(&statement);
+                Ok(None) => false,
+                Err(_) => true,
+            };
+            if failed {
+                tidb_logutil::bg_logger().error(
+                    "release table lock failed",
+                    &[tidb_log::Field::new(
+                        "conn",
+                        tidb_log::Value::U64(self.session.connection_id()),
+                    )],
+                );
             }
         }
         // Go `session.Close`: `GlobalBuiltinFunctionsUsage.Collect`.
@@ -1487,15 +1495,69 @@ impl Session {
 /// Go `DDLExec` over this connection: the session's DDL state and the store
 /// steps the node takes for it.
 impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
+    fn run_set_tiflash_replica(
+        &mut self,
+        sql: &str,
+        parsed: &Stmt,
+        schema: &str,
+        table: &str,
+        count: u64,
+        labels: &[String],
+    ) -> Result<Option<i64>, tidb_driver_error::DriverError> {
+        let service = Arc::clone(&self.domain_services().ddl);
+        self.session.run_set_tiflash_replica(
+            sql,
+            parsed,
+            schema,
+            table,
+            count,
+            labels,
+            service.as_ref(),
+        )
+    }
+
+    fn run_create_view(
+        &mut self,
+        sql: &str,
+        parsed: &Stmt,
+        schema: &str,
+        name: &str,
+        or_replace: bool,
+        info: &tidb_model::TableInfo,
+    ) -> Result<Option<i64>, tidb_driver_error::DriverError> {
+        let service = Arc::clone(&self.domain_services().ddl);
+        self.session.run_create_view(
+            sql,
+            parsed,
+            schema,
+            name,
+            or_replace,
+            info,
+            service.as_ref(),
+        )
+    }
+
+    fn run_ddl_job_wrapper(
+        &mut self,
+        sql: &str,
+        parsed: &Stmt,
+        job: tidb_ddl::JobWrapper,
+    ) -> Result<Option<i64>, tidb_driver_error::DriverError> {
+        let service = Arc::clone(&self.domain_services().ddl);
+        self.session
+            .run_ddl_job_wrapper(sql, parsed, job, service.as_ref())
+    }
+
     fn begin_ddl_statement(&mut self, parsed: &Stmt) -> Result<(), tidb_driver_error::DriverError> {
         self.session.begin_ddl_statement(parsed)
     }
 
-    fn cluster_cleanup_table_lock_statement(
+    fn cluster_cleanup_table_lock_job(
         &self,
         tables: &[Vec<String>],
-    ) -> Result<Option<DdlStatement>, tidb_driver_error::DriverError> {
-        self.session.cluster_cleanup_table_lock_statement(tables)
+        sql: &str,
+    ) -> Result<Option<tidb_ddl::JobWrapper>, tidb_driver_error::DriverError> {
+        self.session.cluster_cleanup_table_lock_job(tables, sql)
     }
 
     fn drop_table_job(
@@ -1526,15 +1588,18 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         self.session.ddl_target_checks(stmt)
     }
 
-    fn cluster_lock_tables_statement(
+    fn cluster_lock_tables_job(
         &mut self,
         locks: &[tidb_ast::TableLock],
-    ) -> Result<DdlStatement, tidb_driver_error::DriverError> {
-        self.session.cluster_lock_tables_statement(locks)
+        sql: &str,
+    ) -> Result<tidb_ddl::JobWrapper, tidb_driver_error::DriverError> {
+        self.session.cluster_lock_tables_job(locks, sql)
     }
 
-    fn cluster_unlock_tables_statement(&self) -> Option<DdlStatement> {
-        self.session.cluster_unlock_tables_statement()
+    fn cluster_unlock_tables_job(
+        &self,
+    ) -> Result<Option<tidb_ddl::JobWrapper>, tidb_driver_error::DriverError> {
+        self.session.cluster_unlock_tables_job()
     }
 
     fn require_table_exists(&mut self, path: &[String]) -> Result<(), tidb_driver_error::DriverError> {
@@ -1601,34 +1666,39 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         ClusterServerSession::record_new_txn_in_stmt(self);
     }
 
-    fn probe_resource_group_statement(
+    fn probe_resource_group_job(
         &mut self,
         ddl: &tidb_ast::DdlStmt,
-    ) -> Result<Option<DdlStatement>, SqlQueryError> {
+        sql: &str,
+    ) -> Result<Option<tidb_ddl::JobWrapper>, SqlQueryError> {
+        let context = self.session.ddl_statement_context().with_ddl_query(sql);
         let resource_group = self.session.current_resource_group().to_owned();
         self.probe_statement(StatementReadShape::Unknown, &resource_group, |session| {
             session
-                .cluster_resource_group_statement(ddl)
+                .cluster_resource_group_job(ddl, &context)
                 .map_err(map_error)
         })
     }
 
-    fn probe_masking_policy_statement(
+    fn probe_masking_policy_job(
         &mut self,
         ddl: &tidb_ast::DdlStmt,
-    ) -> Result<Option<DdlStatement>, SqlQueryError> {
+        sql: &str,
+    ) -> Result<Option<tidb_ddl::JobWrapper>, SqlQueryError> {
+        let context = self.session.ddl_statement_context().with_ddl_query(sql);
         let resource_group = self.session.current_resource_group().to_owned();
         self.probe_statement(StatementReadShape::Unknown, &resource_group, |session| {
             session
-                .cluster_masking_policy_statement(ddl)
+                .cluster_masking_policy_job(ddl, &context)
                 .map_err(map_error)
         })
     }
 
-    fn flashback_cluster_statement(
+    fn flashback_cluster_job(
         &mut self,
         stmt: &tidb_ast::FlashbackToTimestampStmt,
-    ) -> Result<DdlStatement, SqlQueryError> {
+        sql: &str,
+    ) -> Result<tidb_ddl::JobWrapper, SqlQueryError> {
         // Check `TO TSO` clause, then the `TO TIMESTAMP` clause.
         let flashback_ts = if stmt.flashback_tso > 0 {
             stmt.flashback_tso
@@ -1637,7 +1707,9 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
                 .flashback_ts
                 .as_ref()
                 .expect("FLASHBACK ... TO TIMESTAMP carries its expression");
-            self.session.calculate_as_of_ts_expr(expr).map_err(map_error)?
+            self.session
+                .calculate_as_of_ts_expr(expr)
+                .map_err(map_error)?
         };
         // Go `executor.FlashbackCluster`.
         let now_ts = self
@@ -1660,7 +1732,12 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
                 ),
             );
         }
-        Ok(DdlStatement::FlashbackCluster { flashback_ts })
+        Ok(
+            tidb_ddl::cluster_ddl::flashback_cluster::flashback_cluster_job(
+                flashback_ts,
+                &self.session.ddl_statement_context().with_ddl_query(sql),
+            ),
+        )
     }
 
     fn is_masking_policy_statement(&self, ddl: &tidb_ast::DdlStmt) -> bool {
@@ -1696,15 +1773,14 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         self.node.domain.catalog.get_latest()
     }
 
-    fn run_ddl_statement(
+    fn run_executor_statement(
         &mut self,
         sql: &str,
         parsed: &Stmt,
-        statement: &DdlStatement,
     ) -> Result<Option<i64>, tidb_driver_error::DriverError> {
         let service = Arc::clone(&self.domain_services().ddl);
         self.session
-            .run_ddl_statement(sql, parsed, statement, service.as_ref())
+            .run_executor_statement(sql, parsed, service.as_ref())
     }
 
     fn tiflash_store_count(&self) -> Result<u64, String> {
@@ -1762,7 +1838,10 @@ impl<'s> ClusterServerSession<'s> {
         // A text `EXECUTE` of a prepared DDL runs that DDL (Go `ExecuteExec`
         // builds the prepared plan as its body).
         if let Some((body_sql, body)) = self.session.prepared_ddl_body(stmt) {
-            return self.run_statement(&body_sql, &body, record_failure);
+            let previous = std::mem::replace(&mut self.session.in_prepare, true);
+            let result = self.run_statement(&body_sql, &body, record_failure);
+            self.session.in_prepare = previous;
+            return result;
         }
         // Go `Compile`'s fresh `TelemetryInfo`, for every statement
         // `runStmt` executes -- transaction control included.
@@ -1822,9 +1901,11 @@ impl<'s> ClusterServerSession<'s> {
                     && (matches!(stmt, Stmt::Ddl(_))
                         || !matches!(error.code, 1148 | 1210 | 1264 | 1265 | 1366 | 1406))
                 {
-                    self
-                        .session
-                        .record_ddl_failure(error.code, error.message.clone(), error.identity);
+                    self.session.record_ddl_failure(
+                        error.code,
+                        error.message.clone(),
+                        error.identity,
+                    );
                 }
                 Err(error)
             }
@@ -3273,6 +3354,62 @@ struct ClusterDdlService {
 }
 
 impl crate::ddl_service::DdlService for ClusterDdlService {
+    fn set_tiflash_replica(
+        &self,
+        schema: &str,
+        table: &str,
+        count: u64,
+        labels: &[String],
+        context: &tidb_sessionctx::StmtContext,
+    ) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, tidb_driver_error::DriverError> {
+        self.ddl
+            .alter_table_set_tiflash_replica(
+                schema,
+                table,
+                count,
+                labels,
+                false,
+                false,
+                &(Arc::new(context.clone()) as tidb_ddl::cluster_ddl::DdlContext),
+            )
+            .map_err(sql_query_error_to_driver)
+    }
+
+    fn create_view(
+        &self,
+        schema: &str,
+        name: &str,
+        or_replace: bool,
+        info: &tidb_model::TableInfo,
+        context: &tidb_sessionctx::StmtContext,
+    ) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, tidb_driver_error::DriverError> {
+        self.ddl
+            .create_view(schema, name, or_replace, info, context)
+            .map_err(sql_query_error_to_driver)
+    }
+
+    fn do_ddl_job_wrapper(
+        &self,
+        context: &tidb_sessionctx::StmtContext,
+        job: tidb_ddl::JobWrapper,
+    ) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, tidb_driver_error::DriverError> {
+        self.ddl
+            .do_ddl_job_wrapper(context, job)
+            .map_err(sql_query_error_to_driver)
+    }
+
+    fn execute_ddl(
+        &self,
+        statement: &Stmt,
+        current_db: &str,
+        context: &tidb_sessionctx::StmtContext,
+    ) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, tidb_driver_error::DriverError> {
+        let context: tidb_ddl::cluster_ddl::DdlContext = Arc::new(context.clone());
+        self.ddl
+            .execute_ddl(statement, current_db, &context)
+            .map_err(sql_query_error_to_driver)
+    }
+
     fn command_ddl_jobs(
         &self,
         kind: tidb_ast::AdminDdlJobControlKind,
@@ -3282,7 +3419,9 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
         let domain = self.domain.upgrade().ok_or_else(|| {
             tidb_driver_error::DriverError::unsupported("the node's domain is closed")
         })?;
-        let mut session = domain.open_system_session().map_err(sql_query_error_to_driver)?;
+        let mut session = domain
+            .open_system_session()
+            .map_err(sql_query_error_to_driver)?;
         // Go `CommandDDLJobsExec`'s system session runs under
         // `kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)`.
         session.set_internal_request_source(tidb_txnkv::INTERNAL_TXN_DDL);
@@ -3299,20 +3438,10 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
             tidb_model::AdminCommandOperator::BY_END_USER,
         )
         .map_err(tidb_driver_error::DriverError::Mysql)?;
-        Ok(errs.into_iter().map(|err| err.map(|err| err.to_string())).collect())
-    }
-
-    fn execute(
-        &self,
-        statement: &DdlStatement,
-        job_context: &tidb_sessionctx::StmtContext,
-    ) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, tidb_driver_error::DriverError> {
-        self.ddl.execute(statement, job_context).map_err(|error| {
-            tidb_driver_error::DriverError::Mysql(
-                tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
-                    .with_identity_opt(error.identity),
-            )
-        })
+        Ok(errs
+            .into_iter()
+            .map(|err| err.map(|err| err.to_string()))
+            .collect())
     }
 
     fn check_cached_table_ddl(

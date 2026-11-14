@@ -11,8 +11,6 @@ use std::sync::Arc;
 use tidb_ast::{DdlStmt, Stmt};
 use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
-use tidb_ddl::cluster_ddl::DdlStatement;
-use tidb_ddl::real_tikv_ddl::prepare_cluster_ddl_parsed;
 
 use crate::{DriverError, StmtOutput};
 
@@ -24,64 +22,6 @@ pub struct WriteOutcome {
     /// The auto-increment id this statement generated, which the OK packet
     /// carries as `last_insert_id`. Zero when the statement generated none.
     pub last_insert_id: u64,
-}
-
-/// What [`DdlExec::lower_ddl_exec`] lowered a DDL to.
-pub enum LoweredDdl {
-    /// The job(s) to run in order, stopping at the first failure (Go
-    /// `AlterTable`'s table-option loop is several).
-    Jobs(Vec<DdlStatement>),
-    /// Go `DDLExec.Next`'s DROP that also names LOCAL temporary tables: the
-    /// job drops the rest, then `dropLocalTemporaryTables` drops `local`.
-    DropTableJob {
-        /// The job dropping the tables that are not LOCAL temporary ones.
-        statement: DdlStatement,
-        /// The LOCAL temporary tables dropped once the job succeeds.
-        local: Vec<Vec<String>>,
-    },
-    /// Go's executor functions that submit several jobs in order (the
-    /// table-option loop, `AlterSchema`): each part is lowered when its turn
-    /// comes, so a refusal leaves the earlier parts applied, as Go's does.
-    Sequence {
-        /// The statements lowered and run one after another.
-        parts: Vec<Stmt>,
-        /// The statement context their lowering warnings join.
-        context: crate::StmtContext,
-    },
-}
-
-impl LoweredDdl {
-    fn one(statement: DdlStatement) -> Self {
-        Self::Jobs(vec![statement])
-    }
-}
-
-/// The statements one Go executor function runs as several jobs in order --
-/// a multi-option `ALTER TABLE ... <table options>` (Go `AlterTable`'s
-/// option loop) and an `ALTER DATABASE` with several changes (Go
-/// `AlterSchema`). `None` for every other statement.
-fn job_sequence_parts(stmt: &Stmt) -> Option<Vec<Stmt>> {
-    let Stmt::Ddl(ddl) = stmt else {
-        return None;
-    };
-    let parts = match &**ddl {
-        tidb_ast::DdlStmt::AlterTable(alter) => {
-            tidb_ddl::cluster_ddl::split_table_option_alter(alter)?
-                .into_iter()
-                .map(|part| tidb_ast::DdlStmt::AlterTable(Box::new(part)))
-                .collect()
-        }
-        tidb_ast::DdlStmt::AlterDatabase { name, options } => {
-            tidb_ddl::cluster_ddl::split_alter_database(name, options)?
-        }
-        _ => return None,
-    };
-    Some(
-        parts
-            .into_iter()
-            .map(|part| Stmt::Ddl(tidb_ast::NodeBox::new(part)))
-            .collect(),
-    )
 }
 
 /// A DDL shape this node does not plan.
@@ -109,13 +49,44 @@ fn ddl_error(error: &tidb_ddl_build::plan_error::DdlPlanError) -> DriverError {
 /// The connection Go's `DDLExec` runs over: the session (Go `sctx`) and the
 /// store-side steps its node takes for it.
 pub trait DdlExec {
+    /// Go `executor.ModifySchemaSetTiFlashReplica` calling its per-table method.
+    fn run_set_tiflash_replica(
+        &mut self,
+        sql: &str,
+        parsed: &Stmt,
+        schema: &str,
+        table: &str,
+        count: u64,
+        labels: &[String],
+    ) -> Result<Option<i64>, DriverError>;
+
+    /// Go `DDLExec.executeCreateView` calling the owning DDL method.
+    fn run_create_view(
+        &mut self,
+        sql: &str,
+        parsed: &Stmt,
+        schema: &str,
+        name: &str,
+        or_replace: bool,
+        info: &tidb_model::TableInfo,
+    ) -> Result<Option<i64>, DriverError>;
+
+    /// Go `executor.DoDDLJobWrapper` for the job built by the owning method.
+    fn run_ddl_job_wrapper(
+        &mut self,
+        sql: &str,
+        parsed: &Stmt,
+        job: tidb_ddl::JobWrapper,
+    ) -> Result<Option<i64>, DriverError>;
+
     /// Go `DDLExec.Next`'s statement checks before `NewTxnInStmt`.
     fn begin_ddl_statement(&mut self, parsed: &Stmt) -> Result<(), DriverError>;
     /// Go `DDLExec.executeCleanupTableLock`'s job, none when nothing is locked.
-    fn cluster_cleanup_table_lock_statement(
+    fn cluster_cleanup_table_lock_job(
         &self,
         tables: &[Vec<String>],
-    ) -> Result<Option<DdlStatement>, DriverError>;
+        sql: &str,
+    ) -> Result<Option<tidb_ddl::JobWrapper>, DriverError>;
     /// A DROP that also names LOCAL temporary tables: the DROP without them
     /// and the LOCAL tables `dropLocalTemporaryTables` drops after the job;
     /// `None` for every other DDL that runs as a job.
@@ -123,7 +94,7 @@ pub trait DdlExec {
         &self,
         ddl: &tidb_ast::DdlStmt,
     ) -> Option<(tidb_ast::DropTableStmt, Vec<Vec<String>>)>;
-    /// The statement context a DDL is lowered under.
+    /// Go `BuildContext` for the statement's DDL executor methods.
     fn ddl_statement_context(&self) -> crate::StmtContext;
     /// The session's current database.
     fn current_database(&self) -> &str;
@@ -132,17 +103,18 @@ pub trait DdlExec {
     /// The DDL executor's target checks against the session's catalog.
     fn ddl_target_checks(&mut self, stmt: &Stmt) -> Result<(), DriverError>;
     /// Go `executor.LockTables`' checks, building the lock job.
-    fn cluster_lock_tables_statement(
+    fn cluster_lock_tables_job(
         &mut self,
         locks: &[tidb_ast::TableLock],
-    ) -> Result<DdlStatement, DriverError>;
+        sql: &str,
+    ) -> Result<tidb_ddl::JobWrapper, DriverError>;
     /// The job releasing every table lock the session holds, if any.
-    fn cluster_unlock_tables_statement(&self) -> Option<DdlStatement>;
+    fn cluster_unlock_tables_job(&self) -> Result<Option<tidb_ddl::JobWrapper>, DriverError>;
     /// Go's preprocessor resolving one named table (1146 / 1046).
     fn require_table_exists(&mut self, path: &[String]) -> Result<(), DriverError>;
     /// Starts the statement's own warnings.
     fn begin_routed_statement_warnings(&mut self);
-    /// Appends a lowering context's warnings to the statement's.
+    /// Appends the DDL build context's warnings to the statement's.
     fn drain_context_warnings(&mut self, ctx: &crate::StmtContext);
     /// Go `dropLocalTemporaryTables`.
     fn drop_local_temporary_tables(&mut self, names: &[Vec<String>]) -> Result<(), DriverError>;
@@ -171,25 +143,28 @@ pub trait DdlExec {
     fn record_new_txn_in_stmt(&mut self);
     /// Go `executor.AddResourceGroup` and its siblings' checks, run over a
     /// statement snapshot (DROP reads `mysql.user`).
-    fn probe_resource_group_statement(
+    fn probe_resource_group_job(
         &mut self,
         ddl: &tidb_ast::DdlStmt,
-    ) -> Result<Option<DdlStatement>, SqlQueryError>;
+        sql: &str,
+    ) -> Result<Option<tidb_ddl::JobWrapper>, SqlQueryError>;
     /// Go `executor.CreateMaskingPolicy` and the `ALTER TABLE ... MASKING
-    /// POLICY` functions' checks, run over a statement snapshot (they read
-    /// `mysql.tidb_masking_policy`); `None` is an
+    /// POLICY` functions' checks through the snapshot's lazy infoschema cache;
+    /// `None` is an
     /// `IF NOT EXISTS` that filed its note.
-    fn probe_masking_policy_statement(
+    fn probe_masking_policy_job(
         &mut self,
         ddl: &tidb_ast::DdlStmt,
-    ) -> Result<Option<DdlStatement>, SqlQueryError>;
+        sql: &str,
+    ) -> Result<Option<tidb_ddl::JobWrapper>, SqlQueryError>;
     /// Go `DDLExec.executeFlashBackCluster` and `executor.FlashbackCluster`
     /// up to the job: the `TO TSO` value or the `TO TIMESTAMP` expression's
     /// timestamp, and the warning for a local clock away from PD's.
-    fn flashback_cluster_statement(
+    fn flashback_cluster_job(
         &mut self,
         stmt: &tidb_ast::FlashbackToTimestampStmt,
-    ) -> Result<DdlStatement, SqlQueryError>;
+        sql: &str,
+    ) -> Result<tidb_ddl::JobWrapper, SqlQueryError>;
     /// Whether `ddl` is one of Go's masking-policy statements.
     fn is_masking_policy_statement(&self, ddl: &tidb_ast::DdlStmt) -> bool;
     /// Go `checkMaskingPolicyOnModifyColumn`, run once `ModifyColumn` /
@@ -206,13 +181,12 @@ pub trait DdlExec {
     ) -> Result<Option<(String, String, bool, crate::ViewDef)>, SqlQueryError>;
     /// The catalog the node publishes (Go's latest infoschema).
     fn published_catalog(&self) -> Arc<SessionExtendedInfoSchema>;
-    /// `ddlExecutor.DoDDLJob` for one lowered statement: the ids of the
-    /// tables it created.
-    fn run_ddl_statement(
+
+    /// Go `DDLExec.Next` calling a Go-named DDL executor method.
+    fn run_executor_statement(
         &mut self,
         sql: &str,
         parsed: &Stmt,
-        statement: &DdlStatement,
     ) -> Result<Option<i64>, DriverError>;
     /// The cluster's TiFlash stores, for a replica count's check.
     fn tiflash_store_count(&self) -> Result<u64, String>;
@@ -223,22 +197,20 @@ pub trait DdlExec {
     /// the DDL executor's checks against this node's catalog and the
     /// statement lowered to the job(s) the cluster runs. Every refusal here
     /// comes after the implicit commit, as Go's do.
-    fn lower_ddl_exec(&mut self, stmt: &Stmt) -> Result<LoweredDdl, SqlQueryError> {
+    fn execute_ddl(&mut self, sql: &str, stmt: &Stmt) -> Result<(), SqlQueryError> {
         // Go `DDLExec.executeCleanupTableLock` after the planner's
         // SUPER check: the `IsCleanup` unlock job, none when no named
         // table is locked.
         if let Stmt::Ddl(ddl) = stmt {
             if let tidb_ast::DdlStmt::CleanupTableLock(cleanup) = ddl.as_ref() {
-                let statement = self
-                    .cluster_cleanup_table_lock_statement(&cleanup.tables)
-                    .map_err(map_error)?;
-                return Ok(LoweredDdl::one(statement.unwrap_or(
-                    DdlStatement::AcceptedNoOp {
-                        schema: String::new(),
-                        table: String::new(),
-                        warning: None,
-                    },
-                )));
+                if let Some(job) = self
+                    .cluster_cleanup_table_lock_job(&cleanup.tables, sql)
+                    .map_err(map_error)?
+                {
+                    self.run_ddl_job_wrapper(sql, stmt, job)
+                        .map_err(map_error)?;
+                }
+                return Ok(());
             }
         }
         // Go `DDLExec.Next`: the DDL the session answers runs there;
@@ -249,27 +221,31 @@ pub trait DdlExec {
                 let persistent = Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::DropTable(
                     Box::new(persistent),
                 )));
-                let context = self.ddl_statement_context();
-                let ddl_context: tidb_ddl::cluster_ddl::DdlContext = Arc::new(context.clone());
-                let statement =
-                    prepare_cluster_ddl_parsed(&persistent, self.current_database(), &ddl_context)
-                        .map_err(|error| SqlQueryError::from(error.to_mysql_error()))?
-                        .ok_or_else(|| {
-                            SqlQueryError::unknown("DROP TABLE has no cluster metadata operation")
-                        })?;
-                return Ok(LoweredDdl::DropTableJob { statement, local });
+                self.run_executor_statement(sql, &persistent)
+                    .map_err(map_error)?;
+                return self.drop_local_temporary_tables(&local).map_err(map_error);
             }
         }
         // The DDL executor's target checks; the ALTER spec walk's own
         // refusals are the lowering's (`cluster_ddl`).
         self.ddl_target_checks(stmt).map_err(map_error)?;
+        if matches!(stmt, Stmt::Ddl(ddl) if matches!(&**ddl, DdlStmt::RecoverTable(..) | DdlStmt::FlashbackTable(..) | DdlStmt::FlashbackDatabase(..) | DdlStmt::CreateIndex(..) | DdlStmt::DropIndex(..) | DdlStmt::CreatePlacementPolicy(..) | DdlStmt::AlterPlacementPolicy(..) | DdlStmt::DropPlacementPolicy(..) | DdlStmt::CreateDatabase { .. } | DdlStmt::DropDatabase { .. } | DdlStmt::DropView { .. } | DdlStmt::DropTable(..) | DdlStmt::DropSequence(..) | DdlStmt::RenameTable(..) | DdlStmt::CreateTable(..) | DdlStmt::CreateSequence(..) | DdlStmt::AlterSequence(..) | DdlStmt::RepairTable(..) | DdlStmt::TruncateTable(..)))
+        {
+            self.begin_routed_statement_warnings();
+            let created = self.run_executor_statement(sql, stmt).map_err(map_error)?;
+            if matches!(stmt, Stmt::Ddl(ddl) if matches!(&**ddl, DdlStmt::CreateTable(_) | DdlStmt::TruncateTable(_)))
+            {
+                self.pre_split_created_tables(created.as_slice());
+            }
+            return Ok(());
+        }
+
         // Go `DDLExec.Next`'s `*ast.FlashBackToTimestampStmt` arm.
         if let Stmt::Ddl(ddl) = stmt {
             if let tidb_ast::DdlStmt::FlashbackToTimestamp(flashback) = &**ddl {
                 let unsupported = |message: &str| {
                     map_error(DriverError::from(
-                        tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL
-                            .gen_with_stack(message),
+                        tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL.gen_with_stack(message),
                     ))
                 };
                 if !flashback.tables.is_empty() {
@@ -278,7 +254,10 @@ pub trait DdlExec {
                 if !flashback.database_name.is_empty() {
                     return Err(unsupported("Unsupported FLASHBACK database TO TIMESTAMP"));
                 }
-                return self.flashback_cluster_statement(flashback).map(LoweredDdl::one);
+                let job = self.flashback_cluster_job(flashback, sql)?;
+                self.run_ddl_job_wrapper(sql, stmt, job)
+                    .map_err(map_error)?;
+                return Ok(());
             }
         }
         // Go `DDLExec.executeLockTables`/`executeUnlockTables` with
@@ -289,21 +268,19 @@ pub trait DdlExec {
             if let tidb_ast::Stmt::Ddl(ddl) = stmt {
                 match &**ddl {
                     tidb_ast::DdlStmt::LockTables(locks) => {
-                        return self
-                            .cluster_lock_tables_statement(locks)
-                            .map(LoweredDdl::one)
-                            .map_err(map_error);
+                        let job = self
+                            .cluster_lock_tables_job(locks, sql)
+                            .map_err(map_error)?;
+                        self.run_ddl_job_wrapper(sql, stmt, job)
+                            .map_err(map_error)?;
+                        return Ok(());
                     }
                     tidb_ast::DdlStmt::UnlockTables => {
-                        return Ok(LoweredDdl::one(
-                            self.cluster_unlock_tables_statement().unwrap_or(
-                                DdlStatement::AcceptedNoOp {
-                                    schema: String::new(),
-                                    table: String::new(),
-                                    warning: None,
-                                },
-                            ),
-                        ));
+                        if let Some(job) = self.cluster_unlock_tables_job().map_err(map_error)? {
+                            self.run_ddl_job_wrapper(sql, stmt, job)
+                                .map_err(map_error)?;
+                        }
+                        return Ok(());
                     }
                     _ => {}
                 }
@@ -340,12 +317,9 @@ pub trait DdlExec {
                 )),
                 _ => None,
             };
-            if let Some((schema, table, message)) = notice {
-                return Ok(LoweredDdl::one(DdlStatement::AcceptedNoOp {
-                    schema,
-                    table,
-                    warning: Some((1235, message)),
-                }));
+            if let Some((_, _, message)) = notice {
+                self.append_warning(tidb_context::WarningLevel::Warning, 1235, message);
+                return Ok(());
             }
         }
         // Go `executor.AddResourceGroup` / `AlterResourceGroup` /
@@ -362,14 +336,11 @@ pub trait DdlExec {
                 // DROP reads `mysql.user` for an account bound to the
                 // group (Go `MatchUserResourceGroupName`), so the
                 // admission reads through a statement snapshot.
-                let statement = self.probe_resource_group_statement(ddl)?;
-                return Ok(LoweredDdl::one(statement.unwrap_or(
-                    DdlStatement::AcceptedNoOp {
-                        schema: String::new(),
-                        table: String::new(),
-                        warning: None,
-                    },
-                )));
+                if let Some(job) = self.probe_resource_group_job(ddl, sql)? {
+                    self.run_ddl_job_wrapper(sql, stmt, job)
+                        .map_err(map_error)?;
+                }
+                return Ok(());
             }
         }
         // Go `executor.CreateMaskingPolicy` and the masking-policy
@@ -377,14 +348,27 @@ pub trait DdlExec {
         // `mysql.tidb_masking_policy` before the job.
         if let Stmt::Ddl(ddl) = stmt {
             if self.is_masking_policy_statement(ddl) {
-                let statement = self.probe_masking_policy_statement(ddl)?;
-                return Ok(LoweredDdl::one(statement.unwrap_or(
-                    DdlStatement::AcceptedNoOp {
-                        schema: String::new(),
-                        table: String::new(),
-                        warning: None,
-                    },
-                )));
+                if let Some(job) = self.probe_masking_policy_job(ddl, sql)? {
+                    let result = self.run_ddl_job_wrapper(sql, stmt, job);
+                    match result {
+                        Err(error)
+                            if matches!(&**ddl, DdlStmt::CreateMaskingPolicy(create) if create.if_not_exists)
+                                && error
+                                    .equal(&tidb_meta::meta_errors::ERR_MASKING_POLICY_EXISTS) =>
+                        {
+                            let note = error.to_mysql_error();
+                            self.append_warning(
+                                tidb_context::WarningLevel::Note,
+                                note.code,
+                                note.message,
+                            );
+                        }
+                        other => {
+                            other.map_err(map_error)?;
+                        }
+                    }
+                }
+                return Ok(());
             }
         }
         // A CREATE VIEW resolves its body against this node's own
@@ -399,80 +383,102 @@ pub trait DdlExec {
         let resolved = self.probe_cluster_view(stmt)?;
         if let Some((database, name, or_replace, view)) = resolved {
             let info = crate::view::build_view_table_info(&name, &view);
-            return Ok(LoweredDdl::one(DdlStatement::CreateView {
-                schema: database,
-                name,
-                or_replace,
-                info: Box::new(info),
-            }));
+            self.run_create_view(sql, stmt, &database, &name, or_replace, &info)
+                .map_err(map_error)?;
+            return Ok(());
         }
-        let context = self.ddl_statement_context();
-        let ddl_context: tidb_ddl::cluster_ddl::DdlContext = Arc::new(context.clone());
-        match prepare_cluster_ddl_parsed(stmt, self.current_database(), &ddl_context) {
-            Ok(Some(statement)) => {
-                if let Stmt::Ddl(ddl) = stmt {
-                    self.probe_masking_policy_on_modify_column(ddl)?;
+        if let Stmt::Ddl(ddl) = stmt {
+            if let DdlStmt::AlterDatabase { name, options } = &**ddl {
+                let context = self.ddl_statement_context();
+                let resolved =
+                    tidb_ddl::cluster_ddl::alter_schema::resolve_schema_options(options, &context)
+                        .map_err(|e| map_error(ddl_error(&e)))?;
+                self.begin_routed_statement_warnings();
+                // Each completed Go `ModifySchema*` job updates the session even if
+                // a later job fails; validation above precedes all these calls.
+                let mut parts = Vec::new();
+                if let Some((charset, collate)) = resolved.charset_collate {
+                    parts.push(vec![
+                        tidb_ast::DatabaseOption::CharacterSet(charset),
+                        tidb_ast::DatabaseOption::Collate(collate),
+                    ]);
                 }
-                // Warnings the LOWERING produced (an ignored CHECK
-                // constraint, Go ddl/create_table.go:1470) belong to
-                // this statement; Go appends them to the session's
-                // own context, so drain the lowering context's here.
+                if let Some(policy) = resolved.placement_policy {
+                    parts.push(vec![tidb_ast::DatabaseOption::PlacementPolicy(policy)]);
+                }
+                if parts.is_empty() && resolved.tiflash_replica.is_none() {
+                    parts.push(Vec::new());
+                }
+                for options in parts {
+                    let part = Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterDatabase {
+                        name: name.clone(),
+                        options,
+                    }));
+                    self.run_executor_statement(sql, &part).map_err(map_error)?;
+                }
+                if let Some((count, labels)) = resolved.tiflash_replica {
+                    let name = name
+                        .clone()
+                        .unwrap_or_else(|| self.current_database().to_owned());
+                    self.modify_schema_set_tiflash_replica(sql, stmt, &name, count, &labels)?;
+                }
+                return Ok(());
+            }
+        }
+        if let Stmt::Ddl(ddl) = stmt {
+            if let DdlStmt::AlterTable(alter) = &**ddl {
+                let context = self.ddl_statement_context();
+                let ddl_context: tidb_ddl::cluster_ddl::DdlContext = Arc::new(context.clone());
+                let resolved = tidb_ddl::cluster_ddl::resolve_alter_table_spec(alter, &ddl_context);
                 self.begin_routed_statement_warnings();
                 self.drain_context_warnings(&context);
-                Ok(LoweredDdl::one(statement))
-            }
-            Ok(None) => {
-                if let Some(parts) = job_sequence_parts(stmt) {
-                    self.begin_routed_statement_warnings();
-                    self.drain_context_warnings(&context);
-                    return Ok(LoweredDdl::Sequence { parts, context });
+                let resolved = resolved.map_err(|e| SqlQueryError::from(e.to_mysql_error()))?;
+                // Go `executor.AlterTable`'s `AlterTableWriteable` case.
+                if let [tidb_ast::AlterTableAction::ReadOnly(read_only)] =
+                    resolved.actions.as_slice()
+                {
+                    if !tidb_config::config_tree::config::table_lock_enabled() {
+                        return Ok(());
+                    }
+                    let job = if *read_only {
+                        Some(
+                            self.cluster_lock_tables_job(
+                                &[tidb_ast::TableLock {
+                                    table: resolved.name.clone(),
+                                    lock_type: tidb_ast::TableLockType::READ_ONLY,
+                                }],
+                                sql,
+                            )
+                            .map_err(map_error)?,
+                        )
+                    } else {
+                        self.cluster_cleanup_table_lock_job(&[resolved.name.clone()], sql)
+                            .map_err(map_error)?
+                    };
+                    if let Some(job) = job {
+                        self.run_ddl_job_wrapper(sql, stmt, job)
+                            .map_err(map_error)?;
+                    }
+                    return Ok(());
                 }
-                // Go's executor refuses a cached table before any
-                // shape this node does not plan.
-                tidb_ddl::cluster_ddl::cached_table::check_cached_table_ddl(
-                    &self.published_catalog(),
-                    self.current_database(),
-                    stmt,
-                )
-                .map_err(|error| SqlQueryError::from(error))?;
-                Err(unplanned_ddl())
-            }
-            // The refusal carries Go's own errno where it has one
-            // (`Unsupported ...` is 8200), so a client can tell a
-            // shape this server will not do from an internal failure.
-            // Warnings the lowering raised BEFORE the refusal (a
-            // 1681 display-width warning beside an 8216 auto-random
-            // refusal) survive it: go's failed DDL leaves both in
-            // the warning buffer.
-            Err(refusal) => {
-                self.begin_routed_statement_warnings();
-                self.drain_context_warnings(&context);
-                tidb_ddl::cluster_ddl::cached_table::check_cached_table_ddl(
-                    &self.published_catalog(),
-                    self.current_database(),
-                    stmt,
-                )
-                .map_err(|error| SqlQueryError::from(error))?;
-                Err(SqlQueryError::from(refusal.to_mysql_error()))
+                self.probe_masking_policy_on_modify_column(ddl)?;
+                let parts = tidb_ddl::cluster_ddl::split_table_option_alter(&resolved)
+                    .unwrap_or_else(|| vec![resolved]);
+                for part in parts {
+                    let part =
+                        Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterTable(Box::new(part))));
+                    self.run_executor_statement(sql, &part).map_err(map_error)?;
+                }
+                return Ok(());
             }
         }
-    }
-
-    /// One part of a [`LoweredDdl::Sequence`], lowered by the ordinary path
-    /// when its turn comes; its warnings join the statement's.
-    fn lower_sequence_part(
-        &mut self,
-        part: &Stmt,
-        context: &crate::StmtContext,
-    ) -> Result<DdlStatement, SqlQueryError> {
-        let ddl_context: tidb_ddl::cluster_ddl::DdlContext = Arc::new(context.clone());
-        let lowered = prepare_cluster_ddl_parsed(part, self.current_database(), &ddl_context);
-        self.drain_context_warnings(context);
-        match lowered {
-            Ok(Some(statement)) => Ok(statement),
-            Ok(None) => Err(unplanned_ddl()),
-            Err(refusal) => Err(SqlQueryError::from(refusal.to_mysql_error())),
-        }
+        tidb_ddl::cluster_ddl::cached_table::check_cached_table_ddl(
+            &self.published_catalog(),
+            self.current_database(),
+            stmt,
+        )
+        .map_err(SqlQueryError::from)?;
+        Err(unplanned_ddl())
     }
 
     /// Go `DDLExec.Next` for a DDL that runs as a job: `Compile` checked the
@@ -486,78 +492,13 @@ pub trait DdlExec {
         // Go `DDLExec.Next`'s `NewTxnInStmt` (`executor/ddl.go:151`).
         self.new_txn_in_stmt()?;
         self.record_new_txn_in_stmt();
-        match self.lower_ddl_exec(parsed)? {
-            LoweredDdl::Jobs(statements) => {
-                for statement in &statements {
-                    self.run_ddl_job(sql, parsed, statement)?;
-                }
-            }
-            LoweredDdl::Sequence { parts, context } => {
-                for part in &parts {
-                    let statement = self.lower_sequence_part(part, &context)?;
-                    self.run_ddl_job(sql, parsed, &statement)?;
-                }
-            }
-            LoweredDdl::DropTableJob { statement, local } => {
-                self.run_ddl_job(sql, parsed, &statement)?;
-                self.drop_local_temporary_tables(&local)
-                    .map_err(map_error)?;
-            }
-        }
+        self.execute_ddl(sql, parsed)?;
         // Go answers a DDL with an OK packet carrying no rows and no insert
         // id, whether it changed anything or was an IF [NOT] EXISTS no-op.
         Ok(WriteOutcome {
             affected_rows: 0,
             last_insert_id: 0,
         })
-    }
-
-    /// One job through the DDL executor (`ddlExecutor.DoDDLJob`).
-    fn run_ddl_job(
-        &mut self,
-        sql: &str,
-        parsed: &tidb_ast::Stmt,
-        statement: &DdlStatement,
-    ) -> Result<(), SqlQueryError> {
-        if let DdlStatement::ModifySchemaSetTiFlashReplica {
-            name,
-            count,
-            labels,
-        } = statement
-        {
-            return self.modify_schema_set_tiflash_replica(sql, parsed, name, *count, labels);
-        }
-        // The session owns the rest of the DDL path; this node installed
-        // the service that publishes to the cluster.
-        let created = match self.run_ddl_statement(sql, parsed, statement) {
-            // Go `createMaskingPolicyWithInfo` after `doDDLJob2`: the policy
-            // another session created first is `IF NOT EXISTS`'s note.
-            Err(error)
-                if matches!(
-                    statement,
-                    DdlStatement::CreateMaskingPolicy {
-                        ignore_on_exist: true,
-                        ..
-                    }
-                ) && error.equal(&tidb_meta::meta_errors::ERR_MASKING_POLICY_EXISTS) =>
-            {
-                let note = error.to_mysql_error();
-                self.append_warning(tidb_context::WarningLevel::Note, note.code, note.message);
-                return Ok(());
-            }
-            result => result.map_err(map_error)?,
-        };
-        // Go's executor pre-splits the table a CREATE TABLE published and
-        // the new identity `onTruncateTable` gave.
-        if matches!(
-            statement,
-            DdlStatement::CreateTable { .. }
-                | DdlStatement::CreateTableLike { .. }
-                | DdlStatement::TruncateTable { .. }
-        ) {
-            self.pre_split_created_tables(created.as_slice());
-        }
-        Ok(())
     }
 
     /// Go `ModifySchemaSetTiFlashReplica`: an `ActionSetTiFlashReplica` job
@@ -615,11 +556,7 @@ pub trait DdlExec {
             if let Err(error) =
                 tidb_ddl_build::ddl_executor::is_table_tiflash_supported(&schema, &table)
             {
-                self.append_warning(
-                    tidb_context::WarningLevel::Note,
-                    error.code,
-                    error.message,
-                );
+                self.append_warning(tidb_context::WarningLevel::Note, error.code, error.message);
                 skipped += 1;
                 continue;
             }
@@ -636,16 +573,15 @@ pub trait DdlExec {
                     return Ok(());
                 }
             }
-            let job = DdlStatement::SetTiFlashReplica {
-                schema: schema.clone(),
-                table: table.name.original().to_owned(),
+            match self.run_set_tiflash_replica(
+                sql,
+                parsed,
+                &schema,
+                table.name.original(),
                 count,
-                labels: labels.to_vec(),
-                reset_available: false,
-                hypo: false,
-            };
-            match self.run_ddl_job(sql, parsed, &job) {
-                Ok(()) => succeeded += 1,
+                labels,
+            ) {
+                Ok(_) => succeeded += 1,
                 Err(_) => {
                     one_fail = table.id;
                     failed += 1;

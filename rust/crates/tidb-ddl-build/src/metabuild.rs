@@ -49,6 +49,10 @@ impl crate::session_context::DdlSessionContext for StmtContext {
         StmtContext::set_ddl_job_in_queue(self, in_queue);
     }
 
+    fn enable_row_level_checksum(&self) -> bool {
+        self.ddl_enable_row_level_checksum()
+    }
+
     fn enable_check_constraint(&self) -> bool {
         StmtContext::enable_check_constraint(self)
     }

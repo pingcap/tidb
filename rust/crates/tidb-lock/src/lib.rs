@@ -189,12 +189,10 @@ fn check_lock_tp_meet_privilege(tp: TableLockType, privilege: PrivilegeType) -> 
 /// Go `core.CheckTableLock`'s loop over the visit infos.
 pub fn check_visits(
     checker: &Checker<'_>,
-    visits: &[(&str, &str, PrivilegeType)],
+    visits: &[(&str, &str, PrivilegeType, bool)],
 ) -> Result<(), DriverError> {
-    for (db, table, privilege) in visits {
-        // `alterWritable` is set only by `ALTER TABLE ... READ ONLY`'s
-        // writeable spec, which this tier does not execute.
-        match checker.check_table_lock(db, table, *privilege, false) {
+    for (db, table, privilege, alter_writable) in visits {
+        match checker.check_table_lock(db, table, *privilege, *alter_writable) {
             Ok(()) => {}
             // With the session's WRITE-locked table dropped, its other
             // tables may be accessed (`rename`).

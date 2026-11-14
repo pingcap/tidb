@@ -29,11 +29,7 @@ fn replica_available(stack: &UnistoreClusterStack, session: &mut Session, table:
     stack
         .factory
         .ddl
-        .execute(
-            &tidb_ddl::cluster_ddl::DdlStatement::UpdateTiFlashReplicaStatus {
-                table_id,
-                available: true,
-            },
+        .update_table_replica_info(table_id, true,
             &tidb_sessionctx::StmtContext::for_query(),
         )
         .expect("the replica turns available");

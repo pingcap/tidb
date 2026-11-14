@@ -13,3 +13,6 @@ workspace = true
 [dependencies]
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
+
+[dev-dependencies]
+tidb-ast = { path = "../tidb-ast" }

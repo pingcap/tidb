@@ -21,7 +21,6 @@ use std::collections::HashSet;
 use std::sync::{Arc, Weak};
 
 use serde::{Deserialize, Serialize};
-use tidb_ddl::cluster_ddl::DdlStatement;
 use tidb_ddl_build::plan_error::DdlPlanError;
 use tidb_domain_core::domain::Domain;
 use tidb_model::table_info::TableInfo;
@@ -201,18 +200,13 @@ impl FlashReplicaDeprecated {
     }
 
     fn handle_status_report(&self, domain: &Domain, body: &str) -> Result<(), String> {
-        let status: TableFlashReplicaStatus = serde_json::from_str(body).map_err(|error| error.to_string())?;
+        let status: TableFlashReplicaStatus =
+            serde_json::from_str(body).map_err(|error| error.to_string())?;
         let available = status.check_table_flash_replica_available();
         // Go writes the DDL's error and still records the progress.
         let ddl_result = domain
             .ddl
-            .execute(
-                &DdlStatement::UpdateTiFlashReplicaStatus {
-                    table_id: status.id,
-                    available,
-                },
-                &*self.sess_pool.system_session(),
-            )
+            .update_table_replica_info(status.id, available, &*self.sess_pool.system_session())
             .map(drop)
             .map_err(|error| error.error_string());
         if available {
@@ -223,7 +217,9 @@ impl FlashReplicaDeprecated {
             tidb_domain_infosync::tiflash_manager::delete_tiflash_table_sync_progress(&table_info);
         } else {
             let progress = status.flash_region_count as f64 / status.region_count as f64;
-            tidb_domain_infosync::tiflash_manager::update_tiflash_progress_cache(status.id, progress);
+            tidb_domain_infosync::tiflash_manager::update_tiflash_progress_cache(
+                status.id, progress,
+            );
         }
         // Go's `zap.Error(err)` carries the progress update's error, which
         // the process-wide manager never returns.
@@ -232,7 +228,10 @@ impl FlashReplicaDeprecated {
             &[
                 tidb_log::Field::new("table ID", tidb_log::Value::I64(status.id)),
                 tidb_log::Field::new("region count", tidb_log::Value::U64(status.region_count)),
-                tidb_log::Field::new("flash region count", tidb_log::Value::U64(status.flash_region_count)),
+                tidb_log::Field::new(
+                    "flash region count",
+                    tidb_log::Value::U64(status.flash_region_count),
+                ),
             ],
         );
         ddl_result

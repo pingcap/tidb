@@ -207,7 +207,10 @@ fn ddl_jobs_keep_masking_policies_in_step_like_go() {
     let mut session = stack.factory.open_session(session_context(2132)).unwrap();
     rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
     rows(&mut session, "USE test");
-    run(&mut session, "create table h(a varchar(10), b varchar(10), c int)");
+    run(
+        &mut session,
+        "create table h(a varchar(10), b varchar(10), c int)",
+    );
     run(&mut session, "create masking policy p1 on h(a) as a");
     run(&mut session, "create masking policy p2 on h(b) as b");
     run(
@@ -248,14 +251,17 @@ fn ddl_jobs_keep_masking_policies_in_step_like_go() {
     let columns = "select policy_name, column_name, expression from mysql.tidb_masking_policy";
     run(&mut session, "alter table d2.h3 modify column a char(5)");
     assert_eq!(text(&mut session, columns), ["p1|a|UPPER(`a`)"]);
-    run(&mut session, "alter table d2.h3 change column a a2 varchar(20)");
+    run(
+        &mut session,
+        "alter table d2.h3 change column a a2 varchar(20)",
+    );
     assert_eq!(text(&mut session, columns), ["p1|a2|UPPER(`a2`)"]);
     run(&mut session, "alter table d2.h3 change column a2 a3 int");
     assert_eq!(text(&mut session, columns), ["p1|a3|UPPER(`a3`)"]);
     // The reorganization gave the column a new ID and the policy's row
     // follows it. Go's infoschema keeps the policy it cached under the old
     // column ID past this job and answers "masking policy p1 doesn't exist"
-    // here although its row is the one above; this session reads the row.
+    // here although its row is the one above (Go TestMaskingPolicyDDLHooksCache).
     assert_eq!(
         text(
             &mut session,
@@ -264,23 +270,100 @@ fn ddl_jobs_keep_masking_policies_in_step_like_go() {
         ["1"]
     );
     assert_eq!(
-        text(&mut session, "select column_id from mysql.tidb_masking_policy"),
+        text(
+            &mut session,
+            "select column_id from mysql.tidb_masking_policy"
+        ),
         ["4"]
     );
-    run(&mut session, "alter table d2.h3 enable masking policy p1");
+    assert_eq!(
+        refused(&mut session, "alter table d2.h3 enable masking policy p1"),
+        "1105|masking policy p1 doesn't exist"
+    );
     assert_eq!(
         refused(&mut session, "create masking policy p1 on d2.h3(a3) as a3"),
-        "1105|masking policy p1 already exists"
+        "8268|masking policy already exists"
     );
     let count = "select count(*) from mysql.tidb_masking_policy";
     assert_eq!(text(&mut session, count), ["1"]);
-    run(&mut session, "alter table d2.h3 drop masking policy p1");
-    assert_eq!(text(&mut session, count), ["0"]);
-    run(&mut session, "create masking policy p1 on d2.h3(a3) as a3");
+    assert_eq!(
+        refused(&mut session, "alter table d2.h3 drop masking policy p1"),
+        "1105|masking policy p1 doesn't exist"
+    );
+    assert_eq!(text(&mut session, count), ["1"]);
     run(&mut session, "drop table d2.h3");
     assert_eq!(text(&mut session, count), ["0"]);
     run(&mut session, "create table d2.k(a varchar(10))");
     run(&mut session, "create masking policy pk on d2.k(a) as a");
     run(&mut session, "drop database d2");
     assert_eq!(text(&mut session, count), ["0"]);
+}
+
+/// Go `TestMaskingPolicyReorganizingColumn`, captured with the disposable
+/// `zzprobe/d01` testkit probe on 2026-11-14: the system row moves from
+/// column 1 to 2, but the schema snapshot still returns column 1's policy.
+#[test]
+fn test_masking_policy_reorganizing_column() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(2140)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    for (change, column) in [
+        ("modify column c varchar(10)", "c"),
+        ("change column c d varchar(10)", "d"),
+    ] {
+        run(&mut session, "drop table if exists t");
+        run(&mut session, "create table t(c int)");
+        run(&mut session, "insert into t values (12)");
+        run(&mut session, "create masking policy p on t(c) as c");
+        run(&mut session, &format!("alter table t {change}"));
+        assert_eq!(
+            text(
+                &mut session,
+                "select policy_name,column_name,column_id from mysql.tidb_masking_policy"
+            ),
+            [format!("p|{column}|2")]
+        );
+        assert_eq!(
+            refused(&mut session, "alter table t disable masking policy p"),
+            "1105|masking policy p doesn't exist"
+        );
+    }
+}
+
+/// Go `TestMaskingPolicyReorganizingColumnV1` (zzprobe/d01): changing the
+/// schema cache setting selects V1, whose table diff resets the lazy cache.
+#[test]
+fn test_masking_policy_reorganizing_column_v1() {
+    use std::sync::atomic::Ordering;
+    struct RestoreSchemaCache(u64);
+    impl Drop for RestoreSchemaCache {
+        fn drop(&mut self) {
+            tidb_vardef::SCHEMA_CACHE_SIZE.store(self.0, Ordering::SeqCst);
+        }
+    }
+    let _restore = RestoreSchemaCache(tidb_vardef::SCHEMA_CACHE_SIZE.load(Ordering::SeqCst));
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(2143)).unwrap();
+    run(&mut session, "set global tidb_schema_cache_size=0");
+    run(&mut session, "create database if not exists test");
+    run(&mut session, "use test");
+    for alter in [
+        "modify column c varchar(10)",
+        "change column c d varchar(10)",
+    ] {
+        run(&mut session, "drop table if exists t");
+        run(&mut session, "create table t(c int)");
+        run(&mut session, "insert into t values(12)");
+        run(&mut session, "create masking policy p on t(c) as c");
+        run(&mut session, &format!("alter table t {alter}"));
+        run(&mut session, "alter table t disable masking policy p");
+        assert_eq!(
+            text(
+                &mut session,
+                "select column_id,status from mysql.tidb_masking_policy"
+            ),
+            ["2|DISABLED"]
+        );
+    }
 }

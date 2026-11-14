@@ -75,6 +75,8 @@ pub struct TablePrivilegeRequest {
     /// Go's `ErrViewNoExplain` authErr (1345): the SHOW VIEW visit
     /// `BuildDataSourceFromView` appends under EXPLAIN.
     pub view_no_explain: bool,
+    /// Go `visitInfo.alterWritable`, retained through privilege adaptation.
+    pub alter_writable: bool,
 }
 
 impl TablePrivilegeRequest {
@@ -93,6 +95,7 @@ impl TablePrivilegeRequest {
             specific_denial: None,
             also_granted_by: Vec::new(),
             view_no_explain: false,
+            alter_writable: false,
         }
     }
 
@@ -321,6 +324,7 @@ pub fn request_of_visit(
     }
     let primary = alternatives.first().copied().unwrap_or(tidb_mysql::SelectPriv);
     let mut request = TablePrivilegeRequest::new(&visit.database, &visit.table, primary);
+    request.alter_writable = visit.alter_writable;
     request.also_granted_by = alternatives.into_iter().skip(1).collect();
     match &visit.error {
         VisitAuthError::TableAccessDenied { command, table } => {
@@ -429,10 +433,10 @@ fn check_table_lock(
     if locked_tables.is_empty() && !catalog.has_table_locks() {
         return Ok(());
     }
-    let visits: Vec<(&str, &str, PrivilegeType)> = requests
+    let visits: Vec<(&str, &str, PrivilegeType, bool)> = requests
         .iter()
         .filter(|request| request.dynamic_privileges.is_empty())
-        .map(|request| (request.database.as_str(), request.table.as_str(), request.privilege))
+        .map(|request| (request.database.as_str(), request.table.as_str(), request.privilege, request.alter_writable))
         .collect();
     tidb_lock::check_visits(&tidb_lock::Checker::new(locked_tables, catalog), &visits)
 }

@@ -2972,3 +2972,23 @@ fn txn_entry_size_limit_bounds_one_entry() {
     session.run("set tidb_txn_entry_size_limit = 0").unwrap();
     session.run("insert into t values (2, repeat('x', 2000))").unwrap();
 }
+
+/// Go `TestTableModeResolveContext` (zzprobe/d01): an internal optimizer
+/// invocation whose NodeW was not preprocessed has no resolved table names.
+#[test]
+fn test_table_mode_resolve_context() {
+    let catalog = tidb_infoschema::SessionExtendedInfoSchema::init_with_db_infos(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        1,
+    );
+    let ctx = tidb_sessionctx::StmtContext::for_query();
+    tidb_executor::table_privilege::check_plan_privilege(&ctx, &catalog, &[]).unwrap();
+    let ctx = ctx.with_protected_table_mode(Some(("t".to_owned(), tidb_model::TableMode::RESTORE)));
+    let error = tidb_executor::table_privilege::check_plan_privilege(&ctx, &catalog, &[])
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 8258);
+    assert_eq!(error.message, "Table t is in mode Restore");
+}

@@ -325,8 +325,15 @@ where
     // commit in that window was `ResultUnknown` until its retries ran out:
     // 8027 on the first COMMIT after boot.
     validator.reset();
-    validator.update(startup_lease_grant_ts, 0, startup.schema_meta_version(), None);
+    validator.update(
+        startup_lease_grant_ts,
+        0,
+        startup.schema_meta_version(),
+        None,
+    );
     let catalog = Arc::new(InfoCache::new(startup));
+    catalog.set_row_ids(row_ids);
+    let loader = Arc::clone(&catalog);
     let pass_validator = Arc::clone(&validator);
     let reloader = Syncer::spawn(
         Arc::clone(&catalog),
@@ -336,9 +343,13 @@ where
                 &transaction_opener,
                 PRODUCTION_CONTROL_PLANE_TIMEOUT,
                 current,
-                &row_ids,
+                &loader,
             ) {
-                Ok(at) => Ok(note_reload(&pass_validator, current.schema_meta_version(), at)),
+                Ok(at) => Ok(note_reload(
+                    &pass_validator,
+                    current.schema_meta_version(),
+                    at,
+                )),
                 Err(error) => Err(error.to_string()),
             }
         }),

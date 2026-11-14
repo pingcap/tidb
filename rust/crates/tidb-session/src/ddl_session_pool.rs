@@ -162,11 +162,46 @@ impl NodeDdlSessionPool {
     /// Go `mustExecute` for bootstrap DDL, on the domain's ordinary owner.
     pub(crate) fn execute_bootstrap(
         &self,
-        statement: &tidb_ddl::cluster_ddl::DdlStatement,
-        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+        statement: &tidb_ast::Stmt,
+        view: Option<&tidb_model::TableInfo>,
+        context: tidb_ddl::cluster_ddl::DdlContext,
     ) -> Result<(), String> {
-        self.store_domain.as_ref().expect("store-owned domain").domain
-            .ddl.execute(statement, context).map(drop).map_err(|error| error.to_string())
+        let ddl = &self
+            .store_domain
+            .as_ref()
+            .expect("store-owned domain")
+            .domain
+            .ddl;
+        let tidb_ast::Stmt::Ddl(ddl_statement) = statement else {
+            return Err("bootstrap statement is not DDL".into());
+        };
+        let result = match &**ddl_statement {
+            tidb_ast::DdlStmt::CreateView(create) => {
+                let (schema, name) =
+                    tidb_ddl::cluster_ddl::split_name(&create.name, "mysql", "view")
+                        .map_err(|error| error.to_string())?;
+                ddl.create_view(
+                    &schema,
+                    &name,
+                    create.or_replace,
+                    view.expect("bootstrap view metadata"),
+                    context.as_ref(),
+                )
+            }
+            tidb_ast::DdlStmt::AlterResourceGroup(_) => {
+                let (group, _) = crate::mysql_bootstrap::bootstrap_default_resource_group()
+                    .map_err(|error| error.to_string())?;
+                ddl.do_ddl_job_wrapper(
+                    context.as_ref(),
+                    tidb_ddl::cluster_ddl::resource_group::alter_resource_group(
+                        &group,
+                        context.as_ref(),
+                    ),
+                )
+            }
+            _ => ddl.execute_ddl(statement, "mysql", &context),
+        };
+        result.map(drop).map_err(|error| error.to_string())
     }
 
     /// Binds the pool to the domain whose sessions it hands out.

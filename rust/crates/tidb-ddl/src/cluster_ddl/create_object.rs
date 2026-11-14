@@ -44,83 +44,200 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
-    let mut warnings = Vec::new();
-    let built = match statement {
-        // Go `executor.CreateView`.
+    match statement {
         DdlStatement::CreateView {
             schema,
             name,
             or_replace,
             info,
-        } => {
-            let Some(database) = find_database(&catalog, schema) else {
-                return Err(DdlPlanError::from(
-                    tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                        .gen_with_stack_by_args(&[(schema.clone()).into()]),
-                ));
-            };
-            tidb_ddl_build::table_lifecycle::check_view_target(
-                schema,
-                name,
-                *or_replace,
-                find_table(&database.read(), name).map(|table| table.read().view.is_some()),
-            )
-            .map_err(|error| match error.code {
-                tidb_mysql::errors::errcode::ErrTableExists => DdlPlanError::from(
-                    tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(
-                        &[format!("{}.{}", (schema.clone()), (name.clone())).into()],
-                    ),
-                ),
-                _ => DdlPlanError::from_mysql_error(error),
-            })?;
-            let on_exist = if *or_replace {
-                OnExist::Replace
-            } else {
-                OnExist::Error
-            };
-            create_table_with_info_job(
-                snapshot,
-                &catalog,
-                schema,
-                (**info).clone(),
-                on_exist,
-                job_context,
-                tiflash_stores,
-                &mut warnings,
-            )?
-        }
-        // Go `executor.CreateSequence`.
+        } => create_view(
+            snapshot,
+            schema,
+            name,
+            *or_replace,
+            info,
+            job_context,
+            tiflash_stores,
+            start_ts,
+            upgrading,
+        ),
         DdlStatement::CreateSequence {
             schema,
             if_not_exists,
             info,
             ..
-        } => {
-            let on_exist = if *if_not_exists {
-                OnExist::Ignore
-            } else {
-                OnExist::Error
-            };
-            create_table_with_info_job(
-                snapshot,
-                &catalog,
-                schema,
-                (**info).clone(),
-                on_exist,
-                job_context,
-                tiflash_stores,
-                &mut warnings,
-            )?
-        }
-        // Go `executor.CreateTableWithLike`.
+        } => create_sequence(
+            snapshot,
+            schema,
+            *if_not_exists,
+            info,
+            job_context,
+            tiflash_stores,
+            start_ts,
+            upgrading,
+        ),
         DdlStatement::CreateTableLike {
             schema,
+            table,
+            source_schema,
+            source_table,
+            temporary,
+            on_commit_delete,
             if_not_exists,
-            ..
-        } => match build_create_table_like_info(&catalog, statement, job_context)? {
+        } => create_table_like(
+            snapshot,
+            schema,
+            table,
+            source_schema,
+            source_table,
+            *temporary,
+            *on_commit_delete,
+            *if_not_exists,
+            job_context,
+            tiflash_stores,
+            start_ts,
+            upgrading,
+        ),
+        DdlStatement::AlterSequence {
+            schema,
+            name,
+            if_exists,
+            options,
+        } => alter_sequence(
+            snapshot,
+            schema,
+            name,
+            *if_exists,
+            options,
+            job_context,
+            start_ts,
+            upgrading,
+        ),
+        _ => Ok(None),
+    }
+}
+
+/// Go `executor.CreateView` through `doDDLJob2`.
+#[allow(clippy::too_many_arguments)]
+pub fn create_view<S: MetaSnapshot>(
+    snapshot: &mut S,
+    schema: &str,
+    name: &str,
+    or_replace: bool,
+    info: &TableInfo,
+    job_context: &dyn DdlSessionContext,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_info_schema(snapshot)?;
+    let mut warnings = Vec::new();
+    let built = {
+        let Some(database) = find_database(&catalog, schema) else {
+            return Err(DdlPlanError::from(
+                tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
+                    .gen_with_stack_by_args(&[(schema.to_owned()).into()]),
+            ));
+        };
+        tidb_ddl_build::table_lifecycle::check_view_target(
+            schema,
+            name,
+            or_replace,
+            find_table(&database.read(), name).map(|table| table.read().view.is_some()),
+        )
+        .map_err(|error| match error.code {
+            tidb_mysql::errors::errcode::ErrTableExists => DdlPlanError::from(
+                tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(&[
+                    format!("{}.{}", (schema.to_owned()), (name.to_owned())).into(),
+                ]),
+            ),
+            _ => DdlPlanError::from_mysql_error(error),
+        })?;
+        let on_exist = if or_replace {
+            OnExist::Replace
+        } else {
+            OnExist::Error
+        };
+        create_table_with_info_job(
+            snapshot,
+            &catalog,
+            schema,
+            info.clone(),
+            on_exist,
+            job_context,
+            tiflash_stores,
+            &mut warnings,
+        )?
+    };
+    submit_create_object(snapshot, built, warnings, start_ts, upgrading)
+}
+
+/// Go `executor.CreateSequence` through `doDDLJob2`.
+#[allow(clippy::too_many_arguments)]
+pub fn create_sequence<S: MetaSnapshot>(
+    snapshot: &mut S,
+    schema: &str,
+    if_not_exists: bool,
+    info: &TableInfo,
+    job_context: &dyn DdlSessionContext,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_info_schema(snapshot)?;
+    let mut warnings = Vec::new();
+    let built = {
+        let on_exist = if if_not_exists {
+            OnExist::Ignore
+        } else {
+            OnExist::Error
+        };
+        create_table_with_info_job(
+            snapshot,
+            &catalog,
+            schema,
+            info.clone(),
+            on_exist,
+            job_context,
+            tiflash_stores,
+            &mut warnings,
+        )?
+    };
+    submit_create_object(snapshot, built, warnings, start_ts, upgrading)
+}
+
+/// Go `executor.CreateTable` with `BuildTableInfoWithLike`, through `doDDLJob2`.
+#[allow(clippy::too_many_arguments)]
+pub fn create_table_like<S: MetaSnapshot>(
+    snapshot: &mut S,
+    schema: &str,
+    table: &str,
+    source_schema: &str,
+    source_table: &str,
+    temporary: tidb_ast::CreateTableTemporary,
+    on_commit_delete: bool,
+    if_not_exists: bool,
+    job_context: &dyn DdlSessionContext,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_info_schema(snapshot)?;
+    let mut warnings = Vec::new();
+    let built = {
+        match build_create_table_like_info(
+            &catalog,
+            schema,
+            table,
+            source_schema,
+            source_table,
+            temporary,
+            on_commit_delete,
+            if_not_exists,
+            job_context,
+        )? {
             Ok(info) => {
-                let on_exist = if *if_not_exists {
+                let on_exist = if if_not_exists {
                     OnExist::Ignore
                 } else {
                     OnExist::Error
@@ -137,12 +254,38 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
                 )?
             }
             Err(satisfied) => Some(satisfied),
-        },
-        DdlStatement::AlterSequence { .. } => {
-            build_alter_sequence_job(&catalog, statement, job_context)?
         }
-        _ => return Ok(None),
     };
+    submit_create_object(snapshot, built, warnings, start_ts, upgrading)
+}
+
+/// Go `executor.AlterSequence` through `doDDLJob2`.
+#[allow(clippy::too_many_arguments)]
+pub fn alter_sequence<S: MetaSnapshot>(
+    snapshot: &mut S,
+    schema: &str,
+    name: &str,
+    if_exists: bool,
+    options: &[tidb_ast::SequenceOption],
+    job_context: &dyn DdlSessionContext,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_info_schema(snapshot)?;
+    let mut warnings = Vec::new();
+    let built =
+        { build_alter_sequence_job(&catalog, schema, name, if_exists, options, job_context)? };
+    submit_create_object(snapshot, built, warnings, start_ts, upgrading)
+}
+
+/// Go `createTableWithInfoJob` followed by `doDDLJob2`.
+fn submit_create_object<S: MetaSnapshot>(
+    snapshot: &mut S,
+    built: Option<AddIndexSubmission>,
+    mut warnings: Vec<tidb_context::SqlWarn>,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let built = match built {
         Some(AddIndexSubmission::Job(spec, executor_warnings)) => {
             warnings.extend(executor_warnings);
@@ -269,30 +412,24 @@ pub(super) fn create_table_with_info_job<S: MetaSnapshot>(
 /// reset list applied. `Err` is an IF NOT EXISTS over an existing table.
 fn build_create_table_like_info(
     catalog: &SessionExtendedInfoSchema,
-    statement: &DdlStatement,
+    schema: &str,
+    table: &str,
+    source_schema: &str,
+    source_table: &str,
+    temporary: tidb_ast::CreateTableTemporary,
+    on_commit_delete: bool,
+    if_not_exists: bool,
     context: &dyn DdlSessionContext,
 ) -> Result<Result<TableInfo, AddIndexSubmission>, DdlPlanError> {
-    let DdlStatement::CreateTableLike {
-        schema,
-        table,
-        source_schema,
-        source_table,
-        temporary,
-        on_commit_delete,
-        if_not_exists,
-    } = statement
-    else {
-        unreachable!("called for CREATE TABLE LIKE");
-    };
     // Go's preprocessor resolves and validates the LIKE source before the
     // DDL executor checks the target database. A missing source database is
     // consequently reported as a missing table.
-    let source = resolve_like_source(catalog, source_schema, source_table, *temporary)?;
+    let source = resolve_like_source(catalog, source_schema, source_table, temporary)?;
     let source = source.read();
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                .gen_with_stack_by_args(&[(schema.clone()).into()]),
+                .gen_with_stack_by_args(&[(schema.to_owned()).into()]),
         ));
     };
     // Go `BuildTableInfoWithLike` runs after the executor has found the
@@ -301,8 +438,8 @@ fn build_create_table_like_info(
         schema,
         table,
         &source,
-        *temporary,
-        *on_commit_delete,
+        temporary,
+        on_commit_delete,
     )
     .map_err(DdlPlanError::Admission)?;
     // Go `CreateTable` runs `checkTableInfoValidWithStmt` on the copy too,
@@ -314,22 +451,22 @@ fn build_create_table_like_info(
     .map_err(DdlPlanError::Admission)?;
     if let Some(existing) = find_table(&database.read(), table) {
         let existing = existing.read();
-        if *if_not_exists {
+        if if_not_exists {
             return Ok(Err(AddIndexSubmission::AlreadySatisfied {
                 detail: format!(
                     "table `{schema}`.`{}` already exists",
                     existing.name.original()
                 ),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
-                    tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(
-                        &[format!("{}.{}", schema, existing.name.original()).into()],
-                    ),
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(&[
+                        format!("{}.{}", schema, existing.name.original()).into(),
+                    ]),
                 )],
             }));
         }
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(&[
-                format!("{}.{}", (schema.clone()), (table.clone())).into(),
+                format!("{}.{}", (schema.to_owned()), (table.to_owned())).into(),
             ]),
         ));
     }
@@ -606,26 +743,20 @@ pub(super) fn on_create_sequence(
 /// Go `executor.AlterSequence` up to `doDDLJob2`.
 fn build_alter_sequence_job(
     catalog: &SessionExtendedInfoSchema,
-    statement: &DdlStatement,
+    schema: &str,
+    name: &str,
+    if_exists: bool,
+    options: &[tidb_ast::SequenceOption],
     job_context: &dyn DdlSessionContext,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let DdlStatement::AlterSequence {
-        schema,
-        name,
-        if_exists,
-        options,
-    } = statement
-    else {
-        unreachable!("called for ALTER SEQUENCE");
-    };
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                .gen_with_stack_by_args(&[(schema.clone()).into()]),
+                .gen_with_stack_by_args(&[(schema.to_owned()).into()]),
         ));
     };
     let Some(stored) = find_table(&database.read(), name) else {
-        if *if_exists {
+        if if_exists {
             return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                 detail: format!("sequence `{schema}`.`{name}` does not exist"),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
@@ -636,7 +767,7 @@ fn build_alter_sequence_job(
         }
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                .gen_with_stack_by_args(&[(schema.clone()).into(), (name.clone()).into()]),
+                .gen_with_stack_by_args(&[(schema.to_owned()).into(), (name.to_owned()).into()]),
         ));
     };
     let stored = stored.read();
@@ -647,8 +778,13 @@ fn build_alter_sequence_job(
         ));
     };
     // Validate the options over a copy of the stored ones.
-    tidb_ddl_build::sequence::alter_sequence_options(tidb_model::table::SequenceInfo::clone(&old), options, schema, name)
-        .map_err(DdlPlanError::from_mysql_error)?;
+    tidb_ddl_build::sequence::alter_sequence_options(
+        tidb_model::table::SequenceInfo::clone(&old),
+        options,
+        schema,
+        name,
+    )
+    .map_err(DdlPlanError::from_mysql_error)?;
     let mut job = session_job(job_context, ActionType::ACTION_ALTER_SEQUENCE);
     job.schema_id = database.read().id;
     job.table_id = stored.id;
@@ -656,8 +792,8 @@ fn build_alter_sequence_job(
     job.table_name = stored.name.lowercase().to_owned().into();
     let args = tidb_model::AlterSequenceArgs {
         ident: tidb_model::Ident {
-            schema: CiString::new(schema.clone()),
-            name: CiString::new(name.clone()),
+            schema: CiString::new(schema.to_owned()),
+            name: CiString::new(name.to_owned()),
         },
         seq_options: options
             .iter()

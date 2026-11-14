@@ -143,7 +143,30 @@ pub fn rename_table<S: MetaSnapshot>(
         DdlStatement::RenameTables { pairs } => (pairs.clone(), false),
         _ => return Ok(None),
     };
+    rename_tables(snapshot, &pairs, is_alter, job_context, start_ts, upgrading)
+}
+
+/// Go `executor.renameTable` / `executor.renameTables` through `doDDLJob2`.
+pub fn rename_tables<S: MetaSnapshot>(
+    snapshot: &mut S,
+    pairs: &[RenameTablePair],
+    is_alter: bool,
+    job_context: &dyn DdlSessionContext,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let catalog = load_info_schema(snapshot)?;
+    let built = rename_tables_job(&catalog, pairs, is_alter, job_context)?;
+    submit_built_job(snapshot, built, start_ts, upgrading)
+}
+
+/// Go `executor.renameTable` / `renameTables` before `doDDLJob2`.
+pub(crate) fn rename_tables_job(
+    catalog: &SessionExtendedInfoSchema,
+    pairs: &[RenameTablePair],
+    is_alter: bool,
+    job_context: &dyn DdlSessionContext,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let mut tables = BTreeMap::new();
     let (job, args) = if pairs.len() == 1 {
         // Go `renameTable`.
@@ -189,7 +212,7 @@ pub fn rename_table<S: MetaSnapshot>(
         let mut infos = Vec::with_capacity(pairs.len());
         let mut involving = Vec::with_capacity(pairs.len() * 2);
         let mut last_schema = (0, CiString::default());
-        for pair in &pairs {
+        for pair in pairs {
             let (old_schema_id, old_schema_name, new_schema_id, new_schema_name, table_id) =
                 extract_tbl_infos(&catalog, pair, false, &mut tables)?
                     .expect("RENAME TABLE never names its own source as the target");
@@ -225,16 +248,14 @@ pub fn rename_table<S: MetaSnapshot>(
         })));
         (job, args)
     };
-    let mut specs = [tidb_ddl_jobsubmit::JobSpec {
-        job,
-        args,
-        id_allocated: true,
-    }];
-    tidb_ddl_jobsubmit::prepare_submit_batch(
-        snapshot, &mut specs, start_ts, upgrading,
-    )?;
-    let [spec] = specs;
-    Ok(Some(AddIndexSubmission::Job(Box::new(spec), Vec::new())))
+    Ok(Some(AddIndexSubmission::Job(
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
+            job,
+            args,
+            id_allocated: true,
+        }),
+        Vec::new(),
+    )))
 }
 
 /// The tables as the job's earlier moves left them, keyed by id, with the

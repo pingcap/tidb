@@ -58,6 +58,8 @@ pub const LOAD_SCHEMA_DIFF_VERSION_GAP_THRESHOLD: i64 = 100;
 /// tests can assert on the exact cause.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FullReloadReason {
+    /// Go shouldUseV2 changed the schema builder implementation.
+    ImplementationChanged,
     /// The stored version is older than the loaded one, so there are no diffs
     /// forward to replay (a flashback, or reading an older snapshot).
     VersionWentBackwards {
@@ -100,6 +102,9 @@ pub enum FullReloadReason {
 impl fmt::Display for FullReloadReason {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ImplementationChanged => {
+                formatter.write_str("schema cache implementation changed")
+            }
             Self::VersionWentBackwards { from, to } => write!(
                 formatter,
                 "stored schema version {to} is older than the loaded version {from}"
@@ -126,6 +131,11 @@ impl fmt::Display for FullReloadReason {
 /// What one reload pass did.
 #[derive(Clone, Debug)]
 pub enum ReloadedCatalog {
+    /// Go Loader cache hit: reuse an already built version without applying diffs.
+    Cached {
+        /// The image the shared loader already built for this version.
+        catalog: SessionExtendedInfoSchema,
+    },
     /// The cluster is still at the loaded version; nothing was read further
     /// and the caller keeps the catalog it already has.
     Unchanged {
@@ -134,6 +144,8 @@ pub enum ReloadedCatalog {
     },
     /// The loaded catalog was advanced by replaying diffs.
     Diffs {
+        /// Go Loader's currentSchemaVersion, the cached image these diffs extend.
+        previous_version: i64,
         /// The new catalog.
         catalog: SessionExtendedInfoSchema,
         /// How many non-empty diffs were applied.
@@ -158,7 +170,9 @@ impl ReloadedCatalog {
     pub const fn catalog(&self) -> Option<&SessionExtendedInfoSchema> {
         match self {
             Self::Unchanged { .. } => None,
-            Self::Diffs { catalog, .. } | Self::Full { catalog, .. } => Some(catalog),
+            Self::Cached { catalog } | Self::Diffs { catalog, .. } | Self::Full { catalog, .. } => {
+                Some(catalog)
+            }
         }
     }
 
@@ -167,7 +181,9 @@ impl ReloadedCatalog {
     pub fn version(&self) -> i64 {
         match self {
             Self::Unchanged { version } => *version,
-            Self::Diffs { catalog, .. } | Self::Full { catalog, .. } => catalog.schema_meta_version(),
+            Self::Cached { catalog } | Self::Diffs { catalog, .. } | Self::Full { catalog, .. } => {
+                catalog.schema_meta_version()
+            }
         }
     }
 }
@@ -249,6 +265,7 @@ fn apply_diff_range<S: MetaSnapshot>(
     // Go `InitWithOldInfoSchema`: the diffs apply to a copy over the
     // current version's `DBInfo` pointers.
     let mut catalog = current.metadata_copy();
+    catalog.set_schema_ts(snapshot.start_ts());
     let mut applied = 0usize;
     let mut changes = RelatedSchemaChange::default();
     for version in (loaded + 1)..=needed {
@@ -308,6 +325,7 @@ fn apply_diff_range<S: MetaSnapshot>(
         }
     }
     Ok(Ok(ReloadedCatalog::Diffs {
+        previous_version: loaded,
         catalog,
         applied,
         changes,
@@ -427,10 +445,13 @@ fn apply_schema_diff<S: MetaSnapshot>(
             Ok(Ok(Vec::new()))
         }
         // Go `applyMaskingPolicyChange` (`builder.go:412-415`) touches only
-        // the masking-policy map, which this catalog does not hold.
+        // the masking-policy map, reset by the diff builder.
         ActionType::ACTION_CREATE_MASKING_POLICY
         | ActionType::ACTION_ALTER_MASKING_POLICY
-        | ActionType::ACTION_DROP_MASKING_POLICY => Ok(Ok(Vec::new())),
+        | ActionType::ACTION_DROP_MASKING_POLICY => {
+            catalog.reset_masking_policy_cache();
+            Ok(Ok(Vec::new()))
+        }
         // Go `applyTruncateTableOrPartition`, `applyDropTableOrPartition`,
         // `applyRecoverTable` and `applyReorganizePartition`
         // (`builder.go:260-320`, `:397-410`): one `applyTableUpdate`, then
@@ -589,9 +610,8 @@ fn table_ids<S: MetaSnapshot>(
 /// loaded; the old table, if any, is dropped -- from the OLD database when a
 /// rename crossed databases, since Go's one `dbInfo` is resolved from the new
 /// `SchemaID` throughout -- and the new one, if any, is read from the store
-/// and added. Everything else Go does there (`updateBundleForTableUpdate`,
-/// `copySortedTables`, kept auto-ID allocators, the masking-policy cache
-/// reset) maintains caches this catalog does not have.
+/// and added. V1 resets its masking-policy cache here; V2 does not.
+/// The catalog rebuilds table maps when a database changes.
 ///
 /// The IDs answered are Go's `tblIDs`: the dropped table's (`applyDropTable`,
 /// only when it was loaded) then the created table's (`applyCreateTable`,
@@ -602,8 +622,7 @@ fn apply_table_update<S: MetaSnapshot>(
     diff: &SchemaDiff,
 ) -> AppliedDiff {
     let version = diff.version;
-    if catalog.schema_by_id(diff.schema_id).is_none()
-    {
+    if catalog.schema_by_id(diff.schema_id).is_none() {
         return Ok(Err(missing(
             version,
             format!("unknown database {}", diff.schema_id),
@@ -642,6 +661,14 @@ fn apply_table_update<S: MetaSnapshot>(
             }
             Err(reason) => return Ok(Err(reason)),
         }
+    }
+    // Go applyTableUpdateV2 intentionally has no masking-policy reset.
+    if !catalog.uses_infoschema_v2()
+        && tidb_infoschema::masking_policy::need_refresh_masking_policies_for_table_diff(
+            diff.action_type,
+        )
+    {
+        catalog.reset_masking_policy_cache();
     }
     Ok(Ok(ids))
 }
@@ -954,11 +981,15 @@ pub fn load_info_schema<S: MetaSnapshot + ?Sized>(
     snapshot: &mut S,
 ) -> Result<SessionExtendedInfoSchema, ClusterCatalogError> {
     use tidb_domainutil::REPAIR_INFO;
-    load_info_schema_keeping(snapshot, &mut |di, tbl| {
+    let mut schema = load_info_schema_keeping(snapshot, &mut |di, tbl| {
         !(REPAIR_INFO.in_repair_mode()
             && REPAIR_INFO.check_and_fetch_repaired_table(di, tbl)
             && tbl.read().state != tidb_model::schema_state::SchemaState::PUBLIC)
-    })
+    })?;
+    schema.set_uses_infoschema_v2(
+        tidb_vardef::SCHEMA_CACHE_SIZE.load(std::sync::atomic::Ordering::SeqCst) > 0,
+    );
+    Ok(schema)
 }
 
 /// Go `applyCreateTable`'s failpoint `repairFetchCreateTable`: a repair test

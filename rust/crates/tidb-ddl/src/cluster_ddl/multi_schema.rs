@@ -427,6 +427,16 @@ pub fn multi_schema_change<S: MetaSnapshot>(
     )
 }
 
+/// Go `appendToSubJobs`: refuse unsupported sub-jobs when that specification runs.
+pub(super) fn append_to_sub_jobs(
+    specs: &mut Vec<tidb_ddl_jobsubmit::JobSpec>,
+    spec: tidb_ddl_jobsubmit::JobSpec,
+) -> Result<(), DdlPlanError> {
+    MultiSchemaNames::default().fill(&spec)?;
+    specs.push(spec);
+    Ok(())
+}
+
 /// Go `appendToSubJobs` for each built job, then `multiSchemaChange`: the
 /// parent job, `checkMultiSchemaInfo` and `mergeAddIndex`.
 pub(super) fn build_multi_schema_job(

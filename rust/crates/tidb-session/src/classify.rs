@@ -327,28 +327,36 @@ impl Session {
     /// the session, so this is the one submitter check the session makes
     /// itself. The foreign-key checks are the DDL executor's
     /// (`tidb_ddl::cluster_ddl`), against the latest schema.
-    pub fn validate_persistent_ddl_references(
-        &mut self,
-        statement: &tidb_ddl::cluster_ddl::DdlStatement,
+    pub(crate) fn validate_executor_ddl_references(
+        &self,
+        statement: &tidb_ast::Stmt,
     ) -> Result<(), DriverError> {
-        use tidb_ddl::cluster_ddl::DdlStatement;
-        // Use the shared persistent image, never a local temporary overlay.
+        let tidb_ast::Stmt::Ddl(ddl) = statement else {
+            return Ok(());
+        };
+        let tidb_ast::DdlStmt::AlterTable(alter) = &**ddl else {
+            return Ok(());
+        };
+        let (schema, table) =
+            tidb_infoschema::split_table_path_pub(&alter.name, self.current_database())?;
         let catalog = self.lock_catalog()?;
-        if let DdlStatement::ExchangePartition {
-            schema,
-            table,
-            standalone_schema,
-            standalone_table,
-            ..
-        } = statement
-        {
-            Self::exchange_local_temporary_refusal(
-                &catalog,
-                (schema, table),
-                self.local_temporary_table(standalone_schema, standalone_table)
-                    .map(|table| table.name())
-                    .as_deref(),
-            )?;
+        for action in &alter.actions {
+            if let tidb_ast::AlterTableAction::Partition(
+                tidb_ast::AlterPartitionAction::Exchange {
+                    table: standalone, ..
+                },
+            ) = action
+            {
+                let (standalone_schema, standalone_table) =
+                    tidb_infoschema::split_table_path_pub(standalone, self.current_database())?;
+                Self::exchange_local_temporary_refusal(
+                    &catalog,
+                    (schema, table),
+                    self.local_temporary_table(standalone_schema, standalone_table)
+                        .map(|table| table.name())
+                        .as_deref(),
+                )?;
+            }
         }
         Ok(())
     }

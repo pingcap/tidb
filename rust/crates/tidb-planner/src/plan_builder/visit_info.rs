@@ -74,5 +74,7 @@ pub struct VisitInfo {
     pub dynamic_privs: Vec<String>,
     /// Go `dynamicWithGrant`.
     pub dynamic_with_grant: bool,
+    /// Go `visitInfo.alterWritable`: ALTER TABLE READ ONLY / READ WRITE.
+    pub alter_writable: bool,
 }
 

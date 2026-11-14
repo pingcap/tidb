@@ -1599,6 +1599,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 error: super::visit_info::VisitAuthError::ViewNoExplain,
                 dynamic_privs: Vec::new(),
                 dynamic_with_grant: false,
+                alter_writable: false,
             });
         }
         if let Some(alias) = alias.filter(|alias| !alias.is_empty()) {

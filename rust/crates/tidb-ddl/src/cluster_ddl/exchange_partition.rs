@@ -44,6 +44,30 @@ pub fn exchange_table_partition<S: MetaSnapshot>(
         return Ok(None);
     };
     let catalog = load_info_schema(snapshot)?;
+    let built = exchange_table_partition_job(
+        &catalog,
+        schema,
+        table,
+        partition,
+        standalone_schema,
+        standalone_table,
+        with_validation,
+        job_context,
+    )?;
+    submit_built_job(snapshot, built, start_ts, upgrading)
+}
+
+/// Go `executor.ExchangeTablePartition` before `doDDLJob2`.
+pub(crate) fn exchange_table_partition_job(
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    partition: &String,
+    standalone_schema: &String,
+    standalone_table: &String,
+    with_validation: &bool,
+    job_context: &dyn DdlSessionContext,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let (partitioned_db_id, partitioned) = locate_table(&catalog, schema, table)?;
     let partitioned = partitioned.read();
     let (standalone_db_id, standalone) =
@@ -109,11 +133,7 @@ pub fn exchange_table_partition<S: MetaSnapshot>(
                 .to_owned(),
         )],
     );
-    submit_built_job(
-        snapshot, Some(built),
-        start_ts,
-        upgrading,
-    )
+    Ok(Some(built))
 }
 
 struct ExchangeArgs {

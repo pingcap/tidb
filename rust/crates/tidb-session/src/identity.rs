@@ -672,9 +672,12 @@ impl Session {
         if !Self::compiles_as_statement_plan(stmt) {
             return Ok(CompiledExecutor::Other);
         }
-        Ok(self
-            .preprocess_and_build(stmt)?
-            .map_or(CompiledExecutor::Other, |(plan, _, _)| CompiledExecutor::of(&plan)))
+        let previous = std::mem::replace(&mut self.in_prepare, true);
+        let result = self.preprocess_and_build(stmt);
+        self.in_prepare = previous;
+        Ok(result?.map_or(CompiledExecutor::Other, |(plan, _, _)| {
+            CompiledExecutor::of(&plan)
+        }))
     }
 
     /// Go `Compile`'s preprocessor and `PlanBuilder.Build`.
@@ -1110,6 +1113,9 @@ impl Session {
         &self,
         stmt: &Stmt,
     ) -> Result<Option<(String, tidb_model::TableMode)>, DriverError> {
+        if self.ddl_names_skipped_in_prepare(stmt) {
+            return Ok(None);
+        }
         self.with_txn_catalog(|catalog| {
             if !catalog.has_table_modes() {
                 return None;

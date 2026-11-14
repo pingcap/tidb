@@ -68,108 +68,86 @@ pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
-    let (action, policy_name, schema_id, args) = match statement {
-        // Go `executor.CreatePlacementPolicyWithInfo`.
+    match statement {
         DdlStatement::CreatePlacementPolicy {
             name,
             settings,
             if_not_exists,
             or_replace,
-        } => {
-            if name.go_lower_eq("default") {
-                return Err(coded_refusal(
-                    &tidb_infoschema::infoschema_errors::ERR_RESERVED_SYNTAX,
-                    format!(
-                        "The '{name}' syntax is reserved for purposes internal to the MySQL server"
-                    ),
-                ));
-            }
-            if find_policy(snapshot, name)?.is_some() && !*or_replace {
-                if *if_not_exists {
-                    return Ok(Some(AddIndexSubmission::AlreadySatisfied {
-                        detail: format!("placement policy `{name}` already exists"),
-                        warnings: vec![crate::real_tikv_ddl::ddl_note(
-                            tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_EXISTS
-                                .gen_with_stack_by_args(&[name.into()]),
-                        )],
-                    }));
-                }
-                return Err(coded_refusal(
-                    &tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_EXISTS,
-                    format!("Placement policy '{name}' already exists"),
-                ));
-            }
-            check_policy_validation(settings)?;
-            // The id comes from the policies' own sequence at submission.
-            let policy = tidb_model::PolicyInfo {
-                placement_settings: Some(GoShared::new(settings.clone())),
-                id: 0,
-                name: CiString::new(name.clone()),
-                state: SchemaState::NONE,
-            };
-            (
-                ActionType::ACTION_CREATE_PLACEMENT_POLICY,
-                CiString::new(name.clone()),
-                0,
-                tidb_model::PlacementPolicyArgs {
-                    policy: Some(GoShared::new(policy)),
-                    replace_on_exist: *or_replace,
-                    ..tidb_model::PlacementPolicyArgs::default()
-                },
-            )
-        }
-        // Go `executor.AlterPlacementPolicy`: a missing policy is 8239
-        // whatever IF EXISTS says.
+        } => create_placement_policy(
+            snapshot,
+            name,
+            settings,
+            *if_not_exists,
+            *or_replace,
+            job_context,
+            start_ts,
+            upgrading,
+        ),
         DdlStatement::AlterPlacementPolicy { name, settings, .. } => {
-            let Some(found) = find_policy(snapshot, name)? else {
-                return Err(policy_not_exists(name));
-            };
-            check_policy_validation(settings)?;
-            let policy = tidb_model::PolicyInfo {
-                placement_settings: Some(GoShared::new(settings.clone())),
-                id: 0,
-                name: found.name.clone(),
-                state: SchemaState::NONE,
-            };
-            (
-                ActionType::ACTION_ALTER_PLACEMENT_POLICY,
-                found.name.clone(),
-                found.id,
-                tidb_model::PlacementPolicyArgs {
-                    policy: Some(GoShared::new(policy)),
-                    policy_id: found.id,
-                    ..tidb_model::PlacementPolicyArgs::default()
-                },
-            )
+            alter_placement_policy(snapshot, name, settings, job_context, start_ts, upgrading)
         }
-        // Go `executor.DropPlacementPolicy`.
         DdlStatement::DropPlacementPolicy { name, if_exists } => {
-            let Some(found) = find_policy(snapshot, name)? else {
-                if *if_exists {
-                    return Ok(Some(AddIndexSubmission::AlreadySatisfied {
-                        detail: format!("placement policy `{name}` does not exist"),
-                        warnings: vec![crate::real_tikv_ddl::ddl_note(
-                            tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_NOT_EXISTS
-                                .gen_with_stack_by_args(&[name.into()]),
-                        )],
-                    }));
-                }
-                return Err(policy_not_exists(name));
-            };
-            check_policy_not_in_use(&catalog, &found.name)?;
-            (
-                ActionType::ACTION_DROP_PLACEMENT_POLICY,
-                CiString::new(name.clone()),
-                found.id,
-                tidb_model::PlacementPolicyArgs {
-                    policy_name: CiString::new(name.clone()),
-                    policy_id: found.id,
-                    ..tidb_model::PlacementPolicyArgs::default()
-                },
-            )
+            drop_placement_policy(snapshot, name, *if_exists, job_context, start_ts, upgrading)
         }
-        _ => return Ok(None),
+        _ => Ok(None),
+    }
+}
+
+/// Go `executor.CreatePlacementPolicy`: validate and build its job.
+pub fn create_placement_policy<S: MetaSnapshot>(
+    snapshot: &mut S,
+    name: &str,
+    settings: &tidb_model::PlacementSettings,
+    if_not_exists: bool,
+    or_replace: bool,
+    job_context: &dyn DdlSessionContext,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_info_schema(snapshot)?;
+    let (action, policy_name, schema_id, args) = {
+        if name.go_lower_eq("default") {
+            return Err(coded_refusal(
+                &tidb_infoschema::infoschema_errors::ERR_RESERVED_SYNTAX,
+                format!(
+                    "The '{name}' syntax is reserved for purposes internal to the MySQL server"
+                ),
+            ));
+        }
+        if find_policy(snapshot, name)?.is_some() && !or_replace {
+            if if_not_exists {
+                return Ok(Some(AddIndexSubmission::AlreadySatisfied {
+                    detail: format!("placement policy `{name}` already exists"),
+                    warnings: vec![crate::real_tikv_ddl::ddl_note(
+                        tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_EXISTS
+                            .gen_with_stack_by_args(&[name.into()]),
+                    )],
+                }));
+            }
+            return Err(coded_refusal(
+                &tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_EXISTS,
+                format!("Placement policy '{name}' already exists"),
+            ));
+        }
+        check_policy_validation(settings)?;
+        // The id comes from the policies' own sequence at submission.
+        let policy = tidb_model::PolicyInfo {
+            placement_settings: Some(GoShared::new(settings.clone())),
+            id: 0,
+            name: CiString::new(name.to_owned()),
+            state: SchemaState::NONE,
+        };
+        (
+            ActionType::ACTION_CREATE_PLACEMENT_POLICY,
+            CiString::new(name.to_owned()),
+            0,
+            tidb_model::PlacementPolicyArgs {
+                policy: Some(GoShared::new(policy)),
+                replace_on_exist: or_replace,
+                ..tidb_model::PlacementPolicyArgs::default()
+            },
+        )
     };
     let mut job = session_job(job_context, action);
     job.schema_id = schema_id;
@@ -186,11 +164,110 @@ pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
         }),
         Vec::new(),
     );
-    submit_built_job(
-        snapshot, Some(built),
-        start_ts,
-        upgrading,
-    )
+    submit_built_job(snapshot, Some(built), start_ts, upgrading)
+}
+
+/// Go `executor.AlterPlacementPolicy`: validate and build its job.
+pub fn alter_placement_policy<S: MetaSnapshot>(
+    snapshot: &mut S,
+    name: &str,
+    settings: &tidb_model::PlacementSettings,
+    job_context: &dyn DdlSessionContext,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_info_schema(snapshot)?;
+    let (action, policy_name, schema_id, args) = {
+        let Some(found) = find_policy(snapshot, name)? else {
+            return Err(policy_not_exists(name));
+        };
+        check_policy_validation(settings)?;
+        let policy = tidb_model::PolicyInfo {
+            placement_settings: Some(GoShared::new(settings.clone())),
+            id: 0,
+            name: found.name.to_owned(),
+            state: SchemaState::NONE,
+        };
+        (
+            ActionType::ACTION_ALTER_PLACEMENT_POLICY,
+            found.name.to_owned(),
+            found.id,
+            tidb_model::PlacementPolicyArgs {
+                policy: Some(GoShared::new(policy)),
+                policy_id: found.id,
+                ..tidb_model::PlacementPolicyArgs::default()
+            },
+        )
+    };
+    let mut job = session_job(job_context, action);
+    job.schema_id = schema_id;
+    job.schema_name = policy_name.lowercase().to_owned().into();
+    job.involving_schema_info = GoSharedSlice::from_vec(vec![tidb_model::InvolvingSchemaInfo {
+        policy: policy_name.lowercase().to_owned().into(),
+        ..tidb_model::InvolvingSchemaInfo::default()
+    }]);
+    let built = AddIndexSubmission::Job(
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
+            job,
+            args: JobArgsValue::PlacementPolicy(Some(GoShared::new(args))),
+            id_allocated: true,
+        }),
+        Vec::new(),
+    );
+    submit_built_job(snapshot, Some(built), start_ts, upgrading)
+}
+
+/// Go `executor.DropPlacementPolicy`: validate and build its job.
+pub fn drop_placement_policy<S: MetaSnapshot>(
+    snapshot: &mut S,
+    name: &str,
+    if_exists: bool,
+    job_context: &dyn DdlSessionContext,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_info_schema(snapshot)?;
+    let (action, policy_name, schema_id, args) = {
+        let Some(found) = find_policy(snapshot, name)? else {
+            if if_exists {
+                return Ok(Some(AddIndexSubmission::AlreadySatisfied {
+                    detail: format!("placement policy `{name}` does not exist"),
+                    warnings: vec![crate::real_tikv_ddl::ddl_note(
+                        tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_NOT_EXISTS
+                            .gen_with_stack_by_args(&[name.into()]),
+                    )],
+                }));
+            }
+            return Err(policy_not_exists(name));
+        };
+        check_policy_not_in_use(&catalog, &found.name)?;
+        (
+            ActionType::ACTION_DROP_PLACEMENT_POLICY,
+            CiString::new(name.to_owned()),
+            found.id,
+            tidb_model::PlacementPolicyArgs {
+                policy_name: CiString::new(name.to_owned()),
+                policy_id: found.id,
+                ..tidb_model::PlacementPolicyArgs::default()
+            },
+        )
+    };
+    let mut job = session_job(job_context, action);
+    job.schema_id = schema_id;
+    job.schema_name = policy_name.lowercase().to_owned().into();
+    job.involving_schema_info = GoSharedSlice::from_vec(vec![tidb_model::InvolvingSchemaInfo {
+        policy: policy_name.lowercase().to_owned().into(),
+        ..tidb_model::InvolvingSchemaInfo::default()
+    }]);
+    let built = AddIndexSubmission::Job(
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
+            job,
+            args: JobArgsValue::PlacementPolicy(Some(GoShared::new(args))),
+            id_allocated: true,
+        }),
+        Vec::new(),
+    );
+    submit_built_job(snapshot, Some(built), start_ts, upgrading)
 }
 
 /// Go `genPlacementPolicyID`, set on a CREATE PLACEMENT POLICY job before

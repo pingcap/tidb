@@ -111,11 +111,35 @@ pub fn repair_table<S: MetaSnapshot>(
     else {
         return Ok(None);
     };
+    repair_table_with_info(
+        snapshot,
+        schema,
+        table,
+        build,
+        job_context,
+        tiflash_stores,
+        start_ts,
+        upgrading,
+    )
+}
+
+/// Go `executor.RepairTable`: typed arguments through `doDDLJob2`.
+#[allow(clippy::too_many_arguments)]
+pub fn repair_table_with_info<S: MetaSnapshot>(
+    snapshot: &mut S,
+    schema: &str,
+    table: &str,
+    build: &CreateTableBuild,
+    job_context: &dyn DdlSessionContext,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     // Existence of DB and table has been checked in the preprocessor, which
     // hands Go's executor both through the session's values.
     let (old_table_info, old_db_info) = REPAIR_INFO.get_repaired_table_info_by_table_name(
-        CiString::new(schema.clone()).lowercase(),
-        CiString::new(table.clone()).lowercase(),
+        CiString::new(schema.to_owned()).lowercase(),
+        CiString::new(table.to_owned()).lowercase(),
     );
     let Some(old_table_info) = old_table_info else {
         return Err(DdlPlanError::from(
@@ -131,7 +155,7 @@ pub fn repair_table<S: MetaSnapshot>(
     let old_table_info = old_table_info.read();
     let old_db_info = old_db_info.read();
     // By now only support same DB repair.
-    if CiString::new(build.schema.clone()).lowercase() != old_db_info.name.lowercase() {
+    if CiString::new(build.schema.to_owned()).lowercase() != old_db_info.name.lowercase() {
         return Err(DdlPlanError::from(
             tidb_dbterror::ERR_REPAIR_TABLE_FAIL
                 .gen_with_stack("Repaired table should in same database with the old one"),
@@ -177,8 +201,7 @@ pub fn repair_table<S: MetaSnapshot>(
     // repair failed.
     for new_one in new_table_info.columns.iter_deref() {
         let mut new_one = new_one.write();
-        let Some(old) = old_table_info.find_public_column_by_name(new_one.name.lowercase())
-        else {
+        let Some(old) = old_table_info.find_public_column_by_name(new_one.name.lowercase()) else {
             return Err(repair_table_fail(format!(
                 "Column {} has lost",
                 new_one.name.lowercase()

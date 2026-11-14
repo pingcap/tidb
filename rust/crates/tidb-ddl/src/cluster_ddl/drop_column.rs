@@ -53,6 +53,30 @@ pub(super) fn build_drop_column_job<S: MetaSnapshot>(
     else {
         return Ok(None);
     };
+    drop_column_by_name(
+        _snapshot,
+        catalog,
+        schema,
+        table,
+        if_exists,
+        column,
+        allow_remove_auto_inc,
+        job_context,
+    )
+}
+
+/// Go `executor.DropColumn` with the prepared column/index definition.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn drop_column_by_name<S: MetaSnapshot>(
+    _snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    if_exists: &bool,
+    column: &String,
+    allow_remove_auto_inc: &bool,
+    job_context: &dyn DdlSessionContext,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
     let stored = stored.read();
     if !check_is_droppable_column(
@@ -67,8 +91,7 @@ pub(super) fn build_drop_column_job<S: MetaSnapshot>(
         return Ok(Some(AddIndexSubmission::AlreadySatisfied {
             detail: format!("column `{column}` does not exist on `{schema}`.`{table}`"),
             warnings: vec![crate::real_tikv_ddl::ddl_note(
-                tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
-                    .gen_with_stack_by_args(&[column.into()]),
+                tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY.gen_with_stack_by_args(&[column.into()]),
             )],
         }));
     }

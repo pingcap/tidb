@@ -1731,8 +1731,7 @@ impl Session {
         // applies its own hints after its early control-statement doors.
         if matches!(&stmt, Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::Explain(
             _,
-        )))
-        {
+        ))) {
             self.apply_set_var_hints(&stmt)?;
         }
         // Go `Compile` for every statement that is not a query or DML: the
@@ -1901,8 +1900,10 @@ impl Session {
         let output = match &stmt {
             Stmt::Query(query) => {
                 let current_db = self.vars.current_db.clone();
-                let ctx =
-                    self.with_plan_privilege_check(self.statement_context_for_stmt(&stmt, false), &stmt)?;
+                let ctx = self.with_plan_privilege_check(
+                    self.statement_context_for_stmt(&stmt, false),
+                    &stmt,
+                )?;
                 // go `SelectIntoOutfile` opens the destination with O_EXCL
                 // when the executor opens, after the statement was planned
                 // and its privileges checked: an existing file is refused
@@ -1943,7 +1944,10 @@ impl Session {
                     let mut effective_parameterized = parameterized.statement.clone();
                     if binding_sql.is_some() {
                         let binding_hints = tidb_bindinfo::binding::collect_hints(&stmt);
-                        tidb_bindinfo::binding::bind_hints(&mut effective_parameterized, &binding_hints);
+                        tidb_bindinfo::binding::bind_hints(
+                            &mut effective_parameterized,
+                            &binding_hints,
+                        );
                     }
                     if let Some(execution) = self.bind_non_prepared_select(
                         parameterized,
@@ -2018,7 +2022,10 @@ impl Session {
                     let mut effective_parameterized = parameterized.statement.clone();
                     if binding_sql.is_some() {
                         let binding_hints = tidb_bindinfo::binding::collect_hints(&stmt);
-                        tidb_bindinfo::binding::bind_hints(&mut effective_parameterized, &binding_hints);
+                        tidb_bindinfo::binding::bind_hints(
+                            &mut effective_parameterized,
+                            &binding_hints,
+                        );
                     }
                     if let Some((execution, requests)) = self.bind_non_prepared_dml(
                         &parameterized,
@@ -2067,21 +2074,20 @@ impl Session {
                         }
                         let result = self.retrieving_memory_tables(&ctx, |session| {
                             session.with_staged_catalog(|catalog| {
-                                    // Go executes the statement the protocol BOUND
-                                    // (`pkg/server`'s `statement`/`executableParams`
-                                    // carry the values): re-parsing `sql` here would
-                                    // run a tree whose markers never met their
-                                    // execute-time values, which is a wrong answer
-                                    // for every binary-protocol write.
-                                    tidb_executor::run_insert_stmt_with_physical(
-                                        insert,
-                                        catalog,
-                                        &current_db,
-                                        &ctx,
-                                        physical_plan.as_deref_mut(),
-                                    )
-                                },
-                            )
+                                // Go executes the statement the protocol BOUND
+                                // (`pkg/server`'s `statement`/`executableParams`
+                                // carry the values): re-parsing `sql` here would
+                                // run a tree whose markers never met their
+                                // execute-time values, which is a wrong answer
+                                // for every binary-protocol write.
+                                tidb_executor::run_insert_stmt_with_physical(
+                                    insert,
+                                    catalog,
+                                    &current_db,
+                                    &ctx,
+                                    physical_plan.as_deref_mut(),
+                                )
+                            })
                         });
                         self.drain_eval_warnings(&ctx);
                         // Go `session.LastInsertID()`, the OK packet's field:
@@ -2124,26 +2130,26 @@ impl Session {
                             .with_statement_class(tidb_sessionctx::StatementClass::Update);
                         let ctx = self.with_plan_privilege_check(ctx, &stmt)?;
                         let output = match &update.kind {
-                            tidb_ast::UpdateKind::Single(_) => self
-                                .retrieving_memory_tables(&ctx, |session| {
+                            tidb_ast::UpdateKind::Single(_) => {
+                                self.retrieving_memory_tables(&ctx, |session| {
                                     session.with_staged_catalog(|catalog| {
-                                            // Bound AST, not SQL text: the text still
-                                            // carries the markers the binary protocol
-                                            // already replaced. See the INSERT arm.
-                                            Ok(StmtOutput::Affected(
-                                                tidb_executor::run_update_stmt_with_physical(
-                                                    update,
-                                                    catalog,
-                                                    &current_db,
-                                                    &ctx,
-                                                    physical_plan.as_deref_mut(),
-                                                )?,
-                                            ))
-                                        },
-                                    )
-                                }),
-                            tidb_ast::UpdateKind::Multi { .. } => self
-                                .retrieving_memory_tables(&ctx, |session| {
+                                        // Bound AST, not SQL text: the text still
+                                        // carries the markers the binary protocol
+                                        // already replaced. See the INSERT arm.
+                                        Ok(StmtOutput::Affected(
+                                            tidb_executor::run_update_stmt_with_physical(
+                                                update,
+                                                catalog,
+                                                &current_db,
+                                                &ctx,
+                                                physical_plan.as_deref_mut(),
+                                            )?,
+                                        ))
+                                    })
+                                })
+                            }
+                            tidb_ast::UpdateKind::Multi { .. } => {
+                                self.retrieving_memory_tables(&ctx, |session| {
                                     session.with_staged_catalog(|catalog| {
                                         Ok(StmtOutput::Affected(
                                             tidb_executor::run_update_stmt_with_physical(
@@ -2155,7 +2161,8 @@ impl Session {
                                             )?,
                                         ))
                                     })
-                                }),
+                                })
+                            }
                         };
                         self.drain_eval_warnings(&ctx);
                         self.statement_message = ctx.message();
@@ -2177,25 +2184,25 @@ impl Session {
                             .with_statement_class(tidb_sessionctx::StatementClass::Delete);
                         let ctx = self.with_plan_privilege_check(ctx, &stmt)?;
                         let output = match &delete.kind {
-                            tidb_ast::DeleteKind::Single(_) => self
-                                .retrieving_memory_tables(&ctx, |session| {
+                            tidb_ast::DeleteKind::Single(_) => {
+                                self.retrieving_memory_tables(&ctx, |session| {
                                     session.with_staged_catalog(|catalog| {
-                                            // Bound AST, not SQL text -- see the
-                                            // UPDATE arm.
-                                            Ok(StmtOutput::Affected(
-                                                tidb_executor::run_delete_stmt_with_physical(
-                                                    delete,
-                                                    catalog,
-                                                    &current_db,
-                                                    &ctx,
-                                                    physical_plan.as_deref_mut(),
-                                                )?,
-                                            ))
-                                        },
-                                    )
-                                }),
-                            tidb_ast::DeleteKind::Multi { .. } => self
-                                .retrieving_memory_tables(&ctx, |session| {
+                                        // Bound AST, not SQL text -- see the
+                                        // UPDATE arm.
+                                        Ok(StmtOutput::Affected(
+                                            tidb_executor::run_delete_stmt_with_physical(
+                                                delete,
+                                                catalog,
+                                                &current_db,
+                                                &ctx,
+                                                physical_plan.as_deref_mut(),
+                                            )?,
+                                        ))
+                                    })
+                                })
+                            }
+                            tidb_ast::DeleteKind::Multi { .. } => {
+                                self.retrieving_memory_tables(&ctx, |session| {
                                     session.with_staged_catalog(|catalog| {
                                         Ok(StmtOutput::Affected(
                                             tidb_executor::run_delete_stmt_with_physical(
@@ -2207,7 +2214,8 @@ impl Session {
                                             )?,
                                         ))
                                     })
-                                }),
+                                })
+                            }
                         };
                         self.drain_eval_warnings(&ctx);
                         // Go's info is the statement context's message, which
@@ -2219,10 +2227,14 @@ impl Session {
                     DmlStmt::ImportInto(import) => {
                         // Go `PlanBuilder.buildImportInto` checks assignments
                         // before `ImportIntoExec.Next` builds the import plan.
-                        tidb_planner::import_into::check_import_into_input_vars(import)
-                            .map_err(|error| {
-                                DriverError::Mysql(tidb_terror::MysqlError::unknown(error.message()))
-                            })?;
+                        tidb_planner::import_into::check_import_into_input_vars(import).map_err(
+                            |error| {
+                                DriverError::Mysql(tidb_terror::MysqlError::unknown(
+                                    error.message(),
+                                ))
+                            },
+                        )?;
+                        self.check_table_mode(&stmt)?;
                         // Physical ingest and the import task owner are still
                         // absent; successful validation must not write rows.
                         tidb_executor::import_into_options::validate_import_into_options(import)
@@ -2272,7 +2284,6 @@ impl Session {
         };
         output.map(PendingExecution::Complete)
     }
-
 }
 
 impl Session {

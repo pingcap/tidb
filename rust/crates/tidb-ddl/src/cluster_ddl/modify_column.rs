@@ -94,7 +94,7 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
     store_count: usize,
     has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let (schema, stored, schema_id, args, need_reorg) = match statement {
+    match statement {
         DdlStatement::ModifyColumn {
             schema,
             table,
@@ -102,87 +102,180 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
             position,
             context,
             rename_from,
-            modify_column_type: _,
             if_exists,
-        } => {
-            // Go `ModifyColumn` / `ChangeColumn`: the qualifiers first.
-            tidb_ddl_build::column_changes::check_column_qualifier(&column.qualifier, schema, table)
-                .map_err(|error| {
-                    DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
-                })?;
-            let (schema_id, shared) = locate_table(&catalog, schema, table)?;
-            let stored = shared.read();
-            let original_col_name = rename_from.as_deref().unwrap_or(column.name.as_str());
-            let bdr_role = snapshot.get(&key::bdr_role_kv_key())?.unwrap_or_default();
-            let built = match get_modifiable_column_job(
-                catalog,
-                &bdr_role,
-                schema,
-                table,
-                &stored,
-                original_col_name,
-                column,
-                position,
-                context,
-                has_null,
-            ) {
-                Ok(built) => built,
-                // Go: `ErrColumnNotExists` under IF EXISTS becomes a note
-                // and the statement succeeds.
-                Err(error)
-                    if *if_exists
-                        && error.equal(&tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS) =>
-                {
-                    return Ok(Some(AddIndexSubmission::AlreadySatisfied {
-                        detail: format!(
-                            "column `{original_col_name}` does not exist on `{schema}`.`{table}`"
-                        ),
-                        warnings: vec![crate::real_tikv_ddl::ddl_note(
-                            tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS
-                                .gen_with_stack_by_args(&[
-                                    original_col_name.into(),
-                                    table.into(),
-                                ]),
-                        )],
-                    }));
-                }
-                Err(error) => return Err(error),
-            };
-            let args = tidb_model::ModifyColumnArgs {
-                column: Some(GoShared::new(built.column)),
-                old_column_name: CiString::new(original_col_name),
-                position: Some(GoShared::new(tidb_ast::JobColumnPosition::from_statement(
-                    position,
-                ))),
-                new_shard_bits: built.new_shard_bits,
-                ..tidb_model::ModifyColumnArgs::default()
-            };
-            (schema, GoShared::clone(&shared), schema_id, args, built.need_reorg)
-        }
+            ..
+        } => modify_column_with_info(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            column,
+            position,
+            context,
+            rename_from,
+            if_exists,
+            job_context,
+            store_count,
+            has_null,
+        ),
         DdlStatement::RenameColumn {
             schema,
             table,
             from,
             to,
-        } => {
-            let (schema_id, shared) = locate_table(&catalog, schema, table)?;
-            let stored = shared.read();
-            // Go `RenameColumn`: the column cloned under its new name.
-            let Some(renamed) = prepare_rename_column(&stored, table, from, to)? else {
+            ..
+        } => rename_column(
+            snapshot,
+            catalog,
+            schema,
+            table,
+            from,
+            to,
+            job_context,
+            store_count,
+            has_null,
+        ),
+        _ => Ok(None),
+    }
+}
+
+/// Go `executor.ModifyColumn`: its typed column arguments and reorganization job.
+#[allow(unused_variables, clippy::too_many_arguments)]
+pub(crate) fn modify_column_with_info<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    column: &Box<tidb_ast::ColumnDef>,
+    position: &tidb_ast::ColumnPosition,
+    context: &DdlStatementContext,
+    rename_from: &Option<String>,
+    if_exists: &bool,
+    job_context: &dyn DdlSessionContext,
+    store_count: usize,
+    has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let (schema, stored, schema_id, args, need_reorg) = {
+        // Go `ModifyColumn` / `ChangeColumn`: the qualifiers first.
+        tidb_ddl_build::column_changes::check_column_qualifier(&column.qualifier, schema, table)
+            .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error)))?;
+        let (schema_id, shared) = locate_table(&catalog, schema, table)?;
+        let stored = shared.read();
+        let original_col_name = rename_from.as_deref().unwrap_or(column.name.as_str());
+        let bdr_role = snapshot.get(&key::bdr_role_kv_key())?.unwrap_or_default();
+        let built = match get_modifiable_column_job(
+            catalog,
+            &bdr_role,
+            schema,
+            table,
+            &stored,
+            original_col_name,
+            column,
+            position,
+            context,
+            has_null,
+        ) {
+            Ok(built) => built,
+            // Go: `ErrColumnNotExists` under IF EXISTS becomes a note
+            // and the statement succeeds.
+            Err(error)
+                if *if_exists
+                    && error.equal(&tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS) =>
+            {
                 return Ok(Some(AddIndexSubmission::AlreadySatisfied {
-                    detail: format!("column `{from}` already has the requested name"),
-                    warnings: Vec::new(),
+                    detail: format!(
+                        "column `{original_col_name}` does not exist on `{schema}`.`{table}`"
+                    ),
+                    warnings: vec![crate::real_tikv_ddl::ddl_note(
+                        tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS
+                            .gen_with_stack_by_args(&[original_col_name.into(), table.into()]),
+                    )],
                 }));
-            };
-            let args = tidb_model::ModifyColumnArgs {
-                column: Some(GoShared::new(renamed)),
-                old_column_name: CiString::new(from.clone()),
-                ..tidb_model::ModifyColumnArgs::default()
-            };
-            // Go `RenameColumn` submits no reorganization.
-            (schema, GoShared::clone(&shared), schema_id, args, false)
-        }
-        _ => return Ok(None),
+            }
+            Err(error) => return Err(error),
+        };
+        let args = tidb_model::ModifyColumnArgs {
+            column: Some(GoShared::new(built.column)),
+            old_column_name: CiString::new(original_col_name),
+            position: Some(GoShared::new(tidb_ast::JobColumnPosition::from_statement(
+                position,
+            ))),
+            new_shard_bits: built.new_shard_bits,
+            ..tidb_model::ModifyColumnArgs::default()
+        };
+        (
+            schema,
+            GoShared::clone(&shared),
+            schema_id,
+            args,
+            built.need_reorg,
+        )
+    };
+    let stored = stored.read();
+    let mut job = session_job(job_context, ActionType::ACTION_MODIFY_COLUMN);
+    job.schema_id = schema_id;
+    job.table_id = stored.id;
+    job.schema_name = schema.go_to_lower().into();
+    job.table_name = stored.name.lowercase().to_owned().into();
+    // Go `NeedReorg: mayNeedChangeColData`.
+    job.need_reorg = need_reorg;
+    let vars = job_context.ddl_reorg_vars();
+    job.session_vars = Some(GoShared::new(std::collections::BTreeMap::from([
+        (
+            tidb_vardef::tidb_vars::TIDB_ENABLE_DDL_ANALYZE.to_owned(),
+            vars.enable_ddl_analyze.clone().into(),
+        ),
+        (
+            tidb_vardef::tidb_vars::TIDB_ANALYZE_VERSION.to_owned(),
+            vars.analyze_version.clone().into(),
+        ),
+    ])));
+    // Go `initJobReorgMetaFromVariables`.
+    job.reorg_meta = Some(GoShared::new(add_index::new_ddl_reorg_meta(
+        job_context,
+        schema,
+        store_count,
+    )));
+    Ok(Some(AddIndexSubmission::Job(
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
+            job,
+            args: JobArgsValue::ModifyColumn(Some(GoShared::new(args))),
+            id_allocated: true,
+        }),
+        Vec::new(),
+    )))
+}
+
+/// Go `executor.RenameColumn`: its typed column arguments and reorganization job.
+#[allow(unused_variables, clippy::too_many_arguments)]
+pub(crate) fn rename_column<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    from: &String,
+    to: &String,
+    job_context: &dyn DdlSessionContext,
+    store_count: usize,
+    has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let (schema, stored, schema_id, args, need_reorg) = {
+        let (schema_id, shared) = locate_table(&catalog, schema, table)?;
+        let stored = shared.read();
+        // Go `RenameColumn`: the column cloned under its new name.
+        let Some(renamed) = prepare_rename_column(&stored, table, from, to)? else {
+            return Ok(Some(AddIndexSubmission::AlreadySatisfied {
+                detail: format!("column `{from}` already has the requested name"),
+                warnings: Vec::new(),
+            }));
+        };
+        let args = tidb_model::ModifyColumnArgs {
+            column: Some(GoShared::new(renamed)),
+            old_column_name: CiString::new(from.clone()),
+            ..tidb_model::ModifyColumnArgs::default()
+        };
+        // Go `RenameColumn` submits no reorganization.
+        (schema, GoShared::clone(&shared), schema_id, args, false)
     };
     let stored = stored.read();
     let mut job = session_job(job_context, ActionType::ACTION_MODIFY_COLUMN);

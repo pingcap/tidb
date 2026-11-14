@@ -17,8 +17,8 @@
 //! `ModifyMaskingPolicyExpression`, `ModifyMaskingPolicyRestrictOn` and
 //! `checkMaskingPolicyOnModifyColumn` (`ddl/executor.go`) with
 //! `buildMaskingPolicyInfo` (`ddl/masking_policy.go`). Go's infoschema loads
-//! the policies of `mysql.tidb_masking_policy` lazily and caches them; this
-//! session reads the table for each statement.
+//! the policies of `mysql.tidb_masking_policy` lazily at its snapshot TS;
+//! this executor uses that schema cache.
 
 use tidb_ast::{
     AlterMaskingPolicyAction, AlterTableAction, AlterTableStmt, CiString, CreateMaskingPolicyStmt,
@@ -26,9 +26,9 @@ use tidb_ast::{
 };
 use tidb_ddl::cluster_ddl::masking_policy::{
     check_masking_policy_column, check_masking_policy_table, is_masking_policy_supported_type,
-    masking_policy_from_sys_table_row, SELECT_MASKING_POLICY_SQL,
 };
-use tidb_ddl::cluster_ddl::DdlStatement;
+use tidb_ddl::JobWrapper;
+use tidb_ddl_build::session_context::DdlSessionContext;
 use tidb_driver_error::{DriverError, ExecError};
 use tidb_hack::GoToLower;
 use tidb_model::{
@@ -133,22 +133,11 @@ impl Session {
         Ok((schema_name, table))
     }
 
-    /// The policies Go's infoschema loads from `mysql.tidb_masking_policy`;
-    /// none while the table does not exist yet.
-    fn masking_policies(&mut self) -> Result<Vec<MaskingPolicyInfo>, DriverError> {
-        let rows = match self.user_table_rows(SELECT_MASKING_POLICY_SQL) {
-            Ok(rows) => rows,
-            Err(error) => {
-                let error = error.to_mysql_error();
-                if error.code == tidb_errno::errcode::ErrNoSuchTable {
-                    return Ok(Vec::new());
-                }
-                return Err(DriverError::Mysql(error));
-            }
-        };
-        rows.iter()
-            .map(|row| masking_policy_from_sys_table_row(row).map_err(plain_error))
-            .collect()
+    /// Go `InfoSchema.AllMaskingPolicies`: load once at the schema snapshot.
+    fn masking_policies(&self) -> Result<Vec<MaskingPolicyInfo>, DriverError> {
+        // Release the session's catalog lock before the factory runs SQL.
+        let catalog = self.lock_catalog()?.clone();
+        Ok(catalog.all_masking_policies())
     }
 
     /// Go `validateMaskingPolicyExpression`: the expression builds against
@@ -234,7 +223,8 @@ impl Session {
         table: &TableInfo,
         policy: MaskingPolicyInfo,
         on_exist: OnExist,
-    ) -> Result<Option<DdlStatement>, DriverError> {
+        context: &dyn DdlSessionContext,
+    ) -> Result<Option<JobWrapper>, DriverError> {
         let policies = self.masking_policies()?;
         if let Some(exist) =
             masking_policy_by_name_for_table(&policies, table, policy.name.lowercase())
@@ -268,18 +258,17 @@ impl Session {
                 exist.column_name.original()
             )));
         }
-        Ok(Some(DdlStatement::CreateMaskingPolicy {
-            policy: Box::new(policy),
-            replace_on_exist: on_exist == OnExist::Replace,
-            ignore_on_exist: on_exist == OnExist::Ignore,
-        }))
+        Ok(Some(tidb_ddl::cluster_ddl::masking_policy::create_masking_policy_with_info(
+            &policy, on_exist == OnExist::Replace, context,
+        )))
     }
 
     /// Go `executor.CreateMaskingPolicy`.
     fn create_masking_policy(
         &mut self,
         stmt: &CreateMaskingPolicyStmt,
-    ) -> Result<Option<DdlStatement>, DriverError> {
+        context: &dyn DdlSessionContext,
+    ) -> Result<Option<JobWrapper>, DriverError> {
         if stmt.or_replace && stmt.if_not_exists {
             return Err(DriverError::from(
                 tidb_dbterror::ERR_WRONG_USAGE
@@ -303,7 +292,7 @@ impl Session {
         } else {
             OnExist::Error
         };
-        self.create_masking_policy_with_info(&table, policy, on_exist)
+        self.create_masking_policy_with_info(&table, policy, on_exist, context)
     }
 
     /// Go's `ALTER TABLE ... MASKING POLICY` executor functions.
@@ -311,7 +300,8 @@ impl Session {
         &mut self,
         alter: &AlterTableStmt,
         action: &AlterMaskingPolicyAction,
-    ) -> Result<Option<DdlStatement>, DriverError> {
+        context: &dyn DdlSessionContext,
+    ) -> Result<Option<JobWrapper>, DriverError> {
         let (schema, table) = self.masking_policy_schema_and_table(&alter.name)?;
         let name = match action {
             AlterMaskingPolicyAction::Add {
@@ -331,7 +321,7 @@ impl Session {
                     *restrict_ops,
                     *state,
                 )?;
-                return self.create_masking_policy_with_info(&table, policy, OnExist::Error);
+                return self.create_masking_policy_with_info(&table, policy, OnExist::Error, context);
             }
             AlterMaskingPolicyAction::Enable(name)
             | AlterMaskingPolicyAction::Disable(name)
@@ -349,9 +339,9 @@ impl Session {
             AlterMaskingPolicyAction::Add { .. } => unreachable!("returned above"),
             // Go `DropMaskingPolicy`.
             AlterMaskingPolicyAction::Drop(_) => {
-                return Ok(Some(DdlStatement::DropMaskingPolicy {
-                    policy: Box::new(new_policy),
-                }));
+                return Ok(Some(tidb_ddl::cluster_ddl::masking_policy::drop_masking_policy(
+                    &new_policy, context,
+                )));
             }
             // Go `AlterTableMaskingPolicyState`.
             AlterMaskingPolicyAction::Enable(_) => new_policy.status = MaskingPolicyStatus::ENABLE,
@@ -380,11 +370,9 @@ impl Session {
             }
         }
         new_policy.updated_at = chrono::Local::now().fixed_offset();
-        Ok(Some(DdlStatement::AlterMaskingPolicy {
-            policy_id: policy.id,
-            policy: Box::new(new_policy),
-            schema_name,
-        }))
+        Ok(Some(tidb_ddl::cluster_ddl::masking_policy::alter_masking_policy_with_info(
+            &new_policy, policy.id, &schema_name, context,
+        )))
     }
 
     /// Whether `ddl` is a statement Go's masking-policy executor functions
@@ -408,15 +396,16 @@ impl Session {
     /// # Errors
     ///
     /// The refusal Go's executor function returns before its job.
-    pub fn cluster_masking_policy_statement(
+    pub fn cluster_masking_policy_job(
         &mut self,
         ddl: &DdlStmt,
-    ) -> Result<Option<DdlStatement>, DriverError> {
+        context: &dyn DdlSessionContext,
+    ) -> Result<Option<JobWrapper>, DriverError> {
         match ddl {
-            DdlStmt::CreateMaskingPolicy(create) => self.create_masking_policy(create),
+            DdlStmt::CreateMaskingPolicy(create) => self.create_masking_policy(create, context),
             DdlStmt::AlterTable(alter) => match alter.actions.as_slice() {
                 [AlterTableAction::MaskingPolicy(action)] => {
-                    self.alter_table_masking_policy(alter, action)
+                    self.alter_table_masking_policy(alter, action, context)
                 }
                 _ => Ok(None),
             },
@@ -464,9 +453,6 @@ impl Session {
             let Ok(code) = tidb_ddl_build::column_field_type::column_type_code(&column.ty) else {
                 continue;
             };
-            if is_masking_policy_supported_type(code) {
-                continue;
-            }
             // Go: a table or column that is not found is a later check's.
             let Ok((_, table)) = self.masking_policy_schema_and_table(&alter.name) else {
                 continue;
@@ -482,7 +468,7 @@ impl Session {
                 continue;
             };
             let policies = self.masking_policies()?;
-            if policies
+            if !is_masking_policy_supported_type(code) && policies
                 .iter()
                 .any(|policy| policy.table_id == table.id && policy.column_id == column_id)
             {

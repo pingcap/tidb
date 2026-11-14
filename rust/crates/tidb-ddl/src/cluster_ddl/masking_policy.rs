@@ -41,53 +41,101 @@ pub fn prepare_masking_policy_job_submission<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let (action, schema_id, schema_name, policy, args) = match statement {
+    let spec = match statement {
         DdlStatement::CreateMaskingPolicy {
             policy,
             replace_on_exist,
             ..
-        } => (
-            ActionType::ACTION_CREATE_MASKING_POLICY,
-            0,
-            policy.db_name.lowercase().to_owned(),
-            policy,
-            tidb_model::MaskingPolicyArgs {
-                policy: Some(GoShared::new((**policy).clone())),
-                replace_on_exist: *replace_on_exist,
-                ..tidb_model::MaskingPolicyArgs::default()
-            },
-        ),
+        } => create_masking_policy_with_info(policy, *replace_on_exist, job_context),
         DdlStatement::AlterMaskingPolicy {
             policy,
             policy_id,
             schema_name,
-        } => (
-            ActionType::ACTION_ALTER_MASKING_POLICY,
-            *policy_id,
-            schema_name.clone(),
-            policy,
-            tidb_model::MaskingPolicyArgs {
-                policy: Some(GoShared::new((**policy).clone())),
-                policy_id: *policy_id,
-                ..tidb_model::MaskingPolicyArgs::default()
-            },
-        ),
-        DdlStatement::DropMaskingPolicy { policy } => (
-            ActionType::ACTION_DROP_MASKING_POLICY,
-            policy.id,
-            policy.db_name.lowercase().to_owned(),
-            policy,
-            tidb_model::MaskingPolicyArgs {
-                policy_name: policy.name.clone(),
-                policy_id: policy.id,
-                ..tidb_model::MaskingPolicyArgs::default()
-            },
-        ),
+        } => alter_masking_policy_with_info(policy, *policy_id, schema_name, job_context),
+        DdlStatement::DropMaskingPolicy { policy } => drop_masking_policy(policy, job_context),
         _ => return Ok(None),
     };
+    submit_built_job(
+        snapshot,
+        Some(AddIndexSubmission::Job(Box::new(spec), Vec::new())),
+        start_ts,
+        upgrading,
+    )
+}
+
+/// Go `executor.createMaskingPolicyWithInfo`: the job before `doDDLJob2`.
+pub fn create_masking_policy_with_info(
+    policy: &MaskingPolicyInfo,
+    replace_on_exist: bool,
+    context: &dyn DdlSessionContext,
+) -> crate::JobWrapper {
+    masking_policy_job(
+        ActionType::ACTION_CREATE_MASKING_POLICY,
+        0,
+        policy.db_name.lowercase(),
+        policy,
+        tidb_model::MaskingPolicyArgs {
+            policy: Some(GoShared::new(policy.clone())),
+            replace_on_exist,
+            ..Default::default()
+        },
+        context,
+    )
+}
+
+/// Go `executor.AlterTableMaskingPolicyState`, `ModifyMaskingPolicyExpression`,
+/// and `ModifyMaskingPolicyRestrictOn`: the job before `doDDLJob2`.
+pub fn alter_masking_policy_with_info(
+    policy: &MaskingPolicyInfo,
+    policy_id: i64,
+    schema_name: &str,
+    context: &dyn DdlSessionContext,
+) -> crate::JobWrapper {
+    masking_policy_job(
+        ActionType::ACTION_ALTER_MASKING_POLICY,
+        policy_id,
+        schema_name,
+        policy,
+        tidb_model::MaskingPolicyArgs {
+            policy: Some(GoShared::new(policy.clone())),
+            policy_id,
+            ..Default::default()
+        },
+        context,
+    )
+}
+
+/// Go `executor.DropMaskingPolicy`: the job before `doDDLJob2`.
+pub fn drop_masking_policy(
+    policy: &MaskingPolicyInfo,
+    context: &dyn DdlSessionContext,
+) -> crate::JobWrapper {
+    masking_policy_job(
+        ActionType::ACTION_DROP_MASKING_POLICY,
+        policy.id,
+        policy.db_name.lowercase(),
+        policy,
+        tidb_model::MaskingPolicyArgs {
+            policy_name: policy.name.clone(),
+            policy_id: policy.id,
+            ..Default::default()
+        },
+        context,
+    )
+}
+
+/// Go `executor`'s shared masking-policy job fields.
+fn masking_policy_job(
+    action: ActionType,
+    schema_id: i64,
+    schema_name: &str,
+    policy: &MaskingPolicyInfo,
+    args: tidb_model::MaskingPolicyArgs,
+    job_context: &dyn DdlSessionContext,
+) -> crate::JobWrapper {
     let mut job = session_job(job_context, action);
     job.schema_id = schema_id;
-    job.schema_name = schema_name.clone().into();
+    job.schema_name = schema_name.into();
     job.table_id = policy.table_id;
     job.table_name = policy.table_name.lowercase().to_owned().into();
     job.involving_schema_info = GoSharedSlice::from_vec(vec![
@@ -101,15 +149,11 @@ pub fn prepare_masking_policy_job_submission<S: MetaSnapshot>(
             ..tidb_model::InvolvingSchemaInfo::default()
         },
     ]);
-    let built = AddIndexSubmission::Job(
-        Box::new(tidb_ddl_jobsubmit::JobSpec {
-            job,
-            args: JobArgsValue::MaskingPolicy(Some(GoShared::new(args))),
-            id_allocated: true,
-        }),
-        Vec::new(),
-    );
-    submit_built_job(snapshot, Some(built), start_ts, upgrading)
+    crate::JobWrapper {
+        job,
+        args: JobArgsValue::MaskingPolicy(Some(GoShared::new(args))),
+        id_allocated: true,
+    }
 }
 
 /// Go `w.sess.Execute` of a masking-policy statement. The job handlers run

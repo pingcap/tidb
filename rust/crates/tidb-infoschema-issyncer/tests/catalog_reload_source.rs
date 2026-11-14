@@ -678,6 +678,7 @@ fn diff_reloads_report_the_changed_physical_tables_and_actions() {
         catalog,
         applied,
         changes,
+        ..
     } = reloaded
     else {
         panic!("expected an incremental diff reload, got {reloaded:?}");
@@ -1451,21 +1452,194 @@ fn a_full_load_keeps_a_repairing_table_out_of_the_schema() {
     // `bad` is mid-repair: its table state is not public.
     snapshot.put(
         key::table_kv_key(3, 78),
-        go_table(78, "Bad", "bad").replace(r#""state":5,"pk_is_handle""#, r#""state":1,"pk_is_handle""#),
+        go_table(78, "Bad", "bad")
+            .replace(r#""state":5,"pk_is_handle""#, r#""state":1,"pk_is_handle""#),
     );
     snapshot.put(key::table_kv_key(3, 79), go_table(79, "Kept", "kept"));
     snapshot.commit_diff(100, &diff_json(100, ActionType::ACTION_CREATE_TABLE, 3, 79));
     let _off = RepairModeOff;
     tidb_domainutil::REPAIR_INFO.set_repair_mode(true);
-    tidb_domainutil::REPAIR_INFO.set_repair_table_list(vec!["campaign.rows".to_owned(), "campaign.bad".to_owned()]);
+    tidb_domainutil::REPAIR_INFO
+        .set_repair_table_list(vec!["campaign.rows".to_owned(), "campaign.bad".to_owned()]);
 
     // The domain's loader (`issyncer`), not the meta-only catalog read.
-    let catalog = tidb_infoschema_issyncer::catalog_reload::load_info_schema(&mut snapshot).expect("full load");
-    assert!(catalog.table_info_by_name("campaign", "rows").is_some(), "a public table on the list loads");
-    assert!(catalog.table_info_by_name("campaign", "bad").is_none(), "a repairing table stays out");
-    assert!(catalog.table_info_by_name("campaign", "kept").is_some(), "a table off the list loads");
+    let catalog = tidb_infoschema_issyncer::catalog_reload::load_info_schema(&mut snapshot)
+        .expect("full load");
     assert!(
-        tidb_domainutil::REPAIR_INFO.get_repaired_table_info_by_table_name("campaign", "bad").0.is_some(),
+        catalog.table_info_by_name("campaign", "rows").is_some(),
+        "a public table on the list loads"
+    );
+    assert!(
+        catalog.table_info_by_name("campaign", "bad").is_none(),
+        "a repairing table stays out"
+    );
+    assert!(
+        catalog.table_info_by_name("campaign", "kept").is_some(),
+        "a table off the list loads"
+    );
+    assert!(
+        tidb_domainutil::REPAIR_INFO
+            .get_repaired_table_info_by_table_name("campaign", "bad")
+            .0
+            .is_some(),
         "RepairInfo holds the repairing table"
     );
+}
+
+/// Go `Loader.LoadWithTS` returns the cached schema after the first load.
+/// Pin the single repair registration when the worker loads a version before
+/// the domain reload publishes it; Go's TestRepairTable uses this loader.
+#[test]
+fn test_repair_table_worker_and_reload_share_one_loader() {
+    use tidb_domainutil::REPAIR_INFO;
+    use tidb_infoschema_issyncer::catalog_watch::InfoCache;
+    struct RepairOff;
+    impl Drop for RepairOff {
+        fn drop(&mut self) {
+            REPAIR_INFO.remove_from_repair_info("campaign", "bad");
+            REPAIR_INFO.set_repair_mode(false);
+            REPAIR_INFO.set_repair_table_list(Vec::new());
+        }
+    }
+    let (mut snapshot, current) = started_cluster();
+    let cache = InfoCache::new(current);
+    let current = cache.get_latest();
+    snapshot.put(
+        key::table_kv_key(3, 78),
+        go_table(78, "Bad", "bad")
+            .replace(r#""state":5,"pk_is_handle""#, r#""state":1,"pk_is_handle""#),
+    );
+    // Force the full-load branch, which consults the repair list without a failpoint.
+    snapshot.commit_diff(201, &diff_json(201, ActionType::ACTION_REPAIR_TABLE, 3, 78));
+    REPAIR_INFO.set_repair_mode(true);
+    REPAIR_INFO.set_repair_table_list(vec!["campaign.bad".to_owned()]);
+    let _off = RepairOff;
+    let worker = cache.load_with_ts(&mut snapshot, 16).unwrap();
+    assert!(worker.table_info_by_name("campaign", "bad").is_none());
+    // Go TestLoadFromTS: the next load extends InfoCache.GetLatest, even
+    // before Syncer publishes the worker's preceding load to sessions.
+    snapshot.commit_diff(
+        202,
+        &diff_json(202, ActionType::ACTION_MODIFY_TABLE_COMMENT, 3, 77),
+    );
+    let second = cache.load_with_ts(&mut snapshot, 16).unwrap();
+    assert_eq!(second.schema_meta_version(), 202);
+    assert_eq!(cache.get_latest().schema_meta_version(), 100);
+    let loaded = cache.reload_with_ts(&mut snapshot, &current).unwrap();
+    assert!(matches!(loaded, ReloadedCatalog::Cached { .. }));
+    assert!(loaded
+        .catalog()
+        .unwrap()
+        .table_info_by_name("campaign", "bad")
+        .is_none());
+    let (_, db) = REPAIR_INFO.get_repaired_table_info_by_table_name("campaign", "bad");
+    let count = db
+        .unwrap()
+        .read()
+        .deprecated_tables
+        .iter_deref()
+        .filter(|t| t.read().name.lowercase() == "bad")
+        .count();
+    assert_eq!(count, 1, "the shared Loader applies the version once");
+}
+
+/// Go `TestMaskingPolicyReorganizingColumn` / its V1 probe: V1's
+/// applyTableUpdate resets; applyTableUpdateV2 does not. Policy jobs reset both.
+#[test]
+fn test_masking_policy_reorganizing_column_cache() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use tidb_infoschema::masking_policy::{MaskingPolicySession, MaskingPolicySessionFactory};
+    struct EmptySession;
+    impl MaskingPolicySession for EmptySession {
+        fn exec_restricted_sql(
+            &self,
+            _: u64,
+            _: &str,
+            _: &[i64],
+        ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
+            Ok(Vec::new())
+        }
+    }
+    for use_v2 in [false, true] {
+        let (mut snapshot, mut catalog) = started_cluster();
+        catalog.set_uses_infoschema_v2(use_v2);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&calls);
+        let factory: MaskingPolicySessionFactory = Arc::new(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(EmptySession))
+        });
+        catalog.set_masking_policy_factory(factory);
+        assert!(catalog.all_masking_policies().is_empty());
+        snapshot.commit_diff(
+            101,
+            &diff_json(101, ActionType::ACTION_MODIFY_COLUMN, 3, 77),
+        );
+        let next = reload_cluster_catalog(&mut snapshot, &catalog, None).unwrap();
+        let next = next.catalog().unwrap();
+        assert!(next.all_masking_policies().is_empty());
+        let expected = if use_v2 { 1 } else { 2 };
+        assert_eq!(calls.load(Ordering::SeqCst), expected);
+        snapshot.commit_diff(
+            102,
+            &diff_json(102, ActionType::ACTION_ALTER_MASKING_POLICY, 3, 77),
+        );
+        let changed = reload_cluster_catalog(&mut snapshot, next, None).unwrap();
+        assert!(changed.catalog().unwrap().all_masking_policies().is_empty());
+        assert_eq!(calls.load(Ordering::SeqCst), expected + 1);
+        assert!(catalog.all_masking_policies().is_empty());
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            expected + 1,
+            "old image retains its own loaded state"
+        );
+    }
+}
+
+/// Go `TestLoadFromTS` (pkg/infoschema/issyncer/loader_test.go): each loaded
+/// version enters InfoCache; the next diff starts there and returns that
+/// oldSchemaVersion, even before a domain publication.
+#[test]
+fn test_load_from_ts() {
+    use tidb_infoschema_issyncer::catalog_watch::InfoCache;
+    let (mut snapshot, current) = started_cluster();
+    let cache = InfoCache::new(current);
+    let published = cache.get_latest();
+    assert_eq!(
+        cache
+            .load_with_ts(&mut snapshot, 16)
+            .unwrap()
+            .schema_meta_version(),
+        100
+    );
+    snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
+    snapshot.commit_diff(101, &diff_json(101, ActionType::ACTION_CREATE_TABLE, 3, 78));
+    let first = cache.load_with_ts(&mut snapshot, 16).unwrap();
+    assert!(first.table_info_by_name("campaign", "notes").is_some());
+    snapshot.put(key::table_kv_key(3, 79), go_table(79, "Extra", "extra"));
+    snapshot.commit_diff(102, &diff_json(102, ActionType::ACTION_CREATE_TABLE, 3, 79));
+    let loaded = cache.reload_with_ts(&mut snapshot, &published).unwrap();
+    let ReloadedCatalog::Diffs {
+        previous_version,
+        catalog,
+        applied,
+        changes,
+    } = loaded
+    else {
+        panic!("incremental load")
+    };
+    assert_eq!(previous_version, 101);
+    assert_eq!(applied, 1);
+    assert_eq!(changes.phy_tbl_ids, [79]);
+    assert_eq!(catalog.schema_meta_version(), 102);
+    assert!(catalog.table_info_by_name("campaign", "notes").is_some());
+    assert!(catalog.table_info_by_name("campaign", "extra").is_some());
+    assert_eq!(cache.get_latest().schema_meta_version(), 100);
+    assert!(matches!(
+        cache.reload_with_ts(&mut snapshot, &published).unwrap(),
+        ReloadedCatalog::Cached { .. }
+    ));
 }

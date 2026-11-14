@@ -1441,6 +1441,8 @@ pub struct StmtContextData {
     allocator_runtime_stats: Arc<std::sync::Mutex<Option<Arc<tidb_autoid::AllocatorRuntimeStats>>>>,
     /// Go `SessionVars.CDCWriteSource`, persisted in every user DDL job.
     ddl_cdc_write_source: u64,
+    /// Go `SessionVars.EnableRowLevelChecksum`, captured for DDL admission.
+    ddl_enable_row_level_checksum: bool,
     /// Go `SessionVars.DDLReorgPriority`, used by ADD CHECK validation reads.
     ddl_reorg_priority: i64,
     /// Go `TraceInfo.SessionAlias`, captured when the DDL job is submitted.
@@ -3361,6 +3363,7 @@ impl StmtContext {
             hypo_index_writes: Arc::default(),
             allocator_runtime_stats: Arc::default(),
             ddl_cdc_write_source: 0,
+            ddl_enable_row_level_checksum: false,
             // Go initializes `DDLReorgPriority` to `kv.PriorityLow`.
             ddl_reorg_priority: 1,
             ddl_session_alias: String::new(),
@@ -4003,6 +4006,15 @@ impl StmtContext {
     #[must_use]
     pub fn ddl_query(&self) -> &str {
         &self.ddl_query
+    }
+
+    /// Go `SessionVars.EnableRowLevelChecksum` as read by `executor.AlterTable`.
+    pub fn ddl_enable_row_level_checksum(&self) -> bool { self.ddl_enable_row_level_checksum }
+
+    /// Go `SessionVars.EnableRowLevelChecksum` carried into DDL admission.
+    pub fn with_ddl_enable_row_level_checksum(mut self, enabled: bool) -> Self {
+        self.ddl_enable_row_level_checksum = enabled;
+        self
     }
 
     /// CDC write-source identifier captured for a persisted DDL job.

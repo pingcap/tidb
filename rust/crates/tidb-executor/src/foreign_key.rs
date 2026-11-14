@@ -1363,7 +1363,7 @@ fn check_fk_cascade_table_lock(
     let (db, table) = (&fkc.plan.child_database, &fkc.plan.child_table);
     tidb_lock::check_visits(
         &tidb_lock::Checker::new(locked_tables, catalog),
-        &[(db, table, tidb_mysql::SelectPriv), (db, table, write)],
+        &[(db, table, tidb_mysql::SelectPriv, false), (db, table, write, false)],
     )
 }
 

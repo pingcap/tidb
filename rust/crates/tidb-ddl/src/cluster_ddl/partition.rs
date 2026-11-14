@@ -105,237 +105,270 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
             table,
             action,
             ..
-        } => {
-            let (database_id, stored) = locate_table(&catalog, schema, table)?;
-            let stored = stored.read();
-            let Some(partitioning) = stored.get_partition_info() else {
-                return Err(admission(tidb_terror::MysqlError::from_terror(
-                    &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
-                        .gen_with_stack_by_args(&[]),
-                )));
-            };
-            let partitioning = partitioning.read().clone_like_go();
-            // Go `AddTablePartitions` refuses a table with AFFINITY before
-            // it hands a HASH/KEY table to `hashPartitionManagement`.
-            if stored.affinity.is_none()
-                && matches!(
-                    partitioning.partition_type,
-                    tidb_ast::PartitionType::HASH | tidb_ast::PartitionType::KEY
-                )
-            {
-                return Ok(None);
-            }
-            // `BuildAddedPartitionInfo` and `CheckAndUpdateAddedPartitionDefinitions`
-            // over the session's expression context (Go `ctx.GetExprCtx()`),
-            // whose notes this statement reports.
-            let context = job_context.with_isolated_warnings();
-            let change = apply_partition_change(&stored, action, &*context)?;
-            let transformed = change.definitions;
-            let notes = partition_notes(&*context);
-            let old_names = partitioning
-                .definitions
-                .snapshot()
-                .iter()
-                .map(|definition| definition.name.lowercase().to_owned())
-                .collect::<std::collections::HashSet<_>>();
-            // `assignGIDsForJobs` draws the new partitions' ids.
-            let mut added = transformed
-                .into_iter()
-                .filter(|definition| !old_names.contains(definition.name.lowercase()))
-                .map(|definition| tidb_model::partition::PartitionDefinition {
-                    id: 0,
-                    ..definition
-                })
-                .collect::<Vec<_>>();
-            // `IF NOT EXISTS` over an existing name: Go's note, no job.
-            if added.is_empty() {
-                return Ok(Some(AddIndexSubmission::AlreadySatisfied {
-                    detail: format!("partitions of `{schema}`.`{table}` already exist"),
-                    warnings: notes,
-                }));
-            }
-            // `handlePartitionPlacement`.
-            let mut host = super::reorganize_partition::AdmissionReorgHost::new(snapshot, job_context)?;
-            tidb_ddl_build::partition_ddl::ReorgHost::handle_partition_placement(&mut host, &mut added)
-                .map_err(DdlPlanError::from_mysql_error)?;
-            let mut notes = notes;
-            notes.extend(host.placement_note());
-            let part_info = tidb_model::partition::PartitionInfo {
-                partition_type: partitioning.partition_type,
-                expr: partitioning.expr.clone(),
-                columns: partitioning.columns.clone(),
-                enable: partitioning.enable,
-                num: added.len() as u64,
-                definitions: added.into(),
-                ..tidb_model::partition::PartitionInfo::default()
-            };
-            let mut job = partition_job(
-                job_context,
-                ActionType::ACTION_ADD_TABLE_PARTITION,
-                database_id,
-                schema,
-                &stored,
-                interval_query_rewrite(action, change.query_rewrite).as_ref(),
-            );
-            scatter_region_vars(&mut job, job_context);
-            let args = tidb_model::TablePartitionArgs {
-                part_info: GoField::new(Some(GoShared::new(part_info))),
-                ..tidb_model::TablePartitionArgs::default()
-            };
-            AddIndexSubmission::Job(
-                Box::new(tidb_ddl_jobsubmit::JobSpec {
-                    job,
-                    args: JobArgsValue::TablePartition(Some(GoShared::new(args))),
-                    // `assignGIDsForJobs` draws the new partitions' ids.
-                    id_allocated: false,
-                }),
-                notes,
-            )
-        }
+        } => add_table_partitions_job(snapshot, &catalog, schema, table, action, job_context)?,
         DdlStatement::DropPartitions {
             schema,
             table,
             action,
             ..
-        } => {
-            let (database_id, stored) = locate_table(&catalog, schema, table)?;
-            let stored = stored.read();
-            // `CheckDropTablePartition`, and FIRST PARTITION's generated
-            // names.
-            let context = job_context.with_isolated_warnings();
-            let change = apply_partition_change(&stored, action, &*context)?;
-            let transformed = change.definitions;
-            let notes = partition_notes(&*context);
-            let remaining = transformed
-                .iter()
-                .map(|definition| definition.name.lowercase().to_owned())
-                .collect::<std::collections::HashSet<_>>();
-            let dropped = stored
-                .get_partition_info()
-                .map(|partitioning| partitioning.read().definitions.snapshot())
-                .unwrap_or_default()
-                .into_iter()
-                .map(|definition| definition.name.lowercase().to_owned())
-                .filter(|name| !remaining.contains(name))
-                .collect::<Vec<_>>();
-            // `IF EXISTS` over a missing partition: Go's note, no job.
-            if dropped.is_empty() {
-                return Ok(Some(AddIndexSubmission::AlreadySatisfied {
-                    detail: format!("no partition of `{schema}`.`{table}` to drop"),
-                    warnings: notes,
-                }));
-            }
-            // Go's `PartNames`: the names as written, in statement order.
-            let part_names = match action.as_ref() {
-                tidb_ast::AlterPartitionAction::Drop { names, .. } => {
-                    names.iter().map(|name| name.go_to_lower()).collect()
-                }
-                _ => dropped,
-            };
-            let mut job = partition_job(
-                job_context,
-                ActionType::ACTION_DROP_TABLE_PARTITION,
-                database_id,
-                schema,
-                &stored,
-                interval_query_rewrite(action, change.query_rewrite).as_ref(),
-            );
-            job.schema_state = SchemaState::PUBLIC;
-            let args = tidb_model::TablePartitionArgs {
-                part_names: GoField::new(GoSharedSlice::from_vec(
-                    part_names.into_iter().map(Into::into).collect(),
-                )),
-                ..tidb_model::TablePartitionArgs::default()
-            };
-            AddIndexSubmission::Job(
-                Box::new(tidb_ddl_jobsubmit::JobSpec {
-                    job,
-                    args: JobArgsValue::TablePartition(Some(GoShared::new(args))),
-                    id_allocated: true,
-                }),
-                notes,
-            )
-        }
+        } => drop_table_partition_job(snapshot, &catalog, schema, table, action, job_context)?,
         DdlStatement::TruncatePartitions {
             schema,
             table,
             action,
             ..
-        } => {
-            let (database_id, stored) = locate_table(&catalog, schema, table)?;
-            let stored = stored.read();
-            let Some(partitioning) = stored.get_partition_info() else {
-                return Err(admission(tidb_terror::MysqlError::from_terror(
-                    &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
-                        .gen_with_stack_by_args(&[]),
-                )));
-            };
-            let definitions = partitioning.read().definitions.snapshot();
-            // Go's `getTruncatedParts`: ALL, or each name once in statement
-            // order (MySQL allows a name twice).
-            let old_partition_ids = match action.as_ref() {
-                tidb_ast::AlterPartitionAction::Truncate { all: true, .. } => definitions
-                    .iter()
-                    .map(|definition| definition.id)
-                    .collect::<Vec<_>>(),
-                tidb_ast::AlterPartitionAction::Truncate { names, .. } => {
-                    let mut positions = Vec::new();
-                    for name in names {
-                        let lower = name.go_to_lower();
-                        let Some(position) = definitions
-                            .iter()
-                            .position(|definition| definition.name.lowercase() == lower)
-                        else {
-                            return Err(admission(tidb_terror::MysqlError::from_terror(
-                                &tidb_table::table_errors::ERR_UNKNOWN_PARTITION
-                                    .gen_with_stack_by_args(&[
-                                        (lower).to_string().into(),
-                                        (table.clone()).to_string().into(),
-                                    ]),
-                            )));
-                        };
-                        if !positions.contains(&position) {
-                            positions.push(position);
-                        }
-                    }
-                    positions
-                        .into_iter()
-                        .map(|position| definitions[position].id)
-                        .collect()
-                }
-                other => unreachable!("lowered only for TRUNCATE PARTITION, got {other:?}"),
-            };
-            let mut job = partition_job(
-                job_context,
-                ActionType::ACTION_TRUNCATE_TABLE_PARTITION,
-                database_id,
-                schema,
-                &stored,
-                None,
-            );
-            job.schema_state = SchemaState::PUBLIC;
-            scatter_region_vars(&mut job, job_context);
-            let args = tidb_model::TruncateTableArgs {
-                old_partition_ids: GoField::new(GoSharedSlice::from_vec(old_partition_ids)),
-                ..tidb_model::TruncateTableArgs::default()
-            };
-            AddIndexSubmission::Job(
-                Box::new(tidb_ddl_jobsubmit::JobSpec {
-                    job,
-                    args: JobArgsValue::TruncateTable(Some(GoShared::new(args))),
-                    // `assignGIDsForJobs` draws the new partition ids.
-                    id_allocated: false,
-                }),
-                Vec::new(),
-            )
-        }
+        } => truncate_table_partition_job(snapshot, &catalog, schema, table, action, job_context)?,
         _ => return Ok(None),
     };
-    submit_built_job(
-        snapshot, Some(built),
-        start_ts,
-        upgrading,
-    )
+    submit_built_job(snapshot, built, start_ts, upgrading)
+}
+
+/// Go `executor.AddTablePartitions` before `doDDLJob2`.
+pub(crate) fn add_table_partitions_job<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    action: &Box<tidb_ast::AlterPartitionAction>,
+    job_context: &dyn DdlSessionContext,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let built = {
+        let (database_id, stored) = locate_table(&catalog, schema, table)?;
+        let stored = stored.read();
+        let Some(partitioning) = stored.get_partition_info() else {
+            return Err(admission(tidb_terror::MysqlError::from_terror(
+                &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED.gen_with_stack_by_args(&[]),
+            )));
+        };
+        let partitioning = partitioning.read().clone_like_go();
+        // Go `AddTablePartitions` refuses a table with AFFINITY before
+        // it hands a HASH/KEY table to `hashPartitionManagement`.
+        if stored.affinity.is_none()
+            && matches!(
+                partitioning.partition_type,
+                tidb_ast::PartitionType::HASH | tidb_ast::PartitionType::KEY
+            )
+        {
+            return Ok(None);
+        }
+        // `BuildAddedPartitionInfo` and `CheckAndUpdateAddedPartitionDefinitions`
+        // over the session's expression context (Go `ctx.GetExprCtx()`),
+        // whose notes this statement reports.
+        let context = job_context.with_isolated_warnings();
+        let change = apply_partition_change(&stored, action, &*context)?;
+        let transformed = change.definitions;
+        let notes = partition_notes(&*context);
+        let old_names = partitioning
+            .definitions
+            .snapshot()
+            .iter()
+            .map(|definition| definition.name.lowercase().to_owned())
+            .collect::<std::collections::HashSet<_>>();
+        // `assignGIDsForJobs` draws the new partitions' ids.
+        let mut added = transformed
+            .into_iter()
+            .filter(|definition| !old_names.contains(definition.name.lowercase()))
+            .map(|definition| tidb_model::partition::PartitionDefinition {
+                id: 0,
+                ..definition
+            })
+            .collect::<Vec<_>>();
+        // `IF NOT EXISTS` over an existing name: Go's note, no job.
+        if added.is_empty() {
+            return Ok(Some(AddIndexSubmission::AlreadySatisfied {
+                detail: format!("partitions of `{schema}`.`{table}` already exist"),
+                warnings: notes,
+            }));
+        }
+        // `handlePartitionPlacement`.
+        let mut host = super::reorganize_partition::AdmissionReorgHost::new(snapshot, job_context)?;
+        tidb_ddl_build::partition_ddl::ReorgHost::handle_partition_placement(&mut host, &mut added)
+            .map_err(DdlPlanError::from_mysql_error)?;
+        let mut notes = notes;
+        notes.extend(host.placement_note());
+        let part_info = tidb_model::partition::PartitionInfo {
+            partition_type: partitioning.partition_type,
+            expr: partitioning.expr.clone(),
+            columns: partitioning.columns.clone(),
+            enable: partitioning.enable,
+            num: added.len() as u64,
+            definitions: added.into(),
+            ..tidb_model::partition::PartitionInfo::default()
+        };
+        let mut job = partition_job(
+            job_context,
+            ActionType::ACTION_ADD_TABLE_PARTITION,
+            database_id,
+            schema,
+            &stored,
+            interval_query_rewrite(action, change.query_rewrite).as_ref(),
+        );
+        scatter_region_vars(&mut job, job_context);
+        let args = tidb_model::TablePartitionArgs {
+            part_info: GoField::new(Some(GoShared::new(part_info))),
+            ..tidb_model::TablePartitionArgs::default()
+        };
+        AddIndexSubmission::Job(
+            Box::new(tidb_ddl_jobsubmit::JobSpec {
+                job,
+                args: JobArgsValue::TablePartition(Some(GoShared::new(args))),
+                // `assignGIDsForJobs` draws the new partitions' ids.
+                id_allocated: false,
+            }),
+            notes,
+        )
+    };
+    Ok(Some(built))
+}
+
+/// Go `executor.DropTablePartition` before `doDDLJob2`.
+pub(crate) fn drop_table_partition_job<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    action: &Box<tidb_ast::AlterPartitionAction>,
+    job_context: &dyn DdlSessionContext,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let built = {
+        let (database_id, stored) = locate_table(&catalog, schema, table)?;
+        let stored = stored.read();
+        // `CheckDropTablePartition`, and FIRST PARTITION's generated
+        // names.
+        let context = job_context.with_isolated_warnings();
+        let change = apply_partition_change(&stored, action, &*context)?;
+        let transformed = change.definitions;
+        let notes = partition_notes(&*context);
+        let remaining = transformed
+            .iter()
+            .map(|definition| definition.name.lowercase().to_owned())
+            .collect::<std::collections::HashSet<_>>();
+        let dropped = stored
+            .get_partition_info()
+            .map(|partitioning| partitioning.read().definitions.snapshot())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|definition| definition.name.lowercase().to_owned())
+            .filter(|name| !remaining.contains(name))
+            .collect::<Vec<_>>();
+        // `IF EXISTS` over a missing partition: Go's note, no job.
+        if dropped.is_empty() {
+            return Ok(Some(AddIndexSubmission::AlreadySatisfied {
+                detail: format!("no partition of `{schema}`.`{table}` to drop"),
+                warnings: notes,
+            }));
+        }
+        // Go's `PartNames`: the names as written, in statement order.
+        let part_names = match action.as_ref() {
+            tidb_ast::AlterPartitionAction::Drop { names, .. } => {
+                names.iter().map(|name| name.go_to_lower()).collect()
+            }
+            _ => dropped,
+        };
+        let mut job = partition_job(
+            job_context,
+            ActionType::ACTION_DROP_TABLE_PARTITION,
+            database_id,
+            schema,
+            &stored,
+            interval_query_rewrite(action, change.query_rewrite).as_ref(),
+        );
+        job.schema_state = SchemaState::PUBLIC;
+        let args = tidb_model::TablePartitionArgs {
+            part_names: GoField::new(GoSharedSlice::from_vec(
+                part_names.into_iter().map(Into::into).collect(),
+            )),
+            ..tidb_model::TablePartitionArgs::default()
+        };
+        AddIndexSubmission::Job(
+            Box::new(tidb_ddl_jobsubmit::JobSpec {
+                job,
+                args: JobArgsValue::TablePartition(Some(GoShared::new(args))),
+                id_allocated: true,
+            }),
+            notes,
+        )
+    };
+    Ok(Some(built))
+}
+
+/// Go `executor.TruncateTablePartition` before `doDDLJob2`.
+pub(crate) fn truncate_table_partition_job<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    action: &Box<tidb_ast::AlterPartitionAction>,
+    job_context: &dyn DdlSessionContext,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let built = {
+        let (database_id, stored) = locate_table(&catalog, schema, table)?;
+        let stored = stored.read();
+        let Some(partitioning) = stored.get_partition_info() else {
+            return Err(admission(tidb_terror::MysqlError::from_terror(
+                &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED.gen_with_stack_by_args(&[]),
+            )));
+        };
+        let definitions = partitioning.read().definitions.snapshot();
+        // Go's `getTruncatedParts`: ALL, or each name once in statement
+        // order (MySQL allows a name twice).
+        let old_partition_ids = match action.as_ref() {
+            tidb_ast::AlterPartitionAction::Truncate { all: true, .. } => definitions
+                .iter()
+                .map(|definition| definition.id)
+                .collect::<Vec<_>>(),
+            tidb_ast::AlterPartitionAction::Truncate { names, .. } => {
+                let mut positions = Vec::new();
+                for name in names {
+                    let lower = name.go_to_lower();
+                    let Some(position) = definitions
+                        .iter()
+                        .position(|definition| definition.name.lowercase() == lower)
+                    else {
+                        return Err(admission(tidb_terror::MysqlError::from_terror(
+                            &tidb_table::table_errors::ERR_UNKNOWN_PARTITION
+                                .gen_with_stack_by_args(&[
+                                    (lower).to_string().into(),
+                                    (table.clone()).to_string().into(),
+                                ]),
+                        )));
+                    };
+                    if !positions.contains(&position) {
+                        positions.push(position);
+                    }
+                }
+                positions
+                    .into_iter()
+                    .map(|position| definitions[position].id)
+                    .collect()
+            }
+            other => unreachable!("lowered only for TRUNCATE PARTITION, got {other:?}"),
+        };
+        let mut job = partition_job(
+            job_context,
+            ActionType::ACTION_TRUNCATE_TABLE_PARTITION,
+            database_id,
+            schema,
+            &stored,
+            None,
+        );
+        job.schema_state = SchemaState::PUBLIC;
+        scatter_region_vars(&mut job, job_context);
+        let args = tidb_model::TruncateTableArgs {
+            old_partition_ids: GoField::new(GoSharedSlice::from_vec(old_partition_ids)),
+            ..tidb_model::TruncateTableArgs::default()
+        };
+        AddIndexSubmission::Job(
+            Box::new(tidb_ddl_jobsubmit::JobSpec {
+                job,
+                args: JobArgsValue::TruncateTable(Some(GoShared::new(args))),
+                // `assignGIDsForJobs` draws the new partition ids.
+                id_allocated: false,
+            }),
+            Vec::new(),
+        )
+    };
+    Ok(Some(built))
 }
 
 fn table_partition_args(

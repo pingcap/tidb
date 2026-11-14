@@ -16,7 +16,6 @@
 //! jobs IMPORT INTO and BR queue by ID.
 
 use super::*;
-use tidb_ddl::cluster_ddl::DdlStatement;
 use tidb_model::TableMode;
 
 /// The last job's id and its type, schema state and state.
@@ -56,12 +55,10 @@ fn alter_table_mode_runs_as_a_persisted_job_like_go() {
         stack
             .factory
             .ddl
-            .execute(
-                &DdlStatement::AlterTableMode {
-                    table_mode,
-                    schema_id,
-                    table_id,
-                },
+            .alter_table_mode(
+                table_mode,
+                schema_id,
+                table_id,
                 &tidb_sessionctx::StmtContext::for_query(),
             )
             .map(|_| ())
@@ -83,7 +80,11 @@ fn alter_table_mode_runs_as_a_persisted_job_like_go() {
     assert_eq!(stored().2, TableMode::RESTORE);
 
     set(TableMode::RESTORE, schema_id, table_id).unwrap();
-    assert_eq!(last_job(&mut session).0, restored, "the mode already holds: no job");
+    assert_eq!(
+        last_job(&mut session).0,
+        restored,
+        "the mode already holds: no job"
+    );
 
     set(TableMode::NORMAL, schema_id, table_id).unwrap();
     assert_eq!(stored().2, TableMode::NORMAL);
@@ -94,12 +95,18 @@ fn alter_table_mode_runs_as_a_persisted_job_like_go() {
     // Go `executor.AlterTableMode` resolves both IDs in the latest schema.
     let schema = set(TableMode::NORMAL, schema_id + 1000, table_id).unwrap_err();
     assert!(
-        schema.contains(&format!("Unknown database 'SchemaID: {}'", schema_id + 1000)),
+        schema.contains(&format!(
+            "Unknown database 'SchemaID: {}'",
+            schema_id + 1000
+        )),
         "{schema}"
     );
     let table = set(TableMode::NORMAL, schema_id, table_id + 1000).unwrap_err();
     assert!(
-        table.contains(&format!("Table 'test.TableID: {}' doesn't exist", table_id + 1000)),
+        table.contains(&format!(
+            "Table 'test.TableID: {}' doesn't exist",
+            table_id + 1000
+        )),
         "{table}"
     );
 }
@@ -135,12 +142,10 @@ fn set_table_mode(stack: &UnistoreClusterStack, table: &str, table_mode: TableMo
     stack
         .factory
         .ddl
-        .execute(
-            &DdlStatement::AlterTableMode {
-                table_mode,
-                schema_id,
-                table_id,
-            },
+        .alter_table_mode(
+            table_mode,
+            schema_id,
+            table_id,
             &tidb_sessionctx::StmtContext::for_query(),
         )
         .unwrap();
@@ -312,20 +317,20 @@ fn refresh_meta_runs_as_a_persisted_job_like_go() {
         .unwrap();
     let (schema_id, table_id) = (schema.read().id, table.read().id);
     let schema_version = |session: &mut Session| -> i64 {
-        displayed(rows(session, "ADMIN SHOW DDL"))[0][0].parse().unwrap()
+        displayed(rows(session, "ADMIN SHOW DDL"))[0][0]
+            .parse()
+            .unwrap()
     };
     let before = schema_version(&mut session);
     let (created, _) = last_job(&mut session);
     stack
         .factory
         .ddl
-        .execute(
-            &DdlStatement::RefreshMeta {
-                schema_id,
-                table_id,
-                involved_db: "test1".to_owned(),
-                involved_table: "t1".to_owned(),
-            },
+        .refresh_meta(
+            schema_id,
+            table_id,
+            "test1",
+            "t1",
             &tidb_sessionctx::StmtContext::for_query(),
         )
         .expect("the refresh runs");
@@ -333,4 +338,129 @@ fn refresh_meta_runs_as_a_persisted_job_like_go() {
     let (refreshed, kind) = last_job(&mut session);
     assert!(refreshed > created);
     assert_eq!(kind, "refresh meta|public|synced");
+}
+
+/// Go `TestTableModeRemainders` (zzprobe/d01): the prepared resolve context
+/// omits ALTER TABLE / CREATE INDEX; DROP INDEX / TRUNCATE keep their names.
+#[test]
+fn test_table_mode_remainders() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(2141)).unwrap();
+    rows(&mut session, "create database if not exists test");
+    rows(&mut session, "use test");
+    rows(&mut session, "create table t(a int, index i(a))");
+    set_table_mode(&stack, "t", TableMode::RESTORE);
+    for sql in [
+        "load data local infile '/tmp/d01-data' into table t",
+        "load data infile '/tmp/d01-data' into table t",
+        "import into t from '/tmp/d01-data'",
+    ] {
+        assert_eq!(
+            refusal(&mut session, sql).as_deref(),
+            Some("8258|Table t is in mode Restore"),
+            "{sql}"
+        );
+    }
+    for sql in ["alter table t add column b int", "create index j on t(a)"] {
+        rows(&mut session, &format!("prepare s from '{sql}'"));
+        rows(&mut session, "execute s");
+    }
+    for sql in ["drop index i on t", "truncate table t"] {
+        rows(&mut session, &format!("prepare s from '{sql}'"));
+        assert_eq!(
+            refusal(&mut session, "execute s").as_deref(),
+            Some("8258|Table t is in mode Restore")
+        );
+    }
+    // The binary protocol retains the same inPrepare resolve context.
+    for sql in ["alter table t add column c int", "create index k on t(a)"] {
+        let prepared = session.node_conn().prepare_general(sql).unwrap();
+        session.node_conn().execute_general(&prepared, &[]).unwrap();
+    }
+    for sql in ["drop index i on t", "truncate table t"] {
+        let prepared = session.node_conn().prepare_general(sql).unwrap();
+        let error = session
+            .node_conn()
+            .execute_general(&prepared, &[])
+            .err()
+            .unwrap();
+        assert!(format!("{error:?}").contains("Table t is in mode Restore"));
+    }
+    session.set_restricted_sql(true);
+    for sql in [
+        "select * from t",
+        "insert into t(a) values(1)",
+        "alter table t add column d int",
+    ] {
+        assert_eq!(
+            refusal(&mut session, sql).as_deref(),
+            Some("8258|Table t is in mode Restore"),
+            "{sql}"
+        );
+    }
+    session.set_restricted_sql(false);
+    // The preparation flag must not escape into the next ordinary statement.
+    assert_eq!(
+        refusal(&mut session, "alter table t add column d int").as_deref(),
+        Some("8258|Table t is in mode Restore")
+    );
+}
+
+/// Go `TestTableModePlanCacheHit` (zzprobe/d01): mutate only the same image's
+/// mode to distinguish a cache hit from a schema-version invalidation.
+#[test]
+fn test_table_mode_plan_cache_hit() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(2142)).unwrap();
+    for sql in [
+        "create database if not exists test",
+        "use test",
+        "create table t(a int)",
+        "insert into t values(1),(2)",
+        "prepare s from 'select a+1 from t where a > ?'",
+        "set @a=0",
+    ] {
+        rows(&mut session, sql);
+    }
+    rows(&mut session, "create table sentinel(a int)");
+    set_table_mode(&stack, "sentinel", TableMode::RESTORE);
+    for _ in 0..2 {
+        assert_eq!(
+            displayed(rows(&mut session, "execute s using @a")),
+            [["2"], ["3"]]
+        );
+    }
+    assert_eq!(
+        displayed(rows(&mut session, "select @@last_plan_from_cache")),
+        [["1"]]
+    );
+    // Go TableByName(...).Meta(), not DBInfo's metadata-only table list.
+    let table = {
+        let catalog = session.lock_catalog().unwrap();
+        let tidb_infoschema::TableEntry::Kv(table) = catalog.table_in("test", "t").unwrap() else {
+            panic!("base table")
+        };
+        table.meta()
+    };
+    table.write().mode = TableMode::RESTORE;
+    assert_eq!(
+        session
+            .lock_catalog()
+            .unwrap()
+            .protected_table_mode(&[vec!["t".to_owned()]], "test"),
+        Some(("t".to_owned(), TableMode::RESTORE))
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "execute s using @a")),
+        [["2"], ["3"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "select @@last_plan_from_cache")),
+        [["1"]]
+    );
+    assert_eq!(
+        refusal(&mut session, "select a+1 from t where a>0").as_deref(),
+        Some("8258|Table t is in mode Restore")
+    );
+    table.write().mode = TableMode::NORMAL;
 }

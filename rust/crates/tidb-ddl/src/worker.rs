@@ -19,6 +19,9 @@
 //! statement is routed here and what happens to the connection's own
 //! catalog afterwards.
 
+#[path = "executor.rs"]
+mod executor;
+
 use tidb_ddl_build::partition_reorg::KvTablePartitionReorg;
 use tidb_ddl_build::table_backfill::KvTableBackfill;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -63,6 +66,326 @@ use tidb_table::table_from_meta::{cluster_table, AutoIdSource};
 /// exercised without a cluster. The production implementation is
 /// [`RealClusterDdl`].
 pub trait ClusterDdl: Send + Sync {
+    /// Go `executor.UpdateTableReplicaInfo`.
+    fn update_table_replica_info(
+        &self,
+        table_id: i64,
+        available: bool,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.AlterTable`.
+    fn alter_table(
+        &self,
+        statement: &tidb_ast::AlterTableStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.RecoverSchema`.
+    fn recover_schema(
+        &self,
+        name: &str,
+        new_name: &str,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.RecoverTable`.
+    fn recover_table(
+        &self,
+        table: &Option<Vec<String>>,
+        job_id: i64,
+        new_name: &str,
+        flashback: bool,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.DropIndex`.
+    fn drop_index(
+        &self,
+        statement: &tidb_ast::DropIndexStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.CreateIndex`.
+    fn create_index(
+        &self,
+        statement: &tidb_ast::CreateIndexStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.AlterTableSetTiFlashReplica`.
+    fn alter_table_set_tiflash_replica(
+        &self,
+        schema: &str,
+        table: &str,
+        count: u64,
+        labels: &[String],
+        reset_available: bool,
+        hypo: bool,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.AlterSchema`.
+    fn alter_schema(
+        &self,
+        name: &str,
+        options: &[tidb_ast::DatabaseOption],
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.DropPlacementPolicy`.
+    fn drop_placement_policy(
+        &self,
+        statement: &tidb_ast::DropPlacementPolicyStmt,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.AlterPlacementPolicy`.
+    fn alter_placement_policy(
+        &self,
+        statement: &tidb_ast::AlterPlacementPolicyStmt,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.CreatePlacementPolicy`.
+    fn create_placement_policy(
+        &self,
+        statement: &tidb_ast::CreatePlacementPolicyStmt,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.RefreshMeta`.
+    fn refresh_meta(
+        &self,
+        schema_id: i64,
+        table_id: i64,
+        involved_db: &str,
+        involved_table: &str,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.AlterTableMode`.
+    fn alter_table_mode(
+        &self,
+        table_mode: tidb_model::TableMode,
+        schema_id: i64,
+        table_id: i64,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.CreateView` after `DDLExec.executeCreateView` resolves its body.
+    fn create_view(
+        &self,
+        schema: &str,
+        name: &str,
+        or_replace: bool,
+        info: &tidb_model::TableInfo,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.DoDDLJobWrapper` for an executor's already-built job.
+    fn do_ddl_job_wrapper(
+        &self,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+        job: crate::JobWrapper,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.CreateSchema`.
+    fn create_schema(
+        &self,
+        name: &str,
+        if_not_exists: bool,
+        options: &[tidb_ast::DatabaseOption],
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.CreateTable`.
+    fn create_table(
+        &self,
+        statement: &tidb_ast::CreateTableStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.CreateSequence`.
+    fn create_sequence(
+        &self,
+        statement: &tidb_ast::CreateSequenceStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.AlterSequence`.
+    fn alter_sequence(
+        &self,
+        statement: &tidb_ast::AlterSequenceStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.RepairTable`.
+    fn repair_table(
+        &self,
+        statement: &tidb_ast::RepairTableStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.TruncateTable`.
+    fn truncate_table(
+        &self,
+        statement: &[String],
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.DropTable`.
+    fn drop_table(
+        &self,
+        statement: &tidb_ast::DropTableStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.DropSequence`.
+    fn drop_sequence(
+        &self,
+        statement: &tidb_ast::DropSequenceStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.RenameTable`.
+    fn rename_table(
+        &self,
+        statement: &tidb_ast::RenameTableStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.DropView`.
+    fn drop_view(
+        &self,
+        names: &[Vec<String>],
+        if_exists: bool,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.DropSchema`.
+    fn drop_schema(
+        &self,
+        name: &str,
+        if_exists: bool,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `DDLExec.Next`: dispatch the AST to the owning executor method.
+    fn execute_ddl(
+        &self,
+        statement: &tidb_ast::Stmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        if let tidb_ast::Stmt::Ddl(ddl) = statement {
+            return match &**ddl {
+                tidb_ast::DdlStmt::AlterTable(statement) => {
+                    self.alter_table(statement, current_db, context)
+                }
+                tidb_ast::DdlStmt::RecoverTable(statement) => self.recover_table(
+                    &statement.table,
+                    statement.job_id,
+                    "",
+                    false,
+                    current_db,
+                    context,
+                ),
+                tidb_ast::DdlStmt::FlashbackTable(statement) => self.recover_table(
+                    &statement.table,
+                    0,
+                    &statement.new_name,
+                    true,
+                    current_db,
+                    context,
+                ),
+                tidb_ast::DdlStmt::FlashbackDatabase(statement) => self.recover_schema(
+                    &statement.name,
+                    statement.new_name.as_deref().unwrap_or(""),
+                    current_db,
+                    context,
+                ),
+
+                tidb_ast::DdlStmt::DropIndex(statement) => {
+                    self.drop_index(statement, current_db, context)
+                }
+                tidb_ast::DdlStmt::CreateIndex(statement) => {
+                    self.create_index(statement, current_db, context)
+                }
+                tidb_ast::DdlStmt::AlterDatabase { name, options } => {
+                    self.alter_schema(name.as_deref().unwrap_or(current_db), options, context)
+                }
+                tidb_ast::DdlStmt::DropPlacementPolicy(statement) => {
+                    self.drop_placement_policy(statement, context)
+                }
+                tidb_ast::DdlStmt::AlterPlacementPolicy(statement) => {
+                    self.alter_placement_policy(statement, context)
+                }
+                tidb_ast::DdlStmt::CreatePlacementPolicy(statement) => {
+                    self.create_placement_policy(statement, context)
+                }
+                tidb_ast::DdlStmt::CreateDatabase {
+                    name,
+                    if_not_exists,
+                    options,
+                } => self.create_schema(name, *if_not_exists, options, context.as_ref()),
+                tidb_ast::DdlStmt::CreateTable(statement) => {
+                    self.create_table(statement, current_db, context)
+                }
+                tidb_ast::DdlStmt::CreateSequence(statement) => {
+                    self.create_sequence(statement, current_db, context)
+                }
+                tidb_ast::DdlStmt::AlterSequence(statement) => {
+                    self.alter_sequence(statement, current_db, context)
+                }
+                tidb_ast::DdlStmt::RepairTable(statement) => {
+                    self.repair_table(statement, current_db, context)
+                }
+                tidb_ast::DdlStmt::TruncateTable(statement) => {
+                    self.truncate_table(statement, current_db, context)
+                }
+                tidb_ast::DdlStmt::DropTable(statement) => {
+                    self.drop_table(statement, current_db, context)
+                }
+                tidb_ast::DdlStmt::DropSequence(statement) => {
+                    self.drop_sequence(statement, current_db, context)
+                }
+                tidb_ast::DdlStmt::RenameTable(statement) => {
+                    self.rename_table(statement, current_db, context)
+                }
+                tidb_ast::DdlStmt::DropView { names, if_exists } => {
+                    self.drop_view(names, *if_exists, current_db, context)
+                }
+                tidb_ast::DdlStmt::DropDatabase { name, if_exists } => {
+                    self.drop_schema(name, *if_exists, context)
+                }
+                _ => Err(SqlQueryError::unknown(
+                    "statement has no DDL executor method",
+                )),
+            };
+        }
+        Err(SqlQueryError::unknown(
+            "statement has no DDL executor method",
+        ))
+    }
+
+    /// Compatibility entry for recorded DDL fixtures and mock adapters.
+    /// Serving SQL and internal jobs use the typed methods above.
+    ///
     /// Publishes one admitted catalog change, then brings this node's own
     /// catalog up to it before answering.
     ///
@@ -1049,6 +1372,8 @@ where
         row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
         start_mode: crate::StartMode,
     ) -> Result<Self, String> {
+        // Go Loader keeps the allocator requirement for every load caller.
+        catalog.set_row_ids(Arc::clone(&row_ids));
         let owner_id = server_info.get_local_server_info().static_info.id;
         // Go `ddl.Start`: on the classic kernel, settle the job version and
         // the global index V1 key format before any job is submitted.
@@ -1200,14 +1525,18 @@ where
     /// Go `executor.DoDDLJobWrapper`: the job handed to the submit loop
     /// (`deliverJobTask`, whose result is the inserted job's id), then
     /// waited for in the history.
-    fn do_ddl_job_wrapper(
+    fn deliver_job_and_wait(
         &self,
         job_context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
         spec: tidb_ddl_jobsubmit::JobSpec,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
-        let submitted = self.submitter.delivery_job(spec).map_err(cluster_ddl_error)?;
+        let submitted = self
+            .submitter
+            .delivery_job(spec)
+            .map_err(cluster_ddl_error)?;
         self.notify_new_job_submitted();
-        let mut report = self.wait_persisted_job(job_context, submitted.job_id, submitted.action)?;
+        let mut report =
+            self.wait_persisted_job(job_context, submitted.job_id, submitted.action)?;
         // A merged CREATE TABLE created this statement's table under the id
         // its submission assigned.
         if let (Some(table_id), ClusterDdlReport::Applied { created_id, .. }) =
@@ -2923,9 +3252,8 @@ where
     fn reload_catalog(&self) -> Result<(), String> {
         let _reload = self.catalog.lock_reload();
         let current = self.catalog.get_latest();
-        let at =
-            reload(&self.opener, self.timeout, &current, &self.row_ids)
-                .map_err(|error| error.to_string())?;
+        let at = reload(&self.opener, self.timeout, &current, &self.catalog)
+            .map_err(|error| error.to_string())?;
         match tidb_infoschema_issyncer::real_tikv_catalog::note_reload(
             &self.schema_validator,
             current.schema_meta_version(),
@@ -2988,6 +3316,269 @@ impl<S> ClusterDdl for RealClusterDdl<S>
 where
     S: StoreClient,
 {
+    fn update_table_replica_info(
+        &self,
+        table_id: i64,
+        available: bool,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::update_table_replica_info(self, table_id, available, context)
+    }
+
+    fn alter_table(
+        &self,
+        statement: &tidb_ast::AlterTableStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::alter_table(self, statement, current_db, context)
+    }
+
+    fn recover_schema(
+        &self,
+        name: &str,
+        new_name: &str,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::recover_schema(self, name, new_name, current_db, context)
+    }
+
+    fn recover_table(
+        &self,
+        table: &Option<Vec<String>>,
+        job_id: i64,
+        new_name: &str,
+        flashback: bool,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::recover_table(
+            self, table, job_id, new_name, flashback, current_db, context,
+        )
+    }
+
+    fn drop_index(
+        &self,
+        statement: &tidb_ast::DropIndexStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::drop_index(self, statement, current_db, context)
+    }
+
+    fn create_index(
+        &self,
+        statement: &tidb_ast::CreateIndexStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::create_index(self, statement, current_db, context)
+    }
+
+    fn alter_table_set_tiflash_replica(
+        &self,
+        schema: &str,
+        table: &str,
+        count: u64,
+        labels: &[String],
+        reset_available: bool,
+        hypo: bool,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::alter_table_set_tiflash_replica(
+            self,
+            schema,
+            table,
+            count,
+            labels,
+            reset_available,
+            hypo,
+            context,
+        )
+    }
+
+    fn alter_schema(
+        &self,
+        name: &str,
+        options: &[tidb_ast::DatabaseOption],
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::alter_schema(self, name, options, context)
+    }
+
+    fn drop_placement_policy(
+        &self,
+        statement: &tidb_ast::DropPlacementPolicyStmt,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::drop_placement_policy(self, statement, context)
+    }
+
+    fn alter_placement_policy(
+        &self,
+        statement: &tidb_ast::AlterPlacementPolicyStmt,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::alter_placement_policy(self, statement, context)
+    }
+
+    fn create_placement_policy(
+        &self,
+        statement: &tidb_ast::CreatePlacementPolicyStmt,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::create_placement_policy(self, statement, context)
+    }
+
+    fn refresh_meta(
+        &self,
+        schema_id: i64,
+        table_id: i64,
+        involved_db: &str,
+        involved_table: &str,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::refresh_meta(
+            self,
+            schema_id,
+            table_id,
+            involved_db,
+            involved_table,
+            context,
+        )
+    }
+
+    fn alter_table_mode(
+        &self,
+        table_mode: tidb_model::TableMode,
+        schema_id: i64,
+        table_id: i64,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::alter_table_mode(self, table_mode, schema_id, table_id, context)
+    }
+
+    fn create_view(
+        &self,
+        schema: &str,
+        name: &str,
+        or_replace: bool,
+        info: &tidb_model::TableInfo,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::create_view(self, schema, name, or_replace, info, context)
+    }
+
+    fn do_ddl_job_wrapper(
+        &self,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+        job: crate::JobWrapper,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::do_ddl_job_wrapper(self, context, job)
+    }
+
+    fn drop_table(
+        &self,
+        statement: &tidb_ast::DropTableStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::drop_table(self, statement, current_db, context)
+    }
+
+    fn drop_sequence(
+        &self,
+        statement: &tidb_ast::DropSequenceStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::drop_sequence(self, statement, current_db, context)
+    }
+
+    fn rename_table(
+        &self,
+        statement: &tidb_ast::RenameTableStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::rename_table(self, statement, current_db, context)
+    }
+
+    fn drop_view(
+        &self,
+        names: &[Vec<String>],
+        if_exists: bool,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::drop_view(self, names, if_exists, current_db, context)
+    }
+
+    fn drop_schema(
+        &self,
+        name: &str,
+        if_exists: bool,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::drop_schema(self, name, if_exists, context)
+    }
+
+    fn create_table(
+        &self,
+        statement: &tidb_ast::CreateTableStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::create_table(self, statement, current_db, context)
+    }
+
+    fn create_sequence(
+        &self,
+        statement: &tidb_ast::CreateSequenceStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::create_sequence(self, statement, current_db, context)
+    }
+
+    fn alter_sequence(
+        &self,
+        statement: &tidb_ast::AlterSequenceStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::alter_sequence(self, statement, current_db, context)
+    }
+
+    fn repair_table(
+        &self,
+        statement: &tidb_ast::RepairTableStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::repair_table(self, statement, current_db, context)
+    }
+
+    fn truncate_table(
+        &self,
+        statement: &[String],
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::truncate_table(self, statement, current_db, context)
+    }
+
+    fn create_schema(
+        &self,
+        name: &str,
+        if_not_exists: bool,
+        options: &[tidb_ast::DatabaseOption],
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::create_schema(self, name, if_not_exists, options, context)
+    }
+
     fn is_owner(&self) -> bool {
         self.owner.is_owner()
     }
@@ -3061,8 +3652,7 @@ where
             };
             let mut notes = Vec::new();
             // Go `dropTableObject`'s `dropExistErr`.
-            let missing_error: &tidb_terror::TerrorError = if object == DropObject::Sequence
-            {
+            let missing_error: &tidb_terror::TerrorError = if object == DropObject::Sequence {
                 &tidb_infoschema::infoschema_errors::ERR_SEQUENCE_DROP_EXISTS
             } else {
                 &tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
@@ -3208,7 +3798,7 @@ where
                     Ok(ClusterDdlReport::AlreadySatisfied { detail, warnings })
                 }
                 AddIndexSubmission::Job(spec, executor_warnings) => {
-                    let mut report = self.do_ddl_job_wrapper(job_context, *spec)?;
+                    let mut report = self.deliver_job_and_wait(job_context, *spec)?;
                     if let DdlStatement::RepairTable { schema, table, .. } = statement {
                         // Go `RepairTable`: remove the old TableInfo from
                         // repairInfo before domain reload.
@@ -3304,29 +3894,30 @@ where
     }
 
     fn update_replica_status(&self, table_id: i64, available: bool) -> Result<(), (u16, String)> {
-        self.execute(
-            &DdlStatement::UpdateTiFlashReplicaStatus {
-                table_id,
-                available,
-            },
-            // The domain's own job: a system session, no statement text.
+        self.update_table_replica_info(
+            table_id,
+            available,
             &*self.scheduler.session_pool.system_session(),
         )
         .map(|_| ())
         .map_err(|error| (error.code, error.message))
     }
 
-    fn reset_tiflash_replica(&self, schema: &str, table: &str, count: u64, labels: Vec<String>) -> Result<(), (u16, String)> {
-        self.execute(
-            &DdlStatement::SetTiFlashReplica {
-                schema: schema.to_owned(),
-                table: table.to_owned(),
-                count,
-                labels,
-                reset_available: true,
-                hypo: false,
-            },
-            &*self.scheduler.session_pool.system_session(),
+    fn reset_tiflash_replica(
+        &self,
+        schema: &str,
+        table: &str,
+        count: u64,
+        labels: Vec<String>,
+    ) -> Result<(), (u16, String)> {
+        self.alter_table_set_tiflash_replica(
+            schema,
+            table,
+            count,
+            &labels,
+            true,
+            false,
+            &Arc::from(self.scheduler.session_pool.system_session()),
         )
         .map(|_| ())
         .map_err(|error| (error.code, error.message))

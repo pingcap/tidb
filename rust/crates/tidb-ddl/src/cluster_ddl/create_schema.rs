@@ -38,9 +38,35 @@ pub fn create_schema<S: MetaSnapshot>(
     else {
         return Ok(None);
     };
+    create_schema_with_info(
+        snapshot,
+        name,
+        *if_not_exists,
+        charset,
+        collate,
+        placement_policy.as_deref(),
+        job_context,
+        start_ts,
+        upgrading,
+    )
+}
+
+/// Go `executor.CreateSchemaWithInfo`: admission and job construction.
+#[allow(clippy::too_many_arguments)]
+pub fn create_schema_with_info<S: MetaSnapshot>(
+    snapshot: &mut S,
+    name: &str,
+    if_not_exists: bool,
+    charset: &str,
+    collate: &str,
+    placement_policy: Option<&str>,
+    job_context: &dyn DdlSessionContext,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let catalog = load_info_schema(snapshot)?;
     if let Some(existing) = find_database(&catalog, name) {
-        if *if_not_exists {
+        if if_not_exists {
             return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                 detail: format!(
                     "database `{}` already exists",
@@ -54,7 +80,7 @@ pub fn create_schema<S: MetaSnapshot>(
         }
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS
-                .gen_with_stack_by_args(&[(name.clone()).into()]),
+                .gen_with_stack_by_args(&[name.into()]),
         ));
     }
     // Go `checkTooLongSchema`.
@@ -71,9 +97,9 @@ pub fn create_schema<S: MetaSnapshot>(
         None => None,
     };
     let info = DBInfo {
-        name: CiString::new(name.clone()),
-        charset: charset.clone(),
-        collate: collate.clone(),
+        name: CiString::new(name),
+        charset: charset.to_owned(),
+        collate: collate.to_owned(),
         placement_policy_ref: placement_policy_ref.clone(),
         ..DBInfo::default()
     };
@@ -101,9 +127,7 @@ pub fn create_schema<S: MetaSnapshot>(
         // `assignGIDsForJobs` draws the schema id.
         id_allocated: false,
     }];
-    tidb_ddl_jobsubmit::prepare_submit_batch(
-        snapshot, &mut specs, start_ts, upgrading,
-    )?;
+    tidb_ddl_jobsubmit::prepare_submit_batch(snapshot, &mut specs, start_ts, upgrading)?;
     let [spec] = specs;
     Ok(Some(AddIndexSubmission::Job(Box::new(spec), warnings)))
 }

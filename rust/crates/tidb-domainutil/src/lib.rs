@@ -142,16 +142,11 @@ impl RepairInfo {
             return false;
         }
         if let Some(repaired_db) = state.repair_db_info_map.get(&db_id) {
-            // Go's one `Loader` meets a table once. Here the DDL worker's
-            // `LoadWithTS` and the domain's reload both apply the diff that
-            // creates it, so a table already recorded is replaced, never
-            // recorded twice.
+            // Go appends; the shared Loader prevents duplicate application.
             let mut repaired_db = repaired_db.write();
-            let table_id = tbl.read().id;
             let mut tables = repaired_db
                 .deprecated_tables
                 .iter_handles()
-                .filter(|table| table.as_ref().is_none_or(|table| table.read().id != table_id))
                 .collect::<Vec<_>>();
             tables.push(Some(tbl.clone()));
             repaired_db.deprecated_tables = tidb_model::GoSharedPointerSlice::from_handles(tables);
@@ -248,5 +243,36 @@ impl std::fmt::Display for RepairKeyType {
             Self::RepairedTable => "RepairedTable",
             Self::RepairedDatabase => "RepairedDatabase",
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go `TestCheckAndFetchRepairedTableAppends` (zzprobe/d01): two explicit
+    /// calls append two pointers; lookup retains the first, even for one ID.
+    #[test]
+    fn test_check_and_fetch_repaired_table_appends() {
+        let repair = RepairInfo::new();
+        repair.set_repair_mode(true);
+        repair.set_repair_table_list(vec!["d01.t".to_owned()]);
+        let db = GoShared::new(DBInfo {
+            id: 123,
+            name: tidb_ast::CiString::new("d01"),
+            ..Default::default()
+        });
+        for comment in ["first", "second"] {
+            let table = GoShared::new(TableInfo {
+                id: 456,
+                name: tidb_ast::CiString::new("t"),
+                comment: comment.into(),
+                ..Default::default()
+            });
+            assert!(repair.check_and_fetch_repaired_table(&db, &table));
+        }
+        let (table, db) = repair.get_repaired_table_info_by_table_name("d01", "t");
+        assert_eq!(table.unwrap().read().comment, "first");
+        assert_eq!(db.unwrap().read().deprecated_tables.len(), 2);
     }
 }

@@ -23,6 +23,10 @@ use tidb_variable::session_vars::DdlReorgVars;
 pub trait DdlSessionContext: Send + Sync {
     /// Go `NewMetaBuildContextWithSctx(sctx)`.
     fn metabuild_context(&self) -> tidb_metabuild::Context;
+    /// Go `SessionVars.EnableRowLevelChecksum` (the default is false).
+    fn enable_row_level_checksum(&self) -> bool {
+        false
+    }
     /// `tidb_enable_check_constraint`.
     fn enable_check_constraint(&self) -> bool;
     /// `foreign_key_checks`.
@@ -107,6 +111,10 @@ pub trait DdlSessionContext: Send + Sync {
 impl<T: DdlSessionContext + ?Sized> DdlSessionContext for std::sync::Arc<T> {
     fn metabuild_context(&self) -> tidb_metabuild::Context {
         (**self).metabuild_context()
+    }
+
+    fn enable_row_level_checksum(&self) -> bool {
+        (**self).enable_row_level_checksum()
     }
 
     fn enable_check_constraint(&self) -> bool {

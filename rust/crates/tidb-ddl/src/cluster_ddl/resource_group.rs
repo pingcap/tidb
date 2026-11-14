@@ -30,31 +30,76 @@ pub fn prepare_resource_group_job_submission<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let (action, group, schema_id, id_allocated) = match statement {
-        DdlStatement::CreateResourceGroup { group } => {
-            let mut info = (**group).clone();
-            info.id = 0;
-            info.state = SchemaState::NONE;
-            // `assignGIDsForJobs` draws the group's id.
-            (ActionType::ACTION_CREATE_RESOURCE_GROUP, info, 0, false)
-        }
-        DdlStatement::AlterResourceGroup { group } => (
-            ActionType::ACTION_ALTER_RESOURCE_GROUP,
-            (**group).clone(),
-            group.id,
-            true,
-        ),
-        DdlStatement::DropResourceGroup { group } => (
-            ActionType::ACTION_DROP_RESOURCE_GROUP,
-            tidb_model::ResourceGroupInfo {
-                name: group.name.clone(),
-                ..tidb_model::ResourceGroupInfo::default()
-            },
-            group.id,
-            true,
-        ),
+    let spec = match statement {
+        DdlStatement::CreateResourceGroup { group } => add_resource_group(group, job_context),
+        DdlStatement::AlterResourceGroup { group } => alter_resource_group(group, job_context),
+        DdlStatement::DropResourceGroup { group } => drop_resource_group(group, job_context),
         _ => return Ok(None),
     };
+    submit_built_job(
+        snapshot,
+        Some(AddIndexSubmission::Job(Box::new(spec), Vec::new())),
+        start_ts,
+        upgrading,
+    )
+}
+
+/// Go `executor.AddResourceGroup`: the job before `doDDLJob2`.
+pub fn add_resource_group(
+    group: &tidb_model::ResourceGroupInfo,
+    context: &dyn DdlSessionContext,
+) -> crate::JobWrapper {
+    let mut info = group.clone();
+    info.id = 0;
+    info.state = SchemaState::NONE;
+    resource_group_job(
+        ActionType::ACTION_CREATE_RESOURCE_GROUP,
+        info,
+        0,
+        false,
+        context,
+    )
+}
+
+/// Go `executor.AlterResourceGroup`: the job before `doDDLJob2`.
+pub fn alter_resource_group(
+    group: &tidb_model::ResourceGroupInfo,
+    context: &dyn DdlSessionContext,
+) -> crate::JobWrapper {
+    resource_group_job(
+        ActionType::ACTION_ALTER_RESOURCE_GROUP,
+        group.clone(),
+        group.id,
+        true,
+        context,
+    )
+}
+
+/// Go `executor.DropResourceGroup`: the job before `doDDLJob2`.
+pub fn drop_resource_group(
+    group: &tidb_model::ResourceGroupInfo,
+    context: &dyn DdlSessionContext,
+) -> crate::JobWrapper {
+    resource_group_job(
+        ActionType::ACTION_DROP_RESOURCE_GROUP,
+        tidb_model::ResourceGroupInfo {
+            name: group.name.clone(),
+            ..Default::default()
+        },
+        group.id,
+        true,
+        context,
+    )
+}
+
+/// Go `executor`'s shared resource-group job fields.
+fn resource_group_job(
+    action: ActionType,
+    group: tidb_model::ResourceGroupInfo,
+    schema_id: i64,
+    id_allocated: bool,
+    job_context: &dyn DdlSessionContext,
+) -> crate::JobWrapper {
     let mut job = session_job(job_context, action);
     job.schema_id = schema_id;
     job.schema_name = group.name.lowercase().to_owned().into();
@@ -65,19 +110,11 @@ pub fn prepare_resource_group_job_submission<S: MetaSnapshot>(
     let args = tidb_model::ResourceGroupArgs {
         resource_group_info: GoField::new(Some(GoShared::new(group))),
     };
-    let built = AddIndexSubmission::Job(
-        Box::new(tidb_ddl_jobsubmit::JobSpec {
-            job,
-            args: JobArgsValue::ResourceGroup(Some(GoShared::new(args))),
-            id_allocated,
-        }),
-        Vec::new(),
-    );
-    submit_built_job(
-        snapshot, Some(built),
-        start_ts,
-        upgrading,
-    )
+    crate::JobWrapper {
+        job,
+        args: JobArgsValue::ResourceGroup(Some(GoShared::new(args))),
+        id_allocated,
+    }
 }
 
 fn group_args(

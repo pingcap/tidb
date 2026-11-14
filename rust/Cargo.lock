@@ -4657,6 +4657,7 @@ dependencies = [
 name = "tidb-domainutil"
 version = "0.0.0"
 dependencies = [
+ "tidb-ast",
  "tidb-model",
  "tidb-mysql",
 ]
@@ -5772,6 +5773,7 @@ dependencies = [
 name = "tidb-infoschema"
 version = "0.0.0"
 dependencies = [
+ "chrono",
  "crossbeam-channel",
  "serde_json",
  "tidb-ast",
@@ -5831,6 +5833,7 @@ dependencies = [
  "tidb-table",
  "tidb-terror",
  "tidb-txnkv",
+ "tidb-vardef",
 ]
 
 [[package]]

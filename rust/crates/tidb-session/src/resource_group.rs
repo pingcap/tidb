@@ -376,27 +376,19 @@ impl Session {
     /// The cluster DDL for a resource-group statement: Go's executor checks
     /// against this session's schema, then the statement the DDL job runs.
     /// `None` is an `IF [NOT] EXISTS` that filed its note and submits no job.
-    pub fn cluster_resource_group_statement(
+    pub fn cluster_resource_group_job(
         &mut self,
         ddl: &tidb_ast::DdlStmt,
-    ) -> Result<Option<tidb_ddl::cluster_ddl::DdlStatement>, DriverError> {
-        use tidb_ddl::cluster_ddl::DdlStatement;
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<Option<tidb_ddl::JobWrapper>, DriverError> {
+        use tidb_ddl::cluster_ddl::resource_group;
         Ok(match ddl {
-            tidb_ast::DdlStmt::CreateResourceGroup(create) => self
-                .admit_create_resource_group(create)?
-                .map(|group| DdlStatement::CreateResourceGroup {
-                    group: Box::new(group),
-                }),
-            tidb_ast::DdlStmt::AlterResourceGroup(alter) => self
-                .admit_alter_resource_group(alter)?
-                .map(|group| DdlStatement::AlterResourceGroup {
-                    group: Box::new(group),
-                }),
-            tidb_ast::DdlStmt::DropResourceGroup(drop) => self
-                .admit_drop_resource_group(drop)?
-                .map(|group| DdlStatement::DropResourceGroup {
-                    group: Box::new(group),
-                }),
+            tidb_ast::DdlStmt::CreateResourceGroup(create) => self.admit_create_resource_group(create)?
+                .map(|group| resource_group::add_resource_group(&group, context)),
+            tidb_ast::DdlStmt::AlterResourceGroup(alter) => self.admit_alter_resource_group(alter)?
+                .map(|group| resource_group::alter_resource_group(&group, context)),
+            tidb_ast::DdlStmt::DropResourceGroup(drop) => self.admit_drop_resource_group(drop)?
+                .map(|group| resource_group::drop_resource_group(&group, context)),
             _ => None,
         })
     }

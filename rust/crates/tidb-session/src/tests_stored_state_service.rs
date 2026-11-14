@@ -50,13 +50,23 @@ impl PendingSysvarChange for FakePendingSysvars {
 struct Unreached;
 
 impl DdlService for Unreached {
-    fn execute(
-        &self,
-        _statement: &tidb_ddl::cluster_ddl::DdlStatement,
-        _job_context: &tidb_sessionctx::StmtContext,
+    fn set_tiflash_replica(&self, schema: &str, table: &str, count: u64, labels: &[String], context: &tidb_sessionctx::StmtContext) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, DriverError> { let _ = (schema, table, count, labels, context); unreachable!("a SET runs no DDL job") }
+
+    fn create_view(&self, schema: &str, name: &str, or_replace: bool, info: &tidb_model::TableInfo, context: &tidb_sessionctx::StmtContext)
+        -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, DriverError> {
+        let _ = (schema, name, or_replace, info, context);
+        unreachable!("a SET runs no DDL job")
+    }
+
+    fn do_ddl_job_wrapper(&self, _: &tidb_sessionctx::StmtContext, _: tidb_ddl::JobWrapper)
+        -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, DriverError> { unreachable!("a SET runs no DDL job") }
+
+    fn execute_ddl(
+        &self, _: &tidb_ast::Stmt, _: &str, _: &tidb_sessionctx::StmtContext,
     ) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, DriverError> {
         unreachable!("a SET runs no DDL job")
     }
+
 
     fn check_cached_table_ddl(
         &self,

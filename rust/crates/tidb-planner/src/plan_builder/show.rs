@@ -93,6 +93,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             error,
             dynamic_privs: Vec::new(),
             dynamic_with_grant: false,
+            alter_writable: false,
         });
     }
 
@@ -111,6 +112,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             error,
             dynamic_privs: privs.iter().map(|privilege| (*privilege).to_owned()).collect(),
             dynamic_with_grant: with_grant,
+            alter_writable: false,
         });
     }
 

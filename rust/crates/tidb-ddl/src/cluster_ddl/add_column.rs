@@ -54,6 +54,32 @@ pub(super) fn build_add_column_job<S: MetaSnapshot>(
     else {
         return Ok(None);
     };
+    add_column_with_info(
+        snapshot,
+        catalog,
+        schema,
+        table,
+        if_not_exists,
+        column,
+        position,
+        context,
+        job_context,
+    )
+}
+
+/// Go `executor.AddColumn` with the prepared column/index definition.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_column_with_info<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    if_not_exists: &bool,
+    column: &Box<tidb_ast::ColumnDef>,
+    position: &tidb_ast::ColumnPosition,
+    context: &DdlStatementContext,
+    job_context: &dyn DdlSessionContext,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
     let stored = stored.read();
     let (mut added, _) = match build_add_column(

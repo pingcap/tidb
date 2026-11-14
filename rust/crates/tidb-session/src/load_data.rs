@@ -28,7 +28,32 @@ use tidb_executor::load_data::LoadDataExec;
 
 use crate::{DriverError, StmtOutput};
 
-impl LoadDataExec for crate::Session {}
+impl LoadDataExec for crate::Session {
+    /// Go `Compile` for LOAD DATA: resolve the table, check privileges and
+    /// table mode, then let `executorBuilder.buildLoadData` validate input.
+    fn prepare_load_data(
+        &mut self,
+        load: &LoadDataStmt,
+    ) -> Result<tidb_executor::load_data::PreparedLoadData, DriverError> {
+        let current_db = self.vars.current_db.clone();
+        let env = self.load_data_env();
+        let privileges = match load.table.as_slice() {
+            [schema, table] => self.load_data_privileges(schema, table, load.on_duplicate),
+            [table] if !current_db.is_empty() => {
+                self.load_data_privileges(&current_db, table, load.on_duplicate)
+            }
+            _ => Ok(()),
+        };
+        let checks = privileges.and_then(|()| {
+            self.check_table_mode(&Stmt::Dml(tidb_ast::NodeBox::new(tidb_ast::DmlStmt::LoadData(Box::new(load.clone())))))
+        });
+        self.with_catalog_mut(|catalog| {
+            tidb_executor::load_data::build_load_data(
+                load, catalog, &current_db, &env, |_, _| checks,
+            )
+        })
+    }
+}
 
 impl crate::Session {
     /// Go `clientConn.preprocessLoadDataLocal` accepted the statement (the

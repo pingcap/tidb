@@ -1632,11 +1632,8 @@ pub fn build_ddl_job<S: StoreClient>(
         .store()
         .store_addresses()
         .map_or(0, |stores| stores.len());
-    let preparation = SessionTransaction::begin(
-        Arc::clone(&opener),
-        timeout,
-        ddl_transaction_options(),
-    )?;
+    let preparation =
+        SessionTransaction::begin(Arc::clone(&opener), timeout, ddl_transaction_options())?;
     let start_ts = preparation.start_ts();
     let prepared = {
         let mut snapshot = SnapshotMetaSnapshot::new(
@@ -1651,12 +1648,8 @@ pub fn build_ddl_job<S: StoreClient>(
                 .has_null_value(schema, table, column_id)
                 .map_err(|error| {
                     DdlPlanError::from_mysql_error(
-                        tidb_terror::MysqlError::from_parts(
-                            error.code,
-                            error.state,
-                            error.message,
-                        )
-                        .with_identity_opt(error.identity),
+                        tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
+                            .with_identity_opt(error.identity),
                     )
                 })
         };
@@ -1707,10 +1700,12 @@ pub fn build_ddl_job<S: StoreClient>(
                         &at,
                     )?
                 };
-                Ok(Some(crate::cluster_ddl::add_index::AddIndexSubmission::Job(
-                    Box::new(spec),
-                    Vec::new(),
-                )))
+                Ok(Some(
+                    crate::cluster_ddl::add_index::AddIndexSubmission::Job(
+                        Box::new(spec),
+                        Vec::new(),
+                    ),
+                ))
             })()
         } else {
             prepare_persisted_job_submission(
@@ -1738,53 +1733,77 @@ pub fn build_ddl_job<S: StoreClient>(
             ))
         }
     };
-    // Go `AlterTableCache`: `checkCacheTableSize`, then `replace into
-    // mysql.table_cache_meta values (%?, 'NONE', 0, 0)`, each before the job.
-    if spec.job.type_ == tidb_model::action_type::ActionType::ACTION_ALTER_CACHE_TABLE {
-        let table_id = spec.job.table_id;
-        let sess_pool = backfiller.session_pool().ok_or_else(||
-            ClusterDdlError::NotCommitted("the DDL worker has no session pool".to_owned()))?;
-        add_index_reorg::reorg_transaction(&opener, timeout, &crate::job_ctx::internal_ddl_source(), |meta, handle, buffer, _| {
-            let catalog = load_info_schema(meta).map_err(DdlPlanError::Meta)?;
-            let table = catalog
-                .stored_schemas()
-                .iter()
-                .flat_map(|database| database.read().deprecated_tables.iter_deref())
-                .find(|table| table.read().id == table_id)
-                .ok_or_else(|| ClusterDdlError::Backfill(format!("table {table_id} is gone")))?;
-            let table = table.read();
-            backfiller
-                .stage_cache_table_check(&table, handle, buffer)
-                .map_err(ClusterDdlError::IndexBackfill)?;
-            buffer.reset();
-            Ok(((), Vec::new()))
-        })?;
-        sess_pool
-                .exec_restricted_sql_with(
-                    "replace into mysql.table_cache_meta values (%?, 'NONE', 0, 0)",
-                    &[tidb_sqlescape::SqlArg::Signed(table_id)],
-                )
-                .map_err(DdlPlanError::from_mysql_error)?;
-    }
-    // Go `genPlacementPolicyID`: the executor draws the policy's id from the
-    // policies' own sequence, in a transaction of its own, before the job.
-    if spec.job.type_ == tidb_model::action_type::ActionType::ACTION_CREATE_PLACEMENT_POLICY {
-        let policy_id = add_index_reorg::reorg_transaction(&opener, timeout, &crate::job_ctx::internal_ddl_source(), |meta, _, _, _| {
-            let (id, mutation) = tidb_ddl_jobsubmit::reserve_placement_policy_id(meta)?;
-            Ok((id, vec![mutation]))
-        })?;
-        crate::cluster_ddl::placement_policy::gen_placement_policy_id(&spec, policy_id);
-    }
+    prepare_executor_job(&opener, timeout, backfiller, &spec)?;
     Ok(crate::cluster_ddl::add_index::AddIndexSubmission::Job(
         spec, warnings,
     ))
 }
 
+/// Go `executor.AlterTableCache` and `genPlacementPolicyID` before submission.
+pub(crate) fn prepare_executor_job<S: StoreClient>(
+    opener: &Arc<RealOptimisticTransactionOpener<S>>,
+    timeout: Duration,
+    backfiller: &dyn IndexBackfiller,
+    spec: &tidb_ddl_jobsubmit::JobSpec,
+) -> Result<(), ClusterDdlError> {
+    // Go `AlterTableCache`: `checkCacheTableSize`, then `replace into
+    // mysql.table_cache_meta values (%?, 'NONE', 0, 0)`, each before the job.
+    if spec.job.type_ == tidb_model::action_type::ActionType::ACTION_ALTER_CACHE_TABLE {
+        let table_id = spec.job.table_id;
+        let sess_pool = backfiller.session_pool().ok_or_else(|| {
+            ClusterDdlError::NotCommitted("the DDL worker has no session pool".to_owned())
+        })?;
+        add_index_reorg::reorg_transaction(
+            &opener,
+            timeout,
+            &crate::job_ctx::internal_ddl_source(),
+            |meta, handle, buffer, _| {
+                let catalog = load_info_schema(meta).map_err(DdlPlanError::Meta)?;
+                let table = catalog
+                    .stored_schemas()
+                    .iter()
+                    .flat_map(|database| database.read().deprecated_tables.iter_deref())
+                    .find(|table| table.read().id == table_id)
+                    .ok_or_else(|| {
+                        ClusterDdlError::Backfill(format!("table {table_id} is gone"))
+                    })?;
+                let table = table.read();
+                backfiller
+                    .stage_cache_table_check(&table, handle, buffer)
+                    .map_err(ClusterDdlError::IndexBackfill)?;
+                buffer.reset();
+                Ok(((), Vec::new()))
+            },
+        )?;
+        sess_pool
+            .exec_restricted_sql_with(
+                "replace into mysql.table_cache_meta values (%?, 'NONE', 0, 0)",
+                &[tidb_sqlescape::SqlArg::Signed(table_id)],
+            )
+            .map_err(DdlPlanError::from_mysql_error)?;
+    }
+    // Go `genPlacementPolicyID`: the executor draws the policy's id from the
+    // policies' own sequence, in a transaction of its own, before the job.
+    if spec.job.type_ == tidb_model::action_type::ActionType::ACTION_CREATE_PLACEMENT_POLICY {
+        let policy_id = add_index_reorg::reorg_transaction(
+            &opener,
+            timeout,
+            &crate::job_ctx::internal_ddl_source(),
+            |meta, _, _, _| {
+                let (id, mutation) = tidb_ddl_jobsubmit::reserve_placement_policy_id(meta)?;
+                Ok((id, vec![mutation]))
+            },
+        )?;
+        crate::cluster_ddl::placement_policy::gen_placement_policy_id(&spec, policy_id);
+    }
+    Ok(())
+}
+
 /// Go `dom.GetSnapshotMeta(ts)`: a meta reader over the store's snapshot at
 /// `ts` (`store.GetSnapshot(kv.NewVersion(ts))`), outside any transaction.
-struct StoreSnapshotMeta<S: StoreClient> {
-    opener: Arc<RealOptimisticTransactionOpener<S>>,
-    timeout: Duration,
+pub(crate) struct StoreSnapshotMeta<S: StoreClient> {
+    pub(crate) opener: Arc<RealOptimisticTransactionOpener<S>>,
+    pub(crate) timeout: Duration,
 }
 
 impl<S: StoreClient> StoreSnapshotMeta<S> {
@@ -1867,19 +1886,25 @@ impl<S: StoreClient> crate::cluster_ddl::SnapshotMetaAt for StoreSnapshotMeta<S>
 /// Go `JobSubmitter.SubmitBatch`'s admission:
 /// `sysTblMgr.HasFlashbackClusterJob(ctx, minJobIDRefresher.GetCurrMinJobID())`
 /// on a session of `ddl.sessPool`.
-fn check_flashback_cluster_job(
+pub(crate) fn check_flashback_cluster_job(
     session_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     min_job_id: i64,
 ) -> Result<(), ClusterDdlError> {
     let encode = |error: tidb_ddl_systable::SystemTableManagerError| {
-        ClusterDdlError::from(tidb_ddl_jobsubmit::JobSubmitError::Encode(error.to_string()))
+        ClusterDdlError::from(tidb_ddl_jobsubmit::JobSubmitError::Encode(
+            error.to_string(),
+        ))
     };
-    let pool = session_pool.sess_pool().ok_or_else(|| encode(
-        tidb_ddl_systable::SystemTableManagerError::Sql("the DDL session pool has no sessions".to_owned()),
-    ))?;
+    let pool = session_pool.sess_pool().ok_or_else(|| {
+        encode(tidb_ddl_systable::SystemTableManagerError::Sql(
+            "the DDL session pool has no sessions".to_owned(),
+        ))
+    })?;
     let has_flashback_cluster_job = tidb_ddl_systable::Manager::has_flashback_cluster_job(
-        &tidb_ddl_systable::SystemTableManager::new(pool), min_job_id,
-    ).map_err(encode)?;
+        &tidb_ddl_systable::SystemTableManager::new(pool),
+        min_job_id,
+    )
+    .map_err(encode)?;
     if has_flashback_cluster_job {
         return Err(tidb_ddl_jobsubmit::JobSubmitError::FlashbackClusterJob.into());
     }
@@ -2421,7 +2446,8 @@ pub fn cluster_ddl_error(error: ClusterDdlError) -> tidb_store_driver_error::sql
 /// Go's DDL context (`ddl.Start`'s `kv.WithInternalSourceType(ctx,
 /// kv.InternalTxnDDL)`), from which the submitter's and scheduler's
 /// transactions begin.
-fn ddl_transaction_options() -> tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions {
+pub(crate) fn ddl_transaction_options(
+) -> tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions {
     tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions::from(
         tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
     )

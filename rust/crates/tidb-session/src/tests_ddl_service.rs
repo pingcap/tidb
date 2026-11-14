@@ -7,22 +7,29 @@ use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::ddl_service::DdlService;
 use crate::tests_support::*;
 use crate::*;
-use tidb_ddl::cluster_ddl::DdlStatement;
 use tidb_ddl::real_tikv_ddl::ClusterDdlReport;
 use tidb_context::WarningLevel;
 
 struct Fake(Result<ClusterDdlReport, (u16, &'static str)>);
 
 impl DdlService for Fake {
-    fn execute(
-        &self,
-        _statement: &DdlStatement,
-        _job_context: &tidb_sessionctx::StmtContext,
-    ) -> Result<ClusterDdlReport, DriverError> {
-        self.0.clone().map_err(|(code, message)| {
-            DriverError::Mysql(tidb_terror::MysqlError::sql_error(code, message))
-        })
+    fn set_tiflash_replica(&self, schema: &str, table: &str, count: u64, labels: &[String], context: &tidb_sessionctx::StmtContext) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, DriverError> { let _ = (schema, table, count, labels, context); self.0.clone().map_err(|(code, message)| DriverError::Mysql(tidb_terror::MysqlError::sql_error(code, message))) }
+
+    fn create_view(&self, schema: &str, name: &str, or_replace: bool, info: &tidb_model::TableInfo, context: &tidb_sessionctx::StmtContext)
+        -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, DriverError> {
+        let _ = (schema, name, or_replace, info, context);
+        self.0.clone().map_err(|(code, message)| DriverError::Mysql(tidb_terror::MysqlError::sql_error(code, message)))
     }
+
+    fn do_ddl_job_wrapper(&self, _: &tidb_sessionctx::StmtContext, _: tidb_ddl::JobWrapper)
+        -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, DriverError> { self.0.clone().map_err(|(code, message)| DriverError::Mysql(tidb_terror::MysqlError::sql_error(code, message))) }
+
+    fn execute_ddl(
+        &self, _: &tidb_ast::Stmt, _: &str, _: &tidb_sessionctx::StmtContext,
+    ) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, DriverError> {
+        self.0.clone().map_err(|(code, message)| DriverError::Mysql(tidb_terror::MysqlError::sql_error(code, message)))
+    }
+
     /// No table this test drops is cached.
     fn check_cached_table_ddl(
         &self,
@@ -38,24 +45,15 @@ impl DdlService for Fake {
     }
 }
 
-fn drop_database(session: &mut Session, name: &str) -> (tidb_ast::Stmt, DdlStatement) {
-    let sql = format!("DROP DATABASE {name}");
-    let parsed = session.parse_statement(&sql).unwrap();
-    (
-        parsed,
-        DdlStatement::DropDatabase {
-            name: name.to_owned(),
-            if_exists: false,
-        },
-    )
+fn drop_database(session: &mut Session, name: &str) -> tidb_ast::Stmt {
+    session.parse_statement(&format!("DROP DATABASE {name}")).unwrap()
 }
-
 #[test]
 fn a_dropped_current_database_is_deselected_and_job_warnings_reach_the_session() {
     let mut session = Session::new();
     session.run("CREATE DATABASE d_svc").unwrap();
     session.run("USE d_svc").unwrap();
-    let (parsed, statement) = drop_database(&mut session, "d_svc");
+    let parsed = drop_database(&mut session, "d_svc");
     let service = Fake(Ok(ClusterDdlReport::Applied {
         schema_version: 7,
         created_id: None,
@@ -66,7 +64,7 @@ fn a_dropped_current_database_is_deselected_and_job_warnings_reach_the_session()
     }));
     session.begin_ddl_statement(&parsed).unwrap();
     session
-        .run_ddl_statement("DROP DATABASE d_svc", &parsed, &statement, &service)
+        .run_executor_statement("DROP DATABASE d_svc", &parsed, &service)
         .unwrap();
     // Go `dropSchema`: the next unqualified statement answers ErrNoDB.
     assert_eq!(session.current_database(), "");
@@ -85,10 +83,10 @@ fn a_failed_job_leaves_the_session_untouched_and_surfaces_the_service_error() {
     let mut session = Session::new();
     session.run("CREATE DATABASE d_svc2").unwrap();
     session.run("USE d_svc2").unwrap();
-    let (parsed, statement) = drop_database(&mut session, "d_svc2");
+    let parsed = drop_database(&mut session, "d_svc2");
     let service = Fake(Err((1105, "the owner is gone")));
     let error = session
-        .run_ddl_statement("DROP DATABASE d_svc2", &parsed, &statement, &service)
+        .run_executor_statement("DROP DATABASE d_svc2", &parsed, &service)
         .unwrap_err();
     let mysql = error.to_mysql_error();
     assert_eq!((mysql.code, mysql.message.as_str()), (1105, "the owner is gone"));

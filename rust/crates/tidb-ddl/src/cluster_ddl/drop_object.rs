@@ -63,177 +63,250 @@ pub fn drop_table_object<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
     match statement {
         DdlStatement::DropTable {
             schema,
             table,
             if_exists,
-        } => {
-            let identifiers: Vec<(String, String)> = if targets.is_empty() {
-                vec![(schema.clone(), table.clone())]
-            } else {
-                targets.to_vec()
-            };
-            // Go `dropTableObject`: before any table goes, no table the
-            // statement names may be cited by a key from a table it does not
-            // name.
-            for (target_schema, target_table) in &identifiers {
-                if let Some(referred) =
-                    crate::foreign_key_build::check_table_has_foreign_key_referred(
-                        &catalog,
-                        target_schema,
-                        target_table,
-                        &identifiers,
-                        job_context.foreign_key_checks(),
-                    )
-                {
-                    return Err(err_foreign_key_cannot_drop_parent(target_table, &referred));
-                }
-            }
-            let missing = || -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-                if *if_exists {
-                    return Ok(Some(AddIndexSubmission::AlreadySatisfied {
-                        detail: format!("table `{schema}`.`{table}` does not exist"),
-                        warnings: vec![missing_table_note(schema, table)],
-                    }));
-                }
-                Err(DdlPlanError::from(
-                    tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
-                        .gen_with_stack_by_args(&[format!("{schema}.{table}").into()]),
-                ))
-            };
-            let Some(database) = find_database(&catalog, schema) else {
-                return missing();
-            };
-            let Some(stored) = find_table(&database.read(), table) else {
-                return missing();
-            };
-            let stored = stored.read();
-            // Go `dropTableObject` asks the mode of every object it finds,
-            // before it tells a table from a view or a sequence.
-            super::rename_table::check_table_mode_is_normal(&stored)?;
-            if !check_cluster_drop_object(schema, table, &stored, false)? {
-                return missing();
-            }
-            let db_id = database.read().id;
-            drop_table_like(
-                snapshot,
-                job_context,
-                ActionType::ACTION_DROP_TABLE,
-                db_id,
-                schema,
-                &stored,
-                &identifiers,
-                (start_ts, upgrading),
-            )
-        }
+        } => drop_table(
+            snapshot,
+            schema,
+            table,
+            *if_exists,
+            job_context,
+            targets,
+            start_ts,
+            upgrading,
+        ),
         DdlStatement::DropView { names, if_exists } => {
             let [(schema, name)] = names.as_slice() else {
                 return Ok(None);
             };
-            let stored = find_database(&catalog, schema)
-                .and_then(|db| find_table(&db.read(), name).map(|table| (db.read().id, table)));
-            let Some((db_id, table)) = stored else {
-                if *if_exists {
-                    return Ok(Some(AddIndexSubmission::AlreadySatisfied {
-                        detail: format!("view `{schema}`.`{name}` does not exist"),
-                        warnings: vec![missing_table_note(schema, name)],
-                    }));
-                }
-                return Err(DdlPlanError::from(
-                    tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
-                        .gen_with_stack_by_args(&[format!("{schema}.{name}").into()]),
-                ));
-            };
-            let table = table.read();
-            check_cluster_drop_object(schema, name, &table, true)?;
-            drop_table_like(
+            drop_view(
                 snapshot,
-                job_context,
-                ActionType::ACTION_DROP_VIEW,
-                db_id,
                 schema,
-                &table,
-                &[(schema.clone(), name.clone())],
-                (start_ts, upgrading),
-            )
-        }
-        DdlStatement::DropSequence { schema, name } => {
-            let found = find_database(&catalog, schema).and_then(|database| {
-                find_table(&database.read(), name).map(|table| (database.read().id, table))
-            });
-            let Some((db_id, stored)) = found else {
-                return Err(coded_refusal(
-                    &tidb_dbterror::ERR_UNKNOWN_SEQUENCE,
-                    format!("Unknown SEQUENCE: '{schema}.{name}'"),
-                ));
-            };
-            let stored = stored.read();
-            if !stored.is_sequence() {
-                return Err(coded_refusal(
-                    &tidb_dbterror::ERR_WRONG_OBJECT,
-                    format!("'{schema}.{name}' is not SEQUENCE"),
-                ));
-            }
-            drop_table_like(
-                snapshot,
+                name,
+                *if_exists,
                 job_context,
-                ActionType::ACTION_DROP_SEQUENCE,
-                db_id,
-                schema,
-                &stored,
-                &[(schema.clone(), name.clone())],
-                (start_ts, upgrading),
-            )
-        }
-        DdlStatement::DropDatabase { name, if_exists } => {
-            let Some(database) = find_database(&catalog, name) else {
-                if *if_exists {
-                    return Ok(Some(AddIndexSubmission::AlreadySatisfied {
-                        detail: format!("database `{name}` does not exist"),
-                        warnings: Vec::new(),
-                    }));
-                }
-                // Go `executor.DropSchema`: `ErrDatabaseDropExists` (1008).
-                return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
-                    &tidb_infoschema::infoschema_errors::ERR_DATABASE_DROP_EXISTS
-                        .gen_with_stack_by_args(&[name.into()]),
-                )));
-            };
-            // Go `DropSchema`: `checkDatabaseHasForeignKeyReferred`.
-            check_database_has_foreign_key_referred(
-                &catalog,
-                &database.read(),
-                job_context.foreign_key_checks(),
-            )?;
-            let mut job = job_for(
-                job_context,
-                ActionType::ACTION_DROP_SCHEMA,
-                database.read().id,
-                database.read().name.original(),
-            );
-            job.schema_state = database.read().state;
-            job.involving_schema_info =
-                GoSharedSlice::from_vec(vec![tidb_model::InvolvingSchemaInfo {
-                    database: database.read().name.lowercase().to_owned().into(),
-                    table: tidb_model::job::INVOLVING_ALL.into(),
-                    ..tidb_model::InvolvingSchemaInfo::default()
-                }]);
-            let args = GoShared::new(tidb_model::DropSchemaArgs {
-                fk_check: GoField::new(job_context.foreign_key_checks()),
-                ..tidb_model::DropSchemaArgs::default()
-            });
-            submission(
-                snapshot,
-                job,
-                JobArgsValue::DropSchema(Some(args)),
                 start_ts,
                 upgrading,
             )
         }
+        DdlStatement::DropSequence { schema, name } => {
+            drop_sequence(snapshot, schema, name, job_context, start_ts, upgrading)
+        }
+        DdlStatement::DropDatabase { name, if_exists } => {
+            drop_schema(snapshot, name, *if_exists, job_context, start_ts, upgrading)
+        }
         _ => Ok(None),
     }
+}
+
+/// Go `executor.dropTableObject` for DropTable.
+#[allow(clippy::too_many_arguments)]
+pub fn drop_table<S: MetaSnapshot>(
+    snapshot: &mut S,
+    schema: &str,
+    table: &str,
+    if_exists: bool,
+    job_context: &dyn DdlSessionContext,
+    targets: &[(String, String)],
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_info_schema(snapshot)?;
+
+    let identifiers: Vec<(String, String)> = if targets.is_empty() {
+        vec![(schema.to_owned(), table.to_owned())]
+    } else {
+        targets.to_vec()
+    };
+    // Go `dropTableObject`: before any table goes, no table the
+    // statement names may be cited by a key from a table it does not
+    // name.
+    for (target_schema, target_table) in &identifiers {
+        if let Some(referred) = crate::foreign_key_build::check_table_has_foreign_key_referred(
+            &catalog,
+            target_schema,
+            target_table,
+            &identifiers,
+            job_context.foreign_key_checks(),
+        ) {
+            return Err(err_foreign_key_cannot_drop_parent(target_table, &referred));
+        }
+    }
+    let missing = || -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+        if if_exists {
+            return Ok(Some(AddIndexSubmission::AlreadySatisfied {
+                detail: format!("table `{schema}`.`{table}` does not exist"),
+                warnings: vec![missing_table_note(schema, table)],
+            }));
+        }
+        Err(DdlPlanError::from(
+            tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
+                .gen_with_stack_by_args(&[format!("{schema}.{table}").into()]),
+        ))
+    };
+    let Some(database) = find_database(&catalog, schema) else {
+        return missing();
+    };
+    let Some(stored) = find_table(&database.read(), table) else {
+        return missing();
+    };
+    let stored = stored.read();
+    // Go `dropTableObject` asks the mode of every object it finds,
+    // before it tells a table from a view or a sequence.
+    super::rename_table::check_table_mode_is_normal(&stored)?;
+    if !check_cluster_drop_object(schema, table, &stored, false)? {
+        return missing();
+    }
+    let db_id = database.read().id;
+    drop_table_like(
+        snapshot,
+        job_context,
+        ActionType::ACTION_DROP_TABLE,
+        db_id,
+        schema,
+        &stored,
+        &identifiers,
+        (start_ts, upgrading),
+    )
+}
+
+/// Go `executor.dropTableObject` for DropView.
+#[allow(clippy::too_many_arguments)]
+pub fn drop_view<S: MetaSnapshot>(
+    snapshot: &mut S,
+    schema: &str,
+    name: &str,
+    if_exists: bool,
+    job_context: &dyn DdlSessionContext,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_info_schema(snapshot)?;
+    let stored = find_database(&catalog, schema)
+        .and_then(|db| find_table(&db.read(), name).map(|table| (db.read().id, table)));
+    let Some((db_id, table)) = stored else {
+        if if_exists {
+            return Ok(Some(AddIndexSubmission::AlreadySatisfied {
+                detail: format!("view `{schema}`.`{name}` does not exist"),
+                warnings: vec![missing_table_note(schema, name)],
+            }));
+        }
+        return Err(DdlPlanError::from(
+            tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
+                .gen_with_stack_by_args(&[format!("{schema}.{name}").into()]),
+        ));
+    };
+    let table = table.read();
+    check_cluster_drop_object(schema, name, &table, true)?;
+    drop_table_like(
+        snapshot,
+        job_context,
+        ActionType::ACTION_DROP_VIEW,
+        db_id,
+        schema,
+        &table,
+        &[(schema.to_owned(), name.to_owned())],
+        (start_ts, upgrading),
+    )
+}
+
+/// Go `executor.dropTableObject` for DropSequence.
+#[allow(clippy::too_many_arguments)]
+pub fn drop_sequence<S: MetaSnapshot>(
+    snapshot: &mut S,
+    schema: &str,
+    name: &str,
+    job_context: &dyn DdlSessionContext,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_info_schema(snapshot)?;
+
+    let found = find_database(&catalog, schema).and_then(|database| {
+        find_table(&database.read(), name).map(|table| (database.read().id, table))
+    });
+    let Some((db_id, stored)) = found else {
+        return Err(coded_refusal(
+            &tidb_dbterror::ERR_UNKNOWN_SEQUENCE,
+            format!("Unknown SEQUENCE: '{schema}.{name}'"),
+        ));
+    };
+    let stored = stored.read();
+    if !stored.is_sequence() {
+        return Err(coded_refusal(
+            &tidb_dbterror::ERR_WRONG_OBJECT,
+            format!("'{schema}.{name}' is not SEQUENCE"),
+        ));
+    }
+    drop_table_like(
+        snapshot,
+        job_context,
+        ActionType::ACTION_DROP_SEQUENCE,
+        db_id,
+        schema,
+        &stored,
+        &[(schema.to_owned(), name.to_owned())],
+        (start_ts, upgrading),
+    )
+}
+
+/// Go `executor.DropSchema` for DropDatabase.
+#[allow(clippy::too_many_arguments)]
+pub fn drop_schema<S: MetaSnapshot>(
+    snapshot: &mut S,
+    name: &str,
+    if_exists: bool,
+    job_context: &dyn DdlSessionContext,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_info_schema(snapshot)?;
+
+    let Some(database) = find_database(&catalog, name) else {
+        if if_exists {
+            return Ok(Some(AddIndexSubmission::AlreadySatisfied {
+                detail: format!("database `{name}` does not exist"),
+                warnings: Vec::new(),
+            }));
+        }
+        // Go `executor.DropSchema`: `ErrDatabaseDropExists` (1008).
+        return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
+            &tidb_infoschema::infoschema_errors::ERR_DATABASE_DROP_EXISTS
+                .gen_with_stack_by_args(&[name.into()]),
+        )));
+    };
+    // Go `DropSchema`: `checkDatabaseHasForeignKeyReferred`.
+    check_database_has_foreign_key_referred(
+        &catalog,
+        &database.read(),
+        job_context.foreign_key_checks(),
+    )?;
+    let mut job = job_for(
+        job_context,
+        ActionType::ACTION_DROP_SCHEMA,
+        database.read().id,
+        database.read().name.original(),
+    );
+    job.schema_state = database.read().state;
+    job.involving_schema_info = GoSharedSlice::from_vec(vec![tidb_model::InvolvingSchemaInfo {
+        database: database.read().name.lowercase().to_owned().into(),
+        table: tidb_model::job::INVOLVING_ALL.into(),
+        ..tidb_model::InvolvingSchemaInfo::default()
+    }]);
+    let args = GoShared::new(tidb_model::DropSchemaArgs {
+        fk_check: GoField::new(job_context.foreign_key_checks()),
+        ..tidb_model::DropSchemaArgs::default()
+    });
+    submission(
+        snapshot,
+        job,
+        JobArgsValue::DropSchema(Some(args)),
+        start_ts,
+        upgrading,
+    )
 }
 
 /// The job of one `dropTableObject` target.

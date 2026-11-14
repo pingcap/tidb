@@ -47,11 +47,9 @@ use super::{
 use tidb_infoschema::cluster_catalog::{load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot};
 use tidb_ddl::cluster_ddl::add_index::AddIndexSubmission;
 use tidb_ddl::cluster_ddl::{
-    lower_ddl_with_context, plan_persisted_ddl_job_step, DdlStatement,
-    PersistedDdlJobPlan, ResourceGroupUpdate,
+    plan_persisted_ddl_job_step, PersistedDdlJobPlan, ResourceGroupUpdate,
 };
 use tidb_ddl_jobsubmit::plan_assign_global_ids;
-use tidb_ddl::real_tikv_ddl::prepare_persisted_job_submission;
 use tidb_metadef::system::SYSTEM_DATABASE_ID;
 use tidb_metadef::{BOOTSTRAP_TABLES, DDL_TABLE_VERSION_TABLES};
 
@@ -226,28 +224,47 @@ fn run_ddl_job<S: MetaSnapshot>(
     overlay: &mut Overlay<'_, S>,
     clock: &mut Clock,
     sql: &str,
-    statement: &DdlStatement,
+    view: Option<&TableInfo>,
 ) -> Result<JobOutcome, BootstrapError> {
     let job_error = |detail: String| BootstrapError::Job {
         statement: sql.lines().next().unwrap_or(sql).trim().to_owned(),
         detail,
     };
-    let context = bootstrap_context(sql);
-    // `Domain.Init` registered this server, the only one, before the first
-    // job, so the job version detection settles on version 2.
-    let submission = prepare_persisted_job_submission(
-        overlay,
-        statement,
-        &context,
-        &[],
-        clock.tick(),
-        false,
-        0,
-        // The bootstrap's statements set no TiFlash replica.
-        &|| Ok(0),
-        &mut |_, _, _| Ok(false),
-    )
-    .map_err(|error| job_error(error.to_string()))?;
+    let context: tidb_ddl::cluster_ddl::DdlContext = std::sync::Arc::new(bootstrap_context(sql));
+    let tidb_ast::Stmt::Ddl(statement) = parse_statement(sql)? else { return Err(job_error("bootstrap statement is not DDL".to_owned())); };
+    let start_ts = clock.tick();
+    // Go `doDDLWorks`: the same typed executor builders as ordinary SQL.
+    let submission = match &*statement {
+        tidb_ast::DdlStmt::CreateDatabase { name, if_not_exists, options } => {
+            let (charset, collate) = tidb_ddl::cluster_ddl::database_charset_collation(&options)
+                .map_err(|error| job_error(error.to_string()))?;
+            tidb_ddl::cluster_ddl::create_schema::create_schema_with_info(
+                overlay, &name, *if_not_exists, &charset, &collate, None, context.as_ref(), start_ts, false)
+        }
+        tidb_ast::DdlStmt::CreateTable(create) => {
+            let (schema, name) = tidb_ddl::cluster_ddl::split_name(&create.name, SYSTEM_DB, "table")
+                .map_err(|error| job_error(error.to_string()))?;
+            let build = tidb_ddl::cluster_ddl::CreateTableBuild::new(&create, &schema, &context)
+                .map_err(|error| job_error(error.to_string()))?;
+            tidb_ddl::cluster_ddl::create_table::create_table_job(
+                overlay, &schema, &name, create.if_not_exists, &build, context.as_ref(), &|| Ok(0), start_ts, false)
+        }
+        tidb_ast::DdlStmt::CreateView(create) => {
+            let (schema, name) = tidb_ddl::cluster_ddl::split_name(&create.name, SYSTEM_DB, "view")
+                .map_err(|error| job_error(error.to_string()))?;
+            tidb_ddl::cluster_ddl::create_object::create_view(
+                overlay, &schema, &name, create.or_replace, view.expect("bootstrap view metadata"),
+                context.as_ref(), &|| Ok(0), start_ts, false)
+        }
+        tidb_ast::DdlStmt::AlterResourceGroup(_) => {
+            let (group, _) = bootstrap_default_resource_group()?;
+            let mut job = tidb_ddl::cluster_ddl::resource_group::alter_resource_group(&group, context.as_ref());
+            tidb_ddl_jobsubmit::prepare_submit_batch(overlay, std::slice::from_mut(&mut job), start_ts, false)
+                .map_err(|error| job_error(error.to_string()))?;
+            Ok(Some(AddIndexSubmission::Job(Box::new(job), Vec::new())))
+        }
+        _ => return Err(job_error("unexpected bootstrap DDL".to_owned())),
+    }.map_err(|error| job_error(error.to_string()))?;
     let Some(AddIndexSubmission::Job(mut spec, _)) = submission else {
         return Err(job_error("the statement queued no DDL job".to_owned()));
     };
@@ -319,9 +336,9 @@ fn run<S: MetaSnapshot>(
     clock: &mut Clock,
     last: &mut JobOutcome,
     sql: &str,
-    statement: &DdlStatement,
+    view: Option<&TableInfo>,
 ) -> Result<(), BootstrapError> {
-    let outcome = run_ddl_job(overlay, clock, sql, statement)?;
+    let outcome = run_ddl_job(overlay, clock, sql, view)?;
     if outcome.diff.is_some() {
         last.diff = outcome.diff;
     }
@@ -331,24 +348,12 @@ fn run<S: MetaSnapshot>(
     Ok(())
 }
 
-fn parse_statement(sql: &str, default_schema: &str) -> Result<DdlStatement, BootstrapError> {
-    let parsed = tidb_parser::parse(sql).map_err(|error| BootstrapError::Job {
+/// Go `mustExecute`: parse the bootstrap SQL without another statement IR.
+fn parse_statement(sql: &str) -> Result<tidb_ast::Stmt, BootstrapError> {
+    tidb_parser::parse(sql).map_err(|error| BootstrapError::Job {
         statement: sql.lines().next().unwrap_or(sql).trim().to_owned(),
         detail: format!("does not parse: {error:?}"),
-    })?;
-    lower_ddl_with_context(
-        &parsed,
-        default_schema,
-        &(std::sync::Arc::new(bootstrap_context(sql)) as tidb_ddl::cluster_ddl::DdlContext),
-    )
-        .map_err(|error| BootstrapError::Job {
-            statement: sql.lines().next().unwrap_or(sql).trim().to_owned(),
-            detail: error.to_string(),
-        })?
-        .ok_or_else(|| BootstrapError::Job {
-            statement: sql.lines().next().unwrap_or(sql).trim().to_owned(),
-            detail: "is not a catalog change".to_owned(),
-        })
+    })
 }
 
 /// Refuses a keyspace that already carries the `mysql` database, found by
@@ -404,7 +409,7 @@ pub(crate) fn execute<S: tidb_store_driver_txn::transaction::StoreClient>(
     let (start_ts, mut current) = snapshot()?;
     let mut pool: Option<Arc<crate::ddl_session_pool::NodeDdlSessionPool>> = None;
     plan_with_executor(&mut current, start_ts, environment, layout, false, true,
-        &mut |overlay, _, last, sql, statement| {
+        &mut |overlay, _, last, sql, view| {
             if pool.is_none() {
                 let txn = opener.begin().map_err(|e| error(e.to_string()))?;
                 let outcome = txn.commit(overlay.net_mutations()?, &UnaryCallContext::with_timeout(timeout))
@@ -415,7 +420,7 @@ pub(crate) fn execute<S: tidb_store_driver_txn::transaction::StoreClient>(
                 pool = Some(crate::ddl_session_pool::NodeDdlSessionPool::for_bootstrap(opener.clone(), timeout)
                     .map_err(error)?);
             }
-            pool.as_ref().unwrap().execute_bootstrap(statement, &bootstrap_context(sql))
+            pool.as_ref().unwrap().execute_bootstrap(&parse_statement(sql)?, view, std::sync::Arc::new(bootstrap_context(sql)))
                 .map_err(|detail| BootstrapError::Job {
                     statement: sql.lines().next().unwrap_or(sql).trim().to_owned(), detail,
                 })?;
@@ -485,7 +490,7 @@ fn plan_with_executor<S: MetaSnapshot>(
     layout: BootstrapLayout,
     withhold_created_tables: bool,
     resume: bool,
-    run: &mut impl FnMut(&mut Overlay<'_, S>, &mut Clock, &mut JobOutcome, &str, &DdlStatement) -> Result<(), BootstrapError>,
+    run: &mut impl FnMut(&mut Overlay<'_, S>, &mut Clock, &mut JobOutcome, &str, Option<&TableInfo>) -> Result<(), BootstrapError>,
 ) -> Result<BootstrapWrite, BootstrapError> {
     let classic = layout == BootstrapLayout::Classic;
     let existing_database = if resume {
@@ -594,7 +599,7 @@ fn plan_with_executor<S: MetaSnapshot>(
             &mut clock,
             &mut last,
             &create_sys,
-            &parse_statement(&create_sys, SYSTEM_DB)?,
+            None,
         )?;
         for table in BOOTSTRAP_TABLES
             .iter()
@@ -605,7 +610,7 @@ fn plan_with_executor<S: MetaSnapshot>(
                 &mut clock,
                 &mut last,
                 table.create_sql,
-                &parse_statement(table.create_sql, SYSTEM_DB)?,
+                None,
             )?;
             table_names.push(table.name);
         }
@@ -613,18 +618,13 @@ fn plan_with_executor<S: MetaSnapshot>(
     // The views Go creates after `insertBuiltinBindInfoRow`, whose DML is
     // seeded with the other rows below.
     for view in BOOTSTRAP_VIEWS {
-        let statement = DdlStatement::CreateView {
-            schema: view.schema.to_owned(),
-            name: view.name.to_owned(),
-            or_replace: true,
-            info: Box::new(build_bootstrap_view(view, 0, 0)),
-        };
+        let info = build_bootstrap_view(view, 0, 0);
         run(
             &mut overlay,
             &mut clock,
             &mut last,
             view.create_sql,
-            &statement,
+            Some(&info),
         )?;
     }
     let create_test = "CREATE DATABASE IF NOT EXISTS test";
@@ -633,10 +633,9 @@ fn plan_with_executor<S: MetaSnapshot>(
         &mut clock,
         &mut last,
         create_test,
-        &parse_statement(create_test, SYSTEM_DB)?,
+        None,
     )?;
     // `ALTER RESOURCE GROUP default BACKGROUND=(TASK_TYPES='stats')`.
-    let (default_group, _) = bootstrap_default_resource_group()?;
     let alter_group = format!(
         "ALTER RESOURCE GROUP `default` BACKGROUND=(TASK_TYPES='{}')",
         tidb_txnkv::INTERNAL_TXN_STATS
@@ -646,9 +645,7 @@ fn plan_with_executor<S: MetaSnapshot>(
         &mut clock,
         &mut last,
         &alter_group,
-        &DdlStatement::AlterResourceGroup {
-            group: Box::new(default_group),
-        },
+        None,
     )?;
     let diff = last
         .diff

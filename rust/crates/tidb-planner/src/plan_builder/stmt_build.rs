@@ -76,6 +76,7 @@ fn visit(privilege: PrivilegeType, database: &str, table: &str, error: VisitAuth
         error,
         dynamic_privs: Vec::new(),
         dynamic_with_grant: false,
+        alter_writable: false,
     }
 }
 
@@ -89,6 +90,7 @@ fn dynamic_visit(privs: &[&str], with_grant: bool, error: VisitAuthError) -> Vis
         error,
         dynamic_privs: privs.iter().map(|privilege| (*privilege).to_owned()).collect(),
         dynamic_with_grant: with_grant,
+        alter_writable: false,
     }
 }
 
@@ -882,6 +884,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 ));
                 for action in &alter.actions {
                     match action {
+                        tidb_ast::AlterTableAction::ReadOnly(_) => {
+                            // Go `PlanBuilder.buildDDL`: permit the writeable specification
+                            // through CheckTableLock; LockTables checks conflicting modes.
+                            self.visit_info[0].alter_writable = true;
+                        }
                         tidb_ast::AlterTableAction::RenameTable { new_name: other }
                         | tidb_ast::AlterTableAction::Partition(
                             tidb_ast::AlterPartitionAction::Exchange { table: other, .. },

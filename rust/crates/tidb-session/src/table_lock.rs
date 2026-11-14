@@ -26,6 +26,7 @@
 use std::collections::HashSet;
 
 use tidb_ast::TableLockType;
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_config::config_tree::config::table_lock_enabled;
 use tidb_ddl_build::table_lock;
 use tidb_infoschema::SessionExtendedInfoSchema;
@@ -147,7 +148,7 @@ impl Session {
         if !self.table_lock_check_needed(catalog) {
             return Ok(());
         }
-        let visits: Vec<(&str, &str, PrivilegeType)> = requests
+        let visits: Vec<(&str, &str, PrivilegeType, bool)> = requests
             .iter()
             .filter(|request| request.dynamic_privileges.is_empty())
             .map(|request| {
@@ -155,6 +156,7 @@ impl Session {
                     request.database.as_str(),
                     request.table.as_str(),
                     request.privilege,
+                    request.alter_writable,
                 )
             })
             .collect();
@@ -247,92 +249,87 @@ impl Session {
         Ok((info, lock_tables, first_schema))
     }
 
-    /// The cluster lock job for `LOCK TABLES`: `executor.LockTables`' checks
-    /// against this node's catalog, then Go's `LockTablesArgs` with the
-    /// session's current locks to release
-    /// ([`Self::begin_cluster_lock_job`] adds the new ones).
-    pub fn cluster_lock_tables_statement(
-        &mut self,
-        locks: &[tidb_ast::TableLock],
-    ) -> Result<tidb_ddl::cluster_ddl::DdlStatement, DriverError> {
+    /// Go `executor.LockTables`: validate names and build its typed job.
+    pub fn cluster_lock_tables_job(&mut self, locks: &[tidb_ast::TableLock], sql: &str)
+        -> Result<tidb_ddl::JobWrapper, DriverError> {
         let unlock_tables = self.get_all_table_locks();
-        let (session, lock_tables, _) = self.lock_tables_args(locks)?;
-        Ok(tidb_ddl::cluster_ddl::DdlStatement::LockTables {
-            lock_tables,
-            unlock_tables,
-            session,
-        })
+        let (session_info, lock_tables, _) = self.lock_tables_args(locks)?;
+        let context = self.ddl_statement_context().with_ddl_query(sql);
+        let catalog = self.lock_catalog()?;
+        tidb_ddl::cluster_ddl::table_lock::lock_tables_job(&catalog,
+            tidb_model::LockTablesArgs { lock_tables, unlock_tables, session_info, ..Default::default() },
+            &context)
+            .map_err(|e| DriverError::Mysql(tidb_terror::MysqlError::from_sql_error(e.to_sql_error())))
     }
 
-    /// The cluster lock job that releases every lock this session holds
-    /// (`UNLOCK TABLES`, and `session.Close`); `None` with none held, where Go's
-    /// `UnlockTables` submits nothing.
-    pub fn cluster_unlock_tables_statement(&self) -> Option<tidb_ddl::cluster_ddl::DdlStatement> {
+    /// Go `executor.UnlockTables`; no job when the session holds no locks.
+    pub fn cluster_unlock_tables_job(&self) -> Result<Option<tidb_ddl::JobWrapper>, DriverError> {
         let unlock_tables = self.get_all_table_locks();
-        if unlock_tables.is_empty() {
-            return None;
-        }
-        Some(tidb_ddl::cluster_ddl::DdlStatement::UnlockTables {
-            unlock_tables,
-            session: self.table_lock_session_info(),
-            is_cleanup: false,
-        })
+        if unlock_tables.is_empty() { return Ok(None); }
+        let context = self.ddl_statement_context();
+        let catalog = self.lock_catalog()?;
+        tidb_ddl::cluster_ddl::table_lock::unlock_tables_job(&catalog,
+            tidb_model::LockTablesArgs { unlock_tables, session_info: self.table_lock_session_info(),
+                ..Default::default() }, &context)
+            .map(Some).map_err(|e| DriverError::Mysql(tidb_terror::MysqlError::from_sql_error(e.to_sql_error())))
     }
 
-    /// Go `executor.LockTables`' `AddTableLock` before the job, once the
-    /// statement passed its privilege check.
-    pub fn begin_cluster_lock_job(&mut self, statement: &tidb_ddl::cluster_ddl::DdlStatement) {
-        if let tidb_ddl::cluster_ddl::DdlStatement::LockTables { lock_tables, .. } = statement {
-            self.add_table_lock(lock_tables);
+    /// Go `executor.CleanupTableLock`; no job when all named tables are unlocked.
+    pub fn cluster_cleanup_table_lock_job(&self, tables: &[Vec<String>], sql: &str)
+        -> Result<Option<tidb_ddl::JobWrapper>, DriverError> {
+        let Some(unlock_tables) = self.cleanup_table_lock_args(tables)? else { return Ok(None); };
+        let context = self.ddl_statement_context().with_ddl_query(sql);
+        let catalog = self.lock_catalog()?;
+        tidb_ddl::cluster_ddl::table_lock::unlock_tables_job(&catalog,
+            tidb_model::LockTablesArgs { unlock_tables, is_cleanup: true, ..Default::default() },
+            &context)
+            .map(Some).map_err(|e| DriverError::Mysql(tidb_terror::MysqlError::from_sql_error(e.to_sql_error())))
+    }
+
+    /// Go `executor.LockTables` before `doDDLJob2` protects locks if the session is killed.
+    pub(crate) fn begin_lock_tables_args(&mut self, args: &tidb_model::LockTablesArgs) {
+        self.add_table_lock(&args.lock_tables);
+    }
+
+    /// Go `executor.LockTables`, `UnlockTables`, `CleanupTableLock` after success.
+    pub(crate) fn finish_lock_tables_args(&mut self, args: &tidb_model::LockTablesArgs) {
+        if !args.lock_tables.is_empty() {
+            self.release_table_locks(&args.unlock_tables);
+            self.add_table_lock(&args.lock_tables);
+        } else if args.is_cleanup {
+            self.release_table_locks(&args.unlock_tables);
+        } else {
+            self.release_all_table_locks();
         }
     }
 
-    /// What a cluster DROP TABLE, DROP DATABASE or TRUNCATE TABLE does to
-    /// this session's locks once it succeeds, read from this node's catalog
-    /// before it runs (Go `dropTableObject`, `DropSchema` and
-    /// `HandleLockTablesOnFinish`).
-    pub fn cluster_ddl_lock_effect(
-        &self,
-        statement: &tidb_ddl::cluster_ddl::DdlStatement,
-    ) -> ClusterDdlLockEffect {
-        use tidb_ddl::cluster_ddl::DdlStatement;
-        if !table_lock_enabled() || !self.has_locked_tables() {
-            return ClusterDdlLockEffect::None;
-        }
-        let Ok(catalog) = self.lock_catalog() else {
-            return ClusterDdlLockEffect::None;
-        };
-        let held = |schema: &str, table: &str| {
-            catalog
-                .stored_table_id(schema, table)
-                .filter(|table_id| self.check_table_locked(*table_id).0)
-        };
-        match statement {
-            DdlStatement::DropTable { schema, table, .. } => {
-                ClusterDdlLockEffect::Release(held(schema, table).into_iter().collect())
-            }
-            DdlStatement::DropTables { names, .. } => ClusterDdlLockEffect::Release(
-                names
-                    .iter()
-                    .filter_map(|(schema, table)| held(schema, table))
-                    .collect(),
-            ),
-            DdlStatement::DropDatabase { name, .. } => ClusterDdlLockEffect::Release(
-                catalog
-                    .table_names(name)
-                    .unwrap_or_default()
-                    .iter()
-                    .filter_map(|table| held(name, table))
-                    .collect(),
-            ),
-            DdlStatement::TruncateTable { schema, table } => {
+
+
+
+
+    /// Go `dropTableObject`, `DropSchema`, and `HandleLockTablesOnFinish`:
+    /// capture the affected locks before the executor publishes new metadata.
+    pub(crate) fn cluster_executor_lock_effect(&self, statement: &tidb_ast::Stmt) -> ClusterDdlLockEffect {
+        if !table_lock_enabled() || !self.has_locked_tables() { return ClusterDdlLockEffect::None; }
+        let tidb_ast::Stmt::Ddl(ddl) = statement else { return ClusterDdlLockEffect::None; };
+        let Ok(catalog) = self.lock_catalog() else { return ClusterDdlLockEffect::None; };
+        let held = |schema: &str, table: &str| catalog.stored_table_id(schema, table)
+            .filter(|id| self.check_table_locked(*id).0);
+        match &**ddl {
+            tidb_ast::DdlStmt::TruncateTable(path) => {
+                let Ok((schema, table)) = tidb_infoschema::split_table_path_pub(path, &self.vars.current_db) else {
+                    return ClusterDdlLockEffect::None;
+                };
                 match (held(schema, table), catalog.database_id(schema)) {
-                    (Some(old_id), Some(schema_id)) => {
-                        ClusterDdlLockEffect::Move { schema_id, old_id }
-                    }
+                    (Some(old_id), Some(schema_id)) => ClusterDdlLockEffect::Move { schema_id, old_id },
                     _ => ClusterDdlLockEffect::None,
                 }
             }
+            tidb_ast::DdlStmt::DropTable(drop) => ClusterDdlLockEffect::Release(drop.names.iter()
+                .filter_map(|path| tidb_infoschema::split_table_path_pub(path, &self.vars.current_db).ok())
+                .filter_map(|(schema, table)| held(schema, table)).collect()),
+            tidb_ast::DdlStmt::DropDatabase { name, .. } => ClusterDdlLockEffect::Release(
+                catalog.table_names(name).unwrap_or_default().iter().filter_map(|table| held(name, table)).collect()),
             _ => ClusterDdlLockEffect::None,
         }
     }
@@ -357,30 +354,6 @@ impl Session {
         }
     }
 
-    /// Go `executor.LockTables`/`UnlockTables` after a successful cluster
-    /// lock job: the released locks leave the session, the new ones stay.
-    pub fn finish_cluster_lock_job(&mut self, statement: &tidb_ddl::cluster_ddl::DdlStatement) {
-        match statement {
-            tidb_ddl::cluster_ddl::DdlStatement::LockTables {
-                lock_tables,
-                unlock_tables,
-                ..
-            } => {
-                self.release_table_locks(unlock_tables);
-                self.add_table_lock(lock_tables);
-            }
-            tidb_ddl::cluster_ddl::DdlStatement::UnlockTables {
-                is_cleanup: false, ..
-            } => {
-                self.release_all_table_locks();
-            }
-            // Go `CleanupTableLock` releases only the tables it cleaned.
-            tidb_ddl::cluster_ddl::DdlStatement::UnlockTables { unlock_tables, .. } => {
-                self.release_table_locks(unlock_tables);
-            }
-            _ => {}
-        }
-    }
 
     /// Go `DDLExec.executeCleanupTableLock`'s local-temporary refusal and
     /// `executor.CleanupTableLock`'s checks: the tables to clean, `None`
@@ -458,20 +431,6 @@ impl Session {
         Ok(Some(cleanup))
     }
 
-    /// The cluster `IsCleanup` unlock job for `ADMIN CLEANUP TABLE LOCK`,
-    /// `None` when no named table is locked.
-    pub fn cluster_cleanup_table_lock_statement(
-        &self,
-        tables: &[Vec<String>],
-    ) -> Result<Option<tidb_ddl::cluster_ddl::DdlStatement>, DriverError> {
-        Ok(self.cleanup_table_lock_args(tables)?.map(|unlock_tables| {
-            tidb_ddl::cluster_ddl::DdlStatement::UnlockTables {
-                unlock_tables,
-                session: self.table_lock_session_info(),
-                is_cleanup: true,
-            }
-        }))
-    }
 
     /// Go `HandleLockTablesOnSuccessSubmit`/`HandleLockTablesOnFinish` for a
     /// successful `TRUNCATE TABLE`: the session's lock moves to the new

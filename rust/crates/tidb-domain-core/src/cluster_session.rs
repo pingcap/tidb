@@ -129,6 +129,7 @@ pub fn cluster_session_catalog_with_templates(
 ) -> ClusterSessionCatalog {
     let mut catalog = tidb_infoschema_perfschema::catalog();
     catalog.set_schema_meta_version(loaded.schema_meta_version());
+    catalog.inherit_masking_policy_cache(loaded);
     let mut skipped = Vec::new();
     // Go `infoschema`'s resource groups come from meta, so a group another
     // TiDB created is one this node's `SET RESOURCE GROUP` finds.
@@ -163,7 +164,9 @@ pub fn cluster_session_catalog_with_templates(
         for table_handle in database.read().deprecated_tables.iter_deref() {
             // Go `ApplyDiff`: a table no diff names keeps the object the
             // previous image built, its cached table's runtime with it.
-            if previous.is_some_and(|previous| catalog.adopt_built_table(previous, &schema, &table_handle)) {
+            if previous
+                .is_some_and(|previous| catalog.adopt_built_table(previous, &schema, &table_handle))
+            {
                 continue;
             }
             let table = table_handle.read();
@@ -245,7 +248,11 @@ pub fn cluster_session_catalog_with_templates(
             }
         }
     }
-    ClusterSessionCatalog { catalog, skipped, statistics }
+    ClusterSessionCatalog {
+        catalog,
+        skipped,
+        statistics,
+    }
 }
 
 /// A stored table this node cannot build is a gap in the port, not a state

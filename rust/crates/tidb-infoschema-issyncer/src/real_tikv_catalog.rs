@@ -24,7 +24,7 @@ use tidb_txnkv::transaction::OptimisticCoordinatorError;
 use tidb_txnkv::kv_storage::{SnapshotScanRegion, Storage, Transaction};
 use tidb_txnkv::Key;
 
-use crate::catalog_reload::{reload_cluster_catalog, ReloadedCatalog};
+use crate::catalog_reload::ReloadedCatalog;
 use crate::catalog_reload::load_info_schema;
 use tidb_infoschema::cluster_catalog::{ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot};
 use tidb_infoschema::SessionExtendedInfoSchema;
@@ -88,6 +88,11 @@ impl<'transaction> TransactionMetaSnapshot<'transaction> {
 }
 
 impl MetaSnapshot for TransactionMetaSnapshot<'_> {
+    /// Go `Loader.LoadWithTS(startTS)`: the timestamp used by the schema load.
+    fn start_ts(&self) -> u64 {
+        self.transaction.start_ts()
+    }
+
     fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
         let call = UnaryCallContext::with_timeout(self.timeout);
         self.transaction
@@ -186,6 +191,11 @@ impl SnapshotMetaSnapshot {
 }
 
 impl MetaSnapshot for SnapshotMetaSnapshot {
+    /// Go `Loader.LoadWithTS(startTS)`: the timestamp used by the schema load.
+    fn start_ts(&self) -> u64 {
+        self.snapshot.start_ts()
+    }
+
     fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
         self.snapshot
             .get(&Key::from_bytes(key.to_vec()))
@@ -283,7 +293,7 @@ pub fn reload(
     opener: &dyn Storage,
     timeout: Duration,
     current: &SessionExtendedInfoSchema,
-    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
+    cache: &crate::catalog_watch::InfoCache,
 ) -> Result<ReloadedCatalogAt, ClusterCatalogError> {
     let mut transaction = opener
         .begin_read_only()
@@ -293,7 +303,7 @@ pub fn reload(
         // The node's allocator registry, so an applied rebase diff drops the
         // ranges reserved before it (see `catalog_reload`).
         let mut snapshot = TransactionMetaSnapshot::new(transaction.as_mut(), timeout);
-        reload_cluster_catalog(&mut snapshot, current, Some(row_ids.as_ref()))?
+        cache.reload_with_ts(&mut snapshot, current)?
     };
     transaction
         .finish_without_writes()
@@ -339,12 +349,20 @@ pub fn note_reload(
             validator.update(lease_grant_ts, 0, version, None);
             crate::catalog_watch::CatalogReloadPass::Unchanged
         }
+        ReloadedCatalog::Cached { catalog } => {
+            // Go LoadWithTS returns cacheHit=true, oldVersion=0, changes=nil.
+            validator.update(lease_grant_ts, 0, catalog.schema_meta_version(), None);
+            crate::catalog_watch::CatalogReloadPass::Diffs(catalog)
+        }
         ReloadedCatalog::Diffs {
-            catalog, changes, ..
+            catalog,
+            changes,
+            previous_version,
+            ..
         } => {
             validator.update(
                 lease_grant_ts,
-                current_version,
+                previous_version,
                 catalog.schema_meta_version(),
                 Some(&changes),
             );

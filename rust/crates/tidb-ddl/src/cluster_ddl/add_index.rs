@@ -277,6 +277,17 @@ pub(super) fn check_added_primary_key_holds_no_null(
     else {
         return Ok(());
     };
+    check_primary_key_null_values(catalog, schema, table, index, has_null)
+}
+
+/// Go `checkPrimaryKeyNotNull` with the index's resolved definition.
+pub(crate) fn check_primary_key_null_values(
+    catalog: &SessionExtendedInfoSchema,
+    schema: &str,
+    table: &str,
+    index: &IndexInfo,
+    has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
+) -> Result<(), DdlPlanError> {
     if !index.primary {
         return Ok(());
     }
@@ -544,6 +555,38 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
     else {
         return Ok(None);
     };
+    create_index_with_info(
+        _snapshot,
+        catalog,
+        schema,
+        table,
+        if_not_exists,
+        index,
+        expressions,
+        condition,
+        context,
+        columnar,
+        store_count,
+        job_context,
+    )
+}
+
+/// Go `executor.CreateIndex` with the prepared column/index definition.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_index_with_info<S: MetaSnapshot>(
+    _snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    if_not_exists: &bool,
+    index: &Box<IndexInfo>,
+    expressions: &Vec<Option<tidb_ast::Expr>>,
+    condition: &Option<tidb_ast::Expr>,
+    context: &DdlStatementContext,
+    columnar: &Option<Box<ColumnarIndexSpec>>,
+    store_count: usize,
+    job_context: &dyn DdlSessionContext,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
     let stored = stored.read();
     if let Some(spec) = columnar {
@@ -554,8 +597,10 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
     // mysql.PrimaryKeyName for every lookup and for the submitted job.
     let name = if index.primary {
         tidb_ddl_build::check_too_long_identifier(index.name.original()).map_err(|_| {
-            DdlPlanError::from(tidb_dbterror::ERR_TOO_LONG_IDENT
-                .gen_with_stack_by_args(&[tidb_mysql::consts::PrimaryKeyName.into()]))
+            DdlPlanError::from(
+                tidb_dbterror::ERR_TOO_LONG_IDENT
+                    .gen_with_stack_by_args(&[tidb_mysql::consts::PrimaryKeyName.into()]),
+            )
         })?;
         tidb_mysql::consts::PrimaryKeyName.to_owned()
     } else {
@@ -584,8 +629,7 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
                     existing.name.original()
                 ),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
-                    tidb_dbterror::ERR_DUP_KEY_NAME
-                        .gen_with_stack_by_args(&[name.into()]),
+                    tidb_dbterror::ERR_DUP_KEY_NAME.gen_with_stack_by_args(&[name.into()]),
                 )],
             }));
         }

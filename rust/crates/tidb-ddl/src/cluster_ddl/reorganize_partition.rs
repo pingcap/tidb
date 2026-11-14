@@ -139,6 +139,30 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
         _ => return Ok(None),
     };
     let catalog = load_info_schema(snapshot)?;
+    let built = reorganize_partitions_job(
+        snapshot,
+        &catalog,
+        schema,
+        table,
+        action,
+        context,
+        job_context,
+        store_count,
+    )?;
+    submit_built_job(snapshot, built, start_ts, upgrading)
+}
+
+/// Go `executor.ReorganizePartitions`, `hashPartitionManagement`, `AlterTablePartitioning`, `RemovePartitioning`.
+pub(crate) fn reorganize_partitions_job<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    action: &tidb_ast::AlterPartitionAction,
+    context: &DdlContext,
+    job_context: &dyn DdlSessionContext,
+    store_count: usize,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let (database_id, stored) = locate_table(&catalog, schema, table)?;
     let stored = stored.read();
     let kv = tidb_ddl_build::partition_ddl::PartitionedTable::new(&stored)
@@ -189,9 +213,7 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
                     }
                 }
             };
-            tidb_ddl_build::partition_ddl::hash_partition_management(
-                &kv, change, &ctx, &mut host,
-            )
+            tidb_ddl_build::partition_ddl::hash_partition_management(&kv, change, &ctx, &mut host)
         }
         _ => return Ok(None),
     }
@@ -351,11 +373,7 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
         }),
         warnings,
     );
-    submit_built_job(
-        snapshot, Some(built),
-        start_ts,
-        upgrading,
-    )
+    Ok(Some(built))
 }
 
 /// Go `checkReorgPartitionNames`.

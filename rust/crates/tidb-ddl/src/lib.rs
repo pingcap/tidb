@@ -63,6 +63,9 @@ pub mod pre_split;
 
 pub use worker::{ClusterDdl, RealClusterDdl};
 
+/// Go `JobWrapper`: a job, typed arguments and its ID-allocation ownership.
+pub use tidb_ddl_jobsubmit::JobSpec as JobWrapper;
+
 /// Go `ddl.StartMode`: the mode a node starts its DDL in. `Upgrade` forces
 /// the node to be the DDL owner, and outside `Normal` the masking-policy
 /// hooks tolerate a `mysql.tidb_masking_policy` that does not exist yet;

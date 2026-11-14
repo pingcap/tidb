@@ -423,6 +423,8 @@ pub struct Session {
     /// ([`Session::compile_statement`]), which that executor's own compile
     /// takes instead of building and checking the plan again.
     precompiled: Option<crate::identity::PrecompiledStatement>,
+    /// Go `preprocessor.inPrepare`: prepared DDL retains its prepared resolve context.
+    in_prepare: bool,
     /// What the session's executors reach through Go's `Domain`; `None` for
     /// an in-process session.
     domain_services: Option<crate::domain_services::DomainServices>,
@@ -994,6 +996,7 @@ impl Session {
             catalog,
             account_sql: None,
             precompiled: None,
+            in_prepare: false,
             domain_services: None,
             privilege_change_notifier: None,
             pending_privilege_users: None,

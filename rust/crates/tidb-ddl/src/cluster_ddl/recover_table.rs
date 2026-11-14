@@ -642,8 +642,35 @@ pub(crate) fn build_recover_table_job<S: MetaSnapshot>(
     else {
         unreachable!("called for RECOVER / FLASHBACK TABLE");
     };
+    recover_table_by_job_or_name(
+        snapshot,
+        catalog,
+        by_name,
+        job_id,
+        new_name,
+        flashback,
+        job_context,
+        gc_safe_point,
+        at,
+    )
+}
+
+/// Go `executor.RecoverTable` and its DDLExec history lookup.
+pub(crate) fn recover_table_by_job_or_name<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    by_name: &Option<(String, String)>,
+    job_id: &i64,
+    new_name: &String,
+    flashback: &bool,
+    job_context: &dyn DdlSessionContext,
+    gc_safe_point: u64,
+    at: &dyn SnapshotMetaAt,
+) -> Result<tidb_ddl_jobsubmit::JobSpec, DdlPlanError> {
     let (job, mut table_info) = match by_name {
-        Some((schema, table)) => recover_table_by_name(snapshot, catalog, schema, table, gc_safe_point, at)?,
+        Some((schema, table)) => {
+            recover_table_by_name(snapshot, catalog, schema, table, gc_safe_point, at)?
+        }
         None => {
             // Go `getRecoverTableByJobID`.
             let job = tidb_infoschema::cluster_catalog::with_meta_reader(snapshot, |reader| {
@@ -652,7 +679,8 @@ pub(crate) fn build_recover_table_job<S: MetaSnapshot>(
             .map_err(DdlPlanError::Meta)?
             .ok_or_else(|| {
                 DdlPlanError::from(
-                    tidb_dbterror::ERR_DDL_JOB_NOT_FOUND.gen_with_stack_by_args(&[(*job_id).into()]),
+                    tidb_dbterror::ERR_DDL_JOB_NOT_FOUND
+                        .gen_with_stack_by_args(&[(*job_id).into()]),
                 )
             })?;
             if !matches!(
@@ -665,20 +693,29 @@ pub(crate) fn build_recover_table_job<S: MetaSnapshot>(
                 )));
             }
             let snapshot_ts = get_recover_snapshot_ts(&job);
-            tidb_gcutil::validate_snapshot_with_gc_safe_point(snapshot_ts, gc_safe_point).map_err(|error| {
-                gc_error(match error {
-                    tidb_gcutil::Error::SnapshotTooOld { safe_point_time } => {
-                        tidb_gcutil::Error::SnapshotTooOld { safe_point_time }
-                    }
-                    other => tidb_gcutil::Error::Context(tidb_terror::MysqlError::unknown(other.to_string())),
-                })
-            })?;
-            let table = at.table_at(snapshot_ts, job.schema_id, job.table_id)?.ok_or_else(|| {
-                DdlPlanError::from(tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.gen_with_stack_by_args(&[
-                    format!("(Schema ID {})", job.schema_id).into(),
-                    format!("(Table ID {})", job.table_id).into(),
-                ]))
-            })?;
+            tidb_gcutil::validate_snapshot_with_gc_safe_point(snapshot_ts, gc_safe_point).map_err(
+                |error| {
+                    gc_error(match error {
+                        tidb_gcutil::Error::SnapshotTooOld { safe_point_time } => {
+                            tidb_gcutil::Error::SnapshotTooOld { safe_point_time }
+                        }
+                        other => tidb_gcutil::Error::Context(tidb_terror::MysqlError::unknown(
+                            other.to_string(),
+                        )),
+                    })
+                },
+            )?;
+            let table = at
+                .table_at(snapshot_ts, job.schema_id, job.table_id)?
+                .ok_or_else(|| {
+                    DdlPlanError::from(
+                        tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                            .gen_with_stack_by_args(&[
+                                format!("(Schema ID {})", job.schema_id).into(),
+                                format!("(Table ID {})", job.table_id).into(),
+                            ]),
+                    )
+                })?;
             (job, table)
         }
     };
@@ -911,6 +948,27 @@ pub(crate) fn build_recover_schema_job<S: MetaSnapshot>(
     let DdlStatement::FlashbackDatabase { name, new_name } = statement else {
         unreachable!("called for FLASHBACK DATABASE");
     };
+    recover_schema(
+        snapshot,
+        catalog,
+        name,
+        new_name,
+        job_context,
+        gc_safe_point,
+        at,
+    )
+}
+
+/// Go `executor.RecoverSchema` and its DDLExec history lookup.
+pub(crate) fn recover_schema<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    name: &String,
+    new_name: &String,
+    job_context: &dyn DdlSessionContext,
+    gc_safe_point: u64,
+    at: &dyn SnapshotMetaAt,
+) -> Result<tidb_ddl_jobsubmit::JobSpec, DdlPlanError> {
     let db_name = if new_name.is_empty() { name } else { new_name };
     // Check the schema name does not exist.
     if super::find_database(catalog, db_name).is_some() {

@@ -711,6 +711,18 @@ pub fn flashback_cluster<S: MetaSnapshot>(
     let DdlStatement::FlashbackCluster { flashback_ts } = statement else {
         return Ok(None);
     };
+    let built = add_index::AddIndexSubmission::Job(
+        Box::new(flashback_cluster_job(*flashback_ts, job_context)),
+        Vec::new(),
+    );
+    submit_built_job(snapshot, Some(built), start_ts, upgrading)
+}
+
+/// Go `executor.FlashbackCluster`: the job after the clock check.
+pub fn flashback_cluster_job(
+    flashback_ts: u64,
+    job_context: &dyn DdlSessionContext,
+) -> tidb_ddl_jobsubmit::JobSpec {
     let mut job = session_job(job_context, ActionType::ACTION_FLASHBACK_CLUSTER);
     // FLASHBACK CLUSTER affects all schemas and tables.
     job.involving_schema_info = GoSharedSlice::from_vec(vec![tidb_model::InvolvingSchemaInfo {
@@ -721,20 +733,16 @@ pub fn flashback_cluster<S: MetaSnapshot>(
     // The value for global variables is meaningless, it will cover during
     // flashback cluster.
     let args = FlashbackClusterArgs {
-        flashback_ts: *flashback_ts,
+        flashback_ts: flashback_ts,
         pd_schedule_value: Some(BTreeMap::new()),
         enable_gc: true,
         enable_auto_analyze: true,
         enable_ttl_job: true,
         ..FlashbackClusterArgs::default()
     };
-    let built = add_index::AddIndexSubmission::Job(
-        Box::new(tidb_ddl_jobsubmit::JobSpec {
-            job,
-            args: JobArgsValue::FlashbackCluster(Some(GoShared::new(args))),
-            id_allocated: true,
-        }),
-        Vec::new(),
-    );
-    submit_built_job(snapshot, Some(built), start_ts, upgrading)
+    tidb_ddl_jobsubmit::JobSpec {
+        job,
+        args: JobArgsValue::FlashbackCluster(Some(GoShared::new(args))),
+        id_allocated: true,
+    }
 }

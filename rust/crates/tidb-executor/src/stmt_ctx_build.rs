@@ -731,6 +731,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         };
         let context = self
             .statement_context(false)
+            .with_ddl_enable_row_level_checksum(self.session_vars().enable_row_level_checksum)
             .with_foreign_key_checks(self.foreign_key_checks())
             .with_clustered_index_def_mode(self.clustered_index_mode())
             .with_shard_row_id_defaults(

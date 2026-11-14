@@ -225,6 +225,11 @@ pub fn job_meta_error(meta: &JobMeta<'_, '_>, error: tidb_meta::MetaError) -> Cl
 }
 
 impl MetaSnapshot for JobTxn<'_> {
+    /// Go `Loader.LoadWithTS(startTS)`: the timestamp used by the schema load.
+    fn start_ts(&self) -> u64 {
+        self.start_ts
+    }
+
     fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
         match self.writes.get(key) {
             Some(written) => Ok(written.clone()),
@@ -286,6 +291,7 @@ impl RawTransaction for JobTxn<'_> {
 }
 
 impl tidb_meta::transaction::MetaTransaction for JobTxn<'_> {
+    /// Go `Loader.LoadWithTS(startTS)`: the timestamp used by the schema load.
     fn start_ts(&self) -> u64 {
         self.start_ts
     }

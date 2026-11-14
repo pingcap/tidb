@@ -85,6 +85,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 },
                 dynamic_privs: Vec::new(),
                 dynamic_with_grant: false,
+                alter_writable: false,
             });
         }
         if local {
@@ -96,6 +97,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 error: VisitAuthError::SpecificAccessDenied { privilege: "FILE" },
                 dynamic_privs: Vec::new(),
                 dynamic_with_grant: false,
+                alter_writable: false,
             });
         }
         if self

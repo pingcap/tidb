@@ -39,6 +39,32 @@ pub fn prepare_create_table_job_submission<S: MetaSnapshot>(
     else {
         return Ok(None);
     };
+    create_table_job(
+        snapshot,
+        schema,
+        table,
+        *if_not_exists,
+        build,
+        job_context,
+        tiflash_stores,
+        start_ts,
+        upgrading,
+    )
+}
+
+/// Go `executor.CreateTable`: typed arguments through `doDDLJob2`.
+#[allow(clippy::too_many_arguments)]
+pub fn create_table_job<S: MetaSnapshot>(
+    snapshot: &mut S,
+    schema: &str,
+    table: &str,
+    if_not_exists: bool,
+    build: &CreateTableBuild,
+    job_context: &dyn DdlSessionContext,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let catalog = load_info_schema(snapshot)?;
     let mut warnings = Vec::new();
     let info = match build_create_table_info(
@@ -46,7 +72,7 @@ pub fn prepare_create_table_job_submission<S: MetaSnapshot>(
         &catalog,
         schema,
         table,
-        *if_not_exists,
+        if_not_exists,
         build,
         tiflash_stores,
         &mut warnings,
@@ -111,9 +137,7 @@ pub fn prepare_create_table_job_submission<S: MetaSnapshot>(
         // `assignGIDsForJobs` draws the table's and its partitions' ids.
         id_allocated: false,
     }];
-    tidb_ddl_jobsubmit::prepare_submit_batch(
-        snapshot, &mut specs, start_ts, upgrading,
-    )?;
+    tidb_ddl_jobsubmit::prepare_submit_batch(snapshot, &mut specs, start_ts, upgrading)?;
     let [spec] = specs;
     Ok(Some(AddIndexSubmission::Job(Box::new(spec), warnings)))
 }

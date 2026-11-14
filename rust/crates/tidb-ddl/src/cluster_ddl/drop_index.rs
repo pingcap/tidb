@@ -44,34 +44,65 @@ pub(super) fn build_drop_index_job<S: MetaSnapshot>(
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let (schema, table, index_name, if_exists) = match statement {
+    match statement {
         DdlStatement::DropIndex {
             schema,
             table,
             index,
             if_exists,
             hypo,
-        } => {
-            // Go `dropIndex` with `isHypo`: after the table lookup,
-            // `dropHypoIndexFromCtx`.
-            if *hypo {
-                let (_, stored) = locate_table(&catalog, schema, table)?;
-                let stored = stored.read();
-                job_context
-                    .drop_hypo_index(&schema.go_to_lower(), stored.name.lowercase(), index, *if_exists)
-                    .map_err(DdlPlanError::from_mysql_error)?;
-                return Ok(Some(AddIndexSubmission::AlreadySatisfied {
-                    detail: format!("hypothetical index `{index}` dropped from the session"),
-                    warnings: Vec::new(),
-                }));
-            }
-            (schema, table, index.clone(), *if_exists)
-        }
-        DdlStatement::DropPrimaryKey { schema, table } => {
-            (schema, table, "PRIMARY".to_owned(), false)
-        }
-        _ => return Ok(None),
-    };
+        } => drop_index_by_name(
+            _snapshot,
+            catalog,
+            schema,
+            table,
+            index,
+            *if_exists,
+            *hypo,
+            job_context,
+        ),
+        DdlStatement::DropPrimaryKey { schema, table } => drop_index_by_name(
+            _snapshot,
+            catalog,
+            schema,
+            table,
+            &"PRIMARY".to_owned(),
+            false,
+            false,
+            job_context,
+        ),
+        _ => Ok(None),
+    }
+}
+
+/// Go `executor.dropIndex`, shared with `DropPrimaryKey`.
+pub(crate) fn drop_index_by_name<S: MetaSnapshot>(
+    _snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    index: &String,
+    if_exists: bool,
+    hypo: bool,
+    job_context: &dyn DdlSessionContext,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    if hypo {
+        let (_, stored) = locate_table(&catalog, schema, table)?;
+        let stored = stored.read();
+        job_context
+            .drop_hypo_index(
+                &schema.go_to_lower(),
+                stored.name.lowercase(),
+                index,
+                if_exists,
+            )
+            .map_err(DdlPlanError::from_mysql_error)?;
+        return Ok(Some(AddIndexSubmission::AlreadySatisfied {
+            detail: format!("hypothetical index `{index}` dropped from the session"),
+            warnings: Vec::new(),
+        }));
+    }
+    let index_name = index.clone();
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
     let stored = stored.read();
     let index = find_index(&stored, &index_name);

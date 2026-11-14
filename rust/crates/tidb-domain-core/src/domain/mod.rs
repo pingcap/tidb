@@ -24,6 +24,7 @@ pub mod plan_replayer_owner;
 pub mod runaway_owner;
 pub mod ttl_owner;
 mod telemetry;
+mod masking_policy;
 pub mod schema_lease;
 pub mod sqlsvr;
 pub mod dist_task;
@@ -1027,18 +1028,18 @@ impl Domain {
         global_vars.set_external_timestamp_provider(Arc::new(ClusterExternalTimestamp(
             Arc::clone(&transactions),
         )));
-        let boot_skipped = cluster_session_catalog(
-            &catalog.get_latest(),
-            &stats.load(),
-            auto_ids.as_ref(),
-        )
-        .skipped;
+        let boot_skipped =
+            cluster_session_catalog(&catalog.get_latest(), &stats.load(), auto_ids.as_ref())
+                .skipped;
         // Go's loader builds each version's `InfoSchema` before `InfoCache`
         // holds it; the domain owns the auto-id allocators the build needs.
         let schema_builder_domain = Arc::new(std::sync::OnceLock::new());
         catalog.install_schema_builder(Box::new({
             let auto_ids = Arc::clone(&auto_ids);
-            let cached_table_session = cached_table_session_factory(Arc::clone(&schema_builder_domain));
+            let masking_factory =
+                masking_policy::session_factory(Arc::clone(&schema_builder_domain));
+            let cached_table_session =
+                cached_table_session_factory(Arc::clone(&schema_builder_domain));
             move |loaded, previous| {
                 let built = cluster_session_catalog_with_templates(
                     loaded,
@@ -1048,6 +1049,7 @@ impl Domain {
                     Some(cached_table_session.as_ref()),
                 );
                 let mut schema = built.catalog;
+                schema.set_masking_policy_factory(Arc::clone(&masking_factory));
                 schema.set_skipped_tables(built.skipped);
                 schema
             }
@@ -1129,7 +1131,9 @@ impl Domain {
             runaway: std::sync::OnceLock::new(),
             ttl_job_manager: std::sync::OnceLock::new(),
             signing_cert_loop: std::sync::OnceLock::new(),
-            expensive_query_handle: Arc::new(tidb_expensivequery::Handle::new(expensive_query_exited)),
+            expensive_query_handle: Arc::new(tidb_expensivequery::Handle::new(
+                expensive_query_exited,
+            )),
             expensive_query_exit: Mutex::new(Some(expensive_query_exit)),
             approximate_table_counts,
             auto_analyze_priority_queue: Arc::new(std::sync::OnceLock::new()),

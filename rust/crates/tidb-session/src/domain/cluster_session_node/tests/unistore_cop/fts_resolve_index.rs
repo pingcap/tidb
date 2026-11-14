@@ -47,11 +47,7 @@ fn setup_tiflash_fts_match_word_table(stack: &UnistoreClusterStack, session: &mu
     stack
         .factory
         .ddl
-        .execute(
-            &tidb_ddl::cluster_ddl::DdlStatement::UpdateTiFlashReplicaStatus {
-                table_id,
-                available: true,
-            },
+        .update_table_replica_info(table_id, true,
             &tidb_sessionctx::StmtContext::for_query(),
         )
         .unwrap();

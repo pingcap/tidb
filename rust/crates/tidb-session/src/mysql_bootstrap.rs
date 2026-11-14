@@ -261,7 +261,7 @@ pub fn plan_mysql_bootstrap_with_layout<S: MetaSnapshot>(
 /// group's ID, name and state and replaces only its settings. The proto is
 /// `resourcegroup.NewGroupFromOptions` over those settings, which is what
 /// the job sends through `infosync.ModifyResourceGroup`.
-fn bootstrap_default_resource_group() -> Result<
+pub(crate) fn bootstrap_default_resource_group() -> Result<
     (
         tidb_model::ResourceGroupInfo,
         tidb_ddl::cluster_ddl::ResourceGroupUpdate,

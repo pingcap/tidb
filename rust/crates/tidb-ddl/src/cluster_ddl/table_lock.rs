@@ -32,16 +32,79 @@ pub fn prepare_table_lock_job_submission<S: MetaSnapshot>(
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let catalog = load_info_schema(snapshot)?;
+    let job = match statement {
+        DdlStatement::LockTables {
+            lock_tables,
+            unlock_tables,
+            session,
+        } => lock_tables_job(
+            &catalog,
+            tidb_model::LockTablesArgs {
+                lock_tables: lock_tables.clone(),
+                unlock_tables: unlock_tables.clone(),
+                session_info: session.clone(),
+                ..Default::default()
+            },
+            job_context,
+        )?,
+        DdlStatement::UnlockTables {
+            unlock_tables,
+            session,
+            is_cleanup,
+        } => unlock_tables_job(
+            &catalog,
+            tidb_model::LockTablesArgs {
+                unlock_tables: unlock_tables.clone(),
+                session_info: session.clone(),
+                is_cleanup: *is_cleanup,
+                ..Default::default()
+            },
+            job_context,
+        )?,
+        _ => return Ok(None),
+    };
+    submit_built_job(
+        snapshot,
+        Some(AddIndexSubmission::Job(Box::new(job), Vec::new())),
+        start_ts,
+        upgrading,
+    )
+}
+
+/// Go `executor.LockTables` after the session validates the table identities.
+pub fn lock_tables_job(
+    catalog: &SessionExtendedInfoSchema,
+    args: tidb_model::LockTablesArgs,
+    job_context: &dyn DdlSessionContext,
+) -> Result<tidb_ddl_jobsubmit::JobSpec, DdlPlanError> {
+    table_lock_job(catalog, args, job_context, true)
+}
+
+/// Go `executor.UnlockTables` and `executor.CleanupTableLock`.
+pub fn unlock_tables_job(
+    catalog: &SessionExtendedInfoSchema,
+    args: tidb_model::LockTablesArgs,
+    job_context: &dyn DdlSessionContext,
+) -> Result<tidb_ddl_jobsubmit::JobSpec, DdlPlanError> {
+    table_lock_job(catalog, args, job_context, false)
+}
+
+fn table_lock_job(
+    catalog: &SessionExtendedInfoSchema,
+    mut args: tidb_model::LockTablesArgs,
+    job_context: &dyn DdlSessionContext,
+    lock: bool,
+) -> Result<tidb_ddl_jobsubmit::JobSpec, DdlPlanError> {
     // Go names each table the job touches; an unlock skips a table dropped
     // since it was locked.
     let involving = |tables: &[tidb_model::TableLockTpInfo]| {
         tables
             .iter()
             .filter_map(|table| {
-                let database = catalog
-                    .schema_by_id(table.schema_id)?;
+                let database = catalog.schema_by_id(table.schema_id)?;
                 let stored = database
-                    .read().deprecated_tables
+                    .read()
+                    .deprecated_tables
                     .iter_deref()
                     .find(|stored| stored.read().id == table.table_id)?;
                 let stored = stored.read();
@@ -54,76 +117,43 @@ pub fn prepare_table_lock_job_submission<S: MetaSnapshot>(
             })
             .collect::<Vec<_>>()
     };
-    let (job, args) = match statement {
-        // Go `executor.LockTables`.
-        DdlStatement::LockTables {
-            lock_tables,
-            unlock_tables,
-            session,
-        } => {
-            let first = lock_tables.first().ok_or_else(|| {
-                DdlPlanError::Admission(DdlAdmissionError::plain(
-                    "LOCK TABLES names no table".to_owned(),
-                ))
-            })?;
-            let mut job = session_job(job_context, ActionType::ACTION_LOCK_TABLE);
-            job.schema_id = first.schema_id;
-            job.table_id = first.table_id;
-            job.involving_schema_info = GoSharedSlice::from_vec(involving(lock_tables));
-            let args = tidb_model::LockTablesArgs {
-                lock_tables: lock_tables.clone(),
-                unlock_tables: unlock_tables.clone(),
-                session_info: session.clone(),
-                ..tidb_model::LockTablesArgs::default()
-            };
-            (job, args)
-        }
-        // Go `executor.UnlockTables`, `ddl.cleanDeadTableLock` and
-        // `executor.CleanupTableLock`.
-        DdlStatement::UnlockTables {
-            unlock_tables,
-            session,
-            is_cleanup,
-        } => {
-            let first = unlock_tables.first().ok_or_else(|| {
-                DdlPlanError::Admission(DdlAdmissionError::plain(
-                    "UNLOCK TABLES names no table".to_owned(),
-                ))
-            })?;
-            let mut job = session_job(job_context, ActionType::ACTION_UNLOCK_TABLE);
-            // Go `setDDLJobQuery`: an unlock job records no query.
-            job.query = String::new().into();
-            job.schema_id = first.schema_id;
-            job.table_id = first.table_id;
-            job.involving_schema_info = GoSharedSlice::from_vec(involving(unlock_tables));
-            let args = tidb_model::LockTablesArgs {
-                unlock_tables: unlock_tables.clone(),
-                // A cleanup drops every holder's lock and names no session.
-                session_info: if *is_cleanup {
-                    tidb_model::SessionInfo::default()
-                } else {
-                    session.clone()
-                },
-                is_cleanup: *is_cleanup,
-                ..tidb_model::LockTablesArgs::default()
-            };
-            (job, args)
-        }
-        _ => return Ok(None),
+    let tables = if lock {
+        &args.lock_tables
+    } else {
+        &args.unlock_tables
     };
-    let built = AddIndexSubmission::Job(
-        Box::new(tidb_ddl_jobsubmit::JobSpec {
-            job,
-            args: JobArgsValue::LockTables(Some(GoShared::new(args))),
-            id_allocated: true,
-        }),
-        Vec::new(),
+    let first = tables.first().ok_or_else(|| {
+        DdlPlanError::Admission(DdlAdmissionError::plain(
+            if lock {
+                "LOCK TABLES names no table"
+            } else {
+                "UNLOCK TABLES names no table"
+            }
+            .to_owned(),
+        ))
+    })?;
+    let mut job = session_job(
+        job_context,
+        if lock {
+            ActionType::ACTION_LOCK_TABLE
+        } else {
+            ActionType::ACTION_UNLOCK_TABLE
+        },
     );
-    submit_built_job(
-        snapshot, Some(built),
-        start_ts,
-        upgrading,
-    )
+    job.schema_id = first.schema_id;
+    job.table_id = first.table_id;
+    job.involving_schema_info = GoSharedSlice::from_vec(involving(tables));
+    if !lock {
+        job.query = String::new().into();
+        if args.is_cleanup {
+            args.session_info = tidb_model::SessionInfo::default();
+        }
+    }
+    Ok(tidb_ddl_jobsubmit::JobSpec {
+        job,
+        args: JobArgsValue::LockTables(Some(GoShared::new(args))),
+        id_allocated: true,
+    })
 }
 
 fn lock_tables_args(

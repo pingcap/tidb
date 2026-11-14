@@ -50,6 +50,7 @@ mod tiflash_partition;
 mod table_mode;
 mod repair_table;
 mod masking_policy;
+mod ddl_executor;
 mod analyzetest;
 mod ddl_analyze;
 mod ddl_delivery;
@@ -24669,11 +24670,7 @@ fn tiflash_replica_status_runs_as_a_persisted_job_like_go() {
         )
     };
     let update = |available: bool| {
-        stack.factory.ddl.execute(
-            &tidb_ddl::cluster_ddl::DdlStatement::UpdateTiFlashReplicaStatus {
-                table_id,
-                available,
-            },
+        stack.factory.ddl.update_table_replica_info(table_id, available,
             &tidb_sessionctx::StmtContext::for_query(),
         )
     };
@@ -24695,11 +24692,7 @@ fn tiflash_replica_status_runs_as_a_persisted_job_like_go() {
         updated,
         "the status already holds: no job"
     );
-    let missing = stack.factory.ddl.execute(
-        &tidb_ddl::cluster_ddl::DdlStatement::UpdateTiFlashReplicaStatus {
-            table_id: table_id + 1000,
-            available: true,
-        },
+    let missing = stack.factory.ddl.update_table_replica_info(table_id + 1000, true,
         &tidb_sessionctx::StmtContext::for_query(),
     );
     assert!(missing.is_err());
@@ -24873,6 +24866,47 @@ fn placement_policies_and_resource_groups_run_as_persisted_jobs_like_go() {
     assert!(
         dropped.starts_with("rg1|drop resource group|none|"),
         "{dropped}"
+    );
+}
+
+/// Go `TestAlterSchemaOptions` (zzprobe/d01): session collation and validation order.
+#[test]
+fn test_alter_schema_options() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1944)).unwrap();
+    rows(
+        &mut session,
+        "create database d01_schema character set latin1",
+    );
+    rows(
+        &mut session,
+        "set default_collation_for_utf8mb4='utf8mb4_general_ci'",
+    );
+    rows(
+        &mut session,
+        "alter database d01_schema character set utf8mb4",
+    );
+    let metadata = "select default_character_set_name,default_collation_name from information_schema.schemata where schema_name='d01_schema'";
+    assert_eq!(
+        displayed(rows(&mut session, metadata)),
+        [["utf8mb4", "utf8mb4_general_ci"]]
+    );
+    let error = session
+        .node_conn()
+        .execute_write(
+            "alter database d01_schema charset latin1 collate utf8mb4_bin placement policy missing",
+        )
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            1302,
+            "Conflicting declarations: 'CHARACTER SET latin1' and 'CHARACTER SET utf8mb4'"
+        )
+    );
+    assert_eq!(
+        displayed(rows(&mut session, metadata)),
+        [["utf8mb4", "utf8mb4_general_ci"]]
     );
 }
 

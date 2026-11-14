@@ -27,6 +27,409 @@ struct ReportDdl {
 }
 
 impl ClusterDdl for ReportDdl {
+    fn update_table_replica_info(
+        &self,
+        table_id: i64,
+        available: bool,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        self.execute(
+            &DdlStatement::UpdateTiFlashReplicaStatus {
+                table_id,
+                available,
+            },
+            context,
+        )
+    }
+
+    fn alter_table(
+        &self,
+        statement: &tidb_ast::AlterTableStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        let parsed = tidb_ast::Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::AlterTable(
+            Box::new(statement.clone()),
+        )));
+        let lowered =
+            tidb_ddl::real_tikv_ddl::prepare_cluster_ddl_parsed(&parsed, current_db, context)
+                .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?
+                .unwrap();
+        self.execute(&lowered, context.as_ref())
+    }
+
+    fn recover_schema(
+        &self,
+        name: &str,
+        new_name: &str,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (name, new_name, current_db, context);
+        self.execute(
+            &DdlStatement::FlashbackDatabase {
+                name: name.to_owned(),
+                new_name: new_name.to_owned(),
+            },
+            context.as_ref(),
+        )
+    }
+
+    fn recover_table(
+        &self,
+        table: &Option<Vec<String>>,
+        job_id: i64,
+        new_name: &str,
+        flashback: bool,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (table, job_id, new_name, flashback, current_db, context);
+        let table = table.as_ref().map(|path| match path.as_slice() {
+            [schema, table] => (schema.clone(), table.clone()),
+            [table] => (current_db.to_owned(), table.clone()),
+            _ => unreachable!(),
+        });
+        self.execute(
+            &DdlStatement::RecoverTable {
+                table,
+                job_id,
+                new_name: new_name.to_owned(),
+                flashback,
+            },
+            context.as_ref(),
+        )
+    }
+
+    fn drop_index(
+        &self,
+        statement: &tidb_ast::DropIndexStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        let parsed = tidb_ast::Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::DropIndex(
+            Box::new(statement.clone()),
+        )));
+        let lowered =
+            tidb_ddl::real_tikv_ddl::prepare_cluster_ddl_parsed(&parsed, current_db, context)
+                .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?
+                .unwrap();
+        self.execute(&lowered, context.as_ref())
+    }
+
+    fn create_index(
+        &self,
+        statement: &tidb_ast::CreateIndexStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        let parsed = tidb_ast::Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::CreateIndex(
+            Box::new(statement.clone()),
+        )));
+        let lowered =
+            tidb_ddl::real_tikv_ddl::prepare_cluster_ddl_parsed(&parsed, current_db, context)
+                .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?
+                .unwrap();
+        self.execute(&lowered, context.as_ref())
+    }
+
+    fn alter_table_set_tiflash_replica(
+        &self,
+        schema: &str,
+        table: &str,
+        count: u64,
+        labels: &[String],
+        reset_available: bool,
+        hypo: bool,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (schema, table, count, labels, reset_available, hypo, context);
+        self.execute(
+            &DdlStatement::SetTiFlashReplica {
+                schema: schema.to_owned(),
+                table: table.to_owned(),
+                count,
+                labels: labels.to_vec(),
+                reset_available,
+                hypo,
+            },
+            context.as_ref(),
+        )
+    }
+
+    fn alter_schema(
+        &self,
+        name: &str,
+        options: &[tidb_ast::DatabaseOption],
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (name, options, context);
+        let parsed =
+            tidb_ast::Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::AlterDatabase {
+                name: Some(name.to_owned()),
+                options: options.to_vec(),
+            }));
+        let lowered = tidb_ddl::real_tikv_ddl::prepare_cluster_ddl_parsed(&parsed, "", context)
+            .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?
+            .unwrap();
+        self.execute(&lowered, context.as_ref())
+    }
+
+    fn drop_placement_policy(
+        &self,
+        statement: &tidb_ast::DropPlacementPolicyStmt,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, context);
+        let parsed = tidb_ast::Stmt::Ddl(tidb_ast::NodeBox::new(
+            tidb_ast::DdlStmt::DropPlacementPolicy(Box::new(statement.clone())),
+        ));
+        let lowered = tidb_ddl::real_tikv_ddl::prepare_cluster_ddl_parsed(&parsed, "", context)
+            .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?
+            .unwrap();
+        self.execute(&lowered, context.as_ref())
+    }
+
+    fn alter_placement_policy(
+        &self,
+        statement: &tidb_ast::AlterPlacementPolicyStmt,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, context);
+        let parsed = tidb_ast::Stmt::Ddl(tidb_ast::NodeBox::new(
+            tidb_ast::DdlStmt::AlterPlacementPolicy(Box::new(statement.clone())),
+        ));
+        let lowered = tidb_ddl::real_tikv_ddl::prepare_cluster_ddl_parsed(&parsed, "", context)
+            .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?
+            .unwrap();
+        self.execute(&lowered, context.as_ref())
+    }
+
+    fn create_placement_policy(
+        &self,
+        statement: &tidb_ast::CreatePlacementPolicyStmt,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, context);
+        let parsed = tidb_ast::Stmt::Ddl(tidb_ast::NodeBox::new(
+            tidb_ast::DdlStmt::CreatePlacementPolicy(Box::new(statement.clone())),
+        ));
+        let lowered = tidb_ddl::real_tikv_ddl::prepare_cluster_ddl_parsed(&parsed, "", context)
+            .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?
+            .unwrap();
+        self.execute(&lowered, context.as_ref())
+    }
+
+    fn refresh_meta(
+        &self,
+        schema_id: i64,
+        table_id: i64,
+        involved_db: &str,
+        involved_table: &str,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (schema_id, table_id, involved_db, involved_table, context);
+        self.execute(
+            &DdlStatement::RefreshMeta {
+                schema_id,
+                table_id,
+                involved_db: involved_db.to_owned(),
+                involved_table: involved_table.to_owned(),
+            },
+            context,
+        )
+    }
+
+    fn alter_table_mode(
+        &self,
+        table_mode: tidb_model::TableMode,
+        schema_id: i64,
+        table_id: i64,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (table_mode, schema_id, table_id, context);
+        self.execute(
+            &DdlStatement::AlterTableMode {
+                table_mode,
+                schema_id,
+                table_id,
+            },
+            context,
+        )
+    }
+
+    fn create_view(
+        &self,
+        schema: &str,
+        name: &str,
+        or_replace: bool,
+        info: &tidb_model::TableInfo,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (schema, name, or_replace, info, context);
+        self.execute(
+            &DdlStatement::CreateView {
+                schema: schema.to_owned(),
+                name: name.to_owned(),
+                or_replace,
+                info: Box::new(info.clone()),
+            },
+            context,
+        )
+    }
+
+    fn do_ddl_job_wrapper(
+        &self,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+        _: tidb_ddl::JobWrapper,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "the mock catalog writer does not execute persisted jobs",
+        ))
+    }
+
+    fn drop_table(
+        &self,
+        statement: &tidb_ast::DropTableStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let parsed = Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::DropTable(
+            Box::new(statement.clone()),
+        )));
+        let admitted =
+            tidb_ddl::real_tikv_ddl::prepare_cluster_ddl_parsed(&parsed, current_db, context)
+                .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?
+                .expect("mock DDL");
+        self.execute(&admitted, context.as_ref())
+    }
+    fn drop_sequence(
+        &self,
+        statement: &tidb_ast::DropSequenceStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let parsed = Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::DropSequence(
+            Box::new(statement.clone()),
+        )));
+        let admitted =
+            tidb_ddl::real_tikv_ddl::prepare_cluster_ddl_parsed(&parsed, current_db, context)
+                .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?
+                .expect("mock DDL");
+        self.execute(&admitted, context.as_ref())
+    }
+    fn rename_table(
+        &self,
+        statement: &tidb_ast::RenameTableStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let parsed = Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::RenameTable(
+            Box::new(statement.clone()),
+        )));
+        let admitted =
+            tidb_ddl::real_tikv_ddl::prepare_cluster_ddl_parsed(&parsed, current_db, context)
+                .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?
+                .expect("mock DDL");
+        self.execute(&admitted, context.as_ref())
+    }
+    fn drop_view(
+        &self,
+        names: &[Vec<String>],
+        if_exists: bool,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let parsed = Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::DropView {
+            names: names.to_vec(),
+            if_exists,
+        }));
+        let admitted =
+            tidb_ddl::real_tikv_ddl::prepare_cluster_ddl_parsed(&parsed, current_db, context)
+                .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?
+                .expect("mock DDL");
+        self.execute(&admitted, context.as_ref())
+    }
+    fn drop_schema(
+        &self,
+        name: &str,
+        if_exists: bool,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let parsed = Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::DropDatabase {
+            name: name.to_owned(),
+            if_exists,
+        }));
+        let admitted = tidb_ddl::real_tikv_ddl::prepare_cluster_ddl_parsed(&parsed, "", context)
+            .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?
+            .expect("mock DDL");
+        self.execute(&admitted, context.as_ref())
+    }
+
+    fn create_table(
+        &self,
+        statement: &tidb_ast::CreateTableStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        panic!("this fixture reports DROP statements only")
+    }
+
+    fn create_sequence(
+        &self,
+        statement: &tidb_ast::CreateSequenceStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        panic!("this fixture reports DROP statements only")
+    }
+
+    fn alter_sequence(
+        &self,
+        statement: &tidb_ast::AlterSequenceStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        panic!("this fixture reports DROP statements only")
+    }
+
+    fn repair_table(
+        &self,
+        statement: &tidb_ast::RepairTableStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        panic!("this fixture reports DROP statements only")
+    }
+
+    fn truncate_table(
+        &self,
+        statement: &[String],
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        panic!("this fixture reports DROP statements only")
+    }
+
+    fn create_schema(
+        &self,
+        name: &str,
+        if_not_exists: bool,
+        options: &[tidb_ast::DatabaseOption],
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (name, if_not_exists, options, context);
+        panic!("this fixture reports DROP statements only")
+    }
+
     // A cluster without TiFlash stores.
     fn tiflash_store_count(&self) -> Result<u64, SqlQueryError> {
         Ok(0)
@@ -168,6 +571,277 @@ fn ddl_reports_preserve_warning_order_levels_and_statement_lifetime() {
 struct UndeterminedDdl(SqlQueryError);
 
 impl ClusterDdl for UndeterminedDdl {
+    fn update_table_replica_info(
+        &self,
+        table_id: i64,
+        available: bool,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        self.execute(
+            &DdlStatement::UpdateTiFlashReplicaStatus {
+                table_id,
+                available,
+            },
+            context,
+        )
+    }
+
+    fn alter_table(
+        &self,
+        statement: &tidb_ast::AlterTableStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        Err(self.0.clone())
+    }
+
+    fn recover_schema(
+        &self,
+        name: &str,
+        new_name: &str,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (name, new_name, current_db, context);
+        Err(self.0.clone())
+    }
+
+    fn recover_table(
+        &self,
+        table: &Option<Vec<String>>,
+        job_id: i64,
+        new_name: &str,
+        flashback: bool,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (table, job_id, new_name, flashback, current_db, context);
+        Err(self.0.clone())
+    }
+
+    fn drop_index(
+        &self,
+        statement: &tidb_ast::DropIndexStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        Err(self.0.clone())
+    }
+
+    fn create_index(
+        &self,
+        statement: &tidb_ast::CreateIndexStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        Err(self.0.clone())
+    }
+
+    fn alter_table_set_tiflash_replica(
+        &self,
+        schema: &str,
+        table: &str,
+        count: u64,
+        labels: &[String],
+        reset_available: bool,
+        hypo: bool,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (schema, table, count, labels, reset_available, hypo, context);
+        Err(self.0.clone())
+    }
+
+    fn alter_schema(
+        &self,
+        name: &str,
+        options: &[tidb_ast::DatabaseOption],
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (name, options, context);
+        Err(self.0.clone())
+    }
+
+    fn drop_placement_policy(
+        &self,
+        statement: &tidb_ast::DropPlacementPolicyStmt,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, context);
+        Err(self.0.clone())
+    }
+
+    fn alter_placement_policy(
+        &self,
+        statement: &tidb_ast::AlterPlacementPolicyStmt,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, context);
+        Err(self.0.clone())
+    }
+
+    fn create_placement_policy(
+        &self,
+        statement: &tidb_ast::CreatePlacementPolicyStmt,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, context);
+        Err(self.0.clone())
+    }
+
+    fn refresh_meta(
+        &self,
+        schema_id: i64,
+        table_id: i64,
+        involved_db: &str,
+        involved_table: &str,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (schema_id, table_id, involved_db, involved_table, context);
+        Err(self.0.clone())
+    }
+
+    fn alter_table_mode(
+        &self,
+        table_mode: tidb_model::TableMode,
+        schema_id: i64,
+        table_id: i64,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (table_mode, schema_id, table_id, context);
+        Err(self.0.clone())
+    }
+
+    fn create_view(
+        &self,
+        schema: &str,
+        name: &str,
+        or_replace: bool,
+        info: &tidb_model::TableInfo,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (schema, name, or_replace, info, context);
+        Err(self.0.clone())
+    }
+
+    fn do_ddl_job_wrapper(
+        &self,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+        _: tidb_ddl::JobWrapper,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        Err(self.0.clone())
+    }
+
+    fn drop_table(
+        &self,
+        statement: &tidb_ast::DropTableStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        Err(self.0.clone())
+    }
+    fn drop_sequence(
+        &self,
+        statement: &tidb_ast::DropSequenceStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        Err(self.0.clone())
+    }
+    fn rename_table(
+        &self,
+        statement: &tidb_ast::RenameTableStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        Err(self.0.clone())
+    }
+    fn drop_view(
+        &self,
+        names: &[Vec<String>],
+        if_exists: bool,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (names, if_exists, current_db, context);
+        Err(self.0.clone())
+    }
+    fn drop_schema(
+        &self,
+        name: &str,
+        if_exists: bool,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (name, if_exists, context);
+        Err(self.0.clone())
+    }
+
+    fn create_table(
+        &self,
+        statement: &tidb_ast::CreateTableStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        Err(self.0.clone())
+    }
+
+    fn create_sequence(
+        &self,
+        statement: &tidb_ast::CreateSequenceStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        Err(self.0.clone())
+    }
+
+    fn alter_sequence(
+        &self,
+        statement: &tidb_ast::AlterSequenceStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        Err(self.0.clone())
+    }
+
+    fn repair_table(
+        &self,
+        statement: &tidb_ast::RepairTableStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        Err(self.0.clone())
+    }
+
+    fn truncate_table(
+        &self,
+        statement: &[String],
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (statement, current_db, context);
+        Err(self.0.clone())
+    }
+
+    fn create_schema(
+        &self,
+        name: &str,
+        if_not_exists: bool,
+        options: &[tidb_ast::DatabaseOption],
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let _ = (name, if_not_exists, options, context);
+        Err(self.0.clone())
+    }
+
     // A cluster without TiFlash stores.
     fn tiflash_store_count(&self) -> Result<u64, SqlQueryError> {
         Ok(0)

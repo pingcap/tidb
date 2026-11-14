@@ -67,6 +67,11 @@ pub type MetaPairs = Vec<(Vec<u8>, Vec<u8>)>;
 /// production implementation is a live transaction's snapshot (see
 /// `tidb_infoschema_issyncer::real_tikv_catalog`).
 pub trait MetaSnapshot {
+    /// Go snapshot version (zero for metadata-only test snapshots).
+    fn start_ts(&self) -> u64 {
+        0
+    }
+
     /// Reads one meta key, `None` when the snapshot holds no value there.
     fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError>;
 
@@ -271,6 +276,7 @@ pub fn load_info_schema_keeping<S: MetaSnapshot + ?Sized>(
     snapshot: &mut S,
     keep: &mut dyn FnMut(&GoShared<DBInfo>, &GoShared<TableInfo>) -> bool,
 ) -> Result<crate::SessionExtendedInfoSchema, ClusterCatalogError> {
+    let ts = snapshot.start_ts();
     let reader = meta_reader(snapshot);
     let read = |error| reader_error(&reader, error);
     let schema_version = reader.schema_version().map_err(read)?;
@@ -284,12 +290,14 @@ pub fn load_info_schema_keeping<S: MetaSnapshot + ?Sized>(
         .map(|group| (**group).clone())
         .collect();
     let databases = fetch_all_schemas_with_tables(&reader, keep).map_err(read)?;
-    Ok(crate::SessionExtendedInfoSchema::init_with_db_infos(
+    let mut schema = crate::SessionExtendedInfoSchema::init_with_db_infos(
         databases,
         policies,
         resource_groups,
         schema_version,
-    ))
+    );
+    schema.set_schema_ts(ts);
+    Ok(schema)
 }
 
 /// Go `Loader.fetchAllSchemasWithTables`: `ListDatabases`, each database's

@@ -32,6 +32,19 @@ pub fn truncate_table<S: MetaSnapshot>(
     let DdlStatement::TruncateTable { schema, table } = statement else {
         return Ok(None);
     };
+    truncate_table_by_name(snapshot, schema, table, job_context, start_ts, upgrading)
+}
+
+/// Go `executor.TruncateTable`: typed arguments through `doDDLJob2`.
+#[allow(clippy::too_many_arguments)]
+pub fn truncate_table_by_name<S: MetaSnapshot>(
+    snapshot: &mut S,
+    schema: &str,
+    table: &str,
+    job_context: &dyn DdlSessionContext,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let catalog = load_info_schema(snapshot)?;
     let (db_id, stored) = locate_table(&catalog, schema, table)?;
     let stored = stored.read();
@@ -52,7 +65,7 @@ pub fn truncate_table<S: MetaSnapshot>(
         &catalog,
         schema,
         table,
-        &[(schema.clone(), table.clone())],
+        &[(schema.to_owned(), table.to_owned())],
         fk_check,
     ) {
         return Err(truncate_referenced(&referred));
@@ -78,9 +91,7 @@ pub fn truncate_table<S: MetaSnapshot>(
         // `assignGIDsForJobs` draws the new table and partition ids.
         id_allocated: false,
     }];
-    tidb_ddl_jobsubmit::prepare_submit_batch(
-        snapshot, &mut specs, start_ts, upgrading,
-    )?;
+    tidb_ddl_jobsubmit::prepare_submit_batch(snapshot, &mut specs, start_ts, upgrading)?;
     let [spec] = specs;
     Ok(Some(AddIndexSubmission::Job(Box::new(spec), Vec::new())))
 }

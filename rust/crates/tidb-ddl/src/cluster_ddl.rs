@@ -28,14 +28,14 @@
 //!   (`Inc(SchemaVersionKey, 1)`) then `SetSchemaDiff` writes `Diff:<version>`
 //!   describing exactly what that version changed.
 //!
-//! CHECK actions follow Go's durable path: submission first inserts the full
+//! DDL actions follow Go's durable path: submission first inserts the full
 //! job envelope in `mysql.tidb_ddl_job`, each owner transaction reloads that
 //! envelope and publishes one state transition, and terminal handling moves
-//! the job to both Go history stores. Other actions still use the ordinary
-//! one-write planner below and must not borrow CHECK-specific recovery state.
+//! the job to both Go history stores.
 //!
-//! Only shapes this node can also serve are admitted, and every refusal
-//! happens in [`lower_ddl_with_context`], before a timestamp is spent or a byte is written.
+//! Go-named executor methods admit statements and call the typed job builders
+//! here. [`lower_ddl_with_context`] remains for deterministic fixtures and
+//! compatibility adapters; serving statements do not pass through it.
 
 use tidb_ddl_build::plan_error::{unknown_ddl_job_error, DdlPlanError};
 use tidb_ddl_build::session_context::DdlSessionContext;
@@ -110,7 +110,8 @@ impl std::fmt::Debug for CreateTableBuild {
 }
 
 impl CreateTableBuild {
-    fn new(
+    /// Go `executor.CreateTable`: build metadata under the statement context.
+    pub fn new(
         create: &CreateTableStmt,
         schema: &str,
         context: &DdlContext,
@@ -1457,7 +1458,7 @@ pub struct RenameTablePair {
 /// Go `executor.CreateSchema`: the last explicit charset/collation wins, and
 /// either explicit half replaces the corresponding server default before the
 /// pair is resolved and validated.
-fn database_charset_collation(
+pub fn database_charset_collation(
     options: &[DatabaseOption],
 ) -> Result<(String, String), DdlAdmissionError> {
     let mut charset = None;
@@ -2019,7 +2020,7 @@ fn policy_referenced(catalog: &SessionExtendedInfoSchema, policy: &CiString) -> 
     })
 }
 
-fn placement_settings_from_options(
+pub(crate) fn placement_settings_from_options(
     options: &[tidb_ast::PlacementOption],
 ) -> Result<tidb_model::PlacementSettings, DdlAdmissionError> {
     let mut settings = tidb_model::PlacementSettings::default();
@@ -2174,7 +2175,7 @@ fn lower_single_alter_spec(
 /// ADD COLUMN spec per column, then one ADD CONSTRAINT spec per table
 /// constraint), and resolves the last ALGORITHM against every remaining
 /// spec before any of them runs.
-fn resolve_alter_table_spec(
+pub fn resolve_alter_table_spec(
     alter: &AlterTableStmt,
     context: &DdlContext,
 ) -> Result<AlterTableStmt, DdlAdmissionError> {
@@ -4770,7 +4771,7 @@ fn drop_foreign_key(info: &mut TableInfo, name: &str) -> Result<(), DdlPlanError
     Ok(())
 }
 
-fn split_name(
+pub fn split_name(
     path: &[String],
     default_schema: &str,
     what: &str,
@@ -4797,10 +4798,9 @@ fn split_name(
         [object] => Ok((default_schema.to_owned(), object.clone())),
         [schema, object] => Ok((schema.clone(), object.clone())),
         _ => Err(DdlAdmissionError::plain(format!(
-                "{what} name `{}` is not a `[schema.]name` path",
-                path.join(".")
-            ),
-        )),
+            "{what} name `{}` is not a `[schema.]name` path",
+            path.join(".")
+        ))),
     }
 }
 
@@ -4920,7 +4920,10 @@ fn lower_create_index(
                 Some(tidb_ast::PrimaryKeyStorage::Unknown(value)) => value,
             },
             global: options.global,
-            secondary_engine_attr: options.secondary_engine_attribute.clone().unwrap_or_default(),
+            secondary_engine_attr: options
+                .secondary_engine_attribute
+                .clone()
+                .unwrap_or_default(),
             add_columnar_replica_on_demand: options.add_columnar_replica_on_demand,
         };
         return Ok(DdlStatement::CreateIndex {
@@ -4949,6 +4952,98 @@ fn lower_create_index(
         index: Box::new(index),
         columnar: None,
     })
+}
+/// Go `executor.CreateIndex` / `CreatePrimaryKey`: AST options to the typed job.
+pub(crate) fn create_index_job<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    create: &CreateIndexStmt,
+    default_schema: &str,
+    primary: bool,
+    context: &DdlContext,
+    store_count: usize,
+    has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
+) -> Result<Option<add_index::AddIndexSubmission>, DdlPlanError> {
+    let (schema, table) = split_name(&create.table, default_schema, "table")?;
+    let mut build = |index: Box<IndexInfo>,
+                     expressions: Vec<Option<tidb_ast::Expr>>,
+                     condition: Option<tidb_ast::Expr>,
+                     columnar: Option<Box<ColumnarIndexSpec>>| {
+        let built = add_index::create_index_with_info(
+            snapshot,
+            catalog,
+            &schema,
+            &table,
+            &create.if_not_exists,
+            &index,
+            &expressions,
+            &condition,
+            &DdlStatementContext(context.clone()),
+            &columnar,
+            store_count,
+            context.as_ref(),
+        )?;
+        if matches!(built, Some(add_index::AddIndexSubmission::Job(..))) {
+            add_index::check_primary_key_null_values(catalog, &schema, &table, &index, has_null)?;
+        }
+        Ok(built)
+    };
+
+    // go's `ADD PRIMARY KEY` lowers through the CreateIndex statement with
+    // `primary = true`; the caller decides, since the AST's own
+    // `CREATE INDEX` grammar has no PRIMARY spelling.
+
+    // Go `checkCreateIndexGrammar` / `checkConstraintGrammar` in the
+    // preprocessor.
+    let (is_columnar, tp) = tidb_ddl_build::table_info_build::check_index_grammar(
+        create.kind,
+        &create.options,
+        &create.parts,
+    )?;
+    // Go `createColumnarIndex`: its checks need the stored table.
+    if is_columnar {
+        let options = &create.options;
+        let option = tidb_ast::IndexOption {
+            key_block_size: options.key_block_size.unwrap_or(0),
+            tp: tp.0,
+            comment: options.comment.clone().unwrap_or_default(),
+            parser_name: CiString::new(options.parser_name.clone().unwrap_or_default()),
+            visibility: match options.visibility {
+                None => 0,
+                Some(tidb_ast::IndexVisibility::Visible) => 1,
+                Some(tidb_ast::IndexVisibility::Invisible) => 2,
+            },
+            primary_key_tp: match options.primary_key_storage {
+                None => 0,
+                Some(tidb_ast::PrimaryKeyStorage::Clustered) => 1,
+                Some(tidb_ast::PrimaryKeyStorage::NonClustered) => 2,
+                Some(tidb_ast::PrimaryKeyStorage::Unknown(value)) => value,
+            },
+            global: options.global,
+            secondary_engine_attr: options
+                .secondary_engine_attribute
+                .clone()
+                .unwrap_or_default(),
+            add_columnar_replica_on_demand: options.add_columnar_replica_on_demand,
+        };
+        return build(
+            Box::default(),
+            Vec::new(),
+            None,
+            Some(Box::new(ColumnarIndexSpec {
+                index_name: create.name.clone(),
+                parts: create.parts.clone(),
+                option,
+            })),
+        );
+    }
+    let (index, expressions) = tidb_ddl_build::index::index_template(create, primary)?;
+    build(
+        Box::new(index),
+        expressions,
+        create.options.condition.clone(),
+        None,
+    )
 }
 
 fn lower_drop_index(
@@ -5025,142 +5120,183 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
     upgrading: bool,
 ) -> Result<Option<tidb_ddl_jobsubmit::JobSpec>, DdlPlanError> {
     let catalog = load_info_schema(snapshot)?;
-    let (job, args) = match statement {
+    let spec = match statement {
         DdlStatement::AddCheckConstraint {
             schema,
             table,
             definition,
             context,
-        } => {
-            let (schema_id, stored) = locate_table(&catalog, schema, table)?;
-            let stored = stored.read();
-            let mut candidate = stored.clone_like_go();
-            let prior_len = candidate.constraints.len();
-            tidb_ddl_build::table_info_build::append_check_constraints(
-                &mut candidate,
-                &[tidb_ddl_build::check_constraint::CheckConstraintInput {
-                    definition: (**definition).clone(),
-                    in_column: None,
-                }],
-                tidb_ddl_build::check_constraint::CheckConstraintBuildMode::Alter,
-                &context.0.metabuild_context(),
-            )
-            .map_err(DdlPlanError::Admission)?;
-            let mut constraint = candidate
-                .constraints
-                .iter_deref()
-                .nth(prior_len)
-                .expect("one ADD CHECK input appends one constraint")
-                .read()
-                .clone();
-            if catalog
-                .schema_by_id(schema_id)
-                .is_some_and(|database| {
-                    database.read().deprecated_tables.iter_deref().any(|candidate| {
-                        let candidate = candidate.read();
-                        candidate.constraints.iter_deref().any(|existing| {
-                            existing.read().name.lowercase() == constraint.name.lowercase()
-                        })
-                    })
-                })
-            {
-                return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
-                    &tidb_dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME
-                        .gen_with_stack_by_args(&[constraint.name.original().into()]),
-                )));
-            }
-            // Go's executor submits StateNone/ID zero. The first owner step
-            // allocates the durable constraint ID.
-            constraint.id = 0;
-            constraint.state = SchemaState::NONE;
-            let job = new_check_constraint_job(
-                schema_id,
-                schema,
-                &stored,
-                ActionType::ACTION_ADD_CHECK_CONSTRAINT,
-                &context.0,
-            );
-            let args = GoShared::new(AddCheckConstraintArgs {
-                constraint: GoField::new(Some(GoShared::new(constraint))),
-            });
-            (job, JobArgsValue::AddCheckConstraint(Some(args)))
-        }
+        } => create_check_constraint_job(&catalog, schema, table, definition, context)?,
         DdlStatement::DropCheckConstraint {
             schema,
             table,
             name,
             context,
-        } => {
-            let (schema_id, stored) = locate_table(&catalog, schema, table)?;
-            let stored = stored.read();
-            let constraint = stored
-                .constraints
-                .iter_deref()
-                .find(|constraint| constraint.read().name.lowercase() == name.go_to_lower())
-                .ok_or_else(|| {
-                    DdlPlanError::Admission(DdlAdmissionError::from_terror(
-                        &tidb_dbterror::ERR_CONSTRAINT_NOT_FOUND
-                            .gen_with_stack_by_args(&[name.into()]),
-                    ))
-                })?;
-            let job = new_check_constraint_job(
-                schema_id,
-                schema,
-                &stored,
-                ActionType::ACTION_DROP_CHECK_CONSTRAINT,
-                &context.0,
-            );
-            let args = GoShared::new(CheckConstraintArgs {
-                constraint_name: GoField::new(constraint.read().name.clone()),
-                enforced: GoField::new(false),
-            });
-            (job, JobArgsValue::CheckConstraint(Some(args)))
-        }
+        } => drop_check_constraint_job(&catalog, schema, table, name, context)?,
         DdlStatement::AlterCheckConstraint {
             schema,
             table,
             name,
             enforced,
             context,
-        } => {
-            let (schema_id, stored) = locate_table(&catalog, schema, table)?;
-            let stored = stored.read();
-            let constraint = stored
-                .constraints
-                .iter_deref()
-                .find(|constraint| constraint.read().name.lowercase() == name.go_to_lower())
-                .ok_or_else(|| {
-                    DdlPlanError::Admission(DdlAdmissionError::from_terror(
-                        &tidb_dbterror::ERR_CONSTRAINT_NOT_FOUND
-                            .gen_with_stack_by_args(&[name.into()]),
-                    ))
-                })?;
-            let job = new_check_constraint_job(
-                schema_id,
-                schema,
-                &stored,
-                ActionType::ACTION_ALTER_CHECK_CONSTRAINT,
-                &context.0,
-            );
-            let args = GoShared::new(CheckConstraintArgs {
-                constraint_name: GoField::new(constraint.read().name.clone()),
-                enforced: GoField::new(*enforced),
-            });
-            (job, JobArgsValue::CheckConstraint(Some(args)))
-        }
+        } => alter_check_constraint_job(&catalog, schema, table, name, enforced, context)?,
         _ => return Ok(None),
     };
+    let mut specs = [spec];
+    tidb_ddl_jobsubmit::prepare_submit_batch(snapshot, &mut specs, start_ts, upgrading)?;
+    let [spec] = specs;
+    Ok(Some(spec))
+}
 
-    let mut specs = [tidb_ddl_jobsubmit::JobSpec {
+/// Go `executor.CreateCheckConstraint` before `doDDLJob2`.
+pub(crate) fn create_check_constraint_job(
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    definition: &Box<tidb_ast::CheckConstraintDefinition>,
+    context: &DdlStatementContext,
+) -> Result<tidb_ddl_jobsubmit::JobSpec, DdlPlanError> {
+    let (job, args) = {
+        let (schema_id, stored) = locate_table(&catalog, schema, table)?;
+        let stored = stored.read();
+        let mut candidate = stored.clone_like_go();
+        let prior_len = candidate.constraints.len();
+        tidb_ddl_build::table_info_build::append_check_constraints(
+            &mut candidate,
+            &[tidb_ddl_build::check_constraint::CheckConstraintInput {
+                definition: (**definition).clone(),
+                in_column: None,
+            }],
+            tidb_ddl_build::check_constraint::CheckConstraintBuildMode::Alter,
+            &context.0.metabuild_context(),
+        )
+        .map_err(DdlPlanError::Admission)?;
+        let mut constraint = candidate
+            .constraints
+            .iter_deref()
+            .nth(prior_len)
+            .expect("one ADD CHECK input appends one constraint")
+            .read()
+            .clone();
+        if catalog.schema_by_id(schema_id).is_some_and(|database| {
+            database
+                .read()
+                .deprecated_tables
+                .iter_deref()
+                .any(|candidate| {
+                    let candidate = candidate.read();
+                    candidate.constraints.iter_deref().any(|existing| {
+                        existing.read().name.lowercase() == constraint.name.lowercase()
+                    })
+                })
+        }) {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
+                &tidb_dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME
+                    .gen_with_stack_by_args(&[constraint.name.original().into()]),
+            )));
+        }
+        // Go's executor submits StateNone/ID zero. The first owner step
+        // allocates the durable constraint ID.
+        constraint.id = 0;
+        constraint.state = SchemaState::NONE;
+        let job = new_check_constraint_job(
+            schema_id,
+            schema,
+            &stored,
+            ActionType::ACTION_ADD_CHECK_CONSTRAINT,
+            &context.0,
+        );
+        let args = GoShared::new(AddCheckConstraintArgs {
+            constraint: GoField::new(Some(GoShared::new(constraint))),
+        });
+        (job, JobArgsValue::AddCheckConstraint(Some(args)))
+    };
+    Ok(tidb_ddl_jobsubmit::JobSpec {
         job,
         args,
         id_allocated: true,
-    }];
-    tidb_ddl_jobsubmit::prepare_submit_batch(
-        snapshot, &mut specs, start_ts, upgrading,
-    )?;
-    let [spec] = specs;
-    Ok(Some(spec))
+    })
+}
+
+/// Go `executor.DropCheckConstraint` before `doDDLJob2`.
+pub(crate) fn drop_check_constraint_job(
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    name: &String,
+    context: &DdlStatementContext,
+) -> Result<tidb_ddl_jobsubmit::JobSpec, DdlPlanError> {
+    let (job, args) = {
+        let (schema_id, stored) = locate_table(&catalog, schema, table)?;
+        let stored = stored.read();
+        let constraint = stored
+            .constraints
+            .iter_deref()
+            .find(|constraint| constraint.read().name.lowercase() == name.go_to_lower())
+            .ok_or_else(|| {
+                DdlPlanError::Admission(DdlAdmissionError::from_terror(
+                    &tidb_dbterror::ERR_CONSTRAINT_NOT_FOUND.gen_with_stack_by_args(&[name.into()]),
+                ))
+            })?;
+        let job = new_check_constraint_job(
+            schema_id,
+            schema,
+            &stored,
+            ActionType::ACTION_DROP_CHECK_CONSTRAINT,
+            &context.0,
+        );
+        let args = GoShared::new(CheckConstraintArgs {
+            constraint_name: GoField::new(constraint.read().name.clone()),
+            enforced: GoField::new(false),
+        });
+        (job, JobArgsValue::CheckConstraint(Some(args)))
+    };
+    Ok(tidb_ddl_jobsubmit::JobSpec {
+        job,
+        args,
+        id_allocated: true,
+    })
+}
+
+/// Go `executor.AlterCheckConstraint` before `doDDLJob2`.
+pub(crate) fn alter_check_constraint_job(
+    catalog: &SessionExtendedInfoSchema,
+    schema: &String,
+    table: &String,
+    name: &String,
+    enforced: &bool,
+    context: &DdlStatementContext,
+) -> Result<tidb_ddl_jobsubmit::JobSpec, DdlPlanError> {
+    let (job, args) = {
+        let (schema_id, stored) = locate_table(&catalog, schema, table)?;
+        let stored = stored.read();
+        let constraint = stored
+            .constraints
+            .iter_deref()
+            .find(|constraint| constraint.read().name.lowercase() == name.go_to_lower())
+            .ok_or_else(|| {
+                DdlPlanError::Admission(DdlAdmissionError::from_terror(
+                    &tidb_dbterror::ERR_CONSTRAINT_NOT_FOUND.gen_with_stack_by_args(&[name.into()]),
+                ))
+            })?;
+        let job = new_check_constraint_job(
+            schema_id,
+            schema,
+            &stored,
+            ActionType::ACTION_ALTER_CHECK_CONSTRAINT,
+            &context.0,
+        );
+        let args = GoShared::new(CheckConstraintArgs {
+            constraint_name: GoField::new(constraint.read().name.clone()),
+            enforced: GoField::new(*enforced),
+        });
+        (job, JobArgsValue::CheckConstraint(Some(args)))
+    };
+    Ok(tidb_ddl_jobsubmit::JobSpec {
+        job,
+        args,
+        id_allocated: true,
+    })
 }
 
 fn new_check_constraint_job(
@@ -5324,7 +5460,7 @@ pub mod resource_group;
 pub mod table_lock;
 pub mod table_mode;
 pub mod truncate;
-mod recover_table;
+pub(crate) mod recover_table;
 pub use recover_table::{
     get_drop_or_truncate_table_info_from_jobs_by_store, get_gc_safe_point, get_recover_snapshot_ts, DdlStepWorker,
     SnapshotMetaAt,
@@ -7211,7 +7347,7 @@ pub(crate) fn tiflash_replica_spec(info: &TableInfo) -> Option<(u64, Vec<String>
 
 /// Go `doDDLJob2` outside a multi-schema change: a built job goes through
 /// `GenGIDAndInsertJobsWithRetry`'s admission.
-fn submit_built_job<S: MetaSnapshot>(
+pub(crate) fn submit_built_job<S: MetaSnapshot>(
     snapshot: &mut S,
     built: Option<add_index::AddIndexSubmission>,
     start_ts: u64,
@@ -7220,9 +7356,7 @@ fn submit_built_job<S: MetaSnapshot>(
     match built {
         Some(add_index::AddIndexSubmission::Job(spec, warnings)) => {
             let mut specs = [*spec];
-            tidb_ddl_jobsubmit::prepare_submit_batch(
-                snapshot, &mut specs, start_ts, upgrading,
-            )?;
+            tidb_ddl_jobsubmit::prepare_submit_batch(snapshot, &mut specs, start_ts, upgrading)?;
             let [spec] = specs;
             Ok(Some(add_index::AddIndexSubmission::Job(
                 Box::new(spec),
@@ -8180,7 +8314,7 @@ fn is_ttl_table_option(option: &tidb_ast::TableOption) -> bool {
 
 /// Go `CreateSequence`'s `BuildTableInfo(ctx, name, nil, nil, "", "")` with
 /// `Sequence` set: a column-less `TableInfo` of the current version.
-fn build_sequence_table_info(
+pub(crate) fn build_sequence_table_info(
     name: &str,
     info: tidb_model::table::SequenceInfo,
     comment: String,
@@ -8188,7 +8322,10 @@ fn build_sequence_table_info(
     TableInfo {
         name: CiString::new(name.to_owned()),
         version: tidb_model::table_info::CURR_LATEST_TABLE_INFO_VERSION,
-        sequence: Some(GoShared::new(tidb_model::table::SequenceInfo { comment, ..info })),
+        sequence: Some(GoShared::new(tidb_model::table::SequenceInfo {
+            comment,
+            ..info
+        })),
         ..TableInfo::default()
     }
 }
@@ -9616,3 +9753,6 @@ fn check_cluster_drop_object(
     )
     .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error)))
 }
+
+mod executor_alter;
+pub(crate) use executor_alter::alter_table_job;

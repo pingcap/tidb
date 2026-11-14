@@ -22,6 +22,91 @@
 use super::add_index::{action_step, AddIndexSubmission};
 use super::*;
 
+/// Go `executor.AlterSchema`'s resolved local state, before any job runs.
+pub struct AlterSchemaOptions {
+    /// Go `isAlterCharsetAndCollate`, `toCharset`, `toCollate`.
+    pub charset_collate: Option<(String, String)>,
+    /// Go `placementPolicyRef`.
+    pub placement_policy: Option<String>,
+    /// Go `tiflashReplica`.
+    pub tiflash_replica: Option<(u64, Vec<String>)>,
+}
+
+/// Go `executor.AlterSchema`: validate every option before the first job.
+pub fn resolve_schema_options(
+    options: &[tidb_ast::DatabaseOption],
+    context: &dyn DdlSessionContext,
+) -> Result<AlterSchemaOptions, DdlPlanError> {
+    use tidb_ast::DatabaseOption;
+    if options
+        .iter()
+        .filter(|o| matches!(o, DatabaseOption::SetTiFlashReplica { .. }))
+        .count()
+        > 1
+    {
+        return Err(DdlPlanError::from(
+            tidb_dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES
+                .gen_with_stack_by_args(&["set tiflash replica".into()]),
+        ));
+    }
+    let mut charset = String::new();
+    let mut collate = String::new();
+    let mut alter_charset = false;
+    let mut placement_policy = None;
+    let mut tiflash_replica = None;
+    for option in options {
+        let selected = match option {
+            DatabaseOption::CharacterSet(value) => {
+                alter_charset = true;
+                Some(value.clone())
+            }
+            DatabaseOption::Collate(value) => {
+                let info = tidb_ddl_build::column_types::get_collation_by_name(value)
+                    .map_err(DdlPlanError::from_mysql_error)?;
+                collate = info.name;
+                alter_charset = true;
+                Some(info.charset_name)
+            }
+            DatabaseOption::PlacementPolicy(value) => {
+                placement_policy = Some(value.clone());
+                None
+            }
+            DatabaseOption::SetTiFlashReplica { count, labels } => {
+                tiflash_replica = Some((*count, labels.clone()));
+                None
+            }
+            DatabaseOption::Encryption(_) => None,
+        };
+        if let Some(selected) = selected {
+            if charset.is_empty() {
+                charset = selected;
+            } else if charset != selected {
+                return Err(DdlPlanError::from(
+                    tidb_dbterror::ERR_CONFLICTING_DECLARATIONS
+                        .gen_with_stack_by_args(&[charset.into(), selected.into()]),
+                ));
+            }
+        }
+    }
+    let charset_collate = if alter_charset {
+        if collate.is_empty() {
+            collate = tidb_ddl_build::column_types::get_default_collation(
+                &charset,
+                context.default_collation_for_utf8mb4(),
+            )
+            .map_err(DdlPlanError::from_mysql_error)?;
+        }
+        Some((charset, collate))
+    } else {
+        None
+    };
+    Ok(AlterSchemaOptions {
+        charset_collate,
+        placement_policy,
+        tiflash_replica,
+    })
+}
+
 /// Go `executor.AlterSchema` up to `DoDDLJob`. `None` for any other statement.
 pub fn alter_schema<S: MetaSnapshot>(
     snapshot: &mut S,
@@ -30,66 +115,69 @@ pub fn alter_schema<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
-    let (name, action, args, policy) = match statement {
-        // Go `executor.ModifySchemaCharsetAndCollate`.
+    match statement {
         DdlStatement::ModifySchemaCharsetAndCollate {
             name,
             charset,
             collate,
-        } => {
-            let Some(database) = find_database(&catalog, name) else {
-                return Err(DdlPlanError::from(
-                    tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                        .gen_with_stack_by_args(&[(name.clone()).into()]),
-                ));
-            };
-            if database.read().charset == *charset && database.read().collate == *collate {
-                return Ok(Some(AddIndexSubmission::AlreadySatisfied {
-                    detail: format!("database `{name}` is already {charset}/{collate}"),
-                    warnings: Vec::new(),
-                }));
-            }
-            (
-                name,
-                ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE,
-                tidb_model::ModifySchemaArgs {
-                    to_charset: GoField::new(charset.clone().into()),
-                    to_collate: GoField::new(collate.clone().into()),
-                    ..tidb_model::ModifySchemaArgs::default()
-                },
-                None,
-            )
-        }
-        // Go `executor.ModifySchemaDefaultPlacement`.
+        } => modify_schema_charset_and_collate(
+            snapshot,
+            name,
+            charset,
+            collate,
+            job_context,
+            start_ts,
+            upgrading,
+        ),
         DdlStatement::ModifySchemaDefaultPlacement {
             name,
             placement_policy,
-        } => {
-            if find_database(&catalog, name).is_none() {
-                return Err(DdlPlanError::from(
-                    tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
-                        .gen_with_stack_by_args(&[(name.clone()).into()]),
-                ));
-            }
-            if let Some(ignored) = check_ignore_placement_ddl(job_context) {
-                return Ok(Some(ignored));
-            }
-            let reference = check_and_normalize_placement_policy(snapshot, placement_policy)?;
-            let policy = reference
-                .as_ref()
-                .map(|reference| reference.read().name.lowercase().to_owned());
-            (
-                name,
-                ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT,
-                tidb_model::ModifySchemaArgs {
-                    policy_ref: GoField::new(reference),
-                    ..tidb_model::ModifySchemaArgs::default()
-                },
-                policy,
-            )
+        } => modify_schema_default_placement(
+            snapshot,
+            name,
+            placement_policy,
+            job_context,
+            start_ts,
+            upgrading,
+        ),
+        _ => Ok(None),
+    }
+}
+
+/// Go `executor.ModifySchemaCharsetAndCollate`.
+pub fn modify_schema_charset_and_collate<S: MetaSnapshot>(
+    snapshot: &mut S,
+    name: &String,
+    charset: &String,
+    collate: &String,
+    job_context: &dyn DdlSessionContext,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_info_schema(snapshot)?;
+    let (name, action, args, policy) = {
+        let Some(database) = find_database(&catalog, name) else {
+            return Err(DdlPlanError::from(
+                tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
+                    .gen_with_stack_by_args(&[(name.clone()).into()]),
+            ));
+        };
+        if database.read().charset == *charset && database.read().collate == *collate {
+            return Ok(Some(AddIndexSubmission::AlreadySatisfied {
+                detail: format!("database `{name}` is already {charset}/{collate}"),
+                warnings: Vec::new(),
+            }));
         }
-        _ => return Ok(None),
+        (
+            name,
+            ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE,
+            tidb_model::ModifySchemaArgs {
+                to_charset: GoField::new(charset.clone().into()),
+                to_collate: GoField::new(collate.clone().into()),
+                ..tidb_model::ModifySchemaArgs::default()
+            },
+            None::<String>,
+        )
     };
     let database = find_database(&catalog, name).expect("checked above");
     let mut job = session_job(job_context, action);
@@ -116,11 +204,69 @@ pub fn alter_schema<S: MetaSnapshot>(
         }),
         Vec::new(),
     );
-    submit_built_job(
-        snapshot, Some(built),
-        start_ts,
-        upgrading,
-    )
+    submit_built_job(snapshot, Some(built), start_ts, upgrading)
+}
+
+/// Go `executor.ModifySchemaDefaultPlacement`.
+pub fn modify_schema_default_placement<S: MetaSnapshot>(
+    snapshot: &mut S,
+    name: &String,
+    placement_policy: &String,
+    job_context: &dyn DdlSessionContext,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_info_schema(snapshot)?;
+    let (name, action, args, policy) = {
+        if find_database(&catalog, name).is_none() {
+            return Err(DdlPlanError::from(
+                tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
+                    .gen_with_stack_by_args(&[(name.clone()).into()]),
+            ));
+        }
+        if let Some(ignored) = check_ignore_placement_ddl(job_context) {
+            return Ok(Some(ignored));
+        }
+        let reference = check_and_normalize_placement_policy(snapshot, placement_policy)?;
+        let policy = reference
+            .as_ref()
+            .map(|reference| reference.read().name.lowercase().to_owned());
+        (
+            name,
+            ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT,
+            tidb_model::ModifySchemaArgs {
+                policy_ref: GoField::new(reference),
+                ..tidb_model::ModifySchemaArgs::default()
+            },
+            policy,
+        )
+    };
+    let database = find_database(&catalog, name).expect("checked above");
+    let mut job = session_job(job_context, action);
+    job.schema_id = database.read().id;
+    job.schema_name = database.read().name.lowercase().to_owned().into();
+    let mut involving = vec![tidb_model::InvolvingSchemaInfo {
+        database: job.schema_name.clone(),
+        table: tidb_model::job::INVOLVING_ALL.into(),
+        ..tidb_model::InvolvingSchemaInfo::default()
+    }];
+    if let Some(policy) = policy {
+        involving.push(tidb_model::InvolvingSchemaInfo {
+            policy: policy.into(),
+            mode: tidb_model::InvolvingSchemaInfoMode::SHARED,
+            ..tidb_model::InvolvingSchemaInfo::default()
+        });
+    }
+    job.involving_schema_info = GoSharedSlice::from_vec(involving);
+    let built = AddIndexSubmission::Job(
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
+            job,
+            args: JobArgsValue::ModifySchema(Some(GoShared::new(args))),
+            id_allocated: true,
+        }),
+        Vec::new(),
+    );
+    submit_built_job(snapshot, Some(built), start_ts, upgrading)
 }
 
 /// Go `onModifySchemaCharsetAndCollate` / `onModifySchemaDefaultPlacement`.
