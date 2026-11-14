@@ -49,7 +49,7 @@ func NewDDLHandler(
 		ddlEventCh:   make(chan *notifier.SchemaChangeEvent, 1000),
 		statsWriter:  statsWriter,
 		statsHandler: statsHandler,
-		sub:          newSubscriber(statsHandler),
+		sub:          newSubscriber(),
 	}
 }
 

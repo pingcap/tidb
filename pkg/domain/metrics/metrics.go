@@ -21,9 +21,6 @@ import (
 
 // domain metrics vars
 var (
-	GenerateHistoricalStatsSuccessCounter prometheus.Counter
-	GenerateHistoricalStatsFailedCounter  prometheus.Counter
-
 	PlanReplayerDumpTaskSuccess prometheus.Counter
 	PlanReplayerDumpTaskFailed  prometheus.Counter
 
@@ -39,9 +36,6 @@ func init() {
 
 // InitMetricsVars init domain metrics vars.
 func InitMetricsVars() {
-	GenerateHistoricalStatsSuccessCounter = metrics.HistoricalStatsCounter.WithLabelValues("generate", "success")
-	GenerateHistoricalStatsFailedCounter = metrics.HistoricalStatsCounter.WithLabelValues("generate", "fail")
-
 	PlanReplayerDumpTaskSuccess = metrics.PlanReplayerTaskCounter.WithLabelValues("dump", "success")
 	PlanReplayerDumpTaskFailed = metrics.PlanReplayerTaskCounter.WithLabelValues("dump", "fail")
 

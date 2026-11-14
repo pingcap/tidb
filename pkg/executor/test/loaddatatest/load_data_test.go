@@ -592,7 +592,6 @@ func prepareLoadDataStore() func() {
 	vardef.SetSchemaLease(500 * time.Millisecond)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
-	domain.DisableDumpHistoricalStats4Test()
 	dom, err := session.BootstrapSession(store)
 	if err != nil {
 		_ = store.Close()

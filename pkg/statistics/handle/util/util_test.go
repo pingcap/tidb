@@ -134,7 +134,6 @@ func newStatsSessionContextForRestoreTest(t *testing.T) *mock.Context {
 		{vardef.TiDBAnalyzePartitionConcurrency, "3", "1"},
 		{vardef.TiDBAnalyzeVersion, "2", "2"},
 		{vardef.TiDBAnalyzeStoreBatchSize, "6", "7"},
-		{vardef.TiDBEnableHistoricalStats, "ON", "OFF"},
 		{vardef.TiDBPartitionPruneMode, "dynamic", "static"},
 		{vardef.TiDBEnableAnalyzeSnapshot, "ON", "OFF"},
 		{vardef.TiDBAnalyzeSkipColumnTypes, "blob", "json"},
@@ -148,7 +147,6 @@ func newStatsSessionContextForRestoreTest(t *testing.T) *mock.Context {
 		}
 	}
 	vars.EnableAsyncMergeGlobalStats = false
-	vars.EnableHistoricalStats = false
 	vars.AnalyzeVersion = 1
 	vars.StmtCtx.SetTimeZone(time.UTC)
 	return sctx
@@ -161,7 +159,6 @@ func checkRestoredStatsSessionVars(t *testing.T, sctx sessionctx.Context) {
 	require.Equal(t, 1, vars.AnalyzePartitionConcurrency)
 	require.Equal(t, 1, vars.AnalyzeVersion)
 	require.Equal(t, 7, vars.AnalyzeStoreBatchSize)
-	require.False(t, vars.EnableHistoricalStats)
 	require.Equal(t, "static", vars.PartitionPruneMode.Load())
 	require.False(t, vars.EnableAnalyzeSnapshot)
 	require.Equal(t, map[string]struct{}{"json": {}}, vars.AnalyzeSkipColumnTypes)
@@ -353,7 +350,6 @@ func TestUpdateSCtxVarsForStatsRestore(t *testing.T) {
 		vardef.TiDBAnalyzePartitionConcurrency,
 		vardef.TiDBAnalyzeVersion,
 		vardef.TiDBAnalyzeStoreBatchSize,
-		vardef.TiDBEnableHistoricalStats,
 		vardef.TiDBPartitionPruneMode,
 		vardef.TiDBEnableAnalyzeSnapshot,
 		vardef.TiDBAnalyzeSkipColumnTypes,
@@ -385,7 +381,6 @@ func TestUpdateSCtxVarsForStatsRestore(t *testing.T) {
 				require.Equal(t, 3, vars.AnalyzePartitionConcurrency)
 				require.Equal(t, 2, vars.AnalyzeVersion)
 				require.Equal(t, 6, vars.AnalyzeStoreBatchSize)
-				require.True(t, vars.EnableHistoricalStats)
 				require.Equal(t, "dynamic", vars.PartitionPruneMode.Load())
 				require.True(t, vars.EnableAnalyzeSnapshot)
 				require.Equal(t, map[string]struct{}{"blob": {}}, vars.AnalyzeSkipColumnTypes)

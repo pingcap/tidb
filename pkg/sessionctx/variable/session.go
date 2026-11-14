@@ -1512,9 +1512,6 @@ type SessionVars struct {
 	// EnableMView indicates whether to enable materialized view DDL.
 	EnableMView bool
 
-	// EnableHistoricalStats indicates whether to enable historical statistics.
-	EnableHistoricalStats bool
-
 	// EnableIndexMergeJoin indicates whether to enable index merge join.
 	EnableIndexMergeJoin bool
 

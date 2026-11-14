@@ -43,9 +43,7 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 		globalStatsTableIDs[globalStatsID.tableID] = struct{}{}
 	}
 
-	tableIDs := make(map[int64]struct{}, len(globalStatsTableIDs))
 	for tableID := range globalStatsTableIDs {
-		tableIDs[tableID] = struct{}{}
 		for globalStatsID, info := range globalStatsMap {
 			if globalStatsID.tableID != tableID {
 				continue
@@ -78,13 +76,6 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 				return err
 			}()
 			statsHandle.FinishAnalyzeJob(job, mergeStatsErr, statistics.GlobalStatsMergeJob)
-		}
-	}
-
-	for tableID := range tableIDs {
-		// Dump stats to historical storage.
-		if err := recordHistoricalStats(e.Ctx(), tableID); err != nil {
-			logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 		}
 	}
 
