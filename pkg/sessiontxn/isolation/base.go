@@ -595,9 +595,10 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 		physicalTableIDs = append(physicalTableIDs, id)
 	}
 	needCheckSchemaByDelta := true
-	// Set this option for 2 phase commit to validate schema lease.
+	// Set this option for 2 phase commit to validate schema lease. A transaction that accessed
+	// tables without taking MDL (internal sessions on the `mysql` schema) still needs the check.
 	if sessVars.TxnCtx != nil {
-		needCheckSchemaByDelta = !sessVars.TxnCtx.EnableMDL
+		needCheckSchemaByDelta = !sessVars.TxnCtx.EnableMDL || sessVars.TxnCtx.NeedSchemaDeltaCheck
 	}
 
 	// TODO: refactor SetOption usage to avoid race risk, should detect it in test.
