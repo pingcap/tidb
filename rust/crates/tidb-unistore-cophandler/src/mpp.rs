@@ -42,6 +42,8 @@ pub(crate) const ERR_EXECUTOR_NOT_SUPPORTED_MSG: &str = "executor not supported:
 
 /// Go `mppExecBuilder`.
 pub(crate) struct MppExecBuilder<'a> {
+    /// Go `dagContext.keyspaceID`.
+    pub(crate) keyspace_id: u32,
     pub(crate) sctx: Arc<RequestEvalContext>,
     pub(crate) db_reader: &'a dyn DbReader,
     pub(crate) key_ranges: Vec<coprocessor::KeyRange>,
@@ -182,6 +184,7 @@ impl<'a> MppExecBuilder<'a> {
         let (sctx, start_ts) = (Arc::clone(&self.sctx), self.start_ts);
         let (counts, paging) = (self.counts.clone(), self.paging.clone());
         Ok(IndexLookUpExec {
+            keyspace_id: self.keyspace_id,
             base: self.base(vec![index_scan_child, mock_child], field_types),
             index_handle_offsets: pb.index_handle_offsets.clone(),
             table_id: tbl_scan_pb.table_id(),

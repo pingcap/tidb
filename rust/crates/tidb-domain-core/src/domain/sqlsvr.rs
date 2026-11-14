@@ -26,6 +26,11 @@ use super::Domain;
 pub struct DomainSqlServer(pub Arc<Domain>);
 
 impl Server<dyn SessionContext> for DomainSqlServer {
+    /// Go `Domain.GetDDLOwnerMgr`.
+    fn get_ddl_owner_mgr(&self) -> Option<Arc<dyn tidb_owner::Manager>> {
+        self.0.ddl.owner_manager()
+    }
+
     /// Go `GetRuntime`: the domain itself.
     fn get_runtime(&self) -> Arc<dyn Runtime<dyn SessionContext>> {
         Arc::new(Self(Arc::clone(&self.0)))
@@ -38,19 +43,25 @@ impl Server<dyn SessionContext> for DomainSqlServer {
         target_ks: &str,
         holder_id: &str,
     ) -> Result<Arc<dyn KsRuntimeHandle<dyn SessionContext>>, String> {
-        if holder_id.is_empty() {
-            return Err("cross keyspace runtime holderID must not be empty".to_owned());
-        }
-        // misusing cross keyspace sessions might cause data written to the wrong
-        // keyspace, or corrupt user data, and it's harder to diagnose those issues.
-        if tidb_config_kerneltype::is_classic() || self.store_keyspace() == target_ks {
-            return Err("cross keyspace is not available in classic kernel or current keyspace".to_owned());
-        }
-        Err(format!("cross keyspace runtime of keyspace {target_ks} is not supported"))
+        self.0.acquire_ks_runtime(target_ks,holder_id)
     }
 }
 
 impl Runtime<dyn SessionContext> for DomainSqlServer {
+    fn store(&self) -> Arc<dyn tidb_txnkv::kv_storage::Storage> {self.0.transactions.kv_storage()}
+    /// Go `Domain.AlterTableMode`: its ordinary DDL executor and pooled session.
+    fn alter_table_mode(&self,_ctx:&tidb_gocontext::Context,target:&tidb_model::AlterTableModeTarget)->Result<(),String> {
+        let pool=self.0.advanced_sys_session_pool();
+        let session=pool.get().map_err(|error|error.to_string())?;
+        let result=session.with_session_context(|context| -> tidb_syssession::Result<()> {
+            let vars=context.ddl_statement_context().map_err(tidb_syssession::SysSessionError::new)?;
+            self.0.ddl.execute(&tidb_ddl::cluster_ddl::DdlStatement::AlterTableMode {table_mode:target.target_mode,schema_id:target.schema_id,table_id:target.table_id},&vars)
+                .map(|_|()).map_err(|error|tidb_syssession::SysSessionError::new(error.message))
+        });
+        pool.put(&session);
+        result.map_err(|error|error.to_string())
+    }
+
     /// Go `Store().GetKeyspace()`: the immutable identity of the opened store.
     fn store_keyspace(&self) -> String {
         self.0.store_keyspace().to_owned()

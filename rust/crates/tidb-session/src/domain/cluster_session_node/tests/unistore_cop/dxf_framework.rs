@@ -2105,6 +2105,7 @@ fn test_planner() {
 /// with Go's `crossks` errors.
 #[test]
 fn dxf_task_runtime_is_the_domain_on_a_classic_kernel() {
+    if tidb_config_kerneltype::is_next_gen() { return; }
     let (_stack, tm) = init_table_test();
     let current_ks = tidb_config::config_tree::config::get_global_keyspace_name();
 
@@ -2148,7 +2149,7 @@ fn test_example_application() {
     let meta = TaskMeta { subtask_count: 3 };
     let bytes = serde_json::to_vec(&meta).unwrap();
     let scope = tidb_dxf_handle::get_target_scope();
-    let task = tidb_dxf_handle::submit_task(&ctx, "test", &TASK_TYPE_EXAMPLE, "", 1, &scope, 0, &bytes).unwrap();
+    let task = tidb_dxf_handle::submit_task(&ctx, "test", &TASK_TYPE_EXAMPLE, stack.factory.store_keyspace(), 1, &scope, 0, &bytes).unwrap();
     tidb_dxf_handle::wait_task_done_by_key(&ctx, &task.base.key).unwrap();
 }
 
@@ -2173,7 +2174,7 @@ fn test_set_scope() {
 }
 
 /// Go probe `TestStoreKeyspaceIdentitySurvivesConfigChange` in `zzprobe/o15_store`:
-/// changing global config after opening an API V1 store does not change its identity.
+/// changing global config after opening the store does not change its identity.
 #[test]
 fn test_store_keyspace_identity_survives_config_change() {
     use tidb_config::config_tree::config::{get_global_config, store_global_config, update_global};
@@ -2185,8 +2186,142 @@ fn test_store_keyspace_identity_survives_config_change() {
     let _restore = Restore(get_global_config());
     update_global(|config| config.keyspace_name = "changed_after_open".into());
     tm.with_new_session(&mut |session| {
-        assert_eq!(session.store_keyspace(), "");
-        assert_eq!(session.sql_server().get_runtime().store_keyspace(), "");
+        let expected = if tidb_config_kerneltype::is_next_gen() { "SYSTEM" } else { "" };
+        assert_eq!(session.store_keyspace(), expected);
+        assert_eq!(session.sql_server().get_runtime().store_keyspace(), expected);
         Ok(())
     }).unwrap();
+}
+
+/// Go `TestGetScheduleStatus` (`handle/status_testkit_test.go`).
+#[test]
+fn test_get_schedule_status() {
+    let (stack, gm) = init_table_test();
+    let ctx = tidb_gocontext::Context::background();
+    let syncer = stack.factory.server_info().unwrap();
+    let info = syncer.get_local_server_info();
+    let exec_id = tidb_domain_serverinfo::serverinfo_syncer::join_host_port(&info.static_info.ip, info.static_info.port);
+    // Go's testkit starts the DXF loop; this fixture registers its node explicitly.
+    gm.init_meta(&ctx, &exec_id, "").unwrap();
+    let status = tidb_dxf_handle::get_schedule_status(&ctx, &syncer).unwrap();
+    assert_eq!(status.version, schstatus::VERSION1);
+    assert_eq!(status.task_queue.scheduled_count, 0);
+    assert_eq!(status.tidb_worker.cpu_count, tidb_dxf_storage::get_dxf_cpu_count());
+    assert_eq!(status.tidb_worker.current_count, 1);
+    assert_eq!(status.tidb_worker.required_count, 1);
+    assert_eq!(status.tidb_worker.busy_nodes, [schstatus::Node { id: exec_id, is_owner: true }]);
+    assert_eq!(status.tikv_worker.required_count, 1);
+    assert!(status.flags.is_empty());
+}
+
+/// Go `TestNodeInfoAndBusyNodes` (`handle/status_testkit_test.go`).
+#[test]
+fn test_node_info_and_busy_nodes() {
+    let (stack, gm) = init_table_test();
+    let ctx = tidb_gocontext::Context::background();
+    assert_eq!(tidb_dxf_handle::get_nodes_info(&ctx, &gm).unwrap(), (0, tidb_dxf_storage::get_dxf_cpu_count()));
+    gm.init_meta(&ctx, "node1", "").unwrap();
+    assert_eq!(tidb_dxf_handle::get_nodes_info(&ctx, &gm).unwrap(), (1, tidb_dxf_storage::get_dxf_cpu_count()));
+    let syncer = stack.factory.server_info().unwrap();
+    let info = syncer.get_local_server_info();
+    let owner_id = tidb_domain_serverinfo::serverinfo_syncer::join_host_port(&info.static_info.ip, info.static_info.port);
+    let owner = schstatus::Node { id: owner_id.clone(), is_owner: true };
+    assert_eq!(tidb_dxf_handle::get_busy_nodes(&ctx, &gm, &syncer).unwrap(), [owner.clone()]);
+    for (id, state) in [(&*owner_id, "pending"), (":4001", "running")] {
+        gm.execute_sql_with_new_session(&ctx, &format!(
+            "insert into mysql.tidb_background_subtask({}) values(1, '1', %?, '{{}}', %?, 1, 1, NULL, CURRENT_TIMESTAMP(), '{{}}', '{{}}')",
+            tidb_dxf_storage::INSERT_SUBTASK_COLUMNS), &[
+                tidb_sqlescape::SqlArg::String(id.as_bytes()), tidb_sqlescape::SqlArg::String(state.as_bytes())
+            ]).unwrap();
+    }
+    let mut nodes = tidb_dxf_handle::get_busy_nodes(&ctx, &gm, &syncer).unwrap();
+    let mut expected = vec![owner, schstatus::Node { id: ":4001".into(), is_owner: false }];
+    nodes.sort_by(|a, b| a.id.cmp(&b.id));
+    expected.sort_by(|a, b| a.id.cmp(&b.id));
+    assert_eq!(nodes, expected);
+}
+
+
+/// Go `jobhistory_test.TestGetFromHistory`.
+#[test]
+fn test_get_from_history() {
+    use tidb_sqlescape::SqlArg;
+    let (_stack, tm) = init_table_test();
+    let ctx = tidb_gocontext::Context::background();
+    tm.init_meta(&ctx, ":4000", "").unwrap();
+    let meta = br#"{"Plan":{"DistSQLScanConcurrency":16,"DesiredTableInfo":{"index_info":[{"id":1},{"id":2}],"cols":[{"id":1},{"id":2},{"id":3}]},"TotalFileSize":2147483648},"Summary":{"row-count":1024}}"#;
+    let task_id = tm.create_task(&ctx,
+        &tidb_dxf_importinto_taskkey::for_job_in_keyspace("ks1", 9527),
+        &IMPORT_INTO, "ks1", 8, "", 4, &ExtraParams::default(), meta).unwrap();
+    for (step, group, start, end, bytes) in [
+        (IMPORT_STEP_ENCODE_AND_SORT, "data", 100, 700, 1_073_741_824),
+        (IMPORT_STEP_WRITE_AND_INGEST, "data", 700, 2500, 1_073_741_824),
+        (IMPORT_STEP_WRITE_AND_INGEST, "index-1", 900, 2100, 536_870_912),
+        (IMPORT_STEP_POST_PROCESS, "data", 0, 0, 0),
+    ] {
+        let meta = format!(r#"{{"kv-group":"{group}"}}"#);
+        let id = testutil::insert_subtask(&tm, task_id, step, "tidb-1", Some(meta.as_bytes()),
+            &SUBTASK_STATE_SUCCEED, &IMPORT_INTO, 8);
+        let summary = format!(r#"{{"bytes":{bytes}}}"#);
+        tm.execute_sql_with_new_session(&ctx,
+            "update mysql.tidb_background_subtask set start_time = %?, state_update_time = %?, summary = %?, meta = %? where id = %?",
+            &[SqlArg::Signed(start), SqlArg::Signed(end), SqlArg::String(summary.as_bytes()),
+              SqlArg::Bytes(Some(meta.as_bytes())), SqlArg::Signed(id)]).unwrap();
+    }
+    let task = tm.get_task_by_id(&ctx, task_id).unwrap();
+    tm.transfer_tasks2_history(&ctx, &[task]).unwrap();
+    let info = tidb_dxf_importinto_jobhistory::get_from_history(&ctx, &tm, "ks1", 9527).unwrap();
+    assert_eq!(info.job_id, 9527);
+    assert_eq!(info.keyspace, "ks1");
+    assert_eq!(info.task_id, task_id);
+    assert_eq!(info.state, "pending");
+    assert_eq!(info.concurrency, 8);
+    assert_eq!(info.max_node_count, 4);
+    assert_eq!(info.distsql_scan_concurrency, 16);
+    assert_eq!(info.index_count, 2);
+    assert_eq!(info.column_count, 3);
+    assert_eq!(info.file_size, "2GiB");
+    assert_eq!(info.data_kv_size, "1GiB");
+    assert_eq!(info.index_kv_size, "512MiB");
+    assert!(!info.per_core_speed.is_empty());
+    assert!(!info.overall_speed.is_empty());
+    assert_eq!(info.row_count, 1024);
+    assert_eq!(info.row_length, 2_097_152);
+    assert_eq!(info.duration.total, "40m0s");
+    assert_eq!(info.duration.encode, "10m0s");
+    assert_eq!(info.duration.ingest, "30m0s");
+    assert!(info.duration.merge_sort.is_empty());
+    assert!(info.duration.collect_conflicts.is_empty());
+    assert!(info.duration.resolve_conflicts.is_empty());
+    assert!(info.duration.post_process.is_empty());
+    let error = tidb_dxf_importinto_jobhistory::get_from_history(&ctx, &tm, "ks1", 9528).unwrap_err();
+    assert!(error.to_string().contains("not found in history"));
+    assert!(error.is(&tidb_dxf_storage::StorageError::TaskNotFound));
+}
+
+/// Go `TestGetScheduleTuneFactors` (`handle/status_testkit_test.go`).
+#[test]
+fn test_get_schedule_tune_factors() {
+    let (stack, tm) = init_table_test();
+    tidb_dxf_storage::set_dxf_svc_task_mgr(tm);
+    let ctx = tidb_gocontext::Context::background();
+    let keyspace = stack.factory.store_keyspace();
+    assert_eq!(tidb_dxf_handle::get_schedule_tune_factors(&ctx, keyspace).unwrap(), schstatus::get_default_tune_factors());
+    let mut factors = schstatus::TtlTuneFactors {
+        ttl_info: schstatus::TtlInfo {
+            ttl_nanoseconds: 3_600_000_000_000,
+            expire_time: (chrono::Utc::now() + chrono::Duration::hours(1)).fixed_offset(),
+        },
+        tune_factors: schstatus::TuneFactors { amplify_factor: 1.5 },
+    };
+    let store = stack.factory.meta_store.get().unwrap();
+    store.run_in_new_txn(&ctx, tidb_txnkv::INTERNAL_DIST_TASK, true, &mut |txn| {
+        tidb_meta::transaction::Mutator::new(txn).set_dxf_schedule_tune_factors(keyspace, &factors)
+    }).unwrap();
+    assert_eq!(tidb_dxf_handle::get_schedule_tune_factors(&ctx, keyspace).unwrap(), factors.tune_factors);
+    factors.ttl_info.expire_time = (chrono::Utc::now() - chrono::Duration::hours(1)).fixed_offset();
+    store.run_in_new_txn(&ctx, tidb_txnkv::INTERNAL_DIST_TASK, true, &mut |txn| {
+        tidb_meta::transaction::Mutator::new(txn).set_dxf_schedule_tune_factors(keyspace, &factors)
+    }).unwrap();
+    assert_eq!(tidb_dxf_handle::get_schedule_tune_factors(&ctx, keyspace).unwrap(), schstatus::get_default_tune_factors());
 }

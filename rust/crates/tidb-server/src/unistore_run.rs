@@ -142,6 +142,7 @@ pub fn run_unistore_cluster_session(
             tidb_mysql::runtime_versions().server_version,
             tidb_versioninfo::TIDB_GIT_HASH.to_owned(),
             crate::http_status::StatusRoutes {
+                keyspace_domain: Some(Arc::clone(&factory)),
                 schema: Some(Arc::new(move || schema_factory.catalog_snapshot())),
                 settings: Some(crate::node_status::status_settings(&factory)),
                 peer: Some(crate::node_status::peer_service(&factory)),

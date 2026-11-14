@@ -198,6 +198,10 @@ pub trait ClusterTransactions: Send + Sync {
         Err("ingest parameter metadata is unavailable from this storage owner".into())
     }
 
+    /// Go `kv.Storage.GetCodec().GetKeyspaceID`; API V1 uses NullspaceID.
+    fn keyspace_id(&self) -> u32 { u32::MAX }
+    /// Go `session.store`: the same transaction authority used by this owner.
+    fn kv_storage(&self) -> Arc<dyn tidb_txnkv::kv_storage::Storage>;
     /// A fresh TSO from the store's oracle (Go `GetOracle().GetTimestamp`):
     /// what `NewTxnInStmt` takes for the session transaction a DDL, account or
     /// ANALYZE statement runs under.
@@ -232,6 +236,9 @@ pub trait ClusterTransactions: Send + Sync {
     fn get_gc_state(&self) -> Result<tidb_txnkv::driver::tikv_store::GcState, String> {
         Err("GC API only support storage with PD".to_owned())
     }
+
+    /// Go `StorageWithPD.GetPDClient().LoadKeyspace`: stores without PD skip this lookup.
+    fn load_keyspace(&self, _keyspace: &str) -> Result<(), String> { Ok(()) }
 
     /// Go `TiFlashSystemTableRetriever`'s `CmdGetTiFlashSystemTable`
     /// request to the TiFlash store at `address`; a store that is not
@@ -1384,6 +1391,11 @@ impl<S> ClusterTransactions for RealClusterTransactions<S>
 where
     S: StoreClient,
 {
+    /// Go `kv.Storage.GetCodec().GetKeyspaceID` from the opened store.
+    fn keyspace_id(&self) -> u32 {
+        self.opener.store().store().keyspace().context_keyspace_id().unwrap_or(u32::MAX)
+    }
+    fn kv_storage(&self) -> Arc<dyn tidb_txnkv::kv_storage::Storage> {self.opener.clone()}
     fn fresh_timestamp(&self) -> Result<u64, String> {
         self.opener.store().get_timestamp_async().wait()
     }
@@ -1446,6 +1458,14 @@ where
     fn get_gc_state(&self) -> Result<tidb_txnkv::driver::tikv_store::GcState, String> {
         self.opener.store().get_gc_state()
     }
+
+    fn load_keyspace(&self, keyspace: &str) -> Result<(), String> {
+        let store = self.opener.store();
+        let pd = store.store().pd_client();
+        store.block_on(async move { tikv_client::PdClient::load_keyspace(pd.as_ref(), keyspace).await })
+            .map(|_| ()).map_err(|error| error.to_string())
+    }
+
 
     /// Go `infoschema_reader.go`'s `DATA_LOCK_WAITS` source: the store's
     /// `GetLockWaits` plus its lock resolver's `Resolving()`.

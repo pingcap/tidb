@@ -11,6 +11,10 @@ description = "Go pkg/dxf/framework/handle: submitting, waiting for and controll
 workspace = true
 
 [dependencies]
+tidb-meta = { path = "../tidb-meta" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
+tidb-owner = { path = "../tidb-owner" }
 chrono.workspace = true
 crossbeam-channel = "0.5"
 serde_json.workspace = true

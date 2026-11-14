@@ -365,3 +365,42 @@ where
             .map_err(|error| MetaTxnError::terminal(error.to_string()))
     }
 }
+
+/// Go `kv.Storage` for metadata transactions, retaining the opened store.
+pub struct MetaStore<S: StoreClient> {
+    opener: std::sync::Arc<RealOptimisticTransactionOpener<S>>,
+    timeout: Duration,
+}
+
+impl<S: StoreClient> MetaStore<S> {
+    /// Go `kv.Storage`'s metadata transaction adapter.
+    pub fn new(opener: std::sync::Arc<RealOptimisticTransactionOpener<S>>, timeout: Duration) -> Self {
+        Self { opener, timeout }
+    }
+}
+
+impl<S: StoreClient> tidb_meta::MetaStore for MetaStore<S> {
+    fn run_in_new_txn(
+        &self,
+        ctx: &tidb_gocontext::Context,
+        source_type: &str,
+        retryable: bool,
+        f: &mut dyn FnMut(&mut dyn MetaTransaction) -> Result<(), MetaError>,
+    ) -> Result<(), String> {
+        if let Some(error) = ctx.err() { return Err(error.to_string()); }
+        let context = tidb_txnkv::RunInNewTxnContext {
+            request_source: Some(tidb_txnkv::RequestSource {
+                internal: true,
+                source_type: source_type.to_owned(),
+                ..tidb_txnkv::RequestSource::default()
+            }),
+        };
+        let mut storage = MetaTxnStorage::new(&self.opener, self.timeout);
+        tidb_txnkv::run_in_new_txn(&context, &mut storage, retryable, |txn| {
+            if let Some(error) = ctx.err() { return Err(MetaTxnError::terminal(error.to_string())); }
+            f(txn).map_err(MetaTxnError::from)?;
+            if let Some(error) = ctx.err() { return Err(MetaTxnError::terminal(error.to_string())); }
+            Ok(())
+        }).map_err(|error| error.to_string())
+    }
+}

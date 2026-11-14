@@ -106,6 +106,16 @@ pub struct Meter {
     writer: Option<Arc<dyn MeteringWriter>>,
 }
 impl Meter {
+    /// Go `NewMeter`: missing provider type or bucket disables metering.
+    pub fn new_meter(config: &tidb_metering_sdk::config::MeteringConfig) -> Result<Option<Self>, String> {
+        if config.tp.is_empty() || config.bucket.is_empty() { return Ok(None); }
+        let provider = tidb_metering_sdk::storage::new_object_storage_provider(config)
+            .map_err(|error| format!("failed to create storage provider: {error}"))?;
+        let writer = tidb_metering_sdk::writer::MeteringWriter::new_from_config(provider,
+            tidb_metering_sdk::writer::Config { overwrite_existing: true, page_size_bytes: 0 }, config);
+        Ok(Some(Self::new_meter_with_writer(Some(Arc::new(writer)))))
+    }
+
     /// Go `newMeterWithWriter`.
     pub fn new_meter_with_writer(writer: Option<Arc<dyn MeteringWriter>>) -> Self {
         let mut bytes = [0u8; 16];
@@ -329,3 +339,17 @@ impl Meter {
 #[cfg(test)]
 #[path = "metering_test.rs"]
 mod tests;
+
+/// Go SDK writer adapter for the `common.MeteringData` fields supplied by DXF.
+impl MeteringWriter for tidb_metering_sdk::writer::MeteringWriter {
+    /// Go `MeteringWriter.Write`: adapt DXF fields to the SDK envelope.
+    fn write(&self, ctx: &Context, data: &MeteringData) -> Result<(), String> {
+        self.write(ctx, &mut tidb_metering_sdk::MeteringData {
+            self_id: data.self_id.clone(), timestamp: data.timestamp,
+            category: data.category.clone(), data: data.data.clone(),
+            shared_pool_id: String::new(),
+        })
+    }
+    /// Go `MeteringWriter.Close`.
+    fn close(&self) -> Result<(), String> {self.close()}
+}

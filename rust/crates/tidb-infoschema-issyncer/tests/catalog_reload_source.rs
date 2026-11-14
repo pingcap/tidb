@@ -1643,3 +1643,38 @@ fn test_load_from_ts() {
         ReloadedCatalog::Cached { .. }
     ));
 }
+
+/// Go `TestLoadFromTSForCrossKS` (`issyncer/loader_test.go`).
+#[test]
+fn test_load_from_ts_for_cross_ks() {
+    use tidb_infoschema_issyncer::{cross_ks,catalog_reload::reload_cross_ks_catalog};
+    let mut snapshot=RecordedSnapshot::default();
+    assert!(cross_ks::load_info_schema(&mut snapshot).err().unwrap().to_string().contains("system database not found"));
+    let system=tidb_metadef::system::SYSTEM_DATABASE_ID;
+    let table=system-1;
+    snapshot.put(key::database_kv_key(system),format!(r#"{{"id":{system},"db_name":{{"O":"mysql","L":"mysql"}},"state":5}}"#));
+    snapshot.put(key::table_kv_key(system,table),go_table(table,"t","t"));
+    snapshot.commit_diff(1,&diff_json(1,ActionType::ACTION_CREATE_TABLE,system,table));
+    let initial=cross_ks::load_info_schema(&mut snapshot).unwrap();
+    assert_eq!(initial.schema_meta_version(),1);
+    assert_eq!(initial.stored_schemas().len(),1);
+    assert!(initial.schema_by_name("information_schema").is_none());
+    assert!(initial.schema_by_name("performance_schema").is_none());
+    assert!(initial.schema_by_name("metrics_schema").is_none());
+    assert_eq!(tables(&initial.stored_schemas()[0].read()).len(),1);
+    let cache=tidb_infoschema_issyncer::catalog_watch::InfoCache::new_for_cross_ks(initial.clone());
+    snapshot.put(key::table_kv_key(system,table-1),go_table(table-1,"t1","t1"));
+    snapshot.commit_diff(2,&diff_json(2,ActionType::ACTION_CREATE_TABLE,system,table-1));
+    snapshot.put(key::table_kv_key(system,100),go_table(100,"t100","t100"));
+    snapshot.commit_diff(3,&diff_json(3,ActionType::ACTION_CREATE_TABLE,system,100));
+    let ReloadedCatalog::Diffs {catalog,changes,..}=reload_cross_ks_catalog(&mut snapshot,&initial).unwrap() else {panic!("Go takes the diff load")};
+    assert_eq!(catalog.schema_meta_version(),3);
+    assert_eq!(changes.phy_tbl_ids,vec![table-1]);
+    assert_eq!(tables(&catalog.stored_schemas()[0].read()).iter().map(|t|t.name.lowercase().to_owned()).collect::<Vec<_>>(),vec!["t","t1"]);
+    assert!(catalog.schema_by_name("information_schema").is_none());
+    let cached=cache.load_with_ts(&mut snapshot,16).unwrap();
+    assert_eq!(cached.schema_meta_version(),3);
+    assert!(cached.schema_by_name("information_schema").is_none());
+    assert!(cached.table_info_by_name("mysql","t100").is_none());
+    assert!(cached.table_info_by_name("mysql","t1").is_some());
+}

@@ -21,3 +21,6 @@ pub mod catalog_reload;
 pub mod catalog_watch;
 pub mod real_tikv_catalog;
 pub mod mdl_info_load;
+
+/// Go cross-keyspace loader and schema-coordination predicates.
+pub mod cross_ks;

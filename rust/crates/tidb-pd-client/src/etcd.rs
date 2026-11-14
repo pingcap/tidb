@@ -1015,30 +1015,23 @@ fn strip_namespace(namespace: &[u8], key: &mut Vec<u8>) {
     }
 }
 
-impl Drop for EtcdClient {
-    fn drop(&mut self) {
-        // Only the last handle stops the worker: an in-flight call on another
-        // clone must not lose its runtime under it.
-        if Arc::strong_count(&self.shared) > 1 {
-            return;
-        }
+impl EtcdClient {
+    /// Go `clientv3.Client.Close`: close all handles sharing this connection.
+    pub fn close(&self) {
+        let mut worker = self.shared.worker.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(thread) = worker.take() else {return;};
         let _ = self.shared.shutdown.send(true);
         let (reply, response) = mpsc::channel();
-        if self
-            .shared
-            .commands
-            .send(EtcdCommand::Close { reply })
-            .is_ok()
-        {
+        if self.shared.commands.send(EtcdCommand::Close { reply }).is_ok() {
             let _ = response.recv();
         }
-        let worker = match self.shared.worker.lock() {
-            Ok(mut worker) => worker.take(),
-            Err(poisoned) => poisoned.into_inner().take(),
-        };
-        if let Some(worker) = worker {
-            let _ = worker.join();
-        }
+        let _ = thread.join();
+    }
+}
+
+impl Drop for EtcdClient {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.shared) == 1 {self.close();}
     }
 }
 
@@ -2457,6 +2450,16 @@ mod tests {
                 .unwrap_err(),
             EtcdError::NoEndpoint
         );
+    }
+
+    /// Go `TestManager` closes its etcd connection even while callers retain handles.
+    #[test]
+    fn test_cross_ks_client_close() {
+        let client=EtcdClient::connect(["127.0.0.1:1"],Duration::from_millis(100)).unwrap();
+        let retained=client.clone();
+        client.close();
+        client.close();
+        assert_eq!(retained.get(b"/tidb/server/info/closed"),Err(EtcdError::Closed));
     }
 
     #[test]

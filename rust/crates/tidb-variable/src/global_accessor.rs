@@ -145,6 +145,9 @@ impl MockGlobalAccessor {
     }
 
     fn value(&self, name: &str) -> Result<String, VarError> {
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_CLOUD_STORAGE_URI) {
+            return Ok(crate::cloud_storage::get_cloud_storage_uri());
+        }
         let def = get_sys_var(name).ok_or_else(|| {
             tidb_terror::MysqlError::from_terror(
                 &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
@@ -167,6 +170,13 @@ impl MockGlobalAccessor {
                     .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
+        if def.name == tidb_vardef::tidb_vars::TIDB_CLOUD_STORAGE_URI {
+            crate::cloud_storage::set_cloud_storage_uri(
+                &tidb_gocontext::Context::background(),
+                &value,
+            )
+            .map_err(VarError::unknown)?;
+        }
         let mut vals = self
             .vals
             .lock()

@@ -10,6 +10,7 @@ description = "TiDB infoschema: the schema image (Go pkg/infoschema) (Rust rewri
 
 [dependencies]
 chrono = { workspace = true }
+tidb-metadef = { path = "../tidb-metadef" }
 tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-txnkv = { path = "../tidb-txnkv" }

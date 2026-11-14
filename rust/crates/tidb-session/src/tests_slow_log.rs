@@ -101,6 +101,12 @@ fn slow_query_reads_back_the_nodes_own_slow_log() {
     // plan text; `Conn_ID` follows `Txn_start_ts` when the session has one,
     // as a Go testkit session and a session on the store do.
     let mut expected_prefix = vec!["Time", "Txn_start_ts"];
+    // Go `ExecStmt.FinishExecuteStmt` and `SlowLogFormat`: named stores add both fields.
+    if !tidb_keyspace::is_keyspace_name_empty(&tidb_keyspace::get_keyspace_name_by_settings()) {
+        expected_prefix.extend(["Keyspace_name", "Keyspace_ID"]);
+        assert!(entry.contains("# Keyspace_name: SYSTEM\n"), "{entry}");
+        assert!(entry.contains("# Keyspace_ID: 16777214\n"), "{entry}");
+    }
     if session.connection_id() != 0 {
         expected_prefix.push("Conn_ID");
     }

@@ -13,6 +13,10 @@ test-util = []
 
 [dependencies]
 tidb-ingestor-ingestctrl = { path = "../tidb-ingestor-ingestctrl" }
+tidb-keyspace = { path = "../tidb-keyspace" }
+tidb-domain-crossks = { path = "../tidb-domain-crossks" }
+tidb-dxf-metering = { path = "../tidb-dxf-metering" }
+tidb-metering-sdk = { path = "../tidb-metering-sdk" }
 tidb-ttl-ttlworker = { path = "../tidb-ttl-ttlworker" }
 tidb-dxf-storage = { path = "../tidb-dxf-storage" }
 crossbeam-channel = "0.5"
@@ -113,4 +117,5 @@ serde_json.workspace = true
 workspace = true
 
 [dev-dependencies]
+flate2.workspace = true
 tidb-executor = { path = "../tidb-executor" }

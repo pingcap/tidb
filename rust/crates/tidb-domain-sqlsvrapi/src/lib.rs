@@ -17,15 +17,17 @@
 //!
 //! Go's session pool hands out `pools.Resource`, which each user asserts to
 //! `sessionctx.Context`; here the pool's session type `C` is the view its
-//! user declares (DXF's `tidb_dxf_storage::SessionContext`). Not ported yet,
-//! with the callers that need them: `Runtime.AlterTableMode` (`IMPORT
-//! INTO`) and `Server.GetDDLOwnerMgr` (DXF's status port, row O15).
+//! user declares (DXF's `tidb_dxf_storage::SessionContext`).
 
 use std::sync::Arc;
 
 /// Go `Runtime`: the view for reaching a keyspace through its store and
 /// sessions.
 pub trait Runtime<C: ?Sized>: Send + Sync {
+    /// Go `Runtime.Store`: the runtime's target transaction store.
+    fn store(&self) -> Arc<dyn tidb_txnkv::kv_storage::Storage>;
+    /// Go `Runtime.AlterTableMode`.
+    fn alter_table_mode(&self, ctx: &tidb_gocontext::Context, target: &tidb_model::AlterTableModeTarget) -> Result<(), String>;
     /// Go `Store().GetKeyspace()`: the keyspace of the runtime's store.
     /// The narrowed Rust `kv.Storage` carries no keyspace, so the runtime
     /// answers for its store.
@@ -46,6 +48,8 @@ pub trait KsRuntimeHandle<C: ?Sized>: Runtime<C> {
 /// Go `Server`: the SQL server, which manages nearly everything related to
 /// SQL execution.
 pub trait Server<C: ?Sized>: Send + Sync {
+    /// Go `GetDDLOwnerMgr`; absent before DDL initialization.
+    fn get_ddl_owner_mgr(&self) -> Option<Arc<dyn tidb_owner::Manager>>;
     /// Go `GetRuntime`: the runtime of the current instance.
     fn get_runtime(&self) -> Arc<dyn Runtime<C>>;
     /// Go `AcquireKSRuntime`: a runtime handle of the target keyspace, to

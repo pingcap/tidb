@@ -167,6 +167,10 @@ mod tests {
         fn store_keyspace(&self) -> String {
             self.keyspace.clone()
         }
+        fn get_store(&self) -> std::sync::Arc<dyn tidb_meta::MetaStore> {
+            panic!("unexpected GetStore")
+        }
+
         fn sql_server(&self) -> Arc<dyn Server<dyn SessionContext>> {
             Arc::clone(self.server.as_ref().expect("a server is bound"))
         }
@@ -193,6 +197,8 @@ mod tests {
     }
 
     impl Runtime<dyn SessionContext> for MockRuntime {
+        fn alter_table_mode(&self,_ctx:&tidb_gocontext::Context,_target:&tidb_model::AlterTableModeTarget)->std::result::Result<(),String> {panic!("unexpected Go mock AlterTableMode call")}
+    fn store(&self) -> std::sync::Arc<dyn tidb_txnkv::kv_storage::Storage> {panic!("unexpected Go mock Store call")}
         fn store_keyspace(&self) -> String {
             self.keyspace.clone()
         }
@@ -217,6 +223,9 @@ mod tests {
     }
 
     impl Server<dyn SessionContext> for MockServer {
+    fn get_ddl_owner_mgr(&self) -> Option<std::sync::Arc<dyn tidb_owner::Manager>> {
+        panic!("the test does not expect GetDDLOwnerMgr")
+    }
         fn get_runtime(&self) -> Arc<dyn Runtime<dyn SessionContext>> {
             Arc::clone(self.runtime.as_ref().expect("the test expects GetRuntime")) as Arc<dyn Runtime<dyn SessionContext>>
         }

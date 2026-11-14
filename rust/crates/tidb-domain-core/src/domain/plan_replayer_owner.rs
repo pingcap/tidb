@@ -118,7 +118,7 @@ impl tidb_sqlexec::RestrictedSqlExecutor for PooledSql {
 struct GcStorage;
 
 impl GcStorage {
-    fn storage() -> Result<Arc<tidb_planner_extstore::LocalStorage>, PlanReplayerError> {
+    fn storage() -> Result<Arc<dyn tidb_planner_extstore::Storage>, PlanReplayerError> {
         tidb_planner_extstore::get_global_ext_storage().map_err(PlanReplayerError::Other)
     }
 }

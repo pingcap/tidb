@@ -608,6 +608,7 @@ async fn resolve_locks_with_context_inner(
     result
 }
 
+/// Go `LockResolver.ResolveLocksWithOpts`, including `resolveAsyncCommitLock`.
 #[allow(clippy::too_many_arguments)]
 async fn resolve_locks_with_context_body(
     locks: Vec<kvrpcpb::LockInfo>,
@@ -717,7 +718,18 @@ async fn resolve_locks_with_context_body(
                     stats::increment_lock_resolver_action("resolve_async_commit");
                     let commit_version = status.commit_ts();
                     *hint = Some(commit_lock_hint(commit_version, caller_start_ts));
-                    let mut keys = primary_lock.secondaries;
+                    // Go `LockResolver.resolveAsyncCommitLock`: cached primary
+                    // metadata came from a decoded response. Native routing and
+                    // request plans require physical secondary keys as well.
+                    let mut keys = primary_lock
+                        .secondaries
+                        .into_iter()
+                        .map(|key| {
+                            crate::Key::from(key)
+                                .encode_keyspace(keyspace, KeyMode::Txn)
+                                .into()
+                        })
+                        .collect::<Vec<Vec<u8>>>();
                     keys.push(lock.primary_lock.clone());
                     if let Some(read_lock_context) = read_lock_context {
                         schedule_read_async_commit_cleanup(

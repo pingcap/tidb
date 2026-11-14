@@ -66,6 +66,7 @@ struct BatchCountingTransactions {
 }
 
 impl ClusterTransactions for BatchCountingTransactions {
+    fn kv_storage(&self) -> Arc<dyn tidb_txnkv::kv_storage::Storage> {panic!("unexpected mock Store call")}
     fn prepare_snapshot(
         &self,
         _resource_group: &str,

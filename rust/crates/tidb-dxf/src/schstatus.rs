@@ -214,7 +214,8 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
-fn serialize_go_time<S: serde::Serializer>(
+/// Go `time.Time.MarshalJSON`.
+pub fn serialize_go_time<S: serde::Serializer>(
     value: &DateTime<FixedOffset>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {

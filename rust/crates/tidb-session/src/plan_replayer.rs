@@ -278,17 +278,17 @@ impl replayer::VariablesDumpSource for SysVarRegistry {
 }
 
 /// Go `getPresignedURL` over the local global storage.
-struct LocalPresign(Option<std::sync::Arc<tidb_planner_extstore::LocalStorage>>);
+struct LocalPresign(Option<std::sync::Arc<dyn tidb_planner_extstore::Storage>>);
 
 impl replayer::PresignSource for LocalPresign {
     fn has_global_storage(&self) -> bool {
         self.0.is_some()
     }
-    fn presign_file(&self, path: &str, _expire: std::time::Duration) -> Result<String, String> {
+    fn presign_file(&self, path: &str, expire: std::time::Duration) -> Result<String, String> {
         self.0
             .as_ref()
-            .map(|storage| storage.presign_file(path))
-            .ok_or_else(|| "no global external storage".to_owned())
+            .ok_or_else(|| "no global external storage".to_owned())?
+            .presign_file(path, expire)
     }
 }
 

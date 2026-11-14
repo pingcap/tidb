@@ -186,7 +186,7 @@ pub type Result<T> = std::result::Result<T, StorageError>;
 
 /// The `sessionctx.Context` operations this package uses, beyond those
 /// `syssession` declares.
-pub trait SessionContext: tidb_syssession::SessionContext {
+pub trait SessionContext: tidb_syssession::SessionContext + std::any::Any {
     /// Go `CommitTxn`.
     ///
     /// # Errors
@@ -210,6 +210,8 @@ pub trait SessionContext: tidb_syssession::SessionContext {
     fn set_system_var(&self, name: &str, value: &str) -> Result<()>;
     /// Go `GetStore().GetKeyspace()`: the keyspace of the session's store.
     fn store_keyspace(&self) -> String;
+    /// Go `GetStore()`, through its metadata transaction interface.
+    fn get_store(&self) -> Arc<dyn tidb_meta::MetaStore>;
     /// Go `GetSQLServer()`.
     fn sql_server(&self) -> Arc<dyn tidb_domain_sqlsvrapi::Server<dyn SessionContext>>;
 }

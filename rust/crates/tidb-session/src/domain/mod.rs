@@ -36,6 +36,8 @@ pub mod auth_identity;
 pub mod native_password;
 pub mod secure_transport;
 pub mod cluster_session_node;
+pub mod cross_ks;
+mod cross_ks_ddl;
 pub mod resource_groups_controller;
 pub mod global_config_sync;
 pub mod cluster_topology;

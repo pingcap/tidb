@@ -181,6 +181,7 @@ struct ResolveLocksForRange {
     resolver: Arc<dyn RegionLockResolver>,
     max_version: u64,
     scan_limit: u32,
+    keyspace: tikv_client::request::Keyspace,
 }
 
 #[async_trait::async_trait]
@@ -190,12 +191,28 @@ impl RangeTaskHandler for ResolveLocksForRange {
         cancellation: Cancellation,
         range: (Vec<u8>, Vec<u8>),
     ) -> (TaskStat, tikv_client::Result<()>) {
+        // Go's range runner sees logical PD boundaries. This native runner
+        // retains physical boundaries, so decode once before the resolver.
+        let range = match self.keyspace {
+            tikv_client::request::Keyspace::Enable { keyspace_id } => {
+                tikv_client::request::ApiV2Codec::new(
+                    tikv_client::request::KeyMode::Txn,
+                    keyspace_id,
+                )
+                .and_then(|codec| codec.decode_range(&range.0, &range.1))
+            }
+            _ => Ok(range),
+        };
+        let (start, end) = match range {
+            Ok(range) => range,
+            Err(error) => return (TaskStat::default(), Err(error)),
+        };
         resolve_locks_for_range(
             cancellation,
             self.resolver.as_ref(),
             self.max_version,
-            range.0,
-            range.1,
+            start,
+            end,
             &new_gc_resolve_lock_max_backoff,
             self.scan_limit,
         )
@@ -206,12 +223,25 @@ impl RangeTaskHandler for ResolveLocksForRange {
 struct TikvResolveLocksRunner<'a, PdC: PdClient> {
     runtime: &'a tokio::runtime::Runtime,
     runner: Runner<PdC, ResolveLocksForRange>,
+    keyspace: tikv_client::request::Keyspace,
 }
 
 impl<PdC: PdClient> ResolveLocksRunner for TikvResolveLocksRunner<'_, PdC> {
     fn run_on_range(&self, start: &[u8], end: &[u8]) -> GcResult<()> {
+        // Go `CodecPDClient`: scope even the full-range GC traversal.
+        let (start, end) = match self.keyspace {
+            tikv_client::request::Keyspace::Enable { keyspace_id } => {
+                tikv_client::request::ApiV2Codec::new(
+                    tikv_client::request::KeyMode::Txn,
+                    keyspace_id,
+                )
+                .map_err(gc_error)?
+                .encode_range(start, end)
+            }
+            _ => (start.to_vec(), end.to_vec()),
+        };
         self.runtime
-            .block_on(self.runner.run_on_range(start.to_vec(), end.to_vec()))
+            .block_on(self.runner.run_on_range(start, end))
             .map_err(gc_error)
     }
 
@@ -230,13 +260,31 @@ impl<PdC: PdClient> GcKvClient for TikvStoreClient<PdC> {
         end: &[u8],
         timeout: Duration,
     ) -> GcResult<Option<String>> {
+        // Go `codecV2.EncodeRequest(CmdUnsafeDestroyRange)`: this direct
+        // store-address RPC does not pass through the region plan's codec.
+        let keyspace = self.store.keyspace();
+        let (start_key, end_key) = match keyspace {
+            tikv_client::request::Keyspace::Enable { keyspace_id } => {
+                tikv_client::request::ApiV2Codec::new(
+                    tikv_client::request::KeyMode::Txn,
+                    keyspace_id,
+                )
+                .map_err(gc_error)?
+                .encode_range(start, end)
+            }
+            _ => (start.to_vec(), end.to_vec()),
+        };
         let mut request = kvrpcpb::UnsafeDestroyRangeRequest {
             context: Some(kvrpcpb::Context {
                 disk_full_opt: kvrpcpb::DiskFullOpt::AllowedOnAlmostFull as i32,
+                api_version: keyspace.api_version() as i32,
+                keyspace: keyspace
+                    .context_keyspace_id()
+                    .map(kvrpcpb::context::Keyspace::KeyspaceId),
                 ..kvrpcpb::Context::default()
             }),
-            start_key: start.to_vec(),
-            end_key: end.to_vec(),
+            start_key,
+            end_key,
         };
         let response = self
             .runtime
@@ -272,9 +320,11 @@ impl<PdC: PdClient> GcKvClient for TikvStoreClient<PdC> {
             resolver: Arc::clone(&self.region_lock_resolver),
             max_version,
             scan_limit,
+            keyspace: self.store.keyspace(),
         };
         Box::new(TikvResolveLocksRunner {
             runtime: &self.runtime,
+            keyspace: self.store.keyspace(),
             runner: Runner::new(name, self.store.pd_client(), concurrency.max(1), handler),
         })
     }

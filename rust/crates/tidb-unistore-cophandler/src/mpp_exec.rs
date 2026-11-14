@@ -33,9 +33,7 @@
 //!   processed versions).
 //! * `selExec` filters row by row through the request's conditions rather
 //!   than `expression.VectorizedFilter`'s column-at-a-time evaluation.
-//! * `indexLookUpExec` encodes its row keys for the classic kernel
-//!   (`kerneltype.IsNextGen()` is false; no keyspace `codecV2`) and does not
-//!   log the region error of a region it leaves to the client.
+//! * `indexLookUpExec` does not log the region error of a region it leaves to the client.
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -866,6 +864,10 @@ impl<'a> IndexScanExec<'a> {
     /// Go `indexScanExec.Process`.
     fn process(&mut self, key: &[u8], value: &[u8]) -> Result<(), MppExecError> {
         let other = |message: String| MppExecError::Other(message);
+        // Go `indexScanExec.Process`: paging tracks the physical storage key.
+        let physical_key = key;
+        let decoded_key = decode_index_keyspace_prefix(key).map_err(other)?;
+        let key = decoded_key.as_ref();
         let values = tidb_tablecodec::decode_index_kv(
             true,
             key,
@@ -914,7 +916,7 @@ impl<'a> IndexScanExec<'a> {
         if is_full(&self.chk) {
             self.chunks.push(std::mem::take(&mut self.chk));
             if self.paging.is_some() {
-                self.chunk_last_processed_keys.push(key.to_vec());
+                self.chunk_last_processed_keys.push(physical_key.to_vec());
             }
             self.chk = Vec::with_capacity(DEFAULT_BATCH_SIZE);
         }
@@ -1026,11 +1028,23 @@ impl<'a> MppExec<'a> for IndexScanExec<'a> {
     }
 }
 
+/// Go `indexScanExec.Process` and `analyzeIndexProcessor.Process`: API V2
+/// physical index keys must be decoded before applying the table codec.
+pub(crate) fn decode_index_keyspace_prefix(key: &[u8]) -> Result<std::borrow::Cow<'_, [u8]>, String> {
+    if key.starts_with(b"t") { return Ok(std::borrow::Cow::Borrowed(key)); }
+    let (_, decoded) = tikv_client::request::decode_api_key(key, tikv_client::proto::kvrpcpb::ApiVersion::V2)
+        .map_err(|error| error.to_string())?;
+    if !decoded.starts_with(b"t") { return Err(format!("invalid index key {key:?} after decoded")); }
+    Ok(std::borrow::Cow::Owned(decoded))
+}
+
 /// Go `indexLookUpExec`: the index child's rows name the table rows; those a
 /// region of this store holds are read here, through a table scan over that
 /// region's reader, and the others go back as intermediate results for the
 /// client to look up.
 pub(crate) struct IndexLookUpExec<'a> {
+    /// Go `dagContext.keyspaceID`.
+    pub(crate) keyspace_id: u32,
     pub(crate) base: BaseMppExec<'a>,
     pub(crate) index_handle_offsets: Vec<u32>,
     pub(crate) table_id: i64,
@@ -1199,6 +1213,13 @@ impl<'a> IndexLookUpExec<'a> {
                 continue;
             }
             let row_key = tidb_tablecodec::table_key::encode_row_key(self.table_id, &h.handle.encoded());
+            let row_key = if tidb_config_kerneltype::is_next_gen() {
+                tikv_client::request::ApiV2Codec::new(tikv_client::request::KeyMode::Txn, self.keyspace_id)
+                    .map_err(|error| MppExecError::Other(error.to_string()))?
+                    .encode_key(&row_key)
+            } else {
+                row_key
+            };
             let mut mvcc_key = Vec::new();
             tidb_codec::encode_bytes(&mut mvcc_key, &row_key);
             if cur.region.found {

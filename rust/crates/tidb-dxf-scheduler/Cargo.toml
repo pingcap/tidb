@@ -15,6 +15,9 @@ workspace = true
 failpoints = ["dep:tidb-failpoint", "tidb-failpoint/failpoints"]
 
 [dependencies]
+tidb-model = { path = "../tidb-model" }
+tidb-meta = { path = "../tidb-meta" }
+tidb-owner = { path = "../tidb-owner" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-cpu = { path = "../tidb-cpu" }
 tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }

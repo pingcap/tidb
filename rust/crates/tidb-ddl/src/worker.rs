@@ -977,6 +977,8 @@ where
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
             };
             job_workers.retain(|worker| !worker.is_finished());
+            // Go `jobScheduler.schedule`, immediately before loadAndDeliverJobs.
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", &mut ());
             // Go `loadAndDeliverJobs`: nothing is loaded while both pools
             // are exhausted.
             let exhausted = reorg_worker_pool.available() == 0

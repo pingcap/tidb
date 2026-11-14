@@ -27,6 +27,9 @@ pub trait DomainSysSession:
     + tidb_stats_handle_autoanalyze_exec::AutoAnalyzeSessionContext
     + tidb_ttl_ttlworker::SysSessionContext
 {
+    /// Go `GetSessionVars` fields captured by internal DDL job construction.
+    fn ddl_statement_context(&self) -> Result<tidb_sessionctx::StmtContext, String>;
+
     /// Go `sessiontxn.NewTxn` (`pessimistic`: `EnterNewTxn` pessimistic), as
     /// `pkg/ddl/session.Session.Begin` / `BeginPessimistic` call it: the
     /// session's API, not a statement.

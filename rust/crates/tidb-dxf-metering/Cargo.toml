@@ -11,6 +11,7 @@ description = "Go pkg/dxf/framework/metering: the distributed execution framewor
 workspace = true
 
 [dependencies]
+tidb-metering-sdk = { path = "../tidb-metering-sdk" }
 getrandom.workspace = true
 crossbeam-channel = "0.5"
 tidb-gocontext = { path = "../tidb-gocontext" }
@@ -21,3 +22,7 @@ serde_json.workspace = true
 tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 tidb-dxf = { path = "../tidb-dxf" }
 tidb-objstore-recording = { path = "../tidb-objstore-recording" }
+
+[dev-dependencies]
+flate2.workspace = true
+tempfile.workspace = true

@@ -76,6 +76,40 @@ impl<S: tikv_client::PdClient> TikvRegionStore<S> {
         }
     }
 
+    /// Go `CodecPDClient` uses the store's transaction codec for PD keys.
+    fn codec(&self) -> Result<Option<tikv_client::request::ApiV2Codec>, String> {
+        match self.store.store().keyspace() {
+            tikv_client::request::Keyspace::Enable { keyspace_id } =>
+                tikv_client::request::ApiV2Codec::new(tikv_client::request::KeyMode::Txn, keyspace_id)
+                    .map(Some).map_err(|error| error.to_string()),
+            _ => Ok(None),
+        }
+    }
+
+    /// Go `codecV2.EncodeKey` at the `CodecPDClient.GetRegion` boundary.
+    fn encode_key(&self, key: &[u8]) -> Result<Vec<u8>, String> {
+        Ok(self.codec()?.map_or_else(|| key.to_vec(), |codec| codec.encode_key(key)))
+    }
+
+    /// Go `codecV2.EncodeRange` at the PD and range-request boundary.
+    fn encode_range(&self, start: &[u8], end: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
+        Ok(self.codec()?.map_or_else(|| (start.to_vec(), end.to_vec()), |codec| codec.encode_range(start, end)))
+    }
+
+    /// Go `CodecPDClient.decodeRegionKeyInPlace`: clip to this keyspace and
+    /// expose logical boundaries to TiDB while the native cache stays physical.
+    fn decode_range(&self, start: &[u8], end: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
+        self.codec()?.map_or_else(|| Ok((start.to_vec(), end.to_vec())), |codec|
+            codec.decode_range(start, end).map_err(|error| error.to_string()))
+    }
+
+    /// Go `CodecPDClient.decodeRegionKeyInPlace` for a PD region response.
+    fn decode_pd_region(&self, region: tikv_client::RegionWithLeader) -> Result<crate::region_map::PdRegion, String> {
+        let mut region = pd_region(region);
+        (region.start_key, region.end_key) = self.decode_range(&region.start_key, &region.end_key)?;
+        Ok(region)
+    }
+
     fn block_on<F>(&self, future: F) -> F::Output
     where
         F: std::future::Future + Send,
@@ -129,7 +163,8 @@ impl<S: tikv_client::PdClient> TikvRegionStore<S> {
             concurrency,
             handler,
         );
-        self.block_on(runner.run_on_range(start_key.to_vec(), end_key.to_vec()))
+        let (start_key, end_key) = self.encode_range(start_key, end_key)?;
+        self.block_on(runner.run_on_range(start_key, end_key))
             .map_err(|error| error.to_string())?;
         Ok(total_regions.load(Ordering::Acquire))
     }
@@ -381,7 +416,8 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
             tikv_client::async_util::Cancellation::default(),
             LOAD_REGIONS_BACKOFF_MS,
         );
-        let (start, end) = (start.to_vec().into(), end.to_vec().into());
+        let (start, end) = self.encode_range(start, end)?;
+        let (start, end) = (start.into(), end.into());
         let regions = self
             .block_on(async move {
                 pd.load_regions_in_key_range(start, end, &mut backoffer)
@@ -392,13 +428,14 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
         for region in regions {
             let leader = region.leader.as_ref();
             let info = self.region_info(region.region.id)?;
+            let (start_key, end_key) = self.decode_range(&region.region.start_key, &region.region.end_key)?;
             metas.push(RegionMeta {
                 id: region.region.id,
                 peer_id: leader.map_or(0, |peer| peer.id),
                 store_id: leader.map_or(0, |peer| peer.store_id),
                 peers: region.region.peers.iter().map(|peer| peer.id).collect(),
-                start_key: region.region.start_key.clone(),
-                end_key: region.region.end_key.clone(),
+                start_key,
+                end_key,
                 scattering: false,
                 written_bytes: info.written_bytes,
                 read_bytes: info.read_bytes,
@@ -421,17 +458,17 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
             tikv_client::async_util::Cancellation::default(),
             10_000,
         );
-        let (start, end) = (start.to_vec().into(), end.to_vec().into());
+        let (start, end) = self.encode_range(start, end)?;
+        let (start, end) = (start.into(), end.into());
         let regions = self
             .block_on(async move {
                 pd.batch_load_regions_with_key_range(start, end, limit, &mut backoffer)
                     .await
             })
             .map_err(|error| error.to_string())?;
-        Ok(regions
-            .into_iter()
-            .map(|region| (region.region.start_key.clone(), region.region.end_key.clone()))
-            .collect())
+        regions.into_iter()
+            .map(|region| self.decode_range(&region.region.start_key, &region.region.end_key))
+            .collect()
     }
 
     fn tikv_store_count(&self) -> Option<usize> {
@@ -447,7 +484,7 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
         let region = self
             .block_on(async move { pd.region_for_id(region_id).await })
             .map_err(|error| error.to_string())?;
-        Ok(pd_region(region))
+        self.decode_pd_region(region)
     }
 
     fn get_pd_addrs(&self) -> Result<Vec<String>, String> {
@@ -478,9 +515,10 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
         end: &[u8],
     ) -> Result<Vec<crate::region_map::PdRegion>, String> {
         let pd = self.store.store().pd_client();
+        let (start_key, end_key) = self.encode_range(start, end)?;
         let ranges = vec![tikv_client::proto::pdpb::KeyRange {
-            start_key: start.to_vec(),
-            end_key: end.to_vec(),
+            start_key,
+            end_key,
         }];
         let options = tikv_client::RegionScanOptions {
             allow_follower_handle: true,
@@ -489,7 +527,7 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
         let regions = self
             .block_on(async move { pd.batch_scan_regions(ranges, 0, options).await })
             .map_err(|error| error.to_string())?;
-        Ok(regions.into_iter().map(pd_region).collect())
+        regions.into_iter().map(|region| self.decode_pd_region(region)).collect()
     }
 
     fn pd_scan_regions(&self, start: &[u8], end: &[u8]) -> Result<Vec<crate::region_map::PdRegion>, String> {
@@ -498,11 +536,12 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
             tikv_client::async_util::Cancellation::default(),
             LOAD_REGIONS_BACKOFF_MS,
         );
-        let (start, end) = (start.to_vec().into(), end.to_vec().into());
+        let (start, end) = self.encode_range(start, end)?;
+        let (start, end) = (start.into(), end.into());
         let regions = self
             .block_on(async move { pd.load_regions_in_key_range(start, end, &mut backoffer).await })
             .map_err(|error| error.to_string())?;
-        Ok(regions.into_iter().map(pd_region).collect())
+        regions.into_iter().map(|region| self.decode_pd_region(region)).collect()
     }
 
     fn mvcc_get_by_key(
@@ -514,8 +553,9 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
             MAX_BACKOFF_TIMEOUT_FOR_MVCC_GET,
         )));
         let pd = self.store.store().pd_client();
+        let encoded_key = self.encode_key(encoded_key)?;
         loop {
-            let key = encoded_key.to_vec();
+            let key = encoded_key.clone();
             let located = Arc::clone(&pd);
             let key_location = self
                 .block_on(async move { located.region_for_key(&key.into()).await })
@@ -564,7 +604,7 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
             5000,
         )));
         let pd = self.store.store().pd_client();
-        let mut start_key = start_key.to_vec();
+        let (mut start_key, end_key) = self.encode_range(start_key, end_key)?;
         loop {
             let key = start_key.clone();
             let located = Arc::clone(&pd);
@@ -602,7 +642,9 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
             if !end_key.is_empty() && cur_region.contains(&end_key.to_vec().into()) {
                 return Ok(None);
             }
-            if cur_region.region.end_key.is_empty() {
+            // Go's CodecPDClient clips the last region to an empty logical
+            // end, even when the physical region ends at the next keyspace.
+            if self.decode_range(&cur_region.region.start_key, &cur_region.region.end_key)?.1.is_empty() {
                 return Ok(None);
             }
             start_key = cur_region.region.end_key.clone();
@@ -648,7 +690,7 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
 
     fn region_id_by_key(&self, key: &[u8]) -> Result<u64, String> {
         let pd = self.store.store().pd_client();
-        let key = key.to_vec();
+        let key = self.encode_key(key)?;
         self.block_on(async move { pd.region_for_key(&key.into()).await })
             .map(|region| region.id())
             .map_err(|error| error.to_string())
@@ -663,14 +705,14 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
             tikv_client::async_util::Cancellation::default(),
             max_sleep,
         );
-        let (start, end) = (start.to_vec().into(), end.to_vec().into());
+        let (start, end) = self.encode_range(start, end)?;
+        let (start, end) = (start.into(), end.into());
         let regions = self
             .block_on(async move { pd.locate_key_range(start, end, &mut backoffer).await })
             .map_err(|error| error.to_string())?;
-        Ok(regions
-            .into_iter()
-            .map(|region| (region.region.start_key.clone(), region.region.end_key.clone()))
-            .collect())
+        regions.into_iter()
+            .map(|region| self.decode_range(&region.region.start_key, &region.region.end_key))
+            .collect()
     }
 
     /// Go `store.GetPDHTTPClient()`: the store's PD HTTP client when the
@@ -687,7 +729,7 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
         let region = self
             .block_on(async move { pd.region_for_id(region_id).await })
             .map_err(|error| error.to_string())?;
-        Ok((region.region.start_key, region.region.end_key))
+        self.decode_range(&region.region.start_key, &region.region.end_key)
     }
 }
 

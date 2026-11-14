@@ -183,6 +183,7 @@ impl std::fmt::Debug for GetGlobalHooks {
 
 impl Default for GlobalSysvars {
     fn default() -> Self {
+        tidb_variable::cloud_storage::install_validator(tidb_planner_extstore::validate_cloud_storage_uri);
         Self {
             set_global_hooks: SetGlobalHooks::default(),
             get_global_hooks: GetGlobalHooks::default(),
@@ -416,6 +417,7 @@ fn runtime_global_value(name: &str) -> Option<String> {
             .format()
     };
     match name {
+        tidb_vardef::tidb_vars::TIDB_CLOUD_STORAGE_URI => Some(tidb_variable::cloud_storage::get_cloud_storage_uri()),
         tidb_vardef::tidb_vars::TIDB_TTL_SCAN_BATCH_SIZE => {
             Some(tidb_vardef::TTL_SCAN_BATCH_SIZE.load(SeqCst).to_string())
         }
@@ -1197,6 +1199,7 @@ impl GlobalSysvars {
                 | TIDB_TTL_JOB_SCHEDULE_WINDOW_END_TIME
                 | TIDB_SERVICE_SCOPE
                 | TIDB_DDL_DISK_QUOTA
+                | TIDB_CLOUD_STORAGE_URI
                 | TIDB_TTL_SCAN_WORKER_COUNT
                 | TIDB_TTL_DELETE_WORKER_COUNT
                 | TIDB_TTL_RUNNING_TASKS
@@ -1632,6 +1635,13 @@ impl GlobalSysvars {
                 .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
         }
         let stored_value = validated.value;
+        if key == tidb_vardef::tidb_vars::TIDB_CLOUD_STORAGE_URI {
+            if self.publishes_runtime_settings {
+                tidb_variable::cloud_storage::set_cloud_storage_uri(&tidb_gocontext::Context::background(), &stored_value).map_err(VarError::unknown)?;
+            } else {
+                tidb_variable::cloud_storage::validate_cloud_storage_uri(&tidb_gocontext::Context::background(), &stored_value).map_err(VarError::unknown)?;
+            }
+        }
         // Go's GOGC tuner bounds are cross-validated against the current
         // process values: max must stay strictly above min, and min strictly
         // below max. The Rust registry has no separate tuner singleton, so
@@ -2159,6 +2169,12 @@ impl crate::sysvar_cache::SysVarCacheDeps for SysVarCacheRebuild<'_> {
         sv: &crate::sysvar_cache::SysVarSpec,
         value: &str,
     ) -> Result<(), String> {
+        if sv.name == tidb_vardef::tidb_vars::TIDB_CLOUD_STORAGE_URI
+            && self.0.publishes_runtime_settings
+            && self.0.domain_hooks.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            tidb_variable::cloud_storage::set_cloud_storage_uri(&tidb_gocontext::Context::background(), value)?;
+        }
         self.0.apply_set_global_hook(&sv.name, value);
         Ok(())
     }

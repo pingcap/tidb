@@ -92,7 +92,10 @@ pub(crate) fn store_requests<R>(
     let recorder = std::sync::Arc::clone(&counted);
     session.set_store_send_hook(Some(std::sync::Arc::new(move |request| {
         let any = request.as_any();
-        let table_key = |key: &[u8]| key.first() == Some(&b't');
+        // Go `rowcodec.RemoveKeyspacePrefix`: the transport hook sees API V2 wire keys.
+        let table_key = |key: &[u8]| tidb_rowcodec::remove_keyspace_prefix(
+            key, tidb_config_kerneltype::is_classic(), true, false,
+        ).first() == Some(&b't');
         let mut counted = recorder.lock().unwrap();
         if let Some(get) = any.downcast_ref::<kvrpcpb::GetRequest>() {
             if table_key(&get.key) {

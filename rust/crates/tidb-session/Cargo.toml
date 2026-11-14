@@ -10,6 +10,10 @@ description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-failpoint = { path = "../tidb-failpoint" }
+tidb-domain-crossks = { path = "../tidb-domain-crossks" }
+tidb-dxf-importinto-taskkey = { path = "../tidb-dxf-importinto-taskkey" }
+tidb-dxf-importinto-jobhistory = { path = "../tidb-dxf-importinto-jobhistory" }
 tidb-worker-stack = { path = "../tidb-worker-stack" }
 tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-ttl = { path = "../tidb-ttl" }
@@ -209,6 +213,7 @@ tidb-resolve = { path = "../tidb-resolve" }
 [dev-dependencies]
 tempfile.workspace = true
 tidb-ddl-ingest = { path = "../tidb-ddl-ingest" }
+tidb-rowcodec = { path = "../tidb-rowcodec" }
 tidb-tiflashcompute = { path = "../tidb-tiflashcompute" }
 tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
 tidb-config-deploymode = { path = "../tidb-config-deploymode" }

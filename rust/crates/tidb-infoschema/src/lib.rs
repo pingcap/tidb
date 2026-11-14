@@ -1079,6 +1079,18 @@ impl SessionExtendedInfoSchema {
         schema
     }
 
+    /// Go `Builder.WithCrossKS(true).InitWithDBInfos`: omit virtual schemas.
+    pub fn init_with_db_infos_for_cross_ks(
+        databases: Vec<tidb_model::GoShared<tidb_model::db::DBInfo>>,
+        policies: Vec<tidb_model::PolicyInfo>,
+        resource_groups: Vec<tidb_model::ResourceGroupInfo>,
+        schema_version: i64,
+    ) -> Self {
+        let mut schema = Self::init_with_db_infos(databases, policies, resource_groups, schema_version);
+        Arc::make_mut(&mut schema.schema.databases).retain(|name, _| !tidb_metadef::is_mem_db(name));
+        schema
+    }
+
     /// Go `Builder.InitWithOldInfoSchema` without the `table.Table` objects:
     /// a schema over this one's `DBInfo` pointers, policies, resource groups
     /// and version, which a reload applies diffs to before the domain's

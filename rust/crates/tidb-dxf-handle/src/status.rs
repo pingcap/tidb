@@ -24,13 +24,69 @@ use tidb_log::{Field, Value};
 
 use crate::{HandleError, Result};
 
+/// Go `GetScheduleStatus`. The server-info syncer is the instance's Go
+/// `infosync` service, supplied explicitly rather than as a process global.
+pub fn get_schedule_status(
+    ctx: &tidb_gocontext::Context,
+    info_syncer: &tidb_domain_serverinfo::serverinfo_syncer::Syncer,
+) -> Result<tidb_dxf::schstatus::Status> {
+    use tidb_dxf::schstatus::{NodeGroup, Status, TaskQueue, VERSION1};
+    let ctx = tidb_dxf_storage::with_internal_source_type(ctx, tidb_txnkv::INTERNAL_DIST_TASK);
+    let ctx = &ctx;
+    let manager = get_task_manager()?;
+    let tasks = manager.get_task_bases_in_states(ctx, &[tidb_dxf::TASK_STATE_RUNNING, tidb_dxf::TASK_STATE_MODIFYING])?;
+    let (node_count, node_cpu) = get_nodes_info(ctx, &manager)?;
+    let busy_nodes = get_busy_nodes(ctx, &manager, info_syncer)?;
+    let flags = get_schedule_flags(ctx, &manager)?;
+    let required_count = calculate_required_nodes(&tasks, node_cpu) as isize;
+    Ok(Status {
+        version: VERSION1,
+        task_queue: TaskQueue { scheduled_count: tasks.len() as isize },
+        tidb_worker: NodeGroup {
+            cpu_count: node_cpu,
+            required_count,
+            current_count: node_count as isize,
+            busy_nodes,
+        },
+        tikv_worker: NodeGroup { required_count, ..NodeGroup::default() },
+        flags,
+    })
+}
+
+/// Go `GetBusyNodes`: include the DDL owner even when it has no subtasks.
+pub fn get_busy_nodes(
+    ctx: &tidb_gocontext::Context,
+    manager: &TaskManager,
+    info_syncer: &tidb_domain_serverinfo::serverinfo_syncer::Syncer,
+) -> Result<Vec<tidb_dxf::schstatus::Node>> {
+    let mut owner_id = String::new();
+    manager.with_new_session(&mut |se| {
+        let owner = se.sql_server().get_ddl_owner_mgr()
+            .ok_or_else(|| tidb_dxf_storage::StorageError::Other("DDL owner manager is not initialized".into()))?;
+        let owner_ctx = tidb_owner::Context::from_go_context(ctx);
+        owner_id = owner.get_owner_id(&owner_ctx).map_err(tidb_dxf_storage::StorageError::Other)?;
+        Ok(())
+    })?;
+    let server = info_syncer.get_server_info_by_id(&owner_id).map_err(HandleError::Other)?;
+    // Go `disttaskutil.GenerateExecID` uses net.JoinHostPort.
+    let owner_exec_id = tidb_domain_serverinfo::serverinfo_syncer::join_host_port(&server.static_info.ip, server.static_info.port);
+    let mut busy_nodes = manager.get_busy_nodes(ctx)?;
+    if let Some(node) = busy_nodes.iter_mut().find(|node| node.id == owner_exec_id) {
+        node.is_owner = true;
+    } else {
+        busy_nodes.push(tidb_dxf::schstatus::Node { id: owner_exec_id, is_owner: true });
+    }
+    Ok(busy_nodes)
+}
+
 /// Go `GetActiveTaskSummary`: the number of active tasks (rows of
 /// `mysql.tidb_global_task`) and their breakdown by keyspace.
 ///
 /// # Errors
 /// No task manager is set, or the query failed.
 pub fn get_active_task_summary(ctx: &tidb_gocontext::Context) -> Result<ActiveTaskSummary> {
-    Ok(get_task_manager()?.get_active_task_counts_by_keyspace(ctx)?)
+    let ctx = tidb_dxf_storage::with_internal_source_type(ctx, tidb_txnkv::INTERNAL_DIST_TASK);
+    Ok(get_task_manager()?.get_active_task_counts_by_keyspace(&ctx)?)
 }
 
 /// Go `ListHistoryTasks`: the history tasks, with keyset pagination and an
@@ -40,7 +96,8 @@ pub fn get_active_task_summary(ctx: &tidb_gocontext::Context) -> Result<ActiveTa
 /// No task manager is set, the page size is out of bounds, or the query
 /// failed.
 pub fn list_history_tasks(ctx: &tidb_gocontext::Context, page_size: isize, page_token: i64, keyspace: &str) -> Result<HistoryTaskPage> {
-    Ok(get_dxf_svc_task_mgr()?.list_history_tasks(ctx, page_size, page_token, keyspace)?)
+    let ctx = tidb_dxf_storage::with_internal_source_type(ctx, tidb_txnkv::INTERNAL_DIST_TASK);
+    Ok(get_dxf_svc_task_mgr()?.list_history_tasks(&ctx, page_size, page_token, keyspace)?)
 }
 
 /// Go `GetNodesInfo`: the number of managed nodes and their CPU count.
@@ -127,7 +184,8 @@ pub fn get_schedule_flags(ctx: &tidb_gocontext::Context, manager: &TaskManager) 
 
 /// Go `getPauseScaleInFlag`: the stored flag, reset once expired.
 fn get_pause_scale_in_flag(ctx: &tidb_gocontext::Context, manager: &TaskManager) -> Result<TtlFlag> {
-    let rs = manager.execute_sql_with_new_session(ctx, 
+    let ctx = tidb_dxf_storage::with_internal_source_type(ctx, tidb_txnkv::INTERNAL_DIST_TASK);
+    let rs = manager.execute_sql_with_new_session(&ctx,
         "SELECT VARIABLE_VALUE from mysql.tidb WHERE VARIABLE_NAME = %?",
         &[tidb_sqlescape::SqlArg::String(tidb_meta_tidbvar::DXF_SCHEDULE_PAUSE_SCALE_IN.as_bytes())],
     )?;
@@ -222,4 +280,21 @@ mod tests {
             assert_eq!(get_needed_nodes(&task), expected, "{name}");
         }
     }
+}
+
+/// Go `GetScheduleTuneFactors`.
+pub fn get_schedule_tune_factors(ctx: &tidb_gocontext::Context, keyspace: &str) -> Result<tidb_dxf::schstatus::TuneFactors> {
+    let ctx = tidb_dxf_storage::with_internal_source_type(ctx, tidb_txnkv::INTERNAL_DIST_TASK);
+    let manager = get_dxf_svc_task_mgr()?;
+    let mut factors = None;
+    manager.with_new_session(&mut |session| {
+        session.get_store().run_in_new_txn(&ctx, tidb_txnkv::INTERNAL_DIST_TASK, true, &mut |txn| {
+            factors = tidb_meta::transaction::Mutator::new(txn).get_dxf_schedule_tune_factors(keyspace)?;
+            Ok(())
+        }).map_err(tidb_dxf_storage::StorageError::Other)
+    })?;
+    Ok(match factors {
+        Some(factors) if factors.ttl_info.expire_time >= chrono::Local::now() => factors.tune_factors,
+        _ => tidb_dxf::schstatus::get_default_tune_factors(),
+    })
 }

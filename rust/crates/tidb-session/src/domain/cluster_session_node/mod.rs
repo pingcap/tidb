@@ -330,6 +330,9 @@ mod upgrade_session;
 pub use upgrade_session::{run_upgrade, seed_auth_file_accounts};
 pub use login_policy::DomainLoginPolicy;
 pub use sessions::*;
+mod cross_ks_session;
+pub use cross_ks_session::{CrossKsSessionResources, SchemaCoordinator, create_cross_ks_session, new_cross_ks_session_pool};
+pub(crate) use cross_ks_session::create_cross_ks_session_over;
 pub use settings::DomainSessionSettings;
 pub use test_session::DomainTestSessions;
 
@@ -340,7 +343,13 @@ pub use test_session::DomainTestSessions;
 /// [`Session`] over a store holds one in `Session::node`.
 pub struct NodeConn {
     /// Go `domain.GetDomain(sctx)`: the node's domain this session runs in.
-    domain: Arc<Domain>,
+    domain: Option<Arc<Domain>>,
+    /// Go `session.store`: independent of the optional Domain.
+    transactions: Arc<dyn ClusterTransactions>,
+    /// Go `session.infoCache`: independent of the optional Domain.
+    catalog: Arc<InfoCache>,
+    /// Go `session.store.GetKeyspace` for a domain-free target session.
+    cross_ks_store: Option<Arc<CrossKsSessionResources>>,
     /// Go `sessiontxn.TxnManager` with its `LazyTxn`.
     txn: TxnManager,
     /// The slot every table of the session reads through; rebound per
@@ -415,6 +424,10 @@ impl Drop for ClusterServerSession<'_> {
 }
 
 impl Session {
+    /// Go `session.IsCrossKS`.
+    pub fn is_cross_ks(&self) -> bool {
+        self.cross_ks
+    }
     /// Lends this session's store half beside it for one step on the store.
     ///
     /// # Panics
@@ -439,9 +452,13 @@ impl Session {
 }
 
 impl NodeConn {
+    /// Go `session.GetStore().GetCodec().GetKeyspaceID`.
+    pub(crate) fn keyspace_id(&self) -> u32 { self.transactions.keyspace_id() }
+    /// Go `session.GetLatestInfoSchema`.
+    pub(crate) fn latest_info_schema(&self) -> Arc<SessionExtendedInfoSchema> {self.catalog.get_latest()}
     /// Go `domain.GetDomain(sctx)`.
     pub(crate) fn domain(&self) -> &Arc<Domain> {
-        &self.domain
+        self.domain.as_ref().expect("Go domain.GetDomain requires a domain-bound session")
     }
 
     /// The tables this connection's catalog left out, with their reasons.
@@ -521,7 +538,7 @@ impl ClusterServerSession<'_> {
                     };
                     let result = self
                         .node
-                        .domain
+                        .domain()
                         .ddl
                         .do_ddl_job_wrapper(&self.session.ddl_statement_context(), job);
                     self.session.finish_lock_tables_args(&args);
@@ -1431,7 +1448,7 @@ impl<'s> ClusterServerSession<'s> {
     /// `@@tidb_last_txn_info` (start only: nothing was written through it).
     /// `@@tidb_current_ts` is 0 again by the next statement, as in Go.
     pub(super) fn record_new_txn_in_stmt(&mut self) {
-        if let Ok(start_ts) = self.node.domain.transactions.fresh_timestamp() {
+        if let Ok(start_ts) = self.node.transactions.fresh_timestamp() {
             self.session.record_started_txn_info(start_ts);
         }
     }
@@ -1449,7 +1466,7 @@ impl<'s> ClusterServerSession<'s> {
             .vars()
             .get_system(tidb_vardef::tidb_vars::TIDB_SCATTER_REGION)
             .unwrap_or_default();
-        let loaded = self.node.domain.catalog.get_latest();
+        let loaded = self.node.catalog.get_latest();
         for id in created {
             let found = loaded
                 .stored_schemas()
@@ -1714,7 +1731,6 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         // Go `executor.FlashbackCluster`.
         let now_ts = self
             .node
-            .domain
             .transactions
             .fresh_timestamp()
             .map_err(SqlQueryError::unknown)?;
@@ -1770,7 +1786,7 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
     }
 
     fn published_catalog(&self) -> Arc<SessionExtendedInfoSchema> {
-        self.node.domain.catalog.get_latest()
+        self.node.catalog.get_latest()
     }
 
     fn run_executor_statement(
@@ -1819,6 +1835,10 @@ impl<'s> ClusterServerSession<'s> {
         stmt: &Stmt,
         record_failure: bool,
     ) -> Result<Executed, SqlQueryError> {
+        // Go `PlanBuilder.Build` rejects DDL before reaching a Domain.
+        if self.node.domain.is_none() && matches!(stmt, Stmt::Ddl(_)) {
+            return Err(SqlQueryError::unknown("DDL is not supported in cross keyspace session"));
+        }
         // Go builds a fresh statement context per statement: the previous
         // statement's counts and any file exchange it left unfinished end here.
         self.node.ok_packet = WriteOutcome::default();

@@ -968,6 +968,10 @@ pub struct Session {
     /// statements through (Go testkit's session on `CreateMockStore`'s
     /// domain); `None` for a session that IS the node connection's own.
     pub(crate) node: Option<Box<crate::domain::cluster_session_node::NodeConn>>,
+    /// Go `session.crossKS`, retained while the store half is borrowed.
+    pub(crate) cross_ks: bool,
+    /// Go `session.store.GetCodec().GetKeyspaceID`, immutable while NodeConn is borrowed.
+    store_keyspace_id: u32,
 }
 
 use tidb_sessmgr::normalize_statement_digest;
@@ -1179,7 +1183,9 @@ impl Session {
             in_execute: false,
             current_plan_nil: false,
             pending_explain_analyze: None,
+            store_keyspace_id: node.keyspace_id(),
             node: Some(node),
+            cross_ks: false,
         }
     }
 

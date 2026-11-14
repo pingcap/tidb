@@ -11,4 +11,8 @@ description = "Go pkg/domain/sqlsvrapi: the SQL server's runtime view of a keysp
 workspace = true
 
 [dependencies]
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-model = { path = "../tidb-model" }
 tidb-syssession = { path = "../tidb-syssession" }
+tidb-owner = { path = "../tidb-owner" }

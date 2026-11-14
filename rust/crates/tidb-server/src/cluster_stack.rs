@@ -607,6 +607,8 @@ pub fn cluster_session_stack(
         factory.install_unprefixed_etcd_client(Arc::clone(client));
     }
     let factory = factory.shared();
+    tidb_session::domain::cross_ks::install_cross_ks_runtime_factory(&factory,config)
+        .map_err(|error|RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     tidb_session::domain::cluster_session_node::NodeServices::new(analyze)
     .with_cluster_peer_client(Arc::new(tidb_executor::cluster_peer::ClusterPeerClient::new(
         authority.tikv_store().clone(),
@@ -821,6 +823,10 @@ pub fn cluster_session_stack(
     // Go `BootstrapSession`'s `dom.StartTTLJobManager()`, over the domain's
     // etcd client; Go `Domain.Close` stops it first, so its guard is the
     // first worker retired.
+    // Go `Domain.Init`: load SYSTEM only after normal user-keyspace startup.
+    if tidb_config_kerneltype::is_next_gen() && factory.store_keyspace()!=tidb_keyspace::SYSTEM && start_mode==tidb_ddl::StartMode::Normal {
+        factory.load_sys_ks_info_schema().map_err(|error|RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    }
     let ttl_job_manager = factory.start_ttl_job_manager();
     let skipped = render_skipped(factory.boot_skipped_tables());
     let stats_receipt = stats.receipt();

@@ -17,11 +17,9 @@
 //!
 //! Not ported yet, with the callers that need them: `GetCloudStorageURI`,
 //! `NewObjStore` and `NewObjStoreWithRecording` (Go `pkg/objstore`; global
-//! sort of DDL ingest and `IMPORT INTO`), `GetScheduleTuneFactors` (a meta
-//! transaction on the session's store; DDL reorg and the importer),
+//! sort of DDL ingest and `IMPORT INTO`),
 //! `SendRowAndSizeMeterData` (the cleanup of DDL ingest and `IMPORT INTO`),
-//! and `GetBusyNodes` / `GetScheduleStatus` (the next-gen status port, row
-//! O15).
+//! and the object-store adapters.
 
 mod status;
 

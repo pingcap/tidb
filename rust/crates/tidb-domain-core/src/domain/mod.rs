@@ -27,6 +27,7 @@ mod telemetry;
 mod masking_policy;
 pub mod schema_lease;
 pub mod sqlsvr;
+pub mod cross_ks;
 pub mod dist_task;
 pub mod stats_maintenance;
 
@@ -644,6 +645,7 @@ pub type BindingHandleSlot =
 pub struct Domain {
     /// Go `Domain.store.GetKeyspace`: installed from the opened store.
     store_keyspace: std::sync::OnceLock<String>,
+    cross_ks_runtimes: std::sync::OnceLock<cross_ks::CrossKsRuntimes>,
     /// Go `Domain.unprefixedEtcdCli`: cluster-wide metadata client.
     unprefixed_etcd_client: std::sync::OnceLock<Arc<tidb_pd_client::EtcdClient>>,
     /// The session package's opener of this domain's internal sessions.
@@ -773,6 +775,8 @@ pub struct Domain {
     workload_learning_worker: std::sync::OnceLock<workload_learning::WorkloadLearningWorker>,
     /// Go `TelemetryLoop`'s goroutine.
     telemetry_worker: std::sync::OnceLock<telemetry::TelemetryWorker>,
+    /// Go `Domain.store`, used for retryable metadata transactions.
+    pub meta_store: std::sync::OnceLock<Arc<dyn tidb_meta::MetaStore>>,
     /// The cluster's BDR role in TiKV meta, which every session's ADMIN
     /// BDR ROLE statements read and write.
     pub bdr_role_store: std::sync::OnceLock<Arc<dyn tidb_meta::BdrRoleStore>>,
@@ -1069,6 +1073,7 @@ impl Domain {
         ));
         Self {
             store_keyspace: std::sync::OnceLock::new(),
+            cross_ks_runtimes: std::sync::OnceLock::new(),
             unprefixed_etcd_client: std::sync::OnceLock::new(),
             sys_session_opener,
             transactions,
@@ -1121,6 +1126,7 @@ impl Domain {
             ru_stats_writer: std::sync::OnceLock::new(),
             workload_learning_worker: std::sync::OnceLock::new(),
             telemetry_worker: std::sync::OnceLock::new(),
+            meta_store: std::sync::OnceLock::new(),
             bdr_role_store: std::sync::OnceLock::new(),
             ddl_job_history_store: std::sync::OnceLock::new(),
             auto_analyze_worker: std::sync::OnceLock::new(),
@@ -1630,6 +1636,9 @@ impl Domain {
                 Arc::clone(&opener),
                 timeout,
             )));
+        let _ = self.meta_store.set(Arc::new(tidb_store_driver_txn::meta_txn::MetaStore::new(
+            Arc::clone(&opener), timeout,
+        )));
         // Go reads the DDL jobs through the same meta store.
         let _ = self.ddl_job_history_store.set(Arc::new(
             ddl_job_history_store::ClusterDdlJobHistoryStore::new(opener, timeout, ddl_session_pool),
@@ -2354,6 +2363,7 @@ impl Drop for StatsUsageWorkers {
 
 impl Drop for Domain {
     fn drop(&mut self) {
+        drop(self.cross_ks_runtimes.take());
         // Go `Domain.Close`: `close(do.exit)` stops the expensive-query handle.
         drop(
             self.expensive_query_exit

@@ -88,7 +88,7 @@ impl tidb_timer_tablestore::store::SessionContext for ClusterStatsSessionContext
 impl tidb_ttl_ttlworker::SysSessionContext for ClusterStatsSessionContext {
     fn ttl_session_context(&self) -> Arc<dyn TtlSessionContext> {
         let (killer, domain) = self
-            .with_session(|session| Ok((session.session.sql_killer(), Arc::clone(&session.node.domain))))
+            .with_session(|session| Ok((session.session.sql_killer(), Arc::clone(session.node.domain()))))
             .expect("a pooled system session is open");
         Arc::new(TtlClusterSessionContext {
             state: Arc::clone(&self.state),

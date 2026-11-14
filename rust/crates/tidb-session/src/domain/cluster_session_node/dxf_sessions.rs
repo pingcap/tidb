@@ -53,13 +53,18 @@ impl tidb_dxf_storage::SessionContext for ClusterStatsSessionContext {
 
     /// Go `session.GetStore().GetKeyspace`: the opened store owns the identity.
     fn store_keyspace(&self) -> String {
-        self.with_session(|session| Ok(session.node.domain.store_keyspace().to_owned()))
+        self.with_session(|session| Ok(session.node.cross_ks_store.as_ref().map_or_else(||session.node.domain().store_keyspace().to_owned(), |store|store.keyspace.clone())))
+            .expect("a pooled system session is open")
+    }
+
+    fn get_store(&self) -> std::sync::Arc<dyn tidb_meta::MetaStore> {
+        self.with_session(|session| Ok(session.node.cross_ks_store.as_ref().map_or_else(||session.node.domain().meta_store.get().expect("the opened store has a metadata transaction adapter").clone(),|store|store.meta_store.clone())))
             .expect("a pooled system session is open")
     }
 
     fn sql_server(&self) -> std::sync::Arc<dyn tidb_domain_sqlsvrapi::Server<dyn tidb_dxf_storage::SessionContext>> {
         let domain = self
-            .with_session(|session| Ok(std::sync::Arc::clone(&session.node.domain)))
+            .with_session(|session| Ok(std::sync::Arc::clone(session.node.domain())))
             .expect("a pooled system session is open");
         std::sync::Arc::new(tidb_domain_core::domain::sqlsvr::DomainSqlServer(domain))
     }

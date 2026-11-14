@@ -337,7 +337,9 @@ const BOOTSTRAP_IMAGE_MAGIC: &[u8; 8] = b"TIDBIMG1";
 impl BootstrapImage {
     /// Bootstraps a fresh embedded store and takes its image.
     pub fn make(security: &tidb_pd_client::ClusterSecurity) -> Result<Self, String> {
-        let stack = in_process_stack(security).map_err(|error| error.message)?;
+        let stack = tidb_ddl::embedded_store::in_process_stack_from_image_for_keyspace(
+            security, None, default_mock_keyspace(),
+        ).map_err(|error| error.message)?;
         // The bootstrap's resource group write lands in the mock resource
         // manager, as the stack's own boot initializes it.
         tidb_domain_infosync::resource_manager_client::init_resource_manager_client(None);
@@ -501,6 +503,32 @@ pub fn unistore_cluster_session_stack_from(
     image: Option<&BootstrapImage>,
     mock_tiflash: usize,
 ) -> Result<UnistoreClusterStack, crate::domain::real_tikv_node::RunConfiguredNodeError> {
+    // Go `mockstore.NewMockStore`: nextgen defaults to SYSTEM unless the
+    // caller explicitly selects a keyspace (including an unprefixed store).
+    unistore_cluster_session_stack_from_for_keyspace(config,users,spill_storage,memory_arbitrator,image,mock_tiflash,default_mock_keyspace())
+}
+
+/// Go `mockstore.NewMockStore`: default nextgen mock keyspace metadata.
+fn default_mock_keyspace() -> Option<tikv_client::proto::keyspacepb::KeyspaceMeta> {
+    tidb_config_kerneltype::is_next_gen().then(|| {
+        tikv_client::proto::keyspacepb::KeyspaceMeta {
+            keyspace: Some(tikv_client::proto::keyspacepb::keyspace_meta::Keyspace::Id(0x00ff_fffe)),
+            name: tidb_keyspace::SYSTEM.to_owned(),
+            ..Default::default()
+        }
+    })
+}
+
+/// Go `CreateMockStoreAndDomainForKS`: boot the explicitly selected mock codec.
+pub fn unistore_cluster_session_stack_from_for_keyspace(
+    config:&tidb_domain_core::node_config::NodeConfig,
+    users:&Arc<crate::domain::configured_user_store::ConfiguredUserStore>,
+    spill_storage:Option<Arc<tidb_spill_storage::SpillStorage>>,
+    memory_arbitrator:Option<Arc<tidb_memory::MemArbitrator>>,
+    image:Option<&BootstrapImage>,
+    mock_tiflash:usize,
+    keyspace:Option<tikv_client::proto::keyspacepb::KeyspaceMeta>,
+)->Result<UnistoreClusterStack,crate::domain::real_tikv_node::RunConfiguredNodeError> {
     use crate::domain::cluster_session_node::{RealClusterDdl, RealClusterTransactions};
     use tidb_domain_core::domain::Domain;
     use crate::domain::real_tikv_node::RunConfiguredNodeError;
@@ -513,9 +541,10 @@ pub fn unistore_cluster_session_stack_from(
         tikv_store,
         rpc,
         handler: _handler,
-    } = tidb_ddl::embedded_store::in_process_stack_from_image(
+    } = tidb_ddl::embedded_store::in_process_stack_from_image_for_keyspace(
         &config.cluster_security,
         image.map(|image| image.data.as_slice()),
+        keyspace,
     )
     .map_err(engine)?;
     with_mock_tiflash(&regions, mock_tiflash);
@@ -775,6 +804,7 @@ pub fn unistore_cluster_session_stack_from(
         Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
         None => factory,
     };
+    factory.install_store_keyspace(opener.store().get_keyspace().to_owned());
     let factory = factory.shared();
     // Go `initResourceGroupsController`'s runaway manager over unistore's
     // mock PD client; `Domain.Start` runs its loops.

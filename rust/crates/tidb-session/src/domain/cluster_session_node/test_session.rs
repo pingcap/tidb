@@ -100,7 +100,6 @@ impl<'s> ClusterServerSession<'s> {
         self.rebuild_catalog_if_stale();
         let snapshot = self
             .node
-            .domain
             .transactions
             .open_snapshot("default")
             .map_err(tidb_driver_error::DriverError::unsupported)?;
@@ -123,7 +122,6 @@ impl<'s> ClusterServerSession<'s> {
         self.rebuild_catalog_if_stale();
         let snapshot = self
             .node
-            .domain
             .transactions
             .open_snapshot("default")
             .map_err(tidb_driver_error::DriverError::unsupported)?;
@@ -179,7 +177,7 @@ impl<'s> ClusterServerSession<'s> {
             .clone();
         services.analyze = super::statistics::analyze_service_over(factory, Arc::clone(&analyze));
         self.session.install_domain_services(services);
-        super::node_services(&self.node.domain).set_analyze(analyze);
+        super::node_services(self.node.domain()).set_analyze(analyze);
     }
 
     /// Rebuilds the session's catalog when the node's schema moved on.
@@ -248,8 +246,8 @@ impl super::NodeConn {
     /// Go testkit's `dom.StatsHandle().Update(ctx, is)`: the stats cache
     /// reloads every table whose `mysql.stats_meta` moved since it last read.
     pub(crate) fn update_stats_cache(&self) -> Result<(), tidb_driver_error::DriverError> {
-        let pool = self.domain.advanced_sys_session_pool();
-        super::node_services(&self.domain)
+        let pool = self.domain().advanced_sys_session_pool();
+        super::node_services(self.domain())
             .analyze()
             .update_stats_cache(
                 Vec::new(),
@@ -266,7 +264,7 @@ impl super::NodeConn {
     /// they are, as Go's mock-statistics tests install theirs.
     pub(crate) fn update_stats_cache_with(&self, tables: Vec<Arc<tidb_stats::Table>>) {
         for table in tables {
-            self.domain
+            self.domain()
                 .stats
                 .publish_analyzed_table(table.hist_coll.physical_id, table);
         }
@@ -277,14 +275,14 @@ impl super::NodeConn {
     /// `physical_id`, which a test copies and changes before publishing it
     /// back through [`Self::update_stats_cache_with`].
     pub(crate) fn stats_table(&self, physical_id: i64) -> Option<Arc<tidb_stats::Table>> {
-        self.domain.stats.get(physical_id)
+        self.domain().stats.get(physical_id)
     }
 
     /// A fresh timestamp from the store's oracle, for a test transaction
     /// written straight into the store.
     #[cfg(test)]
     pub(crate) fn fresh_timestamp_for_test(&self) -> Result<u64, String> {
-        self.domain.transactions.fresh_timestamp()
+        self.domain().transactions.fresh_timestamp()
     }
 
 }

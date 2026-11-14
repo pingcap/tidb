@@ -45,6 +45,16 @@ pub trait ObjectWriter {
     fn close(&mut self) -> io::Result<()>;
 }
 
+/// Go interface ownership: a boxed native `objectio.Writer` retains Write/Close.
+impl<T: ObjectWriter + ?Sized> ObjectWriter for Box<T> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        (**self).write(bytes)
+    }
+    fn close(&mut self) -> io::Result<()> {
+        (**self).close()
+    }
+}
+
 /// Native boundary for the `storeapi.Storage.Create` operation this package uses.
 pub trait Storage {
     /// Writer returned by `Create`.
@@ -83,7 +93,7 @@ pub fn new_file_writer<W: ObjectWriter>(writer: W) -> impl WriteCloser {
 }
 
 /// Go `GeneratePlanReplayerFile`.
-pub fn generate_plan_replayer_file<S: Storage>(
+pub fn generate_plan_replayer_file<S: Storage + ?Sized>(
     storage: &S,
     is_capture: bool,
     is_continues_capture: bool,

@@ -443,3 +443,177 @@ fn strict_assertion_failures_survive_the_native_commit_boundary() {
     assert_eq!(reader.get(&k("missing")).unwrap(), None);
     reader.rollback().unwrap();
 }
+
+/// Go `zzprobe/o15_named_txn.TestNamedKeyspaceDuplicateKey`: lazy uniqueness
+/// errors retain the logical key after API V2 response decoding.
+#[test]
+fn test_named_keyspace_duplicate_key() {
+    use tidb_txnkv::transaction::{OptimisticCommitOutcome, TransactionCause};
+    let runtime = runtime();
+    let pd = mock_store();
+    let begin_named = || {
+        let timestamp = runtime.block_on(pd.clone().get_timestamp()).unwrap();
+        TikvTransactionDriver::new(
+            Transaction::new(
+                timestamp,
+                pd.clone(),
+                TransactionOptions::new_optimistic(),
+                Keyspace::try_enable(7).unwrap(),
+            ),
+            runtime.clone(),
+        )
+    };
+    let mut seed = begin_named();
+    seed.set(k("occupied"), b"existing".to_vec()).unwrap();
+    seed.commit().unwrap();
+    let mut txn = begin_named();
+    txn.set_with_flags(
+        k("occupied"),
+        b"conflict".to_vec(),
+        &[FlagsOp::SetPresumeKeyNotExists],
+    )
+    .unwrap();
+    assert!(
+        matches!(txn.commit_staged().unwrap(), OptimisticCommitOutcome::RolledBack(result) if matches!(result.cause, TransactionCause::AlreadyExists { .. }))
+    );
+}
+
+/// Go `zzprobe/o15_named_txn.TestNamedKeyspaceCommitTSExpired`: a decoded
+/// primary-key error allocates another commit timestamp and retries.
+#[test]
+fn test_named_keyspace_commit_ts_expired() {
+    use std::any::Any;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tikv_client::proto::kvrpcpb;
+    let runtime = runtime();
+    for keyspace in [Keyspace::Disable, Keyspace::try_enable(7).unwrap()] {
+        let commits = Arc::new(AtomicUsize::new(0));
+        let captured = commits.clone();
+        let pd = Arc::new(tikv_client::mock::MockPdClient::new(
+            tikv_client::mock::MockKvClient::with_dispatch_hook(move |request| {
+                if request.is::<kvrpcpb::PrewriteRequest>() {
+                    return Ok(Box::<kvrpcpb::PrewriteResponse>::default() as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::CommitRequest>() {
+                    let error = if captured.fetch_add(1, Ordering::SeqCst) == 0 {
+                        Some(kvrpcpb::KeyError {
+                            commit_ts_expired: Some(kvrpcpb::CommitTsExpired {
+                                start_ts: request.start_version,
+                                attempted_commit_ts: request.commit_version,
+                                min_commit_ts: request.commit_version + 1,
+                                key: request.keys[0].clone(),
+                            }),
+                            ..Default::default()
+                        })
+                    } else {
+                        None
+                    };
+                    return Ok(Box::new(kvrpcpb::CommitResponse {
+                        error,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::BatchRollbackRequest>() {
+                    return Ok(Box::<kvrpcpb::BatchRollbackResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected transaction request");
+            }),
+        ));
+        runtime.block_on(async {
+            let mut txn = Transaction::new(
+                tikv_client::Timestamp::default(),
+                pd,
+                TransactionOptions::new_optimistic(),
+                keyspace,
+            );
+            txn.put(b"k".to_vec(), b"v".to_vec()).await.unwrap();
+            txn.commit().await.unwrap();
+        });
+        assert_eq!(commits.load(Ordering::SeqCst), 2);
+    }
+}
+
+/// Go client-go `TestLockResolverCache`: a cache hit reuses the async primary
+/// without checking secondaries again. API V2 still encodes every ResolveLock key.
+#[test]
+fn test_lock_resolver_cache() {
+    use std::{any::Any, sync::Mutex};
+    use tikv_client::{
+        proto::kvrpcpb,
+        request::{ApiV2Codec, KeyMode},
+    };
+    let runtime = runtime();
+    let codec = ApiV2Codec::new(KeyMode::Txn, 7).unwrap();
+    for (commit_version, for_read) in [(0, false), (10, false), (0, true), (10, true)] {
+        let resolved = Arc::new(Mutex::new(Vec::new()));
+        let requests = resolved.clone();
+        let pd = Arc::new(tikv_client::mock::MockPdClient::new(
+            tikv_client::mock::MockKvClient::with_dispatch_hook(move |request| {
+                let request = request
+                    .downcast_ref::<kvrpcpb::ResolveLockRequest>()
+                    .expect("cached status needs neither CheckTxnStatus nor CheckSecondaryLocks");
+                requests.lock().unwrap().push(request.keys.clone());
+                assert_eq!(request.commit_version, commit_version);
+                Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>)
+            }),
+        ));
+        runtime.block_on(async {
+            let mut context = tikv_client::transaction::ResolveLocksContext::default();
+            context.set_async_resolve_pool_size(0);
+            context
+                .save_resolved(
+                    1,
+                    Arc::new(tikv_client::transaction::TransactionStatus::from(
+                        kvrpcpb::CheckTxnStatusResponse {
+                            commit_version,
+                            lock_info: Some(kvrpcpb::LockInfo {
+                                key: b"k1".to_vec(),
+                                primary_lock: b"k1".to_vec(),
+                                lock_version: 1,
+                                use_async_commit: true,
+                                min_commit_ts: 2,
+                                secondaries: vec![b"k2".to_vec()],
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        },
+                    )),
+                )
+                .await;
+            let resolver = tikv_client::transaction::LockResolver::new(context.clone());
+            let retry = Arc::new(tokio::sync::Mutex::new(
+                tikv_client::retry::RetryBackoffer::new(
+                    tikv_client::async_util::Cancellation::default(),
+                    1000,
+                ),
+            ));
+            resolver
+                .resolve_locks_with_opts(
+                    pd,
+                    Keyspace::try_enable(7).unwrap(),
+                    Some("tenant"),
+                    retry,
+                    tikv_client::txnkv::txnlock::ResolveLocksOptions {
+                        caller_start_ts: 5,
+                        for_read,
+                        locks: vec![kvrpcpb::LockInfo {
+                            key: b"k2".to_vec(),
+                            primary_lock: b"k1".to_vec(),
+                            lock_version: 1,
+                            use_async_commit: true,
+                            min_commit_ts: 2,
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            context.close().await;
+        });
+        assert_eq!(
+            *resolved.lock().unwrap(),
+            [vec![codec.encode_key(b"k2"), codec.encode_key(b"k1")]]
+        );
+    }
+}

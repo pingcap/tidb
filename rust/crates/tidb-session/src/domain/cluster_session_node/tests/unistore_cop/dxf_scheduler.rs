@@ -210,7 +210,7 @@ fn check_schedule(task_cnt: usize, is_succ: bool, is_cancel: bool, is_subtask_ca
     let stack = mock_store();
     let ctrl = Controller::new();
 
-    let keyspace = "";
+    let keyspace = stack.factory.store_keyspace();
     let scope = tidb_dxf_handle::get_target_scope();
     let (sch, mgr) = mock_scheduler_manager(&stack, Some(get_number_example_scheduler_ext(&ctrl)), None);
     mgr.init_meta(&tidb_gocontext::Context::background(), ":4000", &scope).unwrap();
@@ -421,7 +421,7 @@ fn test_manager_schedule_loop() {
 
     let stack = mock_store();
     let _dist_task_loop = stack.factory.init_dist_task_loop().unwrap();
-    let keyspace = "";
+    let keyspace = stack.factory.store_keyspace();
     eventually(Duration::from_secs(10), Duration::from_millis(100), || tidb_dxf_storage::get_task_manager().is_ok());
 
     let task_mgr = tidb_dxf_storage::get_task_manager().unwrap();
@@ -548,7 +548,7 @@ fn test_scheduler_cleaner_drains_bounded_batches() {
     mock_cleaner.ret_times("Clean", Times::N(3), Ok::<(), SchedulerError>(()));
     for task_key in ["cleanup-batch-0", "cleanup-batch-1", "cleanup-batch-2"] {
         let task_id = mgr
-            .create_task(&tidb_gocontext::Context::background(), task_key, &TASK_TYPE_EXAMPLE, "", 1, &tidb_dxf_handle::get_target_scope(), 1, &ExtraParams::default(), &[])
+            .create_task(&tidb_gocontext::Context::background(), task_key, &TASK_TYPE_EXAMPLE, &testutil::get_task_ks(), 1, &tidb_dxf_handle::get_target_scope(), 1, &ExtraParams::default(), &[])
             .unwrap();
         let task = mgr.get_task_by_id(&tidb_gocontext::Context::background(), task_id).unwrap();
         mgr.switch_task_step(&tidb_gocontext::Context::background(), &task, &TASK_STATE_RUNNING, STEP_ONE, &[]).unwrap();
@@ -591,7 +591,7 @@ fn test_scheduler_cleaner() {
     mgr.init_meta(&tidb_gocontext::Context::background(), ":4000", &target_scope).unwrap();
     mock_cleaner.ret_times("Clean", Times::Any, Ok::<(), SchedulerError>(()));
     sch.start();
-    let task_id = mgr.create_task(&tidb_gocontext::Context::background(), "test", &TASK_TYPE_EXAMPLE, "", 1, &target_scope, 1, &ExtraParams::default(), &[]).unwrap();
+    let task_id = mgr.create_task(&tidb_gocontext::Context::background(), "test", &TASK_TYPE_EXAMPLE, &testutil::get_task_ks(), 1, &target_scope, 1, &ExtraParams::default(), &[]).unwrap();
 
     let check_task_running = || {
         eventually(Duration::from_secs(5), Duration::from_millis(50), || {

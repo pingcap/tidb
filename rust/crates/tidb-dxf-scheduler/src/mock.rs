@@ -508,6 +508,10 @@ impl SessionContext for MockSession {
     fn store_keyspace(&self) -> String {
         self.keyspace.clone()
     }
+    fn get_store(&self) -> std::sync::Arc<dyn tidb_meta::MetaStore> {
+        panic!("unexpected GetStore")
+    }
+
     fn sql_server(&self) -> std::sync::Arc<dyn tidb_domain_sqlsvrapi::Server<dyn SessionContext>> {
         std::sync::Arc::clone(self.server.as_ref().expect("the session has a server"))
     }
@@ -528,6 +532,8 @@ pub(crate) struct MockRuntime {
 }
 
 impl tidb_domain_sqlsvrapi::Runtime<dyn SessionContext> for MockRuntime {
+    fn store(&self) -> std::sync::Arc<dyn tidb_txnkv::kv_storage::Storage> {panic!("unexpected Go mock Store call")}
+    fn alter_table_mode(&self,_ctx:&tidb_gocontext::Context,_target:&tidb_model::AlterTableModeTarget)->std::result::Result<(),String> {panic!("unexpected Go mock AlterTableMode call")}
     fn store_keyspace(&self) -> String {
         self.keyspace.clone()
     }
@@ -610,6 +616,8 @@ pub(crate) struct MockRuntimeHandle {
 }
 
 impl tidb_domain_sqlsvrapi::Runtime<dyn SessionContext> for MockRuntimeHandle {
+    fn store(&self) -> std::sync::Arc<dyn tidb_txnkv::kv_storage::Storage> {panic!("unexpected Go mock Store call")}
+    fn alter_table_mode(&self,_ctx:&tidb_gocontext::Context,_target:&tidb_model::AlterTableModeTarget)->std::result::Result<(),String> {panic!("unexpected Go mock AlterTableMode call")}
     fn store_keyspace(&self) -> String {
         self.keyspace.clone()
     }
@@ -636,6 +644,9 @@ pub(crate) struct MockServer {
 }
 
 impl tidb_domain_sqlsvrapi::Server<dyn SessionContext> for MockServer {
+    fn get_ddl_owner_mgr(&self) -> Option<std::sync::Arc<dyn tidb_owner::Manager>> {
+        panic!("the test does not expect GetDDLOwnerMgr")
+    }
     fn get_runtime(&self) -> std::sync::Arc<dyn tidb_domain_sqlsvrapi::Runtime<dyn SessionContext>> {
         std::sync::Arc::clone(self.runtime.as_ref().expect("the test expects GetRuntime"))
     }

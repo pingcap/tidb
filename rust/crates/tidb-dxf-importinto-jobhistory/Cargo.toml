@@ -1,0 +1,22 @@
+[package]
+name = "tidb-dxf-importinto-jobhistory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
+tidb-dxf-importinto-taskkey = { path = "../tidb-dxf-importinto-taskkey" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-failpoint = { path = "../tidb-failpoint" }
+rand = "0.10"

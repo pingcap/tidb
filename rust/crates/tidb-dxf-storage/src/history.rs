@@ -46,24 +46,30 @@ fn history_task_summary_columns() -> String {
 }
 
 /// Go `HistoryTaskSummary`: the summary fields of one history task.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct HistoryTaskSummary {
     /// Go's embedded `*proto.TaskBase`.
+    #[serde(flatten)]
     pub task_base: TaskBase,
     /// Go `ErrorCode`.
     pub error_code: String,
     /// Go `ErrorCategory`.
     pub error_category: String,
     /// Go `StartTime`.
+    #[serde(serialize_with = "tidb_dxf::schstatus::serialize_go_time")]
     pub start_time: DateTime<FixedOffset>,
     /// Go `StateUpdateTime`.
+    #[serde(serialize_with = "tidb_dxf::schstatus::serialize_go_time")]
     pub state_update_time: DateTime<FixedOffset>,
     /// Go `EndTime`.
+    #[serde(serialize_with = "tidb_dxf::schstatus::serialize_go_time")]
     pub end_time: DateTime<FixedOffset>,
 }
 
 /// Go `HistoryTaskPage`: the paged result of history task listing.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct HistoryTaskPage {
     /// Go `Items`.
     pub items: Vec<HistoryTaskSummary>,
@@ -337,6 +343,28 @@ mod tests {
 
     use super::{classify_task_error, task_error_code};
     use crate::converter::TaskError;
+
+    /// Go `TestHistoryTaskPageJSON`, captured by `zzprobe/o15_history_json`.
+    #[test]
+    fn test_history_task_page_json() {
+        let zero = crate::converter::zero_time();
+        let page = super::HistoryTaskPage {
+            items: vec![super::HistoryTaskSummary {
+                task_base: tidb_dxf::TaskBase {
+                    id: 7, key: "fixture".into(), tp: tidb_dxf::IMPORT_INTO,
+                    state: TASK_STATE_SUCCEED, step: tidb_dxf::STEP_DONE,
+                    priority: 0, required_slots: 4,
+                    create_time: chrono::DateTime::parse_from_rfc3339("1970-01-01T00:02:00Z").unwrap(),
+                    ..Default::default()
+                },
+                error_code: String::new(), error_category: String::new(),
+                start_time: zero, state_update_time: zero, end_time: zero,
+            }],
+            has_more: false, next_page_token: 7, approx_total_count: 1,
+        };
+        let expected = r#"{"Items":[{"ID":7,"Key":"fixture","Type":"ImportInto","State":"succeed","Step":-2,"Priority":0,"RequiredSlots":4,"TargetScope":"","CreateTime":"1970-01-01T00:02:00Z","MaxNodeCount":0,"ExtraParams":{},"Keyspace":"","ErrorCode":"","ErrorCategory":"","StartTime":"0001-01-01T00:00:00Z","StateUpdateTime":"0001-01-01T00:00:00Z","EndTime":"0001-01-01T00:00:00Z"}],"HasMore":false,"NextPageToken":7,"ApproxTotalCount":1}"#;
+        assert_eq!(serde_json::to_string(&page).unwrap(), expected);
+    }
 
     fn err(message: &str) -> TaskError {
         TaskError(message.to_owned())

@@ -1,0 +1,30 @@
+[package]
+name = "tidb-azure-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+url = "2"
+roxmltree = "0.20"
+uuid = { version = "1", features = ["v4"] }
+azure_identity = { version = "=1.0.0", features = ["tokio", "client_certificate"] }
+azure_core = "=1.0.0"
+async-trait.workspace = true
+chrono.workspace = true
+openssl = "0.10.79"
+base64 = "0.22"
+serde_json.workspace = true
+tokio = { workspace = true, features = ["process", "rt-multi-thread", "time"] }
+reqsign = { version = "0.16.5", default-features = false, features = ["services-azblob"] }
+reqwest12 = { package = "reqwest", version = "0.12.24", default-features = false, features = ["rustls-tls"] }
+http = "1"
+opendal = { version = "=0.55.0", features = ["services-azblob"] }
+
+[dev-dependencies]
+tempfile.workspace = true

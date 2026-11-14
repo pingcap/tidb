@@ -1,0 +1,5 @@
+<definitions xmlns:wsp="http://schemas.xmlsoap.org/ws/2004/09/policy" xmlns:sp="http://docs.oasis-open.org/ws-sx/ws-securitypolicy/200702" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:wsa="http://www.w3.org/2005/08/addressing">
+<wsp:Policy Id="password"><wsp:ExactlyOne><wsp:All><sp:TransportBinding xmlns:sp="http://docs.oasis-open.org/ws-sx/ws-securitypolicy/200702"/><sp:SignedSupportingTokens><wsp:Policy><sp:UsernameToken><wsp:Policy><sp:WssUsernameToken10/></wsp:Policy></sp:UsernameToken></wsp:Policy></sp:SignedSupportingTokens></wsp:All></wsp:ExactlyOne></wsp:Policy>
+<binding name="passwordBinding"><wsp:PolicyReference URI="#password"/><soap:binding transport="http://schemas.xmlsoap.org/soap/http"/><operation><soap:operation soapAction="http://docs.oasis-open.org/ws-sx/ws-trust/200512/RST/Issue"/></operation></binding>
+<service><port binding="passwordBinding"><wsa:EndpointReference><wsa:Address>https://federation.example.invalid/token</wsa:Address></wsa:EndpointReference></port></service>
+</definitions>

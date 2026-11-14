@@ -64,7 +64,7 @@ impl tidb_telemetry::Session for Session {
 
     fn info_schema(&self) -> std::sync::Arc<tidb_infoschema::SessionExtendedInfoSchema> {
         match &self.node {
-            Some(node) => node.domain().catalog.get_latest(),
+            Some(node) => node.latest_info_schema(),
             None => std::sync::Arc::new(
                 self.shared_catalog()
                     .lock()

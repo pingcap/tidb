@@ -13,6 +13,14 @@ workspace = true
 
 [dependencies]
 tidb-ingestor-ingestctrl = { path = "../tidb-ingestor-ingestctrl" }
+tidb-goruntime = { path = "../tidb-goruntime" }
+tidb-dxf-importinto-jobhistory = { path = "../tidb-dxf-importinto-jobhistory" }
+percent-encoding = "2"
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
+tidb-dxf-handle = { path = "../tidb-dxf-handle" }
+tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+tidb-dxf = { path = "../tidb-dxf" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-store-helper = { path = "../tidb-store-helper" }
 tidb-stats-handle-autoanalyze-priorityqueue = { path = "../tidb-stats-handle-autoanalyze-priorityqueue" }

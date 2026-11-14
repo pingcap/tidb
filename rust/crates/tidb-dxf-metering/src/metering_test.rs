@@ -386,3 +386,81 @@ fn test_meter_close() {
     assert_eq!(meter.close().unwrap_err(), "some err");
     set_metering(None);
 }
+
+/// Go `TestNewMeterEmptyBucket`, including the empty-bucket URI variants.
+#[test]
+fn test_new_meter_empty_bucket() {
+    use tidb_metering_sdk::config::{MeteringConfig, new_from_uri};
+    assert!(super::Meter::new_meter(&MeteringConfig::default()).unwrap().is_none());
+    assert!(super::Meter::new_meter(&new_from_uri("s3://").unwrap()).unwrap().is_none());
+    assert!(super::Meter::new_meter(&new_from_uri("localfs:///unused").unwrap()).unwrap().is_none());
+}
+
+/// Go `TestNewMeterValidConfig`.
+#[test]
+fn test_new_meter_valid_config() {
+    use tidb_metering_sdk::config::{MeteringConfig, CloudCredentials, new_from_uri};
+    let configs = [
+        MeteringConfig {tp:"s3".into(),bucket:"test-bucket".into(),aws:Some(CloudCredentials {assume_role_arn:"test-role-arn".into(),..Default::default()}),..Default::default()},
+        new_from_uri("azure://test-container/test-prefix?account-name=test-account&account-key=MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=").unwrap(),
+    ];
+    for config in configs {let meter=Meter::new_meter(&config).unwrap().unwrap();assert!(!meter.uuid.is_empty());assert!(!meter.uuid.contains('-'));}
+}
+
+/// Go `TestMeterSimpleFlushAndReadBack`: real SDK compression/storage after a
+/// recorder delta flush, with every metering field checked after decompression.
+#[test]
+fn test_meter_simple_flush_and_read_back() {
+    if tidb_config_kerneltype::is_classic() { return; }
+    let _lock = TEST_LOCK.lock().unwrap();
+    use std::io::Read;
+    use tidb_metering_sdk::config::{CloudCredentials, MeteringConfig, MeteringLocalFSConfig};
+    let root = tempfile::tempdir().unwrap();
+    let config = MeteringConfig {
+        tp: "s3".into(), bucket: "bucket".into(),
+        aws: Some(CloudCredentials { assume_role_arn: "test-role-arn".into(), ..Default::default() }),
+        ..Default::default()
+    };
+    let mut meter = Meter::new_meter(&config).unwrap().unwrap();
+    let provider = tidb_metering_sdk::storage::new_object_storage_provider(&MeteringConfig {
+        tp: "localfs".into(),
+        local_fs: Some(MeteringLocalFSConfig {
+            base_path: root.path().to_string_lossy().into_owned(), create_dirs: true, permissions: "0755".into(),
+        }),
+        ..Default::default()
+    }).unwrap();
+    meter.writer = Some(Arc::new(tidb_metering_sdk::writer::MeteringWriter::new_from_config(
+        provider.clone(), tidb_metering_sdk::writer::Config::default(), &config,
+    )));
+    let meter = Arc::new(meter);
+    set_metering(Some(meter.clone()));
+    let context = Context::background();
+    assert!(provider.list(&context, "metering/ru/60/").unwrap().is_empty());
+    let recorder = register_recorder(&TaskBase { id: 1, keyspace: "ks1".into(), ..Default::default() });
+    get(&recorder, 10);
+    put(&recorder, 20);
+    recorder.obj_store_access.rec_read(11);
+    recorder.obj_store_access.rec_write(22);
+    recorder.inc_cluster_read_bytes(300);
+    recorder.inc_cluster_write_bytes(400);
+    meter.flush(&context, 120);
+    assert!(provider.list(&context, "metering/ru/60/").unwrap().is_empty());
+    let files = provider.list(&context, "metering/ru/120/").unwrap();
+    assert_eq!(files.len(), 1);
+    let compressed = provider.download(&context, &files[0]).unwrap();
+    let mut json = String::new();
+    flate2::read::GzDecoder::new(compressed.as_slice()).read_to_string(&mut json).unwrap();
+    let data: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let data = data["data"].as_array().unwrap();
+    assert_eq!(data.len(), 1);
+    assert_eq!(data[0]["version"], "1");
+    assert_eq!(data[0]["cluster_id"], "ks1");
+    assert_eq!(data[0]["source_name"], "dxf");
+    for (field, value) in [(GET_REQUESTS_FIELD, 10), (PUT_REQUESTS_FIELD, 20),
+        (crate::OBJ_STORE_READ_BYTES_FIELD, 11), (crate::OBJ_STORE_WRITE_BYTES_FIELD, 22),
+        (crate::CLUSTER_READ_BYTES_FIELD, 300), (crate::CLUSTER_WRITE_BYTES_FIELD, 400)] {
+        assert_eq!(data[0][field], value);
+    }
+    meter.close().unwrap();
+    set_metering(None);
+}

@@ -113,6 +113,8 @@ pub type SchemaBuilder = Box<
 /// statement in flight keeps the exact schema it started with and a publish
 /// never has to wait for readers.
 pub struct InfoCache {
+    /// Go `Loader.crossKS`: historical reads use the same isolated loader.
+    cross_ks: bool,
     published: RwLock<Arc<SessionExtendedInfoSchema>>,
     historical: Mutex<std::collections::BTreeMap<i64, Arc<SessionExtendedInfoSchema>>>,
     capacity: AtomicUsize,
@@ -146,6 +148,7 @@ impl InfoCache {
         catalog.set_uses_infoschema_v2(tidb_vardef::SCHEMA_CACHE_SIZE.load(Ordering::SeqCst) > 0);
         let built = Arc::new(catalog);
         Self {
+            cross_ks: false,
             published: RwLock::new(Arc::clone(&built)),
             historical: Mutex::new(std::collections::BTreeMap::from([(
                 built.schema_meta_version(),
@@ -159,6 +162,16 @@ impl InfoCache {
             row_ids: RwLock::new(None),
         }
     }
+
+    /// Go `NewLoaderForCrossKS`: keep both current and snapshot loads scoped.
+    pub fn new_for_cross_ks(catalog: SessionExtendedInfoSchema) -> Self {
+        let mut cache = Self::new(catalog);
+        cache.cross_ks = true;
+        cache
+    }
+
+    /// Go `Loader.crossKS` / `Syncer.crossKS`.
+    pub fn is_cross_ks(&self) -> bool { self.cross_ks }
 
     /// Go `InfoCache.GetAndResetRecentInfoSchemaTS`: the min start ts for
     /// `InfoSyncer.ReportMinStartTS`, reset to the round's current TS.
@@ -281,21 +294,26 @@ impl InfoCache {
         let mut loaded = if latest.schema_meta_version() != 0
             && version > latest.schema_meta_version()
         {
-            match crate::catalog_reload::reload_cluster_catalog(
-                snapshot,
-                &latest,
-                self.row_ids
-                    .read()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .as_deref(),
-            )? {
+            let reloaded = if self.cross_ks {
+                crate::catalog_reload::reload_cross_ks_catalog(snapshot, &latest)?
+            } else {
+                crate::catalog_reload::reload_cluster_catalog(
+                    snapshot,
+                    &latest,
+                    self.row_ids
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .as_deref(),
+                )?
+            };
+            match reloaded {
                 crate::catalog_reload::ReloadedCatalog::Cached { catalog }
                 | crate::catalog_reload::ReloadedCatalog::Diffs { catalog, .. }
                 | crate::catalog_reload::ReloadedCatalog::Full { catalog, .. } => catalog,
                 crate::catalog_reload::ReloadedCatalog::Unchanged { .. } => latest.metadata_copy(),
             }
         } else {
-            let mut loaded = crate::catalog_reload::load_info_schema(snapshot)?;
+            let mut loaded = if self.cross_ks { crate::cross_ks::load_info_schema(snapshot)? } else { crate::catalog_reload::load_info_schema(snapshot)? };
             // The reserved counter may be ahead of the committed schema diff.
             // Use the same effective version as the live reload owner.
             loaded.set_schema_meta_version(version);

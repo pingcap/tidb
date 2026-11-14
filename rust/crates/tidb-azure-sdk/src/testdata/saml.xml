@@ -1,0 +1,3 @@
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><RequestSecurityTokenResponseCollection><RequestSecurityTokenResponse><RequestedSecurityToken>
+<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="fixture">fixture</saml:Assertion>
+</RequestedSecurityToken></RequestSecurityTokenResponse></RequestSecurityTokenResponseCollection></s:Body></s:Envelope>

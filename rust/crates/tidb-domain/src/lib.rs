@@ -37,3 +37,6 @@ pub mod server_id;
 pub mod sysvar_cache;
 pub mod global_sysvars;
 pub mod topn_slow_query;
+
+#[cfg(test)]
+mod cloud_storage_tests;

@@ -28,6 +28,16 @@ impl TestSessionManager {
     }
 }
 impl Runtime<C> for TestSessionManager {
+    fn store(&self) -> std::sync::Arc<dyn tidb_txnkv::kv_storage::Storage> {
+        panic!("unexpected Go mock Store call")
+    }
+    fn alter_table_mode(
+        &self,
+        _ctx: &tidb_gocontext::Context,
+        _target: &tidb_model::AlterTableModeTarget,
+    ) -> Result<(), String> {
+        panic!("unexpected Go mock AlterTableMode call")
+    }
     fn store_keyspace(&self) -> String {
         self.ks.clone()
     }
@@ -36,6 +46,9 @@ impl Runtime<C> for TestSessionManager {
     }
 }
 impl SessionManager<C> for TestSessionManager {
+    fn info_cache(&self) -> Arc<tidb_infoschema_issyncer::catalog_watch::InfoCache> {
+        panic!("unexpected Go mock InfoCache call")
+    }
     fn close(&self) {
         self.pool.close();
         self.pool_close_count.fetch_add(1, Ordering::SeqCst);

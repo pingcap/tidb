@@ -13,6 +13,7 @@ autotests = false
 nextgen = ["tidb-config-kerneltype/nextgen"]
 
 [dependencies]
+tidb-intest = { path = "../tidb-intest" }
 tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 tidb-config-deploymode = { path = "../tidb-config-deploymode" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }

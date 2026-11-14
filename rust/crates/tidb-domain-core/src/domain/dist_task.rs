@@ -39,6 +39,7 @@ pub struct DistTaskLoop {
     exit: Option<crossbeam_channel::Sender<()>>,
     manager_cancel: CancelFunc,
     handle: Option<JoinHandle<()>>,
+    metering: Option<MeteringLoop>,
 }
 
 impl Drop for DistTaskLoop {
@@ -49,6 +50,41 @@ impl Drop for DistTaskLoop {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
+    }
+}
+
+/// Go `Domain.InitDistTaskLoop`'s metering worker, joined by `Domain.Close`.
+struct MeteringLoop {
+    cancel: CancelFunc,
+    handle: Option<JoinHandle<()>>,
+}
+impl MeteringLoop {
+    /// Go `InitDistTaskLoop`: parse the configured provider before starting its loop.
+    fn start(uri: &str) -> Result<Option<Self>, String> {
+        if uri.is_empty() {
+            tidb_logutil::bg_logger().warn("metering storage uri is empty, metering will be disabled", &[]);
+            return Ok(None);
+        }
+        let config = tidb_metering_sdk::config::new_from_uri(uri)
+            .map_err(|error| format!("failed to parse metering storage uri: {error}"))?;
+        let meter = tidb_dxf_metering::Meter::new_meter(&config)
+            .map_err(|error| format!("failed to create metering: {error}"))?.map(Arc::new);
+        tidb_dxf_metering::set_metering(meter.clone());
+        let Some(meter) = meter else {return Ok(None)};
+        let (ctx, cancel) = Context::with_cancel(&Context::background());
+        let handle = std::thread::Builder::new().name("dxfMeteringFlushLoop".into()).spawn(move || {
+            struct Reset;
+            impl Drop for Reset {fn drop(&mut self) {tidb_dxf_metering::set_metering(None);}}
+            let _reset = Reset;
+            meter.start_flush_loop(&ctx);
+        }).map_err(|error| {tidb_dxf_metering::set_metering(None); error.to_string()})?;
+        Ok(Some(Self {cancel, handle: Some(handle)}))
+    }
+}
+impl Drop for MeteringLoop {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+        if let Some(handle) = self.handle.take() {let _ = handle.join();}
     }
 }
 
@@ -96,22 +132,28 @@ impl Domain {
     /// Go `InitDistTaskLoop`: sets the process's task manager and starts the
     /// DXF framework loop.
     ///
-    /// Go's next-gen branches (a user keyspace reaches the DXF service of
-    /// the SYSTEM keyspace; the SYSTEM keyspace meters) belong to the
-    /// keyspace work (O15): a next-gen build refuses. Go's last step,
+    /// The SYSTEM keyspace installs its configured Meter. User-keyspace
+    /// sessions use the crossks SYSTEM pool. Go's last step,
     /// `ingestctrl.InitializeRateLimiterParam`, comes with the ingest port
     /// (D02).
     ///
     /// # Errors
-    /// A next-gen build; the node is not in the cluster's server list; the
+    /// A missing cross-keyspace pool; the node is not in the cluster's server list; the
     /// node's resource is unknown.
     pub fn init_dist_task_loop(self: &Arc<Self>) -> Result<DistTaskLoop, String> {
         let task_manager = Arc::new(TaskManager::new(self.dxf_session_pool()));
         tidb_dxf_storage::set_task_manager(Some(Arc::clone(&task_manager)));
 
-        if tidb_config_kerneltype::is_next_gen() {
-            return Err("the DXF framework of a next-gen keyspace is not supported".to_owned());
+        if tidb_config_kerneltype::is_next_gen() && self.store_keyspace() != "SYSTEM" {
+            let pool=self.get_ks_sess_pool(tidb_keyspace::SYSTEM)?;
+            tidb_dxf_storage::set_dxf_svc_task_mgr(Arc::new(TaskManager::new(pool)));
+            tidb_logutil::bg_logger().info("skip running DXF in user keyspace", &[]);
+            let (_,manager_cancel)=Context::with_cancel(&Context::background());
+            return Ok(DistTaskLoop {exit:None,manager_cancel,handle:None,metering:None});
         }
+        let metering = if tidb_config_kerneltype::is_next_gen() {
+            MeteringLoop::start(&tidb_config::config_tree::config::get_global_config().metering_storage_uri)?
+        } else {None};
 
         // Go `ddl.GetID()`: the DDL uuid the server info publishes.
         let ddl_id = self
@@ -162,7 +204,7 @@ impl Domain {
         if let Err(error) = self.transactions.initialize_ingest_parameters() {
             tidb_logutil::bg_logger().error("initialize global max batch split ranges failed", &[str_field("error", error)]);
         }
-        Ok(DistTaskLoop { exit: Some(exit_tx), manager_cancel, handle: Some(handle) })
+        Ok(DistTaskLoop { exit: Some(exit_tx), manager_cancel, handle: Some(handle), metering })
     }
 
     /// Go `distTaskFrameworkLoop`.
@@ -233,5 +275,46 @@ impl Domain {
         logger.info("stopping dist task executor manager", &[]);
         executor_manager.stop();
         logger.info("dist task executor manager stopped", &[]);
+    }
+}
+
+#[cfg(test)]
+mod metering_provider_tests {
+    use super::*;
+    use std::io::Read;
+
+    /// Go `zzprobe/o15_meter_live.TestMeterProductionS3Readback`, through
+    /// Domain.InitDistTaskLoop's production provider installation and teardown.
+    #[test]
+    #[ignore = "requires O15_LIVE_CONFIG for an isolated MinIO fixture"]
+    fn test_meter_production_s3_readback() {
+        if tidb_config_kerneltype::is_classic() {return;}
+        let fixture=std::fs::read(std::env::var("O15_LIVE_CONFIG").expect("MinIO fixture configuration")).unwrap();
+        let fixture:serde_json::Value=serde_json::from_slice(&fixture).unwrap();
+        let endpoint=format!("http://127.0.0.1:{}",fixture["minio"].as_u64().unwrap());
+        let uri=format!("s3://o15-meter/rust-domain?region=us-east-1&endpoint={endpoint}&access-key={}&secret-access-key={}&force-path-style=true&shared-pool-id=pool",
+            fixture["access_key"].as_str().unwrap(),fixture["secret_key"].as_str().unwrap());
+        let config=tidb_metering_sdk::config::new_from_uri(&uri).unwrap();
+        let provider=tidb_metering_sdk::storage::new_object_storage_provider(&config).unwrap();
+        let ctx=Context::background();
+        let path="metering/ru/120/dxf/pool/server_1-0.json.gz";
+        let after_close="metering/ru/180/dxf/pool/server_2-0.json.gz";
+        provider.delete(&ctx,path).unwrap();provider.delete(&ctx,after_close).unwrap();
+        let worker=MeteringLoop::start(&uri).unwrap().expect("configured meter is installed");
+        let items=[std::collections::BTreeMap::from([("row_count".into(),serde_json::json!(12)),("task_id".into(),serde_json::json!(7))])];
+        tidb_dxf_metering::write_meter_data(&ctx,120,"server_1",&items).unwrap();
+        let read=|provider:&dyn tidb_metering_sdk::storage::ObjectStorageProvider| {
+            let bytes=provider.download(&ctx,path).unwrap();
+            let mut json=String::new();flate2::read::GzDecoder::new(bytes.as_slice()).read_to_string(&mut json).unwrap();
+            serde_json::from_str::<serde_json::Value>(&json).unwrap()
+        };
+        let actual=read(provider.as_ref());
+        let mut go_config=config.clone();go_config.prefix="go-capture".into();
+        let go_provider=tidb_metering_sdk::storage::new_object_storage_provider(&go_config).unwrap();
+        assert_eq!(actual,read(go_provider.as_ref()));
+        assert_eq!(actual["data"],serde_json::json!([{"row_count":12,"task_id":7}]));
+        drop(worker);
+        tidb_dxf_metering::write_meter_data(&ctx,180,"server_2",&items).unwrap();
+        assert!(!provider.exists(&ctx,after_close).unwrap(),"Domain.Close uninstalls the meter");
     }
 }

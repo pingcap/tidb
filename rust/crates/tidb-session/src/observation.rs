@@ -1460,6 +1460,15 @@ mod tests {
 
 /// Go `ExecStmt`'s `sctx`, as the statement's observation reads it.
 impl tidb_executor::exec_stmt_observation::ExecStmtObservation for Session {
+    /// Go `ExecStmt.FinishExecuteStmt`: use the session's store codec, not global identity.
+    fn observed_keyspace_id(&self) -> u32 {
+        if tidb_keyspace::is_keyspace_name_empty(&tidb_keyspace::get_keyspace_name_by_settings()) {
+            0
+        } else {
+            self.store_keyspace_id
+        }
+    }
+
     fn observed_connection_id(&self) -> u64 {
         self.connection_id()
     }

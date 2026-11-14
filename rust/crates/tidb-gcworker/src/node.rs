@@ -17,9 +17,7 @@
 //! client -- and its start at boot (Go `store/driver` -> `gcworker.NewGCWorker`
 //! + `Start`), which the server's main runs.
 //!
-//! The node serves the null keyspace, so the worker runs Go's full procedure
-//! (leader lease, safe points, lock resolution, delete ranges) rather than
-//! the unified-GC keyspace path.
+//! The store's keyspace metadata selects Go's full or unified-GC procedure.
 
 use tidb_session::domain::cluster_session_node::DomainSessions as _;
 use std::collections::HashMap;
@@ -68,11 +66,10 @@ pub fn gc_worker_deps<S: tidb_store_driver_txn::transaction::StoreClient + 'stat
     store: &tidb_txnkv::driver::tikv_store::TikvStore<S>,
     opener: Arc<tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>>,
 ) -> GcWorkerDeps {
-    // The node serves the null keyspace.
     let client = Arc::new(TikvStoreClient::new(
         Arc::clone(store.runtime()),
         store.store().clone(),
-        None,
+        store.store().keyspace_meta().cloned(),
     ));
     let pd_http_client = store.pd_http_client();
     GcWorkerDeps {

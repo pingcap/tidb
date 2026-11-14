@@ -1,0 +1,20 @@
+[package]
+name = "tidb-aws-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+aws-config = "=1.13.0"
+aws-credential-types = "=1.3.1"
+aws-types = "=1.7.0"
+async-trait.workspace = true
+anyhow = "1"
+chrono.workspace = true
+reqsign = { version = "0.16.5", default-features = false, features = ["services-aws"] }
+reqwest12 = { package = "reqwest", version = "0.12.24", default-features = false, features = ["rustls-tls"] }

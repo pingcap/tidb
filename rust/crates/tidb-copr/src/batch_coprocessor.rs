@@ -342,6 +342,20 @@ impl<S: tikv_client::PdClient> BatchCopWorker<S> {
             }),
             ..Default::default()
         };
+        // Go `codecV2.EncodeRequest(CmdBatchCop)`; this direct transport bypasses PlanBuilder.
+        let mut cop_req = match self.store.store().keyspace() {
+            tikv_client::request::Keyspace::Enable { keyspace_id } => {
+                tikv_client::request::ApiV2Codec::new(tikv_client::request::KeyMode::Txn, keyspace_id)
+                    .map_err(|error| QueryResponseError::Source(error.to_string()))?
+                    .encode_batch_coprocessor_request(&cop_req)
+            }
+            _ => cop_req,
+        };
+        let keyspace = self.store.store().keyspace();
+        let context = cop_req.context.get_or_insert_with(Default::default);
+        context.api_version = keyspace.api_version() as i32;
+        context.keyspace = keyspace.context_keyspace_id()
+            .map(tidb_proto::kvrpcpb::context::Keyspace::KeyspaceId);
         let target = MppTarget::new(&self.store, &task.address, &self.rpc_interceptor);
         // Go `sender.SendReqToAddr(bo, task.ctx, task.regionInfos, req,
         // readTimeoutUltraLong)`.

@@ -44,7 +44,7 @@ impl RequestInfo {
         }
     }
 
-    /// Extracts source `resourcecontrol.MakeRequestInfo` fields from the
+    /// Go `resourcecontrol.MakeRequestInfo`: extract fields from the
     /// concrete typed TiKV request. Route-owned replica/location fields and
     /// the caller's predicted read hint are installed by `select` after this
     /// request-local extraction step.
@@ -69,21 +69,38 @@ impl RequestInfo {
             };
         }
 
+        // Go `MakeRequestInfo` runs before `codecV2.EncodeRequest`. Native
+        // transactions retain physical keys, so charge their logical lengths.
+        let prefix = context
+            .filter(|context| context.api_version == kvrpcpb::ApiVersion::V2 as i32)
+            .and_then(|context| match context.keyspace.as_ref() {
+                Some(kvrpcpb::context::Keyspace::KeyspaceId(id)) => Some(*id),
+                _ => None,
+            })
+            .and_then(|id| crate::request::ApiV2Codec::new(crate::request::KeyMode::Txn, id).ok())
+            .map(|codec| codec.prefix());
+        let logical_len = |key: &[u8]| {
+            prefix
+                .as_ref()
+                .and_then(|prefix| key.strip_prefix(prefix.as_slice()))
+                .unwrap_or(key)
+                .len()
+        };
         let write_bytes =
             if let Some(prewrite) = request.as_any().downcast_ref::<kvrpcpb::PrewriteRequest>() {
                 prewrite
                     .mutations
                     .iter()
-                    .map(|mutation| (mutation.key.len() + mutation.value.len()) as u64)
+                    .map(|mutation| (logical_len(&mutation.key) + mutation.value.len()) as u64)
                     .sum::<u64>()
-                    + prewrite.primary_lock.len() as u64
+                    + logical_len(&prewrite.primary_lock) as u64
                     + prewrite
                         .secondaries
                         .iter()
-                        .map(|key| key.len() as u64)
+                        .map(|key| logical_len(key) as u64)
                         .sum::<u64>()
             } else if let Some(commit) = request.as_any().downcast_ref::<kvrpcpb::CommitRequest>() {
-                commit.keys.iter().map(|key| key.len() as u64).sum()
+                commit.keys.iter().map(|key| logical_len(key) as u64).sum()
             } else {
                 0
             };

@@ -1899,7 +1899,7 @@ impl<S: StoreClient> crate::cluster_ddl::SnapshotMetaAt for StoreSnapshotMeta<S>
 /// Go `JobSubmitter.SubmitBatch`'s admission:
 /// `sysTblMgr.HasFlashbackClusterJob(ctx, minJobIDRefresher.GetCurrMinJobID())`
 /// on a session of `ddl.sessPool`.
-pub(crate) fn check_flashback_cluster_job(
+pub fn check_flashback_cluster_job(
     session_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     min_job_id: i64,
 ) -> Result<(), ClusterDdlError> {

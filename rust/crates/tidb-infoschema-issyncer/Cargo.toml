@@ -9,6 +9,7 @@ description = "TiDB schema loader and syncer: Go pkg/infoschema/issyncer (Rust r
 
 [dependencies]
 tidb-vardef = { path = "../tidb-vardef" }
+tidb-metadef = { path = "../tidb-metadef" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tidb-logutil = { path = "../tidb-logutil" }

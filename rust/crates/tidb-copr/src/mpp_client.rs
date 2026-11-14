@@ -354,14 +354,14 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for MPPClient<S> 
         // batch sender, whose send failure always invalidates the compute
         // stores; a task without regions keeps them when it was canceled.
         let has_regions = !(regions.is_empty() && table_regions.is_empty());
-        let dispatch_request = encode_dispatch_request(DispatchTaskRequest {
+        let dispatch_request = encode_dispatch_request(self.store.store().keyspace(), DispatchTaskRequest {
             meta: Some(meta.clone()),
             encoded_plan: encoded_plan.to_vec(),
             regions,
             table_regions,
             schema_ver: (self.schema_version)(),
             ..Default::default()
-        });
+        }).map_err(|error| MppRpcError { retry: false, err: MppError::Other(error.to_string()) })?;
         // Go dispatches under the statement ctx, whose `RUDetails`
         // client-go's resource-control interceptor charges.
         self.store
@@ -1094,18 +1094,20 @@ impl<S: tikv_client::PdClient> Drop for MppQueryResponse<S> {
 }
 
 
-fn encode_dispatch_request(mut request: DispatchTaskRequest) -> DispatchTaskRequest {
+/// Go `codecV2.EncodeRequest` and `setAPICtx` for `CmdMPPTask`.
+fn encode_dispatch_request(
+    keyspace: tikv_client::request::Keyspace,
+    mut request: DispatchTaskRequest,
+) -> Result<DispatchTaskRequest, tikv_client::Error> {
     use tikv_client::tikv::Request;
-
-    // This scanner uses classic API-V1 record keys. Match client-go's
-    // setAPICtx: the native keyspace codec owns both the wire API version
-    // and the null-keyspace sentinel, rather than duplicating their numbers.
-    let keyspace = tikv_client::request::Keyspace::Disable;
-    // Go copr.MPPClient.DispatchMPPTask task lifetime, independent of the RPC deadline.
     request.timeout = 60;
     request.set_api_version(keyspace.api_version());
     request.set_keyspace_id(keyspace.context_keyspace_id());
-    request
+    if let tikv_client::request::Keyspace::Enable { keyspace_id } = keyspace {
+        let codec = tikv_client::request::ApiV2Codec::new(tikv_client::request::KeyMode::Txn, keyspace_id)?;
+        request = codec.encode_mpp_dispatch_task_request(&request);
+    }
+    Ok(request)
 }
 
 #[cfg(test)]
@@ -1193,10 +1195,10 @@ mod dispatch_context_tests {
             address: "tiflash:3930".to_owned(),
             ..TaskMeta::default()
         };
-        let dispatch = encode_dispatch_request(DispatchTaskRequest {
+        let dispatch = encode_dispatch_request(tikv_client::request::Keyspace::Disable, DispatchTaskRequest {
             meta: Some(sender.clone()),
             ..Default::default()
-        });
+        }).unwrap();
         let dispatched = dispatch.meta.unwrap();
         assert_eq!(dispatched.local_query_id, sender.local_query_id);
         assert_eq!(dispatched.query_ts, sender.query_ts);
@@ -1205,12 +1207,34 @@ mod dispatch_context_tests {
         assert_eq!(dispatched.server_id, 42);
     }
 
+    /// Go client-go `testCodecV2Suite.TestEncodeMPPRequest`.
+    #[test]
+    fn test_encode_mpp_request() {
+        let request = encode_dispatch_request(
+            tikv_client::request::Keyspace::try_enable(7).unwrap(),
+            DispatchTaskRequest {
+                meta: Some(TaskMeta::default()),
+                regions: vec![tidb_proto::coprocessor::RegionInfo {
+                    ranges: vec![tidb_proto::coprocessor::KeyRange {
+                        start: b"a".to_vec(), end: b"b".to_vec(),
+                    }], ..Default::default()
+                }],
+                ..Default::default()
+            },
+        ).unwrap();
+        let meta = request.meta.unwrap();
+        assert_eq!(meta.api_version(), tidb_proto::kvrpcpb::ApiVersion::V2);
+        assert_eq!(meta.keyspace, Some(tidb_proto::mpp::task_meta::Keyspace::KeyspaceId(7)));
+        assert_eq!(request.regions[0].ranges[0].start, b"x\x00\x00\x07a");
+        assert_eq!(request.regions[0].ranges[0].end, b"x\x00\x00\x07b");
+    }
+
     #[test]
     fn classic_mpp_dispatch_uses_the_transactional_v1_codec() {
-        let request = encode_dispatch_request(DispatchTaskRequest {
+        let request = encode_dispatch_request(tikv_client::request::Keyspace::Disable, DispatchTaskRequest {
             meta: Some(TaskMeta::default()),
             ..Default::default()
-        });
+        }).unwrap();
         let wire = request.encode_to_vec();
         let request = DispatchTaskRequest::decode(wire.as_slice()).unwrap();
         assert_eq!(request.timeout, 60);

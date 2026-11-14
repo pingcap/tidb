@@ -1870,10 +1870,12 @@ fn test_resolve_locks_with_keyspaces_non_null_keyspace_in_multi_keyspace_environ
             system,
         ],
     );
-    s.split_at_keys(&[b"a".to_vec()]);
+    s.split_at_keys(&[make_key(MAX_KEYSPACE_ID_FOR_TEST - 1, "a")]);
     s.job().resolve_locks(100, 2).unwrap();
-    // The keyspace resolves its own unbounded range; the codec adds the prefix.
-    assert_eq!(vec![req(b"", b"")], collect_and_merge_ranges(&s.kv));
+    // Go's test documents these physical bounds as the intended wire result;
+    // its mock strips prefixes, while this native fixture retains them.
+    assert_eq!(vec![req(&make_key(MAX_KEYSPACE_ID_FOR_TEST - 1, ""),
+        &make_key(MAX_KEYSPACE_ID_FOR_TEST, ""))], collect_and_merge_ranges(&s.kv));
     assert_eq!(2, scan_lock_count(&s.kv));
 }
 
@@ -2312,4 +2314,41 @@ fn leader_desc_renders_the_start_time_as_go_time_string() {
         go_time_string(whole).starts_with("2026-10-19 12:12:25 "),
         "a whole second prints no fraction"
     );
+}
+
+/// Go `zzprobe/o15_keyspace_codec.TestNamedGCRequests`: dropped-table range
+/// destruction carries API V2 physical bounds, including the keyspace end.
+#[test]
+fn test_named_gc_requests() {
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let captured = requests.clone();
+    let meta = make_keyspace(7, "tenant", true);
+    let (rpc, pd, cluster) = tidb_unistore::mock::new(vec![meta.clone()]).unwrap();
+    bootstrap_with_multi_stores(&cluster, 1);
+    let address = cluster.get_all_stores()[0].address.clone();
+    rpc.set_send_hook(Some(Arc::new(move |request| {
+        if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::UnsafeDestroyRangeRequest>() {
+            captured.lock().unwrap().push(request.clone());
+        }
+    })));
+    let mut config = tikv_client::Config::default();
+    config.keyspace = Some("tenant".into());
+    let store_pd = runtime.block_on(tidb_unistore::mock::store_pd_client(&rpc, pd, config.clone())).unwrap();
+    let store = runtime.block_on(KvStore::new_with_pd_client(
+        Arc::new(store_pd), Arc::new(MockSafePointKv::new()), config,
+    )).unwrap();
+    let client = TikvStoreClient::new(runtime, store, Some(meta));
+    for end in [b"z".as_slice(), b""] {
+        client.unsafe_destroy_range(&address, b"a", end, Duration::from_secs(1)).unwrap();
+    }
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    for (request, end) in requests.iter().zip([b"x\x00\x00\x07z".as_slice(), b"x\x00\x00\x08"]) {
+        assert_eq!(request.start_key, b"x\x00\x00\x07a");
+        assert_eq!(request.end_key, end);
+        let context = request.context.as_ref().unwrap();
+        assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
+        assert_eq!(context.keyspace, Some(kvrpcpb::context::Keyspace::KeyspaceId(7)));
+    }
 }

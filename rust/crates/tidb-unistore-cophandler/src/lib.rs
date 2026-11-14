@@ -76,6 +76,8 @@ pub const REQ_TYPE_CHECKSUM: i64 = 105;
 /// executor runs.
 #[derive(Debug)]
 pub struct DagContext {
+    /// Go `dagContext.keyspaceID`, from the RPC context.
+    pub keyspace_id: u32,
     /// Go `dagContext` inherits the session's `DivPrecisionIncrement`,
     /// defaulted to `variable.DefDivPrecisionIncrement` (4) when the DAG
     /// request omits it. `DivideDecimal` widens its result fraction by it.
@@ -180,6 +182,10 @@ pub fn handle_mpp_dag_req(
         dag_req.flags.unwrap_or(0),
     );
     let mut builder = mpp::MppExecBuilder {
+        keyspace_id: req.context.as_ref().map_or(0, |ctx| match ctx.keyspace {
+            Some(tidb_proto::kvrpcpb::context::Keyspace::KeyspaceId(id)) => id,
+            _ => 0,
+        }),
         sctx: Arc::new(sctx),
         db_reader: store,
         key_ranges: req.ranges.clone(),
@@ -317,6 +323,7 @@ fn build_and_run_mpp_executor<'a>(
     let paging = (context.paging_size > 0)
         .then(|| Rc::new(RefCell::new(coprocessor::KeyRange::default())));
     let mut builder = mpp::MppExecBuilder {
+        keyspace_id: context.keyspace_id,
         sctx: Arc::clone(&context.expression_context),
         db_reader: store,
         key_ranges: context.key_ranges.clone(),
@@ -1080,6 +1087,10 @@ pub fn build_dag(req: &coprocessor::Request) -> Result<DagContext, String> {
         expression_context.column_types = columns.iter().map(field_type_from_pb_column).collect();
     }
     Ok(DagContext {
+        keyspace_id: req.context.as_ref().map_or(0, |ctx| match ctx.keyspace {
+            Some(tidb_proto::kvrpcpb::context::Keyspace::KeyspaceId(id)) => id,
+            _ => 0,
+        }),
         expression_context: Arc::new(expression_context),
         key_ranges: req.ranges.clone(),
         start_ts: req.start_ts,

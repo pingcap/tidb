@@ -345,7 +345,9 @@ fn execute_index_ndv(
                     }
                     key
                 } else {
-                    tidb_tablecodec::cut_index_key(&pair.key, index.num_columns() as usize)
+                    let key = crate::mpp_exec::decode_index_keyspace_prefix(&pair.key)
+                        .map_err(|error| other_error(&error))?;
+                    tidb_tablecodec::cut_index_key(&key, index.num_columns() as usize)
                         .map_err(|e| other_error(&e.to_string()))?
                         .0
                         .concat()

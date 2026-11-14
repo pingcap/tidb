@@ -16,6 +16,8 @@ const CROSS_KS_RUNTIME_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 /// This trait is the Rust boundary for Go's concrete resource owner, not a
 /// factory for reusing the current keyspace's sessions.
 pub trait SessionManager<C: ?Sized>: Runtime<C> {
+    /// Go `SessionManager.InfoCache`.
+    fn info_cache(&self) -> Arc<tidb_infoschema_issyncer::catalog_watch::InfoCache>;
     /// Go `SessionManager.close`: closes sessions and workers before leases,
     /// etcd and the target store. The SYSTEM store is owned outside the runtime.
     fn close(&self);
@@ -205,6 +207,17 @@ struct RuntimeHandle<C: ?Sized> {
 }
 
 impl<C: ?Sized + 'static> Runtime<C> for RuntimeHandle<C> {
+    fn store(&self) -> Arc<dyn tidb_txnkv::kv_storage::Storage> {
+        self.sess_mgr.store()
+    }
+    /// Go `runtimeHandle.AlterTableMode`.
+    fn alter_table_mode(
+        &self,
+        ctx: &Context,
+        target: &tidb_model::AlterTableModeTarget,
+    ) -> Result<(), String> {
+        self.sess_mgr.alter_table_mode(ctx, target)
+    }
     /// Go `runtimeHandle.Store().GetKeyspace`.
     fn store_keyspace(&self) -> String {
         self.sess_mgr.store_keyspace()

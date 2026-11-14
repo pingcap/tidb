@@ -8,6 +8,9 @@ repository.workspace = true
 description = "Go pkg/domain/crossks runtime ownership and eviction."
 
 [dependencies]
+tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-model = { path = "../tidb-model" }
 crossbeam-channel = "0.5"
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-domain-sqlsvrapi = { path = "../tidb-domain-sqlsvrapi" }

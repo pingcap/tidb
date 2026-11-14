@@ -44,7 +44,7 @@ pub struct MockStoreDomain {
     next_connection_id: AtomicU64,
     /// Go `BootstrapSession`'s last step, `dom.InitDistTaskLoop()`, which
     /// testkit's `CreateMockStore` runs too; it stops with the domain.
-    _dist_task_loop: tidb_domain_core::domain::dist_task::DistTaskLoop,
+    _dist_task_loop: Option<tidb_domain_core::domain::dist_task::DistTaskLoop>,
 }
 
 impl MockStoreDomain {
@@ -62,6 +62,32 @@ impl MockStoreDomain {
     pub fn create() -> Result<Arc<Self>, String> {
         Self::create_with_accounts(None)
     }
+
+    /// Go `testkit.CreateMockStoreAndDomainForKS` and its keyspace ID allocator.
+    pub fn create_for_keyspace(keyspace:&str)->Result<Arc<Self>,String> {
+        assert!(tidb_config_kerneltype::is_next_gen());
+        static KEYSPACE_IDS:std::sync::atomic::AtomicU32=std::sync::atomic::AtomicU32::new(0);
+        let id=if keyspace=="SYSTEM" {0x00ff_fffe} else {KEYSPACE_IDS.fetch_add(1,Ordering::SeqCst)+1};
+        let mut config=testkit_config()?;
+        config.global_config.keyspace_name=keyspace.to_owned();
+        let users=Arc::new(ConfiguredUserStore::parse("root\t%\tmysql_native_password\t\n").map_err(|error|format!("configured user store: {error:?}"))?);
+        let meta=tikv_client::proto::keyspacepb::KeyspaceMeta {keyspace:Some(tikv_client::proto::keyspacepb::keyspace_meta::Keyspace::Id(id)),name:keyspace.into(),..Default::default()};
+        let stack=super::unistore_node::unistore_cluster_session_stack_from_for_keyspace(&config,&users,None,None,None,0,Some(meta)).map_err(|error|format!("unistore stack: {error:?}"))?;
+        // Go's bootstrap runs `InitDistTaskLoop`. In a user keyspace that
+        // only installs the DXF service task manager over the SYSTEM
+        // keyspace's pool (`GetKSSessPool(SYSTEM)`, resolved through
+        // `kvstore.SetSystemStorage`); this mock store has no system-storage
+        // registry to resolve it from, so only SYSTEM starts the loop.
+        let dist_task_loop = if keyspace == "SYSTEM" {
+            Some(stack.factory.init_dist_task_loop()?)
+        } else {
+            None
+        };
+        Ok(Arc::new(Self {stack,#[cfg(test)] users,next_connection_id:AtomicU64::new(1),_dist_task_loop:dist_task_loop}))
+    }
+
+    /// Go `MockStorage`'s underlying target transaction capability.
+    pub(crate) fn transaction_opener(&self)->tidb_ddl::embedded_store::InProcessOpener {self.stack.opener.clone()}
 
     /// [`Self::create`] whose node keeps its accounts in `accounts`: the
     /// store bootstraps with that table's rows and every account change on
@@ -117,7 +143,7 @@ impl MockStoreDomain {
             #[cfg(test)]
             users: Arc::clone(&users),
             next_connection_id: AtomicU64::new(1),
-            _dist_task_loop: dist_task_loop,
+            _dist_task_loop: Some(dist_task_loop),
         });
         remember_accounts_domain(&domain);
         Ok(domain)
@@ -345,6 +371,7 @@ impl NodeConn {
     /// The committed value of one raw key, read at a fresh timestamp.
     #[cfg(test)]
     pub(crate) fn get_key_for_test(&self, key: &[u8]) -> Result<Option<Vec<u8>>, String> {
+        let key = self.physical_key_for_test(key)?;
         let version = self.fresh_timestamp_for_test()?;
         let handler = self.mock_store().stack.rpc.handler();
         let handler = handler
@@ -352,7 +379,7 @@ impl NodeConn {
             .map_err(|_| "kv handler poisoned".to_owned())?;
         handler
             .store
-            .get(key, version)
+            .get(&key, version)
             .map_err(|error| format!("get: {error:?}"))
     }
 
@@ -368,9 +395,23 @@ impl NodeConn {
         self.write_key_for_test(key, Some(value))
     }
 
+    /// Go `codecV2.EncodeKey`: direct MVCC test mutations bypass the transaction codec.
+    #[cfg(test)]
+    fn physical_key_for_test(&self, key: &[u8]) -> Result<Vec<u8>, String> {
+        match self.mock_store().stack.opener.store().store().keyspace() {
+            tikv_client::request::Keyspace::Enable { keyspace_id } => {
+                tikv_client::request::ApiV2Codec::new(tikv_client::request::KeyMode::Txn, keyspace_id)
+                    .map(|codec| codec.encode_key(key)).map_err(|error| error.to_string())
+            }
+            _ => Ok(key.to_vec()),
+        }
+    }
+
+    /// Go `kv.Transaction.Set/Delete`: test corruption commits at a fresh timestamp.
     #[cfg(test)]
     fn write_key_for_test(&self, key: &[u8], value: Option<&[u8]>) -> Result<(), String> {
         use tidb_proto::{KvrpcMutation, KvrpcOp};
+        let key = self.physical_key_for_test(key)?;
         let (op, value) = match value {
             Some(value) => (KvrpcOp::Put, value.to_vec()),
             None => (KvrpcOp::Del, Vec::new()),

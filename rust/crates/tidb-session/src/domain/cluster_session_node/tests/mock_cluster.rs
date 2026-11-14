@@ -386,6 +386,7 @@ impl PendingClusterSnapshot for MockPendingSnapshot {
 }
 
 impl ClusterTransactions for MockTransactions {
+    fn kv_storage(&self) -> Arc<dyn tidb_txnkv::kv_storage::Storage> {panic!("unexpected mock Store call")}
     fn prepare_snapshot(
         &self,
         resource_group: &str,

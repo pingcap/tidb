@@ -1,0 +1,18 @@
+[package]
+name = "tidb-dxf-importinto-taskkey"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-keyspace = { path = "../tidb-keyspace" }
+
+[dev-dependencies]
+tidb-config = { path = "../tidb-config" }

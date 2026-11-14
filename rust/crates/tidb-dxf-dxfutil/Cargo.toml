@@ -11,9 +11,14 @@ description = "Go pkg/dxf/framework/dxfutil: the task keyspace's runtime for sch
 workspace = true
 
 [dependencies]
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-meta = { path = "../tidb-meta" }
+tidb-owner = { path = "../tidb-owner" }
 tidb-domain-sqlsvrapi = { path = "../tidb-domain-sqlsvrapi" }
 tidb-dxf-storage = { path = "../tidb-dxf-storage" }
 
 [dev-dependencies]
+tidb-model = { path = "../tidb-model" }
+tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-syssession = { path = "../tidb-syssession" }

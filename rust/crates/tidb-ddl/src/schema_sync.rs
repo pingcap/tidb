@@ -234,6 +234,18 @@ impl SchemaSyncAck {
     where
         S: StoreClient + Send + 'static,
     {
+        Self::initialize(etcd, ddl_id, server_info)?.start(
+            catalog, opener, pins, min_job_id_refresher, schema_validator,
+            reload_waker, reload_stats, tick, timeout,
+        )
+    }
+
+    /// Go `createSessionManager`: initialize the schema lease before loading metadata.
+    pub fn initialize(
+        etcd: Option<Arc<EtcdClient>>,
+        ddl_id: String,
+        server_info: Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>,
+    ) -> Result<Self, String> {
         // Go `NewDomain`: the etcd syncer when the store has etcd, else
         // `NewMemSyncer`; `mdlCheckLoop` runs over either.
         let syncer: Arc<dyn SchemaVersionSyncer> = match etcd {
@@ -249,7 +261,31 @@ impl SchemaSyncAck {
                 .map(|servers| servers.into_values().collect())
         }));
         let syncer_context = SchemaVersionContext::background();
-        syncer.init(&syncer_context)?;
+        if let Err(error) = syncer.init(&syncer_context) {
+            syncer.close();
+            return Err(error);
+        }
+        Ok(Self {
+            stop: Arc::new(AtomicBool::new(false)), thread: None,
+            global_watch_thread: None, syncer_context, syncer_thread: None, syncer,
+        })
+    }
+
+    /// Go `SyncLoop` / `MDLCheckLoop`: start only after initial reload succeeds.
+    pub fn start<S: StoreClient + Send + 'static>(
+        mut self,
+        catalog: Arc<InfoCache>,
+        opener: RealOptimisticTransactionOpener<S>,
+        pins: Arc<SchemaPinRegistry>,
+        min_job_id_refresher: Arc<MinJobIdRefresher>,
+        schema_validator: Arc<SchemaValidator>,
+        reload_waker: CatalogReloadWaker,
+        reload_stats: CatalogReloadStatsSource,
+        tick: Duration,
+        timeout: Duration,
+    ) -> Result<Self, String> {
+        let syncer = self.syncer.clone();
+        let syncer_context = self.syncer_context.clone();
         let syncer_thread =
             match crate::worker::sql_worker_thread("schema-version-mirror").spawn({
                 let syncer = Arc::clone(&syncer);
@@ -259,7 +295,6 @@ impl SchemaSyncAck {
                 Ok(thread) => thread,
                 Err(error) => {
                     syncer_context.cancel();
-                    syncer.close();
                     return Err(error.to_string());
                 }
             };
@@ -288,7 +323,6 @@ impl SchemaSyncAck {
                 stop.store(true, Ordering::SeqCst);
                 syncer_context.cancel();
                 let _ = syncer_thread.join();
-                syncer.close();
                 return Err(error.to_string());
             }
         };
@@ -319,18 +353,14 @@ impl SchemaSyncAck {
                 stop.store(true, Ordering::SeqCst);
                 let _ = global_watch_thread.join();
                 let _ = syncer_thread.join();
-                syncer.close();
                 return Err(error.to_string());
             }
         };
-        Ok(Self {
-            stop,
-            thread: Some(thread),
-            global_watch_thread: Some(global_watch_thread),
-            syncer_context,
-            syncer_thread: Some(syncer_thread),
-            syncer,
-        })
+        self.stop = stop;
+        self.thread = Some(thread);
+        self.global_watch_thread = Some(global_watch_thread);
+        self.syncer_thread = Some(syncer_thread);
+        Ok(self)
     }
 
     /// The package-parity schema-version syncer shared with the DDL owner.
@@ -339,8 +369,9 @@ impl SchemaSyncAck {
     }
 }
 
-impl Drop for SchemaSyncAck {
-    fn drop(&mut self) {
+impl SchemaSyncAck {
+    /// Go `SessionManager.close`: join workers before removing server registration.
+    pub fn stop_workers(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         self.syncer_context.cancel();
         if let Some(thread) = self.global_watch_thread.take() {
@@ -352,6 +383,12 @@ impl Drop for SchemaSyncAck {
         if let Some(thread) = self.syncer_thread.take() {
             let _ = thread.join();
         }
+    }
+}
+
+impl Drop for SchemaSyncAck {
+    fn drop(&mut self) {
+        self.stop_workers();
         self.syncer.close();
     }
 }
@@ -488,7 +525,8 @@ fn run_ack_loop<S>(
             ) {
                 let min_job_id = min_job_id_refresher.get_curr_min_job_id();
                 match refresh_mdl_check_table_info(opener, timeout, &catalog.get_latest(), min_job_id) {
-                    Ok(jobs) => {
+                    Ok(mut jobs) => {
+                        jobs.retain(|job| !tidb_infoschema_issyncer::cross_ks::skip_mdl_check(catalog.is_cross_ks(), &job.table_ids));
                         scanned_version = Some(loaded);
                         last_reload_pass = Some(reload_pass);
                         retry_mdl_scan = false;

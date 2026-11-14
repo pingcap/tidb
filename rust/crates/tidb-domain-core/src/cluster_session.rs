@@ -127,7 +127,30 @@ pub fn cluster_session_catalog_with_templates(
     // its cached tables as plain tables.
     cached_table_session: Option<&CachedTableSessionFactory>,
 ) -> ClusterSessionCatalog {
-    let mut catalog = tidb_infoschema_perfschema::catalog();
+    build_cluster_session_catalog(loaded, statistics, auto_ids, previous, cached_table_session, false)
+}
+
+/// Go `Builder.WithCrossKS(true)`: build stored system tables without virtual tables.
+#[must_use]
+pub fn cluster_session_catalog_for_cross_ks(
+    loaded: &SessionExtendedInfoSchema,
+    auto_ids: &dyn TableAutoIds,
+    previous: Option<&SessionExtendedInfoSchema>,
+) -> ClusterSessionCatalog {
+    build_cluster_session_catalog(loaded, None, auto_ids, previous, None, true)
+}
+
+fn build_cluster_session_catalog(
+    loaded: &SessionExtendedInfoSchema,
+    statistics: Option<Arc<tidb_stats_handle::StatisticsView>>,
+    auto_ids: &dyn TableAutoIds,
+    previous: Option<&SessionExtendedInfoSchema>,
+    cached_table_session: Option<&CachedTableSessionFactory>,
+    cross_ks: bool,
+) -> ClusterSessionCatalog {
+    let mut catalog = if cross_ks {
+        SessionExtendedInfoSchema::init_with_db_infos_for_cross_ks(Vec::new(), Vec::new(), Vec::new(), loaded.schema_meta_version())
+    } else {tidb_infoschema_perfschema::catalog()};
     catalog.set_schema_meta_version(loaded.schema_meta_version());
     catalog.inherit_masking_policy_cache(loaded);
     let mut skipped = Vec::new();

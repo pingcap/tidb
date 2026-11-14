@@ -62,6 +62,7 @@ pub(crate) fn serve_status_for_test(
         "test".into(),
         crate::http_status::StatusRoutes {
             peer: Some(peer_service(factory)),
+            keyspace_domain: Some(Arc::clone(factory)),
             server_info: factory.server_info(),
             ..Default::default()
         },
@@ -248,7 +249,7 @@ mod tests {
     use super::*;
 
     fn stack() -> tidb_session::domain::unistore_node::UnistoreClusterStack {
-        let config = crate::parse_node_config([
+        let mut config = crate::parse_node_config([
             "tidb-server",
             "--store",
             "unistore",
@@ -265,7 +266,13 @@ mod tests {
             crate::domain_test_support::ABC_HASH
         ))
         .unwrap());
-        tidb_session::domain::unistore_node::unistore_cluster_session_stack(&config, &users, None, None).unwrap()
+        let keyspace=tidb_config_kerneltype::is_next_gen().then(|| {
+            config.global_config.keyspace_name="SYSTEM".into();
+            tikv_client::proto::keyspacepb::KeyspaceMeta {
+                name:"SYSTEM".into(),keyspace:Some(tikv_client::proto::keyspacepb::keyspace_meta::Keyspace::Id(0x00ff_fffe)),..Default::default()
+            }
+        });
+        tidb_session::domain::unistore_node::unistore_cluster_session_stack_from_for_keyspace(&config, &users, None, None,None,0,keyspace).unwrap()
     }
 
     /// [`stack`] whose status port is served, as a running tidb-server's is.
@@ -298,6 +305,268 @@ mod tests {
                 .unwrap();
         let status = serve_status_for_test(&config, &stack.factory);
         (stack, status)
+    }
+
+    /// Go `TestDDLCheckHandler` (`handler/tests/http_handler_test.go`).
+    #[test]
+    fn test_ddl_check_handler() {
+        if !tidb_config_kerneltype::is_next_gen() { return; }
+        let stack = stack();
+        run(&stack.factory, "CREATE DATABASE tidb");
+        run(&stack.factory, "CREATE TABLE tidb.test (id int, index idx1(id))");
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let call = |method, index| {
+            let path = format!("/ddl/check/tidb/test/{index}");
+            let request = format!("{method} {path} HTTP/1.1\r\n\r\n");
+            let response = crate::ddl_check_handler::serve(&path, &request, Some(&stack.factory)).unwrap();
+            let status = response.status();
+            let body = runtime.block_on(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap();
+            (status.as_u16(), String::from_utf8(body.to_vec()).unwrap())
+        };
+        let (code, body) = call("GET", "idx1");
+        assert_eq!(code, 400);
+        assert!(body.contains("only support POST"));
+        let (code, body) = call("POST", "idx_not_exist");
+        assert_eq!(code, 200, "{body}");
+        let result: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(result["result"], "failed");
+        assert!(!result["error"].as_str().unwrap().is_empty());
+        let (code, body) = call("POST", "idx1");
+        assert_eq!(code, 200, "{body}");
+        let result: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(result["db"], "tidb");
+        assert_eq!(result["table"], "test");
+        assert_eq!(result["index"], "idx1");
+        assert_eq!(result["check_sql"], "admin check index `tidb`.`test` `idx1`");
+        assert_eq!(result["result"], "success", "{result}");
+    }
+
+    /// Go `zzprobe/o15_dxf_context.TestDXFHistoryRequestCanceled`.
+    #[test]
+    fn test_dxf_history_request_canceled() {
+        if !tidb_config_kerneltype::is_next_gen() {return;}
+        let store=tidb_session::domain::mock_store::MockStoreDomain::create_for_keyspace("SYSTEM").unwrap();
+        let factory=store.factory();
+        let manager=Arc::new(tidb_dxf_storage::TaskManager::new(factory.dxf_session_pool()));
+        tidb_dxf_storage::set_task_manager(Some(manager.clone()));
+        tidb_dxf_storage::set_dxf_svc_task_mgr(manager);
+        let (ctx,cancel)=tidb_gocontext::Context::with_cancel(&tidb_gocontext::Context::background());
+        cancel.cancel();
+        let response=crate::dxf_handler::serve_with_context("/dxf/task/history","GET /dxf/task/history HTTP/1.1\r\n\r\n",Some(&factory),&ctx).unwrap();
+        assert_eq!(response.status().as_u16(),500);
+        let body=tokio::runtime::Runtime::new().unwrap().block_on(axum::body::to_bytes(response.into_body(),usize::MAX)).unwrap();
+        assert!(String::from_utf8(body.to_vec()).unwrap().contains("context canceled"));
+    }
+
+    /// Go `TestDXFAPI` and `TestDDLCheckHandler`, over real named TiKV stores.
+    #[test]
+    #[ignore = "requires O15_LIVE_CONFIG and the isolated SYSTEM/tenant SQL servers"]
+    fn test_dxf_api_live_named_keyspace() {
+        let fixture=std::fs::read(std::env::var("O15_LIVE_CONFIG").expect("live fixture configuration")).unwrap();
+        let fixture:serde_json::Value=serde_json::from_slice(&fixture).unwrap();
+        let runtime=tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let client=reqwest::Client::new();
+            for role in ["system","tenant"] {
+                let base=format!("http://127.0.0.1:{}",fixture[format!("{role}_status")].as_u64().unwrap());
+                for path in ["/dxf/schedule/status","/dxf/task/history"] {
+                    let response=client.get(format!("{base}{path}")).send().await.unwrap();
+                    let code=response.status().as_u16();
+                    let body=response.text().await.unwrap();
+                    if role=="tenant" {assert_eq!(code,404);continue;}
+                    assert_eq!(code,200,"{path}: {body}");
+                    let data:serde_json::Value=serde_json::from_str(&body).unwrap();
+                    if path=="/dxf/schedule/status" {
+                        assert_eq!(data["tidb_worker"]["required_count"],1);
+                        assert!(data["tidb_worker"]["busy_nodes"].as_array().unwrap().iter().any(|node|node["is_owner"]==true));
+                    } else {assert_eq!(data["Items"],serde_json::json!([]));}
+                }
+                let response=client.post(format!("{base}/ddl/check/test/t_named/iv")).send().await.unwrap();
+                assert_eq!(response.status().as_u16(),200);
+                let data:serde_json::Value=serde_json::from_str(&response.text().await.unwrap()).unwrap();
+                assert_eq!(data["result"],"success");
+            }
+        });
+    }
+
+    /// Go `TestDXFAPI`: status, flags, active tasks, and in-memory limits.
+    #[test]
+    fn test_dxf_api() {
+        if !tidb_config_kerneltype::is_next_gen() { return; }
+        let stack = stack();
+        let manager = Arc::new(tidb_dxf_storage::TaskManager::new(stack.factory.dxf_session_pool()));
+        tidb_dxf_storage::set_task_manager(Some(Arc::clone(&manager)));
+        tidb_dxf_storage::set_dxf_svc_task_mgr(Arc::clone(&manager));
+        let ctx = tidb_gocontext::Context::background();
+        manager.init_meta(&ctx, ":4000", "").unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let call = |method, path: &str| {
+            let request = format!("{method} {path} HTTP/1.1\r\n\r\n");
+            let response = crate::dxf_handler::serve(path, &request, Some(&stack.factory)).unwrap();
+            let code = response.status().as_u16();
+            let body = runtime.block_on(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap();
+            (code, String::from_utf8(body.to_vec()).unwrap())
+        };
+        for path in ["/dxf/schedule/status", "/dxf/task/active", "/dxf/task/history"] {
+            let (code, body) = call("POST", path);
+            assert_eq!(code, 400);
+            assert!(body.contains("This api only support GET method"));
+        }
+        let (code, body) = call("GET", "/dxf/schedule/status");
+        assert_eq!(code, 200, "{body}");
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(value["tidb_worker"]["required_count"], 1);
+        assert_eq!(call("GET", "/dxf/schedule").0, 400);
+        for (action, enabled) in [("pause_scale_in", true), ("resume_scale_in", false)] {
+            let (code, body) = call("POST", &format!("/dxf/schedule?action={action}"));
+            assert_eq!(code, 200, "{body}");
+            let flag: tidb_dxf::schstatus::TtlFlag = serde_json::from_str(&body).unwrap();
+            assert_eq!(flag.enabled, enabled);
+            if enabled { assert_eq!(flag.ttl_info.ttl_nanoseconds, 3_600_000_000_000); }
+        }
+        for (key, ks) in [("active-key-1", "SYSTEM"), ("active-key-2", "ks1"), ("active-key-3", "ks1")] {
+            manager.create_task(&ctx, key, &tidb_dxf::IMPORT_INTO, ks, 1, "", 0, &tidb_dxf::ExtraParams::default(), b"test").unwrap();
+        }
+        let (code, body) = call("GET", "/dxf/task/active");
+        assert_eq!(code, 200, "{body}");
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(value["total"], 3);
+        assert_eq!(value["per_keyspace"]["SYSTEM"], 1);
+        assert_eq!(value["per_keyspace"]["ks1"], 2);
+        let restore_concurrent = tidb_dxf::set_max_concurrent_task_for_test(tidb_dxf::get_max_concurrent_task());
+        let restore_batch = tidb_dxf::set_task_cleanup_batch_size_for_test(tidb_dxf::get_task_cleanup_batch_size());
+        for key in ["max_concurrent_task", "task_cleanup_batch_size"] {
+            let path = format!("/dxf/schedule/{key}");
+            assert_eq!(call("DELETE", &path).0, 400);
+            assert_eq!(call("POST", &path).0, 400);
+            assert_eq!(call("POST", &format!("{path}?value=0")).0, 400);
+            let (code, body) = call("POST", &format!("{path}?value=128"));
+            assert_eq!(code, 200, "{body}");
+            let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(value[key], 128);
+            assert_eq!(value["persistence"], "memory_only");
+            let (code, body) = call("GET", &path);
+            assert_eq!(code, 200);
+            let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(value[key], 128);
+        }
+        restore_concurrent(); restore_batch();
+        // Go TestDXFAPI's history pagination, keyspace filter and error redaction.
+        for query in ["page_size=0", "page_size=201", "page_size=aa", "page_token=0", "page_token=aa", "keyspace=ks.1"] {
+            assert_eq!(call("GET", &format!("/dxf/task/history?{query}")).0, 400);
+        }
+        let mut ids = Vec::new(); let mut tasks = Vec::new();
+        for (i, keyspace) in ["ks1", "ks2", "ks1", "ks3", "ks1"].iter().enumerate() {
+            let id = manager.create_task(&ctx, &format!("history-key-{}", i + 1), &tidb_dxf::IMPORT_INTO, keyspace, 8, "", 0, &tidb_dxf::ExtraParams::default(), b"test").unwrap();
+            let task = manager.get_task_by_id(&ctx, id).unwrap();
+            manager.switch_task_step(&ctx, &task, &tidb_dxf::TASK_STATE_RUNNING, tidb_dxf::STEP_ONE, &[]).unwrap();
+            if i == 4 {
+                let error = tidb_terror::TerrorError::normalize("sensitive history task failure", "DXF:History:Named", tidb_terror::TerrorCode::new(0));
+                manager.fail_task(&ctx, id, &tidb_dxf::TASK_STATE_RUNNING, Some(&error)).unwrap();
+            } else { manager.succeed_task(&ctx, id).unwrap(); }
+            ids.push(id); tasks.push(manager.get_task_by_id(&ctx, id).unwrap());
+        }
+        manager.transfer_tasks2_history(&ctx, &tasks).unwrap();
+        let history = |query: &str| {
+            let (code, body) = call("GET", &format!("/dxf/task/history?{query}"));
+            assert_eq!(code, 200, "{body}");
+            assert!(!body.contains("sensitive history task failure"));
+            assert!(!body.contains("\"Error\":"));
+            serde_json::from_str::<serde_json::Value>(&body).unwrap()
+        };
+        let first = history("page_size=2");
+        assert_eq!(first["Items"].as_array().unwrap().len(), 2);
+        assert_eq!(first["ApproxTotalCount"], 5); assert_eq!(first["HasMore"], true);
+        assert_eq!(first["Items"][0]["ID"], ids[4]); assert_eq!(first["Items"][1]["ID"], ids[3]);
+        assert_eq!(first["Items"][0]["ErrorCode"], "DXF:History:Named");
+        assert_eq!(first["Items"][0]["ErrorCategory"], "failed");
+        let second = history(&format!("page_size=2&page_token={}", first["NextPageToken"]));
+        assert_eq!(second["Items"][0]["ID"], ids[2]); assert_eq!(second["Items"][1]["ID"], ids[1]);
+        let last = history(&format!("page_size=2&page_token={}", second["NextPageToken"]));
+        assert_eq!(last["Items"].as_array().unwrap().len(), 1); assert_eq!(last["Items"][0]["ID"], ids[0]);
+        assert_eq!(last["HasMore"], false); assert_eq!(last["NextPageToken"], 0);
+        let filtered = history("page_size=2&keyspace=ks1");
+        assert_eq!(filtered["ApproxTotalCount"], 3); assert_eq!(filtered["HasMore"], true);
+        for item in filtered["Items"].as_array().unwrap() {assert_eq!(item["Keyspace"], "ks1");}
+        let filtered_last = history(&format!("page_size=2&keyspace=ks1&page_token={}",filtered["NextPageToken"]));
+        assert_eq!(filtered_last["Items"].as_array().unwrap().len(),1); assert_eq!(filtered_last["HasMore"],false);
+        // Go TestDXFAPI: import history route validation and not-found status.
+        for (method, path, code) in [
+            ("POST", "/dxf/import-into/history/job/ks1/1", 400),
+            ("GET", "/dxf/import-into/history/job/ks1/a", 400),
+            ("GET", "/dxf/import-into/history/job/ks1/0", 400),
+            ("GET", "/dxf/import-into/history/job/bad%20ks/1", 400),
+            ("GET", "/dxf/import-into/history/job/ks1/999999", 404),
+        ] {
+            let (got, body) = call(method, path);
+            assert_eq!(got, code, "{path}: {body}");
+        }
+        // Go TestDXFAPI's max_runtime_slots cases, including repeated target_step.
+        let task_id = manager.create_task(&ctx, "runtime-slots", &tidb_dxf::IMPORT_INTO, "", 8, "", 0, &tidb_dxf::ExtraParams::default(), b"test").unwrap();
+        let path = format!("/dxf/task/{task_id}/max_runtime_slots");
+        assert_eq!(call("GET", &path).0, 400);
+        for (request, expected) in [
+            ("/dxf/task/0/max_runtime_slots".to_owned(), "invalid task ID"),
+            ("/dxf/task/aa/max_runtime_slots".into(), "invalid task ID"),
+            (path.clone(), "invalid value"),
+            (format!("{path}?value=aa"), "invalid value"),
+            (format!("{path}?value=0"), "invalid value"),
+            (format!("{path}?value=1&target_step=a"), "invalid target step"),
+            (format!("{path}?value=1&target_step=1&target_step=aa"), "invalid target step"),
+            (format!("{path}?value=10"), "max runtime slots should be less than required slots(8)"),
+            (format!("{path}?value=6&target_step=100"), "invalid target step 100 for task type ImportInto"),
+        ] {
+            let (code, body) = call("POST", &request);
+            assert_eq!(code, 400, "{request}: {body}");
+            assert!(body.contains(expected), "{body}");
+        }
+        for suffix in ["&target_step=3", ""] {
+            let (code, body) = call("POST", &format!("{path}?value=6{suffix}"));
+            assert_eq!(code, 200, "{body}");
+            let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(value["required_slots"], 8);
+            assert_eq!(value["max_runtime_slots"], 6);
+            assert_eq!(value["target_steps"], if suffix.is_empty() { serde_json::json!([]) } else { serde_json::json!(["encode"]) });
+            let task = manager.get_task_by_id(&ctx, task_id).unwrap();
+            assert_eq!(task.base.extra_params.max_runtime_slots, 6);
+            assert_eq!(task.base.extra_params.target_steps.len(), usize::from(!suffix.is_empty()));
+        }
+    }
+
+    /// Go `TestDXFScheduleTuneAPI`.
+    #[test]
+    fn test_dxf_schedule_tune_api() {
+        if !tidb_config_kerneltype::is_next_gen() { return; }
+        let stack = stack();
+        let manager = Arc::new(tidb_dxf_storage::TaskManager::new(stack.factory.dxf_session_pool()));
+        tidb_dxf_storage::set_task_manager(Some(Arc::clone(&manager)));
+        tidb_dxf_storage::set_dxf_svc_task_mgr(manager);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let call = |method, path: &str| {
+            let request = format!("{method} {path} HTTP/1.1\r\n\r\n");
+            let response = crate::dxf_handler::serve(path, &request, Some(&stack.factory)).unwrap();
+            let code = response.status().as_u16();
+            let body = runtime.block_on(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap();
+            (code, String::from_utf8(body.to_vec()).unwrap())
+        };
+        // Go TestDXFScheduleTuneAPI: tuning metadata survives another HTTP request.
+        assert_eq!(call("GET", "/dxf/schedule/tune").0, 400);
+        assert!(call("GET", "/dxf/schedule/tune?keyspace=aaa").1.contains("failed to load keyspace"));
+        assert_eq!(call("PUT", "/dxf/schedule/tune?keyspace=SYSTEM").0, 400);
+        let (code, body) = call("GET", "/dxf/schedule/tune?keyspace=SYSTEM");
+        assert_eq!(code, 200, "{body}");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap()["amplify_factor"], 1.0);
+        for factor in [0.9, 10.1] {
+            assert_eq!(call("POST", &format!("/dxf/schedule/tune?keyspace=SYSTEM&amplify_factor={factor}")).0, 400);
+        }
+        let (code, body) = call("POST", "/dxf/schedule/tune?keyspace=SYSTEM&amplify_factor=2&ttl=10h");
+        assert_eq!(code, 200, "{body}");
+        let factors: tidb_dxf::schstatus::TtlTuneFactors = serde_json::from_str(&body).unwrap();
+        assert_eq!(factors.tune_factors.amplify_factor, 2.0);
+        assert_eq!(factors.ttl_info.ttl_nanoseconds, 36_000_000_000_000);
+        let (code, body) = call("GET", "/dxf/schedule/tune?keyspace=SYSTEM");
+        assert_eq!(code, 200, "{body}");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap()["amplify_factor"], 2.0);
     }
 
     /// A result's rows as the text the wire carries.
@@ -1016,7 +1285,14 @@ mod tests {
         let stack = stack();
         let ts = || stack.factory.transactions.fresh_timestamp().unwrap();
         let handler = Arc::clone(stack.rpc.handler());
+        let codec = match stack.opener.store().store().keyspace() {
+            tikv_client::request::Keyspace::Enable { keyspace_id } => Some(
+                tikv_client::request::ApiV2Codec::new(tikv_client::request::KeyMode::Txn, keyspace_id).unwrap()),
+            _ => None,
+        };
         let prewrite = |key: &[u8], start: u64| {
+            // Go mockstore's RPC codec prefixes mutations before MVCC storage.
+            let key = codec.as_ref().map_or_else(|| key.to_vec(), |codec| codec.encode_key(key));
             handler
                 .lock()
                 .unwrap()
@@ -1037,7 +1313,7 @@ mod tests {
                 .store
                 .scan_lock(&[], &[], u64::MAX, 16)
                 .into_iter()
-                .map(|lock| lock.key)
+                .map(|lock| codec.as_ref().map_or_else(|| lock.key.clone(), |codec| codec.decode_key(&lock.key).unwrap()))
                 .collect();
             keys.sort();
             keys
@@ -1048,6 +1324,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         assert_eq!(locks(), [b"x_gc_new".to_vec(), b"x_gc_old".to_vec()]);
         let deps = tidb_gcworker::node::gc_worker_deps(&stack.factory, stack.opener.store(), Arc::new(stack.opener.clone()));
+        assert_eq!(deps.store.keyspace_meta().as_ref(), stack.opener.store().store().keyspace_meta());
         tidb_gcworker::run_resolve_locks(deps, safe_point, "testGCWorker", 3).unwrap();
         assert_eq!(locks(), [b"x_gc_new".to_vec()]);
     }

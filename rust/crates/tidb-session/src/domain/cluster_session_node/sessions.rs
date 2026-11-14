@@ -256,10 +256,13 @@ impl DomainSessions for Domain {
         let stats_handle = statistics_loading.handle();
         // Go `session` owns its store half from birth.
         let node = Box::new(NodeConn {
-            domain: self
+            domain: Some(self
                 .binding_session_factory
                 .upgrade()
-                .expect("a domain opens sessions from behind its shared Arc"),
+                .expect("a domain opens sessions from behind its shared Arc")),
+            transactions: Arc::clone(&transactions),
+            catalog: Arc::clone(&self.catalog),
+            cross_ks_store: None,
             txn: TxnManager::new(
                 transactions,
                 Arc::new(NodeSchemaPins(Arc::clone(&self.schema_pins))),
@@ -621,7 +624,7 @@ impl ClusterStatsSessionState {
         if !option.use_cur_session {
             let internal = self.with_session(|session| {
                 Ok(super::NodeRestrictedSql::of_issuer(
-                    Arc::downgrade(&session.node.domain),
+                    Arc::downgrade(session.node.domain()),
                     session.session.restricted_sql_issuer(),
                 ))
             })?;
@@ -884,6 +887,7 @@ impl tidb_stats_handle_autoanalyze_exec::AutoAnalyzeSessionContext for ClusterSt
 
 impl tidb_syssession::SessionContext for ClusterStatsSessionContext {
     fn close(&self) {
+        <Self as tidb_syssession::SessionContext>::unregister_internal_session(self);
         self.state
             .session
             .lock()
@@ -920,12 +924,20 @@ impl tidb_syssession::SessionContext for ClusterStatsSessionContext {
     }
 
     fn register_internal_session(&self) {
+        let _ = self.with_session(|session| {
+            if let Some(target)=&session.node.cross_ks_store {target.coordinator.store_internal_session(session.node.connection_id);}
+            Ok(())
+        });
         self.state
             .registered
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     fn unregister_internal_session(&self) {
+        let _ = self.with_session(|session| {
+            if let Some(target)=&session.node.cross_ks_store {target.coordinator.delete_internal_session(session.node.connection_id);}
+            Ok(())
+        });
         self.state
             .registered
             .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -1101,7 +1113,6 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
         self.with_session(|session| {
             session
                 .node
-                .domain
                 .transactions
                 .fresh_timestamp()
                 .map_err(stats_session_error)
@@ -1314,6 +1325,9 @@ impl tidb_ddl_session::Transaction for NodeDdlTransaction {
 }
 
 impl tidb_domain_core::sys_session::DomainSysSession for ClusterStatsSessionContext {
+    fn ddl_statement_context(&self)->Result<tidb_sessionctx::StmtContext,String> {
+        self.with_session(|session|Ok(session.session.ddl_statement_context())).map_err(|error|error.to_string())
+    }
     fn into_dxf_session(self: Arc<Self>) -> Arc<dyn tidb_dxf_storage::SessionContext> {
         self
     }
@@ -1380,7 +1394,7 @@ impl tidb_domain_core::sys_session::DomainSysSession for ClusterStatsSessionCont
     ) -> Result<(), String> {
         let (stats, catalog) = self
             .with_session(|session| {
-                let domain = &session.node.domain;
+                let domain = session.node.domain();
                 Ok((Arc::clone(&domain.stats), domain.catalog.get_latest()))
             })
             .map_err(|error| error.to_string())?;

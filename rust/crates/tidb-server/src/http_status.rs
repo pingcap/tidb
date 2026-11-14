@@ -98,6 +98,8 @@ pub fn start_status_listener(
 /// has no source for it.
 #[derive(Default, Clone)]
 pub struct StatusRoutes {
+    /// Go status handlers over the opened store and its domain.
+    pub keyspace_domain: Option<Arc<tidb_domain_core::domain::Domain>>,
     /// Go's `/schema` family, read from the live catalog.
     pub schema: Option<SchemaSource>,
     /// Live configuration and the node's shared runtime settings owners.
@@ -350,18 +352,26 @@ async fn http_response(
     }
     request.push_str(&format!("Content-Length: {}\r\n\r\n{body}", body.len()));
     let path = path.to_owned();
-    // Existing settings handlers may open an internal synchronous SQL session.
-    match tokio::task::spawn_blocking(move || {
-        route_response(&path, &request, &tracker, &version, &git_hash, &routes)
-    })
-    .await
-    {
-        Ok(response) => response,
-        Err(error) => (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            error.to_string(),
-        )
-            .into_response(),
+    // Go `net/http.Request.Context`: cancel when the request future ends,
+    // including a dropped connection while its synchronous handler is running.
+    struct RequestContextGuard(tidb_gocontext::CancelFunc);
+    impl Drop for RequestContextGuard {fn drop(&mut self) {self.0.cancel();}}
+    let (context,cancel)=tidb_gocontext::Context::with_cancel(&tidb_gocontext::Context::background());
+    let _request_context=RequestContextGuard(cancel);
+    // Go net/http runs handlers independently of the SQL transport runtime.
+    // A Tokio blocking worker still carries a runtime handle, which the native
+    // synchronous TiKV snapshot client correctly refuses. Use the same worker
+    // boundary as SQL connections and domain background sessions.
+    let (send,receive)=tokio::sync::oneshot::channel();
+    if let Err(error)=tidb_worker_stack::sql_worker_thread("status-handler").spawn(move || {
+        let response=route_response_with_context(&path, &request, &tracker, &version, &git_hash, &routes,&context);
+        let _=send.send(response);
+    }) {
+        return (axum::http::StatusCode::INTERNAL_SERVER_ERROR,error.to_string()).into_response();
+    }
+    match receive.await {
+        Ok(response)=>response,
+        Err(error)=>(axum::http::StatusCode::INTERNAL_SERVER_ERROR,error.to_string()).into_response(),
     }
 }
 
@@ -1080,6 +1090,20 @@ fn route_response(
     git_hash: &str,
     routes: &StatusRoutes,
 ) -> axum::response::Response {
+    route_response_with_context(path,request,tracker,version,git_hash,routes,&tidb_gocontext::Context::background())
+}
+
+/// Go `Server.startStatusHTTP`: retain the request context through dispatch.
+fn route_response_with_context(
+    path:&str,request:&str,tracker:&ConnectionTracker,version:&str,git_hash:&str,routes:&StatusRoutes,
+    context:&tidb_gocontext::Context,
+)->axum::response::Response {
+    if let Some(response) = crate::ddl_check_handler::serve(path, request, routes.keyspace_domain.as_ref()) {
+        return response;
+    }
+    if let Some(response) = crate::dxf_handler::serve_with_context(path, request, routes.keyspace_domain.as_deref(),context) {
+        return response;
+    }
     if let Some(response) = download_file_response(path, routes) {
         return response;
     }
@@ -1668,7 +1692,7 @@ fn settings_response(
 
 /// Go `Request.ParseForm`: a form-encoded POST body's values, then the
 /// query's.
-fn request_form(query: &str, request: &str) -> Result<std::collections::HashMap<String, String>, String> {
+pub(crate) fn request_form(query: &str, request: &str) -> Result<std::collections::HashMap<String, String>, String> {
     let (headers, body) = request.split_once("\r\n\r\n").unwrap_or((request, ""));
     let is_form = headers
         .lines()
@@ -3083,7 +3107,7 @@ mod schema_route_tests {
         let base = std::env::temp_dir().join(format!("status-download-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let storage = Arc::new(tidb_planner_extstore::LocalStorage::new(&base).unwrap());
-        tidb_planner_extstore::set_global_ext_storage_for_test(Some(Arc::clone(&storage)));
+        tidb_planner_extstore::set_global_ext_storage_for_test(Some(storage.clone() as Arc<dyn tidb_planner_extstore::Storage>));
         std::fs::create_dir_all(base.join("replayer")).unwrap();
         std::fs::write(base.join("replayer/replayer_x_1.zip"), b"PK-bytes").unwrap();
         let mut archive = tidb_replayer::zip::ZipWriter::new(Vec::new());

@@ -219,6 +219,18 @@ pub fn reload_cluster_catalog<S: MetaSnapshot>(
     current: &SessionExtendedInfoSchema,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<ReloadedCatalog, ClusterCatalogError> {
+    reload_catalog(snapshot, current, row_ids, false)
+}
+
+/// Go `Loader.LoadWithTS` after `NewLoaderForCrossKS`.
+pub fn reload_cross_ks_catalog<S: MetaSnapshot>(
+    snapshot: &mut S,
+    current: &SessionExtendedInfoSchema,
+) -> Result<ReloadedCatalog, ClusterCatalogError> {
+    reload_catalog(snapshot, current, None, true)
+}
+
+fn reload_catalog<S: MetaSnapshot>(snapshot: &mut S, current: &SessionExtendedInfoSchema, row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>, cross_ks: bool) -> Result<ReloadedCatalog, ClusterCatalogError> {
     let needed = get_schema_version_with_non_empty_diff(snapshot)?;
     let loaded = current.schema_meta_version();
     if needed == loaded {
@@ -236,13 +248,13 @@ pub fn reload_cluster_catalog<S: MetaSnapshot>(
             to: needed,
         }
     } else {
-        match apply_diff_range(snapshot, current, loaded, needed, row_ids)? {
+        match apply_diff_range(snapshot, current, loaded, needed, row_ids, cross_ks)? {
             Ok(applied) => return Ok(applied),
             Err(reason) => reason,
         }
     };
 
-    let mut catalog = load_info_schema(snapshot)?;
+    let mut catalog = if cross_ks {crate::cross_ks::load_info_schema(snapshot)?} else {load_info_schema(snapshot)?};
     // The diff whose absence set `needed` back one version is still absent at
     // this snapshot, so the full load's own version reading is stepped back
     // the same way rather than trusting the raw counter.
@@ -261,10 +273,20 @@ fn apply_diff_range<S: MetaSnapshot>(
     loaded: i64,
     needed: i64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
+    cross_ks: bool,
 ) -> Result<Result<ReloadedCatalog, FullReloadReason>, ClusterCatalogError> {
     // Go `InitWithOldInfoSchema`: the diffs apply to a copy over the
     // current version's `DBInfo` pointers.
-    let mut catalog = current.metadata_copy();
+    let mut catalog = if cross_ks {
+        SessionExtendedInfoSchema::init_with_db_infos_for_cross_ks(
+            current.stored_schemas(),
+            current.policies().cloned().collect(),
+            current.resource_groups().cloned().collect(),
+            current.schema_meta_version(),
+        )
+    } else {
+        current.metadata_copy()
+    };
     catalog.set_schema_ts(snapshot.start_ts());
     let mut applied = 0usize;
     let mut changes = RelatedSchemaChange::default();
@@ -275,6 +297,10 @@ fn apply_diff_range<S: MetaSnapshot>(
             catalog.set_schema_meta_version(version);
             continue;
         };
+        if crate::cross_ks::skip_loading_diff(cross_ks, &diff) {
+            catalog.set_schema_meta_version(version);
+            continue;
+        }
         if diff.regenerate_schema_map {
             return Ok(Err(FullReloadReason::RegenerateSchemaMap { version }));
         }

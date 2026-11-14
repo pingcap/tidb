@@ -31,7 +31,19 @@ use tidb_unistore_tikv::mvcc_store::MvccStore;
 const TABLE_ID: i64 = 90;
 const INDEX_ID: i64 = 1;
 
+/// Go `indexLookUpExec.fetchTableScans`: nextgen fixture keys use API V2.
+fn physical_key(key: &[u8]) -> Vec<u8> {
+    if tidb_config_kerneltype::is_next_gen() {
+        tikv_client::request::ApiV2Codec::new(tikv_client::request::KeyMode::Txn, 0)
+            .expect("valid fixture keyspace")
+            .encode_key(key)
+    } else {
+        key.to_vec()
+    }
+}
+
 fn put(store: &mut MvccStore, key: Vec<u8>, value: Vec<u8>) {
+    let key = physical_key(&key);
     store
         .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
             mutations: vec![KvrpcMutation {
@@ -54,7 +66,7 @@ fn row_key(handle: i64) -> Vec<u8> {
 
 fn mvcc_key(row_key: &[u8]) -> Vec<u8> {
     let mut key = Vec::new();
-    tidb_codec::encode_bytes(&mut key, row_key);
+    tidb_codec::encode_bytes(&mut key, &physical_key(row_key));
     key
 }
 
@@ -236,7 +248,7 @@ fn index_look_up(common: bool) -> tipb::Executor {
 
 fn index_range() -> coprocessor::KeyRange {
     let (start, end) = tidb_tablecodec::get_table_index_key_range(TABLE_ID, INDEX_ID);
-    coprocessor::KeyRange { start, end }
+    coprocessor::KeyRange { start: physical_key(&start), end: physical_key(&end) }
 }
 
 fn request(root: tipb::Executor) -> coprocessor::Request {
@@ -295,7 +307,7 @@ fn index_rows(handles: &[i64]) -> Vec<Vec<Datum>> {
 fn range(start: Vec<u8>, last: &[u8]) -> coprocessor::KeyRange {
     let mut end = last.to_vec();
     end.push(0);
-    coprocessor::KeyRange { start, end }
+    coprocessor::KeyRange { start: physical_key(&start), end: physical_key(&end) }
 }
 
 /// Every handle is in the one local region: the response is the table rows,

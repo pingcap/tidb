@@ -163,21 +163,31 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
     ) -> Result<Vec<tikv_client::RegionWithLeader>, tikv_client::Error> {
         self.block_on(with_statement_kv_context(kv_context, async {
             let pd = self.store().pd_client();
+            let codec=match self.store().keyspace() {
+                tikv_client::request::Keyspace::Enable {keyspace_id}=>Some(tikv_client::request::ApiV2Codec::new(tikv_client::request::KeyMode::Txn,keyspace_id)?),
+                _=>None,
+            };
             let mut regions: Vec<tikv_client::RegionWithLeader> = Vec::new();
             for (start, end) in ranges {
-                let mut next = start.clone();
+                // Go `CodecPDClient`: TiDB sees logical boundaries, while
+                // the native client's region cache retains physical keys.
+                let (start,end)=codec.as_ref().map_or_else(||(start.clone(),end.clone()),|codec|codec.encode_range(start,end));
+                let mut next = start;
                 loop {
-                    let region = pd.region_for_key(&next.clone().into()).await?;
+                    let mut region = pd.region_for_key(&next.clone().into()).await?;
                     let region_end = region.region.end_key.clone();
-                    if regions
-                        .last()
-                        .is_none_or(|last| last.region.id != region.region.id)
-                    {
+                    if regions.last().is_none_or(|last| last.region.id != region.region.id) {
+                        if let Some(codec)=&codec {
+                            (region.region.start_key,region.region.end_key)=codec.decode_range(&region.region.start_key,&region.region.end_key)?;
+                            if let Some(buckets)=&mut region.buckets {
+                                let wire=tikv_client::request::ApiV1Codec::new(tikv_client::request::KeyMode::Txn);
+                                let encoded=buckets.keys.iter().map(|key|wire.encode_region_key(key)).collect::<Vec<_>>();
+                                buckets.keys=codec.decode_bucket_keys(&encoded)?;
+                            }
+                        }
                         regions.push(region);
                     }
-                    if region_end.is_empty() || (!end.is_empty() && region_end >= *end) {
-                        break;
-                    }
+                    if region_end.is_empty() || (!end.is_empty() && region_end >= end) {break;}
                     next = region_end;
                 }
             }
@@ -196,6 +206,12 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
     ) -> Result<NativeCopSend, tikv_client::Error> {
         let request = tikv_client::proto::coprocessor::Request::decode(request)
             .map_err(|error| tikv_client::Error::StringError(error.to_string()))?;
+        // Go `codecV2.EncodeRequest(CmdCop)`: prefix every unary/batched
+        // range before dispatch. The native plan decodes response key fields.
+        let request=match self.store().keyspace() {
+            tikv_client::request::Keyspace::Enable {keyspace_id}=>tikv_client::request::ApiV2Codec::new(tikv_client::request::KeyMode::Txn,keyspace_id)?.encode_coprocessor_request(&request),
+            _=>request,
+        };
         let region = tikv_client::RegionVerId {
             id: region.0,
             conf_ver: region.1,

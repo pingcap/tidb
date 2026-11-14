@@ -155,6 +155,8 @@ impl StmtExecLazyInfo for LazyStatement {
 /// `sctx` as `FinishExecuteStmt`, `LogSlowQuery`, `SummaryStmt`,
 /// `updatePrevStmt` and `recordLastQueryInfo` read it.
 pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
+    /// Go `ExecStmt.FinishExecuteStmt`: the codec ID when keyspace settings are nonempty.
+    fn observed_keyspace_id(&self) -> u32;
     /// The connection the statement runs on.
     fn observed_connection_id(&self) -> u64;
     /// Go `StmtHints.WriteSlowLog`: the `write_slow_log` hint.
@@ -441,7 +443,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
             } else {
                 keyspace_name
             },
-            keyspace_id: 0,
+            keyspace_id: self.observed_keyspace_id(),
             sql: tidb_variable::slow_log::format_sql(
                 &self.text_to_log(observation, true),
                 self.query_log_max_len(),
@@ -738,7 +740,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
             keyspace_name: tidb_config::config_tree::config::get_global_config()
                 .keyspace_name
                 .clone(),
-            keyspace_id: 0,
+            keyspace_id: self.observed_keyspace_id(),
             resource_group_name: self.observed_resource_group(),
             ru_detail: Some(Arc::clone(&observation.ru_details)),
             // Go `calculateStatementTotalRUV2`.

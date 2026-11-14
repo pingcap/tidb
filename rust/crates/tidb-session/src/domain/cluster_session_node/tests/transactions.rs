@@ -109,7 +109,7 @@ fn restricted_pessimistic_statement_retries_obey_live_config() {
             &tidb_store_driver_txn::cluster_storage::MutationBuffer::new(),
             |read_ts| {
                 read_timestamps.push(read_ts);
-                session.node().domain.transactions.open_snapshot("")
+                session.node().transactions.open_snapshot("")
             },
             |keys, _, _| {
                 calls += 1;

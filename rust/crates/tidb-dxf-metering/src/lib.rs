@@ -17,7 +17,7 @@
 //! object storage and the cluster (`recorder.go`, `data.go`).
 //!
 //! `Meter` owns recorder lifecycle, delta writes and retry batches. The SDK
-//! object-storage provider construction used by Go `NewMeter` remains external.
+//! object-storage provider construction used by Go `NewMeter` uses the native SDK adapter.
 
 /// Go `metering.go`.
 pub mod metering;

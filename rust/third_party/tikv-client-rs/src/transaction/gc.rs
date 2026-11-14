@@ -95,13 +95,26 @@ impl<PdC: PdClient> BaseRegionLockResolver<PdC> {
         &self.store
     }
 
-    fn location(&self, region: &RegionWithLeader) -> KeyLocation {
-        let keyspace = self.store.keyspace();
-        KeyLocation {
+    /// Go `CodecPDClient.decodeRegionKeyInPlace`: clip region bounds to
+    /// the store's keyspace before returning logical keys to the resolver.
+    fn location(&self, region: &RegionWithLeader) -> Result<KeyLocation> {
+        let (start_key, end_key) = match self.store.keyspace() {
+            crate::request::Keyspace::Disable
+            | crate::request::Keyspace::V1Ttl
+            | crate::request::Keyspace::ApiV2NoPrefix => (
+                region.region.start_key.clone(),
+                region.region.end_key.clone(),
+            ),
+            crate::request::Keyspace::Enable { keyspace_id } => {
+                crate::request::ApiV2Codec::new(KeyMode::Txn, keyspace_id)?
+                    .decode_range(&region.region.start_key, &region.region.end_key)?
+            }
+        };
+        Ok(KeyLocation {
             region: region.ver_id(),
-            start_key: region.start_key().truncate_keyspace(keyspace).into(),
-            end_key: region.end_key().truncate_keyspace(keyspace).into(),
-        }
+            start_key,
+            end_key,
+        })
     }
 
     async fn locate_key(&self, key: &[u8]) -> Result<RegionWithLeader> {
@@ -171,7 +184,7 @@ impl<PdC: PdClient> RegionLockResolver for BaseRegionLockResolver<PdC> {
             )
             .await?;
             let region = self.locate_key(&locks[0].key).await?;
-            let location = self.location(&region);
+            let location = self.location(&region)?;
             if location.contains(&locks[locks.len() - 1].key) {
                 resolved_location = location;
             } else {
@@ -192,24 +205,27 @@ impl<PdC: PdClient> RegionLockResolver for BaseRegionLockResolver<PdC> {
         let keyspace = self.store.keyspace();
         loop {
             let region = self.locate_key(key).await?;
-            let location = self.location(&region);
+            let location = self.location(&region)?;
             let mut req_end_key = location.end_key.clone();
             if !end_key.is_empty() && (req_end_key.is_empty() || end_key < req_end_key.as_slice()) {
                 req_end_key = end_key.to_vec();
             }
+            // Go `codecV2.EncodeRequest(CmdScanLock)` also bounds an empty
+            // end at the next keyspace prefix, rather than scanning tenants.
+            let (start_key, end_key) = match keyspace {
+                crate::request::Keyspace::Disable
+                | crate::request::Keyspace::V1Ttl
+                | crate::request::Keyspace::ApiV2NoPrefix => (key.to_vec(), req_end_key),
+                crate::request::Keyspace::Enable { keyspace_id } => {
+                    crate::request::ApiV2Codec::new(KeyMode::Txn, keyspace_id)?
+                        .encode_range(key, &req_end_key)
+                }
+            };
             let request = kvrpcpb::ScanLockRequest {
                 max_version,
                 limit: scan_limit,
-                start_key: Key::from(key.to_vec())
-                    .encode_keyspace(keyspace, KeyMode::Txn)
-                    .into(),
-                end_key: if req_end_key.is_empty() {
-                    Vec::new()
-                } else {
-                    Key::from(req_end_key)
-                        .encode_keyspace(keyspace, KeyMode::Txn)
-                        .into()
-                },
+                start_key,
+                end_key,
                 ..kvrpcpb::ScanLockRequest::default()
             };
             let store = self.store.pd_client().map_region_to_store(region).await?;

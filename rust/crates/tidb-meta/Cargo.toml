@@ -17,6 +17,7 @@ nextgen = ["tidb-config/nextgen"]
 workspace = true
 
 [dependencies]
+tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-structure = { path = "../tidb-structure" }

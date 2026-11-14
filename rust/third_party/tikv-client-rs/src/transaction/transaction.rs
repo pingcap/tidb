@@ -7233,9 +7233,12 @@ impl<PdC: PdClient> Committer<PdC> {
             })
     }
 
+    /// Go `twoPhaseCommitter.extractKeyExistsErr`: match the decoded error
+    /// against the authoritative buffer's physical key namespace.
     fn mutation_presumes_key_not_exists(&self, key: &[u8]) -> bool {
         if let Some(keys) = &self.presume_key_not_exists_keys {
-            return keys.contains(key);
+            let physical = Key::from(key.to_vec()).encode_keyspace(self.keyspace, KeyMode::Txn);
+            return keys.contains(<&[u8]>::from(&physical));
         }
         self.mutations.iter().any(|mutation| {
             let logical_key = Key::from(mutation.key.clone()).truncate_keyspace(self.keyspace);
@@ -9132,7 +9135,8 @@ impl<PdC: PdClient> Committer<PdC> {
                     "2PC commitTS rejected by TiKV, retry with a newer commitTS"
                 );
                 let primary = self.primary_key.as_ref().ok_or(Error::NoPrimaryKey)?;
-                if !batch.is_primary || expired.key.as_slice() != <&[u8]>::from(primary) {
+                let logical_primary = primary.clone().truncate_keyspace(self.keyspace);
+                if !batch.is_primary || expired.key.as_slice() != <&[u8]>::from(&logical_primary) {
                     return Err(Error::StringError(
                         "2PC commitTS rejected by TiKV, but the key is not the primary key"
                             .to_owned(),
@@ -10166,7 +10170,9 @@ impl<PdC: PdClient> Committer<PdC> {
                             );
 
                             let primary_key = self.primary_key.as_ref().unwrap();
-                            if primary_key != expired.key.as_ref() {
+                            // Go codecV2 has already decoded the response key.
+                            let logical_primary = primary_key.clone().truncate_keyspace(self.keyspace);
+                            if <&[u8]>::from(&logical_primary) != expired.key.as_slice() {
                                 log::error!(
                                     txnStartTS = self.start_version.version(),
                                     key:% = crate::redact::key(&expired.key),

@@ -19,6 +19,7 @@
 
 pub mod connection_info;
 mod error;
+pub mod cloud_storage;
 pub mod mem_quota;
 pub mod wire_status;
 pub mod savepoints;

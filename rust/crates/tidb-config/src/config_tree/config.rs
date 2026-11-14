@@ -439,7 +439,16 @@ static GLOBAL_CONFIG: OnceLock<RwLock<Arc<Config>>> = OnceLock::new();
 static CHECK_TABLE_BEFORE_DROP: StdAtomicBool = StdAtomicBool::new(false);
 
 fn global_config() -> &'static RwLock<Arc<Config>> {
-    GLOBAL_CONFIG.get_or_init(|| RwLock::new(Arc::new(new_config())))
+    GLOBAL_CONFIG.get_or_init(|| RwLock::new(Arc::new(initial_global_config())))
+}
+
+/// Go `initByLDFlags`: nextgen tests start with a valid SYSTEM configuration.
+fn initial_global_config() -> Config {
+    let mut config = new_config();
+    if tidb_intest::IN_TEST && tidb_config_kerneltype::is_next_gen() {
+        config.keyspace_name = "SYSTEM".to_owned();
+    }
+    config
 }
 
 /// Go `GetGlobalConfig`: retain the published configuration without copying
@@ -474,7 +483,7 @@ pub fn check_table_before_drop() -> bool {
 
 /// Go `initByLDFlags`.
 pub fn init_by_ld_flags(_edition: &str, check_before_drop_ld_flag: &str) {
-    store_global_config(new_config());
+    store_global_config(initial_global_config());
     if check_before_drop_ld_flag == "1" {
         CHECK_TABLE_BEFORE_DROP.store(true, Ordering::Relaxed);
     }
@@ -1059,6 +1068,10 @@ mod tests {
         ] {
             CHECK_TABLE_BEFORE_DROP.store(false, Ordering::Relaxed);
             init_by_ld_flags(edition, flag);
+
+            assert_eq!(get_global_config().keyspace_name,
+                if tidb_intest::IN_TEST && tidb_config_kerneltype::is_next_gen() { "SYSTEM" } else { "" });
+            assert!(new_config().keyspace_name.is_empty());
 
             assert_eq!(get_global_config().enable_telemetry, enable_telemetry);
             assert_eq!(new_config().enable_telemetry, enable_telemetry);

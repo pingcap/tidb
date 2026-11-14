@@ -407,6 +407,187 @@ impl DdlSessionPool for NodeDdlSessionPool {
     }
 }
 
+/// Go `ddlClient`'s `SubmitOptions.SessPool`: `sess.NewSessionPool` over the
+/// target keyspace's system session pool (crossks `SessionManager`). Its
+/// sessions are domain-free target sessions (Go `createCrossKSSession`).
+pub struct CrossKsDdlSessionPool {
+    resources: CrossKsDdlResourcePool,
+    sess_pool: Arc<tidb_ddl_session::DynPool>,
+}
+
+impl CrossKsDdlSessionPool {
+    /// Go `sess.NewSessionPool(SessionManager.sysSessPool)`.
+    pub fn new(
+        current_keyspace: String,
+        target: Arc<crate::domain::cluster_session_node::CrossKsSessionResources>,
+    ) -> Self {
+        let resources = CrossKsDdlResourcePool { current_keyspace, target };
+        let sess_pool = Arc::new(tidb_ddl_session::Pool::new(Box::new(resources.clone())
+            as Box<dyn tidb_ddl_session::ResourcePool<dyn tidb_ddl_session::SessionContext>>));
+        Self { resources, sess_pool }
+    }
+}
+
+/// The target keyspace's system sessions, one per `Get`.
+#[derive(Clone)]
+struct CrossKsDdlResourcePool {
+    current_keyspace: String,
+    target: Arc<crate::domain::cluster_session_node::CrossKsSessionResources>,
+}
+
+impl CrossKsDdlResourcePool {
+    /// Go `createCrossKSSession` under the DDL's request source.
+    fn open(
+        &self,
+        transactions: Arc<dyn ClusterTransactions>,
+        buffer: tidb_store_driver_txn::cluster_storage::MutationBuffer,
+    ) -> Result<crate::Session, MysqlError> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        // Apart from client connections and the advanced pool's range.
+        static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1_u64 << 61);
+        let mut session = crate::domain::cluster_session_node::create_cross_ks_session_over(
+            &self.current_keyspace,
+            Arc::clone(&self.target),
+            NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
+            transactions,
+            buffer,
+        )
+        .map_err(sql_to_mysql)?;
+        set_ddl_request_source(&mut session);
+        Ok(session)
+    }
+
+    fn open_fresh(&self) -> Result<crate::Session, MysqlError> {
+        self.open(
+            Arc::clone(&self.target.transactions),
+            tidb_store_driver_txn::cluster_storage::MutationBuffer::new(),
+        )
+    }
+}
+
+impl tidb_ddl_session::ResourcePool<dyn tidb_ddl_session::SessionContext>
+    for CrossKsDdlResourcePool
+{
+    fn get(&self) -> tidb_ddl_session::Result<Arc<dyn tidb_ddl_session::SessionContext>> {
+        let session = self
+            .open_fresh()
+            .map_err(|error| tidb_ddl_session::Error::new(error.to_string()))?;
+        Ok(Arc::new(
+            crate::domain::cluster_session_node::ClusterStatsSessionContext::new(
+                session,
+                self.target.global_vars.clone(),
+            ),
+        ))
+    }
+
+    /// The session ends with its handle; the pool opens one per `Get`.
+    fn put(&self, _resource: Option<Arc<dyn tidb_ddl_session::SessionContext>>) {}
+
+    fn close(&self) {}
+
+    fn destroy_mode(&self) -> tidb_ddl_session::DestroyMode {
+        tidb_ddl_session::DestroyMode::ResourcePool
+    }
+}
+
+/// Go `withRestrictedSQLExecutor` on a target session: each statement on a
+/// fresh target session in its own autocommit transaction.
+struct CrossKsRestrictedSql(CrossKsDdlResourcePool);
+
+impl CrossKsRestrictedSql {
+    fn executor(&self) -> Result<crate::domain::cluster_session_node::SystemSqlExecutor, tidb_sqlexec::SqlExecError> {
+        let session = self.0.open_fresh().map_err(|error| {
+            tidb_domain_core::sys_session::stats_session_error(error.to_string())
+        })?;
+        Ok(crate::domain::cluster_session_node::SystemSqlExecutor::new(session))
+    }
+}
+
+impl tidb_sqlexec::RestrictedSqlExecutor for CrossKsRestrictedSql {
+    fn parse_with_params(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+        arguments: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<tidb_ast::Stmt, tidb_sqlexec::SqlExecError> {
+        tidb_sqlexec::RestrictedSqlExecutor::parse_with_params(&self.executor()?, context, sql, arguments)
+    }
+
+    fn exec_restricted_stmt(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        statement: &tidb_ast::Stmt,
+        options: &[tidb_sqlexec::OptionFuncAlias],
+    ) -> Result<(Vec<Vec<tidb_datatype::Datum>>, Vec<tidb_resolve::ResultFieldRef>), tidb_sqlexec::SqlExecError>
+    {
+        tidb_sqlexec::RestrictedSqlExecutor::exec_restricted_stmt(&self.executor()?, context, statement, options)
+    }
+
+    fn exec_restricted_sql(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        options: &[tidb_sqlexec::OptionFuncAlias],
+        sql: &str,
+        arguments: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<(Vec<Vec<tidb_datatype::Datum>>, Vec<tidb_resolve::ResultFieldRef>), tidb_sqlexec::SqlExecError>
+    {
+        tidb_sqlexec::RestrictedSqlExecutor::exec_restricted_sql(&self.executor()?, context, options, sql, arguments)
+    }
+}
+
+impl DdlSessionPool for CrossKsDdlSessionPool {
+    fn sess_pool(&self) -> Option<Arc<tidb_ddl_session::DynPool>> {
+        Some(Arc::clone(&self.sess_pool))
+    }
+
+    /// A fresh statement of a default session.
+    fn system_session(&self) -> Box<dyn tidb_ddl_build::session_context::DdlSessionContext> {
+        Box::new(StmtContext::for_query())
+    }
+
+    fn restricted_sql_executor(&self) -> Arc<dyn tidb_sqlexec::RestrictedSqlExecutor> {
+        Arc::new(CrossKsRestrictedSql(self.resources.clone()))
+    }
+
+    fn get(&self) -> Result<Box<dyn tidb_ddl_build::session_pool::DdlSysSession>, MysqlError> {
+        Ok(Box::new(crate::domain::cluster_session_node::SystemSqlExecutor::new(
+            self.resources.open_fresh()?,
+        )))
+    }
+
+    fn current_version(&self) -> Result<u64, MysqlError> {
+        self.resources.target.transactions.fresh_timestamp().map_err(MysqlError::unknown)
+    }
+
+    fn min_safe_ts(&self) -> u64 {
+        self.resources.target.transactions.min_safe_ts("global")
+    }
+
+    fn open_sql_session(
+        &self,
+    ) -> Result<Box<dyn tidb_ddl_build::session_pool::StepSqlSession>, MysqlError> {
+        Ok(Box::new(NodeSqlSession::new(self.resources.open_fresh()?)))
+    }
+
+    fn open_step_session(
+        &self,
+        start_ts: u64,
+        buffer: &tidb_store_driver_txn::cluster_storage::MutationBuffer,
+    ) -> Result<Box<dyn tidb_ddl_build::session_pool::StepSqlSession>, MysqlError> {
+        let transactions: Arc<dyn ClusterTransactions> = Arc::new(StepTransactions {
+            inner: Arc::clone(&self.resources.target.transactions),
+            start_ts,
+        });
+        let mut session = self.resources.open(transactions, buffer.clone())?;
+        // Go `sess.Begin`: `sessiontxn.NewTxn` enters an optimistic transaction.
+        session
+            .node_conn()
+            .new_txn(tidb_ast::TransactionMode::Optimistic)
+            .map_err(sql_to_mysql)?;
+        Ok(Box::new(NodeStepSession(NodeSqlSession::new(session))))
+    }
+}
+
 fn sql_to_mysql(error: tidb_store_driver_error::sql_query_error::SqlQueryError) -> MysqlError {
     MysqlError::from_parts(error.code, error.state, error.message).with_identity_opt(error.identity)
 }
@@ -501,6 +682,10 @@ fn outside_the_step() -> String {
 }
 
 impl ClusterTransactions for StepTransactions {
+    /// Go `session.GetStore`: a DDL step retains its session's store.
+    fn kv_storage(&self) -> Arc<dyn tidb_txnkv::kv_storage::Storage> { self.inner.kv_storage() }
+    /// Go `session.GetStore().GetCodec().GetKeyspaceID`.
+    fn keyspace_id(&self) -> u32 { self.inner.keyspace_id() }
     fn fresh_timestamp(&self) -> Result<u64, String> {
         self.inner.fresh_timestamp()
     }
@@ -686,5 +871,20 @@ mod tests {
         tidb_topsql_state::disable_top_sql();
         tidb_cpuprofile::labels::set_goroutine_labels(None);
     }
+}
 
+#[cfg(test)]
+mod keyspace_tests {
+    use super::*;
+
+    /// Go `session.NewSession` retains `GetStore` and its codec; zzprobe/o15_named_sql.
+    #[test]
+    fn test_named_keyspace_ddl_step_store() {
+        if !tidb_config_kerneltype::is_next_gen() { return; }
+        let domain = crate::domain::mock_store::MockStoreDomain::create().unwrap();
+        let inner = domain.domain().transactions.clone();
+        let step = StepTransactions { inner: inner.clone(), start_ts: 1 };
+        assert_eq!(step.keyspace_id(), 16777214);
+        assert!(Arc::ptr_eq(&step.kv_storage(), &inner.kv_storage()));
+    }
 }

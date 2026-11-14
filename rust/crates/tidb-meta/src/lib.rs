@@ -57,3 +57,17 @@ pub trait BdrRoleStore: Send + Sync {
     /// Go `meta.Mutator.SetBDRRole`, or `ClearBDRRole` for "".
     fn set(&self, role: &str) -> std::result::Result<(), String>;
 }
+
+/// Go `kv.Storage` as metadata callers use it through `kv.RunInNewTxn`.
+/// The callback borrows each attempt's transaction; retry and commit remain
+/// the store's responsibility.
+pub trait MetaStore: Send + Sync {
+    /// Go `kv.RunInNewTxn(ctx, store, retryable, f)`.
+    fn run_in_new_txn(
+        &self,
+        ctx: &tidb_gocontext::Context,
+        source_type: &str,
+        retryable: bool,
+        f: &mut dyn FnMut(&mut dyn transaction::MetaTransaction) -> Result<()>,
+    ) -> std::result::Result<(), String>;
+}

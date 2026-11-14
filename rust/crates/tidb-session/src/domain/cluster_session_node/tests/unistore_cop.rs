@@ -55,12 +55,18 @@ mod analyzetest;
 mod ddl_analyze;
 mod ddl_delivery;
 mod dxf_framework;
+mod cross_ks;
 mod dxf_integrationtests;
 mod dxf_scheduler;
 mod dxf_taskexecutor;
 mod fts_resolve_index;
 mod mpp_to_pb;
 mod mpp_execution;
+
+/// Go `rowcodec.RemoveKeyspacePrefix`: the native RPC hook observes physical keys.
+fn logical_rpc_key(key: &[u8]) -> &[u8] {
+    tidb_rowcodec::remove_keyspace_prefix(key, tidb_config_kerneltype::is_classic(), true, false)
+}
 
 pub(super) fn cop_backed_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
     cop_backed_stack_with_stats_lease(None)
@@ -81,6 +87,14 @@ fn cop_backed_stack_with_stats_lease(
 pub(super) fn cop_backed_stack_with_config(
     f: impl FnOnce(&mut tidb_domain_core::node_config::NodeConfig),
 ) -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
+    // Go `testenv.UpdateConfigForNextgen`, called by CreateMockStore.
+    if tidb_config_kerneltype::is_next_gen() {
+        tidb_config::config_tree::config::update_global(|config| {
+            config.keyspace_name = tidb_keyspace::SYSTEM.to_owned();
+            config.instance.tidb_service_scope = tidb_dxf_handle::NEXT_GEN_TARGET_SCOPE.to_owned();
+        });
+        tidb_vardef::set_service_scope(tidb_dxf_handle::NEXT_GEN_TARGET_SCOPE.to_owned());
+    }
     let mut config = tidb_domain_core::node_config::NodeConfig::with_defaults(
         |config| {
             config.store = tidb_config::store::StoreType("unistore".to_owned());
@@ -2322,7 +2336,7 @@ fn global_binding_commands_commit_outside_the_user_transaction() {
 fn handle_stats_schema_change(session: &mut Session, event: &SchemaChangeEvent) {
     let factory = session
         .node()
-        .domain
+        .domain()
         .binding_session_factory
         .upgrade()
         .expect("the node's domain is live");
@@ -3128,7 +3142,7 @@ fn production_auto_analyze_is_killable_by_its_process_id() {
         |context| {
             super::super::cluster_stats_session(context).with_session(|session| {
                 let analyze = Arc::new(KillingSystemAnalyze {
-                    inner: crate::domain::cluster_session_node::node_services(&session.node.domain).analyze(),
+                    inner: crate::domain::cluster_session_node::node_services(session.node.domain()).analyze(),
                     processes: factory.processes(),
                     factory: Arc::downgrade(&factory),
                     process_id: Arc::clone(&process_id),
@@ -3230,7 +3244,7 @@ fn run_tracked_auto_analyze(kill: Option<bool>) {
             super::super::cluster_stats_session(context)
                 .with_session(|session| {
                     let analyze = Arc::new(ObservedSystemAnalyze {
-                        inner: crate::domain::cluster_session_node::node_services(&session.node.domain).analyze(),
+                        inner: crate::domain::cluster_session_node::node_services(session.node.domain()).analyze(),
                         processes: factory.processes(),
                         kill,
                         process_id,
@@ -5213,7 +5227,7 @@ fn analyze_samples_the_go_handle_ranges() {
                 request
                     .ranges
                     .iter()
-                    .map(|range| (range.start.clone(), range.end.clone())),
+                    .map(|range| (logical_rpc_key(&range.start).to_vec(), logical_rpc_key(&range.end).to_vec())),
             );
         }
     })));
@@ -6858,7 +6872,7 @@ fn plan_replayer_capture_dumps_a_matching_statement_and_gc_expires_files() {
     let base = std::env::temp_dir().join(format!("plan-replayer-capture-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
     let storage = Arc::new(tidb_planner_extstore::LocalStorage::new(&base).unwrap());
-    tidb_planner_extstore::set_global_ext_storage_for_test(Some(Arc::clone(&storage)));
+    tidb_planner_extstore::set_global_ext_storage_for_test(Some(storage.clone() as Arc<dyn tidb_planner_extstore::Storage>));
     let nanos = |at: chrono::DateTime<chrono::Utc>| at.timestamp_nanos_opt().unwrap();
     let month_ago = nanos(chrono::Utc::now() - chrono::Duration::days(30));
     let old_dump = format!("replayer/replayer_old_{month_ago}.zip");
@@ -7163,7 +7177,7 @@ fn analyze_records_historical_stats_through_the_domain_worker() {
     assert_eq!(
         session
             .node()
-            .domain
+            .domain()
             .historical_stats_worker
             .get_one_historical_stats_table(),
         tidb_domain::historical_stats::NO_HISTORICAL_STATS_TABLE
@@ -7173,7 +7187,7 @@ fn analyze_records_historical_stats_through_the_domain_worker() {
     rows(&mut session, "ANALYZE TABLE history_analyze WITH 2 TOPN");
     let table_id = session
         .node()
-        .domain
+        .domain()
         .historical_stats_worker
         .get_one_historical_stats_table();
     assert!(table_id > 0, "a successful ANALYZE posts its table ID");
@@ -7186,7 +7200,7 @@ fn analyze_records_historical_stats_through_the_domain_worker() {
     };
     session
         .node()
-        .domain
+        .domain()
         .historical_stats_worker
         .dump_historical_stats(
             table_id,
@@ -7284,7 +7298,7 @@ fn clear_outdated_history_stats_uses_the_go_retention_duration() {
     rows(&mut session, "ANALYZE TABLE history_gc");
     let table_id = session
         .node()
-        .domain
+        .domain()
         .historical_stats_worker
         .get_one_historical_stats_table();
     let handle = ClusterHistoricalStatsHandle {
@@ -7296,7 +7310,7 @@ fn clear_outdated_history_stats_uses_the_go_retention_duration() {
     };
     session
         .node()
-        .domain
+        .domain()
         .historical_stats_worker
         .dump_historical_stats(
             table_id,
@@ -7947,7 +7961,7 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
     assert_eq!(
         session
             .node()
-            .domain
+            .domain()
             .historical_stats_worker
             .get_one_historical_stats_table(),
         partition_id
@@ -7955,7 +7969,7 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
     assert_eq!(
         session
             .node()
-            .domain
+            .domain()
             .historical_stats_worker
             .get_one_historical_stats_table(),
         tidb_domain::historical_stats::NO_HISTORICAL_STATS_TABLE
@@ -7969,12 +7983,12 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
     let mut queued = vec![
         session
             .node()
-            .domain
+            .domain()
             .historical_stats_worker
             .get_one_historical_stats_table(),
         session
             .node()
-            .domain
+            .domain()
             .historical_stats_worker
             .get_one_historical_stats_table(),
     ];
@@ -7985,7 +7999,7 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
     assert_eq!(
         session
             .node()
-            .domain
+            .domain()
             .historical_stats_worker
             .get_one_historical_stats_table(),
         tidb_domain::historical_stats::NO_HISTORICAL_STATS_TABLE
@@ -8001,7 +8015,7 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
     for table_id in queued {
         session
             .node()
-            .domain
+            .domain()
             .historical_stats_worker
             .dump_historical_stats(
                 table_id,
@@ -12589,7 +12603,7 @@ fn a_pessimistic_batch_point_write_folds_its_read_into_one_lock() {
     // Only this table's row reads and locks count: the session's own system
     // reads (statistics, catalog) share the store.
     fn is_row_of(table_id: i64, key: &[u8]) -> bool {
-        tidb_tablecodec::table_key::decode_record_key(key).is_ok_and(|(table, _)| table == table_id)
+        tidb_tablecodec::table_key::decode_record_key(logical_rpc_key(key)).is_ok_and(|(table, _)| table == table_id)
     }
     let sent: Arc<std::sync::Mutex<Vec<&'static str>>> = Arc::default();
     let recorded = Arc::clone(&sent);
@@ -18932,7 +18946,7 @@ fn failed_stats_cache_update_fails_the_analyze_statement() {
     rows(&mut session, "INSERT INTO analyze_update_b VALUES (3)");
     let updated = Arc::new(std::sync::Mutex::new(Vec::new()));
     let analyze = Arc::new(FailingStatsCacheUpdate {
-        inner: crate::domain::cluster_session_node::node_services(&session.node().domain).analyze(),
+        inner: crate::domain::cluster_session_node::node_services(session.node().domain()).analyze(),
         updated: Arc::clone(&updated),
     });
     session.node_conn().set_analyzer(&stack.factory, analyze);
@@ -29151,10 +29165,10 @@ fn a_statements_requests_carry_its_label_as_their_source() {
         if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::PrewriteRequest>() {
             let source = request.context.as_ref().map(|context| context.request_source.clone()).unwrap_or_default();
             // Go's `NextGlobalID` meta key, memcomparable-encoded.
-            if request.mutations.iter().any(|mutation| mutation.key.starts_with(b"mNextGlob")) {
+            if request.mutations.iter().any(|mutation| logical_rpc_key(&mutation.key).starts_with(b"mNextGlob")) {
                 recorded_submission.lock().unwrap().push(source.clone());
             }
-            if request.mutations.iter().any(|mutation| mutation.key.starts_with(&reorg_table)) {
+            if request.mutations.iter().any(|mutation| logical_rpc_key(&mutation.key).starts_with(&reorg_table)) {
                 recorded_reorg.lock().unwrap().push(source.clone());
             }
             recorded.lock().unwrap().push(source);
@@ -29550,13 +29564,15 @@ fn the_stack_arms_the_set_global_hooks_like_gos_domain() {
 /// commit. Captured from a Go tidb-server over the wire:
 /// `explain analyze update t set b=b+1 where id=2` reports `RU:3.94`,
 /// `insert into t values (9,90,9)` `RU:3.54` and `delete from t where id=9`
-/// `RU:3.99`, every run.
+/// `RU:3.99`, every run. Fresh nextgen Go capture:
+/// `zzprobe/o15_named_sql.TestNamedRequestUnits` with optimistic transactions.
 #[test]
 fn an_analyzed_autocommit_write_renders_after_its_commit_like_go() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1150)).unwrap();
     for sql in [
         "USE test",
+        "SET tidb_txn_mode = optimistic",
         "create table t (id int primary key, uk int, b int, unique key(uk))",
         "insert into t values (1,10,0),(2,20,0),(3,30,0)",
     ] {

@@ -10,6 +10,31 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+tidb-azure-sdk = { path = "../tidb-azure-sdk" }
+tidb-oss-sdk = { path = "../tidb-oss-sdk" }
+http = "1"
+hmac = "0.12"
+sha1 = "0.10"
+base64 = "0.22"
+tidb-aws-sdk = { path = "../tidb-aws-sdk" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+opendal = { version = "=0.55.0", features = ["services-s3", "services-azblob", "services-gcs", "services-oss"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+reqwest.workspace = true
+reqwest12 = { package = "reqwest", version = "0.12.24", default-features = false, features = ["rustls-tls"] }
+reqsign = { version = "0.16.5", default-features = false, features = ["services-aws", "services-azblob", "services-google", "services-aliyun", "reqwest_request"] }
+async-trait.workspace = true
+anyhow = "1"
+serde.workspace = true
+serde_json.workspace = true
+quick-xml = { version = "0.38", features = ["serialize"] }
+url = "2"
+percent-encoding = "2"
+uuid = { version = "1", features = ["v4"] }
+tidb-keyspace = { path = "../tidb-keyspace" }
+tidb-vardef = { path = "../tidb-vardef" }
+tidb-ast = { path = "../tidb-ast" }
+chrono.workspace = true
 tidb-config = { path = "../tidb-config" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-replayer = { path = "../tidb-replayer" }

@@ -59,6 +59,8 @@ mod region_routes;
 pub mod upgrade_handler;
 pub mod tikv_handler;
 mod extractor_handler;
+mod dxf_handler;
+mod ddl_check_handler;
 pub mod main_flags;
 mod mysql_connection;
 pub mod node_flags;

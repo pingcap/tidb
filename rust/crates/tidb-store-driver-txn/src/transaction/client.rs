@@ -888,10 +888,27 @@ impl<S: PdClient> TikvTxn<S> {
         let rows = result?;
         // A region split or lock retry can replace a page. Associate each
         // final row with a successful response that actually supplied it.
+        // Go `codecV2.DecodeResponse`: RPC interception precedes the codec,
+        // while `scanner` returns logical keys and region bounds to TiDB.
+        let codec = match self.store.store().keyspace() {
+            tikv_client::request::Keyspace::Enable { keyspace_id } => Some(
+                tikv_client::request::ApiV2Codec::new(tikv_client::request::KeyMode::Txn, keyspace_id)
+                    .map_err(Self::read_error)?
+            ),
+            _ => None,
+        };
         let mut served = std::collections::BTreeMap::new();
         for page in pages {
+            let end_key = match &codec {
+                Some(codec) => codec.decode_range(&[], &page.end_key).map_err(Self::read_error)?.1,
+                None => page.end_key,
+            };
             for (key, value) in page.pairs {
-                served.insert(key, (value, page.region.clone(), page.end_key.clone()));
+                let key = match &codec {
+                    Some(codec) => codec.decode_key(&key).map_err(Self::read_error)?,
+                    None => key,
+                };
+                served.insert(key, (value, page.region.clone(), end_key.clone()));
             }
         }
         let mut regions: Vec<SnapshotScanRegion> = Vec::new();

@@ -176,6 +176,9 @@ pub static ENABLE_FAST_REORG: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_EN
 /// target scope of the tasks this instance submits.
 pub static SERVICE_SCOPE: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
 
+/// Go `vardef.CloudStorageURI`. SQL getters redact this value.
+pub static CLOUD_STORAGE_URI: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
 /// Go `vardef.ServiceScope.Load()`.
 #[must_use]
 pub fn service_scope() -> String {

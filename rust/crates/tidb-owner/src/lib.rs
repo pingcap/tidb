@@ -81,6 +81,7 @@ impl std::fmt::Display for OpType {
 pub struct Context {
     canceled: Arc<AtomicBool>,
     deadline: Option<Instant>,
+    parent: Option<tidb_gocontext::Context>,
 }
 
 impl Context {
@@ -102,6 +103,15 @@ impl Context {
         Self {
             canceled: Arc::new(AtomicBool::new(false)),
             deadline: Some(Instant::now() + timeout),
+            parent: None,
+        }
+    }
+
+    /// Go `context.Context`: retains caller cancellation and deadlines.
+    pub fn from_go_context(parent: &tidb_gocontext::Context) -> Self {
+        Self {
+            parent: Some(parent.clone()),
+            ..Self::default()
         }
     }
 
@@ -110,8 +120,24 @@ impl Context {
         self.canceled.store(true, Ordering::Release);
     }
 
+    /// Go `context.Context.Err`, preserving the caller's cancellation reason.
+    fn error(&self) -> Option<String> {
+        if let Some(error) = self.parent.as_ref().and_then(tidb_gocontext::Context::err) {
+            return Some(error.to_string());
+        }
+        if self.canceled.load(Ordering::Acquire) {
+            return Some("context canceled".into());
+        }
+        self.deadline
+            .filter(|deadline| Instant::now() >= *deadline)
+            .map(|_| "context deadline exceeded".into())
+    }
+
     fn is_done(&self) -> bool {
-        self.canceled.load(Ordering::Acquire)
+        self.parent
+            .as_ref()
+            .is_some_and(|parent| parent.err().is_some())
+            || self.canceled.load(Ordering::Acquire)
             || self
                 .deadline
                 .is_some_and(|deadline| Instant::now() >= deadline)
@@ -714,8 +740,8 @@ fn get_owner_info(
 ) -> Result<(EtcdKeyValue, i64), String> {
     let mut last_error = String::new();
     for attempt in 0..3 {
-        if context.is_done() {
-            return Err("context canceled".to_owned());
+        if let Some(error) = context.error() {
+            return Err(error);
         }
         // Go's `getOwnerInfo` returns `resp.Header.Revision` beside the key
         // metadata; the campaign watch starts from that revision + 1.
@@ -1003,4 +1029,28 @@ fn sleep_until_stopped(stop: &AtomicBool, duration: Duration) -> bool {
         );
     }
     stop.load(Ordering::Acquire)
+}
+
+#[cfg(test)]
+mod go_context_tests {
+    /// Go capture `zzprobe/o15_context.TestOwnerContextCancellation`:
+    /// context passed to owner retains cancellation occurring after conversion.
+    #[test]
+    fn test_owner_context_cancellation() {
+        let (parent, cancel) =
+            tidb_gocontext::Context::with_cancel(&tidb_gocontext::Context::background());
+        let context = super::Context::from_go_context(&parent);
+        assert!(!context.is_done());
+        cancel.cancel();
+        assert!(context.is_done());
+        assert_eq!(context.error().as_deref(), Some("context canceled"));
+        let (parent, _cancel) = tidb_gocontext::Context::with_timeout(
+            &tidb_gocontext::Context::background(),
+            std::time::Duration::ZERO,
+        );
+        assert_eq!(
+            super::Context::from_go_context(&parent).error().as_deref(),
+            Some("context deadline exceeded")
+        );
+    }
 }

@@ -275,13 +275,16 @@ fn is_zero_i64(v: &isize) -> bool {
 
 /// Go `TaskBase`: the basic information of a task, split out so that the
 /// possibly very large task meta need not be loaded into memory.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct TaskBase {
     /// Task ID.
+    #[serde(rename = "ID")]
     pub id: i64,
     /// Task key, unique across tasks.
     pub key: String,
     /// Task type.
+    #[serde(rename = "Type")]
     pub tp: TaskType,
     /// Task state.
     pub state: TaskState,
@@ -306,6 +309,7 @@ pub struct TaskBase {
     /// and fall back to the `""` scope.
     pub target_scope: String,
     /// Creation time.
+    #[serde(serialize_with = "crate::schstatus::serialize_go_time")]
     pub create_time: DateTime<FixedOffset>,
     /// The max node count of the task.
     pub max_node_count: isize,

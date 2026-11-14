@@ -15,6 +15,10 @@ workspace = true
 failpoints = ["dep:tidb-failpoint", "tidb-failpoint/failpoints"]
 
 [dependencies]
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-model = { path = "../tidb-model" }
+tidb-meta = { path = "../tidb-meta" }
+tidb-owner = { path = "../tidb-owner" }
 crossbeam-channel = "0.5"
 tidb-failpoint = { path = "../tidb-failpoint", optional = true }
 serde_json.workspace = true

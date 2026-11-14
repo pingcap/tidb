@@ -463,9 +463,17 @@ impl Syncer {
         };
         if let Some(lease) = self.session_lease() {
             let _ = self.endpoint_claim.remove(etcd.as_ref(), lease);
-            let _ = etcd.lease_revoke(lease);
         }
         let _ = etcd.delete(&self.server_info_path);
+    }
+
+    /// Go `Syncer.RevokeSession`: stop renewal and revoke the server-info lease.
+    /// Call after stopping the server-info loop, which can otherwise restart it.
+    pub fn revoke_session(&self) {
+        let Some(etcd) = self.etcd.as_ref() else { return; };
+        if let Some(lease) = self.session_lease() {
+            let _ = etcd.lease_revoke(lease);
+        }
     }
 
     /// The topology session's lease, once one is held.
@@ -799,6 +807,24 @@ impl SyncerRunner {
         })
     }
 
+    /// Go `SessionManager` starts `ServerInfoSyncLoop` after registration and
+    /// schema initialization. A virtual server does not publish topology.
+    pub fn start_cross_ks(syncer: Arc<Syncer>, intervals: SyncIntervals) -> Result<Self, String> {
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let keepalive_syncer = syncer.clone();
+        let keepalive_stop = stop.clone();
+        let thread = std::thread::Builder::new()
+            .name("cross-ks-server-info-syncer".to_owned())
+            .spawn(move || {
+                while !sleep_until_stopped(&keepalive_stop, intervals.keep_alive) {
+                    if keepalive_syncer.keep_alive_once().is_err() {
+                        let _ = keepalive_syncer.restart();
+                    }
+                }
+            }).map_err(|error|error.to_string())?;
+        Ok(Self { syncer, stop, threads: vec![thread] })
+    }
+
     /// Installs Go's thirty-second ReportMinStartTS leg after session owners exist.
     /// The closure snapshots owners before asking storage for its current version.
     pub fn start_min_start_ts_reporter(
@@ -837,7 +863,10 @@ impl Drop for SyncerRunner {
         }
         self.syncer.remove_min_start_ts();
         self.syncer.remove_server_info();
-        self.syncer.remove_topology_info();
+        self.syncer.revoke_session();
+        if self.syncer.topology_session_lease().is_some() {
+            self.syncer.remove_topology_info();
+        }
     }
 }
 
@@ -1146,6 +1175,8 @@ mod tests {
 
         syncer.remove_server_info();
         assert!(etcd.value("/tidb/server/info/uuid-1").is_none());
+        assert!(etcd.revoked.lock().unwrap().is_empty());
+        syncer.revoke_session();
         assert_eq!(etcd.revoked.lock().unwrap().as_slice(), &[first]);
 
         syncer.restart().unwrap();
@@ -1425,6 +1456,29 @@ mod tests {
             ])),
             "dc=one,rack=r2,zone=east"
         );
+    }
+
+    /// Go capture `zzprobe/o15_serverinfo.TestCrossKSRemoveAndRevoke` and
+    /// `crossks.TestManager`'s "close removes virtual server info" assertion.
+    #[test]
+    fn test_cross_ks_remove_and_revoke() {
+        let etcd=Arc::new(FakeEtcd::default());
+        let syncer=Arc::new(Syncer::new_cross_ks_syncer(info_at("virtual", "10.0.0.1",4000),Some(etcd.clone()),"target"));
+        syncer.new_session_and_store_server_info().unwrap();
+        let lease=syncer.session_lease().unwrap();
+        assert!(etcd.value("/tidb/server/info/virtual").is_some());
+        syncer.remove_server_info();
+        assert!(etcd.value("/tidb/server/info/virtual").is_none());
+        assert!(etcd.revoked.lock().unwrap().is_empty());
+        syncer.revoke_session();
+        assert_eq!(*etcd.revoked.lock().unwrap(),vec![lease]);
+        syncer.restart().unwrap();
+        let current=syncer.session_lease().unwrap();
+        let runner=SyncerRunner::start_cross_ks(syncer.clone(),SyncIntervals::default()).unwrap();
+        assert!(syncer.topology_session_lease().is_none());
+        drop(runner);
+        assert!(etcd.value("/tidb/server/info/virtual").is_none());
+        assert_eq!(*etcd.revoked.lock().unwrap(),vec![lease,current]);
     }
 
     /// Go's `etcdCli == nil` deployment: nothing is published, and the
