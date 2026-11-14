@@ -7927,6 +7927,7 @@ dependencies = [
  "tidb-sqlexec",
  "tidb-sqlexec-mock",
  "tidb-stats-handle-logutil",
+ "tidb-stats-handle-metrics",
  "tidb-stats-handle-util",
  "tidb-syssession",
  "tidb-vardef",

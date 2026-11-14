@@ -16,6 +16,7 @@ tidb-logutil = { path = "../tidb-logutil" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
 chrono.workspace = true
 prometheus = { version = "0.14", default-features = false }
+tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-log = { path = "../tidb-log" }
 tidb-resolve = { path = "../tidb-resolve" }

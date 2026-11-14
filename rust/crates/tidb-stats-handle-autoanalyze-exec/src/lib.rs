@@ -21,7 +21,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::Instant;
 
 use chrono::{DateTime, FixedOffset};
-use prometheus::{exponential_buckets, CounterVec, Histogram, HistogramOpts, Opts};
+use prometheus::{CounterVec, Opts};
 use tidb_datatype::Datum;
 use tidb_log::{Field, Value};
 use tidb_resolve::ResultFieldRef;
@@ -34,25 +34,6 @@ use tidb_stats_handle_util::{AutoAnalyzeProcIdGenerator, AutoAnalyzeTracker, STA
 use tidb_sqlescape::SqlArg;
 
 const FULL_DAY_TIME_FORMAT: &str = "%H:%M %z";
-
-static AUTO_ANALYZE_HISTOGRAM: LazyLock<Histogram> = LazyLock::new(|| {
-    let histogram = Histogram::with_opts(
-        HistogramOpts::new(
-            "tidb_statistics_auto_analyze_duration_seconds",
-            "Bucketed histogram of processing time (s) of auto analyze.",
-        )
-        .buckets(exponential_buckets(0.01, 2.0, 24).expect("valid auto-analyze buckets")),
-    )
-    .expect("valid auto-analyze histogram");
-    // `tidb-stats-handle-metrics` registers a histogram of the same name
-    // when it initialises first; this one then stays unexported instead of
-    // panicking the auto-analyze worker.
-    match prometheus::default_registry().register(Box::new(histogram.clone())) {
-        Ok(()) | Err(prometheus::Error::AlreadyReg) => {}
-        Err(error) => panic!("register auto-analyze histogram: {error}"),
-    }
-    histogram
-});
 
 static AUTO_ANALYZE_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
     let counter = CounterVec::new(
@@ -218,7 +199,9 @@ pub fn auto_analyze<C: AutoAnalyzeSessionContext + ?Sized>(
         arguments,
     );
     let elapsed = start.elapsed();
-    AUTO_ANALYZE_HISTOGRAM.observe(elapsed.as_secs_f64());
+    // Go `metrics.AutoAnalyzeHistogram`: the one histogram the stats
+    // metrics register.
+    tidb_stats_handle_metrics::AUTO_ANALYZE_HISTOGRAM.observe(elapsed.as_secs_f64());
     match result {
         Ok(_) => {
             AUTO_ANALYZE_COUNTER.with_label_values(&["succ"]).inc();
