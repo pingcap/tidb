@@ -1,0 +1,46 @@
+[package]
+name = "tidb-ddl-ingest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/ddl/ingest: DDL local ingest resources and checkpoints"
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ddl-logutil = { path = "../tidb-ddl-logutil" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tikv-client.workspace = true
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-pd-client = { path = "../tidb-pd-client" }
+nix.workspace = true
+tidb-memory = { path = "../tidb-memory" }
+tidb-log = { path = "../tidb-log" }
+hex = "0.4"
+tidb-ingestor-ingestctrl = { path = "../tidb-ingestor-ingestctrl" }
+tidb-ddl-build = { path = "../tidb-ddl-build" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-goruntime = { path = "../tidb-goruntime" }
+tidb-model = { path = "../tidb-model" }
+uuid = { version = "1", features = ["v5"] }
+
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+tidb-config = { path = "../tidb-config" }
+tidb-dbterror = { path = "../tidb-dbterror" }
+tidb-terror = { path = "../tidb-terror" }
+tidb-vardef = { path = "../tidb-vardef" }
+tidb-failpoint = { path = "../tidb-failpoint" }
+tidb-lightning-common = { path = "../tidb-lightning-common" }
+
+[dev-dependencies]
+tempfile.workspace = true
+tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }

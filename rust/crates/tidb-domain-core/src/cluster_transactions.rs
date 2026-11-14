@@ -188,6 +188,16 @@ impl CommittedTxnInfo {
 /// implementation is [`RealClusterTransactions`]; the tests drive the same
 /// lifecycle against an in-memory committed store.
 pub trait ClusterTransactions: Send + Sync {
+    /// Go `IngestConcurrencyHandler`'s metadata transaction. `None` reads;
+    /// `Some` persists a value, with retry on the write transaction.
+    fn ingest_parameter(&self, _param: tidb_ingestor_ingestctrl::rate_limiter_param::IngestParam, _value: Option<f64>) -> Result<Option<f64>, String> {
+        Err("ingest parameter metadata is unavailable from this storage owner".into())
+    }
+    /// Go `Domain.initDistTaskLoop`'s `InitializeRateLimiterParam` transaction.
+    fn initialize_ingest_parameters(&self) -> Result<(), String> {
+        Err("ingest parameter metadata is unavailable from this storage owner".into())
+    }
+
     /// A fresh TSO from the store's oracle (Go `GetOracle().GetTimestamp`):
     /// what `NewTxnInStmt` takes for the session transaction a DDL, account or
     /// ANALYZE statement runs under.
@@ -1380,6 +1390,27 @@ where
 
     fn external_timestamp(&self, value: Option<u64>) -> Result<u64, String> {
         self.opener.store().external_timestamp(value)
+    }
+
+    fn ingest_parameter(&self, param: tidb_ingestor_ingestctrl::rate_limiter_param::IngestParam, value: Option<f64>) -> Result<Option<f64>, String> {
+        use tidb_store_driver_txn::meta_txn::{MetaTxnStorage, MetaTxnError};
+        let mut storage = MetaTxnStorage::new(&self.opener, self.timeout);
+        let mut result = None;
+        tidb_txnkv::run_in_new_txn(&tidb_txnkv::RunInNewTxnContext::default(), &mut storage, value.is_some(), |transaction| {
+            let m = tidb_meta::transaction::Mutator::new(&mut *transaction);
+            if let Some(value) = value { param.set(&m, value).map_err(MetaTxnError::from)?; }
+            else { result = param.get(&m).map_err(MetaTxnError::from)?; }
+            Ok(())
+        }).map_err(|error| error.to_string())?;
+        Ok(result)
+    }
+
+    fn initialize_ingest_parameters(&self) -> Result<(), String> {
+        use tidb_store_driver_txn::meta_txn::{MetaTxnStorage, MetaTxnError};
+        let mut storage = MetaTxnStorage::new(&self.opener, self.timeout);
+        tidb_txnkv::run_in_new_txn(&tidb_txnkv::RunInNewTxnContext::default(), &mut storage, true, |transaction| {
+            tidb_ingestor_ingestctrl::rate_limiter_param::initialize_rate_limiter_param(&tidb_meta::transaction::Mutator::new(&mut *transaction)).map_err(MetaTxnError::from)
+        }).map_err(|error| error.to_string())
     }
 
     fn min_safe_ts(&self, txn_scope: &str) -> u64 {

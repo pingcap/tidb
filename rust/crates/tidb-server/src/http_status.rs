@@ -1068,7 +1068,7 @@ fn handle_plan_replayer_capture_file(content: Vec<u8>, routes: &StatusRoutes) ->
 /// Go `handler.WriteData`: `json.MarshalIndent(data, "", " ")`, which is the
 /// value's marshalled text (with Go's string escapes) indented by
 /// `json.Indent`.
-fn write_data(compact: &str) -> String {
+pub(crate) fn write_data(compact: &str) -> String {
     tidb_stringutil::go_json_indent(&tidb_stringutil::go_json_html_escape(compact), "", " ")
 }
 
@@ -1138,6 +1138,8 @@ fn route_response(
         (200, "text/plain; version=0.0.4", body)
     } else if route == "/tiflash/replica" {
         flash_replica_summary_response(path, request, routes)
+    } else if let Some(answer) = crate::ingest_handler::ingest_response(path, request, routes.transactions.as_deref()) {
+        answer
     } else if route == "/txn-gc-states" {
         txn_gc_states_response(request, routes.transactions.as_deref())
     } else if let Some(answer) = settings_response(path, request, routes.settings.as_ref()) {

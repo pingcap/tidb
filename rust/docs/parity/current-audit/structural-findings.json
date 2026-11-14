@@ -19,8 +19,8 @@
       "id": "D02",
       "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "No ingest (fast-reorg) backfill: it falls back to the transactional merge (`tidb-ddl/src/cluster_ddl/add_index.rs`); with it the status port's `/ingest/*` routes (Go `IngestConcurrencyHandler` over `ingestctrl`'s rate-limit parameters) are absent, and so is the DXF add-index task's `autoPauseAddIndexJobOnKVDiskFull`, the one producer of the system pause a multi-schema change promotes (`promote_proxy_kv_disk_full_pause`); the DXF backfill executor's Top SQL attach (`attachTopProfilingInfo` in `backfilling_dist_executor.go`) goes with it",
-      "rust_evidence": "`rust/crates/tidb-ddl/src/cluster_ddl/add_index.rs`",
+      "finding": "The ingest (fast-reorg) backfill runs: `ddl.Start` initializes Go's ingest environment (`InitGlobalLightningEnv` on TiKV, `CleanUpTempDirLoop`), ADD INDEX picks `ReorgType::INGEST` and, under `tidb_enable_dist_task`, Go's DXF backfill task (`tidb-ddl` `real_tikv_ddl/backfilling_dist.rs`, `backfilling_dist_{executor,scheduler}.rs`), whose local backend (`tidb-ddl-ingest`, `tidb-ingestor-ingestctrl`) sorts on disk and imports through TiKV's ImportSST, then merges the temporary index as its own DXF step and checks a unique index's remote duplicates; `autoPauseAddIndexJobOnKVDiskFull` (`tidb-ddl` `index.rs`), the status port's `/ingest/*` routes (`tidb-server` `ingest_handler.rs`) and the backfill executor's Top SQL attach are Go's; the testkit's mock store runs `InitDistTaskLoop` as Go's `BootstrapSession` does. A live TiKV ADD INDEX / UNIQUE INDEX / duplicate case answers as Go's (job comment `ingest, DXF, max_node_count=3`, Go's 1062 text). Left: Go's dynamic resource and task-parameter changes, the local backend's region split/scatter and retry coverage against Go's `ingestctrl` tests, global sort, and the remaining `pkg/ddl/ingest` / realtikv test inventory",
+      "rust_evidence": "`rust/crates/tidb-ddl/src/real_tikv_ddl/backfilling_dist.rs`, `rust/crates/tidb-ingestor-ingestctrl`",
       "go_owner": "`pkg/ddl/backfilling*.go`, `pkg/ddl/ingest`"
     },
     {

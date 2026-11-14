@@ -24,3 +24,5 @@ mod check_constraint_write_source;
 mod serial_column_flags_and_limits_source;
 mod serial_db_integration_config_source;
 mod serial_multi_schema_change_config_source;
+
+mod serial_ddl_ingest_source;

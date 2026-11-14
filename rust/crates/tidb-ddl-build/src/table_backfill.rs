@@ -799,3 +799,46 @@ impl KvTableBackfill for TableCommon {
 pub fn index_backfill_error(error: KvTableError) -> tidb_terror::MysqlError {
     error.into_mysql_error()
 }
+
+/// Go `common.KvPair` from `writeOneKV`, grouped by its target index.
+pub struct IndexKV {
+    /// Go `index.Meta().ID`.
+    pub index_id:i64,
+    /// Go `KvPair.Key`.
+    pub key:Vec<u8>,
+    /// Go `KvPair.Val`.
+    pub value:Vec<u8>,
+    /// Go `KvPair.RowID`, the encoded table handle.
+    pub row_id:Vec<u8>,
+}
+/// Go `IndexRecordChunk` and `IndexWriteResult` at the local ingest boundary.
+pub struct IngestBatch {
+    /// Go row count, end key and decode warnings.
+    pub batch:ReorgBatch,
+    /// Encoded index entries, without transactional locks or writes.
+    pub entries:Vec<IndexKV>,
+}
+/// Go `tableScanWorker.scanRecords` and `writeChunk` using the same row decoder
+/// and index codecs as table writes. Callers hold one read snapshot per task.
+pub fn write_chunk(
+    table:&mut TableCommon,
+    store:&mut dyn tidb_kv::storage::TableStorage,
+    index_ids:&[i64],physical_id:i64,start:&[u8],end:&[u8],batch_count:usize,
+    decode_context:&RowDecodeContext,
+)->Result<IngestBatch,KvTableError>{
+    let (rows,mut batch)=table.fetch_reorg_rows(store,start,end,batch_count,decode_context)?;
+    let zone=decode_context.zone();
+    let indexes=index_ids.iter().map(|id|table.indexes().iter().find(|i|i.read().id==*id).cloned().ok_or_else(||KvTableError::Decode(format!("index {id} is not on the table")))).collect::<Result<Vec<_>,_>>()?;
+    let mut entries=Vec::new();
+    for (_,handle,row) in &rows {
+        let row_id=match handle{TableHandle::Int(value)=>{let mut bytes=Vec::new();tidb_codec::encode_int(&mut bytes,*value);bytes},TableHandle::Common(bytes)=>bytes.clone()};
+        for index in &indexes {
+            for entry in table.index_entry_keys(index,row,handle,physical_id,zone)? {
+                let value=table.gen_index_value(index,&entry.values,row,handle,entry.distinct,physical_id,zone)?;
+                entries.push(IndexKV{index_id:index.read().id,key:entry.key,value,row_id:row_id.clone()});
+            }
+        }
+        batch.added+=1;batch.scanned+=1;
+    }
+    Ok(IngestBatch{batch,entries})
+}

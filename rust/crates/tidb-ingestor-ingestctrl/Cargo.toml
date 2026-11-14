@@ -1,0 +1,36 @@
+[package]
+name = "tidb-ingestor-ingestctrl"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/ingestor/ingestctrl: local engines and TiKV ingest control"
+
+[lints]
+workspace = true
+
+[dependencies]
+tikv-client.workspace = true
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-extsort = { path = "../tidb-extsort" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-proto = { path = "../tidb-proto" }
+tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-failpoint = { path = "../tidb-failpoint" }
+tidb-ingestor-errdef = { path = "../tidb-ingestor-errdef" }
+tidb-terror = { path = "../tidb-terror" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tonic.workspace = true
+uuid = { version = "1", features = ["v4", "v5"] }
+
+crossbeam-channel = "0.5"
+tidb-meta = { path = "../tidb-meta" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+
+[dev-dependencies]
+tempfile.workspace = true
+tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }

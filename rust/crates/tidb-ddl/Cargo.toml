@@ -12,6 +12,18 @@ description = "Go pkg/ddl's worker side: the owner-stepped DDL job scheduler, th
 workspace = true
 
 [dependencies]
+tidb-ddl-ingest = { path = "../tidb-ddl-ingest" }
+tidb-ingestor-ingestctrl = { path = "../tidb-ingestor-ingestctrl" }
+tidb-ingestor-errdef = { path = "../tidb-ingestor-errdef" }
+tidb-lightning-common = { path = "../tidb-lightning-common" }
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-dxf-execute = { path = "../tidb-dxf-execute" }
+tidb-dxf-taskexecutor = { path = "../tidb-dxf-taskexecutor" }
+tidb-dxf-scheduler = { path = "../tidb-dxf-scheduler" }
+tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+tidb-dxf-handle = { path = "../tidb-dxf-handle" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+
 hex = "0.4"
 crossbeam-channel = "0.5"
 tidb-cpuprofile = { path = "../tidb-cpuprofile" }
@@ -57,6 +69,8 @@ tidb-infoschema-isvalidator = { path = "../tidb-infoschema-isvalidator" }
 tidb-metrics = { path = "../tidb-metrics" }
 tikv-client.workspace = true
 serde_json.workspace = true
+serde.workspace = true
+base64.workspace = true
 tidb-ast = { path = "../tidb-ast" }
 tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }

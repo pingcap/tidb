@@ -3173,6 +3173,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4058,11 +4064,13 @@ dependencies = [
 name = "tidb-ddl"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "chrono-tz",
  "crossbeam-channel",
  "hex",
  "reqwest 0.13.4",
+ "serde",
  "serde_json",
  "tidb-ast",
  "tidb-autoid",
@@ -4077,6 +4085,7 @@ dependencies = [
  "tidb-dbterror",
  "tidb-ddl-bdr",
  "tidb-ddl-build",
+ "tidb-ddl-ingest",
  "tidb-ddl-jobsubmit",
  "tidb-ddl-label",
  "tidb-ddl-logutil",
@@ -4089,6 +4098,12 @@ dependencies = [
  "tidb-domain-infosync",
  "tidb-domain-serverinfo",
  "tidb-domainutil",
+ "tidb-dxf",
+ "tidb-dxf-execute",
+ "tidb-dxf-handle",
+ "tidb-dxf-scheduler",
+ "tidb-dxf-storage",
+ "tidb-dxf-taskexecutor",
  "tidb-errno",
  "tidb-executor",
  "tidb-exeerrors",
@@ -4098,13 +4113,17 @@ dependencies = [
  "tidb-filter",
  "tidb-gcutil",
  "tidb-go-time-layout",
+ "tidb-gocontext",
  "tidb-goruntime",
  "tidb-hack",
  "tidb-infoschema",
  "tidb-infoschema-issyncer",
  "tidb-infoschema-isvalidator",
+ "tidb-ingestor-errdef",
+ "tidb-ingestor-ingestctrl",
  "tidb-keyspace",
  "tidb-kv",
+ "tidb-lightning-common",
  "tidb-log",
  "tidb-logutil",
  "tidb-meta",
@@ -4225,6 +4244,41 @@ dependencies = [
  "tidb-exprctx",
  "tidb-model",
  "tidb-mysql",
+]
+
+[[package]]
+name = "tidb-ddl-ingest"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "hex",
+ "nix 0.31.3",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tidb-config",
+ "tidb-datatype",
+ "tidb-dbterror",
+ "tidb-ddl-build",
+ "tidb-ddl-logutil",
+ "tidb-failpoint",
+ "tidb-gocontext",
+ "tidb-goruntime",
+ "tidb-ingestor-ingestctrl",
+ "tidb-kv",
+ "tidb-lightning-common",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-memory",
+ "tidb-model",
+ "tidb-pd-client",
+ "tidb-store-driver-txn",
+ "tidb-tablecodec",
+ "tidb-terror",
+ "tidb-txnkv",
+ "tidb-vardef",
+ "tikv-client",
+ "uuid",
 ]
 
 [[package]]
@@ -4524,6 +4578,7 @@ dependencies = [
  "tidb-infoschema-issyncer",
  "tidb-infoschema-isvalidator",
  "tidb-infoschema-perfschema",
+ "tidb-ingestor-ingestctrl",
  "tidb-intest",
  "tidb-kv",
  "tidb-lightning-common",
@@ -5869,6 +5924,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-ingestor-ingestctrl"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tidb-codec",
+ "tidb-extsort",
+ "tidb-failpoint",
+ "tidb-gocontext",
+ "tidb-ingestor-errdef",
+ "tidb-meta",
+ "tidb-pd-client",
+ "tidb-proto",
+ "tidb-terror",
+ "tidb-txnkv",
+ "tikv-client",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "uuid",
+]
+
+[[package]]
 name = "tidb-intest"
 version = "0.0.0"
 
@@ -5952,6 +6032,11 @@ version = "0.0.0"
 dependencies = [
  "rustix 1.1.4",
  "tempfile",
+ "tidb-errno",
+ "tidb-gocontext",
+ "tidb-ingestor-errdef",
+ "tidb-terror",
+ "tonic",
 ]
 
 [[package]]
@@ -7300,6 +7385,7 @@ dependencies = [
  "tidb-hack",
  "tidb-infoschema",
  "tidb-infoschema-issyncer",
+ "tidb-ingestor-ingestctrl",
  "tidb-keyspace",
  "tidb-kv",
  "tidb-log",
@@ -7463,6 +7549,7 @@ dependencies = [
  "sha2",
  "signal-hook",
  "subtle",
+ "tempfile",
  "tidb-ast",
  "tidb-autoid",
  "tidb-bindinfo",
@@ -7482,6 +7569,7 @@ dependencies = [
  "tidb-dbterror",
  "tidb-ddl",
  "tidb-ddl-build",
+ "tidb-ddl-ingest",
  "tidb-ddl-jobsubmit",
  "tidb-ddl-notifier",
  "tidb-ddl-resourcegroup",
@@ -9809,7 +9897,9 @@ version = "1.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a0e2d11620c50695fe12bbbfde96b3477fe606e7284c22d505c12ce51214514"
 dependencies = [
+ "getrandom 0.4.3",
  "js-sys",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 

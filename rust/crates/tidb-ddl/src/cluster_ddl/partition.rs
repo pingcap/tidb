@@ -602,7 +602,7 @@ fn clean_global_index_entries_from_dropped_partitions(
         Some(ReorgResult::Failed { code, message, .. }) => {
             Err(checked_refusal(*code, message.clone()))
         }
-        Some(ReorgResult::Checked(_)) => Err(DdlPlanError::Encode(
+        Some(ReorgResult::Checked(_) | ReorgResult::AutoPaused { .. }) => Err(DdlPlanError::Encode(
             "a global-index cleanup got a check's outcome".to_owned(),
         )),
     }

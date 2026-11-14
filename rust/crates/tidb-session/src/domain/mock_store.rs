@@ -42,6 +42,9 @@ pub struct MockStoreDomain {
     users: Arc<ConfiguredUserStore>,
     /// Go testkit's `testKitIDGenerator`.
     next_connection_id: AtomicU64,
+    /// Go `BootstrapSession`'s last step, `dom.InitDistTaskLoop()`, which
+    /// testkit's `CreateMockStore` runs too; it stops with the domain.
+    _dist_task_loop: tidb_domain_core::domain::dist_task::DistTaskLoop,
 }
 
 impl MockStoreDomain {
@@ -108,11 +111,13 @@ impl MockStoreDomain {
         let stack =
             unistore_cluster_session_stack_from(&config, &users, None, None, Some(&image), mock_tiflash)
             .map_err(|error| format!("unistore stack: {error:?}"))?;
+        let dist_task_loop = stack.factory.init_dist_task_loop()?;
         let domain = Arc::new(Self {
             stack,
             #[cfg(test)]
             users: Arc::clone(&users),
             next_connection_id: AtomicU64::new(1),
+            _dist_task_loop: dist_task_loop,
         });
         remember_accounts_domain(&domain);
         Ok(domain)

@@ -314,6 +314,8 @@ members = [
     "crates/tidb-keydecoder",
     "crates/tidb-keyspace",
     "crates/tidb-ddl",
+    "crates/tidb-ddl-ingest",
+    "crates/tidb-ingestor-ingestctrl",
     "crates/tidb-ddl-jobsubmit",
     "crates/tidb-ddl-systable",
     "crates/tidb-stmtsummary",

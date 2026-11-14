@@ -19,3 +19,6 @@
 mod storage;
 
 pub use storage::{get_storage_size, same_disk, StorageSize};
+
+mod retry;
+pub use retry::{is_retryable_error, WriteTooSlow};

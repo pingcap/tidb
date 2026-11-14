@@ -38,6 +38,8 @@
 //! [`RealClusterDdl`].
 
 mod cluster_bdr;
+/// Go `pkg/ddl/index.go` distributed-task control.
+pub mod index;
 pub mod stat;
 pub mod ddl_history;
 pub mod cluster_ddl;
@@ -123,3 +125,8 @@ pub(crate) fn isolate_process_globals() -> bool {
     );
     true
 }
+
+/// Go distributed backfill task metadata and executor.
+pub mod backfilling_dist_executor;
+/// Go distributed backfill scheduler.
+pub mod backfilling_dist_scheduler;

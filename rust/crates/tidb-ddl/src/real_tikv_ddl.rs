@@ -51,7 +51,7 @@ use tidb_ddl_systable::ddl_job_table::DdlJobTable;
 use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_infoschema_issyncer::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 
-mod add_index_reorg;
+pub(crate) mod add_index_reorg;
 mod backfilling;
 pub mod delete_range;
 
@@ -519,6 +519,17 @@ pub enum AddIndexReorgWork<'a> {
         /// Go `backfillCtx.batchCnt`: the rows of one batch.
         batch_size: usize,
     },
+    /// Go `tableScanWorker.scanRecords` and `indexIngestWorker.WriteChunk`.
+    Ingest {
+        /// The physical table.
+        physical_id: i64,
+        /// The scan range's first key.
+        start: &'a [u8],
+        /// The scan range's exclusive end.
+        end: &'a [u8],
+        /// The number of rows to decode.
+        batch_size: usize,
+    },
     /// Go `updateColumnWorker.BackfillData` over the rows in
     /// `[start, end)` (the reorganization's `column`).
     UpdateColumn {
@@ -588,6 +599,8 @@ pub enum AddIndexReorgAnswer {
     Range(Option<(Vec<u8>, Vec<u8>)>),
     /// What a batch did.
     Batch(tidb_ddl_build::backfilling::ReorgBatch),
+    /// Go `IndexRecordChunk` encoded by `writeChunk`, with no transaction mutations.
+    Ingest(tidb_ddl_build::table_backfill::IngestBatch),
     /// What a column check found: `None` when every row fits.
     Checked(Option<LockSqlError>),
     /// A task's actual end key.

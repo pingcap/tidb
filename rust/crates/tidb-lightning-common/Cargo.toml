@@ -11,6 +11,11 @@ description = "Go pkg/lightning/common: Lightning's shared helpers (the storage 
 workspace = true
 
 [dependencies]
+tonic.workspace = true
+tidb-terror = { path = "../tidb-terror" }
+tidb-errno = { path = "../tidb-errno" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-ingestor-errdef = { path = "../tidb-ingestor-errdef" }
 rustix = { workspace = true, features = ["fs"] }
 
 [dev-dependencies]

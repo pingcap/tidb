@@ -31,6 +31,11 @@ use crate::cluster_ddl::add_index::{
 };
 use super::backfilling::{write_physical_table_record, BackfillExecutor, BatchStep, TableRecordOutcome};
 
+#[path = "backfilling_ingest.rs"]
+mod ingest;
+#[path = "backfilling_dist.rs"]
+pub(crate) mod dist;
+
 /// Runs what `reorg` asks for and answers its outcome. A storage or owner
 /// failure is the caller's error; a SQL failure of the reorganization itself
 /// (a duplicate entry, a bad value) is the outcome Go's
@@ -480,6 +485,29 @@ fn run_reorg<S>(
 where
     S: StoreClient,
 {
+    // Go `addTableIndex`: an ingest job with a distributed reorg runs both
+    // its read step and its temp-index merge as a DXF task; a local ingest
+    // reads through the backend and merges as the transactional path does.
+    let ingest_job = if reorg.column.is_none() && !reorg.clean_up_global_index && reorg.partition_phase.is_none() {
+        latest_job(sess_pool, reorg.job_id)?
+            .map(|job| {
+                reorg
+                    .sub_job
+                    .and_then(|sequence| {
+                        job.multi_schema_info.as_ref().and_then(|multi| {
+                            multi.read().sub_jobs.get(sequence as usize).map(|sub| sub.read().to_proxy_job(&job, sequence as i64))
+                        })
+                    })
+                    .unwrap_or(job)
+            })
+            .filter(|job| job.reorg_meta.as_ref().is_some_and(|meta| meta.read().reorg_type == tidb_model::ReorgType::INGEST))
+    } else {
+        None
+    };
+    if let Some(job) = ingest_job.as_ref().filter(|job| job.reorg_meta.as_ref().is_some_and(|m| m.read().is_dist_reorg)) {
+        return dist::execute_dist_task(opener, timeout, sess_pool, reorg, job, check_owner, step_cancelled);
+    }
+    let ingest_job = ingest_job.filter(|_| !reorg.merging);
     let element_type = reorg_element(reorg).map_or(INDEX_ELEMENT_KEY, |(_, kind)| kind);
     let first_partition = reorg
         .physical_ids
@@ -540,6 +568,15 @@ where
                 continue;
             }
             let handle = current.clone();
+            if let Some(job)=&ingest_job {
+                let pool=backfiller.session_pool().ok_or_else(||ClusterDdlError::Backfill("ingest requires the DDL session pool".into()))?;
+                update_reorg_meta(sess_pool,reorg,&handle);
+                match ingest::add_index_with_local_ingest(opener,timeout,backfiller,pool,reorg,job,&handle,check_owner,step_cancelled,warnings)? {
+                    ReorgResult::Done(rows)=>{total+=rows;continue;},
+                    ReorgResult::Failed{code,message,rows}=>return Ok(ReorgResult::Failed{code,message,rows:total+rows}),
+                    other=>return Ok(other),
+                }
+            }
             let backfill_data = |start: &[u8], end: &[u8], batch_size: usize| {
                 run_batch(
                     opener,

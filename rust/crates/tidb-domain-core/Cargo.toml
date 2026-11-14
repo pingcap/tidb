@@ -12,6 +12,7 @@ description = "TiDB domain: Go pkg/domain's Domain and the cluster services it o
 test-util = []
 
 [dependencies]
+tidb-ingestor-ingestctrl = { path = "../tidb-ingestor-ingestctrl" }
 tidb-ttl-ttlworker = { path = "../tidb-ttl-ttlworker" }
 tidb-dxf-storage = { path = "../tidb-dxf-storage" }
 crossbeam-channel = "0.5"

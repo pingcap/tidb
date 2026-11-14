@@ -523,6 +523,69 @@ fn detect_and_update_job_version_once(
     Ok(())
 }
 
+/// Go `CleanUpTempDirLoop`'s ticker.
+const CLEAN_UP_TEMP_DIR_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Go `ddl.Start`'s ingest tail: `GenIngestTempDataDir`, then
+/// `InitGlobalLightningEnv` and, when it succeeds, `CleanUpTempDirLoop`.
+fn init_ingest_env(
+    session_pool: &Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
+) -> Option<(Sender<()>, JoinHandle<()>)> {
+    let ingest_data_dir = match tidb_ddl_ingest::env::gen_ingest_temp_data_dir() {
+        Ok(dir) => dir,
+        Err(error) => {
+            tidb_ddl_logutil::ddl_ingest_logger().warn(
+                tidb_ddl_ingest::env::LIT_WARN_ENV_INIT_FAIL,
+                &[zap_error(error)],
+            );
+            return None;
+        }
+    };
+    if !tidb_ddl_ingest::env::init_global_lightning_env(&ingest_data_dir) {
+        return None;
+    }
+    let (stop, stopped) = channel::<()>();
+    let session_pool = Arc::clone(session_pool);
+    let worker = sql_worker_thread("ddl-clean-up-temp-dir")
+        .spawn(move || clean_up_temp_dir_loop(&stopped, session_pool.as_ref(), &ingest_data_dir))
+        .ok()?;
+    Some((stop, worker))
+}
+
+/// Go `ddl.CleanUpTempDirLoop`: every minute, `ingest.CleanUpTempDir` on a
+/// session of the DDL pool, until the DDL stops.
+fn clean_up_temp_dir_loop(
+    stopped: &Receiver<()>,
+    session_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    path: &std::path::Path,
+) {
+    loop {
+        match stopped.recv_timeout(CLEAN_UP_TEMP_DIR_INTERVAL) {
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            _ => return,
+        }
+        let mut se = match session_pool.open_sql_session() {
+            Ok(se) => se,
+            Err(error) => {
+                tidb_ddl_logutil::ddl_logger()
+                    .warn("get session from pool failed", &[zap_error(error)]);
+                return;
+            }
+        };
+        clean_up_temp_dir(se.as_mut(), path);
+    }
+}
+
+/// Go `ingest.CleanUpTempDir(ctx, se, path)`: its `filterProcessingJobIDs`
+/// runs on `se`.
+pub fn clean_up_temp_dir(se: &mut dyn tidb_ddl_build::session_pool::StepSqlSession, path: &std::path::Path) {
+    tidb_ddl_ingest::env::clean_up_temp_dir(path, |job_ids| {
+        se.execute(&tidb_ddl_ingest::env::filter_processing_job_ids_sql(job_ids), &[])
+            .map(|rows| rows.iter().map(|row| row[0].get_int64()).collect())
+            .map_err(|error| error.to_string())
+    });
+}
+
 /// Go `ddl.detectAndUpdateJobVersion`: without etcd (a single node) job
 /// version 2 and global index V1 hold at once; otherwise detect now and, while
 /// a peer is older, re-detect every `detectJobVerInterval` until both hold.
@@ -1259,6 +1322,9 @@ where
     min_job_id_refresher: Arc<MinJobIdRefresher>,
     min_job_id_stop: Sender<()>,
     min_job_id_worker: Option<JoinHandle<()>>,
+    /// Go `ddl.Start`'s `CleanUpTempDirLoop`, while the ingest environment
+    /// is initialized.
+    clean_up_temp_dir_loop: Option<(Sender<()>, JoinHandle<()>)>,
     /// Go `detectAndUpdateJobVersion`'s background re-detection, while some
     /// peer is still older than job version 2 / global index V1.
     job_version_detector: Option<(Sender<()>, JoinHandle<()>)>,
@@ -1458,7 +1524,18 @@ where
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::clone(&owner));
         owner.set_listener(Arc::clone(&scheduler) as Arc<dyn tidb_owner::Listener>);
+        crate::real_tikv_ddl::add_index_reorg::dist::register_backfill_task(Arc::new(
+            crate::real_tikv_ddl::add_index_reorg::dist::BackfillDdl {
+                opener:opener.clone(),timeout,etcd:notifier.clone(),
+                backfiller:Arc::new({let scheduler=Arc::downgrade(&scheduler);move || {
+                    let scheduler=scheduler.upgrade().expect("DDL owns backfill task factories");
+                    Arc::new(KvTableIndexBackfiller::new(&scheduler.row_ids,&scheduler.session_pool)
+                        .with_start_mode(scheduler.start_mode).with_region_store(scheduler.region_store.get().cloned())) as Arc<dyn IndexBackfiller>
+                }}),
+            }
+        ));
         start_owner(owner.as_ref(), campaign_owner, start_mode)?;
+        let clean_up_temp_dir_loop = init_ingest_env(&scheduler.session_pool);
         Ok(Self {
             auto_ids: None,
             opener,
@@ -1478,6 +1555,7 @@ where
             min_job_id_refresher,
             min_job_id_stop,
             min_job_id_worker: Some(min_job_id_worker),
+            clean_up_temp_dir_loop,
             job_version_detector,
         })
     }
@@ -3938,6 +4016,10 @@ where
             let _ = stop.send(());
             let _ = worker.join();
         }
+        if let Some((stop, worker)) = self.clean_up_temp_dir_loop.take() {
+            let _ = stop.send(());
+            let _ = worker.join();
+        }
         self.owner.close();
         self.scheduler.stop();
     }
@@ -4239,6 +4321,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         let mut table = cluster_table(&info, &AutoIdSource::Unavailable)
             .map_err(exchange_validation_internal)?
             .with_new_collation_mode(tidb_datatype::new_collation_enabled());
+        let ingest=matches!(&work,AddIndexReorgWork::Ingest{..});
         match work {
             AddIndexReorgWork::CheckColumn(_) | AddIndexReorgWork::PartitionCopy { .. } => {
                 unreachable!("answered above")
@@ -4293,7 +4376,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 start,
                 end,
                 batch_size,
-            } => {
+            } | AddIndexReorgWork::Ingest { physical_id,start,end,batch_size } => {
                 // A partial index's entries are the rows its condition holds
                 // for (Go `buildIndexConditionChecker` in the backfill).
                 for index in info.indices.iter_deref() {
@@ -4315,6 +4398,10 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                         .map_err(backfill_failure)?;
                 }
                 let decode = RowDecodeContext::for_write(context);
+                if ingest {
+                    return tidb_ddl_build::table_backfill::write_chunk(&mut table,&mut storage.clone(),&reorg.index_ids,physical_id,start,end,batch_size,&decode)
+                        .map(AddIndexReorgAnswer::Ingest).map_err(backfill_failure);
+                }
                 let mut combined: Option<tidb_ddl_build::backfilling::ReorgBatch> = None;
                 for index_id in &reorg.index_ids {
                     let batch = table

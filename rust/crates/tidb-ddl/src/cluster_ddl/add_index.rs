@@ -31,10 +31,6 @@ pub const INDEX_ELEMENT_KEY: &[u8] = b"_idx_";
 /// Go `meta.ColumnElementKey`.
 pub const COLUMN_ELEMENT_KEY: &[u8] = b"_col_";
 
-/// Go `ingest.LitInitialized`: this node has no Lightning ingest backend,
-/// so a fast reorganization falls back to the transactional merge.
-const LIGHTNING_INITIALIZED: bool = false;
-
 /// Go `tablecodec.TempIndexPrefix`.
 pub const TEMP_INDEX_PREFIX: i64 = 0x7fff_0000_0000_0000;
 
@@ -194,6 +190,9 @@ pub enum ReorgResult {
     /// Go `ErrWaitReorgTimeout`: still running after the owner's wait; the
     /// job records this row count and resumes from the handle.
     Progress(i64),
+    /// Go `executeDistTask`: DXF paused for storage disk full; persist the
+    /// system pause before the owning multi-schema job promotes its proxy.
+    AutoPaused { task_id:i64, error:Option<std::sync::Arc<dyn std::error::Error+Send+Sync>> },
     /// It failed with this error, having counted this many rows.
     Failed {
         /// The error code.
@@ -919,7 +918,7 @@ pub(super) fn pick_backfill_type(job: &Job) -> tidb_model::ReorgType {
     }
     meta.reorg_type = if !meta.is_fast_reorg {
         tidb_model::ReorgType::TXN
-    } else if LIGHTNING_INITIALIZED {
+    } else if tidb_ddl_ingest::env::LIT_INITIALIZED.load(std::sync::atomic::Ordering::SeqCst) {
         tidb_model::ReorgType::INGEST
     } else {
         tidb_model::ReorgType::TXN_MERGE
@@ -1788,6 +1787,10 @@ pub(super) fn do_reorg_work_for_create_index(
                 Vec::new(),
             ))));
         }
+        Some(ReorgResult::AutoPaused{task_id,error}) => {
+            crate::index::auto_pause_add_index_job_on_kv_disk_full(&mut active.job,*task_id,error.as_ref().map(|e|e.as_ref() as &(dyn std::error::Error+'static)));
+            return Ok(CreateIndexReorg::Step(action_step(job_only_write(active.job.id,Vec::new()))));
+        }
         Some(ReorgResult::Checked(_)) => {
             return Err(DdlPlanError::Encode(
                 "an index reorganization got a column check's outcome".to_owned(),
@@ -1808,6 +1811,7 @@ pub(super) fn do_reorg_work_for_create_index(
         }
     };
     active.job.row_count = finished;
+    if active.job.reorg_meta.as_ref().is_some_and(|m|m.read().is_dist_reorg) { active.job.clear_resume_reason(); }
     if reorg_type.need_merge_process() {
         if backfill_state == tidb_model::BackfillState::RUNNING {
             for index in indexes {

@@ -159,6 +159,9 @@ impl Domain {
                 tidb_dxf_storage::set_task_manager(None);
             })
             .map_err(|err| err.to_string())?;
+        if let Err(error) = self.transactions.initialize_ingest_parameters() {
+            tidb_logutil::bg_logger().error("initialize global max batch split ranges failed", &[str_field("error", error)]);
+        }
         Ok(DistTaskLoop { exit: Some(exit_tx), manager_cancel, handle: Some(handle) })
     }
 

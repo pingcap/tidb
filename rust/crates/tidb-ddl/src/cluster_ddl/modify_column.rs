@@ -3383,7 +3383,7 @@ fn do_reorg_work_for_modify_column(
             active.job.row_count = *rows;
             ColumnReorgVisit::Failed(checked_refusal(*code, message.clone()))
         }
-        Some(ReorgResult::Checked(_)) => {
+        Some(ReorgResult::Checked(_) | ReorgResult::AutoPaused { .. }) => {
             return Err(DdlPlanError::Encode(
                 "a column rewrite got a column check's outcome".to_owned(),
             ))

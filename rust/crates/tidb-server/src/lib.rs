@@ -52,6 +52,8 @@ pub mod handshake;
 mod handshake_response;
 pub mod http_settings;
 pub mod http_status;
+/// Go `IngestConcurrencyHandler`.
+pub mod ingest_handler;
 mod mvcc_routes;
 mod region_routes;
 pub mod upgrade_handler;
