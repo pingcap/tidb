@@ -1356,8 +1356,8 @@ impl SessionVars {
     /// registry-indexed table of the current `systems` overrides.
     fn build_session_image(systems: &HashMap<String, String>) -> ResolvedGlobals {
         let mut slots: Vec<Option<Arc<str>>> =
-            std::vec::Vec::with_capacity(crate::sysvar::SYS_VARS.len());
-        slots.resize_with(crate::sysvar::SYS_VARS.len(), || None);
+            std::vec::Vec::with_capacity(crate::sysvar::sys_var_count());
+        slots.resize_with(crate::sysvar::sys_var_count(), || None);
         for (name, value) in systems {
             if let Some(index) = crate::sysvar::sys_var_index_lookup(name) {
                 slots[index] = Some(Arc::from(value.as_str()));
@@ -1414,7 +1414,7 @@ impl SessionVars {
     /// only the name-to-index hash probe. Every other step, and the error a
     /// node-tier read can raise, is what [`Self::system_value`] does.
     pub fn system_value_at(&self, index: usize) -> Result<Cow<'_, str>, VarError> {
-        let def = &crate::sysvar::SYS_VARS[index];
+        let def = crate::sysvar::sys_var_at(index);
         // An INSTANCE-scoped variable has no session copy either, and its
         // node-wide value is the only one there is: without this arm a
         // `SET GLOBAL tidb_general_log = 1` would store a value that
@@ -1431,7 +1431,7 @@ impl SessionVars {
             if let Some(value) = value.as_ref() {
                 return Ok(Cow::Borrowed(value.as_ref()));
             }
-            if self.session_resolved.values.len() == crate::sysvar::SYS_VARS.len() {
+            if self.session_resolved.values.len() == crate::sysvar::sys_var_count() {
                 // A full-length image is current by construction -- every
                 // `systems` mutation republishes it before returning.
                 if def.name == "timestamp" {
@@ -1463,7 +1463,7 @@ impl SessionVars {
     /// it (Go stores it into `s.systems`), so a later `SET GLOBAL` does not
     /// change what this session reads.
     fn unseeded_global_value(&self, index: usize) -> Option<Result<Cow<'_, str>, VarError>> {
-        let def = &crate::sysvar::SYS_VARS[index];
+        let def = crate::sysvar::sys_var_at(index);
         if !(def.skip_init() && def.has_global_scope()) {
             return None;
         }
@@ -1525,7 +1525,7 @@ impl SessionVars {
                     .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         };
-        let definition = &crate::sysvar::SYS_VARS[index];
+        let definition = crate::sysvar::sys_var_at(index);
         let key = crate::sysvar::lowered_if_needed(name);
 
         // Go's GetStateValue hooks intentionally omit these values even when

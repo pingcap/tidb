@@ -5517,6 +5517,7 @@ dependencies = [
  "tidb-exprctx",
  "tidb-mysql",
  "tidb-parser",
+ "tidb-variable",
 ]
 
 [[package]]

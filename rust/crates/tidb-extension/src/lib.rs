@@ -28,6 +28,7 @@ pub use extensions::Extensions;
 pub use function::{EvalIntFunc, EvalStringFunc, FunctionContext, FunctionDef, RequireDynamicPrivileges};
 pub use manifest::{
     with_close, with_custom_access_check, with_custom_dyn_privs, with_custom_functions,
+    with_custom_sys_variables,
     AccessCheckFunc, ExtensionOption, Manifest, REGISTER_DYNAMIC_PRIVILEGE, REGISTER_EXTENSION_FUNC,
     REMOVE_DYNAMIC_PRIVILEGE, REMOVE_EXTENSION_FUNC,
 };

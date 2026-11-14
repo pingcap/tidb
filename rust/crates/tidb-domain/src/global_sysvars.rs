@@ -673,7 +673,7 @@ impl GlobalSysvars {
                 .and_then(|slot| slot.as_deref())
                 .map(str::to_owned)
                 .unwrap_or_else(|| {
-                    tidb_variable::sysvar::effective_default(&tidb_variable::sysvar::SYS_VARS[index])
+                    tidb_variable::sysvar::effective_default(tidb_variable::sysvar::sys_var_at(index))
                 })
         };
         let enabled = |name| {
@@ -741,7 +741,7 @@ impl GlobalSysvars {
                     .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
         };
-        let def = &tidb_variable::sysvar::SYS_VARS[index];
+        let def = tidb_variable::sysvar::sys_var_at(index);
         // Go's retired partition-statistics concurrency variable has fixed
         // getters so upgraded persisted values cannot leak a stale setting.
         if let Some(value) = self.instance_plan_cache_limit_getter(def) {
@@ -796,7 +796,7 @@ impl GlobalSysvars {
         if let Some(value) = snapshot.values.get(index).and_then(|slot| slot.as_ref()) {
             return Ok(value.to_string());
         }
-        if snapshot.values.len() == tidb_variable::sysvar::SYS_VARS.len() {
+        if snapshot.values.len() == tidb_variable::sysvar::sys_var_count() {
             // The image is current (a mutation republishes it before releasing
             // its writer), so an empty slot means "at its registry default".
             return Ok(tidb_variable::sysvar::effective_default(def));
@@ -858,9 +858,9 @@ impl GlobalSysvars {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut slots: Vec<Option<Arc<str>>> =
-            std::vec::Vec::with_capacity(tidb_variable::sysvar::SYS_VARS.len());
-        slots.resize_with(tidb_variable::sysvar::SYS_VARS.len(), || None);
-        for (index, def) in tidb_variable::sysvar::SYS_VARS.iter().enumerate() {
+            std::vec::Vec::with_capacity(tidb_variable::sysvar::sys_var_count());
+        slots.resize_with(tidb_variable::sysvar::sys_var_count(), || None);
+        for (index, def) in tidb_variable::sysvar::indexed_sys_vars() {
             if def.has_global_scope() {
                 slots[index] = Some(Arc::from(self.cached_global(def).as_str()));
             }
@@ -872,7 +872,7 @@ impl GlobalSysvars {
             .iter()
         {
             if let Some(index) = tidb_variable::sysvar::sys_var_index_lookup(name) {
-                if !tidb_variable::sysvar::SYS_VARS[index].has_global_scope() {
+                if !tidb_variable::sysvar::sys_var_at(index).has_global_scope() {
                     slots[index] = Some(Arc::from(value.as_str()));
                 }
             }
@@ -886,7 +886,7 @@ impl GlobalSysvars {
             .iter()
         {
             if let Some(index) = tidb_variable::sysvar::sys_var_index_lookup(name) {
-                if slots[index].is_none() && !tidb_variable::sysvar::SYS_VARS[index].has_global_scope() {
+                if slots[index].is_none() && !tidb_variable::sysvar::sys_var_at(index).has_global_scope() {
                     slots[index] = Some(Arc::from(value.as_str()));
                 }
             }
@@ -898,7 +898,7 @@ impl GlobalSysvars {
                 .as_deref()
                 .map(str::to_owned)
                 .unwrap_or_else(|| {
-                    tidb_variable::sysvar::effective_default(&tidb_variable::sysvar::SYS_VARS[index])
+                    tidb_variable::sysvar::effective_default(tidb_variable::sysvar::sys_var_at(index))
                 })
         };
         let oom_action = tidb_vardef::OomAction::parse(&effective(
@@ -981,7 +981,7 @@ impl GlobalSysvars {
     /// once for both tiers). Same image-then-authoritative fallback as
     /// [`Self::get`].
     pub fn get_by_registry_index(&self, index: usize) -> Result<String, VarError> {
-        let def = &tidb_variable::sysvar::SYS_VARS[index];
+        let def = tidb_variable::sysvar::sys_var_at(index);
         if let Some(value) = self.run_get_global_hook(def.name) {
             return Ok(value);
         }
@@ -1016,7 +1016,7 @@ impl GlobalSysvars {
         if let Some(value) = snapshot.values.get(index).and_then(|slot| slot.as_ref()) {
             return Ok(value.to_string());
         }
-        if snapshot.values.len() == tidb_variable::sysvar::SYS_VARS.len() {
+        if snapshot.values.len() == tidb_variable::sysvar::sys_var_count() {
             return Ok(tidb_variable::sysvar::effective_default(def));
         }
         Ok(self.unimaged_value(def))
@@ -2106,8 +2106,8 @@ impl crate::sysvar_cache::SysVarCacheDeps for SysVarCacheRebuild<'_> {
     }
 
     fn sys_vars(&self) -> Vec<crate::sysvar_cache::SysVarSpec> {
-        tidb_variable::sysvar::SYS_VARS
-            .iter()
+        tidb_variable::sysvar::sys_vars()
+            .into_iter()
             .map(|def| crate::sysvar_cache::SysVarSpec {
                 name: def.name.to_owned(),
                 value: self.0.registry_value(def),

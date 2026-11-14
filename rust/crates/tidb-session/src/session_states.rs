@@ -124,7 +124,7 @@ impl Session {
             )));
         }
         let mut system_vars = BTreeMap::new();
-        for definition in tidb_variable::sysvar::SYS_VARS.iter() {
+        for definition in tidb_variable::sysvar::sys_vars() {
             if !definition.has_session_scope() || definition.is_read_only() {
                 continue;
             }

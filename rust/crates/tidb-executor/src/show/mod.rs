@@ -63,7 +63,7 @@ pub fn fetch_show_variables(
     let vars = ctx.session_vars();
     let noop_enabled = vars.enable_noop_variables();
     let mut rows = Vec::new();
-    for definition in sysvar::SYS_VARS {
+    for definition in sysvar::sys_vars() {
         if (global && definition.scope == sysvar::SCOPE_SESSION)
             || (definition.is_noop() && !noop_enabled)
         {

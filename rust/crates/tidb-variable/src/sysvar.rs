@@ -677,17 +677,114 @@ impl SysVarDef {
     ///
     /// No entry of Go's built-in `sysVars` sets it; only a variable an
     /// extension registers through `variable.RegisterSysVar`
-    /// (`pkg/extension/manifest.go:197`) can. This registry has no such
-    /// registration, so every entry answers Go's nil.
+    /// (`pkg/extension/manifest.go:197`) can.
     #[must_use]
     pub fn require_dynamic_privileges(&self) -> Option<RequireDynamicPrivilegesFn> {
-        None
+        let registered = dynamic_sys_vars();
+        let index = *registered.names.get(self.name)?;
+        registered.vars[index - SYS_VARS.len()]
+            .as_ref()
+            .and_then(|sys_var| sys_var.require_dynamic_privileges.clone())
     }
 }
 
 /// Go's `func(isGlobal bool, sem bool) []string` of
 /// `SysVar.RequireDynamicPrivileges`.
-pub type RequireDynamicPrivilegesFn = fn(is_global: bool, sem: bool) -> Vec<&'static str>;
+pub type RequireDynamicPrivilegesFn = std::sync::Arc<dyn Fn(bool, bool) -> Vec<String> + Send + Sync>;
+
+/// Go `*variable.SysVar` as `RegisterSysVar` takes it: the entry's data and
+/// the hook an extension's variable may carry.
+#[derive(Clone)]
+pub struct SysVar {
+    /// The entry (Go `Scope`, `Name`, `Value`, `Type`, `MinValue`, ...).
+    pub def: SysVarDef,
+    /// Go `RequireDynamicPrivileges`.
+    pub require_dynamic_privileges: Option<RequireDynamicPrivilegesFn>,
+}
+
+/// The variables registered at runtime (Go `RegisterSysVar`), addressed
+/// after the built-in registry: entry `i` is registry index
+/// `SYS_VARS.len() + i`, and an unregistered one leaves its slot empty.
+#[derive(Default)]
+struct DynamicSysVars {
+    vars: Vec<Option<SysVar>>,
+    defs: Vec<Option<&'static SysVarDef>>,
+    names: HashMap<&'static str, usize>,
+}
+
+static DYNAMIC_SYS_VARS: std::sync::LazyLock<RwLock<DynamicSysVars>> =
+    std::sync::LazyLock::new(RwLock::default);
+
+fn dynamic_sys_vars() -> std::sync::RwLockReadGuard<'static, DynamicSysVars> {
+    DYNAMIC_SYS_VARS.read().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn dynamic_sys_vars_mut() -> std::sync::RwLockWriteGuard<'static, DynamicSysVars> {
+    DYNAMIC_SYS_VARS.write().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Go `RegisterSysVar`: adds a variable to the registry. Its entry lives as
+/// long as the process (an unregistered one only leaves the name map).
+pub fn register_sys_var(sys_var: SysVar) {
+    let mut registered = dynamic_sys_vars_mut();
+    let def: &'static SysVarDef = Box::leak(Box::new(sys_var.def.clone()));
+    let index = SYS_VARS.len() + registered.vars.len();
+    registered.vars.push(Some(sys_var));
+    registered.defs.push(Some(def));
+    registered.names.insert(def.name, index);
+}
+
+/// Go `UnregisterSysVar`.
+pub fn unregister_sys_var(name: &str) {
+    let mut registered = dynamic_sys_vars_mut();
+    if let Some(index) = registered.names.remove(lowered_if_needed(name).as_ref()) {
+        registered.vars[index - SYS_VARS.len()] = None;
+        registered.defs[index - SYS_VARS.len()] = None;
+    }
+}
+
+/// The entry at a registry index [`sys_var_index_lookup`] answered.
+///
+/// # Panics
+///
+/// An index no lookup answered.
+#[must_use]
+pub fn sys_var_at(index: usize) -> &'static SysVarDef {
+    if let Some(def) = SYS_VARS.get(index) {
+        return def;
+    }
+    dynamic_sys_vars().defs[index - SYS_VARS.len()].expect("a registered variable's index")
+}
+
+/// The registry's index space: the built-in entries and every runtime slot.
+#[must_use]
+pub fn sys_var_count() -> usize {
+    SYS_VARS.len() + dynamic_sys_vars().defs.len()
+}
+
+/// Go `GetSysVars`' entries with their registry indices: the built-in ones,
+/// then the registered ones.
+#[must_use]
+pub fn indexed_sys_vars() -> Vec<(usize, &'static SysVarDef)> {
+    let registered = dynamic_sys_vars();
+    SYS_VARS
+        .iter()
+        .enumerate()
+        .chain(
+            registered
+                .defs
+                .iter()
+                .enumerate()
+                .filter_map(|(i, def)| def.map(|def| (SYS_VARS.len() + i, def))),
+        )
+        .collect()
+}
+
+/// Go `GetSysVars`: every registered variable.
+#[must_use]
+pub fn sys_vars() -> Vec<&'static SysVarDef> {
+    indexed_sys_vars().into_iter().map(|(_, def)| def).collect()
+}
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -724,7 +821,7 @@ pub fn lowered_if_needed(name: &str) -> std::borrow::Cow<'_, str> {
 /// entries pays a string compare per level every single time.
 #[must_use]
 pub fn get_sys_var(name: &str) -> Option<&'static SysVarDef> {
-    sys_var_index_lookup(name).map(|index| &SYS_VARS[index])
+    sys_var_index_lookup(name).map(sys_var_at)
 }
 
 fn set_sys_var_defaults() -> &'static RwLock<HashMap<String, String>> {
@@ -750,7 +847,10 @@ pub fn set_sys_var(name: &str, value: &str) {
 #[must_use]
 pub fn sys_var_index_lookup(name: &str) -> Option<usize> {
     let lowered = lowered_if_needed(name);
-    sys_var_index().get(lowered.as_ref()).copied()
+    sys_var_index()
+        .get(lowered.as_ref())
+        .copied()
+        .or_else(|| dynamic_sys_vars().names.get(lowered.as_ref()).copied())
 }
 
 /// The registry index of one `&'static` variable name, resolved on first use.

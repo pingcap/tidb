@@ -693,8 +693,8 @@ impl Session {
     /// Go `*variable.SessionVars` as the dump reads it: the current database
     /// and every system variable's session-or-global value.
     fn plan_replayer_session_vars(&self) -> replayer::PlanReplayerSessionVars {
-        let values = tidb_variable::sysvar::SYS_VARS
-            .iter()
+        let values = tidb_variable::sysvar::sys_vars()
+            .into_iter()
             .map(|definition| {
                 (definition.name.to_owned(), self.vars.get_system(definition.name).map_err(|error| error.to_string()))
             })
@@ -710,7 +710,7 @@ impl Session {
             hidden: std::collections::BTreeSet::new(),
             enable_noop_variables: self.vars.enable_noop_variables(),
         };
-        for definition in tidb_variable::sysvar::SYS_VARS {
+        for definition in tidb_variable::sysvar::sys_vars() {
             registry.names.push(definition.name.to_owned());
             if definition.is_noop() {
                 registry.noop.insert(definition.name.to_owned());

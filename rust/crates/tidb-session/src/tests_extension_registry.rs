@@ -252,3 +252,157 @@ fn custom_access_check_under(sem_ver: &str) {
     assert_eq!(row_text(tk2.run("select * from t1 where id=1")), [["1", "32"]]);
     restore();
 }
+
+fn sys_var(
+    scope: u8,
+    name: &'static str,
+    value: &'static str,
+    var_type: tidb_variable::sysvar::TypeFlag,
+) -> tidb_variable::sysvar::SysVar {
+    tidb_variable::sysvar::SysVar {
+        def: tidb_variable::sysvar::SysVarDef {
+            name,
+            scope,
+            value,
+            var_type,
+            ..tidb_variable::sysvar::SysVarDef::PLACEHOLDER
+        },
+        require_dynamic_privileges: None,
+    }
+}
+
+/// Go `TestRegisterExtensionWithSysVars`.
+#[test]
+fn register_extension_with_sys_vars() {
+    use tidb_variable::sysvar::{TypeFlag, SCOPE_GLOBAL, SCOPE_SESSION};
+    // Go `require.Same` / `require.Nil` over `variable.GetSysVar`.
+    let get_sys_var = |name: &str| {
+        tidb_variable::sysvar::get_sys_var(name).map(|def| (def.name, def.scope, def.value))
+    };
+    let _reset = ResetOnDrop;
+    let vars = |vars: Vec<tidb_variable::sysvar::SysVar>| tidb_extension::with_custom_sys_variables(vars);
+    let sys_var1 = sys_var(SCOPE_GLOBAL | SCOPE_SESSION, "var1", "ON", TypeFlag::Bool);
+    let sys_var2 = sys_var(SCOPE_SESSION, "var2", "val2", TypeFlag::Str);
+
+    // normal register
+    tidb_extension::reset();
+    tidb_extension::register("test", vec![vars(vec![sys_var1.clone(), sys_var2.clone()])]).unwrap();
+    tidb_extension::setup().unwrap();
+    assert_eq!(get_sys_var("var1"), Some(("var1", sys_var1.def.scope, "ON")));
+    assert_eq!(get_sys_var("var2"), Some(("var2", SCOPE_SESSION, "val2")));
+
+    // test for empty name
+    tidb_extension::reset();
+    tidb_extension::register("test", vec![vars(vec![sys_var(SCOPE_GLOBAL, "", "val3", TypeFlag::Str)])])
+        .unwrap();
+    assert_eq!(error_text(tidb_extension::setup()), "system var name should not be empty");
+    assert_eq!(get_sys_var(""), None);
+
+    // test for duplicate name with builtin
+    tidb_extension::reset();
+    tidb_extension::register(
+        "test",
+        vec![vars(vec![
+            sys_var1.clone(),
+            sys_var(SCOPE_GLOBAL, tidb_vardef::tidb_vars::TIDB_SNAPSHOT, "val3", TypeFlag::Str),
+        ])],
+    )
+    .unwrap();
+    assert_eq!(error_text(tidb_extension::setup()), "system var 'tidb_snapshot' has already registered");
+    assert_eq!(get_sys_var("var1"), None);
+    assert_eq!(get_sys_var(tidb_vardef::tidb_vars::TIDB_SNAPSHOT).unwrap().2, "");
+    assert_eq!(get_sys_var(tidb_vardef::tidb_vars::TIDB_SNAPSHOT).unwrap().1, SCOPE_SESSION);
+
+    // test for duplicate name with other extension
+    tidb_extension::reset();
+    tidb_extension::register("test1", vec![vars(vec![sys_var1.clone(), sys_var2])]).unwrap();
+    tidb_extension::register("test2", vec![vars(vec![sys_var1])]).unwrap();
+    assert_eq!(error_text(tidb_extension::setup()), "system var 'var1' has already registered");
+    assert_eq!(get_sys_var("var1"), None);
+    assert_eq!(get_sys_var("var2"), None);
+}
+
+/// Go `TestSetVariablePrivilege`.
+#[test]
+fn set_variable_privilege() {
+    set_variable_privilege_under(tidb_sem_compat::V1);
+    set_variable_privilege_under(tidb_sem_compat::V2);
+}
+
+fn set_variable_privilege_under(sem_ver: &str) {
+    use crate::tests_support::*;
+    use tidb_variable::sysvar::{TypeFlag, SCOPE_GLOBAL, SCOPE_SESSION};
+
+    crate::init_extension_hooks();
+    let _reset = ResetOnDrop;
+    let mut sys_var1 = sys_var(SCOPE_GLOBAL | SCOPE_SESSION, "var1", "1", TypeFlag::Int);
+    sys_var1.def.min_value = 0;
+    sys_var1.def.max_value = 100;
+    sys_var1.require_dynamic_privileges = Some(Arc::new(|is_global: bool, sem: bool| {
+        let mut privs = vec!["priv1".to_owned()];
+        if is_global {
+            privs.push("priv2".to_owned());
+        }
+        if sem {
+            privs.push("restricted_priv3".to_owned());
+        }
+        privs
+    }));
+
+    tidb_extension::reset();
+    tidb_extension::register(
+        "test",
+        vec![
+            tidb_extension::with_custom_sys_variables(vec![sys_var1]),
+            tidb_extension::with_custom_dyn_privs(
+                ["priv1", "priv2", "restricted_priv3"].map(str::to_owned).to_vec(),
+            ),
+        ],
+    )
+    .unwrap();
+    tidb_extension::setup().unwrap();
+
+    let mut tk = session_with_privileges();
+    tk.run("use test").unwrap();
+    tk.run("create user u2@localhost").unwrap();
+    let registry = tk.privileges.clone().unwrap();
+    let mut tk1 = session_as(&registry, tk.catalog.clone(), "root", "%");
+    let mut tk2 = session_as(&registry, tk.catalog.clone(), "u2", "localhost");
+
+    tk1.run("set @@var1=7").unwrap();
+    assert_eq!(row_text(tk1.run("select @@var1")), [["7"]]);
+
+    let denied = |privs: &str| {
+        format!("Access denied; you need (at least one of) the {privs} privilege(s) for this operation")
+    };
+    assert_err(tk2.run("set @@var1=10"), 1227, &denied("SUPER or priv1"));
+    assert_eq!(row_text(tk2.run("select @@var1")), [["1"]]);
+
+    tk.run("GRANT priv1 on *.* TO u2@localhost").unwrap();
+    tk2.run("set @@var1=8").unwrap();
+    assert_eq!(row_text(tk2.run("select @@var1")), [["8"]]);
+
+    tk1.run("set @@global.var1=17").unwrap();
+    assert_eq!(row_text(tk1.run("select @@global.var1")), [["17"]]);
+
+    tk.run("GRANT SYSTEM_VARIABLES_ADMIN on *.* TO u2@localhost").unwrap();
+    assert_err(tk2.run("set @@global.var1=18"), 1227, &denied("SUPER or priv2"));
+    assert_eq!(row_text(tk2.run("select @@global.var1")), [["17"]]);
+
+    tk.run("GRANT priv2 on *.* TO u2@localhost").unwrap();
+    tk2.run("set @@global.var1=18").unwrap();
+    assert_eq!(row_text(tk2.run("select @@global.var1")), [["18"]]);
+
+    let restore = tidb_sem_compat::switch_to_sem_for_test(sem_ver);
+
+    assert_err(tk1.run("set @@global.var1=27"), 1227, &denied("restricted_priv3"));
+    assert_eq!(row_text(tk1.run("select @@global.var1")), [["18"]]);
+
+    assert_err(tk2.run("set @@global.var1=27"), 1227, &denied("restricted_priv3"));
+    assert_eq!(row_text(tk2.run("select @@global.var1")), [["18"]]);
+
+    tk.run("GRANT restricted_priv3 on *.* TO u2@localhost").unwrap();
+    tk2.run("set @@global.var1=28").unwrap();
+    assert_eq!(row_text(tk2.run("select @@global.var1")), [["28"]]);
+    restore();
+}

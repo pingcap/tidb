@@ -285,8 +285,8 @@ impl VariablesState {
     pub(crate) fn set_data_for_variables_info(&self) -> Vec<Vec<tidb_datatype::Datum>> {
         use tidb_datatype::Datum;
         let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
-        let mut rows = Vec::with_capacity(sysvar::SYS_VARS.len());
-        for definition in sysvar::SYS_VARS {
+        let mut rows = Vec::with_capacity(sysvar::sys_var_count());
+        for definition in sysvar::sys_vars() {
             if self.hides(definition.name) {
                 continue;
             }
@@ -334,8 +334,8 @@ impl VariablesState {
     /// `VARIABLES_INFO`, a value that cannot be read fails the statement.
     pub(crate) fn get_data_from_session_variables(&self) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         let text = |value: &str| tidb_datatype::Datum::Bytes(value.as_bytes().to_vec());
-        let mut rows = Vec::with_capacity(sysvar::SYS_VARS.len());
-        for definition in sysvar::SYS_VARS {
+        let mut rows = Vec::with_capacity(sysvar::sys_var_count());
+        for definition in sysvar::sys_vars() {
             if self.hides(definition.name) {
                 continue;
             }

@@ -24,7 +24,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
-use crate::sysvar::{get_sys_var, sys_var_index_lookup, SYS_VARS};
+use crate::sysvar::{get_sys_var, sys_var_index_lookup};
 use crate::vars::ExternalTimestampProvider;
 use crate::VarError;
 
@@ -135,8 +135,8 @@ impl MockGlobalAccessor {
     pub fn new() -> Self {
         Self {
             vals: Mutex::new(
-                SYS_VARS
-                    .iter()
+                crate::sysvar::sys_vars()
+                    .into_iter()
                     .map(|def| (def.name.to_owned(), crate::sysvar::effective_default(def)))
                     .collect(),
             ),
@@ -207,7 +207,7 @@ impl GlobalVarAccessor for MockGlobalAccessor {
     }
 
     fn get_by_registry_index(&self, index: usize) -> Result<String, VarError> {
-        self.value(SYS_VARS[index].name)
+        self.value(crate::sysvar::sys_var_at(index).name)
     }
 
     fn set_with_time_zone(
@@ -267,7 +267,7 @@ impl GlobalVarAccessor for MockGlobalAccessor {
             .iter()
             .filter(|(name, _)| {
                 sys_var_index_lookup(name)
-                    .is_some_and(|index| SYS_VARS[index].has_session_scope())
+                    .is_some_and(|index| crate::sysvar::sys_var_at(index).has_session_scope())
             })
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect()

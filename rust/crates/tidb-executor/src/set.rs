@@ -91,9 +91,9 @@ fn set_sys_variable(
         let sem_enabled = tidb_sem_compat::is_enabled();
         let pm = ctx.privilege_manager();
         for privilege in require_dynamic_privileges(v.is_global, sem_enabled) {
-            if !pm.request_dynamic_verification(privilege, false) {
+            if !pm.request_dynamic_verification(&privilege, false) {
                 let msg = if sem_enabled {
-                    privilege.to_owned()
+                    privilege
                 } else {
                     format!("SUPER or {privilege}")
                 };

@@ -16,3 +16,4 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
+tidb-variable = { path = "../tidb-variable" }

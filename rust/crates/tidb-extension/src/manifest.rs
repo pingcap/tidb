@@ -18,6 +18,7 @@ use std::sync::{Arc, RwLock};
 
 use tidb_exprctx::EvalError;
 use tidb_mysql::privilege::PrivilegeType;
+use tidb_variable::sysvar::SysVar;
 
 use crate::function::FunctionDef;
 use crate::util::{ClearFunc, ClearFuncBuilder};
@@ -29,6 +30,12 @@ pub type ExtensionOption = Arc<dyn Fn(&mut Manifest) + Send + Sync>;
 /// table and column with `priv` needs, given whether SEM is enabled.
 pub type AccessCheckFunc =
     Arc<dyn Fn(&str, &str, &str, PrivilegeType, bool) -> Vec<String> + Send + Sync>;
+
+/// Go `WithCustomSysVariables`.
+#[must_use]
+pub fn with_custom_sys_variables(vars: Vec<SysVar>) -> ExtensionOption {
+    Arc::new(move |m: &mut Manifest| m.sys_variables.clone_from(&vars))
+}
 
 /// Go `WithCustomDynPrivs`.
 #[must_use]
@@ -58,6 +65,7 @@ pub fn with_close(f: Arc<dyn Fn() + Send + Sync>) -> ExtensionOption {
 #[derive(Clone, Default)]
 pub struct Manifest {
     name: String,
+    sys_variables: Vec<SysVar>,
     dyn_privs: Vec<String>,
     funcs: Vec<FunctionDef>,
     pub(crate) access_check_func: Option<AccessCheckFunc>,
@@ -113,6 +121,20 @@ fn setup_manifest(
             Ok::<_, EvalError>(Some(Box::new(move || {
                 hook(&REMOVE_DYNAMIC_PRIVILEGE)(&privilege);
             }) as ClearFunc))
+        })?;
+    }
+    // setup sys vars
+    for sys_var in &m.sys_variables {
+        clear_builder.do_with_collect_clear(|| {
+            let name = sys_var.def.name;
+            if name.is_empty() {
+                return Err(EvalError::Raw("system var name should not be empty".to_owned()));
+            }
+            if tidb_variable::sysvar::get_sys_var(name).is_some() {
+                return Err(EvalError::Raw(format!("system var '{name}' has already registered")));
+            }
+            tidb_variable::sysvar::register_sys_var(sys_var.clone());
+            Ok(Some(Box::new(move || tidb_variable::sysvar::unregister_sys_var(name)) as ClearFunc))
         })?;
     }
     // setup functions
