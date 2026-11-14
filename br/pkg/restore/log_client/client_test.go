@@ -143,6 +143,7 @@ func MockEmptySchemasReplace() *stream.SchemasReplace {
 		dbMap,
 		true,
 		nil,
+		nil,
 		1,
 		filter.All(),
 		nil,
@@ -1757,4 +1758,42 @@ func TestPutRawKvWithRetry(t *testing.T) {
 			require.Equal(t, tt.wantPuts, mockRawClient.putCount)
 		})
 	}
+}
+
+func TestMaterializedViewRecorderCheckpointWithIDMap(t *testing.T) {
+	ctx := context.Background()
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec(session.CreatePITRIDMap)
+	tk.MustExec("CREATE DATABASE " + checkpoint.LogRestoreCheckpointDatabaseName)
+	g := gluetidb.New()
+	se, err := g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
+	defer se.Close()
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
+	client.SetUseCheckpoint()
+	db := stream.NewDBReplace("test", 100)
+	db.TableMap[3] = stream.NewTableReplace("mv", 103)
+	sr := stream.NewSchemasReplace(map[int64]*stream.DBReplace{10: db}, true, nil, nil, 100, filter.All(), nil, nil, nil)
+	sr.MaterializedViewRecorder.Seed(10, &model.TableInfo{
+		ID: 3, Name: pmodel.NewCIStr("mv"), State: model.StatePublic,
+		MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{1}, DefinitionTimeZone: model.TimeZoneLocation{Name: "UTC"}},
+	})
+	require.NoError(t, client.PreConstructAndSaveIDMap(ctx, nil, nil, sr))
+	progress, err := checkpoint.LoadCheckpointProgress(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor())
+	require.NoError(t, err)
+	require.Equal(t, checkpoint.InLogRestoreAndIdMapPersist, progress.Progress)
+	// No snapshot backend or log-file reader is needed when resuming the map.
+	loaded, err := client.InitSchemasReplaceForDDL(ctx, &logclient.InitSchemaConfig{
+		IsNewTask: false, FullBackupStorage: &logclient.FullBackupStorageConfig{}, TableFilter: filter.All(),
+	}, nil)
+	require.NoError(t, err)
+	require.False(t, loaded.NeedConstructIdMap())
+	require.Contains(t, loaded.MaterializedViewRecorder.Tables, int64(3))
+	require.Equal(t, "mv", loaded.MaterializedViewRecorder.Tables[3].Info.Name.O)
+	require.True(t, loaded.MaterializedViewRecorder.Skipped[3])
+	require.NoError(t, client.CheckpointMaterializedViewRepair(ctx))
+	progress, err = checkpoint.LoadCheckpointProgress(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor())
+	require.NoError(t, err)
+	require.Equal(t, checkpoint.InMaterializedViewRepair, progress.Progress)
 }

@@ -469,6 +469,72 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		},
 	}
 
+	onExist := OnExistError
+	if s.IfNotExists {
+		onExist = OnExistIgnore
+	}
+	return e.submitCreateMaterializedViewJob(ctx, schema, mvTableInfo, baseTableInfo, mlogTableInfo,
+		CreateTableConfig{OnExist: onExist})
+}
+
+// CreateMaterializedViewWithInfo creates and initially builds an MV from its physical
+// schema. BaseTableIDs must already refer to target tables. Reverse links are rebuilt
+// by the worker; source indexes and definition-time evaluation settings are retained.
+func (e *executor) CreateMaterializedViewWithInfo(
+	ctx sessionctx.Context, dbName pmodel.CIStr, info *model.TableInfo, cs ...CreateTableOption,
+) error {
+	if info == nil || info.MaterializedView == nil || len(info.MaterializedView.BaseTableIDs) != 1 {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid metadata or base table IDs")
+	}
+	cfg := GetCreateTableConfig(cs)
+	mvTableInfo := info.Clone()
+	is := e.infoCache.GetLatest()
+	schema, exists := is.SchemaByName(dbName)
+	if !exists {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
+	}
+	if exists, err := e.prepareMaterializedObjectWithInfo(ctx, schema.Name, mvTableInfo, cfg); err != nil || exists {
+		return err
+	}
+	baseTable, exists := is.TableByID(e.ctx, mvTableInfo.MaterializedView.BaseTableIDs[0])
+	if !exists {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName.O, "MV base table")
+	}
+	baseTableInfo := baseTable.Meta()
+	if err := validateMaterializedViewSourceState(dbName.O, baseTableInfo); err != nil {
+		return err
+	}
+	if err := validateMaterializedViewNestingDepth(baseTableInfo, func(id int64) (*model.TableInfo, error) {
+		tbl, ok := is.TableByID(e.ctx, id)
+		if !ok {
+			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(dbName.O, fmt.Sprintf("(Table ID %d)", id))
+		}
+		return tbl.Meta(), nil
+	}); err != nil {
+		return err
+	}
+	if baseTableInfo.MaterializedViewBase == nil {
+		return errors.Errorf("materialized view log does not exist for source object %s.%s", dbName.O, baseTableInfo.Name.O)
+	}
+	mlogTable, exists := is.TableByID(e.ctx, baseTableInfo.MaterializedViewBase.MLogID)
+	if !exists {
+		return errors.Errorf("materialized view log does not exist for source object %s.%s", dbName.O, baseTableInfo.Name.O)
+	}
+	mlogTableInfo := mlogTable.Meta()
+	if err := validateMaterializedViewSourceMLog(dbName.O, baseTableInfo, mlogTableInfo); err != nil {
+		return err
+	}
+	mvTableInfo.MaterializedView.InitBuildState = model.MViewInitBuildBuilding
+
+	return e.submitCreateMaterializedViewJob(ctx, schema, mvTableInfo, baseTableInfo, mlogTableInfo, cfg)
+}
+
+// Callers prepare metadata through either SQL validation or the WithInfo checks.
+// The worker rechecks mutable dependencies before creating the objects.
+func (e *executor) submitCreateMaterializedViewJob(
+	ctx sessionctx.Context, schema *model.DBInfo, mvTableInfo, baseTableInfo, mlogTableInfo *model.TableInfo,
+	cfg CreateTableConfig,
+) error {
 	// CREATE MATERIALIZED VIEW is submitted as reorg DDL: create table first, then initial build in reorg phase.
 	involvingSchemas := []model.InvolvingSchemaInfo{
 		{Database: schema.Name.L, Table: mvTableInfo.Name.L},
@@ -495,10 +561,10 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	jobW := NewJobWrapperWithArgs(job, &model.CreateMaterializedViewArgs{
 		TableInfo:    mvTableInfo,
 		MLogTableIDs: []int64{mlogTableInfo.ID},
-	}, false)
+	}, cfg.IDAllocated)
 	if err := e.DoDDLJobWrapper(ctx, jobW); err != nil {
 		// A concurrent creator may have won after the existence precheck.
-		if s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
+		if cfg.OnExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
 		}
@@ -510,6 +576,102 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		scatterScope = val
 	}
 	return errors.Trace(e.createTableWithInfoPost(ctx, mvTableInfo, jobW.SchemaID, scatterScope))
+}
+
+// CreateMaterializedViewLogWithInfo creates an MLog from a physical schema whose
+// BaseTableID already refers to its target base. The worker creates fresh purge state.
+func (e *executor) CreateMaterializedViewLogWithInfo(
+	ctx sessionctx.Context, dbName pmodel.CIStr, info *model.TableInfo, cs ...CreateTableOption,
+) error {
+	if info == nil || info.MaterializedViewLog == nil || info.MaterializedViewLog.BaseTableID == 0 {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view log: invalid metadata or base table ID")
+	}
+	cfg := GetCreateTableConfig(cs)
+	mlogTableInfo := info.Clone()
+	is := e.infoCache.GetLatest()
+	schema, exists := is.SchemaByName(dbName)
+	if !exists {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
+	}
+	if exists, err := e.prepareMaterializedObjectWithInfo(ctx, schema.Name, mlogTableInfo, cfg); err != nil || exists {
+		return err
+	}
+	baseTable, exists := is.TableByID(e.ctx, mlogTableInfo.MaterializedViewLog.BaseTableID)
+	if !exists {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName.O, "MLog base table")
+	}
+	mlogTableInfo.MaterializedViewLog.DependentMViewIDs = nil
+
+	return e.submitCreateMaterializedViewLogJob(ctx, schema, mlogTableInfo, baseTable.Meta(), cfg)
+}
+
+func (e *executor) submitCreateMaterializedViewLogJob(
+	ctx sessionctx.Context, schema *model.DBInfo, mlogTableInfo, baseTableInfo *model.TableInfo, cfg CreateTableConfig,
+) error {
+	involvingSchemas := []model.InvolvingSchemaInfo{
+		{Database: schema.Name.L, Table: mlogTableInfo.Name.L},
+		{Database: schema.Name.L, Table: baseTableInfo.Name.L},
+	}
+	job := &model.Job{
+		Version:             model.GetJobVerInUse(),
+		SchemaID:            schema.ID,
+		SchemaName:          schema.Name.L,
+		TableName:           mlogTableInfo.Name.L,
+		Type:                model.ActionCreateMaterializedViewLog,
+		BinlogInfo:          &model.HistoryInfo{},
+		InvolvingSchemaInfo: involvingSchemas,
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:             ctx.GetSessionVars().SQLMode,
+		SessionVars:         make(map[string]string),
+	}
+	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	jobW := NewJobWrapperWithArgs(job, &model.CreateMaterializedViewLogArgs{TableInfo: mlogTableInfo}, cfg.IDAllocated)
+	if err := e.DoDDLJobWrapper(ctx, jobW); err != nil {
+		// A concurrent creator may have won after the existence precheck.
+		if cfg.OnExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return errors.Trace(err)
+	}
+
+	var scatterScope string
+	if val, ok := jobW.GetSessionVars(variable.TiDBScatterRegion); ok {
+		scatterScope = val
+	}
+	return errors.Trace(e.createTableWithInfoPost(ctx, mlogTableInfo, jobW.SchemaID, scatterScope))
+}
+
+// prepareMaterializedObjectWithInfo checks supplied physical metadata and clears
+// source reverse links. SQL CREATE builds fresh metadata and bypasses this path.
+func (e *executor) prepareMaterializedObjectWithInfo(
+	ctx sessionctx.Context, dbName pmodel.CIStr, info *model.TableInfo, cfg CreateTableConfig,
+) (bool, error) {
+	old, err := e.infoCache.GetLatest().TableByName(e.ctx, dbName, info.Name)
+	if err == nil {
+		err = infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: dbName, Name: info.Name})
+		if cfg.OnExist != OnExistIgnore {
+			return false, err
+		}
+		if (info.MaterializedView != nil) != (old.Meta().MaterializedView != nil) ||
+			(info.MaterializedViewLog != nil) != (old.Meta().MaterializedViewLog != nil) {
+			return false, dbterror.ErrWrongObject.GenWithStackByArgs(dbName.O, info.Name.O, "matching materialized object")
+		}
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return true, nil
+	}
+	if !infoschema.ErrTableNotExists.Equal(err) {
+		return false, err
+	}
+	if err := handleTablePlacement(ctx, info); err != nil {
+		return false, err
+	}
+	if err := checkTableInfoValidExtra(ctx.GetSessionVars().StmtCtx.ErrCtx(), e.store, dbName, info); err != nil {
+		return false, err
+	}
+	info.MaterializedViewBase = nil
+	info.MaterializedViewShadow = nil
+	return false, nil
 }
 
 func (e *executor) DropMaterializedView(ctx sessionctx.Context, s *ast.DropMaterializedViewStmt) error {

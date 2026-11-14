@@ -897,6 +897,15 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
+	mvPlan, tables, err := newMaterializedViewRestorePlan(tables, checkInfo != nil)
+	if err != nil {
+		return err
+	}
+	files = nil
+	for _, table := range tables {
+		files = append(files, table.Files...)
+	}
+
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
 	idFrom, idEnd, err := client.AllocTableIDs(ctx, tables)
 	if err != nil {
@@ -1158,6 +1167,11 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
+	err = mvPlan.restore(ctx, g, mgr.GetDomain(), cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// The cost of rename user table / replace into system table wouldn't be so high.
 	// So leave it out of the pipeline for easier implementation.
 	err = client.RestoreSystemSchemas(ctx, cfg.TableFilter)
@@ -1402,13 +1416,8 @@ func filterRestoreFiles(
 			if table.Info == nil || !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
 				continue
 			}
-			if table.Info.MaterializedView != nil ||
-				table.Info.MaterializedViewLog != nil ||
-				table.Info.MaterializedViewShadow != nil {
+			if table.Info.MaterializedViewShadow != nil {
 				continue
-			}
-			if table.Info.MaterializedViewBase != nil {
-				table.Info.MaterializedViewBase = nil
 			}
 			files = append(files, table.Files...)
 			tables = append(tables, table)

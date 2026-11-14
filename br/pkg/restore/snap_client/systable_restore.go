@@ -94,8 +94,8 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		// replace into view is not supported now
 		"tidb_mdl_view": {},
 
-		// MV maintenance metadata uses cluster-local table IDs and TSOs, so it
-		// cannot be meaningfully restored into another cluster.
+		// Logical MV reconstruction creates fresh maintenance metadata.
+		// Maintenance progress and histories are not restored.
 		"tidb_mview_refresh_info":             {},
 		"tidb_mview_fast_refresh_source_info": {},
 		"tidb_mlog_purge_info":                {},

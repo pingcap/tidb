@@ -85,7 +85,7 @@ go_test(
     ],
     embed = [":log_client"],
     flaky = True,
-    shard_count = 44,
+    shard_count = 45,
     deps = [
         "//br/pkg/checkpoint",
         "//br/pkg/errors",

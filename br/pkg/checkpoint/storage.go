@@ -55,9 +55,10 @@ const (
 	checkpointDataTableName     string = "cpt_data"
 	checkpointChecksumTableName string = "cpt_checksum"
 	// file level table
-	checkpointMetaTableName     string = "cpt_metadata"
-	checkpointProgressTableName string = "cpt_progress"
-	checkpointIngestTableName   string = "cpt_ingest"
+	checkpointMetaTableName             string = "cpt_metadata"
+	checkpointProgressTableName         string = "cpt_progress"
+	checkpointIngestTableName           string = "cpt_ingest"
+	checkpointMaterializedViewTableName string = "cpt_mview"
 
 	// the primary key (uuid: uuid, segment_id:0) records the number of segment
 	createCheckpointTable string = `

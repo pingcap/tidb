@@ -309,6 +309,16 @@ func (d *Checker) CreateMaterializedView(ctx sessionctx.Context, stmt *ast.Creat
 	return d.realExecutor.CreateMaterializedView(ctx, stmt)
 }
 
+// CreateMaterializedViewWithInfo implements the DDL interface.
+func (d *Checker) CreateMaterializedViewWithInfo(ctx sessionctx.Context, dbName pmodel.CIStr, info *model.TableInfo, cs ...ddl.CreateTableOption) error {
+	return d.realExecutor.CreateMaterializedViewWithInfo(ctx, dbName, info, cs...)
+}
+
+// CreateMaterializedViewLogWithInfo implements the DDL interface.
+func (d *Checker) CreateMaterializedViewLogWithInfo(ctx sessionctx.Context, dbName pmodel.CIStr, info *model.TableInfo, cs ...ddl.CreateTableOption) error {
+	return d.realExecutor.CreateMaterializedViewLogWithInfo(ctx, dbName, info, cs...)
+}
+
 // DropMaterializedView implements the DDL interface.
 func (d *Checker) DropMaterializedView(ctx sessionctx.Context, stmt *ast.DropMaterializedViewStmt) error {
 	return d.realExecutor.DropMaterializedView(ctx, stmt)

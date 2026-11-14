@@ -26,10 +26,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// Asserting Glue implements glue.ConsoleGlue and glue.Glue at compile time.
+// Check glue and session capabilities at compile time.
 var (
-	_ glue.ConsoleGlue = Glue{}
-	_ glue.Glue        = Glue{}
+	_ glue.ConsoleGlue             = Glue{}
+	_ glue.Glue                    = Glue{}
+	_ glue.MaterializedViewSession = (*tidbSession)(nil)
 )
 
 const brComment = `/*from(br)*/`
@@ -249,6 +250,20 @@ func (gs *tidbSession) CreateTables(_ context.Context,
 func (gs *tidbSession) CreateTable(_ context.Context, dbName pmodel.CIStr,
 	table *model.TableInfo, cs ...ddl.CreateTableOption) error {
 	return errors.Trace(executor.BRIECreateTable(gs.se, dbName, table, brComment, cs...))
+}
+
+// CreateMaterializedViewWithInfo implements glue.MaterializedViewSession.
+func (gs *tidbSession) CreateMaterializedViewWithInfo(
+	ctx context.Context, dbName pmodel.CIStr, info *model.TableInfo,
+) error {
+	return (&executor.BRIEMaterializedViewSession{Context: gs.se}).CreateMaterializedViewWithInfo(ctx, dbName, info)
+}
+
+// CreateMaterializedViewLogWithInfo implements glue.MaterializedViewSession.
+func (gs *tidbSession) CreateMaterializedViewLogWithInfo(
+	ctx context.Context, dbName pmodel.CIStr, info *model.TableInfo,
+) error {
+	return (&executor.BRIEMaterializedViewSession{Context: gs.se}).CreateMaterializedViewLogWithInfo(ctx, dbName, info)
 }
 
 // Close implements glue.Session.

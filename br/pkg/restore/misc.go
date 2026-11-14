@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -68,6 +69,37 @@ func GetTableSchema(
 		return nil, errors.Trace(err)
 	}
 	return table.Meta(), nil
+}
+
+// WaitTiFlashReplicaReady waits for the target tables' current replica availability.
+// Tables with no replicas need no wait. Cancellation interrupts polling immediately.
+func WaitTiFlashReplicaReady(ctx context.Context, dom *domain.Domain, tableIDs ...int64) error {
+	if len(tableIDs) == 0 {
+		return nil
+	}
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for _, tableID := range tableIDs {
+		for {
+			if err := ctx.Err(); err != nil {
+				return errors.Trace(err)
+			}
+			table, ok := dom.InfoSchema().TableByID(ctx, tableID)
+			if !ok {
+				return errors.Errorf("table ID %d does not exist while waiting for TiFlash", tableID)
+			}
+			replica := table.Meta().TiFlashReplica
+			if replica == nil || replica.Count == 0 || replica.Available {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return errors.Trace(ctx.Err())
+			case <-ticker.C:
+			}
+		}
+	}
+	return nil
 }
 
 const maxUserTablesNum = 10
