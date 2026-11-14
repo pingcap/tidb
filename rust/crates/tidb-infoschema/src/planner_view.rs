@@ -508,9 +508,11 @@ impl SessionExtendedInfoSchema {
             }
         }
         // A view reads around the session's temporary tables (Go
-        // `buildDataSource` under `buildingViewStack`).
-        let detached =
-            with_local_temporary.then(|| Arc::new(self.build_planner_schema_view(false)));
+        // `buildDataSource` under `buildingViewStack`); with none attached
+        // the image is its own detached form (Go's
+        // `DetachLocalTemporaryTableInfoSchema` returns it unchanged).
+        let detached = (with_local_temporary && !self.local_temporary.is_empty())
+            .then(|| Arc::new(self.build_planner_schema_view(false)));
         PlannerSchemaView {
             databases,
             tables,
