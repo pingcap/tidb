@@ -600,3 +600,127 @@ func TestFullTextIndexMatchAgainstSeeks(t *testing.T) {
 	entries, _ = postingReads("select id from ti use index (idx) where match(body) against('+rareword -common' in boolean mode)")
 	require.Less(t, entries, 2000)
 }
+
+// TestFullTextIndexMatchAgainstIndexMergeControls covers the FULLTEXT path
+// being an IndexMerge to the controls of one: what turns IndexMerge off turns
+// the path off, and the MATCH is then evaluated on the rows scanned.
+func TestFullTextIndexMatchAgainstIndexMergeControls(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, k int, body text, fulltext index idx (body))")
+	fullTextCorpus(t, tk, "t", 1500, 1)
+	tk.MustExec("analyze table t")
+	where := "where match(body) against('+rareword' in boolean mode)"
+	want := tk.MustQuery("select id from t ignore index (idx) " + where).Sort().Rows()
+	require.NotEmpty(t, want)
+
+	// The optimizer chooses the index for this search by itself.
+	mustUseFullTextIndex(t, tk, "select id from t "+where, "idx(body)", "+rareword")
+	mustScan(t, tk, "select /*+ no_index_merge() */ id from t "+where)
+	tk.MustQuery("select /*+ no_index_merge() */ id from t " + where).Sort().Check(want)
+	// The hint also overrides an index hint, as it does for other indexes.
+	mustScan(t, tk, "select /*+ no_index_merge() */ id from t use index (idx) "+where)
+	tk.MustQuery("select /*+ no_index_merge() */ id from t use index (idx) " + where).Sort().Check(want)
+
+	tk.MustExec("set @@tidb_enable_index_merge = off")
+	mustScan(t, tk, "select id from t "+where)
+	tk.MustQuery("select id from t " + where).Sort().Check(want)
+	// A hint that names the index still gets it.
+	mustUseFullTextIndex(t, tk, "select id from t use index (idx) "+where, "idx(body)", "+rareword")
+	tk.MustQuery("select id from t use index (idx) " + where).Sort().Check(want)
+}
+
+// TestFullTextIndexMatchAgainstLimit covers a LIMIT pushed to the IndexMerge:
+// the posting scan stays the partial plan, shown as running in TiDB with its
+// own runtime statistics, and stops opening partitions once the limit is met.
+func TestFullTextIndexMatchAgainstLimit(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, k int, body text, fulltext index idx (body))")
+	fullTextCorpus(t, tk, "t", 600, 5)
+	tk.MustExec("analyze table t")
+	sql := "select id from t use index (idx) where match(body) against('+alpha' in boolean mode) limit 3"
+	mustUseFullTextIndex(t, tk, sql, "idx(body)", "+alpha")
+	for _, row := range tk.MustQuery("explain format = 'brief' " + sql).Rows() {
+		id := fmt.Sprint(row[0])
+		require.NotContains(t, id, "Limit", "no Limit executor runs over a posting scan")
+		if strings.Contains(id, "IndexMerge") {
+			require.Contains(t, fmt.Sprint(row[4]), "limit embedded(offset:0, count:3)")
+		}
+	}
+	scans := 0
+	for _, row := range tk.MustQuery("explain analyze " + sql).Rows() {
+		if !strings.Contains(fmt.Sprint(row[0]), "FullTextIndexScan") {
+			require.NotContains(t, fmt.Sprint(row[5]), "fulltext:{")
+			continue
+		}
+		scans++
+		require.Equal(t, "3", fmt.Sprint(row[2]))
+		require.Equal(t, "root", fmt.Sprint(row[3]))
+		require.Contains(t, fmt.Sprint(row[5]), "fulltext:{posting_entries:3, posting_scans:1, ")
+	}
+	require.Equal(t, 1, scans)
+	require.Len(t, tk.MustQuery(sql).Rows(), 3)
+
+	// Every partition holds a match, and the first one opened meets the
+	// limit, so the postings of the others are never opened.
+	tk.MustExec("create table pt (id int primary key, body text, fulltext index idx (body)) partition by hash(id) partitions 8")
+	tk.MustExec("insert into pt select id, 'alpha beta' from t")
+	tk.MustExec("analyze table pt")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	sql = "select id from pt use index (idx) where match(body) against('+alpha' in boolean mode) limit 2"
+	mustUseFullTextIndex(t, tk, sql, "idx(body)", "+alpha")
+	scans = 0
+	for _, row := range tk.MustQuery("explain analyze " + sql).Rows() {
+		if strings.Contains(fmt.Sprint(row[0]), "FullTextIndexScan") {
+			scans++
+			require.Contains(t, fmt.Sprint(row[5]), "fulltext:{posting_entries:2, posting_scans:1, ")
+		}
+	}
+	require.Equal(t, 1, scans)
+	// Stopping early is not an error, whenever the reader stops.
+	for range 20 {
+		require.Len(t, tk.MustQuery(sql).Rows(), 2)
+		require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+	}
+}
+
+// TestFullTextIndexMatchAgainstPointPlanCache covers a statement whose point
+// lookup keeps the FULLTEXT path from being offered: no posting scan is in
+// its plan, so the plan is cached, while a plan that scans the index for a
+// search string given as a parameter is not.
+func TestFullTextIndexMatchAgainstPointPlanCache(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, k int, body text, fulltext index idx (body))")
+	tk.MustExec("insert into t values (1, 1, 'alpha beta'), (2, 2, 'gamma delta'), (3, 3, 'alpha gamma')")
+	tk.MustExec("prepare point from 'select id from t where id = ? and match(body) against(? in boolean mode)'")
+	tk.MustExec("set @id = 1, @search = '+alpha'")
+	tk.MustQuery("execute point using @id, @search").Check(testkit.Rows("1"))
+	tk.MustQuery("execute point using @id, @search").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// The cached plan searches the string and the row of each execution.
+	tk.MustExec("set @id = 2, @search = '+gamma'")
+	tk.MustQuery("execute point using @id, @search").Check(testkit.Rows("2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @search = '+alpha'")
+	tk.MustQuery("execute point using @id, @search").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare scan from 'select id from t use index (idx) where match(body) against(? in boolean mode) order by id'")
+	tk.MustQuery("execute scan using @search").Check(testkit.Rows("1", "3"))
+	tk.MustQuery("execute scan using @search").Check(testkit.Rows("1", "3"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}

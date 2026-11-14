@@ -20,9 +20,12 @@ import (
 	"github.com/pingcap/errors"
 )
 
-// Possible parsing errors.
 var (
-	ErrUnmatchedLeftParen  = errors.New("unmatched '(' in BOOLEAN MODE query")
+	// ErrUnmatchedLeftParen is returned for a search string that opens a
+	// group with '(' and ends before closing it.
+	ErrUnmatchedLeftParen = errors.New("unmatched '(' in BOOLEAN MODE query")
+	// ErrUnmatchedRightParen is returned for a search string with a ')'
+	// that closes no group.
 	ErrUnmatchedRightParen = errors.New("unmatched ')' in BOOLEAN MODE query")
 )
 

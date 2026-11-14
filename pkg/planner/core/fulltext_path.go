@@ -99,7 +99,14 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 		return nil
 	}
 	sessVars := ds.SCtx().GetSessionVars()
+	// The path is an IndexMerge, so what turns IndexMerge off turns it off,
+	// as it does the paths of generateIndexMergePath: the NO_INDEX_MERGE
+	// hint, and tidb_enable_index_merge unless a hint names the index.
+	noIndexMerge := sessVars.StmtCtx.NoIndexMergeHint
+	indexMergeEnabled := sessVars.GetEnableIndexMerge()
 	var paths []*util.AccessPath
+	// Why a plan that scans the index cannot be cached, when it cannot.
+	skipPlanCacheReason := ""
 	forced := false
 	for _, idx := range ds.TableInfo.Indices {
 		textCol := idx.QueryableTiKVFullTextColumn()
@@ -110,6 +117,9 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 			continue
 		}
 		if !fullTextIndexAllowedByHints(ds, idx) {
+			continue
+		}
+		if noIndexMerge || (!indexMergeEnabled && !fullTextIndexNamedByHints(ds, idx)) {
 			continue
 		}
 		colInfo := ds.TableInfo.Columns[textCol.Offset]
@@ -128,11 +138,13 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 					// The path is built for this execution's search string,
 					// which the scan reads from the plan; a cached plan would
 					// search a later execution's string with this one.
-					ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("MATCH...AGAINST with a mutable search string uses a FULLTEXT index")
+					skipPlanCacheReason = "MATCH...AGAINST with a mutable search string uses a FULLTEXT index"
 				} else if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), path.PartialIndexPaths[0].AccessConds...) {
 					// Likewise for the key-column point and the handle
 					// ranges, which a cached plan does not rebuild.
-					ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("a FULLTEXT index scan confined by a mutable condition")
+					if skipPlanCacheReason == "" {
+						skipPlanCacheReason = "a FULLTEXT index scan confined by a mutable condition"
+					}
 				}
 				paths = append(paths, path)
 				forced = forced || fullTextIndexNamedByHints(ds, idx)
@@ -145,8 +157,13 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 	if !forced && pointPathSelectedByHeuristics(ds) {
 		// A point lookup reads at most a row per point, which no posting scan
 		// can beat; the heuristics that chose it pruned every other path, and
-		// an ordinary IndexMerge path is not generated beside it either.
+		// an ordinary IndexMerge path is not generated beside it either. The
+		// plan then holds no posting scan, so nothing keeps it from the plan
+		// cache.
 		return nil
+	}
+	if skipPlanCacheReason != "" {
+		sessVars.StmtCtx.SetSkipPlanCache(skipPlanCacheReason)
 	}
 	if forced {
 		// The hinted indexes compete among themselves. The other paths may be

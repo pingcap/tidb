@@ -237,6 +237,10 @@ func (w *partialFullTextWorker) run(ctx context.Context, exitCh <-chan struct{},
 			return nil
 		default:
 		}
+		if w.limit > 0 && w.fetched >= w.limit {
+			// The limit is met; the partitions left are not opened.
+			return nil
+		}
 		if err := w.scanPhysicalTable(ctx, physicalID, parTblIdx, exitCh, fetchCh); err != nil {
 			return err
 		}
@@ -270,6 +274,11 @@ func (w *partialFullTextWorker) scanPhysicalTable(ctx context.Context, physicalI
 		},
 	}
 	iter, err := w.query.OpenPostings(source)
+	if errors.Cause(err) == errFullTextScanStopped {
+		// The reader stopped while the postings were being opened, which is
+		// an ordinary end of the scan, as it is while they are read.
+		return nil
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}

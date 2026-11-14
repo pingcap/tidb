@@ -23,9 +23,12 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -568,6 +571,149 @@ func (c *failAfterCursor) Next() (Posting, bool, error) {
 	}
 	c.after--
 	return c.PostingCursor.Next()
+}
+
+// quotaSource panics when a search holds more than its quota, as the memory
+// tracker of a statement does.
+type quotaSource struct {
+	*memIndex
+	charged, quota int64
+}
+
+func (q *quotaSource) ConsumeMemory(bytes int64) {
+	q.charged += bytes
+	if bytes > 0 && q.charged > q.quota {
+		panic("memory quota exceeded")
+	}
+}
+
+// TestOpenPostingsReleasesOnMemoryPanic covers the memory quota stopping a
+// prefix by a panic: the cursors opened so far are closed and the memory
+// charged is released, wherever in the query the prefix is.
+func TestOpenPostingsReleasesOnMemoryPanic(t *testing.T) {
+	for _, search := range []string{
+		"+shared +prefix*",
+		"shared prefix*",
+		"+shared -prefix*",
+		"+shared +other +prefix*",
+	} {
+		index := newMemIndex(t, standardConfig())
+		for h := range 1000 {
+			index.add(t, int64(h), fmt.Sprintf("prefix%d shared other", h%37))
+		}
+		src := &quotaSource{memIndex: index, quota: 1024}
+		query, err := CompileBooleanQuery(search, standardConfig())
+		require.NoError(t, err)
+		require.PanicsWithValue(t, "memory quota exceeded", func() {
+			_, _ = query.OpenPostings(src)
+		}, search)
+		require.Zero(t, src.charged, search)
+		require.Greater(t, index.opened, 1, search)
+		require.Equal(t, index.opened, index.closed, search)
+	}
+}
+
+// commonHandleSource hands out the postings of a memIndex under common
+// handles, as the index of a table with a clustered primary key does.
+type commonHandleSource struct {
+	*memIndex
+	charged int64
+}
+
+func (c *commonHandleSource) ConsumeMemory(bytes int64) { c.charged += bytes }
+
+func commonHandleOf(t *testing.T, handle int64) kv.Handle {
+	encoded, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(handle))
+	require.NoError(t, err)
+	common, err := kv.NewCommonHandle(encoded)
+	require.NoError(t, err)
+	return common
+}
+
+type commonHandleCursor struct {
+	PostingCursor
+	t *testing.T
+}
+
+func (c commonHandleCursor) Next() (Posting, bool, error) {
+	posting, ok, err := c.PostingCursor.Next()
+	if err != nil || !ok {
+		return posting, ok, err
+	}
+	posting.Handle = commonHandleOf(c.t, posting.Handle.IntValue())
+	return posting, true, nil
+}
+
+func (c *commonHandleSource) wrap(t *testing.T, cursor PostingCursor, err error) (PostingCursor, error) {
+	if err != nil {
+		return nil, err
+	}
+	return commonHandleCursor{PostingCursor: cursor, t: t}, nil
+}
+
+// TestOpenPostingsCommonHandles covers a table with a clustered primary key:
+// a prefix collects, orders and deduplicates common handles, is sought in by
+// the streams it is intersected with, and charges and releases their memory.
+func TestOpenPostingsCommonHandles(t *testing.T) {
+	index := newMemIndex(t, standardConfig())
+	// Handles are added out of order and negative ones included, so the
+	// order of the encoded handles is what is exercised.
+	for h := range 400 {
+		handle := int64((h*7919)%400 - 200)
+		index.add(t, handle, fmt.Sprintf("prefix%d prefixed%d shared%d", h%13, h%5, h%3))
+	}
+	for _, search := range []string{
+		"prefix*",
+		"+prefix* +shared1",
+		"+shared1 +prefix1*",
+		"+shared2 -prefixed3*",
+		"prefix1* shared0",
+		"+prefix* +prefixed*",
+	} {
+		query, err := CompileBooleanQuery(search, standardConfig())
+		require.NoError(t, err)
+		src := &commonHandleSource{memIndex: index}
+		iter, err := query.OpenPostings(commonHandleTestSource{commonHandleSource: src, t: t})
+		require.NoError(t, err, search)
+		require.Positive(t, src.charged, search)
+		got := make([]int64, 0)
+		var previous kv.Handle
+		for {
+			handle, ok, err := iter.Next()
+			require.NoError(t, err, search)
+			if !ok {
+				break
+			}
+			require.False(t, handle.IsInt(), search)
+			if previous != nil {
+				require.Less(t, previous.Compare(handle), 0, "handles must ascend without duplicates: %s", search)
+			}
+			previous = handle
+			_, datum, err := codec.DecodeOne(handle.Encoded())
+			require.NoError(t, err)
+			got = append(got, datum.GetInt64())
+		}
+		require.NoError(t, iter.Close())
+		require.Zero(t, src.charged, search)
+		slices.Sort(got)
+		require.Equal(t, index.scan(t, query), got, search)
+	}
+}
+
+// commonHandleTestSource is commonHandleSource bound to a test.
+type commonHandleTestSource struct {
+	*commonHandleSource
+	t *testing.T
+}
+
+func (c commonHandleTestSource) Term(term string) (PostingCursor, error) {
+	cursor, err := c.memIndex.Term(term)
+	return c.wrap(c.t, cursor, err)
+}
+
+func (c commonHandleTestSource) Prefix(prefix string) (PostingCursor, error) {
+	cursor, err := c.memIndex.Prefix(prefix)
+	return c.wrap(c.t, cursor, err)
 }
 
 // TestEstimatePostingCost covers the cost of a search following its streams:

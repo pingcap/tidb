@@ -206,6 +206,10 @@ func TestQueryUsesPrefixPostings(t *testing.T) {
 		{standard, "distrib*", true},
 		{standard, "+distributed -datab*", true},
 		{standard, "+foo.bar*", true},
+		// An optional prefix beside a required term only ranks; its
+		// postings are read when nothing is required.
+		{standard, "+distributed datab*", false},
+		{standard, "distributed datab*", true},
 		// An NGRAM search at least as long as a gram is a phrase of exact
 		// grams, wildcard or not; only a wildcard shorter than a gram is a
 		// prefix of one.

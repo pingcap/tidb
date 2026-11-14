@@ -175,14 +175,24 @@ func openPostingStream(node queryNode, src PostingSource) (postingStream, error)
 
 func openChildren(nodes []queryNode, src PostingSource) ([]postingStream, error) {
 	streams := make([]postingStream, 0, len(nodes))
+	// Opening a stream can fail by panicking as well as by returning an
+	// error: a prefix charges the rows it collects to the statement's memory
+	// tracker, which panics when the quota is exceeded. The streams already
+	// open are closed either way.
+	opened := false
+	defer func() {
+		if !opened {
+			_ = closeStreams(streams)
+		}
+	}()
 	for _, node := range nodes {
 		stream, err := openPostingStream(node, src)
 		if err != nil {
-			_ = closeStreams(streams)
 			return nil, err
 		}
 		streams = append(streams, stream)
 	}
+	opened = true
 	return streams, nil
 }
 
@@ -319,11 +329,20 @@ func openPrefixStream(prefix string, src PostingSource) (postingStream, error) {
 	}
 	s := &prefixStream{}
 	s.mem, _ = src.(PostingMemoryConsumer)
+	// Charging the rows can panic, when the statement's memory quota is
+	// exceeded; the cursor is closed and what was charged released then too.
+	cursorOpen, collected := true, false
+	defer func() {
+		if cursorOpen {
+			_ = cursor.Close()
+		}
+		if !collected {
+			_ = s.close()
+		}
+	}()
 	for {
 		posting, ok, err := cursor.Next()
 		if err != nil {
-			_ = cursor.Close()
-			_ = s.close()
 			return nil, err
 		}
 		if !ok {
@@ -331,11 +350,12 @@ func openPrefixStream(prefix string, src PostingSource) (postingStream, error) {
 		}
 		s.add(posting.Handle)
 	}
+	cursorOpen = false
 	if err := cursor.Close(); err != nil {
-		_ = s.close()
 		return nil, err
 	}
 	s.sortAndCompact()
+	collected = true
 	return s, nil
 }
 
@@ -702,11 +722,17 @@ func openGroupStream(n groupNode, src PostingSource) (postingStream, error) {
 	if len(n.mustNot) == 0 {
 		return positive, nil
 	}
+	opened := false
+	defer func() {
+		if !opened {
+			_ = positive.close()
+		}
+	}()
 	streams, err := openChildren(n.mustNot, src)
 	if err != nil {
-		_ = positive.close()
 		return nil, err
 	}
+	opened = true
 	return &exceptStream{positive: positive, negative: newOrStream(streams)}, nil
 }
 
