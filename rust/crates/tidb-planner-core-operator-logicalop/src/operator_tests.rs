@@ -2667,16 +2667,16 @@ fn window_is_wired_into_the_enum_dispatches() {
 
 // ***** LogicalCTE / LogicalCTETable *****
 
-fn cte_class(build: impl FnOnce(&mut CteClass)) -> std::rc::Rc<std::cell::RefCell<CteClass>> {
+fn cte_class(build: impl FnOnce(&mut CteClass)) -> std::sync::Arc<std::sync::RwLock<CteClass>> {
     let mut class = CteClass {
         is_outer_most_cte: true,
         ..CteClass::default()
     };
     build(&mut class);
-    std::rc::Rc::new(std::cell::RefCell::new(class))
+    std::sync::Arc::new(std::sync::RwLock::new(class))
 }
 
-fn cte(class: std::rc::Rc<std::cell::RefCell<CteClass>>) -> LogicalCTE {
+fn cte(class: std::sync::Arc<std::sync::RwLock<CteClass>>) -> LogicalCTE {
     LogicalCTE::new(BaseLogicalPlan::with_id(1, LogicalCTE::TYPE, 0), class)
 }
 
@@ -2773,9 +2773,9 @@ fn cte_attaches_a_topn_above_itself() {
 /// the shared pointer so every `LogicalCTETable` sees it.
 #[test]
 fn cte_derive_stats_maps_seed_ndvs_positionally_and_publishes_the_seed_stat() {
-    let seed_stat = std::rc::Rc::new(std::cell::RefCell::new(StatsInfo::new(0.0, [])));
+    let seed_stat = std::sync::Arc::new(std::sync::RwLock::new(StatsInfo::new(0.0, [])));
     let mut c = cte(cte_class(|_| {}));
-    c.seed_stat = Some(std::rc::Rc::clone(&seed_stat));
+    c.seed_stat = Some(std::sync::Arc::clone(&seed_stat));
 
     // The CTE renames: its output ids differ from the seed's, position by
     // position.
@@ -2788,12 +2788,12 @@ fn cte_derive_stats_maps_seed_ndvs_positionally_and_publishes_the_seed_stat() {
     assert!((stats.col_ndvs()[&20] - 30.0).abs() < 1e-9);
     assert!((stats.col_ndvs()[&21] - 7.0).abs() < 1e-9);
     // The shared seed profile was published.
-    assert!((seed_stat.borrow().row_count() - 300.0).abs() < 1e-9);
+    assert!((seed_stat.read().unwrap().row_count() - 300.0).abs() < 1e-9);
 
     // A LogicalCTETable on the same storage adopts it.
     let mut table = LogicalCTETable::new(
         BaseLogicalPlan::with_id(5, LogicalCTETable::TYPE, 0),
-        std::rc::Rc::clone(&seed_stat),
+        std::sync::Arc::clone(&seed_stat),
     );
     let (table_stats, derived) = table.derive_stats(&[true]).unwrap();
     assert!(derived);
@@ -2802,7 +2802,7 @@ fn cte_derive_stats_maps_seed_ndvs_positionally_and_publishes_the_seed_stat() {
     // flag, the derive publishes the seed's CURRENT content -- and if the
     // seed's stats change, the next derive publishes that (the consumers
     // share the seed's stats object).
-    *seed_stat.borrow_mut() = StatsInfo::new(500.0, [(10_i64, 50.0), (11, 9.0)]);
+    *seed_stat.write().unwrap() = StatsInfo::new(500.0, [(10_i64, 50.0), (11, 9.0)]);
     let (table_stats2, derived2) = table.derive_stats(&[false]).unwrap();
     assert!(derived2);
     // The published profile is the seed's own (the seed ids, not the
@@ -2833,7 +2833,7 @@ fn cte_derive_stats_maps_seed_ndvs_positionally_and_publishes_the_seed_stat() {
     assert!(derived);
     assert_eq!(updated.row_count(), 300.0);
     assert_eq!(updated.col_ndvs()[&20], 90.0);
-    assert_eq!(seed_stat.borrow().col_ndvs()[&10], 90.0);
+    assert_eq!(seed_stat.read().unwrap().col_ndvs()[&10], 90.0);
 }
 
 /// The recursive half (`logical_cte.go:203`): NDVs ADD, and `DISTINCT` takes
@@ -2946,12 +2946,21 @@ fn get_has_tiflash_reads_the_bit_prepare_possible_properties_left() {
 #[test]
 fn cte_shallow_clone_shares_the_class() {
     let class = cte_class(|_| {});
-    let plan = LogicalPlan::CTE(cte(std::rc::Rc::clone(&class)));
+    let plan = LogicalPlan::CTE(cte(std::sync::Arc::clone(&class)));
     let LogicalPlan::CTE(cloned) = plan.clone_shallow() else {
         panic!("the variant is preserved");
     };
-    class.borrow_mut().push_down_predicates.push(one());
-    assert_eq!(cloned.cte.unwrap().borrow().push_down_predicates.len(), 1);
+    class.write().unwrap().push_down_predicates.push(one());
+    assert_eq!(
+        cloned
+            .cte
+            .unwrap()
+            .read()
+            .unwrap()
+            .push_down_predicates
+            .len(),
+        1
+    );
     // Go's PruneColumns is an empty call: it never rewrites the plan.
     assert!(!LogicalCTE::prune_columns_local());
 }

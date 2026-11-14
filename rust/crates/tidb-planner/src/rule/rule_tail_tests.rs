@@ -25,8 +25,8 @@
 
 use tidb_planner_property::ColumnSortItem;
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::RwLock;
 
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -158,7 +158,7 @@ fn sequence(allocator: &PlanIdAllocator, children: Vec<LogicalPlan>) -> LogicalP
 fn cte(allocator: &PlanIdAllocator) -> LogicalPlan {
     LogicalPlan::CTE(LogicalCTE::new(
         base(allocator, LogicalCTE::TYPE, Some(schema_of(&[9]))),
-        Rc::new(RefCell::new(CteClass::default())),
+        Arc::new(RwLock::new(CteClass::default())),
     ))
 }
 

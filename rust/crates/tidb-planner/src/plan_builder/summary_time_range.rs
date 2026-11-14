@@ -42,7 +42,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let hint = self
             .plan_hints
             .as_ref()
-            .and_then(|hints| hints.borrow().time_range.clone())
+            .and_then(|hints| hints.read().unwrap().time_range.clone())
             .filter(|(from, to)| !from.is_empty() || !to.is_empty());
         let Some((from_hint, to_hint)) = hint else {
             let to = Local::now();

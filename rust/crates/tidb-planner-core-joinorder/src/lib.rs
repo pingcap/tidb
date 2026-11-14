@@ -70,7 +70,7 @@ struct Edge {
 struct JoinGroup {
     root: Rc<LogicalPlan>,
     vertexes: Vec<Rc<LogicalPlan>>,
-    leading_hints: Vec<Rc<tidb_planner_util::misc::JoinHints>>,
+    leading_hints: Vec<std::sync::Arc<tidb_planner_util::misc::JoinHints>>,
     has_user_leading_hint: bool,
     vertex_hints: BTreeMap<i32, JoinMethodHint>,
     all_inner_join: bool,
@@ -84,7 +84,7 @@ pub struct JoinMethodHint {
     /// Go `preferredJoinMethod`.
     pub prefer_join_method: u32,
     /// Go `joinMethodHintInfo`.
-    pub hint_info: Rc<tidb_planner_util::misc::JoinHints>,
+    pub hint_info: std::sync::Arc<tidb_planner_util::misc::JoinHints>,
 }
 
 impl JoinGroup {
@@ -193,7 +193,7 @@ fn extract_join_group(context: &RuleContext<'_>, plan: Rc<LogicalPlan>) -> JoinG
                     left.id(),
                     JoinMethodHint {
                         prefer_join_method: join.left_prefer_join_type,
-                        hint_info: Rc::clone(hint_info),
+                        hint_info: std::sync::Arc::clone(hint_info),
                     },
                 );
                 left_has_hint = true;
@@ -203,7 +203,7 @@ fn extract_join_group(context: &RuleContext<'_>, plan: Rc<LogicalPlan>) -> JoinG
                     right.id(),
                     JoinMethodHint {
                         prefer_join_method: join.right_prefer_join_type,
-                        hint_info: Rc::clone(hint_info),
+                        hint_info: std::sync::Arc::clone(hint_info),
                     },
                 );
                 right_has_hint = true;
@@ -250,7 +250,7 @@ pub fn is_derived_table_in_leading_hint(
     if block_offset <= 1 {
         return false;
     }
-    let block_names = hint.block_as_names.borrow();
+    let block_names = hint.block_as_names.read().unwrap();
     let Some(alias) = block_names
         .get(&block_offset)
         .filter(|alias| !alias.is_empty())
@@ -314,7 +314,7 @@ pub fn find_plan_by_ast_hint<T>(
             return Some(index);
         }
     }
-    let block_names = hint.block_as_names.borrow();
+    let block_names = hint.block_as_names.read().unwrap();
     let mut matched = None;
     for (index, item) in plans.iter().enumerate() {
         let Some(plan) = plan_of(item) else {
@@ -1158,11 +1158,11 @@ pub fn set_new_join_with_hint(
     };
     if let Some(hint) = vertex_hints.get(&left.id()) {
         join.left_prefer_join_type = hint.prefer_join_method;
-        join.hint_info = Some(Rc::clone(&hint.hint_info));
+        join.hint_info = Some(std::sync::Arc::clone(&hint.hint_info));
     }
     if let Some(hint) = vertex_hints.get(&right.id()) {
         join.right_prefer_join_type = hint.prefer_join_method;
-        join.hint_info = Some(Rc::clone(&hint.hint_info));
+        join.hint_info = Some(std::sync::Arc::clone(&hint.hint_info));
     }
     if join.left_prefer_join_type == 0 && join.right_prefer_join_type == 0 {
         return;
@@ -1616,7 +1616,7 @@ fn build_join_by_leading_hint(
     if group
         .leading_hints
         .windows(2)
-        .any(|hints| !Rc::ptr_eq(&hints[0], &hints[1]))
+        .any(|hints| !std::sync::Arc::ptr_eq(&hints[0], &hints[1]))
     {
         if group.has_user_leading_hint {
             set_hint_warning(
@@ -2303,7 +2303,7 @@ fn try_annotate_ordered_leading_anchor(
         return false;
     }
     anchor.internal_prefer_join_order = true;
-    anchor.internal_hint_info = Some(Rc::new(tidb_planner_util::misc::JoinHints {
+    anchor.internal_hint_info = Some(std::sync::Arc::new(tidb_planner_util::misc::JoinHints {
         tables: BTreeMap::new(),
         leading: Some(vec![tidb_ast::LeadingElement::Table(table)]),
         ..tidb_planner_util::misc::JoinHints::default()

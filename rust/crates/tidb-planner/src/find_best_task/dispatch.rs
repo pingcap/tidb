@@ -1822,11 +1822,7 @@ fn burn_index_join_candidate_ids(
 /// that reach the generic `findBestTask` (a `DataSource` answers for itself).
 /// `tiflash` is `storeTp == kv.TiFlash`; TiKV pushes none of these. An operator
 /// outside the list raises the enforced-MPP warning, whatever the store.
-fn can_self_be_pushed_to_cop(
-    plan: &LogicalPlan,
-    tiflash: bool,
-    ctx: &DispatchContext<'_>,
-) -> bool {
+fn can_self_be_pushed_to_cop(plan: &LogicalPlan, tiflash: bool, ctx: &DispatchContext<'_>) -> bool {
     match plan {
         LogicalPlan::UnionAll(_)
         | LogicalPlan::Sort(_)
@@ -1843,7 +1839,7 @@ fn can_self_be_pushed_to_cop(
         LogicalPlan::CTE(cte) => {
             tiflash
                 && cte.cte.as_ref().is_none_or(|class| {
-                    class.borrow().recursive_part_logical_plan.is_none()
+                    class.read().unwrap().recursive_part_logical_plan.is_none()
                 })
         }
         other => {
@@ -6076,7 +6072,7 @@ fn record_index_join_hint_warnings(
         .hint_info
         .as_ref()
         .and_then(|hints| hints.canonical.as_ref())
-        .map(|canonical| canonical.borrow().index_join.clone())
+        .map(|canonical| canonical.read().unwrap().index_join.clone())
         .unwrap_or_default();
     let mut message = if join.prefer_any(&[hint::LEFT_AS_INLJ_INNER, hint::RIGHT_AS_INLJ_INNER]) {
         format!(

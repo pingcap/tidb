@@ -15,7 +15,7 @@
 //! Pinned Go `pkg/planner/core/rule_join_reorder*.go` legacy solver.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::rc::Rc;
+use std::sync::Arc;
 
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::normal_form::expr_from_schema;
@@ -53,7 +53,7 @@ struct BasicJoinGroupInfo {
 struct JoinGroupResult {
     group: Vec<LogicalPlan>,
     has_outer_join: bool,
-    join_order_hints: Vec<Rc<tidb_planner_util::misc::JoinHints>>,
+    join_order_hints: Vec<Arc<tidb_planner_util::misc::JoinHints>>,
     info: BasicJoinGroupInfo,
     column_expressions: BTreeMap<i64, Expression>,
 }
@@ -281,7 +281,7 @@ fn extract_join_group(context: &RuleContext<'_>, plan: &mut LogicalPlan) -> Join
         None
     };
     if let Some(hint) = current_leading.as_ref() {
-        join_order_hints.push(Rc::clone(hint));
+        join_order_hints.push(Arc::clone(hint));
     }
     let is_outer = matches!(
         join.join_type,
@@ -325,7 +325,7 @@ fn extract_join_group(context: &RuleContext<'_>, plan: &mut LogicalPlan) -> Join
                     left.id(),
                     JoinMethodHint {
                         prefer_join_method: join_snapshot.left_prefer_join_type,
-                        hint_info: Rc::clone(hint_info),
+                        hint_info: Arc::clone(hint_info),
                     },
                 );
                 left_has_hint = true;
@@ -335,7 +335,7 @@ fn extract_join_group(context: &RuleContext<'_>, plan: &mut LogicalPlan) -> Join
                     right.id(),
                     JoinMethodHint {
                         prefer_join_method: join_snapshot.right_prefer_join_type,
-                        hint_info: Rc::clone(hint_info),
+                        hint_info: Arc::clone(hint_info),
                     },
                 );
                 right_has_hint = true;
@@ -660,16 +660,18 @@ fn set_hint_warning(context: &RuleContext<'_>, message: &str) {
 }
 
 fn check_and_generate_leading_hint(
-    hints: &[Rc<tidb_planner_util::misc::JoinHints>],
-) -> (Option<Rc<tidb_planner_util::misc::JoinHints>>, bool) {
+    hints: &[Arc<tidb_planner_util::misc::JoinHints>],
+) -> (Option<Arc<tidb_planner_util::misc::JoinHints>>, bool) {
     let Some(first) = hints.first() else {
         return (None, false);
     };
-    let conflicting = hints.windows(2).any(|pair| !Rc::ptr_eq(&pair[0], &pair[1]));
+    let conflicting = hints
+        .windows(2)
+        .any(|pair| !Arc::ptr_eq(&pair[0], &pair[1]));
     if conflicting {
         (None, true)
     } else {
-        (Some(Rc::clone(first)), false)
+        (Some(Arc::clone(first)), false)
     }
 }
 
@@ -1652,12 +1654,12 @@ mod tests {
 
     #[test]
     fn conflicting_leading_hints_use_shared_owner_identity() {
-        let first = Rc::new(tidb_planner_util::misc::JoinHints::default());
-        let same = Rc::clone(&first);
+        let first = Arc::new(tidb_planner_util::misc::JoinHints::default());
+        let same = Arc::clone(&first);
         assert!(check_and_generate_leading_hint(&[first.clone(), same])
             .0
             .is_some());
-        let different = Rc::new(tidb_planner_util::misc::JoinHints::default());
+        let different = Arc::new(tidb_planner_util::misc::JoinHints::default());
         let (hint, conflicting) = check_and_generate_leading_hint(&[first, different]);
         assert!(hint.is_none());
         assert!(conflicting);

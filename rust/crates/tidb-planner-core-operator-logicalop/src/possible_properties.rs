@@ -198,7 +198,7 @@ impl OwnedRewrite for Prepare {
             // TiFlash capability, else its seed plan's (`GetHasTiFlash`).
             LogicalPlan::CTE(operator) => {
                 let seed_has_tiflash = operator.cte.as_ref().is_some_and(|class| {
-                    crate::cte::get_has_tiflash(class.borrow().seed_part_logical_plan.as_deref())
+                    crate::cte::get_has_tiflash(class.read().unwrap().seed_part_logical_plan.as_deref())
                 });
                 operator.prepare_possible_properties(
                     &children.iter().cloned().map(Some).collect::<Vec<_>>(),

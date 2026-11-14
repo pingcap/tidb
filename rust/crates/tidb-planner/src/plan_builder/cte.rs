@@ -112,8 +112,8 @@
 //!   it is named here because 6b's header pointed at this batch for it.
 
 use std::any::Any;
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::RwLock;
 
 use tidb_ast::{
     Cte, QueryStmt, SelectStmt, SetOp, SetOprStmt, TableRef, Visitable, Visitor, WithClause,
@@ -477,7 +477,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 non_recursive: !with.recursive,
                 is_building: true,
                 storage_id: self.alloc_id_for_cte_storage,
-                seed_stat: Rc::new(RefCell::new(StatsInfo::new(0.0, []))),
+                seed_stat: Arc::new(RwLock::new(StatsInfo::new(0.0, []))),
                 force_inline_by_hint_or_var: self.enable_force_inline_cte,
                 consumer_count,
                 ..super::OuterCte::default()
@@ -960,7 +960,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     .unwrap_or_default();
                 let mut cte_table = LogicalCTETable::new(
                     self.base(LogicalCTETable::TYPE),
-                    Rc::clone(&self.outer_ctes[index].seed_stat),
+                    Arc::clone(&self.outer_ctes[index].seed_stat),
                 );
                 cte_table.name = self.outer_ctes[index].name_original.clone();
                 cte_table.id_for_storage = self.outer_ctes[index].storage_id;
@@ -1061,9 +1061,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 limit_end,
                 ..CteClass::default()
             };
-            self.outer_ctes[index].cte_class = Some(Rc::new(RefCell::new(class)));
+            self.outer_ctes[index].cte_class = Some(Arc::new(RwLock::new(class)));
         }
-        let class = Rc::clone(
+        let class = Arc::clone(
             self.outer_ctes[index]
                 .cte_class
                 .as_ref()
@@ -1073,7 +1073,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // columns, letting resolve_expr_and_replace translate consumer
         // predicates that reference the CTE's output columns.
         {
-            let mut class = class.borrow_mut();
+            let mut class = class.write().unwrap();
             let schema_columns: Vec<Column> = class
                 .seed_part_logical_plan
                 .as_ref()
@@ -1089,7 +1089,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // The seed's schema is available here: populate the column_map for
         // the consumer predicates' column translation.
         {
-            let mut class = class.borrow_mut();
+            let mut class = class.write().unwrap();
             let schema_columns: Vec<Column> = class
                 .seed_part_logical_plan
                 .as_ref()
@@ -1108,7 +1108,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // When a CTE is referenced multiple times, cteClass is shared and
         // contains the schema from when the CTE was first processed."
         let (prev_schema, seed_names) = {
-            let borrowed = class.borrow();
+            let borrowed = class.read().unwrap();
             let seed = borrowed
                 .seed_part_logical_plan
                 .as_ref()
@@ -1120,12 +1120,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         };
         let result_schema = self.get_result_cte_schema(&prev_schema);
 
-        let mut lp = LogicalCTE::new(self.base(LogicalCTE::TYPE), Rc::clone(&class));
+        let mut lp = LogicalCTE::new(self.base(LogicalCTE::TYPE), Arc::clone(&class));
         lp.cte_as_name = self.outer_ctes[index].name_original.clone();
         lp.cte_name = self.outer_ctes[index].name_original.clone();
-        lp.seed_stat = Some(Rc::clone(&self.outer_ctes[index].seed_stat));
+        lp.seed_stat = Some(Arc::clone(&self.outer_ctes[index].seed_stat));
         {
-            let mut borrowed = class.borrow_mut();
+            let mut borrowed = class.write().unwrap();
             for (column, prev) in result_schema.columns.iter().zip(&prev_schema.columns) {
                 borrowed
                     .column_map
@@ -1257,14 +1257,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let names = plan.output_names().to_vec();
         let mut children = Vec::with_capacity(kept.len() + 1);
         for index in kept {
-            let class = Rc::clone(
+            let class = Arc::clone(
                 self.outer_ctes[index]
                     .cte_class
                     .as_ref()
                     .expect("filtered above"),
             );
             let seed_schema = class
-                .borrow()
+                .read().unwrap()
                 .seed_part_logical_plan
                 .as_ref()
                 .and_then(|seed| seed.schema().cloned())
@@ -1272,7 +1272,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let mut lcte = LogicalCTE::new(self.base(LogicalCTE::TYPE), class);
             lcte.cte_as_name = self.outer_ctes[index].name_original.clone();
             lcte.cte_name = self.outer_ctes[index].name_original.clone();
-            lcte.seed_stat = Some(Rc::clone(&self.outer_ctes[index].seed_stat));
+            lcte.seed_stat = Some(Arc::clone(&self.outer_ctes[index].seed_stat));
             lcte.only_used_as_storage = true;
             let schema = self.get_result_cte_schema(&seed_schema);
             lcte.base.base.set_schema(Some(schema));

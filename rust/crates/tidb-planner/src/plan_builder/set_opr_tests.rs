@@ -504,8 +504,8 @@ fn test_a_multi_consumer_cte_becomes_a_logical_cte_over_a_shared_class() {
     };
     assert_eq!(cte.cte_name, "c");
     let class = cte.cte.as_ref().expect("the reference points at a class");
-    assert!(class.borrow().seed_part_logical_plan.is_some());
-    assert!(class.borrow().recursive_part_logical_plan.is_none());
+    assert!(class.read().unwrap().seed_part_logical_plan.is_some());
+    assert!(class.read().unwrap().recursive_part_logical_plan.is_none());
     assert!(find(&plan, "DataSource").is_none());
 }
 
@@ -563,7 +563,7 @@ fn test_a_non_recursive_cte_cannot_see_itself() {
         unreachable!()
     };
     let class = cte.cte.as_ref().expect("a class");
-    let class = class.borrow();
+    let class = class.read().unwrap();
     let seed = class.seed_part_logical_plan.as_ref().expect("a seed");
     assert!(find(seed, "DataSource").is_some());
     assert!(find(seed, "CTE").is_none());
@@ -583,7 +583,7 @@ fn test_a_recursive_cte_builds_a_seed_a_recursive_part_and_a_cte_table() {
         unreachable!()
     };
     let class = cte.cte.as_ref().expect("a class");
-    let class = class.borrow();
+    let class = class.read().unwrap();
     assert!(class.seed_part_logical_plan.is_some());
     let recursive = class
         .recursive_part_logical_plan
@@ -607,7 +607,14 @@ fn test_union_between_seed_and_recursive_part_records_is_distinct() {
     let LogicalPlan::CTE(cte) = find(&plan, "CTE").expect("a LogicalCTE") else {
         unreachable!()
     };
-    assert!(cte.cte.as_ref().expect("a class").borrow().is_distinct);
+    assert!(
+        cte.cte
+            .as_ref()
+            .expect("a class")
+            .read()
+            .unwrap()
+            .is_distinct
+    );
 }
 
 #[test]
@@ -629,7 +636,7 @@ fn test_the_recursive_parts_columns_are_nullable_and_freshly_identified() {
     }
     let class = cte.cte.as_ref().expect("a class");
     let seed_schema = class
-        .borrow()
+        .read().unwrap()
         .seed_part_logical_plan
         .as_ref()
         .and_then(|seed| seed.schema().cloned())
@@ -698,7 +705,7 @@ fn test_a_recursive_declaration_with_no_self_reference_is_an_ordinary_cte() {
         .cte
         .as_ref()
         .expect("a class")
-        .borrow()
+        .read().unwrap()
         .recursive_part_logical_plan
         .is_none());
 }
@@ -715,7 +722,7 @@ fn test_a_recursive_ctes_limit_becomes_the_classs_limit_bounds() {
         unreachable!()
     };
     let class = cte.cte.as_ref().expect("a class");
-    let class = class.borrow();
+    let class = class.read().unwrap();
     assert!(class.has_limit);
     assert_eq!((class.limit_beg, class.limit_end), (2, 5));
 }

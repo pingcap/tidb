@@ -1398,13 +1398,20 @@ mod tests {
                 row_count: 0,
             })),
             recur_plan: None,
-            id_for_storage: 1,
-            is_distinct: false,
-            has_limit: false,
-            limit_beg: 0,
-            limit_end: 0,
+
             cte_as_name: String::new(),
             cte_name: String::new(),
+
+            cte: std::sync::Arc::new(std::sync::RwLock::new(
+                tidb_planner_core_operator_logicalop::cte::CteClass {
+                    id_for_storage: 1,
+                    is_distinct: false,
+                    has_limit: false,
+                    limit_beg: 0,
+                    limit_end: 0,
+                    ..Default::default()
+                },
+            )),
         });
         let cte_cost = coster.task_cost(&root(cte)).expect("cte cost");
         assert!(cte_cost > 0.0);

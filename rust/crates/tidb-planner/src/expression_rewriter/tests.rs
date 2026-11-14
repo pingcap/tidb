@@ -82,7 +82,7 @@ impl Fixture {
             select_offset: 0,
             flags,
             hints: RewriterHints::default(),
-            join_hints: std::rc::Rc::new(tidb_planner_util::misc::JoinHints::default()),
+            join_hints: std::sync::Arc::new(tidb_planner_util::misc::JoinHints::default()),
             opt_flags: &self.opt_flags,
         })
     }

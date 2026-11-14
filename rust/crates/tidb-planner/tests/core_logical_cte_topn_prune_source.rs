@@ -34,8 +34,8 @@
 //! [`tidb_planner_core_operator_logicalop::LogicalPlan::prune_columns`] (the owned rewrite
 //! whose `TopN` arm mirrors `logical_top_n.go:79` arm by arm).
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::RwLock;
 
 use tidb_expression_aggregation::ByItems;
 use tidb_expr::column::Column;
@@ -144,7 +144,7 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
 /// as FALSE so only the skip-nil behavior can produce the true result.
 #[test]
 fn cte_prepare_possible_properties_skips_nil_children_to_the_first_non_nil_answer() {
-    let class = Rc::new(RefCell::new(CteClass::default()));
+    let class = Arc::new(RwLock::new(CteClass::default()));
     let mut cte = LogicalCTE::new(BaseLogicalPlan::default(), class);
 
     let with_tiflash = PossiblePropertiesInfo {

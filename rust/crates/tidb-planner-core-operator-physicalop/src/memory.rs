@@ -382,11 +382,14 @@ pub(super) fn go_node_memory_usage(node: &PhysicalPlan) -> i64 {
                 + point_plan_keys_usage(op.range_rebuild.as_ref(), op.index_id.is_none(), true)
         }
         PhysicalPlan::CTE(op) => {
-            // `PhysicalCTE` and its `CTEDefinition` each hold the name and
-            // the same two plans.
-            2 * (op.base.go_schema_producer_memory_usage() + ci_str_memory_usage(&op.cte_as_name))
-                + 2 * (subtree_usage(&op.seed_plan)
-                    + optional_subtree_usage(op.recur_plan.as_deref()))
+            op.base.go_schema_producer_memory_usage() + ci_str_memory_usage(&op.cte_as_name)
+                + subtree_usage(&op.seed_plan)
+                + optional_subtree_usage(op.recur_plan.as_deref())
+                + op.cte.read().unwrap().memory_usage()
+        }
+        PhysicalPlan::CTEStorage(op) => {
+            op.base.go_schema_producer_memory_usage() + ci_str_memory_usage(&op.cte_as_name)
+                + op.cte.read().unwrap().memory_usage()
         }
         PhysicalPlan::CTETable(op) => op.base.go_schema_producer_memory_usage() + SIZE_OF_INT,
         PhysicalPlan::Dml(root) => {
@@ -411,7 +414,7 @@ pub(super) fn go_node_memory_usage(node: &PhysicalPlan) -> i64 {
         }
         PhysicalPlan::ShuffleReceiver(receiver) => {
             receiver.base.go_schema_producer_memory_usage()
-                + std::mem::size_of::<Box<PhysicalPlan>>() as i64
+                + SIZE_OF_POINTER + SIZE_OF_INTERFACE
                 + receiver.data_source.memory_usage()
         }
         PhysicalPlan::ExchangeReceiver(receiver) => {

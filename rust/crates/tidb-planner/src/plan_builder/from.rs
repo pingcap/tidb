@@ -104,7 +104,7 @@
 //!   stack, and the counter's only reader is the `ErrViewNoExplain` arm.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::rc::Rc;
+use std::sync::Arc;
 
 use tidb_ast::{Join, JoinNode, JoinType, QueryStmt};
 use tidb_datatype::{
@@ -152,7 +152,7 @@ pub const EXTRA_PHYS_TBL_ID_NAME: &str = "_tidb_tid";
 /// children have moved by then, so the names arrive as parameters.
 pub fn set_preferred_join_type_and_order(
     join: &mut LogicalJoin,
-    hints: &Rc<tidb_planner_util::misc::JoinHints>,
+    hints: &Arc<tidb_planner_util::misc::JoinHints>,
     (left_names, left_offset): (&[FieldName], i32),
     (right_names, right_offset): (&[FieldName], i32),
     ctx: &dyn tidb_exprctx::Columns,
@@ -243,7 +243,7 @@ pub fn set_preferred_join_type_and_order(
     let straight_join_order = hints
         .canonical
         .as_ref()
-        .is_some_and(|canonical| canonical.borrow().straight_join_order);
+        .is_some_and(|canonical| canonical.read().unwrap().straight_join_order);
     let has_conflict = if !hints.advanced_join_hint || straight_join_order {
         contain_different_join_types(join.prefer_join_type)
     } else {
@@ -275,14 +275,14 @@ pub fn set_preferred_join_type_and_order(
             })
             .collect::<Vec<_>>();
         let candidates = aliases.iter().map(Some).collect::<Vec<_>>();
-        let mut canonical = canonical.borrow_mut();
+        let mut canonical = canonical.write().unwrap();
         join.prefer_join_order = tidb_hint::PlanHints::match_table_name(
             &candidates,
             &mut canonical.leading_join_order,
         );
     }
     if join.prefer_join_type != 0 || join.prefer_join_order {
-        join.hint_info = Some(Rc::clone(hints));
+        join.hint_info = Some(Arc::clone(hints));
     }
 }
 
@@ -659,7 +659,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // records its alias, which join-hint aliases read.
         if let Some(first) = names.first() {
             self.select_block_as_names
-                .borrow_mut()
+                .write().unwrap()
                 .insert(plan.query_block_offset(), first.names.table.lower.clone());
         }
 

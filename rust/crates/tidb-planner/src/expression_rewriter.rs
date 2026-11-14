@@ -303,7 +303,7 @@ pub struct RewriterEnv<'a, C: Columns> {
     /// join+agg inside it — so a `TIDB_INLJ(t)` hint on the outer table names
     /// the probe side of an `IN`-subquery join even though the join was never
     /// written in the FROM clause.
-    pub join_hints: std::rc::Rc<tidb_planner_util::misc::JoinHints>,
+    pub join_hints: std::sync::Arc<tidb_planner_util::misc::JoinHints>,
     /// Go `b.optFlag`, for the bits these builders set
     /// ([`crate::plan_builder::PlanBuilder::rewriter_opt_flags`]).
     pub opt_flags: &'a std::cell::Cell<u64>,
@@ -507,7 +507,7 @@ fn visit_logical_correlated_columns_mut(
         }
         LogicalPlan::CTE(op) => {
             if let Some(cte) = &op.cte {
-                let mut cte = cte.borrow_mut();
+                let mut cte = cte.write().unwrap();
                 if let Some(seed) = &mut cte.seed_part_logical_plan {
                     visit_logical_correlated_columns_mut(seed, visitor);
                 }

@@ -23,7 +23,7 @@
 //! # Where this port DOES share, and why
 //!
 //! The [`crate`] header's rule is that the CHILD edge is owned, never
-//! `Rc`. A CTE is the one place in `logicalop` where Go shares deliberately and
+//! `Arc`. A CTE is the one place in `logicalop` where Go shares deliberately and
 //! the sharing is load-bearing rather than incidental:
 //!
 //! * `LogicalCTE.Cte *CTEClass` is one class per CTE and one `LogicalCTE` per
@@ -36,7 +36,8 @@
 //!   comment "Changing the pointer so that SeedStat in LogicalCTETable can get
 //!   the new stat".
 //!
-//! Both are therefore [`Rc`]`<`[`RefCell`]`<...>>` here. That is Go's model,
+//! Both use [`Arc`]`<`[`RwLock`]`<...>>` so a cached physical plan can
+//! retain the same class across threads. This preserves Go's pointer sharing,
 //! not a relaxation of the child rule: neither is a child edge, and neither is
 //! reached by a tree walk.
 //!
@@ -51,14 +52,12 @@
 //!   `ruleutil.ResolveExprAndReplace(expr, p.Cte.ColumnMap)` and
 //!   `expression.ComposeCNFCondition`; the DECISION is
 //!   [`LogicalCTE::predicate_push_down`] and the composition is the driver's.
-//! * `CTEClass.MemoryUsage` sums `PhysicalPlan.MemoryUsage`, which is not
-//!   transcreated.
 //! * `LogicalCTE.OnlyUsedAsStorage` drives `p.SetChildren(SeedPartLogicalPlan)`
 //!   inside `DeriveStats`; that re-parenting moves a plan and belongs to the
 //!   driver, so the flag is carried and the move is not performed here.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::RwLock;
 
 use tidb_expr::column::{Column, CorrelatedColumn};
 use tidb_expr::expression::Expression;
@@ -115,6 +114,32 @@ pub struct CteClass {
     pub is_outer_most_cte: bool,
 }
 
+impl CteClass {
+    /// Go `CTEClass.MemoryUsage` (`logical_cte.go`). Logical plans are not
+    /// charged; physical plans and expressions are, even when shared.
+    pub fn memory_usage(&self) -> i64 {
+        // Go unsafe.Sizeof(CTEClass{}) on 64-bit, captured by zzprobe/p01.
+        160 + self
+            .seed_part_physical_plan
+            .as_ref()
+            .map_or(0, |p| p.memory_usage())
+            + self
+                .recursive_part_physical_plan
+                .as_ref()
+                .map_or(0, |p| p.memory_usage())
+            + self
+                .push_down_predicates
+                .iter()
+                .map(Expression::memory_usage)
+                .sum::<i64>()
+            + self
+                .column_map
+                .iter()
+                .map(|(key, column)| 16 + key.len() as i64 + 8 + column.memory_usage())
+                .sum::<i64>()
+    }
+}
+
 /// What [`LogicalCTE::predicate_push_down`] resolved.
 ///
 /// Go's function ALWAYS returns `predicates` to the parent — a CTE never
@@ -143,15 +168,15 @@ pub enum CtePredicatePushDown {
 pub struct LogicalCTE {
     /// The shared logical base.
     pub base: BaseLogicalPlan,
-    /// Go `Cte *CTEClass`; see this module's header for the `Rc`.
-    pub cte: Option<Rc<RefCell<CteClass>>>,
+    /// Go `Cte *CTEClass`; see this module's header for the `Arc`.
+    pub cte: Option<Arc<RwLock<CteClass>>>,
     /// Go `CteAsName`.
     pub cte_as_name: String,
     /// Go `CteName`.
     pub cte_name: String,
     /// Go `SeedStat *property.StatsInfo`, aliased by every
     /// [`LogicalCTETable`] for the same storage.
-    pub seed_stat: Option<Rc<RefCell<StatsInfo>>>,
+    pub seed_stat: Option<Arc<RwLock<StatsInfo>>>,
     /// Go `OnlyUsedAsStorage`.
     pub only_used_as_storage: bool,
 }
@@ -162,7 +187,7 @@ impl LogicalCTE {
 
     /// Go `LogicalCTE.Init(ctx, offset)` (`logical_cte.go:45`).
     #[must_use]
-    pub fn new(base: BaseLogicalPlan, cte: Rc<RefCell<CteClass>>) -> Self {
+    pub fn new(base: BaseLogicalPlan, cte: Arc<RwLock<CteClass>>) -> Self {
         Self {
             base,
             cte: Some(cte),
@@ -185,7 +210,7 @@ impl LogicalCTE {
         let Some(cte) = &self.cte else {
             return CtePredicatePushDown::Unsupported;
         };
-        let cte = cte.borrow();
+        let cte = cte.read().unwrap();
         if cte.recursive_part_logical_plan.is_some() || !cte.is_outer_most_cte {
             return CtePredicatePushDown::Unsupported;
         }
@@ -287,7 +312,7 @@ impl LogicalCTE {
         // SeedStat is the shared publication slot, not a second input owner.
         let seed_profile = seed;
         if let Some(seed_stat) = &self.seed_stat {
-            *seed_stat.borrow_mut() = seed_profile.clone();
+            *seed_stat.write().unwrap() = seed_profile.clone();
         }
         let mut row_count = seed_profile.row_count();
         let mut ndvs: Vec<(i64, f64)> = self_schema
@@ -316,7 +341,7 @@ impl LogicalCTE {
             let is_distinct = self
                 .cte
                 .as_ref()
-                .is_some_and(|cte| cte.borrow().is_distinct);
+                .is_some_and(|cte| cte.read().unwrap().is_distinct);
             if is_distinct {
                 row_count = distinct_row_count.unwrap_or_else(|| {
                     let profile = StatsInfo::new(row_count, ndvs.iter().copied());
@@ -386,7 +411,7 @@ impl LogicalCTE {
         let Some(cte) = &self.cte else {
             return Vec::new();
         };
-        let cte = cte.borrow();
+        let cte = cte.read().unwrap();
         let mut cor_cols = Vec::new();
         if let Some(seed) = &cte.seed_part_logical_plan {
             cor_cols.extend(extract_correlated_cols_for_plan(seed));
@@ -400,7 +425,7 @@ impl LogicalCTE {
     /// This operator's own fields with NO children; see
     /// [`crate::LogicalPlan::clone_shallow`].
     ///
-    /// The `Rc`s are cloned as HANDLES, which is exactly Go's pointer copy: a
+    /// The `Arc`s are cloned as HANDLES, which is exactly Go's pointer copy: a
     /// shallow copy of a `LogicalCTE` still refers to the same `CTEClass`.
     #[must_use]
     pub fn clone_shallow(&self) -> Self {
@@ -423,7 +448,7 @@ pub struct LogicalCTETable {
     pub base: BaseLogicalPlan,
     /// Go `SeedStat`, the SAME profile the producing [`LogicalCTE`] writes
     /// through; see that module header.
-    pub seed_stat: Option<Rc<RefCell<StatsInfo>>>,
+    pub seed_stat: Option<Arc<RwLock<StatsInfo>>>,
     /// Go `Name`.
     pub name: String,
     /// Go `IDForStorage`.
@@ -439,7 +464,7 @@ impl LogicalCTETable {
 
     /// Go `LogicalCTETable.Init(ctx, offset)` (`logical_cte_table.go:36`).
     #[must_use]
-    pub fn new(base: BaseLogicalPlan, seed_stat: Rc<RefCell<StatsInfo>>) -> Self {
+    pub fn new(base: BaseLogicalPlan, seed_stat: Arc<RwLock<StatsInfo>>) -> Self {
         Self {
             base,
             seed_stat: Some(seed_stat),
@@ -462,7 +487,7 @@ impl LogicalCTETable {
         // seed's subtree derives after them. Caching the first read left the
         // consumers at the initial one-row seed_stat forever (q30's CTE
         // showed 1.00 while go showed the seed's real 603125.46).
-        let stats = self.seed_stat.as_ref()?.borrow().clone();
+        let stats = self.seed_stat.as_ref()?.read().unwrap().clone();
         self.base.base.set_stats(Some(stats.clone()));
         Some((stats, true))
     }
@@ -527,7 +552,7 @@ fn find_ctes(
             return;
         };
         {
-            let mut class = class.borrow_mut();
+            let mut class = class.write().unwrap();
             if !is_root_tree {
                 // Go `recheck_cte.go:39`: "Set it to false since it's
                 // referenced by other CTEs."
@@ -542,16 +567,16 @@ fn find_ctes(
         // Go descends into the seed (and the recursive part, when present)
         // with `isRootTree = false` on the first visit only. The seed is a
         // separate tree root here, so the walk goes through the class.
-        let mut seed = class.borrow_mut().seed_part_logical_plan.take();
+        let mut seed = class.write().unwrap().seed_part_logical_plan.take();
         if let Some(seed) = seed.as_deref_mut() {
             find_ctes(seed, visited, false);
         }
-        class.borrow_mut().seed_part_logical_plan = seed;
-        let mut recursive = class.borrow_mut().recursive_part_logical_plan.take();
+        class.write().unwrap().seed_part_logical_plan = seed;
+        let mut recursive = class.write().unwrap().recursive_part_logical_plan.take();
         if let Some(recursive) = recursive.as_deref_mut() {
             find_ctes(recursive, visited, false);
         }
-        class.borrow_mut().recursive_part_logical_plan = recursive;
+        class.write().unwrap().recursive_part_logical_plan = recursive;
         return;
     }
     for child in plan.base_mut().children_mut() {

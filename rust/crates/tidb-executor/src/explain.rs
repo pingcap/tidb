@@ -2169,7 +2169,8 @@ fn cte_definitions(
         let PhysicalPlan::CTE(cte) = plan else {
             continue;
         };
-        if !seen.insert(cte.id_for_storage) {
+        let id_for_storage = cte.cte.read().unwrap().id_for_storage;
+        if !seen.insert(id_for_storage) {
             continue;
         }
         let mut children = vec![physical_explain_operator(
@@ -2202,8 +2203,8 @@ fn cte_definitions(
             ));
             collect_ctes(recursive, &mut ctes);
         }
-        let mut definition = ExplainOperator::new("CTE", cte.id_for_storage)
-            .with_fixed_id(format!("CTE_{}", cte.id_for_storage))
+        let mut definition = ExplainOperator::new("CTE", id_for_storage)
+            .with_fixed_id(format!("CTE_{}", id_for_storage))
             .with_operator_info(if cte.recur_plan.is_some() {
                 "Recursive CTE"
             } else {

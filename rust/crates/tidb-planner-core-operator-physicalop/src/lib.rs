@@ -1755,12 +1755,12 @@ pub fn exhaust_physical_plans_4_logical_max_one_row(
 pub struct PhysicalCTEStorage {
     /// The shared physical base; its one child is the seed's physical plan.
     pub base: BasePhysicalPlan,
-    /// Go `CTE.IDForStorage`.
-    pub id_for_storage: i32,
     /// Go `CteAsName`.
     pub cte_as_name: String,
     /// Go `CteName`.
     pub cte_name: String,
+    /// Go `CTE`: the same class retained by the logical plan and every physical clone.
+    pub cte: std::sync::Arc<std::sync::RwLock<tidb_planner_core_operator_logicalop::cte::CteClass>>,
 }
 
 impl PhysicalCTEStorage {
@@ -1773,7 +1773,7 @@ impl PhysicalCTEStorage {
     /// Go `PhysicalCTEStorage.ExplainID`: `CTE_<IDForStorage>`.
     #[must_use]
     pub fn explain_id(&self) -> String {
-        format!("CTE_{}", self.id_for_storage)
+        format!("CTE_{}", self.cte.read().unwrap().id_for_storage)
     }
 }
 
@@ -1869,27 +1869,19 @@ pub struct PhysicalCTE {
     pub seed_plan: Box<PhysicalPlan>,
     /// Go `RecurPlan`.
     pub recur_plan: Option<Box<PhysicalPlan>>,
-    /// Go `CTE.IDForStorage`.
-    pub id_for_storage: i32,
-    /// Go `CTE.IsDistinct`.
-    pub is_distinct: bool,
-    /// Go `CTE.HasLimit`.
-    pub has_limit: bool,
-    /// Go `CTE.LimitBeg`.
-    pub limit_beg: u64,
-    /// Go `CTE.LimitEnd`.
-    pub limit_end: u64,
     /// Go `CteAsName`.
     pub cte_as_name: String,
     /// Go `CteName`.
     pub cte_name: String,
+    /// Go `CTE`: the same class retained by the logical plan and every physical clone.
+    pub cte: std::sync::Arc<std::sync::RwLock<tidb_planner_core_operator_logicalop::cte::CteClass>>,
 }
 
 impl PhysicalCTE {
     /// Go `PhysicalCTE.OperatorInfo`.
     #[must_use]
     pub fn operator_info(&self) -> String {
-        format!("data:CTE_{}", self.id_for_storage)
+        format!("data:CTE_{}", self.cte.read().unwrap().id_for_storage)
     }
 }
 
@@ -1925,7 +1917,7 @@ pub fn find_best_task_4_logical_cte(
         .cte
         .as_ref()
         .ok_or_else(|| PlanError::internal("findBestTask4LogicalCTE: CTEClass is nil"))?
-        .borrow();
+        .read().unwrap();
     let seed_plan = class
         .seed_part_physical_plan
         .as_deref()
@@ -1952,11 +1944,7 @@ pub fn find_best_task_4_logical_cte(
             .and_then(|plan| plan.as_any().downcast_ref::<PhysicalPlan>())
             .map(PhysicalPlan::deep_clone)
             .map(Box::new),
-        id_for_storage: class.id_for_storage,
-        is_distinct: class.is_distinct,
-        has_limit: class.has_limit,
-        limit_beg: class.limit_beg,
-        limit_end: class.limit_end,
+        cte: p.cte.as_ref().unwrap().clone(),
         cte_as_name: p.cte_as_name.clone(),
         cte_name: p.cte_name.clone(),
     });
@@ -2423,10 +2411,9 @@ pub fn exhaust_physical_plans_4_logical_cte(
     base.base.set_stats(p.base.base.stats_info().cloned());
     base.base.set_schema(p.base.base.schema().cloned());
     base.set_children_req_props(vec![Some(prop.clone_essential_fields())]);
-    let id_for_storage = p.cte.as_ref().map_or(0, |cte| cte.borrow().id_for_storage);
     vec![PhysicalPlan::CTEStorage(PhysicalCTEStorage {
         base,
-        id_for_storage,
+        cte: p.cte.clone().expect("LogicalCTE.Cte for CTE storage"),
         cte_as_name: p.cte_as_name.clone(),
         cte_name: p.cte_name.clone(),
     })]
@@ -5024,6 +5011,11 @@ pub enum PhysicalPlan {
 }
 
 impl tidb_planner_core_base::PhysicalPlanHandle for PhysicalPlan {
+    /// Go `base.PhysicalPlan.MemoryUsage`.
+    fn memory_usage(&self) -> i64 {
+        PhysicalPlan::memory_usage(self)
+    }
+
     fn stats_info(&self) -> Option<&StatsInfo> {
         PhysicalPlan::stats_info(self)
     }
@@ -5797,17 +5789,13 @@ impl PhysicalPlan {
                     .as_deref()
                     .map(PhysicalPlan::deep_clone)
                     .map(Box::new),
-                id_for_storage: op.id_for_storage,
-                is_distinct: op.is_distinct,
-                has_limit: op.has_limit,
-                limit_beg: op.limit_beg,
-                limit_end: op.limit_end,
+                cte: op.cte.clone(),
                 cte_as_name: op.cte_as_name.clone(),
                 cte_name: op.cte_name.clone(),
             }),
             Self::CTEStorage(op) => Self::CTEStorage(PhysicalCTEStorage {
                 base: base_of(&op.base),
-                id_for_storage: op.id_for_storage,
+                cte: op.cte.clone(),
                 cte_as_name: op.cte_as_name.clone(),
                 cte_name: op.cte_name.clone(),
             }),
@@ -6039,6 +6027,7 @@ impl PhysicalPlan {
             Self::ShuffleReceiver(op) => Self::ShuffleReceiver(PhysicalShuffleReceiverStub {
                 base: base_of(&op.base),
                 data_source: op.data_source.clone(),
+                receiver: std::sync::Mutex::new(op.receiver.lock().unwrap().clone()),
             }),
             Self::Shuffle(op) => Self::Shuffle(PhysicalShuffle {
                 base: base_of(&op.base),

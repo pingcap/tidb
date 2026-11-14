@@ -85,8 +85,6 @@ struct BuildState {
     /// executors, so the copy records no `exec.Next` regions and no runtime
     /// statistics.
     untraced: bool,
-    /// Receiver substitutions while building a shuffle worker subtree.
-    shuffle_receivers: HashMap<i32, Box<dyn Executor>>,
     cte_slots: HashMap<i32, CteBuildSlot>,
     executor_runtime_stats_source: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
     /// Go `executorStats`' Top SQL registration of the statement being built.
@@ -5549,12 +5547,13 @@ fn cte_reader(
     producer: SharedCteProducer,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
+    let class = cte.cte.read().unwrap();
     Ok(Box::new(CteExec::new(
         meta(ctx, plan, plan_schema(plan)?),
         producer,
-        cte.has_limit,
-        cte.limit_beg,
-        cte.limit_end,
+        class.has_limit,
+        class.limit_beg,
+        class.limit_end,
     )))
 }
 
@@ -5565,6 +5564,15 @@ fn build_cte(
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
+    let (id_for_storage, is_distinct, has_limit, limit_end) = {
+        let class = cte.cte.read().unwrap();
+        (
+            class.id_for_storage,
+            class.is_distinct,
+            class.has_limit,
+            class.limit_end,
+        )
+    };
     // Go `buildCTE`'s telemetry, under `withStmtCtxLock`.
     {
         let mut ti = ctx.telemetry_info();
@@ -5575,16 +5583,16 @@ fn build_cte(
     }
     if let Some(producer) = state
         .cte_slots
-        .get(&cte.id_for_storage)
+        .get(&id_for_storage)
         .and_then(|slot| slot.producer.as_ref())
         .cloned()
     {
         return cte_reader(plan, cte, producer, ctx);
     }
-    if state.cte_slots.contains_key(&cte.id_for_storage) {
+    if state.cte_slots.contains_key(&id_for_storage) {
         return Err(DriverError::unsupported(format!(
             "producer should already be set up by CTEExec(id: {})",
-            cte.id_for_storage
+            id_for_storage
         )));
     }
 
@@ -5617,7 +5625,7 @@ fn build_cte(
     }
     let iter_in = Arc::new(Mutex::new(iter_in_storage));
     state.cte_slots.insert(
-        cte.id_for_storage,
+        id_for_storage,
         CteBuildSlot {
             result: Arc::clone(&result),
             iter_in: Arc::clone(&iter_in),
@@ -5629,7 +5637,7 @@ fn build_cte(
         Some(recursive) => match build_with_state(recursive, catalog, ctx, state) {
             Ok(executor) => Some(executor),
             Err(error) => {
-                state.cte_slots.remove(&cte.id_for_storage);
+                state.cte_slots.remove(&id_for_storage);
                 return Err(error);
             }
         },
@@ -5640,7 +5648,7 @@ fn build_cte(
     }
     let slot = state
         .cte_slots
-        .get(&cte.id_for_storage)
+        .get(&id_for_storage)
         .expect("CTE slot inserted before recursive executor build");
     let result = Arc::clone(&slot.result);
     let iter_in = Arc::clone(&slot.iter_in);
@@ -5649,9 +5657,9 @@ fn build_cte(
         recursive,
         result,
         iter_in,
-        cte.is_distinct,
-        cte.has_limit,
-        cte.limit_end,
+        is_distinct,
+        has_limit,
+        limit_end,
         ctx.clone(),
         output_types,
         ctx.executor_chunk_sizes().1,
@@ -5660,7 +5668,7 @@ fn build_cte(
     .with_storage_parents(storage_parents)));
     state
         .cte_slots
-        .get_mut(&cte.id_for_storage)
+        .get_mut(&id_for_storage)
         .expect("CTE slot inserted before recursive executor build")
         .producer = Some(Arc::clone(&producer));
     cte_reader(plan, cte, producer, ctx)
@@ -5684,7 +5692,7 @@ fn build_cte_table(
     )))
 }
 
-/// Recursively instantiates one retained physical operator tree.
+/// Go `executorBuilder.buildShuffle`.
 fn build_shuffle(
     plan: &PhysicalPlan,
     shuffle: &tidb_planner_core_operator_physicalop::PhysicalShuffle,
@@ -5739,7 +5747,6 @@ fn build_shuffle(
     let mut workers = Vec::with_capacity(shuffle.concurrency);
     for _ in 0..shuffle.concurrency {
         let inboxes: Vec<_> = source_plans.iter().map(|_| InboxHandle::new()).collect();
-        let saved_receivers = std::mem::take(&mut state.shuffle_receivers);
         let result = (|| {
             for (receiver_plan, inbox) in receiver_plans.iter().zip(&inboxes) {
                 let receiver = ShuffleReceiver::new(
@@ -5747,13 +5754,13 @@ fn build_shuffle(
                     inbox.clone(),
                     finish.clone(),
                 );
-                state
-                    .shuffle_receivers
-                    .insert(receiver_plan.id(), Box::new(receiver));
+                let PhysicalPlan::ShuffleReceiver(stub) = receiver_plan else {
+                    unreachable!("validated receiver boundary")
+                };
+                *stub.receiver.lock().unwrap() = Some(Arc::new(Mutex::new(receiver)));
             }
             build_with_state(only_child(plan)?, catalog, ctx, state)
         })();
-        state.shuffle_receivers = saved_receivers;
         workers.push(ShuffleWorker::new(result?, inboxes, finish.clone()));
     }
     Ok(Box::new(ShuffleExec::new(
@@ -5763,6 +5770,25 @@ fn build_shuffle(
         splitters,
         sources,
         finish,
+    )))
+}
+
+/// Go `executorBuilder.buildShuffleReceiverStub`: recover the exact receiver
+/// installed by buildShuffle, independent of the physical plan's ID.
+pub(crate) fn build_shuffle_receiver_stub(
+    stub: &tidb_planner_core_operator_physicalop::PhysicalShuffleReceiverStub,
+) -> Result<Box<dyn Executor>, DriverError> {
+    let receiver = stub
+        .receiver
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| DriverError::unsupported("shuffle receiver has no owning worker"))?;
+    let receiver = receiver
+        .downcast::<Mutex<crate::shuffle::ShuffleReceiver>>()
+        .map_err(|_| DriverError::unsupported("shuffle receiver has the wrong executor type"))?;
+    Ok(Box::new(crate::shuffle::SharedShuffleReceiver::new(
+        receiver,
     )))
 }
 
@@ -6103,9 +6129,6 @@ fn build_with_state(
     if state.executor_runtime_stats_source.is_none() && !state.untraced {
         state.executor_runtime_stats_source = ctx.executor_runtime_stats_source().cloned();
     }
-    if let Some(receiver) = state.shuffle_receivers.remove(&plan.id()) {
-        return Ok(state.meter(plan, receiver, ctx.statement_memory()));
-    }
     let executor: Box<dyn Executor> = match plan {
         PhysicalPlan::Shuffle(shuffle) => {
             // Go `ShuffleExec.Open` registers its concurrency.
@@ -6119,9 +6142,7 @@ fn build_with_state(
             }
             build_shuffle(plan, shuffle, catalog, ctx, state)
         }
-        PhysicalPlan::ShuffleReceiver(_) => Err(DriverError::unsupported(
-            "shuffle receiver has no owning worker",
-        )),
+        PhysicalPlan::ShuffleReceiver(stub) => build_shuffle_receiver_stub(stub),
         PhysicalPlan::MemTable(scan) => build_mem_table(plan, scan, catalog, ctx),
         PhysicalPlan::TableScan(scan)
             if scan.store_type == tidb_kv::store_type::StoreType::TiDb =>
@@ -8476,13 +8497,20 @@ use super::*;
             base,
             seed_plan: Box::new(seed),
             recur_plan: recursive.map(Box::new),
-            id_for_storage: storage_id,
-            is_distinct: distinct,
-            has_limit: limit.is_some(),
-            limit_beg: limit.map_or(0, |limit| limit.0),
-            limit_end: limit.map_or(0, |limit| limit.1),
+
             cte_as_name: "r".to_owned(),
             cte_name: "r".to_owned(),
+
+            cte: std::sync::Arc::new(std::sync::RwLock::new(
+                tidb_planner_core_operator_logicalop::cte::CteClass {
+                    id_for_storage: storage_id,
+                    is_distinct: distinct,
+                    has_limit: limit.is_some(),
+                    limit_beg: limit.map_or(0, |limit| limit.0),
+                    limit_end: limit.map_or(0, |limit| limit.1),
+                    ..Default::default()
+                },
+            )),
         })
     }
 

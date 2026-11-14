@@ -357,7 +357,7 @@ impl OwnedRewrite for InterestingColumnPruner {
             }
             LogicalPlan::CTE(cte) => {
                 if let Some(class) = &cte.cte {
-                    let mut class = class.borrow_mut();
+                    let mut class = class.write().unwrap();
                     if let Some(seed) = class.seed_part_logical_plan.take() {
                         let (seed, ()) = fold_owned(self, *seed, InterestingColumnsDown::default());
                         class.seed_part_logical_plan = Some(Box::new(seed));
@@ -562,7 +562,7 @@ impl Collector {
                     self.result.operator_count += 1;
                     return;
                 };
-                let class = class.borrow();
+                let class = class.read().unwrap();
                 if let Some(seed) = class.seed_part_logical_plan.as_deref() {
                     self.collect_tree(seed);
                 }

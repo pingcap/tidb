@@ -2,9 +2,9 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 12,
+    "unresolved": 11,
     "open": 0,
-    "partial": 12
+    "partial": 11
   },
   "findings": [
     {
@@ -29,13 +29,6 @@
       "finding": "No ingest (fast-reorg) backfill: it falls back to the transactional merge (`tidb-ddl/src/cluster_ddl/add_index.rs`); with it the status port's `/ingest/*` routes (Go `IngestConcurrencyHandler` over `ingestctrl`'s rate-limit parameters) are absent, and so is the DXF add-index task's `autoPauseAddIndexJobOnKVDiskFull`, the one producer of the system pause a multi-schema change promotes (`promote_proxy_kv_disk_full_pause`); the DXF backfill executor's Top SQL attach (`attachTopProfilingInfo` in `backfilling_dist_executor.go`) goes with it",
       "rust_evidence": "`rust/crates/tidb-ddl/src/cluster_ddl/add_index.rs`",
       "go_owner": "`pkg/ddl/backfilling*.go`, `pkg/ddl/ingest`"
-    },
-    {
-      "id": "P01",
-      "status": "partial",
-      "group": "DML and executor handoff",
-      "finding": "The physical operators carry Go's fields (audit: `rust/scripts/physicalop-field-audit.py`; Go's flattened plan lists, which alias the reader's own tree, are borrowing views such as `PhysicalIndexLookUpReader::index_plans()`). Missing still: `PhysicalCTE.CTE` is the copied `CTEClass` fields, the session's `CTEClass` being `Rc<RefCell<_>>` logical state a cached physical plan cannot share; `PhysicalShuffleReceiverStub.Receiver`, the executor builder's pointer to its receiver, is the builder's (`shuffle::install_receivers`). A scan keeps its statement's used-statistics entry by pointer as Go's `UsedStatsInfo` does (`SharedUsedStatsInfo`, set where Go sets it, shared by a cached plan's copy), and EXPLAIN prints that entry.",
-      "go_owner": "`pkg/planner/core/operator/physicalop` (the operator structs)"
     },
     {
       "id": "C01",

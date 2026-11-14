@@ -205,9 +205,7 @@ pub mod window;
 #[cfg(test)]
 mod window_tests;
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::rc::Rc;
 
 use tidb_ast::{Expr, JoinNode, Limit, SelectField, SelectStmt, TableRef};
 use tidb_datatype::{
@@ -325,9 +323,11 @@ pub struct OuterCte {
     pub opt_flag: u64,
     /// Go `cteInfo.seedStat`, aliased by every `LogicalCTE`/`LogicalCTETable`
     /// for this CTE; see [`tidb_planner_core_operator_logicalop::cte`]'s header.
-    pub seed_stat: std::rc::Rc<std::cell::RefCell<tidb_planner_property::stats_info::StatsInfo>>,
+    pub seed_stat: std::sync::Arc<std::sync::RwLock<tidb_planner_property::stats_info::StatsInfo>>,
     /// Go `cteInfo.cteClass`, created at the FIRST reference and shared.
-    pub cte_class: Option<std::rc::Rc<std::cell::RefCell<tidb_planner_core_operator_logicalop::cte::CteClass>>>,
+    pub cte_class: Option<
+        std::sync::Arc<std::sync::RwLock<tidb_planner_core_operator_logicalop::cte::CteClass>>,
+    >,
     /// Go `cteInfo.isInline`.
     pub is_inline: bool,
     /// Go `cteInfo.forceInlineByHintOrVar`.
@@ -361,7 +361,7 @@ impl Default for OuterCte {
             limit_bounds: None,
             storage_id: 0,
             opt_flag: 0,
-            seed_stat: std::rc::Rc::new(std::cell::RefCell::new(
+            seed_stat: std::sync::Arc::new(std::sync::RwLock::new(
                 tidb_planner_property::stats_info::StatsInfo::new(0.0, []),
             )),
             cte_class: None,
@@ -475,8 +475,8 @@ struct NoIndexLookupPushDownHint {
 
 struct QueryBlockHintFrame {
     hints: RewriterHints,
-    join_hints: Rc<tidb_planner_util::misc::JoinHints>,
-    plan_hints: Option<Rc<RefCell<tidb_hint::PlanHints>>>,
+    join_hints: std::sync::Arc<tidb_planner_util::misc::JoinHints>,
+    plan_hints: Option<std::sync::Arc<std::sync::RwLock<tidb_hint::PlanHints>>>,
     index_merge_hints: Vec<IndexMergeHint>,
     index_hints: Vec<IndexHint>,
     no_index_lookup_push_down_hints: Vec<NoIndexLookupPushDownHint>,
@@ -651,7 +651,8 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub advanced_join_hint: bool,
     /// Go `SessionVars.PlannerSelectBlockAsName`: each derived table's alias
     /// by its query block, which join-hint aliases read.
-    pub(crate) select_block_as_names: Rc<RefCell<std::collections::BTreeMap<i32, String>>>,
+    pub(crate) select_block_as_names:
+        std::sync::Arc<std::sync::RwLock<std::collections::BTreeMap<i32, String>>>,
     /// Go `allowBuildCastArray`: set only around a virtual generated column's
     /// rebuild, where a multi-valued index's `CAST(... AS ... ARRAY)` lives.
     allow_build_cast_array: std::cell::Cell<bool>,
@@ -797,9 +798,9 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub hints: RewriterHints,
     /// Go `b.TableHints()`'s JOIN half, which `buildJoin` reads through
     /// `SetPreferredJoinTypeAndOrder`; see [`tidb_planner_util::misc::JoinHints`].
-    pub join_hints: Rc<tidb_planner_util::misc::JoinHints>,
+    pub join_hints: std::sync::Arc<tidb_planner_util::misc::JoinHints>,
     /// Canonical Go `PlanHints` for the current query block.
-    plan_hints: Option<Rc<RefCell<tidb_hint::PlanHints>>>,
+    plan_hints: Option<std::sync::Arc<std::sync::RwLock<tidb_hint::PlanHints>>>,
     /// Go `PlanHints.IndexMergeHintList` for the current query block.
     index_merge_hints: Vec<IndexMergeHint>,
     /// Go `PlanHints.IndexHintList` for the current query block.
@@ -1683,7 +1684,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             partition_processor_enabled: true,
             dynamic_prune_fallback: None,
             advanced_join_hint: tidb_vardef::defaults::DEF_TIDB_OPT_ADVANCED_JOIN_HINT,
-            select_block_as_names: Rc::default(),
+            select_block_as_names: std::sync::Arc::default(),
             allow_build_cast_array: std::cell::Cell::new(false),
             is_sampling: false,
             cur_clause: ClauseCode::Unknow,
@@ -1736,7 +1737,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             update_assigns: Vec::new(),
             flags: RewriterSessionFlags::default(),
             hints: RewriterHints::default(),
-            join_hints: Rc::new(tidb_planner_util::misc::JoinHints::default()),
+            join_hints: std::sync::Arc::new(tidb_planner_util::misc::JoinHints::default()),
             plan_hints: None,
             index_merge_hints: Vec::new(),
             index_hints: Vec::new(),
@@ -2068,17 +2069,18 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         // Go resolves conflicting aggregation hints only when the aggregate
         // is physicalized (`LogicalAggregation.ResetHintIfConflicted`).
         let current_hints = RewriterHints::from_plan_hints(&parsed_plan_hints);
-        let current_plan_hints = Rc::new(RefCell::new(parsed_plan_hints));
-        let current_join_hints = Rc::new(tidb_planner_util::misc::JoinHints::from_plan_hints(
-            Rc::clone(&current_plan_hints),
+        let current_plan_hints = std::sync::Arc::new(std::sync::RwLock::new(parsed_plan_hints));
+        let current_join_hints = std::sync::Arc::new(tidb_planner_util::misc::JoinHints::from_plan_hints(
+            std::sync::Arc::clone(&current_plan_hints),
             select_offset,
             self.source.current_database(),
             self.advanced_join_hint,
-            Rc::clone(&self.select_block_as_names),
+            std::sync::Arc::clone(&self.select_block_as_names),
         ));
-        let current_index_merge_hints = index_merge_hints_from_plan(&current_plan_hints.borrow());
+        let current_index_merge_hints =
+            index_merge_hints_from_plan(&current_plan_hints.read().unwrap());
         let (current_index_hints, current_no_lookup_hints) =
-            index_hints_from_plan(&current_plan_hints.borrow());
+            index_hints_from_plan(&current_plan_hints.read().unwrap());
 
         let frame = QueryBlockHintFrame {
             hints: std::mem::replace(&mut self.hints, current_hints),
@@ -2098,7 +2100,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         if self
             .plan_hints
             .as_ref()
-            .is_some_and(|hints| hints.borrow().straight_join_order)
+            .is_some_and(|hints| hints.read().unwrap().straight_join_order)
             || select.straight_join
         {
             self.in_straight_join = true;
@@ -2108,7 +2110,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
 
     fn pop_query_block_hints(&mut self, frame: QueryBlockHintFrame) {
         if let Some(plan) = &self.plan_hints {
-            let mut plan = plan.borrow_mut();
+            let mut plan = plan.write().unwrap();
             for (canonical, applied) in plan.index_hint_list.iter_mut().zip(&self.index_hints) {
                 canonical.matched = applied.matched;
             }
@@ -2155,7 +2157,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             select_offset: self.select_offset(),
             flags: self.flags,
             hints: self.hints,
-            join_hints: Rc::clone(&self.join_hints),
+            join_hints: std::sync::Arc::clone(&self.join_hints),
             opt_flags: &self.rewriter_opt_flags,
         }
     }
@@ -3924,7 +3926,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             ..tidb_hint::HintedTable::default()
         };
         let isolation_engines = self.isolation_read_engines_display();
-        let mut plan_hints = plan_hints.borrow_mut();
+        let mut plan_hints = plan_hints.write().unwrap();
 
         if let Some(hinted) = plan_hints.prefer_tikv(Some(&table)) {
             if data_source.all_possible_access_paths.iter().any(|path| !path.is_tiflash_path()) {
@@ -5547,7 +5549,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// offset, so an offset beyond it is unknown rather than unnamed.
     #[must_use]
     pub fn statement_block_as_names(&self) -> Vec<(String, String)> {
-        let names = self.select_block_as_names.borrow();
+        let names = self.select_block_as_names.read().unwrap();
         (0..=self.next_qb_offset)
             .map(|offset| (String::new(), names.get(&offset).cloned().unwrap_or_default()))
             .collect()
@@ -5634,7 +5636,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if self
             .plan_hints
             .as_ref()
-            .is_some_and(|hints| hints.borrow().cte_merge)
+            .is_some_and(|hints| hints.read().unwrap().cte_merge)
         {
             if self.building_cte {
                 if self.is_cte {

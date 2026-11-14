@@ -269,8 +269,10 @@ pub trait CteOptimizer {
     /// BEFORE the recursive part is optimized, so its `CTETable` sees them.
     fn optimize_cte(
         &self,
-        class: &std::rc::Rc<std::cell::RefCell<super::cte::CteClass>>,
-        seed_stat: Option<&std::rc::Rc<std::cell::RefCell<tidb_planner_property::stats_info::StatsInfo>>>,
+        class: &std::sync::Arc<std::sync::RwLock<super::cte::CteClass>>,
+        seed_stat: Option<
+            &std::sync::Arc<std::sync::RwLock<tidb_planner_property::stats_info::StatsInfo>>,
+        >,
         context: &RuleContext<'_>,
     ) -> Result<(), PlanError>;
 }

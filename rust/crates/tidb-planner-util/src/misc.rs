@@ -14,9 +14,9 @@
 
 //! Go `pkg/planner/util/misc.go`.
 
-use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::RwLock;
 
 use tidb_datatype::FieldName;
 use tidb_expr::column::Column;
@@ -61,7 +61,7 @@ pub struct JoinHints {
     /// Go `PlanHints.LeadingList`, retaining the nested AST order.
     pub leading: Option<Vec<tidb_ast::LeadingElement>>,
     /// Go `PlanHints` itself, which the preference checks consult.
-    pub canonical: Option<Rc<RefCell<tidb_hint::PlanHints>>>,
+    pub canonical: Option<Arc<RwLock<tidb_hint::PlanHints>>>,
     /// The query block these hints were read for.
     pub select_offset: i32,
     /// Go `SessionVars.CurrentDB`, which `ExtractTableAlias` gives an alias
@@ -71,7 +71,7 @@ pub struct JoinHints {
     pub advanced_join_hint: bool,
     /// Go `SessionVars.PlannerSelectBlockAsName`: each derived table's
     /// alias by its query block, shared with the builder that records them.
-    pub block_as_names: Rc<RefCell<BTreeMap<i32, String>>>,
+    pub block_as_names: Arc<RwLock<BTreeMap<i32, String>>>,
 }
 
 impl JoinHints {
@@ -79,13 +79,13 @@ impl JoinHints {
     /// consumed by `LogicalJoin`.
     #[must_use]
     pub fn from_plan_hints(
-        canonical: Rc<RefCell<tidb_hint::PlanHints>>,
+        canonical: Arc<RwLock<tidb_hint::PlanHints>>,
         select_offset: i32,
         current_db: &str,
         advanced_join_hint: bool,
-        block_as_names: Rc<RefCell<BTreeMap<i32, String>>>,
+        block_as_names: Arc<RwLock<BTreeMap<i32, String>>>,
     ) -> Self {
-        let plan = canonical.borrow();
+        let plan = canonical.read().unwrap();
         let mut hints = Self::default();
         for (tables, flag) in [
             (&plan.index_join.inlj_tables, tidb_hint::join_hint_flags::INLJ),
@@ -137,7 +137,7 @@ impl JoinHints {
             && plan_offset >= 0
             && self
                 .block_as_names
-                .borrow()
+                .read().unwrap()
                 .get(&plan_offset)
                 .is_some_and(|name| !name.is_empty())
         {
@@ -172,7 +172,7 @@ impl JoinHints {
                 ..tidb_hint::HintedTable::default()
             };
             let tables = [Some(&table)];
-            let mut canonical = canonical.borrow_mut();
+            let mut canonical = canonical.write().unwrap();
             return match flag {
                 tidb_hint::join_hint_flags::INLJ => canonical.if_prefer_inlj(&tables),
                 tidb_hint::join_hint_flags::INLHJ => canonical.if_prefer_inlhj(&tables),

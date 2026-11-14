@@ -27,6 +27,7 @@ use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashSet};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use tidb_expr::expr_util::RealFunctionBuilder;
 use tidb_expr::expr_util::normal_form::extract_filters_from_dn_fs;
@@ -1430,14 +1431,14 @@ struct DriverCteOptimizer<'a> {
 impl tidb_planner_core_operator_logicalop::plan_context::CteOptimizer for DriverCteOptimizer<'_> {
     fn optimize_cte(
         &self,
-        class: &Rc<RefCell<CteClass>>,
-        seed_stat: Option<&Rc<RefCell<StatsInfo>>>,
+        class: &Arc<std::sync::RwLock<CteClass>>,
+        seed_stat: Option<&Arc<std::sync::RwLock<StatsInfo>>>,
         rule_context: &RuleContext<'_>,
     ) -> Result<(), tidb_planner_core_base::PlanError> {
-        if class.borrow().seed_part_physical_plan.is_some() {
+        if class.read().unwrap().seed_part_physical_plan.is_some() {
             return Ok(());
         }
-        let identity = Rc::as_ptr(class) as usize;
+        let identity = Arc::as_ptr(class) as usize;
         if !self.visiting.borrow_mut().insert(identity) {
             return Err(tidb_planner_core_base::PlanError::internal(
                 "LogicalCTE.DeriveStats: cyclic CTE class optimization",
@@ -1452,12 +1453,12 @@ impl tidb_planner_core_operator_logicalop::plan_context::CteOptimizer for Driver
 impl DriverCteOptimizer<'_> {
     fn optimize_class(
         &self,
-        class: &Rc<RefCell<CteClass>>,
-        seed_stat: Option<&Rc<RefCell<StatsInfo>>>,
+        class: &Arc<std::sync::RwLock<CteClass>>,
+        seed_stat: Option<&Arc<std::sync::RwLock<StatsInfo>>>,
         rule_context: &RuleContext<'_>,
     ) -> Result<(), tidb_planner_core_base::PlanError> {
         let (mut seed, mut opt_flag, predicates) = {
-            let class = class.borrow();
+            let class = class.read().unwrap();
             let seed = class
                 .seed_part_logical_plan
                 .as_deref()
@@ -1482,20 +1483,20 @@ impl DriverCteOptimizer<'_> {
             selection.base.set_children(vec![seed]);
             seed = LogicalPlan::Selection(selection);
             opt_flag = tidb_planner_core_rule::set_predicate_push_down_flag(opt_flag);
-            class.borrow_mut().opt_flag = opt_flag;
+            class.write().unwrap().opt_flag = opt_flag;
         }
         let (seed_logical, seed_physical) = self.optimize_tree(seed, opt_flag, rule_context)?;
         // Go `*p.SeedStat = *resStat` precedes the recursive DoOptimize.
         if let (Some(seed_stat), Some(stats)) = (seed_stat, seed_physical.stats_info()) {
-            *seed_stat.borrow_mut() = stats.clone();
+            *seed_stat.write().unwrap() = stats.clone();
         }
         {
-            let mut class = class.borrow_mut();
+            let mut class = class.write().unwrap();
             class.seed_part_logical_plan = Some(Box::new(seed_logical));
             class.seed_part_physical_plan = Some(Box::new(seed_physical));
         }
         let recursive = {
-            let class = class.borrow();
+            let class = class.read().unwrap();
             match (
                 class.recursive_part_logical_plan.as_deref(),
                 class.recursive_part_physical_plan.is_none(),
@@ -1511,7 +1512,7 @@ impl DriverCteOptimizer<'_> {
             let optimized = self.optimize_tree(recursive, opt_flag, rule_context);
             self.parallel_apply_allowed.set(previous);
             let (logical, physical) = optimized?;
-            let mut class = class.borrow_mut();
+            let mut class = class.write().unwrap();
             class.recursive_part_logical_plan = Some(Box::new(logical));
             class.recursive_part_physical_plan = Some(Box::new(physical));
         }

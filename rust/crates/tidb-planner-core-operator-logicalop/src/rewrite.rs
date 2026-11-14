@@ -823,7 +823,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                 let decision = op.predicate_push_down(&predicates);
                 let mut seed_predicates: Option<Vec<Expression>> = None;
                 if let Some(class) = &op.cte {
-                    let mut class = class.borrow_mut();
+                    let mut class = class.write().unwrap();
                     let recorded = match decision {
                         CtePredicatePushDown::Unsupported => None,
                         CtePredicatePushDown::RecordAlwaysTrue => {
@@ -2448,14 +2448,14 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                     // -- the class is optimized HERE, the first time any
                     // reference's statistics are needed, with whatever
                     // predicates the references have recorded by then.
-                    if class.borrow().seed_part_physical_plan.is_none() {
+                    if class.read().unwrap().seed_part_physical_plan.is_none() {
                         let optimizer = rule_context
                             .and_then(|context| context.cte_optimizer.map(|o| (o, context)));
                         if let Some((optimizer, context)) = optimizer {
                             optimizer.optimize_cte(&class, op.seed_stat.as_ref(), context)?;
                         }
                     }
-                    let class = class.borrow();
+                    let class = class.read().unwrap();
                     let seed_plan = class.seed_part_physical_plan.as_deref().ok_or_else(|| {
                         PlanError::internal("LogicalCTE.DeriveStats: seed physical plan is nil")
                     })?;

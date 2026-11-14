@@ -736,7 +736,10 @@ impl Clone for Box<dyn ShowPredicateExtractor> {
 /// its seed and recursive parts' physical plans, whose statistics
 /// `LogicalCTE.DeriveStats` reads; the planner that built them reads them back
 /// as its own plan type (Go's type assertion).
-pub trait PhysicalPlanHandle: std::fmt::Debug {
+pub trait PhysicalPlanHandle: std::fmt::Debug + Send + Sync {
+    /// Go `PhysicalPlan.MemoryUsage` for CTEClass's retained producer plans.
+    fn memory_usage(&self) -> i64;
+
     /// Go `StatsInfo()`.
     fn stats_info(&self) -> Option<&StatsInfo>;
 

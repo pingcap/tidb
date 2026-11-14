@@ -160,7 +160,9 @@ fn flatten<'a>(
         }
         PhysicalPlan::CTE(cte) => {
             // Only a CTE executed in TiDB is flattened separately.
-            if store == Store::TiDb && !ctes.iter().any(|seen| seen.id_for_storage == cte.id_for_storage)
+            let id_for_storage = cte.cte.read().unwrap().id_for_storage;
+            if store == Store::TiDb
+                && !ctes.iter().any(|seen| seen.cte.read().unwrap().id_for_storage == id_for_storage)
             {
                 ctes.push(cte);
             }

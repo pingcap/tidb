@@ -122,13 +122,36 @@ impl PhysicalShuffle {
 
 /// Go's PhysicalShuffleReceiverStub. The source remains a separate owned
 /// reference, not a normal physical child. The worker-specific receiver is
-/// supplied by the builder instead of storing Go's unsafe pointer in the plan.
-#[derive(Clone, Debug)]
+/// stored as a type-erased shared pointer to avoid an executor dependency.
 pub struct PhysicalShuffleReceiverStub {
     /// Schema, statistics and ID; the receiver has no normal child executors.
     pub base: BasePhysicalPlan,
     /// Go DataSource, rendered below the receiver but built outside its worker.
     pub data_source: Box<PhysicalPlan>,
+    /// Go `Receiver`: executorBuilder sets the pointer before building each worker.
+    pub receiver: std::sync::Mutex<Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>>,
+}
+
+impl Clone for PhysicalShuffleReceiverStub {
+    /// Go `PhysicalShuffleReceiverStub`: copy the pointer, not its receiver.
+    fn clone(&self) -> Self {
+        Self {
+            base: self.base.clone(),
+            data_source: self.data_source.clone(),
+            receiver: std::sync::Mutex::new(self.receiver.lock().unwrap().clone()),
+        }
+    }
+}
+
+impl std::fmt::Debug for PhysicalShuffleReceiverStub {
+    /// Go `PhysicalShuffleReceiverStub`: describe the source and receiver presence.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PhysicalShuffleReceiverStub")
+            .field("base", &self.base)
+            .field("data_source", &self.data_source)
+            .field("receiver", &self.receiver.lock().unwrap().is_some())
+            .finish()
+    }
 }
 
 /// Install the receiver boundaries after physical rewrites. IDs come from the
@@ -174,6 +197,7 @@ pub fn install_receivers(
             PhysicalShuffleReceiverStub {
                 base,
                 data_source: Box::new(source),
+                receiver: Default::default(),
             },
         )]);
     }

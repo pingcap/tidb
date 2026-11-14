@@ -265,12 +265,12 @@ fn untwist_plan_and_remove_union_all<'a>(
                 let storage_stats = producer.stats_info().cloned();
                 let cte_sink = crate::PhysicalCTESink::new(
                     plan_ids,
-                    cte_storage.id_for_storage,
+                    cte_storage.cte.read().unwrap().id_for_storage,
                     storage_stats.clone(),
                     storage_child.clone(),
                 );
                 cte_groups.insert(
-                    cte_storage.id_for_storage,
+                    cte_storage.cte.read().unwrap().id_for_storage,
                     CteGroupInFragment {
                         storage_child: storage_child.clone(),
                         storage_stats,
@@ -608,7 +608,10 @@ impl MppTaskGenerator<'_> {
     }
 
     /// Go `generateMPPTasksForFragment`.
-    fn generate_mpp_tasks_for_fragment(&mut self, f: &mut Fragment) -> Result<Vec<MppTask>, PlanError> {
+    fn generate_mpp_tasks_for_fragment(
+        &mut self,
+        f: &mut Fragment,
+    ) -> Result<Vec<MppTask>, PlanError> {
         let sink = f.sink.as_mut().expect("a fragment owns its sink");
         // CTE reader fragments depend on the corresponding CTE producer tasks. Generate producer tasks first
         // so that task placement for this fragment can be constrained to producer addresses if needed.
@@ -652,7 +655,7 @@ impl MppTaskGenerator<'_> {
                 let PhysicalPlan::CTE(cte_reader) = find_mut(sink, cte_reader).expect("the fragment's CTE reader") else {
                     unreachable!("a fragment's CTE reader is a PhysicalCTE")
                 };
-                let cte_id = cte_reader.id_for_storage;
+                let cte_id = cte_reader.cte.read().unwrap().id_for_storage;
                 if !added_cte_producers.insert(cte_id) {
                     continue;
                 }
@@ -683,8 +686,11 @@ impl MppTaskGenerator<'_> {
     /// generated once for every reader of the storage, and the reader's leaf
     /// (`CTESource`, or a `Projection` over it when the storage's output
     /// differs from the reader's in NULLability).
-    fn generate_tasks_for_cte_reader(&mut self, cte_reader: &mut crate::PhysicalCTE) -> Result<(), PlanError> {
-        let cte_id = cte_reader.id_for_storage;
+    fn generate_tasks_for_cte_reader(
+        &mut self,
+        cte_reader: &mut crate::PhysicalCTE,
+    ) -> Result<(), PlanError> {
+        let cte_id = cte_reader.cte.read().unwrap().id_for_storage;
         let group = self
             .cte_groups
             .get(&cte_id)
@@ -1197,13 +1203,20 @@ mod tests {
                 base: node(id, "CTEFullScan", vec![]),
                 seed_plan: Box::new(scan(id + 1000)),
                 recur_plan: None,
-                id_for_storage: 0,
-                is_distinct: false,
-                has_limit: false,
-                limit_beg: 0,
-                limit_end: 0,
+
                 cte_as_name: String::new(),
                 cte_name: String::new(),
+
+                cte: std::sync::Arc::new(std::sync::RwLock::new(
+                    tidb_planner_core_operator_logicalop::cte::CteClass {
+                        id_for_storage: 0,
+                        is_distinct: false,
+                        has_limit: false,
+                        limit_beg: 0,
+                        limit_end: 0,
+                        ..Default::default()
+                    },
+                )),
             }),
             3,
         )
@@ -1214,14 +1227,23 @@ mod tests {
         let storage = with_schema(
             PhysicalPlan::CTEStorage(crate::PhysicalCTEStorage {
                 base: node(3, "CTE", vec![producer]),
-                id_for_storage: 0,
+
                 cte_as_name: String::new(),
                 cte_name: String::new(),
+
+                cte: std::sync::Arc::new(std::sync::RwLock::new(
+                    tidb_planner_core_operator_logicalop::cte::CteClass {
+                        id_for_storage: 0,
+                        ..Default::default()
+                    },
+                )),
             }),
             3,
         );
         let sequence = with_schema(
-            PhysicalPlan::Sequence(crate::PhysicalSequence { base: node(2, "Sequence", vec![storage, consumer]) }),
+            PhysicalPlan::Sequence(crate::PhysicalSequence {
+                base: node(2, "Sequence", vec![storage, consumer]),
+            }),
             3,
         );
         sender(1, ExchangeType::PassThrough, sequence)

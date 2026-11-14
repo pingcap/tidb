@@ -235,6 +235,57 @@ impl Executor for ShuffleReceiver {
     }
 }
 
+/// Go `executorBuilder.buildShuffleReceiverStub`: an executor reference to
+/// the same receiver retained by the physical stub. Metadata is immutable;
+/// Open/Next/Close operate through the shared receiver pointer.
+pub(crate) struct SharedShuffleReceiver {
+    receiver: Arc<Mutex<ShuffleReceiver>>,
+    meta: ExecutorMeta,
+}
+
+impl SharedShuffleReceiver {
+    /// Go `executorBuilder.buildShuffleReceiverStub` pointer conversion.
+    pub(crate) fn new(receiver: Arc<Mutex<ShuffleReceiver>>) -> Self {
+        let meta = receiver.lock().unwrap().meta.clone();
+        Self { receiver, meta }
+    }
+}
+
+impl Executor for SharedShuffleReceiver {
+    /// Go `shuffleReceiver.Open`.
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.receiver.lock().unwrap().open()
+    }
+    /// Go `shuffleReceiver.Next`.
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        self.receiver.lock().unwrap().next(req)
+    }
+    /// Go `shuffleReceiver.Close`.
+    fn close(&mut self) -> Result<(), ExecError> {
+        self.receiver.lock().unwrap().close()
+    }
+    /// Go `exec.BaseExecutor.Schema`.
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+    /// Go `exec.BaseExecutor.RetFieldTypes`.
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+    /// Go `exec.BaseExecutor.InitCap`.
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+    /// Go `exec.BaseExecutor.MaxChunkSize`.
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+    /// Go `exec.BaseExecutor.NewChunk`.
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
+}
+
 /// Go `shuffleWorker` (`shuffle.go:397`): one partition's child executor plus
 /// the mailboxes feeding its receivers.
 pub struct ShuffleWorker {
@@ -1253,6 +1304,67 @@ use tidb_charset::Collation;
     }
 
     // ---- receiver ------------------------------------------------------
+
+    /// Go `TestPhysicalShuffleReceiverPointer` (zzprobe/p01), using actual
+    /// receivers: replacement of the stub pointer cannot retarget an already
+    /// built worker, and Open/Next mutate the receiver behind that pointer.
+    #[test]
+    fn test_physical_shuffle_receiver_pointer() {
+        use tidb_planner_core_operator_physicalop::{
+            PhysicalPlan, PhysicalShuffleReceiverStub, PhysicalTableDual,
+        };
+        let stub = PhysicalShuffleReceiverStub {
+            base: Default::default(),
+            data_source: Box::new(PhysicalPlan::TableDual(PhysicalTableDual::default())),
+            receiver: Default::default(),
+        };
+        assert!(crate::driver::physical_builder::build_shuffle_receiver_stub(&stub).is_err());
+        assert_eq!(
+            PhysicalPlan::ShuffleReceiver(stub.clone()).memory_usage(),
+            stub.base.go_schema_producer_memory_usage() + 24 + stub.data_source.memory_usage(),
+        );
+        let first_inbox = InboxHandle::new();
+        first_inbox.push(chunk_of(&[11]));
+        first_inbox.close();
+        let first = Arc::new(Mutex::new(ShuffleReceiver::new(
+            ExecutorMeta::new(one_col_schema(), 0, MAX_CHUNK, MAX_CHUNK),
+            first_inbox,
+            FinishFlag::new(),
+        )));
+        *stub.receiver.lock().unwrap() = Some(first.clone());
+        let mut built_first =
+            crate::driver::physical_builder::build_shuffle_receiver_stub(&stub).unwrap();
+        let second_inbox = InboxHandle::new();
+        second_inbox.push(chunk_of(&[22]));
+        second_inbox.close();
+        let second = Arc::new(Mutex::new(ShuffleReceiver::new(
+            ExecutorMeta::new(one_col_schema(), 0, MAX_CHUNK, MAX_CHUNK),
+            second_inbox,
+            FinishFlag::new(),
+        )));
+        *stub.receiver.lock().unwrap() = Some(second.clone());
+        let mut built_second =
+            crate::driver::physical_builder::build_shuffle_receiver_stub(&stub).unwrap();
+        let mut chunk = built_first.new_chunk();
+        built_first.open().unwrap();
+        built_second.open().unwrap();
+        built_first.next(&mut chunk).unwrap();
+        assert_eq!(ints(&chunk), vec![11]);
+        built_first.next(&mut chunk).unwrap();
+        assert!(first.lock().unwrap().executed);
+        assert!(!second.lock().unwrap().executed);
+        built_first.open().unwrap();
+        assert!(!first.lock().unwrap().executed);
+        built_second.next(&mut chunk).unwrap();
+        assert_eq!(ints(&chunk), vec![22]);
+        built_first.close().unwrap();
+        built_second.close().unwrap();
+        let cloned = stub.clone();
+        assert!(Arc::ptr_eq(
+            cloned.receiver.lock().unwrap().as_ref().unwrap(),
+            stub.receiver.lock().unwrap().as_ref().unwrap(),
+        ));
+    }
 
     #[test]
     fn receiver_relays_then_reports_exhaustion() {

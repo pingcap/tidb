@@ -2342,10 +2342,10 @@ fn a_cte_scan_explains_as_cte_full_scan_like_go_master() {
     // row while the definition row is `CTE_N` (`CTEDefinition.ExplainID`,
     // `physical_cte.go:178`). Before this correction the Rust tree named the
     // scan row with the logical type, printing `CTE_N` for both rows.
+    use std::sync::Arc;
+    use std::sync::RwLock;
     use tidb_planner_core_operator_logicalop::cte::CteClass;
     use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalCTE};
-    use std::cell::RefCell;
-    use std::rc::Rc;
 
     let allocator = PlanIdAllocator::new();
     let seed = scan(5, &[1]);
@@ -2367,7 +2367,7 @@ fn a_cte_scan_explains_as_cte_full_scan_like_go_master() {
     };
     let lp = LogicalCTE::new(
         BaseLogicalPlan::new(&allocator, LogicalCTE::TYPE, 0),
-        Rc::new(RefCell::new(class)),
+        Arc::new(RwLock::new(class)),
     );
     let task = find_best_task_4_logical_cte(&lp, &PhysicalProperty::default(), &allocator, &tidb_ranger::points::evaluate_static, None, &crate::task_attach::CoreTaskAttacher, true)
         .expect("a root CTE build");
@@ -2691,4 +2691,109 @@ fn a_select_lock_over_a_point_get_becomes_the_point_gets_lock() {
     );
     assert!(matches!(&plan, PhysicalPlan::Lock(_)));
     plan.dismantle();
+}
+
+/// Go `TestPhysicalCTEClassSharing` (zzprobe/p01): PhysicalCTE.Clone and
+/// ExhaustPhysicalPlans4LogicalCTE retain the logical class pointer.
+#[test]
+fn test_physical_cte_class_sharing() {
+    use std::sync::{Arc, RwLock};
+    use tidb_planner_core_operator_logicalop::{cte::CteClass, BaseLogicalPlan, LogicalCTE};
+    use tidb_planner_core_operator_physicalop::exhaust_physical_plans_4_logical_cte;
+
+    fn send_sync<T: Send + Sync>() {}
+    send_sync::<PhysicalPlan>();
+    send_sync::<CteClass>();
+    assert_eq!(CteClass::default().memory_usage(), 160);
+    let allocator = PlanIdAllocator::new();
+    let class = Arc::new(RwLock::new(CteClass {
+        id_for_storage: 7,
+        is_distinct: true,
+        seed_part_physical_plan: Some(Box::new(scan(5, &[1]))),
+        ..Default::default()
+    }));
+    let logical = LogicalCTE::new(
+        BaseLogicalPlan::new(&allocator, LogicalCTE::TYPE, 0),
+        class.clone(),
+    );
+    let task = find_best_task_4_logical_cte(
+        &logical,
+        &PhysicalProperty::default(),
+        &allocator,
+        &tidb_ranger::points::evaluate_static,
+        None,
+        &crate::task_attach::CoreTaskAttacher,
+        true,
+    )
+    .unwrap();
+    let original = task.plan().unwrap();
+    let cloned = original.deep_clone();
+    let (PhysicalPlan::CTE(original), PhysicalPlan::CTE(cloned)) = (original, &cloned) else {
+        panic!("physical CTEs")
+    };
+    assert!(Arc::ptr_eq(&class, &original.cte));
+    assert!(Arc::ptr_eq(&class, &cloned.cte));
+    assert!(!std::ptr::eq(
+        original.seed_plan.as_ref(),
+        cloned.seed_plan.as_ref()
+    ));
+    // A cached plan can retain the complete class beyond the planning thread.
+    let writer = class.clone();
+    std::thread::spawn(move || {
+        let mut class = writer.write().unwrap();
+        class.id_for_storage = 9;
+        class.has_limit = true;
+        class.limit_beg = 2;
+        class.limit_end = 5;
+        class.is_in_apply = true;
+    })
+    .join()
+    .unwrap();
+    assert_eq!(cloned.operator_info(), "data:CTE_9");
+    assert_eq!(
+        task.plan().unwrap().memory_usage(),
+        original.base.go_schema_producer_memory_usage() + 32
+            + original.seed_plan.memory_usage() + class.read().unwrap().memory_usage(),
+    );
+    let retained = cloned.cte.read().unwrap();
+    assert_eq!((retained.limit_beg, retained.limit_end), (2, 5));
+    assert!(retained.is_in_apply);
+    assert_eq!(
+        retained.memory_usage(),
+        160 + original.seed_plan.memory_usage()
+    );
+    drop(retained);
+    let storage =
+        exhaust_physical_plans_4_logical_cte(&logical, &PhysicalProperty::default(), &allocator)
+            .remove(0)
+            .deep_clone();
+    let PhysicalPlan::CTEStorage(storage) = storage else {
+        panic!("CTE storage")
+    };
+    assert!(Arc::ptr_eq(&class, &storage.cte));
+    assert_eq!(storage.explain_id(), "CTE_9");
+    assert_eq!(
+        PhysicalPlan::CTEStorage(storage.clone()).memory_usage(),
+        storage.base.go_schema_producer_memory_usage() + 32 + class.read().unwrap().memory_usage(),
+    );
+    class.write().unwrap().recursive_part_physical_plan = Some(Box::new(scan(6, &[1])));
+    let recursive_task = find_best_task_4_logical_cte(
+        &logical,
+        &PhysicalProperty::default(),
+        &allocator,
+        &tidb_ranger::points::evaluate_static,
+        None,
+        &crate::task_attach::CoreTaskAttacher,
+        true,
+    ).unwrap();
+    let recursive = recursive_task.plan().unwrap();
+    let cloned = recursive.deep_clone();
+    let (PhysicalPlan::CTE(recursive), PhysicalPlan::CTE(cloned)) = (recursive, cloned) else {
+        panic!("recursive CTEs")
+    };
+    assert!(Arc::ptr_eq(&class, &cloned.cte));
+    assert!(!std::ptr::eq(
+        recursive.recur_plan.as_deref().unwrap(),
+        cloned.recur_plan.as_deref().unwrap(),
+    ));
 }
