@@ -461,8 +461,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             // Go `fetchShowProcedureStatus`, `fetchShowTriggers` and the
             // `ShowEvents` / `ShowProfiles` / `ShowFunctionStatus` arms
             // answer nothing; `fetchShowOpenTables` answers the empty set;
-            // `fetchShowPlugins` lists an empty `plugin.GetAll()`; the BRIE
-            // listings read a queue this server never fills.
+            // `fetchShowPlugins` lists an empty `plugin.GetAll()`.
             // Go `fetchShowImportJobs` / `fetchShowImportGroups` read the
             // dist-task framework, which runs no IMPORT job here.
             T::ImportJobs | T::ImportGroups => Vec::new(),
@@ -472,9 +471,15 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             | T::Events
             | T::Profiles
             | T::OpenTables
-            | T::Plugins
-            | T::Backups
-            | T::Restores => Vec::new(),
+            | T::Plugins => Vec::new(),
+            T::Backups => {
+                crate::brie::require_brie_privilege(self, tidb_ast::BrieKind::Backup)?;
+                crate::brie::GLOBAL_BRIE_QUEUE.fetch_show_brie(tidb_ast::BrieKind::Backup)
+            },
+            T::Restores => {
+                crate::brie::require_brie_privilege(self, tidb_ast::BrieKind::Restore)?;
+                crate::brie::GLOBAL_BRIE_QUEUE.fetch_show_brie(tidb_ast::BrieKind::Restore)
+            },
             T::Tables => {
                 let domain = self.domain_info_schema();
                 let catalog = domain.lock().unwrap_or_else(std::sync::PoisonError::into_inner);

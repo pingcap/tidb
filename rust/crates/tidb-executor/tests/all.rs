@@ -44,6 +44,7 @@ mod analyze_added_column_source;
 mod analyze_commit_size_source;
 mod analyze_generated_column_source;
 mod analyze_panic_error_source;
+mod brie_source;
 mod cluster_config_source;
 mod cluster_peer_source;
 mod column_flag_builders_agree_source;

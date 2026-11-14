@@ -86,8 +86,13 @@ fn admin_plan_has_result_schema(admin: &tidb_ast::AdminStmt) -> bool {
         | AdminStmt::DropQueryWatch(_)
         | AdminStmt::CancelImportJob(_)
         | AdminStmt::DropStats(_) => false,
-        // `buildSimple` sets a schema for these three.
-        AdminStmt::Brie(_) | AdminStmt::CalibrateResource(_) | AdminStmt::AddQueryWatch(_) => true,
+        // Go `buildBRIESchema`: only backup/restore, query and metadata have columns.
+        AdminStmt::Brie(stmt) => matches!(
+            stmt.kind,
+            tidb_ast::BrieKind::Backup | tidb_ast::BrieKind::Restore
+                | tidb_ast::BrieKind::ShowQuery | tidb_ast::BrieKind::ShowBackupMetadata
+        ),
+        AdminStmt::CalibrateResource(_) | AdminStmt::AddQueryWatch(_) => true,
         // `ShutdownStmt` is `Simple`; `HELP` reports the topics it finds.
         AdminStmt::ServerControl(control) => {
             matches!(control.as_ref(), tidb_ast::ServerControlStmt::Help(_))

@@ -931,6 +931,27 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
             //
             // See `crate::explain`'s module doc for every place
             // this tier's plan text diverges from Go's and why.
+            tidb_ast::AdminStmt::Brie(stmt) => {
+                crate::brie::require_brie_privilege(self, stmt.kind)?;
+                match stmt.kind {
+                    tidb_ast::BrieKind::ShowBackupMetadata => {
+                        crate::brie::show_meta_next(stmt, &self.session_time_zone()).map(Some)
+                    }
+                    tidb_ast::BrieKind::ShowQuery => Ok(Some(crate::brie::show_query_next(
+                        &crate::brie::GLOBAL_BRIE_QUEUE, stmt.job_id as u64,
+                    ))),
+                    tidb_ast::BrieKind::CancelJob => Ok(Some(crate::brie::cancel_job_next(
+                        &crate::brie::GLOBAL_BRIE_QUEUE, stmt.job_id as u64, self,
+                    ))),
+                    tidb_ast::BrieKind::Backup | tidb_ast::BrieKind::Restore => {
+                        // Go's builder errors are available before the physical BR
+                        // runners. Do not report a successful task.
+                        let _ = crate::brie::build_brie(stmt, &self.session_time_zone())?;
+                        Ok(None)
+                    }
+                    _ => Ok(None),
+                }
+            }
             tidb_ast::AdminStmt::Explain(explain) => self.explain_stmt(explain),
             // Go `executeAdminSetBDRRole` / `executeAdminUnsetBDRRole` write
             // the meta key `BDRRole`; `AdminShowBDRRoleExec` reads it.

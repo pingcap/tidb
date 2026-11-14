@@ -1,0 +1,5 @@
+Go task/show capture: TZ=UTC go test --tags=intest -p 6 ./zzprobe/e07 -run TestMetadataEdges -count=1 -v
+E07 raw result={"cluster-id":0,"cluster-version":"","br-version":"","version":0,"start-version":0,"end-version":0,"is-raw-kv":true,"raw-ranges":[{"column-family":"default","start-key":"01","end-key":"02"}],"tables":null}
+E07 raw_v2 error=[BR:Common:ErrInvalidMetaFile]invalid metafile: show raw kv with backup meta v2 isn't supported for now
+E07 reversed error=[BR:Common:ErrInvalidMetaFile]invalid metafile: the start version(2(Y70M01D01,00:12:00)) is greater than the end version(1(Y70M01D01,00:12:00)), perhaps reading a backup meta from log backup
+E07 database_only result={"cluster-id":0,"cluster-version":"","br-version":"","version":0,"start-version":0,"end-version":0,"is-raw-kv":false,"raw-ranges":null,"tables":[{"db-name":"Db","table-name":"","kv-count":123,"kv-size":456,"tiflash-replica":0}]}

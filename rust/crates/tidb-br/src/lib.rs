@@ -40,7 +40,12 @@
 //! Direct dependencies are workspace crates (`tidb-codec`, `tidb-model`,
 //! `tidb-proto`, `tidb-util`). Go's `github.com/google/btree` maps onto
 //! [`std::collections::BTreeMap`] throughout. The helpers are not integrated
-//! into live BRIE execution; source test mappings do not certify that path.
+//! into physical BRIE execution; source test mappings do not certify that path.
+//!
+//! [`task::show`] and [`metautil`] serve local SQL metadata inspection (V1/V2,
+//! including encrypted schema indexes). The new task configuration modules
+//! contain the SQL builder's fields, not the complete CLI task packages or
+//! their physical backup/restore runners.
 //!
 //! Go's `pkg/tablecodec` import is served by `tidb-codec`'s `table_key` and
 //! `row_index` modules, which is where this workspace put the table-key framing
@@ -75,3 +80,7 @@ pub mod rtree;
 pub mod spans;
 pub mod summary;
 pub mod utils;
+
+pub mod local_storage;
+pub mod metautil;
+pub mod task;

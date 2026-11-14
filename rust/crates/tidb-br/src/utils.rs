@@ -46,3 +46,17 @@ pub fn check_log_backup_task_exist() -> bool {
 pub fn is_log_backup_in_use() -> bool {
     check_log_backup_task_exist()
 }
+
+/// Go `br/pkg/utils.Decrypt`.
+pub fn decrypt(content: &[u8], cipher: Option<&tidb_proto::backup::CipherInfo>, iv: &[u8]) -> Result<Vec<u8>, String> {
+    use tidb_proto::encryptionpb::EncryptionMethod;
+    let Some(cipher) = cipher.filter(|_| !content.is_empty()) else { return Ok(content.to_vec()) };
+    match EncryptionMethod::try_from(cipher.cipher_type) {
+        Ok(EncryptionMethod::Plaintext) => Ok(content.to_vec()),
+        Ok(EncryptionMethod::Aes128Ctr | EncryptionMethod::Aes192Ctr | EncryptionMethod::Aes256Ctr) => {
+            if iv.len() != 16 { return Err("bad IV length".into()); }
+            tidb_encrypt::aes_decrypt_with_ctr(content, &cipher.cipher_key, iv).map_err(|e| e.to_string())
+        },
+        _ => Err("cipher type invalid [BR:Common:ErrInvalidArgument]invalid argument".into()),
+    }
+}

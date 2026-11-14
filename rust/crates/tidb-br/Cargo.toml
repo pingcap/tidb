@@ -11,6 +11,7 @@ description = "Go br/pkg/streamhelper/spans, br/pkg/rtree, br/pkg/restore/utils 
 workspace = true
 
 [dependencies]
+tidb-table-filter = { path = "../tidb-table-filter" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-redact = { path = "../tidb-redact" }
 tidb-goruntime = { path = "../tidb-goruntime" }
@@ -19,5 +20,14 @@ tidb-codec = { path = "../tidb-codec" }
 tidb-model = { path = "../tidb-model" }
 tidb-proto = { path = "../tidb-proto" }
 
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-encrypt = { path = "../tidb-encrypt" }
+prost.workspace = true
+sha2.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+hex = "0.4"
+
 [dev-dependencies]
+tempfile.workspace = true
 tidb-ast = { path = "../tidb-ast" }
