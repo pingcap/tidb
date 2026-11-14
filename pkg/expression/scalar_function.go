@@ -715,6 +715,7 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 			evalTp := sf.RetType.EvalType()
 			sf.canonicalhashcode = append(sf.canonicalhashcode, byte(evalTp))
 		}
+		sf.canonicalhashcode = appendFTSMysqlMatchAgainstIdentity(sf.canonicalhashcode, sf)
 	}
 }
 
@@ -732,6 +733,10 @@ func (sf *ScalarFunction) Hash64(h base.Hasher) {
 	h.HashInt(len(sf.GetArgs()))
 	for _, arg := range sf.GetArgs() {
 		arg.Hash64(h)
+	}
+	if modifier, local, ok := ftsMysqlMatchAgainstIdentity(sf); ok {
+		h.HashInt(modifier)
+		h.HashBool(local)
 	}
 }
 
@@ -758,7 +763,9 @@ func (sf *ScalarFunction) Equals(other any) bool {
 			return false
 		}
 	}
-	return ok
+	modifier, local, isMatch := ftsMysqlMatchAgainstIdentity(sf)
+	modifier2, local2, isMatch2 := ftsMysqlMatchAgainstIdentity(sf2)
+	return ok && isMatch == isMatch2 && modifier == modifier2 && local == local2
 }
 
 // ReHashCode is used after we change the argument in place.
@@ -777,6 +784,7 @@ func ReHashCode(sf *ScalarFunction) {
 		evalTp := sf.RetType.EvalType()
 		sf.hashcode = append(sf.hashcode, byte(evalTp))
 	}
+	sf.hashcode = appendFTSMysqlMatchAgainstIdentity(sf.hashcode, sf)
 	if sf.FuncName.L == ast.Grouping {
 		sf.hashcode = codec.EncodeInt(sf.hashcode, int64(sf.Function.(*BuiltinGroupingImplSig).GetGroupingMode()))
 		marks := sf.Function.(*BuiltinGroupingImplSig).GetMetaGroupingMarks()

@@ -760,11 +760,12 @@ func (t *PhysicalTable) BuildTTLIndexScanPlan(idx *model.IndexInfo) (*TTLIndexSc
 		return nil, errors.Errorf("clustered primary index %s uses the table scan path", idx.Name)
 	}
 	if idx.State != model.StatePublic || idx.Invisible || idx.Global || idx.MVIndex ||
-		idx.IsColumnarIndex() || idx.ConditionExprString != "" || len(idx.Columns) == 0 {
+		idx.IsColumnarIndex() || idx.IsTiKVFullTextIndex() || idx.ConditionExprString != "" || len(idx.Columns) == 0 {
 		// TTL needs one local public physical-index order that can be scanned
 		// directly. Global/MV/columnar/conditional indexes either use a different
 		// access path, add extra predicate semantics, or do not provide that single
-		// local physical order.
+		// local physical order. A FULLTEXT index built in TiKV keys the terms of
+		// its last column, not the column's values, so it has no such order.
 		return nil, errors.Errorf("index %s is not a supported TTL scan index", idx.Name)
 	}
 	if idx.Columns[0].Name.L != t.TimeColumn.Name.L {
