@@ -35,23 +35,41 @@ impl BindingSessions {
             next_id: AtomicU64::new(1_u64 << 61),
         }
     }
-    fn open(&self) -> Result<BindingRunner, String> {
+    /// Go bindinfo `callWithSCtx`: the call runs on a session of the
+    /// domain's pool (`do.sysSessionPool`), returned on success and destroyed
+    /// on error.
+    fn call_with_sctx<T>(
+        &self,
+        f: impl FnOnce(&mut PooledBindingRunner) -> Result<T, String>,
+    ) -> Result<T, String> {
         let factory = self
             .factory
             .upgrade()
             .ok_or("binding session factory is stopped")?;
-        let mut session = factory
-            .open_storage_session(self.next_id.fetch_add(2, Ordering::Relaxed))
-            .map_err(|e| e.message)?;
-        session.enable_privilege_bypass();
-        // Go bindinfo's `kv.WithInternalSourceType(ctx, kv.InternalTxnBindInfo)`.
-        session.set_internal_request_source(tidb_txnkv::INTERNAL_TXN_BIND_INFO);
-        Ok(BindingRunner(super::SystemSqlExecutor::new(session)))
+        let mut result = None;
+        let outcome = factory.advanced_sys_session_pool().with_session(|lease| {
+            lease.with_session_context(|context| {
+                let mut runner = PooledBindingRunner {
+                    sql: context.sql_executor(),
+                    restricted: context.restricted_sql_executor(),
+                    context,
+                };
+                match f(&mut runner) {
+                    Ok(value) => {
+                        result = Some(value);
+                        Ok(())
+                    }
+                    Err(error) => Err(tidb_syssession::SysSessionError::new(error)),
+                }
+            })
+        });
+        outcome.map_err(|error| error.to_string())?;
+        Ok(result.expect("the call succeeded"))
     }
 }
 impl tidb_bindinfo::cluster_binding_seam::BindingSessionPool for BindingSessions {
+    /// Go `LoadFromStorageToCache`'s `callWithSCtx(h.sPool, false, ...)`.
     fn load(&self, boundary: Option<&str>) -> Result<Vec<Vec<Datum>>, String> {
-        let runner = self.open()?;
         let (condition, args) = match boundary {
             Some(boundary) => (
                 "USE INDEX (time_index) WHERE update_time > %?",
@@ -59,7 +77,9 @@ impl tidb_bindinfo::cluster_binding_seam::BindingSessionPool for BindingSessions
             ),
             None => ("", Vec::new()),
         };
-        tidb_bindinfo::binding_utils::exec_rows(&runner, &format!("SELECT {BINDING_STORAGE_COLUMNS} FROM mysql.bind_info {condition} ORDER BY update_time, create_time"), &args).map_err(|e| e.to_string())
+        self.call_with_sctx(|runner| {
+            tidb_bindinfo::binding_utils::exec_rows(runner, &format!("SELECT {BINDING_STORAGE_COLUMNS} FROM mysql.bind_info {condition} ORDER BY update_time, create_time"), &args).map_err(|e| e.to_string())
+        })
     }
     fn gc(&self) -> Result<(), String> {
         let factory = self
@@ -79,17 +99,20 @@ impl tidb_bindinfo::cluster_binding_seam::BindingSessionPool for BindingSessions
             .map(|_| ())
             .map_err(|e| e.to_string())
     }
+    /// Go `UpdateBindingUsageInfoToStorage`'s `callWithSCtx(h.sPool, ...)`.
     fn write_usage(&self, bindings: &[Arc<Binding>]) -> Result<(), String> {
-        let mut runner = self.open()?;
         let mut snapshots = bindings
             .iter()
             .map(|binding| binding.usage_snapshot())
             .collect::<Vec<_>>();
-        let result = tidb_bindinfo::binding_utils::update_binding_usage_info_to_storage(
-            &mut runner,
-            &mut snapshots,
-            chrono::Utc::now(),
-        );
+        let result = self.call_with_sctx(|runner| {
+            tidb_bindinfo::binding_utils::update_binding_usage_info_to_storage(
+                runner,
+                &mut snapshots,
+                chrono::Utc::now(),
+            )
+            .map_err(|e| e.to_string())
+        });
         // A later batch failure must not erase successful earlier commits.
         for (binding, usage) in bindings.iter().zip(snapshots) {
             if let Some(saved) = usage.last_saved_at {
@@ -99,6 +122,35 @@ impl tidb_bindinfo::cluster_binding_seam::BindingSessionPool for BindingSessions
         result.map(|_| ()).map_err(|e| e.to_string())
     }
 }
+/// A session of the domain's pool as Go bindinfo's `sctx` in `callWithSCtx`.
+struct PooledBindingRunner<'a> {
+    sql: Arc<dyn tidb_sqlexec::SqlExecutor>,
+    restricted: Arc<dyn tidb_sqlexec::RestrictedSqlExecutor>,
+    context: &'a dyn tidb_domain_core::sys_session::DomainSysSession,
+}
+
+impl tidb_bindinfo::binding_operator::BindingOperatorSession for PooledBindingRunner<'_> {
+    fn now_timestamp(&self, offset_micros: i64) -> String {
+        let state = &super::sessions::cluster_stats_session(self.context).state;
+        let slot = state.session.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        slot.as_ref().map_or_else(String::new, |session| session.binding_now_timestamp(offset_micros))
+    }
+}
+
+impl InternalSqlRunner for PooledBindingRunner<'_> {
+    fn get_sql_executor(&self) -> &dyn tidb_sqlexec::SqlExecutor {
+        self.sql.as_ref()
+    }
+
+    fn get_restricted_sql_executor(&self) -> &dyn tidb_sqlexec::RestrictedSqlExecutor {
+        self.restricted.as_ref()
+    }
+
+    fn affected_rows(&self) -> u64 {
+        tidb_stats_handle_util::StatsSessionContext::affected_rows(self.context)
+    }
+}
+
 /// A storage session of the node as Go bindinfo's pooled `sctx`.
 pub(super) struct BindingRunner(pub(super) super::SystemSqlExecutor);
 
