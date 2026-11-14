@@ -17,6 +17,7 @@ package issuetest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/errno"
@@ -1013,4 +1014,43 @@ func TestIssue70706(t *testing.T) {
 		Check(testkit.Rows("2 MySQL vs. PostgreSQL"))
 	tk.MustQuery("select id, title from articles having match(title) against('+PostgreSQL' in boolean mode)").
 		Check(testkit.Rows("2 MySQL vs. PostgreSQL"))
+}
+
+func TestLocalMatchAgainstPlanIdentity(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table articles (id int primary key, title varchar(200))")
+	tk.MustExec("insert into articles values (1, 'apple banana'), (2, 'apple'), (3, 'start party article')")
+
+	// A BOOLEAN MODE search evaluated in TiDB and a natural-language search
+	// over the same column and string are two predicates; neither is dropped
+	// as a duplicate of the other, whichever comes first.
+	tk.MustExec("set @@tidb_enable_local_match_against = on")
+	for _, sql := range []string{
+		"select id from articles where match(title) against('+apple -banana' in boolean mode) and match(title) against('+apple -banana')",
+		"select id from articles where match(title) against('+apple -banana') and match(title) against('+apple -banana' in boolean mode)",
+	} {
+		matches := 0
+		for _, row := range tk.MustQuery("explain format = 'brief' " + sql).Rows() {
+			matches += strings.Count(row[4].(string), "match_against(")
+		}
+		require.Equal(t, 2, matches, sql)
+	}
+
+	// The switch is part of the plan cache key: a plan cached with it off
+	// matches substrings through the ILIKE fallback, which the plan built with
+	// it on does not.
+	tk.MustExec("set @@tidb_enable_local_match_against = off")
+	tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans = on")
+	tk.MustExec("prepare st from 'select id from articles where match(title) against(''+art'' in boolean mode)'")
+	tk.MustQuery("execute st").Check(testkit.Rows("3"))
+	tk.MustQuery("execute st").Check(testkit.Rows("3"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_enable_local_match_against = on")
+	tk.MustQuery("execute st").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_enable_local_match_against = off")
+	tk.MustQuery("execute st").Check(testkit.Rows("3"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }

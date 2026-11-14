@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -123,6 +124,47 @@ func (b *builtinFtsMysqlMatchAgainstSig) SetModifier(modifier ast.FulltextSearch
 	b.modifier = modifier
 }
 
+// equal compares the modifier and the place of evaluation as well as the
+// arguments; see ftsMysqlMatchAgainstIdentity.
+func (b *builtinFtsMysqlMatchAgainstSig) equal(ctx EvalContext, fun builtinFunc) bool {
+	other, ok := fun.(*builtinFtsMysqlMatchAgainstSig)
+	if !ok || b.modifier != other.modifier || b.hasLocalEvalInfo() != other.hasLocalEvalInfo() {
+		return false
+	}
+	return b.baseBuiltinFunc.equal(ctx, fun)
+}
+
+// ftsMysqlMatchAgainstIdentity returns what tells two `MATCH ... AGAINST`
+// builtins over the same arguments apart: the search modifier, and whether
+// the builtin is evaluated in TiDB. Neither is an argument, so the hash codes
+// and the equality of a ScalarFunction take them from here; without them a
+// BOOLEAN MODE search and a natural-language one over the same column and
+// string would be one predicate, and one of the two would be dropped.
+func ftsMysqlMatchAgainstIdentity(sf *ScalarFunction) (modifier int, local bool, ok bool) {
+	if sf.FuncName.L != ast.FTSMysqlMatchAgainst {
+		return 0, false, false
+	}
+	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
+	if !ok {
+		return 0, false, false
+	}
+	return int(sig.modifier), sig.hasLocalEvalInfo(), true
+}
+
+// appendFTSMysqlMatchAgainstIdentity appends ftsMysqlMatchAgainstIdentity to
+// a hash code; it appends nothing for any other function.
+func appendFTSMysqlMatchAgainstIdentity(buf []byte, sf *ScalarFunction) []byte {
+	modifier, local, ok := ftsMysqlMatchAgainstIdentity(sf)
+	if !ok {
+		return buf
+	}
+	buf = codec.EncodeInt(buf, int64(modifier))
+	if local {
+		return append(buf, 1)
+	}
+	return append(buf, 0)
+}
+
 // SetFTSMysqlMatchAgainstModifier sets the modifier for the internal `MATCH ... AGAINST` builtin signature.
 // It is expected to be called by planner right after building the scalar function.
 func SetFTSMysqlMatchAgainstModifier(sf *ScalarFunction, modifier ast.FulltextSearchModifier) error {
@@ -131,6 +173,8 @@ func SetFTSMysqlMatchAgainstModifier(sf *ScalarFunction, modifier ast.FulltextSe
 		return errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, sf.Function)
 	}
 	sig.SetModifier(modifier)
+	// The modifier is part of the hash code.
+	sf.CleanHashCode()
 	return nil
 }
 
@@ -144,6 +188,8 @@ func SetFTSMysqlMatchAgainstLocalEvalInfo(sf *ScalarFunction, info *FTSLocalEval
 		return errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, sf.Function)
 	}
 	sig.localEvalInfo.Store(info.Clone())
+	// Whether the builtin is evaluated here is part of the hash code.
+	sf.CleanHashCode()
 	return nil
 }
 
@@ -330,9 +376,12 @@ func (b *builtinFtsMysqlMatchAgainstSig) evalReal(ctx EvalContext, row chunk.Row
 }
 
 // getOrBuildLocalNoScorePlan returns the compiled query for search, rebuilding
-// it if the search string changed. A prepared statement re-executed with a new
-// parameter reuses the same signature, so the cached plan is keyed by the
-// search text rather than assumed valid for the lifetime of the sig.
+// it if the search string changed. The search string is an expression, not
+// necessarily a constant: a correlated column gives a new one per outer row
+// through the same signature, so the cached plan is keyed by the search text
+// rather than assumed valid for the lifetime of the sig. A plan holding this
+// builtin is never served from the plan cache, so a re-executed prepared
+// statement gets a new signature and does not come through here.
 func (b *builtinFtsMysqlMatchAgainstSig) getOrBuildLocalNoScorePlan(search string) (*ftsLocalEvalPlan, error) {
 	b.localPlanMu.Lock()
 	defer b.localPlanMu.Unlock()

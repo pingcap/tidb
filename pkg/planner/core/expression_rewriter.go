@@ -2640,8 +2640,8 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 	// error — and yields the estimation proxy and the matches-nothing
 	// short-circuit. For a mutable search string (`?` marker, user variable)
 	// none of that is knowable yet, so the plan carries no baked-in search
-	// value and evaluation compiles per search string instead. This is why
-	// local matching, unlike the ILIKE fallback, stays plan-cache safe.
+	// value and evaluation compiles per search string instead. The plan is
+	// still not cached, because of the analyzer settings frozen above.
 	if constExpr, isConst := against.(*expression.Constant); isConst &&
 		!expression.MaybeOverOptimized4PlanCache(er.sctx, constExpr) {
 		query, err := expression.CompileFTSMysqlMatchAgainstLocalQuery(er.sctx.GetEvalCtx(), sf, config)

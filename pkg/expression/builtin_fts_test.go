@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -424,4 +425,53 @@ func TestFTSMysqlMatchAgainstLocalEvalInfoTracksSearch(t *testing.T) {
 		require.NoError(t, evalErrs[i])
 		require.True(t, hasInfo[i])
 	}
+}
+
+// TestFTSMysqlMatchAgainstIdentity checks that the search modifier and the
+// place of evaluation tell two MATCH ... AGAINST builtins over the same
+// arguments apart, in every hash code and equality a ScalarFunction has.
+func TestFTSMysqlMatchAgainstIdentity(t *testing.T) {
+	ctx := mock.NewContext()
+	build := func(modifier ast.FulltextSearchModifier, local bool) *ScalarFunction {
+		col := &Column{UniqueID: 1, Index: 0, RetType: types.NewFieldType(mysql.TypeVarchar)}
+		against := &Constant{Value: types.NewStringDatum("+tidb -mysql"), RetType: types.NewFieldType(mysql.TypeVarchar)}
+		fn, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), against, col)
+		require.NoError(t, err)
+		sf := fn.(*ScalarFunction)
+		// Cache the hash codes before the planner state is attached, as the
+		// rewriter may.
+		_ = sf.HashCode()
+		_ = sf.CanonicalHashCode()
+		require.NoError(t, SetFTSMysqlMatchAgainstModifier(sf, modifier))
+		if local {
+			require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, &FTSLocalEvalInfo{}))
+		}
+		return sf
+	}
+	hash64 := func(sf *ScalarFunction) uint64 {
+		h := base.NewHashEqualer()
+		sf.Hash64(h)
+		return h.Sum64()
+	}
+	natural := build(ast.FulltextSearchModifierNaturalLanguageMode, false)
+	boolean := build(ast.FulltextSearchModifierBooleanMode, false)
+	local := build(ast.FulltextSearchModifierBooleanMode, true)
+	for _, pair := range [][2]*ScalarFunction{{natural, boolean}, {boolean, local}, {natural, local}} {
+		a, b := pair[0], pair[1]
+		require.NotEqual(t, a.HashCode(), b.HashCode())
+		require.NotEqual(t, a.CanonicalHashCode(), b.CanonicalHashCode())
+		require.NotEqual(t, hash64(a), hash64(b))
+		require.False(t, a.Equal(ctx, b))
+		require.False(t, a.Equals(b))
+		require.False(t, a.Function.equal(ctx, b.Function))
+	}
+	same := build(ast.FulltextSearchModifierBooleanMode, true)
+	require.Equal(t, local.HashCode(), same.HashCode())
+	require.Equal(t, local.CanonicalHashCode(), same.CanonicalHashCode())
+	require.Equal(t, hash64(local), hash64(same))
+	require.True(t, local.Equal(ctx, same))
+	require.True(t, local.Equals(same))
+	// A clone is the same expression.
+	require.True(t, local.Equal(ctx, local.Clone()))
+	require.Equal(t, local.HashCode(), local.Clone().HashCode())
 }
