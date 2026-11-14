@@ -1,0 +1,9 @@
+import into t  from '/file.csv'		a,b	a,b
+import into t (b,a) from '/file.csv'		b,a	b,a
+import into t (@v,b) set a=@v+1 from '/file.csv'		@v,b	b,a
+import into t (a) set b=2 from '/file.csv'		a	a,b
+import into t (a,b) set a=2 from '/file.csv'		a,b	a,b
+import into t (a,a) from '/file.csv'	[table:1110]Column 'a' specified twice		
+import into t (missing) from '/file.csv'	[ddl:1054]Unknown column 'missing' in 'field list'		
+import into t (_tidb_rowid,a) from '/file.csv'		<nil>,a	_tidb_rowid,a
+import into t (@v) set a=@v,b=2 from '/file.csv'		@v	a,b

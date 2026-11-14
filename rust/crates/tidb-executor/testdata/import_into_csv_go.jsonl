@@ -1,0 +1,6 @@
+{"error":"EOF","rows":[["1","hello"],["2","quoted,text"],["3",null],["4",null]],"source":"1,hello\n2,\"quoted,text\"\r\n3,\\N\n4,\"\\N\"\n","sql":"import into t from '/file.csv' format 'csv'"}
+{"error":"EOF","rows":[["1",null],["2","hello"]],"source":"1|NULL\n2|hello\n","sql":"import into t from '/file.csv' format 'csv' with fields_terminated_by='|', fields_enclosed_by='', fields_defined_null_by='NULL'"}
+{"error":"EOF","rows":[["1","hello"],["2","world"]],"source":"a,b\n1,hello\n2,world\n","sql":"import into t from '/file.csv' format 'csv' with skip_rows=1"}
+{"error":"EOF","rows":[],"source":"a,b\n1,hello\n","sql":"import into t from '/file.csv' format 'csv' with skip_rows=9"}
+{"error":"syntax error: unterminated quoted field","rows":[],"source":"1,\"unterminated","sql":"import into t from '/file.csv' format 'csv'"}
+{"error":"[executor:8162]%!(EXTRA string=FIELDS ENCLOSED BY and TERMINATED BY must not be prefix of each other)","rows":[],"source":"1x2\n","sql":"import into t from '/file.csv' format 'csv' with fields_terminated_by='x', fields_enclosed_by='x'"}

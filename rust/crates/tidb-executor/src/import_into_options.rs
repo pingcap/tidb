@@ -115,7 +115,7 @@ fn classify(value: &Expr) -> OptionValue {
 }
 
 /// Go `optAsString`.
-fn as_string(option: &LoadDataOption) -> Result<String, DriverError> {
+pub(crate) fn as_string(option: &LoadDataOption) -> Result<String, DriverError> {
     match option.value.as_ref().map(classify) {
         Some(OptionValue::Text(text)) => Ok(text),
         _ => Err(invalid(&option.name)),
@@ -123,7 +123,7 @@ fn as_string(option: &LoadDataOption) -> Result<String, DriverError> {
 }
 
 /// Go `optAsInt64`.
-fn as_int(option: &LoadDataOption) -> Result<i64, DriverError> {
+pub(crate) fn as_int(option: &LoadDataOption) -> Result<i64, DriverError> {
     match option.value.as_ref().map(classify) {
         Some(OptionValue::Int(value)) => Ok(value),
         _ => Err(invalid(&option.name)),
@@ -132,7 +132,7 @@ fn as_int(option: &LoadDataOption) -> Result<i64, DriverError> {
 
 /// `units.RAMInBytes`: `^(\d+(\.\d+)*) ?([kKmMgGtTpP])?[iI]?[bB]?$`, binary
 /// multiples, fractions truncated.
-fn ram_in_bytes(text: &str) -> Option<i64> {
+pub(crate) fn ram_in_bytes(text: &str) -> Option<i64> {
     let number_end = {
         let bytes = text.as_bytes();
         let mut end = 0;
@@ -223,6 +223,12 @@ fn is_valid_name(name: &str, max_len: usize) -> bool {
 /// before reading its source: `initOptions` in its order, then the path and
 /// format checks of `checkFieldParams`.
 pub fn validate_import_into_options(stmt: &ImportIntoStmt) -> Result<(), DriverError> {
+    validate_import_into_options_with_cloud_storage(stmt, "")?;
+    check_field_params(stmt)
+}
+
+/// Go `Plan.initOptions`: validation before controller construction.
+pub(crate) fn validate_import_into_options_with_cloud_storage(stmt: &ImportIntoStmt, default_cloud_storage_uri: &str) -> Result<(), DriverError> {
     let (format, path) = match &stmt.source {
         ImportSource::File { path, format } => (
             format
@@ -357,7 +363,7 @@ pub fn validate_import_into_options(stmt: &ImportIntoStmt) -> Result<(), DriverE
     }
     // An empty `cloud_storage_uri` forces local sort; otherwise the global
     // `tidb_cloud_storage_uri` (empty by default) decides.
-    let mut cloud_storage_uri = String::new();
+    let mut cloud_storage_uri = default_cloud_storage_uri.to_owned();
     if let Some(option) = find("cloud_storage_uri") {
         cloud_storage_uri = as_string(option)?;
         if !cloud_storage_uri.is_empty() && !is_supported_cloud_storage_uri(&cloud_storage_uri) {
@@ -384,7 +390,18 @@ pub fn validate_import_into_options(stmt: &ImportIntoStmt) -> Result<(), DriverE
         ));
     }
 
-    // Go `checkFieldParams`.
+    Ok(())
+}
+
+/// Go `LoadDataController.checkFieldParams`: invoked after plan construction.
+pub(crate) fn check_field_params(stmt: &ImportIntoStmt) -> Result<(), DriverError> {
+    let (format, path) = match &stmt.source {
+        ImportSource::File { path, format } => (
+            format.as_deref().map_or_else(|| "auto".to_owned(), str::to_ascii_lowercase),
+            Some(path.as_str()),
+        ),
+        ImportSource::Select { .. } => ("auto".to_owned(), None),
+    };
     if let Some("") = path {
         return Err(code(
             &tidb_exeerrors::ERR_LOAD_DATA_EMPTY_PATH,

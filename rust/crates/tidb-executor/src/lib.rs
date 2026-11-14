@@ -133,6 +133,7 @@ mod tests_generated_column_ddl;
 use tidb_distsql::split_ranges_across_int64_boundary;
 pub mod index_merge_reader;
 pub mod import_into_options;
+pub mod importer;
 pub mod kv_table;
 pub mod limit;
 pub mod load_data;

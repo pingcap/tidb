@@ -159,3 +159,20 @@ continuing; all subsequent checks execute from `rust/` to use its Cargo config.
 Targeted handoff verification completed: all eight tests passed in 42.243s.
 Full crate suites are deferred to the end of the resumed task, as the user
 explicitly requested. The row remains partial and counts are unchanged.
+
+### Importer interpretation increment
+
+Ported the interpretation/options portion of importer Plan, defaults and
+adjustment, CSV config, field mapping and load-column validation, file-type
+selection, and the CSV arm of HandleSkipNRows. Plan session/metadata capture,
+serialization, SEM/node limits, source discovery, other reader types, encoding
+and execution remain. No successful import is claimed.
+
+Go probes TestImportControllerMapping and TestImportCSVInterpretation ran with
+`GOMAXPROCS=6 go test --tags=intest -p 6 ./zzprobe/e05 -run '^<name>$' -count=1 -v`.
+Captures preserve nine mappings and six CSV interpretation/error cases. Eight
+targeted Rust tests passed: `cargo nextest run --build-jobs 6 -j6 -p tidb-executor
+-E 'test(importer::)'`; `cargo check -j6 -p tidb-executor --tests` passed. Both use
+the required environment and shared target above. New test modules depend on
+new controller APIs and cannot compile without the implementation. Full suites
+remain deferred to the end.
