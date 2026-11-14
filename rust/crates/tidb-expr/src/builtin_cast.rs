@@ -198,6 +198,7 @@ fn new_base_builtin_cast_func_4_string(
         collation,
         sig: crate::builtin::SigFields::None,
         kernel: None,
+        in_cache: None,
     };
     Ok(bf)
 }

@@ -62,6 +62,10 @@ pub trait BuildContext {
     fn eval_constant(&self, expression: &Expression) -> Result<Datum, EvalError>;
     /// Go `ctx.GetEvalCtx().AppendWarning(err)`.
     fn append_warning(&self, error: &TerrorError);
+    /// Go `ctx.GetEvalCtx().Location()`.
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone;
+    /// Go `ctx.GetEvalCtx().SQLMode()` date flags.
+    fn date_modes(&self) -> tidb_datatype::DateModes;
     /// Go `ctx.GetEvalCtx()` itself, for a build that evaluates in the
     /// statement: a context-free resolver has none.
     fn columns(&self) -> Option<&dyn Columns>;
@@ -100,6 +104,9 @@ impl BuildContext for ColumnsBuildContext<'_> {
     fn append_warning(&self, error: &TerrorError) {
         self.0.append_error_warning(&error.to_sql_error());
     }
+
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone { self.0.time_zone() }
+    fn date_modes(&self) -> tidb_datatype::DateModes { self.0.date_modes() }
 
     fn columns(&self) -> Option<&dyn Columns> {
         Some(self.0)
@@ -142,6 +149,9 @@ impl<R: ColumnResolver> BuildContext for ResolverBuildContext<'_, R> {
             error.identity,
         ));
     }
+
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone { self.0.time_zone() }
+    fn date_modes(&self) -> tidb_datatype::DateModes { self.0.date_modes() }
 
     fn columns(&self) -> Option<&dyn Columns> {
         self.0.comparison_context()
@@ -196,6 +206,9 @@ pub(crate) fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
     use crate::builtin_string as s;
     use crate::builtin_miscellaneous as misc;
     Some(match name {
+        "'tidb`.(dateliteral" => &t::DateLiteralFunctionClass,
+        "'tidb`.(timeliteral" => &t::TimeLiteralFunctionClass,
+        "'tidb`.(timestampliteral" => &t::TimestampLiteralFunctionClass,
         "vec_dims" => &crate::builtin_vec::VecDimsFunctionClass { func_name: "vec_dims" },
         "vec_l1_distance" => &crate::builtin_vec::VecL1DistanceFunctionClass { func_name: "vec_l1_distance" },
         "vec_l2_distance" => &crate::builtin_vec::VecL2DistanceFunctionClass { func_name: "vec_l2_distance" },
@@ -525,6 +538,14 @@ pub(crate) enum SigFields {
     /// A signature that is its `baseBuiltinFunc` alone.
     #[default]
     None,
+    /// Go `builtinDateLiteralSig.literal` / `builtinTimestampLiteralSig.tm`.
+    TimeLiteral { value: tidb_datatype::Time, date: bool },
+    /// Go `builtinTimeLiteralSig.duration`.
+    DurationLiteral { value: tidb_datatype::MySqlDuration },
+    /// Go `builtinRandSig.mysqlRng`: captured constant seed.
+    Rand { seed: i64 },
+    /// Go `builtinBenchmarkSig.constLoopCount`.
+    Benchmark { const_loop_count: i64 },
     /// Go `builtinTimestamp1ArgSig.isFloat` / `builtinTimestamp2ArgsSig.isFloat`.
     Timestamp { is_float: bool },
     /// Go `builtinWeightStringNullSig`.
@@ -552,6 +573,8 @@ pub(crate) enum SigFields {
 /// Go `baseBuiltinFunc` with the signature's `pbCode`.
 #[derive(Debug)]
 pub(crate) struct BaseBuiltinFunc {
+    /// Go `baseInSig` and its typed constant hash set.
+    pub(crate) in_cache: Option<std::sync::Arc<crate::builtin_other::InHashSet>>,
     /// Go `args`: the arguments after their implicit casts.
     pub(crate) args: Vec<Expression>,
     /// Go `tp`.
@@ -867,6 +890,7 @@ pub(crate) fn new_base_builtin_func(
         collation,
         sig: SigFields::None,
         kernel: None,
+        in_cache: None,
     })
 }
 
@@ -901,6 +925,9 @@ impl BuildContext for UnfoldedBuildContext {
 
     fn append_warning(&self, _: &TerrorError) {}
 
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone { crate::NoColumns.time_zone() }
+    fn date_modes(&self) -> tidb_datatype::DateModes { crate::NoColumns.date_modes() }
+
     fn columns(&self) -> Option<&dyn Columns> {
         None
     }
@@ -928,5 +955,6 @@ fn base_builtin_func_of(
         collation,
         sig: SigFields::None,
         kernel: None,
+        in_cache: None,
     }
 }

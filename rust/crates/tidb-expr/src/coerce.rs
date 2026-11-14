@@ -144,9 +144,13 @@ pub fn vec_truthy_of(
         ) && ft.eval_type() == tidb_datatype::EvalType::String
     });
     if let Some(field_type) = hybrid {
+        // Go `toBool`'s hybrid arm reads the column's string (`GetString`):
+        // a row datum carries the enum/set itself, a column cell its name.
         let name = match value {
             Datum::Enum(value, _) => Some(value.name_bytes()),
             Datum::Set(value, _) => Some(value.name_bytes()),
+            Datum::String(value) => Some(value.bytes()),
+            Datum::Bytes(value) => Some(value.as_slice()),
             _ => None,
         };
         if let Some(name) = name {

@@ -308,47 +308,6 @@ pub(crate) fn extremum_with_signature(
     Ok(Datum::new_string_datum(best))
 }
 
-/// The byte length of each value as a string (`None` for NULL): what its
-/// `VecEvalString` appends into a column.
-pub(crate) fn string_lengths(vals: &[Datum]) -> Result<Vec<Option<usize>>, EvalError> {
-    vals.iter()
-        .map(|value| {
-            if value.is_null() {
-                Ok(None)
-            } else {
-                extremum_string_value(value).map(|bytes| Some(bytes.len()))
-            }
-        })
-        .collect()
-}
-
-/// Go `builtinGreatestStringSig.vecEvalString` (`builtinLeastStringSig`): the
-/// byte length of the running value after each argument -- `None` once an
-/// argument is NULL -- which keeps the running value only while it compares
-/// strictly ahead (`CompareString(src, arg) > 0`, `< 0` for LEAST).
-pub(crate) fn string_extremum_steps(
-    vals: &[Datum],
-    want: Ordering,
-    collation: tidb_charset::Collation,
-) -> Result<Vec<Option<usize>>, EvalError> {
-    let collator = tidb_datatype::get_collator(collation.name());
-    let mut steps = Vec::with_capacity(vals.len());
-    let mut best: Option<Vec<u8>> = None;
-    for (index, value) in vals.iter().enumerate() {
-        best = if value.is_null() || (index > 0 && best.is_none()) {
-            None
-        } else {
-            let candidate = extremum_string_value(value)?;
-            match best.take() {
-                Some(src) if collator.compare(&src, &candidate) == want => Some(src),
-                _ => Some(candidate),
-            }
-        };
-        steps.push(best.as_ref().map(Vec::len));
-    }
-    Ok(steps)
-}
-
 /// Go's ETDatetime/ETTimestamp arm (`builtinGreatestTimeSig.evalTime`): every
 /// argument is cast onto the AGGREGATED temporal type before it is compared,
 /// and the winner is converted to that type on the way out
@@ -587,7 +546,7 @@ fn extremum_string_value(value: &Datum) -> Result<Vec<u8>, EvalError> {
 /// that time's text; one that does not stays itself after Go's
 /// `handleInvalidTimeError` (a read's warning). `parseDatetime`'s own
 /// truncation warning (`ErrTruncatedWrongVal`) is appended either way.
-fn time_conversion_for_gl(
+pub(crate) fn time_conversion_for_gl(
     cmp_as_date: bool,
     value: &str,
     ctx: &dyn crate::Columns,

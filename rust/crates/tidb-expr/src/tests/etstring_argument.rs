@@ -326,6 +326,16 @@ fn field_reads_a_hybrid_by_its_own_eval_type() {
 fn an_uncast_etstring_argument_is_refused_rather_than_re_derived() {
     assert!(eval_string(&Datum::Int(1)).is_err());
     assert!(eval_string(&Datum::Real(1.0)).is_err());
-    assert!(eval_string(&Datum::Bit(BinaryLiteral::from_uint(3, None))).is_err());
     assert_eq!(eval_string(&Datum::Null).unwrap(), None);
+}
+
+/// Go `Column.EvalString` over a BIT column is its bytes: a hybrid argument
+/// reaches an ETString position uncast (`castAsStringFunctionClass` picks
+/// `builtinCastStringAsStringSig` for it).
+#[test]
+fn a_bit_column_is_its_bytes_as_an_etstring_argument() {
+    assert_eq!(
+        eval_string(&Datum::Bit(BinaryLiteral::from_uint(0xffffff, None))).unwrap(),
+        Some(vec![0xff, 0xff, 0xff])
+    );
 }

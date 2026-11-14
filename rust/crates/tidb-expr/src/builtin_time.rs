@@ -1247,3 +1247,61 @@ function_class!(
     /// Go `tidbCurrentTsoFunctionClass`.
     TidbCurrentTsoFunctionClass, Int, [], Unspecified => crate::scalar_function::Kernel::Values(crate::time_fn::current_tso)
 );
+
+/// Go `dateLiteralFunctionClass`.
+pub(crate) struct DateLiteralFunctionClass;
+/// Go `timeLiteralFunctionClass`.
+pub(crate) struct TimeLiteralFunctionClass;
+/// Go `timestampLiteralFunctionClass`.
+pub(crate) struct TimestampLiteralFunctionClass;
+
+/// Go the literal classes' `getFunction`: parse once and keep no argument expressions.
+fn literal_function(ctx: &dyn BuildContext, args: Vec<Expression>, name: &str, kind: u8) -> Result<BaseBuiltinFunc, EvalError> {
+    assert!(matches!(args[0], Expression::Constant(_)), "Unexpected parameter for temporal literal");
+    // Go `dt.GetString()`: the parser's literal text is UTF-8.
+    let text = ctx.eval_constant(&args[0])?.sql_string()
+        .map_err(|_| EvalError::Unsupported("invalid UTF-8 string coercion"))?;
+    let mut modes = ctx.date_modes();
+    let zone = ctx.time_zone();
+    // Go DATE's zero-mode checks belong to evalTime, after parsing at build.
+    modes.no_zero_date = false;
+    modes.no_zero_in_date = false;
+    let (field, sig) = if kind == 1 {
+        let (value, field) = crate::time_literal::time_literal(&text, &zone, modes)?;
+        (field, SigFields::DurationLiteral { value })
+    } else {
+        let (value, field) = if kind == 0 { crate::time_literal::date_literal(&text, &zone, modes)? } else { crate::time_literal::timestamp_literal(&text, &zone, modes)? };
+        (field, SigFields::TimeLiteral { value, date: kind == 0 })
+    };
+    let mut bf = new_base_builtin_func_with_tp(ctx, name, Vec::new(), field.eval_type(), &[])?;
+    bf.tp.set_code(field.code());
+    bf.tp.set_flen(field.flen());
+    bf.tp.set_decimal(field.decimal());
+    bf.sig = sig;
+    Ok(bf.evaluated_by(crate::scalar_function::Kernel::Method(literal_value)))
+}
+
+/// Go `builtin{Date,Time,Timestamp}LiteralSig.eval*`.
+pub(crate) fn literal_value(function: &crate::scalar_function::ScalarFunction, _: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    match function.signature_fields() {
+        SigFields::TimeLiteral { value, date } => {
+            let mode = ctx.date_modes();
+            if date && ((mode.no_zero_date && value.is_zero()) || (mode.no_zero_in_date && value.invalid_zero() && !value.is_zero())) {
+                return Err(EvalError::WrongTemporalLiteral { code: 1292, message: format!("Incorrect date value: '{}'", value) });
+            }
+            Ok(Datum::Time(value))
+        }
+        SigFields::DurationLiteral { value } => Ok(Datum::Duration(value)),
+        _ => unreachable!("temporal literal signature"),
+    }
+}
+
+impl FunctionClass for DateLiteralFunctionClass {
+    fn get_function(&self, ctx: &dyn BuildContext, args: Vec<Expression>) -> Result<BaseBuiltinFunc, EvalError> { literal_function(ctx, args, "'tidb`.(dateliteral", 0) }
+}
+impl FunctionClass for TimeLiteralFunctionClass {
+    fn get_function(&self, ctx: &dyn BuildContext, args: Vec<Expression>) -> Result<BaseBuiltinFunc, EvalError> { literal_function(ctx, args, "'tidb`.(timeliteral", 1) }
+}
+impl FunctionClass for TimestampLiteralFunctionClass {
+    fn get_function(&self, ctx: &dyn BuildContext, args: Vec<Expression>) -> Result<BaseBuiltinFunc, EvalError> { literal_function(ctx, args, "'tidb`.(timestampliteral", 2) }
+}

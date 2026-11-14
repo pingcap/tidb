@@ -109,13 +109,14 @@ fn rand_row(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Resul
 
 /// Go `builtinRandSig.evalReal`: the generator the class seeded, one per
 /// occurrence.
-fn rand_const_row(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
-    let values = function
-        .args
-        .iter()
-        .map(|arg| arg.eval(ctx, row))
-        .collect::<Result<Vec<_>, _>>()?;
-    crate::math_fn::eval_rand_values(&values, ctx, Some(std::ptr::from_ref(function) as usize), true)
+fn rand_const_row(function: &ScalarFunction, ctx: &dyn Columns, _: Row<'_>) -> Result<Datum, EvalError> {
+    rand_next(function, ctx)
+}
+
+/// Go `builtinRandSig.evalReal` / `vecEvalReal`: the signature's generator.
+pub(super) fn rand_next(function: &ScalarFunction, ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    if let Some(generator) = &function.rand_rng { return Ok(Datum::Real(generator.0.gen())); }
+    ctx.rand_next().map(Datum::Real).ok_or(EvalError::Unsupported("RAND requires a session"))
 }
 
 /// Go `builtinTruncate{Int,Uint,Real,Decimal}Sig`: the decimal signature caps
@@ -229,12 +230,29 @@ fn current_time_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Co
     } else {
         "current_time"
     };
-    temporal_of_ret_type(function, crate::time_fn::current_time(values, name, ctx)?, ctx)
+    let result = crate::time_fn::current_time(values, name, ctx)?;
+    // Go `builtinCurrentTime1ArgSig.evalDuration` parses at the row's own
+    // fsp (a NULL one reads as 0), which the return type need not hold.
+    match values {
+        [fsp] => crate::cast::parse_computed_duration(
+            &result,
+            ctx,
+            Some(crate::arg_eval_type::eval_int(fsp)?.unwrap_or(0)),
+        ),
+        _ => temporal_of_ret_type(function, result, ctx),
+    }
 }
 
 /// Go `builtinUTCTimeWithArgSig` / `builtinUTCTimeWithoutArgSig`.
 fn utc_time_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    temporal_of_ret_type(function, crate::time_fn::utc_time(values, ctx)?, ctx)
+    let result = crate::time_fn::utc_time(values, ctx)?;
+    // Go `builtinUTCTimeWithArgSig.evalDuration` parses at the row's own
+    // fsp, which the return type (0 for a non-constant argument) need not hold.
+    match values {
+        [Datum::Null] => Ok(Datum::Null),
+        [fsp] => crate::cast::parse_computed_duration(&result, ctx, crate::arg_eval_type::eval_int(fsp)?),
+        _ => temporal_of_ret_type(function, result, ctx),
+    }
 }
 
 /// Go `builtinSecToTimeSig`.
@@ -620,7 +638,7 @@ pub(crate) enum StringOp {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PbBuiltin {
     signature: ScalarFuncSig,
-    kernel: Kernel,
+    pub(super) kernel: Kernel,
 }
 
 impl PbBuiltin {
@@ -1280,6 +1298,179 @@ impl PbBuiltin {
         matches!(self.kernel, Kernel::DateArithmetic { .. })
     }
 
+    /// Go signature value operations shared by `eval*` and `vecEval*`.
+    pub(super) fn eval_values(self, function: &ScalarFunction, mut values: Vec<Datum>, ctx: &dyn Columns) -> Result<Datum, EvalError> {
+        let args = &function.args;
+        let kernel = self.kernel;
+        if values.iter().any(Datum::is_null) && !matches!(kernel, Kernel::Json | Kernel::Values(_) | Kernel::Method(_)) {
+            return Ok(Datum::Null);
+        }
+                match kernel {
+                    Kernel::Values(eval) => eval(&values, ctx),
+                    Kernel::Method(eval) => eval(function, &values, ctx),
+                    Kernel::RegexpFamily(name) => function.eval_regexp_family(name, &values, ctx),
+                    Kernel::ConvertCharset { from_binary } => {
+                        let [value] = values.as_slice() else {
+                            return Err(EvalError::Unsupported("protobuf charset builtin arity"));
+                        };
+                        if from_binary {
+                            let charset = function
+                                .get_static_type()
+                                .map_or("binary", FieldType::charset_name);
+                            crate::convert_charset::from_binary(
+                                value,
+                                charset,
+                                function.cannot_convert_string_as_warning,
+                                ctx,
+                            )
+                        } else {
+                            let charset = args[0]
+                                .static_type()
+                                .map_or("binary", FieldType::charset_name);
+                            crate::convert_charset::to_binary(value, charset)
+                        }
+                    }
+                    Kernel::Round => crate::math_fn::round_or_truncate_with_result_decimal(
+                        &values,
+                        true,
+                        function.ret_type.as_ref().map(FieldType::decimal),
+                        ctx,
+                    ),
+                    Kernel::String { operation, binary } => {
+                        let Some(value) = values.first_mut() else {
+                            return Err(EvalError::Unsupported("protobuf string builtin arity"));
+                        };
+                        if !value.is_null() {
+                            let bytes = crate::arg_eval_type::eval_string(value)?
+                                .ok_or(EvalError::Unsupported("protobuf string argument"))?;
+                            *value = if binary {
+                                Datum::Bytes(bytes)
+                            } else {
+                                Datum::new_string_datum(bytes)
+                            };
+                        }
+                        match operation {
+                            StringOp::Length => Ok(match &values[0] {
+                                Datum::Null => Datum::Null,
+                                Datum::Bytes(bytes) => Datum::Int(bytes.len() as i64),
+                                value => Datum::Int(
+                                    crate::string_signature::StrUnits::of_with_signature(
+                                        value, false,
+                                    )?
+                                    .expect("non-NULL string")
+                                    .len() as i64,
+                                ),
+                            }),
+                            StringOp::Upper => crate::string_fn::case_convert_with_type(
+                                &values,
+                                true,
+                                args[0].static_type(),
+                                binary,
+                            ),
+                            StringOp::Lower => crate::string_fn::case_convert_with_type(
+                                &values,
+                                false,
+                                args[0].static_type(),
+                                binary,
+                            ),
+                            StringOp::Substring => crate::string_fn::substring(&values, ctx),
+                        }
+                    }
+                    Kernel::FromUnixTime => {
+                        let result = crate::time_fn::session_tz::from_unixtime_with_precision(
+                            &values,
+                            ctx,
+                            function.get_static_type().map(FieldType::decimal),
+                        )?;
+                        if self.signature == ScalarFuncSig::FromUnixTime1Arg {
+                            crate::cast::parse_computed_time(
+                                &result,
+                                ctx,
+                                tidb_datatype::TimeType::DateTime,
+                                function.get_static_type().map(FieldType::decimal),
+                            )
+                        } else {
+                            Ok(result)
+                        }
+                    }
+                    Kernel::Json => {
+                        let types = args
+                            .iter()
+                            .map(|arg| arg.static_type().cloned())
+                            .collect::<Vec<_>>();
+                        let cache_paths = args.get(1..).is_some_and(|arguments| {
+                            !arguments.is_empty()
+                                && arguments
+                                    .iter()
+                                    .step_by(2)
+                                    .all(|arg| arg.const_level() >= ConstLevel::ONLY_IN_CONTEXT)
+                        });
+                        crate::builtin_ext::json::eval_pb(
+                            self.signature,
+                            &values,
+                            &types,
+                            ctx,
+                            cache_paths.then_some(&function.json_modify_path_cache),
+                        )
+                    }
+                    _ => unreachable!("lazy kernels were handled before evaluating arguments"),
+                }
+    }
+
+    /// Go `builtinCast*Sig`: the conversion shared by scalar and vector kernels.
+    pub(super) fn cast_value(self, function: &ScalarFunction, value: Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
+        let Kernel::Cast { source, target, in_union } = self.kernel else { unreachable!() };
+        let args = &function.args;
+                if value.is_null() {
+                    return Ok(Datum::Null);
+                }
+                // Go `builtinCastStringAs{Int,Real}Sig`: "Take the implicit
+                // evalInt path if possible."
+                if let Some(number) = super::can_implicit_eval_int(&args[0], &value, target) {
+                    return Ok(number);
+                }
+                if target == EvalType::Json {
+                    return cast_json_argument_value(function, value);
+                }
+                let field = function
+                    .get_static_type()
+                    .ok_or(EvalError::Unsupported("protobuf cast result type"))?;
+                if matches!(target, EvalType::Int | EvalType::Real | EvalType::Decimal) {
+                    return crate::cast::eval_numeric_cast_with_type(
+                        value,
+                        source,
+                        Some(&args[0]),
+                        args[0].static_type(),
+                        field,
+                        in_union,
+                        ctx,
+                    );
+                }
+                if target == EvalType::String {
+                    return crate::cast::eval_string_cast_with_type(
+                        value,
+                        args[0].static_type(),
+                        field,
+                        ctx,
+                    );
+                }
+                let fsp = field.decimal().max(0);
+                match target {
+                    EvalType::Datetime | EvalType::Timestamp => {
+                        let (tp, fsp) = match field.code() {
+                            tidb_datatype::FieldTypeCode::Date => (tidb_datatype::TimeType::Date, 0),
+                            _ => (tidb_datatype::TimeType::DateTime, fsp),
+                        };
+                        crate::cast::cast_to_time(&value, args[0].static_type(), ctx, tp, fsp)
+                    }
+                    EvalType::Duration => {
+                        crate::cast::cast_to_duration(&value, args[0].static_type(), ctx, fsp)
+                    }
+                    EvalType::VectorFloat32 => crate::cast::cast_as_vector_float32(value, field),
+                    _ => Err(EvalError::Unsupported("protobuf cast target")),
+                }
+    }
+
     pub(super) fn eval(
         self,
         function: &ScalarFunction,
@@ -1457,8 +1648,14 @@ impl PbBuiltin {
                 if left.is_null() {
                     return Ok(Datum::Null);
                 }
-                let mut has_null = false;
-                for candidate in &args[1..] {
+                let cache = function.in_cache.as_deref();
+                let mut has_null = cache.is_some_and(|cache| cache.has_null);
+                let candidates: Vec<_> = if let Some(cache) = cache.filter(|cache| !cache.is_empty()) {
+                    let collator = tidb_datatype::get_collator(function.derived_collation().name());
+                    if cache.contains(&left, collator, crate::wrap_cast::type_of(first).is_unsigned())? { return Ok(Datum::Int(1)); }
+                    cache.non_const_args.iter().map(|index| &args[*index]).collect()
+                } else { args[1..].iter().collect() };
+                for candidate in candidates {
                     let right = eval_numeric_row(candidate, ctx, row, domain)?;
                     if right.is_null() {
                         has_null = true;
@@ -1531,54 +1728,7 @@ impl PbBuiltin {
                 } else {
                     eval_numeric_row(&args[0], ctx, row, source)?
                 };
-                if value.is_null() {
-                    return Ok(Datum::Null);
-                }
-                // Go `builtinCastStringAs{Int,Real}Sig`: "Take the implicit
-                // evalInt path if possible."
-                if let Some(number) = super::can_implicit_eval_int(&args[0], &value, target) {
-                    return Ok(number);
-                }
-                if target == EvalType::Json {
-                    return cast_json_argument_value(function, value);
-                }
-                let field = function
-                    .get_static_type()
-                    .ok_or(EvalError::Unsupported("protobuf cast result type"))?;
-                if matches!(target, EvalType::Int | EvalType::Real | EvalType::Decimal) {
-                    return crate::cast::eval_numeric_cast_with_type(
-                        value,
-                        source,
-                        Some(&args[0]),
-                        args[0].static_type(),
-                        field,
-                        in_union,
-                        ctx,
-                    );
-                }
-                if target == EvalType::String {
-                    return crate::cast::eval_string_cast_with_type(
-                        value,
-                        args[0].static_type(),
-                        field,
-                        ctx,
-                    );
-                }
-                let fsp = field.decimal().max(0);
-                match target {
-                    EvalType::Datetime | EvalType::Timestamp => {
-                        let (tp, fsp) = match field.code() {
-                            tidb_datatype::FieldTypeCode::Date => (tidb_datatype::TimeType::Date, 0),
-                            _ => (tidb_datatype::TimeType::DateTime, fsp),
-                        };
-                        crate::cast::cast_to_time(&value, args[0].static_type(), ctx, tp, fsp)
-                    }
-                    EvalType::Duration => {
-                        crate::cast::cast_to_duration(&value, args[0].static_type(), ctx, fsp)
-                    }
-                    EvalType::VectorFloat32 => crate::cast::cast_as_vector_float32(value, field),
-                    _ => Err(EvalError::Unsupported("protobuf cast target")),
-                }
+                self.cast_value(function, value, ctx)
             }
             Kernel::Regexp => function.eval_regexp_like(ctx, row),
             kernel => {
@@ -1593,116 +1743,7 @@ impl PbBuiltin {
                     }
                     values.push(value);
                 }
-                match kernel {
-                    Kernel::Values(eval) => eval(&values, ctx),
-                    Kernel::Method(eval) => eval(function, &values, ctx),
-                    Kernel::RegexpFamily(name) => function.eval_regexp_family(name, &values, ctx),
-                    Kernel::ConvertCharset { from_binary } => {
-                        let [value] = values.as_slice() else {
-                            return Err(EvalError::Unsupported("protobuf charset builtin arity"));
-                        };
-                        if from_binary {
-                            let charset = function
-                                .get_static_type()
-                                .map_or("binary", FieldType::charset_name);
-                            crate::convert_charset::from_binary(
-                                value,
-                                charset,
-                                function.cannot_convert_string_as_warning,
-                                ctx,
-                            )
-                        } else {
-                            let charset = args[0]
-                                .static_type()
-                                .map_or("binary", FieldType::charset_name);
-                            crate::convert_charset::to_binary(value, charset)
-                        }
-                    }
-                    Kernel::Round => crate::math_fn::round_or_truncate_with_result_decimal(
-                        &values,
-                        true,
-                        function.ret_type.as_ref().map(FieldType::decimal),
-                        ctx,
-                    ),
-                    Kernel::String { operation, binary } => {
-                        let Some(value) = values.first_mut() else {
-                            return Err(EvalError::Unsupported("protobuf string builtin arity"));
-                        };
-                        if !value.is_null() {
-                            let bytes = crate::arg_eval_type::eval_string(value)?
-                                .ok_or(EvalError::Unsupported("protobuf string argument"))?;
-                            *value = if binary {
-                                Datum::Bytes(bytes)
-                            } else {
-                                Datum::new_string_datum(bytes)
-                            };
-                        }
-                        match operation {
-                            StringOp::Length => Ok(match &values[0] {
-                                Datum::Null => Datum::Null,
-                                Datum::Bytes(bytes) => Datum::Int(bytes.len() as i64),
-                                value => Datum::Int(
-                                    crate::string_signature::StrUnits::of_with_signature(
-                                        value, false,
-                                    )?
-                                    .expect("non-NULL string")
-                                    .len() as i64,
-                                ),
-                            }),
-                            StringOp::Upper => crate::string_fn::case_convert_with_type(
-                                &values,
-                                true,
-                                args[0].static_type(),
-                                binary,
-                            ),
-                            StringOp::Lower => crate::string_fn::case_convert_with_type(
-                                &values,
-                                false,
-                                args[0].static_type(),
-                                binary,
-                            ),
-                            StringOp::Substring => crate::string_fn::substring(&values, ctx),
-                        }
-                    }
-                    Kernel::FromUnixTime => {
-                        let result = crate::time_fn::session_tz::from_unixtime_with_precision(
-                            &values,
-                            ctx,
-                            function.get_static_type().map(FieldType::decimal),
-                        )?;
-                        if self.signature == ScalarFuncSig::FromUnixTime1Arg {
-                            crate::cast::parse_computed_time(
-                                &result,
-                                ctx,
-                                tidb_datatype::TimeType::DateTime,
-                                function.get_static_type().map(FieldType::decimal),
-                            )
-                        } else {
-                            Ok(result)
-                        }
-                    }
-                    Kernel::Json => {
-                        let types = args
-                            .iter()
-                            .map(|arg| arg.static_type().cloned())
-                            .collect::<Vec<_>>();
-                        let cache_paths = args.get(1..).is_some_and(|arguments| {
-                            !arguments.is_empty()
-                                && arguments
-                                    .iter()
-                                    .step_by(2)
-                                    .all(|arg| arg.const_level() >= ConstLevel::ONLY_IN_CONTEXT)
-                        });
-                        crate::builtin_ext::json::eval_pb(
-                            self.signature,
-                            &values,
-                            &types,
-                            ctx,
-                            cache_paths.then_some(&function.json_modify_path_cache),
-                        )
-                    }
-                    _ => unreachable!("lazy kernels were handled before evaluating arguments"),
-                }
+                self.eval_values(function, values, ctx)
             }
         }
     }

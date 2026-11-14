@@ -246,10 +246,12 @@ pub(crate) fn benchmark(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'
     let [count, expression] = function.args.as_slice() else {
         return Err(EvalError::Unsupported("BENCHMARK arguments"));
     };
-    let Some(loop_count) =
-        crate::func::benchmark_loop_count(count.eval(ctx, row)?, count.static_type(), ctx)?
-    else {
-        return Ok(Datum::Null);
+    let loop_count = match function.sig {
+        SigFields::Benchmark { const_loop_count } if const_loop_count > 0 => const_loop_count,
+        _ => match crate::func::benchmark_loop_count(count.eval(ctx, row)?, count.static_type(), ctx)? {
+            Some(value) => value,
+            None => return Ok(Datum::Null),
+        },
     };
     if loop_count < 0 {
         return Ok(Datum::Null);

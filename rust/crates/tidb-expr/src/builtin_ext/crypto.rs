@@ -468,7 +468,7 @@ fn identity_username(identity: &str) -> &str {
 
 /// `VALIDATE_PASSWORD_STRENGTH(str)`.
 pub(crate) fn validate_password_strength(value: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    use tidb_password_validation::{self as password_validation, PasswordUser};
+    use tidb_password_validation as password_validation;
 
     let Some(password) = sql_string_bytes(value)? else {
         return Ok(Datum::Null);
@@ -487,18 +487,40 @@ pub(crate) fn validate_password_strength(value: &Datum, ctx: &dyn Columns) -> Re
     if !(validation.eq_ignore_ascii_case("ON") || validation == "1") {
         return Ok(Datum::Int(0));
     }
+    let user = password_validation_user(ctx);
+    validate_password_strength_with_user(value, ctx, user.as_ref())
+}
+
+/// Go `builtinValidatePasswordStrengthSig.CurrentUser`: one identity per batch.
+pub(crate) fn password_validation_user(ctx: &dyn Columns) -> Option<tidb_password_validation::PasswordUser> {
+    use tidb_password_validation::PasswordUser;
     let current_user = ctx.current_user();
     let login_user = ctx.login_user();
-    let user = current_user.as_deref().map(|current| PasswordUser {
+    current_user.as_deref().map(|current| PasswordUser {
         auth_username: identity_username(current).into(),
         username: login_user
             .as_deref()
             .map(identity_username)
             .unwrap_or_else(|| identity_username(current))
             .into(),
-    });
+    })
+}
+
+/// Go `builtinValidatePasswordStrengthSig.vecEvalInt` reads this global once.
+pub(crate) fn password_validation_enabled(ctx: &dyn Columns) -> Result<bool, EvalError> {
+    let value = tidb_password_validation::GlobalVarAccessor::get_global_sys_var(&EvalGlobalVars(ctx), "validate_password.enable")?;
+    Ok(value.eq_ignore_ascii_case("ON") || value == "1")
+}
+
+/// Go `builtinValidatePasswordStrengthSig.validateStr`.
+pub(crate) fn validate_password_strength_with_user(value: &Datum, ctx: &dyn Columns, user: Option<&tidb_password_validation::PasswordUser>) -> Result<Datum, EvalError> {
+    use tidb_password_validation as password_validation;
+    let Some(password) = sql_string_bytes(value)? else { return Ok(Datum::Null); };
+    let password = tidb_goruntime::GoString::from_bytes(password);
+    if password.to_utf8_lossy_go().chars().count() < 4 { return Ok(Datum::Int(0)); }
+    let globals = EvalGlobalVars(ctx);
     let warning =
-        password_validation::validate_user_name_in_password(&password, user.as_ref(), &globals)
+        password_validation::validate_user_name_in_password(&password, user, &globals)
             .map_err(password_eval_error)?;
     if !warning.is_empty() {
         return Ok(Datum::Int(0));

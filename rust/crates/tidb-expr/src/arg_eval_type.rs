@@ -42,7 +42,8 @@ pub(crate) fn eval_string(v: &Datum) -> Result<Option<Vec<u8>>, EvalError> {
         Datum::Null => Ok(None),
         Datum::String(value) => Ok(Some(value.bytes().to_vec())),
         Datum::Bytes(value) => Ok(Some(value.clone())),
-        Datum::BinaryLiteral(value) => Ok(Some(value.as_bytes().to_vec())),
+        // A BIT column's string is its bytes (Go `Column.EvalString`).
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => Ok(Some(value.as_bytes().to_vec())),
         Datum::Enum(value, _) => Ok(Some(value.name_bytes().to_vec())),
         Datum::Set(value, _) => Ok(Some(value.name_bytes().to_vec())),
         // Same contract as [`eval_int`]: the build declared this position

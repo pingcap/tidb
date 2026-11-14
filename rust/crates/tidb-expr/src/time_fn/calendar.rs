@@ -643,7 +643,7 @@ pub(crate) fn date_add_result_fsp(
 
 // Go baseDateArithmetical.addDate sends out-of-range calendar results
 // through handleInvalidTimeError (the statement's truncation error group).
-pub(super) fn date_arithmetic_overflow(ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn date_arithmetic_overflow(ctx: &dyn Columns) -> Result<Datum, EvalError> {
     const MESSAGE: &str = "Datetime function: datetime field overflow";
     match ctx.truncate_level() {
         ErrorLevel::Ignore => {}
@@ -1223,7 +1223,7 @@ pub(super) fn parse_composite_value(
 /// is significant at this boundary: it makes the decimal point land on the
 /// unit-specific field separator before `parse_composite_value` right-aligns
 /// the resulting numeric groups.
-pub(super) fn format_decimal_composite_interval(unit: &str, decimal: &crate::Decimal) -> String {
+pub(crate) fn format_decimal_composite_interval(unit: &str, decimal: &crate::Decimal) -> String {
     let interval = decimal.to_string();
     let (negative, magnitude) = interval
         .strip_prefix('-')

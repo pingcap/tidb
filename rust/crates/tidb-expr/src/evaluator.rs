@@ -22,9 +22,9 @@ use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_util::ColumnSwapHelper;
 use tidb_datatype::Datum;
 
+use crate::expression::Expression;
 use tidb_exprctx::context::{Columns, EvalError};
 use tidb_exprctx::optional::{OptionalEvalPropKey, OptionalEvalPropKeySet};
-use crate::expression::Expression;
 
 /// Go `HasGetSetVarFunc`: whether an expression contains a user-variable read
 /// or assignment at any depth.
@@ -35,9 +35,7 @@ pub fn has_get_set_var_func(expression: &Expression) -> bool {
     };
 
     let name = function.func_name.lowercase();
-    name == "setvar"
-        || name == "getvar"
-        || function.get_args().iter().any(has_get_set_var_func)
+    name == "setvar" || name == "getvar" || function.get_args().iter().any(has_get_set_var_func)
 }
 
 /// Go `Vectorizable`: whether expressions may be evaluated column by column.
@@ -78,14 +76,9 @@ pub fn vectorizable(expressions: &[Expression]) -> bool {
 /// As in Go, the vector path preserves NULL from equality rewritten from IN
 /// until later conjuncts reject the row; ordinary NULL rejects it immediately.
 ///
-/// The expression model exposes Go's typed `VecEval*` only for the numeric
-/// comparisons, `NOT` over them and `IS NULL` over a column
-/// (`ScalarFunction::vec_eval_bool`). The vector evaluator
-/// nevertheless preserves the important vectorized contract: filters run
-/// filter-major, rejected rows are removed before the next filter, and direct
-/// column/constant expressions are materialized column-wise. Any other
-/// scalar-function node uses its row evaluator as the explicit fallback,
-/// without evaluating rows that an earlier filter already rejected.
+/// Each filter selects its signature's typed column kernel when both the
+/// session flag and `Expression.Vectorized` allow it. Go's non-vectorized
+/// signatures use row evaluation over the surviving input selection.
 pub fn vectorized_filter_consider_null<C: Columns>(
     ctx: &C,
     vec_enabled: bool,
@@ -173,13 +166,6 @@ fn filter_physical_rows<C: Columns>(
     let mut sel: Vec<usize> = (0..physical_rows).collect();
     // Go's `isZero`: -1 NULL, 0 false, 1 true, one entry per row of `sel`.
     let mut is_zero: Vec<i8> = Vec::new();
-    let truth_code = |value: &Datum| -> Result<i8, EvalError> {
-        Ok(match crate::truthy_of(value)? {
-            None => -1,
-            Some(false) => 0,
-            Some(true) => 1,
-        })
-    };
     // Go `toBool` decides by the filter's type: see `vec_truthy_of`.
     let typed_truth_code = |value: &Datum, filter: &Expression| -> Result<i8, EvalError> {
         Ok(
@@ -194,43 +180,42 @@ fn filter_physical_rows<C: Columns>(
         if sel.is_empty() {
             break;
         }
-        let column_wise = if !vec_enabled {
-            false
-        } else {
-            match filter {
-                // Go `Constant.VecEval*` reads parameters once per nonempty
-                // batch; a deferred expression keeps row evaluation.
-                Expression::Constant(constant) if constant.deferred_expr.is_none() => {
-                    let code = truth_code(&constant.eval_in(ctx)?)?;
-                    is_zero.clear();
-                    is_zero.resize(sel.len(), code);
-                    true
-                }
-                Expression::CorrelatedColumn(column) => {
-                    let code = truth_code(&column.eval())?;
-                    is_zero.clear();
-                    is_zero.resize(sel.len(), code);
-                    true
-                }
-                Expression::ScalarFunction(function) => {
-                    function.vec_eval_bool(input, &sel, &mut is_zero)?
-                }
-                // Go `ScalarSubQueryExpr.Vectorized()` is true and every
-                // `VecEval*` refuses.
-                Expression::ScalarSubQuery(_) => {
-                    return Err(crate::scalar_subquery::vec_eval_error());
-                }
-                Expression::Column(_) | Expression::Constant(_) => false,
+        let column_wise = vec_enabled && crate::chunk_executor::vectorized(filter);
+        is_zero.clear();
+        if column_wise {
+            let mut selected_input = input.clone();
+            selected_input.set_sel(Some(sel.clone()));
+            let field = filter.static_type().expect("typed filter");
+            let mut result = tidb_chunk::column::Column::default();
+            crate::scalar_function::vec_eval::eval_into(
+                filter,
+                field.eval_type(),
+                ctx,
+                &selected_input,
+                &mut result,
+            )?;
+            for i in 0..sel.len() {
+                let value = crate::scalar_function::vec_eval::value(
+                    &result,
+                    i,
+                    field.eval_type(),
+                    Some(field),
+                );
+                // Go `VecEvalBool`: `CanImplicitEvalReal` (DAYNAME) takes
+                // the expression's REAL value, its weekday index.
+                let value = crate::scalar_function::can_implicit_eval_int(
+                    filter,
+                    &value,
+                    tidb_datatype::EvalType::Real,
+                )
+                .unwrap_or(value);
+                is_zero.push(typed_truth_code(&value, filter)?);
             }
-        };
-        if !column_wise {
-            // The scalar evaluator is the documented fallback for every
-            // other shape, over the live rows only, answering as Go's
-            // `EvalExpr` would for this filter.
-            let _vec_eval = crate::chunk_executor::enter_vec_eval(
-                vec_enabled && crate::chunk_executor::vectorized(filter),
-            );
-            is_zero.clear();
+        } else {
+            let _vec_eval = crate::chunk_executor::enter_vec_eval(false);
+            if vec_enabled && matches!(filter, Expression::ScalarSubQuery(_)) {
+                return Err(crate::scalar_subquery::vec_eval_error());
+            }
             for &physical in &sel {
                 is_zero.push(typed_truth_code(
                     &filter.eval(ctx, input.physical_row(physical))?,
@@ -417,8 +402,15 @@ fn builtin_required_optional_eval_props(name: &str) -> OptionalEvalPropKeySet {
         // builtinConnectionIDSig, builtinLastInsertID(WithID)Sig,
         // builtinRowCountSig, builtinSleepSig, builtinSet*VarSig,
         // builtinValues*Sig, builtinTiDBCurrentTsoSig.
-        "found_rows" | "current_resource_group" | "connection_id" | "last_insert_id"
-        | "row_count" | "sleep" | "setvar" | "values" | "tidb_current_tso" => set.add(SessionVars),
+        "found_rows"
+        | "current_resource_group"
+        | "connection_id"
+        | "last_insert_id"
+        | "row_count"
+        | "sleep"
+        | "setvar"
+        | "values"
+        | "tidb_current_tso" => set.add(SessionVars),
         // builtinTiDBIsDDLOwnerSig.
         "tidb_is_ddl_owner" => set.add(DdlOwnerInfo),
         // builtinTiDBMVCCInfoSig.
@@ -432,9 +424,10 @@ fn builtin_required_optional_eval_props(name: &str) -> OptionalEvalPropKeySet {
         // builtinTiDBDecodeSQLDigestsSig.
         "tidb_decode_sql_digests" => set.add(SessionVars).add(SqlExecutor).add(PrivilegeChecker),
         // builtinNextValSig, builtinLastValSig, builtinSetValSig.
-        "nextval" | "lastval" | "setval" => {
-            set.add(SequenceOperator).add(SessionVars).add(PrivilegeChecker)
-        }
+        "nextval" | "lastval" | "setval" => set
+            .add(SequenceOperator)
+            .add(SessionVars)
+            .add(PrivilegeChecker),
         // builtinLockSig, builtinReleaseLockSig, builtinFreeLockSig,
         // builtinUsedLockSig, builtinReleaseAllLocksSig.
         "get_lock" | "release_lock" | "is_free_lock" | "is_used_lock" | "release_all_locks" => {
@@ -511,57 +504,20 @@ impl EvaluatorSuite {
                 .iter()
                 .zip(&program.calculated)
             {
-                // Go `defaultEvaluator.run`: `vecEnabled && expr.Vectorized()`
-                // is `evalOneVec`, whose builtins size the result column
-                // themselves; the values below then fill it.
+                // Go `defaultEvaluator.run`: each expression independently
+                // selects its signature's typed vector kernel or row evaluation.
                 let vectorized = vec_enabled && crate::chunk_executor::vectorized(expression);
                 let _vec_eval = crate::chunk_executor::enter_vec_eval(vectorized);
-                if vectorized {
-                    if let (Some((arity, directly)), Expression::ScalarFunction(function)) =
-                        (crate::chunk_executor::string_extremum_arity(expression), expression)
-                    {
-                        string_extremum_vec(
-                            function,
-                            arity,
-                            directly,
-                            ctx,
-                            input,
-                            output,
-                            *output_index,
-                        )?;
-                        continue;
-                    }
-                    crate::chunk_executor::eval_one_vec(expression, input, output, *output_index);
-                }
-                if let Expression::ScalarFunction(function) = expression {
-                    // Go's typed `VecEvalDecimal` for decimal arithmetic.
-                    if function.vec_eval_decimal_arithmetic(input, output, *output_index)? {
-                        continue;
-                    }
-                }
-                if vec_enabled {
-                    if let Some(values) =
-                        crate::scalar_function::try_eval_numeric_batch(expression, ctx, input)?
-                    {
-                        for value in values {
-                            output.append_datum(*output_index, &value);
-                        }
-                        continue;
-                    }
-                }
-                if let Expression::Constant(constant) = expression {
-                    // Go Constant.VecEval* broadcasts only non-deferred
-                    // constants. Deferred expressions still consume rows;
-                    // parameter values are read anew for every chunk.
-                    if constant.deferred_expr.is_none() {
-                        if rows != 0 {
-                            let value = constant.eval_in(ctx)?;
-                            for _ in 0..rows {
-                                output.append_datum(*output_index, &value);
-                            }
-                        }
-                        continue;
-                    }
+                if vectorized
+                    && crate::scalar_function::vec_eval::eval_one(
+                        expression,
+                        ctx,
+                        input,
+                        output,
+                        *output_index,
+                    )?
+                {
+                    continue;
                 }
                 for row_index in 0..rows {
                     let value = expression.eval(ctx, input.get_row(row_index))?;
@@ -589,82 +545,6 @@ impl EvaluatorSuite {
         }
         Ok(())
     }
-}
-
-/// Go's string `GREATEST`/`LEAST` `vecEvalString` writing a projection's
-/// `result` (`evalOneVec`). `builtinGreatestStringSig` evaluates its first
-/// argument into `result`, then ping-pongs it with two buffers: each even
-/// step's running value is appended into `result` after a
-/// `ReserveString(n)`, and an even argument count ends with the last step
-/// copied in (`src.CopyConstruct(result)`); an odd one leaves `result`
-/// holding the last step. `builtinGreatestCmpStringAsTimeSig` evaluates
-/// every argument into `result`, then reserves it and appends the values.
-/// An argument evaluated into `result` either copies its rows in (a column)
-/// or leaves it reserved for the rows it appends; those lengths, and the
-/// running values', shape `result`; its rows are the call's values.
-fn string_extremum_vec<C: Columns>(
-    function: &crate::expression::ScalarFunction,
-    arity: usize,
-    directly: bool,
-    ctx: &C,
-    input: &Chunk,
-    output: &mut Chunk,
-    output_index: usize,
-) -> Result<(), EvaluatorError> {
-    let rows = input.num_rows();
-    let mut values = Vec::with_capacity(rows);
-    let mut lengths = Vec::with_capacity(rows);
-    let mut steps = Vec::with_capacity(rows);
-    for row_index in 0..rows {
-        let (value, row_lengths, row_steps) =
-            function.eval_string_extremum_steps(ctx, input.get_row(row_index))?;
-        values.push(value);
-        lengths.push(row_lengths);
-        steps.push(row_steps);
-    }
-    let append_lengths = |result: &mut tidb_chunk::column::Column, index: usize, of: &[Vec<Option<usize>>]| {
-        for row in of {
-            match row[index] {
-                Some(len) => result.append_bytes(&vec![0; len]),
-                None => result.append_null(),
-            }
-        }
-    };
-    {
-        let mut result = output.column_mut(output_index);
-        let evaluated_into_result = if directly { 1 } else { arity };
-        for (index, arg) in function.args.iter().take(evaluated_into_result).enumerate() {
-            crate::chunk_executor::vec_eval_string(arg, input, &mut result);
-            if result.rows() == 0 && rows != 0 {
-                append_lengths(&mut result, index, &lengths);
-            }
-        }
-        result.reserve_string(rows);
-        if directly {
-            // `result` is `dst` at every even step; the last one, for an odd
-            // count, is the call's value appended below.
-            for step in (2..arity).step_by(2).filter(|&step| step != arity - 1) {
-                append_lengths(&mut result, step, &steps);
-                result.reserve_string(rows);
-            }
-        }
-    }
-    if !directly || arity % 2 == 1 {
-        for value in &values {
-            output.append_datum(output_index, value);
-        }
-        return Ok(());
-    }
-    let field_type = function
-        .get_static_type()
-        .cloned()
-        .expect("a vectorized extremum has its result type");
-    let mut src = Chunk::new(std::slice::from_ref(&field_type), rows, rows);
-    for value in &values {
-        src.append_datum(0, value);
-    }
-    src.column(0).copy_construct_to(&mut output.column_mut(output_index));
-    Ok(())
 }
 
 #[cfg(test)]
@@ -713,6 +593,31 @@ mod tests {
 
     fn scalar(name: &str, args: Vec<Expression>) -> Expression {
         crate::new_function::new_function_base(&crate::NoColumns, name, long(), args).unwrap()
+    }
+
+    #[test]
+    fn vectorized_builtin_arithmetic_evaluates_rhs_before_merging_nulls() {
+        // Go builtin_arithmetic_vec.go builtinArithmeticMultiplyIntSig.vecEvalInt
+        // evaluates both argument columns before MergeNulls. The vec-vs-eval
+        // harness in TestVectorizedBuiltinArithmeticFunc only uses safe ranges;
+        // this boundary deliberately distinguishes its two evaluation paths.
+        let expression = scalar(
+            "mul",
+            vec![input_column(0), scalar("abs", vec![input_column(1)])],
+        );
+        let mut input = Chunk::new_chunk_with_capacity(&[long(), long()], 1);
+        input.append_null(0);
+        input.append_int64(1, i64::MIN);
+        assert!(expression
+            .eval(&NoColumns, input.get_row(0))
+            .unwrap()
+            .is_null());
+        let suite = EvaluatorSuite::new(vec![expression], false);
+        let mut output = Chunk::new_chunk_with_capacity(&[long()], 1);
+        let error = suite
+            .run(&NoColumns, &mut input, &mut output)
+            .expect_err("Go's vector kernel evaluates ABS even for a NULL left operand");
+        assert!(matches!(error, EvaluatorError::Eval(_)), "{error:?}");
     }
 
     struct CountedParameter {
@@ -828,10 +733,7 @@ mod tests {
         }
 
         let suite = EvaluatorSuite::new(
-            vec![
-                parameter(long()),
-                scalar("getvar", vec![string_const("v")]),
-            ],
+            vec![parameter(long()), scalar("getvar", vec![string_const("v")])],
             false,
         );
         assert!(!suite.vectorizable());
@@ -901,7 +803,8 @@ mod tests {
                         name,
                         out_type.clone(),
                         vec![Expression::Column(left), Expression::Column(right)],
-                    ).unwrap();
+                    )
+                    .unwrap();
                     let mut input = Chunk::new_chunk_with_capacity(&[left_type, right_type], 3);
                     for (left, right) in [(5, 2), (6, 3), (7, 4)] {
                         input.append_int64(0, left);
@@ -937,13 +840,15 @@ mod tests {
             "abs",
             long(),
             vec![input_column(0)],
-        ).unwrap();
+        )
+        .unwrap();
         let expression = crate::new_function::new_function_base(
             &crate::NoColumns,
             "plus",
             long(),
             vec![parameter(long()), unsupported],
-        ).unwrap();
+        )
+        .unwrap();
         let mut input = Chunk::new_chunk_with_capacity(&[long()], 1);
         input.append_int64(0, 1);
         assert_eq!(
@@ -960,7 +865,8 @@ mod tests {
             "plus",
             long(),
             vec![parameter(long()), input_column(0)],
-        ).unwrap();
+        )
+        .unwrap();
         input.reset();
         assert_eq!(
             crate::scalar_function::try_eval_numeric_batch(&expression, &ctx, &input).unwrap(),
@@ -1000,7 +906,8 @@ mod tests {
                         Expression::Column(column.clone()),
                         Expression::Constant(Constant::new(one, field)),
                     ],
-                ).unwrap();
+                )
+                .unwrap();
                 let expected = if code == FieldTypeCode::Double {
                     Datum::Real(u64::MAX as f64)
                 } else {
@@ -1049,13 +956,15 @@ mod tests {
             "mul",
             long(),
             vec![input_column(1), int_const(2)],
-        ).unwrap();
+        )
+        .unwrap();
         let expression = crate::new_function::new_function_base(
             &crate::NoColumns,
             "plus",
             long(),
             vec![input_column(0), nested],
-        ).unwrap();
+        )
+        .unwrap();
         for vectorized in [false, true] {
             let mut input = Chunk::new_chunk_with_capacity(&[long(), long()], 1);
             input.append_null(0);
@@ -1101,13 +1010,15 @@ mod tests {
             "setvar",
             string(),
             vec![string_const("v"), Expression::Column(column)],
-        ).unwrap();
+        )
+        .unwrap();
         let getvar = crate::new_function::new_function_base(
             &crate::NoColumns,
             "getvar",
             string(),
             vec![string_const("v")],
-        ).unwrap();
+        )
+        .unwrap();
         let suite = EvaluatorSuite::new(vec![setvar, getvar], false);
         assert!(!suite.vectorizable());
 
@@ -1157,7 +1068,10 @@ mod tests {
             scalar("nextval", vec![string_const("s")]),
         ]));
 
-        let nested_nextval = scalar("plus", vec![scalar("nextval", vec![string_const("s")]), int_const(1)]);
+        let nested_nextval = scalar(
+            "plus",
+            vec![scalar("nextval", vec![string_const("s")]), int_const(1)],
+        );
         assert!(vectorizable(&[nested_nextval]));
     }
 
@@ -1277,7 +1191,8 @@ mod tests {
             "plus",
             long(),
             vec![input_column(1), int_const(1)],
-        ).unwrap();
+        )
+        .unwrap();
         let suite = EvaluatorSuite::new(vec![input_column(0), plus_one, input_column(0)], false);
         let mut output = Chunk::new_chunk_with_capacity(&[long(), long(), long()], 2);
 
@@ -1310,7 +1225,8 @@ mod tests {
                 Expression::Constant(Constant::new(Datum::Int(i64::MAX), long())),
                 Expression::Constant(Constant::new(Datum::Int(1), long())),
             ],
-        ).unwrap();
+        )
+        .unwrap();
         let suite = EvaluatorSuite::new(vec![input_column(0), unsupported], false);
 
         assert!(matches!(
@@ -1352,13 +1268,15 @@ mod tests {
             "minus",
             decimal.clone(),
             vec![one, discount],
-        ).unwrap();
+        )
+        .unwrap();
         let revenue = crate::new_function::new_function_base(
             &crate::NoColumns,
             "mul",
             decimal.clone(),
             vec![decimal_column(0, &decimal), discounted_fraction],
-        ).unwrap();
+        )
+        .unwrap();
         let suite = EvaluatorSuite::new(vec![revenue], false);
 
         let mut input = Chunk::new_chunk_with_capacity(&[decimal.clone(), decimal.clone()], 3);
@@ -1587,7 +1505,10 @@ mod tests {
                 "mul",
                 vec![
                     decimal_column(0, &price_type),
-                    Expression::ScalarFunction(crate::builtin_cast::cast_function_for_test(input_column(2), target.clone())),
+                    Expression::ScalarFunction(crate::builtin_cast::cast_function_for_test(
+                        input_column(2),
+                        target.clone(),
+                    )),
                 ],
                 &result_type,
             );
@@ -1619,7 +1540,10 @@ mod tests {
             "mul",
             vec![
                 decimal_column(0, &price_type),
-                Expression::ScalarFunction(crate::builtin_cast::cast_function_for_test(input_column(2), narrow.clone())),
+                Expression::ScalarFunction(crate::builtin_cast::cast_function_for_test(
+                    input_column(2),
+                    narrow.clone(),
+                )),
             ],
             &result_type,
         ) else {

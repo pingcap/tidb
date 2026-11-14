@@ -95,7 +95,7 @@ impl FunctionClass for InFunctionClass {
 }
 
 /// What one `builtinIn*Sig.hashSet` is keyed by.
-#[derive(PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 enum InKey {
     /// `builtinInIntSig`: the evaluated int64, whatever its sign flag.
     Int(i64),
@@ -108,6 +108,37 @@ enum InKey {
     Time(tidb_datatype::CoreTime),
     /// `builtinInDurationSig`: `Duration.Duration`.
     Duration(i64),
+}
+
+/// Go `baseInSig` with a signature's typed `hashSet`.
+#[derive(Debug, Default)]
+pub(crate) struct InHashSet {
+    values: std::collections::HashMap<InKey, bool>,
+    pub(crate) non_const_args: Vec<usize>,
+    pub(crate) has_null: bool,
+}
+
+impl InHashSet {
+    /// Go `len(b.hashSet) != 0`.
+    pub(crate) fn is_empty(&self) -> bool { self.values.is_empty() }
+
+    /// Go `builtinIn*Sig`'s hash lookup. `builtinInIntSig` matches an int64
+    /// carrier when its sign flag agrees with the first argument's type
+    /// (`isUnsigned0`), or when the carrier is non-negative.
+    pub(crate) fn contains(
+        &self,
+        value: &Datum,
+        collator: tidb_datatype::Collator,
+        is_unsigned0: bool,
+    ) -> Result<bool, EvalError> {
+        let Some(key) = in_key(value, collator)? else { return Ok(false) };
+        // Go float map lookup never matches NaN, including the same NaN bits.
+        if matches!(value, Datum::Real(v) | Datum::Float32(v) if v.is_nan()) { return Ok(false); }
+        Ok(self.values.get(&key).is_some_and(|is_unsigned| match key {
+            InKey::Int(arg0) => *is_unsigned == is_unsigned0 || arg0 >= 0,
+            _ => true,
+        }))
+    }
 }
 
 /// The key Go's `Eval<Type>` result of a list constant hashes to.
@@ -153,29 +184,38 @@ fn build_hash_map_for_const_args(
         return Ok(());
     }
     let collator = tidb_datatype::get_collator(bf.collation.charset_and_collation().1);
-    let mut hash_set = std::collections::HashSet::with_capacity(bf.args.len() - 1);
-    let mut has_null = false;
+    let mut cache = InHashSet::default();
+    cache.values.reserve(bf.args.len() - 1);
     let mut args = std::mem::take(&mut bf.args).into_iter();
     bf.args.extend(args.next());
     for arg in args {
         let level = arg.const_level();
         if level == ConstLevel::NONE {
+            cache.non_const_args.push(bf.args.len());
             bf.args.push(arg);
             continue;
         }
         let value = ctx.eval_constant(&arg)?;
         if level == ConstLevel::ONLY_IN_CONTEXT {
+            cache.non_const_args.push(bf.args.len());
             bf.args.push(arg);
             continue;
         }
         let unique = match &value {
-            Datum::Null => !std::mem::replace(&mut has_null, true),
-            value => in_key(value, collator)?.is_none_or(|key| hash_set.insert(key)),
+            Datum::Null => !std::mem::replace(&mut cache.has_null, true),
+            value => in_key(value, collator)?.is_none_or(|key| {
+                if matches!(value, Datum::Real(v) | Datum::Float32(v) if v.is_nan()) { return true; }
+                if let std::collections::hash_map::Entry::Vacant(entry) = cache.values.entry(key) {
+                    entry.insert(type_of(&arg).is_unsigned());
+                    true
+                } else { false }
+            }),
         };
         if unique {
             bf.args.push(arg);
         }
     }
+    bf.in_cache = Some(std::sync::Arc::new(cache));
     Ok(())
 }
 

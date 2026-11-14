@@ -137,8 +137,15 @@ impl FunctionClass for BenchmarkFunctionClass {
         args: Vec<Expression>,
     ) -> Result<BaseBuiltinFunc, EvalError> {
         let same_eval_type = type_of(&args[1]).eval_type();
-        new_base_builtin_func_with_tp(ctx, "benchmark", args, EvalType::Int, &[EvalType::Int, same_eval_type])
-            .map(|bf| bf.evaluated_by(crate::scalar_function::Kernel::Row(crate::scalar_function::class_kernels::benchmark)))
+        let const_loop_count = match &args[0] {
+            Expression::Constant(constant) if matches!(constant.value, tidb_datatype::Datum::Int(_)) => {
+                match ctx.eval_constant(&args[0]) { Ok(tidb_datatype::Datum::Int(value)) => value, _ => 0 }
+            }
+            _ => 0,
+        };
+        let mut bf = new_base_builtin_func_with_tp(ctx, "benchmark", args, EvalType::Int, &[EvalType::Int, same_eval_type])?;
+        bf.sig = crate::builtin::SigFields::Benchmark { const_loop_count };
+        Ok(bf.evaluated_by(crate::scalar_function::Kernel::Row(crate::scalar_function::class_kernels::benchmark)))
     }
 }
 

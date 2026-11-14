@@ -30,6 +30,22 @@
 //! collation.
 
 pub(crate) mod class_kernels;
+pub(crate) mod vec_eval;
+mod builtin_arithmetic_vec;
+mod builtin_compare_vec;
+mod builtin_control_vec;
+mod builtin_cast_vec;
+mod builtin_op_vec;
+mod builtin_math_vec;
+mod builtin_string_vec;
+mod builtin_json_vec;
+mod builtin_info_vec;
+mod builtin_vec_vec;
+mod builtin_like_vec;
+mod builtin_encryption_vec;
+mod builtin_time_vec;
+mod builtin_miscellaneous_vec;
+mod builtin_other_vec;
 mod pb_builtin;
 
 pub(crate) use pb_builtin::{greatest_method, least_method, Kernel, PbBuiltin};
@@ -259,9 +275,20 @@ pub fn into_coprocessor_form(expr: &mut Expression) {
     }
 }
 
+/// Go `builtinRandSig.mysqlRng`, shared by cloned signatures.
+#[derive(Clone)]
+struct RandGenerator(std::sync::Arc<crate::MysqlRng>);
+
+impl std::fmt::Debug for RandGenerator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("builtinRandSig.mysqlRng").finish_non_exhaustive()
+    }
+}
+
 /// Go `ScalarFunction`: the application of a built-in function to arguments.
 #[derive(Clone, Debug)]
 pub struct ScalarFunction {
+    in_cache: Option<std::sync::Arc<crate::builtin_other::InHashSet>>,
     /// Go `FuncName` (an `ast.CIStr`): the function's name.
     pub func_name: CiString,
     /// Go `RetType` (a `*types.FieldType`; `None` mirrors a nil pointer).
@@ -271,6 +298,8 @@ pub struct ScalarFunction {
     /// Go `Function`: the builtin signature a function class's `getFunction`
     /// or `getSignatureByPB` returned. Every node has one.
     pb_builtin: PbBuiltin,
+    /// Go `builtinRandSig.mysqlRng`; Clone shares its generator.
+    rand_rng: Option<RandGenerator>,
     /// Lazily-filled `HashCode` cache (Go `hashcode`).
     hashcode: Vec<u8>,
     /// Go `BuiltinGroupingImplSig` metadata installed by `SetMetadata`.
@@ -594,14 +623,16 @@ impl ScalarFunction {
         ret_type: FieldType,
         f: crate::builtin::BaseBuiltinFunc,
     ) -> Self {
-        Self::of_function(
+        let mut function = Self::of_function(
             func_name,
             ret_type,
             f.args,
             PbBuiltin::of_builtin_func(f.pb_code, f.kernel),
             f.collation,
             f.sig,
-        )
+        );
+        function.in_cache = f.in_cache;
+        function
     }
 
     /// Go `&ScalarFunction{FuncName, RetType, Function}`.
@@ -618,6 +649,11 @@ impl ScalarFunction {
             ret_type: Some(ret_type),
             args,
             pb_builtin,
+            in_cache: None,
+            rand_rng: match sig {
+                crate::builtin::SigFields::Rand { seed } => Some(RandGenerator(std::sync::Arc::new(crate::MysqlRng::new_with_seed(seed)))),
+                _ => None,
+            },
             hashcode: Vec::new(),
             grouping_metadata: None,
             cannot_convert_string_as_warning: false,
@@ -680,6 +716,9 @@ impl ScalarFunction {
         ))
     }
 
+    /// Go the concrete builtin signature's fields.
+    pub(crate) fn signature_fields(&self) -> crate::builtin::SigFields { self.sig }
+
     /// Go `Function.PbCode()`.
     #[must_use]
     pub fn pb_code(&self) -> tidb_proto::tipb::ScalarFuncSig {
@@ -727,6 +766,7 @@ impl ScalarFunction {
     /// argument-derived cache must be discarded before the rebound tree is
     /// used by ranger or executor code.
     pub fn invalidate_cached_arguments(&mut self) {
+        self.in_cache = None;
         self.hashcode.clear();
         self.in_string_hash_set = None;
         self.in_string_non_const_args.clear();
@@ -1131,14 +1171,10 @@ impl ScalarFunction {
         }
     }
 
-    /// Whether Go evaluates this call through its `vecEval*` body. A call
-    /// whose arguments are all CONSTANT is what Go folds, and folding runs
-    /// the ROW body; anything reading a column runs the vectorized one.
+    /// Go `EvalExpr`: the selected kernel, including a control function's
+    /// explicit row fallback, determines which body is currently running.
     fn runs_vectorized_body(&self) -> bool {
-        !self
-            .args
-            .iter()
-            .all(|arg| matches!(arg, Expression::Constant(_)))
+        crate::chunk_executor::in_vec_eval()
     }
 
     /// The collation this function's own evaluation runs under (Go's
@@ -1702,34 +1738,6 @@ impl ScalarFunction {
             .or_else(|| crate::rewriter::result_type::gl_signature(&self.args))
     }
 
-    /// Go's string `GREATEST`/`LEAST` `vecEvalString` for one row: the
-    /// call's value, the byte length of each argument's string (`None` for
-    /// NULL), which an argument's `VecEvalString` appends into `result`, and
-    /// of the running extremum after each argument (`None` once one is
-    /// NULL), which the ping-pong appends at its even steps. The arguments
-    /// are evaluated once, as Go's kernel evaluates each column once.
-    pub(crate) fn eval_string_extremum_steps(
-        &self,
-        ctx: &dyn Columns,
-        row: Row<'_>,
-    ) -> Result<(Datum, Vec<Option<usize>>, Vec<Option<usize>>), EvalError> {
-        let vals: Vec<Datum> = self
-            .args
-            .iter()
-            .map(|a| a.eval(ctx, row))
-            .collect::<Result<_, _>>()?;
-        let collation = self.derived_collation();
-        let greatest = self.func_name.lowercase() == "greatest";
-        let want = if greatest {
-            std::cmp::Ordering::Greater
-        } else {
-            std::cmp::Ordering::Less
-        };
-        let lengths = crate::builtin_ext::compare2::string_lengths(&vals)?;
-        let steps = crate::builtin_ext::compare2::string_extremum_steps(&vals, want, collation)?;
-        let value = self.extremum_of(greatest, &vals, collation, ctx)?;
-        Ok((self.coerce_to_ret_type(value)?, lengths, steps))
-    }
 
 }
 
@@ -1784,268 +1792,6 @@ fn uservar_as_kind(kind: &str, value: Datum, ctx: &dyn Columns) -> Result<Datum,
     // Every target above is numeric or string, so no arm reads the
     // source type.
     crate::cast::eval_cast(&target, value, None, ctx)
-}
-
-/// One numeric value of a column-wise comparison, in the comparison's
-/// evaluation family (Go `getBaseCmpType`: `ETInt` when both sides are
-/// integers, `ETDecimal` when a decimal meets an integer or a decimal).
-#[derive(Clone, Copy)]
-enum CompareValue {
-    Int(crate::coerce::Integer),
-    Decimal(tidb_datatype::MyDecimal),
-}
-
-impl CompareValue {
-    fn cmp(self, other: Self) -> std::cmp::Ordering {
-        match (self, other) {
-            (Self::Int(a), Self::Int(b)) => crate::coerce::integer_cmp(a, b),
-            (a, b) => a.to_my_decimal().compare(&b.to_my_decimal()),
-        }
-    }
-
-    fn to_my_decimal(self) -> tidb_datatype::MyDecimal {
-        match self {
-            Self::Int(crate::coerce::Integer::Signed(value)) => {
-                tidb_datatype::MyDecimal::from_int(value)
-            }
-            Self::Int(crate::coerce::Integer::Unsigned(value)) => {
-                tidb_datatype::MyDecimal::from_uint(value)
-            }
-            Self::Decimal(value) => value,
-        }
-    }
-}
-
-/// One argument of a numeric comparison as Go's `VecEvalInt`/`VecEvalDecimal`
-/// reads it: a chunk column's 8-byte integer or 40-byte decimal cells, or
-/// one strict constant.
-enum CompareOperand<'a> {
-    IntColumn {
-        column: tidb_chunk::ColumnRead<'a>,
-        signed: bool,
-    },
-    DecimalColumn(tidb_chunk::ColumnRead<'a>),
-    Constant(Option<CompareValue>),
-}
-
-impl<'a> CompareOperand<'a> {
-    /// Returns the operand and whether it is in the decimal family.
-    fn of(expression: &Expression, input: &'a Chunk) -> Option<(Self, bool)> {
-        use tidb_datatype::FieldTypeCode;
-        let field_type = expression.static_type()?;
-        // Only the integer codes store the value as the 8-byte cell
-        // `GetInt64` reads; BIT and the ENUM/SET-as-int forms (Go's hybrid
-        // types) keep the row path.
-        let is_int = matches!(
-            field_type.code(),
-            FieldTypeCode::Tiny
-                | FieldTypeCode::Short
-                | FieldTypeCode::Int24
-                | FieldTypeCode::Long
-                | FieldTypeCode::LongLong
-                | FieldTypeCode::Year
-        );
-        let is_decimal = field_type.code() == FieldTypeCode::NewDecimal;
-        if !is_int && !is_decimal {
-            return None;
-        }
-        // Go `mysql.HasUnsignedFlag(args[i].GetType(ctx).GetFlag())`: the
-        // argument's field type decides how its int64 bits are read.
-        let signed = !field_type.is_unsigned();
-        match expression {
-            Expression::Column(column) => {
-                let index = usize::try_from(column.index).ok()?;
-                if index >= input.num_cols() {
-                    return None;
-                }
-                let column = input.column(index);
-                if is_int && column.type_size() == 8 {
-                    Some((Self::IntColumn { column, signed }, false))
-                } else if is_decimal
-                    && column.type_size() == tidb_chunk::column::MY_DECIMAL_STRUCT_SIZE
-                {
-                    Some((Self::DecimalColumn(column), true))
-                } else {
-                    None
-                }
-            }
-            Expression::Constant(constant) => {
-                let value = match constant.literal_value()? {
-                    Datum::Null => None,
-                    Datum::Int(value) if is_int => Some(CompareValue::Int(if signed {
-                        crate::coerce::Integer::Signed(*value)
-                    } else {
-                        crate::coerce::Integer::Unsigned(*value as u64)
-                    })),
-                    Datum::UInt(value) if is_int => {
-                        Some(CompareValue::Int(crate::coerce::Integer::Unsigned(*value)))
-                    }
-                    Datum::Decimal(value) if is_decimal => {
-                        Some(CompareValue::Decimal(value.to_my_decimal().ok()?))
-                    }
-                    _ => return None,
-                };
-                Some((Self::Constant(value), is_decimal))
-            }
-            _ => None,
-        }
-    }
-
-    fn get(&self, physical: usize) -> Option<CompareValue> {
-        match self {
-            Self::IntColumn { column, signed } => {
-                if column.is_null(physical) {
-                    return None;
-                }
-                let bits = column.get_int64(physical);
-                Some(CompareValue::Int(if *signed {
-                    crate::coerce::Integer::Signed(bits)
-                } else {
-                    crate::coerce::Integer::Unsigned(bits as u64)
-                }))
-            }
-            Self::DecimalColumn(column) => {
-                if column.is_null(physical) {
-                    return None;
-                }
-                Some(CompareValue::Decimal(column.get_my_decimal(physical)))
-            }
-            Self::Constant(value) => *value,
-        }
-    }
-}
-
-impl ScalarFunction {
-    /// Go `builtin{EQ,NE,LT,LE,GT,GE}{Int,Decimal}Sig.vecEvalInt`: a numeric
-    /// comparison over the live physical rows `sel` of `input`, column-wise.
-    ///
-    /// `is_zero` receives one entry per row of `sel` in Go's `VecEvalBool`
-    /// encoding (`-1` NULL, `0` false, `1` true). Returns `Ok(false)`, with
-    /// `is_zero` untouched, for every shape this kernel does not cover -- an
-    /// argument that is neither an integer/decimal column nor a strict
-    /// integer/decimal constant, or a result type the row evaluator would
-    /// still convert -- so the caller keeps the row evaluator as the
-    /// behavior contract there. The covered shapes produce exactly what
-    /// [`Self::eval`] produces row by row: NULL when either side is NULL,
-    /// the signedness of each integer side read from its argument's field
-    /// type (`ops::integer_binary_typed`), and an integer meeting a decimal
-    /// compared exactly in the decimal domain (`ops::decimal_binary`).
-    pub(crate) fn vec_eval_numeric_compare(
-        &self,
-        input: &Chunk,
-        sel: &[usize],
-        is_zero: &mut Vec<i8>,
-    ) -> Result<bool, EvalError> {
-        if self.args.len() != 2 {
-            return Ok(false);
-        }
-        let op = match binary_op_for_name(self.func_name.lowercase()) {
-            Some(
-                op @ (BinaryOp::Eq
-                | BinaryOp::Ne
-                | BinaryOp::Lt
-                | BinaryOp::Le
-                | BinaryOp::Gt
-                | BinaryOp::Ge),
-            ) => op,
-            _ => return Ok(false),
-        };
-        // `coerce_to_ret_type` leaves an integer alone only for an integer
-        // result type that is not BIT.
-        let Some(ret_type) = self.get_static_type() else {
-            return Ok(false);
-        };
-        if ret_type.eval_type() != EvalType::Int
-            || ret_type.code() == tidb_datatype::FieldTypeCode::Bit
-        {
-            return Ok(false);
-        }
-        let (Some((lhs, _)), Some((rhs, _))) = (
-            CompareOperand::of(&self.args[0], input),
-            CompareOperand::of(&self.args[1], input),
-        ) else {
-            return Ok(false);
-        };
-        is_zero.clear();
-        is_zero.reserve(sel.len());
-        for &physical in sel {
-            let (Some(a), Some(b)) = (lhs.get(physical), rhs.get(physical)) else {
-                is_zero.push(-1);
-                continue;
-            };
-            let ordering = a.cmp(b);
-            let truth = match op {
-                BinaryOp::Eq => ordering.is_eq(),
-                BinaryOp::Ne => !ordering.is_eq(),
-                BinaryOp::Lt => ordering.is_lt(),
-                BinaryOp::Le => ordering.is_le(),
-                BinaryOp::Gt => ordering.is_gt(),
-                _ => ordering.is_ge(),
-            };
-            is_zero.push(i8::from(truth));
-        }
-        Ok(true)
-    }
-
-    /// Go `VecEvalBool`'s column-wise leg over one filter node: the numeric
-    /// comparisons of [`Self::vec_eval_numeric_compare`], `NOT` over a node
-    /// this kernel covers (`builtinUnaryNotIntSig.vecEvalInt`: NULL stays
-    /// NULL, zero becomes one, anything else zero) and `IS NULL` over a
-    /// chunk column (`builtin*IsNullSig.vecEvalInt`: the column's null
-    /// bitmap, never NULL itself). `is_zero` and the `Ok(false)` contract are
-    /// those of the comparison kernel; the covered shapes produce what
-    /// [`Self::eval`] produces row by row (`ops::eval_unary`'s three-valued
-    /// NOT and the `ISNULL` value dispatch).
-    pub(crate) fn vec_eval_bool(
-        &self,
-        input: &Chunk,
-        sel: &[usize],
-        is_zero: &mut Vec<i8>,
-    ) -> Result<bool, EvalError> {
-        let name = self.func_name.lowercase();
-        if name != "not" && name != "isnull" {
-            return self.vec_eval_numeric_compare(input, sel, is_zero);
-        }
-        // `coerce_to_ret_type` leaves an integer alone only for an integer
-        // result type that is not BIT.
-        let Some(ret_type) = self.get_static_type() else {
-            return Ok(false);
-        };
-        if ret_type.eval_type() != EvalType::Int
-            || ret_type.code() == tidb_datatype::FieldTypeCode::Bit
-        {
-            return Ok(false);
-        }
-        match (name, self.args.as_slice()) {
-            ("not", [Expression::ScalarFunction(argument)]) => {
-                if !argument.vec_eval_bool(input, sel, is_zero)? {
-                    return Ok(false);
-                }
-                for code in is_zero.iter_mut() {
-                    if *code >= 0 {
-                        *code = i8::from(*code == 0);
-                    }
-                }
-                Ok(true)
-            }
-            ("isnull", [Expression::Column(column)]) => {
-                let Some(index) = usize::try_from(column.index)
-                    .ok()
-                    .filter(|&index| index < input.num_cols())
-                else {
-                    return Ok(false);
-                };
-                let column = input.column(index);
-                is_zero.clear();
-                is_zero.extend(
-                    sel.iter()
-                        .map(|&physical| i8::from(column.is_null(physical))),
-                );
-                Ok(true)
-            }
-            _ => Ok(false),
-        }
-    }
 }
 
 /// One decimal value of a column-wise arithmetic evaluation, in the shape
@@ -2441,10 +2187,38 @@ fn cast_string_as_decimal(
     }
     let value = Datum::Decimal(tidb_datatype::Decimal::from_my_decimal(&decimal));
     if tp.decimal() < 0 {
-        Ok(value)
-    } else {
-        convert_numeric_datum(value, tp, ctx)
+        return Ok(value);
     }
+    // Go `ProduceDecWithSpecifiedTp` then `ec.HandleError(err)`: its
+    // overflow (1690) is in `ErrGroupTruncate`, so a read warns and keeps
+    // the clamped decimal while a strict write fails.
+    let warnings = crate::constant::ConversionWarnings(ctx);
+    let zone = ctx.time_zone();
+    let context = tidb_datatype::ConversionContext::new(
+        ctx.type_flags(),
+        tidb_datatype::ConversionLocation::from_time_zone(&zone),
+        &warnings,
+    );
+    let converted = value
+        .convert_to_in_context(tp, &context, &zone)
+        .map_err(|_| EvalError::Unsupported("numeric argument conversion failed"))?;
+    if let Some(error) = converted.error {
+        let sql_error = error.to_sql_error();
+        if sql_error.code != tidb_errno::errcode::ErrDataOutOfRange {
+            return Err(EvalError::Conversion(error));
+        }
+        match ctx.truncate_level() {
+            crate::ErrorLevel::Error => return Err(EvalError::Conversion(error)),
+            crate::ErrorLevel::Warn => ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
+                tidb_context::WarningLevel::Warning,
+                sql_error.code,
+                sql_error.message.clone(),
+                sql_error.identity,
+            )),
+            crate::ErrorLevel::Ignore => {}
+        }
+    }
+    Ok(converted.value)
 }
 
 fn convert_numeric_datum(
@@ -4005,55 +3779,23 @@ use tidb_charset::Collation;
         assert_eq!(opaque.bytes, b"ab");
     }
 
+    /// Go `builtin_math_test.go:TestRand` (issue 3211): a constant seed
+    /// builds `builtinRandSig` with its own `mathutil.NewWithSeed(seed)`, so
+    /// each evaluation of that one signature reads the generator's next value.
     #[test]
-    fn rand_reuses_one_generator_per_node_for_a_constant_seed() {
-        use std::cell::Cell;
+    fn test_rand_constant_seed_owns_its_generator() {
         use tidb_chunk::chunk::Chunk;
-
-        // A minimal session whose `rand_seeded_next` records the key it was
-        // called with and returns a fixed value, so this asserts the SAME
-        // key reaches it across repeated evaluations of one `ScalarFunction`
-        // node.
-        struct RandColumns {
-            keys: Cell<Vec<usize>>,
-        }
-        impl Columns for RandColumns {
-            fn get(&self, _: &[String]) -> Option<Datum> {
-                None
-            }
-            fn rand_seeded_next(&self, key: usize, _seed: i64) -> Option<f64> {
-                let mut keys = self.keys.take();
-                keys.push(key);
-                self.keys.set(keys);
-                Some(0.5)
-            }
-        }
-
         let chk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&ft()), 1);
         let row = chk.get_row(0);
-        let konst = |d: Datum| Expression::Constant(Constant::new(d, ft()));
-        let rand_five =
-            crate::new_function::new_function_base(&crate::NoColumns, "rand", real_ft(), vec![konst(Datum::Int(5))]).unwrap().into_scalar_function().unwrap();
-        let columns = RandColumns {
-            keys: Cell::new(Vec::new()),
-        };
-
-        assert_eq!(rand_five.eval(&columns, row).unwrap(), Datum::Real(0.5));
-        assert_eq!(rand_five.eval(&columns, row).unwrap(), Datum::Real(0.5));
-        let keys = columns.keys.into_inner();
-        assert_eq!(keys.len(), 2);
-        // The SAME node produced the same key both times.
-        assert_eq!(keys[0], keys[1]);
-
-        // A DIFFERENT node (a different RAND(5) call site) gets a different
-        // key, because each owns its own generator.
-        let rand_five_again =
-            crate::new_function::new_function_base(&crate::NoColumns, "rand", real_ft(), vec![konst(Datum::Int(5))]).unwrap().into_scalar_function().unwrap();
-        let columns2 = RandColumns {
-            keys: Cell::new(Vec::new()),
-        };
-        rand_five_again.eval(&columns2, row).unwrap();
-        assert_ne!(columns2.keys.into_inner()[0], keys[0]);
+        let seed = Expression::Constant(Constant::new(Datum::Int(20160101), ft()));
+        let rand = crate::new_function::new_function_base(&crate::NoColumns, "rand", real_ft(), vec![seed])
+            .unwrap()
+            .into_scalar_function()
+            .unwrap();
+        let rand_gen = crate::MysqlRng::new_with_seed(20160101);
+        for _ in 0..3 {
+            assert_eq!(rand.eval(&crate::NoColumns, row).unwrap(), Datum::Real(rand_gen.gen()));
+        }
     }
 
     #[test]

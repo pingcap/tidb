@@ -423,7 +423,7 @@ pub(crate) fn tidb_parse_tso(vals: &[Datum], cols: &dyn Columns) -> Result<Datum
 /// Go `oracle.GetTimeFromTS(ts).In(timeZone)` as a full-precision DATETIME
 /// (`types.FromGoTime`): the TSO's physical milliseconds as the session
 /// zone's wall clock. `None` is an instant chrono cannot place.
-pub(super) fn get_time_from_ts(ts: u64, cols: &dyn Columns) -> Result<Option<Time>, EvalError> {
+pub(crate) fn get_time_from_ts(ts: u64, cols: &dyn Columns) -> Result<Option<Time>, EvalError> {
     let physical_ms = tikv_client::oracle::extract_physical(ts);
     let secs = physical_ms.div_euclid(1000);
     let micros = (physical_ms.rem_euclid(1000) * 1000) as u32;

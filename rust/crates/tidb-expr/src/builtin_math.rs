@@ -353,13 +353,16 @@ impl FunctionClass for RandFunctionClass {
         let args_len = args.len();
         let mut bf =
             new_base_builtin_func_with_tp(ctx, "rand", args, EvalType::Real, &arg_tps[..args_len])?;
-        // Go seeds `builtinRandSig`'s generator from a constant argument
-        // here; this port's generator is seeded at the first evaluation.
-        bf.pb_code = match bf.args.first() {
-            None => ScalarFuncSig::Rand,
-            Some(seed) if folded_constant(ctx, seed).is_some() => ScalarFuncSig::Rand,
-            Some(_) => ScalarFuncSig::RandWithSeedFirstGen,
-        };
+        // Go checks `args[0].(*Constant)` after `newBaseBuiltinFuncWithTp`
+        // wrapped it in place with its cast to INT.
+        let constant_seed = matches!(bf.args.first(), Some(Expression::Constant(_)));
+        bf.pb_code = if args_len == 0 { ScalarFuncSig::Rand }
+            else if constant_seed {
+                let value = ctx.eval_constant(&bf.args[0])?;
+                let seed = crate::arg_eval_type::eval_int(&value)?.unwrap_or(0);
+                bf.sig = crate::builtin::SigFields::Rand { seed };
+                ScalarFuncSig::Rand
+            } else { ScalarFuncSig::RandWithSeedFirstGen };
         Ok(bf)
     }
 }

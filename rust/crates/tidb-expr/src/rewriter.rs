@@ -2015,6 +2015,15 @@ fn finish_function_call(
         ));
         return finish_function_call("if", vec![condition, null, value], resolver);
     }
+    // Go `newFunctionImpl`: `case ast.Sysdate: if ctx.GetSysdateIsNow() {
+    // funcName = ast.Now }`, before the class is looked up.
+    let lowered = if lowered == "sysdate"
+        && resolver.comparison_context().is_some_and(|ctx| ctx.sysdate_is_now())
+    {
+        "now".to_owned()
+    } else {
+        lowered
+    };
     let Some(class) = crate::builtin::funcs_or_extension(&lowered) else {
         return Err(crate::builtin_registry::unresolved_error(
             &lowered,

@@ -158,15 +158,20 @@ impl Constant {
         target: tidb_datatype::EvalType,
     ) -> Result<Datum, EvalError> {
         use tidb_datatype::EvalType;
-        let field = self.get_type(ctx)?;
-        let value = if let Some(marker) = self.param_marker {
+        // A parameter's type is inferred from the value read here (Go
+        // `GetType` over `ParamMarker.GetUserVar`), so it is read once.
+        let (field, value) = if let Some(marker) = self.param_marker {
             let order = usize::try_from(marker.order)
                 .map_err(|_| EvalError::Unsupported("unbound prepared parameter"))?;
-            ctx.param_value(order)?
-        } else if let Some(deferred) = self.deferred_expr.as_deref() {
-            deferred.eval(ctx, row)?
+            let value = ctx.param_value(order)?;
+            (std::borrow::Cow::Owned(tidb_datatype::infer_param_type_from_datum(&value)), value)
         } else {
-            self.value.clone()
+            let field = self.get_type(ctx)?;
+            let value = match self.deferred_expr.as_deref() {
+                Some(deferred) => deferred.eval(ctx, row)?,
+                None => self.value.clone(),
+            };
+            (field, value)
         };
         if field.code() == FieldTypeCode::Null || value.is_null() {
             return Ok(Datum::Null);

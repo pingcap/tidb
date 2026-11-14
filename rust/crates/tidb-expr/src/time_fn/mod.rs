@@ -89,7 +89,7 @@ pub(crate) fn tidb_bounded_staleness(vals: &[Datum], cols: &dyn Columns) -> Resu
 
 /// Go `calAppropriateTime`: the SafeTS when it lies in `[min_time,
 /// max_time]`, otherwise the bound it passed.
-fn cal_appropriate_time(
+pub(crate) fn cal_appropriate_time(
     min_time: tidb_datatype::Time,
     max_time: tidb_datatype::Time,
     min_safe_time: tidb_datatype::Time,
@@ -312,7 +312,7 @@ pub(crate) fn clock_function_name(name: &str) -> &'static str {
 /// `types.ErrSyntax`, above `MaxFsp` is `types.ErrTooBigPrecision` (1426).
 /// A constant argument already failed these checks at build time
 /// (`getFspByIntArg`); this sees a per-row argument.
-fn parse_fsp_for(vals: &[Datum], function: &'static str) -> Result<Option<u32>, EvalError> {
+pub(crate) fn parse_fsp_for(vals: &[Datum], function: &'static str) -> Result<Option<u32>, EvalError> {
     let fsp = match vals {
         [] => return Ok(None),
         [Datum::Int(i)] => *i,
@@ -379,7 +379,7 @@ fn round_nanos(nanos: u32, fsp: u32) -> (i64, u32) {
     }
 }
 
-fn format_datetime(secs: i64, nanos: u32, fsp: u32, round: bool) -> String {
+pub(crate) fn format_datetime(secs: i64, nanos: u32, fsp: u32, round: bool) -> String {
     let (carry, nanos) = if round {
         round_nanos(nanos, fsp)
     } else {
@@ -394,7 +394,7 @@ fn format_datetime(secs: i64, nanos: u32, fsp: u32, round: bool) -> String {
     )
 }
 
-fn format_time_only(secs: i64, nanos: u32, fsp: u32, round: bool) -> String {
+pub(crate) fn format_time_only(secs: i64, nanos: u32, fsp: u32, round: bool) -> String {
     let (carry, nanos) = if round {
         round_nanos(nanos, fsp)
     } else {

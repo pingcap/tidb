@@ -790,9 +790,8 @@ fn time_format_hour_family_rows_match_master() {
 /// GO PORT of `builtin_time_test.go:3426 TestWithTimeZone`: SYSDATE(fsp),
 /// CURDATE, CURRENT_TIME(fsp) and CURTIME all read the SESSION zone's local
 /// wall clock. Go asserts each result sits within two seconds of `now` in
-/// Asia/Tokyo; routing SYSDATE through the statement clock makes the
-/// identical shape deterministic -- every rendered value is exactly the
-/// Tokyo rendering of the fixed instant, truncated/rounded per its fsp.
+/// Asia/Tokyo. SYSDATE keeps that host-clock check; the statement-clock
+/// builtins render the fixed instant in Tokyo exactly.
 #[test]
 fn with_time_zone_clock_builtins_render_the_session_zone() {
     struct TokyoClock(i64);
@@ -807,19 +806,24 @@ fn with_time_zone_clock_builtins_render_the_session_zone() {
             Some((self.0, 0, 9 * 3600))
         }
 
-        fn sysdate_is_now(&self) -> bool {
-            true
+        fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+            tidb_datatype::SessionTimeZone::Named(chrono_tz::Asia::Tokyo)
         }
     }
 
     // 2021-03-01 08:01:09 UTC == 2021-03-01 17:01:09 Tokyo.
     let ctx = TokyoClock(1_614_585_669);
 
-    // SYSDATE(2): timezone-local, fsp-2 truncation.
-    assert_eq!(
-        dispatched("SYSDATE", &[Datum::Int(2)], &ctx).sql_string().unwrap(),
-        "2021-03-01 17:01:09.00",
-        "SYSDATE(2) in Asia/Tokyo"
+    // SYSDATE(2) reads the host clock in the session zone: Go asserts it
+    // sits within two seconds of `time.Now().In(loc)`.
+    let sysdate = dispatched("SYSDATE", &[Datum::Int(2)], &ctx).sql_string().unwrap();
+    let parsed = chrono::NaiveDateTime::parse_from_str(&sysdate, "%Y-%m-%d %H:%M:%S%.f")
+        .unwrap_or_else(|_| panic!("SYSDATE(2) in Asia/Tokyo: {sysdate}"));
+    assert_eq!(sysdate.len(), "2021-03-01 17:01:09.00".len(), "{sysdate}");
+    let tokyo_now = chrono::Utc::now().naive_utc() + chrono::Duration::hours(9);
+    assert!(
+        (tokyo_now - parsed).num_milliseconds().abs() < 2000,
+        "SYSDATE(2) in Asia/Tokyo: {sysdate} vs {tokyo_now}"
     );
     assert_eq!(
         dispatched("CURDATE", &[], &ctx).sql_string().unwrap(),

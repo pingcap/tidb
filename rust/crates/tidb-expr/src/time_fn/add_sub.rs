@@ -740,9 +740,6 @@ fn number_of(value: &Datum) -> Result<Option<f64>, EvalError> {
 /// was taken earlier. With `tidb_sysdate_is_now=ON`, Go builds `NOW` instead,
 /// including its truncating FSP behavior.
 pub(crate) fn sysdate(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
-    if cols.sysdate_is_now() {
-        return super::now(vals, cols);
-    }
     if vals.len() > 1 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -805,26 +802,6 @@ mod sysdate_source_tests {
         }
     }
 
-    struct AliasedStatementClock;
-
-    impl Columns for AliasedStatementClock {
-        fn get(&self, _: &[String]) -> Option<Datum> {
-            None
-        }
-
-        fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
-            tidb_datatype::SessionTimeZone::utc()
-        }
-
-        fn now(&self) -> Option<(i64, u32, i32)> {
-            Some((1_700_000_000, 654_999_999, 8 * 60 * 60))
-        }
-
-        fn sysdate_is_now(&self) -> bool {
-            true
-        }
-    }
-
     fn host_now(fsp: u32) -> String {
         let elapsed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -868,22 +845,6 @@ mod sysdate_source_tests {
             Err(EvalError::Unsupported(
                 "bad fractional-seconds-precision argument"
             ))
-        );
-    }
-
-    #[test]
-    fn sysdate_is_now_uses_the_statement_clock_and_now_rounding() {
-        assert_eq!(
-            sysdate(&[], &AliasedStatementClock).unwrap(),
-            Datum::new_string_datum("2023-11-15 06:13:20")
-        );
-        assert_eq!(
-            sysdate(&[Datum::Int(3)], &AliasedStatementClock).unwrap(),
-            Datum::new_string_datum("2023-11-15 06:13:20.654")
-        );
-        assert_eq!(
-            sysdate(&[Datum::Int(6)], &AliasedStatementClock).unwrap(),
-            Datum::new_string_datum("2023-11-15 06:13:20.654999")
         );
     }
 }
