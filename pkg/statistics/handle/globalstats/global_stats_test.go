@@ -734,6 +734,107 @@ func TestGlobalStatsNDV(t *testing.T) {
 	}
 }
 
+func TestGlobalStatsMVIndexNDV(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set tidb_analyze_version = 2")
+	schema := `(id int primary key nonclustered, b int not null default 1, j json,
+		key m((cast(j->'$.a' as unsigned array))),
+		key cm(b, (cast(j->'$.a' as unsigned array))), key normal(b))`
+	tk.MustExec("create table t " + schema)
+	tk.MustExec("create table tp " + schema + " partition by hash(id) partitions 2")
+	partitioned, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp"))
+	require.NoError(t, err)
+	plain, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name         string
+		values       string
+		ndv          int
+		compositeNDV int
+	}{
+		{"distinct elements", `(1, '{"a":[1,2,3]}'), (2, '{"a":[4,5,6]}'), (3, '{"a":[7,8,9]}'), (4, '{"a":[10,11,12]}')`, 12, 12},
+		{"elements shared across partitions", `(1, '{"a":[1,1,2,3]}'), (2, '{"a":[1,2,2,3]}'), (3, '{"a":[1,2,3]}'), (4, '{"a":[1,2,3]}')`, 3, 3},
+		{"empty and null arrays", `(1, '{"a":[1,2,3,4,5]}'), (2, '{"a":[]}'), (3, null), (4, '{"a":[5,6,7,8,9]}')`, 9, 10},
+		{"only empty and null arrays", `(1, '{"a":[]}'), (2, '{"a":[]}'), (3, null), (4, null)`, 0, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tk.MustExec("delete from t")
+			tk.MustExec("delete from tp")
+			tk.MustExec("insert into t (id, j) values " + tc.values)
+			tk.MustExec("insert into tp select * from t")
+			for _, async := range []bool{false, true} {
+				for _, topN := range []int{0, 2, 13} {
+					t.Run(fmt.Sprintf("async=%t/topn=%d", async, topN), func(t *testing.T) {
+						tk := testkit.NewTestKit(t, store)
+						tk.MustExec("use test")
+						tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+						tk.MustExec("set tidb_analyze_version = 2")
+						tk.MustExec(fmt.Sprintf("set tidb_enable_async_merge_global_stats = %t", async))
+						tk.MustExec(fmt.Sprintf("analyze table t, tp with %d topn, 2 buckets", topN))
+						for name, want := range map[string]int{"m": tc.ndv, "cm": tc.compositeNDV, "normal": 1, "primary": 4} {
+							for _, tbl := range []struct{ tableID, indexID int64 }{
+								{plain.Meta().ID, plain.Meta().FindIndexByName(name).ID},
+								{partitioned.Meta().ID, partitioned.Meta().FindIndexByName(name).ID},
+							} {
+								tk.MustQuery("select distinct_count from mysql.stats_histograms where table_id = ? and is_index = 1 and hist_id = ?", tbl.tableID, tbl.indexID).
+									Check(testkit.Rows(strconv.Itoa(want)))
+							}
+						}
+						// Index-entry counts must not replace the table's row count.
+						tk.MustQuery("select count from mysql.stats_meta where table_id = ?", partitioned.Meta().ID).Check(testkit.Rows("4"))
+						if tc.name == "distinct elements" {
+							// A sketch can overestimate NDV. Even with all values in TopN,
+							// the bound must be the 12 index entries, not the four rows.
+							wire, err := (&tipb.FMSketch{Mask: 3, Hashset: []uint64{4, 8, 12, 16}}).Marshal()
+							require.NoError(t, err)
+							tbl := partitioned.Meta()
+							idxID := tbl.FindIndexByName("m").ID
+							tk.MustExec("update mysql.stats_fm_sketch set value = ? where is_index = 1 and hist_id = ? and table_id in (?, ?)",
+								wire, idxID, tbl.Partition.Definitions[0].ID, tbl.Partition.Definitions[1].ID)
+							opts := map[ast.AnalyzeOptionType]uint64{ast.AnalyzeOptNumBuckets: 2, ast.AnalyzeOptNumTopN: uint64(topN)}
+							merged, err := globalstats.MergePartitionStats2GlobalStats(tk.Session(), dom.StatsHandle(), opts, dom.InfoSchema(), tbl, true, []int64{idxID})
+							require.NoError(t, err)
+							require.Equal(t, int64(12), merged.Hg[0].NDV)
+							if topN == 13 {
+								require.Zero(t, merged.Hg[0].Len())
+								require.NotNil(t, merged.TopN[0])
+								require.Len(t, merged.TopN[0].TopN, 12)
+							}
+						}
+					})
+				}
+			}
+		})
+	}
+
+	t.Run("member of row estimate", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+		tk.MustExec("set tidb_analyze_version = 2")
+		tk.MustExec("set cte_max_recursion_depth = 2000")
+		tk.MustExec("delete from t")
+		tk.MustExec("delete from tp")
+		tk.MustExec(`insert into t (id, j) with recursive s(n) as
+			(select 1 union all select n + 1 from s where n < 1000)
+			select n, json_object('a', json_array(3*n, 3*n+1, 3*n+2)) from s`)
+		tk.MustExec("insert into tp select * from t")
+		for _, async := range []bool{false, true} {
+			tk.MustExec(fmt.Sprintf("set tidb_enable_async_merge_global_stats = %t", async))
+			tk.MustExec("analyze table t, tp with 0 topn")
+			for _, table := range []string{"t", "tp"} {
+				rows := tk.MustQuery(fmt.Sprintf("explain format = 'brief' select /*+ use_index_merge(%s, m) */ * from %s where 1500 member of (j->'$.a')", table, table)).Rows()
+				require.Equal(t, "1.00", rows[0][1])
+				tk.MustQuery(fmt.Sprintf("select count(*) from %s where 1500 member of (j->'$.a')", table)).Check(testkit.Rows("1"))
+			}
+		}
+	})
+}
+
 func TestGlobalStatsIndexNDV(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
