@@ -2,9 +2,9 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 14,
+    "unresolved": 13,
     "open": 3,
-    "partial": 11
+    "partial": 10
   },
   "findings": [
     {
@@ -60,13 +60,6 @@
       "go_owner": "`pkg/executor/importer`, `pkg/disttask/importinto`"
     },
     {
-      "id": "O09",
-      "status": "partial",
-      "group": "Domain and process services",
-      "finding": "Lazy cursor fetch answers Go's `executor.Detach` over the physical plan (`tidb_executor::detach`), because the builder's operator tree is not Go's executor tree",
-      "go_owner": "`pkg/domain/infosync`, `pkg/executor` (`detach.go`, `adapter.go` `recordSet.TryDetach`)"
-    },
-    {
       "id": "O15",
       "status": "open",
       "group": "Domain and process services",
@@ -110,7 +103,7 @@
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 14,
+  "unresolved": 13,
   "open": 3,
-  "partial": 11
+  "partial": 10
 }

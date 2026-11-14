@@ -272,6 +272,15 @@ impl<C: Columns + Send> SelectionExec<C> {
 }
 
 impl<C: Columns + Send> Executor for SelectionExec<C> {
+    /// Go `SelectionExec.Detach`: not when a filter requires any optional
+    /// evaluation property, then its child.
+    fn detach(&mut self) -> bool {
+        self.filters
+            .iter()
+            .all(|filter| tidb_expr::evaluator::get_optional_eval_props_for_expr(filter).is_empty())
+            && self.child.detach()
+    }
+
     fn open(&mut self) -> Result<(), ExecError> {
         self.release_child_chunk();
         self.child.open()?;

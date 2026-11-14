@@ -31,9 +31,6 @@ pub struct RecordSet {
     memory: StatementMemory,
     init_cap: usize,
     max_chunk_size: usize,
-    /// Go `Detach(a.executor)`'s answer for this tree, decided over the
-    /// physical plan it was built from ([`crate::detach::detach`]).
-    detachable: bool,
 }
 
 impl RecordSet {
@@ -56,15 +53,7 @@ impl RecordSet {
             output_names: Vec::new(),
             current_db: String::new(),
             memory,
-            detachable: false,
         })
-    }
-
-    /// Records whether Go's `Detach` would detach this executor tree.
-    #[must_use]
-    pub(super) fn with_detachable(mut self, detachable: bool) -> Self {
-        self.detachable = detachable;
-        self
     }
 
     /// Go `recordSet.TryDetach`: when `Detach(a.executor)` succeeds, the
@@ -72,7 +61,8 @@ impl RecordSet {
     /// this record set keeps only its metadata. `None` leaves this record set
     /// as it was.
     pub fn try_detach(&mut self) -> Option<crate::staticrecordset::StaticRecordSet> {
-        if !self.detachable {
+        // Go `Detach(a.executor)`.
+        if !self.executor.as_mut()?.detach() {
             return None;
         }
         let executor = self.executor.take()?;

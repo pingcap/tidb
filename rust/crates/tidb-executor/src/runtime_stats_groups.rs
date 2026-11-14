@@ -141,6 +141,12 @@ impl RegisterStatsOnClose {
 }
 
 impl Executor for RegisterStatsOnClose {
+    /// Registering the runtime stats is not an executor of Go's: `Detach`
+    /// asks the one it wraps.
+    fn detach(&mut self) -> bool {
+        self.child.detach()
+    }
+
     fn open(&mut self) -> Result<(), crate::ExecError> {
         self.child.open()
     }

@@ -370,6 +370,11 @@ impl CopIndexUsageExec {
 }
 
 impl Executor for CopIndexUsageExec {
+    /// The reader it reports for is the executor Go's `Detach` asks.
+    fn detach(&mut self) -> bool {
+        self.child.detach()
+    }
+
     fn open(&mut self) -> Result<(), ExecError> {
         self.reported = false;
         self.child.open()

@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**14 unresolved: 3 open, 11 partial.**
+**13 unresolved: 3 open, 10 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -18,7 +18,6 @@ unresolved until it is restated against its Go owner or closed.
 | --- | --- | --- | --- |
 | Y01 | partial | On a bound node every DDL statement over `mysql.tidb_ddl_job`, `tidb_mdl_info` and `tidb_ddl_reorg` runs Go's SQL on a session of `DdlSessionPool::sess_pool` or the step's session (the systable `Manager`, the scheduler's `loadAndDeliverJobs`, `SwitchMDL`, the submission insert, a step's update / delete / history insert, the reorg handle's reads and writes, `UpdateConfigFromSysTbl`, `runOneJobStep`'s job-cancelled checker, `GetAllDDLJobs` and `get2JobsFromTable`). What remains: a pool no node has bound (the store-level harness and the bootstrap) keeps the snapshot twin of each read (`SnapshotSystemTables`) and stages raw job rows, where Go's DDL always has its session pool; a step reads its job row inside its own transaction (`DdlJobTable::load_by_id` in `cluster_ddl.rs`) where Go's `deliveryJob` refreshes the delivered job by `sysTblMgr.GetJobByID` between steps; the privilege handle (Go `Handle`: `UpdateAll` / `UpdateAllActive` / `Update(userList)` under `tidb_accelerate_user_creation_update`, `ensureActiveUser` at login, `SHOW GRANTS`, `FindRole` and the `*WithUser` checks, each account executor's `NotifyUpdatePrivilege(users)` and the watch's `PrivilegeEvent`s) loads every user at startup, where Go's starts empty and loads each user at first use until the first event's `UpdateAll` (the site-by-site list is the retired `docs/system-table-sql-execplan.md`, in git at `d64db1f96bc`) | `pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap, `pkg/privilege/privileges` (`ensureActiveUser`) |
 | I04 | partial | No lazy InfoSchema V2, schema-cache-size loader/evictor or InfoCache timestamp ranges; `ReportMinStartTS` reads the InfoCache's recent-schema TS (`GetAndResetRecentInfoSchemaTS`), which nothing lowers because no V2 reader calls `keepAlive` | `pkg/infoschema` |
-| O09 | partial | Lazy cursor fetch answers Go's `executor.Detach` over the physical plan (`tidb_executor::detach`), because the builder's operator tree is not Go's executor tree | `pkg/domain/infosync`, `pkg/executor` (`detach.go`, `adapter.go` `recordSet.TryDetach`) |
 
 ### DDL
 

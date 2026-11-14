@@ -108,6 +108,16 @@ pub trait Executor: Send {
     fn agg_tree_input_empty(&self) -> bool {
         false
     }
+
+    /// Go `Executor.Detach` with `executor.Detach`'s walk of its children:
+    /// whether this executor and every child of it can keep running after
+    /// the session context moves on to another statement. Go's detached copy
+    /// carries static contexts; an executor here owns its statement state
+    /// already, so a detachable tree is handed over as it is. The default is
+    /// Go's `BaseExecutorV2.Detach`: `false`.
+    fn detach(&mut self) -> bool {
+        false
+    }
 }
 
 

@@ -555,6 +555,12 @@ fn checked_executor_with_stats(
 }
 
 impl Executor for SqlKillerCheckExec {
+    /// Go's per-executor base behavior this wrapper carries is not an
+    /// executor of its own: `Detach` asks the one it wraps.
+    fn detach(&mut self) -> bool {
+        self.child.detach()
+    }
+
     fn open(&mut self) -> Result<(), crate::ExecError> {
         let trace = self.trace.as_deref_mut();
         let _region = trace
@@ -7674,12 +7680,8 @@ pub(super) fn open_query(
         .collect();
     let current_db = ctx.current_database_name().unwrap_or_default();
     crate::notify_before_executor_first_run(ctx);
-    let detachable = crate::detach::detach(physical);
-    super::RecordSet::open(root, columns, ctx.statement_memory()).map(|record_set| {
-        record_set
-            .with_output_names(output_names, current_db)
-            .with_detachable(detachable)
-    })
+    super::RecordSet::open(root, columns, ctx.statement_memory())
+        .map(|record_set| record_set.with_output_names(output_names, current_db))
 }
 
 /// Go `runStmt` -> `ExecStmt.Exec` for a planned SHOW: the executor built

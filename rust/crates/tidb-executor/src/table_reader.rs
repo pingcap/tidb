@@ -191,6 +191,11 @@ fn executor_shapes(dag: &tipb::DagRequest) -> RequestEnvelope {
 }
 
 impl Executor for TiDbTableReaderExecutor {
+    /// Go `TableReaderExecutor.Detach` (this is the one over `kv.TiDB`).
+    fn detach(&mut self) -> bool {
+        true
+    }
+
     fn open(&mut self) -> Result<(), ExecError> {
         self.result = Some(self.build_resp()?);
         self.exhausted = false;
@@ -916,6 +921,11 @@ impl tidb_executor_internal_exec::table_access::TableAccess for TableReaderExecu
 impl Executor for TableReaderExecutor {
     fn table_access(&mut self) -> Option<&mut dyn tidb_executor_internal_exec::table_access::TableAccess> {
         Some(self)
+    }
+
+    /// Go `TableReaderExecutor.Detach`: its context becomes static; it has no child.
+    fn detach(&mut self) -> bool {
+        true
     }
 
     fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {

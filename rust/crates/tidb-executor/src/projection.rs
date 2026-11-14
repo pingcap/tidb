@@ -439,6 +439,12 @@ impl<C: ProjectionContext> ProjectionExec<C> {
 }
 
 impl<C: ProjectionContext> Executor for ProjectionExec<C> {
+    /// Go `ProjectionExec.Detach`: not when its `evaluatorSuit` requires any
+    /// optional evaluation property, then its child.
+    fn detach(&mut self) -> bool {
+        self.evaluator_suite.required_optional_eval_props().is_empty() && self.child.detach()
+    }
+
     fn open(&mut self) -> Result<(), ExecError> {
         self.parallel = None;
         self.child.open()?;

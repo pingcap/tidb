@@ -396,6 +396,11 @@ impl Executor for IndexReaderExecutor {
         Some(self)
     }
 
+    /// Go `IndexReaderExecutor.Detach`: its context becomes static; it has no child.
+    fn detach(&mut self) -> bool {
+        true
+    }
+
     fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
     }
