@@ -92,8 +92,8 @@ type IndexLookUpJoin struct {
 	// AdaptiveLimitEligible indicates that the outer physical property must keep
 	// order. The executor builder uses it only as an adaptive LIMIT eligibility gate.
 	AdaptiveLimitEligible bool
-	// AdaptiveLimitController is shared with the eligible outer IndexLookUp. The
-	// owning LimitExec controls its lifecycle; this join only reports progress.
+	// AdaptiveLimitController bounds outer tasks and, for a double read, is
+	// shared with the outer IndexLookUp. LimitExec controls its lifecycle.
 	AdaptiveLimitController *exec.AdaptiveLimitController
 }
 
@@ -158,6 +158,11 @@ type outerWorker struct {
 
 	maxBatchSize int
 	batchSize    int
+
+	// A single-read reader can return more than RequiredRows. Keep the tail
+	// here until a later task has reserved space for it.
+	pendingOuterChunk *chunk.Chunk
+	pendingOuterRow   int
 
 	resultCh chan<- *lookUpJoinTask
 	innerCh  chan<- *lookUpJoinTask
@@ -436,6 +441,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 		close(ow.innerCh)
 		wg.Done()
 	}()
+	defer ow.releasePendingOuterChunk()
 	for {
 		failpoint.Inject("TestIssue30211", nil)
 		failpoint.Inject("ConsumeRandomPanic", nil)
@@ -526,11 +532,20 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	task.memTracker.AttachTo(ow.parentMemTracker)
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	nextChunkCap, maxChunkSize := ow.executor.InitCap(), ow.executor.MaxChunkSize()
+	controller := ow.lookup.AdaptiveLimitController
+	strictOuterWindow := controller != nil && !controller.HasLookupStage()
 	if nextChunkCap <= 0 {
 		nextChunkCap = chunk.InitialCapacity
 	}
 	for remainingRows := requiredRows - task.outerResult.Len(); remainingRows > 0; remainingRows = requiredRows - task.outerResult.Len() {
 		fetchRequiredRows := min(remainingRows, maxChunkSize)
+		if ow.pendingOuterChunk != nil {
+			if err := ctx.Err(); err != nil {
+				return task, err
+			}
+			ow.appendPendingOuterRows(task.outerResult, fetchRequiredRows)
+			continue
+		}
 		chkCap := min(nextChunkCap, fetchRequiredRows)
 		chk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, chkCap, maxChunkSize)
 		chk = chk.SetRequiredRows(fetchRequiredRows, maxChunkSize)
@@ -542,7 +557,13 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		if rows == 0 {
 			break
 		}
-		task.outerResult.Add(chk)
+		if strictOuterWindow && rows > fetchRequiredRows {
+			ow.pendingOuterChunk = chk
+			ow.parentMemTracker.Consume(chk.MemoryUsage())
+			ow.appendPendingOuterRows(task.outerResult, fetchRequiredRows)
+		} else {
+			task.outerResult.Add(chk)
+		}
 		if rows >= chkCap && nextChunkCap < maxChunkSize {
 			nextChunkCap = min(max(nextChunkCap*2, rows), maxChunkSize)
 		}
@@ -574,6 +595,28 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		)
 	}
 	return task, nil
+}
+
+func (ow *outerWorker) appendPendingOuterRows(result *chunk.List, maxRows int) {
+	pending := ow.pendingOuterChunk
+	end := min(ow.pendingOuterRow+maxRows, pending.NumRows())
+	part := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, end-ow.pendingOuterRow, ow.executor.MaxChunkSize())
+	for row := ow.pendingOuterRow; row < end; row++ {
+		part.AppendRow(pending.GetRow(row))
+	}
+	result.Add(part)
+	ow.pendingOuterRow = end
+	if end == pending.NumRows() {
+		ow.releasePendingOuterChunk()
+	}
+}
+
+func (ow *outerWorker) releasePendingOuterChunk() {
+	if ow.pendingOuterChunk != nil {
+		ow.parentMemTracker.Consume(-ow.pendingOuterChunk.MemoryUsage())
+		ow.pendingOuterChunk = nil
+		ow.pendingOuterRow = 0
+	}
 }
 
 func (ow *outerWorker) increaseBatchSize() {
@@ -992,18 +1035,25 @@ func (e *indexLookUpJoinRuntimeStats) String() string {
 		buf.WriteString(strconv.FormatUint(snapshot.OuterFetched, 10))
 		buf.WriteString("/")
 		buf.WriteString(strconv.FormatUint(snapshot.OuterConsumed, 10))
-		buf.WriteString(", lookup:")
-		buf.WriteString(strconv.FormatUint(snapshot.LookupHandles, 10))
-		buf.WriteString("/")
-		buf.WriteString(strconv.FormatUint(snapshot.LookupRows, 10))
+		if snapshot.HasLookupStage {
+			buf.WriteString(", lookup:")
+			buf.WriteString(strconv.FormatUint(snapshot.LookupHandles, 10))
+			buf.WriteString("/")
+			buf.WriteString(strconv.FormatUint(snapshot.LookupRows, 10))
+		}
 		buf.WriteString(", outstanding:")
 		buf.WriteString(strconv.FormatUint(snapshot.OuterOutstandingAtStop, 10))
-		buf.WriteString("/")
-		buf.WriteString(strconv.FormatUint(snapshot.LookupOutstandingAtStop, 10))
-		buf.WriteString(", blocked:outer=")
-		buf.WriteString(execdetails.FormatDuration(snapshot.OuterAdmissionBlocked))
-		buf.WriteString(",lookup=")
-		buf.WriteString(execdetails.FormatDuration(snapshot.LookupAdmissionBlocked))
+		if snapshot.HasLookupStage {
+			buf.WriteString("/")
+			buf.WriteString(strconv.FormatUint(snapshot.LookupOutstandingAtStop, 10))
+			buf.WriteString(", blocked:outer=")
+			buf.WriteString(execdetails.FormatDuration(snapshot.OuterAdmissionBlocked))
+			buf.WriteString(",lookup=")
+			buf.WriteString(execdetails.FormatDuration(snapshot.LookupAdmissionBlocked))
+		} else {
+			buf.WriteString(", blocked:")
+			buf.WriteString(execdetails.FormatDuration(snapshot.OuterAdmissionBlocked))
+		}
 		buf.WriteString("}")
 	}
 	return buf.String()

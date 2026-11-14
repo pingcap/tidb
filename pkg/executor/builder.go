@@ -895,26 +895,35 @@ func (b *executorBuilder) attachAdaptiveLimitController(
 	if !b.sctx.GetSessionVars().EnableAdaptiveLimitScan {
 		return
 	}
-	// V1 recognizes two roots. Unsupported reader modes retain the existing path:
-	//
-	//	Limit -> Projection* -> ordered IndexLookUpJoin
-	//	Limit -> Projection* -> keep-order IndexLookUp
+	// Only projections may intervene between Limit and an eligible join or reader.
 	indexJoin := findAdaptiveLimitIndexJoin(childExec)
 	if indexJoin != nil {
 		if !indexJoin.AdaptiveLimitEligible {
 			return
 		}
-		outerIndexLookup := findAdaptiveLimitIndexLookupCandidate(indexJoin.Children(0))
-		if outerIndexLookup == nil {
+		outer := skipAdaptiveLimitProjections(indexJoin.Children(0))
+		outerIndexLookup := findAdaptiveLimitIndexLookupCandidate(outer)
+		if outerIndexLookup == nil && !adaptiveLimitSingleReadEligible(outer) {
 			return
 		}
 		demandRows := limitPlan.Offset + limitPlan.Count
-		config := b.buildAdaptiveLimitConfig(demandRows, outerIndexLookup)
-		config.InitialOuterWindow = adaptiveLimitInitialWindow(demandRows, b.sctx.GetSessionVars().IndexJoinBatchSize)
-		config.MaxOuterWindow = uint64(b.sctx.GetSessionVars().IndexJoinBatchSize) *
-			uint64(b.sctx.GetSessionVars().IndexLookupJoinConcurrency())
-		controller := exec.NewAdaptiveLimitController(config)
-		outerIndexLookup.adaptiveLimitController = controller
+		vars := b.sctx.GetSessionVars()
+		initialOuterWindow := adaptiveLimitInitialWindow(demandRows, vars.IndexJoinBatchSize)
+		maxOuterWindow := uint64(vars.IndexJoinBatchSize) * uint64(vars.IndexLookupJoinConcurrency())
+		var controller *exec.AdaptiveLimitController
+		if outerIndexLookup != nil {
+			config := b.buildAdaptiveLimitConfig(demandRows, outerIndexLookup)
+			config.InitialOuterWindow = initialOuterWindow
+			config.MaxOuterWindow = maxOuterWindow
+			controller = exec.NewAdaptiveLimitController(config)
+			outerIndexLookup.adaptiveLimitController = controller
+		} else {
+			controller = exec.NewAdaptiveLimitOuterJoinController(exec.AdaptiveLimitConfig{
+				DemandRows:         demandRows,
+				InitialOuterWindow: min(initialOuterWindow, uint64(vars.MaxChunkSize)),
+				MaxOuterWindow:     maxOuterWindow,
+			})
+		}
 		indexJoin.AdaptiveLimitController = controller
 		limitExec.adaptiveLimitController = controller
 		return
@@ -971,37 +980,71 @@ func adaptiveLimitInitialLookupBatchSize(initialWindow uint64, indexPaging bool,
 }
 
 func findAdaptiveLimitIndexJoin(executor exec.Executor) *join.IndexLookUpJoin {
-	if indexJoin, ok := executor.(*join.IndexLookUpJoin); ok {
-		return indexJoin
-	}
-	if _, ok := executor.(*ProjectionExec); !ok {
-		return nil
-	}
-	children := executor.AllChildren()
-	if len(children) != 1 {
-		return nil
-	}
-	return findAdaptiveLimitIndexJoin(children[0])
+	indexJoin, _ := skipAdaptiveLimitProjections(executor).(*join.IndexLookUpJoin)
+	return indexJoin
 }
 
 func findAdaptiveLimitIndexLookupCandidate(executor exec.Executor) *IndexLookUpExecutor {
+	indexLookup, ok := skipAdaptiveLimitProjections(executor).(*IndexLookUpExecutor)
+	if !ok || indexLookup.adaptiveLimitController != nil || !adaptiveLimitIndexLookupEligible(indexLookup) {
+		return nil
+	}
+	return indexLookup
+}
+
+func skipAdaptiveLimitProjections(executor exec.Executor) exec.Executor {
 	for {
-		switch e := executor.(type) {
-		case *IndexLookUpExecutor:
-			if e.adaptiveLimitController != nil || !adaptiveLimitIndexLookupEligible(e) {
-				return nil
-			}
-			return e
-		case *ProjectionExec:
-			children := e.AllChildren()
-			if len(children) != 1 {
-				return nil
-			}
-			executor = children[0]
-		default:
+		projection, ok := executor.(*ProjectionExec)
+		if !ok {
+			return executor
+		}
+		children := projection.AllChildren()
+		if len(children) != 1 {
 			return nil
 		}
+		executor = children[0]
 	}
+}
+
+func adaptiveLimitSingleReadEligible(executor exec.Executor) bool {
+	switch e := executor.(type) {
+	case *IndexReaderExecutor:
+		if !e.keepOrder || e.dummy || len(e.groupedRanges) != 0 || len(e.byItems) != 0 ||
+			len(e.partitions) != 0 || len(e.partRangeMap) != 0 || len(e.partitionIDMap) != 0 ||
+			adaptiveLimitSingleReadTable(e.table) == nil || len(e.plans) == 0 {
+			return false
+		}
+		scan, ok := e.plans[0].(*physicalop.PhysicalIndexScan)
+		return ok && len(scan.GroupByColIdxs) == 0
+	case *TableReaderExecutor:
+		if !e.keepOrder || e.dummy || e.storeType != kv.TiKV || e.batchCop || e.kvRangeBuilder != nil ||
+			len(e.groupedRanges) != 0 || len(e.groupByColIdxs) != 0 || len(e.byItems) != 0 {
+			return false
+		}
+		meta := adaptiveLimitSingleReadTable(e.table)
+		if meta == nil {
+			return false
+		}
+		if !meta.PKIsHandle {
+			return true
+		}
+		// A keep-order scan of unsigned integer handles can open two results.
+		pk := meta.GetPkColInfo()
+		return pk != nil && !mysql.HasUnsignedFlag(pk.GetFlag())
+	default:
+		return false
+	}
+}
+
+func adaptiveLimitSingleReadTable(tbl table.Table) *model.TableInfo {
+	if tbl == nil {
+		return nil
+	}
+	meta := tbl.Meta()
+	if meta == nil || meta.Partition != nil {
+		return nil
+	}
+	return meta
 }
 
 func adaptiveLimitIndexLookupEligible(indexLookup *IndexLookUpExecutor) bool {
