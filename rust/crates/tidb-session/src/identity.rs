@@ -121,6 +121,7 @@ impl Session {
             registry,
             user,
             host,
+            &self.extension_access_check_funcs,
             self.active_roles(),
             database,
             table,
@@ -138,6 +139,7 @@ impl Session {
         let registry = registry.clone();
         let (user, host) = (user.to_owned(), host.to_owned());
         let roles = self.active_roles().to_vec();
+        let access_checks = self.extension_access_check_funcs.clone();
         Some(Arc::new(
             move |database: &str, sequence: &str, insert: bool| {
                 let global_priv = if insert {
@@ -149,6 +151,7 @@ impl Session {
                     &registry,
                     &user,
                     &host,
+                    &access_checks,
                     &roles,
                     database,
                     sequence,
@@ -180,6 +183,7 @@ impl Session {
         let registry = registry.clone();
         let (user, host) = (user.to_owned(), host.to_owned());
         let roles = self.active_roles().to_vec();
+        let access_checks = self.extension_access_check_funcs.clone();
         Some(Arc::new(
             move |database: &str,
                   table: &str,
@@ -188,7 +192,9 @@ impl Session {
                 tidb_executor::table_privilege::global_privileges_of(privilege)
                     .into_iter()
                     .any(|global| {
-                        scoped_privilege(&registry, &user, &host, &roles, database, table, global)
+                        scoped_privilege(
+                            &registry, &user, &host, &access_checks, &roles, database, table, global,
+                        )
                     })
             },
         ))
@@ -217,13 +223,16 @@ impl Session {
         let Some((registry, user, host)) = self.privilege_context() else {
             return true;
         };
-        if let Some(verdict) = self.sem_table_verdict(registry, user, host, database, table, mask) {
-            return verdict;
-        }
-        if let Some(verdict) = tidb_privilege::verification::mem_db_verdict_mask(database, mask) {
-            return verdict;
-        }
-        registry.has_priv_mask_with_roles(user, host, self.active_roles(), database, table, mask)
+        scoped_privilege(
+            registry,
+            user,
+            host,
+            &self.extension_access_check_funcs,
+            self.active_roles(),
+            database,
+            table,
+            tidb_mysql::PrivilegeType(mask),
+        )
     }
 
     /// The owned snapshot of this session's identity that the
@@ -313,33 +322,6 @@ impl Session {
             return true;
         };
         registry.has_dynamic_priv_with_roles(user, host, self.active_roles(), name, with_grant)
-    }
-
-    fn sem_table_verdict(
-        &self,
-        registry: &tidb_privilege::PrivilegeRegistry,
-        user: &str,
-        host: &str,
-        database: &str,
-        table: &str,
-        mask: u64,
-    ) -> Option<bool> {
-        if !tidb_sem_compat::is_enabled() {
-            return None;
-        }
-        let has_restricted_tables_admin = registry.has_dynamic_priv_with_roles(
-            user,
-            host,
-            self.active_roles(),
-            "RESTRICTED_TABLES_ADMIN",
-            false,
-        );
-        tidb_privilege::verification::sem_verdict_mask(
-            database,
-            table,
-            mask,
-            has_restricted_tables_admin,
-        )
     }
 
     pub(crate) fn sem_hides_sysvar(&self, name: &str) -> bool {
@@ -798,8 +780,10 @@ impl Session {
                 tidb_executor::table_privilege::global_privileges_of(privilege)
                     .into_iter()
                     .any(|global| {
+                        // Go `RequestVerificationWithUser` asks the handle
+                        // alone: no extension's access check.
                         scoped_privilege(
-                            &registry, &account.0, &account.1, &roles, database, table, global,
+                            &registry, &account.0, &account.1, &[], &roles, database, table, global,
                         )
                     })
             },
@@ -987,6 +971,7 @@ impl Session {
                 self.active_roles().to_vec(),
             )
         });
+        let access_checks = self.extension_access_check_funcs.clone();
         let phases = self
             .statement_observation
             .as_ref()
@@ -1017,7 +1002,9 @@ impl Session {
                         registry.has_dynamic_priv_with_roles(user, host, roles, name, with_grant)
                     },
                     |database, table, privilege| {
-                        scoped_privilege(registry, user, host, roles, database, table, privilege)
+                        scoped_privilege(
+                            registry, user, host, &access_checks, roles, database, table, privilege,
+                        )
                     },
                     |database, table| {
                         let (database, table) = (go_to_lower(database), go_to_lower(table));
@@ -1328,6 +1315,12 @@ impl Session {
     }
 
     pub fn attach_privileges(&mut self, registry: tidb_privilege::PrivilegeRegistry) {
+        // Go `CreateSession`: `privileges.NewUserPrivileges(handle,
+        // extension.GetExtensions())` keeps the extensions' access checks.
+        self.extension_access_check_funcs = tidb_extension::get_extensions()
+            .expect("the extensions are set up before a session binds its privilege manager")
+            .map(|extensions| extensions.get_access_check_funcs())
+            .unwrap_or_default();
         // A session on the store reads its domain's privilege cache, as a Go
         // session does; a private registry would hide every account
         // statement the node persists from this session.
@@ -1602,41 +1595,27 @@ fn view_no_explain() -> DriverError {
     ))
 }
 
-/// Go `RequestVerification(activeRoles, database, table, "", priv)` for an
-/// identity: the SEM table verdict, the virtual schemas, then the grants
-/// (own or through `roles`).
+/// Go `UserPrivileges.RequestVerification(activeRoles, database, table, "",
+/// priv)` for an identity and the extensions' access checks it was bound
+/// with.
+#[allow(clippy::too_many_arguments)]
 fn scoped_privilege(
     registry: &tidb_privilege::PrivilegeRegistry,
     user: &str,
     host: &str,
+    extension_access_check_funcs: &[tidb_extension::AccessCheckFunc],
     roles: &[tidb_privilege::Account],
     database: &str,
     table: &str,
     global_priv: tidb_mysql::PrivilegeType,
 ) -> bool {
-    if tidb_sem_compat::is_enabled() {
-        let has_restricted_tables_admin = registry.has_dynamic_priv_with_roles(
-            user,
-            host,
-            roles,
-            "RESTRICTED_TABLES_ADMIN",
-            false,
-        );
-        if let Some(verdict) = tidb_privilege::verification::sem_verdict_mask(
-            database,
-            table,
-            global_priv.mask(),
-            has_restricted_tables_admin,
-        ) {
-            return verdict;
-        }
+    tidb_privilege::UserPrivileges {
+        user,
+        host,
+        handle: registry,
+        extension_access_check_funcs,
     }
-    if let Some(verdict) =
-        tidb_privilege::verification::mem_db_verdict_mask(database, global_priv.mask())
-    {
-        return verdict;
-    }
-    registry.has_table_priv_with_roles(user, host, roles, database, table, global_priv)
+    .request_verification(roles, database, table, "", global_priv)
 }
 
 /// A statement [`Session::compile_statement`] compiled, and the privilege

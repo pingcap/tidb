@@ -6852,6 +6852,7 @@ dependencies = [
  "tidb-dbterror",
  "tidb-errno",
  "tidb-exeerrors",
+ "tidb-extension",
  "tidb-fastrand",
  "tidb-hack",
  "tidb-infoschema",

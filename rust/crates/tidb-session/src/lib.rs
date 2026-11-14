@@ -859,6 +859,9 @@ pub struct Session {
     /// which is why every check through it falls back to the pre-existing
     /// bit above rather than treating an absent registry as "no privilege".
     privileges: Option<tidb_privilege::PrivilegeRegistry>,
+    /// Go `UserPrivileges.extensionAccessCheckFuncs`, bound with the
+    /// privilege manager ([`Session::attach_privileges`]).
+    extension_access_check_funcs: Vec<tidb_extension::AccessCheckFunc>,
     /// Go's process-wide `privileges.SkipWithGrant` admission copied onto
     /// this connection by the front end. The registry remains attached for
     /// account/role storage, while authorization readers treat the session
@@ -1131,6 +1134,7 @@ impl Session {
             process: None,
             has_process_priv: false,
             privileges: None,
+            extension_access_check_funcs: Vec::new(),
             privilege_bypassed: false,
             rand: new_time_seeded_rand(),
             prepared_statements: prepared_statements::PreparedStore::default(),

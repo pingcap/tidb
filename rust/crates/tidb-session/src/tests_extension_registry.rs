@@ -149,3 +149,106 @@ fn register_extension_with_dync_privs() {
     assert_eq!(error_text(tidb_extension::setup()), "privilege is already registered");
     assert_eq!(orig_dyn_privs, tidb_privilege::get_dynamic_privileges());
 }
+
+/// Go `TestCustomAccessCheck`.
+#[test]
+fn custom_access_check() {
+    custom_access_check_under(tidb_sem_compat::V1);
+    custom_access_check_under(tidb_sem_compat::V2);
+}
+
+fn custom_access_check_under(sem_ver: &str) {
+    use crate::tests_support::*;
+    use tidb_mysql::PrivilegeType;
+
+    crate::init_extension_hooks();
+    let _reset = ResetOnDrop;
+    tidb_extension::reset();
+    tidb_extension::register(
+        "test",
+        vec![
+            tidb_extension::with_custom_dyn_privs(
+                ["priv1", "priv2", "restricted_priv3"].map(str::to_owned).to_vec(),
+            ),
+            tidb_extension::with_custom_access_check(Arc::new(
+                |db: &str, tbl: &str, _column: &str, privilege: PrivilegeType, sem: bool| {
+                    if db != "test" || tbl != "t1" {
+                        return Vec::new();
+                    }
+                    let mut privs = Vec::new();
+                    if privilege == tidb_mysql::SelectPriv {
+                        privs.push("priv1".to_owned());
+                    } else if privilege == tidb_mysql::UpdatePriv {
+                        privs.push("priv2".to_owned());
+                        if sem {
+                            privs.push("restricted_priv3".to_owned());
+                        }
+                    } else {
+                        return Vec::new();
+                    }
+                    privs
+                },
+            )),
+        ],
+    )
+    .unwrap();
+    tidb_extension::setup().unwrap();
+
+    let mut tk = session_with_privileges();
+    tk.run("use test").unwrap();
+    tk.run("create user u2@localhost").unwrap();
+    let registry = tk.privileges.clone().unwrap();
+    // Go's `Auth` matches root@localhost to the root@% account, the
+    // identity this port's session carries.
+    let mut tk1 = session_as(&registry, tk.catalog.clone(), "root", "%");
+    tk1.run("use test").unwrap();
+    let mut tk2 = session_as(&registry, tk.catalog.clone(), "u2", "localhost");
+    tk.run("GRANT all on test.t1 TO u2@localhost").unwrap();
+    tk2.run("use test").unwrap();
+
+    tk1.run("create table t1(id int primary key, v int)").unwrap();
+    tk1.run("insert into t1 values (1, 10), (2, 20)").unwrap();
+    // `session_as` sessions share the catalog of the session they were made from.
+    tk2.catalog = tk1.catalog.clone();
+
+    assert_eq!(row_text(tk1.run("select * from t1 where id=1")), [["1", "10"]]);
+    assert_eq!(row_text(tk1.run("select * from t1")), [["1", "10"], ["2", "20"]]);
+
+    let select_denied = "SELECT command denied to user 'u2'@'localhost' for table 't1'";
+    assert_err(tk2.run("select * from t1 where id=1"), 1142, select_denied);
+    assert_err(tk2.run("select * from t1"), 1142, select_denied);
+
+    tk.run("GRANT priv1 on *.* TO u2@localhost").unwrap();
+    assert_eq!(row_text(tk2.run("select * from t1 where id=1")), [["1", "10"]]);
+    assert_eq!(row_text(tk2.run("select * from t1")), [["1", "10"], ["2", "20"]]);
+
+    let update_failed = "privilege check for 'Update' fail";
+    assert_err(tk2.run("update t1 set v=11 where id=1"), 8121, update_failed);
+    assert_err(tk2.run("update t1 set v=11 where id<2"), 8121, update_failed);
+    assert_eq!(row_text(tk2.run("select * from t1 where id=1")), [["1", "10"]]);
+
+    tk.run("GRANT priv2 on *.* TO u2@localhost").unwrap();
+    tk2.run("update t1 set v=11 where id=1").unwrap();
+    assert_eq!(row_text(tk2.run("select * from t1 where id=1")), [["1", "11"]]);
+
+    tk2.run("update t1 set v=12 where id<2").unwrap();
+    assert_eq!(row_text(tk2.run("select * from t1 where id=1")), [["1", "12"]]);
+
+    let restore = tidb_sem_compat::switch_to_sem_for_test(sem_ver);
+
+    assert_err(tk1.run("update t1 set v=21 where id=1"), 8121, update_failed);
+    assert_err(tk1.run("update t1 set v=21 where id<2"), 8121, update_failed);
+    assert_eq!(row_text(tk1.run("select * from t1 where id=1")), [["1", "12"]]);
+
+    assert_err(tk2.run("update t1 set v=21 where id=1"), 8121, update_failed);
+    assert_err(tk2.run("update t1 set v=21 where id<2"), 8121, update_failed);
+    assert_eq!(row_text(tk2.run("select * from t1 where id=1")), [["1", "12"]]);
+
+    tk.run("GRANT restricted_priv3 on *.* TO u2@localhost").unwrap();
+    tk2.run("update t1 set v=31 where id=1").unwrap();
+    assert_eq!(row_text(tk2.run("select * from t1 where id=1")), [["1", "31"]]);
+
+    tk2.run("update t1 set v=32 where id<2").unwrap();
+    assert_eq!(row_text(tk2.run("select * from t1 where id=1")), [["1", "32"]]);
+    restore();
+}

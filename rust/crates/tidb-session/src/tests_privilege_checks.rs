@@ -15,7 +15,7 @@
 //! Privilege checks and SHOW GRANTS as `privilege/privileges.test` records
 //! them on this branch's Go.
 
-use crate::tests_support::{authenticated_session, row_text, session_as};
+use crate::tests_support::{authenticated_session, row_text, session_as, session_with_privileges};
 use crate::Session;
 
 fn setup() -> (tidb_privilege::PrivilegeRegistry, Session) {
@@ -435,5 +435,53 @@ fn prepare_builds_the_statement_before_checking_its_privileges_like_go() {
     assert_eq!(
         error_of(&mut u, "prepare s3 from 'update pp.t set nosuch = 1'"),
         (1054, "Unknown column 'nosuch' in 'field list'".to_owned())
+    );
+}
+
+/// Go `UserPrivileges.RequestVerification`: "PROCESS is the same with
+/// SELECT for metrics_schema" on a metric table. A Go testkit capture, each
+/// result drained: without PROCESS, SELECT and SHOW CREATE TABLE on
+/// `metrics_schema.up` are refused with 1142; with it, the SELECT reaches
+/// the metric query (no PD here) and SHOW CREATE TABLE passes. DESC asks for
+/// any privilege (a multi-bit mask, which the rule leaves alone) and is
+/// refused either way.
+#[test]
+fn process_admits_a_metrics_schema_table_like_go() {
+    let mut tk = session_with_privileges();
+    tk.run("create user u1@localhost").unwrap();
+    tk.run("create user u2@localhost").unwrap();
+    tk.run("grant process on *.* to u2@localhost").unwrap();
+    let registry = tk.privileges.clone().unwrap();
+    let mut answers = Vec::new();
+    for user in ["u1", "u2"] {
+        let mut tk1 = session_as(&registry, tk.catalog.clone(), user, "localhost");
+        for sql in [
+            "select * from metrics_schema.up",
+            "select * from metrics_schema.uptime",
+            "desc metrics_schema.up",
+            "show create table metrics_schema.up",
+        ] {
+            let answer = match tk1.run(sql) {
+                Ok(_) => "<nil>".to_owned(),
+                Err(error) => {
+                    let error = error.to_mysql_error();
+                    format!("{} {}", error.code, error.message)
+                }
+            };
+            answers.push(format!("{user} | {sql} | {answer}"));
+        }
+    }
+    assert_eq!(
+        answers,
+        [
+            "u1 | select * from metrics_schema.up | 1142 SELECT command denied to user 'u1'@'localhost' for table 'up'",
+            "u1 | select * from metrics_schema.uptime | 1142 SELECT command denied to user 'u1'@'localhost' for table 'uptime'",
+            "u1 | desc metrics_schema.up | 1142 SELECT command denied to user 'u1'@'localhost' for table 'up'",
+            "u1 | show create table metrics_schema.up | 1142 SHOW command denied to user 'u1'@'localhost' for table 'up'",
+            "u2 | select * from metrics_schema.up | 1105 query metric error: pd unavailable",
+            "u2 | select * from metrics_schema.uptime | 1105 query metric error: pd unavailable",
+            "u2 | desc metrics_schema.up | 1142 SELECT command denied to user 'u2'@'localhost' for table 'up'",
+            "u2 | show create table metrics_schema.up | <nil>",
+        ]
     );
 }

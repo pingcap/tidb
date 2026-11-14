@@ -74,6 +74,7 @@ pub mod account_policy;
 pub mod load;
 pub mod loaded;
 mod password;
+mod user_privileges;
 mod password_history;
 mod password_lock;
 mod privs;
@@ -90,6 +91,7 @@ pub use tls_policy::{certificate_uri, TlsPeerIdentity};
 
 pub use export::*;
 pub use password::*;
+pub use user_privileges::UserPrivileges;
 pub use password_lock::*;
 pub use privs::*;
 use tidb_mysql::PrivilegeType;
