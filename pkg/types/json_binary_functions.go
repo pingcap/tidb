@@ -781,11 +781,27 @@ func compareInt64Uint64(x int64, y uint64) int {
 }
 
 func compareFloat64Int64(x float64, y int64) int {
-	return compareFloat64PrecisionLoss(x, float64(y))
+	cmp := compareFloat64PrecisionLoss(x, float64(y))
+	if cmp != 0 || x != math.Trunc(x) {
+		return cmp
+	}
+	// float64(y) is rounded when |y| > 2^53, so compare the integral float exactly.
+	if x >= 1<<63 {
+		return 1
+	}
+	return compareInt64(int64(x), y)
 }
 
 func compareFloat64Uint64(x float64, y uint64) int {
-	return compareFloat64PrecisionLoss(x, float64(y))
+	cmp := compareFloat64PrecisionLoss(x, float64(y))
+	if cmp != 0 || x != math.Trunc(x) {
+		return cmp
+	}
+	// float64(y) is rounded when y > 2^53, so compare the integral float exactly.
+	if x >= 1<<64 {
+		return 1
+	}
+	return compareUint64(uint64(x), y)
 }
 
 // CompareBinaryJSON compares two binary json objects. Returns -1 if left < right,
