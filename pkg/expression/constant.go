@@ -33,6 +33,32 @@ import (
 
 var _ base.HashEquals = &Constant{}
 
+// ConvertConstantLosslessly evaluates constant and converts it to target. It
+// uses a strict type context so conversions with warnings cannot be mistaken
+// for lossless conversions.
+func ConvertConstantLosslessly(
+	evalCtx EvalContext,
+	constant *Constant,
+	target *types.FieldType,
+	collator collate.Collator,
+) (types.Datum, bool) {
+	if evalCtx == nil || constant == nil || target == nil || collator == nil {
+		return types.Datum{}, false
+	}
+
+	typeCtx := types.StrictContext.WithLocation(evalCtx.Location())
+	source, err := constant.Eval(evalCtx, chunk.Row{})
+	if err != nil {
+		return types.Datum{}, false
+	}
+	converted, err := source.ConvertTo(typeCtx, target)
+	if err != nil {
+		return types.Datum{}, false
+	}
+	cmp, err := converted.Compare(typeCtx, &source, collator)
+	return converted, err == nil && cmp == 0
+}
+
 // NewOne stands for an unsigned number 1.
 func NewOne() *Constant {
 	retT := types.NewFieldType(mysql.TypeTiny)

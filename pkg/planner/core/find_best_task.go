@@ -1123,6 +1123,9 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	path.GroupedRanges = nil
 	path.GroupByColIdxs = nil
 
+	if logicalop.IsExactFTSPath(ds, path) {
+		return property.PropNotMatched
+	}
 	if ds.Table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
 		// TableScan with cluster table can't keep order.
 		return property.PropNotMatched

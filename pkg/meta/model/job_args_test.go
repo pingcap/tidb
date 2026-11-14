@@ -1344,6 +1344,100 @@ func TestAddIndexArgs(t *testing.T) {
 	}
 }
 
+func TestAddFullTextIndexArgsV2(t *testing.T) {
+	minGram := uint64(3)
+	delimiter := "/"
+	fullTextParts := []*ast.FullTextIndexPartSpecification{
+		{
+			Column: &ast.ColumnName{Name: ast.NewCIStr("title")},
+			ParserSpecs: []*ast.FullTextParserSpec{
+				{ParserType: ast.FullTextParserTypeMultilingualV1},
+				{
+					ParserType: ast.FullTextParserTypeNgramV1,
+					Ngram:      &ast.FullTextNgramParserParams{MinGram: &minGram},
+				},
+			},
+		},
+		{
+			Column: &ast.ColumnName{Name: ast.NewCIStr("path")},
+			ParserSpecs: []*ast.FullTextParserSpec{
+				{ParserType: ast.FullTextParserTypeExactV1},
+				{
+					ParserType:    ast.FullTextParserTypePathHierarchyV1,
+					PathHierarchy: &ast.FullTextPathHierarchyParserParams{Delimiter: &delimiter},
+				},
+			},
+		},
+	}
+	inArgs := &ModifyIndexArgs{
+		IndexArgs: []*IndexArg{
+			{
+				IndexName:                       ast.NewCIStr("idx_fts"),
+				IndexPartSpecifications:         ast.FullTextIndexPartsToIndexParts(fullTextParts),
+				FullTextIndexPartSpecifications: fullTextParts,
+				IndexOption:                     &ast.IndexOption{Tp: ast.IndexTypeFulltext},
+				IsColumnar:                      true,
+				ColumnarIndexType:               ColumnarIndexTypeFulltext,
+			},
+		},
+		OpType: OpAddIndex,
+	}
+
+	job := &Job{}
+	require.NoError(t, job.Decode(getJobBytes(t, inArgs, JobVersion2, ActionAddColumnarIndex)))
+	decoded, err := GetModifyIndexArgs(job)
+	require.NoError(t, err)
+	require.Equal(t, fullTextParts, decoded.IndexArgs[0].FullTextIndexPartSpecifications)
+}
+
+func TestAddLegacyFullTextIndexArgsV2RollingUpgrade(t *testing.T) {
+	indexOption := &ast.IndexOption{
+		Tp: ast.IndexTypeFulltext,
+		FullTextParser: &ast.FullTextParserSpec{
+			ParserType: ast.FullTextParserTypeMultilingualV1,
+		},
+	}
+	indexOption.FillLegacyFullTextParserName()
+	newArgs := &ModifyIndexArgs{IndexArgs: []*IndexArg{{
+		IndexName:         ast.NewCIStr("idx_fts"),
+		IndexOption:       indexOption,
+		IsColumnar:        true,
+		ColumnarIndexType: ColumnarIndexTypeFulltext,
+	}}}
+
+	newJob := &Job{Version: JobVersion2, Type: ActionAddColumnarIndex}
+	newJob.FillArgs(newArgs)
+	_, err := newJob.Encode(true)
+	require.NoError(t, err)
+	var legacyPayload struct {
+		IndexArgs []struct {
+			IndexOption struct {
+				ParserName ast.CIStr
+			} `json:"index_option"`
+		} `json:"index_args"`
+	}
+	require.NoError(t, json.Unmarshal(newJob.RawArgs, &legacyPayload))
+	require.Equal(t, ast.NewCIStr("MULTILINGUAL"), legacyPayload.IndexArgs[0].IndexOption.ParserName)
+
+	legacyArgs := &ModifyIndexArgs{IndexArgs: []*IndexArg{{
+		IndexName: ast.NewCIStr("idx_fts"),
+		IndexOption: &ast.IndexOption{
+			Tp:         ast.IndexTypeFulltext,
+			ParserName: ast.NewCIStr("MULTILINGUAL"),
+		},
+		IsColumnar:        true,
+		ColumnarIndexType: ColumnarIndexTypeFulltext,
+	}}}
+	decodedJob := &Job{}
+	require.NoError(t, decodedJob.Decode(getJobBytes(t, legacyArgs, JobVersion2, ActionAddColumnarIndex)))
+	decodedArgs, err := GetModifyIndexArgs(decodedJob)
+	require.NoError(t, err)
+	decodedOption := decodedArgs.IndexArgs[0].IndexOption
+	require.Nil(t, decodedOption.FullTextParser)
+	decodedOption.NormalizeLegacyFullTextParserName()
+	require.Equal(t, indexOption.FullTextParser, decodedOption.FullTextParser)
+}
+
 func TestDropIndexArguements(t *testing.T) {
 	checkFunc := func(t *testing.T, inArgs *ModifyIndexArgs) {
 		for _, v := range []JobVersion{JobVersion1, JobVersion2} {

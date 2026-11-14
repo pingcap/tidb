@@ -1526,12 +1526,13 @@ const (
 //	Rename index: IndexName
 type IndexArg struct {
 	// Global is never used, we only use Global in IndexOption. Can be deprecated later.
-	Global                  bool                          `json:"-"`
-	Unique                  bool                          `json:"unique,omitempty"`
-	IndexName               ast.CIStr                     `json:"index_name,omitempty"`
-	IndexPartSpecifications []*ast.IndexPartSpecification `json:"index_part_specifications"`
-	IndexOption             *ast.IndexOption              `json:"index_option,omitempty"`
-	HiddenCols              []*ColumnInfo                 `json:"hidden_cols,omitempty"`
+	Global                          bool                                  `json:"-"`
+	Unique                          bool                                  `json:"unique,omitempty"`
+	IndexName                       ast.CIStr                             `json:"index_name,omitempty"`
+	IndexPartSpecifications         []*ast.IndexPartSpecification         `json:"index_part_specifications"`
+	IndexOption                     *ast.IndexOption                      `json:"index_option,omitempty"`
+	HiddenCols                      []*ColumnInfo                         `json:"hidden_cols,omitempty"`
+	FullTextIndexPartSpecifications []*ast.FullTextIndexPartSpecification `json:"fulltext_index_part_specifications,omitempty"`
 
 	// For vector index
 	FuncExpr string `json:"func_expr,omitempty"`
@@ -1591,7 +1592,7 @@ type IndexArgSplitOpt struct {
 }
 
 // ModifyIndexArgs is the argument for add/drop/rename index jobs,
-// which includes PK and vector index.
+// which includes PK and columnar indexes.
 type ModifyIndexArgs struct {
 	IndexArgs []*IndexArg `json:"index_args,omitempty"`
 

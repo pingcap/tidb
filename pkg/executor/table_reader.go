@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/distsql"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -203,6 +204,9 @@ type TableReaderExecutor struct {
 	// If dummy flag is set, this is not a real TableReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
 	dummy bool
+
+	// isFTS selects the worker discovery route for this scan.
+	isFTS bool
 }
 
 // Table implements the dataSourceExecutor interface.
@@ -409,6 +413,7 @@ func (e *TableReaderExecutor) Close() error {
 // buildRespForGroupedRanges builds the input ranger.Range into SelectResult.
 // Note that no matter the range is from e.ranges or e.groupedRanges, they are all passed in as groupedRanges here.
 func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, groupedRanges [][]*ranger.Range) (distsql.SelectResult, error) {
+	ctx = config.WithFTSQuery(ctx, e.isFTS)
 	// Accessing partitioned table on TiFlash is slightly different right now, we use a different code path for it.
 	if e.storeType == kv.TiFlash && e.kvRangeBuilder != nil {
 		// Since accessing partitioned table on TiFlash doesn't support keep order, so e.groupedRanges must be empty.

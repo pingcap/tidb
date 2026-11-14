@@ -16,6 +16,7 @@ package copr
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/config"
 	"math/rand"
 	"slices"
 	"sort"
@@ -583,5 +584,19 @@ func TestCheckAliveStore(t *testing.T) {
 			nil, tiflash.ClosestReplicas, 2, tasks, minReplicaNum, maxAllowedRemote)
 		require.True(t, needRetry)
 		require.Equal(t, 3, len(invalidRegions))
+	}
+}
+
+func TestUseColumnarFTSConfig(t *testing.T) {
+	for _, autoScaler := range []bool{false, true} {
+		for _, columnar := range []bool{false, true} {
+			for _, columnarFTS := range []bool{false, true} {
+				for _, fts := range []bool{false, true} {
+					cfg := &config.Config{UseAutoScaler: autoScaler, UseColumnar: columnar, UseColumnarFTS: columnarFTS}
+					want := autoScaler && (!columnar || (fts && !columnarFTS))
+					require.Equal(t, want, shouldDispatchToAutoScalerForDisaggregatedTiFlash(cfg, fts), "%+v fts=%v", cfg, fts)
+				}
+			}
+		}
 	}
 }

@@ -1,0 +1,118 @@
+drop table if exists t1;
+create table t1(
+    id INT PRIMARY KEY, title TEXT, body TEXT,
+    FULLTEXT KEY (title),
+    FULLTEXT KEY (body)
+);
+insert into t1 values (1, 'this is title', 'this is body');
+insert into t1 values (2, 'hello world', 'hello world');
+insert into t1 values (3, 'hello there', 'this is a test body');
+insert into t1 values (4, 'random title', 'random body content');
+insert into t1 values (5, 'hello world again', 'hello appears twice in this body hello');
+insert into t1 values (6, 'another title', 'this body does not contain the keyword');
+insert into t1 values (7, 'hello in title', 'but not in the body');
+insert into t1 values (8, 'no keyword here', 'still no hello in this body');
+insert into t1 values (9, 'hello hello hello', 'repeating hello multiple times in the title');
+insert into t1 values (10, 'unique title', 'hello is only in the body this time');
+insert into t1 values (11, 'hello and welcome', 'this body welcomes you with hello');
+insert into t1 values (12, 'a title without hello', 'a body without hello as well');
+insert into t1 values (13, 'hello in both', 'hello in the title and hello in the body');
+insert into t1 values (14, 'just a title', 'hello is hidden in this body');
+insert into t1 values (15, 'hello once', 'hello twice in this body hello');
+insert into t1 values (16, 'no hello here', 'this body is completely unrelated');
+insert into t1 values (17, 'hello at the start', 'and hello at the end hello');
+insert into t1 values (18, 'a very long title without hello', 'but the body contains hello at the very end');
+insert into t1 values (19, 'hello in uppercase', 'HELLO in the body as well');
+insert into t1 values (20, 'mixed case Hello', 'the body says hello in lowercase');
+delete from t1 where id <= 5;
+
+# Following test cases are adopted from fts_index_suite_in, verifying that these cases are also executed well.
+# Some tests are modified to make test more effective.
+
+select * from t1 where fts_match_word('hello', title);
+select * from t1 where fts_match_word('hello', body);
+select * from t1 where fts_match_word('hello', title) AND id > 10;
+select * from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 15;
+select title from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 15;
+select count(id) from t1 where fts_match_word('hello', title);
+select count(*) from t1 where fts_match_word('hello', title);
+select id from t1 where fts_match_word('hello', title);
+select id from t1 where fts_match_word('hello', title) AND id > 10;
+select id from t1 where fts_match_word('hello', title) AND LENGTH(body) > 10;
+select fts_match_word('hello', title) from t1 where fts_match_word('hello', title);
+select fts_match_word('hello', title) as score1, fts_match_word('hello', title) as score2 from t1 where fts_match_word('hello', title);
+select fts_match_word('hello', body) from t1 where fts_match_word('hello', body);
+select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10;
+select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 15;
+select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title);
+select *, fts_match_word('hello', body) from t1 where fts_match_word('hello', body);
+select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10;
+select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 15;
+select title, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 15;
+select count(id) from t1 where fts_match_word('hello', title);
+select count(*) from t1 where fts_match_word('hello', title);
+select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title);
+select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10;
+select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND LENGTH(body) > 10;
+select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title);
+select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) AND id > 10;
+select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) AND LENGTH(body) > 10;
+select * from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) LIMIT 10;
+select * from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+select * from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100;
+select * from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100;
+select body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+select count(*) from (select id from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10) AS tmp;
+select id from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+select id from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+select id, body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+select id from t1 where fts_match_word('hello', title) AND LENGTH(body)>10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) LIMIT 10;
+select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100;
+select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100;
+select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) LIMIT 10;
+select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100;
+select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100;
+select fts_match_word('hello', title), body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+select body, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+select count(*) from (select id from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10) AS tmp;
+select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+select fts_match_word('hello', title), id, body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) AND LENGTH(body)>10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+select id, fts_match_word('hello', title), body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND LENGTH(body)>10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10;
+
+# A parameterized exact filter must be bound before score projection and TopN are resolved.
+drop table if exists fts_parameterized_score;
+create table fts_parameterized_score(
+    row_id INT PRIMARY KEY,
+    fs_id VARCHAR(32),
+    content_text TEXT,
+    FULLTEXT KEY ft_content_fs(content_text WITH (STANDARD), fs_id WITH (EXACT))
+);
+insert into fts_parameterized_score values
+    (1, 'tenant-a', 'hello from tenant a one'),
+    (2, 'tenant-a', 'hello from tenant a two'),
+    (3, 'tenant-a', 'hello from tenant a three'),
+    (4, 'tenant-a', 'hello from tenant a four'),
+    (5, 'tenant-a', 'hello from tenant a five'),
+    (6, 'tenant-a', 'hello from tenant a six'),
+    (7, 'tenant-a', 'hello from tenant a seven'),
+    (8, 'tenant-a', 'hello from tenant a eight'),
+    (9, 'tenant-a', 'hello from tenant a nine'),
+    (10, 'tenant-a', 'hello from tenant a ten'),
+    (11, 'tenant-a', 'hello from tenant a eleven'),
+    (12, 'tenant-b', 'hello from tenant b');
+prepare fts_parameterized_score_stmt from 'select group_concat(distinct fs_id) as fs_ids, count(*) as row_count, max(score) >= min(score) as valid_score_range from (select fs_id, fts_match_word("hello", content_text) as score from fts_parameterized_score where fs_id = ? and fts_match_word("hello", content_text) order by score desc limit 10) q';
+set @fs_id = 'tenant-a';
+execute fts_parameterized_score_stmt using @fs_id;
+select @@last_plan_from_cache;
+set @fs_id = 'tenant-b';
+execute fts_parameterized_score_stmt using @fs_id;
+select @@last_plan_from_cache;
+deallocate prepare fts_parameterized_score_stmt;

@@ -111,6 +111,7 @@ func deriveStats4LogicalIndexScan(lp base.LogicalPlan, selfSchema *expression.Sc
 // The ds.TableStats.RowCount >= ds.stats.RowCount >= ds.stats.CountAfterAccess
 func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, error) {
 	ds := lp.(*logicalop.DataSource)
+	hasFTSPushDown := ds.FtsPushDown != nil
 	if ds.StatsInfo() != nil {
 		return ds.StatsInfo(), false, nil
 	}
@@ -128,35 +129,49 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	for i, expr := range ds.PushedDownConds {
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, expr)
 	}
-	// Index pruning is now done earlier in CollectPredicateColumnsPoint to avoid loading stats for pruned indexes.
-	// Fill index paths for all paths
 	ds.CheckPartialIndexes()
-	for _, path := range ds.AllPossibleAccessPaths {
-		if path.IsTablePath() {
-			continue
-		}
-		err := fillIndexPath(ds, path, ds.PushedDownConds)
-		if err != nil {
+	filledPaths := ds.AllPossibleAccessPaths
+	var ftsHandlePath *util.AccessPath
+	if hasFTSPushDown {
+		// The resolver has already selected the only executable FTS path. Derive
+		// normal handle ranges on a scratch table path, which also lets generic
+		// selectivity estimation account for PK and _tidb_rowid predicates.
+		ftsHandlePath = genTiFlashPath(ds.TableInfo)
+		// StatsInfo is not available yet, so defer the normal lower-bound
+		// adjustment until after selectivity has been derived from this path.
+		if err := deriveTablePathStats(ds, ftsHandlePath, ds.PushedDownConds, true); err != nil {
 			return nil, false, err
+		}
+		filledPaths = []*util.AccessPath{ftsHandlePath}
+	} else {
+		for _, path := range filledPaths {
+			if path.IsTablePath() {
+				continue
+			}
+			if err := fillIndexPath(ds, path, ds.PushedDownConds); err != nil {
+				return nil, false, err
+			}
 		}
 	}
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
 	// when ds.PossibleAccessPaths are pruned.
-	ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, ds.AllPossibleAccessPaths))
-	// after heuristic pruning, the new path are stored into ds.PossibleAccessPaths.
-	err := derivePathStatsAndTryHeuristics(ds)
-	if err != nil {
-		return nil, false, err
+	ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, filledPaths))
+	if hasFTSPushDown {
+		// Re-derive with the finalized DataSource stats to preserve the normal
+		// handle-path CountAfterAccess adjustment semantics.
+		if err := deriveTablePathStats(ds, ftsHandlePath, ds.PushedDownConds, false); err != nil {
+			return nil, false, err
+		}
+		installFTSHandlePathStats(ds.PossibleAccessPaths[0], ftsHandlePath)
+	} else {
+		if err := derivePathStatsAndTryHeuristics(ds); err != nil {
+			return nil, false, err
+		}
+		// Index merge paths are generated only from ordinary candidate paths.
+		if err := generateIndexMergePath(ds); err != nil {
+			return nil, false, err
+		}
 	}
-	// index merge path is generated from all conditions from ds based on ds.PossibleAccessPath.
-	// we should renew ds.PossibleAccessPath to AllPossibleAccessPath once a new DS is generated.
-	if err := generateIndexMergePath(ds); err != nil {
-		return nil, false, err
-	}
-	if err := cleanAccessPathForFTS(ds); err != nil {
-		return nil, false, err
-	}
-
 	indexForce := false
 	ds.AccessPathMinSelectivity, indexForce = getGeneralAttributesFromPaths(ds.PossibleAccessPaths, float64(ds.TblColHists.RealtimeCount))
 	if indexForce {
@@ -164,6 +179,25 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	}
 
 	return ds.StatsInfo(), true, nil
+}
+
+func installFTSHandlePathStats(exactPath, handlePath *util.AccessPath) {
+	*exactPath = util.AccessPath{
+		Index:               exactPath.Index,
+		Ranges:              handlePath.Ranges,
+		CountAfterAccess:    handlePath.CountAfterAccess,
+		MinCountAfterAccess: handlePath.MinCountAfterAccess,
+		MaxCountAfterAccess: handlePath.MaxCountAfterAccess,
+		AccessConds:         handlePath.AccessConds,
+		TableFilters:        handlePath.TableFilters,
+		ConstCols:           handlePath.ConstCols,
+		StoreType:           exactPath.StoreType,
+		IsIntHandlePath:     exactPath.IsIntHandlePath,
+		IsCommonHandlePath:  exactPath.IsCommonHandlePath,
+		Forced:              exactPath.Forced,
+		ForceNoKeepOrder:    exactPath.ForceNoKeepOrder,
+		IsSingleScan:        true,
+	}
 }
 
 func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression) error {
@@ -189,7 +223,7 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 			}
 		}
 	}
-	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl)
+	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl, path.Index)
 	return err
 }
 
@@ -265,7 +299,10 @@ func scaleCorColCountAfterAccess(path *util.AccessPath, countBeforeSplit float64
 }
 
 // deriveIndexPathStats will fulfill the information that the AccessPath need.
-// isIm indicates whether this function is called to generate the partial path for IndexMerge.
+// conds is the conditions used to generate the DetachRangeResult for path.
+// isIm indicates whether this function derives an IndexMerge partial path. For
+// partial paths, it skips the CountAfterAccess lower-bound adjustment and lets
+// CountAfterIndex use the index-filter selectivity without the DataSource row-count lower bound.
 func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []expression.Expression, isIm bool) {
 	if path.EqOrInCondCount == len(path.AccessConds) {
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
@@ -314,10 +351,10 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 }
 
 // deriveTablePathStats will fulfill the information that the AccessPath need.
-// isIm indicates whether this function is called to generate the partial path for IndexMerge.
-func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression, isIm bool) error {
+// skipCountAfterAccessAdjustment skips the CountAfterAccess lower-bound adjustment.
+func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression, skipCountAfterAccessAdjustment bool) error {
 	if path.IsCommonHandlePath {
-		return deriveCommonHandleTablePathStats(ds, path, conds, isIm)
+		return deriveCommonHandleTablePathStats(ds, path, conds, skipCountAfterAccessAdjustment)
 	}
 	var err error
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
@@ -398,22 +435,29 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 		countEst, err = cardinality.GetRowCountByColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges, true)
 		path.CountAfterAccess = countEst.Est
 	}
-	if !isIm {
+	if !skipCountAfterAccessAdjustment {
 		// Check if we need to apply a lower bound to CountAfterAccess
 		adjustCountAfterAccess(ds, path)
 	}
 	return err
 }
 
-func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression, isIm bool) error {
+func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression, skipCountAfterAccessAdjustment bool) error {
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.Ranges = ranger.FullNotNullRange()
+	// A TiFlash-only index can be attached to a table access path so the optimizer can
+	// select that storage path. The physical table range is still encoded by the
+	// common handle, so always derive it from the primary index instead of path.Index.
+	primaryIndex := ds.TableInfo.GetPrimaryKey()
+	if primaryIndex == nil || !primaryIndex.Primary {
+		return errors.New("primary index is missing for common handle table")
+	}
 	path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
-		util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+		util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, primaryIndex)
 	if len(conds) == 0 {
 		return nil
 	}
-	if err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl); err != nil {
+	if err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl, primaryIndex); err != nil {
 		return err
 	}
 	if path.EqOrInCondCount == len(path.AccessConds) {
@@ -439,7 +483,7 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 			scaleCorColCountAfterAccess(path, countBeforeSplit)
 		}
 	}
-	if !isIm {
+	if !skipCountAfterAccessAdjustment {
 		// Check if we need to apply a lower bound to CountAfterAccess
 		adjustCountAfterAccess(ds, path)
 	}
@@ -451,6 +495,7 @@ func detachCondAndBuildRangeForPath(
 	path *util.AccessPath,
 	conds []expression.Expression,
 	histColl *statistics.HistColl,
+	statsIndex *model.IndexInfo,
 ) error {
 	if len(path.IdxCols) == 0 {
 		path.TableFilters = conds
@@ -474,9 +519,9 @@ func detachCondAndBuildRangeForPath(
 		}
 	}
 	indexCols := path.IdxCols
-	if len(indexCols) > len(path.Index.Columns) {
+	if len(indexCols) > len(statsIndex.Columns) {
 		// Trim appended handle dimensions and keep only real index-definition columns for stats estimation.
-		indexCols = indexCols[0:len(path.Index.Columns)]
+		indexCols = indexCols[0:len(statsIndex.Columns)]
 	}
 	needPruneEstimateRange := false
 	if len(indexCols) < len(path.IdxCols) {
@@ -496,7 +541,7 @@ func detachCondAndBuildRangeForPath(
 			return err
 		}
 	}
-	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, estimateRanges, indexCols)
+	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, statsIndex.ID, estimateRanges, indexCols)
 	if err != nil {
 		return err
 	}

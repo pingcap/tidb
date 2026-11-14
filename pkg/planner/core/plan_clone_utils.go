@@ -129,13 +129,9 @@ func cloneDataSource(ds *logicalop.DataSource) *logicalop.DataSource {
 	clone.AllConds = append([]expression.Expression(nil), ds.AllConds...)
 	clone.PushedDownConds = append([]expression.Expression(nil), ds.PushedDownConds...)
 	if ds.FtsPushDown != nil {
-		clone.FtsPushDown = &logicalop.FTSPushDown{
-			IndexInfo: ds.FtsPushDown.IndexInfo,
-		}
-		if ds.FtsPushDown.QueryInfo != nil {
-			clone.FtsPushDown.QueryInfo = tidbutil.ProtoV1Clone(ds.FtsPushDown.QueryInfo)
-		}
+		clone.FtsPushDown = tidbutil.ProtoV1Clone(ds.FtsPushDown)
 	}
+
 	// Deep-clone AccessPaths so the Join and Apply alternatives have fully
 	// independent path objects. Stats derivation (fillIndexPath, etc.) mutates
 	// AccessPath fields in place; without deep cloning, costing one alternative
