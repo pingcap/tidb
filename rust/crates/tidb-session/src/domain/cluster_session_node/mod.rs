@@ -2974,8 +2974,21 @@ impl SystemSqlExecutor {
         ),
         tidb_sqlexec::SqlExecError,
     > {
-        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-            .execute_restricted_sql(context, options, sql, &[])
+        let option = tidb_sqlexec::exec_option(options);
+        let mut session = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if option.use_cur_session {
+            // Go `useCurrentSession`.
+            return with_exec_option(&mut session, &option, |session| {
+                execute_internal_under(session, context, sql)
+            });
+        }
+        // Go `getInternalSession`, this session the issuer.
+        let internal =
+            NodeRestrictedSql::of_issuer(Arc::downgrade(&session.node().domain), session.restricted_sql_issuer());
+        drop(session);
+        let result = internal.run(context, &option, sql);
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).append_restricted_sql_warnings();
+        result
     }
 }
 
@@ -3079,7 +3092,7 @@ impl tidb_sqlexec::SqlExecutor for SystemSqlExecutor {
 /// session a restricted statement runs on -- the snapshot, statistics
 /// version, analyze snapshot, DDL analyze and partition prune mode -- and
 /// their `clean`, which restores them (and clears the snapshot) afterwards.
-pub(crate) fn with_exec_option<T>(
+fn with_exec_option<T>(
     session: &mut Session,
     option: &tidb_sqlexec::ExecOption,
     run: impl FnOnce(&mut Session) -> Result<T, tidb_sqlexec::SqlExecError>,
@@ -3102,13 +3115,9 @@ fn with_exec_option_of<H, T>(
     let set = |session: &mut Session, name: &str, value: String| {
         session
             .set_session_sys_var(name, value)
-            .map_err(|error| -> tidb_sqlexec::SqlExecError { Box::new(SqlQueryError::from(error.to_mysql_error())) })
+            .map_err(|error| -> tidb_sqlexec::SqlExecError { error.to_mysql_error().message.into() })
     };
     let previous = |session: &Session, name: &str| session.vars.get_system(name).unwrap_or_default();
-    let original_snapshot_ts = session.vars.snapshot_ts();
-    let original_snapshot_schema = session.snapshot_schema.clone();
-    let original_ruv2 = session.last_ruv2_metrics.clone();
-    let original_observation = if option.use_cur_session { session.statement_observation.take() } else { None };
     let prev_stats_ver = previous(session, TIDB_ANALYZE_VERSION);
     let prev_analyze_snapshot = previous(session, TIDB_ENABLE_ANALYZE_SNAPSHOT);
     let prev_prune_mode = previous(session, TIDB_PARTITION_PRUNE_MODE);
@@ -3143,19 +3152,13 @@ fn with_exec_option_of<H, T>(
             );
         }
     }
-    if option.use_cur_session {
-        session.vars.restore_snapshot_ts(original_snapshot_ts);
-        session.snapshot_schema = original_snapshot_schema;
-        session.last_ruv2_metrics = original_ruv2;
-        session.statement_observation = original_observation;
-    }
     result
 }
 
 /// Go `ExecuteInternal(ctx, sql)` on an internal session: the session takes
 /// the request source `ctx` carries, and answers the drained rows with their
 /// result fields.
-pub(crate) fn execute_internal_under(
+fn execute_internal_under(
     session: &mut Session,
     context: &dyn tidb_sqlexec::ExecutionContext,
     sql: &str,
@@ -3364,11 +3367,3 @@ mod tests;
 
 mod login_policy;
 mod settings;
-
-/// Go `executeStmtImpl`: honor a canceled restricted SQL caller.
-pub(crate) fn prepare_restricted_caller(session: &mut Session, context: &dyn tidb_sqlexec::ExecutionContext) -> tidb_sqlexec::Result<()> {
-    if let Some(source) = sessions::context_request_source(context) {
-        session.set_internal_request_source(&source.source_type);
-    }
-    sessions::honor_canceled_caller(context)
-}

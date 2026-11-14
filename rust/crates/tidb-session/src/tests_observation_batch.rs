@@ -603,15 +603,22 @@ fn observation_plan_batch_encoded_plan_reaches_summary() {
 
 #[test]
 fn observation_plan_batch_binary_switch_is_live_across_sessions() {
-    // Go TestBinaryPlanSwitch writes the live global through SQL.
-    let registry = tidb_privilege::PrivilegeRegistry::default();
-    let mut session = tests_support::authenticated_session(&registry, "root", "%");
-    let mut setter = tests_support::session_as(&registry, session.shared_catalog(), "root", "%");
-    setter.run("SET GLOBAL tidb_generate_binary_plan=OFF").unwrap();
+    let mut session = Session::new();
+    session.set_user("root@%".into(), "root@localhost".into());
+    let globals = session.vars.global_sysvars();
+    let mut setter = Session::new();
+    setter.vars.seed_from_globals(globals).unwrap();
+    setter
+        .vars
+        .set_global("tidb_generate_binary_plan", "OFF".into())
+        .unwrap();
     let sql = "SELECT 810 AS observation_binary_disabled";
     session.run(sql).unwrap();
     let (_, disabled) = observation_plan_samples(sql);
-    setter.run("SET GLOBAL tidb_generate_binary_plan=ON").unwrap();
+    setter
+        .vars
+        .set_global("tidb_generate_binary_plan", "ON".into())
+        .unwrap();
     let sql = "SELECT 811 AS observation_binary_enabled";
     session.run(sql).unwrap();
     let (_, enabled) = observation_plan_samples(sql);

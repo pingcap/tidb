@@ -454,14 +454,21 @@ impl SysvarReloader {
         // Go `LoadSysVarCacheLoop`: each rebuild reads the table through the
         // domain's system sessions (`rebuildSysVarCache` -> `fetchTableValues`),
         // the first one before the loop starts, its failure the caller's.
-        live.set_restricted_sql_executor(Arc::new(SysvarPoolExecutor(Arc::downgrade(&session_pool))));
-        live.rebuild_sys_var_cache().map_err(|error| SysvarReloadError::Load(error.to_string()))?;
-        // Go serializes the read and publication with sysVarCache.rebuildLock.
-        // No pre-read image is passed from the reload loop into rebuild.
-        let _ = publication_fence;
-        Self::spawn_with_reload(interval, Box::new(move || {
-            live.rebuild_sys_var_cache().map(|()| true).map_err(|error| error.to_string())
-        }))
+        let rows = fetch_table_values(&crate::sys_session::StatsPool {
+            session_pool: Some(&session_pool),
+        })
+        .map_err(SysvarReloadError::Load)?;
+        live.replace_from(&GlobalSysvars::from_cluster_rows(rows));
+        Self::spawn_with_read(
+            live,
+            interval,
+            publication_fence,
+            Box::new(move || {
+                fetch_table_values(&crate::sys_session::StatsPool {
+                    session_pool: Some(&session_pool),
+                })
+            }),
+        )
     }
 
     /// Starts the reload thread with an injectable read step; production
@@ -471,18 +478,6 @@ impl SysvarReloader {
         interval: Duration,
         publication_fence: SysvarPublicationFence,
         mut read: SysvarReloadRead,
-    ) -> Result<Self, SysvarReloadError> {
-        Self::spawn_with_reload(interval, Box::new(move || {
-            let observed_epoch = publication_fence.observed_epoch();
-            let fresh = GlobalSysvars::from_cluster_rows(read()?);
-            Ok(publication_fence.publish_reload_if_current(observed_epoch, &live, &fresh))
-        }))
-    }
-
-    /// Go `LoadSysVarCacheLoop`: each tick asks the cache to rebuild itself.
-    fn spawn_with_reload(
-        interval: Duration,
-        mut reload: Box<dyn FnMut() -> Result<bool, String> + Send>,
     ) -> Result<Self, SysvarReloadError> {
         if interval.is_zero() {
             return Err(SysvarReloadError::ZeroInterval);
@@ -512,9 +507,15 @@ impl SysvarReloader {
                         return;
                     }
                     worker_stats.passes.fetch_add(1, Ordering::AcqRel);
-                    match reload() {
-                        Ok(published) => {
-                            if published {
+                    let observed_epoch = publication_fence.observed_epoch();
+                    match read() {
+                        Ok(rows) => {
+                            let fresh = GlobalSysvars::from_cluster_rows(rows);
+                            if publication_fence.publish_reload_if_current(
+                                observed_epoch,
+                                &live,
+                                &fresh,
+                            ) {
                                 worker_stats.reloads.fetch_add(1, Ordering::AcqRel);
                             }
                         }
@@ -1394,59 +1395,5 @@ mod reloader_tests {
         let warning = outcome.expect("an unknown future sysvar must not panic this node");
         assert_eq!(warning.as_deref(), Some("post-commit read unavailable"));
         assert!(live.overrides().is_empty());
-    }
-}
-
-/// Go `Domain.sysSessionPool`: get a session for fetchTableValues and return
-/// it after execution. Weak ownership avoids a domain/pool/cache cycle.
-struct SysvarPoolExecutor(std::sync::Weak<crate::sys_session::DomainSysSessionPool>);
-impl SysvarPoolExecutor {
-    /// Go `Domain.rebuildSysVarCache`: sysSessionPool.Get and deferred Put.
-    fn with_executor<T>(
-        &self,
-        run: impl FnOnce(&dyn tidb_sqlexec::RestrictedSqlExecutor) -> tidb_sqlexec::Result<T>,
-    ) -> tidb_sqlexec::Result<T> {
-        let pool = self.0.upgrade().ok_or("sysvar session pool is closed")?;
-        let session = pool.get()?;
-        let result =
-            session.with_session_context(|context| run(context.restricted_sql_executor().as_ref()));
-        pool.put(&session);
-        result
-    }
-}
-impl tidb_sqlexec::RestrictedSqlExecutor for SysvarPoolExecutor {
-    /// Go `sqlexec.RestrictedSQLExecutor.ParseWithParams`.
-    fn parse_with_params(
-        &self,
-        context: &dyn tidb_sqlexec::ExecutionContext,
-        sql: &str,
-        args: &[tidb_sqlescape::SqlArg<'_>],
-    ) -> tidb_sqlexec::Result<tidb_ast::Stmt> {
-        self.with_executor(|exec| exec.parse_with_params(context, sql, args))
-    }
-    /// Go `sqlexec.RestrictedSQLExecutor.ExecRestrictedStmt`.
-    fn exec_restricted_stmt(
-        &self,
-        context: &dyn tidb_sqlexec::ExecutionContext,
-        stmt: &tidb_ast::Stmt,
-        options: &[tidb_sqlexec::OptionFuncAlias],
-    ) -> tidb_sqlexec::Result<(
-        Vec<Vec<tidb_datatype::Datum>>,
-        Vec<tidb_resolve::ResultFieldRef>,
-    )> {
-        self.with_executor(|exec| exec.exec_restricted_stmt(context, stmt, options))
-    }
-    /// Go `sqlexec.RestrictedSQLExecutor.ExecRestrictedSQL`.
-    fn exec_restricted_sql(
-        &self,
-        context: &dyn tidb_sqlexec::ExecutionContext,
-        options: &[tidb_sqlexec::OptionFuncAlias],
-        sql: &str,
-        args: &[tidb_sqlescape::SqlArg<'_>],
-    ) -> tidb_sqlexec::Result<(
-        Vec<Vec<tidb_datatype::Datum>>,
-        Vec<tidb_resolve::ResultFieldRef>,
-    )> {
-        self.with_executor(|exec| exec.exec_restricted_sql(context, options, sql, args))
     }
 }

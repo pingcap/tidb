@@ -161,28 +161,6 @@ impl Session {
 }
 
 impl tidb_executor::show::exec::ShowExec for Session {
-    /// Go `ShowExec.fetchShowTableStatus`: query TABLES on the issuer,
-    /// using its transaction timestamp unless tidb_snapshot overrides it.
-    fn show_table_status_rows(&mut self, database: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let snapshot = if self.vars.snapshot_ts() != 0 {
-            self.vars.snapshot_ts()
-        } else {
-            u64::try_from(self.current_tso.value()).unwrap_or_default()
-        };
-        let context = tikv_client::util::with_internal_source_type(
-            &tikv_client::trace::TraceContext::new(),
-            tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY,
-        );
-        let options = [
-            tidb_sqlexec::exec_option_with_snapshot(snapshot),
-            std::sync::Arc::new(tidb_sqlexec::exec_option_use_cur_session) as tidb_sqlexec::OptionFuncAlias,
-        ];
-        self.execute_restricted_sql(&context, &options,
-            "SELECT table_name, engine, version, row_format, table_rows, avg_row_length, data_length, max_data_length, index_length, data_free, auto_increment, create_time, update_time, check_time, table_collation, IFNULL(checksum,''), create_options, table_comment FROM information_schema.tables WHERE lower(table_schema)=%? ORDER BY table_name",
-            &[tidb_sqlescape::SqlArg::from(tidb_hack::go_to_lower(database).as_str())],
-        ).map(|(rows, _)| rows).map_err(tidb_executor::memtable_reader::sql_exec_driver_error)
-    }
-
     fn with_catalog_scope<T>(
         &mut self,
         include_local: bool,

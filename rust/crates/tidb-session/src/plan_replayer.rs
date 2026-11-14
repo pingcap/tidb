@@ -124,8 +124,28 @@ impl tidb_sqlexec::RestrictedSqlExecutor for SessionSql<'_> {
         sql: &str,
         arguments: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<(Vec<Vec<Datum>>, Vec<tidb_resolve::ResultFieldRef>), tidb_sqlexec::SqlExecError> {
-        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-            .execute_restricted_sql(context, options, sql, arguments)
+        if !tidb_sqlexec::exec_option(options).use_cur_session {
+            let internal = {
+                let session = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                session.node.as_ref().map(|node| {
+                    crate::domain::cluster_session_node::NodeRestrictedSql::of_issuer(
+                        std::sync::Arc::downgrade(node.domain()),
+                        session.restricted_sql_issuer(),
+                    )
+                })
+            };
+            if let Some(internal) = internal {
+                let result = internal.exec_restricted_sql(context, options, sql, arguments);
+                self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).append_restricted_sql_warnings();
+                return result;
+            }
+        }
+        let sql = tidb_sqlexec::sql_with_params(sql, arguments)?;
+        let Some(mut record_set) = self.record_set(&sql)? else {
+            return Ok((Vec::new(), Vec::new()));
+        };
+        let rows = tidb_sqlexec::drain_record_set(context, record_set.as_mut(), 1024)?;
+        Ok((rows, record_set.fields().to_vec()))
     }
 }
 
