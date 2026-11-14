@@ -539,3 +539,69 @@ func TestFullTextIndexPostingsProbeScope(t *testing.T) {
 	require.Greater(t, estimates("Projection", "select id + 1 from gt where match(body) against('+alpha' in boolean mode)")[0], 1.0)
 	tk.MustExec("rollback")
 }
+
+// TestFullTextIndexPostingsProbeReadTimestamp checks that a probe counts the
+// postings the statement itself reads: those of a historical read, of the
+// transaction's snapshot, or, under READ COMMITTED, of each statement.
+func TestFullTextIndexPostingsProbeReadTimestamp(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, body longtext, fulltext index idx (body))")
+	insert := func(from, to int, body string) {
+		values := make([]string, 0, to-from)
+		for i := from; i < to; i++ {
+			values = append(values, fmt.Sprintf("(%d, '%s')", i, body))
+		}
+		tk.MustExec("insert into t values " + strings.Join(values, ","))
+	}
+	const search = "select id from t where match(body) against('+rareword' in boolean mode)"
+	estimate := func(tk *testkit.TestKit) float64 {
+		for _, row := range tk.MustQuery("explain format = 'brief' " + search).Rows() {
+			if strings.Contains(fmt.Sprint(row[0]), "FullTextIndexScan") {
+				var est float64
+				_, err := fmt.Sscanf(fmt.Sprint(row[1]), "%f", &est)
+				require.NoError(t, err)
+				return est
+			}
+		}
+		require.Fail(t, "no FullTextIndexScan in the plan")
+		return 0
+	}
+
+	insert(0, 2000, "filler text")
+	insert(2000, 2007, "filler rareword")
+	require.Equal(t, 7.0, estimate(tk))
+
+	// A historical read counts the postings of its own timestamp.
+	tk.MustExec(`insert into mysql.tidb values ('tikv_gc_safe_point', '20060102-15:04:05 -0700', '')
+		on duplicate key update variable_value = '20060102-15:04:05 -0700'`)
+	tk.MustExec("begin")
+	past := fmt.Sprint(tk.MustQuery("select @@tidb_current_ts").Rows()[0][0])
+	tk.MustExec("rollback")
+	insert(2007, 2030, "filler rareword")
+	require.Equal(t, 30.0, estimate(tk))
+	tk.MustExec("set @@tidb_snapshot = " + past)
+	require.Equal(t, 7.0, estimate(tk))
+	tk.MustExec("set @@tidb_snapshot = ''")
+
+	// A transaction counts those of its snapshot, whatever commits after it
+	// started; under READ COMMITTED each statement counts those of its own.
+	other := testkit.NewTestKit(t, store)
+	other.MustExec("use test")
+	tk.MustExec("begin pessimistic")
+	require.Equal(t, 30.0, estimate(tk))
+	other.MustExec("insert into t values (3000, 'filler rareword'), (3001, 'filler rareword')")
+	require.Equal(t, 30.0, estimate(tk))
+	tk.MustExec("rollback")
+
+	tk.MustExec("set transaction_isolation = 'READ-COMMITTED'")
+	tk.MustExec("begin pessimistic")
+	require.Equal(t, 32.0, estimate(tk))
+	other.MustExec("insert into t values (3002, 'filler rareword')")
+	require.Equal(t, 33.0, estimate(tk))
+	tk.MustExec("rollback")
+}

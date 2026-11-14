@@ -447,11 +447,11 @@ func (c *rangedPostingCursor) openNext(from kv.Key) (bool, error) {
 	for c.next < len(c.source.handleRanges) {
 		ran := c.source.handleRanges[c.next]
 		c.next++
-		start := kv.Key(slices.Concat(c.termKey, ran.low))
+		start := slices.Concat(c.termKey, ran.low)
 		if ran.lowExclude {
 			start = start.PrefixNext()
 		}
-		end := kv.Key(slices.Concat(c.termKey, ran.high))
+		end := slices.Concat(c.termKey, ran.high)
 		if !ran.highExclude {
 			end = end.PrefixNext()
 		}
