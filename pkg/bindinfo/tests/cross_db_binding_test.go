@@ -47,17 +47,18 @@ func TestCrossDBBindingBasic(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		for _, idx := range []string{"a", "b", "c", "d", "e"} {
 			tk.MustExec("use test")
-			tk.MustExec(fmt.Sprintf(`create %v binding using select /*+ use_index(t, %v) */ * from *.t`, scope, idx))
+			tk.MustExec(fmt.Sprintf(`create %v binding using select /*+ use_index(t, %v) */ * from *.t where %v >= 0`, scope, idx, idx))
 			for _, useDB := range []string{"test", "test1", "test2"} {
 				tk.MustExec("use " + useDB)
 				for _, testDB := range []string{"", "test.", "test1.", "test2."} {
+					query := fmt.Sprintf("select * from %vt where %v >= 0", testDB, idx)
 					tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`) // enabled
-					tk.MustUseIndex(fmt.Sprintf("select * from %vt", testDB), idx)
+					tk.MustUseIndex(query, idx)
 					tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
-					tk.MustUseIndex(fmt.Sprintf("select * from %vt", testDB), idx)
+					tk.MustUseIndex(query, idx)
 					tk.MustQuery(`show warnings`).Check(testkit.Rows())  // no warning
 					tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=0`) // disabled
-					tk.MustQuery(fmt.Sprintf("select * from %vt", testDB))
+					tk.MustQuery(query)
 					tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
 				}
 			}
