@@ -2,9 +2,9 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 8,
+    "unresolved": 9,
     "open": 0,
-    "partial": 8
+    "partial": 9
   },
   "findings": [
     {
@@ -66,9 +66,16 @@
       "finding": "Local `SHOW BACKUP METADATA` executes over Go V1/V2 backupmeta (including indexed schema checksums; the BR reader also reads encrypted V2 fixtures). Local atomic writes, Go V1/V2 MetaWriter (including encryption, indexes and archive sizes), DDL reading, restore schema/file loading with partition assignment, checksums, and statistics payloads are ported and tested against Go tests/captured output. BRIE's queue/progress, SHOW BACKUPS/RESTORES, SHOW BR JOB QUERY, CANCEL BR JOB, dynamic privileges, SEM/store builder guards and SQL option/configuration fields are ported. Remaining: `BRIEExec.Next` does not register or execute BACKUP/RESTORE; `task.RunBackup`/`RunRestore`, the backup client and snapshot restore client, PD/GC/checkpoint orchestration, TiKV backup/SST import, tidbGlue and restore DDL are absent. Queue execution is tested directly with registered jobs, not physical backup jobs. Complete destination URL parsing/canonicalization, remote backend construction/credential extraction, complete task configuration/CLI parsing and remaining BR metadata paths (compatibility checks, statistics-file writing/downloading and restore integration) remain unported. No database/table backup-drop-restore roundtrip is established.",
       "go_owner": "`pkg/executor/brie.go`, `br/pkg/task`, `br/pkg/backup`, `br/pkg/restore/snap_client`",
       "rust_evidence": "`rust/crates/tidb-executor/src/brie.rs`, `rust/crates/tidb-br/src/task`, `rust/crates/tidb-br/src/metautil.rs`, `rust/crates/tidb-br/src/metautil`, `rust/docs/parity/current-audit/e07-execplan.md`"
+    },
+    {
+      "id": "R01",
+      "status": "partial",
+      "group": "Domain and process services",
+      "finding": "Go's `ExecRestrictedSQL` / `ExecuteInternal` are methods of the issuing session (`withRestrictedSQLExecutor`); this port's executors are adapters beside it (`NodeRestrictedSql`, `SystemSqlExecutor`, `ClusterStatsSqlExecutor`, the plan replayer's `SessionSql`). The node's executors apply and restore `ExecOption` as Go's `useCurrentSession` / `getInternalSession` do, and share a `RestrictedSqlIssuer` with the session they were taken from, through which the internal session inherits `OptimizerUseInvisibleIndexes` / `SkipMissingPartitionStats` and hands its warnings back (`IgnoreWarning`); the statistics session's executor is the same pair (`ClusterStatsSessionState::restricted`), and an ANALYZE is an auto analyze because its session is `InRestrictedSQL`. The internal session is a pooled one's (`getSessionFactoryInternal`: its own autocommit, max_execution_time, max_allowed_packet and in-place constraint check, and no copy of the global tier) and shares the issuer's `InspectionTableCache`. What remains: a user session's executor cannot run a statement on the session itself (`ExecOptionUseCurSession`). `rebuildSysVarCache` consumes the rows the domain's sysvar reload loop last read (`SysVarCacheDeps::table_contents`) where Go's runs `fetchTableValues` itself",
+      "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 8,
+  "unresolved": 9,
   "open": 0,
-  "partial": 8
+  "partial": 9
 }
