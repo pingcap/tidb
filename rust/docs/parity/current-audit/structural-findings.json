@@ -2,9 +2,9 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 10,
+    "unresolved": 9,
     "open": 0,
-    "partial": 10
+    "partial": 9
   },
   "findings": [
     {
@@ -76,7 +76,7 @@
       "go_owner": "`pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap"
     }
   ],
-  "unresolved": 11,
+  "unresolved": 9,
   "open": 0,
-  "partial": 11
+  "partial": 9
 }
