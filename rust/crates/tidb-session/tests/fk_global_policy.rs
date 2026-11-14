@@ -119,7 +119,13 @@ fn foreign_key_global_policy_batch() {
         &mut session,
         "CREATE TABLE child(id INT, FOREIGN KEY fk(id) REFERENCES parent(k))",
     );
-    set("OFF");
+    // Go `TestCreateTableWithForeignKeyMetaInfo`: SET GLOBAL writes the
+    // domain's stored value, so LoadSysVarCacheLoop retains the policy.
+    sql(&mut session, "SET GLOBAL tidb_enable_foreign_key=OFF");
+    let tidb_session::StmtResult::Rows(stored) = session.run(
+        "SELECT variable_value FROM mysql.global_variables WHERE variable_name='tidb_enable_foreign_key'",
+    ).unwrap() else { panic!("stored global") };
+    assert_eq!(stored[0][0].go_bytes(), b"OFF");
     errno(&mut session, "INSERT INTO child VALUES (7)", 1452);
     sql(
         &mut session,
@@ -200,7 +206,7 @@ fn foreign_key_global_policy_batch() {
     sql(&mut session, "SET foreign_key_checks=OFF");
     sql(&mut session, "DROP TABLE parent");
     sql(&mut session, "SET foreign_key_checks=ON");
-    set("ON");
+    sql(&mut session, "SET GLOBAL tidb_enable_foreign_key=ON");
     sql(&mut session, "INSERT INTO legacy VALUES (9)");
     sql(&mut session, "INSERT INTO altered VALUES (9)");
     errno(
@@ -212,7 +218,7 @@ fn foreign_key_global_policy_batch() {
     errno(&mut session, "CREATE TABLE parent(k VARCHAR(20))", 3780);
     sql(&mut session, "DROP TABLE child");
     sql(&mut session, "CREATE TABLE parent(k VARCHAR(20))");
-    set("OFF");
+    sql(&mut session, "SET GLOBAL tidb_enable_foreign_key=OFF");
     sql(&mut session, "CREATE DATABASE other");
     sql(
         &mut session,
@@ -249,7 +255,7 @@ fn foreign_key_global_policy_batch() {
         table.max_foreign_key_id, 1,
         "legacy metadata still gets an ID"
     );
-    set("ON");
+    sql(&mut session, "SET GLOBAL tidb_enable_foreign_key=ON");
     check_table_foreign_keys_valid(&catalog, "test", &table, true).unwrap();
     assert_eq!(table.foreign_keys.get(0).unwrap().read().version, 0);
 }

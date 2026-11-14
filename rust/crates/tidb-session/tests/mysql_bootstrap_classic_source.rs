@@ -36,7 +36,7 @@ use tidb_infoschema::cluster_catalog::{
 };
 use tidb_ddl::cluster_ddl::add_index::AddIndexSubmission;
 use tidb_ddl::cluster_ddl::{
-    lower_ddl_with_context, plan_persisted_ddl_job_step, DdlJobSchemaState, PersistedDdlJobPlan,
+    lower_ddl_with_context, plan_persisted_ddl_job_step, PersistedDdlJobPlan,
 };
 use tidb_ddl::ddl_history_table::DdlHistoryTable;
 use tidb_ddl_jobsubmit::{plan_insert_attempt, JobSpec};
@@ -348,19 +348,25 @@ fn the_first_user_table_is_117() {
     apply_mutations(&mut store, &mutations);
     assert_eq!(spec.job.id, 118);
     let mut version = 0;
+    let row_ids = std::sync::Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default());
     for tick in 1..=2 {
+        let sessions = tidb_session::ddl_session_pool::recorded::RecordedDdlSession::new(
+            &mut store, row_ids.clone(),
+        ).unwrap();
+        let state = sessions.schema_state(118, true).unwrap();
         let plan = plan_persisted_ddl_job_step(
             &mut store,
             118,
             467_996_279_696_262_000 + tick,
-            DdlJobSchemaState::new(true),
+            state,
             &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
             None,
         )
         .unwrap();
-        let PersistedDdlJobPlan::Step(step) = plan else {
+        let PersistedDdlJobPlan::Step(mut step) = plan else {
             panic!("the job needs a worker step");
         };
+        sessions.append_writes(&mut step.write).unwrap();
         apply_mutations(&mut store, &step.write.mutations);
         version = version.max(step.write.schema_version);
     }

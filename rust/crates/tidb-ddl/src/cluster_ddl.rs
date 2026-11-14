@@ -5230,7 +5230,7 @@ pub(crate) fn session_job(context: &dyn DdlSessionContext, action: ActionType) -
 #[derive(Clone, Debug)]
 pub struct DdlJobSchemaState {
     /// Go `deliveryJob`'s `jobW`, refreshed by the scheduler between steps.
-    pub delivered_job: Option<tidb_model::JobW>,
+    pub delivered_job: tidb_model::JobW,
     /// Go IsMDLEnabled, including the next-generation kernel override.
     pub mdl_enabled: bool,
     /// Last version acknowledged by this owner run.
@@ -5243,9 +5243,9 @@ pub struct DdlJobSchemaState {
     /// every sub-job needs each one's); a new owner reruns them.
     pub reorg: Vec<add_index::ReorgOutcome>,
     /// What a step reaches through Go's `*worker` (its session pool and
-    /// store snapshots), which RECOVER needs. `None` for a run without one
-    /// (bootstrap, tests).
-    pub worker: Option<DdlStepWorker>,
+    /// store snapshots), which RECOVER needs. Bootstrap and tests supply
+    /// the same session pool as ordinary delivery.
+    pub worker: DdlStepWorker,
     /// The statement kv context of the step's transaction, which Go's
     /// `prepareTxn` tags with the job's SQL (`kv.ResourceGroupTagger`).
     /// `None` for a run without a transaction of its own.
@@ -5257,15 +5257,15 @@ pub struct DdlJobSchemaState {
 }
 
 impl DdlJobSchemaState {
-    /// Starts a fresh owner run in the selected source mode.
-    pub fn new(mdl_enabled: bool) -> Self {
+    /// Go `jobScheduler.deliveryJob`: start an owner run with its job and worker.
+    pub fn new(mdl_enabled: bool, delivered_job: tidb_model::JobW, worker: DdlStepWorker) -> Self {
         Self {
-            delivered_job: None,
+            delivered_job,
             mdl_enabled,
             synced_version: None,
             pending_version: None,
             reorg: Vec::new(),
-            worker: None,
+            worker,
             step_kv_context: None,
             info_cache: None,
         }
@@ -5393,7 +5393,7 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
     ) || alter_table::ALTER_TABLE_ACTIONS.contains(&action)
 }
 
-/// Plans Go's shared worker lifecycle: recover the selected schema barrier,
+/// Go `worker.transitOneJobStep`: recover the selected schema barrier,
 /// execute one action, then move a completed job to history after synchronization.
 /// A restarted owner supplies a fresh schema state and recovers the barrier.
 pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
@@ -5405,7 +5405,7 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
     let reorg_outcomes = schema_state.reorg.clone();
-    let sessions = schema_state.worker.clone();
+    let sessions = &schema_state.worker.clone();
     plan_persisted_ddl_job_with(
         snapshot,
         ddl_job_id,
@@ -5421,10 +5421,9 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
                 start_ts,
                 &reorg_outcomes,
                 row_ids,
-                sessions.as_ref(),
+                Some(sessions),
             )
         },
-        row_ids,
     )
 }
 
@@ -5704,7 +5703,7 @@ fn dispatch_persisted_action(
 
 /// Go `transitOneJobStepAndWaitSync`: recover the schema barrier before
 /// entering `worker.transitOneJobStep` and opening its transaction.
-pub(crate) fn schema_sync_before_step<S: MetaSnapshot>(
+pub fn schema_sync_before_step<S: MetaSnapshot>(
     snapshot: &mut S,
     schema_state: &DdlJobSchemaState,
     job: &tidb_model::Job,
@@ -5731,17 +5730,12 @@ fn recover_schema_before_step<S: MetaSnapshot>(
         info.omit_owner_id =
             tidb_metadef::is_system_related_db(&active.job.schema_name.to_string().go_to_lower());
         if !check_barrier { return Ok((Some(info), None)); }
-        // Go `sysTblMgr.GetMDLVer`; snapshot access is only for fixtures.
-        let mdl_ver = match schema_state.worker.as_ref() {
-            Some(worker) => {
-                let pool = worker.sess_pool.sess_pool().ok_or_else(||
-                    DdlPlanError::Encode("the DDL session pool has no sessions".to_owned()))?;
-                tidb_ddl_systable::Manager::get_mdl_ver(
-                    &tidb_ddl_systable::SystemTableManager::new(pool), ddl_job_id,
-                )
-            }
-            None => info.fixture_mdl_version(snapshot, ddl_job_id),
-        };
+        // Go `sysTblMgr.GetMDLVer` on the scheduler's session pool.
+        let pool = schema_state.worker.sess_pool.sess_pool().ok_or_else(||
+            DdlPlanError::Encode("the DDL session pool has no sessions".to_owned()))?;
+        let mdl_ver = tidb_ddl_systable::Manager::get_mdl_ver(
+            &tidb_ddl_systable::SystemTableManager::new(pool), ddl_job_id,
+        );
         match mdl_ver {
             Ok(version) if Some(version) != schema_state.synced_version => {
                 return Ok((None, Some(PersistedDdlJobPlan::SchemaSync {
@@ -5818,7 +5812,6 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         &SessionExtendedInfoSchema,
         &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     ) -> Result<PersistedDdlActionStep, DdlPlanError>,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
     // Go `transitOneJobStep`: the schema from `jobCtx.infoCache` at the
     // step's version; the handlers read the job's own objects through
@@ -5831,18 +5824,10 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         Some(cached) => cached.metadata_copy(),
         None => load_info_schema(snapshot)?,
     };
-    let job_table = tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&catalog)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    let mut active = match (&schema_state.delivered_job, schema_state.worker.as_ref()) {
-        (Some(job_w), _) => tidb_ddl_systable::ddl_job_table::ActiveDdlJob::from_job(
-            job_w.job.as_ref().expect("delivered job").read().clone(),
-        ),
-        (None, Some(_)) => return Err(DdlPlanError::Encode("DDL worker has no delivered job".to_owned())),
-        (None, None) => job_table
-            .load_by_id(snapshot, ddl_job_id)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-            .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?,
-    };
+    let job_w = &schema_state.delivered_job;
+    let mut active = tidb_ddl_systable::ddl_job_table::ActiveDdlJob::from_job(
+        job_w.job.as_ref().expect("delivered job").read().clone(),
+    );
     let result = (|| {
     if !supports_action(active.job.type_) {
         return Err(DdlPlanError::Encode(format!(
@@ -5851,25 +5836,18 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         )));
     }
     let (mdl_info, schema_sync) = recover_schema_before_step(
-        snapshot, &catalog, &active, &schema_state, schema_state.worker.is_none(),
+        snapshot, &catalog, &active, &schema_state, false,
     )?;
     if let Some(schema_sync) = schema_sync { return Ok(schema_sync); }
-    if let Some(job_w) = schema_state.delivered_job.clone() {
-        // Go `worker.transitOneJobStep`: compare the exact bytes, but run
-        // the delivered object. Re-decoding this read would lose that guard.
-        let bytes = match step_session(schema_state.worker.as_ref()) {
-            Some(session) => {
-                let sql = format!("select job_meta from mysql.tidb_ddl_job where job_id = {ddl_job_id}");
-                let rows = session.execute(start_ts, &sql, &[]).map_err(DdlPlanError::from_mysql_error)?;
-                rows.first().and_then(|row| row.first()).map(|value| value.go_bytes().to_vec())
-            }
-            None => job_table.job_bytes_by_id(snapshot, ddl_job_id)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        }.ok_or_else(|| DdlPlanError::Encode("not found".to_owned()))?;
-        if bytes != job_w.bytes.snapshot() {
-            return Err(DdlPlanError::Encode("job meta changed by others".to_owned()));
-        }
-        active.job = job_w.job.as_ref().expect("delivered job").read().clone();
+    // Go `worker.transitOneJobStep`: compare the exact bytes on w.sess,
+    // but execute the delivered object, never a decoded transaction row.
+    let session = step_session(Some(&schema_state.worker)).expect("worker session");
+    let sql = format!("select job_meta from mysql.tidb_ddl_job where job_id = {ddl_job_id}");
+    let rows = session.execute(start_ts, &sql, &[]).map_err(DdlPlanError::from_mysql_error)?;
+    let bytes = rows.first().and_then(|row| row.first())
+        .ok_or_else(|| DdlPlanError::Encode("not found".to_owned()))?;
+    if bytes.go_bytes() != job_w.bytes.snapshot() {
+        return Err(DdlPlanError::Encode("job meta changed by others".to_owned()));
     }
     // Go `transitOneJobStep` -> `prepareTxn`'s `attachTopProfilingInfo`:
     // every step, finishing ones included, runs under the job's SQL.
@@ -5899,16 +5877,12 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     ) {
         // Go `finishDDLJob`'s `finishRecoverTable` / `finishRecoverSchema` /
         // `finishFlashbackCluster`.
-        recover_table::finish_recover(&mut active.job, schema_state.worker.as_ref())?;
-        flashback_cluster::finish_flashback_cluster(&mut active.job, schema_state.worker.as_ref())?;
+        recover_table::finish_recover(&mut active.job, Some(&schema_state.worker))?;
+        flashback_cluster::finish_flashback_cluster(&mut active.job, Some(&schema_state.worker))?;
         return finish_persisted_ddl_job(
-            snapshot,
-            &catalog,
-            &job_table,
             &mut active,
             start_ts,
-            row_ids,
-            step_session(schema_state.worker.as_ref()).as_ref(),
+            &session,
         )
         .map(PersistedDdlJobPlan::Step);
     }
@@ -5927,14 +5901,12 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     }
     if active.job.is_pausing() {
         active.job.state = JobState::PAUSED;
-        let mut mutations = Vec::new();
+        let mutations = Vec::new();
         update_ddl_job_2_table(
-            step_session(schema_state.worker.as_ref()).as_ref(),
+            &session,
             start_ts,
-            &job_table,
             &mut active,
             false,
-            &mut mutations,
         )?;
         return Ok(PersistedDdlJobPlan::Step(PersistedDdlJobStep {
             job: Box::new(active.job.clone()),
@@ -5949,7 +5921,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     let previous_schema_version = active.job.last_schema_version;
     let outcome = recover_ddl_action(|| {
         if cancelling {
-            run_in_job_txn(snapshot, start_ts, schema_state.worker.as_ref(), |txn| {
+            run_in_job_txn(snapshot, start_ts, Some(&schema_state.worker), |txn| {
                 plan_cancel_persisted_ddl_job(txn, &catalog, &mut active, start_ts)
             })
         } else {
@@ -6002,16 +5974,12 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     if active.job.state == JobState::CANCELLED {
         // Go `finishDDLJob`'s `finishRecoverTable` / `finishRecoverSchema` /
         // `finishFlashbackCluster`.
-        recover_table::finish_recover(&mut active.job, schema_state.worker.as_ref())?;
-        flashback_cluster::finish_flashback_cluster(&mut active.job, schema_state.worker.as_ref())?;
+        recover_table::finish_recover(&mut active.job, Some(&schema_state.worker))?;
+        flashback_cluster::finish_flashback_cluster(&mut active.job, Some(&schema_state.worker))?;
         return finish_persisted_ddl_job(
-            snapshot,
-            &catalog,
-            &job_table,
             &mut active,
             start_ts,
-            row_ids,
-            step_session(schema_state.worker.as_ref()).as_ref(),
+            &session,
         )
         .map(PersistedDdlJobPlan::Step);
     }
@@ -6020,17 +5988,13 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     if step.run_error.is_some() && !active.job.is_rollingback() && !active.job.is_rollback_done() {
         step.write = job_only_write(ddl_job_id, Vec::new());
         // The statements the failed handler ran on `w.sess` go too.
-        if let Some(worker) = schema_state.worker.as_ref() {
-            worker.step_buffer.reset();
-        }
+        schema_state.worker.step_buffer.reset();
     }
     update_ddl_job_2_table(
-        step_session(schema_state.worker.as_ref()).as_ref(),
+        &session,
         start_ts,
-        &job_table,
         &mut active,
         step.update_raw_args,
-        &mut step.write.mutations,
     )?;
     // Only a new diff publishes a schema version; cancellation is not a
     // publication of whatever catalog version happened to be read.
@@ -6046,30 +6010,20 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         error_count: active.job.error_count,
     }))
     })();
-    if let Some(job_w) = &schema_state.delivered_job {
-        *job_w.job.as_ref().expect("delivered job").write() = active.job;
-    }
+    *job_w.job.as_ref().expect("delivered job").write() = active.job;
     result
 }
 
 pub(crate) use tidb_ddl_jobsubmit::wrap_key_2_string;
 
 /// Go `updateDDLJob2Table`: `update mysql.tidb_ddl_job set job_meta = ...`
-/// through the step's session; a run without one still stages the row
-/// itself, which Go never does.
+/// through the step's session.
 fn update_ddl_job_2_table(
-    session: Option<&crate::job_txn::StepSession>,
+    session: &crate::job_txn::StepSession,
     start_ts: u64,
-    job_table: &tidb_ddl_systable::ddl_job_table::DdlJobTable,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     update_raw_args: bool,
-    mutations: &mut Vec<BufferMutation>,
 ) -> Result<(), DdlPlanError> {
-    let Some(session) = session else {
-        return job_table
-            .append_update(active, update_raw_args, mutations)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()));
-    };
     let encoded = active
         .job
         .encode(update_raw_args)
@@ -6089,14 +6043,10 @@ fn update_ddl_job_2_table(
 // transaction after discarding action mutations; DONE/ROLLBACK_DONE reach it
 // only after the shared MDL barrier. No action handler writes history itself.
 #[allow(clippy::too_many_arguments)]
-fn finish_persisted_ddl_job<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    job_table: &tidb_ddl_systable::ddl_job_table::DdlJobTable,
+fn finish_persisted_ddl_job(
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-    session: Option<&crate::job_txn::StepSession>,
+    session: &crate::job_txn::StepSession,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
     if active.job.state == JobState::DONE {
         active.job.state = JobState::SYNCED;
@@ -6112,49 +6062,35 @@ fn finish_persisted_ddl_job<S: MetaSnapshot>(
         .encode(false)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     let mut mutations = Vec::new();
-    if let Some(session) = session {
-        // Go `finishDDLJob` -> `addDelRangeJob`: the keys the job left
-        // behind, recorded before it moves to history, on a pooled session
-        // in their own transactions.
-        if crate::ddl_delete_range::job_need_gc(&active.job) {
-            crate::ddl_delete_range::add_del_range_job(session.pool.as_ref(), &active.job)?;
-        }
-        if active.job.type_ == ActionType::ACTION_ALTER_NO_CACHE_TABLE
-            && !active.job.is_cancelled()
-        {
-            session
-                .execute(
-                    start_ts,
-                    &format!(
-                        "delete from mysql.table_cache_meta where tid = {}",
-                        active.job.table_id
-                    ),
-                    &[],
-                )
-                .map_err(DdlPlanError::from_mysql_error)?;
-        }
-        // Go `deleteDDLJob`, then `AddHistoryDDLJob`, on `w.sess`.
+    // Go `finishDDLJob` -> `addDelRangeJob`: the keys the job left
+    // behind, recorded before it moves to history, on a pooled session
+    // in their own transactions.
+    if crate::ddl_delete_range::job_need_gc(&active.job) {
+        crate::ddl_delete_range::add_del_range_job(session.pool.as_ref(), &active.job)?;
+    }
+    if active.job.type_ == ActionType::ACTION_ALTER_NO_CACHE_TABLE
+        && !active.job.is_cancelled()
+    {
         session
             .execute(
                 start_ts,
-                &format!("delete from mysql.tidb_ddl_job where job_id = {}", active.job.id),
+                &format!(
+                    "delete from mysql.table_cache_meta where tid = {}",
+                    active.job.table_id
+                ),
                 &[],
             )
             .map_err(DdlPlanError::from_mysql_error)?;
-        add_history_ddl_job(session, start_ts, &active.job, encoded, &mut mutations)?;
-    } else {
-        mutations = crate::ddl_delete_range::finish_ddl_job(
-            snapshot,
-            catalog,
-            &active.job,
-            start_ts,
-            row_ids,
-        )?;
-        append_history_ddl_job(catalog, snapshot, &active.job, encoded, &mut mutations)?;
-        job_table
-            .append_delete(active, &mut mutations)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     }
+    // Go `deleteDDLJob`, then `AddHistoryDDLJob`, on `w.sess`.
+    session
+        .execute(
+            start_ts,
+            &format!("delete from mysql.tidb_ddl_job where job_id = {}", active.job.id),
+            &[],
+        )
+        .map_err(DdlPlanError::from_mysql_error)?;
+    add_history_ddl_job(session, start_ts, &active.job, encoded, &mut mutations)?;
     Ok(PersistedDdlJobStep {
         job: Box::new(active.job.clone()),
         write: job_only_write(active.job.id, mutations),
@@ -7677,28 +7613,18 @@ pub enum PersistedDdlJobFailure {
     Panic,
 }
 
-/// Plans an action failure against the ORIGINAL action snapshot. The
-/// caller commits this job-only write using that same transaction, so a racing
+/// Go `worker.runOneJobStep`: checkpoint a failure on the delivered job.
+/// The caller commits this job-only write using that same transaction, so a racing
 /// pause/cancel causes a write conflict instead of being overwritten.
-pub fn plan_persisted_ddl_job_failure<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub fn plan_persisted_ddl_job_failure(
     ddl_job_id: i64,
     start_ts: u64,
     failure: PersistedDdlJobFailure,
-    delivered_job: Option<&tidb_model::Job>,
+    delivered_job: &tidb_model::Job,
     load_error_count_limit: &dyn Fn() -> i64,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-    session: Option<&crate::job_txn::StepSession>,
+    session: &crate::job_txn::StepSession,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
-    let job_table = tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&catalog)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    let mut active = match delivered_job {
-        Some(job) => tidb_ddl_systable::ddl_job_table::ActiveDdlJob::from_job(job.clone()),
-        None => job_table.load_by_id(snapshot, ddl_job_id)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-            .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?,
-    };
+    let mut active = tidb_ddl_systable::ddl_job_table::ActiveDdlJob::from_job(delivered_job.clone());
     if active.job.real_start_ts == 0 {
         active.job.real_start_ts = start_ts;
     }
@@ -7725,17 +7651,13 @@ pub fn plan_persisted_ddl_job_failure<S: MetaSnapshot>(
     };
     if active.job.is_cancelled() {
         return finish_persisted_ddl_job(
-            snapshot,
-            &catalog,
-            &job_table,
             &mut active,
             start_ts,
-            row_ids,
             session,
         );
     }
-    let mut mutations = Vec::new();
-    update_ddl_job_2_table(session, start_ts, &job_table, &mut active, false, &mut mutations)?;
+    let mutations = Vec::new();
+    update_ddl_job_2_table(session, start_ts, &mut active, false)?;
     Ok(PersistedDdlJobStep {
         job: Box::new(active.job.clone()),
         write: job_only_write(ddl_job_id, mutations),
@@ -7867,22 +7789,6 @@ pub struct MdlInfoUpdate {
 }
 
 impl MdlInfoUpdate {
-    /// Reads the MDL row in deterministic snapshot-plan fixtures. Live
-    /// workers use `systable.Manager.GetMDLVer` on the session pool.
-    fn fixture_mdl_version<S: MetaSnapshot>(
-        &self, snapshot: &mut S, job_id: i64,
-    ) -> Result<i64, tidb_ddl_systable::SystemTableManagerError> {
-        use tidb_syssession::mysql_system_tables::{scan_system_table_prefixed, SystemRow, SystemTableView};
-        let view = SystemTableView::project("mysql.tidb_mdl_info", &self.table, &["job_id", "version"]);
-        for (key, value) in scan_system_table_prefixed(snapshot, &view, &[Datum::Int(job_id)])? {
-            let row = SystemRow::parse(&view, &key, &value)?;
-            if row.i64("job_id")? == Some(job_id) {
-                return row.i64("version")?.ok_or(tidb_ddl_systable::SystemTableManagerError::NotFound);
-            }
-        }
-        Err(tidb_ddl_systable::SystemTableManagerError::NotFound)
-    }
-
     /// Go `registerMDLInfo` on the step's session: the job's `table_ids`
     /// read back from `mysql.tidb_ddl_job`, then `replace into
     /// mysql.tidb_mdl_info` (without `owner_id` for a system database).
@@ -8669,33 +8575,7 @@ fn add_history_ddl_job(
     Ok(())
 }
 
-/// Go `ddl.AddHistoryDDLJob`: the job's best-effort copy in
-/// `mysql.tidb_ddl_history` (`addHistoryDDLJob2Table`, whose failure Go only
-/// logs), then the meta `DDLJobHistory` entry every reader iterates.
-fn append_history_ddl_job<S: MetaSnapshot>(
-    catalog: &SessionExtendedInfoSchema,
-    snapshot: &mut S,
-    job: &Job,
-    encoded: Vec<u8>,
-    writes: &mut Vec<BufferMutation>,
-) -> Result<(), DdlPlanError> {
-    let table_copy = crate::ddl_history_table::DdlHistoryTable::locate(catalog)
-        .and_then(|history| history.append_insert_ignore(snapshot, job, &encoded, writes));
-    if let Err(error) = table_copy {
-        tidb_ddl_logutil::ddl_logger().info(
-            "failed to add DDL job to history table",
-            &[tidb_log::Field::new(
-                "error",
-                tidb_log::Value::Str(error.to_string()),
-            )],
-        );
-    }
-    writes.push(BufferMutation::set(
-        key::ddl_job_history_kv_key(job.id),
-        encoded,
-    )?);
-    Ok(())
-}
+
 
 /// The job Go's worker files when a direct change finishes (`finishDDLJob`):
 /// the submitter's identity for it (`Job.SchemaName` / `TableName` /

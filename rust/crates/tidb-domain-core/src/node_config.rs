@@ -283,7 +283,10 @@ impl fmt::Display for NodeConfigError {
 
 impl std::error::Error for NodeConfigError {}
 
-fn parse_file_schema_lease(value: &str) -> Result<Duration, NodeConfigError> {
+/// Go `cmd/tidb-server.setGlobalVars`: parse the configured lease and
+/// normalize the legacy zero value to `config.DefSchemaLease` before any
+/// domain, including the bootstrap domain, constructs its validator.
+pub fn parse_file_schema_lease(value: &str) -> Result<Duration, NodeConfigError> {
     let parse = |value: &str| {
         serde_json::from_value::<tidb_config_configtypes::Duration>(serde_json::Value::String(
             value.to_owned(),

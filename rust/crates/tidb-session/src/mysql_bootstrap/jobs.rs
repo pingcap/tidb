@@ -47,10 +47,10 @@ use super::{
 use tidb_infoschema::cluster_catalog::{load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot};
 use tidb_ddl::cluster_ddl::add_index::AddIndexSubmission;
 use tidb_ddl::cluster_ddl::{
-    lower_ddl_with_context, plan_persisted_ddl_job_step, DdlJobSchemaState, DdlStatement,
+    lower_ddl_with_context, plan_persisted_ddl_job_step, DdlStatement,
     PersistedDdlJobPlan, ResourceGroupUpdate,
 };
-use tidb_ddl_jobsubmit::{plan_insert_attempt, JobSpec};
+use tidb_ddl_jobsubmit::plan_assign_global_ids;
 use tidb_ddl::real_tikv_ddl::prepare_persisted_job_submission;
 use tidb_metadef::system::SYSTEM_DATABASE_ID;
 use tidb_metadef::{BOOTSTRAP_TABLES, DDL_TABLE_VERSION_TABLES};
@@ -252,25 +252,29 @@ fn run_ddl_job<S: MetaSnapshot>(
         return Err(job_error("the statement queued no DDL job".to_owned()));
     };
     spec.job.version = JobVersion::V2;
-    let catalog = load_info_schema(overlay)?;
-    let mut before_insert = |_: &[JobSpec]| Option::<fn()>::None;
-    let (mutations, _) = plan_insert_attempt(
-        overlay,
-        &catalog,
-        std::slice::from_mut(&mut spec),
-        &mut before_insert,
-    )
-    .map_err(|error| job_error(error.to_string()))?;
+    let row_ids = std::sync::Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default());
+    let sessions = crate::ddl_session_pool::recorded::RecordedDdlSession::new(overlay, row_ids.clone())
+        .map_err(|error| job_error(error.to_string()))?;
+    let mut mutations = plan_assign_global_ids(overlay, std::slice::from_mut(&mut spec))
+        .map_err(|error| job_error(error.to_string()))?;
+    sessions.insert_jobs(clock.0, std::slice::from_mut(&mut spec))
+        .map_err(|error| job_error(error.to_string()))?;
+    sessions.append_mutations(&mut mutations).map_err(|error| job_error(error.to_string()))?;
     overlay.apply(&mutations);
     let job_id = spec.job.id;
+    drop(sessions);
 
     let mut outcome = JobOutcome::default();
     loop {
+        let sessions = crate::ddl_session_pool::recorded::RecordedDdlSession::new(overlay, row_ids.clone())
+            .map_err(|error| job_error(error.to_string()))?;
+        let schema_state = sessions.schema_state(job_id, true)
+            .map_err(|error| job_error(error.to_string()))?;
         let plan = plan_persisted_ddl_job_step(
             overlay,
             job_id,
             clock.tick(),
-            DdlJobSchemaState::new(true),
+            schema_state,
             &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
             None,
         )
@@ -283,7 +287,8 @@ fn run_ddl_job<S: MetaSnapshot>(
         if let Some(error) = &step.run_error {
             return Err(job_error(error.to_string()));
         }
-        let write = step.write;
+        let mut write = step.write;
+        sessions.append_writes(&mut write).map_err(|error| job_error(error.to_string()))?;
         // The side effects the owner makes beside the commit have no object
         // in the bootstrap: system tables carry no placement, label rule or
         // affinity group, and the bootstrap's statements create no index.

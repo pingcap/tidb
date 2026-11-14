@@ -114,6 +114,33 @@ fn test_create_tables() {
 mod adminpause;
 mod adminpause_cases;
 
+/// Go `TestMultiSchemaDeliveredReorg` (`zzprobe/y01_multi_schema`), capturing
+/// the column-position case in `ddl/multi_schema_change.test` with no index,
+/// one index, and its original five indexes. A later sub-job's row check
+/// must not discard an earlier sub-job's column move in the shared step.
+#[test]
+fn test_multi_schema_delivered_reorg() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = stack.factory.open_session(session_context(2905)).unwrap();
+    rows(&mut tk, "use test");
+    for indexes in [
+        "",
+        ", key ib(b)",
+        ", key ia(a), key ib(b), key ic(c), key iab(a,b), key iabc(a,b,c)",
+    ] {
+        rows(&mut tk, &format!("create table t (a int, b int, c int{indexes})"));
+        rows(&mut tk, "insert into t values (1,2,3),(11,22,33)");
+        rows(&mut tk, "alter table t modify column a tinyint after c, modify column b tinyint, modify column c tinyint first");
+        assert_eq!(
+            displayed(rows(&mut tk, "select * from t order by b")),
+            [["3", "2", "1"], ["33", "22", "11"]],
+            "indexes: {indexes}",
+        );
+        rows(&mut tk, "admin check table t");
+        rows(&mut tk, "drop table t");
+    }
+}
+
 /// Go `TestCancelJobBeforeRun` (`pkg/ddl/cancel_test.go`).
 #[test]
 fn test_cancel_job_before_run() {

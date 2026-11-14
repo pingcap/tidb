@@ -176,6 +176,10 @@ mod tests {
     /// and leaves the root account and global variables queryable by SQL.
     #[test]
     fn test_bootstrap() {
+        // Go `cmd/tidb-server.setGlobalVars` normalizes this legacy config
+        // before BootstrapSession; tests/integrationtest/config.toml uses it.
+        let restore_config = tidb_config::config_tree::config::restore_func();
+        tidb_config::config_tree::config::update_global(|config| config.lease = "0".to_owned());
         use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
         use std::time::Duration;
         use tidb_ddl_build::session_pool::DdlSessionPool;
@@ -204,6 +208,7 @@ mod tests {
         assert_eq!(root[0][1].go_bytes(), b"root");
         assert!(se.execute("select variable_name from mysql.global_variables", &[]).unwrap().len() > 1);
         assert!(se.execute("select job_id from mysql.tidb_ddl_job", &[]).unwrap().is_empty());
+        restore_config();
     }
 
     /// Go `TestBootstrapWithError`: DDL completed but the session died

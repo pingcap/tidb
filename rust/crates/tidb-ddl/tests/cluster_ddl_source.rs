@@ -28,7 +28,7 @@ use tidb_ddl_notifier::SchemaChangeEvent;
 use tidb_infoschema::cluster_catalog::{load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot};
 
 use tidb_kv::key::prefix_scan_end;
-use tidb_ddl::cluster_ddl::{lower_ddl_with_context, plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step, prepare_check_constraint_job_submission, AlterColumnAction, DdlPlan, DdlStatement, MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan, PersistedDdlJobStep};
+use tidb_ddl::cluster_ddl::{lower_ddl_with_context, prepare_check_constraint_job_submission, AlterColumnAction, DdlPlan, DdlStatement, MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan, PersistedDdlJobStep};
 use tidb_ddl_build::plan_error::DdlPlanError;
 
 use tidb_ddl::cluster_ddl::DdlJobSchemaState;
@@ -43,6 +43,58 @@ use tidb_meta::{key, value};
 use tidb_model::{ActionType, DBInfo, GoAnyView, GoShared, Job, JobState, JobVersion, SchemaState};
 use tidb_txnkv::transaction::{BufferMutation, BufferMutationOp};
 
+/// Go `jobScheduler.deliveryJob`: refresh on pooled SQL before a fixture step.
+fn plan_persisted_ddl_job_step(
+    store: &mut MetaStore,
+    job_id: i64,
+    ts: u64,
+    configure: impl FnOnce(&mut DdlJobSchemaState),
+    error_limit: &dyn Fn() -> i64,
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
+) -> Result<PersistedDdlJobPlan, DdlPlanError> {
+    let owned_row_ids = store.row_ids.clone();
+    let sessions = tidb_session::ddl_session_pool::recorded::RecordedDdlSession::new(
+        store, owned_row_ids.clone(),
+    )?;
+    let mut state = sessions.schema_state(job_id, true)?;
+    configure(&mut state);
+    if let Some(sync) = tidb_ddl::cluster_ddl::schema_sync_before_step(
+        store, &state, &state.delivered_job.job.as_ref().unwrap().read(),
+    )? { return Ok(sync); }
+    let mut plan = tidb_ddl::cluster_ddl::plan_persisted_ddl_job_step(
+        store, job_id, ts, state, error_limit, row_ids,
+    )?;
+    if let PersistedDdlJobPlan::Step(step) = &mut plan {
+        sessions.append_writes(&mut step.write)?;
+    }
+    Ok(plan)
+}
+
+/// Go `worker.runOneJobStep`: failure counting retains the delivered object.
+fn plan_persisted_ddl_job_failure(
+    store: &mut MetaStore,
+    job_id: i64,
+    ts: u64,
+    failure: PersistedDdlJobFailure,
+    error_limit: &dyn Fn() -> i64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    let owned_row_ids = store.row_ids.clone();
+    let sessions = tidb_session::ddl_session_pool::recorded::RecordedDdlSession::new(
+        store, owned_row_ids.clone(),
+    )?;
+    let state = sessions.schema_state(job_id, true)?;
+    let session = tidb_ddl::job_txn::StepSession {
+        pool: state.worker.sess_pool.clone(), buffer: state.worker.step_buffer.clone(),
+        sql: state.worker.step_sql.clone(), start_mode: state.worker.start_mode,
+    };
+    let mut step = tidb_ddl::cluster_ddl::plan_persisted_ddl_job_failure(
+        job_id, ts, failure, &state.delivered_job.job.as_ref().unwrap().read(),
+        error_limit, &session,
+    )?;
+    sessions.append_writes(&mut step.write)?;
+    Ok(step)
+}
+
 fn plan_worker_step(
     store: &mut MetaStore,
     job_id: i64,
@@ -53,7 +105,7 @@ fn plan_worker_step(
         store,
         job_id,
         ts,
-        DdlJobSchemaState::new(true),
+        |_| {},
         &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
         Some(&*row_ids),
     )? {
@@ -210,6 +262,7 @@ pub(crate) fn bootstrapped() -> MetaStore {
         "tidb_ddl_history",
         "tidb_mdl_info",
         "gc_delete_range",
+        "tidb_masking_policy",
     ] {
         let system_table = tidb_metadef::DDL_TABLE_VERSION_TABLES
             .iter()
@@ -578,21 +631,26 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
                 .mdl_info_update
                 .as_ref()
                 .expect("schema publication registers MDL");
-            assert_eq!(mdl.table_ids, ids);
+            let sessions = tidb_session::ddl_session_pool::recorded::RecordedDdlSession::new(store, row_ids.clone()).unwrap();
+            let state = sessions.schema_state(job.id, true).unwrap();
+            let session = tidb_ddl::job_txn::StepSession {
+                pool: state.worker.sess_pool.clone(), buffer: state.worker.step_buffer.clone(),
+                sql: state.worker.step_sql.clone(), start_mode: state.worker.start_mode,
+            };
+            mdl.register(&session, 20_000 + phases as u64, job.id, step.write.schema_version, "first-owner").unwrap();
+            let rows = session.execute(20_000 + phases as u64,
+                &format!("select table_ids from mysql.tidb_mdl_info where job_id = {}", job.id), &[]).unwrap();
+            assert_eq!(rows[0][0].go_bytes(), ids.as_bytes());
+            drop(session);
+            drop(state);
             let mut registration = Vec::new();
-            mdl.append_mutations(
-                job.id,
-                step.write.schema_version,
-                "first-owner",
-                &mut registration,
-            )
-            .unwrap();
+            sessions.append_mutations(&mut registration).unwrap();
             apply_mutations(store, &registration);
             match plan_persisted_ddl_job_step(
                 store,
                 job.id,
                 11_000,
-                DdlJobSchemaState::new(true),
+                |_| {},
                 &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
                 Some(&*row_ids),
             )
@@ -786,14 +844,13 @@ fn a_worker_step_runs_under_the_jobs_sql_digest() {
     // Go `prepareTxn` also tags the step's transaction with the job's SQL
     // (`txn.SetOption(kv.ResourceGroupTagger, ...)`).
     let step_kv_context = tidb_txnkv::StatementKvContextCell::default();
-    let mut schema_state = DdlJobSchemaState::new(true);
-    schema_state.step_kv_context = Some(step_kv_context.clone());
+    let configure = |state: &mut DdlJobSchemaState| state.step_kv_context = Some(step_kv_context.clone());
     let row_ids = std::sync::Arc::clone(&store.row_ids);
     plan_persisted_ddl_job_step(
         &mut store,
         job.id,
         10_000,
-        schema_state,
+        configure,
         &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
         Some(&*row_ids),
     )
@@ -970,7 +1027,7 @@ fn persisted_action_panic_preserves_checkpoint_and_discards_unfinished_metadata(
             &mut store,
             job.id,
             10_000,
-            DdlJobSchemaState::new(true),
+            |_| {},
             &|| limit,
             None,
         )
@@ -1034,6 +1091,7 @@ fn persisted_panic_during_cancellation_or_rollback_keeps_go_budget_and_prior_err
             .unwrap()
             .1
             .read().clone_like_go();
+        let valid_table = value::serialize_table_info(&table).unwrap();
         let constraint = tidb_model::table::ConstraintInfo {
             name: tidb_ast::CiString::new("c"),
             state: SchemaState::WRITE_ONLY,
@@ -1084,15 +1142,26 @@ fn persisted_panic_during_cancellation_or_rollback_keeps_go_budget_and_prior_err
             .unwrap()
             .job
             .raw_args;
-        let PersistedDdlJobPlan::Step(step) = plan_persisted_ddl_job_step(
-            &mut store,
-            job.id,
-            10_000,
-            DdlJobSchemaState::new(true),
-            &|| 3,
-            None,
-        )
-        .unwrap() else {
+        // Go's already-open worker session keeps its valid infoschema while
+        // the action reads the deliberately corrupt metadata transaction.
+        // Open the pool before exposing that corruption to the worker.
+        let run_step = |store: &mut MetaStore, ts| {
+            let key = key::table_kv_key(112, table_id);
+            let corrupt = store.pairs.insert(key.clone(), valid_table.clone()).unwrap();
+            let row_ids = store.row_ids.clone();
+            let sessions = tidb_session::ddl_session_pool::recorded::RecordedDdlSession::new(store, row_ids);
+            store.pairs.insert(key, corrupt);
+            let sessions = sessions.unwrap();
+            let state = sessions.schema_state(job.id, true).unwrap();
+            let mut plan = tidb_ddl::cluster_ddl::plan_persisted_ddl_job_step(
+                store, job.id, ts, state, &|| 3, None,
+            ).unwrap();
+            if let PersistedDdlJobPlan::Step(step) = &mut plan {
+                sessions.append_writes(&mut step.write).unwrap();
+            }
+            plan
+        };
+        let PersistedDdlJobPlan::Step(step) = run_step(&mut store, 10_000) else {
             panic!("panic must checkpoint")
         };
         assert_eq!(step.terminal, initial_state == JobState::ROLLINGBACK);
@@ -1108,15 +1177,7 @@ fn persisted_panic_during_cancellation_or_rollback_keeps_go_budget_and_prior_err
                 "original validation failure"
             );
             assert_eq!(active.job.raw_args, raw);
-            let PersistedDdlJobPlan::Step(step) = plan_persisted_ddl_job_step(
-                &mut store,
-                job.id,
-                20_000,
-                DdlJobSchemaState::new(true),
-                &|| 3,
-                None,
-            )
-            .unwrap() else {
+            let PersistedDdlJobPlan::Step(step) = run_step(&mut store, 20_000) else {
                 panic!("exhausted panic budget must terminate")
             };
             assert!(step.terminal);
@@ -1317,9 +1378,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
             job.id,
             10_000,
             PersistedDdlJobFailure::Error(error),
-            None,
             &|| 5,
-            None, None,
         )
         .unwrap();
         apply(&mut store, &step.write);
@@ -1416,9 +1475,8 @@ fn persisted_check_failure_uses_source_identity_for_rollback() {
             job.id,
             10_000,
             PersistedDdlJobFailure::Error(error),
-            None,
             &|| 512,
-            None, None,
+
         )
         .unwrap();
         apply(&mut store, &step.write);
@@ -1470,7 +1528,7 @@ fn persisted_action_error_is_checkpointed_before_retry() {
         &mut store,
         job.id,
         20_000,
-        DdlJobSchemaState::new(true),
+        |_| {},
         &|| 2,
         None,
     )
@@ -1494,7 +1552,7 @@ fn persisted_action_error_is_checkpointed_before_retry() {
         &mut store,
         job.id,
         30_000,
-        DdlJobSchemaState::new(true),
+        |_| {},
         &|| panic!("normal cancellation must not reload the limit"),
         None,
     )
@@ -1688,7 +1746,7 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
                         &mut store,
                         job.id,
                         20_000,
-                        DdlJobSchemaState::new(true),
+                        |_| {},
                         &|| 0,
                         None,
                     )
@@ -1733,7 +1791,7 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
                         &mut store,
                         job.id,
                         20_000,
-                        DdlJobSchemaState::new(true),
+                        |_| {},
                         &|| 512,
                         None,
                     )
@@ -1744,10 +1802,7 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
                     &mut store,
                     job.id,
                     30_000,
-                    DdlJobSchemaState {
-                        synced_version: Some(step.write.schema_version),
-                        ..DdlJobSchemaState::new(true)
-                    },
+                    |state| state.synced_version = Some(step.write.schema_version),
                     &|| 512,
                     None,
                 )
@@ -2101,7 +2156,7 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
         let before = store.pairs.clone();
         assert!(
             matches!(
-                plan_persisted_ddl_job_step(&mut store, job.id, 9_000, DdlJobSchemaState::new(true), &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT, None).unwrap(),
+                plan_persisted_ddl_job_step(&mut store, job.id, 9_000, |_| {}, &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT, None).unwrap(),
                 PersistedDdlJobPlan::SchemaSync { version: actual, .. } if actual == version
             ),
             "{action}: acknowledge the previous publication before pausing"
@@ -2111,10 +2166,7 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
             &mut store,
             job.id,
             10_000,
-            DdlJobSchemaState {
-                synced_version: Some(version),
-                ..DdlJobSchemaState::new(true)
-            },
+            |state| state.synced_version = Some(version),
             &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
             None,
         )
@@ -2153,6 +2205,17 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
             ..Default::default()
         };
         apply_mutations(&mut expected_store, &checkpoint);
+        // SQL can rewrite V2 fixture bytes using the session's row format.
+        // Compare every stored column, and keep every other KV byte exact.
+        let row_key = checkpoint[0].key();
+        let view = SystemTableView::project("mysql.tidb_ddl_job", queue.table(),
+            &["job_id", "reorg", "schema_ids", "table_ids", "job_meta", "type", "processing"]);
+        assert_eq!(
+            SystemRow::parse(&view, row_key, &store.pairs[row_key]).unwrap().into_values(),
+            SystemRow::parse(&view, row_key, &expected_store.pairs[row_key]).unwrap().into_values(),
+            "{action}: every job-row column is preserved except the checkpoint",
+        );
+        expected_store.pairs.insert(row_key.to_vec(), store.pairs[row_key].clone());
         assert_eq!(store.pairs, expected_store.pairs, "{action}");
         let before = store.pairs.clone();
         assert!(matches!(
@@ -2160,10 +2223,7 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
                 &mut store,
                 job.id,
                 20_000,
-                DdlJobSchemaState {
-                    synced_version: Some(version),
-                    ..DdlJobSchemaState::new(true)
-                },
+                |state| state.synced_version = Some(version),
                 &|| { tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT },
                 None,
             )
@@ -2176,7 +2236,7 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
         );
         assert!(
             matches!(
-                plan_persisted_ddl_job_step(&mut store, job.id, 30_000, DdlJobSchemaState::new(true), &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT, None).unwrap(),
+                plan_persisted_ddl_job_step(&mut store, job.id, 30_000, |_| {}, &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT, None).unwrap(),
                 PersistedDdlJobPlan::SchemaSync { version: actual, .. } if actual == version
             ),
             "{action}: replacement owner must recover an uncleaned MDL row"
@@ -2191,7 +2251,7 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
                 &mut store,
                 job.id,
                 40_000,
-                DdlJobSchemaState::new(true),
+                |_| {},
                 &|| { tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT },
                 None,
             )
@@ -2795,9 +2855,7 @@ fn persisted_add_check_rolls_back_after_owner_restart() {
         PersistedDdlJobFailure::Error(DdlPlanError::from(
             tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate(validation_message),
         )),
-        None,
         &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
-        None, None,
     )
     .expect("countForError persists Running to Rollingback");
     apply(&mut store, &rollingback.write);
@@ -3109,9 +3167,7 @@ fn persisted_alter_check_validation_rolls_back_to_not_enforced() {
         PersistedDdlJobFailure::Error(DdlPlanError::from(
             tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate(validation_message),
         )),
-        None,
         &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
-        None, None,
     )
     .expect("countForError persists ALTER Rollingback");
     apply(&mut store, &rollingback.write);
@@ -3240,13 +3296,12 @@ fn plan_ddl_with_tiflash_stores(
     let mut ts = start_ts;
     loop {
         ts += 1;
-        let mut schema_state = DdlJobSchemaState::new(true);
-        schema_state.reorg = outcomes.clone();
+        let configure = |state: &mut DdlJobSchemaState| state.reorg = outcomes.clone();
         let step = match plan_persisted_ddl_job_step(
             store,
             job_id,
             ts,
-            schema_state,
+            configure,
             &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
             Some(&*row_ids),
         )? {
@@ -4662,6 +4717,10 @@ fn table_with_two_columns(store: &mut MetaStore) -> i64 {
 
 #[test]
 fn tiflash_batch_count_and_label_changes_preserve_available() {
+    // Go `TestSetTableFlashReplica`: the worker's session counts mock stores.
+    let _stores = tidb_failpoint::enable_for_test(
+        "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", "return(true)",
+    );
     let mut store = bootstrapped();
     let id = table_with_two_columns(&mut store);
     let mut table = committed_table(&store, id);

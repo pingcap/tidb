@@ -1080,6 +1080,15 @@ pub(super) fn on_multi_schema_change(
                 row_ids,
             );
             if step.reorg.is_some() {
+                // Go `onMultiSchemaChange` keeps this loop and its metadata
+                // transaction alive while runOneJobStep waits for reorg.
+                // Our reorg request unwinds the planner and discards `subs`;
+                // restore the earlier sub-jobs too, so the retry replays their
+                // writes instead of skipping a now-finished delivered sub-job.
+                // The requesting proxy has not been copied back yet.
+                for (earlier, saved) in sub_jobs.iter().zip(&saved).take(seq) {
+                    *earlier.write() = saved.clone();
+                }
                 return Ok(step);
             }
             let proxy_version = step.write.schema_version;

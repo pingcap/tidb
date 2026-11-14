@@ -85,13 +85,13 @@ impl NodeDdlSessionPool {
         opener: tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
         timeout: std::time::Duration,
     ) -> Result<Arc<Self>, String> {
-        let lease = tidb_config_configtypes::parse_duration(
+        let lease = tidb_domain_core::node_config::parse_file_schema_lease(
             &tidb_config::config_tree::config::get_global_config().lease,
-        )?;
+        ).map_err(|error| error.to_string())?;
         let row_ids = Arc::new(tidb_domain_core::cluster_auto_id_seam::ClusterTableAutoIds::new(opener.clone(), timeout));
         Self::for_store_with_mode(
             opener, timeout, row_ids, false,
-            std::time::Duration::from_nanos(u64::try_from(lease).map_err(|e| e.to_string())?), true,
+            lease, true,
         )
     }
 
@@ -103,9 +103,17 @@ impl NodeDdlSessionPool {
         schema_lease: std::time::Duration,
         bootstrap: bool,
     ) -> Result<Arc<Self>, String> {
-        use tidb_infoschema_issyncer::{catalog_watch::InfoCache, real_tikv_catalog::load_catalog_from_cluster};
+        use tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster_at;
         use tidb_domain_core::cluster_transactions::RealClusterTransactions;
-        let catalog = Arc::new(InfoCache::new(load_catalog_from_cluster(&opener, timeout).map_err(|e| e.to_string())?));
+        // Go `NewDomain` / `Domain.Init`: the domain owns one validator,
+        // grants its initial lease on reload, and shares it with DDL and
+        // sessions. A DDL barrier's zero wait is not a domain schema lease.
+        let (startup, at) = load_catalog_from_cluster_at(&opener, timeout)
+            .map_err(|e| e.to_string())?;
+        let (catalog, reloader, schema_validator) =
+            crate::domain::real_tikv_node::spawn_catalog_reloader(
+                startup, at, opener.clone(), schema_lease, Arc::clone(&row_ids),
+            ).map_err(|e| e.to_string())?;
         // This internal-session domain reads variables without publishing
         // process-wide defaults over the owning DDL's current settings.
         let globals = tidb_domain::global_sysvars::GlobalSysvars::from_cluster_rows([]);
@@ -119,7 +127,7 @@ impl NodeDdlSessionPool {
         let server_info = Arc::new(tidb_domain_serverinfo::serverinfo_syncer::Syncer::new(info, None));
         let ddl = Arc::new(tidb_ddl::worker::RealClusterDdl::new_with_min_job_id_refresher(
             opener.clone(), Arc::clone(&catalog), timeout, None, server_info, None,
-            Arc::new(tidb_infoschema_isvalidator::SchemaValidator::new(schema_lease)),
+            Arc::clone(&schema_validator),
             bootstrap, Arc::new(tidb_ddl_systable::MinJobIdRefresher::new()),
             worker_pool.clone(), Arc::clone(&row_ids),
             if bootstrap { tidb_ddl::StartMode::Bootstrap } else { tidb_ddl::StartMode::Normal },
@@ -134,7 +142,8 @@ impl NodeDdlSessionPool {
             )),
             catalog, privileges, globals, Arc::clone(&stats), row_ids,
             crate::domain::cluster_session_node::open_pool_session,
-        ).with_kv_client(Arc::new(tidb_copr::cop_client::CopClient::new(Arc::new(
+        ).with_schema_validator(schema_validator)
+        .with_kv_client(Arc::new(tidb_copr::cop_client::CopClient::new(Arc::new(
             StoreReadSessionFactory { store: Arc::new(opener.store().clone()), timeout },
         )))).shared();
         crate::domain::cluster_session_node::NodeServices::new(Arc::new(
@@ -145,7 +154,7 @@ impl NodeDdlSessionPool {
         worker_pool.bind(&domain);
         // The DDL's own pool retains only a Weak domain pointer, avoiding
         // a domain -> DDL -> pool -> domain cycle.
-        let pool = Arc::new(Self { mock_storage, store_domain: Some(StoreDomain(Arc::clone(&domain))), ..Self::default() });
+        let pool = Arc::new(Self { mock_storage, store_domain: Some(StoreDomain { domain: Arc::clone(&domain), _reloader: reloader }), ..Self::default() });
         pool.bind(&domain);
         Ok(pool)
     }
@@ -156,7 +165,7 @@ impl NodeDdlSessionPool {
         statement: &tidb_ddl::cluster_ddl::DdlStatement,
         context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
     ) -> Result<(), String> {
-        self.store_domain.as_ref().expect("store-owned domain").0
+        self.store_domain.as_ref().expect("store-owned domain").domain
             .ddl.execute(statement, context).map(drop).map_err(|error| error.to_string())
     }
 
@@ -174,14 +183,17 @@ impl NodeDdlSessionPool {
 }
 
 /// Go `GetDomain(store)`'s owned domain for this pool's lifetime.
-struct StoreDomain(Arc<Domain>);
+struct StoreDomain {
+    domain: Arc<Domain>,
+    _reloader: tidb_infoschema_issyncer::catalog_watch::Syncer,
+}
 
 impl Drop for StoreDomain {
     /// Go `Domain.Close` / `DDL.Stop`: retire the store-owned domain before
     /// releasing it. Its scheduler session retains the domain while running,
     /// so dropping the last external Arc alone cannot retire that owner.
     fn drop(&mut self) {
-        if let Some(owner) = self.0.ddl.owner_manager() {
+        if let Some(owner) = self.domain.ddl.owner_manager() {
             owner.campaign_cancel();
         }
     }
@@ -586,4 +598,58 @@ impl tidb_domain_core::cluster_transactions::OpenClusterTransaction for StepTran
     fn rollback(self: Box<Self>) -> Result<(), String> {
         Ok(())
     }
+}
+
+/// Recorded catalog fixtures using Go testkit's mock-store SQL sessions.
+pub mod recorded;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use tidb_infoschema_isvalidator::Validator;
+
+    /// Go `TestDomainSchemaLease` (`zzprobe/y01_domain_lease`): the domain
+    /// owns a positive, initially granted lease shared by its SQL sessions.
+    #[test]
+    fn test_domain_schema_lease() {
+        let (_pd, opener) = tidb_ddl::embedded_store::in_process_write_stack().unwrap();
+        let pool = NodeDdlSessionPool::for_store(
+            opener, Duration::from_secs(20),
+            Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
+            true, Duration::from_millis(500),
+        ).unwrap();
+        let domain = &pool.store_domain.as_ref().unwrap().domain;
+        let validator = domain.schema_validator.as_ref().expect("Go domain owns the validator");
+        assert_eq!(validator.lease(), Duration::from_millis(500));
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
+        assert!(!validator.is_lease_expired(i64::try_from(now.as_nanos()).unwrap()));
+        let mut session = pool.open_sql_session().unwrap();
+        let rows = session.execute("select 1", &[]).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][0], tidb_datatype::Datum::Int(1));
+    }
+
+    /// Go `TestExecuteInternalRestoresLabels` (`zzprobe/y01_internal_labels`):
+    /// internal SQL restores its caller's labels on success and error.
+    #[test]
+    fn test_execute_internal_restores_labels() {
+        let (_pd, opener) = tidb_ddl::embedded_store::in_process_write_stack().unwrap();
+        let pool = NodeDdlSessionPool::for_store(
+            opener, Duration::from_secs(20),
+            Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
+            true, Duration::from_millis(500),
+        ).unwrap();
+        let mut session = pool.open_sql_session().unwrap();
+        tidb_topsql_state::enable_top_sql();
+        let labels = tidb_cpuprofile::labels::with_labels(None, &[("outer", "ddl".to_owned())]);
+        tidb_cpuprofile::labels::set_goroutine_labels(Some(labels.clone()));
+        assert!(session.execute("select 1", &[]).is_ok());
+        assert_eq!(tidb_cpuprofile::labels::goroutine_labels(), Some(labels.clone()));
+        assert!(session.execute("select * from test.missing_table", &[]).is_err());
+        assert_eq!(tidb_cpuprofile::labels::goroutine_labels(), Some(labels));
+        tidb_topsql_state::disable_top_sql();
+        tidb_cpuprofile::labels::set_goroutine_labels(None);
+    }
+
 }

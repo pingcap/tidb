@@ -992,24 +992,20 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
     check_owner: &(dyn Fn() -> Result<(), String> + Sync),
     wait_retry: &dyn Fn(Duration) -> Result<(), String>,
 ) -> Result<PersistedDdlJobOutcome, ClusterDdlError> {
-    let mut schema_state = crate::cluster_ddl::DdlJobSchemaState::new(tidb_vardef::is_mdl_enabled(
-        tidb_config_kerneltype::is_next_gen(),
-    ));
-    schema_state.info_cache = schema_sync.info_cache();
     let sess_pool = backfiller.session_pool().ok_or_else(||
         ClusterDdlError::NotCommitted("the DDL worker has no session pool".to_owned()))?;
-    schema_state.worker = Some(crate::cluster_ddl::DdlStepWorker {
+    let worker = crate::cluster_ddl::DdlStepWorker {
         sess_pool,
-        // Each step's own, set where the step begins.
         step_buffer: MutationBuffer::new(),
         step_sql: Default::default(),
-        store: Some(Arc::new(StoreSnapshotMeta {
-            opener: Arc::clone(&opener),
-            timeout,
-        })),
+        store: Some(Arc::new(StoreSnapshotMeta { opener: Arc::clone(&opener), timeout })),
         region_store: backfiller.region_store(),
         start_mode: backfiller.start_mode(),
-    });
+    };
+    let mut schema_state = crate::cluster_ddl::DdlJobSchemaState::new(
+        tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen()), job_w.clone(), worker,
+    );
+    schema_state.info_cache = schema_sync.info_cache();
     loop {
         let result = transit_one_job_step_and_wait_sync(
             &opener, &mut job_w, &mut schema_state, timeout, job_done, notifier,
@@ -1059,7 +1055,7 @@ fn transit_one_job_step_and_wait_sync<S: StoreClient>(
     loop {
         schema_state.mdl_enabled =
             tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen());
-        schema_state.delivered_job = Some(job_w.clone());
+        schema_state.delivered_job = job_w.clone();
         let outcome = commit_cluster_ddl_phase(
             Arc::clone(&opener),
             DdlPhase {
@@ -1115,7 +1111,7 @@ fn transit_one_job_step_and_wait_sync<S: StoreClient>(
                 if let Some(mdl_info) = mdl_info {
                     // Go `cleanMDLInfo`: the statement on a pooled session, in
                     // its own transaction.
-                    let pool = &schema_state.worker.as_ref().expect("DDL worker").sess_pool;
+                    let pool = &schema_state.worker.sess_pool;
                     let cleaned = pool
                         .exec_restricted_sql(&mdl_info.clean_sql(ddl_job_id, schema_sync.owner_id()));
                     if let Err(error) = cleaned {
@@ -1142,7 +1138,7 @@ fn transit_one_job_step_and_wait_sync<S: StoreClient>(
                 // Go `removeJobCtx`: the job context goes with the job.
                 crate::job_ctx::remove_job_ctx(ddl_job_id);
                 if let Err(error) = add_index_reorg::clean_ddl_reorg_handles(
-                    schema_state.worker.as_ref().expect("DDL worker").sess_pool.as_ref(),
+                    schema_state.worker.sess_pool.as_ref(),
                     ddl_job_id,
                 ) {
                     // Go also carries `zap.Stringer("job", job)`; this loop
@@ -1938,7 +1934,7 @@ fn commit_cluster_ddl_phase<S: StoreClient>(
     // Go `transitOneJobStepAndWaitSync` checks the previous schema barrier
     // before `transitOneJobStep`'s hook and prepareTxn. A cancellation in
     // beforeTransitOneJobStep must be visible at the new transaction's TSO.
-    let mut job_w = phase.schema_state.delivered_job.clone().expect("delivered job");
+    let mut job_w = phase.schema_state.delivered_job.clone();
     let preflight = SessionTransaction::begin(Arc::clone(&opener), timeout, ddl_transaction_options())?;
     let recovery = crate::cluster_ddl::schema_sync_before_step(
         &mut SnapshotMetaSnapshot::new(preflight.snapshot()
@@ -1978,15 +1974,9 @@ fn commit_cluster_ddl_phase<S: StoreClient>(
     // Go `w.sess` for this step, kept until the step commits: the MDL row
     // below runs on it too.
     let mut step_sql: crate::job_txn::StepSqlSlot = Default::default();
-    if let Some(worker) = schema_state.worker.as_mut() {
-        worker.step_buffer = buffer.clone();
-        worker.step_sql = Arc::clone(&step_sql);
-    }
-    let sess_pool = schema_state
-        .worker
-        .as_ref()
-        .map(|worker| Arc::clone(&worker.sess_pool))
-        .ok_or_else(|| ClusterDdlError::NotCommitted("the DDL worker has no session pool".to_owned()))?;
+    schema_state.worker.step_buffer = buffer.clone();
+    schema_state.worker.step_sql = Arc::clone(&step_sql);
+    let sess_pool = Arc::clone(&schema_state.worker.sess_pool);
     let plan = {
         let mut snapshot = SnapshotMetaSnapshot::new(
             transaction
@@ -2088,21 +2078,10 @@ fn commit_cluster_ddl_phase<S: StoreClient>(
                 sql: Arc::clone(&step_sql),
                 start_mode: backfiller.start_mode(),
             };
-            let checkpoint = transaction
-                .snapshot()
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))
-                .and_then(|snapshot| {
-                    plan_persisted_ddl_job_failure(
-                        &mut SnapshotMetaSnapshot::new(snapshot),
-                        ddl_job_id,
-                        start_ts,
-                        failure,
-                        Some(&job),
-                        &|| refresh_ddl_error_count_limit(&opener, timeout, ddl_job_id),
-                        Some(row_ids.as_ref()),
-                        Some(&session),
-                    )
-                });
+            let checkpoint = plan_persisted_ddl_job_failure(
+                ddl_job_id, start_ts, failure, &job,
+                &|| refresh_ddl_error_count_limit(&opener, timeout, ddl_job_id), &session,
+            );
             let checkpoint = match checkpoint {
                 Ok(checkpoint) => checkpoint,
                 Err(error) => {

@@ -2551,6 +2551,16 @@ impl<'s> ClusterServerSession<'s> {
         ),
         SqlQueryError,
     > {
+        // Go `ExecuteInternalStmt` defers SetGoroutineLabels(ctx), including
+        // errors and panics. Internal system-table SQL must not replace the
+        // enclosing DDL job's profiling identity after it returns.
+        struct RestoreLabels(Option<tidb_cpuprofile::labels::LabelSet>);
+        impl Drop for RestoreLabels {
+            fn drop(&mut self) {
+                tidb_cpuprofile::labels::set_goroutine_labels(self.0.take());
+            }
+        }
+        let _labels = RestoreLabels(tidb_cpuprofile::labels::goroutine_labels());
         let stmt = self
             .session
             .parse_at_statement_boundary(sql)
