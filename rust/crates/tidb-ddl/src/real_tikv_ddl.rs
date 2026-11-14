@@ -930,15 +930,59 @@ pub enum PersistedDdlJobOutcome {
     Paused,
 }
 
-/// Runs an integrated persisted action until it finishes or pauses. A durable
-/// MDL row always takes precedence over the next action or history transaction.
-/// Returning Paused releases the worker without completing the submitting SQL.
-/// `wait_retry` waits for the requested interval or returns an error when this
-/// owner's worker context is cancelled. It must not use statement cancellation.
+/// Go `systable.Manager.GetJobByID`: delivery reads on a pooled session.
+pub(crate) fn get_job_by_id(
+    backfiller: &dyn IndexBackfiller,
+    job_id: i64,
+) -> Result<tidb_model::JobW, tidb_ddl_systable::SystemTableManagerError> {
+    let pool = backfiller.session_pool().and_then(|pool| pool.sess_pool())
+        .ok_or_else(|| tidb_ddl_systable::SystemTableManagerError::Sql("the DDL session pool has no sessions".to_owned()))?;
+    tidb_ddl_systable::Manager::get_job_by_id(
+        &tidb_ddl_systable::SystemTableManager::new(pool), job_id,
+    )
+}
+
+/// Go `jobScheduler.deliveryJob`: refresh after a step, retry transient read
+/// failures every 500ms, and end delivery on `systable.ErrNotFound`.
+fn refresh_delivered_job(
+    backfiller: &dyn IndexBackfiller,
+    job_w: &mut tidb_model::JobW,
+    check_owner: &dyn Fn() -> Result<(), String>,
+    wait_retry: &dyn Fn(Duration) -> Result<(), String>,
+) -> Result<bool, ClusterDdlError> {
+    let job_id = {
+        let mut job = job_w.job.as_ref().expect("delivered job").write();
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/beforeRefreshJob", &mut *job);
+        job.id
+    };
+    loop {
+        check_owner().map_err(ClusterDdlError::SchemaSync)?;
+        let fetched = get_job_by_id(backfiller, job_id);
+        let (next, mut error) = match fetched {
+            Ok(job) => (Some(job), None),
+            Err(error) => (None, Some(error)),
+        };
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/mockGetJobByIDFail", &mut error);
+        match error {
+            None => {
+                *job_w = next.expect("GetJobByID succeeded");
+                return Ok(true);
+            }
+            Some(tidb_ddl_systable::SystemTableManagerError::NotFound) => return Ok(false),
+            Some(error) => {
+                tidb_ddl_logutil::ddl_logger().error("get job failed", &[zap_error(error)]);
+                wait_retry(Duration::from_millis(500)).map_err(ClusterDdlError::SchemaSync)?;
+            }
+        }
+    }
+}
+
+/// Go `jobScheduler.deliveryJob`: execute the delivered JobW and refresh
+/// it through systable.Manager between steps until final state or ErrNotFound.
 #[allow(clippy::too_many_arguments)]
 pub fn run_persisted_ddl_job<S: StoreClient>(
     opener: Arc<RealOptimisticTransactionOpener<S>>,
-    ddl_job_id: i64,
+    mut job_w: tidb_model::JobW,
     timeout: Duration,
     job_done: Option<&JobDoneCh>,
     notifier: Option<&dyn SchemaVersionNotifier>,
@@ -952,7 +996,9 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
         tidb_config_kerneltype::is_next_gen(),
     ));
     schema_state.info_cache = schema_sync.info_cache();
-    schema_state.worker = backfiller.session_pool().map(|sess_pool| crate::cluster_ddl::DdlStepWorker {
+    let sess_pool = backfiller.session_pool().ok_or_else(||
+        ClusterDdlError::NotCommitted("the DDL worker has no session pool".to_owned()))?;
+    schema_state.worker = Some(crate::cluster_ddl::DdlStepWorker {
         sess_pool,
         // Each step's own, set where the step begins.
         step_buffer: MutationBuffer::new(),
@@ -965,9 +1011,56 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
         start_mode: backfiller.start_mode(),
     });
     loop {
+        let result = transit_one_job_step_and_wait_sync(
+            &opener, &mut job_w, &mut schema_state, timeout, job_done, notifier,
+            backfiller, check_constraint_validator, schema_sync, check_owner, wait_retry,
+        );
+        match result {
+            Ok(()) if job_w.job.as_ref().unwrap().read().in_final_state() => {
+                // Go InFinalState also includes PAUSED: release this worker,
+                // retaining the active row for an explicit resume.
+                return Ok(if job_w.job.as_ref().unwrap().read().is_paused() {
+                    PersistedDdlJobOutcome::Paused
+                } else {
+                    PersistedDdlJobOutcome::Finished
+                });
+            }
+            Ok(()) => {}
+            Err(error) => {
+                tidb_ddl_logutil::ddl_logger().info(
+                    "transit one job step and wait sync failed", &[zap_error(error)],
+                );
+            }
+        }
+        if !refresh_delivered_job(backfiller, &mut job_w, check_owner, wait_retry)? {
+            return Ok(PersistedDdlJobOutcome::Finished);
+        }
+    }
+}
+
+/// Go `jobScheduler.transitOneJobStepAndWaitSync`: recover the previous
+/// version barrier, execute the delivered object, and wait for this step.
+#[allow(clippy::too_many_arguments)]
+fn transit_one_job_step_and_wait_sync<S: StoreClient>(
+    opener: &Arc<RealOptimisticTransactionOpener<S>>,
+    job_w: &mut tidb_model::JobW,
+    schema_state: &mut crate::cluster_ddl::DdlJobSchemaState,
+    timeout: Duration,
+    job_done: Option<&JobDoneCh>,
+    notifier: Option<&dyn SchemaVersionNotifier>,
+    backfiller: &dyn IndexBackfiller,
+    check_constraint_validator: &dyn CheckConstraintValidator,
+    schema_sync: &dyn DdlSchemaSync,
+    check_owner: &(dyn Fn() -> Result<(), String> + Sync),
+    wait_retry: &dyn Fn(Duration) -> Result<(), String>,
+) -> Result<(), ClusterDdlError> {
+    let ddl_job_id = job_w.job.as_ref().unwrap().read().id;
+    let mut step_committed = false;
+    loop {
         schema_state.mdl_enabled =
             tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen());
-        let outcome = commit_cluster_ddl_phase_with_retry(
+        schema_state.delivered_job = Some(job_w.clone());
+        let outcome = commit_cluster_ddl_phase(
             Arc::clone(&opener),
             DdlPhase {
                 ddl_job_id,
@@ -981,7 +1074,11 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
             schema_sync.owner_id(),
         )?;
         match outcome {
-            DdlPhaseOutcome::Paused => return Ok(PersistedDdlJobOutcome::Paused),
+            DdlPhaseOutcome::Paused => {
+                let mut job = job_w.job.as_ref().unwrap().write();
+                tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", &mut *job);
+                return Ok(());
+            }
             DdlPhaseOutcome::Reorg(reorg) => {
                 // Go `runReorgJob`: the owner reorganizes in its own
                 // transactions; the next step reads the outcome.
@@ -1018,25 +1115,9 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
                 if let Some(mdl_info) = mdl_info {
                     // Go `cleanMDLInfo`: the statement on a pooled session, in
                     // its own transaction.
-                    let pool = schema_state
-                        .worker
-                        .as_ref()
-                        .map(|worker| Arc::clone(&worker.sess_pool))
-                        .filter(|pool| pool.has_step_sessions());
-                    let cleaned = match pool {
-                        Some(pool) => pool
-                            .exec_restricted_sql(&mdl_info.clean_sql(ddl_job_id, schema_sync.owner_id()))
-                            .map(drop)
-                            .map_err(|error| ClusterDdlError::NotCommitted(error.to_string())),
-                        None => clean_mdl_info_with_retry(
-                            Arc::clone(&opener),
-                            timeout,
-                            &mdl_info,
-                            ddl_job_id,
-                            version,
-                            schema_sync.owner_id(),
-                        ),
-                    };
+                    let pool = &schema_state.worker.as_ref().expect("DDL worker").sess_pool;
+                    let cleaned = pool
+                        .exec_restricted_sql(&mdl_info.clean_sql(ddl_job_id, schema_sync.owner_id()));
                     if let Err(error) = cleaned {
                         tidb_ddl_logutil::ddl_logger().warn(
                             "unexpected error when clean mdl info",
@@ -1047,8 +1128,11 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
                         );
                     }
                 }
-                // Go `transitOneJobStepAndWaitSync`'s last step.
-                tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", &mut *job);
+                if step_committed {
+                    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", &mut *job);
+                    *job_w.job.as_ref().unwrap().write() = *job;
+                    return Ok(());
+                }
             }
             DdlPhaseOutcome::Committed(committed) if committed.persisted_job_terminal => {
                 // Go `handleJobDone`: after the history commit, the reorg
@@ -1058,9 +1142,7 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
                 // Go `removeJobCtx`: the job context goes with the job.
                 crate::job_ctx::remove_job_ctx(ddl_job_id);
                 if let Err(error) = add_index_reorg::clean_ddl_reorg_handles(
-                    &opener,
-                    timeout,
-                    backfiller.session_pool().as_deref(),
+                    schema_state.worker.as_ref().expect("DDL worker").sess_pool.as_ref(),
                     ddl_job_id,
                 ) {
                     // Go also carries `zap.Stringer("job", job)`; this loop
@@ -1086,7 +1168,8 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
                 }
                 let mut job = committed.job;
                 tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", &mut *job);
-                return Ok(PersistedDdlJobOutcome::Finished);
+                *job_w.job.as_ref().unwrap().write() = *job;
+                return Ok(());
             }
             DdlPhaseOutcome::Committed(committed) => {
                 // Reorganization outcomes are read by exactly one step.
@@ -1100,10 +1183,12 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
                 // version (the next pass's schema sync, which then calls
                 // `afterWaitSchemaSynced`) or, with no version to wait for,
                 // calls it now.
+                let mut job = committed.job;
                 if schema_state.pending_version.is_none() {
-                    let mut job = committed.job;
                     tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", &mut *job);
                 }
+                *job_w.job.as_ref().unwrap().write() = *job;
+                step_committed = true;
                 if let Some((error, error_count)) = committed.run_error {
                     if is_retryable_job_error(
                         &error,
@@ -1117,6 +1202,9 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
                         wait_retry(Duration::from_secs(1)).map_err(ClusterDdlError::SchemaSync)?;
                     }
                 }
+                if schema_state.pending_version.is_none() {
+                    return Ok(());
+                }
             }
         }
     }
@@ -1127,7 +1215,7 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
 /// rows, and commit the allocation and inserts atomically.
 pub fn gen_gid_and_insert_jobs_with_retry<S, F, Cleanup>(
     opener: Arc<RealOptimisticTransactionOpener<S>>,
-    sess_pool: Option<&dyn tidb_ddl_build::session_pool::DdlSessionPool>,
+    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     specs: &mut [tidb_ddl_jobsubmit::JobSpec],
     timeout: Duration,
     mut before_insert_with_assigned_ids: F,
@@ -1185,34 +1273,22 @@ where
                     .snapshot_at_for(for_update_ts, true)
                     .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
             );
-            let catalog = load_info_schema(&mut snapshot).map_err(DdlPlanError::from)?;
-            let mut ddl_se = match sess_pool.filter(|sess_pool| sess_pool.has_step_sessions()) {
-                Some(sess_pool) => Some(
-                    sess_pool
-                        .open_step_session(for_update_ts, &buffer)
-                        .map_err(DdlPlanError::from_mysql_error)?,
-                ),
-                None => None,
-            };
+            let mut ddl_se = sess_pool.open_step_session(for_update_ts, &buffer)
+                .map_err(DdlPlanError::from_mysql_error)?;
             // The session's BEGIN found an empty buffer; bound now, the
             // statement stages into the transaction that holds the lock (an
             // empty handle attaches without replacing its locks).
             transaction.bind_mutation_buffer(&buffer);
-            let mut execute = ddl_se.as_mut().map(|ddl_se| {
-                move |sql: &str| -> Result<(), tidb_terror::MysqlError> {
-                    ddl_se.execute(sql, &[]).map(|_| ())
-                }
-            });
-            tidb_ddl_jobsubmit::plan_insert_attempt_with(
-                &mut snapshot,
-                &catalog,
-                specs,
-                &mut before_insert_with_assigned_ids,
-                execute.as_mut().map(|execute| {
-                    execute as &mut dyn FnMut(&str) -> Result<(), tidb_terror::MysqlError>
-                }),
-            )
-            .map_err(Into::into)
+            let mut execute = |sql: &str| ddl_se.execute(sql, &[]).map(drop);
+            // Go `GenGIDAndInsertJobsWithRetry`: metadata allocates IDs;
+            // the session resolves its own table for the SQL insert.
+            let mutations = tidb_ddl_jobsubmit::plan_assign_global_ids(&mut snapshot, specs)?;
+            let cleanup = before_insert_with_assigned_ids(specs);
+            if let Err(error) = tidb_ddl_jobsubmit::insert_ddl_jobs_2_table(&mut execute, specs) {
+                if let Some(cleanup) = cleanup { cleanup(); }
+                return Err(error.into());
+            }
+            Ok((mutations, cleanup))
         })();
         let (mutations, cleanup) = match planned {
             Ok(planned) => planned,
@@ -1554,7 +1630,7 @@ pub fn build_ddl_job<S: StoreClient>(
     backfiller: &dyn IndexBackfiller,
     auto_ids: Option<&Arc<tidb_autoid::auto_id_client::AutoIdClient>>,
 ) -> Result<crate::cluster_ddl::add_index::AddIndexSubmission, ClusterDdlError> {
-    check_flashback_cluster_job(&opener, timeout, session_pool, min_job_id)?;
+    check_flashback_cluster_job(session_pool, min_job_id)?;
     // Go `CalcMaxNodeCountByStoresNum` reads PD's store list.
     let store_count = opener
         .store()
@@ -1670,11 +1746,8 @@ pub fn build_ddl_job<S: StoreClient>(
     // mysql.table_cache_meta values (%?, 'NONE', 0, 0)`, each before the job.
     if spec.job.type_ == tidb_model::action_type::ActionType::ACTION_ALTER_CACHE_TABLE {
         let table_id = spec.job.table_id;
-        // A node's pool runs Go's statement; a pool without sessions yet has
-        // the check's transaction stage the row.
-        let sess_pool = backfiller
-            .session_pool()
-            .filter(|sess_pool| sess_pool.has_step_sessions());
+        let sess_pool = backfiller.session_pool().ok_or_else(||
+            ClusterDdlError::NotCommitted("the DDL worker has no session pool".to_owned()))?;
         add_index_reorg::reorg_transaction(&opener, timeout, &crate::job_ctx::internal_ddl_source(), |meta, handle, buffer, _| {
             let catalog = load_info_schema(meta).map_err(DdlPlanError::Meta)?;
             let table = catalog
@@ -1688,20 +1761,14 @@ pub fn build_ddl_job<S: StoreClient>(
                 .stage_cache_table_check(&table, handle, buffer)
                 .map_err(ClusterDdlError::IndexBackfill)?;
             buffer.reset();
-            let mut writes = Vec::new();
-            if sess_pool.is_none() {
-                crate::cluster_ddl::write_table_cache_meta_row(&catalog, table_id, &mut writes)?;
-            }
-            Ok(((), writes))
+            Ok(((), Vec::new()))
         })?;
-        if let Some(sess_pool) = sess_pool {
-            sess_pool
+        sess_pool
                 .exec_restricted_sql_with(
                     "replace into mysql.table_cache_meta values (%?, 'NONE', 0, 0)",
                     &[tidb_sqlescape::SqlArg::Signed(table_id)],
                 )
                 .map_err(DdlPlanError::from_mysql_error)?;
-        }
     }
     // Go `genPlacementPolicyID`: the executor draws the policy's id from the
     // policies' own sequence, in a transaction of its own, before the job.
@@ -1801,179 +1868,26 @@ impl<S: StoreClient> crate::cluster_ddl::SnapshotMetaAt for StoreSnapshotMeta<S>
     }
 }
 
-/// Loads the persisted active DDL queue from a fresh cluster snapshot.
-///
-/// The returned order is the job table's primary-key order, matching Go's
-/// scheduler query `ORDER BY job_id`. The read transaction is always rolled
-/// back because queue inspection publishes no state.
-pub fn load_active_persisted_ddl_jobs<S: StoreClient>(
-    opener: Arc<RealOptimisticTransactionOpener<S>>,
-    timeout: Duration,
-    min_job_id: i64,
-) -> Result<Vec<Job>, ClusterDdlError> {
-    let mut cached = None;
-    load_active_persisted_ddl_jobs_cached(opener, timeout, min_job_id, &mut cached)
-}
-
-/// Scheduler-tick variant of [`load_active_persisted_ddl_jobs`] that keeps
-/// the located `mysql.tidb_ddl_job` table metadata across ticks.
-///
-/// Go's owner polls `mysql.tidb_ddl_job` through a session whose
-/// InfoSchema caches the system table, so a poll costs one indexed read of
-/// the job table and never a catalog walk. Re-deriving the table from a
-/// full [`load_info_schema`] on every one-second tick re-parses every
-/// schema's `TableInfo` JSON each time and showed up as a double-digit
-/// percentage of node CPU under load. The bootstrap system table's layout
-/// does not change between ticks, so only its row scan is per-tick work;
-/// on any read error the cache is dropped so the next tick re-locates the
-/// table exactly like the uncached path.
-pub fn load_active_persisted_ddl_jobs_cached<S: StoreClient>(
-    opener: Arc<RealOptimisticTransactionOpener<S>>,
-    timeout: Duration,
-    min_job_id: i64,
-    cached_job_table: &mut Option<DdlJobTable>,
-) -> Result<Vec<Job>, ClusterDdlError> {
-    let transaction = SessionTransaction::begin(
-        opener,
-        timeout,
-        ddl_transaction_options(),
-    )?;
-    let jobs = {
-        let mut snapshot = SnapshotMetaSnapshot::new(
-            transaction
-                .snapshot()
-                .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
-        );
-        if cached_job_table.is_none() {
-            let catalog = load_info_schema(&mut snapshot).map_err(DdlPlanError::Meta)?;
-            *cached_job_table = Some(
-                DdlJobTable::locate(&catalog)
-                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-            );
-        }
-        // Requiring `&mut snapshot` means the cache can only hold table
-        // metadata; the row scan below is always against this tick's
-        // fresh snapshot.
-        let load = cached_job_table
-            .as_ref()
-            .expect("job table cache is populated above")
-            .load_from(&mut snapshot, min_job_id);
-        match load {
-            Ok(active) => active.into_iter().map(|active| active.job).collect(),
-            Err(error) => {
-                // A locate-time layout change (or a transient snapshot
-                // error) invalidates the cached table; the next tick
-                // re-derives it from the catalog like the uncached path.
-                *cached_job_table = None;
-                return Err(DdlPlanError::Encode(error.to_string()).into());
-            }
-        }
-    };
-    transaction
-        .rollback()
-        .map_err(ClusterDdlError::NotCommitted)?;
-    Ok(jobs)
-}
-
 /// Go `JobSubmitter.SubmitBatch`'s admission:
 /// `sysTblMgr.HasFlashbackClusterJob(ctx, minJobIDRefresher.GetCurrMinJobID())`
-/// on a session of `ddl.sessPool`. A pool no node has bound reads the job
-/// table from a snapshot.
-fn check_flashback_cluster_job<S: StoreClient>(
-    opener: &Arc<RealOptimisticTransactionOpener<S>>,
-    timeout: Duration,
+/// on a session of `ddl.sessPool`.
+fn check_flashback_cluster_job(
     session_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     min_job_id: i64,
 ) -> Result<(), ClusterDdlError> {
     let encode = |error: tidb_ddl_systable::SystemTableManagerError| {
         ClusterDdlError::from(tidb_ddl_jobsubmit::JobSubmitError::Encode(error.to_string()))
     };
-    let has_flashback_cluster_job = match session_pool.sess_pool() {
-        Some(pool) => tidb_ddl_systable::Manager::has_flashback_cluster_job(
-            &tidb_ddl_systable::SystemTableManager::new(pool),
-            min_job_id,
-        )
-        .map_err(encode)?,
-        None => {
-            let transaction =
-                SessionTransaction::begin(Arc::clone(opener), timeout, ddl_transaction_options())?;
-            let has = {
-                let mut snapshot = SnapshotMetaSnapshot::new(
-                    transaction
-                        .snapshot()
-                        .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
-                );
-                let catalog = load_info_schema(&mut snapshot).map_err(DdlPlanError::Meta)?;
-                tidb_ddl_systable::SnapshotSystemTables::new(&catalog)
-                    .has_flashback_cluster_job(&mut snapshot, min_job_id)
-                    .map_err(encode)?
-            };
-            transaction
-                .rollback()
-                .map_err(ClusterDdlError::NotCommitted)?;
-            has
-        }
-    };
+    let pool = session_pool.sess_pool().ok_or_else(|| encode(
+        tidb_ddl_systable::SystemTableManagerError::Sql("the DDL session pool has no sessions".to_owned()),
+    ))?;
+    let has_flashback_cluster_job = tidb_ddl_systable::Manager::has_flashback_cluster_job(
+        &tidb_ddl_systable::SystemTableManager::new(pool), min_job_id,
+    ).map_err(encode)?;
     if has_flashback_cluster_job {
         return Err(tidb_ddl_jobsubmit::JobSubmitError::FlashbackClusterJob.into());
     }
     Ok(())
-}
-
-/// Reads pinned Go `systable.Manager.GetMinJobID` in a fresh read-only
-/// transaction for `MinJobIDRefresher`.
-pub fn load_min_persisted_ddl_job_id<S: StoreClient>(
-    opener: Arc<RealOptimisticTransactionOpener<S>>,
-    timeout: Duration,
-    previous_min_job_id: i64,
-) -> Result<i64, ClusterDdlError> {
-    let mut cached = None;
-    load_min_persisted_ddl_job_id_cached(opener, timeout, previous_min_job_id, &mut cached)
-}
-
-/// Refresher variant of [`load_min_persisted_ddl_job_id`] that caches the
-/// located job table across refresh ticks for the same reason as
-/// [`load_active_persisted_ddl_jobs_cached`].
-pub fn load_min_persisted_ddl_job_id_cached<S: StoreClient>(
-    opener: Arc<RealOptimisticTransactionOpener<S>>,
-    timeout: Duration,
-    previous_min_job_id: i64,
-    cached_job_table: &mut Option<DdlJobTable>,
-) -> Result<i64, ClusterDdlError> {
-    let transaction = SessionTransaction::begin(
-        opener,
-        timeout,
-        ddl_transaction_options(),
-    )?;
-    let minimum = {
-        let mut snapshot = SnapshotMetaSnapshot::new(
-            transaction
-                .snapshot()
-                .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
-        );
-        if cached_job_table.is_none() {
-            let catalog = load_info_schema(&mut snapshot).map_err(DdlPlanError::Meta)?;
-            *cached_job_table = Some(
-                DdlJobTable::locate(&catalog)
-                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-            );
-        }
-        let read = cached_job_table
-            .as_ref()
-            .expect("job table cache is populated above")
-            .min_job_id(&mut snapshot, previous_min_job_id);
-        match read {
-            Ok(minimum) => minimum.unwrap_or_default(),
-            Err(error) => {
-                *cached_job_table = None;
-                return Err(DdlPlanError::Encode(error.to_string()).into());
-            }
-        }
-    };
-    transaction
-        .rollback()
-        .map_err(ClusterDdlError::NotCommitted)?;
-    Ok(minimum)
 }
 
 /// Reads one terminal DDL job from Go's authoritative meta history.
@@ -2011,38 +1925,7 @@ pub fn load_history_persisted_ddl_job<S: StoreClient>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn commit_cluster_ddl_phase_with_retry<S: StoreClient>(
-    opener: Arc<RealOptimisticTransactionOpener<S>>,
-    phase: DdlPhase<'_>,
-    timeout: Duration,
-    notifier: Option<&dyn SchemaVersionNotifier>,
-    backfiller: &dyn IndexBackfiller,
-    check_constraint_validator: &dyn CheckConstraintValidator,
-    owner_id: &str,
-) -> Result<DdlPhaseOutcome, ClusterDdlError> {
-    let mut attempt: u32 = 0;
-    loop {
-        match commit_cluster_ddl_with_backfill_once(
-            Arc::clone(&opener),
-            phase.clone(),
-            timeout,
-            notifier,
-            backfiller,
-            check_constraint_validator,
-            owner_id,
-        ) {
-            Err(ClusterDdlError::ConcurrentSchemaChange { .. })
-                if attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT =>
-            {
-                std::thread::sleep(tidb_txnkv::retry_backoff_delay(attempt));
-                attempt += 1;
-            }
-            outcome => return outcome,
-        }
-    }
-}
-
-fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
+fn commit_cluster_ddl_phase<S: StoreClient>(
     opener: Arc<RealOptimisticTransactionOpener<S>>,
     phase: DdlPhase<'_>,
     timeout: Duration,
@@ -2052,6 +1935,21 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
     owner_id: &str,
 ) -> Result<DdlPhaseOutcome, ClusterDdlError> {
     (phase.check_owner)().map_err(ClusterDdlError::SchemaSync)?;
+    // Go `transitOneJobStepAndWaitSync` checks the previous schema barrier
+    // before `transitOneJobStep`'s hook and prepareTxn. A cancellation in
+    // beforeTransitOneJobStep must be visible at the new transaction's TSO.
+    let mut job_w = phase.schema_state.delivered_job.clone().expect("delivered job");
+    let preflight = SessionTransaction::begin(Arc::clone(&opener), timeout, ddl_transaction_options())?;
+    let recovery = crate::cluster_ddl::schema_sync_before_step(
+        &mut SnapshotMetaSnapshot::new(preflight.snapshot()
+            .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?),
+        &phase.schema_state, &job_w.job.as_ref().unwrap().read(),
+    );
+    preflight.rollback().map_err(ClusterDdlError::NotCommitted)?;
+    if let Some(PersistedDdlJobPlan::SchemaSync { version, mdl_info, publish_version, job }) = recovery? {
+        return Ok(DdlPhaseOutcome::SchemaSync { version, mdl_info, publish_version, job });
+    }
+    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", &mut job_w);
     // Go `prepareTxn`: the step's transaction carries the job's resource
     // group tagger, published once the step has loaded the job.
     let step_kv_context = tidb_txnkv::StatementKvContextCell::default();
@@ -2088,7 +1986,7 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
         .worker
         .as_ref()
         .map(|worker| Arc::clone(&worker.sess_pool))
-        .filter(|pool| pool.has_step_sessions());
+        .ok_or_else(|| ClusterDdlError::NotCommitted("the DDL worker has no session pool".to_owned()))?;
     let plan = {
         let mut snapshot = SnapshotMetaSnapshot::new(
             transaction
@@ -2184,12 +2082,12 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
             // checkpoint's own statements stage into the fresh buffer.
             buffer = MutationBuffer::new();
             step_sql = Default::default();
-            let session = sess_pool.clone().map(|pool| crate::job_txn::StepSession {
-                pool,
+            let session = crate::job_txn::StepSession {
+                pool: Arc::clone(&sess_pool),
                 buffer: buffer.clone(),
                 sql: Arc::clone(&step_sql),
                 start_mode: backfiller.start_mode(),
-            });
+            };
             let checkpoint = transaction
                 .snapshot()
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))
@@ -2199,9 +2097,10 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
                         ddl_job_id,
                         start_ts,
                         failure,
+                        Some(&job),
                         &|| refresh_ddl_error_count_limit(&opener, timeout, ddl_job_id),
                         Some(row_ids.as_ref()),
-                        session.as_ref(),
+                        Some(&session),
                     )
                 });
             let checkpoint = match checkpoint {
@@ -2264,27 +2163,12 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
         }
     }
     if let Some(mdl_info) = &write.mdl_info_update {
-        let registered = match &sess_pool {
-            // Go `registerMDLInfo` on `w.sess`.
-            Some(pool) => mdl_info.register(
-                &crate::job_txn::StepSession {
-                    pool: Arc::clone(pool),
-                    buffer: buffer.clone(),
-                    sql: Arc::clone(&step_sql),
-                    start_mode: backfiller.start_mode(),
-                },
-                start_ts,
-                write.ddl_job_id,
-                write.schema_version,
-                owner_id,
-            ),
-            None => mdl_info.append_mutations(
-                write.ddl_job_id,
-                write.schema_version,
-                owner_id,
-                &mut write.mutations,
-            ),
-        };
+        let registered = mdl_info.register(
+            &crate::job_txn::StepSession {
+                pool: Arc::clone(&sess_pool), buffer: buffer.clone(),
+                sql: Arc::clone(&step_sql), start_mode: backfiller.start_mode(),
+            }, start_ts, write.ddl_job_id, write.schema_version, owner_id,
+        );
         if let Err(error) = registered {
             let _ = transaction.rollback();
             return Err(error.into());
@@ -2346,57 +2230,6 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
                     label_receipt.as_ref(),
                     timeout,
                 ))
-            }
-        }
-    }
-}
-
-fn clean_mdl_info_with_retry<S: StoreClient>(
-    opener: Arc<RealOptimisticTransactionOpener<S>>,
-    timeout: Duration,
-    mdl_info: &MdlInfoUpdate,
-    ddl_job_id: i64,
-    schema_version: i64,
-    owner_id: &str,
-) -> Result<(), ClusterDdlError> {
-    let mut attempt: u32 = 0;
-    loop {
-        let transaction = SessionTransaction::begin(
-            Arc::clone(&opener),
-            timeout,
-            ddl_transaction_options(),
-        )?;
-        let mut mutations = Vec::new();
-        let cleanup = {
-            let mut snapshot = SnapshotMetaSnapshot::new(
-                transaction
-                    .snapshot()
-                    .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
-            );
-            mdl_info.append_delete_mutations(&mut snapshot, ddl_job_id, owner_id, &mut mutations)
-        };
-        if let Err(error) = cleanup {
-            let _ = transaction.rollback();
-            return Err(error.into());
-        }
-        if mutations.is_empty() {
-            return transaction
-                .rollback()
-                .map_err(ClusterDdlError::NotCommitted);
-        }
-        let buffer = MutationBuffer::new();
-        match transaction.commit_with(&buffer, mutations) {
-            Ok(_) => return Ok(()),
-            Err(error) => {
-                let cause = classify_session_ddl_commit_error(schema_version, error);
-                if matches!(cause, ClusterDdlError::ConcurrentSchemaChange { .. })
-                    && attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT
-                {
-                    std::thread::sleep(tidb_txnkv::retry_backoff_delay(attempt));
-                    attempt += 1;
-                    continue;
-                }
-                return Err(cause);
             }
         }
     }

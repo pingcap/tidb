@@ -42,8 +42,8 @@ use tidb_syssession::mysql_system_tables::{
 use tidb_syssession::system_row_write::{delete_clustered_row, store_clustered_row, RowValues};
 use tidb_table::origin_default::RowEncodeError;
 
-/// One decoded active DDL row together with the exact stored row values needed
-/// by Go SQL `UPDATE`/`DELETE` semantics.
+/// Go's delivered job object. Snapshot-plan fixtures additionally retain
+/// stored columns; live SQL UPDATE/DELETE preserve those columns themselves.
 #[derive(Debug)]
 pub struct ActiveDdlJob {
     /// Go `job_meta`.
@@ -62,6 +62,20 @@ pub struct ActiveDdlJob {
 }
 
 impl ActiveDdlJob {
+    /// Go `worker.transitOneJobStep`: the delivered job is the worker's
+    /// object; SQL UPDATE/DELETE preserve the stored scheduling columns.
+    pub fn from_job(job: Job) -> Self {
+        Self {
+            reorg: job.may_need_reorg(),
+            schema_ids: String::new(),
+            table_ids: String::new(),
+            type_: i64::from(job.type_.0),
+            processing: true,
+            job,
+            values: RowValues::new(),
+        }
+    }
+
     /// The same row carrying `job` instead: Go's proxy job, which runs a
     /// multi-schema change's sub-job as if it were the job itself.
     pub fn with_job(&self, job: Job) -> Self {

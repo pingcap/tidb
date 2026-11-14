@@ -39,8 +39,7 @@ use tidb_ddl_systable::MinJobIdRefresher;
 use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_infoschema_issyncer::real_tikv_catalog::reload;
 use crate::real_tikv_ddl::{
-    answer_ddl_without_job, load_active_persisted_ddl_jobs_cached, load_history_persisted_ddl_job,
-    load_min_persisted_ddl_job_id_cached, run_persisted_ddl_job,
+    answer_ddl_without_job, load_history_persisted_ddl_job, run_persisted_ddl_job,
     CheckConstraintValidator, ClusterDdlReport,
     DdlSchemaSync, IndexBackfiller, PersistedDdlJobOutcome, SchemaVersionNotifier,
 };
@@ -295,7 +294,7 @@ fn load_ddl_jobs(
     se: &tidb_ddl_systable::DdlSession,
     min_job_id: i64,
     running_job_ids: &str,
-) -> Result<Vec<(bool, tidb_model::Job)>, crate::real_tikv_ddl::ClusterDdlError> {
+) -> Result<Vec<(bool, tidb_model::JobW)>, crate::real_tikv_ddl::ClusterDdlError> {
     let encode = |error: String| {
         crate::real_tikv_ddl::ClusterDdlError::from(
             tidb_ddl_build::plan_error::DdlPlanError::Encode(error),
@@ -318,7 +317,10 @@ fn load_ddl_jobs(
             let mut job = tidb_model::Job::default();
             job.decode(row[1].go_bytes())
                 .map_err(|error| encode(error.to_string()))?;
-            Ok((row[0].get_int64() == 1, job))
+            Ok((row[0].get_int64() == 1, tidb_model::JobW::new(
+                Some(tidb_model::GoShared::new(job)),
+                tidb_goruntime::go_runtime::GoSharedSlice::from_vec(row[1].go_bytes().to_vec()),
+            )))
         })
         .collect()
 }
@@ -566,10 +568,6 @@ where
             return;
         }
         Self::refresh_server_state(server_state.as_ref(), &server_state_context, owner.as_ref());
-        // The bootstrap `mysql.tidb_ddl_job` layout is located once and kept
-        // across ticks; each tick still reads its rows from a fresh
-        // snapshot. See `load_active_persisted_ddl_jobs_cached`.
-        let mut cached_job_table: Option<DdlJobTable> = None;
         // Go `jobScheduler.runningJobs` and its worker pools: each job runs
         // on a worker of its own, beside jobs on other schema objects.
         let running_jobs = Arc::new(crate::ddl_running_jobs::RunningJobs::new());
@@ -578,8 +576,7 @@ where
         let reorg_worker_pool = WorkerPool::new(reorg_cnt);
         let general_ddl_worker_pool = WorkerPool::new(GENERAL_WORKER_CNT);
         let mut job_workers: Vec<JoinHandle<()>> = Vec::new();
-        // Go `schedule`: the scheduler's one session of `s.sessPool`; a pool
-        // no node has bound reads the job table from a snapshot.
+        // Go `schedule`: the scheduler's one session of `s.sessPool`.
         let mut se: Option<(Arc<tidb_ddl_session::DynPool>, Arc<dyn tidb_ddl_session::SessionContext>)> =
             None;
         while !stop.load(Ordering::Acquire) {
@@ -617,23 +614,15 @@ where
                         min_job_id,
                         &running_jobs.all_ids(),
                     ),
-                    None => load_active_persisted_ddl_jobs_cached(
-                        Arc::clone(&opener),
-                        timeout,
-                        min_job_id,
-                        &mut cached_job_table,
-                    )
-                    .map(|jobs| {
-                        jobs.into_iter()
-                            .filter(|job| !running_jobs.is_running(job.id))
-                            .map(|job| (job.may_need_reorg(), job))
-                            .collect()
-                    }),
+                    None => Err(crate::real_tikv_ddl::ClusterDdlError::NotCommitted(
+                        "the DDL session pool has no sessions".to_owned(),
+                    )),
                 }
             };
             match loaded {
                 Ok(jobs) => {
-                    for (reorg_job, job) in jobs {
+                    for (reorg_job, job_w) in jobs {
+                        let job = job_w.job.as_ref().expect("loaded job").read().clone();
                         if stop.load(Ordering::Acquire) {
                             break;
                         }
@@ -712,7 +701,7 @@ where
                                 let job_done = ddl_job_done_ch_map.load(job_id);
                                 let finished = match run_persisted_ddl_job(
                                     Arc::clone(&opener),
-                                    job_id,
+                                    job_w,
                                     timeout,
                                     job_done.as_deref(),
                                     notifier_ref,
@@ -1084,13 +1073,10 @@ where
         let min_job_id_worker = sql_worker_thread("ddl-min-job-id-refresher")
             .spawn({
                 let refresher = Arc::clone(&min_job_id_refresher);
-                let opener = Arc::clone(&opener);
                 let session_pool = Arc::clone(&session_pool);
                 move || {
-                    let mut cached_job_table: Option<DdlJobTable> = None;
                     // Go `MinJobIDRefresher.refresh`: `sysTblMgr.GetMinJobID`
-                    // on a session of `ddl.sessPool`; a pool no node has
-                    // bound reads the job table from a snapshot.
+                    // on a session of `ddl.sessPool`.
                     refresher.start(&min_job_id_stopped, |previous| {
                         match session_pool.sess_pool() {
                             Some(pool) => tidb_ddl_systable::Manager::get_min_job_id(
@@ -1098,13 +1084,7 @@ where
                                 previous,
                             )
                             .map_err(|error| error.to_string()),
-                            None => load_min_persisted_ddl_job_id_cached(
-                                Arc::clone(&opener),
-                                timeout,
-                                previous,
-                                &mut cached_job_table,
-                            )
-                            .map_err(|error| error.to_string()),
+                            None => Err("the DDL session pool has no sessions".to_owned()),
                         }
                     });
                 }
@@ -1357,6 +1337,65 @@ fn local_ddl_owner(owner_id: String, authority_id: u64) -> tidb_owner::MockManag
 mod schema_sync_tests {
     use super::*;
 
+    fn run_persisted_ddl_job<S: StoreClient>(
+        opener: Arc<RealOptimisticTransactionOpener<S>>,
+        job_id: i64,
+        timeout: Duration,
+        job_done: Option<&crate::real_tikv_ddl::JobDoneCh>,
+        notifier: Option<&dyn SchemaVersionNotifier>,
+        backfiller: &dyn IndexBackfiller,
+        validator: &dyn CheckConstraintValidator,
+        sync: &dyn DdlSchemaSync,
+        check_owner: &(dyn Fn() -> Result<(), String> + Sync),
+        wait_retry: &dyn Fn(Duration) -> Result<(), String>,
+    ) -> Result<PersistedDdlJobOutcome, crate::real_tikv_ddl::ClusterDdlError> {
+        let job_w = crate::real_tikv_ddl::get_job_by_id(backfiller, job_id)
+            .map_err(|error| crate::real_tikv_ddl::ClusterDdlError::NotCommitted(error.to_string()))?;
+        // These worker tests stop the scheduler context at a held barrier
+        // or a paused job to inspect the durable checkpoint. Go delivery
+        // itself retains the worker and retries until its context ends.
+        struct StopAtBarrier<'a> {
+            inner: &'a dyn DdlSchemaSync,
+            stopped: Mutex<Option<String>>,
+        }
+        impl DdlSchemaSync for StopAtBarrier<'_> {
+            fn owner_id(&self) -> &str { self.inner.owner_id() }
+            fn wait_version_synced(&self, id: i64, version: i64) -> Result<(), String> {
+                let result = self.inner.wait_version_synced(id, version);
+                if let Err(error) = &result { *self.stopped.lock().unwrap() = Some(error.clone()); }
+                result
+            }
+            fn clean_job_versions(&self, id: i64) -> Result<(), String> { self.inner.clean_job_versions(id) }
+            fn info_cache(&self) -> Option<Arc<InfoCache>> { self.inner.info_cache() }
+        }
+        let sync = StopAtBarrier { inner: sync, stopped: Mutex::new(None) };
+        let paused = || crate::real_tikv_ddl::get_job_by_id(backfiller, job_id)
+            .is_ok_and(|job| job.job.as_ref().unwrap().read().is_paused());
+        let check = || {
+            check_owner()?;
+            if let Some(error) = sync.stopped.lock().unwrap().clone() { return Err(error); }
+            if paused() { return Err("worker test stopped at pause".to_owned()); }
+            Ok(())
+        };
+        let wait = |delay| {
+            let result = wait_retry(delay);
+            // Go's retry select returns when schCtx ends. The same
+            // cancellation must remain visible to the subsequent refresh.
+            if let Err(error) = &result { *sync.stopped.lock().unwrap() = Some(error.clone()); }
+            result
+        };
+        let result = crate::real_tikv_ddl::run_persisted_ddl_job(
+            Arc::clone(&opener), job_w, timeout, job_done, notifier, backfiller, validator,
+            &sync, &check, &wait,
+        );
+        if result.is_err() && paused() {
+            Ok(PersistedDdlJobOutcome::Paused)
+        } else {
+            result
+        }
+    }
+
+
     /// Go `ddl.Start`: an upgrade needs a DDL-enabled node, which it makes
     /// the owner; otherwise only a DDL-enabled node campaigns.
     #[test]
@@ -1389,14 +1428,27 @@ mod schema_sync_tests {
         assert!(!tidb_owner::Manager::is_owner(&normal));
     }
 
-    /// The backfiller the node builds, its data checks the executor's.
-    fn test_backfiller() -> KvTableIndexBackfiller {
-        KvTableIndexBackfiller::new(
-            &(Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default())
-                as Arc<dyn tidb_table::table_from_meta::TableAutoIds>),
-            &(Arc::new(tidb_session::ddl_session_pool::NodeDdlSessionPool::default())
-                as Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>),
-        )
+    /// Go `GetAllDDLJobs` in the store-level worker harness.
+    fn load_active_persisted_ddl_jobs<S: StoreClient>(
+        opener: Arc<RealOptimisticTransactionOpener<S>>, _timeout: Duration, min_job_id: i64,
+    ) -> Result<Vec<tidb_model::Job>, crate::real_tikv_ddl::ClusterDdlError> {
+        let backfiller = test_backfiller(&opener);
+        let pool = backfiller.session_pool().unwrap();
+        crate::ddl_history::with_pool_session(pool.as_ref(), |se| {
+            crate::ddl_history::get_jobs_by_sql(se, &format!("job_id >= {min_job_id} order by job_id"))
+        }).map_err(crate::real_tikv_ddl::ClusterDdlError::NotCommitted)
+    }
+
+    /// The backfiller the node builds, using real system-session SQL.
+    fn test_backfiller<S: StoreClient>(opener: &Arc<RealOptimisticTransactionOpener<S>>) -> KvTableIndexBackfiller {
+        let row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds> =
+            Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default());
+        let pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool> =
+            tidb_session::ddl_session_pool::NodeDdlSessionPool::for_store(
+                (**opener).clone(), Duration::from_secs(20), Arc::clone(&row_ids), true,
+                Duration::from_millis(500), // Go testkit's schema lease.
+            ).unwrap();
+        KvTableIndexBackfiller::new(&row_ids, &pool)
     }
 
     #[test]
@@ -1471,7 +1523,6 @@ mod schema_sync_tests {
 
     fn worker_without_mdl(recover: bool, remove_mdl_table: bool) {
         use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
-        use crate::real_tikv_ddl::load_active_persisted_ddl_jobs;
         use tidb_meta::{key, value};
         use tidb_model::{
             ActionType, CreateSchemaArgs, DBInfo, GoField, GoShared, HistoryInfo, Job, JobState,
@@ -1589,8 +1640,8 @@ mod schema_sync_tests {
                 timeout,
                 None,
                 Some(&notifier),
-                &test_backfiller(),
-                &test_backfiller(),
+                &test_backfiller(&opener),
+                &test_backfiller(&opener),
                 &barrier,
                 &|| Ok(()),
                 &|_| panic!("no action error retry expected"),
@@ -1613,17 +1664,12 @@ mod schema_sync_tests {
                 .is_none()
         );
         if !remove_mdl_table {
-            let mut tx = opener.begin_read_only().unwrap();
-            let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            assert!(
-                matches!(
-                    tidb_ddl_systable::SnapshotSystemTables::new(&catalog)
-                        .get_mdl_ver(&mut snapshot, job.id),
-                    Err(tidb_ddl_systable::SystemTableManagerError::NotFound)
-                ),
-                "disabled mode must never register an MDL row"
-            );
-            tx.finish_without_writes().unwrap();
+            let backfiller = test_backfiller(&opener);
+            let pool = backfiller.session_pool().unwrap().sess_pool().unwrap();
+            assert!(matches!(tidb_ddl_systable::Manager::get_mdl_ver(
+                &tidb_ddl_systable::SystemTableManager::new(pool), job.id,
+            ), Err(tidb_ddl_systable::SystemTableManagerError::NotFound)),
+                "disabled mode must never register an MDL row");
         }
         barrier.1.store(false, Ordering::Relaxed);
         run(job.id).unwrap();
@@ -1707,7 +1753,7 @@ mod schema_sync_tests {
         }
         tidb_vardef::set_enable_mdl(true);
         use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
-        use crate::real_tikv_ddl::{load_active_persisted_ddl_jobs, ClusterDdlError};
+        use crate::real_tikv_ddl::ClusterDdlError;
         use tidb_model::{
             ActionType, CreateSchemaArgs, DBInfo, GoField, GoShared, HistoryInfo, Job, JobState,
             JobVersion, SchemaState,
@@ -1794,8 +1840,8 @@ mod schema_sync_tests {
                 timeout,
                 None,
                 notifier,
-                &test_backfiller(),
-                &test_backfiller(),
+                &test_backfiller(&opener),
+                &test_backfiller(&opener),
                 &barrier,
                 check,
                 &|_| panic!("this job must not wait after an action error"),
@@ -1824,9 +1870,9 @@ mod schema_sync_tests {
             JobState::QUEUEING
         );
         assert!(run(500, Some(&FailedNotifier), &|| Ok(())).is_err());
-        assert!(
-            barrier.waits.lock().unwrap().is_empty(),
-            "notification failure must precede acknowledgement wait"
+        assert_eq!(
+            *barrier.waits.lock().unwrap(), vec![(500, before + 1)],
+            "Go delivery refreshes after the notification failure and recovers the committed barrier"
         );
         assert!(matches!(
             run(500, Some(&FailedNotifier), &|| Ok(())),
@@ -1861,7 +1907,7 @@ mod schema_sync_tests {
         );
         assert_eq!(
             *barrier.waits.lock().unwrap(),
-            vec![(500, before + 1), (500, before + 1)]
+            vec![(500, before + 1), (500, before + 1), (500, before + 1)]
         );
         assert_eq!(*barrier.cleaned.lock().unwrap(), vec![500]);
         assert!(load_active_persisted_ddl_jobs(opener.clone(), timeout, 0)
@@ -1883,7 +1929,7 @@ mod schema_sync_tests {
         run(502, None, &|| Ok(())).unwrap();
         let waits = barrier.waits.lock().unwrap();
         assert_eq!(
-            &waits[2..],
+            &waits[3..],
             &[
                 (502, before + 2),
                 (502, before + 2),
@@ -2226,8 +2272,8 @@ mod schema_sync_tests {
                 timeout,
                 None,
                 None,
-                &test_backfiller(),
-                &test_backfiller(),
+                &test_backfiller(&opener),
+                &test_backfiller(&opener),
                 &barrier,
                 &|| Ok(()),
                 &|delay| {
@@ -2353,7 +2399,7 @@ mod schema_sync_tests {
             timeout,
             None,
             None,
-            &test_backfiller(),
+            &test_backfiller(&opener),
             &validator,
             &barrier,
             &|| Ok(()),
@@ -2396,7 +2442,7 @@ mod schema_sync_tests {
             timeout,
             None,
             None,
-            &test_backfiller(),
+            &test_backfiller(&opener),
             &PauseDuringValidation(|_: &MutationBuffer| {}),
             &barrier,
             &|| Ok(()),
@@ -2445,7 +2491,7 @@ mod schema_sync_tests {
             timeout,
             None,
             None,
-            &test_backfiller(),
+            &test_backfiller(&opener),
             &PauseDuringValidation(|_: &MutationBuffer| {}),
             &barrier,
             &|| Ok(()),
@@ -2522,7 +2568,7 @@ mod schema_sync_tests {
             timeout,
             None,
             None,
-            &test_backfiller(),
+            &test_backfiller(&opener),
             &panicking,
             &barrier,
             &lost_owner,
@@ -2538,7 +2584,7 @@ mod schema_sync_tests {
             timeout,
             None,
             None,
-            &test_backfiller(),
+            &test_backfiller(&opener),
             &panicking,
             &barrier,
             &|| Ok(()),
@@ -2614,7 +2660,7 @@ mod schema_sync_tests {
                 timeout,
                 None,
                 None,
-                &test_backfiller(),
+                &test_backfiller(&opener),
                 &pause_then_panic,
                 &barrier,
                 &|| Ok(()),
@@ -2637,7 +2683,7 @@ mod schema_sync_tests {
                 timeout,
                 None,
                 None,
-                &test_backfiller(),
+                &test_backfiller(&opener),
                 &panicking,
                 &barrier,
                 &|| Ok(()),
@@ -2802,8 +2848,8 @@ mod schema_sync_tests {
             timeout,
             Some(&done),
             None,
-            &test_backfiller(),
-            &test_backfiller(),
+            &test_backfiller(&opener),
+            &test_backfiller(&opener),
             &Synced,
             &|| Ok(()),
             &|_| panic!("the job must not fail"),

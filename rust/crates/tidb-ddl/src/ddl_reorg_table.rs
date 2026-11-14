@@ -15,8 +15,8 @@
 //! `mysql.tidb_ddl_reorg`, a reorganizing job's checkpoint: Go
 //! `initDDLReorgHandle`, `updateDDLReorgHandle` (in `UpdateReorgMeta`) and
 //! `cleanDDLReorgHandles` (`pkg/ddl/job_scheduler.go`, `reorg.go`) as Go's
-//! statements on a pooled session, and `getDDLReorgHandle`. A worker whose
-//! pool has no sessions yet stages the same rows as mutations.
+//! statements on a pooled session, and `getDDLReorgHandle`. Row primitives
+//! below also support deterministic snapshot fixtures; live workers use SQL.
 
 use tidb_datatype::Datum;
 use tidb_model::TableInfo;
