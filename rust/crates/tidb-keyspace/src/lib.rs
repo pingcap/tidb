@@ -63,7 +63,8 @@ impl KeyspaceCodec for CodecV1 {
     }
 
     fn keyspace_id(&self) -> u32 {
-        0
+        // Go `codecV1.GetKeyspaceID`: `apicodec.NullspaceID`.
+        u32::MAX
     }
 }
 

@@ -349,6 +349,7 @@ struct EtcdClientShared {
 #[derive(Clone)]
 pub struct EtcdClient {
     shared: Arc<EtcdClientShared>,
+    namespace: Vec<u8>,
 }
 
 impl std::fmt::Debug for EtcdClient {
@@ -362,6 +363,27 @@ impl std::fmt::Debug for EtcdClient {
 }
 
 impl EtcdClient {
+    /// Go `etcd.SetEtcdCliByNamespace`: wrap this client's KV and watches.
+    /// Existing clones retain their namespace, as Go's saved unprefixed KV does.
+    /// Prefixes compose without adding a separator. Lease IDs and keepalive/
+    /// revoke operations are unchanged; attached keys are scoped by the KV calls.
+    pub fn set_etcd_cli_by_namespace(&mut self, namespace_prefix: &str) {
+        self.namespace.extend_from_slice(namespace_prefix.as_bytes());
+    }
+
+    /// Go `namespace.prefixInterval`: prefix the request key.
+    fn namespace_key(&self, key: &[u8]) -> Vec<u8> {
+        let mut encoded = Vec::with_capacity(self.namespace.len() + key.len());
+        encoded.extend_from_slice(&self.namespace);
+        encoded.extend_from_slice(key);
+        encoded
+    }
+
+    /// Go `kvPrefix.unprefixGetResponse`: restore a logical response key.
+    fn strip_namespace(&self, key: &mut Vec<u8>) {
+        strip_namespace(&self.namespace, key);
+    }
+
     /// Starts the worker over the PD endpoints, in the caller's order.
     ///
     /// Connecting is lazy: this does not prove etcd is reachable, because the
@@ -422,6 +444,7 @@ impl EtcdClient {
             })
             .map_err(|error| EtcdError::Runtime(error.to_string()))?;
         Ok(Self {
+            namespace: Vec::new(),
             shared: Arc::new(EtcdClientShared {
                 endpoints,
                 timeout,
@@ -452,19 +475,22 @@ impl EtcdClient {
         start_revision: i64,
         on_event: impl Fn(&EtcdWatchEvent) + Send + 'static,
     ) -> Result<EtcdWatcher, EtcdError> {
+        let namespace = self.namespace.clone();
         EtcdWatcher::spawn_from_revision(
             self.shared.endpoints.clone(),
             self.shared.timeout,
             Arc::clone(&self.shared.security),
-            key,
+            self.namespace_key(&key.into()),
             start_revision,
-            on_event,
+            move |event| {
+                let mut event = event.clone();
+                strip_namespace(&namespace, &mut event.key);
+                on_event(&event);
+            },
         )
     }
 
-    /// Starts the same reconnecting watch while preserving each etcd watch
-    /// response as one callback and binding its lifetime to the caller's
-    /// cancellation predicate.
+    /// Go `namespace.NewWatcher`: watch one key and return logical response keys.
     pub fn watch_key_responses(
         &self,
         key: impl Into<Vec<u8>>,
@@ -472,21 +498,10 @@ impl EtcdClient {
         is_cancelled: impl Fn() -> bool + Send + 'static,
         on_response: impl Fn(&WatchResponse) + Send + 'static,
     ) -> Result<EtcdWatcher, EtcdError> {
-        EtcdWatcher::spawn_responses_from_revision(
-            self.shared.endpoints.clone(),
-            self.shared.timeout,
-            Arc::clone(&self.shared.security),
-            key,
-            start_revision,
-            false,
-            is_cancelled,
-            on_response,
-        )
+        self.watch_namespaced_responses(key.into(), start_revision, false, is_cancelled, on_response)
     }
 
-    /// Starts a prefix watch from `start_revision`, preserving etcd watch
-    /// responses and binding its lifetime to the caller's cancellation
-    /// predicate.
+    /// Go `namespace.NewWatcher`: watch a prefix and return logical response keys.
     pub fn watch_prefix_responses(
         &self,
         prefix: impl Into<Vec<u8>>,
@@ -494,15 +509,34 @@ impl EtcdClient {
         is_cancelled: impl Fn() -> bool + Send + 'static,
         on_response: impl Fn(&WatchResponse) + Send + 'static,
     ) -> Result<EtcdWatcher, EtcdError> {
+        self.watch_namespaced_responses(prefix.into(), start_revision, true, is_cancelled, on_response)
+    }
+
+    /// Go `watcherPrefix.Watch`: prefix requests and unprefix event keys.
+    fn watch_namespaced_responses(
+        &self,
+        key: Vec<u8>,
+        start_revision: i64,
+        prefix: bool,
+        is_cancelled: impl Fn() -> bool + Send + 'static,
+        on_response: impl Fn(&WatchResponse) + Send + 'static,
+    ) -> Result<EtcdWatcher, EtcdError> {
+        let namespace = self.namespace.clone();
         EtcdWatcher::spawn_responses_from_revision(
             self.shared.endpoints.clone(),
             self.shared.timeout,
             Arc::clone(&self.shared.security),
-            prefix,
+            self.namespace_key(&key),
             start_revision,
-            true,
+            prefix,
             is_cancelled,
-            on_response,
+            move |response| {
+                let mut response = response.clone();
+                for event in &mut response.events {
+                    strip_namespace(&namespace, &mut event.key);
+                }
+                on_response(&response);
+            },
         )
     }
 
@@ -527,7 +561,7 @@ impl EtcdClient {
         self.shared
             .commands
             .send(EtcdCommand::Put {
-                key: key.to_vec(),
+                key: self.namespace_key(key),
                 value: value.to_vec(),
                 timeout,
                 reply,
@@ -554,7 +588,7 @@ impl EtcdClient {
         self.shared
             .commands
             .send(EtcdCommand::PutWithLease {
-                key: key.to_vec(),
+                key: self.namespace_key(key),
                 value: value.to_vec(),
                 lease,
                 timeout,
@@ -635,11 +669,16 @@ impl EtcdClient {
         self.shared
             .commands
             .send(EtcdCommand::GetPrefix {
-                prefix: prefix.to_vec(),
+                prefix: self.namespace_key(prefix),
                 reply,
             })
             .map_err(|_| EtcdError::Closed)?;
-        response.recv().unwrap_or(Err(EtcdError::Closed))
+        response.recv().unwrap_or(Err(EtcdError::Closed)).map(|mut entries| {
+            for (key, _) in &mut entries {
+                self.strip_namespace(key);
+            }
+            entries
+        })
     }
 
     /// Reads every key under `prefix`, ordered by creation revision, and
@@ -659,11 +698,16 @@ impl EtcdClient {
         self.shared
             .commands
             .send(EtcdCommand::GetPrefixMetadata {
-                prefix: prefix.to_vec(),
+                prefix: self.namespace_key(prefix),
                 reply,
             })
             .map_err(|_| EtcdError::Closed)?;
-        response.recv().unwrap_or(Err(EtcdError::Closed))
+        response.recv().unwrap_or(Err(EtcdError::Closed)).map(|(mut entries, revision)| {
+            for entry in &mut entries {
+                self.strip_namespace(&mut entry.key);
+            }
+            (entries, revision)
+        })
     }
 
     /// Creates `key` under `lease` iff it does not exist.
@@ -677,7 +721,7 @@ impl EtcdClient {
         self.shared
             .commands
             .send(EtcdCommand::CreateWithLease {
-                key: key.to_vec(),
+                key: self.namespace_key(key),
                 value: value.to_vec(),
                 lease,
                 reply,
@@ -710,13 +754,18 @@ impl EtcdClient {
             .commands
             .send(EtcdCommand::CreateOrGetWithLease {
                 timeout,
-                key: key.to_vec(),
+                key: self.namespace_key(key),
                 value: value.to_vec(),
                 lease,
                 reply,
             })
             .map_err(|_| EtcdError::Closed)?;
-        response.recv().unwrap_or(Err(EtcdError::Closed))
+        response.recv().unwrap_or(Err(EtcdError::Closed)).map(|mut result| {
+            if let Some(entry) = &mut result.existing {
+                self.strip_namespace(&mut entry.key);
+            }
+            result
+        })
     }
 
     /// Creates `key` without a lease iff it does not exist.
@@ -725,7 +774,7 @@ impl EtcdClient {
         self.shared
             .commands
             .send(EtcdCommand::Create {
-                key: key.to_vec(),
+                key: self.namespace_key(key),
                 value: value.to_vec(),
                 reply,
             })
@@ -744,7 +793,7 @@ impl EtcdClient {
         self.shared
             .commands
             .send(EtcdCommand::CompareValueAndPut {
-                key: key.to_vec(),
+                key: self.namespace_key(key),
                 expected_value: expected_value.to_vec(),
                 value: value.to_vec(),
                 reply,
@@ -766,7 +815,7 @@ impl EtcdClient {
         self.shared
             .commands
             .send(EtcdCommand::CompareAndPutWithLease {
-                key: key.to_vec(),
+                key: self.namespace_key(key),
                 expected_mod_revision,
                 value: value.to_vec(),
                 lease,
@@ -788,7 +837,7 @@ impl EtcdClient {
         self.shared
             .commands
             .send(EtcdCommand::CompareAndPut {
-                key: key.to_vec(),
+                key: self.namespace_key(key),
                 expected_mod_revision,
                 value: value.to_vec(),
                 reply,
@@ -808,7 +857,7 @@ impl EtcdClient {
         self.shared
             .commands
             .send(EtcdCommand::DeleteIfModRevision {
-                key: key.to_vec(),
+                key: self.namespace_key(key),
                 expected_mod_revision,
                 reply,
             })
@@ -828,8 +877,8 @@ impl EtcdClient {
         self.shared
             .commands
             .send(EtcdCommand::DeleteKeysAndPutWithLease {
-                delete_keys,
-                key: key.to_vec(),
+                delete_keys: delete_keys.iter().map(|key| self.namespace_key(key)).collect(),
+                key: self.namespace_key(key),
                 value: value.to_vec(),
                 lease,
                 reply,
@@ -858,7 +907,7 @@ impl EtcdClient {
         self.shared
             .commands
             .send(EtcdCommand::Delete {
-                key: key.to_vec(),
+                key: self.namespace_key(key),
                 timeout,
                 reply,
             })
@@ -887,7 +936,7 @@ impl EtcdClient {
         self.shared
             .commands
             .send(EtcdCommand::DeletePrefix {
-                prefix: prefix.to_vec(),
+                prefix: self.namespace_key(prefix),
                 reply,
             })
             .map_err(|_| EtcdError::Closed)?;
@@ -914,7 +963,7 @@ impl EtcdClient {
         self.shared
             .commands
             .send(EtcdCommand::Get {
-                key: key.to_vec(),
+                key: self.namespace_key(key),
                 timeout,
                 reply,
             })
@@ -956,6 +1005,13 @@ impl EtcdClient {
             return Ok(None);
         };
         parse_global_schema_version(&value).map(Some)
+    }
+}
+
+/// Go `kvPrefix.unprefixGetResponse` / `watcherPrefix.Watch`: strip the prefix.
+fn strip_namespace(namespace: &[u8], key: &mut Vec<u8>) {
+    if key.starts_with(namespace) {
+        key.drain(..namespace.len());
     }
 }
 
@@ -2532,3 +2588,6 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod namespace_tests;
