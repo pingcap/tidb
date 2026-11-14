@@ -199,6 +199,11 @@ func TestPlanStatsLoad(t *testing.T) {
 			is := dom.InfoSchema()
 			dom.StatsHandle().Clear() // clear statsCache
 			require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
+			// Ristretto rejects a Put for a key whose admission is pending, so the cache
+			// would drop what sync load writes back while the table is still being admitted.
+			// The plan would then miss that column without IsSyncStatsFailed being set, see
+			// https://github.com/pingcap/tidb/issues/70964.
+			dom.StatsHandle().WaitForAsyncUpdates()
 			stmt, err := p.ParseOneStmt(testCase.sql, "", "")
 			require.NoError(t, err)
 			err = executor.ResetContextOfStmt(ctx, stmt)
@@ -206,12 +211,6 @@ func TestPlanStatsLoad(t *testing.T) {
 			nodeW := resolve.NewNodeW(stmt)
 			p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, is)
 			require.NoError(t, err)
-			// The stats cache can still drop a column that sync load just wrote
-			// back, because Ristretto rejects a Put for a key whose admission is
-			// pending. Then the plan misses that column without IsSyncStatsFailed
-			// being set, so this skip does not cover that case. The test can only
-			// be made fully stable by fixing the cache, see
-			// https://github.com/pingcap/tidb/issues/70964.
 			if ctx.GetSessionVars().StmtCtx.IsSyncStatsFailed {
 				t.Logf("skip stats assertions for %q because sync stats load failed: %v",
 					testCase.sql, ctx.GetSessionVars().StmtCtx.GetWarnings())
@@ -260,11 +259,13 @@ func TestPlanStatsLoad(t *testing.T) {
 		testKit.MustExec("insert into t_issue48257 value(1)")
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		h.WaitForAsyncUpdates()
 		testKit.MustExec("analyze table t_issue48257 all columns")
 		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t_issue48257").Rows(), "t_issue48257", false)
 		testKit.MustExec("insert into t_issue48257 value(1)")
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		h.WaitForAsyncUpdates()
 		require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t_issue48257").Rows(), "t_issue48257", false)
 		testKit.MustExec("set tidb_opt_objective='determinate'")
@@ -278,11 +279,13 @@ func TestPlanStatsLoad(t *testing.T) {
 		testKit.MustExec("insert into t1_issue48257 value(1)")
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		h.WaitForAsyncUpdates()
 		testKit.MustExec("analyze table t1_issue48257 all columns")
 		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t1_issue48257").Rows(), "t1_issue48257", true)
 		testKit.MustExec("insert into t1_issue48257 value(1)")
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		h.WaitForAsyncUpdates()
 		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t1_issue48257").Rows(), "t1_issue48257", true)
 		testKit.MustExec("set tidb_opt_objective='determinate'")
 		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t1_issue48257").Rows(), "t1_issue48257", true)
