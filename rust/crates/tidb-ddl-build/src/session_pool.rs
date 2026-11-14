@@ -217,6 +217,14 @@ pub trait DdlSessionPool: Send + Sync {
         ))
     }
 
+    /// Whether [`Self::open_step_session`] can serve a step now: a node's
+    /// pool can once its domain is bound (the node builds the pool before
+    /// the domain exists); a step without one stages its system-table rows
+    /// itself.
+    fn has_step_sessions(&self) -> bool {
+        false
+    }
+
     /// Go `w.sess` for one job step (`w.sess.Begin`): an internal session in
     /// an optimistic transaction that reads at the step's `start_ts` and
     /// stages its writes, key flags included, into the step's `buffer`; the

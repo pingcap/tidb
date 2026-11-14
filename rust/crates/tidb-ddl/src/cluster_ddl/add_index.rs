@@ -550,17 +550,6 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
         return create_columnar_index(schema_id, schema, &stored, spec, *if_not_exists, context)
             .map(Some);
     }
-    // Go `executor.CreatePrimaryKey`: check the written name, then use
-    // mysql.PrimaryKeyName for every lookup and for the submitted job.
-    let name = if index.primary {
-        tidb_ddl_build::check_too_long_identifier(index.name.original()).map_err(|_| {
-            DdlPlanError::from(tidb_dbterror::ERR_TOO_LONG_IDENT
-                .gen_with_stack_by_args(&[tidb_mysql::consts::PrimaryKeyName.into()]))
-        })?;
-        tidb_mysql::consts::PrimaryKeyName.to_owned()
-    } else {
-        settle_added_index_name(&stored, index, expressions)
-    };
     if index.primary && (find_index(&stored, "PRIMARY").is_some() || stored.pk_is_handle) {
         return Err(DdlPlanError::Admission(
             tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
@@ -575,6 +564,7 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
             "The primary key cannot be an expression index",
         ));
     }
+    let name = settle_added_index_name(&stored, index, expressions);
     if let Some(existing) = find_index(&stored, &name) {
         let existing = existing.read();
         if *if_not_exists {

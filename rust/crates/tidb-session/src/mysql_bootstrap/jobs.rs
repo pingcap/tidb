@@ -24,9 +24,13 @@
 //! its object id and then its job id from `NextGlobalID`, publishes its own
 //! schema version and diff, and ends as a `mysql.tidb_ddl_history` row.
 //!
-//! Production executes this statement sequence through the ordinary DDL
-//! session pool, committing each job as Go does. Deterministic artifact tests
-//! use the same sequence with snapshot planners and inspect the net writes.
+//! This planner runs those statements through the same job planners a live
+//! owner uses ([`tidb_ddl::cluster_ddl`]'s submission, `plan_insert_attempt` and
+//! `plan_persisted_ddl_job_step`), against an overlay of the bootstrap's own
+//! writes, and returns the net write set. The one difference from Go is the
+//! transaction boundary: Go commits each job on its own and this node
+//! publishes the whole bootstrap in one transaction (see
+//! [`super::BootstrapWrite`]); the committed bytes are the same.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -376,55 +380,6 @@ pub(super) fn plan<S: MetaSnapshot>(
     plan_with(snapshot, start_ts, environment, layout, true)
 }
 
-/// Go `bootstrap` / `doDDLWorks`: commit `InitDDLTables`, then execute each
-/// statement through the domain's DDL session pool. The returned write holds
-/// only `doDMLWorks` and schema-cache initialization, never active job rows.
-pub(crate) fn execute<S: tidb_store_driver_txn::transaction::StoreClient>(
-    opener: &tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
-    timeout: std::time::Duration,
-    environment: &BootstrapEnvironment,
-    layout: BootstrapLayout,
-) -> Result<BootstrapWrite, BootstrapError> {
-    use std::sync::Arc;
-    use tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot;
-    use tidb_domain_core::cluster_transactions::{ClusterTransactions, RealClusterTransactions};
-    use tidb_txnkv::rpc::UnaryCallContext;
-    let error = |error: String| BootstrapError::Encode(error);
-    let transactions = RealClusterTransactions::new(opener.clone(), timeout);
-    let snapshot = || {
-        let start_ts = transactions.fresh_timestamp().map_err(error)?;
-        let view = transactions.open_snapshot_at(start_ts, "").map_err(error)?;
-        Ok::<_, BootstrapError>((start_ts, SnapshotMetaSnapshot::new(view)))
-    };
-    let (start_ts, mut current) = snapshot()?;
-    let mut pool: Option<Arc<crate::ddl_session_pool::NodeDdlSessionPool>> = None;
-    plan_with_executor(&mut current, start_ts, environment, layout, false, true,
-        &mut |overlay, _, last, sql, statement| {
-            if pool.is_none() {
-                let txn = opener.begin().map_err(|e| error(e.to_string()))?;
-                let outcome = txn.commit(overlay.net_mutations()?, &UnaryCallContext::with_timeout(timeout))
-                    .map_err(|e| error(e.to_string()))?;
-                tidb_store_driver_error::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome)
-                    .map_err(|e| error(e.message))?;
-                overlay.writes.clear();
-                pool = Some(crate::ddl_session_pool::NodeDdlSessionPool::for_bootstrap(opener.clone(), timeout)
-                    .map_err(error)?);
-            }
-            pool.as_ref().unwrap().execute_bootstrap(statement, &bootstrap_context(sql))
-                .map_err(|detail| BootstrapError::Job {
-                    statement: sql.lines().next().unwrap_or(sql).trim().to_owned(), detail,
-                })?;
-            *overlay.base = snapshot()?.1;
-            let version = overlay.get(&key::schema_version_kv_key())?
-                .as_deref().map(value::parse_int_value).transpose()
-                .map_err(|e| error(e.to_string()))?.unwrap_or_default();
-            last.diff = overlay.get(&key::schema_diff_kv_key(version))?
-                .as_deref().map(value::get_schema_diff).transpose()
-                .map_err(|e| error(e.to_string()))?.flatten();
-            Ok(())
-        })
-}
-
 /// A `TableInfo` written into meta, as `createAndSplitTables` does.
 fn write_table<S: MetaSnapshot>(
     overlay: &mut Overlay<'_, S>,
@@ -468,28 +423,8 @@ fn plan_with<S: MetaSnapshot>(
     layout: BootstrapLayout,
     withhold_created_tables: bool,
 ) -> Result<BootstrapWrite, BootstrapError> {
-    plan_with_executor(snapshot, start_ts, environment, layout, withhold_created_tables, false, &mut run)
-}
-
-/// Go `doDDLWorks`: the ordered statements shared by bootstrap publication
-/// and deterministic artifact fixtures. Only the fixture executor stages jobs.
-fn plan_with_executor<S: MetaSnapshot>(
-    snapshot: &mut S,
-    start_ts: u64,
-    environment: &BootstrapEnvironment,
-    layout: BootstrapLayout,
-    withhold_created_tables: bool,
-    resume: bool,
-    run: &mut impl FnMut(&mut Overlay<'_, S>, &mut Clock, &mut JobOutcome, &str, &DdlStatement) -> Result<(), BootstrapError>,
-) -> Result<BootstrapWrite, BootstrapError> {
     let classic = layout == BootstrapLayout::Classic;
-    let existing_database = if resume {
-        let catalog = load_info_schema(snapshot)?;
-        catalog.schema_by_name(SYSTEM_DB).map(|database| database.read().id)
-    } else {
-        refuse_if_present(snapshot)?;
-        None
-    };
+    refuse_if_present(snapshot)?;
     let mut overlay = Overlay::new(snapshot);
     let mut clock = Clock(start_ts);
 
@@ -502,9 +437,7 @@ fn plan_with_executor<S: MetaSnapshot>(
     // `bootstrapSchemas` (next-gen) and `InitDDLTables`: the `mysql` database
     // is `SystemDatabaseID` under the next-gen kernel and the next global id
     // under the classic one.
-    let database_id = if let Some(database_id) = existing_database {
-        database_id
-    } else if classic {
+    let database_id = if classic {
         let current = match overlay.get(&key::next_global_id_kv_key())? {
             Some(stored) => value::parse_int_value(&stored)
                 .map_err(|error| BootstrapError::Encode(format!("NextGlobalID: {error}")))?,
@@ -519,9 +452,7 @@ fn plan_with_executor<S: MetaSnapshot>(
     } else {
         SYSTEM_DATABASE_ID
     };
-    if existing_database.is_none() {
-        write_database(&mut overlay, database_id, SYSTEM_DB)?;
-    }
+    write_database(&mut overlay, database_id, SYSTEM_DB)?;
 
     let mut created_tables = Vec::new();
     let mut global_batches = Vec::new();

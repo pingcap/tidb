@@ -74,17 +74,17 @@ pub fn get_jobs_by_sql(
 }
 
 /// Runs `read` on a session of the DDL's pool (Go `sess.NewSession` over a
-/// pooled context). An unavailable pool is an error, as with Go Pool.Get.
+/// pooled context); `None` when no node has bound the pool.
 pub fn with_pool_session<T>(
     sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     read: impl FnOnce(&tidb_ddl_systable::DdlSession) -> Result<T, String>,
-) -> Result<T, String> {
-    let pool = sess_pool.sess_pool().ok_or_else(|| "the DDL session pool has no sessions".to_owned())?;
-    pool.get().map_err(|error| error.to_string()).and_then(|sess_ctx| {
+) -> Option<Result<T, String>> {
+    let pool = sess_pool.sess_pool()?;
+    Some(pool.get().map_err(|error| error.to_string()).and_then(|sess_ctx| {
         let result = read(&tidb_ddl_session::Session::new(std::sync::Arc::clone(&sess_ctx)));
         pool.put(sess_ctx);
         result
-    })
+    }))
 }
 
 /// Go `ddl.Info`, as `ADMIN SHOW DDL` reads it.

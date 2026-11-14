@@ -166,7 +166,7 @@ fn add_batch_ddl_jobs<S: StoreClient>(
         .collect();
     let result = crate::real_tikv_ddl::gen_gid_and_insert_jobs_with_retry(
         Arc::clone(opener),
-        sess_pool,
+        Some(sess_pool),
         &mut specs,
         timeout,
         |specs| Some(ddl_job_done_ch_map.register_job_done_channels(specs)),

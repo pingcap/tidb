@@ -5229,8 +5229,6 @@ pub(crate) fn session_job(context: &dyn DdlSessionContext, action: ActionType) -
 /// owner starts without acknowledgements and recovers durable schema state.
 #[derive(Clone, Debug)]
 pub struct DdlJobSchemaState {
-    /// Go `deliveryJob`'s `jobW`, refreshed by the scheduler between steps.
-    pub delivered_job: Option<tidb_model::JobW>,
     /// Go IsMDLEnabled, including the next-generation kernel override.
     pub mdl_enabled: bool,
     /// Last version acknowledged by this owner run.
@@ -5260,7 +5258,6 @@ impl DdlJobSchemaState {
     /// Starts a fresh owner run in the selected source mode.
     pub fn new(mdl_enabled: bool) -> Self {
         Self {
-            delivered_job: None,
             mdl_enabled,
             synced_version: None,
             pending_version: None,
@@ -5451,6 +5448,7 @@ fn plan_persisted_action<S: MetaSnapshot>(
 /// buffer.
 fn step_session(worker: Option<&DdlStepWorker>) -> Option<crate::job_txn::StepSession> {
     worker
+        .filter(|worker| worker.sess_pool.has_step_sessions())
         .map(|worker| crate::job_txn::StepSession {
         pool: std::sync::Arc::clone(&worker.sess_pool),
         buffer: worker.step_buffer.clone(),
@@ -5702,108 +5700,6 @@ fn dispatch_persisted_action(
     }
 }
 
-/// Go `transitOneJobStepAndWaitSync`: recover the schema barrier before
-/// entering `worker.transitOneJobStep` and opening its transaction.
-pub(crate) fn schema_sync_before_step<S: MetaSnapshot>(
-    snapshot: &mut S,
-    schema_state: &DdlJobSchemaState,
-    job: &tidb_model::Job,
-) -> Result<Option<PersistedDdlJobPlan>, DdlPlanError> {
-    let catalog = match &schema_state.info_cache {
-        Some(cache) => cache.load_with_ts(snapshot, cache.capacity())?.metadata_copy(),
-        None => load_info_schema(snapshot)?,
-    };
-    let active = tidb_ddl_systable::ddl_job_table::ActiveDdlJob::from_job(job.clone());
-    recover_schema_before_step(snapshot, &catalog, &active, schema_state, true).map(|(_, sync)| sync)
-}
-
-fn recover_schema_before_step<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
-    schema_state: &DdlJobSchemaState,
-    check_barrier: bool,
-) -> Result<(Option<MdlInfoUpdate>, Option<PersistedDdlJobPlan>), DdlPlanError> {
-    let ddl_job_id = active.job.id;
-    let mdl_info = if schema_state.mdl_enabled {
-        let mut info = mdl_info_update(&catalog, active.job.table_id)?;
-        info.table_ids = active.table_ids.clone();
-        info.omit_owner_id =
-            tidb_metadef::is_system_related_db(&active.job.schema_name.to_string().go_to_lower());
-        if !check_barrier { return Ok((Some(info), None)); }
-        // Go `sysTblMgr.GetMDLVer`; snapshot access is only for fixtures.
-        let mdl_ver = match schema_state.worker.as_ref() {
-            Some(worker) => {
-                let pool = worker.sess_pool.sess_pool().ok_or_else(||
-                    DdlPlanError::Encode("the DDL session pool has no sessions".to_owned()))?;
-                tidb_ddl_systable::Manager::get_mdl_ver(
-                    &tidb_ddl_systable::SystemTableManager::new(pool), ddl_job_id,
-                )
-            }
-            None => info.fixture_mdl_version(snapshot, ddl_job_id),
-        };
-        match mdl_ver {
-            Ok(version) if Some(version) != schema_state.synced_version => {
-                return Ok((None, Some(PersistedDdlJobPlan::SchemaSync {
-                    version,
-                    mdl_info: Some(info),
-                    publish_version: false,
-                    job: Box::new(active.job.clone()),
-                })));
-            }
-            Ok(_) => {}
-            Err(tidb_ddl_systable::SystemTableManagerError::NotFound) => {}
-            Err(error) => return Err(DdlPlanError::Encode(error.to_string())),
-        }
-        Some(info)
-    } else {
-        if !check_barrier { return Ok((None, None)); }
-        // Go waitVersionSyncedWithoutMDL recovers from a fresh snapshot, not
-        // from an MDL row or merely the job's possibly older LastSchemaVersion.
-        let can_sync = matches!(
-            active.job.state,
-            JobState::RUNNING | JobState::ROLLINGBACK | JobState::DONE | JobState::ROLLBACK_DONE
-        );
-        if can_sync {
-            if let Some(version) = schema_state.pending_version {
-                return Ok((None, Some(PersistedDdlJobPlan::SchemaSync {
-                    version,
-                    mdl_info: None,
-                    publish_version: false,
-                    job: Box::new(active.job.clone()),
-                })));
-            }
-            if schema_state.synced_version.is_none() && active.job.last_schema_version > 0 {
-                let mut version = catalog.schema_meta_version();
-                // Same projection as meta.GetSchemaVersionWithNonEmptyDiff:
-                // a separately reserved newest version may not have a diff yet.
-                if version > 0 {
-                    let bytes = snapshot.get(&key::schema_diff_kv_key(version))?;
-                    let diff = bytes
-                        .as_deref()
-                        .map(value::get_schema_diff)
-                        .transpose()
-                        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-                        .flatten();
-                    if diff.is_none() {
-                        version -= 1;
-                    }
-                }
-                if version > 0 {
-                    return Ok((None, Some(PersistedDdlJobPlan::SchemaSync {
-                        version,
-                        mdl_info: None,
-                        publish_version: true,
-                        job: Box::new(active.job.clone()),
-                    })));
-                }
-            }
-        }
-        None
-    };
-    Ok((mdl_info, None))
-}
-
 // All persisted actions share the queue, MDL recovery and history owner. The
 // explicit action predicate keeps seed entrypoints out of live dispatch.
 fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
@@ -5833,44 +5729,94 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     };
     let job_table = tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&catalog)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    let mut active = match (&schema_state.delivered_job, schema_state.worker.as_ref()) {
-        (Some(job_w), _) => tidb_ddl_systable::ddl_job_table::ActiveDdlJob::from_job(
-            job_w.job.as_ref().expect("delivered job").read().clone(),
-        ),
-        (None, Some(_)) => return Err(DdlPlanError::Encode("DDL worker has no delivered job".to_owned())),
-        (None, None) => job_table
-            .load_by_id(snapshot, ddl_job_id)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-            .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?,
-    };
-    let result = (|| {
+    let mut active = job_table
+        .load_by_id(snapshot, ddl_job_id)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
     if !supports_action(active.job.type_) {
         return Err(DdlPlanError::Encode(format!(
             "unsupported persisted DDL action {}",
             active.job.type_
         )));
     }
-    let (mdl_info, schema_sync) = recover_schema_before_step(
-        snapshot, &catalog, &active, &schema_state, schema_state.worker.is_none(),
-    )?;
-    if let Some(schema_sync) = schema_sync { return Ok(schema_sync); }
-    if let Some(job_w) = schema_state.delivered_job.clone() {
-        // Go `worker.transitOneJobStep`: compare the exact bytes, but run
-        // the delivered object. Re-decoding this read would lose that guard.
-        let bytes = match step_session(schema_state.worker.as_ref()) {
-            Some(session) => {
-                let sql = format!("select job_meta from mysql.tidb_ddl_job where job_id = {ddl_job_id}");
-                let rows = session.execute(start_ts, &sql, &[]).map_err(DdlPlanError::from_mysql_error)?;
-                rows.first().and_then(|row| row.first()).map(|value| value.go_bytes().to_vec())
+    let mdl_info = if schema_state.mdl_enabled {
+        let mut info = mdl_info_update(&catalog, active.job.table_id)?;
+        info.table_ids = active.table_ids.clone();
+        info.omit_owner_id =
+            tidb_metadef::is_system_related_db(&active.job.schema_name.to_string().go_to_lower());
+        // Go `transitOneJobStepAndWaitSync`: `sysTblMgr.GetMDLVer` on a
+        // session of `ddl.sessPool`; a run without one reads the step's
+        // snapshot.
+        let mdl_ver = match schema_state
+            .worker
+            .as_ref()
+            .and_then(|worker| worker.sess_pool.sess_pool())
+        {
+            Some(pool) => tidb_ddl_systable::Manager::get_mdl_ver(
+                &tidb_ddl_systable::SystemTableManager::new(pool),
+                ddl_job_id,
+            ),
+            None => tidb_ddl_systable::SnapshotSystemTables::new(&catalog)
+                .get_mdl_ver(snapshot, ddl_job_id),
+        };
+        match mdl_ver {
+            Ok(version) if Some(version) != schema_state.synced_version => {
+                return Ok(PersistedDdlJobPlan::SchemaSync {
+                    version,
+                    mdl_info: Some(info),
+                    publish_version: false,
+                    job: Box::new(active.job.clone()),
+                });
             }
-            None => job_table.job_bytes_by_id(snapshot, ddl_job_id)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        }.ok_or_else(|| DdlPlanError::Encode("not found".to_owned()))?;
-        if bytes != job_w.bytes.snapshot() {
-            return Err(DdlPlanError::Encode("job meta changed by others".to_owned()));
+            Ok(_) => {}
+            Err(tidb_ddl_systable::SystemTableManagerError::NotFound) => {}
+            Err(error) => return Err(DdlPlanError::Encode(error.to_string())),
         }
-        active.job = job_w.job.as_ref().expect("delivered job").read().clone();
-    }
+        Some(info)
+    } else {
+        // Go waitVersionSyncedWithoutMDL recovers from a fresh snapshot, not
+        // from an MDL row or merely the job's possibly older LastSchemaVersion.
+        let can_sync = matches!(
+            active.job.state,
+            JobState::RUNNING | JobState::ROLLINGBACK | JobState::DONE | JobState::ROLLBACK_DONE
+        );
+        if can_sync {
+            if let Some(version) = schema_state.pending_version {
+                return Ok(PersistedDdlJobPlan::SchemaSync {
+                    version,
+                    mdl_info: None,
+                    publish_version: false,
+                    job: Box::new(active.job.clone()),
+                });
+            }
+            if schema_state.synced_version.is_none() && active.job.last_schema_version > 0 {
+                let mut version = catalog.schema_meta_version();
+                // Same projection as meta.GetSchemaVersionWithNonEmptyDiff:
+                // a separately reserved newest version may not have a diff yet.
+                if version > 0 {
+                    let bytes = snapshot.get(&key::schema_diff_kv_key(version))?;
+                    let diff = bytes
+                        .as_deref()
+                        .map(value::get_schema_diff)
+                        .transpose()
+                        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+                        .flatten();
+                    if diff.is_none() {
+                        version -= 1;
+                    }
+                }
+                if version > 0 {
+                    return Ok(PersistedDdlJobPlan::SchemaSync {
+                        version,
+                        mdl_info: None,
+                        publish_version: true,
+                        job: Box::new(active.job.clone()),
+                    });
+                }
+            }
+        }
+        None
+    };
     // Go `transitOneJobStep` -> `prepareTxn`'s `attachTopProfilingInfo`:
     // every step, finishing ones included, runs under the job's SQL.
     crate::job_ctx::attach_top_profiling_info(active.job.id, &active.job.query.to_utf8_lossy_go());
@@ -6045,11 +5991,6 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         run_error: step.run_error,
         error_count: active.job.error_count,
     }))
-    })();
-    if let Some(job_w) = &schema_state.delivered_job {
-        *job_w.job.as_ref().expect("delivered job").write() = active.job;
-    }
-    result
 }
 
 pub(crate) use tidb_ddl_jobsubmit::wrap_key_2_string;
@@ -7685,7 +7626,6 @@ pub fn plan_persisted_ddl_job_failure<S: MetaSnapshot>(
     ddl_job_id: i64,
     start_ts: u64,
     failure: PersistedDdlJobFailure,
-    delivered_job: Option<&tidb_model::Job>,
     load_error_count_limit: &dyn Fn() -> i64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
     session: Option<&crate::job_txn::StepSession>,
@@ -7693,12 +7633,10 @@ pub fn plan_persisted_ddl_job_failure<S: MetaSnapshot>(
     let catalog = load_info_schema(snapshot)?;
     let job_table = tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&catalog)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    let mut active = match delivered_job {
-        Some(job) => tidb_ddl_systable::ddl_job_table::ActiveDdlJob::from_job(job.clone()),
-        None => job_table.load_by_id(snapshot, ddl_job_id)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-            .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?,
-    };
+    let mut active = job_table
+        .load_by_id(snapshot, ddl_job_id)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
     if active.job.real_start_ts == 0 {
         active.job.real_start_ts = start_ts;
     }
@@ -7867,22 +7805,6 @@ pub struct MdlInfoUpdate {
 }
 
 impl MdlInfoUpdate {
-    /// Reads the MDL row in deterministic snapshot-plan fixtures. Live
-    /// workers use `systable.Manager.GetMDLVer` on the session pool.
-    fn fixture_mdl_version<S: MetaSnapshot>(
-        &self, snapshot: &mut S, job_id: i64,
-    ) -> Result<i64, tidb_ddl_systable::SystemTableManagerError> {
-        use tidb_syssession::mysql_system_tables::{scan_system_table_prefixed, SystemRow, SystemTableView};
-        let view = SystemTableView::project("mysql.tidb_mdl_info", &self.table, &["job_id", "version"]);
-        for (key, value) in scan_system_table_prefixed(snapshot, &view, &[Datum::Int(job_id)])? {
-            let row = SystemRow::parse(&view, &key, &value)?;
-            if row.i64("job_id")? == Some(job_id) {
-                return row.i64("version")?.ok_or(tidb_ddl_systable::SystemTableManagerError::NotFound);
-            }
-        }
-        Err(tidb_ddl_systable::SystemTableManagerError::NotFound)
-    }
-
     /// Go `registerMDLInfo` on the step's session: the job's `table_ids`
     /// read back from `mysql.tidb_ddl_job`, then `replace into
     /// mysql.tidb_mdl_info` (without `owner_id` for a system database).
@@ -9580,6 +9502,46 @@ fn append_schema_change_mutations(
         };
         writes.extend(mutations.map_err(|error| DdlPlanError::Encode(error.to_string()))?);
     }
+    Ok(())
+}
+
+/// Go `AlterTableCache`'s `replace into mysql.table_cache_meta values (%?,
+/// 'NONE', 0, 0)`: the cached table's lock row, unlocked.
+pub(crate) fn write_table_cache_meta_row(
+    catalog: &SessionExtendedInfoSchema,
+    table_id: i64,
+    writes: &mut Vec<BufferMutation>,
+) -> Result<(), DdlPlanError> {
+    let (_, table) = catalog
+        .table_info_by_name("mysql", "table_cache_meta")
+        .ok_or_else(|| DdlPlanError::Encode("mysql.table_cache_meta does not exist".to_owned()))?;
+    let table = table.read();
+    let column = |name: &str| {
+        table
+            .cols()
+            .iter_deref()
+            .find(|column| column.read().name.lowercase() == name)
+            .map(|column| column.read().clone_like_go())
+            .ok_or_else(|| {
+                DdlPlanError::Encode(format!("mysql.table_cache_meta has no column `{name}`"))
+            })
+    };
+    let lock_type = column("lock_type")?;
+    let mut values = tidb_syssession::system_row_write::RowValues::new();
+    values.insert(column("tid")?.id, Datum::Int(table_id));
+    values.insert(
+        lock_type.id,
+        Datum::new_enum(
+            tidb_datatype::MysqlEnum::new("NONE", 1),
+            lock_type.field_type.collation(),
+        ),
+    );
+    values.insert(column("lease")?.id, Datum::Int(0));
+    values.insert(column("oldreadlease")?.id, Datum::Int(0));
+    writes.extend(
+        tidb_syssession::system_row_write::replace_unindexed_clustered_row(&table, &values)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+    );
     Ok(())
 }
 

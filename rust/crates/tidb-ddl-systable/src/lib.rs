@@ -27,8 +27,12 @@ use tidb_datatype::Datum;
 use tidb_model::{GoShared, Job, JobW};
 use tidb_goruntime::go_runtime::GoSharedSlice;
 
-use crate::ddl_job_table::DdlJobTableError;
-use tidb_syssession::mysql_system_tables::SystemTableError;
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
+use crate::ddl_job_table::{DdlJobTable, DdlJobTableError};
+use tidb_syssession::mysql_system_tables::{
+    scan_system_table_prefixed, SystemRow, SystemTableError, SystemTableView,
+};
 
 /// Go `session.Session` over a session of the DDL's pool.
 pub type DdlSession = tidb_ddl_session::Session<dyn tidb_ddl_session::SessionContext>;
@@ -106,6 +110,98 @@ impl From<SystemTableError> for SystemTableManagerError {
 impl From<serde_json::Error> for SystemTableManagerError {
     fn from(error: serde_json::Error) -> Self {
         Self::Job(error)
+    }
+}
+
+/// The system-table reads of a DDL with no session pool (a store-level
+/// harness): the manager's statements as record reads of one snapshot.
+#[derive(Clone, Debug)]
+pub struct SnapshotSystemTables {
+    catalog: SessionExtendedInfoSchema,
+}
+
+impl SnapshotSystemTables {
+    /// Table lookup remains method-local just like Go's SQL execution, so
+    /// one absent system table cannot break unrelated reads.
+    #[must_use]
+    pub fn new(catalog: &SessionExtendedInfoSchema) -> Self {
+        Self {
+            catalog: catalog.clone(),
+        }
+    }
+
+    fn jobs(&self) -> Result<DdlJobTable, SystemTableManagerError> {
+        DdlJobTable::locate(&self.catalog).map_err(Into::into)
+    }
+
+    fn mdl(&self) -> Result<SystemTableView, SystemTableManagerError> {
+        SystemTableView::locate(&self.catalog, "tidb_mdl_info", &["job_id", "version"])
+            .map_err(Into::into)
+    }
+
+    /// Go `GetJobBytesByIDWithSe`.
+    pub fn get_job_bytes_by_id_with_se<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        job_id: i64,
+    ) -> Result<Vec<u8>, SystemTableManagerError> {
+        self.jobs()?
+            .job_bytes_by_id(snapshot, job_id)?
+            .ok_or(SystemTableManagerError::NotFound)
+    }
+
+    /// Go `GetJobByID`, retaining the exact bytes in `JobW`.
+    pub fn get_job_by_id<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        job_id: i64,
+    ) -> Result<JobW, SystemTableManagerError> {
+        let bytes = self.get_job_bytes_by_id_with_se(snapshot, job_id)?;
+        let mut job = Job::default();
+        job.decode(&bytes)?;
+        Ok(JobW::new(
+            Some(GoShared::new(job)),
+            GoSharedSlice::from_vec(bytes),
+        ))
+    }
+
+    /// Go `GetMDLVer`.
+    pub fn get_mdl_ver<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        job_id: i64,
+    ) -> Result<i64, SystemTableManagerError> {
+        let mdl = self.mdl()?;
+        for (key, value) in scan_system_table_prefixed(snapshot, &mdl, &[Datum::Int(job_id)])? {
+            let row = SystemRow::parse(&mdl, &key, &value)?;
+            if row.i64("job_id")? == Some(job_id) {
+                return row.i64("version")?.ok_or(SystemTableManagerError::NotFound);
+            }
+        }
+        Err(SystemTableManagerError::NotFound)
+    }
+
+    /// Go `GetMinJobID`.
+    pub fn get_min_job_id<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        previous_min_job_id: i64,
+    ) -> Result<i64, SystemTableManagerError> {
+        Ok(self
+            .jobs()?
+            .min_job_id(snapshot, previous_min_job_id)?
+            .unwrap_or_default())
+    }
+
+    /// Go `HasFlashbackClusterJob`.
+    pub fn has_flashback_cluster_job<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        min_job_id: i64,
+    ) -> Result<bool, SystemTableManagerError> {
+        self.jobs()?
+            .has_flashback_cluster_job(snapshot, min_job_id)
+            .map_err(Into::into)
     }
 }
 

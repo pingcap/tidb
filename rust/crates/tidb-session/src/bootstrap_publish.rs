@@ -12,15 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `session.bootstrap`: publish DDL through pooled sessions, then seed DML.
+//! Publishing the `mysql` schema bootstrap on one real transaction.
 //!
-//! Shared by cluster startup and `--store unistore` boot. Go commits the
-//! DDL jobs before `doDMLWorks`, so a bootstrap interrupted between those
-//! phases resumes through the statements' IF NOT EXISTS checks.
+//! [`crate::mysql_bootstrap::bootstrap_mysql_schema`]'s committing caller,
+//! shared by cluster startup and `--store unistore` boot (against the
+//! embedded store, which starts empty on
+//! every run and therefore bootstraps on every run -- exactly Go's
+//! `session.BootstrapSession` over mockstore). A keyspace that already
+//! carries any bootstrap object is refused by the plan, and nothing is
+//! written.
 
 use std::time::Duration;
 
-use crate::mysql_bootstrap::{get_ddl_table_version, BootstrapEnvironment, BootstrapLayout};
+use crate::mysql_bootstrap::{plan_mysql_bootstrap_with_layout, get_ddl_table_version, BootstrapEnvironment, BootstrapLayout};
 use tidb_ddl::pre_split::BootstrapSplits;
 use tidb_datatype::current_time::utc_now_timestamp;
 use tidb_store_driver_error::pessimistic_lock_error::commit_outcome_to_sql_error;
@@ -65,7 +69,9 @@ fn layout_from_test_environment() -> Option<BootstrapLayout> {
     }
 }
 
-/// Go `session.bootstrap`: execute DDL jobs, then commit bootstrap DML.
+/// Plans and commits the bootstrap on one transaction.
+///
+/// Bootstrap reads and writes share one transaction timestamp.
 pub fn publish_bootstrap<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
@@ -115,17 +121,27 @@ pub fn publish_bootstrap_with_effects<S: StoreClient>(
         ddl_table_version: 0,
     };
     let mut transaction = opener.begin().map_err(|error| error.to_string())?;
-    environment.ddl_table_version = get_ddl_table_version(
-        &mut TransactionMetaSnapshot::new(&mut transaction, timeout),
-    ).map_err(|error| error.to_string())?;
-    let _ = transaction.rollback(&UnaryCallContext::with_timeout(timeout));
-    let write = crate::mysql_bootstrap::jobs::execute(opener, timeout, &environment, layout())
-        .map_err(|error| error.to_string())?;
-    let transaction = opener.begin().map_err(|error| error.to_string())?;
+    let start_ts = transaction.start_ts();
+    let write = {
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        environment.ddl_table_version =
+            get_ddl_table_version(&mut snapshot).map_err(|error| error.to_string())?;
+        plan_mysql_bootstrap_with_layout(&mut snapshot, start_ts, &environment, layout())
+            .map_err(|error| error.to_string())?
+    };
     let schema_version = write.schema_version;
     let splits = write.splits.clone();
-    // The DML commit starts after all DDL jobs have completed.
+    // The commit's deadline starts once the plan is made: a classic plan runs
+    // every bootstrap statement as a DDL job, which takes longer than one
+    // round trip.
     let call = UnaryCallContext::with_timeout(timeout);
+    // Go's `onAlterResourceGroup` calls `infosync.ModifyResourceGroup` inside
+    // the job step, before the step's transaction commits, and a failure
+    // cancels the job -- which `mustExecute` turns into a fatal bootstrap.
+    if let Err(error) = write.resource_group_update.apply() {
+        let _ = transaction.rollback(&call);
+        return Err(format!("update resource group failed: {error}"));
+    }
     let resource_group_update = write.resource_group_update.clone();
     let outcome = transaction
         .commit(write.mutations, &call)
@@ -169,72 +185,6 @@ mod tests {
     use super::{notify_committed_bootstrap, SchemaVersionNotifier};
     use std::cell::Cell;
     use tidb_txnkv::transaction::{CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause, UndeterminedTransaction};
-
-    /// Go `TestBootstrap` (`pkg/session/bootstrap_test.go`) and the
-    /// `TestCreateTables` refresh-failure callback: bootstrap runs the same
-    /// delivery loop as user DDL, survives a transient GetJobByID failure,
-    /// and leaves the root account and global variables queryable by SQL.
-    #[test]
-    fn test_bootstrap() {
-        use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
-        use std::time::Duration;
-        use tidb_ddl_build::session_pool::DdlSessionPool;
-        let (_pd, opener) = tidb_ddl::embedded_store::in_process_write_stack().unwrap();
-        let refreshes = Arc::new(AtomicUsize::new(0));
-        let observed = Arc::clone(&refreshes);
-        let _refresh = tidb_failpoint::enable_call_for_test(
-            "github.com/pingcap/tidb/pkg/ddl/mockGetJobByIDFail", move |arg| {
-                if observed.fetch_add(1, Ordering::SeqCst) == 0 {
-                    *arg.downcast_mut::<Option<tidb_ddl_systable::SystemTableManagerError>>().unwrap() =
-                        Some(tidb_ddl_systable::SystemTableManagerError::Sql("mock get job by ID failed".to_owned()));
-                }
-            },
-        );
-        let (outcome, _) = super::publish_bootstrap(&opener, Duration::from_secs(20)).unwrap();
-        tidb_store_driver_error::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome).unwrap();
-        assert!(refreshes.load(Ordering::SeqCst) >= 2, "bootstrap must use deliveryJob and retry GetJobByID");
-        let pool = crate::ddl_session_pool::NodeDdlSessionPool::for_store(
-            opener, Duration::from_secs(20), Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
-            true, Duration::from_millis(500),
-        ).unwrap();
-        let mut se = pool.open_sql_session().unwrap();
-        let root = se.execute("select Host, User from mysql.user", &[]).unwrap();
-        assert_eq!(root.len(), 1);
-        assert_eq!(root[0][0].go_bytes(), b"%");
-        assert_eq!(root[0][1].go_bytes(), b"root");
-        assert!(se.execute("select variable_name from mysql.global_variables", &[]).unwrap().len() > 1);
-        assert!(se.execute("select job_id from mysql.tidb_ddl_job", &[]).unwrap().is_empty());
-    }
-
-    /// Go `TestBootstrapWithError`: DDL completed but the session died
-    /// before doDMLWorks; the next session resumes and seeds the tables.
-    #[test]
-    fn test_bootstrap_with_error() {
-        use std::{sync::Arc, time::Duration};
-        use tidb_ddl_build::session_pool::DdlSessionPool;
-        let (_pd, opener) = tidb_ddl::embedded_store::in_process_write_stack().unwrap();
-        let timeout = Duration::from_secs(20);
-        let environment = crate::mysql_bootstrap::BootstrapEnvironment {
-            system_tz: tidb_timeutil::infer_system_tz(), new_collation_enabled: true,
-            cluster_id: opener.cluster_id(), current_timestamp: tidb_datatype::current_time::utc_now_timestamp(),
-            ddl_table_version: 0,
-        };
-        // Deliberately lose the DML write, as Go's test stops after doDDLWorks.
-        let _uncommitted_dml = crate::mysql_bootstrap::jobs::execute(
-            &opener, timeout, &environment, super::layout(),
-        ).unwrap();
-        let (outcome, _) = super::publish_bootstrap(&opener, timeout).unwrap();
-        tidb_store_driver_error::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome).unwrap();
-        let pool = crate::ddl_session_pool::NodeDdlSessionPool::for_store(
-            opener, timeout, Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
-            true, Duration::from_millis(500),
-        ).unwrap();
-        let mut se = pool.open_sql_session().unwrap();
-        let rows = se.execute("select Host, User from mysql.user", &[]).unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0][0].go_bytes(), b"%");
-        assert_eq!(rows[0][1].go_bytes(), b"root");
-    }
 
     struct RecordingNotifier(Cell<usize>);
 

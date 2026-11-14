@@ -69,7 +69,7 @@ use tidb_syssession::mysql_system_tables::SYSTEM_DB;
 use tidb_syssession::system_row_write::codec_table_info;
 use tidb_ddl_build::table_info_build::{build_table_info_from_ast, DdlAdmissionError};
 
-pub(crate) mod jobs;
+mod jobs;
 mod rows;
 #[cfg(test)]
 pub(crate) use rows::bootstrapped_global_variables;

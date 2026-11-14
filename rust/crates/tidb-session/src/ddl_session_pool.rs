@@ -43,8 +43,6 @@ pub struct NodeDdlSessionPool {
     sess_pool: OnceLock<Arc<tidb_ddl_session::DynPool>>,
     /// The node's store is Go's `mockStorage` (unistore), not TiKV.
     mock_storage: bool,
-    /// Go `GetDomain(store)`: retain the domain for store-owned sessions.
-    store_domain: Option<StoreDomain>,
 }
 
 impl std::fmt::Debug for NodeDdlSessionPool {
@@ -66,100 +64,6 @@ impl NodeDdlSessionPool {
         }
     }
 
-    /// Go `CreateSession(store)` / `GetDomain(store)`: system sessions for
-    /// DDL work over a store before a serving node owns its domain. The
-    /// domain runs the ordinary SQL executor; its DDL owner is not campaigned.
-    pub fn for_store<S: tidb_store_driver_txn::transaction::StoreClient>(
-        opener: tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
-        timeout: std::time::Duration,
-        row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
-        mock_storage: bool,
-        schema_lease: std::time::Duration,
-    ) -> Result<Arc<Self>, String> {
-        Self::for_store_with_mode(opener, timeout, row_ids, mock_storage, schema_lease, false)
-    }
-
-    /// Go `Domain.Start(ddl.Bootstrap)`: the bootstrap owns the ordinary
-    /// DDL scheduler and its system sessions before the serving node starts.
-    pub(crate) fn for_bootstrap<S: tidb_store_driver_txn::transaction::StoreClient>(
-        opener: tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
-        timeout: std::time::Duration,
-    ) -> Result<Arc<Self>, String> {
-        let lease = tidb_config_configtypes::parse_duration(
-            &tidb_config::config_tree::config::get_global_config().lease,
-        )?;
-        let row_ids = Arc::new(tidb_domain_core::cluster_auto_id_seam::ClusterTableAutoIds::new(opener.clone(), timeout));
-        Self::for_store_with_mode(
-            opener, timeout, row_ids, false,
-            std::time::Duration::from_nanos(u64::try_from(lease).map_err(|e| e.to_string())?), true,
-        )
-    }
-
-    fn for_store_with_mode<S: tidb_store_driver_txn::transaction::StoreClient>(
-        opener: tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
-        timeout: std::time::Duration,
-        row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
-        mock_storage: bool,
-        schema_lease: std::time::Duration,
-        bootstrap: bool,
-    ) -> Result<Arc<Self>, String> {
-        use tidb_infoschema_issyncer::{catalog_watch::InfoCache, real_tikv_catalog::load_catalog_from_cluster};
-        use tidb_domain_core::cluster_transactions::RealClusterTransactions;
-        let catalog = Arc::new(InfoCache::new(load_catalog_from_cluster(&opener, timeout).map_err(|e| e.to_string())?));
-        // This internal-session domain reads variables without publishing
-        // process-wide defaults over the owning DDL's current settings.
-        let globals = tidb_domain::global_sysvars::GlobalSysvars::from_cluster_rows([]);
-        let privileges = tidb_privilege::PrivilegeRegistry::default();
-        let stats = Arc::new(tidb_stats_handle_syncload::stats_watch::SharedStats::new(Default::default())
-            .map_err(|e| e.to_string())?);
-        let worker_pool = Arc::new(Self { mock_storage, ..Self::default() });
-        let mut info = tidb_domain_serverinfo::serverinfo::ServerInfo::default();
-        info.static_info.id = tidb_domain_serverinfo::serverinfo_syncer::new_node_id();
-        info.static_info.version_info.version = tidb_mysql::runtime_versions().tidb_release_version;
-        let server_info = Arc::new(tidb_domain_serverinfo::serverinfo_syncer::Syncer::new(info, None));
-        let ddl = Arc::new(tidb_ddl::worker::RealClusterDdl::new_with_min_job_id_refresher(
-            opener.clone(), Arc::clone(&catalog), timeout, None, server_info, None,
-            Arc::new(tidb_infoschema_isvalidator::SchemaValidator::new(schema_lease)),
-            bootstrap, Arc::new(tidb_ddl_systable::MinJobIdRefresher::new()),
-            worker_pool.clone(), Arc::clone(&row_ids),
-            if bootstrap { tidb_ddl::StartMode::Bootstrap } else { tidb_ddl::StartMode::Normal },
-        )?);
-        let domain = Domain::new(
-            Arc::new(RealClusterTransactions::new(opener.clone(), timeout)), ddl,
-            Arc::new(tidb_domain_core::cluster_account_seam::RealClusterAccountWriter::new(
-                Arc::new(opener.clone()), privileges.clone(), timeout, None,
-            )),
-            Arc::new(crate::cluster_sysvar_writer::RealClusterSysvarWriter::new(
-                Arc::new(opener.clone()), globals.clone(), timeout, None, Default::default(), worker_pool.clone(),
-            )),
-            catalog, privileges, globals, Arc::clone(&stats), row_ids,
-            crate::domain::cluster_session_node::open_pool_session,
-        ).with_kv_client(Arc::new(tidb_copr::cop_client::CopClient::new(Arc::new(
-            StoreReadSessionFactory { store: Arc::new(opener.store().clone()), timeout },
-        )))).shared();
-        crate::domain::cluster_session_node::NodeServices::new(Arc::new(
-            tidb_executor::cluster_analyze_seam::RealClusterAnalyze::new(
-                Arc::new(opener), stats, timeout, std::time::Duration::ZERO,
-            ),
-        )).bind(&domain);
-        worker_pool.bind(&domain);
-        // The DDL's own pool retains only a Weak domain pointer, avoiding
-        // a domain -> DDL -> pool -> domain cycle.
-        let pool = Arc::new(Self { mock_storage, store_domain: Some(StoreDomain(Arc::clone(&domain))), ..Self::default() });
-        pool.bind(&domain);
-        Ok(pool)
-    }
-
-    /// Go `mustExecute` for bootstrap DDL, on the domain's ordinary owner.
-    pub(crate) fn execute_bootstrap(
-        &self,
-        statement: &tidb_ddl::cluster_ddl::DdlStatement,
-        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
-    ) -> Result<(), String> {
-        self.store_domain.as_ref().expect("store-owned domain").0
-            .ddl.execute(statement, context).map(drop).map_err(|error| error.to_string())
-    }
-
     /// Binds the pool to the domain whose sessions it hands out.
     pub fn bind(&self, domain: &Arc<Domain>) {
         if self.domain.set(Arc::downgrade(domain)).is_err() {
@@ -170,45 +74,6 @@ impl NodeDdlSessionPool {
                 domain: Arc::downgrade(domain),
             },
         ))));
-    }
-}
-
-/// Go `GetDomain(store)`'s owned domain for this pool's lifetime.
-struct StoreDomain(Arc<Domain>);
-
-impl Drop for StoreDomain {
-    /// Go `Domain.Close` / `DDL.Stop`: retire the store-owned domain before
-    /// releasing it. Its scheduler session retains the domain while running,
-    /// so dropping the last external Arc alone cannot retire that owner.
-    fn drop(&mut self) {
-        if let Some(owner) = self.0.ddl.owner_manager() {
-            owner.campaign_cancel();
-        }
-    }
-}
-
-/// Go `kv.Storage.GetClient`: the same store serves the pool's SQL scans.
-struct StoreReadSessionFactory<S: tidb_store_driver_txn::transaction::StoreClient> {
-    store: Arc<tidb_txnkv::driver::tikv_store::TikvStore<S>>,
-    timeout: std::time::Duration,
-}
-
-impl<S: tidb_store_driver_txn::transaction::StoreClient>
-    tidb_copr::cop_client::RealTiKvSessionTransportFactory for StoreReadSessionFactory<S>
-{
-    type Transport = tidb_copr::cop_paging::NativeCopTransport<tidb_txnkv::driver::tikv_store::TikvStore<S>>;
-
-    fn open_session_transport(&self) -> Result<Self::Transport, String> {
-        Ok(tidb_copr::cop_paging::NativeCopTransport::new(
-            Arc::clone(&self.store), tidb_copr::cop_paging::CopRuntimeConfig {
-                default_timeout: self.timeout,
-                ..Default::default()
-            },
-        ))
-    }
-
-    fn send_batch(&self, request: &tidb_txnkv::TransportRequest) -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
-        tidb_copr::batch_coprocessor::send_batch(&self.store, request)
     }
 }
 
@@ -331,6 +196,10 @@ impl DdlSessionPool for NodeDdlSessionPool {
         let mut session = domain.open_system_session().map_err(sql_to_mysql)?;
         set_ddl_request_source(&mut session);
         Ok(Box::new(NodeSqlSession::new(session)))
+    }
+
+    fn has_step_sessions(&self) -> bool {
+        self.domain.get().and_then(Weak::upgrade).is_some()
     }
 
     fn open_step_session(

@@ -514,8 +514,9 @@ impl DelRangeExecWrapper for SessionDelRangeExecWrapper<'_> {
     }
 }
 
-/// The ranges staged by deterministic snapshot-plan fixtures
-/// ([`del_range_rows_mutations`]); live worker steps use their SQL session.
+/// The ranges a job's statements would insert, for a worker whose pool has
+/// no sessions yet: the step stages their rows itself
+/// ([`del_range_rows_mutations`]).
 #[derive(Default)]
 struct StagedDelRanges {
     ranges: Vec<DelRangeTask>,
