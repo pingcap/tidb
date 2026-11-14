@@ -81,16 +81,9 @@
       "finding": "On a bound node every DDL statement over `mysql.tidb_ddl_job`, `tidb_mdl_info` and `tidb_ddl_reorg` runs Go's SQL on a session of `DdlSessionPool::sess_pool` or the step's session (the systable `Manager`, the scheduler's `loadAndDeliverJobs`, `SwitchMDL`, the submission insert, a step's update / delete / history insert, the reorg handle's reads and writes, `UpdateConfigFromSysTbl`, `runOneJobStep`'s job-cancelled checker, `GetAllDDLJobs` and `get2JobsFromTable`). What remains: a pool no node has bound (the store-level harness and the bootstrap) keeps the snapshot twin of each read (`SnapshotSystemTables`) and stages raw job rows, where Go's DDL always has its session pool; a step reads its job row inside its own transaction (`DdlJobTable::load_by_id` in `cluster_ddl.rs`) where Go's `deliveryJob` refreshes the delivered job by `sysTblMgr.GetJobByID` between steps (the site-by-site list is the retired `docs/system-table-sql-execplan.md`, in git at `d64db1f96bc`)",
       "rust_evidence": "`rust/crates/tidb-executor/src/real_tikv_analyze.rs`",
       "go_owner": "`pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap"
-    },
-    {
-      "id": "R01",
-      "status": "partial",
-      "group": "Domain and process services",
-      "finding": "Go's `ExecRestrictedSQL` / `ExecuteInternal` are methods of the issuing session (`withRestrictedSQLExecutor`); this port's executors are adapters beside it (`NodeRestrictedSql`, `SystemSqlExecutor`, `ClusterStatsSqlExecutor`, the plan replayer's `SessionSql`). The node's executors apply and restore `ExecOption` as Go's `useCurrentSession` / `getInternalSession` do, and share a `RestrictedSqlIssuer` with the session they were taken from, through which the internal session inherits `OptimizerUseInvisibleIndexes` / `SkipMissingPartitionStats` and hands its warnings back (`IgnoreWarning`); the statistics session's executor is the same pair (`ClusterStatsSessionState::restricted`), and an ANALYZE is an auto analyze because its session is `InRestrictedSQL`. The internal session is a pooled one's (`getSessionFactoryInternal`: its own autocommit, max_execution_time, max_allowed_packet and in-place constraint check, and no copy of the global tier) and shares the issuer's `InspectionTableCache`. What remains: a user session's executor cannot run a statement on the session itself (`ExecOptionUseCurSession`). `rebuildSysVarCache` consumes the rows the domain's sysvar reload loop last read (`SysVarCacheDeps::table_contents`) where Go's runs `fetchTableValues` itself",
-      "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 12,
+  "unresolved": 11,
   "open": 0,
-  "partial": 12
+  "partial": 11
 }

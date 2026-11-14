@@ -65,6 +65,7 @@ pub struct GlobalSysvars {
     /// Go `Domain.sysVarCache`: the global and session views every read and
     /// every new session is answered from. Shared by every clone.
     cache: Arc<crate::sysvar_cache::SysVarCache>,
+    restricted_executor: RestrictedExecutor,
     /// The `mysql.global_variables` rows the cache was last rebuilt from (Go
     /// `fetchTableValues`). For a store-backed table (an in-process catalog,
     /// a cluster) every rebuild replaces them from the store's own table; for
@@ -188,6 +189,7 @@ impl Default for GlobalSysvars {
             external_timestamp: Arc::default(),
             pd_region_policy: Arc::default(),
             cache: Arc::default(),
+            restricted_executor: RestrictedExecutor::default(),
             table: Arc::default(),
             startup: Arc::default(),
             inited_from_config: Arc::default(),
@@ -607,7 +609,7 @@ impl GlobalSysvars {
         for (name, value) in instances {
             self.apply_set_global_hook(&name, &value);
         }
-        self.rebuild_sys_var_cache();
+        let _ = self.rebuild_sys_var_cache();
     }
 
     /// Where a variable's node-wide value is written: a variable that has
@@ -631,9 +633,14 @@ impl GlobalSysvars {
     /// variable the cache does not hold falls back to its registry value, as
     /// Go's accessor does once its table probe also misses.
     fn cached_global(&self, def: &'static SysVarDef) -> String {
-        self.cache
+        let value = self.cache
             .get_global_var(&SysVarCacheRebuild(self), def.name)
-            .unwrap_or_else(|_| self.registry_value(def))
+            .unwrap_or_else(|_| self.registry_value(def));
+        // Go session.GetGlobalSysVar: the cache retains the stored value;
+        // the accessor does type validation for values written by older
+        // versions, without rerunning the variable's Validation hook.
+        def.normalize_by_type(&value, SCOPE_GLOBAL)
+            .map_or_else(|_| self.registry_value(def), |validated| validated.value)
     }
 
     /// Go `SysVar.Value` as this process has it: the registry default, or the
@@ -651,10 +658,16 @@ impl GlobalSysvars {
     /// rows, running every GLOBAL variable's SetGlobal hook with its value
     /// (which is how a peer's `SET GLOBAL` takes effect on this node), then
     /// republishes the read image derived from the cache.
-    fn rebuild_sys_var_cache(&self) {
-        // The table read cannot fail here: the rows are already in hand.
-        let _ = self.cache.rebuild(&SysVarCacheRebuild(self));
+    pub fn rebuild_sys_var_cache(&self) -> Result<(), crate::sysvar_cache::SysVarCacheError> {
+        self.cache.rebuild(&SysVarCacheRebuild(self))?;
         self.refresh_resolved();
+        Ok(())
+    }
+
+    /// Go `Domain.sysSessionPool`: bind this live cache to the domain's SQL
+    /// executor. Scratch tables retain their own table as their source.
+    pub fn set_restricted_sql_executor(&self, executor: Arc<dyn tidb_sqlexec::RestrictedSqlExecutor>) {
+        *self.restricted_executor.0.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(executor);
     }
 
     /// Installs the node's PD policy and applies the current persisted/default value.
@@ -1114,7 +1127,7 @@ impl GlobalSysvars {
             .expect("startup sysvar lock poisoned")
             .insert(def.name.to_owned(), value.clone());
         if def.has_global_scope() {
-            self.rebuild_sys_var_cache();
+            let _ = self.rebuild_sys_var_cache();
         } else {
             // A node-local variable's one value is this process's own: the
             // INSTANCE/NONE read path serves it from here.
@@ -1724,7 +1737,7 @@ impl GlobalSysvars {
         }
         // Go `replaceGlobalVariablesTableValue` -> `NotifyUpdateSysVarCache`:
         // the cache is rebuilt from the table the write just changed.
-        self.rebuild_sys_var_cache();
+        let _ = self.rebuild_sys_var_cache();
         if matches!(
             key.as_str(),
             "validate_password.mixed_case_count"
@@ -1746,7 +1759,7 @@ impl GlobalSysvars {
                         .lock()
                         .expect("global sysvar lock poisoned")
                         .insert("validate_password.length".to_owned(), required.to_string());
-                    self.rebuild_sys_var_cache();
+                    let _ = self.rebuild_sys_var_cache();
                 }
             }
         }
@@ -1868,7 +1881,7 @@ impl GlobalSysvars {
             .expect("global sysvar lock poisoned")
             .remove(&key);
         // The rebuild serves the registry value again and runs its hook.
-        self.rebuild_sys_var_cache();
+        let _ = self.rebuild_sys_var_cache();
         Ok(())
     }
 
@@ -1910,11 +1923,11 @@ impl GlobalSysvars {
         Ok(())
     }
 
-    /// Go `rebuildSysVarCache` over rows a caller already read from a
-    /// cluster's (or an in-process store's) `mysql.global_variables` (Go
-    /// `fetchTableValues`): the rows replace this table wholesale, the cache
-    /// is rebuilt from them, and every GLOBAL variable's SetGlobal hook runs
-    /// with its value.
+    /// Go `fetchTableValues`' rows seed a startup or storeless table.
+    /// Once a live executor is bound, `rebuildSysVarCache` fetches from
+    /// that executor again; callers must commit changes to the SQL table
+    /// before rebuilding. Each GLOBAL variable's SetGlobal hook runs with
+    /// the value read by the rebuild.
     ///
     /// Unlike [`Self::set`], this does not validate: a stored row already
     /// passed that validation when some earlier `SET GLOBAL` (Go's or this
@@ -1938,7 +1951,7 @@ impl GlobalSysvars {
             })
             .collect();
         *self.table.lock().expect("global sysvar lock poisoned") = rows;
-        self.rebuild_sys_var_cache();
+        let _ = self.rebuild_sys_var_cache();
     }
 
     /// The `mysql.global_variables` rows this table holds (see the `table`
@@ -1976,9 +1989,9 @@ impl GlobalSysvars {
         table
     }
 
-    /// Publishes `fresh`'s rows into every existing clone of this table and
-    /// rebuilds its cache from them, retaining this node's INSTANCE-only
-    /// overrides.
+    /// Go `rebuildSysVarCache`: publish a committed image and rebuild,
+    /// retaining this node's INSTANCE-only overrides. A live cache reads
+    /// its SQL table again; a startup/storeless cache reads `fresh`'s rows.
     ///
     /// Mirrors [`tidb_variable::privilege::PrivilegeRegistry::replace_from`]: this
     /// `mysql.global_variables` never contains the process-local INSTANCE
@@ -1988,7 +2001,7 @@ impl GlobalSysvars {
     pub fn replace_from(&self, fresh: &Self) {
         let rows = std::mem::take(&mut *fresh.table.lock().expect("global sysvar lock poisoned"));
         *self.table.lock().expect("global sysvar lock poisoned") = rows;
-        self.rebuild_sys_var_cache();
+        let _ = self.rebuild_sys_var_cache();
     }
 
     /// Publishes only the named GLOBAL variables from `fresh`.
@@ -2085,24 +2098,17 @@ impl GlobalSysvars {
 /// the system session it borrows, for one [`GlobalSysvars`].
 ///
 /// boundary: Go `Domain.sysSessionPool` + `ExecRestrictedSQL(SELECT
-/// variable_name, variable_value FROM mysql.global_variables)` -- the rows
-/// are the table the owner last read from its store (an in-process catalog
-/// or the cluster), or the rows a storeless or scratch table holds; see
-/// [`GlobalSysvars`]'s `table`.
+/// variable_name, variable_value FROM mysql.global_variables)`. Live domains
+/// read through their pool during rebuild; storeless and scratch tables
+/// read their own backing table.
 struct SysVarCacheRebuild<'a>(&'a GlobalSysvars);
 
 impl crate::sysvar_cache::SysVarCacheDeps for SysVarCacheRebuild<'_> {
-    fn table_contents(
-        &self,
-    ) -> Result<std::collections::HashMap<String, String>, crate::sysvar_cache::SysVarCacheError> {
-        Ok(self
-            .0
-            .table
-            .lock()
-            .expect("global sysvar lock poisoned")
-            .iter()
-            .map(|(name, value)| (name.clone(), value.clone()))
-            .collect())
+    fn restricted_sql_executor(&self) -> Box<dyn tidb_sqlexec::RestrictedSqlExecutor + '_> {
+        Box::new(GlobalVariablesExecutor {
+            executor: self.0.restricted_executor.0.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone(),
+            table: Arc::clone(&self.0.table),
+        })
     }
 
     fn sys_vars(&self) -> Vec<crate::sysvar_cache::SysVarSpec> {
@@ -2157,3 +2163,104 @@ impl crate::sysvar_cache::SysVarCacheDeps for SysVarCacheRebuild<'_> {
 
 #[cfg(test)]
 mod tests;
+
+/// Go `Domain.sysSessionPool`, held separately from the persisted values.
+#[derive(Clone, Default)]
+struct RestrictedExecutor(Arc<RwLock<Option<Arc<dyn tidb_sqlexec::RestrictedSqlExecutor>>>>);
+impl std::fmt::Debug for RestrictedExecutor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RestrictedExecutor")
+    }
+}
+
+/// Go `fetchTableValues`' executor. Storeless/scratch tables own these rows;
+/// live domains delegate to their system session pool on every invocation.
+struct GlobalVariablesExecutor {
+    executor: Option<Arc<dyn tidb_sqlexec::RestrictedSqlExecutor>>,
+    table: Arc<Mutex<HashMap<String, String>>>,
+}
+impl tidb_sqlexec::RestrictedSqlExecutor for GlobalVariablesExecutor {
+    /// Go `sqlexec.RestrictedSQLExecutor.ParseWithParams`.
+    fn parse_with_params(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+        args: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> tidb_sqlexec::Result<tidb_ast::Stmt> {
+        if let Some(exec) = &self.executor {
+            return exec.parse_with_params(context, sql, args);
+        }
+        Err("storeless global variables reader only executes fetchTableValues".into())
+    }
+    /// Go `sqlexec.RestrictedSQLExecutor.ExecRestrictedStmt`.
+    fn exec_restricted_stmt(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        stmt: &tidb_ast::Stmt,
+        options: &[tidb_sqlexec::OptionFuncAlias],
+    ) -> tidb_sqlexec::Result<(
+        Vec<Vec<tidb_datatype::Datum>>,
+        Vec<tidb_resolve::ResultFieldRef>,
+    )> {
+        self.exec_restricted_sql(
+            context,
+            options,
+            std::str::from_utf8(stmt.original_text())?,
+            &[],
+        )
+    }
+    /// Go `sqlexec.RestrictedSQLExecutor.ExecRestrictedSQL`.
+    fn exec_restricted_sql(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        options: &[tidb_sqlexec::OptionFuncAlias],
+        sql: &str,
+        args: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> tidb_sqlexec::Result<(
+        Vec<Vec<tidb_datatype::Datum>>,
+        Vec<tidb_resolve::ResultFieldRef>,
+    )> {
+        if let Some(exec) = &self.executor {
+            let result = exec.exec_restricted_sql(context, options, sql, args)?;
+            // Keep the table mirror used to form SET GLOBAL's scratch image
+            // in sync with this successful read, under the rebuild lock.
+            let mut table = self.table.lock().expect("global sysvar lock poisoned");
+            table.clear();
+            for row in &result.0 {
+                if let (Some(name), Some(value)) = (
+                    row.first().and_then(tidb_datatype::Datum::as_raw_bytes),
+                    row.get(1).and_then(tidb_datatype::Datum::as_raw_bytes),
+                ) {
+                    let name = String::from_utf8_lossy(name).to_ascii_lowercase();
+                    // Go rebuildSysVarCache: INSTANCE-only rows reach
+                    // neither cache. Preserve load_from_cluster's filter
+                    // in the mirror used to form a transaction's scratch.
+                    if get_sys_var(&name)
+                        .is_some_and(|def| def.has_global_scope() || !def.skip_init())
+                    {
+                        table.insert(name, String::from_utf8_lossy(value).into_owned());
+                    }
+                }
+            }
+            return Ok(result);
+        }
+        if sql != crate::sysvar_cache::SYSVAR_TABLE_QUERY || !args.is_empty() || !options.is_empty()
+        {
+            return Err("storeless global variables reader only executes fetchTableValues".into());
+        }
+        Ok((
+            self.table
+                .lock()
+                .expect("global sysvar lock poisoned")
+                .iter()
+                .map(|(name, value)| {
+                    vec![
+                        tidb_datatype::Datum::new_string_datum(name.clone()),
+                        tidb_datatype::Datum::new_string_datum(value.clone()),
+                    ]
+                })
+                .collect(),
+            Vec::new(),
+        ))
+    }
+}

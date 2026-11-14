@@ -1338,23 +1338,22 @@ fn shared_session_activation_inherits_globals_and_obeys_set() {
     if crate::domain::isolate_process_globals() {
         return;
     }
-    let (stack, users) = cop_backed_stack();
+    let (stack, _users) = cop_backed_stack();
     let factory = &stack.factory;
     let mut ddl = factory.open_session(session_context(133)).unwrap();
     rows(
         &mut ddl,
         "CREATE TABLE test.activation_light (id BIGINT PRIMARY KEY, v BIGINT NOT NULL)",
     );
-    let globals = users.global_vars();
-    globals.load_from_cluster([
-        ("tidb_enable_async_commit".to_owned(), "OFF".to_owned()),
-        ("tidb_enable_1pc".to_owned(), "ON".to_owned()),
-    ]);
+    // Go loadCommonGlobalVariablesIfNeeded reads the SQL-backed cache;
+    // zzprobe/r01 pins first-session retention and new-session inheritance.
+    rows(&mut ddl, "SET GLOBAL tidb_enable_async_commit=OFF");
+    rows(&mut ddl, "SET GLOBAL tidb_enable_1pc=ON");
     let mut first = factory.open_session(session_context(131)).unwrap();
     // Go `loadCommonGlobalVariablesIfNeeded`: the session's copy is taken by
     // its first statement.
     rows(&mut first, "SELECT 1");
-    globals.load_from_cluster([("tidb_enable_1pc".to_owned(), "OFF".to_owned())]);
+    rows(&mut ddl, "SET GLOBAL tidb_enable_1pc=OFF");
     let mut second = factory.open_session(session_context(132)).unwrap();
     for (session, id, one_pc) in [(&mut first, 1, true), (&mut second, 2, false)] {
         let before = tikv_client::metrics::get_txn_commit_counter();
@@ -30307,4 +30306,263 @@ fn a_statistics_session_runs_restricted_sql_under_its_exec_option_like_go() {
             ["analyze table all columns with 256 buckets, 100 topn, 1 samplerate"],
         ]
     );
+}
+
+/// Go testkit probe `zzprobe/r01.TestRestrictedCurrentSession`: current
+/// execution sees the issuer's uncommitted write/user variables, pool
+/// execution sees committed rows, and mutation stays in the issuer.
+#[test]
+fn test_restricted_current_session() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1791)).unwrap();
+    for sql in [
+        "USE test",
+        "CREATE TABLE r01 (a INT)",
+        "INSERT INTO r01 VALUES (1)",
+        "SET @x=7",
+        "BEGIN",
+        "INSERT INTO r01 VALUES (2)",
+    ] {
+        rows(&mut session, sql);
+    }
+    let context = tikv_client::util::with_internal_source_type(
+        &tikv_client::trace::TraceContext::new(),
+        tidb_txnkv::INTERNAL_TXN_OTHERS,
+    );
+    let cur: tidb_sqlexec::OptionFuncAlias = Arc::new(tidb_sqlexec::exec_option_use_cur_session);
+    // Go TestRUV2SessionParserTotalDoesNotLeakAcrossStandaloneParse,
+    // "current-session restricted sql restores outer ruv2 metrics".
+    let outer_metrics = Arc::new(tidb_execdetails::ruv2_metrics::RUV2Metrics::new());
+    session.last_ruv2_metrics = Some(Arc::clone(&outer_metrics));
+    {
+        use tidb_sqlexec::RestrictedSqlExecutor;
+        let exec = session.get_restricted_sql_executor();
+        let sql = "select concat(count(*)), concat(@x), database() from test.r01";
+        assert_eq!(
+            displayed(
+                exec.exec_restricted_sql(&context, &[cur.clone()], sql, &[])
+                    .unwrap()
+                    .0
+            ),
+            [["2", "7", "test"]]
+        );
+        assert_eq!(
+            displayed(exec.exec_restricted_sql(&context, &[], sql, &[]).unwrap().0),
+            [["1", "NULL", "NULL"]]
+        );
+        exec.exec_restricted_sql(&context, &[cur.clone()], "set @x = %?", &[8_i64.into()])
+            .unwrap();
+    }
+    assert_eq!(session.vars.request_source_type, tidb_txnkv::INTERNAL_TXN_OTHERS);
+    assert!(Arc::ptr_eq(session.last_ruv2_metrics.as_ref().unwrap(), &outer_metrics));
+    assert!(!outer_metrics.bypass());
+    rows(&mut session, "CREATE TEMPORARY TABLE r01_temp (a INT)");
+    rows(&mut session, "INSERT INTO r01_temp VALUES (9)");
+    assert_eq!(
+        displayed(
+            session
+                .execute_restricted_sql(&context, &[cur.clone()], "select a from r01_temp", &[])
+                .unwrap()
+                .0
+        ),
+        [["9"]]
+    );
+    assert!(!session.vars.restricted_sql);
+    assert_eq!(displayed(rows(&mut session, "select @x")), [["8"]]);
+    // The Go probe executes SHOW while the issuer still owns its write.
+    // Its nested restricted SELECT must leave that transaction open.
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW TABLE STATUS LIKE 'r01'"))[0][0],
+        "r01"
+    );
+    rows(&mut session, "ROLLBACK");
+    assert_eq!(displayed(rows(&mut session, "select * from r01")), [["1"]]);
+    rows(&mut session, "SET sql_mode='ANSI_QUOTES'");
+    {
+        use tidb_sqlexec::RestrictedSqlExecutor;
+        let executor = session.get_restricted_sql_executor();
+        let statement = executor.parse_with_params(&context, "SELECT \"a\" FROM r01", &[]).unwrap();
+        let tidb_ast::Stmt::Query(query) = statement else { panic!("SELECT") };
+        let tidb_ast::QueryStmt::Select(select) = query.as_ref() else { panic!("SELECT") };
+        assert!(matches!(&select.fields.fields()[0], tidb_ast::SelectField::Expr {
+            expr: tidb_ast::Expr::Column(parts), ..
+        } if parts == &["a"]));
+    }
+    rows(&mut session, "SET sql_mode=DEFAULT");
+    let options = [
+        cur.clone(),
+        tidb_sqlexec::get_partition_prune_mode_option("static"),
+        tidb_sqlexec::get_analyze_snapshot_option(false),
+    ];
+    assert!(session
+        .execute_restricted_sql(&context, &options, "select * from test.absent_r01", &[])
+        .is_err());
+    assert_eq!(
+        displayed(rows(&mut session, "select @@tidb_partition_prune_mode")),
+        [["dynamic"]]
+    );
+    assert!(!session.vars.restricted_sql);
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW TABLE STATUS LIKE 'r01'"))[0][0],
+        "r01"
+    );
+}
+
+/// Go `TestHistoryReadInTxn` in executor_test.go: issue 34529's restricted
+/// read at ts2 must restore the issuer's original snapshot/schema.
+#[test]
+fn test_history_read_in_txn() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1792)).unwrap();
+    for sql in [
+        "USE test",
+        "INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '20060102-15:04:05 -0700', 'All versions after safe point can be accessed. (DO NOT EDIT)')",
+        "CREATE TABLE his_t0 (id INT PRIMARY KEY, v INT)",
+        "INSERT INTO his_t0 VALUES (1,10)",
+        "BEGIN",
+        "SELECT * FROM his_t0",
+    ] {
+        rows(&mut session, sql);
+    }
+    let ts1 = session.current_tso.value() as u64;
+    rows(&mut session, "ROLLBACK");
+    rows(&mut session, "CREATE TABLE his_t1 (id INT PRIMARY KEY, v INT)");
+    rows(&mut session, "UPDATE his_t0 SET v=11");
+    rows(&mut session, "BEGIN");
+    rows(&mut session, "SELECT * FROM his_t0");
+    let ts2 = session.current_tso.value() as u64;
+    rows(&mut session, "ROLLBACK");
+    rows(&mut session, "UPDATE his_t0 SET v=12");
+    let options = [
+        Arc::new(tidb_sqlexec::exec_option_use_cur_session) as tidb_sqlexec::OptionFuncAlias,
+        tidb_sqlexec::exec_option_with_snapshot(ts2),
+    ];
+    for isolation in ["none", "optimistic", "REPEATABLE-READ", "READ-COMMITTED"] {
+        for set_snapshot_before_txn in [false, true] {
+            rows(&mut session, "ROLLBACK");
+            rows(&mut session, "SET tidb_snapshot=''");
+            if set_snapshot_before_txn || isolation == "none" {
+                rows(&mut session, &format!("SET tidb_snapshot='{ts1}'"));
+            }
+            if isolation == "optimistic" {
+                rows(&mut session, "BEGIN OPTIMISTIC");
+            } else if isolation != "none" {
+                rows(&mut session, &format!("SET tx_isolation='{isolation}'"));
+                rows(&mut session, "BEGIN PESSIMISTIC");
+            }
+            if !set_snapshot_before_txn && isolation != "none" {
+                rows(&mut session, &format!("SET tidb_snapshot='{ts1}'"));
+            }
+            // Go useCurrentSession restores SnapshotInfoschema beside
+            // SnapshotTS. Inspect that retained schema directly.
+            let schema = &session.snapshot_schema.as_ref().unwrap().1;
+            assert!(schema.table_in("test", "his_t0").is_some());
+            assert!(schema.table_in("test", "his_t1").is_none());
+            let result = session
+                .execute_restricted_sql(
+                    &tidb_sqlexec::BackgroundContext,
+                    &options,
+                    "select * from his_t0 where id=1",
+                    &[],
+                )
+                .unwrap();
+            assert_eq!(displayed(result.0), [["1", "11"]]);
+            assert_eq!(session.vars.snapshot_ts(), ts1);
+            // Go useCurrentSession restores SnapshotInfoschema beside
+            // SnapshotTS. Inspect that retained schema directly.
+            let schema = &session.snapshot_schema.as_ref().unwrap().1;
+            assert!(schema.table_in("test", "his_t0").is_some());
+            assert!(schema.table_in("test", "his_t1").is_none());
+            assert_eq!(
+                displayed(rows(&mut session, "select * from his_t0 where id=1")),
+                [["1", "10"]]
+            );
+            rows(&mut session, &format!("SET tidb_snapshot='{ts1}'"));
+            assert!(session
+                .execute_restricted_sql(
+                    &tidb_sqlexec::BackgroundContext,
+                    &options,
+                    "select %?, %?",
+                    &[1_i64.into()],
+                )
+                .is_err());
+            assert_eq!(session.vars.snapshot_ts(), ts1);
+            // Go useCurrentSession's clean clears the system-variable text
+            // before restoring SnapshotTS, even when ParseWithParams fails.
+            assert_eq!(session.vars.get_system(tidb_vardef::tidb_vars::TIDB_SNAPSHOT).unwrap(), "");
+            assert!(session
+                .execute_restricted_sql(
+                    &tidb_sqlexec::BackgroundContext,
+                    &options,
+                    "select * from absent_r01",
+                    &[]
+                )
+                .is_err());
+            assert_eq!(session.vars.snapshot_ts(), ts1);
+            assert_eq!(
+                displayed(rows(&mut session, "select * from his_t0 where id=1")),
+                [["1", "10"]]
+            );
+            rows(&mut session, "SET tidb_snapshot=''");
+            assert!(session.snapshot_schema.is_none());
+            assert!(rows(&mut session, "SELECT * FROM his_t1").is_empty());
+            assert_eq!(
+                displayed(rows(&mut session, "select * from his_t0 where id=1")),
+                [["1", "12"]]
+            );
+        }
+    }
+}
+
+/// Go `TestUpgradeSysvars`' direct table write followed by cache rebuild,
+/// plus zzprobe/r01's committed value capture. No reload-loop pre-read.
+#[test]
+fn test_upgrade_sysvars() {
+    let (mut stack, _users) = cop_backed_stack();
+    // Only the explicit rebuild below may discover the committed row.
+    stack._sysvar_reloader.shutdown().unwrap();
+    let mut session = stack.factory.open_session(session_context(1793)).unwrap();
+    rows(
+        &mut session,
+        "REPLACE INTO mysql.global_variables VALUES ('tidb_executor_concurrency','12')",
+    );
+    stack.factory.global_vars.rebuild_sys_var_cache().unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT @@global.tidb_executor_concurrency"
+        )),
+        [["12"]]
+    );
+    rows(
+        &mut session,
+        "REPLACE INTO mysql.global_variables VALUES ('tidb_executor_concurrency','16')",
+    );
+    stack.factory.global_vars.rebuild_sys_var_cache().unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT @@global.tidb_executor_concurrency"
+        )),
+        [["16"]]
+    );
+    for (name, stored, expected) in [
+        ("tidb_enable_noop_functions", "0", "OFF"),
+        ("rpl_semi_sync_slave_enabled", "", "OFF"),
+        ("tidb_executor_concurrency", "999", "256"),
+        ("tidb_enable_noop_functions", "SOMEVAL", "OFF"),
+    ] {
+        rows(
+            &mut session,
+            &format!("REPLACE INTO mysql.global_variables VALUES ('{name}','{stored}')"),
+        );
+        stack.factory.global_vars.rebuild_sys_var_cache().unwrap();
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SHOW GLOBAL VARIABLES LIKE '{name}'")
+            )),
+            [[name, expected]]
+        );
+    }
 }
