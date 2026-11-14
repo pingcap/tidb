@@ -201,6 +201,13 @@ const (
 		SET status = 'paused'
 		WHERE id = %%? AND status IN ('running', 'resetting') AND last_heartbeat_time = FROM_UNIXTIME(%%?)`
 
+	// lockStaleTaskSQLTemplate is the SQL template for locking a running task only
+	// if its heartbeat has not changed
+	lockStaleTaskSQLTemplate = `
+		SELECT id FROM %s.%s
+		WHERE id = %%? AND status IN ('running', 'resetting') AND last_heartbeat_time = FROM_UNIXTIME(%%?)
+		FOR UPDATE`
+
 	// Old BR binaries do not understand routes. Routed rows expose a wildcard
 	// filter to them so their conflict scan fails conservatively instead of
 	// missing a target namespace occupied by a rename restore.
@@ -1340,7 +1347,11 @@ func (r *Registry) FindAndDeleteMatchingTask(ctx context.Context,
 		zap.Bool("with_sys_table", info.WithSysTable),
 		zap.String("cmd", info.Cmd))
 
-	var deletedTaskID uint64
+	var (
+		deletedTaskID           uint64
+		staleCandidateID        uint64
+		staleCandidateHeartbeat int64
+	)
 
 	err = r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor,
 		sessionOpts []sqlexec.OptionFuncAlias) error {
@@ -1404,27 +1415,12 @@ func (r *Registry) FindAndDeleteMatchingTask(ctx context.Context,
 				return nil
 			}
 
-			initialHeartbeatTimestamp := heartbeatRows[0].GetInt64(0)
-
-			// check if the task is stale (not updating heartbeat)
-			isStale, staleErr := r.isTaskStale(ctx, taskID, initialHeartbeatTimestamp)
-			if staleErr != nil {
-				log.Warn("failed to determine if task is stale, skipping abort",
-					zap.Uint64("task_id", taskID),
-					zap.Error(staleErr))
-				return nil
-			}
-
-			if !isStale {
-				log.Info("task is actively running, cannot abort",
-					zap.Uint64("task_id", taskID),
-					zap.String("status", status))
-				return nil
-			}
-
-			log.Info("task is stale, proceeding with abort",
-				zap.Uint64("task_id", taskID),
-				zap.String("status", status))
+			// The stale check waits for the heartbeat to change, so it must run
+			// after this transaction releases the row lock that blocks the
+			// heartbeat update.
+			staleCandidateID = taskID
+			staleCandidateHeartbeat = heartbeatRows[0].GetInt64(0)
+			return nil
 		} else {
 			log.Error("task is in unexpected status, cannot abort",
 				zap.Uint64("task_id", taskID),
@@ -1449,9 +1445,58 @@ func (r *Registry) FindAndDeleteMatchingTask(ctx context.Context,
 		return 0, err
 	}
 
+	if staleCandidateID != 0 {
+		isStale, staleErr := r.isTaskStale(ctx, staleCandidateID, staleCandidateHeartbeat)
+		if staleErr != nil {
+			log.Warn("failed to determine if task is stale, skipping abort",
+				zap.Uint64("task_id", staleCandidateID),
+				zap.Error(staleErr))
+			return 0, nil
+		}
+		if !isStale {
+			log.Info("task is actively running, cannot abort",
+				zap.Uint64("task_id", staleCandidateID))
+			return 0, nil
+		}
+		log.Info("task is stale, proceeding with abort", zap.Uint64("task_id", staleCandidateID))
+		deleted, err := r.deleteStaleTask(ctx, staleCandidateID, staleCandidateHeartbeat)
+		if err != nil {
+			return 0, err
+		}
+		if deleted {
+			deletedTaskID = staleCandidateID
+		}
+	}
+
 	if deletedTaskID != 0 {
 		log.Info("successfully deleted matching task", zap.Uint64("task_id", deletedTaskID))
 	}
 
 	return deletedTaskID, nil
+}
+
+// deleteStaleTask deletes a running or resetting task only if its heartbeat is
+// still the one observed by the stale check.
+func (r *Registry) deleteStaleTask(ctx context.Context, taskID uint64, expectedHeartbeatTimestamp int64) (bool, error) {
+	var deleted bool
+	err := r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor,
+		sessionOpts []sqlexec.OptionFuncAlias) error {
+		lockSQL := fmt.Sprintf(lockStaleTaskSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+		rows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, lockSQL, taskID, expectedHeartbeatTimestamp)
+		if err != nil {
+			return errors.Annotatef(err, "failed to lock stale task %d", taskID)
+		}
+		if len(rows) == 0 {
+			log.Info("task was not deleted (either already changed state or heartbeat was updated)",
+				zap.Uint64("task_id", taskID))
+			return nil
+		}
+		deleteSQL := fmt.Sprintf(deleteRegistrationSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+		if _, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, deleteSQL, taskID); err != nil {
+			return errors.Annotatef(err, "failed to delete task %d", taskID)
+		}
+		deleted = true
+		return nil
+	})
+	return deleted, err
 }
