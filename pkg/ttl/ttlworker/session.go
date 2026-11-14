@@ -313,6 +313,18 @@ func validateTTLWork(ctx context.Context, s session.Session, tbl *cache.Physical
 		return errors.New("table TTL disabled")
 	}
 
+	// Scanned keys must still bind to the same columns in the DELETE predicate.
+	// Checking inside the transaction also rolls back a DELETE built with stale names.
+	if len(newTTLTbl.KeyColumns) != len(tbl.KeyColumns) {
+		return errors.New("key column count changed")
+	}
+	for i, col := range tbl.KeyColumns {
+		newCol := newTTLTbl.KeyColumns[i]
+		if col.ID != newCol.ID || col.Name.L != newCol.Name.L || !col.FieldType.Equal(&newCol.FieldType) {
+			return errors.New("key column changed")
+		}
+	}
+
 	if newTTLTbl.TimeColumn.Name.L != tbl.TimeColumn.Name.L {
 		return errors.New("time column name changed")
 	}
