@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -33,6 +34,20 @@ func NewMetaBuildContextWithSctx(sctx sessionctx.Context, otherOpts ...metabuild
 		metabuild.WithShardRowIDBits(sessVars.ShardRowIDBits),
 		metabuild.WithPreSplitRegions(sessVars.PreSplitRegions),
 		metabuild.WithInfoSchema(sctx.GetLatestInfoSchema()),
+	}
+	// A FULLTEXT index built in TiKV freezes the analyzer settings in force
+	// when it is created. Reading them fails only for a session whose variables
+	// are unreadable, and such a session should not build an index from
+	// settings it did not ask for, so the failure is reported rather than
+	// replaced by defaults.
+	if rebuild := sessVars.TiKVFullTextAnalyzerForRebuild; rebuild != nil {
+		// The index is rebuilt as it was recorded, whatever the variables
+		// say now.
+		opts = append(opts, metabuild.WithTiKVFullTextAnalyzer(*rebuild))
+	} else if analyzer, err := fulltext.TiKVFullTextAnalyzerFromSessionVars(sessVars); err == nil {
+		opts = append(opts, metabuild.WithTiKVFullTextAnalyzer(analyzer))
+	} else {
+		opts = append(opts, metabuild.WithTiKVFullTextAnalyzerError(err))
 	}
 
 	if len(otherOpts) > 0 {

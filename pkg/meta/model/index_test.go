@@ -15,6 +15,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -102,4 +103,37 @@ func TestGlobalIndexV1SupportedForNextGen(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		require.True(t, GetGlobalIndexV1Supported())
 	}
+}
+
+func TestTiKVFullTextIndexVersion(t *testing.T) {
+	// An index whose metadata predates the version field was built with
+	// version 1, and is the same analyzer as one that records it.
+	var old TiKVFullTextIndexInfo
+	require.NoError(t, json.Unmarshal([]byte(`{"parser_type":"STANDARD","min_token_size":3,"max_token_size":84,"enable_stopword":true}`), &old))
+	require.Equal(t, TiKVFullTextVersion1, old.EffectiveVersion())
+	require.True(t, old.Supported())
+	current := old
+	current.Version = CurrentTiKVFullTextVersion
+	require.True(t, old.SameAnalyzer(&current))
+	data, err := json.Marshal(&current)
+	require.NoError(t, err)
+	require.Contains(t, string(data), fmt.Sprintf(`"version":%d`, CurrentTiKVFullTextVersion))
+
+	// A later version is not this binary's to read or write.
+	newer := current
+	newer.Version = CurrentTiKVFullTextVersion + 1
+	require.False(t, newer.Supported())
+	require.False(t, current.SameAnalyzer(&newer))
+	idx := &IndexInfo{
+		State:        StatePublic,
+		Columns:      []*IndexColumn{{Name: ast.NewCIStr("body")}},
+		TiKVFullText: &current,
+	}
+	require.NotNil(t, idx.QueryableTiKVFullTextColumn())
+	idx.TiKVFullText = &newer
+	require.Nil(t, idx.QueryableTiKVFullTextColumn())
+	require.NotNil(t, idx.TiKVFullTextColumn())
+	idx.TiKVFullText = &current
+	idx.State = StateWriteReorganization
+	require.Nil(t, idx.QueryableTiKVFullTextColumn())
 }

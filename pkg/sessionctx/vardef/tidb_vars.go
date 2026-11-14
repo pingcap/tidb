@@ -390,6 +390,11 @@ const (
 	// produce an equivalent same-order index join candidate.
 	TiDBOptEnableAlternativeLogicalPlans = "tidb_opt_enable_alternative_logical_plans"
 
+	// TiDBEnableTiKVFullTextIndex allows creating a FULLTEXT index built in
+	// TiKV on the classic kernel. It is undocumented and off by default while
+	// queries cannot yet read such an index; it is removed once they can.
+	TiDBEnableTiKVFullTextIndex = "tidb_enable_tikv_fulltext_index"
+
 	// TiDBEnableSemiJoinRewrite controls automatic rewrite of semi-join to
 	// inner-join with aggregation (equivalent to SEMI_JOIN_REWRITE() hint).
 	TiDBOptEnableSemiJoinRewrite = "tidb_opt_enable_semi_join_rewrite"
@@ -1621,6 +1626,7 @@ const (
 	DefOptPreferRangeScan               = true
 	DefOptEnableNoDecorrelateInSelect   = false
 	DefOptEnableAlternativeLogicalPlans = false
+	DefTiDBEnableTiKVFullTextIndex      = false
 	DefOptEnableSemiJoinRewrite         = false
 	DefBatchInsert                      = false
 	DefBatchDelete                      = false
@@ -1690,6 +1696,10 @@ const (
 	DefTiDBMaxDeltaSchemaCount              = 1024
 	DefTiDBPlacementMode                    = PlacementModeStrict
 	DefTiDBEnableAutoIncrementInGenerated   = false
+	DefInnodbFtEnableStopword               = true
+	DefInnodbFtMinTokenSize                 = 3
+	DefInnodbFtMaxTokenSize                 = 84
+	DefNgramTokenSize                       = 2
 	DefTiDBHashAggPartialConcurrency        = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency          = ConcurrencyUnset
 	DefTiDBWindowConcurrency                = ConcurrencyUnset

@@ -248,6 +248,9 @@ type CheckpointIngestIndexRepairSQL struct {
 	IndexName  string    `json:"index-name"`
 	AddSQL     string    `json:"add-sql"`
 	AddArgs    []any     `json:"add-args"`
+	// TiKVFullText is the analyzer a FULLTEXT index built in TiKV recorded.
+	// AddSQL cannot spell it, so the session that runs AddSQL is given it.
+	TiKVFullText *model.TiKVFullTextIndexInfo `json:"tikv-fulltext,omitempty"`
 
 	OldIndexIDFound bool `json:"-"`
 	IndexRepaired   bool `json:"-"`
