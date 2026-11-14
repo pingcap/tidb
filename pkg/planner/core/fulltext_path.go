@@ -339,14 +339,9 @@ func buildFullTextIndexPath(ds *logicalop.DataSource, idx *model.IndexInfo, matc
 		if len(partial.IdxCols) < keyColumnCount {
 			return nil, nil
 		}
-		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.SCtx().GetRangerCtx(), tableFilters,
-			partial.IdxCols[:keyColumnCount], partial.IdxColLens[:keyColumnCount], 0)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		tc := ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()
-		if len(res.Ranges) != 1 || len(res.Ranges[0].LowVal) != keyColumnCount || !res.Ranges[0].IsPointNullable(tc) {
-			return nil, nil
+		res, err := fullTextKeyPoint(ds, partial.IdxCols[:keyColumnCount], partial.IdxColLens[:keyColumnCount], tableFilters)
+		if err != nil || res == nil {
+			return nil, err
 		}
 		partial.Ranges = res.Ranges
 		partial.AccessConds = res.AccessConds
@@ -410,6 +405,22 @@ func buildFullTextIndexPath(ds *logicalop.DataSource, idx *model.IndexInfo, matc
 		CountAfterAccess:  count,
 		StoreType:         kv.TiKV,
 	}, nil
+}
+
+// fullTextKeyPoint detaches from conds the equalities that pin every key
+// column of a FULLTEXT index, the columns ahead of its term, to one point. It
+// returns nil when conds do not: the postings of a term are then not one
+// range of the index.
+func fullTextKeyPoint(ds *logicalop.DataSource, keyCols []*expression.Column, keyColLens []int, conds []expression.Expression) (*ranger.DetachRangeResult, error) {
+	res, err := ranger.DetachCondAndBuildRangeForIndex(ds.SCtx().GetRangerCtx(), conds, keyCols, keyColLens, 0)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tc := ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()
+	if len(res.Ranges) != 1 || len(res.Ranges[0].LowVal) != len(keyCols) || !res.Ranges[0].IsPointNullable(tc) {
+		return nil, nil
+	}
+	return res, nil
 }
 
 // fullTextHandleRanges appends each range of the handle columns to the point

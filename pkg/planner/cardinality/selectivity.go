@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1012,6 +1012,17 @@ func (s *fullTextMatchSelectivities) get(expr expression.Expression) (float64, b
 	defer s.mu.Unlock()
 	sel, ok := s.m[string(sf.HashCode())]
 	return sel, ok
+}
+
+// HasFullTextMatchSelectivity reports whether SetFullTextMatchSelectivity has
+// recorded a selectivity for the MATCH predicate in this statement.
+func HasFullTextMatchSelectivity(sctx planctx.PlanContext, match *expression.ScalarFunction) bool {
+	s := fullTextMatchSelectivitiesOf(sctx, false)
+	if s == nil {
+		return false
+	}
+	_, ok := s.get(match)
+	return ok
 }
 
 // SetFullTextMatchSelectivity records the selectivity of a MATCH predicate

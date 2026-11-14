@@ -444,3 +444,98 @@ func TestFullTextIndexPostingsProbedWithoutStatistics(t *testing.T) {
 	plan = explain("select id from lt where match(body) against('+alpha +zebra' in boolean mode)")
 	require.Contains(t, plan, "FullTextIndexScan(Build)", plan)
 }
+
+// TestFullTextIndexPostingsProbeScope covers what the planning-time count of
+// a term's postings reaches and what it must leave to the statistics.
+func TestFullTextIndexPostingsProbeScope(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Every 97th row holds the rare word; half the rows hold the common one.
+	fill := func(table string, rows int) {
+		values := make([]string, 0, rows)
+		for i := 1; i <= rows; i++ {
+			body := "filler text"
+			if i%2 == 0 {
+				body += " alpha"
+			}
+			if i%97 == 0 {
+				body += " rareword"
+			}
+			values = append(values, fmt.Sprintf("(%d, %d, '%s')", i, i%7, body))
+		}
+		tk.MustExec(fmt.Sprintf("insert into %s values %s", table, strings.Join(values, ",")))
+	}
+	// estimates returns the row estimate of every plan line holding op.
+	estimates := func(op, sql string) []float64 {
+		var out []float64
+		for _, row := range tk.MustQuery("explain format = 'brief' " + sql).Rows() {
+			if strings.Contains(fmt.Sprint(row[0]), op) {
+				var est float64
+				_, err := fmt.Sscanf(fmt.Sprint(row[1]), "%f", &est)
+				require.NoError(t, err)
+				out = append(out, est)
+			}
+		}
+		require.NotEmpty(t, out, sql)
+		return out
+	}
+	count := func(sql string) float64 {
+		var n float64
+		_, err := fmt.Sscanf(fmt.Sprint(tk.MustQuery(sql).Rows()[0][0]), "%f", &n)
+		require.NoError(t, err)
+		return n
+	}
+
+	// An index with key columns: the term is counted under the key point,
+	// and the count is the estimate of the rows the search yields there. The
+	// text column has no statistics; the key column has.
+	tk.MustExec("create table tn (id int primary key, tenant int, body longtext, fulltext index idx (tenant, body))")
+	fill("tn", 3000)
+	tk.MustExec("analyze table tn")
+	rare := count("select count(*) from tn where tenant = 3 and body like '%rareword%'")
+	require.Greater(t, rare, 1.0)
+	require.InDelta(t, rare, estimates("FullTextIndexScan", "select id from tn where tenant = 3 and match(body) against('+rareword' in boolean mode)")[0], 0.5)
+	common := count("select count(*) from tn where tenant = 3 and body like '%alpha%'")
+	require.InDelta(t, common, estimates("Projection", "select id + 1 from tn where tenant = 3 and match(body) against('+alpha' in boolean mode)")[0], 1)
+
+	// A table of more partitions than are probed: the count scaled from
+	// those probed is the estimate, not a floor under the statistics' one.
+	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("create table p8 (id int primary key, k int, body longtext, fulltext index idx (body)) partition by hash(id) partitions 8")
+	fill("p8", 3000)
+	rare = count("select count(*) from p8 where body like '%rareword%'")
+	est := estimates("FullTextIndexScan", "select id from p8 where match(body) against('+rareword' in boolean mode)")[0]
+	require.Greater(t, est, rare/3)
+	require.Less(t, est, rare*3)
+
+	// Partitions planned one by one share a term's probe: the first few
+	// count it and the others take their mean, so no partition is left with
+	// the statistics' estimate because the statement's probes ran out.
+	tk.MustExec("set tidb_partition_prune_mode = 'static'")
+	tk.MustExec("create table p40 (id int primary key, k int, body longtext, fulltext index idx (body)) partition by hash(id) partitions 40")
+	fill("p40", 3000)
+	perPartition := estimates("FullTextIndexScan", "select id from p40 where match(body) against('+rareword' in boolean mode)")
+	require.Len(t, perPartition, 40)
+	for _, est := range perPartition {
+		require.Less(t, est, 10.0)
+	}
+	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+
+	// Rows the transaction has written are not in TiKV to be counted, and
+	// those of a temporary table never are: the statistics' estimate stands,
+	// in place of a count of none.
+	tk.MustExec("create table u (id int primary key, k int, body longtext, fulltext index idx (body))")
+	tk.MustExec("begin")
+	fill("u", 3000)
+	require.Greater(t, estimates("Projection", "select id + 1 from u where match(body) against('+alpha' in boolean mode)")[0], 1.0)
+	tk.MustExec("rollback")
+	tk.MustExec("create global temporary table gt (id int primary key, k int, body longtext, fulltext index idx (body)) on commit delete rows")
+	tk.MustExec("begin")
+	fill("gt", 3000)
+	require.Greater(t, estimates("Projection", "select id + 1 from gt where match(body) against('+alpha' in boolean mode)")[0], 1.0)
+	tk.MustExec("rollback")
+}
