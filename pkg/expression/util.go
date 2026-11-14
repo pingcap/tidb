@@ -689,6 +689,15 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 		}
 		if substituted {
 			if v.FuncName.L == ast.FTSMysqlMatchAgainst {
+				// MATCH searches the text of columns: it takes one renamed
+				// for another, but not the expression or constant an
+				// equality ties a column to, which matches the column under
+				// its collation and need not hold the same words.
+				for _, arg := range refExprArr.Result()[1:] {
+					if _, ok := arg.(*Column); !ok {
+						return true, true, v
+					}
+				}
 				// MATCH ... AGAINST keeps planner-initialized local evaluation state
 				// in its signature, so rebuild it by cloning and replacing all args.
 				cloned := v.Clone().(*ScalarFunction)

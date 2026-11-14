@@ -1054,3 +1054,56 @@ func TestLocalMatchAgainstPlanIdentity(t *testing.T) {
 	tk.MustQuery("execute st").Check(testkit.Rows("3"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
+
+// TestMatchAgainstKeepsItsColumns checks that predicate propagation leaves the
+// columns of a MATCH alone. An equality does not make its two sides
+// interchangeable to MATCH, which tokenizes the column's text instead of
+// comparing it under the collation, and a MATCH rebuilt over other arguments
+// loses the search modifier and where it is evaluated.
+func TestMatchAgainstKeepsItsColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	matchArgs := func(sql string) []string {
+		var out []string
+		for _, row := range tk.MustQuery("explain format = 'brief' " + sql).Rows() {
+			info := row[4].(string)
+			for {
+				i := strings.Index(info, "match_against(")
+				if i < 0 {
+					break
+				}
+				info = info[i+len("match_against("):]
+				out = append(out, info[:strings.Index(info, ")")])
+			}
+		}
+		return out
+	}
+
+	// 'cafe' = 'café' under the collation, but the two are different words.
+	tk.MustExec("create table c (id int primary key, a varchar(200) collate utf8mb4_general_ci)")
+	tk.MustExec("insert into c values (1, 'café'), (2, 'cafe')")
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
+	tk.MustExec("set @@tidb_enable_local_match_against = on")
+	tk.MustQuery("select id from c where a = 'cafe' and match(a) against('café' in boolean mode) order by id").
+		Check(testkit.Rows("1"))
+	tk.MustQuery("select id from c where a = 'cafe' and match(a) against('cafe' in boolean mode) order by id").
+		Check(testkit.Rows("2"))
+
+	// Columns an equality ties, which propagation substitutes for one another
+	// when their collation is binary.
+	tk.MustExec("create table vb (id int primary key, a varbinary(200), b varbinary(200))")
+	tk.MustExec("insert into vb values (1, 'foo bar', 'foo bar'), (2, 'foo', 'baz'), (3, 'baz', 'baz')")
+	tk.MustQuery("select id from vb where a = b and match(a) against('+foo' in boolean mode)").
+		Check(testkit.Rows("1"))
+	tk.MustQuery("select t1.id from vb t1 join vb t2 on t1.a = t2.a where match(t1.a) against('+foo' in boolean mode) order by t1.id").
+		Check(testkit.Rows("1", "2"))
+
+	// With the switch off, the MATCH a columnar index answers keeps its column
+	// too.
+	tk.MustExec("set @@tidb_enable_local_match_against = off")
+	require.Equal(t, []string{`"foo", test.c.a`},
+		matchArgs("select id from c where a = 'foo' and match(a) against('foo')"))
+	require.Equal(t, []string{`"foo", test.vb.a`},
+		matchArgs("select id from vb where a = b and match(a) against('foo')"))
+}
