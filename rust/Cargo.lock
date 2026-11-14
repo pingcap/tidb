@@ -3690,6 +3690,7 @@ name = "tidb-br"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "getrandom 0.3.4",
  "hex",
  "prost 0.14.4",
  "serde_json",
@@ -3698,12 +3699,14 @@ dependencies = [
  "tidb-ast",
  "tidb-codec",
  "tidb-encrypt",
+ "tidb-failpoint",
  "tidb-gocontext",
  "tidb-goruntime",
  "tidb-log",
  "tidb-model",
  "tidb-proto",
  "tidb-redact",
+ "tidb-stats-util",
  "tidb-table-filter",
  "tidb-tablecodec",
 ]

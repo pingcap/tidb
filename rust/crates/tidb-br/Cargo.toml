@@ -27,6 +27,9 @@ sha2.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
 hex = "0.4"
+getrandom.workspace = true
+tidb-failpoint = { path = "../tidb-failpoint" }
+tidb-stats-util = { path = "../tidb-stats-util" }
 
 [dev-dependencies]
 tempfile.workspace = true

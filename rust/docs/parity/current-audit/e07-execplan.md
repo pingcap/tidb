@@ -98,3 +98,33 @@ From the root, `TZ=UTC go test --tags=intest -p 6 ./zzprobe/e07 -run TestMetadat
 Revision 2026-11-14: implemented and tested the metadata/control/configuration portion; identified and retained the physical execution gap. Full suite, unchanged-tip replay and passing current-source memory-accounting retest recorded. Implementation committed as `bfcfe4b0feb`; physical execution remains open.
 
 The implementation is committed on the original `codex/e07` branch. The following documentation commit records this verification and preserves the E07 partial row. Source restoration after the baseline replay was verified by SHA-256, and `git diff --check` plus register-count consistency checks passed.
+
+
+## Physical runner continuation (2026-11-14)
+
+
+- [x] Re-read root guidance; verified a clean worktree at continuation start.
+- [x] Trace RunBackup, RunRestore, BRIE store guards, Go unistore, and metadata writer ownership.
+- [x] Port local atomic writes and Go V1/V2 MetaWriter; exact plaintext bytes match zzprobe/e07writer, AES modes pass TestEncryptAndDecrypt, and encrypted V1/V2 DDL readback matches captured Go output. Restore metadata loading now includes files, partitions, checksums, and statistics.
+- [ ] Port backup ranges/client and restore metadata/checksum/schema paths, then task orchestration and BRIE invocation.
+- [ ] Resolve source contract for unistore: Go buildBRIE rejects non-tikv stores; Go unistore has no Backup or ImportSST service. Clarification requested while independent porting proceeds.
+- [ ] Run targeted tests per coherent piece, full changed-crate suites at the end, commit pieces, and reconcile both audit entries.
+
+The user explicitly requests physical database/table backup-drop-restore over local/file archives, with no Go source changes. A generic SQL dump or a fabricated successful queue job is outside this contract. Each component remains a prerequisite until the actual physical round-trip passes. Preserve the Go store restriction pending the requested clarification; work on shared prerequisites meanwhile.
+
+The first milestone adds MetaWriter and atomic local writes under tidb-br, validated by original Go tests and an uncommitted probe with deterministic output. The second adds source-backed backup and restore clients; the third connects task runners and BRIE and validates physical data and schema recovery. A local unistore extension requires an explicit contract decision because its implementation has no counterpart in Go unistore. All Cargo commands retain the four specified environment values and six build/test workers. Never delete targets or modify another worktree.
+
+
+Continuation evidence: `cargo check -j6 -p tidb-br --tests` passes. Targeted nextest metadata run: 10/10 passed; edge-capture run: 2/2 passed. `TZ=UTC go test --tags=intest -p 6 ./zzprobe/e07writer -run TestMetaWriter -count=1 -v` and `-run TestMetadataEdges` pass. Fixtures retain only E07 output lines, with no temp paths or credentials. The first edge probe had a mistyped 34-byte AES key and failed as expected; corrected to the Go test's 32-byte key before capture. All probes remain uncommitted. A mistaken initial Cargo check from the repository root was interrupted; subsequent commands run from rust/ with its configured rustflags and the required environment. The toolchain emits a nonfatal rust-objcopy/libLLVM warning; tests execute successfully.
+
+Go executable constraint probe: `TZ=UTC go test --tags=intest -p 6 ./zzprobe/e07writer -run TestUnistoreBRIE -count=1 -v` passes and confirms both statements are rejected by Go on unistore before physical execution. No physical round-trip is claimed. Source at `pkg/store/mockstore/unistore/tikv/server.go` embeds only the TiKV KV service, not Backup or ImportSST. The pending user question concerns authorizing an extension beyond this source contract.
+
+
+## Continuation stopping point: Git metadata write denied
+
+
+The physical-runner continuation is blocked at its first required coherent commit by an environment write denial outside this worktree. Both `git add rust/` attempts failed to create `/Users/qiliu/projects/tidb/.git/worktrees/cx-e07/index.lock` with `Operation not permitted`. The paired `git commit -m 'Port Go BR metadata writing and restore file loading'` also failed. `git rev-parse --git-dir --git-common-dir` resolves the expected metadata directory; directory ownership/modes show qiliu and 0755, and no existing lock was reported. The active approval policy cannot request elevated filesystem access. No alternate index, permission bypass, branch switch or push was attempted. All source changes remain unstaged and uncommitted for recovery once the environment permits the required Git write.
+
+Final changed-crate suite: `cargo nextest run -j6 -p tidb-br` passed 68 tests, with 2 skipped, in 0.713 seconds (test execution). All Cargo commands use the required four environment settings plus CARGO_BUILD_JOBS=6. Only tidb-br code changed. Go source under pkg/ was unchanged; uncommitted zzprobe/e07writer holds the three source probes. Physical BACKUP/RESTORE, real cluster execution, server build, corpus replay, compatibility checks, statistics-file transfer, and the task/backup/restore clients remain unverified or unimplemented. No whole-Go-package completion is claimed. The metadata prerequisite is reviewable; the requested physical task runner is not delivered.
+
+Both E07 rows retain partial status. The JSON had stale duplicate top-level open/partial values (3/10) despite counts and rows being 2/11; these duplicate values now agree with the actual 13 rows and the Markdown header. See e07-physical-runner-report.md for the exact command record and recovery requirements.

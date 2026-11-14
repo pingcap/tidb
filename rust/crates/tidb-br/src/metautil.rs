@@ -12,13 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `br/pkg/metautil` metadata reader used by `task/show`.
-//! This owns the SkipFiles/SkipStats path; it is not a restore/import runner.
+//! Go `br/pkg/metautil`: backup metadata writing and schema/file loading.
 
 use crate::local_storage::LocalStorage;
 use prost::Message;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use tidb_proto::backup::{BackupMeta, CipherInfo, MetaFile, Schema};
+
+mod writer;
+pub use writer::{AppendOp, MetaItem, MetaWriter, SizedMetaFile, encrypt};
+pub use writer::{BACKUP_SCHEMA_VERSION, META_FILE_SIZE};
+
+mod load;
+pub use load::{Database, load_backup_tables};
+
+/// Go `readSchemaConfig` / `ReadSchemaOption`.
+#[derive(Clone, Copy, Default)]
+pub struct ReadSchemaConfig {
+    /// Go `SkipFiles`.
+    pub skip_files: bool,
+    /// Go `SkipStats`.
+    pub skip_stats: bool,
+}
 
 /// Go `metautil.MetaReader`.
 pub struct MetaReader {
@@ -39,6 +55,67 @@ pub struct Table {
     pub total_bytes: u64,
     /// Go `Table.TiFlashReplicas`.
     pub tiflash_replicas: u32,
+    /// Go `Table.Crc64Xor`.
+    pub crc64_xor: u64,
+    /// Go `Table.FilesOfPhysicals`.
+    pub files_of_physicals: BTreeMap<i64, Vec<tidb_proto::backup::File>>,
+    /// Go `Table.Stats`.
+    pub stats: Option<tidb_stats_util::JsonTable>,
+    /// Go `Table.StatsFileIndexes`.
+    pub stats_file_indexes: Vec<tidb_proto::backup::StatsFileIndex>,
+    /// Go `Table.IsMergeOptionAllowed`.
+    pub is_merge_option_allowed: bool,
+    /// Go `Table.PartitionMergeOptionAllowed`.
+    pub partition_merge_option_allowed: std::collections::HashMap<String, bool>,
+}
+
+/// Go `ChecksumStats`.
+#[derive(Default, Debug, PartialEq, Eq)]
+pub struct ChecksumStats {
+    /// Go `Crc64Xor`.
+    pub crc64_xor: u64,
+    /// Go `TotalKvs`.
+    pub total_kvs: u64,
+    /// Go `TotalBytes`.
+    pub total_bytes: u64,
+}
+impl ChecksumStats {
+    /// Go `ChecksumStats.ChecksumExists`.
+    pub fn checksum_exists(&self) -> bool {
+        self.crc64_xor != 0 || self.total_kvs != 0 || self.total_bytes != 0
+    }
+}
+impl Table {
+    /// Go `Table.CalculateChecksumStatsOnFiles`.
+    pub fn calculate_checksum_stats_on_files(&self) -> ChecksumStats {
+        let mut stats = ChecksumStats::default();
+        for file in self.files_of_physicals.values().flatten() {
+            stats.crc64_xor ^= file.crc64xor;
+            stats.total_kvs = stats.total_kvs.wrapping_add(file.total_kvs);
+            stats.total_bytes = stats.total_bytes.wrapping_add(file.total_bytes);
+        }
+        stats
+    }
+}
+
+/// Go `ArchiveSize`.
+pub fn archive_size(files: &[tidb_proto::backup::File]) -> u64 {
+    files
+        .iter()
+        .fold(0u64, |sum, file| sum.wrapping_add(file.size))
+}
+/// Go `ArchiveTableSize`.
+pub fn archive_table_size(table: &Table) -> u64 {
+    table
+        .files_of_physicals
+        .values()
+        .fold(0u64, |sum, files| sum.wrapping_add(archive_size(files)))
+}
+/// Go `ArchiveTablesSize`.
+pub fn archive_tables_size(tables: &[Table]) -> u64 {
+    tables.iter().fold(0u64, |sum, table| {
+        sum.wrapping_add(archive_table_size(table))
+    })
 }
 
 impl MetaReader {
@@ -58,12 +135,27 @@ impl MetaReader {
 
     /// Go `MetaReader.ReadSchemasFiles(ctx, out, SkipFiles, SkipStats)`.
     pub fn read_schemas_files(&self, ctx: &tidb_gocontext::Context) -> Result<Vec<Table>, String> {
+        self.read_schemas_files_with_options(
+            ctx,
+            ReadSchemaConfig {
+                skip_files: true,
+                skip_stats: true,
+            },
+        )
+    }
+
+    /// Go `MetaReader.ReadSchemasFiles` with explicit options.
+    pub fn read_schemas_files_with_options(
+        &self,
+        ctx: &tidb_gocontext::Context,
+        opts: ReadSchemaConfig,
+    ) -> Result<Vec<Table>, String> {
         let mut tables = Vec::new();
         let mut collect = |schema: &Schema| {
             if let Some(err) = ctx.err() {
                 return Err(err.to_string());
             }
-            tables.push(parse_schema_file(schema)?);
+            tables.push(parse_schema_file(schema, opts.skip_stats)?);
             Ok(())
         };
         for schema in &self.backup_meta.schemas {
@@ -81,12 +173,95 @@ impl MetaReader {
                 Ok(())
             },
         )?;
-        Ok(tables)
+        let mut file_map: BTreeMap<i64, Vec<tidb_proto::backup::File>> = BTreeMap::new();
+        if !opts.skip_files {
+            for file in self.read_data_files(ctx)? {
+                let physical_id = tidb_tablecodec::table_key::decode_table_id(&file.start_key);
+                assert_ne!(physical_id, 0, "tableID must not equal to 0");
+                file_map.entry(physical_id).or_default().push(file);
+            }
+        }
+        let mut result = Vec::new();
+        let mut iter = tables.into_iter();
+        loop {
+            // Go receiveBatch deduplicates table IDs within each batch of 1024.
+            let mut batch = BTreeMap::new();
+            for mut table in iter.by_ref().take(1024) {
+                let id = if let Some(info) = &table.info {
+                    if let Some(files) = file_map.get(&info.id) {
+                        table.files_of_physicals.insert(info.id, files.clone());
+                    }
+                    if let Some(partition) = &info.partition {
+                        for definition in partition.read().definitions.snapshot() {
+                            if let Some(files) = file_map.get(&definition.id) {
+                                table
+                                    .files_of_physicals
+                                    .insert(definition.id, files.clone());
+                            }
+                        }
+                    }
+                    info.id
+                } else {
+                    table.db.id
+                };
+                batch.insert(id, table);
+            }
+            if batch.is_empty() {
+                break;
+            }
+            result.extend(batch.into_values());
+        }
+        Ok(result)
+    }
+
+    /// Go `MetaReader.readDataFiles`: read both inline and indexed files.
+    pub fn read_data_files(
+        &self,
+        ctx: &tidb_gocontext::Context,
+    ) -> Result<Vec<tidb_proto::backup::File>, String> {
+        let mut files = self.backup_meta.files.clone();
+        walk_leaf_meta_file(
+            ctx,
+            &self.storage,
+            self.backup_meta.file_index.as_ref(),
+            &self.cipher,
+            &mut |meta| {
+                files.extend(meta.data_files.iter().cloned());
+                Ok(())
+            },
+        )?;
+        Ok(files)
+    }
+
+    /// Go `MetaReader.ReadDDLs` / `readDDLs`.
+    pub fn read_ddls(&self, ctx: &tidb_gocontext::Context) -> Result<Vec<u8>, String> {
+        if let Some(error) = ctx.err() {
+            return Err(error.to_string());
+        }
+        if self.backup_meta.version == 0 {
+            return Ok(self.backup_meta.ddls.clone());
+        }
+        let mut ddls = Vec::new();
+        walk_leaf_meta_file(
+            ctx,
+            &self.storage,
+            self.backup_meta.ddl_indexes.as_ref(),
+            &self.cipher,
+            &mut |meta| {
+                ddls.extend(meta.ddls.iter().cloned());
+                Ok(())
+            },
+        )?;
+        if ddls.is_empty() {
+            Ok(Vec::new())
+        } else {
+            Ok(writer::merge_ddls(&ddls))
+        }
     }
 }
 
-/// Go `parseSchemaFile` with `SkipStats` already applied.
-fn parse_schema_file(schema: &Schema) -> Result<Table, String> {
+/// Go `parseSchemaFile` with `SkipStats` applied before parsing.
+fn parse_schema_file(schema: &Schema, skip_stats: bool) -> Result<Table, String> {
     Ok(Table {
         db: serde_json::from_slice(&schema.db).map_err(|e| e.to_string())?,
         info: if schema.table.is_empty() {
@@ -97,6 +272,20 @@ fn parse_schema_file(schema: &Schema) -> Result<Table, String> {
         total_kvs: schema.total_kvs,
         total_bytes: schema.total_bytes,
         tiflash_replicas: schema.tiflash_replicas,
+        crc64_xor: schema.crc64xor,
+        files_of_physicals: BTreeMap::new(),
+        stats: if skip_stats || schema.stats.is_empty() {
+            None
+        } else {
+            serde_json::from_slice(&schema.stats).map_err(|e| e.to_string())?
+        },
+        stats_file_indexes: if skip_stats {
+            Vec::new()
+        } else {
+            schema.stats_index.clone()
+        },
+        is_merge_option_allowed: schema.is_merge_option_allowed,
+        partition_merge_option_allowed: schema.partition_merge_option_allowed.clone(),
     })
 }
 
@@ -120,8 +309,11 @@ fn walk_leaf_meta_file(
         let content = crate::utils::decrypt(&content, Some(cipher), &node.cipher_iv)?;
         let checksum = Sha256::digest(&content);
         if node.sha256.as_slice() != checksum.as_slice() {
-            return Err(format!("[BR:Common:ErrInvalidMetaFile]invalid metafile: checksum mismatch expect {}, got {}",
-                hex::encode(&node.sha256), hex::encode(checksum)));
+            return Err(format!(
+                "[BR:Common:ErrInvalidMetaFile]invalid metafile: checksum mismatch expect {}, got {}",
+                hex::encode(&node.sha256),
+                hex::encode(checksum)
+            ));
         }
         let child = MetaFile::decode(content.as_slice()).map_err(|e| e.to_string())?;
         walk_leaf_meta_file(ctx, storage, Some(&child), cipher, output)?;

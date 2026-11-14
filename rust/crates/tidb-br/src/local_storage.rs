@@ -77,7 +77,57 @@ impl LocalStorage {
 
     /// Go `LocalStorage.ReadFile`.
     pub fn read_file(&self, name: &str) -> Result<Vec<u8>, String> {
-        std::fs::read(self.base.join(name)).map_err(|e| e.to_string())
+        std::fs::read(self.path(name)).map_err(|e| e.to_string())
+    }
+
+    /// Go `filepath.Join(l.base, name)`: a leading slash in name does not
+    /// discard the base, unlike Rust's Path::join.
+    fn path(&self, name: &str) -> PathBuf {
+        self.base.join(name.trim_start_matches('/'))
+    }
+
+    /// Go `LocalStorage.WriteFile`: publish only after the temporary write
+    /// completes. Error messages never contain storage credentials.
+    pub fn write_file(&self, name: &str, data: &[u8]) -> Result<(), String> {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        if let Some(value) =
+            tidb_failpoint::eval("github.com/pingcap/tidb/pkg/objstore/local_write_file_err")
+        {
+            return Err(value.string());
+        }
+        let path = self.path(name);
+        let mut random = [0; 16];
+        getrandom::fill(&mut random).map_err(|e| e.to_string())?;
+        let mut tmp = path.as_os_str().to_owned();
+        tmp.push(format!(".tmp.{}", hex::encode(random)));
+        let tmp = PathBuf::from(tmp);
+        let open = || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o644)
+                .open(&tmp)
+        };
+        let mut file = match open() {
+            Ok(file) => file,
+            Err(error) => {
+                let parent = tmp.parent().unwrap();
+                if parent.try_exists().map_err(|e| e.to_string())? {
+                    return Err(error.to_string());
+                }
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                open().map_err(|e| e.to_string())?
+            }
+        };
+        file.write_all(data).map_err(|e| e.to_string())?;
+        drop(file);
+        std::fs::rename(tmp, path).map_err(|e| e.to_string())
+    }
+
+    /// Go `LocalStorage.FileExists` / `pathExists`.
+    pub fn file_exists(&self, name: &str) -> Result<bool, String> {
+        self.path(name).try_exists().map_err(|e| e.to_string())
     }
 }
 

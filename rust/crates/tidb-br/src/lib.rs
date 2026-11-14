@@ -43,7 +43,10 @@
 //! into physical BRIE execution; source test mappings do not certify that path.
 //!
 //! [`task::show`] and [`metautil`] serve local SQL metadata inspection (V1/V2,
-//! including encrypted schema indexes). The new task configuration modules
+//! including encrypted schema indexes). `metautil` also writes Go V1/V2 archives
+//! and loads restore schemas, data-file indexes, DDLs and statistics payloads.
+//! These metadata paths are not yet connected to physical task execution.
+//! The task configuration modules
 //! contain the SQL builder's fields, not the complete CLI task packages or
 //! their physical backup/restore runners.
 //!
@@ -61,9 +64,9 @@
 //!   [`rtree::Range`] and the metadata sink use that same concrete owner.
 //!   Missing-range APIs return generated `kvrpcpb.KeyRange`; Go's separate
 //!   local algebra type remains [`rtree::KeyRange`].
-//! - `br/pkg/metautil` (`MetaWriter`, `ChecksumStats`, `Table`) is narrowed to
-//!   the [`rtree::MetaWriter`] trait, the flat [`rtree::ChecksumStats`] struct,
-//!   and an opaque payload on [`restore_utils::CreatedTable`].
+//! - The range-tree call boundary remains the [`rtree::MetaWriter`] trait
+//!   and flat [`rtree::ChecksumStats`]. The concrete metadata reader/writer
+//!   lives in [`metautil`]; physical runner integration remains absent.
 //! - `br/pkg/logutil` and `go.uber.org/zap` carry no semantics; the two
 //!   renderings that tests assert on are reproduced directly
 //!   ([`rtree::zap_ranges`], [`spans::stringify_range`]).

@@ -1,0 +1,5 @@
+E07 local=file before=false after=true data=second
+E07 local=/nested/file before=false after=true data=second
+E07 crc=4 kvs=6 bytes=30 exists=true size=300
+E07 encrypted=false ddl=[{"id":1}] version=0 schema=1
+E07 encrypted=true ddl=[{"id":1}] version=1 schema=1
