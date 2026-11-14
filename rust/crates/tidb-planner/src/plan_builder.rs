@@ -175,6 +175,7 @@ mod dml_targets;
 pub mod update_targets;
 mod update_build;
 mod dml_visits;
+pub mod insert;
 pub mod insert_on_duplicate;
 pub mod insert_values;
 pub mod single_update;
@@ -884,9 +885,6 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `buildInsert`'s one `TableInfo2SchemaAndNames` of the target, which
     /// `mockTablePlan`, `Insert.tableSchema` and `Schema4OnDuplicate` share.
     pub(crate) insert_target_schema: std::cell::OnceCell<(Schema, Vec<FieldName>)>,
-    /// The column ids that schema drew, when the statement's source build
-    /// drew them first.
-    pub insert_target_column_ids: Option<Vec<i64>>,
     /// Go `b.ctx.GetSessionVars().EnableMPPSharedCTEExecution`
     /// (`tryToBuildSequence`, `:4625`). Go's variable defaults to OFF, so a
     /// `LogicalSequence` is not built unless a caller asks for one.
@@ -1770,7 +1768,6 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             enable_force_inline_cte: false,
             skip_cte_consumer_counts: false,
             insert_target_schema: std::cell::OnceCell::new(),
-            insert_target_column_ids: None,
             enable_mpp_shared_cte_execution: false,
         }
     }

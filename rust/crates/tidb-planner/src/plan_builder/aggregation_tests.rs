@@ -1811,3 +1811,45 @@ fn insert_generated_columns_are_expressions_over_the_whole_row() {
     let target = builder.resolve_insert_target(&insert).unwrap();
     assert!(builder.resolve_generated_columns(&target).unwrap().is_empty());
 }
+
+/// Go `planbuilder_test.go::TestGetInsertColExprDeepCopiesValueExprFieldType`,
+/// exercised through the complete INSERT builder. Rust owns the copied type;
+/// changing the planned constant must not mutate the ValueExpr on the AST.
+#[test]
+fn test_get_insert_col_expr_deep_copies_value_expr_field_type() {
+    use tidb_datatype::Datum;
+    use tidb_planner_core_operator_physicalop::PhysicalPlan;
+
+    let harness = Harness::new();
+    let Stmt::Dml(dml) = tidb_parser::parse("insert into t(a) values (1)").unwrap() else {
+        panic!("INSERT");
+    };
+    let tidb_ast::DmlStmt::Insert(mut insert) = dml.into_inner() else {
+        panic!("INSERT");
+    };
+    let mut field_type = FieldType::new(FieldTypeCode::LongLong);
+    field_type.add_flags(FieldTypeFlags::NOT_NULL);
+    insert.rows[0][0] = tidb_expr::ValueExprDatum {
+        datum: Datum::Int(1),
+        field_type,
+    }.into_expr();
+    let mut builder = harness.builder();
+    let PhysicalPlan::Dml(mut plan) = builder.build_insert(
+        &insert,
+        |_, _, _| panic!("VALUES has no SELECT to optimize"),
+        |_, _| Ok(Vec::new()),
+    ).unwrap() else {
+        panic!("physical INSERT");
+    };
+    let expressions = plan.insert_expressions.as_mut().unwrap();
+    let Expression::Constant(constant) = expressions.lists[0][0].as_mut().unwrap() else {
+        panic!("literal expression");
+    };
+    *constant.ret_type.as_mut().unwrap() = FieldType::new(FieldTypeCode::String);
+    let Expr::Value(value) = &insert.rows[0][0] else {
+        panic!("original ValueExpr");
+    };
+    let original = tidb_expr::ValueExprDatum::of(value).unwrap();
+    assert_eq!(original.field_type.code(), FieldTypeCode::LongLong);
+    assert_ne!(original.field_type.flags() & FieldTypeFlags::NOT_NULL, 0);
+}

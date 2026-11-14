@@ -3544,6 +3544,29 @@ pub struct UpdateAssign {
     pub expr: usize,
 }
 
+/// One `ON DUPLICATE KEY UPDATE` assignment (Go `expression.Assignment`).
+#[derive(Clone, Debug)]
+pub struct OnDuplicateAssign {
+    /// The target column's position in the target table.
+    pub offset: usize,
+    /// The value, over `Schema4OnDuplicate`.
+    pub expr: Expression,
+    /// Go `Assignment.LazyErr`: a scalar subquery's 1242 raised while the
+    /// assignment was built, which only a row meeting a duplicate reports.
+    pub lazy_error: Option<tidb_planner_core_base::PlanError>,
+}
+
+/// Go `physicalop.Insert`'s VALUES, ON DUPLICATE and generated expressions.
+#[derive(Clone, Debug, Default)]
+pub struct InsertExpressions {
+    /// Go `Insert.Lists`, in insert-column order.
+    pub lists: Vec<Vec<Option<Expression>>>,
+    /// Go `Insert.OnDuplicate`, over Schema4OnDuplicate.
+    pub on_duplicate: Vec<OnDuplicateAssign>,
+    /// Go `Insert.GenCols`, in stored-column order.
+    pub generated: Vec<Option<Expression>>,
+}
+
 /// The cached physical root of an INSERT/UPDATE/DELETE whose source is a
 /// SELECT. Go's rebuild visitor descends into `SelectPlan` and otherwise has
 /// no DML-local range state to update.
@@ -3579,6 +3602,10 @@ pub struct PhysicalDmlRoot {
     /// What the planner decided about an `INSERT ... SELECT`'s source: the
     /// names of its outputs and how many of them fill the insert.
     pub insert_select: Option<InsertSelectOutput>,
+    /// Expressions of a fresh INSERT build, consumed by its executor. A
+    /// prepared cache hit rewrites expressions against the newly bound AST;
+    /// a cache miss retains the expressions its one builder already built.
+    pub insert_expressions: Option<InsertExpressions>,
     /// Go `SessionVars.PlanID` once the statement's plan was built: where a
     /// foreign-key cascade's plan, built while the statement runs, continues
     /// the statement's plan ids.
@@ -5996,6 +6023,7 @@ impl PhysicalPlan {
                 update_tables: op.update_tables.clone(),
                 update_assigns: op.update_assigns.clone(),
                 insert_select: op.insert_select.clone(),
+                insert_expressions: op.insert_expressions.clone(),
                 plan_id: op.plan_id,
             }),
             Self::TopN(op) => Self::TopN(PhysicalTopN {

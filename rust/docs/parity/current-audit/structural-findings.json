@@ -2,18 +2,11 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 11,
+    "unresolved": 10,
     "open": 0,
-    "partial": 11
+    "partial": 10
   },
   "findings": [
-    {
-      "id": "A01",
-      "status": "partial",
-      "group": "Privilege and account policy owners",
-      "finding": "A query, INSERT, UPDATE or DELETE is checked over the visit infos of the build that plans it (`table_privilege::check_plan_privilege`: a query's before it is optimized, a DML's once it is built, a point plan's through `check_fast_plan_privilege`). PREPARE, the binary protocol's prepare and a new non-prepared plan-cache entry keep the `VisitInfos` of one build (`Session::collect_table_privileges`), as Go's `GeneratePlanCacheStmtWithAST` keeps those of its `destBuilder.Build`: a query's is `query_visit_info`'s `build_query_node`, a DML's is the driver's own build with no fast plan (`dml_visit_info`). An INSERT's source build and its values / ON DUPLICATE build share one statement's plan and column counters (`StatementAllocators`), the target's schema is drawn once and reused as Go's `mockTablePlan` / `Schema4OnDuplicate` are, and EXPLAIN lists the scalar subqueries both registered (`tests_explain.rs` `explain_insert_lists_the_scalar_subqueries_of_its_one_build_like_go`, a Go testkit capture). What remains: those are still two `PlanBuilder` objects (and a third, discarded, for the ON DUPLICATE extension of an `INSERT ... SELECT`'s AST), where Go's `buildInsert` is one, with `buildSelectPlanOfInsert` in the executor's DML driver rather than the planner",
-      "go_owner": "`pkg/planner/core` (`visitInfo`, `CheckPrivilege`, `GeneratePlanCacheStmtWithAST`)"
-    },
     {
       "id": "D01",
       "status": "partial",

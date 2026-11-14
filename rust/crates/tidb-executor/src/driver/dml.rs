@@ -119,59 +119,52 @@ pub fn run_insert_stmt_with_physical(
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
 ) -> Result<(u64, Option<u64>), DriverError> {
-    run_insert_stmt_with_physical_and_visits(insert, catalog, current_db, ctx, physical_plan, None, None)
+    run_insert_stmt_with_physical_and_visits(insert, catalog, current_db, ctx, physical_plan, None)
 }
 
-/// [`run_insert_stmt_with_physical`] with the executors' runtime stats.
-/// `source_visits` are the visit infos of an INSERT the caller built itself
-/// ([`physical_insert_plan`]); `None` with a `physical_plan` is a cached plan,
-/// whose statement checked the visit infos PREPARE kept.
+/// Go `InsertExec`: execute the plan and expressions of one build. EXPLAIN
+/// ANALYZE hands its completed build in; a cache hit supplies its source.
 pub(crate) fn run_insert_stmt_with_physical_and_visits(
     insert: &tidb_ast::InsertStmt,
     catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
-    source_visits: Option<Vec<tidb_planner::plan_builder::visit_info::VisitInfo>>,
-    built: Option<(
-        &StatementAllocators,
-        &mut Vec<std::sync::Arc<super::planner_bridge::RegisteredScalarSubquery>>,
-    )>,
+    built: Option<PlannedInsert>,
 ) -> Result<(u64, Option<u64>), DriverError> {
-    // go resolves the INSERT's target table before planning the source
-    // query: `INSERT INTO h1 (a, b) SELECT a, b FROM no_such` over a missing
-    // h1 errors `Table 'fdq.h1' doesn't exist`, not the source query's own
-    // 1146 (oracle m13).
     resolve_insert_target(insert, catalog, current_db, ctx)?;
-    // Go `planner.Optimize`.
     let optimize = super::start_optimize_region();
-    let mut source_visits = source_visits;
-    let mut fresh = None;
-    let statement = StatementAllocators::default();
-    if physical_plan.is_none() {
-        let mut visits = Vec::new();
-        fresh = Some(physical_insert_plan(insert, catalog, current_db, ctx, &mut visits, &statement)?);
-        source_visits = Some(visits);
-    }
-    let (built_with, scalar_subqueries) = match built {
-        Some((statement, scalar_subqueries)) => (Some(statement), Some(scalar_subqueries)),
-        None => (None, None),
+    let mut fresh;
+    let (mut physical_plan, planned, check_visits) = match physical_plan {
+        None => {
+            let (physical, planned) = build_insert_plan(insert, catalog, current_db, ctx, false)?;
+            fresh = physical;
+            (Some(&mut fresh), planned, true)
+        }
+        Some(physical) => {
+            let check_visits = built.is_some();
+            let planned = match built {
+                Some(planned) => planned,
+                None => {
+                    let expressions = match physical {
+                        tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root) =>
+                            root.insert_expressions.take(),
+                        _ => None,
+                    };
+                    let expressions = match expressions {
+                        Some(expressions) => expressions,
+                        None => super::planner_bridge::cached_insert_expressions(
+                            insert, physical, catalog, current_db, ctx,
+                        ).map_err(super::planner_error_to_driver)?,
+                    };
+                    PlannedInsert::new(expressions, physical, Vec::new(), Vec::new())
+                }
+            };
+            (Some(physical), planned, check_visits)
+        }
     };
-    // The values plan with the counters of the build of the source: this
-    // statement's own, or the caller's.
-    let shared = fresh.is_some().then_some(&statement).or(built_with);
-    let mut physical_plan = physical_plan.or(fresh.as_mut());
-    // Go `buildInsert` evaluates the values' uncorrelated subqueries while
-    // it plans: the VALUES lists, then (after an INSERT ... SELECT's source
-    // was optimized) the ON DUPLICATE assignments.
-    let planned = plan_insert_over(insert, physical_plan.as_deref(), catalog, current_db, ctx, shared)?;
-    if let Some(scalar_subqueries) = scalar_subqueries {
-        scalar_subqueries.extend(planned.scalar_subqueries.iter().cloned());
-    }
-    // Go `planner.optimize`'s `CheckPrivilege` / `CheckTableLock` once
-    // `buildInsert` returned.
-    if let Some(source_visits) = source_visits {
-        crate::table_privilege::check_plan_privilege(ctx, catalog, &planned.statement_visits(source_visits))?;
+    if check_visits {
+        crate::table_privilege::check_plan_privilege(ctx, catalog, &planned.visits)?;
     }
     optimize.end();
     if let Some(plan) = physical_plan.as_deref_mut() {
@@ -209,71 +202,26 @@ pub(crate) fn run_insert_stmt_with_physical_and_visits(
     })
 }
 
-/// Builds the physical plan of an INSERT: its source (Go's ON DUPLICATE
-/// extension of it for an `INSERT ... SELECT`), the foreign key triggers, and
-/// what the planner decided about the source's outputs. `source_visits`
-/// receives the source's visit infos, which the statement checks with the
-/// rest of `buildInsert`'s once its values are planned.
-pub(crate) fn physical_insert_plan(
+/// Go `PlanBuilder.buildInsert`: consume the planner's complete build,
+/// preserving its visit infos and scalar subquery registration for callers.
+pub(crate) fn build_insert_plan(
     insert: &tidb_ast::InsertStmt,
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
-    source_visits: &mut Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
-    statement: &StatementAllocators,
-) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
-    physical_insert_plan_and_scalar_subqueries(insert, catalog, current_db, ctx, source_visits, statement)
-        .map(|(plan, _)| plan)
-}
-
-/// Go's one `PlanBuilder` per statement as its plan and column ids see it
-/// (`SessionVars.PlanID`, `PlanColumnID`): `buildInsert` plans the target,
-/// the source and the assignments from the same counters.
-#[derive(Default)]
-pub(crate) struct StatementAllocators {
-    pub(crate) plan_ids: tidb_planner_core_base::PlanIdAllocator,
-    pub(crate) column_ids: tidb_planner_core_base::ColumnIdAllocator,
-    /// The column ids an INSERT's target schema drew (Go `buildInsert`'s
-    /// first `TableInfo2SchemaAndNames`), which its assignments reuse.
-    pub(crate) insert_target_column_ids: std::cell::RefCell<Option<Vec<i64>>>,
-}
-
-/// [`physical_insert_plan`] with the scalar subqueries its source
-/// registered, for EXPLAIN.
-pub(crate) fn physical_insert_plan_and_scalar_subqueries(
-    insert: &tidb_ast::InsertStmt,
-    catalog: &SessionExtendedInfoSchema,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-    source_visits: &mut Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
-    statement: &StatementAllocators,
-) -> Result<
-    (
-        tidb_planner_core_operator_physicalop::PhysicalPlan,
-        Vec<std::sync::Arc<super::planner_bridge::RegisteredScalarSubquery>>,
-    ),
-    DriverError,
-> {
-    let extended = super::planner_bridge::insert_extended_source(insert, catalog, current_db, ctx);
-    let (source, actual_col_len) = match &extended {
-        Some((query, width)) => (Some(query), Some(*width)),
-        None => (insert.source.as_deref(), None),
+    use_plan_cache: bool,
+) -> Result<(tidb_planner_core_operator_physicalop::PhysicalPlan, PlannedInsert), DriverError> {
+    let (built, visits, scalar_subqueries) =
+        super::planner_bridge::insert_plan(insert, catalog, current_db, ctx, use_plan_cache)
+            .map_err(super::planner_error_to_driver)?;
+    let mut physical = built;
+    let tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root) = &mut physical else {
+        unreachable!("build_insert returned a physical INSERT");
     };
-    physical_dml_plan_and_scalar_subqueries_with_cache_mode(
-        "Insert",
-        source,
-        None,
-        catalog,
-        current_db,
-        ctx,
-        false,
-        std::slice::from_ref(&fk_spec_for_insert(insert, catalog, current_db, ctx)?),
-        DmlKeep::Auto,
-        actual_col_len,
-        super::planner_bridge::BuildVisits::Collect(source_visits),
-        None,
-        Some(statement),
-    )
+    let expressions = root.insert_expressions.take().expect("a fresh INSERT has expressions");
+    super::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
+    let planned = PlannedInsert::new(expressions, &physical, visits, scalar_subqueries);
+    Ok((physical, planned))
 }
 
 fn dml_execution_parts<'a>(
@@ -368,11 +316,9 @@ pub(crate) fn physical_fk_cascade_plan(
                 false,
                 &[fk_spec_for_delete(delete, &current_db)?],
                 DmlKeep::Auto,
-                None,
                 // Go's `buildFKCascadePlan` checks no privileges.
                 super::planner_bridge::BuildVisits::Discard,
                 Some(plan_ids),
-                None,
             )
         }
         crate::foreign_key::FKCascadeStmt::Update(update) => {
@@ -388,10 +334,8 @@ pub(crate) fn physical_fk_cascade_plan(
                 false,
                 &[build_tbl_2_update_columns(update, &current_db)?],
                 DmlKeep::Auto,
-                None,
                 super::planner_bridge::BuildVisits::Discard,
                 Some(plan_ids),
-                None,
             )
         }
     }
@@ -538,10 +482,8 @@ fn build_dml_visit_info(
         // Go `buildInsert`: the source, then the VALUES lists and the ON
         // DUPLICATE assignments.
         tidb_ast::DmlStmt::Insert(insert) => {
-            let statement = StatementAllocators::default();
-            let physical = physical_insert_plan(insert, catalog, current_db, ctx, &mut visits, &statement)?;
-            let planned = plan_insert_over(insert, Some(&physical), catalog, current_db, ctx, Some(&statement))?;
-            return Ok(planned.statement_visits(visits));
+            let (_, planned) = build_insert_plan(insert, catalog, current_db, ctx, false)?;
+            return Ok(planned.visits);
         }
         _ => return Ok(visits),
     };
@@ -555,9 +497,7 @@ fn build_dml_visit_info(
         false,
         std::slice::from_ref(&fk_spec),
         DmlKeep::Auto,
-        None,
         BuildVisits::Collect(&mut visits),
-        None,
         None,
     )?;
     Ok(visits)
@@ -585,9 +525,7 @@ pub(crate) fn physical_dml_plan(
         false,
         std::slice::from_ref(fk_spec),
         DmlKeep::Auto,
-        None,
         super::planner_bridge::BuildVisits::Check,
-        None,
         None,
     )
 }
@@ -620,9 +558,7 @@ pub(crate) fn physical_dml_plan_and_scalar_subqueries(
         false,
         std::slice::from_ref(fk_spec),
         DmlKeep::Auto,
-        None,
         super::planner_bridge::BuildVisits::Check,
-        None,
         None,
     )
 }
@@ -657,36 +593,30 @@ pub(crate) fn physical_multi_dml_plan(
         false,
         fk_specs,
         keep,
-        None,
         visits,
-        None,
         None,
     )
 }
 
-/// Shared INSERT/UPDATE/DELETE construction, following Go's
+/// Shared UPDATE/DELETE construction, following Go's
 /// plan-builder allocation order and DML-local plan nodes:
 ///
-/// * Go `buildInsert` allocates the physical `Insert` root, then the
-///   `LogicalTableDual` mock plan (`planbuilder.go:4195`), then the source,
-///   then `BuildOnInsertFKTriggers`. The mock plan never renders, but its id
-///   shifts everything after it, so the explain path allocates one filler.
 /// * Go's single-table point UPDATE/DELETE (`point_get_plan.go:1254/1374`)
 ///   builds the locked `PointGet` first; the UPDATE path allocates one extra
 ///   plan before the `Update` root, the DELETE path does not.
 /// * Non-point UPDATE/DELETE build the source logically, allocate the
 ///   `Update`/`Delete` root, then `DoOptimize` — with `buildSelectLock`
 ///   wrapping the single-table source (`logical_plan_builder.go:6117/6552`).
-/// * `BuildOn{Insert,Update,Delete}FKTriggers` runs last, allocating the
+/// * `BuildOn{Update,Delete}FKTriggers` runs last, allocating the
 ///   `Foreign_Key_Check` / `Foreign_Key_Cascade` leaves.
 #[allow(clippy::too_many_arguments)]
 ///
-/// `write` is the UPDATE or DELETE being planned (`None` for an INSERT).
+/// `write` is the UPDATE or DELETE being planned.
 /// `visits` is what becomes of the visit infos Go's one `PlanBuilder` would
-/// hold once `buildInsert` / `buildUpdate` / `buildDelete` returns: `Check`ed
+/// hold once `buildUpdate` / `buildDelete` returns: `Check`ed
 /// here (Go `planner.optimize`'s `CheckPrivilege` after the build, which for a
-/// DML includes the read's `DoOptimize`), `Collect`ed for an INSERT whose
-/// values are planned after this, or `Discard`ed for a cached plan's rebuild.
+/// DML includes the read's `DoOptimize`), `Collect`ed for PREPARE, or
+/// `Discard`ed for a cached plan's rebuild.
 /// A fast point plan is checked as Go's `checkFastPlanPrivilege` checks it,
 /// and a denied one leaves the statement to the ordinary build.
 #[allow(clippy::too_many_arguments)]
@@ -700,10 +630,8 @@ fn physical_dml_plan_with_cache_mode(
     use_plan_cache: bool,
     fk_specs: &[fk_trigger_plan::FkPlanSpec],
     keep: DmlKeep,
-    insert_actual_col_len: Option<usize>,
     visits: super::planner_bridge::BuildVisits<'_>,
     cascade_plan_ids: Option<&tidb_planner_core_base::PlanIdAllocator>,
-    statement: Option<&StatementAllocators>,
 ) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
     physical_dml_plan_and_scalar_subqueries_with_cache_mode(
         operator,
@@ -715,10 +643,8 @@ fn physical_dml_plan_with_cache_mode(
         use_plan_cache,
         fk_specs,
         keep,
-        insert_actual_col_len,
         visits,
         cascade_plan_ids,
-        statement,
     )
     .map(|(plan, _)| plan)
 }
@@ -736,10 +662,8 @@ fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
     use_plan_cache: bool,
     fk_specs: &[fk_trigger_plan::FkPlanSpec],
     keep: DmlKeep,
-    insert_actual_col_len: Option<usize>,
     visits: super::planner_bridge::BuildVisits<'_>,
     cascade_plan_ids: Option<&tidb_planner_core_base::PlanIdAllocator>,
-    statement: Option<&StatementAllocators>,
 ) -> Result<
     (
         tidb_planner_core_operator_physicalop::PhysicalPlan,
@@ -754,7 +678,7 @@ fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
     // A foreign-key cascade's statement continues the plan ids of the
     // statement that runs it (Go's one `SessionVars.PlanID`).
     let own_plan_ids;
-    let plan_ids = match cascade_plan_ids.or(statement.map(|statement| &statement.plan_ids)) {
+    let plan_ids = match cascade_plan_ids {
         Some(plan_ids) => plan_ids,
         None => {
             own_plan_ids = tidb_planner_core_base::PlanIdAllocator::new();
@@ -770,20 +694,12 @@ fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
     let mut statement_visits = Vec::new();
     let mut fast_plan_checked = false;
 
-    let own_column_ids;
-    let column_ids = match statement {
-        Some(statement) => &statement.column_ids,
-        None => {
-            own_column_ids = tidb_planner_core_base::ColumnIdAllocator::new();
-            &own_column_ids
-        }
-    };
+    let column_ids = tidb_planner_core_base::ColumnIdAllocator::new();
     let mut update_expressions = Vec::new();
     let mut delete_col_pos = None;
     let mut delete_tables = Vec::new();
     let mut update_tables = Vec::new();
     let mut update_assigns = Vec::new();
-    let mut insert_select = None;
     let single_update = update.filter(|update| matches!(update.kind, tidb_ast::UpdateKind::Single(_)));
     let mut fast_update_list = false;
     let build_fk_triggers = || -> Result<Vec<FkTriggerNode>, DriverError> {
@@ -802,67 +718,10 @@ fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
         *delete_fk_triggers.borrow_mut() = Some(build_fk_triggers());
     };
 
-    // Go `buildInsert` builds the target's schema first
-    // (`TableInfo2SchemaAndNames`), which draws a plan column id for every
-    // public column of the table before the source plan exists.
-    if operator.eq_ignore_ascii_case("Insert") {
-        if let Some(Some(TableEntry::Kv(table))) = fk_specs
-            .first()
-            .map(|spec| catalog.get_in(&spec.database, &spec.table))
-        {
-            let ids: Vec<i64> = (0..table.columns().len()).map(|_| column_ids.alloc()).collect();
-            if let Some(statement) = statement {
-                *statement.insert_target_column_ids.borrow_mut() = Some(ids);
-            }
-        }
-    }
-
-    // Go `PlanBuilder.Build` for the INSERT (no fast plan exists for one).
-    if operator.eq_ignore_ascii_case("Insert") {
-        super::record_plan_builder_metric(ctx);
-    }
-    // Go `buildInsert`'s mockTablePlan filler, right after the Insert root.
-    let mut root_base = if operator.eq_ignore_ascii_case("Insert") {
-        let root = BasePhysicalPlan::new(plan_ids, operator, 0);
-        let _mock_table_plan = plan_ids.alloc();
-        Some(root)
-    } else {
-        None
-    };
+    let mut root_base = None;
 
     let select_plan = match source {
         None => None,
-        // INSERT ... SELECT: Go's `buildSelectPlanOfInsert` builds the source
-        // without a select lock (only UPDATE/DELETE lock their read), and the
-        // Insert root plus its mockTablePlan filler are already allocated
-        // above, ahead of the source. The output names are what ON DUPLICATE
-        // assignments resolve against.
-        Some(query) if operator.eq_ignore_ascii_case("Insert") => {
-            // Go `buildSelectPlanOfInsert`'s own `b.Build`.
-            super::record_plan_builder_metric(ctx);
-            let (physical, names, source_scalar_subqueries) =
-                super::planner_bridge::physical_query_plan_and_names_with_allocators(
-                    query,
-                    catalog,
-                    current_db,
-                    ctx,
-                    use_plan_cache,
-                    plan_ids,
-                    &column_ids,
-                    if collecting {
-                        BuildVisits::Collect(&mut statement_visits)
-                    } else {
-                        BuildVisits::Discard
-                    },
-                )
-                .map_err(super::planner_error_to_driver)?;
-            insert_select = Some(tidb_planner_core_operator_physicalop::InsertSelectOutput {
-                names,
-                actual_col_len: insert_actual_col_len,
-            });
-            scalar_subqueries = source_scalar_subqueries;
-            Some(physical)
-        }
         Some(tidb_ast::QueryStmt::Select(select)) => {
             let multi_update = update
                 .filter(|update| matches!(update.kind, tidb_ast::UpdateKind::Multi { .. }));
@@ -1034,7 +893,7 @@ fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
     };
 
     let base = root_base.ok_or_else(|| DriverError::unsupported("DML build produced no root"))?;
-    // Go `BuildOn{Insert,Update,Delete}FKTriggers`, last in the builders but
+    // Go `BuildOn{Update,Delete}FKTriggers`, last in the builders but
     // `buildDelete`, which runs them before optimizing its source.
     let mut fk_triggers = match delete_fk_triggers.take() {
         Some(built) => built?,
@@ -1062,41 +921,12 @@ fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
         fast_update_list,
         update_tables,
         update_assigns,
-        insert_select,
+        insert_select: None,
+        insert_expressions: None,
         plan_id: plan_ids.current(),
     });
     super::physical_builder::prepare_plan_for_explain(&mut plan, catalog, ctx)?;
     Ok((plan, scalar_subqueries))
-}
-
-/// Go `tnW.DBInfo.Name.L` / `tableInfo.Name` for the INSERT target, plus the
-/// REPLACE / ON DUPLICATE facts `BuildOnInsertFKTriggers` branches on: the
-/// columns the RESOLVED assignments write (`buildOnDuplicateUpdateColumns`).
-pub(crate) fn fk_spec_for_insert(
-    insert: &tidb_ast::InsertStmt,
-    catalog: &SessionExtendedInfoSchema,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<fk_trigger_plan::FkPlanSpec, DriverError> {
-    let (database, table) = tidb_infoschema::split_table_path(&insert.table, current_db)?;
-    // An assignment the planner cannot resolve is raised by the statement's
-    // own planning; the trigger selection falls back to the names as written.
-    let on_duplicate_cols =
-        super::planner_bridge::insert_on_duplicate_columns(insert, catalog, current_db, ctx)
-            .unwrap_or_else(|_| {
-                insert
-                    .on_duplicate
-                    .iter()
-                    .filter_map(|assignment| assignment.col.last().cloned())
-                    .collect()
-            });
-    Ok(fk_trigger_plan::FkPlanSpec {
-        database: database.to_owned(),
-        table: table.to_owned(),
-        updated_cols: Vec::new(),
-        replace: insert.replace,
-        on_duplicate_cols,
-    })
 }
 
 /// Go `buildTbl2UpdateColumns` narrowed to the SET column names.
@@ -1320,82 +1150,34 @@ pub(crate) struct PlannedInsert {
     /// Go `Insert.GenCols`: each generated column's expression over the
     /// table's complete stored row, per table column.
     generated: Vec<Option<Expression>>,
-    /// `buildInsert`'s visit infos on the target, ahead of the source's.
-    target_visits: Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
-    /// Go `SessionVars.MapScalarSubQ`'s entries the values and the ON
-    /// DUPLICATE assignments registered, which EXPLAIN renders after the
-    /// source's.
+    /// Go `SessionVars.MapScalarSubQ`, in this build's registration order.
     pub(crate) scalar_subqueries: Vec<std::sync::Arc<super::planner_bridge::RegisteredScalarSubquery>>,
-    /// The visit infos planning the values appended, after the source's.
-    visits: Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
+    /// Go `PlanBuilder.GetVisitInfo`, in the order this builder collected it.
+    pub(crate) visits: Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
 }
 
-/// Go `buildInsert`: the VALUES lists, then (for an `INSERT ... SELECT`) the
-/// width and generated-target checks of `buildSelectPlanOfInsert`, then
-/// `ResolveOnDuplicate` -- all before any executor is built, with every
-/// uncorrelated scalar subquery evaluated on the way (`handleScalarSubquery`'s
-/// `EvalSubqueryFirstRow`). A value whose rewrite builds an Apply is Go's
-/// "complex subqueries" refusal (issue 30626); an ON DUPLICATE assignment's
-/// `ErrSubqueryMoreThan1Row` stays on the assignment for the row that meets a
-/// duplicate (issue 29260).
 impl PlannedInsert {
-    /// Go `buildInsert`'s visit infos: its target's, the source's, then the
-    /// values' and ON DUPLICATE assignments'.
-    pub(crate) fn statement_visits(
-        &self,
-        source_visits: Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
-    ) -> Vec<tidb_planner::plan_builder::visit_info::VisitInfo> {
-        let mut visits = self.target_visits.clone();
-        visits.extend(source_visits);
-        visits.extend(self.visits.iter().cloned());
-        visits
+    /// Go `physicalop.Insert`: retain the expressions and source output width.
+    fn new(
+        expressions: tidb_planner_core_operator_physicalop::InsertExpressions,
+        physical: &tidb_planner_core_operator_physicalop::PhysicalPlan,
+        visits: Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
+        scalar_subqueries: Vec<std::sync::Arc<super::planner_bridge::RegisteredScalarSubquery>>,
+    ) -> Self {
+        let actual_col_len = match physical {
+            tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root) =>
+                root.insert_select.as_ref().and_then(|output| output.actual_col_len),
+            _ => None,
+        };
+        Self {
+            lists: expressions.lists,
+            on_duplicate: expressions.on_duplicate,
+            generated: expressions.generated,
+            actual_col_len,
+            visits,
+            scalar_subqueries,
+        }
     }
-}
-
-/// [`plan_insert`] over the physical plan of the INSERT, whose `INSERT ...
-/// SELECT` source (if any) the expressions are resolved after.
-pub(crate) fn plan_insert_over(
-    insert: &tidb_ast::InsertStmt,
-    physical: Option<&tidb_planner_core_operator_physicalop::PhysicalPlan>,
-    catalog: &SessionExtendedInfoSchema,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-    statement: Option<&StatementAllocators>,
-) -> Result<PlannedInsert, DriverError> {
-    let select = match physical {
-        Some(tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root)) => root
-            .select_plan
-            .as_deref()
-            .and_then(|plan| plan.schema())
-            .zip(root.insert_select.as_ref()),
-        _ => None,
-    };
-    plan_insert(insert, select, catalog, current_db, ctx, statement)
-}
-
-fn plan_insert(
-    insert: &tidb_ast::InsertStmt,
-    select: Option<(
-        &tidb_expr::schema::Schema,
-        &tidb_planner_core_operator_physicalop::InsertSelectOutput,
-    )>,
-    catalog: &SessionExtendedInfoSchema,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-    statement: Option<&StatementAllocators>,
-) -> Result<PlannedInsert, DriverError> {
-    let planned =
-        super::planner_bridge::plan_insert_expressions(insert, select, catalog, current_db, ctx, statement)
-            .map_err(super::planner_error_to_driver)?;
-    Ok(PlannedInsert {
-        lists: planned.values.lists,
-        on_duplicate: planned.on_duplicate,
-        actual_col_len: select.and_then(|(_, output)| output.actual_col_len),
-        generated: planned.generated,
-        target_visits: planned.target_visits,
-        visits: planned.visits,
-        scalar_subqueries: planned.scalar_subqueries,
-    })
 }
 
 /// The rows a `LOAD DATA` statement hands Go's `InsertValues`: each already
@@ -3850,6 +3632,9 @@ impl PreparedDmlPlan {
                 let Ok(mut cached) = plan.lock() else {
                     return Ok(None);
                 };
+                if let tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root) = &mut cached.physical {
+                    root.insert_expressions = None;
+                }
                 let generation = cached.bind(params, ctx);
                 drop(cached);
                 match generation {
@@ -4028,16 +3813,22 @@ fn cached_dml_physical_plan(
     let Stmt::Dml(dml) = statement else {
         return Ok(None);
     };
-    let (operator, source, write, insert_actual_col_len) = match dml.as_ref() {
-        tidb_ast::DmlStmt::Insert(insert) => {
-            let extended =
-                super::planner_bridge::insert_extended_source(insert, catalog, current_database, ctx);
-            let actual = extended.as_ref().map(|(_, width)| *width);
-            let source = extended
-                .map(|(query, _)| query)
-                .or_else(|| insert.source.as_deref().cloned());
-            ("Insert", source, None, actual)
+    if let tidb_ast::DmlStmt::Insert(insert) = dml.as_ref() {
+        ctx.start_prepared_range_tracking();
+        let (built, _, _) = super::planner_bridge::insert_plan(
+            insert, catalog, current_database, ctx, true,
+        ).map_err(super::planner_error_to_driver)?;
+        let mut root = built;
+        super::physical_builder::prepare_plan_for_explain(&mut root, catalog, ctx)?;
+        if ctx.skip_plan_cache() {
+            return Ok(Some((root, false)));
         }
+        if tidb_planner::physical_plan_cache::is_plan_cacheable(&root, cacheability).is_err() {
+            return Ok(None);
+        }
+        return Ok(Some((root, true)));
+    }
+    let (operator, source, write) = match dml.as_ref() {
         tidb_ast::DmlStmt::Update(update) => (
             "Update",
             Some(match update_source_query(update) {
@@ -4045,7 +3836,6 @@ fn cached_dml_physical_plan(
                 None => return Ok(None),
             }),
             Some(super::multi_dml::MultiDmlRef::Update(update.as_ref())),
-            None,
         ),
         tidb_ast::DmlStmt::Delete(delete) => (
             "Delete",
@@ -4054,14 +3844,10 @@ fn cached_dml_physical_plan(
                 None => return Ok(None),
             }),
             Some(super::multi_dml::MultiDmlRef::Delete(delete.as_ref())),
-            None,
         ),
         _ => return Ok(None),
     };
     let fk_spec = match dml.as_ref() {
-        tidb_ast::DmlStmt::Insert(insert) => {
-            fk_spec_for_insert(insert, catalog, current_database, ctx)
-        }
         tidb_ast::DmlStmt::Update(update) => build_tbl_2_update_columns(update, current_database),
         tidb_ast::DmlStmt::Delete(delete) => fk_spec_for_delete(delete, current_database),
         _ => return Ok(None),
@@ -4080,9 +3866,7 @@ fn cached_dml_physical_plan(
         true,
         std::slice::from_ref(&fk_spec),
         DmlKeep::Auto,
-        insert_actual_col_len,
         super::planner_bridge::BuildVisits::Discard,
-        None,
         None,
     )?;
     if ctx.skip_plan_cache() {

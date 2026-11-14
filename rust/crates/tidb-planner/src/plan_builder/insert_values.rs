@@ -68,89 +68,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// heap table alone has: a table with a real handle has no such column,
     /// so the name falls through to the ordinary `ErrUnknownColumn`.
     pub fn resolve_insert_target(&self, insert: &InsertStmt) -> Result<InsertTarget, PlanError> {
-        let (database, name) = match insert.table.as_slice() {
-            [_] if self.source.current_database().is_empty() => {
-                return Err(PlanError::from(
-                    tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
-                ))
-            }
-            [name] => (self.source.current_database(), name.as_str()),
-            [database, name] => (database.as_str(), name.as_str()),
-            _ => return Err(PlanError::internal("an INSERT target has no name")),
-        };
-        let table = self.source.find_table(database, name).ok_or_else(|| {
-            PlanError::from(
-                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                    .fast_gen_by_args(&[database.into(), name.into()]),
-            )
-        })?;
-        let mut columns: Vec<(String, FieldType)> = Vec::new();
-        let mut generated = Vec::new();
-        for column in table
-            .columns
-            .iter()
-            .filter(|column| {
-                let column = column.read();
-                !column.hidden && column.state == tidb_model::SchemaState::PUBLIC
-            })
-        {
-            columns.push((column.read().name.original().to_owned(), column.read().field_type.clone()));
-            generated.push(column.read().is_generated());
-        }
-        let named: Vec<String> = if insert.set_syntax {
-            insert
-                .set_columns
-                .iter()
-                .map(|path| path.last().cloned().unwrap_or_default())
-                .collect()
-        } else {
-            insert.columns.clone()
-        };
-        let names_a_column = insert.set_syntax || insert.columns_specified;
-        let heap = !table.pk_is_handle() && !table.is_common_handle();
-        let extra_handle_offset = (names_a_column
-            && heap
-            && !table.is_memory_table
-            && named
-                .iter()
-                .any(|name| go_to_lower(name) == tidb_model::column::EXTRA_HANDLE_NAME))
-        .then(|| {
-            columns.push((
-                tidb_model::column::EXTRA_HANDLE_NAME.to_owned(),
-                FieldType::new(FieldTypeCode::LongLong),
-            ));
-            generated.push(false);
-            columns.len() - 1
-        });
-        let offsets = if names_a_column {
-            named
-                .iter()
-                .map(|name| {
-                    columns
-                        .iter()
-                        .position(|(candidate, _)| go_to_lower(candidate) == go_to_lower(name))
-                        .ok_or_else(|| {
-                            PlanError::from(
-                                tidb_plannererrors::ERR_UNKNOWN_COLUMN
-                                    .gen_with_stack_by_args(&[
-                                        tidb_hack::go_to_lower(name.clone()).into(),
-                                        "field list".into(),
-                                    ]),
-                            )
-                        })
-                })
-                .collect::<Result<Vec<_>, _>>()?
-        } else {
-            (0..columns.len()).collect()
-        };
-        Ok(InsertTarget {
-            database: table.db_name.clone(),
-            table: table.table_name(),
-            columns,
-            generated,
-            offsets,
-            extra_handle_offset,
-        })
+        resolve_insert_target(self.source, insert)
     }
 
     /// Go `resolveGeneratedColumns`: each generated column's expression
@@ -319,12 +237,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     fn new_insert_target_schema(&self, target: &InsertTarget) -> (Schema, Vec<FieldName>) {
         let mut schema = Schema::default();
         let mut names = Vec::with_capacity(target.columns.len());
-        for (position, (name, field_type)) in target.columns.iter().enumerate() {
-            let id = self
-                .insert_target_column_ids
-                .as_ref()
-                .and_then(|ids| ids.get(position).copied())
-                .unwrap_or_else(|| self.column_ids.alloc());
+        for (name, field_type) in &target.columns {
+            let id = self.column_ids.alloc();
             let mut column = Column::new(id, field_type.clone());
             column.orig_name = format!("{}.{}.{name}", target.database, target.table);
             schema.columns.push(column);
@@ -448,4 +362,91 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         super::check_not_multi_column_row(&rewritten)?;
         Ok(rewritten)
     }
+}
+
+/// Go `getAffectCols`: resolve the INSERT target layout without building a plan.
+pub fn resolve_insert_target(source: &impl TableSource, insert: &InsertStmt) -> Result<InsertTarget, PlanError> {
+    let (database, name) = match insert.table.as_slice() {
+        [_] if source.current_database().is_empty() => {
+            return Err(PlanError::from(
+                tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
+            ))
+        }
+        [name] => (source.current_database(), name.as_str()),
+        [database, name] => (database.as_str(), name.as_str()),
+        _ => return Err(PlanError::internal("an INSERT target has no name")),
+    };
+    let table = source.find_table(database, name).ok_or_else(|| {
+        PlanError::from(
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                .fast_gen_by_args(&[database.into(), name.into()]),
+        )
+    })?;
+    let mut columns: Vec<(String, FieldType)> = Vec::new();
+    let mut generated = Vec::new();
+    for column in table
+        .columns
+        .iter()
+        .filter(|column| {
+            let column = column.read();
+            !column.hidden && column.state == tidb_model::SchemaState::PUBLIC
+        })
+    {
+        columns.push((column.read().name.original().to_owned(), column.read().field_type.clone()));
+        generated.push(column.read().is_generated());
+    }
+    let named: Vec<String> = if insert.set_syntax {
+        insert
+            .set_columns
+            .iter()
+            .map(|path| path.last().cloned().unwrap_or_default())
+            .collect()
+    } else {
+        insert.columns.clone()
+    };
+    let names_a_column = insert.set_syntax || insert.columns_specified;
+    let heap = !table.pk_is_handle() && !table.is_common_handle();
+    let extra_handle_offset = (names_a_column
+        && heap
+        && !table.is_memory_table
+        && named
+            .iter()
+            .any(|name| go_to_lower(name) == tidb_model::column::EXTRA_HANDLE_NAME))
+    .then(|| {
+        columns.push((
+            tidb_model::column::EXTRA_HANDLE_NAME.to_owned(),
+            FieldType::new(FieldTypeCode::LongLong),
+        ));
+        generated.push(false);
+        columns.len() - 1
+    });
+    let offsets = if names_a_column {
+        named
+            .iter()
+            .map(|name| {
+                columns
+                    .iter()
+                    .position(|(candidate, _)| go_to_lower(candidate) == go_to_lower(name))
+                    .ok_or_else(|| {
+                        PlanError::from(
+                            tidb_plannererrors::ERR_UNKNOWN_COLUMN
+                                .gen_with_stack_by_args(&[
+                                    tidb_hack::go_to_lower(name.clone()).into(),
+                                    "field list".into(),
+                                ]),
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        (0..columns.len()).collect()
+    };
+    Ok(InsertTarget {
+        database: table.db_name.clone(),
+        table: table.table_name(),
+        columns,
+        generated,
+        offsets,
+        extra_handle_offset,
+    })
 }

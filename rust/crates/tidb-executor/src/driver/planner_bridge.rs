@@ -2653,10 +2653,12 @@ impl QueryBuilderParts<'_> {
         );
         let prune_fallback = dynamic_prune_fallback(catalog, ctx);
         let defaults = default_evaluator(catalog, ctx);
+        let insert_defaults = default_evaluator_using(catalog, ctx, super::dml::DefaultUse::Insert);
         let mut builder =
             PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
                 .with_subquery_evaluator(&evaluator)
                 .with_default_evaluator(&defaults)
+                .with_insert_default_evaluator(&insert_defaults)
                 .with_mpp_warning_sink(ctx);
         if let Some(session_ctx) = self.session_ctx {
             builder = builder.with_session_ctx(session_ctx);
@@ -2847,160 +2849,113 @@ fn query_visit_info_inner(
     Ok(std::mem::take(&mut builder.visit_info))
 }
 
-/// What [`plan_insert_expressions`] plans.
-pub(crate) struct InsertExpressions {
-    pub values: tidb_planner::plan_builder::insert_values::InsertValues,
-    pub on_duplicate: Vec<tidb_planner::plan_builder::insert_on_duplicate::OnDuplicateAssign>,
-    pub generated: Vec<Option<Expression>>,
-    /// Go `buildInsert`'s first visit infos, on the target, which precede
-    /// those of an `INSERT ... SELECT`'s source.
-    pub target_visits: Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
-    /// The visit infos the ON DUPLICATE assignments' build appended (a VALUES
-    /// list's appends none: Go's `getInsertColExpr` drops them).
-    pub visits: Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
-    /// Go `SessionVars.MapScalarSubQ`'s entries the VALUES lists and the ON
-    /// DUPLICATE assignments registered, in that order.
-    pub scalar_subqueries: Vec<std::sync::Arc<RegisteredScalarSubquery>>,
-}
-
-/// Go `buildInsert`'s expressions: the VALUES lists over the target's schema,
-/// the `INSERT ... SELECT` checks, and the ON DUPLICATE assignments, with every
-/// uncorrelated scalar subquery evaluated now (`handleScalarSubquery`'s
-/// `EvalSubqueryFirstRow`).
-pub(crate) fn plan_insert_expressions(
+/// Go `PlanBuilder.buildInsert`, using one configured builder and one scalar
+/// subquery registry for the target, SELECT, VALUES and ON DUPLICATE.
+pub(crate) fn insert_plan(
     insert: &tidb_ast::InsertStmt,
-    select: Option<(
-        &tidb_expr::schema::Schema,
-        &tidb_planner_core_operator_physicalop::InsertSelectOutput,
-    )>,
-    catalog: &SessionExtendedInfoSchema,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-    statement: Option<&super::dml::StatementAllocators>,
-) -> Result<InsertExpressions, tidb_planner_core_base::PlanError> {
-    let source = catalog
-        .planner_catalog(current_database, ctx.latest_index_schema())
-        .with_statement_hypo_state(ctx)
-        .with_statement_dirty_tables(ctx)
-        .with_statement_privilege_verifier(ctx);
-    let session_zone = ctx.session_zone();
-    let own = super::dml::StatementAllocators::default();
-    let statement = statement.unwrap_or(&own);
-    let (plan_ids, column_ids) = (&statement.plan_ids, &statement.column_ids);
-    let registry = ScalarSubqueryRegistry::default();
-    let evaluator = subquery_evaluator(
-        catalog,
-        ctx,
-        plan_ids,
-        column_ids,
-        false,
-        &session_zone,
-        &registry,
-    );
-    let defaults = default_evaluator(catalog, ctx);
-    let insert_defaults = default_evaluator_using(catalog, ctx, super::dml::DefaultUse::Insert);
-    let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
-        .with_subquery_evaluator(&evaluator)
-        .with_default_evaluator(&defaults)
-        .with_insert_default_evaluator(&insert_defaults);
-    builder.only_full_group_by = ctx.only_full_group_by();
-    builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
-    builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
-    builder.enable_mpp_shared_cte_execution = ctx.enable_mpp_shared_cte_execution();
-    builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
-    builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
-    builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
-    builder.flags.enable_semi_join_rewrite = ctx.enable_semi_join_rewrite();
-    builder.flags.enable_correlate_subquery = ctx.enable_correlate_subquery();
-    // Go `PlanBuilder.Build`'s `b.optFlag |= FlagPruneColumns`, which every
-    // statement's build starts from; `DoOptimize` of each subquery reads it.
-    builder.add_opt_flag(tidb_planner_core_rule::flags::PRUNE_COLUMNS);
-    builder.insert_target_column_ids = statement.insert_target_column_ids.borrow().clone();
-    let target = builder.resolve_insert_target(insert)?;
-    builder.append_insert_target_visits(insert, &target.database, &target.table);
-    let target_visits = std::mem::take(&mut builder.visit_info);
-    let values = if insert.source.is_none() {
-        builder.build_values_list_of_insert(insert, &target)?
-    } else {
-        tidb_planner::plan_builder::insert_values::InsertValues::default()
-    };
-    if let Some((schema, output)) = select {
-        // Go counts the SELECT's own outputs when it was extended.
-        builder.check_insert_select(&target, output.actual_col_len.unwrap_or(schema.len()))?;
-    }
-    let on_duplicate = builder.resolve_on_duplicate(insert, &target, select)?;
-    // Go `resolveGeneratedColumns`, after the assignments.
-    let generated = builder.resolve_generated_columns(&target)?;
-    let visits = std::mem::take(&mut builder.visit_info);
-    drop(builder);
-    let scalar_subqueries = registry.borrow().clone();
-    Ok(InsertExpressions {
-        values,
-        on_duplicate,
-        generated,
-        target_visits,
-        visits,
-        scalar_subqueries,
-    })
-}
-
-/// Go `buildSelectPlanOfInsert`'s extension of the source for the ON
-/// DUPLICATE assignments, and the width the SELECT had before it.
-pub(crate) fn insert_extended_source(
-    insert: &tidb_ast::InsertStmt,
-    catalog: &SessionExtendedInfoSchema,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-) -> Option<(tidb_ast::QueryStmt, usize)> {
-    let source = catalog
-        .planner_catalog(current_database, ctx.latest_index_schema())
-        .with_statement_hypo_state(ctx)
-        .with_statement_dirty_tables(ctx)
-        .with_statement_privilege_verifier(ctx);
-    let plan_ids = PlanIdAllocator::new();
-    let column_ids = ColumnIdAllocator::new();
-    let builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone());
-    let target = builder.resolve_insert_target(insert).ok()?;
-    builder.extend_insert_select(insert, &target)
-}
-
-/// [`physical_query_plan_with_allocators`] for an `INSERT ... SELECT`'s source,
-/// also answering the names of the source's outputs (Go
-/// `selectPlan.OutputNames()`).
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn physical_query_plan_and_names_with_allocators(
-    query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
-    plan_ids: &PlanIdAllocator,
-    column_ids: &ColumnIdAllocator,
-    visits: BuildVisits<'_>,
 ) -> Result<
     (
         PhysicalPlan,
-        Vec<tidb_datatype::FieldName>,
+        Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
         Vec<std::sync::Arc<RegisteredScalarSubquery>>,
     ),
     tidb_planner_core_base::PlanError,
 > {
-    planner_physical_query_with_registry(
-        query,
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    let registry = ScalarSubqueryRegistry::default();
+    let parts = QueryBuilderParts {
         catalog,
         current_database,
         ctx,
         use_plan_cache,
-        plan_ids,
-        column_ids,
-        visits,
-        QueryBuild::DmlRead,
-    )
-    .map(|(logical, physical, scalar_subqueries)| (physical, physical_names(&logical), scalar_subqueries))
+        plan_ids: &plan_ids,
+        column_ids: &column_ids,
+        registry: &registry,
+        session_ctx: None,
+    };
+    super::record_plan_builder_metric(ctx);
+    if insert.source.is_some() {
+        super::record_plan_builder_metric(ctx);
+    }
+    if insert.source.is_some() {
+        ctx.phase_durations().reset_rewrite_phase_info();
+    }
+    let begin_rewrite = std::time::Instant::now();
+    let (built, visits) = parts.build(insert.source.as_deref(), None, |builder| {
+        let built = builder.build_insert(
+            insert,
+            |builder, logical, opt_flag| {
+                ctx.set_block_as_names(builder.statement_block_as_names());
+                ctx.phase_durations().set_duration_rewrite(begin_rewrite.elapsed());
+                ctx.phase_durations().begin_optimize();
+                if ctx.enable_alternative_logical_plans()
+                    && opt_flag & flags::PUSH_DOWN_TOPN != 0
+                    && opt_flag & flags::JOIN_REORDER != 0
+                {
+                    ctx.alternative_logical_plan_signals().order_aware_join_reorder
+                        .store(true, std::sync::atomic::Ordering::Release);
+                }
+                let logical = optimize_built_logical(
+                    logical, opt_flag, catalog, ctx, use_plan_cache,
+                    &plan_ids, &column_ids, &ctx.session_zone(),
+                )?;
+                physical_plan_for_logical(&logical, &plan_ids, &column_ids, catalog, ctx)
+            },
+            |target, on_duplicate_columns| {
+                let spec = super::fk_trigger_plan::FkPlanSpec {
+                    database: target.database.clone(),
+                    table: target.table.clone(),
+                    updated_cols: Vec::new(),
+                    replace: insert.replace,
+                    on_duplicate_cols: on_duplicate_columns.to_vec(),
+                };
+                super::fk_trigger_plan::build_fk_triggers(catalog, ctx, "Insert", &spec, &plan_ids)
+                    .map_err(driver_error_to_plan)
+            },
+        )?;
+        ctx.set_block_as_names(builder.statement_block_as_names());
+        Ok((built, std::mem::take(&mut builder.visit_info)))
+    })?;
+    let registered = registry.borrow().clone();
+    Ok((built, visits, registered))
 }
 
-fn physical_names(logical: &LogicalPlan) -> Vec<tidb_datatype::FieldName> {
-    logical.output_names().to_vec()
+/// Go `buildInsert`'s expression phase over a SELECT supplied by the prepared
+/// plan cache. A cache hit does not build or optimize the source again.
+pub(crate) fn cached_insert_expressions(
+    insert: &tidb_ast::InsertStmt,
+    physical: &PhysicalPlan,
+    catalog: &SessionExtendedInfoSchema,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<tidb_planner::plan_builder::insert::InsertExpressions, tidb_planner_core_base::PlanError> {
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    let registry = ScalarSubqueryRegistry::default();
+    let parts = QueryBuilderParts {
+        catalog,
+        current_database,
+        ctx,
+        use_plan_cache: false,
+        plan_ids: &plan_ids,
+        column_ids: &column_ids,
+        registry: &registry,
+        session_ctx: None,
+    };
+    parts.build(insert.source.as_deref(), None, |builder| {
+        let target = builder.resolve_insert_target(insert)?;
+        let select = match physical {
+            PhysicalPlan::Dml(root) => root.select_plan.as_deref()
+                .and_then(PhysicalPlan::schema).zip(root.insert_select.as_ref()),
+            _ => None,
+        };
+        builder.build_insert_expressions(insert, &target, select)
+    })
 }
 
 /// Go `buildUpdateLists`'s resolution of a single-table UPDATE's SET items.
@@ -3024,26 +2979,6 @@ pub(crate) fn single_update_assignments(
         .resolve_single_update_assignments(update, ctx.allow_write_row_id())
 }
 
-/// Go `buildOnDuplicateUpdateColumns`: the columns an INSERT's resolved ON
-/// DUPLICATE assignments write.
-pub(crate) fn insert_on_duplicate_columns(
-    insert: &tidb_ast::InsertStmt,
-    catalog: &SessionExtendedInfoSchema,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-) -> Result<Vec<String>, tidb_planner_core_base::PlanError> {
-    let source = catalog
-        .planner_catalog(current_database, ctx.latest_index_schema())
-        .with_statement_hypo_state(ctx)
-        .with_statement_dirty_tables(ctx)
-        .with_statement_privilege_verifier(ctx);
-    let plan_ids = PlanIdAllocator::new();
-    let column_ids = ColumnIdAllocator::new();
-    let builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone());
-    let target = builder.resolve_insert_target(insert)?;
-    builder.build_on_duplicate_update_columns(insert, &target)
-}
-
 /// Go `getAffectCols` of `buildInsert`: the columns an INSERT writes.
 pub(crate) fn insert_target(
     insert: &tidb_ast::InsertStmt,
@@ -3059,10 +2994,7 @@ pub(crate) fn insert_target(
         .with_statement_hypo_state(ctx)
         .with_statement_dirty_tables(ctx)
         .with_statement_privilege_verifier(ctx);
-    let plan_ids = PlanIdAllocator::new();
-    let column_ids = ColumnIdAllocator::new();
-    PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone())
-        .resolve_insert_target(insert)
+    tidb_planner::plan_builder::insert_values::resolve_insert_target(&source, insert)
 }
 
 /// The shared DML-source build, following Go's allocation order:

@@ -41,17 +41,7 @@ use super::{ClauseCode, PlanBuilder};
 use tidb_planner_core_operator_logicalop::{LogicalPlan, LogicalTableDual};
 use tidb_planner_core_base::PlanError;
 
-/// One `ON DUPLICATE KEY UPDATE` assignment (Go `expression.Assignment`).
-#[derive(Clone, Debug)]
-pub struct OnDuplicateAssign {
-    /// The target column's position in [`InsertTarget::columns`].
-    pub offset: usize,
-    /// The value, over `Schema4OnDuplicate`.
-    pub expr: Expression,
-    /// Go `Assignment.LazyErr`: a scalar subquery's 1242 raised while the
-    /// assignment was built, which only a row meeting a duplicate reports.
-    pub lazy_error: Option<PlanError>,
-}
+pub use tidb_planner_core_operator_physicalop::OnDuplicateAssign;
 
 /// The column references of an assignment value, outside subqueries: plain
 /// references and `VALUES(col)` arguments.

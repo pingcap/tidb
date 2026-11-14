@@ -4177,24 +4177,9 @@ pub fn explain_insert_stmt(
     // Go `buildInsert` resolves the target columns and checks a VALUES list's
     // width before it builds an INSERT ... SELECT's source.
     crate::driver::validate_insert_for_explain(insert, catalog, current_db, ctx, None)?;
-    let fk_spec = crate::driver::fk_spec_for_insert(insert, catalog, current_db, ctx)?;
-    let _ = fk_spec;
-    let mut source_visits = Vec::new();
-    let statement = crate::driver::StatementAllocators::default();
-    let (physical, mut scalar_subqueries) = crate::driver::physical_insert_plan_and_scalar_subqueries(
-        insert,
-        catalog,
-        current_db,
-        ctx,
-        &mut source_visits,
-        &statement,
-    )?;
-    // Go `buildInsert` plans the VALUES lists and the ON DUPLICATE
-    // assignments under EXPLAIN as well, and `planner.optimize`'s
-    // `CheckPrivilege` reads that build's visit infos.
-    let planned =
-        crate::driver::plan_insert_over(insert, Some(&physical), catalog, current_db, ctx, Some(&statement))?;
-    crate::table_privilege::check_plan_privilege(ctx, catalog, &planned.statement_visits(source_visits))?;
+    let (physical, planned) =
+        crate::driver::build_insert_plan(insert, catalog, current_db, ctx, false)?;
+    crate::table_privilege::check_plan_privilege(ctx, catalog, &planned.visits)?;
     // The source's own width: Go appends ON DUPLICATE fields past it.
     let select_width = match &physical {
         PhysicalPlan::Dml(root) => root.select_plan.as_deref().and_then(|select| {
@@ -4206,10 +4191,7 @@ pub fn explain_insert_stmt(
         _ => None,
     };
     crate::driver::validate_insert_for_explain(insert, catalog, current_db, ctx, select_width)?;
-    // Go `SessionVars.MapScalarSubQ` in registration order: the source's,
-    // then the values' and the ON DUPLICATE assignments'.
-    scalar_subqueries.extend(planned.scalar_subqueries.iter().cloned());
-    render_built_plan(ctx, &physical, catalog, format, &scalar_subqueries)
+    render_built_plan(ctx, &physical, catalog, format, &planned.scalar_subqueries)
 }
 
 /// An `EXPLAIN ANALYZE` write whose analyze child ran (Go `handleNoDelay`
@@ -4269,25 +4251,17 @@ pub fn explain_analyze_insert_stmt(
     let ctx = &analyzed;
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
     crate::driver::record_plan_builder_metric(ctx);
-    let mut source_visits = Vec::new();
-    let statement = crate::driver::StatementAllocators::default();
-    let (mut physical, mut scalar_subqueries) = crate::driver::physical_insert_plan_and_scalar_subqueries(
-        insert,
-        catalog,
-        current_db,
-        ctx,
-        &mut source_visits,
-        &statement,
-    )?;
-    // The writes add their affected rows to the statement (Go `AddAffectedRows`).
+    let (mut physical, planned) =
+        crate::driver::build_insert_plan(insert, catalog, current_db, ctx, false)?;
+    let scalar_subqueries = planned.scalar_subqueries.clone();
+    // The executor consumes the expressions this builder already planned.
     run_insert_stmt_with_physical_and_visits(
         insert,
         catalog,
         current_db,
         ctx,
         Some(&mut physical),
-        Some(source_visits),
-        Some((&statement, &mut scalar_subqueries)),
+        Some(planned),
     )?;
     // The write ran and closed (Go `handleNoDelayExecutor`).
     Ok(AnalyzedWrite {
