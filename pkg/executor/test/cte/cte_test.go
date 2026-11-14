@@ -218,6 +218,9 @@ func TestCTEIterationMemTracker(t *testing.T) {
 	tk.MustExec(insertStr)
 
 	tk.MustExec("set @@cte_max_recursion_depth=1000000")
+	originEnableTmpStorageOnOOM := fmt.Sprint(tk.MustQuery("select @@global.tidb_enable_tmp_storage_on_oom").Rows()[0][0])
+	tk.MustExec("set global tidb_enable_tmp_storage_on_oom=on")
+	defer tk.MustExec(fmt.Sprintf("set global tidb_enable_tmp_storage_on_oom=%s", originEnableTmpStorageOnOOM))
 	tk.MustExec("set global tidb_mem_oom_action = 'log';")
 	defer func() {
 		tk.MustExec("set global tidb_mem_oom_action = default;")
