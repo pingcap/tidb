@@ -2207,8 +2207,14 @@ impl Session {
                         output
                     }
                     DmlStmt::ImportInto(import) => {
-                        // Go validates the FORMAT and WITH options before it
-                        // reads anything; the import itself is not modelled.
+                        // Go `PlanBuilder.buildImportInto` checks assignments
+                        // before `ImportIntoExec.Next` builds the import plan.
+                        tidb_planner::import_into::check_import_into_input_vars(import)
+                            .map_err(|error| {
+                                DriverError::Mysql(tidb_terror::MysqlError::unknown(error.message()))
+                            })?;
+                        // Physical ingest and the import task owner are still
+                        // absent; successful validation must not write rows.
                         tidb_executor::import_into_options::validate_import_into_options(import)
                             .and_then(|()| {
                                 Err(DriverError::unsupported("IMPORT INTO is not supported yet"))

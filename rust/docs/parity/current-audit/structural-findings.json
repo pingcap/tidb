@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 13,
-    "open": 3,
-    "partial": 10
+    "open": 2,
+    "partial": 11
   },
   "findings": [
     {
@@ -53,11 +53,11 @@
     },
     {
       "id": "E05",
-      "status": "open",
+      "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "IMPORT INTO refuses (`tidb-session/src/dispatch.rs`)",
+      "finding": "IMPORT INTO still refuses execution after option and assignment validation. Go's `checkImportIntoColAssignments` visitor and `buildImportInto` input-variable check now run (`tidb-planner/src/import_into.rs`, Go's 24-case `TestImportIntoCollAssignmentChecker` and a Go testkit capture). Remaining: the rest of `buildImportInto` and its plan/executor handoff, `ImportIntoExec`, the importer controller, CSV/SQL/Parquet source discovery and parsing, prechecks, physical KV encoding/ingest, and DXF import task/job lifecycle including cleanup, cancellation and result rows. Physical import requires unported `pkg/lightning/backend/kv` and `pkg/ingestor/ingestctrl`; SQL/Parquet readers also lack ports. No successful local or remote import is claimed.",
       "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs`",
-      "go_owner": "`pkg/executor/importer`, `pkg/disttask/importinto`"
+      "go_owner": "`pkg/executor/importer`, `pkg/executor/import_into.go`, `pkg/dxf/importinto`, `pkg/planner/core` (`buildImportInto`)"
     },
     {
       "id": "O15",
@@ -104,6 +104,6 @@
     }
   ],
   "unresolved": 13,
-  "open": 3,
-  "partial": 10
+  "open": 2,
+  "partial": 11
 }

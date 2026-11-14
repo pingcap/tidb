@@ -1555,12 +1555,12 @@ fn import_into_refusal_preserves_file_targets_and_options() {
                 "{sql}"
             );
             let error = result.expect_err("partial import execution must be withdrawn");
-            assert!(
-                error
-                    .to_string()
-                    .contains("IMPORT INTO is not supported yet"),
-                "{sql}: {error}"
-            );
+            let expected = if sql.contains("SET v=CONCAT(v") {
+                "COLUMN reference is not supported in IMPORT INTO column assignment, index 0"
+            } else {
+                "IMPORT INTO is not supported yet"
+            };
+            assert!(error.to_string().contains(expected), "{sql}: {error}");
             session.run("INSERT INTO t VALUES (3, 'ordinary')").unwrap();
             assert_eq!(
                 row_text(session.run("SELECT v FROM t WHERE id=3")),
@@ -1613,4 +1613,15 @@ fn import_into_refusal_preserves_select_targets_and_transaction() {
         );
         assert!(row_text(session.run("SELECT * FROM t")).is_empty());
     }
+}
+
+/// Go `TestImportIntoCollAssignmentChecker`, exercised through dispatch.
+#[test]
+fn test_import_into_coll_assignment_checker() {
+    let mut session = Session::new();
+    session.run("create table import_assignment (a int)").unwrap();
+    let error = session.run("import into import_assignment set a=noexist() from '/file.csv'")
+        .unwrap_err().to_mysql_error();
+    assert_eq!(error.message, "FUNCTION noexist is not supported in IMPORT INTO column assignment, index 0");
+    assert!(row_text(session.run("select * from import_assignment")).is_empty());
 }
