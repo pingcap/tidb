@@ -272,6 +272,7 @@ struct WorkerPool {
 
 #[derive(Clone)]
 struct WorkerConnectionConfig {
+    server_port: u16,
     max_allowed_packet: usize,
     tls: Option<Arc<MysqlTlsManager>>,
 }
@@ -510,6 +511,8 @@ impl ActiveSockets {
 /// accepted-socket queue.
 pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     listener: TcpListener,
+    /// Go `Server.cfg.Port`, also reported for Unix connections.
+    server_port: u16,
     /// Go's `socket` listener, when `socket` is configured.
     socket: Option<SocketListener>,
     factory: Arc<F>,
@@ -656,6 +659,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         ));
         Ok(Self {
             listener,
+            server_port: config.port,
             socket,
             factory,
             users,
@@ -758,6 +762,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             &self.users,
             &self.tracker,
             WorkerConnectionConfig {
+                server_port: self.server_port,
                 max_allowed_packet: self.max_allowed_packet,
                 tls: Some(Arc::clone(&self.tls)),
             },
@@ -769,6 +774,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         let mut dedicated_workers: Vec<WorkerHandle> = Vec::new();
         let mut next_worker_index = warm_workers;
         let connection_config = WorkerConnectionConfig {
+            server_port: self.server_port,
             max_allowed_packet: self.max_allowed_packet,
             tls: Some(Arc::clone(&self.tls)),
         };
@@ -1153,6 +1159,7 @@ fn serve_connection_work<F: QuerySessionFactory>(
         users.as_ref(),
         tracker,
         MysqlConnectionRuntime {
+            server_port: Some(connection.server_port),
             max_allowed_packet: connection.max_allowed_packet,
             tls: tls.as_ref(),
         },
@@ -1755,6 +1762,7 @@ mod tests {
             &users,
             &tracker,
             WorkerConnectionConfig {
+                server_port: 0,
                 max_allowed_packet: tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET,
                 tls: None,
             },

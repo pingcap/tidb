@@ -3716,3 +3716,836 @@ fn a_login_loads_its_user_and_counts_against_max_user_connections_like_go() {
     assert_eq!(login("root").2, "OK");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// Go `pkg/extension/event_listener_test.go:TestExtensionStmtEvents`, through TCP.
+#[test]
+fn test_extension_stmt_events() {
+    use std::sync::Mutex;
+    use tidb_extension::{ConnEventTp, StmtEventTp};
+    #[derive(Clone, Debug)]
+    struct Record {
+        tp: StmtEventTp,
+        text: String,
+        normalized: String,
+        digest: bool,
+        params: Vec<tidb_datatype::Datum>,
+        tables: Vec<(String, String)>,
+        affected: u64,
+        node: bool,
+        execute: bool,
+        prepared: bool,
+        error: Option<String>,
+        alias: String,
+        user: tidb_parser::auth::UserIdentity,
+        connection_id: u64,
+    }
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            tidb_extension::reset();
+        }
+    }
+    let _reset = Reset;
+    tidb_extension::reset();
+    let records = Arc::new(Mutex::new(Vec::<Record>::new()));
+    let connections = Arc::new(Mutex::new(Vec::new()));
+    let factory_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let captured = records.clone();
+    let conn = connections.clone();
+    let factories = factory_calls.clone();
+    tidb_extension::register(
+        "test",
+        vec![tidb_extension::with_session_handler_factory(Arc::new(
+            move || {
+                factories.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let captured = captured.clone();
+                let conn = conn.clone();
+                Some(tidb_extension::SessionHandler {
+                    on_connection_event: Some(Arc::new(move |tp, info| {
+                        conn.lock().unwrap().push((tp, info.clone()))
+                    })),
+                    on_stmt_event: Some(Arc::new(move |tp, info| {
+                        captured.lock().unwrap().push(Record {
+                            tp,
+                            text: info.original_text().into(),
+                            normalized: info.sql_digest().0.into(),
+                            digest: {
+                                let digest: Option<&tidb_parser::Digest> = info.sql_digest().1;
+                                digest.is_some()
+                            },
+                            params: info.prepared_params().to_vec(),
+                            tables: info
+                                .related_tables()
+                                .iter()
+                                .map(|t| (t.db.clone(), t.table.clone()))
+                                .collect(),
+                            affected: info.affected_rows(),
+                            node: info.stmt_node().is_some(),
+                            execute: info.execute_stmt_node().is_some(),
+                            prepared: info.execute_prepared_stmt().is_some(),
+                            error: info.get_error().map(str::to_owned),
+                            alias: info.session_alias().into(),
+                            user: info.user().unwrap().clone(),
+                            connection_id: info.connection_info().unwrap().connection_id,
+                        });
+                    })),
+                })
+            },
+        ))],
+    )
+    .unwrap();
+    tidb_extension::setup().unwrap();
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let worker = std::thread::spawn(move || {
+        let store = users();
+        let node = node_over(&store);
+        let tracker = Arc::new(ConnectionTracker::default());
+        // One accepted and one rejected connection, each gets a new handler.
+        for _ in 0..2 {
+            let (stream, peer) = listener.accept().unwrap();
+            serve_mysql_connection(
+                stream,
+                peer,
+                ConnectionCancellation::default(),
+                node.factory().as_ref(),
+                &store,
+                &tracker,
+                DEFAULT_MAX_ALLOWED_PACKET,
+            )
+            .unwrap();
+        }
+    });
+    let mut client = TcpStream::connect(address).unwrap();
+    client
+        .set_read_timeout(Some(std::time::Duration::from_secs(60)))
+        .unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    authenticate_with_capabilities(&mut client, &mut reader, 1 << 16);
+    for sql in [
+        "create table t1(a int,b int)",
+        "create table t2(id int primary key)",
+        "create database test2",
+        "create table test2.t1(c int,d int)",
+        "set @a=1",
+        "set @b=2",
+    ] {
+        run_write(&mut client, &mut reader, sql);
+    }
+    let (p1, _, _) = prepare_statement(&mut client, &mut reader, "select ?");
+    let (p2, _, _) = prepare_statement(&mut client, &mut reader, "select a, b from t1 left join test2.t1 as t2 on t2.c = t1.a where t1.a = 3 and t1.b = ? and t2.d = ?");
+    run_write(&mut client, &mut reader, "create table tnoexist(n int)");
+    let (p3, _, _) =
+        prepare_statement(&mut client, &mut reader, "select * from tnoexist where n=?");
+    run_write(&mut client, &mut reader, "drop table tnoexist");
+    let (p4, _, _) = prepare_statement(&mut client, &mut reader, "insert into t2 values(?)");
+    // Ping waits for the callback after the preceding response has been flushed.
+    let sync = |client: &mut TcpStream, reader: &mut PacketReader<TcpStream>| {
+        write_packet(client, 0, &[COM_PING]);
+        reader.set_sequence(1);
+        assert_eq!(reader.read_packet().unwrap()[0], 0);
+    };
+    sync(&mut client, &mut reader);
+    records.lock().unwrap().clear();
+    let check = |text: &str,
+                 normalized: &str,
+                 tables: &[(&str, &str)],
+                 affected: u64,
+                 error: bool,
+                 execute: bool,
+                 prepared: bool,
+                 params: &[i64],
+                 alias: &str| {
+        let mut locked = records.lock().unwrap();
+        assert_eq!(locked.len(), 1, "{text}: {locked:?}");
+        let record = locked.remove(0);
+        assert_eq!(record.text, text);
+        assert_eq!(record.normalized, normalized);
+        assert_eq!(
+            record.tp,
+            if error {
+                StmtEventTp::Error
+            } else {
+                StmtEventTp::Success
+            }
+        );
+        assert_eq!(record.error.is_some(), error);
+        assert_eq!(record.affected, affected);
+        assert_eq!(record.execute, execute);
+        assert_eq!(record.prepared, prepared);
+        assert_eq!(record.node, text != "invalid sql");
+        assert_eq!(record.digest, text != "invalid sql");
+        assert_eq!(record.alias, alias);
+        assert_eq!(record.user.username, "alice");
+        assert_eq!(record.user.auth_hostname, "%");
+        assert_ne!(record.connection_id, 0);
+        let mut actual = record.tables.clone();
+        actual.sort();
+        let mut expected: Vec<_> = tables
+            .iter()
+            .map(|(d, t)| (d.to_string(), t.to_string()))
+            .collect();
+        expected.sort();
+        assert_eq!(actual, expected, "{text}");
+        assert_eq!(
+            record
+                .params
+                .iter()
+                .map(|v| v.as_int().unwrap())
+                .collect::<Vec<_>>(),
+            params
+        );
+        record
+    };
+    run_query(&mut client, &mut reader, "select 1");
+    sync(&mut client, &mut reader);
+    check("select 1", "select ?", &[], 0, false, false, false, &[], "");
+    write_packet(&mut client, 0, b"\x03invalid sql");
+    reader.set_sequence(1);
+    assert_error_packet(&reader.read_packet().unwrap(), 1064, b"42000");
+    sync(&mut client, &mut reader);
+    check(
+        "invalid sql",
+        "invalid sql",
+        &[],
+        0,
+        true,
+        false,
+        false,
+        &[],
+        "",
+    );
+    execute_statement(&mut client, &mut reader, p1, &[7]);
+    sync(&mut client, &mut reader);
+    check("select ?", "select ?", &[], 0, false, true, true, &[7], "");
+    let sql = "select a, b from t1 left join test2.t1 as t2 on t2.c = t1.a where t1.a = 3 and t1.b = ? and t2.d = ?";
+    execute_statement(&mut client, &mut reader, p2, &[3, 4]);
+    sync(&mut client, &mut reader);
+    check(sql, "select `a` , `b` from `t1` left join `test2` . `t1` as `t2` on `t2` . `c` = `t1` . `a` where `t1` . `a` = ? and `t1` . `b` = ? and `t2` . `d` = ?", &[("test","t1"),("test2","t1")], 0, false, true, true, &[3,4], "");
+    run_query(
+        &mut client,
+        &mut reader,
+        "select a, b from t1 where a > 1 and b < 2",
+    );
+    sync(&mut client, &mut reader);
+    check(
+        "select a, b from t1 where a > 1 and b < 2",
+        "select `a` , `b` from `t1` where `a` > ? and `b` < ?",
+        &[("test", "t1")],
+        0,
+        false,
+        false,
+        false,
+        &[],
+        "",
+    );
+    assert_eq!(
+        execute_statement_packet_tags(&mut client, &mut reader, p3, &[5]),
+        vec!["error"]
+    );
+    sync(&mut client, &mut reader);
+    let error = check(
+        "select * from tnoexist where n=?",
+        "select * from `tnoexist` where `n` = ?",
+        &[("test", "tnoexist")],
+        0,
+        true,
+        true,
+        true,
+        &[5],
+        "",
+    )
+    .error
+    .unwrap();
+    assert_eq!(error, "select * from tnoexist where n=? [arguments: 5]: [planner:8113]Schema change caused error: [schema:1146]Table 'test.tnoexist' doesn't exist");
+    run_write(&mut client, &mut reader, "insert into t2 values(1)");
+    sync(&mut client, &mut reader);
+    check(
+        "insert into t2 values(1)",
+        "insert into `t2` values ( ? )",
+        &[("test", "t2")],
+        1,
+        false,
+        false,
+        false,
+        &[],
+        "",
+    );
+    write_packet(&mut client, 0, b"\x03insert into t2 values(1)");
+    reader.set_sequence(1);
+    assert_error_packet(&reader.read_packet().unwrap(), 1062, b"23000");
+    sync(&mut client, &mut reader);
+    check(
+        "insert into t2 values(1)",
+        "insert into `t2` values ( ? )",
+        &[("test", "t2")],
+        0,
+        true,
+        false,
+        false,
+        &[],
+        "",
+    );
+    let prep = "prepare s from 'select * from t1 where a=1 and b>? and b<?'";
+    run_write(&mut client, &mut reader, prep);
+    sync(&mut client, &mut reader);
+    check(
+        prep,
+        "prepare `s` from ?",
+        &[],
+        0,
+        false,
+        false,
+        false,
+        &[],
+        "",
+    );
+    run_query(&mut client, &mut reader, "execute s using @a, @b");
+    sync(&mut client, &mut reader);
+    check(
+        "select * from t1 where a=1 and b>? and b<?",
+        "select * from `t1` where `a` = ? and `b` > ? and `b` < ?",
+        &[("test", "t1")],
+        0,
+        false,
+        true,
+        true,
+        &[1, 2],
+        "",
+    );
+    write_packet(&mut client, 0, b"\x03execute sn using @a, @b");
+    reader.set_sequence(1);
+    assert_error_packet(&reader.read_packet().unwrap(), 8111, b"HY000");
+    sync(&mut client, &mut reader);
+    check(
+        "execute sn using @a, @b",
+        "execute `sn` using @a , @b",
+        &[],
+        0,
+        true,
+        true,
+        false,
+        &[1, 2],
+        "",
+    );
+    // Binary writes and errors use the prepared text and original arguments.
+    assert_eq!(
+        execute_statement_packet_tags(&mut client, &mut reader, p4, &[3]),
+        vec!["ok"]
+    );
+    sync(&mut client, &mut reader);
+    check(
+        "insert into t2 values(?)",
+        "insert into `t2` values ( ? )",
+        &[("test", "t2")],
+        1,
+        false,
+        true,
+        true,
+        &[3],
+        "",
+    );
+    assert_eq!(
+        execute_statement_packet_tags(&mut client, &mut reader, p4, &[3]),
+        vec!["error"]
+    );
+    sync(&mut client, &mut reader);
+    assert_eq!(check("insert into t2 values(?)", "insert into `t2` values ( ? )", &[("test","t2")], 0, true, true, true, &[3], "").error.as_deref(),Some("insert into t2 values(?) [arguments: 3]: [kv:1062]Duplicate entry '3' for key 't2.PRIMARY'"));
+    run_write(
+        &mut client,
+        &mut reader,
+        "insert into t1 values(1, 10), (2, 20)",
+    );
+    sync(&mut client, &mut reader);
+    check(
+        "insert into t1 values(1, 10), (2, 20)",
+        "insert into `t1` values ( ... )",
+        &[("test", "t1")],
+        2,
+        false,
+        false,
+        false,
+        &[],
+        "",
+    );
+    write_packet(&mut client, 0, b"\x03select 1;select * from t1 where a > 1");
+    reader.set_sequence(1);
+    for _ in 0..2 {
+        let packet = reader.read_packet().unwrap();
+        assert_ne!(packet[0], 0xff);
+        let columns = usize::from(packet[0]);
+        for _ in 0..columns {
+            reader.read_packet().unwrap();
+        }
+        loop {
+            let packet = reader.read_packet().unwrap();
+            if packet[0] == 0xfe && packet.len() < 13 {
+                break;
+            }
+        }
+    }
+    sync(&mut client, &mut reader);
+    {
+        let mut records = records.lock().unwrap();
+        assert_eq!(records.len(), 2);
+        for (record, text, normalized, tables) in [
+            (&records[0], "select 1;", "select ?", vec![]),
+            (
+                &records[1],
+                "select * from t1 where a > 1",
+                "select * from `t1` where `a` > ?",
+                vec![("test".to_owned(), "t1".to_owned())],
+            ),
+        ] {
+            assert_eq!(record.text, text);
+            assert_eq!(record.normalized, normalized);
+            assert_eq!(record.tables, tables);
+            assert!(record.error.is_none());
+            assert!(record.params.is_empty());
+            assert_eq!(record.affected, 0);
+        }
+        records.clear();
+    }
+    for (sql, normalized, tables) in [
+        (
+            "create database db1",
+            "create database `db1`",
+            vec![("db1", "")],
+        ),
+        ("kill query 1", "kill query ?", vec![]),
+        (
+            "create placement policy p1 followers=1",
+            "create placement policy `p1` followers = ?",
+            vec![],
+        ),
+    ] {
+        run_write(&mut client, &mut reader, sql);
+        sync(&mut client, &mut reader);
+        check(sql, normalized, &tables, 0, false, false, false, &[], "");
+    }
+    for (db, failed) in [("db1", false), ("noexistdb", true)] {
+        let mut packet = vec![2];
+        packet.extend_from_slice(db.as_bytes());
+        write_packet(&mut client, 0, &packet);
+        reader.set_sequence(1);
+        let reply = reader.read_packet().unwrap();
+        assert_eq!(reply[0] == 0xff, failed);
+        sync(&mut client, &mut reader);
+        check(
+            &format!("use `{db}`"),
+            &format!("use `{db}`"),
+            &[(db, "")],
+            0,
+            failed,
+            false,
+            false,
+            &[],
+            "",
+        );
+    }
+    run_write(
+        &mut client,
+        &mut reader,
+        "set @@tidb_session_alias='alias123'",
+    );
+    sync(&mut client, &mut reader);
+    check(
+        "set @@tidb_session_alias='alias123'",
+        "set @@tidb_session_alias = ?",
+        &[],
+        0,
+        false,
+        false,
+        false,
+        &[],
+        "alias123",
+    );
+    run_query(&mut client, &mut reader, "select 123");
+    sync(&mut client, &mut reader);
+    check(
+        "select 123",
+        "select ?",
+        &[],
+        0,
+        false,
+        false,
+        false,
+        &[],
+        "alias123",
+    );
+    run_write(&mut client, &mut reader, "set @@tidb_session_alias=''");
+    sync(&mut client, &mut reader);
+    check(
+        "set @@tidb_session_alias=''",
+        "set @@tidb_session_alias = ?",
+        &[],
+        0,
+        false,
+        false,
+        false,
+        &[],
+        "",
+    );
+    run_query(&mut client, &mut reader, "select 123");
+    sync(&mut client, &mut reader);
+    check(
+        "select 123",
+        "select ?",
+        &[],
+        0,
+        false,
+        false,
+        false,
+        &[],
+        "",
+    );
+    run_write(
+        &mut client,
+        &mut reader,
+        "set @@tidb_session_alias='alias123'",
+    );
+    sync(&mut client, &mut reader);
+    records.lock().unwrap().clear();
+    // ConnReset opens a fresh session, preserves DB, and clears user variables and alias.
+    write_packet(&mut client, 0, &[0x1f]);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+    assert_eq!(
+        run_query(&mut client, &mut reader, "select database(), @a"),
+        vec![vec!["db1", "NULL"]]
+    );
+    sync(&mut client, &mut reader);
+    assert_eq!(records.lock().unwrap().last().unwrap().alias, "");
+    write_packet(&mut client, 0, &[1]);
+    drop(reader);
+    drop(client);
+    let mut rejected = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(rejected.try_clone().unwrap());
+    let reply = handshake_reply_as(&mut rejected, &mut reader, b"no_such_user", 0, 46);
+    assert_error_packet(&reply, 1045, b"28000");
+    drop(reader);
+    drop(rejected);
+    worker.join().unwrap();
+    let connections = connections.lock().unwrap();
+    assert_eq!(
+        connections.iter().map(|(tp, _)| *tp).collect::<Vec<_>>(),
+        [
+            ConnEventTp::Connected,
+            ConnEventTp::HandshakeAccepted,
+            ConnEventTp::Reset,
+            ConnEventTp::Disconnected,
+            ConnEventTp::Connected,
+            ConnEventTp::HandshakeRejected,
+            ConnEventTp::Disconnected
+        ]
+    );
+    assert_eq!(factory_calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(connections[1].1.connection_info.connection_type, "TCP");
+    assert_eq!(
+        connections[1].1.connection_info.server_port,
+        i64::from(address.port())
+    );
+    assert_eq!(
+        connections[1].1.connection_info.auth_method,
+        "mysql_native_password"
+    );
+    assert!(connections[5]
+        .1
+        .error
+        .as_ref()
+        .unwrap()
+        .contains("Access denied"));
+}
+
+/// Go `TestAuthPlugin` / `clientConn.authSwitchRequest` and `conn.AuthConn`, over TCP.
+#[test]
+fn test_auth_plugin_tcp_exchange() {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            tidb_extension::reset();
+        }
+    }
+    let _reset = Reset;
+    tidb_extension::reset();
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let called = calls.clone();
+    tidb_extension::register(
+        "test",
+        vec![tidb_extension::with_custom_auth_plugins(vec![
+            tidb_extension::AuthPlugin {
+                name: "authentication_test_plugin".into(),
+                required_client_side_plugin: "mysql_native_password".into(),
+                authenticate_user: Some(Arc::new(move |mut request| {
+                    called.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    assert_eq!(request.salt.len(), 20);
+                    assert!(request.conn_state.is_none());
+                    assert_eq!(
+                        request.stored_auth_string,
+                        if request.user == "empty" {
+                            ""
+                        } else {
+                            "encodedpassword"
+                        }
+                    );
+                    if request.input_auth_string != b"1" {
+                        return Err("private callback diagnostic".into());
+                    }
+                    let conn = request.auth_conn.as_mut().expect("real auth I/O");
+                    conn.write_auth_more_data(b"challenge")?;
+                    conn.flush()?;
+                    if conn.read_packet()? != b"answer" {
+                        return Err("wrong response".into());
+                    }
+                    Ok(())
+                })),
+                generate_auth_string: Some(Arc::new(|_| ("encodedpassword".into(), true))),
+                validate_auth_string: Some(Arc::new(|hash| {
+                    hash.is_empty() || hash == "encodedpassword"
+                })),
+                ..Default::default()
+            },
+        ])],
+    )
+    .unwrap();
+    tidb_extension::setup().unwrap();
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let worker = std::thread::spawn(move || {
+        let store =
+            ConfiguredUserStore::from_accounts(tidb_privilege::load::registry_from_user_rows([
+                tidb_privilege::loaded::LoadedUser::new(
+                    "u2",
+                    "%",
+                    "authentication_test_plugin",
+                    "encodedpassword",
+                ),
+                tidb_privilege::loaded::LoadedUser::new(
+                    "empty",
+                    "%",
+                    "authentication_test_plugin",
+                    "",
+                ),
+            ]));
+        let node = node_over(&store);
+        let tracker = Arc::new(ConnectionTracker::default());
+        let mut exits = Vec::new();
+        for _ in 0..3 {
+            let (stream, peer) = listener.accept().unwrap();
+            exits.push(
+                serve_mysql_connection(
+                    stream,
+                    peer,
+                    ConnectionCancellation::default(),
+                    node.factory().as_ref(),
+                    &store,
+                    &tracker,
+                    DEFAULT_MAX_ALLOWED_PACKET,
+                )
+                .unwrap()
+                .exit,
+            );
+        }
+        exits
+    });
+    for (user, credential, accepted) in [
+        ("u2", b"1".as_slice(), true),
+        ("u2", b"2".as_slice(), false),
+        ("empty", b"1".as_slice(), true),
+    ] {
+        let mut client = TcpStream::connect(address).unwrap();
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(60)))
+            .unwrap();
+        let mut reader = PacketReader::new(client.try_clone().unwrap());
+        let switch = handshake_reply_as(&mut client, &mut reader, user.as_bytes(), 0, 46);
+        assert_eq!(switch[0], 0xfe);
+        assert!(switch[1..].starts_with(b"mysql_native_password\0"));
+        write_packet(&mut client, 3, credential);
+        reader.set_sequence(4);
+        let reply = reader.read_packet().unwrap();
+        if accepted {
+            assert_eq!(reply, b"\x01challenge");
+            write_packet(&mut client, 5, b"answer");
+            reader.set_sequence(6);
+            assert_eq!(reader.read_packet().unwrap()[0], 0);
+            assert_eq!(
+                run_query(&mut client, &mut reader, "select 1"),
+                vec![vec!["1"]]
+            );
+            write_packet(&mut client, 0, &[1]);
+        } else {
+            assert_error_packet(&reply, 1045, b"28000");
+            assert!(!String::from_utf8_lossy(&reply).contains("private callback diagnostic"));
+        }
+    }
+    assert_eq!(
+        worker.join().unwrap(),
+        [
+            ConnectionExit::Quit,
+            ConnectionExit::AuthenticationRejected,
+            ConnectionExit::Quit
+        ]
+    );
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+}
+
+/// Go `pkg/server/tests/commontest.TestExtensionConnEvent`.
+#[test]
+fn test_extension_conn_event() {
+    use tidb_extension::ConnEventTp;
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            tidb_extension::reset();
+        }
+    }
+    let _reset = Reset;
+    tidb_extension::reset();
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = events.clone();
+    tidb_extension::register(
+        "test",
+        vec![tidb_extension::with_session_handler_factory(Arc::new(
+            move || {
+                let captured = captured.clone();
+                Some(tidb_extension::SessionHandler {
+                    on_connection_event: Some(Arc::new(move |tp, info| {
+                        captured.lock().unwrap().push((tp, info.clone()))
+                    })),
+                    ..Default::default()
+                })
+            },
+        ))],
+    )
+    .unwrap();
+    tidb_extension::setup().unwrap();
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let worker = std::thread::spawn(move || {
+        let store = users();
+        let node = node_over(&store);
+        let tracker = Arc::new(ConnectionTracker::default());
+        for _ in 0..2 {
+            let (stream, peer) = listener.accept().unwrap();
+            serve_mysql_connection(
+                stream,
+                peer,
+                ConnectionCancellation::default(),
+                node.factory().as_ref(),
+                &store,
+                &tracker,
+                DEFAULT_MAX_ALLOWED_PACKET,
+            )
+            .unwrap();
+        }
+    });
+    let handshake = |client: &mut TcpStream, reader: &mut PacketReader<TcpStream>, user: &str| {
+        reader.set_sequence(0);
+        let initial = reader.read_packet().unwrap();
+        let salt = handshake_salt(&initial);
+        let caps = CLIENT_PROTOCOL_41
+            | CLIENT_SECURE_CONNECTION
+            | CLIENT_PLUGIN_AUTH
+            | CLIENT_DEPRECATE_EOF
+            | (1 << 3);
+        let mut response = Vec::new();
+        response.extend_from_slice(&caps.to_le_bytes());
+        response.extend_from_slice(&(DEFAULT_MAX_ALLOWED_PACKET as u32).to_le_bytes());
+        response.push(46);
+        response.extend_from_slice(&[0; 23]);
+        response.extend_from_slice(user.as_bytes());
+        response.push(0);
+        let auth = if user == "alice" {
+            native_response(b"secret", &salt).to_vec()
+        } else {
+            Vec::new()
+        };
+        response.push(auth.len() as u8);
+        response.extend_from_slice(&auth);
+        response.extend_from_slice(b"test\0mysql_native_password\0");
+        write_packet(client, 1, &response);
+        reader.set_sequence(2);
+        reader.read_packet().unwrap()
+    };
+    let mut client = TcpStream::connect(address).unwrap();
+    client
+        .set_read_timeout(Some(std::time::Duration::from_secs(60)))
+        .unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    assert_eq!(handshake(&mut client, &mut reader, "alice")[0], 0);
+    for sql in [
+        "create role r1@'%'",
+        "grant r1 to alice",
+        "set role all",
+        "set @@tidb_session_alias='alias123'",
+    ] {
+        run_write(&mut client, &mut reader, sql);
+    }
+    write_packet(&mut client, 0, &[1]);
+    drop(client);
+    drop(reader);
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    assert_error_packet(
+        &handshake(&mut client, &mut reader, "noexist"),
+        1045,
+        b"28000",
+    );
+    drop(client);
+    drop(reader);
+    worker.join().unwrap();
+    let events = events.lock().unwrap();
+    assert_eq!(
+        events.iter().map(|(tp, _)| *tp).collect::<Vec<_>>(),
+        [
+            ConnEventTp::Connected,
+            ConnEventTp::HandshakeAccepted,
+            ConnEventTp::Disconnected,
+            ConnEventTp::Connected,
+            ConnEventTp::HandshakeRejected,
+            ConnEventTp::Disconnected
+        ]
+    );
+    for index in [0, 3] {
+        let before = &events[index].1;
+        assert_eq!(before.connection_info.client_ip, "127.0.0.1");
+        assert_eq!(before.connection_info.server_ip, "127.0.0.1");
+        assert!(before.connection_info.user.is_empty());
+        assert!(before.connection_info.db.is_empty());
+        assert_eq!(
+            before.connection_info.server_port,
+            i64::from(address.port())
+        );
+        assert_ne!(
+            before.connection_info.client_port,
+            address.port().to_string()
+        );
+        assert_ne!(before.connection_info.connection_id, 0);
+        assert!(before.active_roles.is_empty());
+        assert!(before.error.is_none());
+        assert!(before.session_alias.is_empty());
+        let mut expected = before.connection_info.clone();
+        expected.user = if index == 0 { "alice" } else { "noexist" }.into();
+        expected.db = "test".into();
+        assert_eq!(events[index + 1].1.connection_info, expected);
+        assert!(events[index + 1].1.active_roles.is_empty());
+        assert_eq!(events[index + 2].1.connection_info, expected);
+        assert!(events[index + 2].1.error.is_none());
+    }
+    assert!(events[1].1.error.is_none());
+    assert!(events[1].1.session_alias.is_empty());
+    assert_eq!(
+        events[2].1.active_roles,
+        vec![tidb_parser::auth::RoleIdentity {
+            username: "r1".into(),
+            hostname: "%".into()
+        }]
+    );
+    assert_eq!(events[2].1.session_alias, "alias123");
+    assert_eq!(
+        events[4].1.error.as_deref(),
+        Some("[server:1045]Access denied for user 'noexist'@'127.0.0.1' (using password: NO)")
+    );
+    assert!(events[5].1.session_alias.is_empty());
+}

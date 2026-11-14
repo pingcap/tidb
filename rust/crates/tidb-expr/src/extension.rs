@@ -252,6 +252,13 @@ struct ExtensionFnContext<'a> {
 }
 
 impl FunctionContext for ExtensionFnContext<'_> {
+    /// Go `extensionFuncContext.ConnectionInfo`.
+    fn connection_info(
+        &self,
+    ) -> Option<std::sync::Arc<tidb_variable::connection_info::ConnectionInfo>> {
+        self.ctx.connection_info()
+    }
+
     /// Go `vars.User`, which this port's session keeps as its login and
     /// matched identities.
     fn user(&self) -> Option<UserIdentity> {
@@ -272,7 +279,7 @@ impl FunctionContext for ExtensionFnContext<'_> {
             current_user: false,
             auth_username,
             auth_hostname,
-            auth_plugin: String::new(),
+            auth_plugin: self.ctx.auth_plugin(),
         })
     }
 

@@ -55,6 +55,16 @@ pub fn with_custom_access_check(f: AccessCheckFunc) -> ExtensionOption {
     Arc::new(move |m: &mut Manifest| m.access_check_func = Some(Arc::clone(&f)))
 }
 
+/// Go `WithSessionHandlerFactory`.
+pub fn with_session_handler_factory(factory: crate::SessionHandlerFactory) -> ExtensionOption {
+    Arc::new(move |m| m.session_handler_factory = Some(factory.clone()))
+}
+
+/// Go `WithCustomAuthPlugins`.
+pub fn with_custom_auth_plugins(plugins: Vec<crate::AuthPlugin>) -> ExtensionOption {
+    Arc::new(move |m| m.auth_plugins = Some(plugins.clone()))
+}
+
 /// Go `WithClose`: the function `Reset` invokes.
 #[must_use]
 pub fn with_close(f: Arc<dyn Fn() + Send + Sync>) -> ExtensionOption {
@@ -65,6 +75,9 @@ pub fn with_close(f: Arc<dyn Fn() + Send + Sync>) -> ExtensionOption {
 #[derive(Clone, Default)]
 pub struct Manifest {
     name: String,
+    pub(crate) bootstrap: Option<crate::Bootstrap>,
+    pub(crate) session_handler_factory: Option<crate::SessionHandlerFactory>,
+    pub(crate) auth_plugins: Option<Vec<crate::AuthPlugin>>,
     sys_variables: Vec<SysVar>,
     dyn_privs: Vec<String>,
     funcs: Vec<FunctionDef>,
@@ -147,6 +160,7 @@ fn setup_manifest(
             }) as ClearFunc))
         })?;
     }
+    crate::auth::validate_auth_plugin(m.auth_plugins.as_deref().unwrap_or_default())?;
     Ok(m)
 }
 
@@ -168,4 +182,18 @@ fn hook<F: Copy>(slot: &RwLock<Option<F>>) -> F {
     slot.read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .expect("the extension hook is set by its owning package's init")
+}
+
+/// Go `WithBootstrap`.
+pub fn with_bootstrap(f: crate::Bootstrap) -> ExtensionOption {
+    Arc::new(move |m| m.bootstrap = Some(f.clone()))
+}
+/// Go `WithBootstrapSQL`.
+pub fn with_bootstrap_sql(sql_list: Vec<String>) -> ExtensionOption {
+    with_bootstrap(Arc::new(move |ctx| {
+        for sql in &sql_list {
+            ctx.execute_sql(ctx.context(), sql)?;
+        }
+        Ok(())
+    }))
 }

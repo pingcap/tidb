@@ -122,18 +122,27 @@ fn check_func_list(org_list: &[String], custom_funcs: &[&str]) {
     assert_eq!(check_list, tidb_expr::builtin_registry::get_builtin_list());
 }
 
-/// Go `TestExtensionFuncCtx`, without the `ConnectionInfo` this port's
-/// session does not keep.
+/// Go `TestExtensionFuncCtx`.
 #[test]
 fn extension_func_ctx() {
-    type Seen = (Option<tidb_parser::auth::UserIdentity>, String, Vec<tidb_parser::auth::RoleIdentity>);
+    type Seen = (
+        Option<tidb_parser::auth::UserIdentity>,
+        String,
+        Vec<tidb_parser::auth::RoleIdentity>,
+        Option<Arc<tidb_variable::connection_info::ConnectionInfo>>,
+    );
     let seen: Arc<Mutex<Option<Seen>>> = Arc::default();
     let record = Arc::clone(&seen);
     let _registered = Registered::new(
         &[string_func("custom_get_ctx", Vec::new(), move |ctx, _| {
             let mut seen = record.lock().unwrap();
             assert!(seen.is_none());
-            *seen = Some((ctx.user(), ctx.current_db(), ctx.active_roles()));
+            *seen = Some((
+                ctx.user(),
+                ctx.current_db(),
+                ctx.active_roles(),
+                ctx.connection_info(),
+            ));
             Ok(("done".to_owned(), false))
         })],
         &[],
@@ -151,11 +160,22 @@ fn extension_func_ctx() {
     tk1.run("set role r1").unwrap();
     tk1.run("use test").unwrap();
 
+    tk1.vars.connection_info = Some(Arc::new(tidb_variable::connection_info::ConnectionInfo {
+        connection_id: 12345,
+        user: "u1".into(),
+        ..Default::default()
+    }));
+    tk1.vars.auth_plugin = tidb_mysql::AuthNativePassword.into();
     assert_eq!(row_text(tk1.run("select custom_get_ctx()")), [["done"]]);
 
-    let (user, current_db, active_roles) = seen.lock().unwrap().take().expect("invoked");
+    let (user, current_db, active_roles, conn) = seen.lock().unwrap().take().expect("invoked");
+    assert_eq!(conn, tk1.vars.connection_info);
     let user = user.expect("a user");
-    assert_eq!((user.username.as_str(), user.hostname.as_str()), ("u1", "localhost"));
+    assert_eq!(user.auth_plugin, tidb_mysql::AuthNativePassword);
+    assert_eq!(
+        (user.username.as_str(), user.hostname.as_str()),
+        ("u1", "localhost")
+    );
     assert_eq!(
         (user.auth_username.as_str(), user.auth_hostname.as_str()),
         ("u1", "localhost")

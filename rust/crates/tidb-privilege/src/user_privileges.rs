@@ -32,6 +32,8 @@ pub struct UserPrivileges<'a> {
     pub host: &'a str,
     /// Go `*Handle`.
     pub handle: &'a PrivilegeRegistry,
+    /// Go `authPluginRequestVerification` / `authPluginRequestDynamicVerification`.
+    pub auth_plugin: Option<&'a AuthPluginVerification>,
     /// Go `extensionAccessCheckFuncs`.
     pub extension_access_check_funcs: &'a [AccessCheckFunc],
 }
@@ -48,8 +50,15 @@ impl UserPrivileges<'_> {
         if self.user.is_empty() && self.host.is_empty() {
             return true;
         }
-        self.handle
-            .has_dynamic_priv_with_roles(self.user, self.host, active_roles, priv_name, grantable)
+        self.handle.has_dynamic_priv_with_roles(
+            self.user,
+            self.host,
+            active_roles,
+            priv_name,
+            grantable,
+        ) && self.auth_plugin.is_none_or(|p| {
+            p.verify_dynamic(self.user, self.host, active_roles, priv_name, grantable)
+        })
     }
 
     /// Go `RequestVerification`: SEM's hard rules, the virtual schemas,
@@ -102,7 +111,92 @@ impl UserPrivileges<'_> {
                 }
             }
         }
-        self.handle
-            .has_priv_mask_with_roles(self.user, self.host, active_roles, db, table, privilege.0)
+        self.handle.has_priv_mask_with_roles(
+            self.user,
+            self.host,
+            active_roles,
+            db,
+            table,
+            privilege.0,
+        ) && self.auth_plugin.is_none_or(|p| {
+            p.verify_static(
+                self.user,
+                self.host,
+                active_roles,
+                db,
+                table,
+                column,
+                privilege,
+            )
+        })
+    }
+}
+
+/// Go `authenticateWithPlugin`'s two bound authorization closures.
+#[derive(Clone, Debug)]
+pub struct AuthPluginVerification {
+    pub plugin: tidb_extension::AuthPlugin,
+    pub conn_state: Option<tidb_variable::vars::TlsConnectionState>,
+}
+
+impl AuthPluginVerification {
+    /// Go `authPluginRequestVerification`.
+    pub fn verify_static(
+        &self,
+        user: &str,
+        host: &str,
+        roles: &[Account],
+        db: &str,
+        table: &str,
+        column: &str,
+        privilege: PrivilegeType,
+    ) -> bool {
+        self.plugin.verify_privilege.as_ref().is_none_or(|verify| {
+            verify(tidb_extension::VerifyStaticPrivRequest {
+                user,
+                host,
+                db,
+                table,
+                column,
+                static_priv: privilege,
+                conn_state: self.conn_state.as_ref(),
+                active_roles: &roles
+                    .iter()
+                    .map(|(user, host)| tidb_parser::auth::RoleIdentity {
+                        username: user.clone(),
+                        hostname: host.clone(),
+                    })
+                    .collect::<Vec<_>>(),
+            })
+        })
+    }
+    /// Go `authPluginRequestDynamicVerification`.
+    pub fn verify_dynamic(
+        &self,
+        user: &str,
+        host: &str,
+        roles: &[Account],
+        name: &str,
+        grantable: bool,
+    ) -> bool {
+        self.plugin
+            .verify_dynamic_privilege
+            .as_ref()
+            .is_none_or(|verify| {
+                verify(tidb_extension::VerifyDynamicPrivRequest {
+                    user,
+                    host,
+                    dynamic_priv: name,
+                    with_grant: grantable,
+                    conn_state: self.conn_state.as_ref(),
+                    active_roles: &roles
+                        .iter()
+                        .map(|(user, host)| tidb_parser::auth::RoleIdentity {
+                            username: user.clone(),
+                            hostname: host.clone(),
+                        })
+                        .collect::<Vec<_>>(),
+                })
+            })
     }
 }

@@ -1,0 +1,3 @@
+X01 plugin-only validations=[""]
+X01 rejected hash=[executor:1827]The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.
+X01 TLS version=304 cipher=1301 certificate=010203

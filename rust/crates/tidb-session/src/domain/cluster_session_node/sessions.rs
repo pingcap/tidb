@@ -177,6 +177,7 @@ impl DomainSessions for Domain {
         );
         session.set_client_capability(context.client_capability);
         session.set_tls_state(context.tls_state);
+        session.set_auth_plugin(identity.auth_plugin());
         session.set_compression_level(context.compression_level);
         session.set_compression_algorithm(context.compression_algorithm);
         if identity.in_sandbox_mode() {

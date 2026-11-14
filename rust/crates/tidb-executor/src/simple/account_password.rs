@@ -234,6 +234,11 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                 }
             }
         }
+        // Go `executeAlterUser` evaluates both checks before the account loop.
+        let privileges = (
+            self.has_dynamic_privilege("SYSTEM_USER", false),
+            self.has_dynamic_privilege("RESTRICTED_USER_ADMIN", false),
+        );
         let mut skipped = Vec::new();
         for spec in specs {
             // Go `dualPasswordOption`.
@@ -264,7 +269,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                 return Err(DriverError::from(tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&["ALTER USER".into(), format!("'{}'@'{}'", user, host).into()])));
             }
             if need_admin_check {
-                self.require_system_user_privilege_over(&user, &host)?;
+                self.require_system_user_privilege_over(&user, &host, privileges)?;
             }
             // Go `executeAlterUser` refuses, while composing the account's
             // UPDATE (before any write), to expire the anonymous account.

@@ -2225,6 +2225,7 @@ fn show_status_reports_the_negotiated_tls_names() {
     session.set_tls_state(Some(tidb_variable::vars::TlsConnectionState {
         version: 0x0304,
         cipher_suite: 0x1301,
+        ..Default::default()
     }));
     let (_, rows) = query_text(&mut session, "SHOW STATUS LIKE 'Ssl%'");
     let value = |name: &str| {

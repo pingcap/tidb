@@ -34,6 +34,8 @@ use crate::{
 /// One statement parsed under the SQL mode in force at PREPARE time.
 #[derive(Clone, Debug)]
 pub struct PreparedAst {
+    /// Go `PlanCacheStmt.SchemaVersion`, shared by clones of this prepared definition.
+    schema_version: Arc<std::sync::atomic::AtomicU64>,
     sql: String,
     statement: Arc<Stmt>,
     parameter_count: usize,
@@ -57,6 +59,7 @@ pub struct PreparedPlanCacheEnvironmentCache {
 
 impl PreparedAst {
     pub fn from_parsed(
+        schema_version: u64,
         sql: String,
         statement: Stmt,
         parameter_count: usize,
@@ -66,6 +69,7 @@ impl PreparedAst {
         select_plan: Option<PreparedSelectPlan>,
     ) -> Self {
         Self {
+            schema_version: Arc::new(std::sync::atomic::AtomicU64::new(schema_version)),
             sql,
             statement: Arc::new(statement),
             parameter_count,
@@ -74,6 +78,29 @@ impl PreparedAst {
             dml_plan: dml_plan.map(Arc::new),
             select_plan: select_plan.map(Arc::new),
         }
+    }
+
+    /// Go `planCachePreprocess`: table lookup failure after schema change is ErrSchemaChanged.
+    pub fn schema_change_error(&self, current_version: u64, error: DriverError) -> DriverError {
+        let inner = error.clone().to_mysql_error();
+        if self
+            .schema_version
+            .load(std::sync::atomic::Ordering::Relaxed)
+            != current_version
+            && inner.identity
+                == Some(tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.identity())
+        {
+            return DriverError::from(tidb_plannererrors::ERR_SCHEMA_CHANGED.gen_with_stack(
+                format!("Schema change caused error: {}", inner.error_string()),
+            ));
+        }
+        error
+    }
+
+    /// Go `planCachePreprocess`: retain the schema version after successful preprocessing.
+    pub fn set_schema_version(&self, version: u64) {
+        self.schema_version
+            .store(version, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// The privilege requests PREPARE derived (Go `PlanCacheStmt.VisitInfos`).
@@ -370,6 +397,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
         // PREPARE itself is refused without the statement's privileges.
         self.check_table_privilege_requests(&privilege_requests)?;
         Ok(PreparedAst::from_parsed(
+            self.lock_catalog()?.schema_version(),
             sql.to_owned(),
             statement,
             parameter_count,

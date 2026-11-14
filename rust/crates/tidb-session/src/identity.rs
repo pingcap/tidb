@@ -34,6 +34,18 @@ use tidb_hack::go_to_lower;
 /// Distinct prepared texts whose privilege requests one session keeps.
 
 impl Session {
+    /// Go `authenticateWithPlugin`: retain authorization callbacks only after a successful login.
+    pub fn set_auth_plugin(&mut self, name: &str) {
+        self.vars.auth_plugin = name.to_owned();
+        self.auth_plugin_verification = tidb_extension::get_extensions()
+            .expect("extensions setup before authentication")
+            .and_then(|es| es.get_auth_plugins().remove(name))
+            .map(|plugin| tidb_privilege::AuthPluginVerification {
+                plugin,
+                conn_state: self.vars.tls_connection_state.clone(),
+            });
+    }
+
     /// Checks one already-resolved table name without rebuilding an AST path.
     pub(crate) fn require_named_table_privilege(
         &self,
@@ -122,6 +134,7 @@ impl Session {
             user,
             host,
             &self.extension_access_check_funcs,
+            self.auth_plugin_verification.as_ref(),
             self.active_roles(),
             database,
             table,
@@ -140,6 +153,7 @@ impl Session {
         let (user, host) = (user.to_owned(), host.to_owned());
         let roles = self.active_roles().to_vec();
         let access_checks = self.extension_access_check_funcs.clone();
+        let auth_plugin = self.auth_plugin_verification.clone();
         Some(Arc::new(
             move |database: &str, sequence: &str, insert: bool| {
                 let global_priv = if insert {
@@ -152,6 +166,7 @@ impl Session {
                     &user,
                     &host,
                     &access_checks,
+                    auth_plugin.as_ref(),
                     &roles,
                     database,
                     sequence,
@@ -170,8 +185,17 @@ impl Session {
         let registry = registry.clone();
         let (user, host) = (user.to_owned(), host.to_owned());
         let roles = self.active_roles().to_vec();
+        let auth_plugin = self.auth_plugin_verification.clone();
         Some(Arc::new(move |name: &str, grantable: bool| {
-            registry.has_dynamic_priv_with_roles(&user, &host, &roles, name, grantable)
+            dynamic_privilege(
+                &registry,
+                &user,
+                &host,
+                &roles,
+                auth_plugin.as_ref(),
+                name,
+                grantable,
+            )
         }))
     }
 
@@ -184,6 +208,7 @@ impl Session {
         let (user, host) = (user.to_owned(), host.to_owned());
         let roles = self.active_roles().to_vec();
         let access_checks = self.extension_access_check_funcs.clone();
+        let auth_plugin = self.auth_plugin_verification.clone();
         Some(Arc::new(
             move |database: &str,
                   table: &str,
@@ -193,7 +218,15 @@ impl Session {
                     .into_iter()
                     .any(|global| {
                         scoped_privilege(
-                            &registry, &user, &host, &access_checks, &roles, database, table, global,
+                            &registry,
+                            &user,
+                            &host,
+                            &access_checks,
+                            auth_plugin.as_ref(),
+                            &roles,
+                            database,
+                            table,
+                            global,
                         )
                     })
             },
@@ -228,6 +261,7 @@ impl Session {
             user,
             host,
             &self.extension_access_check_funcs,
+            self.auth_plugin_verification.as_ref(),
             self.active_roles(),
             database,
             table,
@@ -321,7 +355,15 @@ impl Session {
         let Some((registry, user, host)) = self.privilege_context() else {
             return true;
         };
-        registry.has_dynamic_priv_with_roles(user, host, self.active_roles(), name, with_grant)
+        dynamic_privilege(
+            registry,
+            user,
+            host,
+            self.active_roles(),
+            self.auth_plugin_verification.as_ref(),
+            name,
+            with_grant,
+        )
     }
 
     pub(crate) fn sem_hides_sysvar(&self, name: &str) -> bool {
@@ -784,7 +826,15 @@ impl Session {
                         // Go `RequestVerificationWithUser` asks the handle
                         // alone: no extension's access check.
                         scoped_privilege(
-                            &registry, &account.0, &account.1, &[], &roles, database, table, global,
+                            &registry,
+                            &account.0,
+                            &account.1,
+                            &[],
+                            None,
+                            &roles,
+                            database,
+                            table,
+                            global,
                         )
                     })
             },
@@ -973,6 +1023,7 @@ impl Session {
             )
         });
         let access_checks = self.extension_access_check_funcs.clone();
+        let auth_plugin = self.auth_plugin_verification.clone();
         let phases = self
             .statement_observation
             .as_ref()
@@ -1000,11 +1051,27 @@ impl Session {
                     user,
                     host,
                     |name, with_grant| {
-                        registry.has_dynamic_priv_with_roles(user, host, roles, name, with_grant)
+                        dynamic_privilege(
+                            registry,
+                            user,
+                            host,
+                            roles,
+                            auth_plugin.as_ref(),
+                            name,
+                            with_grant,
+                        )
                     },
                     |database, table, privilege| {
                         scoped_privilege(
-                            registry, user, host, &access_checks, roles, database, table, privilege,
+                            registry,
+                            user,
+                            host,
+                            &access_checks,
+                            auth_plugin.as_ref(),
+                            roles,
+                            database,
+                            table,
+                            privilege,
                         )
                     },
                     |database, table| {
@@ -1605,6 +1672,7 @@ fn scoped_privilege(
     user: &str,
     host: &str,
     extension_access_check_funcs: &[tidb_extension::AccessCheckFunc],
+    auth_plugin: Option<&tidb_privilege::AuthPluginVerification>,
     roles: &[tidb_privilege::Account],
     database: &str,
     table: &str,
@@ -1615,6 +1683,7 @@ fn scoped_privilege(
         host,
         handle: registry,
         extension_access_check_funcs,
+        auth_plugin,
     }
     .request_verification(roles, database, table, "", global_priv)
 }
@@ -1691,4 +1760,24 @@ fn create_or_drop_table_names(ddl: &tidb_ast::DdlStmt) -> Vec<&[String]> {
             .collect(),
         _ => Vec::new(),
     }
+}
+
+/// Go `UserPrivileges.RequestDynamicVerification` for the session's bound plugin.
+fn dynamic_privilege(
+    registry: &tidb_privilege::PrivilegeRegistry,
+    user: &str,
+    host: &str,
+    roles: &[tidb_privilege::Account],
+    auth_plugin: Option<&tidb_privilege::AuthPluginVerification>,
+    name: &str,
+    grantable: bool,
+) -> bool {
+    tidb_privilege::UserPrivileges {
+        user,
+        host,
+        handle: registry,
+        extension_access_check_funcs: &[],
+        auth_plugin,
+    }
+    .request_dynamic_verification(roles, name, grantable)
 }

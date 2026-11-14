@@ -29,6 +29,36 @@ use tidb_globalconn::Allocator;
 
 /// Query capability retained entirely inside one fixed worker thread.
 pub trait QuerySession {
+    /// Go `SetExtensions` and `SessionVars.ConnectionInfo`.
+    fn set_extensions(
+        &mut self,
+        _extensions: tidb_extension::SessionExtensions,
+        _info: tidb_variable::connection_info::ConnectionInfo,
+    ) {
+    }
+    /// Go `onExtensionConnEvent`'s session fields.
+    fn extension_connection_event_info(&self) -> Option<tidb_extension::ConnEventInfo> {
+        None
+    }
+    /// Go `onExtensionStmtEnd` / `onExtensionSQLParseFailed` / `onExtensionBinaryExecuteEnd`.
+    fn on_extension_stmt_end(
+        &mut self,
+        _stmt_ctx_valid: bool,
+        _sql: &str,
+        _node: Option<&Stmt>,
+        _binary: Option<(&PreparedGeneral, &[tidb_param::PreparedValue])>,
+        _error: Option<&str>,
+    ) {
+    }
+    /// Go `session.Close`, before `handleResetConnection` opens a replacement.
+    fn close_for_reset(&mut self) {}
+    /// Go `SessionVars.CurrentDB`.
+    fn current_database(&self) -> &str {
+        ""
+    }
+    /// Go `AuthWithoutVerification` does not bind plugin authorization callbacks.
+    fn auth_without_verification(&mut self) {}
+
     /// Shared SQL state used by connection-owned migration handlers.
     fn migration_session(&mut self) -> Option<&mut tidb_session::Session> { None }
 

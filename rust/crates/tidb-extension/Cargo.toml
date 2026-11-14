@@ -17,3 +17,7 @@ tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-variable = { path = "../tidb-variable" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-stmtsummary = { path = "../tidb-stmtsummary" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-pd-client = { path = "../tidb-pd-client" }

@@ -66,6 +66,36 @@ impl QuerySessionFactory for Domain {
 
 /// Go `TiDBContext`: the connection's session, as the protocol layer drives it.
 impl QuerySession for Session {
+    fn set_extensions(
+        &mut self,
+        extensions: tidb_extension::SessionExtensions,
+        info: tidb_variable::connection_info::ConnectionInfo,
+    ) {
+        Session::set_extensions(self, extensions, info);
+    }
+    fn extension_connection_event_info(&self) -> Option<tidb_extension::ConnEventInfo> {
+        Session::extension_connection_event_info(self)
+    }
+    fn on_extension_stmt_end(
+        &mut self,
+        stmt_ctx_valid: bool,
+        sql: &str,
+        node: Option<&Stmt>,
+        binary: Option<(&PreparedGeneral, &[tidb_param::PreparedValue])>,
+        error: Option<&str>,
+    ) {
+        Session::on_extension_stmt_end(self, stmt_ctx_valid, sql, node, binary, error);
+    }
+    fn close_for_reset(&mut self) {
+        Session::close_for_reset(self);
+    }
+    fn current_database(&self) -> &str {
+        Session::current_database(self)
+    }
+    fn auth_without_verification(&mut self) {
+        Session::auth_without_verification(self);
+    }
+
     fn migration_session(&mut self) -> Option<&mut Session> {
         Some(self)
     }

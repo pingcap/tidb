@@ -1762,6 +1762,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_remove_orderby_in_subquery(remove_orderby_in_subquery)
                     .with_session_state(current_db, version)
                     .with_user(self.session_vars().current_user.clone(), self.session_vars().login_user.clone())
+                    .with_connection_info(self.session_vars().connection_info.clone(), self.session_vars().auth_plugin.clone())
                     .with_global_sysvar_accessor(Arc::clone(&global_sysvar_accessor))
                     .with_active_roles(
                         self.session_vars().current_user
@@ -1971,7 +1972,14 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_tmp_table_max_size(snapshot.tmp_table_max_size)
                 .with_remove_orderby_in_subquery(remove_orderby_in_subquery)
                 .with_session_state(current_db, version)
-                .with_user(self.session_vars().current_user.clone(), self.session_vars().login_user.clone())
+                .with_user(
+                    self.session_vars().current_user.clone(),
+                    self.session_vars().login_user.clone(),
+                )
+                .with_connection_info(
+                    self.session_vars().connection_info.clone(),
+                    self.session_vars().auth_plugin.clone(),
+                )
                 .with_global_sysvar_accessor(global_sysvar_accessor)
                 .with_active_roles(
                     self.session_vars().current_user

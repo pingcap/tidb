@@ -1787,7 +1787,11 @@ impl Session {
         if let Stmt::Session(session_stmt) = &stmt {
             match &**session_stmt {
                 SessionStmt::Prepare { name, source } => {
-                    self.prepare_statement(name, source)?;
+                    // Go `PrepareExec.Next` does not install its inner plan's visits
+                    // in the outer PREPARE statement context.
+                    let result = self.prepare_statement(name, source);
+                    self.observe_statement_tables(std::iter::empty());
+                    result?;
                     return Ok(PendingExecution::Complete(StmtOutput::Affected(0)));
                 }
                 SessionStmt::Execute { name, using } => {

@@ -37,7 +37,7 @@ pub fn encode_password(password: &str) -> String {
 /// registered extension auth plugin -- Go `simple.go`'s account executor
 /// switch (`executor/simple.go`'s `executeCreateUser`). Any other name is
 /// Go's `ErrPluginIsNotLoaded` (1524), `Plugin '<name>' is not loaded`,
-/// since this tier registers no extension auth plugins to fall back to.
+/// unless an extension registered that name.
 pub const CREATE_USER_PLUGINS: &[&str] = &[
     AuthNativePassword,
     AuthCachingSha2Password,
@@ -48,20 +48,25 @@ pub const CREATE_USER_PLUGINS: &[&str] = &[
     AuthLDAPSASL,
 ];
 
-/// Whether `plugin` is one [`CREATE_USER_PLUGINS`] accepts.
+/// Go `executeCreateUser`: built-in or registered extension authentication plugin.
 #[must_use]
 pub fn is_create_user_plugin(plugin: &str) -> bool {
-    CREATE_USER_PLUGINS.contains(&plugin)
+    CREATE_USER_PLUGINS.contains(&plugin) || extension_auth_plugin(plugin).is_some()
 }
 
-/// Go `UserPrivileges.isValidHash` for the built-in plugins (this server
-/// registers no extension auth plugin): whether an account's stored
+/// Go `UserPrivileges.isValidHash`: whether an account's stored
 /// `authentication_string` has its plugin's hash shape. An empty string is
 /// always valid; a plugin Go does not know is never valid with a string.
 #[must_use]
 pub fn is_valid_hash(plugin: &str, authentication_string: &str) -> bool {
     if authentication_string.is_empty() {
         return true;
+    }
+    if let Some(p) = extension_auth_plugin(plugin) {
+        return p
+            .validate_auth_string
+            .as_ref()
+            .expect("validated auth plugin")(authentication_string);
     }
     if plugin == AuthNativePassword {
         authentication_string.len() == PWDHashLen as usize + 1
@@ -85,7 +90,11 @@ pub fn is_valid_hash(plugin: &str, authentication_string: &str) -> bool {
 /// error, which `checkAuthPlugin` only logs, so it has none either.
 #[must_use]
 pub fn get_auth_plugin_for_connection<'a>(plugin: &'a str, authentication_string: &str) -> &'a str {
-    if plugin == AuthTiDBAuthToken || plugin == AuthLDAPSASL || plugin == AuthLDAPSimple {
+    if extension_auth_plugin(plugin).is_some()
+        || plugin == AuthTiDBAuthToken
+        || plugin == AuthLDAPSASL
+        || plugin == AuthLDAPSimple
+    {
         return plugin;
     }
     if authentication_string.is_empty() && plugin != AuthSocket {
@@ -138,9 +147,7 @@ pub enum PluginCredential<'a> {
     None,
 }
 
-/// Go `executor/utils.go`'s `encodedPassword`, minus the extension-plugin
-/// branch: this tier registers no extension auth plugins, so
-/// `encodePasswordWithPlugin` always falls to this path.
+/// Go `encodePasswordWithPlugin`, falling back to `encodedPassword` for built-ins.
 ///
 /// Returns the `authentication_string` to store, or
 /// Go `ErrPasswordFormat` (`ErrPasswordFormat`) for an `AS` hash that does not match the
@@ -159,6 +166,34 @@ pub fn encode_password_for_plugin(
     plugin: &str,
     credential: &PluginCredential<'_>,
 ) -> Result<String, MysqlError> {
+    // Go `encodePasswordWithPlugin`: a plugin-only AuthOpt validates its empty hash.
+    if let Some(p) = extension_auth_plugin(plugin) {
+        let (encoded, valid) = match credential {
+            PluginCredential::None => (
+                String::new(),
+                p.validate_auth_string
+                    .as_ref()
+                    .expect("validated auth plugin")(""),
+            ),
+            PluginCredential::By(raw) => p
+                .generate_auth_string
+                .as_ref()
+                .expect("validated auth plugin")(raw),
+            PluginCredential::As(hash) => (
+                (*hash).to_owned(),
+                p.validate_auth_string
+                    .as_ref()
+                    .expect("validated auth plugin")(hash),
+            ),
+        };
+        return if valid {
+            Ok(encoded)
+        } else {
+            Err(MysqlError::from_terror(
+                &tidb_exeerrors::ERR_PASSWORD_FORMAT.gen_with_stack_by_args(&[]),
+            ))
+        };
+    }
     match credential {
         PluginCredential::By(password) => {
             if plugin == AuthCachingSha2Password {
@@ -248,4 +283,11 @@ fn hash_password(password: &str, plugin: &str) -> String {
 pub fn check_hashing_password(stored: &str, password: &[u8], plugin: &str) -> bool {
     tidb_parser::auth::check_hashing_password_bytes(stored.as_bytes(), password, plugin)
         .unwrap_or(false)
+}
+
+/// Go `Extensions.GetAuthPlugins` as read by the privilege manager.
+pub fn extension_auth_plugin(name: &str) -> Option<tidb_extension::AuthPlugin> {
+    tidb_extension::get_extensions()
+        .expect("extensions setup before account execution")
+        .and_then(|extensions| extensions.get_auth_plugins().remove(name))
 }

@@ -5546,11 +5546,15 @@ dependencies = [
 name = "tidb-extension"
 version = "0.0.0"
 dependencies = [
+ "tidb-ast",
  "tidb-chunk",
  "tidb-datatype",
  "tidb-exprctx",
  "tidb-mysql",
  "tidb-parser",
+ "tidb-pd-client",
+ "tidb-sqlexec",
+ "tidb-stmtsummary",
  "tidb-variable",
 ]
 
@@ -6908,6 +6912,7 @@ dependencies = [
  "tidb-timeutil",
  "tidb-txnkv",
  "tidb-vardef",
+ "tidb-variable",
 ]
 
 [[package]]

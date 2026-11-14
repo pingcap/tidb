@@ -23,6 +23,30 @@ pub struct Extensions {
 }
 
 impl Extensions {
+    /// Go `Extensions.Bootstrap`: manifest order, stopping at the first error.
+    pub fn bootstrap(&self, context: &dyn crate::BootstrapContext) -> tidb_sqlexec::Result<()> {
+        for m in &self.manifests {
+            if let Some(bootstrap) = &m.bootstrap {
+                bootstrap(context)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Go `Extensions.NewSessionExtensions`.
+    pub fn new_session_extensions(&self) -> crate::SessionExtensions {
+        crate::SessionExtensions::new(self)
+    }
+
+    /// Go `Extensions.GetAuthPlugins`.
+    pub fn get_auth_plugins(&self) -> std::collections::HashMap<String, crate::AuthPlugin> {
+        self.manifests
+            .iter()
+            .flat_map(|m| m.auth_plugins.iter().flatten())
+            .map(|p| (p.name.clone(), p.clone()))
+            .collect()
+    }
+
     /// Go `Manifests`.
     #[must_use]
     pub fn manifests(&self) -> Vec<Manifest> {

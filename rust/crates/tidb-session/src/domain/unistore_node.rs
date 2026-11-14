@@ -828,6 +828,9 @@ pub fn unistore_cluster_session_stack_from(
         )),
     )
     .map_err(|error| engine(SqlQueryError::unknown(error)))?;
+    // Go `BootstrapSession`: extension bootstrap follows InitBindingHandle.
+    crate::extensionimpl::bootstrap::bootstrap(Arc::new(tidb_sqlexec::BackgroundContext), &factory)
+        .map_err(|error| engine(SqlQueryError::unknown(error)))?;
     // Go `UpdateTableStatsLoop`, after the binding handle.
     let (stats_reloader, async_stats_loader) = crate::domain::real_tikv_node::spawn_node_stats(
         Arc::clone(&stats),

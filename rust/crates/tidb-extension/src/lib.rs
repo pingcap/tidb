@@ -18,6 +18,16 @@
 //! (`extensions.go`); a custom SQL function's definition (`function.go`),
 //! which `pkg/expression` registers as an `extensionFuncClass`.
 
+mod session;
+pub use session::{
+    ConnEventInfo, ConnEventTp, SessionExtensions, SessionHandler, SessionHandlerFactory,
+    StmtEventInfo, StmtEventTp,
+};
+mod auth;
+pub use auth::{
+    AuthConn, AuthPlugin, AuthenticateRequest, VerifyDynamicPrivRequest, VerifyStaticPrivRequest,
+};
+
 mod extensions;
 mod function;
 mod manifest;
@@ -27,9 +37,13 @@ mod util;
 pub use extensions::Extensions;
 pub use function::{EvalIntFunc, EvalStringFunc, FunctionContext, FunctionDef, RequireDynamicPrivileges};
 pub use manifest::{
-    with_close, with_custom_access_check, with_custom_dyn_privs, with_custom_functions,
-    with_custom_sys_variables,
-    AccessCheckFunc, ExtensionOption, Manifest, REGISTER_DYNAMIC_PRIVILEGE, REGISTER_EXTENSION_FUNC,
-    REMOVE_DYNAMIC_PRIVILEGE, REMOVE_EXTENSION_FUNC,
+    with_close, with_custom_access_check, with_custom_auth_plugins, with_custom_dyn_privs,
+    with_custom_functions, with_custom_sys_variables, with_session_handler_factory,
+    AccessCheckFunc, ExtensionOption, Manifest, REGISTER_DYNAMIC_PRIVILEGE,
+    REGISTER_EXTENSION_FUNC, REMOVE_DYNAMIC_PRIVILEGE, REMOVE_EXTENSION_FUNC,
 };
 pub use registry::{get_extensions, register, register_factory, reset, setup};
+
+mod bootstrap;
+pub use bootstrap::{Bootstrap, BootstrapContext, SessionPool, SessionResource};
+pub use manifest::{with_bootstrap, with_bootstrap_sql};

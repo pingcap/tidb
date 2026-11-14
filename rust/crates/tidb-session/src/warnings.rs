@@ -236,7 +236,6 @@ impl Session {
         if let Some(previous) = self.statement_result_authority.get_mut().take() {
             previous.statement_memory().finish_statement();
         }
-        self.prepared_params = None;
         self.in_execute = false;
         self.context_of_stmt_reset = false;
         self.statement_boundary_open = true;
@@ -267,6 +266,7 @@ impl Session {
         self.record_observation_parse(sql, parse_started.elapsed());
         self.record_ruv2_session_parse(sql);
         self.observe_statement_node(&stmt, false);
+        self.reset_text_prepared_params(&stmt);
         self.install_statement_warning_state(&stmt, previous);
         // go's recoverable parser diagnostics land as warning rows AFTER the
         // context reset: the `[parser:8061]`-prefixed hint refusals decode
@@ -379,13 +379,22 @@ impl Session {
         // snapshotted — go's `ResetContextOfStmt` runs once per statement.
         if self.statement_boundary_open {
             self.statement_boundary_open = false;
-            self.prepared_params = None;
+            self.reset_text_prepared_params(stmt);
             return;
         }
-        self.prepared_params = None;
+        self.reset_text_prepared_params(stmt);
         self.reset_plan_cache_tracker();
         let previous = std::mem::take(&mut self.warnings);
         self.install_statement_warning_state(stmt, previous);
+    }
+
+    /// Go `ResetContextOfStmt`: a missing EXECUTE fails before PlanCacheParams.Reset.
+    fn reset_text_prepared_params(&mut self, stmt: &Stmt) {
+        if matches!(stmt, Stmt::Session(s) if matches!(s.as_ref(), tidb_ast::SessionStmt::Execute { name, .. } if !self.prepared_statements.contains_key(name)))
+        {
+            return;
+        }
+        self.prepared_params = None;
     }
 
     /// Starts a statement boundary for an AST retained by PREPARE.

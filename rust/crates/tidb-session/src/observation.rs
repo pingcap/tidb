@@ -952,6 +952,13 @@ impl Session {
         let Some(observation) = self.statement_observation.take() else {
             return;
         };
+        if self.session_extensions.has_stmt_event_listeners() {
+            self.extension_statement = Some(crate::extension::StatementFacts::from_observation(
+                &observation,
+                self.prepared_params.as_deref().unwrap_or_default(),
+                affected_rows,
+            ));
+        }
         self.last_ruv2_metrics = Some(Arc::clone(&observation.ruv2_metrics));
         // Go `doCommit`: `StmtCtx.MergeExecDetails(nil, commitDetail)` once
         // the commit (with its retries) returned.

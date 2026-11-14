@@ -1010,6 +1010,7 @@ pub fn serve_mysql_connection_with_tls<F: QuerySessionFactory>(
         MysqlConnectionRuntime {
             max_allowed_packet,
             tls,
+            server_port: None,
         },
     )
 }
@@ -1064,6 +1065,7 @@ fn record_connection_exit_metrics(result: &Result<ConnectionReport, MysqlConnect
 }
 
 pub(crate) struct MysqlConnectionRuntime<'a> {
+    pub(crate) server_port: Option<u16>,
     pub(crate) max_allowed_packet: usize,
     pub(crate) tls: Option<&'a MysqlServerTls>,
 }
@@ -1147,6 +1149,7 @@ fn check_auth_plugin(
 /// An authentication refusal: the error packet, then the connection's end.
 #[allow(clippy::too_many_arguments)]
 fn rejected_login<O: ConnectionPacketOutput + ?Sized>(
+    events: &mut ConnectionExtensions,
     output: &mut O,
     sequence: u8,
     code: u16,
@@ -1156,6 +1159,10 @@ fn rejected_login<O: ConnectionPacketOutput + ?Sized>(
     connection_id: u64,
     commands: ConnectionCommandCounts,
 ) -> Result<ConnectionReport, MysqlConnectionError> {
+    events.info.error = Some(format!(
+        "[server:{code}]{}",
+        String::from_utf8_lossy(message.as_ref())
+    ));
     write_error(output, sequence, code, state, message, protocol_41)?;
     Ok(ConnectionReport {
         connection_id,
@@ -1191,6 +1198,9 @@ pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
     tidb_logutil::bg_logger().debug("accept new connection success", &[]);
     let shutdown = cancellation.clone();
     let mut commands = ConnectionCommandCounts::default();
+    let mut events =
+        ConnectionExtensions::new(&stream, peer_addr, lease.id(), runtime.server_port)?;
+    events.emit(tidb_extension::ConnEventTp::Connected);
     // Keep worker containment for setup or cleanup panics. Command Run owns
     // its own recovery while the live session and framed writer still exist.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1207,6 +1217,7 @@ pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
             &mut commands,
             &tracker.command_limiter,
             &tracker.user_resource,
+            &mut events,
         )
     }))
     .unwrap_or_else(|payload| {
@@ -1215,6 +1226,17 @@ pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
             lease.id(),
         )))
     });
+    if !events.accepted {
+        if events.info.error.is_none() {
+            events.info.error = Some(result.as_ref().err().map_or_else(
+                || "Could not open session".to_owned(),
+                |error| error.to_string(),
+            ));
+        }
+        events.emit(tidb_extension::ConnEventTp::HandshakeRejected);
+    }
+    events.info.error = None;
+    events.emit(tidb_extension::ConnEventTp::Disconnected);
     let failed = result.is_err() && !shutdown.is_cancelled();
     if failed {
         lease.mark_failed();
@@ -1240,6 +1262,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     commands: &mut ConnectionCommandCounts,
     command_limiter: &CommandLimiter,
     user_resource: &crate::user_connections::UserResource,
+    events: &mut ConnectionExtensions,
 ) -> Result<ConnectionReport, MysqlConnectionError> {
     let AcceptedConnectionIdentity {
         connection_id,
@@ -1302,6 +1325,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         let capability = u16::from_le_bytes([auth_payload[0], auth_payload[1]]);
         if u32::from(capability) & CLIENT_PROTOCOL_41 == 0 {
             return rejected_login(
+                events,
                 &mut output,
                 2,
                 tidb_mysql::errors::errcode::ErrNotSupportedAuthMode,
@@ -1339,6 +1363,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             // connection-attribute hard limit retains its explicit text.
             let message = error.client_error_message();
             return rejected_login(
+                events,
                 &mut output,
                 reply_sequence,
                 ER_UNKNOWN_ERROR,
@@ -1376,6 +1401,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             .with_tls_peer(socket.verified_tls_peer()),
         Err(_) => {
             return rejected_login(
+                events,
                 &mut output,
                 reply_sequence,
                 ER_SECURE_TRANSPORT_REQUIRED,
@@ -1391,6 +1417,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         Ok(capabilities) => capabilities,
         Err(_error) => {
             return rejected_login(
+                events,
                 &mut output,
                 reply_sequence,
                 ER_ACCESS_DENIED_ERROR,
@@ -1405,6 +1432,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     let protocol_41 = capabilities & CLIENT_PROTOCOL_41 != 0;
     if !protocol_41 {
         return rejected_login(
+            events,
             &mut output,
             reply_sequence,
             ER_ACCESS_DENIED_ERROR,
@@ -1415,10 +1443,28 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             *commands,
         );
     }
-    // Go `handleAuthPlugin` -> `checkAuthPlugin` (`server/conn.go:721`,
-    // `:939`). This server registers no extension auth plugin, so Go's
-    // `cc.extensions` is the empty registry.
-    let extensions = crate::auth_plugin_registry::AuthPluginRegistry::default();
+    // Go `handleAuthPlugin` / `authSwitchRequest`: executable extension plugins.
+    let extensions = &events.extensions;
+    events.info.connection_info.user = response_user.clone();
+    events.info.connection_info.db = response_db_name.clone();
+    events.info.connection_info.attributes = response
+        .attrs
+        .iter()
+        .map(|(k, v)| {
+            (
+                k.to_string_lossy().into_owned(),
+                v.to_string_lossy().into_owned(),
+            )
+        })
+        .collect();
+    if let Some((_, version)) = socket.negotiated_tls() {
+        events.info.connection_info.connection_type = "SSL/TLS".into();
+        events.info.connection_info.ssl_version = match version {
+            0x0303 => "TLSv1.2".into(),
+            0x0304 => "TLSv1.3".into(),
+            v => format!("Unknown TLS version: {v}"),
+        };
+    }
     let plugin_auth = capabilities & CLIENT_PLUGIN_AUTH != 0;
     let mut client_plugin = String::from_utf8_lossy(response.auth_plugin.as_bytes()).into_owned();
     let mut auth_response = response.auth.clone();
@@ -1433,9 +1479,12 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     ) {
         Ok(AuthPluginDecision::Keep) => None,
         Ok(AuthPluginDecision::Switch(plugin)) => {
+            events.info.connection_info.auth_method = plugin.clone();
             // Go `authSwitchRequest`.
-            let request =
-                AuthSwitchRequest::new(extensions.client_plugin_name(&plugin), salt.to_vec())
+            let request = AuthSwitchRequest::new(
+                crate::auth_plugin_registry::client_plugin_name(extensions, &plugin),
+                salt.to_vec(),
+            )
                     .map_err(|error| MysqlConnectionError::Handshake(error.to_string()))?;
             write_payload(&mut output, response_sequence, &request.encode_payload())?;
             reader.set_sequence(response_sequence + 1);
@@ -1448,6 +1497,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             Ok(user) => Some(user.into_bytes()),
             Err(error) => {
                 return rejected_login(
+                    events,
                     &mut output,
                     response_sequence,
                     ER_UNKNOWN_ERROR,
@@ -1461,6 +1511,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         },
         Err(AuthPluginRefusal::AccessDenied) => {
             return rejected_login(
+                events,
                 &mut output,
                 response_sequence,
                 ER_ACCESS_DENIED_ERROR,
@@ -1473,6 +1524,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         }
         Err(AuthPluginRefusal::NotSupportedAuthMode) => {
             return rejected_login(
+                events,
                 &mut output,
                 response_sequence,
                 tidb_mysql::errors::errcode::ErrNotSupportedAuthMode,
@@ -1527,9 +1579,10 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         | tidb_mysql::consts::AuthMySQLClearPassword
         | tidb_mysql::consts::AuthLDAPSASL
         | tidb_mysql::consts::AuthLDAPSimple => {}
-        other if extensions.get(other).is_some() => {}
+        other if extensions.get_auth_plugin(other).is_some() => {}
         _ => {
             return rejected_login(
+                events,
                 &mut output,
                 response_sequence,
                 ER_UNKNOWN_ERROR,
@@ -1561,6 +1614,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 tidb_mysql::errors::FormatArg::from(peer_addr.host()),
             ]);
         return rejected_login(
+            events,
             &mut output,
             response_sequence,
             tidb_errno::errcode::ErrAccessDeniedNoPassword,
@@ -1574,13 +1628,21 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // The process-wide transport rule already ran before plugin selection.
     // This call consumes that proof and applies only the matched account's
     // own REQUIRE clause plus ordinary/bypassed identity authentication.
-    let auth_result = users.authenticate_admitted(
+    let tls_state = socket.tls_connection_state();
+    let mut auth_conn = ExtensionAuthConn {
+        reader: &mut reader,
+        output: &mut output,
+        sequence: &mut response_sequence,
+    };
+    let auth_result = users.authenticate_with_plugin(
         &response_user,
         &peer_addr.host(),
         &salt,
         &auth_response,
         &client_plugin,
         transport_admission,
+        tls_state.as_ref(),
+        Some(&mut auth_conn),
     );
     let identity = match auth_result {
         Ok(identity) => identity,
@@ -1588,6 +1650,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         // because it is a property of the connection and not of the account.
         Err(AuthenticationFailure::SecureTransportRequired) => {
             return rejected_login(
+                events,
                 &mut output,
                 response_sequence,
                 ER_SECURE_TRANSPORT_REQUIRED,
@@ -1600,6 +1663,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         }
         Err(AuthenticationFailure::AccountLocked) => {
             return rejected_login(
+                events,
                 &mut output,
                 response_sequence,
                 ER_ACCOUNT_HAS_BEEN_LOCKED,
@@ -1615,6 +1679,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         // remaining.
         Err(AuthenticationFailure::AutoLocked(lockout)) => {
             return rejected_login(
+                events,
                 &mut output,
                 response_sequence,
                 ER_USER_ACCESS_DENIED_BLOCKED_BY_PASSWORD_LOCK,
@@ -1629,6 +1694,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         // is not admitting expired logins into a sandbox session.
         Err(AuthenticationFailure::PasswordExpired) => {
             return rejected_login(
+                events,
                 &mut output,
                 response_sequence,
                 ER_MUST_CHANGE_PASSWORD_LOGIN,
@@ -1659,6 +1725,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         }
         Err(AuthenticationFailure::AccessDenied) => {
             return rejected_login(
+                events,
                 &mut output,
                 response_sequence,
                 ER_ACCESS_DENIED_ERROR,
@@ -1687,22 +1754,19 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         (CompressionAlgorithm::None, tidb_mysql::consts::CompressionNone)
     };
     let (auth_user, auth_host) = (identity.username().to_owned(), identity.host().to_owned());
-    let mut engine = match factory.open_session(SessionContext {
+    let session_context = SessionContext {
         connection_id,
         peer_addr,
         identity,
         client_capability: capabilities,
-        tls_state: socket.negotiated_tls().map(|(cipher_suite, version)| {
-            tidb_variable::vars::TlsConnectionState {
-                version,
-                cipher_suite,
-            }
-        }),
+        tls_state: socket.tls_connection_state(),
         compression_algorithm,
         compression_level: zstd_level,
         cancellation: cancellation.clone(),
         close: close.clone(),
-    }) {
+    };
+    events.info.connection_info.auth_method = session_context.identity.auth_plugin().to_owned();
+    let mut engine = match factory.open_session(session_context.clone()) {
         Ok(session) => {
             // Go `server.go:1329`-adjacent TLS accounting: every TLS
             // handshake counts its negotiated version and cipher.
@@ -1717,6 +1781,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             session
         }
         Err(error) => {
+            events.info.error = Some(error.error_string());
             write_query_error_at(&mut output, response_sequence, &error, protocol_41)?;
             return Ok(ConnectionReport {
                 connection_id,
@@ -1735,6 +1800,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // this server's bin default. An id Go does not know fails the connection.
     let handshake_collation = response.collation;
     if let Err(error) = engine.set_collation(response.collation) {
+        events.info.error = Some(error.error_string());
         write_query_error_at(&mut output, response_sequence, &error, protocol_41)?;
         return Ok(ConnectionReport {
             connection_id,
@@ -1757,6 +1823,10 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             })
             .collect(),
     );
+    engine.set_extensions(
+        events.extensions.clone(),
+        events.info.connection_info.clone(),
+    );
     engine.attach_client_conn_writer();
     // Go's `openSessionAndDoAuth`: the handshake's initial database is applied
     // before the connection is reported ready, and a schema that does not
@@ -1765,6 +1835,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // `CurrentDB` as it is.
     if !response_db_name.is_empty() {
         if let Err(error) = engine.select_database(&response_db_name) {
+            events.info.error = Some(error.error_string());
             write_query_error_at(&mut output, response_sequence, &error, protocol_41)?;
             return Ok(ConnectionReport {
                 connection_id,
@@ -1800,6 +1871,25 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 exit: ConnectionExit::SessionRejected,
             });
         }
+    };
+
+    events.accepted = true;
+    if let Some(info) = engine.extension_connection_event_info() {
+        events.info = info;
+    }
+    events.emit(tidb_extension::ConnEventTp::HandshakeAccepted);
+    let reset_session = |engine: &mut F::Session| -> Result<(), SqlQueryError> {
+        let database = engine.current_database().to_owned();
+        engine.close_for_reset();
+        let mut replacement = factory.open_session(session_context.clone())?;
+        replacement.set_collation(handshake_collation)?;
+        replacement.auth_without_verification();
+        if !database.is_empty() {
+            replacement.select_database(&database)?;
+        }
+        replacement.attach_client_conn_writer();
+        *engine = replacement;
+        Ok(())
     };
 
     // Authentication is always ordinary MySQL packet I/O. Only after its OK
@@ -1839,6 +1929,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         framing,
         cancellation,
         stream_for_watch,
+        events,
+        reset_session: &reset_session,
         conn_info: ConnInfo {
             addr: peer_addr.remote_addr(),
             collation: handshake_collation,
@@ -1915,7 +2007,9 @@ struct CommandConnection<S: QuerySession> {
     close: ConnectionClose,
 }
 
-struct CommandContext<'a> {
+struct CommandContext<'a, S: QuerySession> {
+    events: &'a mut ConnectionExtensions,
+    reset_session: &'a dyn Fn(&mut S) -> Result<(), SqlQueryError>,
     connection_id: u64,
     commands: &'a mut ConnectionCommandCounts,
     command_limiter: &'a CommandLimiter,
@@ -2118,12 +2212,19 @@ fn log_dispatch_failure<S: QuerySession>(
 impl<S: QuerySession> CommandConnection<S> {
     fn run(
         mut self,
-        context: CommandContext<'_>,
+        context: CommandContext<'_, S>,
     ) -> Result<ConnectionReport, MysqlConnectionError> {
         let connection_id = context.connection_id;
         let protocol_41 = context.framing.protocol_41;
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            run_connection_commands(&mut self, context)
+        let events = context.events;
+        let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_connection_commands(
+                &mut self,
+                CommandContext {
+                    events: &mut *events,
+                    ..context
+                },
+            )
         })) {
             Ok(result) => result,
             Err(payload) => {
@@ -2147,7 +2248,11 @@ impl<S: QuerySession> CommandConnection<S> {
                 }
                 Err(MysqlConnectionError::Panicked(message))
             }
+        };
+        if let Some(info) = self.engine.extension_connection_event_info() {
+            events.info = info;
         }
+        result
     }
 }
 
@@ -2179,7 +2284,7 @@ fn connection_panic_message(payload: Box<dyn std::any::Any + Send>, connection_i
 
 fn run_connection_commands<S: QuerySession>(
     connection: &mut CommandConnection<S>,
-    context: CommandContext<'_>,
+    context: CommandContext<'_, S>,
 ) -> Result<ConnectionReport, MysqlConnectionError> {
     let CommandConnection {
         prepared,
@@ -2197,6 +2302,8 @@ fn run_connection_commands<S: QuerySession>(
         cancellation,
         stream_for_watch,
         conn_info,
+        events,
+        reset_session,
     } = context;
     let protocol_41 = framing.protocol_41;
     let connection_alive = Arc::new(ConnectionAliveProbe {
@@ -2303,6 +2410,12 @@ fn run_connection_commands<S: QuerySession>(
         let _command_token = command_limiter.acquire();
         let _ = crate::connection_writers::take_query_failure();
         let raw_labels = attach_dispatch_labels(engine, connection_id, &payload, prepared);
+        // Go `handleQuery`/`handleStmtExecute` defer the event even if packet I/O fails.
+        let mut pending_extension: Option<(
+            String,
+            Option<Stmt>,
+            Option<(PreparedGeneral, Vec<tidb_param::PreparedValue>)>,
+        )> = None;
         let dispatch_result = (|| -> Result<Option<ConnectionReport>, MysqlConnectionError> {
             let command = match decode_command(&payload) {
                 Ok(command) => command,
@@ -2428,6 +2541,14 @@ fn run_connection_commands<S: QuerySession>(
                     {
                         Ok(statements) => statements,
                         Err(error) => {
+                            pending_extension = None;
+                            engine.on_extension_stmt_end(
+                                false,
+                                sql,
+                                None,
+                                None,
+                                Some(&error.error_string()),
+                            );
                             write_query_error(output, &error, protocol_41)?;
                             return Ok(None);
                         }
@@ -2453,6 +2574,17 @@ fn run_connection_commands<S: QuerySession>(
                     // multi-statement query.
                     if statements.len() > 1 {
                         if let Err(error) = engine.prefetch_point_plan_keys(&statements, sql) {
+                            for statement in &statements {
+                                let node = engine.parse_statement(statement).ok();
+                                pending_extension = None;
+                                engine.on_extension_stmt_end(
+                                    false,
+                                    statement,
+                                    node.as_ref(),
+                                    None,
+                                    Some(&error.error_string()),
+                                );
+                            }
                             write_query_error(output, &error, protocol_41)?;
                             return Ok(None);
                         }
@@ -2489,13 +2621,32 @@ fn run_connection_commands<S: QuerySession>(
                                 // half: fresh warning context + the error row
                                 // (see the session's own record_parse_failure).
                                 engine.record_parse_failure(&error);
+                                pending_extension = None;
+                                engine.on_extension_stmt_end(
+                                    false,
+                                    sql,
+                                    None,
+                                    None,
+                                    Some(&error.error_string()),
+                                );
                                 write_query_error_at(output, sequence, &error, protocol_41)?;
                                 aborted = true;
                                 break;
                             }
                         };
+                        if events.extensions.has_stmt_event_listeners() {
+                            pending_extension = Some((sql.to_owned(), Some(stmt.clone()), None));
+                        }
                         if let Err(error) = prepared.session_states_handler(engine, &stmt) {
                             engine.record_parse_failure(&error);
+                            pending_extension = None;
+                            engine.on_extension_stmt_end(
+                                true,
+                                sql,
+                                Some(&stmt),
+                                None,
+                                Some(&error.error_string()),
+                            );
                             write_query_error_at(output, sequence, &error, protocol_41)?;
                             aborted = true;
                             break;
@@ -2551,6 +2702,14 @@ fn run_connection_commands<S: QuerySession>(
                                             &error,
                                             protocol_41,
                                         )?;
+                                            pending_extension = None;
+                                            engine.on_extension_stmt_end(
+                                                true,
+                                                sql,
+                                                Some(&stmt),
+                                                None,
+                                                Some(&error.error_string()),
+                                            );
                                         record_client_warnings(&*output, &*engine);
                                         aborted = true;
                                         break 'statements;
@@ -2569,6 +2728,14 @@ fn run_connection_commands<S: QuerySession>(
                                                 &error,
                                                 protocol_41,
                                             )?;
+                                                pending_extension = None;
+                                                engine.on_extension_stmt_end(
+                                                    true,
+                                                    sql,
+                                                    Some(&stmt),
+                                                    None,
+                                                    Some(&error.error_string()),
+                                                );
                                             record_client_warnings(&*output, &*engine);
                                             aborted = true;
                                             break 'statements;
@@ -2605,6 +2772,14 @@ fn run_connection_commands<S: QuerySession>(
                                                 &error,
                                                 protocol_41,
                                             )?;
+                                                pending_extension = None;
+                                                engine.on_extension_stmt_end(
+                                                    true,
+                                                    sql,
+                                                    Some(&stmt),
+                                                    None,
+                                                    Some(&error.error_string()),
+                                                );
                                             record_client_warnings(&*output, &*engine);
                                             aborted = true;
                                             break 'statements;
@@ -2624,6 +2799,14 @@ fn run_connection_commands<S: QuerySession>(
                                         protocol_41,
                                         &engine.statement_info(),
                                     )?;
+                                        pending_extension = None;
+                                        engine.on_extension_stmt_end(
+                                            true,
+                                            sql,
+                                            Some(&stmt),
+                                            None,
+                                            None,
+                                        );
                                     record_client_warnings(&*output, &*engine);
                                     sequence = sequence.wrapping_add(1);
                                     queries += 1;
@@ -2682,18 +2865,34 @@ fn run_connection_commands<S: QuerySession>(
                                     1,
                                     error.cause.code,
                                     error.cause.state,
-                                    error.cause.message,
+                                        error.cause.message.clone(),
                                     protocol_41,
                                 )?;
+                                    pending_extension = None;
+                                    engine.on_extension_stmt_end(
+                                        true,
+                                        sql,
+                                        Some(&stmt),
+                                        None,
+                                        Some(&error.cause.message),
+                                    );
                                 record_client_warnings(&*output, &*engine);
                                 aborted = true;
                                 break 'statements;
                             }
                             Err(error) => {
                                 drop(result);
+                                    pending_extension = None;
+                                    engine.on_extension_stmt_end(
+                                        true,
+                                        sql,
+                                        Some(&stmt),
+                                        None,
+                                        Some(&error.cause.message),
+                                    );
                                 engine.finish_execute_stmt(query_started.elapsed());
                                 return Err(MysqlConnectionError::PartialResult(
-                                    error.cause.message,
+                                        error.cause.message.clone(),
                                 ));
                             }
                         }
@@ -2701,6 +2900,8 @@ fn run_connection_commands<S: QuerySession>(
                         }
                         engine.set_retrying(false);
                         engine.set_tiflash_fallback(false);
+                        pending_extension = None;
+                        engine.on_extension_stmt_end(true, sql, Some(&stmt), None, None);
                         record_client_warnings(&*output, &*engine);
                     }
                     engine.set_point_plan_value(None);
@@ -2917,9 +3118,25 @@ fn run_connection_commands<S: QuerySession>(
                     };
                     let values = execute.values;
                     let general = prepared_statement.as_ref();
+                    if events.extensions.has_stmt_event_listeners() {
+                        pending_extension = Some((
+                            general.sql().to_owned(),
+                            general.template().cloned(),
+                            Some((general.clone(), values.clone())),
+                        ));
+                    }
+
                     if let Some(ast) = general.prepared_ast() {
                         if let Err(error) = prepared.session_states_handler(engine, ast.statement())
                         {
+                            pending_extension = None;
+                            engine.on_extension_stmt_end(
+                                false,
+                                general.sql(),
+                                general.template(),
+                                Some((general, &values)),
+                                Some(&error.error_string()),
+                            );
                             write_query_error(output, &error, protocol_41)?;
                             return Ok(None);
                         }
@@ -2939,6 +3156,7 @@ fn run_connection_commands<S: QuerySession>(
                     // fallback's timeout is appended after the re-run.
                     let mut retried = false;
                     let mut fallback_error = None;
+                    let mut extension_error = None;
                     'attempt: loop {
                     // An error not yet written, one a re-run may answer
                     // instead (Go's `retryable`), and whether the execute
@@ -3003,6 +3221,7 @@ fn run_connection_commands<S: QuerySession>(
                                         }
                                         Err(PreparedCursorOpenError::Query(error)) => {
                                             drop(result);
+                                                extension_error = Some(error.error_string());
                                             write_query_error(output, &error, protocol_41)?;
                                         }
                                         Err(PreparedCursorOpenError::Transport(error)) => {
@@ -3038,13 +3257,17 @@ fn run_connection_commands<S: QuerySession>(
                                     commands.stmt_execute_successes += 1;
                                 }
                                 Err(PreparedCursorOpenError::Query(error)) => {
+                                        extension_error = Some(error.error_string());
                                     write_query_error(output, &error, protocol_41)?;
                                 }
                                 Err(PreparedCursorOpenError::Transport(error)) => {
                                     return Err(error);
                                 }
                             },
-                            Some(Err(error)) => write_query_error(output, &error, protocol_41)?,
+                                Some(Err(error)) => {
+                                    extension_error = Some(error.error_string());
+                                    write_query_error(output, &error, protocol_41)?;
+                                }
                             None => {}
                         }
                         if let Some(outcome) = write_outcome {
@@ -3089,9 +3312,14 @@ fn run_connection_commands<S: QuerySession>(
                                     commands.stmt_execute_successes += 1;
                                 }
                                 Err(error) if !error.bytes_escaped && error.retryable => {
-                                    unanswered = Some((SqlQueryError::from(error.cause), false));
+                                            unanswered =
+                                                Some((SqlQueryError::from(error.cause), false));
                                 }
                                 Err(error) if !error.bytes_escaped => {
+                                            extension_error = Some(
+                                                SqlQueryError::from(error.cause.clone())
+                                                    .error_string(),
+                                            );
                                     write_error(
                                         output,
                                         1,
@@ -3144,6 +3372,7 @@ fn run_connection_commands<S: QuerySession>(
                             fallback_error = Some(error);
                             continue 'attempt;
                         }
+                            extension_error = Some(error.error_string());
                         if executed {
                             write_query_error(output, &error, protocol_41)?;
                         } else {
@@ -3167,6 +3396,14 @@ fn run_connection_commands<S: QuerySession>(
                     engine.set_retrying(false);
                     engine.set_tiflash_fallback(false);
                     record_client_warnings(&*output, &*engine);
+                    pending_extension = None;
+                    engine.on_extension_stmt_end(
+                        true,
+                        general.sql(),
+                        general.template(),
+                        Some((general, &values)),
+                        extension_error.as_deref(),
+                    );
                     engine.finish_execute_stmt(execute_started.elapsed());
                 }
                 Command::StmtSendLongData(bytes) => {
@@ -3353,7 +3590,20 @@ fn run_connection_commands<S: QuerySession>(
                 // query, so this is the command an interactive `USE` arrives on.
                 Command::InitDb(name) => {
                     let name = String::from_utf8_lossy(&name).into_owned();
-                    match engine.select_database(&name) {
+                    let result = engine.select_database(&name);
+                    let sql = format!("use `{}`", name.replace('`', "``"));
+                    let node = Stmt::Session(tidb_ast::NodeBox::new(tidb_ast::SessionStmt::Use(
+                        name.clone(),
+                    )));
+                    pending_extension = None;
+                    engine.on_extension_stmt_end(
+                        false,
+                        &sql,
+                        Some(&node),
+                        None,
+                        result.as_ref().err().map(|e| e.error_string()).as_deref(),
+                    );
+                    match result {
                         Ok(()) => write_ok(
                             output,
                             1,
@@ -3400,10 +3650,27 @@ fn run_connection_commands<S: QuerySession>(
                 // Go answers COM_SHUTDOWN with handleQuery("SHUTDOWN") and
                 // COM_CHANGE_USER with handleChangeUser; both need the full
                 // server, which this read-only node does not implement yet.
-                Command::FieldList(_)
-                | Command::ResetConnection
-                | Command::Shutdown
-                | Command::ChangeUser(_) => write_error(
+                Command::ResetConnection => match reset_session(engine) {
+                    Ok(()) => {
+                        *prepared = PreparedStatementRegistry::default();
+                        let mut info = events.info.connection_info.clone();
+                        info.db = engine.current_database().to_owned();
+                        engine.set_extensions(events.extensions.clone(), info);
+                        if let Some(info) = engine.extension_connection_event_info() {
+                            events.info = info;
+                        }
+                        events.emit(tidb_extension::ConnEventTp::Reset);
+                        write_ok(
+                            output,
+                            1,
+                            engine.wire_status(),
+                            engine.warning_count(),
+                            protocol_41,
+                        )?;
+                    }
+                    Err(error) => write_query_error(output, &error, protocol_41)?,
+                },
+                Command::FieldList(_) | Command::Shutdown | Command::ChangeUser(_) => write_error(
                     output,
                     1,
                     ER_UNKNOWN_COM_ERROR,
@@ -3422,6 +3689,19 @@ fn run_connection_commands<S: QuerySession>(
             }
             Ok(None)
         })();
+        if let Some((sql, node, binary)) = pending_extension {
+            let error = dispatch_result.as_ref().err().map(ToString::to_string);
+            engine.on_extension_stmt_end(
+                true,
+                &sql,
+                node.as_ref(),
+                binary
+                    .as_ref()
+                    .map(|(prepared, values)| (prepared, values.as_slice())),
+                error.as_deref(),
+            );
+        }
+
         if let Some(raw_labels) = raw_labels {
             tidb_cpuprofile::labels::set_goroutine_labels(raw_labels);
         }
@@ -4030,5 +4310,140 @@ mod check_auth_plugin_tests {
         );
         assert!(matches!(decision, Ok(AuthPluginDecision::SocketUser)));
         assert_eq!(plugin, "auth_socket");
+    }
+}
+
+/// Go `clientConn`'s `conn.AuthConn` during `authenticateWithPlugin`.
+struct ExtensionAuthConn<'a> {
+    reader: &'a mut PacketReader<ClientStream>,
+    output: &'a mut ClientErrorRecordingOutput<ClientStream>,
+    sequence: &'a mut u8,
+}
+impl tidb_extension::AuthConn for ExtensionAuthConn<'_> {
+    /// Go `AuthConn.WriteAuthMoreData`.
+    fn write_auth_more_data(&mut self, data: &[u8]) -> Result<(), String> {
+        let mut packet = vec![1];
+        packet.extend_from_slice(data);
+        write_payload(self.output, *self.sequence, &packet)
+            .map_err(|_| "authentication packet write failed".to_owned())?;
+        *self.sequence = self.sequence.wrapping_add(1);
+        Ok(())
+    }
+    /// Go `AuthConn.ReadPacket`.
+    fn read_packet(&mut self) -> Result<Vec<u8>, String> {
+        self.reader.set_sequence(*self.sequence);
+        let packet = self
+            .reader
+            .read_packet()
+            .map_err(|_| "authentication packet read failed".to_owned())?;
+        *self.sequence = self.reader.sequence();
+        Ok(packet)
+    }
+    /// Go `AuthConn.Flush`.
+    fn flush(&mut self) -> Result<(), String> {
+        self.output
+            .flush()
+            .map_err(|_| "authentication flush failed".to_owned())
+    }
+}
+
+/// Go `clientConn.connectInfo` / `onExtensionConnEvent`.
+struct ConnectionExtensions {
+    extensions: tidb_extension::SessionExtensions,
+    info: tidb_extension::ConnEventInfo,
+    accepted: bool,
+}
+impl ConnectionExtensions {
+    /// Go `clientConn.connectInfo`.
+    fn new(
+        socket: &ClientSocket,
+        peer: PeerAddress,
+        connection_id: u64,
+        server_port: Option<u16>,
+    ) -> Result<Self, MysqlConnectionError> {
+        let extensions = tidb_extension::get_extensions()
+            .map_err(|error| MysqlConnectionError::Handshake(format!("{error:?}")))?
+            .map(|es| es.new_session_extensions())
+            .unwrap_or_default();
+        let local = match socket {
+            ClientSocket::Tcp(s) => s.local_addr().ok(),
+            #[cfg(unix)]
+            ClientSocket::Unix(_) => None,
+        };
+        let info = tidb_variable::connection_info::ConnectionInfo {
+            connection_id,
+            auth_method: tidb_mysql::AuthNativePassword.into(),
+            connection_type: if peer.is_unix_socket() {
+                "UnixSocket"
+            } else {
+                "TCP"
+            }
+            .into(),
+            host: peer.host(),
+            client_ip: peer.host(),
+            client_port: match peer {
+                PeerAddress::Tcp(a) => a.port().to_string(),
+                PeerAddress::Unix => String::new(),
+            },
+            server_id: 1,
+            server_ip: local
+                .map(|a| a.ip().to_string())
+                .unwrap_or_else(|| peer.host()),
+            server_port: server_port
+                .or_else(|| local.map(|a| a.port()))
+                .map(i64::from)
+                .unwrap_or(0),
+            server_version: tidb_mysql::consts::runtime_versions().tidb_release_version,
+            pid: i64::from(std::process::id()),
+            server_os_login_user: nix::unistd::User::from_uid(nix::unistd::Uid::current())
+                .ok()
+                .flatten()
+                .map(|u| u.gecos.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            os_version: tidb_sys_linux::os_version().unwrap_or_default(),
+            ..Default::default()
+        };
+        Ok(Self {
+            extensions,
+            info: tidb_extension::ConnEventInfo {
+                connection_info: info,
+                session_alias: String::new(),
+                active_roles: Vec::new(),
+                error: None,
+            },
+            accepted: false,
+        })
+    }
+    /// Go `clientConn.onExtensionConnEvent`.
+    fn emit(&self, tp: tidb_extension::ConnEventTp) {
+        self.extensions.on_connection_event(tp, &self.info);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod extension_connection_info_tests {
+    use super::*;
+
+    /// Go `commontest.TestExtensionConnEvent`'s connection fields, with `clientConn.PeerHost`'s Unix branch.
+    #[test]
+    fn test_extension_conn_event() {
+        let (socket, _client) = std::os::unix::net::UnixStream::pair().unwrap();
+        let events = ConnectionExtensions::new(
+            &ClientSocket::Unix(socket),
+            PeerAddress::Unix,
+            42,
+            Some(14000),
+        )
+        .unwrap();
+        let info = events.info.connection_info;
+        assert_eq!(info.connection_id, 42);
+        assert_eq!(info.connection_type, "UnixSocket");
+        assert_eq!(info.host, "localhost");
+        assert_eq!(info.client_ip, "localhost");
+        assert_eq!(info.server_ip, "localhost");
+        assert_eq!(info.client_port, "");
+        assert_eq!(info.server_port, 14000);
+        assert!(info.is_secure_transport());
+        assert_eq!(info.auth_method, tidb_mysql::AuthNativePassword);
     }
 }

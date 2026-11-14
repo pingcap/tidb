@@ -842,6 +842,8 @@ pub struct StmtContextData {
     current_db: Option<String>,
     version: Option<String>,
     current_user: Option<String>,
+    auth_plugin: String,
+    connection_info: Option<Arc<tidb_variable::connection_info::ConnectionInfo>>,
     login_user: Option<String>,
     /// Go `SessionVars.GlobalVarsAccessor`, consulted by the expression
     /// builtins that need live GLOBAL state.
@@ -2780,9 +2782,15 @@ context_configuration! {
         self
     }
 
-    /// Attaches the authenticated identity, which Go keeps on
-    /// `SessionVars.User` in the two spellings its builtins report.
+    /// Go `SessionVars.ConnectionInfo` and `SessionVars.User.AuthPlugin`.
     #[must_use]
+    pub fn with_connection_info(mut self, info: Option<Arc<tidb_variable::connection_info::ConnectionInfo>>, plugin: String) -> Self {
+        self.connection_info = info;
+        self.auth_plugin = plugin;
+        self
+    }
+
+    /// Go `SessionVars.User`.
     pub fn with_user(mut self, current_user: Option<String>, login_user: Option<String>) -> Self {
         self.current_user = current_user;
         self.login_user = login_user;
@@ -3151,6 +3159,8 @@ impl StmtContext {
             current_db: None,
             version: None,
             current_user: None,
+            auth_plugin: String::new(),
+            connection_info: None,
             active_roles: None,
             login_user: None,
             global_sysvars: None,
@@ -7190,6 +7200,12 @@ impl Columns for StmtContext {
         self.like_default_escape
     }
 
+    fn connection_info(&self) -> Option<Arc<tidb_variable::connection_info::ConnectionInfo>> {
+        self.connection_info.clone()
+    }
+    fn auth_plugin(&self) -> String {
+        self.auth_plugin.clone()
+    }
     fn current_user(&self) -> Option<String> {
         self.current_user.clone()
     }

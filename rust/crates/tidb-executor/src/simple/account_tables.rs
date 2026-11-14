@@ -333,6 +333,10 @@ pub trait UserTableExec: AccountSession {
             // and the Password Reuse Policy does not take effect.
             return Ok(());
         }
+        // Go `checkPasswordReusePolicy`: extensions own their password policy.
+        if tidb_privilege::extension_auth_plugin(auth_plugin).is_some() {
+            return Ok(());
+        }
         let global = |this: &Self, name: &str| -> Result<i64, DriverError> {
             this.session_vars()
                 .get_global(name)

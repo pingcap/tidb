@@ -25,6 +25,11 @@ use tidb_parser::auth::{RoleIdentity, UserIdentity};
 /// Go `FunctionContext`: what a custom function reads of the statement
 /// evaluating it.
 pub trait FunctionContext {
+    /// Go `FunctionContext.ConnectionInfo`.
+    fn connection_info(
+        &self,
+    ) -> Option<std::sync::Arc<tidb_variable::connection_info::ConnectionInfo>>;
+
     /// Go `User()`: the session's user, `None` for a session with none.
     fn user(&self) -> Option<UserIdentity>;
     /// Go `ActiveRoles()`.

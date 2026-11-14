@@ -865,6 +865,9 @@ pub struct Session {
     /// Go `UserPrivileges.extensionAccessCheckFuncs`, bound with the
     /// privilege manager ([`Session::attach_privileges`]).
     extension_access_check_funcs: Vec<tidb_extension::AccessCheckFunc>,
+    session_extensions: tidb_extension::SessionExtensions,
+    extension_statement: Option<extension::StatementFacts>,
+    auth_plugin_verification: Option<tidb_privilege::AuthPluginVerification>,
     /// Go's process-wide `privileges.SkipWithGrant` admission copied onto
     /// this connection by the front end. The registry remains attached for
     /// account/role storage, while authorization readers treat the session
@@ -1139,6 +1142,9 @@ impl Session {
             has_process_priv: false,
             privileges: None,
             extension_access_check_funcs: Vec::new(),
+            session_extensions: tidb_extension::SessionExtensions::default(),
+            extension_statement: None,
+            auth_plugin_verification: None,
             privilege_bypassed: false,
             rand: new_time_seeded_rand(),
             prepared_statements: prepared_statements::PreparedStore::default(),
@@ -1319,12 +1325,12 @@ mod session_telemetry;
 mod identity;
 pub mod load_stats_arm;
 mod account_state;
-use tidb_executor::compiler::non_prepared_plan_cache as non_prepared_plan_cache;
+use tidb_executor::compiler::non_prepared_plan_cache;
 mod nontransactional;
 pub use nontransactional::{NonTransactionalDml, NonTransactionalInput, NonTransactionalStep};
 mod noop;
 mod observation;
-use tidb_executor::compiler::prepared_ast as prepared_ast;
+use tidb_executor::compiler::prepared_ast;
 use tidb_executor::compiler::prepared as prepared_statements;
 pub mod session_states;
 mod record_set;
@@ -4013,3 +4019,10 @@ impl tidb_executor::sessionctx::PrivilegeManager for Session {
             .is_some_and(|cache| cache.find_role(user, role))
     }
 }
+
+#[cfg(test)]
+mod tests_extension_auth;
+
+mod extension;
+
+pub mod extensionimpl;

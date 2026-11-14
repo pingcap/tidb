@@ -91,10 +91,10 @@ pub use tls_policy::{certificate_uri, TlsPeerIdentity};
 
 pub use export::*;
 pub use password::*;
-pub use user_privileges::UserPrivileges;
 pub use password_lock::*;
 pub use privs::*;
 use tidb_mysql::PrivilegeType;
+pub use user_privileges::{AuthPluginVerification, UserPrivileges};
 
 /// One account identity, `(user, host)` -- the key of every table here, and
 /// the shape a role is named by too, since a role IS an account.

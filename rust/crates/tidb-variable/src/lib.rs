@@ -17,6 +17,7 @@
 //! variables, and the slow-log rules. It sits below the executor, as Go's
 //! package does.
 
+pub mod connection_info;
 mod error;
 pub mod mem_quota;
 pub mod wire_status;

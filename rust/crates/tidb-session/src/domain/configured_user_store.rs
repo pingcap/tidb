@@ -52,6 +52,7 @@ use crate::domain::secure_transport::{SecureTransportError, SecureTransportPolic
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthenticatedIdentity {
     identity: MatchedIdentity,
+    auth_plugin: String,
     in_sandbox_mode: bool,
     privilege_bypassed: bool,
     /// Domain's internal system-session pool admission. Go's internal
@@ -134,6 +135,7 @@ impl AuthenticatedIdentity {
             in_sandbox_mode: false,
             privilege_bypassed: true,
             internal: true,
+            auth_plugin: DEFAULT_AUTH_PLUGIN.to_owned(),
         }
     }
 
@@ -158,11 +160,11 @@ impl AuthenticatedIdentity {
         self.identity.host()
     }
 
-    /// The verified configured native plugin for an ordinary account, or the
-    /// fixed native-plugin handoff Go uses before bypass admission.
+    /// Go `ConnectionVerification`: the verified account plugin, or the
+    /// native-plugin handoff used for bypass admission.
     #[must_use]
-    pub const fn auth_plugin(&self) -> &'static str {
-        DEFAULT_AUTH_PLUGIN
+    pub fn auth_plugin(&self) -> &str {
+        &self.auth_plugin
     }
 
     /// Canonical identity for session metadata owners.
@@ -638,6 +640,31 @@ impl ConfiguredUserStore {
         auth_plugin: &str,
         admission: TransportAdmission,
     ) -> Result<AuthenticatedIdentity, AuthenticationFailure> {
+        self.authenticate_with_plugin(
+            username,
+            remote_host,
+            salt,
+            response,
+            auth_plugin,
+            admission,
+            None,
+            None,
+        )
+    }
+
+    /// Go `UserPrivileges.ConnectionVerification` / `authenticateWithPlugin`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn authenticate_with_plugin(
+        &self,
+        username: &str,
+        remote_host: &str,
+        salt: &[u8],
+        response: &[u8],
+        auth_plugin: &str,
+        admission: TransportAdmission,
+        conn_state: Option<&tidb_variable::vars::TlsConnectionState>,
+        auth_conn: Option<&mut dyn tidb_extension::AuthConn>,
+    ) -> Result<AuthenticatedIdentity, AuthenticationFailure> {
         let is_tls = admission.secure_for_account_policy;
         let session_token = auth_plugin == tidb_mysql::consts::AuthTiDBSessionToken;
         let request = IdentityLookupRequest::new(username, remote_host, true);
@@ -649,6 +676,7 @@ impl ConfiguredUserStore {
                 in_sandbox_mode: false,
                 privilege_bypassed: true,
                 internal: false,
+                auth_plugin: DEFAULT_AUTH_PLUGIN.to_owned(),
             });
         }
         // Go `Auth`'s `MatchIdentity`, which loads the user's rows first.
@@ -722,6 +750,21 @@ impl ConfiguredUserStore {
             if response != user.as_bytes() && response != primary.as_bytes() {
                 return Err(AuthenticationFailure::AccessDenied);
             }
+        } else if let Some(p) = tidb_extension::get_extensions()
+            .map_err(|_| AuthenticationFailure::AccessDenied)?
+            .and_then(|es| es.get_auth_plugins().remove(&plugin))
+        {
+            let authenticate = p.authenticate_user.as_ref().expect("validated auth plugin");
+            // Never surface the callback's error: it may contain credentials.
+            authenticate(tidb_extension::AuthenticateRequest {
+                user: username,
+                stored_auth_string: &primary,
+                input_auth_string: response,
+                salt,
+                conn_state,
+                auth_conn,
+            })
+            .map_err(|_| AuthenticationFailure::AccessDenied)?;
         } else if !primary.is_empty() || !response.is_empty() {
             // The password plugins. Deliberately reachable with an EMPTY
             // stored primary when the client supplied a password, so a
@@ -787,6 +830,11 @@ impl ConfiguredUserStore {
             in_sandbox_mode,
             privilege_bypassed: false,
             internal: false,
+            auth_plugin: if session_token {
+                auth_plugin.to_owned()
+            } else {
+                plugin
+            },
         })
     }
 }

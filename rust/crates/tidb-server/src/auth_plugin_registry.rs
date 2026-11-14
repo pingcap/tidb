@@ -14,13 +14,9 @@
 
 //! Validation and client-plugin selection for extension authentication plugins.
 //!
-//! This is the metadata half of TiDB's Go `AuthPlugin` extension boundary.  Go
-//! validates every custom plugin before setup (`pkg/extension/auth.go:117-142`)
-//! and later maps a server-side plugin to the client-side plugin used by the
-//! auth-switch packet (`pkg/server/conn.go:276-288`).  Rust keeps those rules
-//! explicit without pretending to execute an extension callback: password
-//! hashing, password verification, TLS state, and client I/O remain owned by
-//! later server/privilege layers.
+//! Executable plugins are owned and validated by `tidb_extension::AuthPlugin`.
+//! The descriptor API remains for callers inspecting plugin metadata; the live
+//! handshake reads the connection's `SessionExtensions` through `client_plugin_name`.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -29,10 +25,8 @@ use tidb_mysql::consts::DEFAULT_AUTH_PLUGINS;
 
 /// Metadata needed to validate one custom authentication plugin.
 ///
-/// The three `has_*` fields represent the non-optional Go callbacks.  They are
-/// deliberately booleans rather than Rust function pointers: registering a
-/// callback would claim an executable authentication implementation before the
-/// privilege and extension owners have been ported.
+/// The three `has_*` fields describe callback presence for metadata consumers.
+/// They do not register executable callbacks; registration uses `tidb_extension`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthPluginDescriptor {
     name: String,
@@ -270,5 +264,22 @@ impl AuthPluginRegistry {
     #[must_use]
     pub fn plugins(&self) -> &[AuthPluginDescriptor] {
         &self.plugins
+    }
+}
+
+/// Go `clientConn.authSwitchRequest`: select the executable plugin's client protocol.
+pub(crate) fn client_plugin_name(
+    plugins: &tidb_extension::SessionExtensions,
+    server_plugin: &str,
+) -> String {
+    match server_plugin {
+        "authentication_ldap_sasl" => "authentication_ldap_sasl_client".to_owned(),
+        "authentication_ldap_simple" => "mysql_clear_password".to_owned(),
+        _ => plugins
+            .get_auth_plugin(server_plugin)
+            .map(|p| p.required_client_side_plugin.as_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or(server_plugin)
+            .to_owned(),
     }
 }

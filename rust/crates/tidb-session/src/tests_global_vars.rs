@@ -738,6 +738,7 @@ fn require_secure_transport_can_only_be_enabled_by_a_secure_session() {
     secure.set_tls_state(Some(tidb_variable::vars::TlsConnectionState {
         version: 0x0304,
         cipher_suite: 0x1301,
+        ..Default::default()
     }));
     secure
         .run("SET GLOBAL require_secure_transport = TRUE")

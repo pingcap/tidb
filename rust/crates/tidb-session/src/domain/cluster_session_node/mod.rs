@@ -2027,6 +2027,11 @@ impl<'s> ClusterServerSession<'s> {
         // would let a stale row-handle plan choose MaxTS and then fall back to
         // a newly rebuilt, potentially multi-read plan.
         self.rebuild_catalog_if_stale();
+        let schema_version = self
+            .session
+            .lock_catalog()
+            .map_err(map_error)?
+            .schema_version();
         let resource_group = match effective {
             Some(template) => self.session.statement_resource_group(template).into_owned(),
             None => self
@@ -2221,10 +2226,18 @@ impl<'s> ClusterServerSession<'s> {
                 if opened.is_err() {
                     session.close_context_of_prepared_stmt();
                 }
-                opened.map_err(map_error)
+                opened.map_err(|error| {
+                    map_error(prepared_ast.as_ref().map_or_else(
+                        || error.clone(),
+                        |prepared| prepared.schema_change_error(schema_version, error.clone()),
+                    ))
+                })
             });
             telemetry.update_telemetry_metric();
             let result = result?;
+            if let Some(prepared) = &prepared_ast {
+                prepared.set_schema_version(schema_version);
+            }
             telemetry.count_executed_statement();
             return Ok(GeneralExecuteOutcome::Rows(match process_statement {
                 Some(statement) => result.with_process_statement(statement),
@@ -2280,6 +2293,28 @@ impl<'s> ClusterServerSession<'s> {
                     .map_err(map_error)
             }
         });
+        let attempt = attempt.map_err(|error| {
+            if let Some(prepared) = &prepared_ast {
+                let driver_error = crate::DriverError::Mysql(
+                    tidb_terror::MysqlError::from_parts(
+                        error.code,
+                        error.state,
+                        error.message.clone(),
+                    )
+                    .with_identity_opt(error.identity),
+                );
+                let mapped = prepared.schema_change_error(schema_version, driver_error);
+                if mapped.clone().to_mysql_error().code != error.code {
+                    return map_error(mapped);
+                }
+            }
+            error
+        });
+        if attempt.is_ok() {
+            if let Some(prepared) = &prepared_ast {
+                prepared.set_schema_version(schema_version);
+            }
+        }
         self.node.activate_statement_txn = false;
         self.session.set_binary_prepared_execution(false);
         self.session.close_context_of_prepared_stmt();

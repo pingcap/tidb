@@ -251,6 +251,7 @@ mod tests {
         vars.tls_connection_state = Some(TlsConnectionState {
             version: 0x0304,
             cipher_suite: 0x1301,
+            ..Default::default()
         });
         let secure = get_status_vars(Some(&vars)).unwrap();
         assert_eq!(

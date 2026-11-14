@@ -361,6 +361,10 @@ pub struct SessionVars {
     /// reports. Empty until a front end authenticates one.
     /// (Go `SessionVars.User (rendered)`.)
     pub current_user: Option<String>,
+    /// Go `SessionVars.User.AuthPlugin`.
+    pub auth_plugin: String,
+    /// Go `SessionVars.ConnectionInfo`.
+    pub connection_info: Option<std::sync::Arc<crate::connection_info::ConnectionInfo>>,
     /// Go `SessionVars.User.AuthUsername@AuthHostname (rendered)`.
     pub login_user: Option<String>,
     /// Go `SessionVars.ActiveRoles`: the `(user, host)` of each role `SET
@@ -552,12 +556,14 @@ fn resolve_session_time_zone_value(written: &str) -> tidb_datatype::SessionTimeZ
 }
 
 /// Go `crypto/tls.ConnectionState`, the fields TiDB reads.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TlsConnectionState {
     /// Go `Version`.
     pub version: u16,
     /// Go `CipherSuite`.
     pub cipher_suite: u16,
+    /// Go `PeerCertificates`, represented by each certificate's DER `Raw` bytes.
+    pub peer_certificates: Vec<Vec<u8>>,
 }
 
 impl Default for SessionVars {
@@ -582,6 +588,8 @@ impl Default for SessionVars {
             sys_warning_count: 0,
             sys_error_count: 0,
             current_user: None,
+            auth_plugin: String::new(),
+            connection_info: None,
             active_roles: std::sync::Arc::default(),
             login_user: None,
             connection_id: None,

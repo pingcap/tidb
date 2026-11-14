@@ -705,9 +705,16 @@ pub fn cluster_session_stack(
         },
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    // Go `BootstrapSession`: extension bootstrap follows InitBindingHandle.
+    tidb_session::extensionimpl::bootstrap::bootstrap(
+        Arc::new(tidb_sqlexec::BackgroundContext),
+        &factory,
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     // Go `UpdateTableStatsLoop`, after the binding handle: the cache refresh
     // runs on the domain's sessions.
-    let (stats_reloader, async_stats_loader) = tidb_session::domain::real_tikv_node::spawn_node_stats(
+    let (stats_reloader, async_stats_loader) =
+        tidb_session::domain::real_tikv_node::spawn_node_stats(
         Arc::clone(&stats),
         Arc::clone(&factory.catalog),
         config.stats_lease,

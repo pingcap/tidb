@@ -474,6 +474,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         &self,
         user: &str,
         host: &str,
+        privileges: (bool, bool),
     ) -> Result<(), DriverError> {
         if self.privilege_checks_bypassed()
             || self.privilege_registry().is_none()
@@ -481,9 +482,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         {
             return Ok(());
         }
-        if self.has_dynamic_privilege("SYSTEM_USER", false)
-            || self.has_dynamic_privilege("RESTRICTED_USER_ADMIN", false)
-        {
+        if privileges.0 || privileges.1 {
             return Ok(());
         }
         if self.target_has_dynamic_privilege(user, host, "SYSTEM_USER") {
@@ -1035,8 +1034,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
     ///
     /// Returns the account's `(authentication_string, plugin)` pair. An
     /// unrecognized plugin name is Go's `ErrPluginIsNotLoaded` (1524): this
-    /// tier registers no extension auth plugins, so any name outside
-    /// [`tidb_privilege::CREATE_USER_PLUGINS`] can never be loaded. A missing
+    /// checks both built-in names and Go's registered extension plugins. A missing
     /// `IDENTIFIED` clause uses the live `default_authentication_plugin` and
     /// an empty authentication string, as Go's account executor does.
     fn resolve_auth_string_and_plugin(
@@ -1203,6 +1201,11 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         users: &[tidb_ast::UserSpec],
     ) -> Result<(), DriverError> {
         self.require_drop_user_privilege(is_role)?;
+        // Go `executeDropUser` evaluates both once, before walking targets.
+        let privileges = (
+            self.has_dynamic_privilege("SYSTEM_USER", false),
+            self.has_dynamic_privilege("RESTRICTED_USER_ADMIN", false),
+        );
         // Go walks the accounts in order inside one transaction: the first
         // missing account (without IF EXISTS) stops the walk and is the only
         // one the error names, a missing one under IF EXISTS is Note 3162,
@@ -1230,7 +1233,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                         .gen_with_stack_by_args(&[account.into()]),
                 ));
             }
-            self.require_system_user_privilege_over(&spec.user, &spec.host)?;
+            self.require_system_user_privilege_over(&spec.user, &spec.host, privileges)?;
         }
         for spec in users {
             if self.user_exists(&spec.user, &spec.host)? {

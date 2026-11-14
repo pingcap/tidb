@@ -786,6 +786,25 @@ impl ClientStream {
         }
     }
 
+    /// Go `clientConn.getTLSState`: snapshot the negotiated state and peer certificates.
+    pub fn tls_connection_state(&self) -> Option<tidb_variable::vars::TlsConnectionState> {
+        let guard = self.inner.lock().expect("client stream lock");
+        let ClientStreamInner::Tls(stream, _) = &*guard else {
+            return None;
+        };
+        Some(tidb_variable::vars::TlsConnectionState {
+            version: stream.conn.protocol_version().map(u16::from)?,
+            cipher_suite: u16::from(stream.conn.negotiated_cipher_suite()?.suite()),
+            peer_certificates: stream
+                .conn
+                .peer_certificates()
+                .unwrap_or_default()
+                .iter()
+                .map(|cert| cert.as_ref().to_vec())
+                .collect(),
+        })
+    }
+
     /// Applies the session's command read timeout to the underlying socket.
     ///
     /// TLS changes the byte codec, not the socket authority. Updating the
@@ -1232,6 +1251,12 @@ mod account_tls_batch_handshake_tests {
                 );
                 drop(guard);
                 assert!(stream.verified_tls_peer().is_none());
+            }
+            // Go AuthenticateRequest.ConnState.PeerCertificates (x01_extension Go probe).
+            let state = stream.tls_connection_state().unwrap();
+            assert_eq!(state.peer_certificates.is_empty(), client_kind == 0);
+            for cert in &state.peer_certificates {
+                assert!(x509_parser::parse_x509_certificate(cert).is_ok());
             }
             let verified = stream.has_verified_client_certificate();
             let registry = PrivilegeRegistry::default();

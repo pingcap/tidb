@@ -612,6 +612,16 @@ pub trait Columns {
     /// `CURRENT_USER()` is the matched grant identity (`String()`) and
     /// `USER()` is the login identity (`LoginString()`). `None` is a session
     /// with no authenticated user at all.
+    /// Go `SessionVars.ConnectionInfo`.
+    fn connection_info(
+        &self,
+    ) -> Option<std::sync::Arc<tidb_variable::connection_info::ConnectionInfo>> {
+        None
+    }
+    /// Go `SessionVars.User.AuthPlugin`.
+    fn auth_plugin(&self) -> String {
+        String::new()
+    }
     fn current_user(&self) -> Option<String> {
         None
     }
