@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	lightningcommon "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
@@ -55,6 +56,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func hasModifyFlag(col *model.ColumnInfo) bool {
@@ -1784,9 +1787,16 @@ func isRetryableModifyColumnReorgJobError(err error, jobErrCnt int64) bool {
 	if jobErrCnt+1 >= vardef.GetDDLErrorCountLimit() {
 		return false
 	}
+	// A permission failure is permanent even if its message mentions a retryable cause.
+	if status.Code(errors.Cause(err)) == codes.PermissionDenied {
+		return false
+	}
 	// Modify column reorg can return deterministic data conversion errors. Retrying unknown errors may
 	// cause long retry loops and block the job from rolling back.
-	return isRetryableError(err, false)
+	if rpcStatus, ok := status.FromError(errors.Cause(err)); ok && rpcStatus.Code() == codes.Unknown {
+		return isRetryableError(err, false)
+	}
+	return lightningcommon.IsRetryableError(err) || isRetryableError(err, false)
 }
 
 func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, oldColName ast.CIStr) error {
