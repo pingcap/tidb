@@ -1844,38 +1844,17 @@ func (rc *LogClient) PreSplitRegions(
 		return false, errors.Annotate(err, "pre-split: load DML files")
 	}
 
-	var fileCount int
 	startTime := time.Now()
-	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
-		if r.Err != nil {
-			return false, errors.Annotate(r.Err, "pre-split: iterate DML files")
-		}
-		file := r.Item
-		if file.IsMeta {
-			continue
-		}
-		if _, exist := rules[file.TableId]; !exist {
-			continue
-		}
-		splitHelper, exist := strategy.TableSplitter[file.TableId]
-		if !exist {
-			splitHelper = split.NewSplitHelper()
-			strategy.TableSplitter[file.TableId] = splitHelper
-		}
-		splitHelper.Merge(split.Valued{
-			Key: split.Span{
-				StartKey: file.StartKey,
-				EndKey:   file.EndKey,
-			},
-			Value: split.Value{
-				Size:   file.Length,
-				Number: file.NumberOfEntries,
-			},
-		})
-		fileCount++
+	workers := preSplitMergeWorkers()
+	tableSplitters, fileCount, err := mergeDMLFilesByTable(ctx, logIter, rules, workers)
+	if err != nil {
+		return false, errors.Annotate(err, "pre-split: iterate DML files")
 	}
+	strategy.TableSplitter = tableSplitters
 	log.Info("pre-split: merged all files",
 		zap.Int("file-count", fileCount),
+		zap.Int("tables", len(tableSplitters)),
+		zap.Int("workers", workers),
 		zap.Duration("merge-took", time.Since(startTime)))
 
 	if fileCount == 0 {
