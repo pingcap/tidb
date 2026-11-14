@@ -54,16 +54,15 @@ fn ddl_error_count_limit_publishes_set_load_and_reset() {
         .run("SET GLOBAL max_allowed_packet = 67108864")
         .unwrap();
     assert_eq!(tidb_vardef::ddl_error_count_limit(), 7);
-    globals.load_from_cluster(vec![(
-        "tidb_ddl_error_count_limit".to_owned(),
-        "0".to_owned(),
-    )]);
+    // Go rebuildSysVarCache reads the live table itself.
+    session.run("REPLACE INTO mysql.global_variables VALUES ('tidb_ddl_error_count_limit','0')").unwrap();
+    globals.rebuild_sys_var_cache().unwrap();
     assert_eq!(tidb_vardef::ddl_error_count_limit(), 0);
     assert!(session
         .run("SET GLOBAL tidb_ddl_error_count_limit = 'invalid'")
         .is_err());
     assert_eq!(tidb_vardef::ddl_error_count_limit(), 0);
-    let scratch = tidb_domain::global_sysvars::GlobalSysvars::from_cluster_rows(vec![(
+    let _scratch = tidb_domain::global_sysvars::GlobalSysvars::from_cluster_rows(vec![(
         "tidb_ddl_error_count_limit".to_owned(),
         "9".to_owned(),
     )]);
@@ -72,9 +71,11 @@ fn ddl_error_count_limit_publishes_set_load_and_reset() {
         0,
         "staged globals are private"
     );
-    globals.replace_from(&scratch);
+    session.run("REPLACE INTO mysql.global_variables VALUES ('tidb_ddl_error_count_limit','9')").unwrap();
+    globals.rebuild_sys_var_cache().unwrap();
     assert_eq!(tidb_vardef::ddl_error_count_limit(), 9);
-    globals.reset("tidb_ddl_error_count_limit").unwrap();
+    session.run("DELETE FROM mysql.global_variables WHERE variable_name='tidb_ddl_error_count_limit'").unwrap();
+    globals.rebuild_sys_var_cache().unwrap();
     assert_eq!(
         tidb_vardef::ddl_error_count_limit(),
         tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT
@@ -644,9 +645,8 @@ fn default_authentication_plugin_global_validation_matches_go() {
 
 #[test]
 fn statement_context_reads_global_sysvars_through_the_live_accessor() {
-    let session = Session::new();
-    // The session's own live GLOBAL table, whichever tier owns it.
-    let globals = session.vars().global_sysvars();
+    let (session, mut peer, _) = two_sessions_sharing_globals();
+    // Go's statement context retains a live accessor across a peer's SET.
     let context = session.statement_context(false);
     let read = || {
         tidb_exprctx::Columns::sysvar(
@@ -657,13 +657,7 @@ fn statement_context_reads_global_sysvars_through_the_live_accessor() {
     };
 
     assert_eq!(read(), Some(Datum::Bytes(b"OFF".to_vec())));
-    globals
-        .set_with_time_zone(
-            "validate_password.enable",
-            "ON".to_owned(),
-            &tidb_datatype::SessionTimeZone::utc(),
-        )
-        .unwrap();
+    peer.run("SET GLOBAL validate_password.enable=ON").unwrap();
     assert_eq!(read(), Some(Datum::Bytes(b"ON".to_vec())));
 }
 
@@ -1701,10 +1695,8 @@ fn committer_concurrency_updates_the_process_authority() {
         Restore(tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst));
     let (mut first, mut second, globals) = two_sessions_sharing_globals();
 
-    globals.load_from_cluster([(
-        tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY.to_owned(),
-        "256".to_owned(),
-    )]);
+    first.run("REPLACE INTO mysql.global_variables VALUES ('tidb_committer_concurrency','256')").unwrap();
+    globals.rebuild_sys_var_cache().unwrap();
     assert_eq!(
         tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst),
         256,
@@ -1745,15 +1737,15 @@ fn committer_concurrency_updates_the_process_authority() {
         "validated but uncommitted scratch state must remain private"
     );
 
-    globals.replace_from(&scratch);
+    first.run("REPLACE INTO mysql.global_variables VALUES ('tidb_committer_concurrency','4096')").unwrap();
+    globals.rebuild_sys_var_cache().unwrap();
     assert_eq!(
         tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst),
         4096,
         "committed cluster state must publish atomically with the live table"
     );
-    globals
-        .reset(tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY)
-        .unwrap();
+    first.run("DELETE FROM mysql.global_variables WHERE variable_name='tidb_committer_concurrency'").unwrap();
+    globals.rebuild_sys_var_cache().unwrap();
     assert_eq!(
         tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst),
         i32::try_from(tidb_vardef::defaults::DEF_TIDB_COMMITTER_CONCURRENCY)
@@ -1836,6 +1828,8 @@ fn a_session_only_variable_still_refuses_set_global() {
     assert_eq!(error.to_mysql_error().code, 1228);
 }
 
+/// Go probe `zzprobe/r01.TestRestrictedCurrentSession` pins the instance
+/// row's exclusion from Domain.GetGlobalVar/GetSessionCache.
 /// An instance-scoped value is NOT cluster state: `SET GLOBAL` stores its
 /// row too, but Go `rebuildSysVarCache` keeps it out of the global cache and
 /// the connect-time session seed; the process holds it in a `vardef` atomic.
@@ -2853,7 +2847,8 @@ fn collection_batch_sql_publication_preserves_fractional_wait_and_scratch_isolat
     let scratch = tidb_domain::global_sysvars::GlobalSysvars::from_cluster_rows([(name.to_owned(), "8".to_owned())]);
     scratch.set_pd_region_policy(policy.clone());
     assert_eq!(policy.0.load(Ordering::SeqCst), 1_250_000);
-    globals.replace_from(&scratch);
+    session.run("REPLACE INTO mysql.global_variables VALUES ('tidb_tso_client_batch_max_wait_time','8')").unwrap();
+    globals.rebuild_sys_var_cache().unwrap();
     assert_eq!(policy.0.load(Ordering::SeqCst), 8_000_000);
     peer.run("SET GLOBAL tidb_tso_client_batch_max_wait_time=DEFAULT")
         .unwrap();

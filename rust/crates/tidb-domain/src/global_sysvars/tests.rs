@@ -37,6 +37,43 @@ mod session_vars {
 
     use super::*;
 
+    /// Go `TestSetSysVar` (`pkg/sessionctx/variable/tests/variable_test.go`):
+    /// the require_secure_transport setter immediately updates its runtime
+    /// hook. Go `session.SetGlobalSysVar` does this before cache notification,
+    /// so a failed `rebuildSysVarCache` must not suppress the setter's hook.
+    #[test]
+    fn test_set_sys_var() {
+        use std::sync::atomic::Ordering::SeqCst;
+
+        let _serialised = process_switch_tests();
+        struct Restore(bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                tidb_tls::REQUIRE_SECURE_TRANSPORT.store(self.0, SeqCst);
+            }
+        }
+        let _restore = Restore(tidb_tls::REQUIRE_SECURE_TRANSPORT.load(SeqCst));
+        let globals = GlobalSysvars::new();
+        globals.rebuild_sys_var_cache().unwrap();
+        let executor = Arc::new(tidb_sqlexec_mock::MockRestrictedSqlExecutor::new());
+        globals.set_restricted_sql_executor(executor.clone());
+        for (value, expected) in [("ON", true), ("OFF", false), ("ON", true)] {
+            executor.expect().exec_restricted_sql(move |_, _, sql, _| {
+                assert_eq!(sql, crate::sysvar_cache::SYSVAR_TABLE_QUERY);
+                assert_eq!(tidb_tls::REQUIRE_SECURE_TRANSPORT.load(SeqCst), expected);
+                Err("sysvar cache fetch failed".into())
+            });
+            globals.set("require_secure_transport", value.to_owned()).unwrap();
+            assert_eq!(tidb_tls::REQUIRE_SECURE_TRANSPORT.load(SeqCst), expected);
+        }
+        assert!(globals.set("require_secure_transport", "2".to_owned()).is_err());
+        assert!(tidb_tls::REQUIRE_SECURE_TRANSPORT.load(SeqCst));
+        let scratch = GlobalSysvars::from_cluster_rows([]);
+        scratch.set("require_secure_transport", "OFF".to_owned()).unwrap();
+        assert!(tidb_tls::REQUIRE_SECURE_TRANSPORT.load(SeqCst));
+        executor.verify();
+    }
+
     struct RestoreAnalyzeDefaults {
         buckets: u64,
         top_n: u64,
@@ -1150,7 +1187,11 @@ mod pd_region_batch_tests {
         let name = tidb_vardef::tidb_vars::TIDB_ENABLE_BATCH_QUERY_REGION;
         globals.set(name, "ON".to_owned()).unwrap();
         globals.set(name, "OFF".to_owned()).unwrap();
-        assert_eq!(*policy.0.lock().unwrap(), vec![false, true, false]);
+        // Go `session.SetGlobalSysVar` calls the hook, then its cache
+        // notification calls it again. Captured by zzprobe/r01_transport:
+        // explicit_set_and_rebuild_hooks=[ON ON OFF OFF]. The first OFF
+        // below is the policy's initialization from the registry default.
+        assert_eq!(*policy.0.lock().unwrap(), vec![false, true, true, false, false]);
     }
 
     /// Go maps the `tidb_tso_client_rpc_mode` enum onto a concurrency and

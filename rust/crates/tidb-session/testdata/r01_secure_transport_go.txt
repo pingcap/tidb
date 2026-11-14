@@ -1,0 +1,6 @@
+R01 transport stored=ON cached=ON hook=true
+R01 transport unchanged=ON hook=true
+R01 transport stored=OFF cached=OFF hook=false
+R01 transport unchanged=OFF hook=false
+R01 transport stored=ON cached=ON hook=true
+R01 transport unchanged=ON hook=true

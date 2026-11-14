@@ -68,6 +68,8 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     /// Go `infoschema`'s `TableSizeStats` image: the statement's catalog
     /// with the table-size cache folded in.
     fn table_storage_statistics_catalog(&mut self) -> Result<crate::SessionExtendedInfoSchema, DriverError>;
+    /// Go `fetchShowTableStatus`'s current-session restricted SELECT.
+    fn show_table_status_rows(&mut self, database: &str) -> Result<Vec<Vec<Datum>>, DriverError>;
     /// Go `statstypes.ColumnStatsUsage` storage reader.
     fn column_stats_usage_provider(&self) -> Option<std::sync::Arc<dyn ColumnStatsUsageProvider>>;
     /// Go's `mysql.analyze_jobs` reader.
@@ -676,8 +678,6 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             T::TableStatus => {
                 let database = contents.db_name.clone();
                 self.require_visible_database(&database)?;
-                let ctx = self.statement_context(false);
-                let visibility = self.schema_visibility();
                 let catalog = self.table_storage_statistics_catalog()?;
                 if catalog.table_names(&database).is_none() {
                     return Err(DriverError::from(
@@ -685,7 +685,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                             .gen_with_stack_by_args(&[database.into()]),
                     ));
                 }
-                crate::infoschema_reader::show_table_status_rows(&catalog, &visibility, &ctx, &database)
+                self.show_table_status_rows(&database)?
                     .into_iter()
                     .filter(|row| {
                         let name = go_to_lower(tidb_datatype::datum_text::sysvar_datum_text(&row[0]).unwrap_or_default());

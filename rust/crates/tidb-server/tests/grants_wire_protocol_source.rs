@@ -202,13 +202,23 @@ fn skip_grant_table_still_rejects_insecure_transport_before_auth_switch() {
     let tracker = Arc::new(ConnectionTracker::default());
     let store = Arc::new(users().with_skip_grant_table(true));
     let _restore_transport = RestoreRequireSecureTransport::snapshot();
-    // Set on the running server, as Go's `SET GLOBAL`: the store's bootstrap
-    // rebuilds the sysvar cache from `mysql.global_variables`.
+    // Go `session.SetGlobalSysVar` persists the row before notifying the
+    // cache. A direct write to the cache's mirror is lost on the next
+    // rebuild, which correctly fetches mysql.global_variables itself.
     let node = node_over(&store);
-    store
-        .global_vars()
-        .set("require_secure_transport", "ON".to_owned())
-        .expect("valid process-wide transport policy");
+    let mut session = node.new_session().unwrap();
+    session.set_tls_state(Some(tidb_variable::vars::TlsConnectionState {
+        version: 0x0304,
+        cipher_suite: 0x1301,
+        peer_certificates: Vec::new(),
+    }));
+    session.run("SET GLOBAL require_secure_transport = ON").unwrap();
+    assert_eq!(
+        session.run("SELECT variable_value FROM mysql.global_variables WHERE variable_name='require_secure_transport'").unwrap(),
+        tidb_session::StmtResult::Rows(vec![vec![tidb_datatype::Datum::new_string_datum("ON")]])
+    );
+    store.global_vars().rebuild_sys_var_cache().unwrap();
+    assert!(tidb_tls::REQUIRE_SECURE_TRANSPORT.load(std::sync::atomic::Ordering::SeqCst));
     let factory = Arc::clone(node.factory());
     let acceptor = {
         let factory = Arc::clone(&factory);
