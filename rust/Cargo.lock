@@ -4586,6 +4586,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-domain-crossks"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "tidb-config-kerneltype",
+ "tidb-domain-sqlsvrapi",
+ "tidb-failpoint",
+ "tidb-gocontext",
+ "tidb-syssession",
+]
+
+[[package]]
 name = "tidb-domain-globalconfigsync"
 version = "0.0.0"
 dependencies = [
@@ -4758,9 +4770,15 @@ dependencies = [
 name = "tidb-dxf-metering"
 version = "0.0.0"
 dependencies = [
+ "crossbeam-channel",
+ "getrandom 0.3.4",
  "serde_json",
  "tidb-config-configtypes",
+ "tidb-config-kerneltype",
  "tidb-dxf",
+ "tidb-dxf-dxfmetric",
+ "tidb-failpoint",
+ "tidb-gocontext",
  "tidb-objstore-recording",
 ]
 
@@ -9017,6 +9035,7 @@ dependencies = [
  "tidb-go-time-layout",
  "tidb-gocontext",
  "tidb-hack",
+ "tidb-keyspace",
  "tidb-log",
  "tidb-logutil",
  "tidb-memory",

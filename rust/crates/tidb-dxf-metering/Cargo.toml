@@ -5,12 +5,18 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Go pkg/dxf/framework/metering: the distributed execution framework's metering recorder (the classic kernel's surface)."
+description = "Go pkg/dxf/framework/metering: the distributed execution framework's recorders, delta flushes and retries."
 
 [lints]
 workspace = true
 
 [dependencies]
+getrandom.workspace = true
+crossbeam-channel = "0.5"
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-failpoint = { path = "../tidb-failpoint" }
+tidb-dxf-dxfmetric = { path = "../tidb-dxf-dxfmetric" }
 serde_json.workspace = true
 tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 tidb-dxf = { path = "../tidb-dxf" }

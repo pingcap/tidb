@@ -174,6 +174,7 @@ pub fn server_info_key_path(id: &str) -> String {
 /// Go `Syncer`, the server-info half.
 pub struct Syncer {
     etcd: Option<Arc<dyn EtcdOps>>,
+    min_start_ts_etcd: Option<Arc<dyn EtcdOps>>,
     info: Mutex<ServerInfo>,
     server_info_path: String,
     /// The session's lease, or `None` before `new_session_and_store_server_info`.
@@ -204,6 +205,7 @@ impl Syncer {
         let server_info_path = server_info_key_path(&info.static_info.id);
         let endpoint_claim = StatusEndpointClaim::new(&info, claim_enabled);
         Self {
+            min_start_ts_etcd: etcd.clone(),
             etcd,
             info: Mutex::new(info),
             server_info_path,
@@ -214,9 +216,22 @@ impl Syncer {
         }
     }
 
+    /// Go `NewCrossKSSyncer`: a virtual server participating in target schema changes.
+    pub fn new_cross_ks_syncer(mut info: ServerInfo, etcd: Option<Arc<dyn EtcdOps>>, target_ks: &str) -> Self {
+        info.static_info.assumed_keyspace = target_ks.to_owned();
+        Self::new(info, etcd)
+    }
+
+    /// Go `InfoSyncer.getEtcdClientForMinStartTS`: unified GC uses the
+    /// unprefixed handle; keyspace-level GC uses the domain's namespaced handle.
+    pub fn with_min_start_ts_etcd(mut self, client: Option<Arc<dyn EtcdOps>>) -> Self {
+        self.min_start_ts_etcd = client;
+        self
+    }
+
     /// Go storeMinStartTS: decimal TSO under the current server-info lease.
     pub fn store_min_start_ts(&self, start_ts: u64) -> Result<(), String> {
-        let Some(etcd) = &self.etcd else {
+        let Some(etcd) = &self.min_start_ts_etcd else {
             return Ok(());
         };
         let key = format!(
@@ -237,7 +252,7 @@ impl Syncer {
 
     /// Go RemoveMinStartTS, after the reporting worker has stopped.
     pub fn remove_min_start_ts(&self) {
-        if let Some(etcd) = &self.etcd {
+        if let Some(etcd) = &self.min_start_ts_etcd {
             let key = format!(
                 "/tidb/server/minstartts/{}",
                 self.get_local_server_info().static_info.id
@@ -671,6 +686,7 @@ pub fn server_info_from_config(
             port: config.port,
             status_port: config.status.status_port,
             lease: config.lease.clone(),
+            keyspace: config.keyspace_name.clone(),
             start_timestamp,
             version_info: crate::serverinfo::VersionInfo {
                 version: tidb_mysql::runtime_versions().server_version,
@@ -1434,4 +1450,51 @@ mod tests {
             "with no client every id answers the local info"
         );
     }
+    /// Go `TestAssumedServerInfoSyncer`.
+    #[test]
+    fn test_assumed_server_info_syncer() {
+        let mut config = tidb_config::config_tree::config::Config::default();
+        config.keyspace_name = "SYSTEM".into();
+        let info = server_info_from_config("1", &config, "", Some(Arc::new(|| 1)), 0);
+        let current = Syncer::new(info.clone(), None).get_local_server_info();
+        assert!(!current.static_info.is_assumed());
+        assert_eq!(current.static_info.keyspace, "SYSTEM");
+        assert!(current.static_info.assumed_keyspace.is_empty());
+        let mut target = Syncer::new_cross_ks_syncer(info, None, "ks1").get_local_server_info();
+        assert!(target.static_info.is_assumed());
+        assert_eq!(target.static_info.keyspace, "SYSTEM");
+        assert_eq!(target.static_info.assumed_keyspace, "ks1");
+        let mut decoded = ServerInfo::default();
+        decoded.unmarshal(&target.marshal().unwrap()).unwrap();
+        assert_eq!(decoded.static_info.id, target.static_info.id);
+        assert_eq!(decoded.static_info.keyspace, target.static_info.keyspace);
+        assert_eq!(decoded.static_info.assumed_keyspace, target.static_info.assumed_keyspace);
+        assert_eq!(decoded.static_info.json_server_id, 1);
+    }
+
+    /// Go `InfoSyncer.getEtcdClientForMinStartTS`, with the scope decision
+    /// captured by `zzprobe/o15_store.TestKeyspaceGCNamespace`.
+    #[test]
+    fn test_keyspace_gc_namespace() {
+        for keyspace_level in [false, true] {
+            let scoped = Arc::new(FakeEtcd::default());
+            let unprefixed = Arc::new(FakeEtcd::default());
+            let mut info = ServerInfo::default();
+            info.static_info.id = "minimum".into();
+            let client: Arc<dyn EtcdOps> = if keyspace_level { scoped.clone() } else { unprefixed.clone() };
+            let syncer = Syncer::new_with_status_endpoint_claim(info, Some(scoped.clone()), false)
+                .with_min_start_ts_etcd(Some(client));
+            syncer.new_session_and_store_server_info().unwrap();
+            syncer.store_min_start_ts(123).unwrap();
+            let key = "/tidb/server/minstartts/minimum";
+            assert_eq!(scoped.value(key).is_some(), keyspace_level);
+            assert_eq!(unprefixed.value(key).is_some(), !keyspace_level);
+            assert!(scoped.value("/tidb/server/info/minimum").is_some());
+            assert!(unprefixed.value("/tidb/server/info/minimum").is_none());
+            syncer.remove_min_start_ts();
+            assert!(scoped.value(key).is_none());
+            assert!(unprefixed.value(key).is_none());
+        }
+    }
+
 }

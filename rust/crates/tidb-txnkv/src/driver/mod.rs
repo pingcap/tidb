@@ -17,3 +17,6 @@
 
 pub mod tikv_store;
 pub mod transaction_error;
+
+#[cfg(test)]
+mod keyspace_test;

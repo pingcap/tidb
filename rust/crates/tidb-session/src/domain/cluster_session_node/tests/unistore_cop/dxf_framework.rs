@@ -2171,3 +2171,22 @@ fn test_set_scope() {
     );
     rows(&mut tk, r#"set global tidb_service_scope="""#);
 }
+
+/// Go probe `TestStoreKeyspaceIdentitySurvivesConfigChange` in `zzprobe/o15_store`:
+/// changing global config after opening an API V1 store does not change its identity.
+#[test]
+fn test_store_keyspace_identity_survives_config_change() {
+    use tidb_config::config_tree::config::{get_global_config, store_global_config, update_global};
+    let (_stack, tm) = init_table_test();
+    struct Restore(std::sync::Arc<tidb_config::config_tree::config::Config>);
+    impl Drop for Restore {
+        fn drop(&mut self) { store_global_config(std::sync::Arc::clone(&self.0)); }
+    }
+    let _restore = Restore(get_global_config());
+    update_global(|config| config.keyspace_name = "changed_after_open".into());
+    tm.with_new_session(&mut |session| {
+        assert_eq!(session.store_keyspace(), "");
+        assert_eq!(session.sql_server().get_runtime().store_keyspace(), "");
+        Ok(())
+    }).unwrap();
+}

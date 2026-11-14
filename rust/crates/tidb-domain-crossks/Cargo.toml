@@ -1,0 +1,22 @@
+[package]
+name = "tidb-domain-crossks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/domain/crossks runtime ownership and eviction."
+
+[dependencies]
+crossbeam-channel = "0.5"
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-domain-sqlsvrapi = { path = "../tidb-domain-sqlsvrapi" }
+tidb-failpoint = { path = "../tidb-failpoint" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-syssession = { path = "../tidb-syssession" }
+
+[dev-dependencies]
+tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
+
+[lints]
+workspace = true

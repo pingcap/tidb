@@ -296,6 +296,7 @@ members = [
     "crates/tidb-dxf-scheduler",
     "crates/tidb-dxf-testutil",
     "crates/tidb-domain-sqlsvrapi",
+    "crates/tidb-domain-crossks",
     "crates/tidb-gocontext",
     "crates/tidb-gomock",
     "crates/tidb-ingestor-errdef",

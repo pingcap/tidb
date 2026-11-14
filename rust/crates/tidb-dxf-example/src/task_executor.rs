@@ -33,7 +33,7 @@ pub struct TaskExecutorImpl {
 /// Go `newTaskExecutor`.
 #[must_use]
 pub fn new_task_executor(ctx: &Context, task: Task, param: Param) -> Arc<TaskExecutorImpl> {
-    Arc::new_cyclic(|this| {
+    Arc::<TaskExecutorImpl>::new_cyclic(|this| {
         let e = TaskExecutorImpl { base: BaseTaskExecutor::new(ctx, task, param) };
         e.base.set_extension(this.clone());
         e

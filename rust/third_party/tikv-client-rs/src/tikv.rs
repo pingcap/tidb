@@ -1302,6 +1302,12 @@ impl<PdC: PdClient> KvStore<PdC> {
         self.runtime.cluster_id()
     }
 
+    /// Go `pd.IsKeyspaceUsingKeyspaceLevelGC(store.GetCodec().GetKeyspaceMeta())`.
+    pub fn is_keyspace_using_keyspace_level_gc(&self) -> bool {
+        crate::pd::is_keyspace_using_keyspace_level_gc(self.runtime.keyspace_meta.as_ref())
+    }
+
+
     /// Returns the PD/routing client owned by this store.
     pub fn pd_client(&self) -> Arc<PdC> {
         self.inner.pd_client()

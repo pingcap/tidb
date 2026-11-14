@@ -51,8 +51,10 @@ impl tidb_dxf_storage::SessionContext for ClusterStatsSessionContext {
             .unwrap_or(tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_QUERY)
     }
 
+    /// Go `session.GetStore().GetKeyspace`: the opened store owns the identity.
     fn store_keyspace(&self) -> String {
-        tidb_config::config_tree::config::get_global_keyspace_name()
+        self.with_session(|session| Ok(session.node.domain.store_keyspace().to_owned()))
+            .expect("a pooled system session is open")
     }
 
     fn sql_server(&self) -> std::sync::Arc<dyn tidb_domain_sqlsvrapi::Server<dyn tidb_dxf_storage::SessionContext>> {

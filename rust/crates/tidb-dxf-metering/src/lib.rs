@@ -16,12 +16,12 @@
 //! Go `pkg/dxf/framework/metering`: what each task reads from and writes to
 //! object storage and the cluster (`recorder.go`, `data.go`).
 //!
-//! Go writes these records through its `Meter` (`metering.go`, the external
-//! `metering_sdk`) on a next-gen kernel only: on a classic kernel
-//! `RegisterRecorder` hands out an unregistered recorder and
-//! `UnregisterRecorder` / `WriteMeterData` do nothing. This port's kernel is
-//! classic (the next-gen runtime is register row O15), so the `Meter` itself
-//! is not ported.
+//! `Meter` owns recorder lifecycle, delta writes and retry batches. The SDK
+//! object-storage provider construction used by Go `NewMeter` remains external.
+
+/// Go `metering.go`.
+pub mod metering;
+pub use metering::{Meter, MeteringData, MeteringWriter, register_recorder, unregister_recorder, write_meter_data, set_metering};
 
 use std::collections::BTreeMap;
 
@@ -179,23 +179,6 @@ impl Recorder {
             },
         }
     }
-}
-
-/// Go `RegisterRecorder`: on a classic kernel, a recorder no meter reads.
-#[must_use]
-pub fn register_recorder(_task: &TaskBase) -> std::sync::Arc<Recorder> {
-    std::sync::Arc::new(Recorder::default())
-}
-
-/// Go `UnregisterRecorder`: nothing to do on a classic kernel.
-pub fn unregister_recorder(_task_id: i64) {}
-
-/// Go `WriteMeterData`: nothing to write on a classic kernel.
-///
-/// # Errors
-/// Never on a classic kernel.
-pub fn write_meter_data(_ts: i64, _uuid: &str, _items: &[MeterItem]) -> Result<(), String> {
-    Ok(())
 }
 
 #[cfg(test)]

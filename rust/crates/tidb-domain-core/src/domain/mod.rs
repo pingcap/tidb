@@ -641,6 +641,10 @@ pub type BindingHandleSlot =
     Arc<std::sync::OnceLock<Arc<dyn tidb_bindinfo::cluster_binding_seam::ClusterBindings>>>;
 
 pub struct Domain {
+    /// Go `Domain.store.GetKeyspace`: installed from the opened store.
+    store_keyspace: std::sync::OnceLock<String>,
+    /// Go `Domain.unprefixedEtcdCli`: cluster-wide metadata client.
+    unprefixed_etcd_client: std::sync::OnceLock<Arc<tidb_pd_client::EtcdClient>>,
     /// The session package's opener of this domain's internal sessions.
     pub(crate) sys_session_opener: SysSessionOpener,
     pub global_config_syncer: Option<Arc<tidb_domain_globalconfigsync::GlobalConfigSyncer>>,
@@ -1062,6 +1066,8 @@ impl Domain {
             Arc::clone(&transactions),
         ));
         Self {
+            store_keyspace: std::sync::OnceLock::new(),
+            unprefixed_etcd_client: std::sync::OnceLock::new(),
             sys_session_opener,
             transactions,
             bindings: BindingHandleSlot::default(),
@@ -1845,6 +1851,26 @@ impl Domain {
         take_snapshot: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
     ) -> Result<(), std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>> {
         self.take_snapshot.set(take_snapshot)
+    }
+
+    /// Go `Domain.store.GetKeyspace`: set from the actual store during initialization.
+    pub fn install_store_keyspace(&self, keyspace: String) {
+        self.store_keyspace.set(keyspace).expect("store identity installed once");
+    }
+
+    /// Go `Domain.Store().GetKeyspace`; embedded API-V1 stores have no name.
+    pub fn store_keyspace(&self) -> &str {
+        self.store_keyspace.get().map_or("", String::as_str)
+    }
+
+    /// Go `Domain.Init`: retains a handle without a keyspace namespace.
+    pub fn install_unprefixed_etcd_client(&self, client: Arc<tidb_pd_client::EtcdClient>) {
+        let _ = self.unprefixed_etcd_client.set(client);
+    }
+
+    /// Go `Domain.GetUnprefixedEtcdClient`.
+    pub fn unprefixed_etcd_client(&self) -> Option<Arc<tidb_pd_client::EtcdClient>> {
+        self.unprefixed_etcd_client.get().cloned()
     }
 
     /// Installs Go `Domain.etcdClient`, once.

@@ -110,9 +110,15 @@ pub fn cluster_session_stack(
     let mut upgrade_lock: Option<Box<dyn FnOnce() + Send>> = None;
     // Go `tikv.NewKVStore` in `driver.TiKVDriver.Open`: the node's one
     // client-rust store, which loads the txn safe point before serving.
-    let tikv_store = tidb_txnkv::driver::tikv_store::TikvStore::connect_with_security(
+    let mut store_config = tidb_txnkv::driver::tikv_store::cluster_security(&config.cluster_security);
+    // Go `TiKVDriver.OpenWithOptions`: an empty name selects API V1; a
+    // nonempty name resolves PD metadata and selects the API V2 codec.
+    if !config.global_config.keyspace_name.is_empty() {
+        store_config = store_config.with_keyspace(&config.global_config.keyspace_name);
+    }
+    let tikv_store = tidb_txnkv::driver::tikv_store::TikvStore::connect(
         config.pd_endpoints.clone(),
-        &config.cluster_security,
+        store_config,
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     // Go `InfoSyncer.initResourceManagerClient(pdCli)`, which
@@ -130,7 +136,14 @@ pub fn cluster_session_stack(
     global_vars.arm_domain_hooks();
     // Go `domain.NewDomain`'s `etcdClient`: the node's one etcd client, which
     // every owner, syncer, notifier and watch below shares.
-    let etcd = tidb_session::domain::real_tikv_node::connect_etcd_client(config);
+    let unprefixed_etcd = tidb_session::domain::real_tikv_node::connect_etcd_client(config);
+    // Go `Domain.Init`: KV, transactions and watches use the opened store's
+    // namespace. Keep an unprefixed handle for cluster-wide metadata.
+    let etcd = unprefixed_etcd.as_ref().map(|client| {
+        let mut client = client.as_ref().clone();
+        client.set_etcd_cli_by_namespace(&tidb_keyspace::make_keyspace_etcd_namespace(&tikv_store));
+        Arc::new(client)
+    });
     // The cluster's regions as `SPLIT`, `SHOW TABLE ... REGIONS`,
     // `TABLESAMPLE REGIONS()` and the pre-split after CREATE TABLE reach them.
     let region_store: Arc<dyn tidb_kv::region_map::RegionStore> =
@@ -344,7 +357,11 @@ pub fn cluster_session_stack(
             info,
             server_etcd,
             config.report_status,
-        ),
+        ).with_min_start_ts_etcd(if authority.tikv_store().store().is_keyspace_using_keyspace_level_gc() {
+            etcd.clone().map(|client| Arc::new(tidb_ddl::etcd_ops::EtcdClientOps::new(client)) as _)
+        } else {
+            unprefixed_etcd.clone().map(|client| Arc::new(tidb_ddl::etcd_ops::EtcdClientOps::new(client)) as _)
+        }),
     );
     let mut server_info_runner = match tidb_domain_serverinfo::serverinfo_syncer::SyncerRunner::start(
         Arc::clone(&server_info),
@@ -585,6 +602,10 @@ pub fn cluster_session_stack(
         Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
         None => factory,
     };
+    factory.install_store_keyspace(authority.tikv_store().get_keyspace().to_owned());
+    if let Some(client) = &unprefixed_etcd {
+        factory.install_unprefixed_etcd_client(Arc::clone(client));
+    }
     let factory = factory.shared();
     tidb_session::domain::cluster_session_node::NodeServices::new(analyze)
     .with_cluster_peer_client(Arc::new(tidb_executor::cluster_peer::ClusterPeerClient::new(
@@ -775,8 +796,7 @@ pub fn cluster_session_stack(
         &config.global_config.security.session_token_signing_key,
     );
     // Go `Domain.Start` runs `requestUnitsWriterLoop` beside the other domain
-    // loops (`pkg/domain/domain.go:830`). This node serves the null keyspace,
-    // which the ResourceManager request names as Go's `NullKeyspaceID`.
+    // loops (`pkg/domain/domain.go:830`) through the opened store's PD client.
     factory.install_bdr_role_store(
         Arc::new(authority.transaction_opener()),
         TRANSACTION_RPC_TIMEOUT,

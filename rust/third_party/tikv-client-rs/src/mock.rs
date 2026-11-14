@@ -271,7 +271,8 @@ impl MockPdClient {
         self.bucket_updates.lock().unwrap().clone()
     }
 
-    pub(crate) fn set_keyspace_meta(&self, meta: keyspacepb::KeyspaceMeta) {
+    /// Go mock PD keyspace metadata, supplied by callers testing API V2 stores.
+    pub fn set_keyspace_meta(&self, meta: keyspacepb::KeyspaceMeta) {
         *self.keyspace_meta.lock().unwrap() = Some(meta);
     }
 

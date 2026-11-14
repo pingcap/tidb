@@ -183,7 +183,19 @@ pub fn cluster_security(security: &tidb_pd_client::ClusterSecurity) -> tikv_clie
     }
 }
 
+impl<PdC: PdClient> tidb_keyspace::KeyspaceCodec for TikvStore<PdC> {
+    /// Go `tikvStore.GetCodec().GetAPIVersion`.
+    fn is_api_v1(&self) -> bool {
+        self.store.keyspace().api_version() == tikv_client::proto::kvrpcpb::ApiVersion::V1
+    }
+    /// Go `tikvStore.GetCodec().GetKeyspaceID`.
+    fn keyspace_id(&self) -> u32 { self.store.keyspace().context_keyspace_id().unwrap_or(NULL_KEYSPACE_ID) }
+}
+
 impl<PdC: PdClient> TikvStore<PdC> {
+    /// Go `tikvStore.GetKeyspace`: the store identity, independent of config changes.
+    pub fn get_keyspace(&self) -> &str { self.store.keyspace_name().unwrap_or("") }
+
     /// A node store over a client-rust store already built on `runtime`.
     #[must_use]
     pub fn new(runtime: Arc<tokio::runtime::Runtime>, store: KvStore<PdC>) -> Self {

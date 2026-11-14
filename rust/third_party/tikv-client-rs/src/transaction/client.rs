@@ -833,11 +833,13 @@ impl<PdC: PdClient> Client<PdC> {
         self.lock_resolver_context.clone()
     }
 
-    pub(crate) fn keyspace(&self) -> Keyspace {
+    /// Go `KVStore.GetCodec`: the immutable keyspace codec selection.
+    pub fn keyspace(&self) -> Keyspace {
         self.keyspace
     }
 
-    pub(crate) fn keyspace_name(&self) -> Option<&str> {
+    /// Go `KVStore.GetCodec().GetKeyspaceMeta().GetName`.
+    pub fn keyspace_name(&self) -> Option<&str> {
         self.keyspace_name.as_deref()
     }
 

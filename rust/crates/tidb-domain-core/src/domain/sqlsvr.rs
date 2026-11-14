@@ -51,10 +51,9 @@ impl Server<dyn SessionContext> for DomainSqlServer {
 }
 
 impl Runtime<dyn SessionContext> for DomainSqlServer {
-    /// Go `Store().GetKeyspace()`: the node's store is opened for the
-    /// configured keyspace.
+    /// Go `Store().GetKeyspace()`: the immutable identity of the opened store.
     fn store_keyspace(&self) -> String {
-        tidb_config::config_tree::config::get_global_keyspace_name()
+        self.0.store_keyspace().to_owned()
     }
 
     /// Go `SysSessionPool`: the domain's internal sessions, through the DXF

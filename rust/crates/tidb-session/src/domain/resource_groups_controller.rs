@@ -29,8 +29,8 @@ const RESOURCE_GROUP_MAX_WAIT_DURATION: Duration = Duration::from_secs(30);
 
 /// Go `Domain.initResourceGroupsController`: the node's resource-group
 /// controller over the store's PD client (`rmclient.NewResourceGroupController`
-/// with the server ID as its client ID and the store's keyspace -- none, so
-/// `NullKeyspaceID`), started and installed as client-rust's resource-control
+/// with the server ID as its client ID and the opened store's codec keyspace
+/// ID), started and installed as client-rust's resource-control
 /// interceptor (`tikv.SetResourceControlInterceptor`).
 pub fn init_resource_groups_controller(
     store: &tidb_txnkv::driver::tikv_store::TikvStore,
@@ -59,7 +59,7 @@ pub fn start_resource_groups_controller_over<PdC: tikv_client::PdClient>(
             server_id,
             provider,
             None,
-            tikv_client::tikv::NULLSPACE_ID,
+            store.store().keyspace().context_keyspace_id().unwrap_or(tikv_client::tikv::NULLSPACE_ID),
             vec![rmclient::with_max_wait_duration(
                 RESOURCE_GROUP_MAX_WAIT_DURATION,
             )],
@@ -140,3 +140,7 @@ impl<PdC: tikv_client::PdClient> tidb_resourcegroup_runaway::ResourceGroupsContr
         self.controller.get_config()
     }
 }
+
+#[cfg(test)]
+#[path = "resource_groups_keyspace_test.rs"]
+mod keyspace_tests;
