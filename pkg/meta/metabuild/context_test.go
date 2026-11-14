@@ -17,11 +17,13 @@ package metabuild_test
 import (
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -143,6 +145,42 @@ func TestMetaBuildContext(t *testing.T) {
 				return metabuild.WithInfoSchema(val.(infoschemactx.MetaOnlyInfoSchema))
 			},
 			testVals: []any{infoschema.MockInfoSchema(nil), nil},
+		},
+		{
+			name: "tikvFullTextAnalyzer",
+			getter: func(ctx *metabuild.Context) any {
+				analyzer, err := ctx.GetTiKVFullTextAnalyzer()
+				require.NoError(t, err)
+				return analyzer
+			},
+			checkDefault: model.TiKVFullTextIndexInfo{
+				MinTokenSize:   vardef.DefInnodbFtMinTokenSize,
+				MaxTokenSize:   vardef.DefInnodbFtMaxTokenSize,
+				EnableStopword: vardef.DefInnodbFtEnableStopword,
+				NgramTokenSize: vardef.DefNgramTokenSize,
+			},
+			option: func(val any) metabuild.Option {
+				return metabuild.WithTiKVFullTextAnalyzer(val.(model.TiKVFullTextIndexInfo))
+			},
+			testVals: []any{
+				model.TiKVFullTextIndexInfo{ParserType: model.FullTextParserTypeNgramV1, MinTokenSize: 1, MaxTokenSize: 10, EnableStopword: false, NgramTokenSize: 3},
+				metabuild.DefaultTiKVFullTextAnalyzer(),
+			},
+		},
+		{
+			name: "tikvFullTextAnalyzerErr",
+			getter: func(ctx *metabuild.Context) any {
+				_, err := ctx.GetTiKVFullTextAnalyzer()
+				return err
+			},
+			checkDefault: nil,
+			option: func(val any) metabuild.Option {
+				if val == nil {
+					return metabuild.WithTiKVFullTextAnalyzerError(nil)
+				}
+				return metabuild.WithTiKVFullTextAnalyzerError(val.(error))
+			},
+			testVals: []any{errors.New("cannot read"), nil},
 		},
 	}
 	defCtx := metabuild.NewContext()

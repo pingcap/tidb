@@ -1,0 +1,541 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package core_test
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
+)
+
+// TestFullTextIndexPathPlanning covers when the planner offers the full-text
+// index path for MATCH ... AGAINST and when it must not.
+func TestFullTextIndexPathPlanning(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, k int, body text, title text, fulltext index idx_body (body), fulltext index idx_title (title) with parser ngram, key idx_k (k))")
+
+	explain := func(sql string) string {
+		var sb strings.Builder
+		for _, row := range tk.MustQuery("explain format = 'brief' " + sql).Rows() {
+			sb.WriteString(fmt.Sprintln(row...))
+		}
+		return sb.String()
+	}
+	usesIndex := func(sql, index string) {
+		plan := explain(sql)
+		require.Contains(t, plan, "FullTextIndexScan(Build)", plan)
+		require.Contains(t, plan, "index:"+index, plan)
+		// The MATCH is consumed by the path, not re-evaluated above it.
+		require.NotRegexp(t, `Selection.*match_against`, plan)
+	}
+	scans := func(sql string) {
+		plan := explain(sql)
+		require.NotContains(t, plan, "FullTextIndexScan", plan)
+	}
+
+	// Every row of t holds 'hello', and each a distinct k.
+	rows := make([]string, 0, 200)
+	for i := range 200 {
+		rows = append(rows, fmt.Sprintf("(%d, %d, 'hello world %d', '数据库')", i, i, i))
+	}
+	tk.MustExec("insert into t values " + strings.Join(rows, ","))
+
+	// The index authorises the MATCH without the session variable, and
+	// supplies the analyzer the MATCH compiles with. These checks of what
+	// the path does force it; the cost choice is checked below.
+	tk.MustQuery("select @@tidb_enable_local_match_against").Check(testkit.Rows("0"))
+	usesIndex("select id from t use index (idx_body) where match(body) against('+hello' in boolean mode)", "idx_body(body)")
+	usesIndex("select id from t use index (idx_title) where match(title) against('数据库' in boolean mode)", "idx_title(title)")
+	// The path competes on cost: a more selective condition on another index
+	// wins, and the MATCH is then evaluated on the rows it returns.
+	plan := explain("select id from t where match(body) against('+hello' in boolean mode) and k = 1")
+	require.Contains(t, plan, "index:idx_k(k)", plan)
+	require.NotContains(t, plan, "FullTextIndexScan", plan)
+	require.Regexp(t, `Selection.*match_against`, plan)
+	usesIndex("select id from t use index (idx_body) where match(body) against('+hello' in boolean mode) and k = 1", "idx_body(body)")
+	// Each MATCH conjunct offers its own path; one is chosen.
+	plan = explain("select id from t use index (idx_body, idx_title) where match(body) against('+hello' in boolean mode) and match(title) against('世界' in boolean mode)")
+	require.Contains(t, plan, "FullTextIndexScan(Build)", plan)
+	require.Equal(t, 1, strings.Count(plan, "FullTextIndexScan"), plan)
+
+	// Soundness: a MATCH in negative position or in one branch of an OR
+	// selects exactly the rows that must not be dropped.
+	scans("select id from t where not match(body) against('+hello' in boolean mode)")
+	scans("select id from t where match(body) against('+hello' in boolean mode) or k = 1")
+	// Only a boolean-mode MATCH is a predicate the index can serve.
+	scans("select id from t where match(body) against('hello')")
+	tk.MustContainErrMsg("explain select id from t where match(body) against('hello' with query expansion)", "MATCH...AGAINST with this modifier")
+	// A MATCH over a column without an index, or naming several columns.
+	tk.MustExec("set @@tidb_enable_local_match_against = 1")
+	scans("select id from t where match(body, title) against('+hello' in boolean mode)")
+	tk.MustExec("set @@tidb_enable_local_match_against = 0")
+
+	// Hints in both syntaxes can forbid the index, and force it.
+	scans("select id from t ignore index (idx_body) where match(body) against('+hello' in boolean mode)")
+	scans("select id from t use index (idx_k) where match(body) against('+hello' in boolean mode)")
+	scans("select /*+ ignore_index(t, idx_body) */ id from t where match(body) against('+hello' in boolean mode)")
+	usesIndex("select id from t use index (idx_body) where match(body) against('+hello' in boolean mode)", "idx_body(body)")
+	usesIndex("select /*+ use_index(t, idx_body) */ id from t where match(body) against('+hello' in boolean mode)", "idx_body(body)")
+
+	// The index cannot keep an order, even one on its own column.
+	plan = explain("select id from t use index (idx_body) where match(body) against('+hello' in boolean mode) order by body")
+	require.Contains(t, plan, "Sort", plan)
+
+	// An invisible index is not used unless the session opts in.
+	tk.MustExec("alter table t alter index idx_body invisible")
+	scans("select id from t where match(body) against('+hello' in boolean mode)")
+	tk.MustExec("set @@tidb_opt_use_invisible_indexes = 1")
+	usesIndex("select id from t use index (idx_body) where match(body) against('+hello' in boolean mode)", "idx_body(body)")
+	tk.MustExec("set @@tidb_opt_use_invisible_indexes = 0")
+	tk.MustExec("alter table t alter index idx_body visible")
+
+	// Key columns ahead of the tokenized column: the path exists only when
+	// every key column is pinned to one value, which the index then serves
+	// in place of the table filter.
+	tk.MustExec("create table tc (id int primary key, tenant_id int, region varchar(8), body text, fulltext index idx_tenant (tenant_id, body), fulltext index idx_region (tenant_id, region, body))")
+	// Statistics let the index pinning more columns estimate fewer rows, and
+	// make reading the postings of a rare term cheaper than scanning.
+	values := make([]string, 0, 3000)
+	for i := 1; i <= 3000; i++ {
+		body := "world filler text"
+		if i%50 == 0 {
+			body = "hello world"
+		}
+		values = append(values, fmt.Sprintf("(%d, %d, '%s', '%s')", i, 7+i%3, []string{"eu", "us"}[i%2], body))
+	}
+	tk.MustExec("insert into tc values " + strings.Join(values, ","))
+	tk.MustExec("analyze table tc")
+	usesIndex("select id from tc where tenant_id = 7 and match(body) against('+hello' in boolean mode)", "idx_tenant(tenant_id, body)")
+	plan = explain("select id from tc where tenant_id = 7 and match(body) against('+hello' in boolean mode)")
+	require.Contains(t, plan, "range:[7,7]", plan)
+	require.NotContains(t, plan, "eq(test.tc.tenant_id", plan)
+	usesIndex("select id from tc where tenant_id is null and match(body) against('+hello' in boolean mode)", "idx_tenant(tenant_id, body)")
+	usesIndex("select id from tc where tenant_id = 7 and region = 'eu' and match(body) against('+hello' in boolean mode)", "idx_region(tenant_id, region, body)")
+	plan = explain("select id from tc where tenant_id = 7 and region = 'eu' and match(body) against('+hello' in boolean mode)")
+	require.Contains(t, plan, `range:[7 "eu",7 "eu"]`, plan)
+	require.Equal(t, 1, strings.Count(plan, "FullTextIndexScan"), plan)
+	// A key column left unpinned, or pinned to several values, keeps the
+	// scan; the index still authorises the MATCH.
+	tk.MustQuery("select @@tidb_enable_local_match_against").Check(testkit.Rows("0"))
+	scans("select id from tc where match(body) against('+hello' in boolean mode)")
+	scans("select id from tc where region = 'eu' and match(body) against('+hello' in boolean mode)")
+	scans("select id from tc where tenant_id in (7, 8) and match(body) against('+hello' in boolean mode)")
+	scans("select id from tc where (tenant_id = 7 or tenant_id = 8) and match(body) against('+hello' in boolean mode)")
+	scans("select id from tc where tenant_id > 7 and match(body) against('+hello' in boolean mode)")
+	scans("select id from tc where tenant_id = 7 or match(body) against('+hello' in boolean mode)")
+	usesIndex("select id from tc use index (idx_tenant) where tenant_id = 7 and region = 'eu' and match(body) against('+hello' in boolean mode)", "idx_tenant(tenant_id, body)")
+	scans("select id from tc ignore index (idx_tenant, idx_region) where tenant_id = 7 and match(body) against('+hello' in boolean mode)")
+
+	// The clustered handle ends every entry of the index, so conditions on
+	// a leading prefix of its columns narrow each exact term's posting scan.
+	// They show as the trailing range dimensions and, for a search of exact
+	// terms, are served by the index in place of the table filter.
+	tk.MustExec("create table td (tenant_id bigint, id bigint, body text, primary key (tenant_id, id) clustered, fulltext index idx_body (body))")
+	usesIndex("select id from td use index (idx_body) where tenant_id = 42 and match(body) against('+hello' in boolean mode)", "idx_body(body)")
+	plan = explain("select id from td use index (idx_body) where tenant_id = 42 and match(body) against('+hello' in boolean mode)")
+	require.Contains(t, plan, "range:[42,42]", plan)
+	require.NotContains(t, plan, "eq(test.td.tenant_id", plan)
+	plan = explain("select id from td use index (idx_body) where tenant_id in (42, 43) and match(body) against('+hello' in boolean mode)")
+	require.Contains(t, plan, "range:[42,42], [43,43]", plan)
+	require.NotContains(t, plan, "in(test.td.tenant_id", plan)
+	plan = explain("select id from td use index (idx_body) where tenant_id = 42 and id > 7 and match(body) against('+hello' in boolean mode)")
+	require.Contains(t, plan, "range:(42 7,42 +inf]", plan)
+	require.NotContains(t, plan, "Selection", plan)
+	// A prefix search reads every term with the prefix, which a handle range
+	// cannot narrow, so the condition is also checked on the rows. Reading
+	// the prefix across every tenant costs more than scanning the tenant.
+	scans("select id from td where tenant_id = 42 and match(body) against('hel*' in boolean mode)")
+	plan = explain("select id from td use index (idx_body) where tenant_id = 42 and match(body) against('hel*' in boolean mode)")
+	require.Contains(t, plan, "FullTextIndexScan", plan)
+	require.Contains(t, plan, "range:[42,42]", plan)
+	require.Contains(t, plan, "eq(test.td.tenant_id, 42)", plan)
+	// A condition on a later handle column alone selects no contiguous slice
+	// of a term's postings, and a nonclustered primary key is not in the key.
+	plan = explain("select id from td use index (idx_body) where id = 7 and match(body) against('+hello' in boolean mode)")
+	require.Contains(t, plan, "FullTextIndexScan", plan)
+	require.NotContains(t, plan, "range:", plan)
+	require.Contains(t, plan, "eq(test.td.id, 7)", plan)
+	tk.MustExec("create table tnc (tenant_id bigint, id bigint, body text, primary key (tenant_id, id) nonclustered, fulltext index idx_body (body))")
+	plan = explain("select id from tnc use index (idx_body) where tenant_id = 42 and match(body) against('+hello' in boolean mode)")
+	require.Contains(t, plan, "FullTextIndexScan", plan)
+	require.NotContains(t, plan, "range:", plan)
+	require.Contains(t, plan, "eq(test.tnc.tenant_id, 42)", plan)
+	// An integer handle, alone and after pinned key columns. Without the
+	// hint, reading the rows by their handles wins: the heuristics choose a
+	// point lookup over every other path, including this one.
+	for _, sql := range []string{
+		"select id from t where id in (3, 4) and match(body) against('+hello' in boolean mode)",
+		"select id from t where id = 3 and match(body) against('+hello' in boolean mode)",
+	} {
+		plan = explain(sql)
+		require.Regexp(t, `Point_Get`, plan)
+		require.Regexp(t, `Selection.*match_against`, plan)
+	}
+	plan = explain("select id from t use index (idx_body) where id in (3, 4) and match(body) against('+hello' in boolean mode)")
+	require.Contains(t, plan, "range:[3,3], [4,4]", plan)
+	require.NotContains(t, plan, "in(test.t.id", plan)
+	plan = explain("select id from tc use index (idx_tenant) where tenant_id = 7 and id = 1 and match(body) against('+hello' in boolean mode)")
+	require.Contains(t, plan, "index:idx_tenant(tenant_id, body)", plan)
+	require.Contains(t, plan, "range:[7 1,7 1]", plan)
+	require.NotContains(t, plan, "Selection", plan)
+
+	// The index competes on cost with the other paths. Reading the postings
+	// of a rare term beats scanning the table and analyzing every document,
+	// and beats a weakly selective index; the postings of a term in every
+	// row lose to a selective condition on another index.
+	tk.MustExec("create table tw (id int primary key, k int, body text, fulltext index idx_body (body), key idx_k (k))")
+	values = values[:0]
+	for i := 1; i <= 3000; i++ {
+		body := "world filler text"
+		if i%50 == 0 {
+			body = "hello world"
+		}
+		if i == 1234 {
+			body = "zebra world"
+		}
+		values = append(values, fmt.Sprintf("(%d, %d, '%s')", i, i, body))
+	}
+	tk.MustExec("insert into tw values " + strings.Join(values, ","))
+	tk.MustExec("analyze table tw")
+	usesIndex("select id from tw where match(body) against('+hello' in boolean mode)", "idx_body(body)")
+	usesIndex("select id from tw where k between 1 and 2000 and match(body) against('+hello' in boolean mode)", "idx_body(body)")
+	// A rare term is estimated from the column's statistics through its ILIKE
+	// form, so the index still wins when a LIKE that a scan pushes down to the
+	// storage makes the scan cheap, as applications pair MATCH with LIKE.
+	usesIndex("select id from tw where match(body) against('+zebra' in boolean mode) and body like '%zebra%'", "idx_body(body)")
+	tk.MustQuery("select id from tw where match(body) against('+zebra' in boolean mode) and body like '%zebra%'").Check(testkit.Rows("1234"))
+	// A term in every row: reading its postings and looking up every handle
+	// costs more than scanning the table and analyzing each document.
+	plan = explain("select id from tw where match(body) against('+world' in boolean mode)")
+	require.NotContains(t, plan, "FullTextIndexScan", plan)
+	require.Regexp(t, `Selection.*match_against`, plan)
+	plan = explain("select id from tw where k = 5 and match(body) against('+world' in boolean mode)")
+	require.Contains(t, plan, "index:idx_k(k)", plan)
+	require.NotContains(t, plan, "FullTextIndexScan", plan)
+	require.Regexp(t, `Selection.*match_against`, plan)
+	tk.MustQuery("select id from tw where k = 5 and match(body) against('+world' in boolean mode)").Check(testkit.Rows("5"))
+	// An intersection is costed as it runs: the rare term's postings are
+	// read and the common term's are only sought to them, so the index wins
+	// although reading both lists in full would lose to the scan. A union
+	// reads every list in full, and still does.
+	usesIndex("select id from tw where match(body) against('+zebra +world' in boolean mode)", "idx_body(body)")
+	tk.MustQuery("select id from tw where match(body) against('+zebra +world' in boolean mode)").Check(testkit.Rows("1234"))
+	usesIndex("select id from tw where match(body) against('+world +zebra' in boolean mode)", "idx_body(body)")
+	usesIndex("select id from tw where match(body) against('+zebra -world' in boolean mode)", "idx_body(body)")
+	tk.MustQuery("select id from tw where match(body) against('+zebra -world' in boolean mode)").Check(testkit.Rows())
+	scans("select id from tw where match(body) against('zebra world' in boolean mode)")
+
+	// A literal search string is the same in every execution, so a plan with
+	// the index is cached like any other, and a cached copy reads the same.
+	tk.MustExec("prepare stmt from 'select id from tw use index (idx_body) where match(body) against(''+zebra'' in boolean mode)'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows("1234"))
+	tk.MustQuery("execute stmt").Check(testkit.Rows("1234"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// So is the plan a literal search string gets when it scans.
+	tk.MustExec("prepare stmt from 'select count(*) from tw where match(body) against(''+world'' in boolean mode)'")
+	tk.MustQuery("execute stmt")
+	tk.MustQuery("execute stmt")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	require.NotContains(t, explain("select count(*) from tw where match(body) against('+world' in boolean mode)"), "FullTextIndexScan")
+
+	// The index cannot keep an order, but a limit over an order is still
+	// planned, with the rows sorted above it.
+	tk.MustQuery("select id from tw use index (idx_body) where match(body) against('+hello' in boolean mode) order by id limit 2").Check(testkit.Rows("50", "100"))
+	tk.MustQuery("select id from tw use index (idx_body) where match(body) against('+hello' in boolean mode) order by id desc limit 1").Check(testkit.Rows("3000"))
+
+	// The key-column point and the handle ranges are baked into the plan,
+	// and not rebuilt from the conditions when it is reused: a plan is cached
+	// when they are literals, and searches what it was built for, and is not
+	// when they come from parameters.
+	tk.MustExec("create table tp (id int primary key, tenant_id int, body text, fulltext index idx (tenant_id, body))")
+	tk.MustExec("insert into tp values (1, 7, 'hello'), (2, 8, 'hello'), (3, 7, 'hello'), (4, 7, 'bye')")
+	tk.MustExec("prepare stmt from 'select id from tp use index (idx) where tenant_id = 7 and id > 1 and match(body) against(''+hello'' in boolean mode)'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows("3"))
+	tk.MustQuery("execute stmt").Check(testkit.Rows("3"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("prepare stmt from 'select id from tp use index (idx) where tenant_id = ? and id > ? and match(body) against(''+hello'' in boolean mode) order by id'")
+	for _, c := range []struct{ tenant, id, rows string }{{"7", "0", "1 3"}, {"8", "0", "2"}, {"7", "1", "3"}} {
+		tk.MustExec("set @tenant = " + c.tenant + ", @id = " + c.id)
+		tk.MustQuery("execute stmt using @tenant, @id").Check(testkit.Rows(strings.Fields(c.rows)...))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+
+	// The index is read from TiKV, which the session may rule out.
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash,tidb'")
+	tk.MustContainErrMsg("select id from tw use index (idx_body) where match(body) against('+zebra' in boolean mode)", "No access path for table 'tw'")
+	tk.MustExec("set @@tidb_isolation_read_engines = default")
+
+	// A search string given as a parameter, as drivers send it by default,
+	// is searched through the index with its value in each execution. Such a
+	// plan is kept out of the plan cache, so a later value is never searched
+	// with the plan built for an earlier one.
+	lastPlan := func() string {
+		tkProcess := tk.Session().ShowProcess()
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: []*sessmgr.ProcessInfo{tkProcess}})
+		var sb strings.Builder
+		for _, row := range tk.MustQuery(fmt.Sprintf("explain format = 'brief' for connection %d", tkProcess.ID)).Rows() {
+			sb.WriteString(fmt.Sprintln(row...))
+		}
+		return sb.String()
+	}
+	tk.MustExec("prepare pstmt from 'select count(*) from tw where match(body) against(? in boolean mode)'")
+	for _, c := range []struct{ search, rows string }{
+		{"+zebra", "1"},
+		{"+zebra", "1"},
+		{"+hello", "60"},
+	} {
+		tk.MustExec(fmt.Sprintf("set @search = '%s'", c.search))
+		tk.MustQuery("execute pstmt using @search").Check(testkit.Rows(c.rows))
+		plan := lastPlan()
+		require.Contains(t, plan, "FullTextIndexScan", plan)
+		require.Contains(t, plan, fmt.Sprintf("fulltext:%q", c.search), plan)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+	// The same holds for a literal under the non-prepared plan cache, which
+	// turns it into a parameter.
+	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache = 1")
+	for range 2 {
+		tk.MustQuery("select id from tw where match(body) against('+zebra' in boolean mode)").Check(testkit.Rows("1234"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache = default")
+}
+
+// TestLocalMatchAgainstFollowsSessionAnalyzer covers a MATCH evaluated in
+// TiDB over a column without a FULLTEXT index built in TiKV: its analyzer
+// comes from the innodb_ft_* variables in force when it is planned, so a plan
+// is never cached for a later execution under other settings.
+func TestLocalMatchAgainstFollowsSessionAnalyzer(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table s (id int primary key, c text)")
+	tk.MustExec("insert into s values (1, 'the cat'), (2, 'a dog')")
+	tk.MustExec("set tidb_enable_local_match_against = on")
+	tk.MustExec("set innodb_ft_enable_stopword = on")
+	tk.MustExec("prepare st from 'select id from s where match(c) against(? in boolean mode) order by id'")
+	tk.MustExec("prepare lit from 'select id from s where match(c) against(''+the'' in boolean mode) order by id'")
+	tk.MustExec("set @q = '+the'")
+	tk.MustQuery("execute st using @q").Check(testkit.Rows())
+	tk.MustQuery("execute lit").Check(testkit.Rows())
+	tk.MustExec("set innodb_ft_enable_stopword = off")
+	tk.MustQuery("execute st using @q").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute lit").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select id from s where match(c) against('+the' in boolean mode)").Check(testkit.Rows("1"))
+}
+
+// TestLocalMatchAgainstAnalyzerFollowsBaseColumn covers which FULLTEXT index
+// built in TiKV a MATCH takes its analyzer from: the one over the base-table
+// column the MATCH reads, whatever names a derived table, CTE or alias gives
+// it, and never one that only shares a table or column name with it.
+func TestLocalMatchAgainstAnalyzerFollowsBaseColumn(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database other")
+	tk.MustExec("use test")
+	// NGRAM matches 'cat' inside 'concat'; STANDARD, the session default,
+	// matches only the word.
+	tk.MustExec("create table t (id int primary key, body text, fulltext index idx (body) with parser ngram)")
+	tk.MustExec("insert into t values (1, 'a cat'), (2, 'concat')")
+	tk.MustExec("create table other.t (id int primary key, body text)")
+	tk.MustExec("insert into other.t values (1, 'a cat'), (2, 'concat')")
+	tk.MustExec("create table d (id int primary key, c text, fulltext index ft (c) with parser ngram)")
+
+	// The index authorises the MATCH over its own column, under any name.
+	for _, sql := range []string{
+		"select id from t where match(body) against('+cat' in boolean mode) order by id",
+		"select id from t as x where match(x.body) against('+cat' in boolean mode) order by id",
+		"select id from (select id, body from t) d where match(body) against('+cat' in boolean mode) order by id",
+		"select id from (select id, body as c from t) other where match(c) against('+cat' in boolean mode) order by id",
+	} {
+		tk.MustQuery(sql).Check(testkit.Rows("1", "2"))
+	}
+
+	// A column of no indexed table is analyzed with the session's settings,
+	// and needs the session switch to be evaluated locally at all.
+	for _, sql := range []string{
+		"select id from other.t where match(body) against('+cat' in boolean mode) order by id",
+		"select id from (select id, body from other.t) t where match(body) against('+cat' in boolean mode) order by id",
+		"with t as (select id, body from other.t) select id from t where match(body) against('+cat' in boolean mode) order by id",
+		"select 1 as id from (select 'concat' as c) d where match(c) against('+cat' in boolean mode)",
+	} {
+		tk.MustContainErrMsg(sql, "MATCH...AGAINST")
+	}
+	tk.MustExec("set tidb_enable_local_match_against = on")
+	for _, sql := range []string{
+		"select id from other.t where match(body) against('+cat' in boolean mode) order by id",
+		"select id from (select id, body from other.t) t where match(body) against('+cat' in boolean mode) order by id",
+		"with t as (select id, body from other.t) select id from t where match(body) against('+cat' in boolean mode) order by id",
+		"select 1 as id from (select 'a cat' as c) d where match(c) against('+cat' in boolean mode)",
+	} {
+		tk.MustQuery(sql).Check(testkit.Rows("1"))
+	}
+	tk.MustQuery("select 1 from (select 'concat' as c) d where match(c) against('+cat' in boolean mode)").Check(testkit.Rows())
+}
+
+// TestFullTextIndexPostingsProbedWithoutStatistics covers a text column
+// without statistics, as a LONGTEXT column is after ANALYZE: the planner
+// counts the postings of each term in the index, so a common term is known to
+// be common and scans, a rare one is known to be rare and uses the index, and
+// the MATCH's row estimate is the count.
+func TestFullTextIndexPostingsProbedWithoutStatistics(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table lt (id int primary key, body longtext, fulltext index idx (body))")
+	rows := make([]string, 0, 1500)
+	for i := range 1500 {
+		body := "filler text"
+		if i%100 < 46 {
+			body = "alpha filler text"
+		}
+		if i == 7 {
+			body += " zebra"
+		}
+		rows = append(rows, fmt.Sprintf("(%d, '%s')", i, body))
+	}
+	tk.MustExec("insert into lt values " + strings.Join(rows, ","))
+	tk.MustExec("analyze table lt")
+
+	explain := func(sql string) string {
+		var sb strings.Builder
+		for _, row := range tk.MustQuery("explain format = 'brief' " + sql).Rows() {
+			sb.WriteString(fmt.Sprintln(row...))
+		}
+		return sb.String()
+	}
+	plan := explain("select id from lt where match(body) against('+alpha' in boolean mode)")
+	require.NotContains(t, plan, "FullTextIndexScan", plan)
+	// 690 of the 1500 rows hold the term.
+	require.Regexp(t, `Selection 690\.00 root\s+match_against`, plan)
+	plan = explain("select id from lt where match(body) against('+zebra' in boolean mode)")
+	require.Contains(t, plan, "FullTextIndexScan(Build) 1.00 root", plan)
+	tk.MustQuery("select id from lt where match(body) against('+zebra' in boolean mode)").Check(testkit.Rows("7"))
+	plan = explain("select id from lt where match(body) against('+alpha +zebra' in boolean mode)")
+	require.Contains(t, plan, "FullTextIndexScan(Build)", plan)
+}
+
+// TestFullTextIndexPostingsProbeScope covers what the planning-time count of
+// a term's postings reaches and what it must leave to the statistics.
+func TestFullTextIndexPostingsProbeScope(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Every 97th row holds the rare word; half the rows hold the common one.
+	fill := func(table string, rows int) {
+		values := make([]string, 0, rows)
+		for i := 1; i <= rows; i++ {
+			body := "filler text"
+			if i%2 == 0 {
+				body += " alpha"
+			}
+			if i%97 == 0 {
+				body += " rareword"
+			}
+			values = append(values, fmt.Sprintf("(%d, %d, '%s')", i, i%7, body))
+		}
+		tk.MustExec(fmt.Sprintf("insert into %s values %s", table, strings.Join(values, ",")))
+	}
+	// estimates returns the row estimate of every plan line holding op.
+	estimates := func(op, sql string) []float64 {
+		var out []float64
+		for _, row := range tk.MustQuery("explain format = 'brief' " + sql).Rows() {
+			if strings.Contains(fmt.Sprint(row[0]), op) {
+				var est float64
+				_, err := fmt.Sscanf(fmt.Sprint(row[1]), "%f", &est)
+				require.NoError(t, err)
+				out = append(out, est)
+			}
+		}
+		require.NotEmpty(t, out, sql)
+		return out
+	}
+	count := func(sql string) float64 {
+		var n float64
+		_, err := fmt.Sscanf(fmt.Sprint(tk.MustQuery(sql).Rows()[0][0]), "%f", &n)
+		require.NoError(t, err)
+		return n
+	}
+
+	// An index with key columns: the term is counted under the key point,
+	// and the count is the estimate of the rows the search yields there. The
+	// text column has no statistics; the key column has.
+	tk.MustExec("create table tn (id int primary key, tenant int, body longtext, fulltext index idx (tenant, body))")
+	fill("tn", 3000)
+	tk.MustExec("analyze table tn")
+	rare := count("select count(*) from tn where tenant = 3 and body like '%rareword%'")
+	require.Greater(t, rare, 1.0)
+	require.InDelta(t, rare, estimates("FullTextIndexScan", "select id from tn where tenant = 3 and match(body) against('+rareword' in boolean mode)")[0], 0.5)
+	common := count("select count(*) from tn where tenant = 3 and body like '%alpha%'")
+	require.InDelta(t, common, estimates("Projection", "select id + 1 from tn where tenant = 3 and match(body) against('+alpha' in boolean mode)")[0], 1)
+
+	// A table of more partitions than are probed: the count scaled from
+	// those probed is the estimate, not a floor under the statistics' one.
+	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("create table p8 (id int primary key, k int, body longtext, fulltext index idx (body)) partition by hash(id) partitions 8")
+	fill("p8", 3000)
+	rare = count("select count(*) from p8 where body like '%rareword%'")
+	est := estimates("FullTextIndexScan", "select id from p8 where match(body) against('+rareword' in boolean mode)")[0]
+	require.Greater(t, est, rare/3)
+	require.Less(t, est, rare*3)
+
+	// Partitions planned one by one share a term's probe: the first few
+	// count it and the others take their mean, so no partition is left with
+	// the statistics' estimate because the statement's probes ran out.
+	tk.MustExec("set tidb_partition_prune_mode = 'static'")
+	tk.MustExec("create table p40 (id int primary key, k int, body longtext, fulltext index idx (body)) partition by hash(id) partitions 40")
+	fill("p40", 3000)
+	perPartition := estimates("FullTextIndexScan", "select id from p40 where match(body) against('+rareword' in boolean mode)")
+	require.Len(t, perPartition, 40)
+	for _, est := range perPartition {
+		require.Less(t, est, 10.0)
+	}
+	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+
+	// Rows the transaction has written are not in TiKV to be counted, and
+	// those of a temporary table never are: the statistics' estimate stands,
+	// in place of a count of none.
+	tk.MustExec("create table u (id int primary key, k int, body longtext, fulltext index idx (body))")
+	tk.MustExec("begin")
+	fill("u", 3000)
+	require.Greater(t, estimates("Projection", "select id + 1 from u where match(body) against('+alpha' in boolean mode)")[0], 1.0)
+	tk.MustExec("rollback")
+	tk.MustExec("create global temporary table gt (id int primary key, k int, body longtext, fulltext index idx (body)) on commit delete rows")
+	tk.MustExec("begin")
+	fill("gt", 3000)
+	require.Greater(t, estimates("Projection", "select id + 1 from gt where match(body) against('+alpha' in boolean mode)")[0], 1.0)
+	tk.MustExec("rollback")
+}

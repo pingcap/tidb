@@ -2012,8 +2012,10 @@ func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, pro
 	if prop.IsSortItemEmpty() && len(prop.AdvisorySortItems) > 0 && !path.IndexMergeIsIntersection && allSameOrder {
 		hintsProp := prop.CloneEssentialFields()
 		hintsProp.SortItems = hintsProp.AdvisorySortItems
-		candidate.matchWithAdvisorySortItems = true
 		candidate.partialPathMatchResults, _ = isMatchPropForIndexMerge(ds, path, hintsProp)
+		// Without a match result for every partial path, as when one of them
+		// cannot keep any order, there is nothing for the hints to act on.
+		candidate.matchWithAdvisorySortItems = len(candidate.partialPathMatchResults) == len(path.PartialIndexPaths)
 		// When using hints, there are no real sort items, so the overall match
 		// against the original prop is PropNotMatched.
 		candidate.matchPropResult = property.PropNotMatched
@@ -2142,7 +2144,10 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			if len(c.path.Ranges) > 1 {
 				hasMultiRange = true
 			}
-			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && (c.path.Index.Global || c.path.Index.MVIndex)) {
+			// A FULLTEXT index path reads only the postings of the search's
+			// terms, never the whole table, so it is kept to compete on cost.
+			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && (c.path.Index.Global || c.path.Index.MVIndex)) ||
+				isFullTextIndexPath(c.path) {
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
@@ -2665,6 +2670,14 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		}
 		if partPath.IsTablePath() {
 			scan = convertToPartialTableScan(ds, effectiveProp, partPath, partMatchPropResult, byItems)
+		} else if partPath.FullText != nil {
+			if !prop.IsSortItemEmpty() {
+				// The posting-list engine yields handles in handle order,
+				// never in index-column order, so it cannot keep an order
+				// even when the sort items name the indexed column.
+				return base.InvalidTask, nil
+			}
+			scan = physicalop.ConvertToFullTextIndexScan(ds, effectiveProp, partPath)
 		} else {
 			var remainingFilters []expression.Expression
 			scan, remainingFilters, err = physicalop.ConvertToPartialIndexScan(ds, cop.PhysPlanPartInfo, effectiveProp, partPath, partMatchPropResult, byItems)
