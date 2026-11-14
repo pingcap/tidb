@@ -105,6 +105,23 @@ func TestBackfillRetryableErrors(t *testing.T) {
 		require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
 	})
 
+	t.Run("ingest leader changes are retryable for DDL", func(t *testing.T) {
+		retryableErrs := []error{
+			errdef.ErrNoLeader.GenWithStackByArgs(1),
+			errdef.ErrKVNotLeader.GenWithStack("not leader"),
+			errdef.ErrKVRegionNotFound.GenWithStack("region not found"),
+		}
+		for _, err := range retryableErrs {
+			require.True(t, isRetryableError(err, false))
+			require.True(t, isRetryableError(errors.Annotate(err, "wrapped"), false))
+			require.True(t, isRetryableJobError(err, 0))
+			require.False(t, isRetryableJobError(err, vardef.GetDDLErrorCountLimit()-1))
+		}
+
+		require.False(t, isRetryableError(errdef.ErrKVEpochNotMatch.GenWithStack("epoch mismatch"), false))
+		require.False(t, isRetryableJobError(errdef.ErrKVDiskFull.GenWithStack("store disk full"), 0))
+	})
+
 	t.Run("PD TSO stream errors are retryable", func(t *testing.T) {
 		errs := []error{
 			pderr.ErrClientCreateTSOStream.FastGenByArgs(pderr.RetryTimeoutErr),

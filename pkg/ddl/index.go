@@ -2057,6 +2057,11 @@ func isRetryableError(err error, retryUnknown bool) bool {
 		}
 	}
 	originErr := errors.Cause(err)
+	if errdef.ErrNoLeader.Equal(originErr) ||
+		errdef.ErrKVNotLeader.Equal(originErr) ||
+		errdef.ErrKVRegionNotFound.Equal(originErr) {
+		return true
+	}
 	if pderr.ErrClientCreateTSOStream.Equal(originErr) || pderr.ErrClientTSOStreamClosed.Equal(originErr) {
 		return true
 	}
