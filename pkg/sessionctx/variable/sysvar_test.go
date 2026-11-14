@@ -2688,3 +2688,32 @@ func TestRemovedHistoricalStatsVarsWarn(t *testing.T) {
 	require.Len(t, warns, 1)
 	require.Contains(t, warns[0].Err.Error(), "the historical statistics feature has been removed")
 }
+
+// TestInnodbFtTokenSizeBounds covers the ranges of innodb_ft_min_token_size
+// and innodb_ft_max_token_size overlapping: a minimum above the maximum would
+// make the STANDARD analyzer drop every token, so neither can be set past the
+// other.
+func TestInnodbFtTokenSizeBounds(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	ctx := context.Background()
+
+	require.NoError(t, mock.SetGlobalSysVar(ctx, vardef.InnodbFtMaxTokenSize, "10"))
+	require.NoError(t, mock.SetGlobalSysVar(ctx, vardef.InnodbFtMinTokenSize, "10"))
+	require.ErrorContains(t, mock.SetGlobalSysVar(ctx, vardef.InnodbFtMinTokenSize, "11"),
+		"innodb_ft_min_token_size (11) cannot be greater than innodb_ft_max_token_size (10)")
+	val, err := mock.GetGlobalSysVar(vardef.InnodbFtMinTokenSize)
+	require.NoError(t, err)
+	require.Equal(t, "10", val)
+
+	require.NoError(t, mock.SetGlobalSysVar(ctx, vardef.InnodbFtMaxTokenSize, "84"))
+	require.NoError(t, mock.SetGlobalSysVar(ctx, vardef.InnodbFtMinTokenSize, "16"))
+	require.ErrorContains(t, mock.SetGlobalSysVar(ctx, vardef.InnodbFtMaxTokenSize, "15"),
+		"innodb_ft_max_token_size (15) cannot be less than innodb_ft_min_token_size (16)")
+	val, err = mock.GetGlobalSysVar(vardef.InnodbFtMaxTokenSize)
+	require.NoError(t, err)
+	require.Equal(t, "84", val)
+	require.NoError(t, mock.SetGlobalSysVar(ctx, vardef.InnodbFtMaxTokenSize, "16"))
+}
