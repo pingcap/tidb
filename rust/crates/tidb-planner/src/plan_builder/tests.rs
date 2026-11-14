@@ -1771,3 +1771,37 @@ fn empty_isolation_read_engines_keeps_the_config_default() {
     assert!(fresh.tiflash_in_isolation_read);
     assert!(fresh.tidb_in_isolation_read);
 }
+
+/// Go testkit `zzprobe/e05.TestImportIntoPlanFields`, compiled through
+/// `executor.Compiler.Compile` (2026-11-14); see the captured fixture.
+#[test]
+fn test_import_into_plan_fields() {
+    let harness = Harness::new();
+    for line in include_str!("../../testdata/import_into_plan_go.txt").lines() {
+        let fields: Vec<_> = line.split('\t').collect();
+        let stmt = tidb_parser::parse(fields[0]).unwrap();
+        let mut builder = harness.builder();
+        let crate::common_plans::Plan::ImportInto(plan) = builder.build_stmt(&stmt).unwrap() else {
+            panic!("expected Go ImportInto plan");
+        };
+        assert_eq!(plan.path, fields[1]);
+        assert_eq!(plan.format.as_deref().unwrap_or_default(), fields[2]);
+        assert_eq!(plan.names.iter().map(|name| name.names.column.original.as_str()).collect::<Vec<_>>().join(","), fields[3]);
+        assert_eq!(plan.options.iter().map(|opt| opt.name.as_str()).collect::<Vec<_>>().join(","), fields[4]);
+        assert_eq!(plan.select_plan.is_some(), fields[5] == "true");
+        assert_eq!(plan.column_assignments.len(), fields[6].parse::<usize>().unwrap());
+        assert_eq!(plan.columns_and_user_vars.len(), fields[7].parse::<usize>().unwrap());
+        assert_eq!(plan.table.table_info.as_ref().unwrap().read().id, 100);
+        assert_eq!(plan.table.table_name.name, ["test", "t"]);
+        if let Some(option) = plan.options.first() {
+            let Some(Expression::Constant(value)) = &option.value else { panic!("rewritten constant") };
+            assert_eq!(value.eval().unwrap(), Datum::Int(2));
+        }
+        let expected = if plan.select_plan.is_some() { 5 } else { 6 };
+        assert_eq!(builder.visit_info.len(), expected);
+        assert_eq!(builder.visit_info.iter().take(5).map(|visit| visit.privilege).collect::<Vec<_>>(),
+            [tidb_mysql::SelectPriv, tidb_mysql::UpdatePriv, tidb_mysql::InsertPriv,
+             tidb_mysql::DeletePriv, tidb_mysql::AlterPriv]);
+        if expected == 6 { assert_eq!(builder.visit_info[5].privilege, tidb_mysql::FilePriv); }
+    }
+}

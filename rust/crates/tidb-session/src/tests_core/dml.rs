@@ -1625,3 +1625,36 @@ fn test_import_into_coll_assignment_checker() {
     assert_eq!(error.message, "FUNCTION noexist is not supported in IMPORT INTO column assignment, index 0");
     assert!(row_text(session.run("select * from import_assignment")).is_empty());
 }
+
+/// Go `TestImportIntoBuildPlan`: SELECT width is checked during planning.
+#[test]
+fn test_import_into_build_plan() {
+    let mut session = Session::new();
+    session.run("create table t1 (a int, b int, c datetime on update CURRENT_TIMESTAMP)").unwrap();
+    session.run("create table t2 (a int, b int, c datetime on update CURRENT_TIMESTAMP)").unwrap();
+    for sql in [
+        "IMPORT INTO t1 FROM select a from t2",
+        "IMPORT INTO t1(a) FROM select * from t2",
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1136, "{sql}: {error:?}");
+        assert_eq!(error.message, "Column count doesn't match value count at row 1");
+    }
+}
+
+/// Go testkit `zzprobe/e05.TestImportIntoPlannerHandoff`, captured with
+/// `go test --tags=intest -p 6 ./zzprobe/e05 -run '^TestImportIntoPlannerHandoff$'`.
+#[test]
+fn test_import_into_planner_handoff() {
+    let mut session = Session::new();
+    session.run("create table normal (a int, b int as (a+1))").unwrap();
+    session.run("create temporary table temporary_target (a int)").unwrap();
+    session.run("create table cached_target (a int)").unwrap();
+    session.run("alter table cached_target cache").unwrap();
+    for line in include_str!("../../../tidb-planner/testdata/import_into_handoff_go.txt").lines() {
+        let (sql, expected) = line.split_once('\t').unwrap();
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        let message = expected.strip_prefix("[planner:1136]").unwrap_or(expected);
+        assert_eq!(error.message, message, "{sql}");
+    }
+}

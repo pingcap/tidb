@@ -196,6 +196,7 @@ mod tests;
 pub mod set;
 mod show;
 pub mod stmt_build;
+mod import_into;
 #[cfg(test)]
 mod show_tests;
 mod summary_time_range;

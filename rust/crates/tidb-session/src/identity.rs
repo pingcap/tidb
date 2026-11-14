@@ -508,7 +508,8 @@ impl Session {
                     | tidb_ast::SessionStmt::Execute { .. }
                     | tidb_ast::SessionStmt::Deallocate(_)
             ),
-            tidb_ast::Stmt::Query(_) | tidb_ast::Stmt::Dml(_) => false,
+            tidb_ast::Stmt::Dml(dml) => matches!(dml.as_ref(), tidb_ast::DmlStmt::ImportInto(_)),
+            tidb_ast::Stmt::Query(_) => false,
         }
     }
 

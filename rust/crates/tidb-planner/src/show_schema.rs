@@ -386,6 +386,11 @@ fn typed_schema(columns: &[(&str, FieldTypeCode)]) -> (Schema, Vec<FieldName>) {
     convert2_output_schemas_and_names(&names, &ftypes, &[])
 }
 
+/// Go `buildImportInto`: the file import's job result schema.
+pub fn build_import_into_schema() -> (Schema, Vec<FieldName>) {
+    typed_schema(IMPORT_INTO_SCHEMA)
+}
+
 /// Go `buildShowSchema(s, isView, isSequence)`.
 #[must_use]
 pub fn build_show_schema(s: &ShowStmt, is_view: bool, is_sequence: bool) -> (Schema, Vec<FieldName>) {

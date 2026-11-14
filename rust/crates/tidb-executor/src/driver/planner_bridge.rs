@@ -2480,10 +2480,22 @@ pub(crate) fn statement_plan(
         registry: &registry,
         session_ctx: Some(session_ctx),
     };
-    parts.build(None, None, |builder| {
+    let (mut plan, visits, opt_flag) = parts.build(None, None, |builder| {
         let plan = builder.build_stmt(stmt)?;
-        Ok((plan, builder.visit_info.clone()))
-    })
+        Ok((plan, builder.visit_info.clone(), builder.get_opt_flag()))
+    })?;
+    if let tidb_planner::common_plans::Plan::ImportInto(import) = &mut plan {
+        if let Some(select) = import.select_plan.take() {
+            let tidb_planner::common_plans::Plan::Logical(logical) = *select else {
+                unreachable!("buildImportInto supplies a logical SELECT");
+            };
+            let logical = optimize_built_logical(logical, opt_flag, catalog, ctx, false,
+                &plan_ids, &column_ids, &ctx.session_zone())?;
+            let physical = physical_plan_for_logical(&logical, &plan_ids, &column_ids, catalog, ctx)?;
+            import.select_plan = Some(Box::new(tidb_planner::common_plans::Plan::Physical(physical)));
+        }
+    }
+    Ok((plan, visits))
 }
 
 /// Go `planner.Optimize` for `ADMIN SHOW DDL JOBS [n] [WHERE ...]`:

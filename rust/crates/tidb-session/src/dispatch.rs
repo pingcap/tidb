@@ -388,6 +388,12 @@ impl Session {
                 })
             }
             Plan::Simple(_) => tidb_executor::simple::exec::SimpleExec::simple_next(self, stmt),
+            Plan::ImportInto(_) => {
+                let Stmt::Dml(dml) = stmt else { unreachable!("ImportInto plan has an IMPORT statement") };
+                let tidb_ast::DmlStmt::ImportInto(import) = dml.as_ref() else { unreachable!("ImportInto plan has an IMPORT statement") };
+                tidb_executor::import_into_options::validate_import_into_options(import)?;
+                Err(DriverError::unsupported("IMPORT INTO is not supported yet"))
+            }
             Plan::Ddl(_) => self.ddl_exec(stmt),
             Plan::CompactTable(compact) => self.compact_table_tiflash_exec(compact).map(Some),
             Plan::Logical(_) | Plan::Physical(_) | Plan::ShowNextRowID(_) | Plan::Set(_) => {

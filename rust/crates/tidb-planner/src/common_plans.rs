@@ -111,10 +111,36 @@ pub struct SqlBindPlan {
     pub statement: Option<tidb_ast::AdminStmt>,
 }
 
+/// Go `LoadDataOpt`: an option after expression rewriting.
+#[derive(Clone, Debug)]
+pub struct LoadDataOpt {
+    pub name: String,
+    pub value: Option<Expression>,
+}
+
+/// Go `ImportInto` (`pkg/planner/core/common_plans.go`).
+#[derive(Clone, Debug)]
+pub struct ImportInto {
+    pub table: tidb_resolve::TableNameW,
+    pub column_assignments: Vec<tidb_ast::Assignment>,
+    pub columns_and_user_vars: Vec<tidb_ast::ColumnOrUserVar>,
+    pub path: String,
+    pub format: Option<String>,
+    pub options: Vec<LoadDataOpt>,
+    pub gen_cols: Vec<Expression>,
+    pub stmt: String,
+    /// Logical while building, physical before the executor receives it.
+    pub select_plan: Option<Box<Plan>>,
+    pub schema: Schema,
+    pub names: Vec<FieldName>,
+}
+
 /// Go `base.Plan`: an operator tree before or after optimization, or one of
 /// the common plans.
 #[derive(Clone, Debug)]
 pub enum Plan {
+    /// Go `ImportInto`.
+    ImportInto(Box<ImportInto>),
     /// A logical operator tree (Go `base.LogicalPlan`).
     Logical(LogicalPlan),
     /// A physical operator tree (Go `base.PhysicalPlan`).

@@ -3912,6 +3912,8 @@ impl tidb_executor::sessionctx::SessionContext for Session {
 }
 
 impl tidb_planner::plan_builder::stmt_build::SessionPlanContext for Session {
+    fn snapshot_ts(&self) -> u64 { self.vars.snapshot_ts() }
+
     fn request_dynamic_verification(&self, privilege: &str, with_grant: bool) -> bool {
         self.has_dynamic_privilege(privilege, with_grant)
     }

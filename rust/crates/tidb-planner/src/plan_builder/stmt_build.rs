@@ -39,6 +39,9 @@ use crate::show_schema::build_show_next_row_id;
 /// expressions: the privilege manager, the login user and the session
 /// manager.
 pub trait SessionPlanContext {
+    /// Go `SessionVars.SnapshotTS`.
+    fn snapshot_ts(&self) -> u64 { 0 }
+
     /// Go `privilege.Manager.RequestDynamicVerification(activeRoles, priv,
     /// withGrant)`.
     fn request_dynamic_verification(&self, privilege: &str, with_grant: bool) -> bool;
@@ -133,6 +136,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// rejects while building) and a SET or SHOW value's build error.
     pub fn build_stmt(&mut self, stmt: &Stmt) -> Result<Plan, PlanError> {
         match stmt {
+            Stmt::Dml(dml) if matches!(dml.as_ref(), tidb_ast::DmlStmt::ImportInto(_)) => {
+                let tidb_ast::DmlStmt::ImportInto(import) = dml.as_ref() else { unreachable!() };
+                self.build_import_into(import)
+            }
             Stmt::Query(_) | Stmt::Dml(_) => Err(PlanError::internal(
                 "queries and DML build through their own builders",
             )),

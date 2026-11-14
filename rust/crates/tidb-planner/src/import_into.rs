@@ -8,6 +8,16 @@ use std::collections::HashMap;
 use tidb_ast::{Assignment, ColumnOrUserVar, Expr, ImportIntoStmt, Visitable, Visitor};
 use tidb_planner_core_base::PlanError;
 
+/// Go `objstore.IsLocal`: local, file, and absent schemes denote server disk.
+/// URL syntax validation belongs to the preceding `url.Parse` step.
+pub fn import_from_server(path: &str) -> bool {
+    let scheme = path.split_once(':').filter(|(scheme, _)| {
+        !scheme.is_empty() && scheme.as_bytes()[0].is_ascii_alphabetic()
+            && scheme.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
+    }).map(|(scheme, _)| scheme);
+    scheme.is_none_or(|scheme| scheme.eq_ignore_ascii_case("local") || scheme.eq_ignore_ascii_case("file"))
+}
+
 /// Go `importIntoCollAssignmentChecker`.
 #[derive(Default)]
 struct ImportIntoCollAssignmentChecker {

@@ -109,3 +109,53 @@ From the repository root, the final Go capture and whitespace check were:
     git diff --cached --check
 
 The Go probe is uncommitted. Its output is the six-case Rust test fixture; the seventh probe case establishes Go's file-URI refusal. No `pkg/` source changed, no target/cache artifacts were deleted, no corpus milestone or live TiKV import ran, and no successful IMPORT INTO execution or whole owning-package completion is claimed. Missing prerequisite implementations, rather than a remaining test-only adjustment, prevent closing E05.
+
+## Resumed scope (2026-11-14)
+
+The user expanded scope to include the missing physical backend, ingestor,
+SQL/Parquet readers and task/job lifecycle. These are repository work, not
+external blockers. The earlier outcome's out-of-scope classification is
+superseded. Current Go has no logical IMPORT INTO mode option; follow the
+physical path. First wire the planner handoff and pin target restrictions and
+SELECT width to Go, then implement controller/source handling, encoding and
+ingest, the executor and DXF lifecycle. Never remove target artifacts.
+
+The initial resumed status contains untracked `zzprobe/` only; preserve it and
+never commit it. A new Go probe `TestImportIntoPlannerHandoff` confirms temporary
+and cached targets are rejected before executor option validation, and SELECT
+width includes visible generated columns. Its parser rejects arbitrary option
+expressions (`thread=1+1`, `thread=missing_col`); do not claim these are valid SQL.
+
+### Planner handoff increment
+
+`common_plans::ImportInto` now retains resolved target metadata, rewritten
+options, assignments, generated expressions, the job schema, and the SELECT
+child. `buildImportInto` checks temporary/cached targets and SELECT width and
+collects the five target privileges plus FILE for server sources. The executor
+bridge optimizes the SELECT child before handing the plan to session dispatch.
+Execution still refuses writes after option validation. Remaining planner work
+includes URL parse errors, SEM v1 and nextgen S3 external-ID handling and a
+complete snapshot/privilege regression inventory; this increment is not a claim
+that all of `buildImportInto` or E05 is complete.
+
+The original-source regression `test_import_into_build_plan` failed with MySQL
+1105 (unsupported) instead of Go 1136. Go probes
+`TestImportIntoPlannerHandoff` and `TestImportIntoPlanFields` ran successfully
+with `GOMAXPROCS=6 go test --tags=intest -p 6 ./zzprobe/e05 -run
+'^TestImportIntoPlannerHandoff$' -count=1 -v` and the corresponding PlanFields
+filter. Captures live under `tidb-planner/testdata/import_into_{handoff,plan}_go.txt`.
+The current `cargo check -j6 -p tidb-planner -p tidb-session --tests` passes with
+the four required environment variables and shared target. Targeted nextest
+uses `--build-jobs 6 -j6 -p tidb-planner -p tidb-session -E
+'test(test_import_into_) | test(import_into_refusal)'`.
+
+The installed nightly's `rust-objcopy` cannot find `libLLVM.dylib` by its bundled
+rpath; it exists in the same toolchain's top-level lib directory. Commands now
+set `DYLD_FALLBACK_LIBRARY_PATH=/Users/qiliu/.rustup/toolchains/nightly-2026-08-22-aarch64-apple-darwin/lib`.
+This avoids the strip warning without changing compilation profiles or artifacts.
+An initial check launched from the repository root was interrupted before
+continuing; all subsequent checks execute from `rust/` to use its Cargo config.
+
+Targeted handoff verification completed: all eight tests passed in 42.243s.
+Full crate suites are deferred to the end of the resumed task, as the user
+explicitly requested. The row remains partial and counts are unchanged.

@@ -1,0 +1,5 @@
+import into normal from select 1	[planner:1136]Column count doesn't match value count at row 1
+import into normal(a) from select 1, 2	[planner:1136]Column count doesn't match value count at row 1
+import into temporary_target from '/file.csv'	IMPORT INTO does not support temporary table
+import into cached_target from '/file.csv'	IMPORT INTO does not support cached table
+import into temporary_target from '/file.csv' with unknown_option	IMPORT INTO does not support temporary table

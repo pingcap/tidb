@@ -1,0 +1,2 @@
+import into t (@a,b) set a=@a+1 from '/tmp/data.csv' format 'CSV' with thread=2, detached	/tmp/data.csv	CSV	Job_ID,Group_Key,Data_Source,Target_Table,Table_ID,Phase,Status,Source_File_Size,Imported_Rows,Result_Message,Create_Time,Start_Time,End_Time,Created_By,Last_Update_Time,Cur_Step,Cur_Step_Processed_Size,Cur_Step_Total_Size,Cur_Step_Progress_Pct,Cur_Step_Speed,Cur_Step_ETA	thread,detached	false	1	2
+import into t from select 1, 2					true	0	0
