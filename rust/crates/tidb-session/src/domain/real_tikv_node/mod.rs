@@ -131,8 +131,7 @@ pub fn new_privilege_handle(
 ///
 /// # Errors
 ///
-/// The first load failed (a keyspace no TiDB bootstrapped has no
-/// `mysql.user`), or the reload thread could not start.
+/// The reload thread could not start.
 pub fn load_privilege_loop(
     config: &NodeConfig,
     users: &ConfiguredUserStore,
@@ -142,9 +141,8 @@ pub fn load_privilege_loop(
     }
     let engine = |error: String| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error));
     let accounts = users.accounts();
-    // Go's handle starts empty and loads each user as it is used until the
-    // first event's `UpdateAll`; this node loads every user at once.
-    accounts.update_all().map_err(engine)?;
+    // Go's handle starts empty: each user loads as it is first used
+    // (`ensureActiveUser`) until the first event's `UpdateAll`.
     // Ticks at Go `LoadPrivilegeLoop`'s fallback cadence
     // (pkg/domain/domain.go:1394-1396): ten minutes when the etcd watch is up
     // (the watch makes a peer's GRANT prompt), five when it is not.

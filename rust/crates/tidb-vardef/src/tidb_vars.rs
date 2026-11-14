@@ -259,6 +259,8 @@ pub const TIDB_SYSDATE_IS_NOW: &str = "tidb_sysdate_is_now";
 /// RequireSecureTransport indicates the secure mode for data transport
 /// Go `RequireSecureTransport`.
 pub const REQUIRE_SECURE_TRANSPORT: &str = "require_secure_transport";
+/// Go `vardef.MaxUserConnections` (`sysvar.go`).
+pub const MAX_USER_CONNECTIONS: &str = "max_user_connections";
 /// Go `PerformanceSchemaSessionConnectAttrsSize`.
 pub const PERFORMANCE_SCHEMA_SESSION_CONNECT_ATTRS_SIZE: &str =
     "performance_schema_session_connect_attrs_size";

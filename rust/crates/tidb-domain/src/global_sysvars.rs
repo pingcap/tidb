@@ -1174,6 +1174,7 @@ impl GlobalSysvars {
             name,
             REQUIRE_SECURE_TRANSPORT
                 | PERFORMANCE_SCHEMA_SESSION_CONNECT_ATTRS_SIZE
+                | MAX_USER_CONNECTIONS
                 | TIDB_ACCELERATE_USER_CREATION_UPDATE
                 | TIDB_TTL_JOB_ENABLE
                 | TIDB_TTL_SCAN_BATCH_SIZE
@@ -1259,6 +1260,13 @@ impl GlobalSysvars {
             TIDB_ACCELERATE_USER_CREATION_UPDATE => {
                 tidb_vardef::ACCELERATE_USER_CREATION_UPDATE.store(on, SeqCst);
             }
+            MAX_USER_CONNECTIONS => tidb_vardef::MAX_USER_CONNECTIONS_VALUE.store(
+                tidb_variable::varsutil::tidb_opt_int64(
+                    value,
+                    tidb_vardef::defaults::DEF_MAX_USER_CONNECTIONS,
+                ) as u32,
+                SeqCst,
+            ),
             // Go `SetGlobal`: `vardef.ServiceScope.Store(strings.ToLower(s))`
             // and the config's `Instance.TiDBServiceScope`.
             TIDB_SERVICE_SCOPE => {

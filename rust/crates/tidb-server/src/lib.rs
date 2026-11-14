@@ -87,6 +87,7 @@ mod set_global_vars;
 mod sql_node;
 mod stat;
 mod status_transport;
+mod user_connections;
 pub use auth_exchange::{
     decode_client_packet, AuthClientResponse, AuthExchangeError, AuthMoreData, AuthSwitchRequest,
     AUTH_MORE_DATA_PREFIX, AUTH_SWITCH_REQUEST,

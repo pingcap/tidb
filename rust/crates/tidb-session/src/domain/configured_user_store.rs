@@ -438,16 +438,13 @@ impl ConfiguredUserStore {
         self.len() == 0
     }
 
-    /// Go `MatchIdentity` + `AuthPluginForUser` (`GetAuthPluginForConnection`),
-    /// which `checkAuthPlugin` (`server/conn.go:939`) reads before any auth
-    /// exchange: `None` when no account matches the user and host -- Go
-    /// answers 1045 at once -- else the plugin the connection is switched to,
-    /// empty for "no user plugin set, assuming MySQL Native Password". In
-    /// skip-grant mode every request is native password.
+    /// Go `session.MatchIdentity` (`UserPrivileges.MatchIdentity`): the
+    /// stored account a user logs in as from `remote_host`, `None` when no
+    /// account matches; in skip-grant mode the requested user and host.
     #[must_use]
-    pub fn match_identity(&self, username: &str, remote_host: &str) -> Option<String> {
+    pub fn match_identity_account(&self, username: &str, remote_host: &str) -> Option<(String, String)> {
         if self.identity_policy.skip_with_grant() {
-            return Some(DEFAULT_AUTH_PLUGIN.to_owned());
+            return Some((username.to_owned(), remote_host.to_owned()));
         }
         // Go `MatchIdentity`'s `ensureActiveUser`; a load that fails leaves
         // the user unmatched.
@@ -462,13 +459,59 @@ impl ConfiguredUserStore {
         let IdentityLookupResult::Matched(identity) = catalog.resolve(&request, &[]) else {
             return None;
         };
-        let (authentication_string, plugin, _) = self
-            .accounts
-            .login_credentials(identity.username(), identity.host())?;
+        Some((identity.username().to_owned(), identity.host().to_owned()))
+    }
+
+    /// Go `MatchIdentity` + `AuthPluginForUser` (`GetAuthPluginForConnection`),
+    /// which `checkAuthPlugin` (`server/conn.go:939`) reads before any auth
+    /// exchange: `None` when no account matches the user and host -- Go
+    /// answers 1045 at once -- else the plugin the connection is switched to,
+    /// empty for "no user plugin set, assuming MySQL Native Password". In
+    /// skip-grant mode every request is native password.
+    #[must_use]
+    pub fn match_identity(&self, username: &str, remote_host: &str) -> Option<String> {
+        if self.identity_policy.skip_with_grant() {
+            return Some(DEFAULT_AUTH_PLUGIN.to_owned());
+        }
+        let (user, host) = self.match_identity_account(username, remote_host)?;
+        let (authentication_string, plugin, _) = self.accounts.login_credentials(&user, &host)?;
         Some(
             tidb_privilege::get_auth_plugin_for_connection(&plugin, &authentication_string)
                 .to_owned(),
         )
+    }
+
+    /// Go `UserPrivileges.GetUserResources`: the `max_user_connections` of
+    /// the account `user` / `host` logs in as (`connectionVerification`),
+    /// 0 in skip-grant mode.
+    ///
+    /// # Errors
+    ///
+    /// Go's: no account matches, or its stored hash is not its plugin's.
+    pub fn get_user_resources(&self, user: &str, host: &str) -> Result<i64, String> {
+        if self.identity_policy.skip_with_grant() {
+            return Ok(0);
+        }
+        self.accounts.log_ensure_active_user(user);
+        let Some((authentication_string, plugin, max_user_connections)) = self
+            .accounts
+            .matching_account(user, host)
+            .and_then(|(user, host)| self.accounts.user_resources(&user, &host))
+        else {
+            tidb_logutil::bg_logger().error(
+                "get user privilege record fail",
+                &[
+                    tidb_log::Field::new("user", tidb_log::Value::Str(user.to_owned())),
+                    tidb_log::Field::new("host", tidb_log::Value::Str(host.to_owned())),
+                ],
+            );
+            return Err("Failed to get user record".to_owned());
+        };
+        if tidb_privilege::is_valid_hash(&plugin, &authentication_string) {
+            Ok(max_user_connections)
+        } else {
+            Err("Failed to get max user connections".to_owned())
+        }
     }
 
     /// Go `writeInitialHandshake`'s advertised plugin:

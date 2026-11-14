@@ -1206,6 +1206,7 @@ pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
             runtime,
             &mut commands,
             &tracker.command_limiter,
+            &tracker.user_resource,
         )
     }))
     .unwrap_or_else(|payload| {
@@ -1238,6 +1239,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     runtime: MysqlConnectionRuntime<'_>,
     commands: &mut ConnectionCommandCounts,
     command_limiter: &CommandLimiter,
+    user_resource: &crate::user_connections::UserResource,
 ) -> Result<ConnectionReport, MysqlConnectionError> {
     let AcceptedConnectionIdentity {
         connection_id,
@@ -1539,6 +1541,18 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             )
         }
     }
+    // Go `openSessionAndDoAuth`'s `checkUserConnectionCount`.
+    if let Err(error) =
+        user_resource.check_user_connection_count(users, &response_user, &peer_addr.host())
+    {
+        write_query_error_at(&mut output, response_sequence, &error, protocol_41)?;
+        return Ok(ConnectionReport {
+            connection_id,
+            queries: 0,
+            commands: *commands,
+            exit: ConnectionExit::AuthenticationRejected,
+        });
+    }
     // Go `openSessionAndDoAuth`: `auth_socket` is refused off a Unix socket.
     if !peer_addr.is_unix_socket() && client_plugin == tidb_mysql::consts::AuthSocket {
         let error = tidb_server_err::ERR_ACCESS_DENIED_NO_PASSWORD
@@ -1672,6 +1686,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     } else {
         (CompressionAlgorithm::None, tidb_mysql::consts::CompressionNone)
     };
+    let (auth_user, auth_host) = (identity.username().to_owned(), identity.host().to_owned());
     let mut engine = match factory.open_session(SessionContext {
         connection_id,
         peer_addr,
@@ -1766,6 +1781,26 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         engine.warning_count(),
         protocol_41,
     )?;
+    // Go `onConn`: past the handshake, the connection counts against its
+    // account's `max_user_connections` until it ends.
+    let _user_connection = match user_resource.enter(users, &auth_user, &auth_host) {
+        Ok(user_connection) => user_connection,
+        Err(error) => {
+            tidb_logutil::with_conn_id(&tidb_logutil::bg_logger(), connection_id).warn(
+                "failed to increase the count of connections",
+                &[
+                    tidb_log::Field::new("error", tidb_log::Value::Str(error.message)),
+                    tidb_log::Field::new("remote addr", tidb_log::Value::Str(peer_addr.remote_addr().to_string())),
+                ],
+            );
+            return Ok(ConnectionReport {
+                connection_id,
+                queries: 0,
+                commands: *commands,
+                exit: ConnectionExit::SessionRejected,
+            });
+        }
+    };
 
     // Authentication is always ordinary MySQL packet I/O. Only after its OK
     // has been flushed does Go activate the negotiated command codec. Keep

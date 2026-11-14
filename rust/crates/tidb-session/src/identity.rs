@@ -1350,6 +1350,8 @@ impl Session {
                 .map(|(user, host)| (user.to_owned(), host.to_owned()))
             {
                 let (user, host) = (user.as_str(), host.as_str());
+                // Go `GetDefaultRoles`' `ensureActiveUser`.
+                registry.log_ensure_active_user(user);
                 self.vars.active_roles =
                     Arc::new(registry.default_roles(&(user.to_owned(), host.to_owned())));
                 // Go `Auth`: with resource control on, the account's

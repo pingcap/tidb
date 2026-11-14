@@ -99,6 +99,8 @@ impl ShutdownHandle {
 /// for this server retains this authority, including dedicated worker threads.
 pub struct ConnectionTracker {
     pub(crate) command_limiter: crate::mysql_connection::CommandLimiter,
+    /// Go `Server.userResource`.
+    pub(crate) user_resource: crate::user_connections::UserResource,
     connection_ids: Arc<dyn Allocator + Send + Sync>,
     identity: Option<Arc<tidb_domain::server_id::ServerIdAuthority>>,
     active: AtomicUsize,
@@ -138,6 +140,7 @@ impl ConnectionTracker {
             connection_ids.unwrap_or_else(|| new_connection_id_allocator(config, identity.clone()));
         Self {
             command_limiter: crate::mysql_connection::CommandLimiter::new(config.token_limit),
+            user_resource: crate::user_connections::UserResource::default(),
             connection_ids,
             identity,
             active: AtomicUsize::default(),

@@ -442,6 +442,16 @@ impl PrivilegeRegistry {
             .map(|record| record.auth_string.clone())
     }
 
+    /// Go `connectionVerification`'s record as `GetUserResources` reads it:
+    /// the stored account's authentication string, plugin and
+    /// `max_user_connections`.
+    #[must_use]
+    pub fn user_resources(&self, user: &str, host: &str) -> Option<(String, String, i64)> {
+        self.lock()
+            .get(&(user.to_owned(), host.to_owned()))
+            .map(|record| (record.auth_string.clone(), record.plugin.clone(), record.max_user_connections))
+    }
+
     /// One coherent credential image, including Go's retained secondary password.
     /// Reads the existing user row; no independent authentication cache is introduced.
     pub fn login_credentials(

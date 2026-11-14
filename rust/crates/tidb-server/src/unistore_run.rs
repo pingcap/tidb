@@ -18,7 +18,7 @@
 
 use std::sync::Arc;
 
-use tidb_session::domain::real_tikv_node::{configured_account_store, RunConfiguredNodeError};
+use tidb_session::domain::real_tikv_node::{node_accounts, RunConfiguredNodeError};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_session::domain::unistore_node::*;
 
@@ -62,8 +62,7 @@ pub fn run_unistore_cluster_session(
     // Go `setGlobalVars`, before the store and the domain are created.
     let global_vars = tidb_domain::global_sysvars::GlobalSysvars::before_domain();
     crate::set_global_vars::set_global_vars(&config, &global_vars);
-    let users = configured_account_store(&config, global_vars)?;
-    let users = Arc::new(users);
+    let users = node_accounts(&config, global_vars)?;
     let stack =
         unistore_cluster_session_stack(&config, &users, Some(spill_storage), memory_arbitrator)?;
     let UnistoreClusterStack {
@@ -72,6 +71,7 @@ pub fn run_unistore_cluster_session(
         stats,
         _reloader: reloader,
         _sysvar_reloader: sysvar_reloader,
+        _privilege_reloader: privilege_reloader,
         _stats_reloader: stats_reloader,
         _binding_reloader: binding_reloader,
         _schema_sync_ack: schema_sync_ack,
@@ -216,6 +216,7 @@ pub fn run_unistore_cluster_session(
     drop(stats_maintenance);
     drop(reloader);
     drop(sysvar_reloader);
+    drop(privilege_reloader);
     drop(stats_reloader);
     drop(binding_reloader);
     drop(schema_sync_ack);

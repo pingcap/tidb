@@ -304,6 +304,11 @@ pub static AUTO_ANALYZE_CONCURRENCY: AtomicI64 =
 /// zero-value is intentionally disabled even though the SQL default is ON.
 pub static ENABLE_RESOURCE_CONTROL: AtomicBool = AtomicBool::new(false);
 
+/// Go `vardef.MaxUserConnectionsValue`: the global `max_user_connections`,
+/// the connection limit of an account without its own.
+pub static MAX_USER_CONNECTIONS_VALUE: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(defaults::DEF_MAX_USER_CONNECTIONS as u32);
+
 /// Go `vardef.AccelerateUserCreationUpdate`: whether the privilege handle
 /// loads only the users in use (`tidb_accelerate_user_creation_update`).
 pub static ACCELERATE_USER_CREATION_UPDATE: AtomicBool =

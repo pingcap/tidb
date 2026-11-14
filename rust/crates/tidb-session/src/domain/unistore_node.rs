@@ -252,6 +252,8 @@ pub struct UnistoreClusterStack {
     // store they read from.
     pub _reloader: tidb_infoschema_issyncer::catalog_watch::Syncer,
     pub _sysvar_reloader: tidb_domain_core::cluster_sysvar_seam::SysvarReloader,
+    /// Go `LoadPrivilegeLoop`'s loop, under `--load-privileges`.
+    pub _privilege_reloader: Option<tidb_domain_core::cluster_privileges::PrivilegeReloader>,
     pub _stats_reloader: tidb_stats_handle_syncload::stats_watch::StatsReloader,
     pub _binding_reloader: tidb_bindinfo::cluster_binding_seam::BindingReloader,
     /// Go `mdlCheckLoop` over the node's `MemSyncer`.
@@ -799,9 +801,12 @@ pub fn unistore_cluster_session_stack_from(
     ddl_session_pool.bind(&factory);
     crate::domain::real_tikv_node::new_privilege_handle(&users, factory.advanced_sys_session_pool());
     // Go's bootstrap provisions `root@%` through SQL; this node provisions its
-    // `--auth-file` accounts the same way, before any client connects.
-    crate::domain::cluster_session_node::seed_auth_file_accounts(&factory, &users.accounts())
-        .map_err(|error| engine(SqlQueryError::unknown(error)))?;
+    // `--auth-file` accounts the same way, before any client connects. Under
+    // `--load-privileges` the accounts are the store's own, as Go's are.
+    if !config.load_privileges {
+        crate::domain::cluster_session_node::seed_auth_file_accounts(&factory, &users.accounts())
+            .map_err(|error| engine(SqlQueryError::unknown(error)))?;
+    }
     // Go `LoadSysVarCacheLoop`, started once the domain's sessions exist.
     let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
         users.global_vars(),
@@ -810,6 +815,8 @@ pub fn unistore_cluster_session_stack_from(
         sysvar_publication_fence.clone(),
     )
     .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
+    // Go `LoadPrivilegeLoop`, after the sysvar cache.
+    let privilege_reloader = crate::domain::real_tikv_node::load_privilege_loop(config, users)?;
     // Go `InitBindingHandle`, after the sysvar cache.
     let binding_reloader = crate::domain::cluster_session_node::init_binding_handle(
         &factory,
@@ -857,6 +864,7 @@ pub fn unistore_cluster_session_stack_from(
         _stats_maintenance: stats_maintenance,
         _reloader: reloader,
         _sysvar_reloader: sysvar_reloader,
+        _privilege_reloader: privilege_reloader,
         _stats_reloader: stats_reloader,
         _binding_reloader: binding_reloader,
         _schema_sync_ack: schema_sync_ack,

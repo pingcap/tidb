@@ -3960,8 +3960,11 @@ impl tidb_executor::sessionctx::PrivilegeManager for Session {
         })
     }
 
+    /// Go `UserPrivileges.GetDefaultRoles`, which loads the user first
+    /// (`ensureActiveUser`).
     fn get_default_roles(&self, user: &str, host: &str) -> Vec<(String, String)> {
         self.privileges.as_ref().map_or_else(Vec::new, |registry| {
+            registry.log_ensure_active_user(user);
             registry.default_roles(&(user.to_owned(), host.to_owned()))
         })
     }

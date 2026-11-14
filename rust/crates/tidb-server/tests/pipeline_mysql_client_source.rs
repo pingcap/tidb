@@ -3594,3 +3594,110 @@ fn a_plain_explain_and_a_show_write_through_pooled_chunks_like_go() {
     let _ = std::fs::remove_file(&users);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// Go `Handle` starts empty and loads each user at first use
+/// (`ensureActiveUser`) until the first event's `UpdateAll`, and
+/// `user_connections.go` counts each account's live connections against its
+/// own `MAX_USER_CONNECTIONS`, else the global `max_user_connections`
+/// (`checkUserConnectionCount` at login, `increaseUserConnectionsCount` once
+/// logged in, `decreaseUserConnectionCount` at the end). Captured from a Go
+/// tidb-server on a fresh unistore store, the same statements over pymysql:
+/// a `mysql.user` row written after startup logs in with no FLUSH, a second
+/// `u1` and a second `root` under the global limit are refused with 1203.
+#[test]
+fn a_login_loads_its_user_and_counts_against_max_user_connections_like_go() {
+    let free_port = || TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+    let (port, status_port) = (free_port(), free_port());
+    let base = std::env::temp_dir().join(format!("tidb-server-user-connections-{}", std::process::id()));
+    struct Child(std::process::Child);
+    impl Drop for Child {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    // The accounts are the store's own, as Go's are: the bootstrap's
+    // passwordless `root@%`.
+    let _child = Child(
+        std::process::Command::new(env!("CARGO_BIN_EXE_tidb-server"))
+            .args(["--store", "unistore", "--path", base.to_str().unwrap()])
+            .args(["--host", "127.0.0.1", "-P", &port.to_string(), "--socket", ""])
+            .args(["--status-host", "127.0.0.1", "--status", &status_port.to_string()])
+            .arg("--load-privileges")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start tidb-server"),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+    let connect = || loop {
+        match TcpStream::connect(("127.0.0.1", port)) {
+            Ok(client) => break client,
+            Err(_) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(error) => panic!("tidb-server did not listen: {error}"),
+        }
+    };
+    // The login's answer: `OK`, or the error packet's code and message.
+    let login = |user: &str| {
+        let mut client = connect();
+        let mut reader = PacketReader::new(client.try_clone().unwrap());
+        reader.set_sequence(0);
+        let salt = handshake_salt(&reader.read_packet().unwrap());
+        let mut response = Vec::new();
+        let capabilities = CLIENT_PROTOCOL_41 | CLIENT_SECURE_CONNECTION | CLIENT_PLUGIN_AUTH;
+        response.extend_from_slice(&capabilities.to_le_bytes());
+        response.extend_from_slice(&(DEFAULT_MAX_ALLOWED_PACKET as u32).to_le_bytes());
+        response.push(46);
+        response.extend_from_slice(&[0; 23]);
+        response.extend_from_slice(user.as_bytes());
+        response.push(0);
+        // `root` is passwordless; every other account's password is `secret`.
+        let auth = if user == "root" { Vec::new() } else { native_response(b"secret", &salt).to_vec() };
+        response.push(u8::try_from(auth.len()).unwrap());
+        response.extend_from_slice(&auth);
+        response.extend_from_slice(b"mysql_native_password\0");
+        write_packet(&mut client, 1, &response);
+        reader.set_sequence(2);
+        let reply = reader.read_packet().unwrap();
+        let answer = if reply[0] == 0xff {
+            format!(
+                "{} {}",
+                u16::from_le_bytes([reply[1], reply[2]]),
+                String::from_utf8_lossy(&reply[9..])
+            )
+        } else {
+            "OK".to_owned()
+        };
+        (client, reader, answer)
+    };
+    let (mut root, mut root_reader, answer) = login("root");
+    assert_eq!(answer, "OK");
+    run_write(
+        &mut root,
+        &mut root_reader,
+        "INSERT INTO mysql.user (Host, User, authentication_string, plugin) \
+         VALUES ('%', 'raw', '*14E65567ABDB5135D0CFD9A70B3032C179A49EE7', 'mysql_native_password')",
+    );
+    assert_eq!(login("raw").2, "OK", "a user written after startup loads at its login");
+    run_write(&mut root, &mut root_reader, "CREATE USER u1 IDENTIFIED BY 'secret' WITH MAX_USER_CONNECTIONS 1");
+    let first = login("u1");
+    assert_eq!(first.2, "OK");
+    assert_eq!(login("u1").2, "1203 User u1@% has exceeded the 'max_user_connections' resource");
+    drop(first);
+    let again = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let answer = login("u1").2;
+        if answer == "OK" {
+            break;
+        }
+        assert!(std::time::Instant::now() < again, "a closed connection releases its count: {answer}");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    run_write(&mut root, &mut root_reader, "SET GLOBAL max_user_connections = 1");
+    assert_eq!(login("root").2, "1203 User root@% has exceeded the 'max_user_connections' resource");
+    run_write(&mut root, &mut root_reader, "SET GLOBAL max_user_connections = 0");
+    assert_eq!(login("root").2, "OK");
+    let _ = std::fs::remove_dir_all(&base);
+}
