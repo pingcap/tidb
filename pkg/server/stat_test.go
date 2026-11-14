@@ -79,7 +79,7 @@ func TestInitStatsSessionBlockGC(t *testing.T) {
 	for _, lite := range []bool{false, true} {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStats", "pause"))
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStatsLite", "pause"))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/syssession/ForceBlockGCInTest", "return(true)"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/syssession/ForceRegisterInTest", "return(true)"))
 		newConfig.Performance.LiteInitStats = lite
 		config.StoreGlobalConfig(&newConfig)
 
@@ -109,14 +109,14 @@ func TestInitStatsSessionBlockGC(t *testing.T) {
 		}, 10*time.Second, 10*time.Millisecond, "min_start_ts is not blocked over 1s")
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStats"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStatsLite"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/syssession/ForceBlockGCInTest"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/syssession/ForceRegisterInTest"))
 		dom.Close()
 		require.NoError(t, store.Close())
 	}
 }
 
 func TestInitStatsSessionBlockGCCanBeCanceled(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/syssession/ForceBlockGCInTest", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/syssession/ForceRegisterInTest", "return(true)"))
 
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -134,7 +134,7 @@ func TestInitStatsSessionBlockGCCanBeCanceled(t *testing.T) {
 	}()
 	require.ErrorIs(t, h.InitStats(ctx, dom.InfoSchema()), context.Canceled)
 	require.ErrorIs(t, h.InitStatsLite(ctx, dom.InfoSchema()), context.Canceled)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/syssession/ForceBlockGCInTest"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/syssession/ForceRegisterInTest"))
 	dom.Close()
 	require.NoError(t, store.Close())
 }
