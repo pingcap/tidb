@@ -3626,6 +3626,7 @@ fn build_hash_join_v2_from_child_execs(
     Ok(HashJoinV2FromChildExecs { executor, plan: plan.clone(), output_schema, output_order })
 }
 
+/// Go `executorBuilder.buildApply`.
 fn build_apply(
     plan: &PhysicalPlan,
     apply: &tidb_planner_core_operator_physicalop::PhysicalApply,
@@ -3643,8 +3644,13 @@ fn build_apply(
             "a physical Apply has an invalid inner child",
         ));
     }
-    let left = build_with_state(left_plan, catalog, ctx, state)?;
-    let right = build_with_state(right_plan, catalog, ctx, state)?;
+    // Go Next gives both outerWorker and the inner workers workerCtx.
+    // Capture that scope in both trees, including any nested outer Apply.
+    let worker_ctx = (apply.concurrency > 1)
+        .then(|| ctx.clone().with_coprocessor_worker_scope());
+    let child_ctx = worker_ctx.as_ref().unwrap_or(ctx);
+    let left = build_with_state(left_plan, catalog, child_ctx, state)?;
+    let right = build_with_state(right_plan, catalog, child_ctx, state)?;
     let left_types = left.ret_field_types().to_vec();
     let right_types = right.ret_field_types().to_vec();
     let condition_schema =
@@ -3704,7 +3710,7 @@ fn build_apply(
     };
     if apply.concurrency > 1 {
         use crate::apply::parallel::{
-            ApplyWorker, CancellableInner, ParallelNestedLoopApplyExec, WorkerOuter,
+            ApplyWorker, ParallelNestedLoopApplyExec,
         };
         let inner_plan = if apply.hash_join.inner_child_idx == 0 {
             left_plan
@@ -3717,8 +3723,7 @@ fn build_apply(
         // original inner plan (`CTEStorageMap`), whose correlated cells no
         // worker binds, so Go answers such a CTE from NULL bindings.
         if tidb_planner_core_operator_physicalop::safe_clone(inner_plan).is_ok() {
-            let worker_ctx = ctx.clone().with_coprocessor_worker_scope();
-            let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let worker_ctx = child_ctx.clone();
             let mut workers = Vec::with_capacity(apply.concurrency);
             for _ in 0..apply.concurrency {
                 let mut cloned = tidb_planner_core_operator_physicalop::clone_for_apply_worker(inner_plan);
@@ -3742,16 +3747,6 @@ fn build_apply(
                     workers.clear();
                     break;
                 };
-                let feed = Arc::new(Mutex::new((None, false)));
-                let worker_outer = WorkerOuter::new(
-                    ExecutorMeta::new(
-                        outer.schema().clone(),
-                        plan.id() as i64,
-                        ctx.executor_chunk_sizes().0,
-                        ctx.executor_chunk_sizes().1,
-                    ),
-                    feed.clone(),
-                );
                 let mut worker_conditions = worker_conditions.clone();
                 let mut worker_inner_filter = inner_filter.clone();
                 tidb_planner_core_operator_physicalop::rebind_apply_worker_expressions(
@@ -3778,22 +3773,12 @@ fn build_apply(
                         max_chunk_size: ctx.executor_chunk_sizes().1,
                     },
                 );
-                let worker = NestedLoopApplyExec::new(
-                    meta(ctx, plan, plan_schema(plan)?),
-                    Box::new(worker_outer),
-                    Box::new(CancellableInner::new(worker_inner, stop.clone())),
-                    Vec::new(),
+                workers.push(ApplyWorker::new(
+                    worker_inner,
                     worker_inner_filter,
                     columns,
                     worker_joiner,
-                    apply.hash_join.join_type != LogicalJoinType::Inner,
-                    apply.can_use_cache,
-                    worker_ctx.clone(),
-                );
-                workers.push(ApplyWorker {
-                    executor: Arc::new(Mutex::new(worker)),
-                    feed,
-                });
+                ));
             }
             if workers.len() == apply.concurrency {
                 let sink = state.apply_runtime_sink();
@@ -3802,10 +3787,10 @@ fn build_apply(
                     outer,
                     outer_filter,
                     workers,
+                    apply.hash_join.join_type != LogicalJoinType::Inner,
                     apply.keep_order,
                     apply.can_use_cache,
                     worker_ctx.clone(),
-                    stop,
                     sink.clone(),
                 ));
                 return Ok(register_apply_stats_on_close(executor, ctx, plan, sink));

@@ -44,6 +44,7 @@ use crate::domain::configured_user_store::ConfiguredUserStore;
 use crate::domain::unistore_node::{unistore_cluster_session_stack, UnistoreClusterStack};
 
 mod go_executor_protocol;
+mod chunk_allocator;
 mod upgrade;
 mod tiflash_partition;
 mod table_mode;

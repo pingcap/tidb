@@ -408,6 +408,9 @@ pub struct Session {
     /// Whether the last statement failed, so its allocator is recreated
     /// (Go `ClearAlloc(&alloc, hasErr)`).
     chunk_alloc_failed: bool,
+    /// Go `TraceExec.executeChild` calls ExecuteStmt inside the same client
+    /// command; only clientConn.dispatch resets its allocator.
+    nested_chunk_alloc: bool,
     /// Go `SessionVars.MemDBFootprint`: the transaction buffer's size,
     /// counted under the session tracker that `tidb_mem_quota_query` limits.
     mem_db_footprint: Arc<std::sync::Mutex<Option<Arc<tidb_memory::Tracker>>>>,
@@ -983,6 +986,7 @@ impl Session {
             result_write_chunk: std::sync::Arc::default(),
             connection_writes_results: false,
             chunk_alloc_failed: false,
+            nested_chunk_alloc: false,
             mem_db_footprint: Arc::default(),
             catalog,
             account_sql: None,
@@ -2941,6 +2945,30 @@ impl Session {
         Some(allocator.alloc(fields, init_cap, max_chunk_size).into_pooled_chunk())
     }
 
+    /// Go `clientConn.dispatch` / `handleQuery`: reset and install the pool
+    /// once per client command. TraceExec.executeChild is inside that command.
+    fn reset_chunk_allocator(&mut self) {
+        if self.nested_chunk_alloc {
+            return;
+        }
+        // Go `conn.handleQuery`'s `SetAlloc(cc.chunkAlloc)` for this statement.
+        self.chunk_pool_valid.store(
+            self.vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_REUSECHUNK)
+                .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1"),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        // Go `clientConn.dispatch`'s tail for the previous statement:
+        // `ClearAlloc(&cc.chunkAlloc, err != nil)` (a failed statement's
+        // allocator is replaced) then `cc.chunkAlloc.Reset()`, which hands
+        // the columns its chunks held back to the pool for this statement.
+        self.take_result_write_chunk();
+        if std::mem::take(&mut self.chunk_alloc_failed) {
+            self.chunk_alloc = tidb_chunk::alloc::ChunkAllocator::new();
+        }
+        tidb_chunk::alloc::Allocator::reset(&self.chunk_alloc);
+    }
+
     // Go resets statement state before executor construction. Keep this
     // boundary separate from completion, which belongs to record-set close
     // for queries and to execution itself for statements without results.
@@ -2967,22 +2995,7 @@ impl Session {
         // Go `ExchangeChunkStatus`, at the same `ResetContextOfStmt` boundary.
         self.vars.pre_use_chunk_alloc =
             self.use_chunk_alloc.swap(false, std::sync::atomic::Ordering::Relaxed);
-        // Go `conn.handleQuery`'s `SetAlloc(cc.chunkAlloc)` for this statement.
-        self.chunk_pool_valid.store(
-            self.vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_REUSECHUNK)
-                .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1"),
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        // Go `clientConn.dispatch`'s tail for the previous statement:
-        // `ClearAlloc(&cc.chunkAlloc, err != nil)` (a failed statement's
-        // allocator is replaced) then `cc.chunkAlloc.Reset()`, which hands
-        // the columns its chunks held back to the pool for this statement.
-        self.take_result_write_chunk();
-        if std::mem::take(&mut self.chunk_alloc_failed) {
-            self.chunk_alloc = tidb_chunk::alloc::ChunkAllocator::new();
-        }
-        tidb_chunk::alloc::Allocator::reset(&self.chunk_alloc);
+        self.reset_chunk_allocator();
         // Go promotes `FoundInBinding` at the same boundary, which is why
         // `select @@last_plan_from_binding` reports the statement BEFORE it
         // rather than itself (that SELECT matches no binding of its own).

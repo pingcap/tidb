@@ -373,9 +373,13 @@ fn run_query(
     let mut rows = Vec::new();
     loop {
         let packet = reader.read_packet().unwrap();
-        if packet[0] == 0xfe && packet.len() < 9 + 4 {
-            break; // terminal OK with EOF header (deprecate-EOF mode)
+        // Go dumpLengthEncodedInt uses 0xfe for a row cell only at
+        // lengths >= 2^24. An OK-as-EOF may carry DML's info string and
+        // exceed 13 bytes; its size is not the legacy EOF packet size.
+        if packet[0] == 0xfe && packet.len() < (1 << 24) {
+            break;
         }
+        assert_ne!(packet[0], 0xff, "query {sql} failed while streaming: {packet:?}");
         let mut remaining = packet.as_slice();
         let mut row = Vec::new();
         for _ in 0..column_count {
@@ -3591,6 +3595,17 @@ fn a_plain_explain_and_a_show_write_through_pooled_chunks_like_go() {
     run_query(&mut client, &mut reader, "SHOW COLUMNS FROM t");
     let sql = "SELECT * FROM t USE INDEX(a) WHERE a > 0";
     assert_eq!(memory(&mut client, &mut reader, sql, "IndexLookUp_7"), "2.10 KB");
+    // Go zzprobe/c02.TestC02Materialized: analyzed DML runs in
+    // handleNoDelayExecutor BEFORE the Explain record set takes its chunk.
+    // One projection worker fixes the empty-output swap's allocation order.
+    run_write(&mut client, &mut reader, "SET tidb_executor_concurrency=1");
+    assert_eq!(memory(&mut client, &mut reader, "UPDATE t SET b='changed' WHERE a=1", "Update_4"), "1.36 KB");
+    let sql = "SELECT /*+ hash_agg() */ b, count(a) FROM t GROUP BY b";
+    assert_eq!(memory(&mut client, &mut reader, sql, "HashAgg_9"), "1.76 KB");
+    assert_eq!(memory(&mut client, &mut reader, "INSERT INTO t SELECT a+10,b FROM t", "Insert_1"), "1.58 KB");
+    assert_eq!(memory(&mut client, &mut reader, sql, "HashAgg_9"), "2.38 KB");
+    run_query(&mut client, &mut reader, "TRACE SELECT * FROM t");
+    assert_eq!(memory(&mut client, &mut reader, sql, "HashAgg_9"), "1.76 KB");
     let _ = std::fs::remove_file(&users);
     let _ = std::fs::remove_dir_all(&base);
 }

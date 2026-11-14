@@ -43,7 +43,7 @@ pub(crate) struct ApplyRuntimeSnapshot {
 pub(crate) type ApplyRuntimeSink = Arc<Mutex<Option<ApplyRuntimeSnapshot>>>;
 
 pub(super) struct InnerRows {
-    list: List,
+    pub(super) list: List,
 }
 impl Drop for InnerRows {
     fn drop(&mut self) {
@@ -71,8 +71,6 @@ pub struct NestedLoopApplyExec {
     /// Go `cache.GetMemTracker()`, attached to `tracker` at `Open`.
     cache_tracker: Arc<Tracker>,
     cache_enabled: bool,
-    shared_rows_tracker: Option<Arc<Tracker>>,
-    preset_outer_selection: Option<bool>,
     cache_accesses: u64,
     cache_hits: u64,
     runtime_sink: Option<ApplyRuntimeSink>,
@@ -123,8 +121,6 @@ impl NestedLoopApplyExec {
             inner_list_tracker: Tracker::new(tidb_memory::LABEL_FOR_INNER_LIST, -1),
             cache_tracker: Tracker::new(tidb_memory::LABEL_FOR_APPLY_CACHE, -1),
             cache_enabled,
-            shared_rows_tracker: None,
-            preset_outer_selection: None,
             cache_accesses: 0,
             cache_hits: 0,
             runtime_sink: None,
@@ -147,33 +143,12 @@ impl NestedLoopApplyExec {
         self
     }
 
-    pub(super) fn prepare_worker_row(
-        &mut self,
-        selected: bool,
-        cache: Option<Arc<ApplyCache<InnerRows>>>,
-        tracker: Arc<Tracker>,
-    ) {
-        self.preset_outer_selection = Some(selected);
-        self.shared_rows_tracker = Some(tracker);
-        self.cache = cache;
-    }
-    pub(super) fn cache_snapshot(&self) -> ApplyRuntimeSnapshot {
-        ApplyRuntimeSnapshot {
-            enabled: self.cache_enabled,
-            concurrency: 0,
-            accesses: self.cache_accesses,
-            hits: self.cache_hits,
-        }
-    }
     /// The apply cache's bytes on its tracker (Go `ApplyCache.Set`'s
     /// `Consume`; the inner lists charge `inner_list_tracker` themselves),
-    /// then the statement quota. A parallel apply's worker charges its
-    /// shared trackers instead.
+    /// then the statement quota.
     fn account(&self) -> Result<(), ExecError> {
-        if self.shared_rows_tracker.is_none() {
-            self.cache_tracker
-                .replace_bytes_used(self.cache.as_ref().map_or(0, |cache| cache.memory_consumed()));
-        }
+        self.cache_tracker
+            .replace_bytes_used(self.cache.as_ref().map_or(0, |cache| cache.memory_consumed()));
         self.memory.check().map_err(ExecError::from)
     }
     fn load_inner(&mut self, index: usize) -> Result<(), ExecError> {
@@ -261,24 +236,13 @@ impl NestedLoopApplyExec {
         self.account()
     }
     /// Go `chunk.NewListWithMemTracker(RetTypes(InnerExec), InitCap,
-    /// MaxChunkSize, InnerList.GetMemTracker())`; a parallel apply's worker
-    /// list charges the shared rows tracker.
+    /// MaxChunkSize, InnerList.GetMemTracker())`.
     fn new_inner_rows(&self) -> InnerRows {
         let (types, init_cap, max_chunk_size) =
             (self.inner.ret_field_types(), self.meta.init_cap(), self.meta.max_chunk_size());
-        let list = match &self.shared_rows_tracker {
-            Some(tracker) => {
-                let list = List::new(types, init_cap, max_chunk_size);
-                list.mem_tracker().attach_to(tracker);
-                list
-            }
-            None => List::new_list_with_mem_tracker(
-                types,
-                init_cap,
-                max_chunk_size,
-                Arc::clone(&self.inner_list_tracker),
-            ),
-        };
+        let list = List::new_list_with_mem_tracker(
+            types, init_cap, max_chunk_size, Arc::clone(&self.inner_list_tracker),
+        );
         InnerRows { list }
     }
     fn select_outer(&mut self, req: &mut Chunk) -> Result<bool, ExecError> {
@@ -291,17 +255,13 @@ impl NestedLoopApplyExec {
                 if self.outer_chunk.num_rows() == 0 {
                     return Ok(false);
                 }
-                self.outer_selected = if let Some(selected) = self.preset_outer_selection {
-                    vec![selected; self.outer_chunk.num_rows()]
-                } else {
-                    tidb_expr::evaluator::vectorized_filter(
-                        &self.context,
-                        self.context.enable_vectorized_expression(),
-                        &self.outer_filter,
-                        &self.outer_chunk,
-                        std::mem::take(&mut self.outer_selected),
-                    )?
-                };
+                self.outer_selected = tidb_expr::evaluator::vectorized_filter(
+                    &self.context,
+                    self.context.enable_vectorized_expression(),
+                    &self.outer_filter,
+                    &self.outer_chunk,
+                    std::mem::take(&mut self.outer_selected),
+                )?;
                 let first = self.outer_chunk.get_row(0).idx();
                 if previous_cursor == 0
                     && self.outer_chunk.num_rows() == 1
@@ -348,7 +308,7 @@ impl Executor for NestedLoopApplyExec {
             .then(|| Arc::new(ApplyCache::new(self.context.apply_cache_capacity())));
         // Go `Open`: `InnerList.GetMemTracker().AttachTo(e.memTracker)` and,
         // with the cache, `cache.GetMemTracker().AttachTo(e.memTracker)`.
-        if self.shared_rows_tracker.is_none() {
+        {
             self.inner_list_tracker = Tracker::new(tidb_memory::LABEL_FOR_INNER_LIST, -1);
             self.inner_list_tracker.attach_to(&self.tracker);
             self.cache_tracker = Tracker::new(tidb_memory::LABEL_FOR_APPLY_CACHE, -1);

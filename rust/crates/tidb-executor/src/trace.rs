@@ -303,6 +303,27 @@ fn varchar() -> FieldType {
     FieldType::new(FieldTypeCode::VarString)
 }
 
+/// Go `PlanBuilder.buildTrace`: result columns are known before TraceExec.Next.
+/// Rendering and the connection's writer use this same schema.
+pub fn result_columns(format: &str) -> Result<Vec<(String, FieldType)>, String> {
+    let names: &[&str] = match format.to_lowercase().as_str() {
+        "" | "row" => &["operation", "startTS", "duration"],
+        "json" => &["operation"],
+        "log" => &["time", "event", "tags", "spanName"],
+        _ => return Err("trace format should be one of 'row', 'log' or 'json'".to_owned()),
+    };
+    Ok(names.iter().enumerate().map(|(index, name)| {
+        let field = if format.eq_ignore_ascii_case("log") && index == 0 {
+            let mut timestamp = FieldType::new(FieldTypeCode::Timestamp);
+            timestamp.set_decimal(6);
+            timestamp
+        } else {
+            varchar()
+        };
+        ((*name).to_owned(), field)
+    }).collect())
+}
+
 fn clock(started: std::time::SystemTime, offset: i64) -> chrono::DateTime<chrono::Local> {
     let moment =
         started + std::time::Duration::from_nanos(u64::try_from(offset.max(0)).unwrap_or(0));
@@ -357,10 +378,7 @@ pub fn row_format(
     let mut rows = Vec::new();
     walk(root, "", false, started, &mut rows);
     (
-        ["operation", "startTS", "duration"]
-            .into_iter()
-            .map(|name| (name.to_owned(), varchar()))
-            .collect(),
+        result_columns("row").expect("row schema"),
         rows,
     )
 }
@@ -428,17 +446,7 @@ pub fn generate_log_result(
     }
     rows.sort_by_key(|(at, _)| *at);
     let rows = rows.into_iter().map(|(_, row)| row).collect();
-    let mut timestamp_type = FieldType::new(FieldTypeCode::Timestamp);
-    timestamp_type.set_decimal(6);
-    (
-        vec![
-            ("time".to_owned(), timestamp_type),
-            ("event".to_owned(), varchar()),
-            ("tags".to_owned(), varchar()),
-            ("spanName".to_owned(), varchar()),
-        ],
-        rows,
-    )
+    (result_columns("log").expect("log schema"), rows)
 }
 
 fn base64(bytes: &[u8]) -> String {
@@ -551,7 +559,7 @@ pub fn json_format(
         offset += 4096;
     }
     rows.push(vec![Datum::Bytes(bytes[offset..].to_vec())]);
-    (vec![("operation".to_owned(), varchar())], rows)
+    (result_columns("json").expect("json schema"), rows)
 }
 
 /// The output of `TRACE` for `format` (`row` when empty).

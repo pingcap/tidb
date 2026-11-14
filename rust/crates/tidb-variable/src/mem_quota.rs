@@ -481,7 +481,32 @@ pub struct StatementMemory {
     /// The statement's canonical SQL killer, shared by memory cancellation,
     /// `KILL QUERY`, connection shutdown, and blocking expression waits.
     killer: Arc<SqlKiller>,
-    coprocessor_scope: Option<Arc<Mutex<Arc<tidb_txnkv::CancelHandle>>>>,
+    coprocessor_scope: Option<Arc<CoprocessorScope>>,
+}
+
+/// Go `context.WithCancel(workerCtx)`: nested Apply scopes retain their
+/// parent, and each Open links its fresh generation to the parent's current
+/// generation. Closing an inner Apply cannot cancel its outer siblings.
+struct CoprocessorScope {
+    current: Mutex<Option<Arc<tidb_txnkv::CancelHandle>>>,
+    parent: Option<Arc<CoprocessorScope>>,
+}
+impl CoprocessorScope {
+    /// Go `context.WithCancel`'s parent-child registration.
+    fn new_generation(parent: Option<&Arc<Self>>) -> Arc<tidb_txnkv::CancelHandle> {
+        parent.map_or_else(|| Arc::new(tidb_txnkv::CancelHandle::default()), |parent| {
+            parent.request_child()
+        })
+    }
+
+    /// Go `executorBuilder.buildApply.constructSerialExec`: without a started parallel owner there is
+    /// no WithCancel context, so requests inherit the live parent directly.
+    fn request_child(&self) -> Arc<tidb_txnkv::CancelHandle> {
+        if let Some(current) = self.current.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref() {
+            return current.request_child();
+        }
+        Self::new_generation(self.parent.as_ref())
+    }
 }
 
 impl std::fmt::Debug for StatementMemory {
@@ -518,42 +543,43 @@ impl Default for StatementMemory {
 }
 
 impl StatementMemory {
-    /// A child execution scope, independent of the statement's SQL killer.
+    /// Go `ParallelNestedLoopApplyExec.Next`'s deferred worker context,
+    /// independent of the statement's SQL killer.
+    /// It becomes active at Open; a serial fallback keeps inheriting its parent.
     /// All worker clones see its current generation across executor reopen.
     pub fn with_coprocessor_worker_scope(mut self) -> Self {
-        self.coprocessor_scope = Some(Arc::new(Mutex::new(Arc::new(
-            tidb_txnkv::CancelHandle::default(),
-        ))));
+        let parent = self.coprocessor_scope.take();
+        self.coprocessor_scope = Some(Arc::new(CoprocessorScope {
+            current: Mutex::new(None),
+            parent,
+        }));
         self
     }
-    /// New request-local child. Closing a response cancels only this child;
+    /// Go `context.WithCancel(workerCtx)`: a request-local child.
+    /// Closing a response cancels only this child;
     /// closing its Apply owner cancels every outstanding sibling request.
     pub fn coprocessor_request_cancellation(&self) -> Arc<tidb_txnkv::CancelHandle> {
         self.coprocessor_scope.as_ref().map_or_else(
             || Arc::new(tidb_txnkv::CancelHandle::default()),
-            |scope| {
-                scope
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .request_child()
-            },
+            |scope| scope.request_child(),
         )
     }
-    /// Rotate only after all workers from the previous Open have joined.
+    /// Go `ParallelNestedLoopApplyExec.Next`: a fresh execution context,
+    /// rotated only after all workers from the previous Open have joined.
     pub fn renew_coprocessor_worker_scope(&self) {
         if let Some(scope) = &self.coprocessor_scope {
-            *scope
+            *scope.current
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                Arc::new(tidb_txnkv::CancelHandle::default());
+                Some(CoprocessorScope::new_generation(scope.parent.as_ref()));
         }
     }
+    /// Go `ParallelNestedLoopApplyExec.Close` calls `cancelWorkers`.
     pub fn cancel_coprocessor_workers(&self) {
         if let Some(scope) = &self.coprocessor_scope {
-            scope
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .cancel();
+            if let Some(current) = scope.current.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref() {
+                current.cancel();
+            }
         }
     }
 

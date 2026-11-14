@@ -1139,6 +1139,20 @@ impl<'s> ClusterServerSession<'s> {
         trace: &tidb_ast::TraceStmt,
     ) -> Result<QueryResult<'s>, SqlQueryError> {
         tidb_executor::trace::check_options(trace).map_err(SqlQueryError::unknown)?;
+        // Go writeChunks allocates the TraceExec record set's chunk before
+        // Next calls executeChild. The materialized row builder must reserve
+        // those columns before any of the child's executors can take them.
+        self.session.reset_chunk_allocator();
+        let _ = self.session.statement_context(false);
+        let columns = tidb_executor::trace::result_columns(&trace.format)
+            .map_err(SqlQueryError::unknown)?;
+        let field_types: Vec<_> = columns.iter().map(|(_, field)| field.clone()).collect();
+        let chunk = self.session.result_write_chunk_for(&field_types);
+        let nested = std::mem::replace(&mut self.session.nested_chunk_alloc, true);
+        // Go drainRecordSet takes rs.NewChunk(nil), even when the outer
+        // TRACE is being written by a connection.
+        let writes = std::mem::replace(&mut self.session.connection_writes_results, false);
+        let alloc_failed = self.session.chunk_alloc_failed;
         let inner = (*trace.statement).clone();
         let inner_sql = tidb_executor::trace::statement_text(&inner);
         // Go `TraceExec.Next`: the statement runs under the recording
@@ -1147,57 +1161,65 @@ impl<'s> ClusterServerSession<'s> {
         let entered = recorder.enter();
         // Go `executeChild`: `ExecuteStmt`, then `drainRecordSet` pulls the
         // record set it returned under the same span.
-        let mut affected = 0_u64;
-        match self.run_statement(&inner_sql, &inner, false) {
-            Ok(Executed::Done(outcome)) => affected = outcome.affected_rows,
-            Ok(opened) => match match opened {
-                Executed::Query(execute_stmt) => {
-                    let opened = self.reborrow().open_query(&inner_sql, &inner);
-                    drop(execute_stmt);
-                    opened
-                }
-                Executed::Trace => self.reborrow().execute_trace(trace_of(&inner)),
-                Executed::Done(_) => unreachable!("an OK outcome is matched above"),
-            } {
-                Ok(mut result) => {
-                    let mut rows = 0_u64;
-                    loop {
-                        match result.source().next_batch(1024) {
-                            Ok(batch) if batch.is_empty() => {
-                                recorder.event(&format!(
-                                    "execute done, ReturnRow: {rows}, ModifyRow: 0"
-                                ));
-                                break;
-                            }
-                            Ok(batch) => rows += batch.len() as u64,
-                            Err(failure) => {
-                                recorder.event(&format!(
-                                    "execute with error({}): {}",
-                                    failure.code, failure.message
-                                ));
-                                break;
+        let child = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut affected = 0_u64;
+            match self.run_statement(&inner_sql, &inner, false) {
+                Ok(Executed::Done(outcome)) => affected = outcome.affected_rows,
+                Ok(opened) => match match opened {
+                    Executed::Query(execute_stmt) => {
+                        let opened = self.reborrow().open_query(&inner_sql, &inner);
+                        drop(execute_stmt);
+                        opened
+                    }
+                    Executed::Trace => self.reborrow().execute_trace(trace_of(&inner)),
+                    Executed::Done(_) => unreachable!("an OK outcome is matched above"),
+                } {
+                    Ok(mut result) => {
+                        let mut rows = 0_u64;
+                        loop {
+                            match result.source().next_batch(1024) {
+                                Ok(batch) if batch.is_empty() => {
+                                    recorder.event(&format!(
+                                        "execute done, ReturnRow: {rows}, ModifyRow: 0"
+                                    ));
+                                    break;
+                                }
+                                Ok(batch) => rows += batch.len() as u64,
+                                Err(failure) => {
+                                    recorder.event(&format!(
+                                        "execute with error({}): {}",
+                                        failure.code, failure.message
+                                    ));
+                                    break;
+                                }
                             }
                         }
                     }
-                }
+                    Err(failure) => recorder.event(&format!(
+                        "execute with error({}): {}",
+                        failure.code, failure.message
+                    )),
+                },
                 Err(failure) => recorder.event(&format!(
                     "execute with error({}): {}",
                     failure.code, failure.message
                 )),
-            },
-            Err(failure) => recorder.event(&format!(
-                "execute with error({}): {}",
-                failure.code, failure.message
-            )),
-        }
+            }
+            affected
+        }));
+        self.session.nested_chunk_alloc = nested;
+        self.session.connection_writes_results = writes;
+        // A child error becomes a trace event, not a failed client command.
+        self.session.chunk_alloc_failed = alloc_failed;
+        let affected = match child {
+            Ok(affected) => affected,
+            Err(panic) => std::panic::resume_unwind(panic),
+        };
         drop(entered);
         recorder.event(&format!("execute done, modify row: {affected}"));
         let (spans, started) = recorder.finish();
         let (columns, result_rows) = tidb_executor::trace::render(&trace.format, &spans, started)
             .map_err(SqlQueryError::unknown)?;
-        // Go `writeChunks`' `rs.NewChunk(sessVars.GetChunkAllocator())`.
-        let field_types: Vec<_> = columns.iter().map(|(_, field_type)| field_type.clone()).collect();
-        let chunk = self.session.result_write_chunk_for(&field_types);
         let columns = crate::domain::pipeline_session::select_fields(&columns);
         Ok(QueryResult::new(Box::new(
             crate::domain::pipeline_session::MaterializedResultSetSource::new(columns, result_rows)

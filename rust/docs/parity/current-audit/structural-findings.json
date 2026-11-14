@@ -2,9 +2,9 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 13,
-    "open": 2,
-    "partial": 11
+    "unresolved": 12,
+    "open": 0,
+    "partial": 12
   },
   "findings": [
     {
@@ -43,13 +43,6 @@
       "group": "DML and executor handoff",
       "finding": "A projection's vectorized result column takes the shape its Go builtin's `vecEval*` gives it (`chunk_executor.rs`: `Resize*`, `Reserve*` and appends, one argument evaluated into it, a column's `CopyReconstruct`) for arithmetic, comparisons and `IN`, logic, `NOT`/`IS NULL`/`IS TRUE`, casts, `IF`/`IFNULL`/`CASE`/`COALESCE`, `GREATEST`/`LEAST` (a string one ping-pongs `result` with two buffers, reserving it before its rows land), and every other builtin whose Go signature is `vectorized()` (`builtin_vec_result`: the math, time, JSON, info, string, bit, `LIKE`, encryption, miscellaneous, vector and variable builtins; `UUID`'s `ReserveStringWithSizeHint`), so a tree appends row by row exactly where Go's `evalOneColumn` does; a string `GREATEST`/`LEAST` shapes `result` as Go's kernels do (`Evaluator::run`'s `string_extremum_vec`: the direct signature's ping-pong appends a computed first argument's rows, then each even step's running value after a `ReserveString(n)`, and copies an even count's last step in by `CopyConstruct`; the compare-as-time signature evaluates every argument into `result` before its values), and a compare-as-time call is built as Go's is (its signature kept from the uncast arguments, every argument cast to a string, `doTimeConversionForGL`'s truncation and `checkMonthDay` warnings, a `strconv.Atoi` failure raised as 1105). The values still come from the row and batch evaluators rather than Go's `vecEval*` kernels, but under Go's `EvalExpr` choice (`vecEnabled && expr.Vectorized()`, scoped per projected expression and per filter; a Selection reads `tidb_enable_vectorized_expression` as Go's `SelectionExec` does) a string `GREATEST`/`LEAST` answers the later of two equal arguments as `vecEvalString` does, where a folded constant or a row evaluation keeps the earlier (`evalString`); a control function's row fallback (`fallbackEval*`, when a branch's vectorized evaluation warns) leaves the column the branch already sized and warns only for the branch a row takes (`a_control_function_warns_only_for_the_branch_a_row_takes_like_go`, the fallback rows of `a_projection_sizes_its_result_columns_as_go_vec_eval_does`)",
       "go_owner": "`pkg/expression` (`builtin_*_vec.go`, `Constant.VecEval*`, `Column.VecEval*`), `pkg/util/chunk` (`resize`, `CopyReconstruct`)"
-    },
-    {
-      "id": "C02",
-      "status": "partial",
-      "group": "DML and executor handoff",
-      "finding": "The session's reusable chunk allocator is Go's (`Session::chunk_alloc`, Go `clientConn.chunkAlloc`: installed per statement as `NewSyncAllocator(alloc)` under `tidb_enable_reuse_chunk`, never for an internal `InRestrictedSQL` statement, reset between statements and recreated after a failed one, each statement's validity its own), executors take it as `ExecutorMeta::alloc_pool` (Go `AllocPool`) for `NewChunk` / `TryNewCacheChunk` / `NewChunkWithCapacity`, and Go's `NewFirstChunk` sites (`Executor::new_first_chunk`: projection workers, hash-join probe and result chunks, index-hash-join results, shuffle holders, the drained record set) allocate outside it, so memory charges match Go's in sequence (`a_projection_sizes_its_result_columns_as_go_vec_eval_does`, `explain_analyze_dml_roots_report_their_executor_stats_and_memory_like_go`). The connection writes a result through a chunk from the statement's allocator (`writeChunks`' `rs.NewChunk(GetChunkAllocator())`, `ResultSetSource::new_write_chunk`), and a covering `IndexReader` returns its `OutputColumns` from the source itself (`dagReq.OutputOffsets`) instead of through a projection's pooled chunk, so a later statement reuses the same columns Go's does: a point UPDATE's root charges Go's 638 / 889 Bytes / 1.11 KB over the wire after a point UPDATE, `select 1` or a scan (`pipeline_mysql_client_source.rs` `explain_for_connection_charges_reused_chunks_like_go`). An `INSERT ... SELECT` reads its source into a chunk from the statement's allocator taken once the source is open (Go `insertRowsFromSelect`'s `TryNewCacheChunk(selectExec)`), so the next statement reuses the columns it grew (`an_insert_select_returns_its_source_chunk_to_the_allocator_like_go`). A parallel projection's last answer swaps in the output its fetcher completed empty, and a Projection under a UnionAll copies its columns (`avoidColumnEvaluatorForProjBelowUnion`), as Go's do (`a_parallel_projection_swaps_in_its_last_output_like_go`). Every executor's meta takes the session's allocator as Go's `newBaseExecutor` does (CheckIndexRange, the prepared point get and the access path's inner source too). Remaining: a materialized result (a plain EXPLAIN, SHOW and the other row-built statements) takes its write chunk from the allocator when its rows are already built (`a_plain_explain_and_a_show_write_through_pooled_chunks_like_go`, against the server binary), so a statement whose Go executor draws from the allocator before `Next` builds its rows (an EXPLAIN ANALYZE of a write, whose `ExplainExec` runs the write in `Next`) takes it after those draws; parallel apply's chunks, whose executor shape differs from Go's, are unmapped; the serial apply charges as Go's `NestedLoopApplyExec` does (`InnerList` and apply-cache trackers attached at `Open`, its chunks uncharged; `tests_explain.rs` `an_apply_charges_its_inner_list_and_cache_like_go`, a Go testkit allocator probe), and MaxOneRow and TableDual take the session's allocator as Go's `newBaseExecutor` gives every executor.",
-      "go_owner": "`pkg/util/chunk` (`alloc.go`: `NewAllocator`, `NewReuseHookAllocator`, `NewSyncAllocator`), `pkg/sessionctx/variable/session.go` (`SetAlloc`, `GetChunkAllocator`), `pkg/executor/internal/exec/executor.go` (`AllocPool`, `NewChunkWithCapacity`)"
     },
     {
       "id": "E05",
@@ -104,7 +97,7 @@
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 13,
-  "open": 2,
-  "partial": 11
+  "unresolved": 12,
+  "open": 0,
+  "partial": 12
 }

@@ -13,10 +13,55 @@
 // limitations under the License.
 
 use super::*;
-use tidb_executor_join::joiner::{new_joiner, JoinType, JoinerChunkSizes};
-use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering::SeqCst},
+    Condvar,
+};
 use tidb_datatype::{Datum, FieldTypeCode};
+use tidb_executor_join::joiner::{new_joiner, JoinType, JoinerChunkSizes};
 use tidb_expr::column::{Column, CorrelatedColumn};
+
+// One-chunk outer fixture; production no longer composes serial lanes.
+struct WorkerOuter {
+    meta: ExecutorMeta,
+    feed: Arc<Mutex<(Option<Chunk>, bool)>>,
+}
+impl WorkerOuter {
+    fn new(meta: ExecutorMeta, feed: Arc<Mutex<(Option<Chunk>, bool)>>) -> Self {
+        Self { meta, feed }
+    }
+}
+impl Executor for WorkerOuter {
+    fn open(&mut self) -> Result<(), ExecError> {
+        Ok(())
+    }
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        req.reset();
+        if let Some(mut chk) = lock(&self.feed).0.take() {
+            req.swap_columns(&mut chk);
+        }
+        Ok(())
+    }
+    fn close(&mut self) -> Result<(), ExecError> {
+        lock(&self.feed).0 = None;
+        Ok(())
+    }
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
+}
 
 struct Gate {
     entered: Mutex<usize>,
@@ -138,13 +183,11 @@ fn fixture(
         1,
         1,
     );
-    let stop = Arc::new(AtomicBool::new(false));
     let opens = Arc::new(AtomicUsize::new(0));
     let closes = Arc::new(AtomicUsize::new(0));
     let mut workers = Vec::new();
     for id in 0..4 {
         let correlation = CorrelatedColumn::new(column.clone());
-        let feed = Arc::new(Mutex::new((None, false)));
         let inner = Inner {
             meta: ExecutorMeta::new(schema.clone(), 3, 1, 1),
             correlation: correlation.clone(),
@@ -171,22 +214,12 @@ fn fixture(
                 max_chunk_size: 1,
             },
         );
-        let serial = NestedLoopApplyExec::new(
-            output_meta.clone(),
-            Box::new(WorkerOuter::new(outer_meta.clone(), feed.clone())),
-            Box::new(CancellableInner::new(Box::new(inner), stop.clone())),
-            Vec::new(),
+        workers.push(ApplyWorker::new(
+            Box::new(inner),
             Vec::new(),
             vec![correlation],
             joiner,
-            false,
-            cache,
-            context.clone(),
-        );
-        workers.push(ApplyWorker {
-            executor: Arc::new(Mutex::new(serial)),
-            feed,
-        });
+        ));
     }
     (
         ParallelNestedLoopApplyExec::new(
@@ -194,10 +227,10 @@ fn fixture(
             Box::new(outer),
             Vec::new(),
             workers,
+            false,
             ordered,
             cache,
             context,
-            stop,
             None,
         ),
         opens,
@@ -266,14 +299,15 @@ fn native_parallel_apply_unordered_results_and_shared_cache_retire() {
 fn native_parallel_apply_early_close_joins_full_output_queues_and_reopens() {
     let (mut executor, opens, closes) = fixture(true, true, 100, 0, None);
     for _ in 0..3 {
-        let mut input = executor.outer.new_chunk();
+        let mut input = lock(&executor.outer_exec).new_chunk();
         for n in [1, 2, 3, 4] {
             input.append_datum(0, &Datum::Int(n));
         }
         // Replenish the reusable source fixture, just as a storage Open does.
         let feed = Arc::new(Mutex::new((Some(input), false)));
-        executor.outer = Box::new(WorkerOuter::new(
-            ExecutorMeta::new(executor.outer.schema().clone(), 1, 1, 4),
+        let schema = lock(&executor.outer_exec).schema().clone();
+        *lock(&executor.outer_exec) = Box::new(WorkerOuter::new(
+            ExecutorMeta::new(schema.clone(), 1, 1, 4),
             feed,
         ));
         executor.open().unwrap();
@@ -324,4 +358,90 @@ fn apply_close_cancels_request_children_without_killing_the_statement_and_reopen
     );
     executor.close().unwrap();
     assert!(next.is_cancelled());
+}
+
+/// Go `TestApplyGoroutinePanic` in `pkg/executor/parallel_apply_test.go`.
+#[test]
+fn test_apply_goroutine_panic() {
+    for name in [
+        "parallelApplyInnerWorkerPanic",
+        "parallelApplyOuterWorkerPanic",
+        "parallelApplyGetCachePanic",
+        "parallelApplySetCachePanic",
+    ] {
+        let (mut executor, _, _) = fixture(false, true, 2, 0, None);
+        let _guard = tidb_failpoint::enable_for_test(
+            &format!("github.com/pingcap/tidb/pkg/executor/{name}"),
+            "panic",
+        );
+        executor.open().unwrap();
+        assert!(
+            drain(&mut executor).is_err(),
+            "Go {name} must reach the consumer"
+        );
+        executor.close().unwrap();
+    }
+}
+
+/// Go `TestOrderedParallelApplyGoroutinePanic` in `pkg/executor/parallel_apply_test.go`.
+#[test]
+fn test_ordered_parallel_apply_goroutine_panic() {
+    for name in [
+        "parallelApplyInnerWorkerOrderedPanic",
+        "parallelApplyOuterWorkerPanic",
+    ] {
+        let (mut executor, _, _) = fixture(true, true, 2, 0, None);
+        let _guard = tidb_failpoint::enable_for_test(
+            &format!("github.com/pingcap/tidb/pkg/executor/{name}"),
+            "panic",
+        );
+        executor.open().unwrap();
+        assert!(
+            drain(&mut executor).is_err(),
+            "Go {name} must reach the consumer"
+        );
+        executor.close().unwrap();
+    }
+}
+
+/// Go `ParallelNestedLoopApplyExec.Next`'s `context.WithCancel(ctx)` and
+/// `TestOrderedParallelApplyNested`: a nested Apply's requests inherit its
+/// parent's cancellation even across executor reopens.
+#[test]
+fn nested_apply_cancellation_follows_the_worker_context() {
+    let parent = StatementMemory::default().with_coprocessor_worker_scope();
+    let nested = parent.clone().with_coprocessor_worker_scope();
+    for _ in 0..2 {
+        parent.renew_coprocessor_worker_scope();
+        nested.renew_coprocessor_worker_scope();
+        let outer_request = parent.coprocessor_request_cancellation();
+        let inner_request = nested.coprocessor_request_cancellation();
+        assert!(!inner_request.is_cancelled());
+        nested.cancel_coprocessor_workers();
+        assert!(inner_request.is_cancelled());
+        assert!(!outer_request.is_cancelled());
+        nested.renew_coprocessor_worker_scope();
+        let inner_request = nested.coprocessor_request_cancellation();
+        parent.cancel_coprocessor_workers();
+        assert!(outer_request.is_cancelled());
+        assert!(inner_request.is_cancelled());
+        assert!(parent.check().is_ok());
+    }
+}
+
+/// Go `executorBuilder.buildApply.constructSerialExec` keeps the caller's
+/// context when cloning falls back to serial execution; `Next` has not
+/// created any worker context. Pinned by zzprobe/c02.TestC02ApplyContexts.
+#[test]
+fn serial_apply_fallback_keeps_the_live_parent_context() {
+    let parent = StatementMemory::default().with_coprocessor_worker_scope();
+    let fallback = parent.clone().with_coprocessor_worker_scope();
+    for _ in 0..2 {
+        parent.renew_coprocessor_worker_scope();
+        let request = fallback.coprocessor_request_cancellation();
+        assert!(!request.is_cancelled());
+        parent.cancel_coprocessor_workers();
+        assert!(request.is_cancelled(), "serial fallback retains the current parent");
+        assert!(parent.check().is_ok());
+    }
 }
