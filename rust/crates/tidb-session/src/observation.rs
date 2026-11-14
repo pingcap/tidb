@@ -255,7 +255,9 @@ impl Session {
         let phases = Arc::clone(&observation.phases);
         let stats = Arc::clone(&self.statement_stats);
         let kv_exec_counter = observation.kv_exec_counter.clone();
-        let plan = Arc::clone(&self.process_plan_info);
+        // The session owns its plan cell; a hook that outlives the statement
+        // (a plan context kept for deferred rendering) must not keep it.
+        let plan = Arc::downgrade(&self.process_plan_info);
         let digest = observation.digest.clone();
         let normalized = observation.normalized.clone();
         let restricted_sql = self.vars.restricted_sql;
@@ -310,6 +312,9 @@ impl Session {
             // Go `observeStmtBeginForTopProfiling`: non-fast executions are
             // admitted even while profiling is disabled, so enabling it during
             // execution can still observe their begin.
+            let Some(plan) = plan.upgrade() else {
+                return;
+            };
             let (fast, normalized_plan, plan_digest) = {
                 let plan = plan.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 (plan.is_fast_plan, plan.normalized_plan.clone(), plan.plan_digest.clone())
@@ -496,7 +501,7 @@ impl Session {
         let normalized = observation.normalized.clone();
         let digest = observation.digest.clone();
         let restricted = self.vars.restricted_sql;
-        let plan = Arc::clone(&self.process_plan_info);
+        let plan = Arc::downgrade(&self.process_plan_info);
         let registered = Arc::new(std::sync::atomic::AtomicBool::new(false));
         Some(Arc::new(move || {
             if !tidb_topsql_state::top_profiling_enabled()
@@ -505,6 +510,9 @@ impl Session {
                 return;
             }
             tidb_topsql::register_sql(&normalized, (!normalized.is_empty()).then_some(&digest), restricted);
+            let Some(plan) = plan.upgrade() else {
+                return;
+            };
             let (normalized_plan, plan_digest) = {
                 let plan = plan.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 (plan.normalized_plan.clone(), plan.plan_digest.clone())
@@ -570,8 +578,11 @@ impl Session {
         let sql_digest = (!normalized.is_empty()).then(|| digest.as_bytes().to_vec());
         let keyspace_name = tidb_keyspace::get_keyspace_name_bytes_by_settings();
         // Go `StmtCtx.GetPlanDigest`: empty until the plan is published.
+        // Held weakly: the session owns its plan cell, and the tagger lives in
+        // the KV context its transactions and plan contexts share.
+        let plan = plan.as_ref().map(Arc::downgrade);
         let plan_digest = move || {
-            plan.as_ref().map_or_else(Vec::new, |plan| {
+            plan.as_ref().and_then(std::sync::Weak::upgrade).map_or_else(Vec::new, |plan| {
                 let plan = plan
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1552,5 +1563,25 @@ impl tidb_executor::exec_stmt_observation::ExecStmtObservation for Session {
 
     fn process_plan_info_cell(&self) -> Arc<std::sync::Mutex<tidb_stmtctx::ProcessPlanInfo>> {
         Arc::clone(&self.process_plan_info)
+    }
+}
+
+#[cfg(test)]
+mod plan_cell_lifetime_tests {
+    /// A dropped session frees its process-plan cell. The statement hooks
+    /// (phase observer, Top SQL registration, KV resource-group taggers) hold
+    /// it weakly: the plan context kept for deferred plan rendering carries
+    /// those hooks, and a strong capture made cell -> plan -> context -> hook
+    /// -> cell a cycle that leaked one catalog image and its planner views per
+    /// dropped session (the binding reload opens one every lease).
+    #[test]
+    fn a_dropped_session_frees_its_process_plan_cell() {
+        use tidb_executor::exec_stmt_observation::ExecStmtObservation as _;
+        let mut session = crate::Session::new();
+        session.run("create table plan_cell (a int, b int)").unwrap();
+        session.run("select a from plan_cell where b > 1 order by a").unwrap();
+        let cell = std::sync::Arc::downgrade(&session.process_plan_info_cell());
+        drop(session);
+        assert!(cell.upgrade().is_none(), "the dropped session's plan cell is still referenced");
     }
 }
