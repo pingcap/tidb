@@ -498,6 +498,10 @@ func (b *builtinLeftSig) evalString(ctx EvalContext, row chunk.Row) (string, boo
 	if isNull || err != nil {
 		return "", true, err
 	}
+	// when len > MaxInt64, returns the whole string.
+	if left < 0 && mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
+		return str, false, nil
+	}
 	leftLength := int(left)
 	if strLength := len(str); leftLength > strLength {
 		leftLength = strLength
@@ -531,6 +535,10 @@ func (b *builtinLeftUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string,
 	left, isNull, err := b.args[1].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
+	}
+	// when len > MaxInt64, returns the whole string.
+	if left < 0 && mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
+		return str, false, nil
 	}
 	runes, leftLength := []rune(str), int(left)
 	if runeLength := len(runes); leftLength > runeLength {
@@ -591,6 +599,10 @@ func (b *builtinRightSig) evalString(ctx EvalContext, row chunk.Row) (string, bo
 	if isNull || err != nil {
 		return "", true, err
 	}
+	// when len > MaxInt64, returns the whole string.
+	if right < 0 && mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
+		return str, false, nil
+	}
 	strLength, rightLength := len(str), int(right)
 	if rightLength > strLength {
 		rightLength = strLength
@@ -624,6 +636,10 @@ func (b *builtinRightUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string
 	right, isNull, err := b.args[1].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
+	}
+	// when len > MaxInt64, returns the whole string.
+	if right < 0 && mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
+		return str, false, nil
 	}
 	runes := []rune(str)
 	strLength, rightLength := len(runes), int(right)
@@ -1446,6 +1462,10 @@ func (b *builtinSubstring2ArgsSig) evalString(ctx EvalContext, row chunk.Row) (s
 	if isNull || err != nil {
 		return "", true, err
 	}
+	// when pos > MaxInt64, it is past the end of the string.
+	if pos < 0 && mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
+		return "", false, nil
+	}
 	length := int64(len(str))
 	if pos < 0 {
 		pos += length
@@ -1482,6 +1502,10 @@ func (b *builtinSubstring2ArgsUTF8Sig) evalString(ctx EvalContext, row chunk.Row
 	pos, isNull, err := b.args[1].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
+	}
+	// when pos > MaxInt64, it is past the end of the string.
+	if pos < 0 && mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
+		return "", false, nil
 	}
 	runes := []rune(str)
 	length := int64(len(runes))
@@ -1525,6 +1549,10 @@ func (b *builtinSubstring3ArgsSig) evalString(ctx EvalContext, row chunk.Row) (s
 	if isNull || err != nil {
 		return "", true, err
 	}
+	// when pos > MaxInt64, it is past the end of the string.
+	if pos < 0 && mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
+		return "", false, nil
+	}
 	byteLen := int64(len(str))
 	if pos < 0 {
 		pos += byteLen
@@ -1534,8 +1562,16 @@ func (b *builtinSubstring3ArgsSig) evalString(ctx EvalContext, row chunk.Row) (s
 	if pos > byteLen || pos < 0 {
 		pos = byteLen
 	}
+	// when len > MaxInt64, the result runs to the end of the string.
+	if length < 0 && mysql.HasUnsignedFlag(b.args[2].GetType(ctx).GetFlag()) {
+		return str[pos:], false, nil
+	}
 	end := pos + length
 	if end < pos {
+		if length > 0 {
+			// pos+len overflows max int64, so it runs to the end of the string.
+			return str[pos:], false, nil
+		}
 		return "", false, nil
 	} else if end < byteLen {
 		return str[pos:end], false, nil
@@ -1572,6 +1608,10 @@ func (b *builtinSubstring3ArgsUTF8Sig) evalString(ctx EvalContext, row chunk.Row
 	if isNull || err != nil {
 		return "", true, err
 	}
+	// when pos > MaxInt64, it is past the end of the string.
+	if pos < 0 && mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
+		return "", false, nil
+	}
 	runes := []rune(str)
 	numRunes := int64(len(runes))
 	if pos < 0 {
@@ -1582,8 +1622,16 @@ func (b *builtinSubstring3ArgsUTF8Sig) evalString(ctx EvalContext, row chunk.Row
 	if pos > numRunes || pos < 0 {
 		pos = numRunes
 	}
+	// when len > MaxInt64, the result runs to the end of the string.
+	if length < 0 && mysql.HasUnsignedFlag(b.args[2].GetType(ctx).GetFlag()) {
+		return string(runes[pos:]), false, nil
+	}
 	end := pos + length
 	if end < pos {
+		if length > 0 {
+			// pos+len overflows max int64, so it runs to the end of the string.
+			return string(runes[pos:]), false, nil
+		}
 		return "", false, nil
 	} else if end < numRunes {
 		return string(runes[pos:end]), false, nil
