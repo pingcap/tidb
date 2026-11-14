@@ -42,6 +42,22 @@ pub use load_stats_arm::ClientLocalFileReader;
 use txn_mode::txn_mode_for_begin;
 use tidb_vardef::txn_mode::{SessionTxnMode, PESSIMISTIC_TXN_MODE};
 
+/// Go's `privileges` and `expression` package `init`s: they set the
+/// extension package's hooks (`extension.RegisterDynamicPrivilege`,
+/// `RemoveDynamicPrivilege`, `RegisterExtensionFunc`,
+/// `RemoveExtensionFunc`), which a dependency cycle keeps it from calling
+/// directly. Go runs them before `main`; here the server's start and a
+/// test that sets extensions up run this.
+pub fn init_extension_hooks() {
+    fn set<F>(slot: &std::sync::RwLock<Option<F>>, f: F) {
+        *slot.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(f);
+    }
+    set(&tidb_extension::REGISTER_DYNAMIC_PRIVILEGE, tidb_privilege::register_dynamic_privilege);
+    set(&tidb_extension::REMOVE_DYNAMIC_PRIVILEGE, tidb_privilege::remove_dynamic_privilege);
+    set(&tidb_extension::REGISTER_EXTENSION_FUNC, tidb_expr::extension::register_extension_func);
+    set(&tidb_extension::REMOVE_EXTENSION_FUNC, tidb_expr::extension::remove_extension_func);
+}
+
 /// Go `approxParseSQLTokenCnt`: estimates the token count used to reserve
 /// parser memory with the global memory arbitrator.
 ///
@@ -3712,6 +3728,8 @@ mod tests_resource_group;
 mod tests_savepoint;
 #[cfg(test)]
 mod tests_extension_func;
+#[cfg(test)]
+mod tests_extension_registry;
 #[cfg(test)]
 mod tests_sem_v2;
 #[cfg(test)]

@@ -13,10 +13,22 @@
 // limitations under the License.
 
 
-//! Go `pkg/extension`. Ported so far: `function.go`, the definition an
-//! extension gives of a custom SQL function, which `pkg/expression`
-//! registers as an `extensionFuncClass`.
+//! Go `pkg/extension`: the registry of extensions (`registry.go`), each
+//! one's manifest (`manifest.go`) and the set up extensions
+//! (`extensions.go`); a custom SQL function's definition (`function.go`),
+//! which `pkg/expression` registers as an `extensionFuncClass`.
 
+mod extensions;
 mod function;
+mod manifest;
+mod registry;
+mod util;
 
+pub use extensions::Extensions;
 pub use function::{EvalIntFunc, EvalStringFunc, FunctionContext, FunctionDef, RequireDynamicPrivileges};
+pub use manifest::{
+    with_close, with_custom_access_check, with_custom_dyn_privs, with_custom_functions,
+    AccessCheckFunc, ExtensionOption, Manifest, REGISTER_DYNAMIC_PRIVILEGE, REGISTER_EXTENSION_FUNC,
+    REMOVE_DYNAMIC_PRIVILEGE, REMOVE_EXTENSION_FUNC,
+};
+pub use registry::{get_extensions, register, register_factory, reset, setup};

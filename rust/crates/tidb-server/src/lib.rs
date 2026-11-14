@@ -149,6 +149,7 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
     tidb_traceevent::register_with_client_go();
     crate::install_process_globals(&config);
     setup_log()?;
+    setup_extensions()?;
     let result = run_node_with_log(config);
     // Go `main`: `syncLog()` after the server exited; a failed sync turns
     // the exit into a generic failure.
@@ -159,6 +160,24 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
         }
     }
     result
+}
+
+/// Go `cmd/tidb-server/main.go` `setupExtensions`: sets the registered
+/// extensions up (`extension.Setup`), after the packages' `init`s set the
+/// hooks their setup calls.
+fn setup_extensions() -> Result<(), RunConfiguredNodeError> {
+    tidb_session::init_extension_hooks();
+    tidb_extension::setup()
+        .and_then(|()| tidb_extension::get_extensions())
+        .map(|_| ())
+        .map_err(|error| {
+            // Go `terror.MustNil(err)`: an extension's setup error is a plain one.
+            let message = match error {
+                tidb_exprctx::EvalError::Raw(message) => message,
+                other => format!("{other:?}"),
+            };
+            RunConfiguredNodeError::Engine(SqlQueryError::unknown(message))
+        })
 }
 
 /// Go `cmd/tidb-server/main.go` `setupLog`:

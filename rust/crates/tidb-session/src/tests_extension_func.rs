@@ -14,10 +14,8 @@
 
 
 //! Go `pkg/extension/function_test.go`: an extension's functions through
-//! SQL. Go registers them with `extension.Register(..., WithCustomFunctions,
-//! WithCustomDynPrivs)` and `extension.Setup`, whose manifest calls
-//! `RegisterExtensionFunc` / `RegisterDynamicPrivilege` for each; these
-//! tests call those two directly and remove what they registered after.
+//! SQL, registered as Go's are with `extension.Register(...,
+//! WithCustomFunctions, WithCustomDynPrivs)` and `extension.Setup`.
 
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -29,36 +27,33 @@ use tidb_extension::{FunctionContext, FunctionDef};
 use crate::tests_support::*;
 use crate::*;
 
-/// Go `defer extension.Reset()`: removes the functions and privileges a
-/// test registered.
-struct Registered {
-    funcs: Vec<String>,
-    privs: Vec<String>,
-}
+/// Go `extension.Register("test", WithCustomFunctions(defs),
+/// WithCustomDynPrivs(privs))` and `extension.Setup()`, with the test's
+/// deferred `extension.Reset()`.
+struct Registered;
 
 impl Registered {
     fn new(defs: &[FunctionDef], privs: &[&str]) -> Self {
-        for privilege in privs {
-            tidb_privilege::register_dynamic_privilege(privilege).unwrap();
-        }
-        for def in defs {
-            tidb_expr::extension::register_extension_func(def).unwrap();
-        }
-        Self {
-            funcs: defs.iter().map(|def| def.name.clone()).collect(),
-            privs: privs.iter().map(|privilege| (*privilege).to_owned()).collect(),
-        }
+        crate::init_extension_hooks();
+        tidb_extension::reset();
+        tidb_extension::register(
+            "test",
+            vec![
+                tidb_extension::with_custom_functions(defs.to_vec()),
+                tidb_extension::with_custom_dyn_privs(
+                    privs.iter().map(|privilege| (*privilege).to_owned()).collect(),
+                ),
+            ],
+        )
+        .unwrap();
+        tidb_extension::setup().unwrap();
+        Self
     }
 }
 
 impl Drop for Registered {
     fn drop(&mut self) {
-        for name in &self.funcs {
-            tidb_expr::extension::remove_extension_func(name);
-        }
-        for privilege in &self.privs {
-            tidb_privilege::remove_dynamic_privilege(privilege);
-        }
+        tidb_extension::reset();
     }
 }
 
@@ -221,36 +216,58 @@ fn extension_func_dynamic_arg_len() {
 
 /// Go `TestRegisterExtensionFunc`'s refusals, each leaving the function
 /// list as it was (Go's nil-definition case has no Rust spelling).
+/// Go `TestRegisterExtensionFunc` (a nil definition has no Rust spelling).
 #[test]
 fn register_extension_func() {
-    use tidb_expr::extension::{register_extension_func, remove_extension_func};
+    crate::init_extension_hooks();
+    let _reset = Registered;
     let org_func_list = tidb_expr::builtin_registry::get_builtin_list();
-    let refused = |def: &FunctionDef| match register_extension_func(def) {
-        Err(EvalError::Raw(message)) => message,
-        other => panic!("{other:?}"),
+    // Go `extension.Reset()`, `extension.Register(name, WithCustomFunctions(defs))`
+    // per extension, then `extension.Setup()`'s error.
+    let refused = |extensions: &[(&str, Vec<FunctionDef>)]| {
+        tidb_extension::reset();
+        for (name, defs) in extensions {
+            tidb_extension::register(name, vec![tidb_extension::with_custom_functions(defs.clone())])
+                .unwrap();
+        }
+        match tidb_extension::setup() {
+            Err(EvalError::Raw(message)) => message,
+            other => panic!("{other:?}"),
+        }
     };
 
     // dup name with builtin
     let def = FunctionDef { name: "substring".to_owned(), ..custom_func1() };
-    assert_eq!(refused(&def), "extension function name 'substring' conflict with builtin");
+    assert_eq!(
+        refused(&[("test", vec![custom_func1(), def])]),
+        "extension function name 'substring' conflict with builtin"
+    );
     check_func_list(&org_func_list, &[]);
 
     // empty func name
     let def = FunctionDef { name: String::new(), ..custom_func1() };
-    assert_eq!(refused(&def), "extension function name should not be empty");
+    assert_eq!(refused(&[("test", vec![def])]), "extension function name should not be empty");
     check_func_list(&org_func_list, &[]);
 
-    // dup name with other func
-    register_extension_func(&custom_func1()).unwrap();
-    assert_eq!(refused(&custom_func1()), "duplicated extension function name 'custom_func1'");
-    remove_extension_func("custom_func1");
+    // dup name with other func in one extension
+    assert_eq!(
+        refused(&[("test", vec![custom_func1(), custom_func1()])]),
+        "duplicated extension function name 'custom_func1'"
+    );
+    check_func_list(&org_func_list, &[]);
+
+    // dup name with other func in different extension
+    assert_eq!(
+        refused(&[("test1", vec![custom_func1()]), ("test2", vec![custom_func1()])]),
+        "duplicated extension function name 'custom_func1'"
+    );
     check_func_list(&org_func_list, &[]);
 
     // Go `newExtensionFuncClass`'s refusals.
     let def = FunctionDef { eval_string_func: None, ..custom_func1() };
-    assert_eq!(refused(&def), "eval function is nil");
+    assert_eq!(refused(&[("test", vec![def])]), "eval function is nil");
     let def = FunctionDef { eval_tp: EvalType::Real, ..custom_func1() };
-    assert_eq!(refused(&def), "unsupported extension function ret type: 'Real'");
+    assert_eq!(refused(&[("test", vec![def])]), "unsupported extension function ret type: 'Real'");
     check_func_list(&org_func_list, &[]);
 }
 
