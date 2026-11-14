@@ -545,6 +545,27 @@ func TestBuildTableSampleQueries(t *testing.T) {
 			false,
 		},
 		{
+			[]string{"e", "id"},
+			[]string{"ENUM", "INT"},
+			[][]driver.Value{
+				{1, 1},
+				{2, 3},
+			},
+			[]string{
+				"`e`<1 or(`e`=1 and `id`<1)",
+				"(`e`>1 and `e`<2)or(`e`=1 and(`id`>=1))or(`e`=2 and(`id`<3))",
+				"`e`>2 or(`e`=2 and `id`>=3)",
+			},
+			false,
+		},
+		{
+			[]string{"s"},
+			[]string{"SET"},
+			[][]driver.Value{{1}, {3}},
+			[]string{"`s`<1", "`s`>=1 and `s`<3", "`s`>=3"},
+			false,
+		},
+		{
 			[]string{"a", "b"},
 			[]string{"BIGINT", "BIGINT"},
 			[][]driver.Value{
@@ -669,7 +690,7 @@ func TestBuildTableSampleQueries(t *testing.T) {
 			for i, val := range handleVal {
 				ct := strings.ToUpper(handleColTypes[i])
 				var valStr string
-				if _, ok := dataTypeString[ct]; ok {
+				if _, ok := dataTypeString[ct]; ok && !isEnumOrSetType(ct) {
 					valStr = fmt.Sprintf("'%s'", val)
 				} else if _, ok := dataTypeBin[ct]; ok {
 					valStr = fmt.Sprintf("x'%x'", val)
@@ -701,13 +722,25 @@ func TestBuildTableSampleQueries(t *testing.T) {
 			for _, col := range handleColNames {
 				quotaCols = append(quotaCols, wrapBackTicks(col))
 			}
+			// the MySQL driver reports ENUM and SET columns as CHAR
+			sourceColTypes := make([]string, 0, len(handleColTypes))
+			showColumnsRows := sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"})
+			for i, ct := range handleColTypes {
+				showColumnsType := strings.ToLower(ct)
+				if isEnumOrSetType(ct) {
+					showColumnsType += "('a','b','c')"
+					ct = "CHAR"
+				}
+				sourceColTypes = append(sourceColTypes, ct)
+				showColumnsRows.AddRow(handleColNames[i], showColumnsType, "NO", "PRI", nil, "")
+			}
 			selectFields := strings.Join(quotaCols, ",")
 			meta := &mockTableIR{
 				dbName:           database,
 				tblName:          table,
 				selectedField:    selectFields,
 				hasImplicitRowID: testCase.hasTiDBRowID,
-				colTypes:         handleColTypes,
+				colTypes:         sourceColTypes,
 				colNames:         handleColNames,
 				specCmt: []string{
 					"/*!40101 SET NAMES binary*/;",
@@ -720,6 +753,7 @@ func TestBuildTableSampleQueries(t *testing.T) {
 					rows.AddRow(table, 0, "PRIMARY", i, handleColName, "A", 0, nil, nil, "", "BTREE", "", "")
 				}
 				mock.ExpectQuery(fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", database, table)).WillReturnRows(rows)
+				mock.ExpectQuery(fmt.Sprintf("SHOW COLUMNS FROM `%s`.`%s`", database, table)).WillReturnRows(showColumnsRows)
 			}
 
 			rows := sqlmock.NewRows(handleColNames)
@@ -832,14 +866,48 @@ func TestBuildPartitionClauses(t *testing.T) {
 	}
 }
 
+func TestSelectTiDBTableSampleFailsWhenColumnTypesCannotBeRead(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	baseConn := newBaseConn(conn, true, nil)
+	tctx := tcontext.Background().WithLogger(appLogger)
+
+	meta := &mockTableIR{
+		dbName:   "test",
+		tblName:  "t",
+		colTypes: []string{"CHAR"},
+		colNames: []string{"e"},
+	}
+	mock.ExpectQuery("SHOW INDEX FROM `test`.`t`").
+		WillReturnRows(sqlmock.NewRows(showIndexHeaders).
+			AddRow("t", 0, "PRIMARY", 1, "e", "A", 0, nil, nil, "", "BTREE", "", ""))
+	expectedErr := errors.New("show columns denied")
+	mock.ExpectQuery("SHOW COLUMNS FROM `test`.`t`").WillReturnError(expectedErr)
+
+	pkFields, pkVals, err := selectTiDBTableSample(tctx, baseConn, meta)
+	require.ErrorIs(t, errors.Cause(err), expectedErr)
+	require.Nil(t, pkFields)
+	require.Nil(t, pkVals)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestBuildTiDBTableSampleQuery(t *testing.T) {
 	require.Equal(t,
 		"SELECT `a`,`b` FROM `test`.`t` TABLESAMPLE REGIONS() ORDER BY `a`,`b`",
-		buildTiDBTableSampleQuery([]string{"a", "b"}, "test", "t"),
+		buildTiDBTableSampleQuery([]string{"a", "b"}, []string{"INT", "VARCHAR"}, "test", "t"),
 	)
 	require.Equal(t,
 		"SELECT `a` FROM `test`.`t` PARTITION(`p0`,`p1`) TABLESAMPLE REGIONS() ORDER BY `a`",
-		buildTiDBTableSampleQuery([]string{"a"}, "test", "t", "p0", "p1"),
+		buildTiDBTableSampleQuery([]string{"a"}, []string{"INT"}, "test", "t", "p0", "p1"),
+	)
+	require.Equal(t,
+		"SELECT `e`+0,`a`,`s`+0 FROM `test`.`t` TABLESAMPLE REGIONS() ORDER BY `e`,`a`,`s`",
+		buildTiDBTableSampleQuery([]string{"e", "a", "s"}, []string{"ENUM", "INT", "SET"}, "test", "t"),
 	)
 }
 
