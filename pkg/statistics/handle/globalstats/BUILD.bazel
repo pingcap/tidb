@@ -45,7 +45,11 @@ go_test(
     ],
     embed = [":globalstats"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 30,
+=======
+    shard_count = 27,
+>>>>>>> eca4674a6f6 (statistics: keep same-upper groups together at global histogram cuts (#73121))
     deps = [
         "//pkg/domain",
         "//pkg/kv",
