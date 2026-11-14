@@ -3382,6 +3382,13 @@ def go_deps():
         version = "v1.0.1",
     )
     go_repository(
+        name = "com_github_lib_pq",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/lib/pq",
+        sum = "h1:sJZmqHoEaY7f+NPP8pgLB/WxulyR3fewgCM2qaSlBb4=",
+        version = "v1.1.1",
+    )
+    go_repository(
         name = "com_github_linode_linodego",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/linode/linodego",
@@ -4031,6 +4038,13 @@ def go_deps():
         importpath = "github.com/petermattis/goid",
         sum = "h1:vHpqOnPlnkba8iSxU4j/CvDSS9J4+F4473esQsYLGoE=",
         version = "v0.0.0-20250813065127-a731cc31b4fe",
+    )
+    go_repository(
+        name = "com_github_peterstace_simplefeatures",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/peterstace/simplefeatures",
+        sum = "h1:5fCM3iIwwwz0qYORRtbdoKZ91nzT44WkEjPZ9e6+fC8=",
+        version = "v0.59.1-0.20261111041833-ce2170aed953",
     )
     go_repository(
         name = "com_github_phayes_freeport",
@@ -6877,8 +6891,8 @@ def go_deps():
         name = "org_golang_x_image",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/image",
-        sum = "h1:TcHcE0vrmgzNH1v3ppjcMGbhG5+9fMuvOmUYwNEF4q4=",
-        version = "v0.0.0-20220302094943-723b81ca9867",
+        sum = "h1:HseQ7c2OpPKTPVzNjG5fwJsOTCiiwS4QdsYi5XU6H68=",
+        version = "v0.23.0",
     )
     go_repository(
         name = "org_golang_x_lint",
