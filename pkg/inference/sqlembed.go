@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/inference/embedding/nvidia"
 	"github.com/pingcap/tidb/pkg/inference/embedding/openai"
 	"github.com/pingcap/tidb/pkg/inference/embedding/tidbcloud"
+	"github.com/pingcap/tidb/pkg/inference/embedding/voyage"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -127,6 +128,11 @@ func NewEmbedFn() *EmbedFn {
 		ErrMissingAPIKey: missingAPIKeyError("Gemini", vardef.TiDBExpEmbedGeminiAPIKey),
 		// Gemini's response body provides the useful authentication error, so no
 		// custom unauthorized text is needed here.
+	}))
+	embedder.MustRegister("voyage_ai", voyage.NewVoyageEmbedder(base.APIKeyProviderConfig{
+		GetAPIKey:        vardef.EmbedVoyageAIAPIKey.Load,
+		ErrMissingAPIKey: missingAPIKeyError("Voyage AI", vardef.TiDBExpEmbedVoyageAIAPIKey),
+		ErrUnauthorized:  unauthorizedError("Voyage AI", vardef.TiDBExpEmbedVoyageAIAPIKey),
 	}))
 	if isHostedEmbeddingEnabled() {
 		embedder.MustRegister("tidbcloud_free", tidbcloud.NewTiDBCloudFreeEmbedder(tidbcloud.EmbedderConfig{

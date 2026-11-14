@@ -1341,6 +1341,8 @@ const (
 	TiDBExpEmbedNvidiaNIMAPIKey = "tidb_exp_embed_nvidia_nim_api_key"
 	// TiDBExpEmbedGeminiAPIKey is the API key to use when calling Gemini embedding API.
 	TiDBExpEmbedGeminiAPIKey = "tidb_exp_embed_gemini_api_key"
+	// TiDBExpEmbedVoyageAIAPIKey is the API key to use when calling Voyage AI embedding API.
+	TiDBExpEmbedVoyageAIAPIKey = "tidb_exp_embed_voyage_ai_api_key"
 	// TiDBAutoBuildStatsConcurrency is the number of concurrent workers to automatically analyze tables or partitions.
 	// It is very similar to the `tidb_build_stats_concurrency` variable, but it is used for the auto analyze feature.
 	TiDBAutoBuildStatsConcurrency = "tidb_auto_build_stats_concurrency"
@@ -2151,6 +2153,7 @@ var (
 	EmbedHuggingFaceAPIKey          = atomic.NewString("")
 	EmbedNvidiaNIMAPIKey            = atomic.NewString("")
 	EmbedGeminiAPIKey               = atomic.NewString("")
+	EmbedVoyageAIAPIKey             = atomic.NewString("")
 	// EmbeddingConfigVersion invalidates cached embeddings when a dynamic
 	// provider credential or endpoint changes without putting secrets in cache keys.
 	EmbeddingConfigVersion = atomic.NewUint64(0)

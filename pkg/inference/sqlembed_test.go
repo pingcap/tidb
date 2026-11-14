@@ -74,7 +74,7 @@ func TestEmbedFnProvidersAndErrors(t *testing.T) {
 	embedFn := NewEmbedFn()
 	t.Cleanup(embedFn.Close)
 
-	for _, provider := range []string{"openai", "jina_ai", "cohere", "huggingface", "nvidia_nim", "gemini"} {
+	for _, provider := range []string{"openai", "jina_ai", "cohere", "huggingface", "nvidia_nim", "gemini", "voyage_ai"} {
 		require.True(t, embedFn.HasEmbedder(provider), provider)
 	}
 	require.True(t, embedFn.HasEmbedder(" OPENAI "))

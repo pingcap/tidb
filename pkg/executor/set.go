@@ -297,7 +297,8 @@ func redactSysVarValue(name, value string) string {
 		vardef.TiDBExpEmbedCohereAPIKey,
 		vardef.TiDBExpEmbedHuggingFaceAPIKey,
 		vardef.TiDBExpEmbedNvidiaNIMAPIKey,
-		vardef.TiDBExpEmbedGeminiAPIKey:
+		vardef.TiDBExpEmbedGeminiAPIKey,
+		vardef.TiDBExpEmbedVoyageAIAPIKey:
 		return redactAPIKey(value)
 	default:
 		return value

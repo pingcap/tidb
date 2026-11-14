@@ -4257,6 +4257,7 @@ var defaultSysVars = []*SysVar{
 	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedHuggingFaceAPIKey, vardef.EmbedHuggingFaceAPIKey.Load, vardef.EmbedHuggingFaceAPIKey.Swap),
 	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedNvidiaNIMAPIKey, vardef.EmbedNvidiaNIMAPIKey.Load, vardef.EmbedNvidiaNIMAPIKey.Swap),
 	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedGeminiAPIKey, vardef.EmbedGeminiAPIKey.Load, vardef.EmbedGeminiAPIKey.Swap),
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedVoyageAIAPIKey, vardef.EmbedVoyageAIAPIKey.Load, vardef.EmbedVoyageAIAPIKey.Swap),
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio, Value: strconv.FormatFloat(vardef.DefTiDBCircuitBreakerPDMetaErrorRateRatio, 'f', -1, 64),
 		Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {

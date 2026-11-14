@@ -30,6 +30,7 @@ func TestRedactSysVarValue(t *testing.T) {
 		vardef.TiDBExpEmbedHuggingFaceAPIKey,
 		vardef.TiDBExpEmbedNvidiaNIMAPIKey,
 		vardef.TiDBExpEmbedGeminiAPIKey,
+		vardef.TiDBExpEmbedVoyageAIAPIKey,
 	} {
 		require.Equal(t, "******", redactSysVarValue(name, "secret-api-key"))
 		require.Empty(t, redactSysVarValue(name, ""))
