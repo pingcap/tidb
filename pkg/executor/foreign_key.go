@@ -58,6 +58,10 @@ type FKCheckExec struct {
 	*physicalop.FKCheck
 	*fkValueHelper
 	ctx sessionctx.Context
+	// selfRefHelper extracts the opposite endpoint's values for a self FK.
+	selfRefHelper *fkValueHelper
+	// excludeOldSelfHandle is scoped to one synchronous self-parent update/delete check.
+	excludeOldSelfHandle kv.Handle
 
 	toBeCheckedKeys       []kv.Key
 	toBeCheckedPrefixKeys []kv.Key
@@ -135,6 +139,7 @@ func buildFKCheckExecs(sctx sessionctx.Context, tbl table.Table, fkChecks []*phy
 	return fkCheckExecs, nil
 }
 
+// buildFKCheckExec binds row offsets and, for a self FK, its opposite endpoint.
 func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *physicalop.FKCheck) (*FKCheckExec, error) {
 	var cols []ast.CIStr
 	if fkCheck.FK != nil {
@@ -150,10 +155,32 @@ func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *physica
 		colsOffsets: colsOffsets,
 		fkValuesSet: set.NewStringSet(),
 	}
+	var selfRefCols []ast.CIStr
+	if (fkCheck.FK != nil || fkCheck.ReferredFK != nil) && tbl.Meta().ID == fkCheck.Tbl.Meta().ID {
+		if fkCheck.FK != nil {
+			selfRefCols = fkCheck.FK.RefCols
+		} else {
+			for _, fk := range tbl.Meta().ForeignKeys {
+				if fk.Name.L == fkCheck.ReferredFK.ChildFKName.L {
+					selfRefCols = fk.Cols
+					break
+				}
+			}
+		}
+	}
+	var selfRefHelper *fkValueHelper
+	if len(selfRefCols) > 0 {
+		refOffsets, err := getFKColumnsOffsets(tbl.Meta(), selfRefCols)
+		if err != nil {
+			return nil, err
+		}
+		selfRefHelper = &fkValueHelper{colsOffsets: refOffsets}
+	}
 	return &FKCheckExec{
 		ctx:           sctx,
 		FKCheck:       fkCheck,
 		fkValueHelper: helper,
+		selfRefHelper: selfRefHelper,
 	}, nil
 }
 
@@ -165,14 +192,31 @@ func (fkc *FKCheckExec) insertRowNeedToCheck(sc *stmtctx.StatementContext, row [
 	return fkc.addRowNeedToCheck(sc, row)
 }
 
+// updateRowNeedToCheck queues the changed FK side for deferred validation.
+// It selects the new child or old parent values; addRowNeedToCheck omits NULL keys.
 func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRow, newRow []types.Datum) error {
+	row, needsCheck, err := fkc.rowNeedCheckForUpdate(sc, oldRow, newRow)
+	if err != nil || !needsCheck {
+		return err
+	}
+	return fkc.addRowNeedToCheck(sc, row)
+}
+
+func (fkc *FKCheckExec) deleteRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
+	return fkc.addRowNeedToCheck(sc, row)
+}
+
+// rowNeedCheckForUpdate selects the row image that should be validated for an update.
+// Child-table checks validate the new values, while parent-table referred checks validate the old values being removed.
+// needsCheck is false when the FK value is unchanged or when this FK check does not apply to update.
+func (fkc *FKCheckExec) rowNeedCheckForUpdate(sc *stmtctx.StatementContext, oldRow, newRow []types.Datum) (rowToCheck []types.Datum, needsCheck bool, err error) {
 	newVals, err := fkc.fetchFKValues(newRow)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 	oldVals, err := fkc.fetchFKValues(oldRow)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 	if len(oldVals) == len(newVals) {
 		isSameValue := true
@@ -185,20 +229,120 @@ func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRo
 		}
 		if isSameValue {
 			// If the old fk value and the new fk value are the same, no need to check.
-			return nil
+			return nil, false, nil
 		}
 	}
 
 	if fkc.FK != nil {
-		return fkc.addRowNeedToCheck(sc, newRow)
+		return newRow, true, nil
 	} else if fkc.ReferredFK != nil {
-		return fkc.addRowNeedToCheck(sc, oldRow)
+		return oldRow, true, nil
 	}
-	return nil
+	return nil, false, nil
 }
 
-func (fkc *FKCheckExec) deleteRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
-	return fkc.addRowNeedToCheck(sc, row)
+// checkIgnoreByRow uses fkc.checkRows to validate one row. If fkc.checkRows finds a foreign key violation, it appends fkc.FailedErr as a warning to the
+// statement context and returns `true, nil`. Non-foreign-key failures are returned directly.
+func (fkc *FKCheckExec) checkIgnoreByRow(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, row []types.Datum) (bool, error) {
+	// Earlier rows may have changed the referenced keys since the previous check.
+	clear(fkc.checkRowsCache)
+	fkToBeCheckedRows := [1]toBeCheckedRow{{row: row, ignored: false}}
+	err := fkc.checkRows(ctx, sc, txn, fkToBeCheckedRows[:])
+	if err != nil {
+		return false, err
+	}
+	return fkToBeCheckedRows[0].ignored, nil
+}
+
+// checkIgnoreForInsert validates a fresh child row, allowing it to satisfy its own self-reference.
+func (fkc *FKCheckExec) checkIgnoreForInsert(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, row []types.Datum) (bool, error) {
+	if fkc.ReferredFK != nil {
+		// Insert into parent table doesn't need to do foreign key check.
+		return false, nil
+	}
+	selfReference, err := fkc.selfReferenceMatches(sc, row, row)
+	if err != nil || selfReference {
+		// This candidate satisfies only this FK and is never cached as a parent.
+		return false, err
+	}
+	return fkc.checkIgnoreByRow(ctx, sc, txn, row)
+}
+
+// selfReferenceMatches compares a self FK's two endpoints using its lookup key encoding.
+// It does not publish a candidate or cache existence for a row that another FK can reject.
+func (fkc *FKCheckExec) selfReferenceMatches(sc *stmtctx.StatementContext, row, refRow []types.Datum) (bool, error) {
+	if fkc.selfRefHelper == nil {
+		return false, nil
+	}
+	vals, err := fkc.fetchFKValues(row)
+	if err != nil {
+		return false, err
+	}
+	refVals, err := fkc.selfRefHelper.fetchFKValues(refRow)
+	if err != nil {
+		return false, err
+	}
+	if fkc.hasNullValue(vals) || fkc.hasNullValue(refVals) {
+		return false, nil
+	}
+	key, _, err := fkc.buildCheckKeyFromFKValue(sc, vals)
+	if err != nil {
+		return false, err
+	}
+	refKey, _, err := fkc.buildCheckKeyFromFKValue(sc, refVals)
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(key, refKey), nil
+}
+
+// checkIgnoreForUpdate validates the normalized candidate and removed parent values under IGNORE.
+// A self-parent check excludes only the actual old row, while retaining any new reference to its old key.
+func (fkc *FKCheckExec) checkIgnoreForUpdate(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, oldHandle kv.Handle, oldRow, newRow []types.Datum) (bool, error) {
+	row, needsCheck, err := fkc.rowNeedCheckForUpdate(sc, oldRow, newRow)
+	if err != nil || !needsCheck {
+		return false, err
+	}
+	if fkc.selfRefHelper != nil {
+		selfReference, err := fkc.selfReferenceMatches(sc, row, newRow)
+		if err != nil {
+			return false, err
+		}
+		if fkc.FK != nil {
+			if selfReference {
+				return false, nil
+			}
+		} else {
+			if selfReference {
+				sc.AppendWarning(fkc.FailedErr)
+				return true, nil
+			}
+			previous := fkc.excludeOldSelfHandle
+			fkc.excludeOldSelfHandle = oldHandle
+			defer func() {
+				fkc.excludeOldSelfHandle = previous
+				// An absence after excluding this candidate is not valid for another row.
+				clear(fkc.checkRowsCache)
+			}()
+		}
+	}
+	return fkc.checkIgnoreByRow(ctx, sc, txn, row)
+}
+
+// checkIgnoreForDelete excludes only the row being deleted from a self-parent
+// check. The actual record handle also identifies hidden/common-handle rows;
+// all other children still prevent the delete. It restores the filter and clears
+// cached checks before returning.
+func (fkc *FKCheckExec) checkIgnoreForDelete(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, oldHandle kv.Handle, row []types.Datum) (bool, error) {
+	if fkc.selfRefHelper != nil && fkc.ReferredFK != nil {
+		previousHandle := fkc.excludeOldSelfHandle
+		fkc.excludeOldSelfHandle = oldHandle
+		defer func() {
+			fkc.excludeOldSelfHandle = previousHandle
+			clear(fkc.checkRowsCache)
+		}()
+	}
+	return fkc.checkIgnoreByRow(ctx, sc, txn, row)
 }
 
 func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []types.Datum) error {
@@ -360,15 +504,41 @@ func (fkc *FKCheckExec) checkKeyExist(ctx context.Context, txn kv.Transaction, k
 	return err
 }
 
+// checkKeyNotExist ignores only the current update/delete's old own row; other
+// children must still prevent removal of the referenced key.
 func (fkc *FKCheckExec) checkKeyNotExist(ctx context.Context, txn kv.Transaction, k kv.Key) error {
-	_, err := txn.Get(ctx, k)
+	value, err := txn.Get(ctx, k)
 	if err == nil {
+		excluded, err := fkc.isExcludedSelfRow(k, value.Value)
+		if err != nil {
+			return err
+		}
+		if excluded {
+			return nil
+		}
 		return fkc.FailedErr
 	}
 	if kv.IsErrNotFound(err) {
 		return nil
 	}
 	return err
+}
+
+// isExcludedSelfRow uses the actual old record handle, never the FK column
+// values, to identify the one own row removed by the candidate update/delete.
+func (fkc *FKCheckExec) isExcludedSelfRow(key kv.Key, value []byte) (bool, error) {
+	if fkc.excludeOldSelfHandle == nil {
+		return false, nil
+	}
+	oldKey := tablecodec.EncodeRecordKey(fkc.Tbl.RecordPrefix(), fkc.excludeOldSelfHandle)
+	if fkc.IdxIsPrimaryKey {
+		return bytes.Equal(key, oldKey), nil
+	}
+	handle, err := tablecodec.DecodeIndexHandle(key, value, len(fkc.Idx.Meta().Columns))
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(tablecodec.EncodeRecordKey(fkc.Tbl.RecordPrefix(), handle), oldKey), nil
 }
 
 func (fkc *FKCheckExec) checkIndexKeys(ctx context.Context, txn kv.Transaction) error {
@@ -423,7 +593,10 @@ func (fkc *FKCheckExec) checkPrefixKeyExist(key kv.Key, value []byte) error {
 	return nil
 }
 
-func (*FKCheckExec) getIndexKeyValueInTable(ctx context.Context, memBuffer kv.MemBuffer, snap kv.Snapshot, key kv.Key) (k []byte, v []byte, _ error) {
+// getIndexKeyValueInTable skips the current update/delete's old row while scanning
+// every other child. Every memory key shadows the snapshot, even when its
+// nonempty value belongs to the excluded row, so older owners cannot reappear.
+func (fkc *FKCheckExec) getIndexKeyValueInTable(ctx context.Context, memBuffer kv.MemBuffer, snap kv.Snapshot, key kv.Key) (k []byte, v []byte, _ error) {
 	select {
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
@@ -433,7 +606,7 @@ func (*FKCheckExec) getIndexKeyValueInTable(ctx context.Context, memBuffer kv.Me
 	if err != nil {
 		return nil, nil, err
 	}
-	deletedKeys := set.NewStringSet()
+	shadowedKeys := set.NewStringSet()
 	defer memIter.Close()
 	for ; memIter.Valid(); err = memIter.Next() {
 		if err != nil {
@@ -443,11 +616,20 @@ func (*FKCheckExec) getIndexKeyValueInTable(ctx context.Context, memBuffer kv.Me
 		if !k.HasPrefix(key) {
 			break
 		}
-		// check whether the key was been deleted.
+		shadowedKeys.Insert(string(k))
 		if len(memIter.Value()) > 0 {
+			excluded, err := fkc.isExcludedSelfRow(k, memIter.Value())
+			if err != nil {
+				return nil, nil, err
+			}
+			if excluded {
+				continue
+			}
 			return k, memIter.Value(), nil
 		}
-		deletedKeys.Insert(string(k))
+	}
+	if err != nil {
+		return nil, nil, err
 	}
 
 	it, err := snap.Iter(key, key.PrefixNext())
@@ -463,11 +645,18 @@ func (*FKCheckExec) getIndexKeyValueInTable(ctx context.Context, memBuffer kv.Me
 		if !k.HasPrefix(key) {
 			break
 		}
-		if !deletedKeys.Exist(string(k)) {
+		if !shadowedKeys.Exist(string(k)) {
+			excluded, err := fkc.isExcludedSelfRow(k, it.Value())
+			if err != nil {
+				return nil, nil, err
+			}
+			if excluded {
+				continue
+			}
 			return k, it.Value(), nil
 		}
 	}
-	return nil, nil, nil
+	return nil, nil, err
 }
 
 type fkValueHelper struct {
@@ -554,6 +743,8 @@ type fkCheckKey struct {
 	isPrefix bool
 }
 
+// checkRows marks FK-rejected rows and appends constraint warnings; other errors are returned.
+// It memoizes results by lookup key; row-wise IGNORE callers reset the cache between candidates.
 func (fkc *FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, rows []toBeCheckedRow) error {
 	if fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		fkc.stats = &FKCheckRuntimeStats{}
@@ -618,6 +809,9 @@ func (fkc *FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementCont
 			err = fkc.checkKey(ctx, txn, k)
 		}
 		if err != nil {
+			if !errors.ErrorEqual(err, fkc.FailedErr) {
+				return err
+			}
 			rows[i].ignored = true
 			sc.AppendWarning(fkc.FailedErr)
 			fkc.checkRowsCache[string(k)] = true
@@ -629,30 +823,6 @@ func (fkc *FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementCont
 		}
 	}
 	return nil
-}
-
-// checkFKIgnoreErr will use `fkc.checkRows` to check the rows. The `fkc.checkRows` will ignore the error and append the error as warning to the statement context.
-// It'll return whether an error has been ignored. If an error has been ignored, it'll return `true, nil`.
-func checkFKIgnoreErr(ctx context.Context, sctx sessionctx.Context, fkChecks []*FKCheckExec, row []types.Datum) (bool, error) {
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return false, err
-	}
-
-	fkToBeCheckedRows := [1]toBeCheckedRow{{row: row, ignored: false}}
-
-	for _, fkc := range fkChecks {
-		err := fkc.checkRows(ctx, sctx.GetSessionVars().StmtCtx, txn, fkToBeCheckedRows[:])
-		if err != nil {
-			return false, err
-		}
-	}
-
-	if fkToBeCheckedRows[0].ignored {
-		return true, nil
-	}
-
-	return false, nil
 }
 
 func (b *executorBuilder) buildTblID2FKCascadeExecs(tblID2Table map[int64]table.Table, tblID2FKCascades map[int64][]*physicalop.FKCascade) (map[int64][]*FKCascadeExec, error) {
