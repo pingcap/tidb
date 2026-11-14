@@ -233,8 +233,6 @@ type maxSlidingWindowTestCase struct {
 }
 
 func testMaxSlidingWindow(tk *testkit.TestKit, tc maxSlidingWindowTestCase) {
-	tk.MustExec(fmt.Sprintf("CREATE TABLE t (a %s);", tc.rowType))
-	tk.MustExec(fmt.Sprintf("insert into t values %s;", tc.insertValue))
 	var orderBy string
 	if tc.orderBy {
 		orderBy = "ORDER BY a"
@@ -318,14 +316,17 @@ func TestMaxSlidingWindow(t *testing.T) {
 
 	orderBy := []bool{false, true}
 	frameType := []ast.FrameType{ast.Rows, ast.Ranges, -1}
-	for _, o := range orderBy {
-		for _, f := range frameType {
-			for _, tc := range testCases {
-				t.Run(fmt.Sprintf("%s_%v_%d", tc.rowType, o, f), func(t *testing.T) {
-					tc.frameType = f
-					tc.orderBy = o
-					tk.MustExec("drop table if exists t;")
-					testMaxSlidingWindow(tk, tc)
+	for _, tc := range testCases {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec(fmt.Sprintf("CREATE TABLE t (a %s);", tc.rowType))
+		tk.MustExec(fmt.Sprintf("insert into t values %s;", tc.insertValue))
+		for _, o := range orderBy {
+			for _, f := range frameType {
+				testCase := tc
+				testCase.frameType = f
+				testCase.orderBy = o
+				t.Run(fmt.Sprintf("%s_%v_%d", testCase.rowType, o, f), func(t *testing.T) {
+					testMaxSlidingWindow(tk, testCase)
 				})
 			}
 		}
