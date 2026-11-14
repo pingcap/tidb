@@ -68,6 +68,31 @@ pub use worker::{ClusterDdl, RealClusterDdl};
 /// Go `JobWrapper`: a job, typed arguments and its ID-allocation ownership.
 pub use tidb_ddl_jobsubmit::JobSpec as JobWrapper;
 
+/// Go `OnExist`: what creating an object does on a name collision.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OnExist {
+    /// Go `OnExistError`: throws an error on name collision.
+    #[default]
+    Error,
+    /// Go `OnExistIgnore`: skips creating the new object.
+    Ignore,
+    /// Go `OnExistReplace`: replaces the old object by the new object. This
+    /// is only supported by VIEWs at the moment; for other object types it
+    /// is equivalent to `Error`.
+    Replace,
+}
+
+/// Go `CreateTableConfig`: the configuration of `CreateTableWithInfo`
+/// (Go's `WithOnExist` / `WithIDAllocated` options set its fields).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CreateTableConfig {
+    /// Go `OnExist`.
+    pub on_exist: OnExist,
+    /// Go `IDAllocated`: the job has allocated all IDs for the tables it
+    /// affects, so DDL does not allocate them again. Only BR uses it.
+    pub id_allocated: bool,
+}
+
 /// Go `ddl.StartMode`: the mode a node starts its DDL in. `Upgrade` forces
 /// the node to be the DDL owner, and outside `Normal` the masking-policy
 /// hooks tolerate a `mysql.tidb_masking_policy` that does not exist yet;

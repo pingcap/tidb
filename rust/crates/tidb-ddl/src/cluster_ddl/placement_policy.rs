@@ -94,7 +94,8 @@ pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
     }
 }
 
-/// Go `executor.CreatePlacementPolicy`: validate and build its job.
+/// Go `executor.CreatePlacementPolicy`: the statement's policy
+/// (`buildPolicyInfo`) and its `OnExist`, then `CreatePlacementPolicyWithInfo`.
 pub fn create_placement_policy<S: MetaSnapshot>(
     snapshot: &mut S,
     name: &str,
@@ -105,57 +106,78 @@ pub fn create_placement_policy<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
-    let (action, policy_name, schema_id, args) = {
-        if name.go_lower_eq("default") {
-            return Err(coded_refusal(
-                &tidb_infoschema::infoschema_errors::ERR_RESERVED_SYNTAX,
-                format!(
-                    "The '{name}' syntax is reserved for purposes internal to the MySQL server"
-                ),
-            ));
-        }
-        if find_policy(snapshot, name)?.is_some() && !or_replace {
-            if if_not_exists {
+    let policy = tidb_model::PolicyInfo {
+        placement_settings: Some(GoShared::new(settings.clone())),
+        id: 0,
+        name: CiString::new(name.to_owned()),
+        state: SchemaState::NONE,
+    };
+    let on_exist = if if_not_exists {
+        crate::OnExist::Ignore
+    } else if or_replace {
+        crate::OnExist::Replace
+    } else {
+        crate::OnExist::Error
+    };
+    create_placement_policy_with_info(snapshot, policy, on_exist, job_context, start_ts, upgrading)
+}
+
+/// Go `executor.CreatePlacementPolicyWithInfo` up to `doDDLJob2` (the
+/// caller has applied `checkIgnorePlacementDDL`).
+pub fn create_placement_policy_with_info<S: MetaSnapshot>(
+    snapshot: &mut S,
+    mut policy: tidb_model::PolicyInfo,
+    on_exist: crate::OnExist,
+    job_context: &dyn DdlSessionContext,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let name = policy.name.original().to_owned();
+    if name.go_lower_eq("default") {
+        return Err(coded_refusal(
+            &tidb_infoschema::infoschema_errors::ERR_RESERVED_SYNTAX,
+            format!("The '{name}' syntax is reserved for purposes internal to the MySQL server"),
+        ));
+    }
+    // Check policy existence.
+    if find_policy(snapshot, &name)?.is_some() {
+        match on_exist {
+            crate::OnExist::Ignore => {
                 return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                     detail: format!("placement policy `{name}` already exists"),
                     warnings: vec![crate::real_tikv_ddl::ddl_note(
                         tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_EXISTS
-                            .gen_with_stack_by_args(&[name.into()]),
+                            .gen_with_stack_by_args(&[name.as_str().into()]),
                     )],
                 }));
             }
-            return Err(coded_refusal(
-                &tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_EXISTS,
-                format!("Placement policy '{name}' already exists"),
-            ));
+            crate::OnExist::Error => {
+                return Err(coded_refusal(
+                    &tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_EXISTS,
+                    format!("Placement policy '{name}' already exists"),
+                ));
+            }
+            crate::OnExist::Replace => {}
         }
-        check_policy_validation(settings)?;
-        // The id comes from the policies' own sequence at submission.
-        let policy = tidb_model::PolicyInfo {
-            placement_settings: Some(GoShared::new(settings.clone())),
-            id: 0,
-            name: CiString::new(name.to_owned()),
-            state: SchemaState::NONE,
-        };
-        (
-            ActionType::ACTION_CREATE_PLACEMENT_POLICY,
-            CiString::new(name.to_owned()),
-            0,
-            tidb_model::PlacementPolicyArgs {
-                policy: Some(GoShared::new(policy)),
-                replace_on_exist: or_replace,
-                ..tidb_model::PlacementPolicyArgs::default()
-            },
-        )
-    };
-    let mut job = session_job(job_context, action);
-    job.schema_id = schema_id;
+    }
+    let settings = policy.placement_settings.as_ref().map(|settings| settings.read().clone()).unwrap_or_default();
+    check_policy_validation(&settings)?;
+    // The id comes from the policies' own sequence at submission
+    // (Go `genPlacementPolicyID`).
+    policy.id = 0;
+    let policy_name = policy.name.clone();
+    let mut job = session_job(job_context, ActionType::ACTION_CREATE_PLACEMENT_POLICY);
+    job.schema_id = 0;
     job.schema_name = policy_name.lowercase().to_owned().into();
     job.involving_schema_info = GoSharedSlice::from_vec(vec![tidb_model::InvolvingSchemaInfo {
         policy: policy_name.lowercase().to_owned().into(),
         ..tidb_model::InvolvingSchemaInfo::default()
     }]);
+    let args = tidb_model::PlacementPolicyArgs {
+        policy: Some(GoShared::new(policy)),
+        replace_on_exist: on_exist == crate::OnExist::Replace,
+        ..tidb_model::PlacementPolicyArgs::default()
+    };
     let built = AddIndexSubmission::Job(
         Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,

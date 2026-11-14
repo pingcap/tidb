@@ -239,7 +239,10 @@ fn run_ddl_job<S: MetaSnapshot>(
             let (charset, collate) = tidb_ddl::cluster_ddl::database_charset_collation(&options)
                 .map_err(|error| job_error(error.to_string()))?;
             tidb_ddl::cluster_ddl::create_schema::create_schema_with_info(
-                overlay, &name, *if_not_exists, &charset, &collate, None, context.as_ref(), start_ts, false)
+                overlay,
+                tidb_ddl::cluster_ddl::create_schema::build_db_info(&name, &charset, &collate, None),
+                if *if_not_exists { tidb_ddl::OnExist::Ignore } else { tidb_ddl::OnExist::Error },
+                context.as_ref(), start_ts, false)
         }
         tidb_ast::DdlStmt::CreateTable(create) => {
             let (schema, name) = tidb_ddl::cluster_ddl::split_name(&create.name, SYSTEM_DB, "table")

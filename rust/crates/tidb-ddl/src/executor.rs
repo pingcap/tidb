@@ -181,19 +181,192 @@ pub(super) fn create_schema<S: StoreClient>(
         tidb_ast::DatabaseOption::PlacementPolicy(policy) => Some(policy.as_str()),
         _ => None,
     });
-    executor.with_meta(context, |snapshot, start_ts, upgrading| {
-        crate::cluster_ddl::create_schema::create_schema_with_info(
+    let on_exist = if if_not_exists {
+        crate::OnExist::Ignore
+    } else {
+        crate::OnExist::Error
+    };
+    create_schema_with_info(
+        executor,
+        crate::cluster_ddl::create_schema::build_db_info(name, &charset, &collate, policy),
+        on_exist,
+        context,
+    )
+}
+
+/// Go `executor.CreateTableWithInfo`.
+pub(super) fn create_table_with_info<S: StoreClient>(
+    executor: &RealClusterDdl<S>,
+    db_name: &str,
+    info: tidb_model::TableInfo,
+    involving_ref: &[tidb_model::InvolvingSchemaInfo],
+    config: crate::CreateTableConfig,
+    context: &dyn DdlSessionContext,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    let tiflash = || executor.opener.store().get_tiflash_store_count();
+    let name = info.name.original().to_owned();
+    let result = executor.with_meta(context, |snapshot, start_ts, upgrading| {
+        crate::cluster_ddl::create_object::create_table_with_info(
             snapshot,
-            name,
-            if_not_exists,
-            &charset,
-            &collate,
-            policy,
+            db_name,
+            info,
+            involving_ref,
+            config,
             context,
+            &tiflash,
             start_ts,
             upgrading,
         )
+    });
+    // Table exists, but the if-not-exists flag is true: the error is ignored.
+    let report = ignore_exists(
+        result,
+        config.on_exist,
+        &tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS,
+    )?;
+    if matches!(report, ClusterDdlReport::Applied { .. }) {
+        after_create_tables(executor, db_name, &[name], context)?;
+    }
+    Ok(report)
+}
+
+/// Go `executor.BatchCreateTableWithInfo`.
+pub(super) fn batch_create_table_with_info<S: StoreClient>(
+    executor: &RealClusterDdl<S>,
+    db_name: &str,
+    infos: Vec<tidb_model::TableInfo>,
+    config: crate::CreateTableConfig,
+    context: &dyn DdlSessionContext,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    let tiflash = || executor.opener.store().get_tiflash_store_count();
+    let names: Vec<String> = infos
+        .iter()
+        .map(|info| info.name.original().to_owned())
+        .collect();
+    let result = executor.with_meta(context, |snapshot, start_ts, upgrading| {
+        crate::cluster_ddl::create_object::batch_create_table_with_info(
+            snapshot, db_name, infos, config, context, &tiflash, start_ts, upgrading,
+        )
+    });
+    let report = ignore_exists(
+        result,
+        config.on_exist,
+        &tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS,
+    )?;
+    if matches!(report, ClusterDdlReport::Applied { .. }) {
+        after_create_tables(executor, db_name, &names, context)?;
+    }
+    Ok(report)
+}
+
+/// Go `CreateTableWithInfo` / `BatchCreateTableWithInfo` after a successful
+/// job: `preSplitAndScatterTable` (when `split-table` is on and the store
+/// splits), and under `StartMode::Br` `handleAutoIncID` in its own
+/// transaction.
+fn after_create_tables<S: StoreClient>(
+    executor: &RealClusterDdl<S>,
+    db_name: &str,
+    names: &[String],
+    context: &dyn DdlSessionContext,
+) -> Result<(), SqlQueryError> {
+    let catalog = executor.schema_sync.catalog.get_latest();
+    let Some(database) = catalog.schema_by_name(db_name) else {
+        return Ok(());
+    };
+    let schema_id = database.read().id;
+    // Go `jobW.GetSystemVars(vardef.TiDBScatterRegion)`.
+    let scatter_scope = context.ddl_reorg_vars().scatter_region.clone();
+    let split = tidb_config::config_tree::config::get_global_config().split_table;
+    let regions = executor.scheduler.region_store.get().cloned();
+    for name in names {
+        let Some((_, table)) = catalog.table_info_by_name(db_name, name) else {
+            continue;
+        };
+        let table = table.read().clone();
+        if let (true, Some(regions)) = (split, regions.as_ref()) {
+            crate::pre_split::pre_split_and_scatter(regions.as_ref(), &table, &scatter_scope);
+        }
+        if executor.scheduler.start_mode == crate::StartMode::Br {
+            let store = tidb_store_driver_txn::meta_txn::MetaStore::new(
+                Arc::clone(&executor.opener),
+                executor.timeout,
+            );
+            tidb_meta::MetaStore::run_in_new_txn(
+                &store,
+                &tidb_gocontext::Context::background(),
+                tidb_txnkv::INTERNAL_TXN_DDL,
+                true,
+                &mut |txn| {
+                    let meta = tidb_meta::transaction::Mutator::new(txn);
+                    crate::cluster_ddl::handle_auto_inc_id(&meta, schema_id, &table)
+                },
+            )
+            .map_err(SqlQueryError::unknown)?;
+        }
+    }
+    Ok(())
+}
+
+/// Go `executor.CreatePlacementPolicyWithInfo`.
+pub(super) fn create_placement_policy_with_info<S: StoreClient>(
+    executor: &RealClusterDdl<S>,
+    policy: tidb_model::PolicyInfo,
+    on_exist: crate::OnExist,
+    context: &dyn DdlSessionContext,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    // Go `checkIgnorePlacementDDL`.
+    if context.placement_mode_ignore() {
+        return Ok(ClusterDdlReport::AlreadySatisfied {
+            detail: "placement DDL ignored".into(),
+            warnings: vec![crate::cluster_ddl::placement_ignored_note()],
+        });
+    }
+    executor.with_meta(context, |snapshot, start_ts, upgrading| {
+        crate::cluster_ddl::placement_policy::create_placement_policy_with_info(
+            snapshot, policy, on_exist, context, start_ts, upgrading,
+        )
     })
+}
+
+/// Go `executor.CreateSchemaWithInfo`: a job raced by another creating the
+/// database answers its note under `OnExistIgnore`.
+pub(super) fn create_schema_with_info<S: StoreClient>(
+    executor: &RealClusterDdl<S>,
+    info: tidb_model::DBInfo,
+    on_exist: crate::OnExist,
+    context: &dyn DdlSessionContext,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    let result = executor.with_meta(context, |snapshot, start_ts, upgrading| {
+        crate::cluster_ddl::create_schema::create_schema_with_info(
+            snapshot, info, on_exist, context, start_ts, upgrading,
+        )
+    });
+    ignore_exists(
+        result,
+        on_exist,
+        &tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS,
+    )
+}
+
+/// Go's `if onExist == OnExistIgnore && infoschema.ErrXxxExists.Equal(err)
+/// { AppendNote(err); err = nil }` after `DoDDLJobWrapper`.
+fn ignore_exists(
+    result: Result<ClusterDdlReport, SqlQueryError>,
+    on_exist: crate::OnExist,
+    exists: &tidb_terror::TerrorError,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    match result {
+        Err(error)
+            if on_exist == crate::OnExist::Ignore && error.identity == Some(exists.identity()) =>
+        {
+            let note = exists.fast_gen("%s", &[error.message.clone().into()]);
+            Ok(ClusterDdlReport::AlreadySatisfied {
+                detail: error.message,
+                warnings: vec![crate::real_tikv_ddl::ddl_note(note)],
+            })
+        }
+        result => result,
+    }
 }
 
 impl<S: StoreClient> RealClusterDdl<S> {

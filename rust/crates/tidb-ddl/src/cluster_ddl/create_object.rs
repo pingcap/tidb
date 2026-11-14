@@ -23,16 +23,7 @@
 use super::add_index::{action_step, update_version_and_table_info, AddIndexSubmission};
 use super::*;
 
-/// Go `OnExist`: what `createTableWithInfoJob` does when the name is taken.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum OnExist {
-    /// `ErrTableExists`.
-    Error,
-    /// The error as a note, and no job (`IF NOT EXISTS`).
-    Ignore,
-    /// Replace an existing view (`CREATE OR REPLACE VIEW`).
-    Replace,
-}
+use crate::{CreateTableConfig, OnExist};
 
 /// Go's executor halves up to `doDDLJob2` for CREATE VIEW, CREATE / ALTER
 /// SEQUENCE and CREATE TABLE LIKE. `None` for any other statement.
@@ -163,7 +154,11 @@ pub fn create_view<S: MetaSnapshot>(
             &catalog,
             schema,
             info.clone(),
-            on_exist,
+            &[],
+            CreateTableConfig {
+                on_exist,
+                ..CreateTableConfig::default()
+            },
             job_context,
             tiflash_stores,
             &mut warnings,
@@ -197,7 +192,11 @@ pub fn create_sequence<S: MetaSnapshot>(
             &catalog,
             schema,
             info.clone(),
-            on_exist,
+            &[],
+            CreateTableConfig {
+                on_exist,
+                ..CreateTableConfig::default()
+            },
             job_context,
             tiflash_stores,
             &mut warnings,
@@ -242,12 +241,23 @@ pub fn create_table_like<S: MetaSnapshot>(
                 } else {
                     OnExist::Error
                 };
+                // Go `CreateTable`: the LIKE source is involved, shared.
+                let involving_ref = [tidb_model::InvolvingSchemaInfo {
+                    database: source_schema.go_to_lower().into(),
+                    table: source_table.go_to_lower().into(),
+                    mode: tidb_model::InvolvingSchemaInfoMode::SHARED,
+                    ..tidb_model::InvolvingSchemaInfo::default()
+                }];
                 create_table_with_info_job(
                     snapshot,
                     &catalog,
                     schema,
                     info,
-                    on_exist,
+                    &involving_ref,
+                    CreateTableConfig {
+                        on_exist,
+                        ..CreateTableConfig::default()
+                    },
                     job_context,
                     tiflash_stores,
                     &mut warnings,
@@ -279,7 +289,7 @@ pub fn alter_sequence<S: MetaSnapshot>(
 }
 
 /// Go `createTableWithInfoJob` followed by `doDDLJob2`.
-fn submit_create_object<S: MetaSnapshot>(
+pub(crate) fn submit_create_object<S: MetaSnapshot>(
     snapshot: &mut S,
     built: Option<AddIndexSubmission>,
     mut warnings: Vec<tidb_context::SqlWarn>,
@@ -304,16 +314,19 @@ fn submit_create_object<S: MetaSnapshot>(
 }
 
 /// Go `executor.createTableWithInfoJob`.
-pub(super) fn create_table_with_info_job<S: MetaSnapshot>(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_table_with_info_job<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &SessionExtendedInfoSchema,
     schema: &str,
     mut info: TableInfo,
-    on_exist: OnExist,
+    involving_ref: &[tidb_model::InvolvingSchemaInfo],
+    config: CreateTableConfig,
     job_context: &dyn DdlSessionContext,
     tiflash_stores: &dyn Fn() -> Result<u64, String>,
     warnings: &mut Vec<tidb_context::SqlWarn>,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let on_exist = config.on_exist;
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
@@ -324,30 +337,36 @@ pub(super) fn create_table_with_info_job<S: MetaSnapshot>(
     let mut old_view_id = 0;
     if let Some(existing) = find_table(&database.read(), info.name.original()) {
         let existing = existing.read();
+        // Go `ast.Ident{Schema: schema.Name, Name: tbInfo.Name}`: the stored
+        // schema's name.
+        let ident = format!("{}.{}", database.read().name.original(), info.name.original());
         let exists = || {
             DdlPlanError::from(
-                tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(&[
-                    format!(
-                        "{}.{}",
-                        (schema.to_owned()),
-                        (info.name.original().to_owned())
-                    )
-                    .into(),
-                ]),
+                tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
+                    .gen_with_stack_by_args(&[ident.clone().into()]),
             )
         };
         match on_exist {
             OnExist::Ignore => {
+                // A restoring table (Go `TableModeRestore`) must find the
+                // existing one restoring as well.
+                if info.mode == tidb_model::TableMode::RESTORE
+                    && existing.mode != tidb_model::TableMode::RESTORE
+                {
+                    return Err(DdlPlanError::from(
+                        tidb_infoschema::infoschema_errors::ERR_INVALID_TABLE_MODE_SET
+                            .gen_with_stack_by_args(&[
+                                existing.mode.to_string().into(),
+                                info.mode.to_string().into(),
+                                info.name.original().to_owned().into(),
+                            ]),
+                    ));
+                }
                 return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                     detail: format!("`{schema}`.`{}` already exists", info.name.original()),
                     warnings: vec![crate::real_tikv_ddl::ddl_note(
                         tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
-                            .gen_with_stack_by_args(&[format!(
-                                "{}.{}",
-                                schema,
-                                info.name.original()
-                            )
-                            .into()]),
+                            .gen_with_stack_by_args(&[ident.clone().into()]),
                     )],
                 }));
             }
@@ -377,12 +396,13 @@ pub(super) fn create_table_with_info_job<S: MetaSnapshot>(
     job.schema_name = database.read().name.lowercase().to_owned().into();
     job.table_name = info.name.lowercase().to_owned().into();
     let shared = create_table::get_shared_involving_schema_info(&info);
-    if !shared.is_empty() {
+    if !involving_ref.is_empty() || !shared.is_empty() {
         let mut involving = vec![tidb_model::InvolvingSchemaInfo {
             database: job.schema_name.clone(),
             table: job.table_name.clone(),
             ..tidb_model::InvolvingSchemaInfo::default()
         }];
+        involving.extend_from_slice(involving_ref);
         involving.extend(shared);
         job.involving_schema_info = GoSharedSlice::from_vec(involving);
     }
@@ -400,11 +420,144 @@ pub(super) fn create_table_with_info_job<S: MetaSnapshot>(
         Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,
             args: JobArgsValue::CreateTable(Some(args)),
-            // `assignGIDsForJobs` draws the object's (and partitions') ids.
-            id_allocated: false,
+            // Unless BR allocated them, `assignGIDsForJobs` draws the
+            // object's (and partitions') ids.
+            id_allocated: config.id_allocated,
         }),
         Vec::new(),
     )))
+}
+
+/// Go `executor.CreateTableWithInfo` up to `DoDDLJobWrapper`.
+#[allow(clippy::too_many_arguments)]
+pub fn create_table_with_info<S: MetaSnapshot>(
+    snapshot: &mut S,
+    db_name: &str,
+    info: TableInfo,
+    involving_ref: &[tidb_model::InvolvingSchemaInfo],
+    config: CreateTableConfig,
+    job_context: &dyn DdlSessionContext,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_info_schema(snapshot)?;
+    let mut warnings = Vec::new();
+    let built = create_table_with_info_job(
+        snapshot,
+        &catalog,
+        db_name,
+        info,
+        involving_ref,
+        config,
+        job_context,
+        tiflash_stores,
+        &mut warnings,
+    )?;
+    submit_create_object(snapshot, built, warnings, start_ts, upgrading)
+}
+
+/// Go `executor.BatchCreateTableWithInfo` up to `DoDDLJobWrapper`: one
+/// `ActionCreateTables` job over every table not already satisfied.
+#[allow(clippy::too_many_arguments)]
+pub fn batch_create_table_with_info<S: MetaSnapshot>(
+    snapshot: &mut S,
+    db_name: &str,
+    infos: Vec<TableInfo>,
+    config: CreateTableConfig,
+    job_context: &dyn DdlSessionContext,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let mut entry_too_large = false;
+    tidb_failpoint::inject(
+        "github.com/pingcap/tidb/pkg/ddl/RestoreBatchCreateTableEntryTooLarge",
+        |value| entry_too_large = infos.len() as i64 > value.int(),
+    );
+    if entry_too_large {
+        return Err(DdlPlanError::from(tidb_kv::kv_errors::ERR_ENTRY_TOO_LARGE.fast_gen_by_args(&[])));
+    }
+    let catalog = load_info_schema(snapshot)?;
+    let mut warnings = Vec::new();
+    let mut job = session_job(job_context, ActionType::ACTION_NONE);
+    job.session_vars = Some(GoShared::new(std::collections::BTreeMap::from([(
+        tidb_vardef::tidb_vars::TIDB_SCATTER_REGION.to_owned(),
+        job_context.ddl_reorg_vars().scatter_region.clone().into(),
+    )])));
+    // Check if there are any duplicated table names.
+    let mut duplication = std::collections::HashSet::new();
+    for info in &infos {
+        if !duplication.insert(info.name.lowercase().to_owned()) {
+            let error = tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
+                .fast_gen_by_args(&["can not batch create tables with same name".into()]);
+            if config.on_exist != OnExist::Ignore {
+                return Err(DdlPlanError::from(error));
+            }
+            warnings.push(crate::real_tikv_ddl::ddl_note(error));
+        }
+    }
+    let mut tables = Vec::with_capacity(infos.len());
+    let mut involving = Vec::new();
+    for info in infos {
+        let name = info.name.lowercase().to_owned();
+        let shared = create_table::get_shared_involving_schema_info(&info);
+        match create_table_with_info_job(
+            snapshot,
+            &catalog,
+            db_name,
+            info,
+            &[],
+            config,
+            job_context,
+            tiflash_stores,
+            &mut warnings,
+        )? {
+            Some(AddIndexSubmission::Job(item, item_warnings)) => {
+                warnings.extend(item_warnings);
+                if job.type_ != ActionType::ACTION_CREATE_TABLES {
+                    job.type_ = ActionType::ACTION_CREATE_TABLES;
+                    job.schema_id = item.job.schema_id;
+                    job.schema_name = item.job.schema_name.clone();
+                }
+                let JobArgsValue::CreateTable(Some(args)) = item.args else {
+                    unreachable!("createTableWithInfoJob builds CreateTableArgs");
+                };
+                tables.push(args.read().clone());
+                involving.push(tidb_model::InvolvingSchemaInfo {
+                    database: db_name.go_to_lower().into(),
+                    table: name.into(),
+                    ..tidb_model::InvolvingSchemaInfo::default()
+                });
+                involving.extend(shared);
+            }
+            // Go: a nil job (the table exists under OnExistIgnore) is skipped.
+            Some(AddIndexSubmission::AlreadySatisfied { warnings: notes, .. }) => {
+                warnings.extend(notes);
+            }
+            None => {}
+        }
+    }
+    if tables.is_empty() {
+        return Ok(Some(AddIndexSubmission::AlreadySatisfied {
+            detail: "no table to create".to_owned(),
+            warnings,
+        }));
+    }
+    job.involving_schema_info = GoSharedSlice::from_vec(involving);
+    let built = AddIndexSubmission::Job(
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
+            job,
+            args: JobArgsValue::BatchCreateTable(Some(GoShared::new(
+                tidb_model::BatchCreateTableArgs {
+                    tables: GoField::new(tables.into()),
+                },
+            ))),
+            id_allocated: config.id_allocated,
+        }),
+        warnings,
+    );
+    submit_built_job(snapshot, Some(built), start_ts, upgrading)
 }
 
 /// Go `BuildTableInfoWithLike` after the preprocessor's and the executor's

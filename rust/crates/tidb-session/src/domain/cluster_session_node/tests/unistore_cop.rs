@@ -51,6 +51,7 @@ mod table_mode;
 mod repair_table;
 mod masking_policy;
 mod ddl_executor;
+mod create_with_info;
 mod analyzetest;
 mod ddl_analyze;
 mod ddl_delivery;

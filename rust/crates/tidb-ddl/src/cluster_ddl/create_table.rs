@@ -67,34 +67,7 @@ pub fn create_table_job<S: MetaSnapshot>(
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let catalog = load_info_schema(snapshot)?;
     let mut warnings = Vec::new();
-    let info = match build_create_table_info(
-        snapshot,
-        &catalog,
-        schema,
-        table,
-        if_not_exists,
-        build,
-        tiflash_stores,
-        &mut warnings,
-    )? {
-        Ok(info) => info,
-        Err(DdlPlan::AlreadySatisfied {
-            detail,
-            warnings: notes,
-        }) => {
-            warnings.extend(notes);
-            return Ok(Some(AddIndexSubmission::AlreadySatisfied {
-                detail,
-                warnings,
-            }));
-        }
-        Err(DdlPlan::Write(_)) => unreachable!("the builder answers no write"),
-    };
-    let database = find_database(&catalog, schema).expect("the builder found the database");
-    let mut job = session_job(job_context, ActionType::ACTION_CREATE_TABLE);
-    job.schema_id = database.read().id;
-    job.schema_name = database.read().name.lowercase().to_owned().into();
-    job.table_name = info.name.lowercase().to_owned().into();
+    let info = build_create_table_info(&catalog, schema, table, build)?;
     // Go's partition sugar rewrites `QueryString` before the job copies it;
     // a text without the sugar is `rewritePartitionQueryString`'s error.
     if let Some((original, _)) = build.context.ddl_query_rewrite() {
@@ -105,41 +78,35 @@ pub fn create_table_job<S: MetaSnapshot>(
             )));
         }
     }
-    job.query = tidb_ddl_build::partition_interval::rewritten_query(
-        job_context.ddl_query(),
-        build.context.ddl_query_rewrite().as_ref(),
-    )
-    .into();
-    // Go `getSharedInvolvingSchemaInfo`: the referenced parents and the
-    // placement policy, shared, behind the table itself.
-    let shared = get_shared_involving_schema_info(&info);
-    if !shared.is_empty() {
-        let mut involving = vec![tidb_model::InvolvingSchemaInfo {
-            database: job.schema_name.clone(),
-            table: job.table_name.clone(),
-            ..tidb_model::InvolvingSchemaInfo::default()
-        }];
-        involving.extend(shared);
-        job.involving_schema_info = GoSharedSlice::from_vec(involving);
+    let on_exist = if if_not_exists {
+        crate::OnExist::Ignore
+    } else {
+        crate::OnExist::Error
+    };
+    // Go `e.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef,
+    // WithOnExist(onExist))`.
+    let mut built = super::create_object::create_table_with_info_job(
+        snapshot,
+        &catalog,
+        schema,
+        info,
+        &[],
+        crate::CreateTableConfig {
+            on_exist,
+            ..crate::CreateTableConfig::default()
+        },
+        job_context,
+        tiflash_stores,
+        &mut warnings,
+    )?;
+    if let Some(AddIndexSubmission::Job(spec, _)) = built.as_mut() {
+        spec.job.query = tidb_ddl_build::partition_interval::rewritten_query(
+            job_context.ddl_query(),
+            build.context.ddl_query_rewrite().as_ref(),
+        )
+        .into();
     }
-    job.session_vars = Some(GoShared::new(std::collections::BTreeMap::from([(
-        tidb_vardef::tidb_vars::TIDB_SCATTER_REGION.to_owned(),
-        job_context.ddl_reorg_vars().scatter_region.clone().into(),
-    )])));
-    let args = GoShared::new(tidb_model::CreateTableArgs {
-        table_info: GoField::new(Some(GoShared::new(info))),
-        fk_check: GoField::new(build.context.foreign_key_checks()),
-        ..tidb_model::CreateTableArgs::default()
-    });
-    let mut specs = [tidb_ddl_jobsubmit::JobSpec {
-        job,
-        args: JobArgsValue::CreateTable(Some(args)),
-        // `assignGIDsForJobs` draws the table's and its partitions' ids.
-        id_allocated: false,
-    }];
-    tidb_ddl_jobsubmit::prepare_submit_batch(snapshot, &mut specs, start_ts, upgrading)?;
-    let [spec] = specs;
-    Ok(Some(AddIndexSubmission::Job(Box::new(spec), warnings)))
+    super::create_object::submit_create_object(snapshot, built, warnings, start_ts, upgrading)
 }
 
 /// Go `getSharedInvolvingSchemaInfo`.

@@ -143,6 +143,45 @@ fn mock_rename_table(
 }
 
 impl ClusterDdl for MockDdl {
+    fn create_schema_with_info(
+        &self,
+        _: tidb_model::DBInfo,
+        _: tidb_ddl::OnExist,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        Err(SqlQueryError::unknown("the mock catalog writer does not execute persisted jobs"))
+    }
+
+    fn create_table_with_info(
+        &self,
+        _: &str,
+        _: tidb_model::TableInfo,
+        _: &[tidb_model::InvolvingSchemaInfo],
+        _: tidb_ddl::CreateTableConfig,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        Err(SqlQueryError::unknown("the mock catalog writer does not execute persisted jobs"))
+    }
+
+    fn batch_create_table_with_info(
+        &self,
+        _: &str,
+        _: Vec<tidb_model::TableInfo>,
+        _: tidb_ddl::CreateTableConfig,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        Err(SqlQueryError::unknown("the mock catalog writer does not execute persisted jobs"))
+    }
+
+    fn create_placement_policy_with_info(
+        &self,
+        _: tidb_model::PolicyInfo,
+        _: tidb_ddl::OnExist,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        Err(SqlQueryError::unknown("the mock catalog writer does not execute persisted jobs"))
+    }
+
     fn update_table_replica_info(
         &self,
         table_id: i64,

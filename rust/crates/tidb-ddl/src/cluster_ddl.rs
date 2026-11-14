@@ -1956,6 +1956,27 @@ pub(super) fn handle_table_placement<S: MetaSnapshot>(
     Ok(())
 }
 
+/// Go `handleDatabasePlacement`: under `tidb_placement_mode = IGNORE` the
+/// reference is dropped with a note; otherwise it is normalized by name.
+pub(super) fn handle_database_placement<S: MetaSnapshot>(
+    snapshot: &mut S,
+    context: &dyn DdlSessionContext,
+    info: &mut tidb_model::DBInfo,
+    warnings: &mut Vec<tidb_context::SqlWarn>,
+) -> Result<(), DdlPlanError> {
+    if info.placement_policy_ref.is_none() {
+        return Ok(());
+    }
+    if context.placement_mode_ignore() {
+        info.placement_policy_ref = None;
+        warnings.push(placement_ignored_note());
+        return Ok(());
+    }
+    info.placement_policy_ref =
+        normalize_placement_policy_ref(snapshot, info.placement_policy_ref.take())?;
+    Ok(())
+}
+
 /// Go `removeTablePlacement`: whether there was any.
 fn remove_table_placement(info: &mut TableInfo) -> bool {
     let mut removed = info.placement_policy_ref.take().is_some();
@@ -8725,16 +8746,12 @@ fn add_history_ddl_job(
 /// and every written policy resolved by id), `checkTableForeignKeysValid`,
 /// the existence check (a Note under IF NOT EXISTS, answered as `Err(plan)`)
 /// and `checkTableInfoValidExtra`. Ids are not assigned yet.
-fn build_create_table_info<S: MetaSnapshot>(
-    snapshot: &mut S,
+fn build_create_table_info(
     catalog: &SessionExtendedInfoSchema,
     schema: &str,
     table: &str,
-    if_not_exists: bool,
     build: &CreateTableBuild,
-    tiflash_stores: &dyn Fn() -> Result<u64, String>,
-    warnings: &mut Vec<tidb_context::SqlWarn>,
-) -> Result<Result<TableInfo, DdlPlan>, DdlPlanError> {
+) -> Result<TableInfo, DdlPlanError> {
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
@@ -8789,32 +8806,7 @@ fn build_create_table_info<S: MetaSnapshot>(
             info.placement_policy_ref = Some(tidb_model::GoShared::new(reference.read().clone()));
         }
     }
-    // `createTableWithInfoJob`, ahead of its existence check.
-    handle_table_placement(snapshot, build.context.as_ref(), &mut info, warnings)?;
-    if let Some(existing) = find_table(&database.read(), table) {
-        let existing = existing.read();
-        if if_not_exists {
-            // Go `createTableWithInfoJob`: `ErrTableExists` as a note.
-            return Ok(Err(already_with_warnings(
-                format!(
-                    "table `{schema}`.`{}` already exists",
-                    existing.name.original()
-                ),
-                vec![crate::real_tikv_ddl::ddl_note(
-                    tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(
-                        &[format!("{}.{}", schema, existing.name.original()).into()],
-                    ),
-                )],
-            )));
-        }
-        return Err(DdlPlanError::from(
-            tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(&[
-                format!("{}.{}", (schema.to_owned()), (table.to_owned())).into(),
-            ]),
-        ));
-    }
-    check_table_info_valid_extra(tiflash_stores, schema, &mut info, warnings)?;
-    Ok(Ok(info))
+    Ok(info)
 }
 
 /// Go `createTable`'s publication once the ids are stamped: the placement
@@ -8861,17 +8853,21 @@ fn apply_create_table(
     // Go: "Updating auto id meta kv is done in a separate txn"; here it is
     // the job's, the ids being bound to a table no one reads before the
     // version publishes.
-    handle_auto_inc_id(txn, db_id, info)
+    let meta = txn.meta();
+    handle_auto_inc_id(&meta, db_id, info).map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))
 }
 
 /// Go `handleAutoIncID`: each allocator `NewAllocatorsFromTblInfo` gives the
 /// table is rebased, without allocating, to the first id the table option
 /// asks for; a rebase only moves a counter forward.
-fn handle_auto_inc_id(txn: &mut JobTxn<'_>, db_id: i64, info: &TableInfo) -> Result<(), DdlPlanError> {
+pub(crate) fn handle_auto_inc_id<T: tidb_meta::transaction::MetaTransaction>(
+    meta: &tidb_meta::transaction::Mutator<T>,
+    db_id: i64,
+    info: &TableInfo,
+) -> Result<(), tidb_meta::MetaError> {
     let has_row_id = !info.pk_is_handle && !info.is_common_handle;
     let has_auto_inc_id = info.get_auto_increment_col_info().is_some();
     let sep_auto_inc = info.sep_auto_inc();
-    let meta = txn.meta();
     let auto_ids = meta.auto_ids(db_id, info.id);
     let row_id = (has_row_id || (has_auto_inc_id && !sep_auto_inc)).then(|| auto_ids.row_id());
     let increment = (has_auto_inc_id && sep_auto_inc).then(|| auto_ids.increment_id(info.version));
@@ -8888,21 +8884,21 @@ fn handle_auto_inc_id(txn: &mut JobTxn<'_>, db_id: i64, info: &TableInfo) -> Res
     if info.auto_rand_id > 1 {
         rebases.push((&random, info.auto_rand_id - 1, info.is_auto_random_bit_col_unsigned()));
     }
-    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
     for (allocator, end, unsigned) in rebases {
         let Some(allocator) = allocator else {
             continue;
         };
-        let current = allocator.get().map_err(meta_error)?;
+        let current = allocator.get()?;
         let behind = if unsigned {
             (current as u64) < (end as u64)
         } else {
             current < end
         };
         if behind {
-            allocator.put(end).map_err(meta_error)?;
+            allocator.put(end)?;
         }
     }
+    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/handleAutoIncID", &mut ());
     Ok(())
 }
 

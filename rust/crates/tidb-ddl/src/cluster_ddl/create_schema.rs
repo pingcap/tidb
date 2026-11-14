@@ -40,69 +40,71 @@ pub fn create_schema<S: MetaSnapshot>(
     };
     create_schema_with_info(
         snapshot,
-        name,
-        *if_not_exists,
-        charset,
-        collate,
-        placement_policy.as_deref(),
+        build_db_info(name, charset, collate, placement_policy.as_deref()),
+        if *if_not_exists {
+            crate::OnExist::Ignore
+        } else {
+            crate::OnExist::Error
+        },
         job_context,
         start_ts,
         upgrading,
     )
 }
 
-/// Go `executor.CreateSchemaWithInfo`: admission and job construction.
-#[allow(clippy::too_many_arguments)]
-pub fn create_schema_with_info<S: MetaSnapshot>(
-    snapshot: &mut S,
+/// Go `executor.CreateSchema`'s `dbInfo`: the name, the resolved charset and
+/// collation, and the written placement policy by name.
+pub fn build_db_info(
     name: &str,
-    if_not_exists: bool,
     charset: &str,
     collate: &str,
     placement_policy: Option<&str>,
+) -> DBInfo {
+    DBInfo {
+        name: CiString::new(name),
+        charset: charset.to_owned(),
+        collate: collate.to_owned(),
+        placement_policy_ref: placement_policy.map(|policy| {
+            GoShared::new(tidb_model::PolicyRefInfo {
+                id: 0,
+                name: CiString::new(policy),
+            })
+        }),
+        ..DBInfo::default()
+    }
+}
+
+/// Go `executor.CreateSchemaWithInfo`: admission and job construction.
+pub fn create_schema_with_info<S: MetaSnapshot>(
+    snapshot: &mut S,
+    mut info: DBInfo,
+    on_exist: crate::OnExist,
     job_context: &dyn DdlSessionContext,
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let catalog = load_info_schema(snapshot)?;
-    if let Some(existing) = find_database(&catalog, name) {
-        if if_not_exists {
-            return Ok(Some(AddIndexSubmission::AlreadySatisfied {
-                detail: format!(
-                    "database `{}` already exists",
-                    existing.read().name.original()
-                ),
-                warnings: vec![crate::real_tikv_ddl::ddl_note(
-                    tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS
-                        .gen_with_stack_by_args(&[name.into()]),
-                )],
-            }));
-        }
-        return Err(DdlPlanError::from(
-            tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS
-                .gen_with_stack_by_args(&[name.into()]),
-        ));
+    if find_database(&catalog, info.name.original()).is_some() {
+        // Go keeps the stack: the error may be seen as an error.
+        let error = tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS
+            .gen_with_stack_by_args(&[info.name.original().into()]);
+        return match on_exist {
+            crate::OnExist::Ignore => Ok(Some(AddIndexSubmission::AlreadySatisfied {
+                detail: format!("database `{}` already exists", info.name.original()),
+                warnings: vec![crate::real_tikv_ddl::ddl_note(error)],
+            })),
+            // Go: "can we implement MariaDB's CREATE OR REPLACE SCHEMA?"
+            crate::OnExist::Error | crate::OnExist::Replace => Err(DdlPlanError::from(error)),
+        };
     }
     // Go `checkTooLongSchema`.
-    tidb_ddl_build::check_too_long_identifier(&name.go_to_lower())
+    tidb_ddl_build::check_too_long_identifier(info.name.lowercase())
         .map_err(DdlPlanError::from_mysql_error)?;
-    // Go `handleDatabasePlacement`.
+    tidb_ddl_build::table_info_build::check_charset_and_collation(&info.charset, &info.collate)
+        .map_err(DdlPlanError::Admission)?;
     let mut warnings = Vec::new();
-    let placement_policy_ref = match placement_policy {
-        Some(_) if job_context.placement_mode_ignore() => {
-            warnings.push(placement_ignored_note());
-            None
-        }
-        Some(policy) => check_and_normalize_placement_policy(snapshot, policy)?,
-        None => None,
-    };
-    let info = DBInfo {
-        name: CiString::new(name),
-        charset: charset.to_owned(),
-        collate: collate.to_owned(),
-        placement_policy_ref: placement_policy_ref.clone(),
-        ..DBInfo::default()
-    };
+    handle_database_placement(snapshot, job_context, &mut info, &mut warnings)?;
+    let placement_policy_ref = info.placement_policy_ref.clone();
     let mut job = session_job(job_context, ActionType::ACTION_CREATE_SCHEMA);
     job.schema_name = info.name.lowercase().to_owned().into();
     let mut involving = vec![tidb_model::InvolvingSchemaInfo {

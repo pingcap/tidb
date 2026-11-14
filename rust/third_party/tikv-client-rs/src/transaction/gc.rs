@@ -19,7 +19,7 @@ use crate::backoff::Backoff;
 use crate::pd::PdClient;
 use crate::proto::kvrpcpb;
 use crate::region::{RegionVerId, RegionWithLeader};
-use crate::request::{EncodeKeyspace, KeyMode, Plan, PlanBuilder, TruncateKeyspace};
+use crate::request::{EncodeKeyspace, KeyMode, Plan, PlanBuilder};
 use crate::{Error, Key, Result};
 
 /// client-go `locate.KeyLocation`: a region and its bounds, as the client

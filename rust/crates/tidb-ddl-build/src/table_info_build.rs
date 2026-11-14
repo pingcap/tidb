@@ -1038,7 +1038,7 @@ fn validate_global_index_with_generated_columns(
 }
 
 /// Go `checkCharsetAndCollation` (`executor.go:1546`).
-fn check_charset_and_collation(cs: &str, co: &str) -> Refusal<()> {
+pub fn check_charset_and_collation(cs: &str, co: &str) -> Refusal<()> {
     if !tidb_charset::valid_charset_and_collation(cs, co) {
         return Err(DdlAdmissionError::from_terror(
             &tidb_dbterror::ERR_UNKNOWN_CHARACTER_SET

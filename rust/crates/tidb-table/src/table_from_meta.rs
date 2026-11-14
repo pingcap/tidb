@@ -345,9 +345,6 @@ pub fn cluster_table(
             table.state.0
         ));
     }
-    if columns.is_empty() {
-        return Err("it has no public columns".to_owned());
-    }
     // Go TableFromMeta rebuilds generated expressions against the complete
     // stored schema. The wide loader does not use the bounded reader's
     // admission rules, so it must retain this metadata itself.

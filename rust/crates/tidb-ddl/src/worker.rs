@@ -195,6 +195,41 @@ pub trait ClusterDdl: Send + Sync {
         job: crate::JobWrapper,
     ) -> Result<ClusterDdlReport, SqlQueryError>;
 
+    /// Go `executor.CreateSchemaWithInfo`.
+    fn create_schema_with_info(
+        &self,
+        info: tidb_model::DBInfo,
+        on_exist: crate::OnExist,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.CreateTableWithInfo` (BR restore's entry point).
+    fn create_table_with_info(
+        &self,
+        db_name: &str,
+        info: tidb_model::TableInfo,
+        involving_ref: &[tidb_model::InvolvingSchemaInfo],
+        config: crate::CreateTableConfig,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.BatchCreateTableWithInfo` (BR restore's entry point).
+    fn batch_create_table_with_info(
+        &self,
+        db_name: &str,
+        infos: Vec<tidb_model::TableInfo>,
+        config: crate::CreateTableConfig,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.CreatePlacementPolicyWithInfo` (BR restore's entry point).
+    fn create_placement_policy_with_info(
+        &self,
+        policy: tidb_model::PolicyInfo,
+        on_exist: crate::OnExist,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
     /// Go `executor.CreateSchema`.
     fn create_schema(
         &self,
@@ -1493,6 +1528,12 @@ where
             owner_id: owner_id.clone(),
             row_ids: Arc::clone(&row_ids),
         });
+        // Go `ddl.Start`: `d.executor.startMode = startMode`, then
+        // `mockBRStartMode`.
+        let mut executor_start_mode = start_mode;
+        tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/mockBRStartMode", |_| {
+            executor_start_mode = crate::StartMode::Br;
+        });
         let scheduler = Arc::new(PersistedDdlScheduler {
             opener: Arc::clone(&opener),
             timeout,
@@ -1509,7 +1550,7 @@ where
             ddl_job_done_ch_map: Arc::default(),
             session_pool,
             region_store: Arc::default(),
-            start_mode,
+            start_mode: executor_start_mode,
         });
         let owner: Arc<dyn tidb_owner::Manager> = match notifier.as_ref() {
             Some(etcd) => Arc::new(tidb_owner::OwnerManager::new(
@@ -3556,6 +3597,45 @@ where
         job: crate::JobWrapper,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         executor::do_ddl_job_wrapper(self, context, job)
+    }
+
+    fn create_schema_with_info(
+        &self,
+        info: tidb_model::DBInfo,
+        on_exist: crate::OnExist,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::create_schema_with_info(self, info, on_exist, context)
+    }
+
+    fn create_table_with_info(
+        &self,
+        db_name: &str,
+        info: tidb_model::TableInfo,
+        involving_ref: &[tidb_model::InvolvingSchemaInfo],
+        config: crate::CreateTableConfig,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::create_table_with_info(self, db_name, info, involving_ref, config, context)
+    }
+
+    fn batch_create_table_with_info(
+        &self,
+        db_name: &str,
+        infos: Vec<tidb_model::TableInfo>,
+        config: crate::CreateTableConfig,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::batch_create_table_with_info(self, db_name, infos, config, context)
+    }
+
+    fn create_placement_policy_with_info(
+        &self,
+        policy: tidb_model::PolicyInfo,
+        on_exist: crate::OnExist,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::create_placement_policy_with_info(self, policy, on_exist, context)
     }
 
     fn drop_table(

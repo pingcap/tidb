@@ -27,6 +27,45 @@ struct ReportDdl {
 }
 
 impl ClusterDdl for ReportDdl {
+    fn create_schema_with_info(
+        &self,
+        _: tidb_model::DBInfo,
+        _: tidb_ddl::OnExist,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        Err(SqlQueryError::unknown("the mock catalog writer does not execute persisted jobs"))
+    }
+
+    fn create_table_with_info(
+        &self,
+        _: &str,
+        _: tidb_model::TableInfo,
+        _: &[tidb_model::InvolvingSchemaInfo],
+        _: tidb_ddl::CreateTableConfig,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        Err(SqlQueryError::unknown("the mock catalog writer does not execute persisted jobs"))
+    }
+
+    fn batch_create_table_with_info(
+        &self,
+        _: &str,
+        _: Vec<tidb_model::TableInfo>,
+        _: tidb_ddl::CreateTableConfig,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        Err(SqlQueryError::unknown("the mock catalog writer does not execute persisted jobs"))
+    }
+
+    fn create_placement_policy_with_info(
+        &self,
+        _: tidb_model::PolicyInfo,
+        _: tidb_ddl::OnExist,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        Err(SqlQueryError::unknown("the mock catalog writer does not execute persisted jobs"))
+    }
+
     fn update_table_replica_info(
         &self,
         table_id: i64,
@@ -571,6 +610,45 @@ fn ddl_reports_preserve_warning_order_levels_and_statement_lifetime() {
 struct UndeterminedDdl(SqlQueryError);
 
 impl ClusterDdl for UndeterminedDdl {
+    fn create_schema_with_info(
+        &self,
+        _: tidb_model::DBInfo,
+        _: tidb_ddl::OnExist,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        Err(self.0.clone())
+    }
+
+    fn create_table_with_info(
+        &self,
+        _: &str,
+        _: tidb_model::TableInfo,
+        _: &[tidb_model::InvolvingSchemaInfo],
+        _: tidb_ddl::CreateTableConfig,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        Err(self.0.clone())
+    }
+
+    fn batch_create_table_with_info(
+        &self,
+        _: &str,
+        _: Vec<tidb_model::TableInfo>,
+        _: tidb_ddl::CreateTableConfig,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        Err(self.0.clone())
+    }
+
+    fn create_placement_policy_with_info(
+        &self,
+        _: tidb_model::PolicyInfo,
+        _: tidb_ddl::OnExist,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        Err(self.0.clone())
+    }
+
     fn update_table_replica_info(
         &self,
         table_id: i64,
