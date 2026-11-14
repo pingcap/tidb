@@ -3582,3 +3582,19 @@ func TestGetLockedMigrationsReleasesReadLockOnLoadError(t *testing.T) {
 	}))
 	require.Emptyf(t, lingering, "readLock was not released after Load error; lingering files: %v", lingering)
 }
+
+func TestLogRestoreConcurrencyForStores(t *testing.T) {
+	cases := []struct {
+		stores, want uint
+	}{
+		{stores: 0, want: 16},
+		{stores: 1, want: 256},
+		{stores: 13, want: 3328},
+		{stores: 31, want: 7936},
+		{stores: 32, want: 8000},
+		{stores: 100, want: 8000},
+	}
+	for _, c := range cases {
+		require.Equal(t, c.want, logclient.LogRestoreConcurrencyForStores(c.stores, 16), "stores=%d", c.stores)
+	}
+}

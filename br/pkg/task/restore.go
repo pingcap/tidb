@@ -318,8 +318,11 @@ type RestoreConfig struct {
 	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 	PitrConcurrency uint32                      `json:"-" toml:"-"`
-	Layout          repo.Layout                 `json:"storage-layout" toml:"storage-layout"`
-	BackupID        repo.BackupID               `json:"backup-id" toml:"backup-id"`
+	// PitrConcurrencyFromStores is set when --pitr-concurrency is not given, so
+	// the concurrency follows the number of TiKV stores.
+	PitrConcurrencyFromStores bool          `json:"-" toml:"-"`
+	Layout                    repo.Layout   `json:"storage-layout" toml:"storage-layout"`
+	BackupID                  repo.BackupID `json:"backup-id" toml:"backup-id"`
 	// RetainLatestMVCCVersion means restoring compacted SSTs by retaining only newest MVCC versions.
 	RetainLatestMVCCVersion bool `json:"retain-latest-mvcc-version" toml:"retain-latest-mvcc-version"`
 
@@ -470,7 +473,8 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 		"When set, PITR drops incomplete indexes but does not rebuild them automatically; the SQLs are written to add-index.sql under this storage.")
 	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "specify the batch count to restore log.")
 	command.Flags().Uint32(FlagPiTRBatchSize, defaultPiTRBatchSize, "specify the batch size to retore log.")
-	command.Flags().Uint32(FlagPiTRConcurrency, defaultPiTRConcurrency, "specify the concurrency to restore log.")
+	command.Flags().Uint32(FlagPiTRConcurrency, defaultPiTRConcurrency,
+		"specify the concurrency to restore log. When it is not set, it is 256 per TiKV store, at most 8000.")
 	command.Flags().Bool(
 		FlagRetainLatestMVCCVersion,
 		false,
@@ -527,6 +531,7 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	if cfg.PitrConcurrency, err = flags.GetUint32(FlagPiTRConcurrency); err != nil {
 		return errors.Trace(err)
 	}
+	cfg.PitrConcurrencyFromStores = !flags.Changed(FlagPiTRConcurrency)
 	if cfg.RetainLatestMVCCVersion, err = flags.GetBool(FlagRetainLatestMVCCVersion); err != nil {
 		return errors.Trace(err)
 	}

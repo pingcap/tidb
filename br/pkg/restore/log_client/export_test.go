@@ -32,7 +32,8 @@ import (
 )
 
 var (
-	FilterFilesByRegion = filterFilesByRegion
+	FilterFilesByRegion            = filterFilesByRegion
+	LogRestoreConcurrencyForStores = logRestoreConcurrencyForStores
 )
 
 func (metaname *MetaName) Meta() Meta {

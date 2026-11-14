@@ -581,6 +581,7 @@ func (rc *LogClient) InitClients(
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 	sstCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
 	concurrency uint,
+	concurrencyFromStores bool,
 	concurrencyPerStore uint,
 	retainLatestMVCCVersion bool,
 ) error {
@@ -589,6 +590,9 @@ func (rc *LogClient) InitClients(
 		log.Fatal("failed to get stores", zap.Error(err))
 	}
 	liveStoreCount := liveTiKVStoreCount(stores)
+	if concurrencyFromStores {
+		concurrency = logRestoreConcurrencyForStores(liveStoreCount, concurrency)
+	}
 	replicaCount := rc.getMaxReplica(ctx)
 
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, len(stores)+1)
@@ -660,6 +664,22 @@ func (rc *LogClient) InitClients(
 	}
 	rc.sstRestoreManager = sstRestoreManager
 	return nil
+}
+
+const (
+	logRestoreConcurrencyPerStore = 256
+	logRestoreConcurrencyMax      = 8000
+)
+
+// logRestoreConcurrencyForStores is the number of KV file batches applied at
+// once when --pitr-concurrency is not given. A batch is applied by the leaders
+// of its regions, so the concurrency grows with the stores. Without live stores
+// the fallback is kept.
+func logRestoreConcurrencyForStores(liveStores, fallback uint) uint {
+	if liveStores == 0 {
+		return fallback
+	}
+	return min(liveStores*logRestoreConcurrencyPerStore, logRestoreConcurrencyMax)
 }
 
 func liveTiKVStoreCount(stores []*metapb.Store) uint {
