@@ -203,3 +203,22 @@ id	task	access object	operator info
 IndexReader	root		index:Selection
 └─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t.uuid, "7dce58ba-ba84-4297-94cf-c23cf3a39ed3")
   └─IndexRangeScan	cop[tikv]	table:t, index:idx_uuid(uuid)	range:["7dce58ba-ba84-4297-94cf-c23cf3a39ed3","7dce58ba-ba84-4297-94cf-c23cf3a39ed3"], keep order:false, stats:pseudo
+drop table if exists t;
+create table t (id int, c varchar(10), d decimal(65,30));
+insert into t values (1, 'a', 0), (2, 'B', 1);
+set names utf8mb4 collate utf8mb4_general_ci;
+select hex(min(binary(c))), hex(max(binary(c))) from t;
+hex(min(binary(c)))	hex(max(binary(c)))
+42	61
+select id from t order by binary(c) limit 1;
+id
+2
+select hex(min(binary(case 'x' when d then '2020-11-24' when d then id else ']' end))) from t;
+hex(min(binary(case 'x' when d then '2020-11-24' when d then id else ']' end)))
+323032302D31312D3234
+set names utf8mb4 collate utf8mb4_unicode_ci;
+select hex(min(binary(case 'x' when d then '2020-11-24' when d then id else ']' end))) from t;
+hex(min(binary(case 'x' when d then '2020-11-24' when d then id else ']' end)))
+323032302D31312D3234
+set names utf8mb4;
+drop table t;
