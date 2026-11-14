@@ -1204,7 +1204,8 @@ impl UniqueIndexPointSourceExec {
             self.meta.id(),
             self.meta.init_cap(),
             self.meta.max_chunk_size(),
-        );
+        )
+        .with_alloc_pool(self.meta.alloc_pool().cloned());
         let mut source = if self.single_point {
             HandleSourceExec::new_point_mapped_with_context(
                 meta,

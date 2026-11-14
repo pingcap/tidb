@@ -1996,7 +1996,8 @@ pub fn open_prepared_point_get(
         .collect();
     // Go buildPointGet sets both capacities to one (point_get.go:94).
     let executor = PreparedPointGetExecutor {
-        meta: crate::ExecutorMeta::new(schema, 0, 1, 1),
+        // Go `newBaseExecutor`: the session's `AllocPool`.
+        meta: crate::ExecutorMeta::new(schema, 0, 1, 1).with_alloc_pool(stmt_ctx.chunk_allocator()),
         table,
         execution: execution.clone(),
         decode: ctx.clone(),

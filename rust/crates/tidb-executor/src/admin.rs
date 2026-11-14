@@ -661,7 +661,9 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                 .collect(),
         );
         let (init_cap, max_chunk_size) = ctx.executor_chunk_sizes();
-        let meta = tidb_executor_internal_exec::ExecutorMeta::new(schema, 0, init_cap, max_chunk_size);
+        // Go `newBaseExecutor`: the session's `AllocPool`.
+        let meta = tidb_executor_internal_exec::ExecutorMeta::new(schema, 0, init_cap, max_chunk_size)
+            .with_alloc_pool(ctx.chunk_allocator());
         let field_types = meta.ret_field_types().to_vec();
         let mut exec = crate::check_index_range::CheckIndexRangeExec::new(
             meta,
