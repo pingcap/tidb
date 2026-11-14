@@ -395,6 +395,14 @@ func TestValidator(t *testing.T) {
 		// {"CREATE TABLE t(a int, COLUMNAR INDEX(b) USING VECTOR)", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
 		{"CREATE TABLE t(c TEXT, FULLTEXT INDEX (t) WITH PARSER foo)", false, errors.New(`[ddl:8200]Unsupported parser 'foo'`)},
 		{"CREATE TABLE t(c TEXT, FULLTEXT INDEX (t) USING HNSW)", false, errors.New(`[ddl:8200]'USING HNSW' is not supported for FULLTEXT INDEX`)},
+		{"CREATE TABLE t(g POINT NOT NULL SRID 4326, SPATIAL KEY sk (g))", false, errors.New(`[ddl:8200]SPATIAL index is not supported`)},
+		{"CREATE TABLE t(g GEOMETRY NOT NULL, SPATIAL INDEX (g))", false, errors.New(`[ddl:8200]SPATIAL index is not supported`)},
+		{"CREATE TABLE t(g GEOMETRY NOT NULL, SPATIAL (g))", false, errors.New(`[ddl:8200]SPATIAL index is not supported`)},
+		{"ALTER TABLE t ADD SPATIAL INDEX ai (g)", false, errors.New(`[ddl:8200]SPATIAL index is not supported`)},
+		{"SELECT CAST(0x00000000010100000000000000000000000000000000000000 AS POINT)", false, errors.New(`[planner:1235]This version of TiDB doesn't yet support 'spatial type casts'`)},
+		{"SELECT CONVERT(0x00, MULTIPOLYGON)", false, errors.New(`[planner:1235]This version of TiDB doesn't yet support 'spatial type casts'`)},
+		{"SELECT CAST('[]' AS POINT ARRAY)", false, errors.New(`[planner:1235]This version of TiDB doesn't yet support 'spatial type casts'`)},
+		{"SELECT JSON_SUM_CRC32('[]' AS POINT ARRAY)", false, errors.New(`[planner:1235]This version of TiDB doesn't yet support 'spatial type casts'`)},
 
 		// The following columnar index usages are valid, they only fail due to table not found.
 		{"CREATE VECTOR INDEX ident USING HNSW ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
