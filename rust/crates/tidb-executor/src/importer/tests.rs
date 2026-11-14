@@ -298,3 +298,160 @@ fn test_import_csv_interpretation() {
         );
     }
 }
+
+/// Go `TestParserContract` probe: shared parser metadata, checkpoints,
+/// `ReadChunks`, `ReadUntil` and `HandleSkipNRows` for CSV and SQL.
+#[test]
+fn test_import_parser_contract() {
+    use serde_json::{json, Value};
+    use tidb_lightning_mydump::{read_chunks, read_until, ChunkParser, CsvParser, Parser};
+    for line in include_str!("../../testdata/import_parser_contract_go.jsonl").lines() {
+        let expected: Value = serde_json::from_str(line).unwrap();
+        let format = expected[0].as_str().unwrap();
+        let make_parser = || -> Box<dyn Parser> {
+            if format == "sql" {
+                Box::new(ChunkParser::new(
+                    b"INSERT INTO t (a,b) VALUES (1,'ab'),(2,NULL),(3,'z');".to_vec(),
+                    false,
+                ))
+            } else {
+                let plan = Plan::new_import_plan(
+                    &import("import into t from '/file.csv' format 'csv'"),
+                    6,
+                    "",
+                )
+                .unwrap();
+                Box::new(
+                    CsvParser::new(
+                        &plan.generate_csv_config(),
+                        b"1,\"ab\"\n2,\\N\n3,z\n".to_vec(),
+                        None,
+                    )
+                    .unwrap(),
+                )
+            }
+        };
+        let mut parser = make_parser();
+        let result = if let Some(skip) = expected[1].as_u64() {
+            handle_skip_n_rows(parser.as_mut(), skip).unwrap();
+            let mut rows = Vec::new();
+            loop {
+                let r = parser.read_row();
+                let (pos, id) = parser.pos();
+                if let Err(e) = r {
+                    rows.push(json!([pos, id, e.to_string()]));
+                    break;
+                }
+                let r = parser.last_row();
+                let values: Vec<Value> = r
+                    .row
+                    .iter()
+                    .map(|v| match v {
+                        tidb_datatype::Datum::Null => json!([0, ""]),
+                        tidb_datatype::Datum::UInt(n) => json!([2, n.to_string()]),
+                        tidb_datatype::Datum::String(s) => {
+                            json!([5, String::from_utf8_lossy(s.bytes())])
+                        }
+                        other => panic!("unexpected {other:?}"),
+                    })
+                    .collect();
+                rows.push(json!([pos, id, r.length, values]));
+            }
+            json!([format, skip, rows])
+        } else {
+            match expected[1].as_str().unwrap() {
+                "resume" => {
+                    parser.read_row().unwrap();
+                    let pos = parser.pos().0;
+                    parser = make_parser();
+                    parser.set_pos(pos, 11).unwrap();
+                    parser.set_columns(vec!["restored".into()]);
+                    parser.read_row().unwrap();
+                    let (pos, id) = parser.pos();
+                    json!([
+                        format,
+                        "resume",
+                        pos,
+                        id,
+                        parser.last_row().length,
+                        parser.columns()
+                    ])
+                }
+                "chunks" => {
+                    let chunks = read_chunks(parser.as_mut(), 10).unwrap();
+                    let chunks:Vec<_>=chunks.into_iter().map(|c|json!({"Offset":c.offset,"EndOffset":c.end_offset,"RealOffset":c.real_offset,"PrevRowIDMax":c.prev_row_id_max,"RowIDMax":c.row_id_max,"Columns":if c.columns.is_empty(){Value::Null}else{json!(c.columns)}})).collect();
+                    json!([format, "chunks", chunks])
+                }
+                "until" => {
+                    read_until(parser.as_mut(), 10).unwrap();
+                    let (pos, id) = parser.pos();
+                    json!([format, "until", pos, id])
+                }
+                other => panic!("unknown operation {other}"),
+            }
+        };
+        assert_eq!(result, expected, "{line}");
+    }
+}
+
+/// Go `TestSupportedSuffixForServerDisk`, with source discovery/error outputs
+/// captured by the `TestImportLocalFiles` testkit probe.
+#[test]
+#[cfg(unix)]
+fn test_supported_suffix_for_server_disk() {
+    use serde_json::{json, Value};
+    let dir = tempfile::tempdir().unwrap();
+    for name in [
+        "server-0.csv",
+        "server-1.csv",
+        "server-2.csv",
+        "what?.csv",
+        "whatx.csv",
+        "文件.csv",
+        "a[.csv",
+    ] {
+        std::fs::write(dir.path().join(name), b"1,abc\n").unwrap();
+    }
+    std::fs::create_dir(dir.path().join("nested")).unwrap();
+    std::fs::write(dir.path().join("nested/hidden.csv"), b"2,xyz\n").unwrap();
+    std::os::unix::fs::symlink(dir.path().join("server-0.csv"), dir.path().join("link.csv"))
+        .unwrap();
+    std::os::unix::fs::symlink(dir.path().join("absent"), dir.path().join("dangling.csv")).unwrap();
+    for line in include_str!("../../testdata/import_local_files_go.jsonl").lines() {
+        let expected: Value = serde_json::from_str(line).unwrap();
+        let name = expected[0].as_str().unwrap();
+        let path = if name == "relative.csv" {
+            name.to_owned()
+        } else {
+            dir.path().join(name).to_string_lossy().into_owned()
+        };
+        let result = super::super::local::find_local_data_files(&path, true);
+        match result {
+            Ok((_, files)) => {
+                assert_eq!(expected[2], "");
+                let files: Vec<_> = files.into_iter().map(|f| json!([f.path, f.size])).collect();
+                assert_eq!(
+                    json!(files),
+                    if expected[1].is_null() {
+                        json!([])
+                    } else {
+                        expected[1].clone()
+                    },
+                    "{line}"
+                );
+            }
+            Err(e) => {
+                let expected_message = expected[2]
+                    .as_str()
+                    .unwrap()
+                    .split_once(']')
+                    .map_or(expected[2].as_str().unwrap(), |(_, s)| s);
+                assert_eq!(
+                    e.to_mysql_error().message.replace(dir.path().to_str().unwrap(), "<dir>"),
+                    expected_message,
+                    "{line}"
+                );
+            }
+        }
+    }
+}

@@ -23,6 +23,13 @@
 //! at position 0, and the txn-entry-size limit is checked only when a token
 //! spans blocks.
 
+mod parser;
+mod router;
+mod loader;
+pub use router::{Compression, SourceType, parse_compression_on_file_extension};
+pub use loader::{RawFile, SourceFileMeta};
+pub use parser::{read_chunks, read_until, Chunk, ChunkParser, Parser, Row};
+
 use tidb_datatype::Datum;
 
 /// Go `config.CSVConfig`, the fields `LOAD DATA` sets.
@@ -300,6 +307,8 @@ struct Field {
 
 /// Go `CSVParser` over an in-memory source.
 pub struct CsvParser {
+    last_row: Row,
+    columns: Vec<String>,
     // blockParser
     source: Vec<u8>,
     source_offset: usize,
@@ -385,6 +394,8 @@ impl CsvParser {
         }
         Ok(Self {
             source,
+            last_row: Row::default(),
+            columns: Vec::new(),
             source_offset: 0,
             buf: Vec::new(),
             start: 0,
@@ -806,6 +817,8 @@ impl CsvParser {
     /// Go `ReadRow`: the next record's fields as string datums (NULL where
     /// the field is a NULL marker). `Err(CsvError::Eof)` ends the source.
     pub fn read_row(&mut self) -> Result<Vec<Datum>, CsvError> {
+        self.last_row.length = 0;
+        self.last_row.row_id += 1;
         self.begin_row_len_check();
         let fields = self.read_record();
         self.end_row_len_check();
@@ -813,13 +826,19 @@ impl CsvParser {
         if self.trim_last_empty_field && fields.last().is_some_and(|f| f.content.is_empty()) {
             fields.pop();
         }
-        Ok(fields
+        self.last_row.length = fields.iter().map(|f| f.content.len()).sum();
+        let row: Vec<Datum> = fields
             .iter()
             .map(|field| match self.unescape_string(field) {
                 Some(value) => Datum::Bytes(value),
                 None => Datum::Null,
             })
-            .collect())
+            .collect();
+        self.last_row.row = row.iter().map(|v| match v {
+            Datum::Bytes(bytes) => Datum::new_string_datum(bytes.clone()),
+            other => other.clone(),
+        }).collect();
+        Ok(row)
     }
 
     /// Go `ReadUntilTerminator`: skips past the next line terminator.

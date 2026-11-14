@@ -14,3 +14,7 @@ workspace = true
 tidb-charset = { path = "../tidb-charset" }
 tidb-datatype = { path = "../tidb-datatype" }
 encoding_rs.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+base64.workspace = true

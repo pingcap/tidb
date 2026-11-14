@@ -440,14 +440,21 @@ fn wrong_format(detail: &str) -> DriverError {
     )
 }
 
-/// Go `HandleSkipNRows` for `mydump.CSVParser`: skip physical records using
-/// `ReadUntilTerminator`, and accept EOF before the requested count.
+/// Go `HandleSkipNRows`: CSV skips physical lines; other parsers skip rows.
 pub fn handle_skip_n_rows(
-    parser: &mut tidb_lightning_mydump::CsvParser,
+    parser: &mut dyn tidb_lightning_mydump::Parser,
     ignore_lines: u64,
 ) -> Result<(), tidb_lightning_mydump::CsvError> {
     for _ in 0..ignore_lines {
-        match parser.read_until_terminator() {
+        let result = if let Some(csv) = parser
+            .as_any_mut()
+            .downcast_mut::<tidb_lightning_mydump::CsvParser>()
+        {
+            csv.read_until_terminator()
+        } else {
+            parser.read_row()
+        };
+        match result {
             Ok(()) => {}
             Err(tidb_lightning_mydump::CsvError::Eof) => return Ok(()),
             Err(error) => return Err(error),

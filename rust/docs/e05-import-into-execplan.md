@@ -176,3 +176,38 @@ targeted Rust tests passed: `cargo nextest run --build-jobs 6 -j6 -p tidb-execut
 the required environment and shared target above. New test modules depend on
 new controller APIs and cannot compile without the implementation. Full suites
 remain deferred to the end.
+
+### SQL reader and local discovery increment
+
+The SQL ChunkParser follows parser.go/parser.rl's tokens and four states,
+including read-block boundaries, exact row lengths and offsets, both SQL escape
+modes, column tracking, binary literals and malformed-input errors. The shared
+Parser contract adds CSV row metadata and common ReadChunks/ReadUntil;
+HandleSkipNRows now distinguishes CSV physical lines from SQL rows. A native
+filepath.Match port and local-discovery helper preserve Go's path validation,
+nonrecursive directory walk, symlink sizes and ignored per-file pattern errors.
+The controller does not yet call the helper. Source metadata/types are added;
+Parquet-specific and extended-column metadata remain. No executable import is
+claimed; reader I/O is currently supplied as decompressed byte buffers.
+
+Go captures: TestSQLParserCapture (828 cases from the nine original Go parser
+tests, with their tiny/default block sizes and both escape modes),
+TestParserContract (12 CSV/SQL metadata, skip, resume and chunk cases),
+TestImportLocalFiles (16 cases), and TestImportSourceTypes (19 cases). Each ran
+with `GOMAXPROCS=6 go test --tags=intest -p 6 ./zzprobe/e05 -run '^<name>$'
+-count=1 -v`. Only capture output is committed; the probes remain untracked.
+Go's query component is retained in the local storage base when InitDataStore
+reserializes the URI; a direct what?.csv path therefore fails while the same
+file is discovered by *.csv. Malformed later glob chunks can pass the empty-name
+validation, so per-file match errors must be ignored, as Go does.
+
+`cargo check -j6 -p tidb-lightning-mydump -p tidb-executor --tests` passed.
+`cargo nextest run --build-jobs 6 -j6 -p tidb-lightning-mydump -p tidb-executor
+-E 'test(parser::) | test(import_parser_contract) |
+test(supported_suffix_for_server_disk) | test(import_source_types)'
+--no-fail-fast` passed all 12 tests. Commands use the required environment above.
+Intermediate comparisons exposed EOF-token and vertical-tab differences; the
+final capture comparison includes those regressions. One intermediate build
+saw the new local helper before its metadata dependency was rebuilt; the final
+check and test run rebuild both from the completed source. Full crate suites
+and successful import execution are still outstanding.

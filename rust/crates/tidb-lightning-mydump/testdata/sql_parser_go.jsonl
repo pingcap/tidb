@@ -1,0 +1,828 @@
+{"test":"TestReadRow","input":"Lyogd2hhdGV2ZXIgcHJhZ21hcyAqLztJTlNFUlQgSU5UTyBgbmFtZXNwYWNlZGAuYHRhYmxlYCAoY29sdW1ucywgbW9yZSwgY29sdW1ucykgVkFMVUVTICgxLC0yLCAzKSwKKDQsNS4sIDYpO0lOU0VSVCBgbmFtZXNwYWNlZGAuYHRhYmxlYCAoeCx5LHopIFZBTFVFUyAoNyw4LDkpO2luc2VydCBhbm90aGVyX3RhYmxlIHZhbHVlcyAoMTAsMTFlMSwxMiwgJygxMyknLCAnKCcsIDE0LCAnKScpOw==","no_backslash":false,"block_size":65536,"rows":[{"id":1,"offset":97,"length":62,"columns":["columns","more","columns"],"values":[{"kind":2,"bytes":"MQ=="},{"kind":1,"bytes":"LTI="},{"kind":2,"bytes":"Mw=="}]},{"id":2,"offset":108,"length":6,"columns":["columns","more","columns"],"values":[{"kind":2,"bytes":"NA=="},{"kind":5,"bytes":"NS4="},{"kind":2,"bytes":"Ng=="}]},{"id":3,"offset":159,"length":42,"columns":["x","y","z"],"values":[{"kind":2,"bytes":"Nw=="},{"kind":2,"bytes":"OA=="},{"kind":2,"bytes":"OQ=="}]},{"id":4,"offset":222,"length":49,"columns":null,"values":[{"kind":2,"bytes":"MTA="},{"kind":5,"bytes":"MTFlMQ=="},{"kind":2,"bytes":"MTI="},{"kind":5,"bytes":"KDEzKQ=="},{"kind":5,"bytes":"KA=="},{"kind":2,"bytes":"MTQ="},{"kind":5,"bytes":"KQ=="}]}],"error":"EOF"}
+{"test":"TestReadRow","input":"Lyogd2hhdGV2ZXIgcHJhZ21hcyAqLztJTlNFUlQgSU5UTyBgbmFtZXNwYWNlZGAuYHRhYmxlYCAoY29sdW1ucywgbW9yZSwgY29sdW1ucykgVkFMVUVTICgxLC0yLCAzKSwKKDQsNS4sIDYpO0lOU0VSVCBgbmFtZXNwYWNlZGAuYHRhYmxlYCAoeCx5LHopIFZBTFVFUyAoNyw4LDkpO2luc2VydCBhbm90aGVyX3RhYmxlIHZhbHVlcyAoMTAsMTFlMSwxMiwgJygxMyknLCAnKCcsIDE0LCAnKScpOw==","no_backslash":true,"block_size":65536,"rows":[{"id":1,"offset":97,"length":62,"columns":["columns","more","columns"],"values":[{"kind":2,"bytes":"MQ=="},{"kind":1,"bytes":"LTI="},{"kind":2,"bytes":"Mw=="}]},{"id":2,"offset":108,"length":6,"columns":["columns","more","columns"],"values":[{"kind":2,"bytes":"NA=="},{"kind":5,"bytes":"NS4="},{"kind":2,"bytes":"Ng=="}]},{"id":3,"offset":159,"length":42,"columns":["x","y","z"],"values":[{"kind":2,"bytes":"Nw=="},{"kind":2,"bytes":"OA=="},{"kind":2,"bytes":"OQ=="}]},{"id":4,"offset":222,"length":49,"columns":null,"values":[{"kind":2,"bytes":"MTA="},{"kind":5,"bytes":"MTFlMQ=="},{"kind":2,"bytes":"MTI="},{"kind":5,"bytes":"KDEzKQ=="},{"kind":5,"bytes":"KA=="},{"kind":2,"bytes":"MTQ="},{"kind":5,"bytes":"KQ=="}]}],"error":"EOF"}
+{"test":"TestReadChunks","input":"CgkJSU5TRVJUIGZvbyBWQUxVRVMgKDEsMiwzLDQpLCg1LDYsNyw4KSwoOSwxMCwxMSwxMik7CgkJSU5TRVJUIGZvbyBWQUxVRVMgKDEzLDE0LDE1LDE2KSwoMTcsMTgsMTksMjApLCgyMSwyMiwyMywyNCksKDI1LDI2LDI3LDI4KTsKCQlJTlNFUlQgZm9vIFZBTFVFUyAoMjksMzAsMzEsMzIpLCgzMywzNCwzNSwzNik7Cgk=","no_backslash":false,"block_size":65536,"rows":[{"id":1,"offset":30,"length":21,"columns":null,"values":[{"kind":2,"bytes":"MQ=="},{"kind":2,"bytes":"Mg=="},{"kind":2,"bytes":"Mw=="},{"kind":2,"bytes":"NA=="}]},{"id":2,"offset":40,"length":6,"columns":null,"values":[{"kind":2,"bytes":"NQ=="},{"kind":2,"bytes":"Ng=="},{"kind":2,"bytes":"Nw=="},{"kind":2,"bytes":"OA=="}]},{"id":3,"offset":53,"length":9,"columns":null,"values":[{"kind":2,"bytes":"OQ=="},{"kind":2,"bytes":"MTA="},{"kind":2,"bytes":"MTE="},{"kind":2,"bytes":"MTI="}]},{"id":4,"offset":88,"length":25,"columns":null,"values":[{"kind":2,"bytes":"MTM="},{"kind":2,"bytes":"MTQ="},{"kind":2,"bytes":"MTU="},{"kind":2,"bytes":"MTY="}]},{"id":5,"offset":102,"length":10,"columns":null,"values":[{"kind":2,"bytes":"MTc="},{"kind":2,"bytes":"MTg="},{"kind":2,"bytes":"MTk="},{"kind":2,"bytes":"MjA="}]},{"id":6,"offset":116,"length":10,"columns":null,"values":[{"kind":2,"bytes":"MjE="},{"kind":2,"bytes":"MjI="},{"kind":2,"bytes":"MjM="},{"kind":2,"bytes":"MjQ="}]},{"id":7,"offset":130,"length":10,"columns":null,"values":[{"kind":2,"bytes":"MjU="},{"kind":2,"bytes":"MjY="},{"kind":2,"bytes":"Mjc="},{"kind":2,"bytes":"Mjg="}]},{"id":8,"offset":165,"length":25,"columns":null,"values":[{"kind":2,"bytes":"Mjk="},{"kind":2,"bytes":"MzA="},{"kind":2,"bytes":"MzE="},{"kind":2,"bytes":"MzI="}]},{"id":9,"offset":179,"length":10,"columns":null,"values":[{"kind":2,"bytes":"MzM="},{"kind":2,"bytes":"MzQ="},{"kind":2,"bytes":"MzU="},{"kind":2,"bytes":"MzY="}]}],"error":"EOF"}
+{"test":"TestReadChunks","input":"CgkJSU5TRVJUIGZvbyBWQUxVRVMgKDEsMiwzLDQpLCg1LDYsNyw4KSwoOSwxMCwxMSwxMik7CgkJSU5TRVJUIGZvbyBWQUxVRVMgKDEzLDE0LDE1LDE2KSwoMTcsMTgsMTksMjApLCgyMSwyMiwyMywyNCksKDI1LDI2LDI3LDI4KTsKCQlJTlNFUlQgZm9vIFZBTFVFUyAoMjksMzAsMzEsMzIpLCgzMywzNCwzNSwzNik7Cgk=","no_backslash":true,"block_size":65536,"rows":[{"id":1,"offset":30,"length":21,"columns":null,"values":[{"kind":2,"bytes":"MQ=="},{"kind":2,"bytes":"Mg=="},{"kind":2,"bytes":"Mw=="},{"kind":2,"bytes":"NA=="}]},{"id":2,"offset":40,"length":6,"columns":null,"values":[{"kind":2,"bytes":"NQ=="},{"kind":2,"bytes":"Ng=="},{"kind":2,"bytes":"Nw=="},{"kind":2,"bytes":"OA=="}]},{"id":3,"offset":53,"length":9,"columns":null,"values":[{"kind":2,"bytes":"OQ=="},{"kind":2,"bytes":"MTA="},{"kind":2,"bytes":"MTE="},{"kind":2,"bytes":"MTI="}]},{"id":4,"offset":88,"length":25,"columns":null,"values":[{"kind":2,"bytes":"MTM="},{"kind":2,"bytes":"MTQ="},{"kind":2,"bytes":"MTU="},{"kind":2,"bytes":"MTY="}]},{"id":5,"offset":102,"length":10,"columns":null,"values":[{"kind":2,"bytes":"MTc="},{"kind":2,"bytes":"MTg="},{"kind":2,"bytes":"MTk="},{"kind":2,"bytes":"MjA="}]},{"id":6,"offset":116,"length":10,"columns":null,"values":[{"kind":2,"bytes":"MjE="},{"kind":2,"bytes":"MjI="},{"kind":2,"bytes":"MjM="},{"kind":2,"bytes":"MjQ="}]},{"id":7,"offset":130,"length":10,"columns":null,"values":[{"kind":2,"bytes":"MjU="},{"kind":2,"bytes":"MjY="},{"kind":2,"bytes":"Mjc="},{"kind":2,"bytes":"Mjg="}]},{"id":8,"offset":165,"length":25,"columns":null,"values":[{"kind":2,"bytes":"Mjk="},{"kind":2,"bytes":"MzA="},{"kind":2,"bytes":"MzE="},{"kind":2,"bytes":"MzI="}]},{"id":9,"offset":179,"length":10,"columns":null,"values":[{"kind":2,"bytes":"MzM="},{"kind":2,"bytes":"MzQ="},{"kind":2,"bytes":"MzU="},{"kind":2,"bytes":"MzY="}]}],"error":"EOF"}
+{"test":"TestNestedRow","input":"CgkJSU5TRVJUIElOVE8gZXhhbV9kZXRhaWwgVkFMVUVTCgkJKCIxMjMiLENPTlZFUlQoInt9IiBVU0lORyBVVEY4TUI0KSksCgkJKCI0NTYiLENPTlZFUlQoIntcImFcIjo0fSIgVVNJTkcgVVRGOE1CNCkpLAoJCSgiNzg5IixDT05WRVJUKCJbXSIgVVNJTkcgVVRGOE1CNCkpOwoJ","no_backslash":false,"block_size":65536,"rows":[{"id":1,"offset":71,"length":38,"columns":null,"values":[{"kind":5,"bytes":"MTIz"},{"kind":5,"bytes":"e30="}]},{"id":2,"offset":117,"length":18,"columns":null,"values":[{"kind":5,"bytes":"NDU2"},{"kind":5,"bytes":"eyJhIjo0fQ=="}]},{"id":3,"offset":156,"length":11,"columns":null,"values":[{"kind":5,"bytes":"Nzg5"},{"kind":5,"bytes":"W10="}]}],"error":"EOF"}
+{"test":"TestNestedRow","input":"CgkJSU5TRVJUIElOVE8gZXhhbV9kZXRhaWwgVkFMVUVTCgkJKCIxMjMiLENPTlZFUlQoInt9IiBVU0lORyBVVEY4TUI0KSksCgkJKCI0NTYiLENPTlZFUlQoIntcImFcIjo0fSIgVVNJTkcgVVRGOE1CNCkpLAoJCSgiNzg5IixDT05WRVJUKCJbXSIgVVNJTkcgVVRGOE1CNCkpOwoJ","no_backslash":true,"block_size":65536,"rows":[{"id":1,"offset":71,"length":38,"columns":null,"values":[{"kind":5,"bytes":"MTIz"},{"kind":5,"bytes":"e30="}]},{"id":2,"offset":117,"length":18,"columns":null,"values":[{"kind":5,"bytes":"NDU2"},{"kind":5,"bytes":"e1w="},{"kind":5,"bytes":"YVw="},{"kind":5,"bytes":"OjR9"}]},{"id":3,"offset":156,"length":11,"columns":null,"values":[{"kind":5,"bytes":"Nzg5"},{"kind":5,"bytes":"W10="}]}],"error":"EOF"}
+{"test":"TestVariousSyntax","input":"SU5TRVJUIElOVE8gZm9vYmFyIFZBTFVFUyAoMSwgMik7","no_backslash":false,"block_size":65536,"rows":[{"id":1,"offset":32,"length":26,"columns":null,"values":[{"kind":2,"bytes":"MQ=="},{"kind":2,"bytes":"Mg=="}]}],"error":"EOF"}
+{"test":"TestVariousSyntax","input":"SU5TRVJUIElOVE8gZm9vYmFyIFZBTFVFUyAoMSwgMik7","no_backslash":true,"block_size":65536,"rows":[{"id":1,"offset":32,"length":26,"columns":null,"values":[{"kind":2,"bytes":"MQ=="},{"kind":2,"bytes":"Mg=="}]}],"error":"EOF"}
+{"test":"TestVariousSyntax","input":"SU5TRVJUIElOVE8gYGZvb2JhcmAgVkFMVUVTICgzLCA0KTs=","no_backslash":false,"block_size":65536,"rows":[{"id":1,"offset":34,"length":28,"columns":null,"values":[{"kind":2,"bytes":"Mw=="},{"kind":2,"bytes":"NA=="}]}],"error":"EOF"}
+{"test":"TestVariousSyntax","input":"SU5TRVJUIElOVE8gYGZvb2JhcmAgVkFMVUVTICgzLCA0KTs=","no_backslash":true,"block_size":65536,"rows":[{"id":1,"offset":34,"length":28,"columns":null,"values":[{"kind":2,"bytes":"Mw=="},{"kind":2,"bytes":"NA=="}]}],"error":"EOF"}
+{"test":"TestVariousSyntax","input":"SU5TRVJUIElOVE8gImZvb2JhciIgVkFMVUVTICg1LCA2KTs=","no_backslash":false,"block_size":65536,"rows":[{"id":1,"offset":34,"length":28,"columns":null,"values":[{"kind":2,"bytes":"NQ=="},{"kind":2,"bytes":"Ng=="}]}],"error":"EOF"}
+{"test":"TestVariousSyntax","input":"SU5TRVJUIElOVE8gImZvb2JhciIgVkFMVUVTICg1LCA2KTs=","no_backslash":true,"block_size":65536,"rows":[{"id":1,"offset":34,"length":28,"columns":null,"values":[{"kind":2,"bytes":"NQ=="},{"kind":2,"bytes":"Ng=="}]}],"error":"EOF"}
+{"test":"TestVariousSyntax","input":"KDcsIC04LCBOdWxsLCAnOScpLCAoYicxMCcsIDBiMTEsIDB4MTIsIHgnMTMnKSwgKCIxNCIsIFRydWUsIEZhbHNlLCAwKQ==","no_backslash":false,"block_size":65536,"rows":[{"id":1,"offset":18,"length":12,"columns":null,"values":[{"kind":2,"bytes":"Nw=="},{"kind":1,"bytes":"LTg="},{"kind":0,"bytes":""},{"kind":5,"bytes":"OQ=="}]},{"id":2,"offset":46,"length":20,"columns":null,"values":[{"kind":7,"bytes":"Ag=="},{"kind":7,"bytes":"Aw=="},{"kind":7,"bytes":"Eg=="},{"kind":7,"bytes":"Ew=="}]},{"id":3,"offset":70,"length":16,"columns":null,"values":[{"kind":5,"bytes":"MTQ="},{"kind":1,"bytes":"MQ=="},{"kind":1,"bytes":"MA=="},{"kind":2,"bytes":"MA=="}]}],"error":"EOF"}
+{"test":"TestVariousSyntax","input":"KDcsIC04LCBOdWxsLCAnOScpLCAoYicxMCcsIDBiMTEsIDB4MTIsIHgnMTMnKSwgKCIxNCIsIFRydWUsIEZhbHNlLCAwKQ==","no_backslash":true,"block_size":65536,"rows":[{"id":1,"offset":18,"length":12,"columns":null,"values":[{"kind":2,"bytes":"Nw=="},{"kind":1,"bytes":"LTg="},{"kind":0,"bytes":""},{"kind":5,"bytes":"OQ=="}]},{"id":2,"offset":46,"length":20,"columns":null,"values":[{"kind":7,"bytes":"Ag=="},{"kind":7,"bytes":"Aw=="},{"kind":7,"bytes":"Eg=="},{"kind":7,"bytes":"Ew=="}]},{"id":3,"offset":70,"length":16,"columns":null,"values":[{"kind":5,"bytes":"MTQ="},{"kind":1,"bytes":"MQ=="},{"kind":1,"bytes":"MA=="},{"kind":2,"bytes":"MA=="}]}],"error":"EOF"}
+{"test":"TestVariousSyntax","input":"CgkJCQkoLjE1LCAxLjYsIDE3LiksCgkJCQkoLjE4ZTEsIDEuOWUxLCAyMC5lMSksICguMjFlLTEsIDIuMmUtMSwgMjMuZS0xKSwgKC4yNGUrMSwgMi41ZSsxLCAyNi5lKzEpLAoJCQkJKC0uMjcsIC0yLjgsIC0yOS4pLAoJCQkJKC0uMzBlMSwgLTMuMWUxLCAtMzIuZTEpLCAoLS4zM2UtMSwgLTMuNGUtMSwgLTM1LmUtMSksICgtLjM2ZSsxLCAtMy43ZSsxLCAtMzguZSsxKSwKCQkJCSgxZTM5LCAxZS00MCwgMWUrNDEpLAoJCQkJKC40MkUxLCA0LjNFMSwgNDQuRTEpLCAoLjQ1RS0xLCA0LjZFLTEsIDQ3LkUtMSksICguNDhFKzEsIDQuOUUrMSwgNTAuRSsxKSwKCQkJCSgtLjUxRTEsIC01LjJFMSwgLTUzLkUxKSwgKC0uNTRFLTEsIC01LjVFLTEsIC01Ni5FLTEpLCAoLS41N0UrMSwgLTUuOEUrMSwgLTU5LkUrMSksCgkJCQkoMUU2MCwgMUUtNjEsIDFFKzYyKSwKCQkJCSg2LjMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzLCAtNi40NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NCwgLTAuMCksCgkJCQkoNjU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTUuNSwgLTY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2LjYsIDAuMCkKCQkJ","no_backslash":false,"block_size":65536,"rows":[{"id":1,"offset":20,"length":11,"columns":null,"values":[{"kind":5,"bytes":"LjE1"},{"kind":5,"bytes":"MS42"},{"kind":5,"bytes":"MTcu"}]},{"id":2,"offset":47,"length":17,"columns":null,"values":[{"kind":5,"bytes":"LjE4ZTE="},{"kind":5,"bytes":"MS45ZTE="},{"kind":5,"bytes":"MjAuZTE="}]},{"id":3,"offset":73,"length":20,"columns":null,"values":[{"kind":5,"bytes":"LjIxZS0x"},{"kind":5,"bytes":"Mi4yZS0x"},{"kind":5,"bytes":"MjMuZS0x"}]},{"id":4,"offset":99,"length":20,"columns":null,"values":[{"kind":5,"bytes":"LjI0ZSsx"},{"kind":5,"bytes":"Mi41ZSsx"},{"kind":5,"bytes":"MjYuZSsx"}]},{"id":5,"offset":123,"length":14,"columns":null,"values":[{"kind":5,"bytes":"LS4yNw=="},{"kind":5,"bytes":"LTIuOA=="},{"kind":5,"bytes":"LTI5Lg=="}]},{"id":6,"offset":153,"length":20,"columns":null,"values":[{"kind":5,"bytes":"LS4zMGUx"},{"kind":5,"bytes":"LTMuMWUx"},{"kind":5,"bytes":"LTMyLmUx"}]},{"id":7,"offset":182,"length":23,"columns":null,"values":[{"kind":5,"bytes":"LS4zM2UtMQ=="},{"kind":5,"bytes":"LTMuNGUtMQ=="},{"kind":5,"bytes":"LTM1LmUtMQ=="}]},{"id":8,"offset":211,"length":23,"columns":null,"values":[{"kind":5,"bytes":"LS4zNmUrMQ=="},{"kind":5,"bytes":"LTMuN2UrMQ=="},{"kind":5,"bytes":"LTM4LmUrMQ=="}]},{"id":9,"offset":237,"length":16,"columns":null,"values":[{"kind":5,"bytes":"MWUzOQ=="},{"kind":5,"bytes":"MWUtNDA="},{"kind":5,"bytes":"MWUrNDE="}]},{"id":10,"offset":264,"length":17,"columns":null,"values":[{"kind":5,"bytes":"LjQyRTE="},{"kind":5,"bytes":"NC4zRTE="},{"kind":5,"bytes":"NDQuRTE="}]},{"id":11,"offset":290,"length":20,"columns":null,"values":[{"kind":5,"bytes":"LjQ1RS0x"},{"kind":5,"bytes":"NC42RS0x"},{"kind":5,"bytes":"NDcuRS0x"}]},{"id":12,"offset":316,"length":20,"columns":null,"values":[{"kind":5,"bytes":"LjQ4RSsx"},{"kind":5,"bytes":"NC45RSsx"},{"kind":5,"bytes":"NTAuRSsx"}]},{"id":13,"offset":346,"length":20,"columns":null,"values":[{"kind":5,"bytes":"LS41MUUx"},{"kind":5,"bytes":"LTUuMkUx"},{"kind":5,"bytes":"LTUzLkUx"}]},{"id":14,"offset":375,"length":23,"columns":null,"values":[{"kind":5,"bytes":"LS41NEUtMQ=="},{"kind":5,"bytes":"LTUuNUUtMQ=="},{"kind":5,"bytes":"LTU2LkUtMQ=="}]},{"id":15,"offset":404,"length":23,"columns":null,"values":[{"kind":5,"bytes":"LS41N0UrMQ=="},{"kind":5,"bytes":"LTUuOEUrMQ=="},{"kind":5,"bytes":"LTU5LkUrMQ=="}]},{"id":16,"offset":430,"length":16,"columns":null,"values":[{"kind":5,"bytes":"MUU2MA=="},{"kind":5,"bytes":"MUUtNjE="},{"kind":5,"bytes":"MUUrNjI="}]},{"id":17,"offset":539,"length":99,"columns":null,"values":[{"kind":5,"bytes":"Ni4zMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMw=="},{"kind":5,"bytes":"LTYuNDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ="},{"kind":5,"bytes":"LTAuMA=="}]},{"id":18,"offset":647,"length":98,"columns":null,"values":[{"kind":5,"bytes":"NjU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTUuNQ=="},{"kind":5,"bytes":"LTY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2LjY="},{"kind":5,"bytes":"MC4w"}]}],"error":"EOF"}
+{"test":"TestVariousSyntax","input":"CgkJCQkoLjE1LCAxLjYsIDE3LiksCgkJCQkoLjE4ZTEsIDEuOWUxLCAyMC5lMSksICguMjFlLTEsIDIuMmUtMSwgMjMuZS0xKSwgKC4yNGUrMSwgMi41ZSsxLCAyNi5lKzEpLAoJCQkJKC0uMjcsIC0yLjgsIC0yOS4pLAoJCQkJKC0uMzBlMSwgLTMuMWUxLCAtMzIuZTEpLCAoLS4zM2UtMSwgLTMuNGUtMSwgLTM1LmUtMSksICgtLjM2ZSsxLCAtMy43ZSsxLCAtMzguZSsxKSwKCQkJCSgxZTM5LCAxZS00MCwgMWUrNDEpLAoJCQkJKC40MkUxLCA0LjNFMSwgNDQuRTEpLCAoLjQ1RS0xLCA0LjZFLTEsIDQ3LkUtMSksICguNDhFKzEsIDQuOUUrMSwgNTAuRSsxKSwKCQkJCSgtLjUxRTEsIC01LjJFMSwgLTUzLkUxKSwgKC0uNTRFLTEsIC01LjVFLTEsIC01Ni5FLTEpLCAoLS41N0UrMSwgLTUuOEUrMSwgLTU5LkUrMSksCgkJCQkoMUU2MCwgMUUtNjEsIDFFKzYyKSwKCQkJCSg2LjMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzLCAtNi40NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NCwgLTAuMCksCgkJCQkoNjU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTUuNSwgLTY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2LjYsIDAuMCkKCQkJ","no_backslash":true,"block_size":65536,"rows":[{"id":1,"offset":20,"length":11,"columns":null,"values":[{"kind":5,"bytes":"LjE1"},{"kind":5,"bytes":"MS42"},{"kind":5,"bytes":"MTcu"}]},{"id":2,"offset":47,"length":17,"columns":null,"values":[{"kind":5,"bytes":"LjE4ZTE="},{"kind":5,"bytes":"MS45ZTE="},{"kind":5,"bytes":"MjAuZTE="}]},{"id":3,"offset":73,"length":20,"columns":null,"values":[{"kind":5,"bytes":"LjIxZS0x"},{"kind":5,"bytes":"Mi4yZS0x"},{"kind":5,"bytes":"MjMuZS0x"}]},{"id":4,"offset":99,"length":20,"columns":null,"values":[{"kind":5,"bytes":"LjI0ZSsx"},{"kind":5,"bytes":"Mi41ZSsx"},{"kind":5,"bytes":"MjYuZSsx"}]},{"id":5,"offset":123,"length":14,"columns":null,"values":[{"kind":5,"bytes":"LS4yNw=="},{"kind":5,"bytes":"LTIuOA=="},{"kind":5,"bytes":"LTI5Lg=="}]},{"id":6,"offset":153,"length":20,"columns":null,"values":[{"kind":5,"bytes":"LS4zMGUx"},{"kind":5,"bytes":"LTMuMWUx"},{"kind":5,"bytes":"LTMyLmUx"}]},{"id":7,"offset":182,"length":23,"columns":null,"values":[{"kind":5,"bytes":"LS4zM2UtMQ=="},{"kind":5,"bytes":"LTMuNGUtMQ=="},{"kind":5,"bytes":"LTM1LmUtMQ=="}]},{"id":8,"offset":211,"length":23,"columns":null,"values":[{"kind":5,"bytes":"LS4zNmUrMQ=="},{"kind":5,"bytes":"LTMuN2UrMQ=="},{"kind":5,"bytes":"LTM4LmUrMQ=="}]},{"id":9,"offset":237,"length":16,"columns":null,"values":[{"kind":5,"bytes":"MWUzOQ=="},{"kind":5,"bytes":"MWUtNDA="},{"kind":5,"bytes":"MWUrNDE="}]},{"id":10,"offset":264,"length":17,"columns":null,"values":[{"kind":5,"bytes":"LjQyRTE="},{"kind":5,"bytes":"NC4zRTE="},{"kind":5,"bytes":"NDQuRTE="}]},{"id":11,"offset":290,"length":20,"columns":null,"values":[{"kind":5,"bytes":"LjQ1RS0x"},{"kind":5,"bytes":"NC42RS0x"},{"kind":5,"bytes":"NDcuRS0x"}]},{"id":12,"offset":316,"length":20,"columns":null,"values":[{"kind":5,"bytes":"LjQ4RSsx"},{"kind":5,"bytes":"NC45RSsx"},{"kind":5,"bytes":"NTAuRSsx"}]},{"id":13,"offset":346,"length":20,"columns":null,"values":[{"kind":5,"bytes":"LS41MUUx"},{"kind":5,"bytes":"LTUuMkUx"},{"kind":5,"bytes":"LTUzLkUx"}]},{"id":14,"offset":375,"length":23,"columns":null,"values":[{"kind":5,"bytes":"LS41NEUtMQ=="},{"kind":5,"bytes":"LTUuNUUtMQ=="},{"kind":5,"bytes":"LTU2LkUtMQ=="}]},{"id":15,"offset":404,"length":23,"columns":null,"values":[{"kind":5,"bytes":"LS41N0UrMQ=="},{"kind":5,"bytes":"LTUuOEUrMQ=="},{"kind":5,"bytes":"LTU5LkUrMQ=="}]},{"id":16,"offset":430,"length":16,"columns":null,"values":[{"kind":5,"bytes":"MUU2MA=="},{"kind":5,"bytes":"MUUtNjE="},{"kind":5,"bytes":"MUUrNjI="}]},{"id":17,"offset":539,"length":99,"columns":null,"values":[{"kind":5,"bytes":"Ni4zMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMw=="},{"kind":5,"bytes":"LTYuNDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ="},{"kind":5,"bytes":"LTAuMA=="}]},{"id":18,"offset":647,"length":98,"columns":null,"values":[{"kind":5,"bytes":"NjU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTUuNQ=="},{"kind":5,"bytes":"LTY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2LjY="},{"kind":5,"bytes":"MC4w"}]}],"error":"EOF"}
+{"test":"TestVariousSyntax","input":"CgkJCQkoMHgxMjM0NTZBQkNERUZhYmNkZWYsIDB4QUJDREVGMTIzNDU2LCAweGFiY2RlZjEyMzQ1NiwgMHgxMjMpLAoJCQkJKHgnMTIzNDU2QUJDREVGYWJjZGVmJywgeCdBQkNERUYxMjM0NTYnLCB4J2FiY2RlZjEyMzQ1NicsIHgnJyksCgkJCQkoWCcxMjM0NTZBQkNERUZhYmNkZWYnLCBYJ0FCQ0RFRjEyMzQ1NicsIFgnYWJjZGVmMTIzNDU2JywgWCcnKSwKCQkJCSgKCQkJCQkwYjEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMCwKCQkJCQliJzAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMScsCgkJCQkJQicxMTAwMTEwMDExMDAxMTAwMTEwMDExMDAxMTAwMTEwMDExMDAxMTAwMTEwMDExMDAxMTAwMTEwMDExMDAnLAoJCQkJCWInJywKCQkJCQlCJycKCQkJCSkKCQkJ","no_backslash":false,"block_size":65536,"rows":[{"id":1,"offset":66,"length":55,"columns":null,"values":[{"kind":7,"bytes":"EjRWq83vq83v"},{"kind":7,"bytes":"q83vEjRW"},{"kind":7,"bytes":"q83vEjRW"},{"kind":7,"bytes":"ASM="}]},{"id":2,"offset":134,"length":56,"columns":null,"values":[{"kind":7,"bytes":"EjRWq83vq83v"},{"kind":7,"bytes":"q83vEjRW"},{"kind":7,"bytes":"q83vEjRW"},{"kind":7,"bytes":""}]},{"id":3,"offset":202,"length":56,"columns":null,"values":[{"kind":7,"bytes":"EjRWq83vq83v"},{"kind":7,"bytes":"q83vEjRW"},{"kind":7,"bytes":"q83vEjRW"},{"kind":7,"bytes":""}]},{"id":4,"offset":455,"length":208,"columns":null,"values":[{"kind":7,"bytes":"Aqqqqqqqqqqq"},{"kind":7,"bytes":"AVVVVVVVVVVV"},{"kind":7,"bytes":"DMzMzMzMzMw="},{"kind":7,"bytes":""},{"kind":7,"bytes":""}]}],"error":"EOF"}
+{"test":"TestVariousSyntax","input":"CgkJCQkoMHgxMjM0NTZBQkNERUZhYmNkZWYsIDB4QUJDREVGMTIzNDU2LCAweGFiY2RlZjEyMzQ1NiwgMHgxMjMpLAoJCQkJKHgnMTIzNDU2QUJDREVGYWJjZGVmJywgeCdBQkNERUYxMjM0NTYnLCB4J2FiY2RlZjEyMzQ1NicsIHgnJyksCgkJCQkoWCcxMjM0NTZBQkNERUZhYmNkZWYnLCBYJ0FCQ0RFRjEyMzQ1NicsIFgnYWJjZGVmMTIzNDU2JywgWCcnKSwKCQkJCSgKCQkJCQkwYjEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMCwKCQkJCQliJzAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMScsCgkJCQkJQicxMTAwMTEwMDExMDAxMTAwMTEwMDExMDAxMTAwMTEwMDExMDAxMTAwMTEwMDExMDAxMTAwMTEwMDExMDAnLAoJCQkJCWInJywKCQkJCQlCJycKCQkJCSkKCQkJ","no_backslash":true,"block_size":65536,"rows":[{"id":1,"offset":66,"length":55,"columns":null,"values":[{"kind":7,"bytes":"EjRWq83vq83v"},{"kind":7,"bytes":"q83vEjRW"},{"kind":7,"bytes":"q83vEjRW"},{"kind":7,"bytes":"ASM="}]},{"id":2,"offset":134,"length":56,"columns":null,"values":[{"kind":7,"bytes":"EjRWq83vq83v"},{"kind":7,"bytes":"q83vEjRW"},{"kind":7,"bytes":"q83vEjRW"},{"kind":7,"bytes":""}]},{"id":3,"offset":202,"length":56,"columns":null,"values":[{"kind":7,"bytes":"EjRWq83vq83v"},{"kind":7,"bytes":"q83vEjRW"},{"kind":7,"bytes":"q83vEjRW"},{"kind":7,"bytes":""}]},{"id":4,"offset":455,"length":208,"columns":null,"values":[{"kind":7,"bytes":"Aqqqqqqqqqqq"},{"kind":7,"bytes":"AVVVVVVVVVVV"},{"kind":7,"bytes":"DMzMzMzMzMw="},{"kind":7,"bytes":""},{"kind":7,"bytes":""}]}],"error":"EOF"}
+{"test":"TestVariousSyntax","input":"LyogY29tbWVudCAqLzsgLS0gY29tbWVudA==","no_backslash":false,"block_size":65536,"rows":null,"error":"EOF"}
+{"test":"TestVariousSyntax","input":"LyogY29tbWVudCAqLzsgLS0gY29tbWVudA==","no_backslash":true,"block_size":65536,"rows":null,"error":"EOF"}
+{"test":"TestVariousSyntax","input":"CgkJCQktLSBjb21tZW50IC8qIC4uLgoJCQkJaW5zZXJ0IGludG8geHh4IC0tIGNvbW1lbnQKCQkJCXZhbHVlcyAtLSBjb21tZW50CgkJCQkodHJ1ZSwgZmFsc2UpLCAtLSBjb21tZW50CgkJCQkobnVsbCwgMDAwMDApOyAtLSBjb21tZW50IC4uLiAqLwoJCQk=","no_backslash":false,"block_size":65536,"rows":[{"id":1,"offset":93,"length":30,"columns":null,"values":[{"kind":1,"bytes":"MQ=="},{"kind":1,"bytes":"MA=="}]},{"id":2,"offset":123,"length":11,"columns":null,"values":[{"kind":0,"bytes":""},{"kind":2,"bytes":"MA=="}]}],"error":"EOF"}
+{"test":"TestVariousSyntax","input":"CgkJCQktLSBjb21tZW50IC8qIC4uLgoJCQkJaW5zZXJ0IGludG8geHh4IC0tIGNvbW1lbnQKCQkJCXZhbHVlcyAtLSBjb21tZW50CgkJCQkodHJ1ZSwgZmFsc2UpLCAtLSBjb21tZW50CgkJCQkobnVsbCwgMDAwMDApOyAtLSBjb21tZW50IC4uLiAqLwoJCQk=","no_backslash":true,"block_size":65536,"rows":[{"id":1,"offset":93,"length":30,"columns":null,"values":[{"kind":1,"bytes":"MQ=="},{"kind":1,"bytes":"MA=="}]},{"id":2,"offset":123,"length":11,"columns":null,"values":[{"kind":0,"bytes":""},{"kind":2,"bytes":"MA=="}]}],"error":"EOF"}
+{"test":"TestVariousSyntax","input":"KCdcMFxiXG5cclx0XFpcJ1xhJyk=","no_backslash":false,"block_size":65536,"rows":[{"id":1,"offset":20,"length":20,"columns":null,"values":[{"kind":5,"bytes":"AAgKDQkaJ2E="}]}],"error":"EOF"}
+{"test":"TestVariousSyntax","input":"KCdcMFxiXG5cclx0XFpcJ1xhJyk=","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error"}
+{"test":"TestVariousSyntax","input":"KENPTlZFUlQoIlsxLDIsM10iIFVTSU5HIFVURjhNQjQpKQ==","no_backslash":false,"block_size":65536,"rows":[{"id":1,"offset":34,"length":11,"columns":null,"values":[{"kind":5,"bytes":"WzEsMiwzXQ=="}]}],"error":"EOF"}
+{"test":"TestVariousSyntax","input":"KENPTlZFUlQoIlsxLDIsM10iIFVTSU5HIFVURjhNQjQpKQ==","no_backslash":true,"block_size":65536,"rows":[{"id":1,"offset":34,"length":11,"columns":null,"values":[{"kind":5,"bytes":"WzEsMiwzXQ=="}]}],"error":"EOF"}
+{"test":"TestContinuation","input":"CgkJCQkoJ0ZVWk50Y0dZZWdlWHduTVJLdFluWHRGaGduQU1UelFIRUJVVEJlaEFGQlFkUHNuakhoUndSWmhaTHRFQnNJRFVGZHV6ZnRza2d4a1lrUG1FZ3ZvaXJmSVpSc0FSWGpzZEt3T2MnKQoJCQk=","no_backslash":false,"block_size":1,"rows":[{"id":1,"offset":109,"length":104,"columns":null,"values":[{"kind":5,"bytes":"RlVaTnRjR1llZ2VYd25NUkt0WW5YdEZoZ25BTVR6UUhFQlVUQmVoQUZCUWRQc25qSGhSd1JaaFpMdEVCc0lEVUZkdXpmdHNrZ3hrWWtQbUVndm9pcmZJWlJzQVJYanNkS3dPYw=="}]}],"error":"EOF"}
+{"test":"TestContinuation","input":"CgkJCQkoJ0ZVWk50Y0dZZWdlWHduTVJLdFluWHRGaGduQU1UelFIRUJVVEJlaEFGQlFkUHNuakhoUndSWmhaTHRFQnNJRFVGZHV6ZnRza2d4a1lrUG1FZ3ZvaXJmSVpSc0FSWGpzZEt3T2MnKQoJCQk=","no_backslash":true,"block_size":1,"rows":[{"id":1,"offset":109,"length":104,"columns":null,"values":[{"kind":5,"bytes":"RlVaTnRjR1llZ2VYd25NUkt0WW5YdEZoZ25BTVR6UUhFQlVUQmVoQUZCUWRQc25qSGhSd1JaaFpMdEVCc0lEVUZkdXpmdHNrZ3hrWWtQbUVndm9pcmZJWlJzQVJYanNkS3dPYw=="}]}],"error":"EOF"}
+{"test":"TestContinuation","input":"SU5TRVJUIElOVE8gYHJlcG9ydF9jYXNlX2hpZ2hfcmlza2AgVkFMVUVTICgyLCc0JywnNicsOCwxMCk7","no_backslash":false,"block_size":1,"rows":[{"id":1,"offset":59,"length":51,"columns":null,"values":[{"kind":2,"bytes":"Mg=="},{"kind":5,"bytes":"NA=="},{"kind":5,"bytes":"Ng=="},{"kind":2,"bytes":"OA=="},{"kind":2,"bytes":"MTA="}]}],"error":"EOF"}
+{"test":"TestContinuation","input":"SU5TRVJUIElOVE8gYHJlcG9ydF9jYXNlX2hpZ2hfcmlza2AgVkFMVUVTICgyLCc0JywnNicsOCwxMCk7","no_backslash":true,"block_size":1,"rows":[{"id":1,"offset":59,"length":51,"columns":null,"values":[{"kind":2,"bytes":"Mg=="},{"kind":5,"bytes":"NA=="},{"kind":5,"bytes":"Ng=="},{"kind":2,"bytes":"OA=="},{"kind":2,"bytes":"MTA="}]}],"error":"EOF"}
+{"test":"TestPseudoKeywords","input":"CgkJSU5TRVJUIElOVE8gdCAoCgkJCWMsIEMsCgkJCWNvLCBDTywKCQkJY29uLCBDT04sCgkJCWNvbnYsIENPTlYsCgkJCWNvbnZlLCBDT05WRSwKCQkJY29udmVyLCBDT05WRVIsCgkJCWNvbnZlcnQsIENPTlZFUlQsCgkJCXUsIFUsCgkJCXVzLCBVUywKCQkJdXNpLCBVU0ksCgkJCXVzaW4sIFVTSU4sCgkJCXV0LCBVVCwKCQkJdXRmLCBVVEYsCgkJCXV0ZjgsIFVURjgsCgkJCXV0ZjhtLCBVVEY4TSwKCQkJdXRmOG1iLCBVVEY4TUIsCgkJCXV0ZjhtYjQsIFVURjhNQjQsCgkJCXQsIFQsCgkJCXRyLCBUUiwKCQkJdHJ1LCBUUlUsCgkJCWYsIEYsCgkJCWZhLCBGQSwKCQkJZmFsLCBGQUwsCgkJCWZhbHMsIEZBTFMsCgkJCW4sIE4sCgkJCW51LCBOVSwKCQkJbnVsLCBOVUwsCgkJCXYsIFYsCgkJCXZhLCBWQSwKCQkJdmFsLCBWQUwsCgkJCXZhbHUsIFZBTFUsCgkJCXZhbHVlLCBWQUxVRSwKCQkJaSwgSSwKCQkJaW5zLCBJTlMsCgkJCWluc2UsIElOU0UsCgkJCWluc2VyLCBJTlNFUiwKCQkpIFZBTFVFUyAoKTsKCQ==","no_backslash":false,"block_size":65536,"rows":[{"id":1,"offset":514,"length":251,"columns":["c","c","co","co","con","con","conv","conv","conve","conve","conver","conver","convert","convert","u","u","us","us","usi","usi","usin","usin","ut","ut","utf","utf","utf8","utf8","utf8m","utf8m","utf8mb","utf8mb","utf8mb4","utf8mb4","t","t","tr","tr","tru","tru","f","f","fa","fa","fal","fal","fals","fals","n","n","nu","nu","nul","nul","v","v","va","va","val","val","valu","valu","value","value","i","i","ins","ins","inse","inse","inser","inser"],"values":null}],"error":"EOF"}
+{"test":"TestPseudoKeywords","input":"CgkJSU5TRVJUIElOVE8gdCAoCgkJCWMsIEMsCgkJCWNvLCBDTywKCQkJY29uLCBDT04sCgkJCWNvbnYsIENPTlYsCgkJCWNvbnZlLCBDT05WRSwKCQkJY29udmVyLCBDT05WRVIsCgkJCWNvbnZlcnQsIENPTlZFUlQsCgkJCXUsIFUsCgkJCXVzLCBVUywKCQkJdXNpLCBVU0ksCgkJCXVzaW4sIFVTSU4sCgkJCXV0LCBVVCwKCQkJdXRmLCBVVEYsCgkJCXV0ZjgsIFVURjgsCgkJCXV0ZjhtLCBVVEY4TSwKCQkJdXRmOG1iLCBVVEY4TUIsCgkJCXV0ZjhtYjQsIFVURjhNQjQsCgkJCXQsIFQsCgkJCXRyLCBUUiwKCQkJdHJ1LCBUUlUsCgkJCWYsIEYsCgkJCWZhLCBGQSwKCQkJZmFsLCBGQUwsCgkJCWZhbHMsIEZBTFMsCgkJCW4sIE4sCgkJCW51LCBOVSwKCQkJbnVsLCBOVUwsCgkJCXYsIFYsCgkJCXZhLCBWQSwKCQkJdmFsLCBWQUwsCgkJCXZhbHUsIFZBTFUsCgkJCXZhbHVlLCBWQUxVRSwKCQkJaSwgSSwKCQkJaW5zLCBJTlMsCgkJCWluc2UsIElOU0UsCgkJCWluc2VyLCBJTlNFUiwKCQkpIFZBTFVFUyAoKTsKCQ==","no_backslash":true,"block_size":65536,"rows":[{"id":1,"offset":514,"length":251,"columns":["c","c","co","co","con","con","conv","conv","conve","conve","conver","conver","convert","convert","u","u","us","us","usi","usi","usin","usin","ut","ut","utf","utf","utf8","utf8","utf8m","utf8m","utf8mb","utf8mb","utf8mb4","utf8mb4","t","t","tr","tr","tru","tru","f","f","fa","fa","fal","fal","fals","fals","n","n","nu","nu","nul","nul","v","v","va","va","val","val","valu","valu","value","value","i","i","ins","ins","inse","inse","inser","inser"],"values":null}],"error":"EOF"}
+{"test":"TestSyntaxError","input":"KCd4eHgp","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error"}
+{"test":"TestSyntaxError","input":"KCd4eHgp","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error"}
+{"test":"TestSyntaxError","input":"KCJ4eHgp","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error"}
+{"test":"TestSyntaxError","input":"KCJ4eHgp","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error"}
+{"test":"TestSyntaxError","input":"KGB4eHgp","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error"}
+{"test":"TestSyntaxError","input":"KGB4eHgp","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error"}
+{"test":"TestSyntaxError","input":"KC8qIHh4eCk=","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestSyntaxError","input":"KC8qIHh4eCk=","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestSyntaxError","input":"KCdcJyk=","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error"}
+{"test":"TestSyntaxError","input":"KCdcJyk=","no_backslash":true,"block_size":65536,"rows":[{"id":1,"offset":5,"length":5,"columns":null,"values":[{"kind":5,"bytes":"XA=="}]}],"error":"EOF"}
+{"test":"TestSyntaxError","input":"KCJcIik=","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error"}
+{"test":"TestSyntaxError","input":"KCJcIik=","no_backslash":true,"block_size":65536,"rows":[{"id":1,"offset":5,"length":5,"columns":null,"values":[{"kind":5,"bytes":"XA=="}]}],"error":"EOF"}
+{"test":"TestSyntaxError","input":"KCdcKQ==","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error"}
+{"test":"TestSyntaxError","input":"KCdcKQ==","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error"}
+{"test":"TestSyntaxError","input":"KCJcKQ==","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error"}
+{"test":"TestSyntaxError","input":"KCJcKQ==","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error"}
+{"test":"TestSyntaxError","input":"KA==","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestSyntaxError","input":"KA==","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestSyntaxError","input":"KDE=","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestSyntaxError","input":"KDE=","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestSyntaxError","input":"KDEs","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestSyntaxError","input":"KDEs","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestSyntaxError","input":"KHZhbHVlcyk=","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error: unexpected Values (values) at offset 7, expecting data literal"}
+{"test":"TestSyntaxError","input":"KHZhbHVlcyk=","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error: unexpected Values (values) at offset 7, expecting data literal"}
+{"test":"TestSyntaxError","input":"aW5zZXJ0IGludG8gZSAoZg==","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error: premature EOF at offset 16"}
+{"test":"TestSyntaxError","input":"aW5zZXJ0IGludG8gZSAoZg==","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error: premature EOF at offset 16"}
+{"test":"TestSyntaxError","input":"aW5zZXJ0IGludG8gZSAoMykgdmFsdWVzICg0KQ==","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error: unexpected Integer (3) at offset 16, expecting column list"}
+{"test":"TestSyntaxError","input":"aW5zZXJ0IGludG8gZSAoMykgdmFsdWVzICg0KQ==","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error: unexpected Integer (3) at offset 16, expecting column list"}
+{"test":"TestSyntaxError","input":"aW5zZXJ0IGludG8gZSAoJzMnKSB2YWx1ZXMgKDQp","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error: unexpected SingleQuoted ('3') at offset 18, expecting column list"}
+{"test":"TestSyntaxError","input":"aW5zZXJ0IGludG8gZSAoJzMnKSB2YWx1ZXMgKDQp","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error: unexpected SingleQuoted ('3') at offset 18, expecting column list"}
+{"test":"TestSyntaxError","input":"aW5zZXJ0IGludG8gZSAoMHgzKSB2YWx1ZXMgKDQp","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error: unexpected HexString (0x3) at offset 18, expecting column list"}
+{"test":"TestSyntaxError","input":"aW5zZXJ0IGludG8gZSAoMHgzKSB2YWx1ZXMgKDQp","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error: unexpected HexString (0x3) at offset 18, expecting column list"}
+{"test":"TestSyntaxError","input":"aW5zZXJ0IGludG8gZSAoeCczJykgdmFsdWVzICg0KQ==","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error: unexpected HexString (x'3') at offset 19, expecting column list"}
+{"test":"TestSyntaxError","input":"aW5zZXJ0IGludG8gZSAoeCczJykgdmFsdWVzICg0KQ==","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error: unexpected HexString (x'3') at offset 19, expecting column list"}
+{"test":"TestSyntaxError","input":"aW5zZXJ0IGludG8gZSAoYiczJykgdmFsdWVzICg0KQ==","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error: unexpected SingleQuoted ('3') at offset 19, expecting column list"}
+{"test":"TestSyntaxError","input":"aW5zZXJ0IGludG8gZSAoYiczJykgdmFsdWVzICg0KQ==","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error: unexpected SingleQuoted ('3') at offset 19, expecting column list"}
+{"test":"TestSyntaxError","input":"Mw==","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error: unexpected Integer (3) at offset 1, expecting start of row"}
+{"test":"TestSyntaxError","input":"Mw==","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error: unexpected Integer (3) at offset 1, expecting start of row"}
+{"test":"TestSyntaxError","input":"KGB2YWx1ZXNgKQ==","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error: unexpected BackQuoted (`values`) at offset 9, expecting data literal"}
+{"test":"TestSyntaxError","input":"KGB2YWx1ZXNgKQ==","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error: unexpected BackQuoted (`values`) at offset 9, expecting data literal"}
+{"test":"TestSyntaxError","input":"LyogLi4u","no_backslash":false,"block_size":65536,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestSyntaxError","input":"LyogLi4u","no_backslash":true,"block_size":65536,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"IHVzaW4w","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"IHVzaW4w","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"LSA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"LSA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"LSw=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"LSw=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"LTs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"LTs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"LQ==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"LQ==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"LSg=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"LSg=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"LS8=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"LS8=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"LSI=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"LSI=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"LWA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"LWA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"LCAnMFww","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"LCAnMFww","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"LC8qMDAw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"LC8qMDAw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"OyBjb24w","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"OyBjb24w","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"O0NPTlYw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"O0NPTlYw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"O3VzaW5nIFVURjA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 11"}
+{"test":"TestMoreSyntaxError","input":"O3VzaW5nIFVURjA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 11"}
+{"test":"TestMoreSyntaxError","input":"Jyc=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected SingleQuoted ('') at offset 2, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"Jyc=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected SingleQuoted ('') at offset 2, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"Jw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Jw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"J1w=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"J1w=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"J1xc","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"J1xc","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"JzAnJzAw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected SingleQuoted ('0') at offset 3, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"JzAnJzAw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected SingleQuoted ('0') at offset 3, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"JzAn","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected SingleQuoted ('0') at offset 3, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"JzAn","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected SingleQuoted ('0') at offset 3, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"JzBc","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"JzBc","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"KCcnJycw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"KCcnJycw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"KCcnMCcw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"KCcnMCcw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"KGZhbHMw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"KGZhbHMw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"KHgnMDAw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"KHgnMDAw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Kg==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Kg==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Lw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Lw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Lyoq","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Lyoq","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"LyoqKg==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"LyoqKg==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"LyoqMA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"LyoqMA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"LyowMCow","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"LyowMCow","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"LzA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"LzA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Ig==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Ig==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"IiI=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"IiI=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"IiIiMFww","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"IiIiMFww","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Ilw=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Ilw=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Ilxc","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Ilxc","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"IjAi","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"IjAi","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"IjAiACIw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"IjAiACIw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"IjBc","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"IjBc","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"IjAwMDAiIiIiIjA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 11, expecting table name"}
+{"test":"TestMoreSyntaxError","input":"IjAwMDAiIiIiIjA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 11, expecting table name"}
+{"test":"TestMoreSyntaxError","input":"IjAwMDAw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"IjAwMDAw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"ADs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"ADs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"2S8=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"2S8=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"3jAgYicw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"3jAgYicw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"7TAwMDAw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"7TAwMDAw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"YGA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"YGA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"YGBgYGAw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"YGBgYGAw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"MCA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 1, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MCA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 1, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MC0i","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"MC0i","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"MCw=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 1, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MCw=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 1, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MDs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 1, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MDs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 1, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 1, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 1, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MC8=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 1, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MC8=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 1, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MCI=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 1, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MCI=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 1, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MAAgQ09OVkVSVDA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 11"}
+{"test":"TestMoreSyntaxError","input":"MAAgQ09OVkVSVDA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 11"}
+{"test":"TestMoreSyntaxError","input":"MAAiIkMw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MAAiIkMw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MAMMRmEw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MAMMRmEw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MGA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 1, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MGA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 1, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MDAg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (00) at offset 2, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MDAg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (00) at offset 2, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MDAv","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (00) at offset 2, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MDAv","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (00) at offset 2, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MDAi","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (00) at offset 2, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MDAi","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (00) at offset 2, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MDBg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (00) at offset 2, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MDBg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (00) at offset 2, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MDAw8S8w","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"MDAw8S8w","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"MDBhIHQw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MDBhIHQw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MDBiIGIw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MDBiIGIw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MDBkIGYw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MDBkIGYw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MDBlIHUw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MDBlIHUw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MDBsIDAw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (00) at offset 6, expecting table name"}
+{"test":"TestMoreSyntaxError","input":"MDBsIDAw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (00) at offset 6, expecting table name"}
+{"test":"TestMoreSyntaxError","input":"MDBsIHYw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MDBsIHYw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MDBuIC0w","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (-0) at offset 6, expecting table name"}
+{"test":"TestMoreSyntaxError","input":"MDBuIC0w","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (-0) at offset 6, expecting table name"}
+{"test":"TestMoreSyntaxError","input":"MDBuIFVzaW5nIFVURjhNMA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 16"}
+{"test":"TestMoreSyntaxError","input":"MDBuIFVzaW5nIFVURjhNMA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 16"}
+{"test":"TestMoreSyntaxError","input":"MDB0IHVzaW5nIDA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 11, expecting table name"}
+{"test":"TestMoreSyntaxError","input":"MDB0IHVzaW5nIDA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 11, expecting table name"}
+{"test":"TestMoreSyntaxError","input":"MDB0IHgw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MDB0IHgw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MGEgVkEw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MGEgVkEw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MGIg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"MGIg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"MGI7","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"MGI7","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"MGIn","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"MGIn","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"MGI=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"MGI=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"MGIv","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"MGIv","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"MGIi","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"MGIi","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"MGJg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"MGJg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"MGIwMDAw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected BinString (0b0000) at offset 6, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MGIwMDAw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected BinString (0b0000) at offset 6, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MGJ5","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"MGJ5","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"ME8sQ08w","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"ME8sQ08w","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MHIgdHIw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MHIgdHIw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MHMgdXMw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MHMgdXMw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MFRgYENPTlZFUjA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 11"}
+{"test":"TestMoreSyntaxError","input":"MFRgYENPTlZFUjA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 11"}
+{"test":"TestMoreSyntaxError","input":"MHULbnUw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MHULbnUw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"MHgg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"MHgg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"MHg7","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"MHg7","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"MHg=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"MHg=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"MHgv","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"MHgv","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"MHgi","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"MHgi","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"MHgK","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"MHgK","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"MHgA","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"MHgA","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"MHhg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"MHhg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"MHgwMDAw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected HexString (0x0000) at offset 6, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"MHgwMDAw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected HexString (0x0000) at offset 6, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"Njs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (6) at offset 1, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"Njs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (6) at offset 1, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"YWAwMGAw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 6, expecting table name"}
+{"test":"TestMoreSyntaxError","input":"YWAwMGAw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 6, expecting table name"}
+{"test":"TestMoreSyntaxError","input":"YiA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"YiA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Yiw=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Yiw=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Qjs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Qjs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Yic=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Yic=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Yg==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Yg==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Yi8=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Yi8=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"YiI=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"YiI=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Qgw=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Qgw=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"YmA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"YmA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"YjA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"YjA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"QyA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"QyA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Qzs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Qzs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Qw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Qw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Qy8=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Qy8=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"QyI=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"QyI=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Qwo=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Qwo=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Q2A=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Q2A=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"QzA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"QzA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"Q08g","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"Q08g","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"Q087","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"Q087","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"Q08=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"Q08=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"Q08v","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q08v","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q08i","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q08i","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q08L","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"Q08L","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"Q09g","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Q09g","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Q09OIA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"Q09OIA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"Q09OOw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"Q09OOw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"Q09O","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"Q09O","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"Q09OLw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OLw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OIg==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OIg==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OCw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"Q09OCw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"Q09OYA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Q09OYA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Q09OMA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"Q09OMA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"Q09OViA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"Q09OViA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"Q09OVjs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"Q09OVjs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"Q09Odg==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"Q09Odg==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"Q09OVi8=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OVi8=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OViI=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OViI=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OVgs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"Q09OVgs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"Q09OVmA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Q09OVmA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Q09OVjA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"Q09OVjA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkUg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkUg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkU7","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkU7","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkU=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkU=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkUv","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkUv","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkUi","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkUi","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkUL","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkUL","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkUw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkUw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSIA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSIA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSOw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSOw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVS","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVS","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSLw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSLw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSIg==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSIg==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSCg==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSCg==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSYA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSYA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSMA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 7"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSMA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 7"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSVCA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 7"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSVCA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 7"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSVDs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 7"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSVDs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 7"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSVA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 7"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSVA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 7"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSVC8=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSVC8=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSVCI=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSVCI=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSVAo=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 7"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSVAo=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 7"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSVGA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSVGA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSVDA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 8"}
+{"test":"TestMoreSyntaxError","input":"Q09OVkVSVDA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 8"}
+{"test":"TestMoreSyntaxError","input":"ZSB0cnUw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"ZSB0cnUw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"ZiA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"ZiA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Zjs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Zjs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Ri8=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Ri8=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"ZiI=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"ZiI=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Rgw=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Rgw=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"ZmA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"ZmA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"ZmEg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"ZmEg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"RmE7","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"RmE7","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"ZmE=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"ZmE=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"RkEv","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"RkEv","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"RkEi","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"RkEi","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"RmEM","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"RmEM","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"RkFg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"RkFg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"ZmEw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"ZmEw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"ZmFsIA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"ZmFsIA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"ZmFsOw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"ZmFsOw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"RmFs","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"RmFs","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"ZmFsLw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"ZmFsLw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"RkFMIg==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"RkFMIg==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"RkFMCg==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"RkFMCg==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"RkFsYA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"RkFsYA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"ZmFsMA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"ZmFsMA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"ZmFscyA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"ZmFscyA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"ZmFsczs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"ZmFsczs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"ZmFscw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"ZmFscw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"ZmFscy8=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"ZmFscy8=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"ZmFscyI=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"ZmFscyI=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"ZmFscwo=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"ZmFscwo=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"ZmFsc2A=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"ZmFsc2A=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"RkFMUzA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"RkFMUzA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"RkFMU0U=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected False (FALSE) at offset 5, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"RkFMU0U=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected False (FALSE) at offset 5, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"ZyBVc2luZyBVVDA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 11"}
+{"test":"TestMoreSyntaxError","input":"ZyBVc2luZyBVVDA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 11"}
+{"test":"TestMoreSyntaxError","input":"TiA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"TiA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"TiBOVUww","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"TiBOVUww","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"bjs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"bjs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Tg==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Tg==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Ti8=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Ti8=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"biI=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"biI=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"bgs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"bgs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"bmA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"bmA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"TjA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"TjA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"bjAwC24w","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"bjAwC24w","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"bnUg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"bnUg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"bnU7","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"bnU7","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"bnU=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"bnU=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"bnUv","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"bnUv","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"blUi","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"blUi","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"bnUL","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"bnUL","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"bnVg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"bnVg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"bnUw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"bnUw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"TlVMIA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"TlVMIA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"bnVMOw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"bnVMOw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"bnVs","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"bnVs","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"TnVMLw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"TnVMLw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"TlVMIg==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"TlVMIg==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"TlVMDA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"TlVMDA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"bnVsYA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"bnVsYA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"bnVsMA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"bnVsMA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"TlVMTA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Null (NULL) at offset 4, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"TlVMTA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Null (NULL) at offset 4, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"Tw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Tw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"UiBGQUww","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"UiBGQUww","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"dCBuKDUw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (50) at offset 6, expecting column list"}
+{"test":"TestMoreSyntaxError","input":"dCBuKDUw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (50) at offset 6, expecting column list"}
+{"test":"TestMoreSyntaxError","input":"dCB1c2kw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"dCB1c2kw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"dCB1c2luZyBVVEY4MA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 13"}
+{"test":"TestMoreSyntaxError","input":"dCB1c2luZyBVVEY4MA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 13"}
+{"test":"TestMoreSyntaxError","input":"dCB1c2luZyBVVEY4TQ==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 13"}
+{"test":"TestMoreSyntaxError","input":"dCB1c2luZyBVVEY4TQ==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 13"}
+{"test":"TestMoreSyntaxError","input":"dDs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"dDs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"dA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"dA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"dC8=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dC8=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dCI=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dCI=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dAw=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"dAw=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"dGA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dGA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dDAgVVNJTkcgVTA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 11"}
+{"test":"TestMoreSyntaxError","input":"dDAgVVNJTkcgVTA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 11"}
+{"test":"TestMoreSyntaxError","input":"dDA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dDA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dHIg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dHIg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"VHI7","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"VHI7","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dHI=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dHI=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dHIv","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dHIv","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dHIi","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dHIi","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dHIM","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dHIM","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dHJg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dHJg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dHIw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dHIw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dHJ1IA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dHJ1IA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dHJVOw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dHJVOw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"VFJV","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"VFJV","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"VHJVLw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"VHJVLw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dHJ1Ig==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dHJ1Ig==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dHJ1DA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dHJ1DA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dHJ1YA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dHJ1YA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"VFJVMA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"VFJVMA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"VFJVRQ==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected True (TRUE) at offset 4, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"VFJVRQ==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected True (TRUE) at offset 4, expecting start of row"}
+{"test":"TestMoreSyntaxError","input":"dSA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"dSA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"dTs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"dTs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"dQ==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"dQ==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"dS8=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dS8=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"VSI=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"VSI=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dQk=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"dQk=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"dWA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dWA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dXMg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dXMg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dXM7","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dXM7","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dXM=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dXM=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dXMv","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dXMv","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"VVMi","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"VVMi","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dXMJ","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dXMJ","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dXNg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dXNg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dXMw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dXMw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dXNpIA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dXNpIA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dXNpOw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dXNpOw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dXNp","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dXNp","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dXNpLw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dXNpLw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dXNpIg==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dXNpIg==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dXNpCQ==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dXNpCQ==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dXNpYA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dXNpYA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dXNpMA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"dXNpMA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"dXNpbiA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"dXNpbiA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"dXNpTjs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"dXNpTjs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"VVNJTg==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"VVNJTg==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"dXNpbi8=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dXNpbi8=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dXNpbiI=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dXNpbiI=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dXNpbgk=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"dXNpbgk=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"VVNJTjA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"VVNJTjA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcgMA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 7, expecting table name"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcgMA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected Integer (0) at offset 7, expecting table name"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcgdQ==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 7"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcgdQ==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 7"}
+{"test":"TestMoreSyntaxError","input":"VVNJTkcgVQ==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 7"}
+{"test":"TestMoreSyntaxError","input":"VVNJTkcgVQ==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 7"}
+{"test":"TestMoreSyntaxError","input":"VVNJTkcgVTA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 8"}
+{"test":"TestMoreSyntaxError","input":"VVNJTkcgVTA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 8"}
+{"test":"TestMoreSyntaxError","input":"VVNJTkcgVXQ=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 8"}
+{"test":"TestMoreSyntaxError","input":"VVNJTkcgVXQ=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 8"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcgVVQw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 9"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcgVVQw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 9"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcgdXRG","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 9"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcgdXRG","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 9"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcgVVRm","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 9"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcgVVRm","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 9"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcgdXRGMA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 10"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcgdXRGMA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 10"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcgdXRmOA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 10"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcgdXRmOA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 10"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcgVVRGODA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 11"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcgVVRGODA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 11"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcgVVRGOG0=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 11"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcgVVRGOG0=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 11"}
+{"test":"TestMoreSyntaxError","input":"VXNpbmcgVVRGOE0w","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 12"}
+{"test":"TestMoreSyntaxError","input":"VXNpbmcgVVRGOE0w","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 12"}
+{"test":"TestMoreSyntaxError","input":"VXNpbmcgVVRGOE1C","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 12"}
+{"test":"TestMoreSyntaxError","input":"VXNpbmcgVVRGOE1C","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 12"}
+{"test":"TestMoreSyntaxError","input":"VXNpbmcgdXRmOG1i","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 12"}
+{"test":"TestMoreSyntaxError","input":"VXNpbmcgdXRmOG1i","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 12"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcs","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcs","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmc7","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmc7","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmc=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmc=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"VVNJTkc=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"VVNJTkc=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcv","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcv","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmci","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmci","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcL","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcL","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmdg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmdg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"dXNpbmcw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"diA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"diA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"djs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"djs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"dg==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"dg==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"Vi8=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"Vi8=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"ViI=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"ViI=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dgs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"dgs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"dmA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dmA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"djA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"djA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dmEg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dmEg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dmE7","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dmE7","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dmE=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dmE=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dmEv","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dmEv","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"VmEi","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"VmEi","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dmEL","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dmEL","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 2"}
+{"test":"TestMoreSyntaxError","input":"dmFg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dmFg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dmEw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dmEw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dmFsIA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dmFsIA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dmFsOw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dmFsOw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dmFs","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dmFs","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dmFsLw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dmFsLw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"VmFsIg==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"VmFsIg==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"VkFMCw==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"VkFMCw==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 3"}
+{"test":"TestMoreSyntaxError","input":"dmFsYA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dmFsYA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dmFsMA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"dmFsMA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"dmFsdSA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"dmFsdSA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"dmFsdTs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"dmFsdTs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"dmFsdQ==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"dmFsdQ==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"dmFsdS8=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dmFsdS8=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dmFsdSI=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"dmFsdSI=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"VkFMVQk=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"VkFMVQk=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 4"}
+{"test":"TestMoreSyntaxError","input":"VkFMVWA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"VkFMVWA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dmFsdTA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dmFsdTA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dmFsdWUg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dmFsdWUg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dmFsdWU7","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dmFsdWU7","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dmFsdWU=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dmFsdWU=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"VmFsdWUv","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"VmFsdWUv","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"VmFsdWUi","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"VmFsdWUi","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"VkFMVUUL","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"VkFMVUUL","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 5"}
+{"test":"TestMoreSyntaxError","input":"dmFsdWVg","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dmFsdWVg","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"dmFsdWUw","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"dmFsdWUw","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"eCA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"eCA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"eCB2YWww","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"eCB2YWww","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 6"}
+{"test":"TestMoreSyntaxError","input":"eDs=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"eDs=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"eCc=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"eCc=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"eCd4","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"eCd4","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"eA==","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"eA==","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"eC8=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"eC8=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"eCI=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"eCI=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: unexpected EOF"}
+{"test":"TestMoreSyntaxError","input":"WA0=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"WA0=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 1"}
+{"test":"TestMoreSyntaxError","input":"eGA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"eGA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error"}
+{"test":"TestMoreSyntaxError","input":"eDAwYDBgVmFsdTA=","no_backslash":false,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 11"}
+{"test":"TestMoreSyntaxError","input":"eDAwYDBgVmFsdTA=","no_backslash":true,"block_size":1,"rows":null,"error":"syntax error: premature EOF at offset 11"}
+{"test":"TestMoreEmptyFiles","input":"","no_backslash":false,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"","no_backslash":true,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0J","no_backslash":false,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0J","no_backslash":true,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0i","no_backslash":false,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0i","no_backslash":true,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0gMDAw","no_backslash":false,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0gMDAw","no_backslash":true,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS07","no_backslash":false,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS07","no_backslash":true,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0s","no_backslash":false,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0s","no_backslash":true,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0w","no_backslash":false,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0w","no_backslash":true,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS1g","no_backslash":false,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS1g","no_backslash":true,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0=","no_backslash":false,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0=","no_backslash":true,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0wMDAw","no_backslash":false,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0wMDAw","no_backslash":true,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0K","no_backslash":false,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0K","no_backslash":true,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0v","no_backslash":false,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0v","no_backslash":true,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0iDQ==","no_backslash":false,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0iDQ==","no_backslash":true,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0N","no_backslash":false,"block_size":1,"rows":null,"error":"EOF"}
+{"test":"TestMoreEmptyFiles","input":"LS0N","no_backslash":true,"block_size":1,"rows":null,"error":"EOF"}

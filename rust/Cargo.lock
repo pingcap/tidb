@@ -5992,7 +5992,9 @@ dependencies = [
 name = "tidb-lightning-mydump"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "encoding_rs",
+ "serde_json",
  "tidb-charset",
  "tidb-datatype",
 ]
