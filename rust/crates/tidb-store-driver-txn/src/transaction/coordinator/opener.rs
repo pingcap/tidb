@@ -348,6 +348,21 @@ impl<S> tidb_txnkv::kv_storage::Storage for RealOptimisticTransactionOpener<S>
 where
     S: StoreClient + 'static,
 {
+    fn oldest_schema_version(&self) -> Result<Option<i64>, String> {
+        let response = tidb_kv::tikv_region_store::TikvRegionStore::new(self.store.clone(), Vec::new())
+            .mvcc_get_by_key_with_ts(&tidb_meta::key::schema_version_kv_key(), u64::MAX)?;
+        let info = response.info.ok_or_else(|| tidb_meta::MetaError::NoSchemaVersionWrite.to_string())?;
+        let write = info.writes.last().ok_or_else(|| tidb_meta::MetaError::NoSchemaVersionWrite.to_string())?;
+        tidb_meta::value::parse_int_value(&write.short_value).map(Some).map_err(|e| e.to_string())
+    }
+
+    fn mvcc_commit_ts(&self, key: &[u8], start_ts: u64) -> Result<u64, String> {
+        let response = tidb_kv::tikv_region_store::TikvRegionStore::new(self.store.clone(), Vec::new())
+            .mvcc_get_by_key_with_ts(key, start_ts)?;
+        response.info.and_then(|info| info.writes.first().map(|write| write.commit_ts))
+            .ok_or_else(|| "There is no Write MVCC info for the schema version".to_owned())
+    }
+
     fn begin(
         &self,
     ) -> Result<Box<dyn tidb_txnkv::kv_storage::Transaction>, OptimisticCoordinatorError> {

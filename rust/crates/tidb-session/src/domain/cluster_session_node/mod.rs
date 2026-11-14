@@ -1468,11 +1468,7 @@ impl<'s> ClusterServerSession<'s> {
             .unwrap_or_default();
         let loaded = self.node.catalog.get_latest();
         for id in created {
-            let found = loaded
-                .stored_schemas()
-                .iter()
-                .flat_map(|database| database.read().deprecated_tables.iter_deref())
-                .find(|table| table.read().id == *id);
+            let found = loaded.table_info_by_id(*id);
             if let Some(table) = found {
                 tidb_ddl::pre_split::pre_split_and_scatter(
                     regions.as_ref(),

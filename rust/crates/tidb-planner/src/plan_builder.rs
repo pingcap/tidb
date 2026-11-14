@@ -3292,9 +3292,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let in_view = !self.building_view_stack.is_empty();
         let found_view = if in_view {
             self.source
-                .find_view_ignoring_local_temporary(&db_name, &table_name)
+                .try_find_view_ignoring_local_temporary(&db_name, &table_name)?
         } else {
-            self.source.find_view(&db_name, &table_name)
+            self.source.try_find_view(&db_name, &table_name)?
         };
         if let Some(view) = found_view.cloned() {
             // Go `tryLockMDLAndUpdateSchemaIfNecessary` locks the view's own
@@ -3336,9 +3336,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         let found = if in_view {
             self.source
-                .find_table_ignoring_local_temporary(&db_name, &table_name)
+                .try_find_table_ignoring_local_temporary(&db_name, &table_name)?
         } else {
-            self.source.find_table(&db_name, &table_name)
+            self.source.try_find_table(&db_name, &table_name)?
         };
         let Some(table) = found else {
             if let Some(sequence_name) = self.source.find_sequence(&db_name, &table_name) {

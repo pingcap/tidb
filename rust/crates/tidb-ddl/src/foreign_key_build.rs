@@ -110,20 +110,31 @@ fn check_valid(
         check_table_foreign_key_valid(catalog, schema, table, &fk, fk_check, in_owner)?;
     }
     // Go `is.GetTableReferredForeignKeys`: children created earlier with
-    // `foreign_key_checks=0` that reference this (new) table.
-    for database in &catalog.stored_schemas() {
-        for child in database.read().deprecated_tables.iter_deref() {
-            let child = child.read();
-            for fk in child.foreign_keys.iter_deref() {
-                let fk = fk.read();
-                if fk.version >= FK_VERSION1
-                    && fk.ref_schema.lowercase() == schema_l
-                    && fk.ref_table.lowercase() == table.name.lowercase()
-                {
-                    check_table_foreign_key(table, &child, &fk)?;
-                }
-            }
-        }
+    // `foreign_key_checks=0` that reference this (new) table, each read
+    // through `is.TableByName`.
+    for referred in get_table_referred_foreign_keys(catalog, &schema_l, table.name.lowercase()) {
+        let Some((_, child)) = catalog.table_info_by_name(
+            referred.child_schema.original(),
+            referred.child_table.original(),
+        ) else {
+            return Err(coded(
+                &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS,
+                format!(
+                    "Table '{}.{}' doesn't exist",
+                    referred.child_schema.original(),
+                    referred.child_table.original()
+                ),
+            ));
+        };
+        let child = child.read();
+        let Some(fk) = child
+            .foreign_keys
+            .iter_deref()
+            .find(|fk| fk.read().name.lowercase() == referred.child_fk_name.lowercase())
+        else {
+            continue;
+        };
+        check_table_foreign_key(table, &child, &fk.read())?;
     }
     Ok(())
 }
@@ -169,6 +180,9 @@ pub(crate) fn get_table_referred_foreign_keys(
         tidb_hack::go_to_lower(schema),
         tidb_hack::go_to_lower(table),
     );
+    if let Some(v2) = catalog.v2() {
+        return v2.get_table_referred_foreign_keys(&schema, &table);
+    }
     let mut referred = Vec::new();
     for database in &catalog.stored_schemas() {
         for child in database.read().deprecated_tables.iter_deref() {

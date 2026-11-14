@@ -308,6 +308,22 @@ pub fn cluster_table(
     table: &TableInfo,
     auto: &AutoIdSource<'_>,
 ) -> Result<TableCommon, String> {
+    if table.state != SchemaState::PUBLIC {
+        return Err(format!("its schema state is {} rather than public", table.state.0));
+    }
+    table_from_meta(table, auto)
+}
+
+/// Go `tables.TableFromMeta`: build intermediate DDL states as well as public
+/// tables. Query visibility is checked by the planner, not the lazy loader.
+pub fn table_from_meta(
+    table: &TableInfo,
+    auto: &AutoIdSource<'_>,
+) -> Result<TableCommon, String> {
+    if table.state == SchemaState::NONE {
+        return Err(crate::table_errors::ERR_TABLE_STATE_CANT_NONE
+            .gen_with_stack_by_args(&[table.name.original().into()]).to_string());
+    }
     if table.is_view() {
         return Err("it is a view".to_owned());
     }
@@ -339,12 +355,6 @@ pub fn cluster_table(
         }
         _ => None,
     };
-    if table.state != SchemaState::PUBLIC {
-        return Err(format!(
-            "its schema state is {} rather than public",
-            table.state.0
-        ));
-    }
     // Go TableFromMeta rebuilds generated expressions against the complete
     // stored schema. The wide loader does not use the bounded reader's
     // admission rules, so it must retain this metadata itself.

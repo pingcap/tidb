@@ -103,14 +103,7 @@ pub fn alter_table_mode_by_id<S: MetaSnapshot>(
         };
         let schema_name = schema.read().name.clone();
         // Go `is.TableByID`: the table by its ID alone.
-        let schemas = catalog.stored_schemas();
-        let Some(stored) = schemas.iter().find_map(|database| {
-            database
-                .read()
-                .deprecated_tables
-                .iter_deref()
-                .find(|stored| stored.read().id == table_id)
-        }) else {
+        let Some(stored) = catalog.table_info_by_id(table_id) else {
             return Err(DdlPlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.gen_with_stack_by_args(&[
                     schema_name.original().into(),

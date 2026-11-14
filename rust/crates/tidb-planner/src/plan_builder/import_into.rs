@@ -49,7 +49,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         };
         let table = self
             .source
-            .find_table(database, name)
+            .try_find_table(database, name)?
             .ok_or_else(|| {
                 PlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
@@ -103,7 +103,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if self
             .source
             .latest_index_schema()
-            .is_some_and(|latest| !latest.table_indexes.contains_key(&table.table_id()))
+            .is_some_and(|latest| latest.indexes_for_table(table.table_id()).is_none())
         {
             if self.session_ctx.is_some_and(|ctx| ctx.snapshot_ts() != 0) {
                 return Err(PlanError::internal(

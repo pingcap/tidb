@@ -116,10 +116,12 @@ pub struct InfoCache {
     /// Go `Loader.crossKS`: historical reads use the same isolated loader.
     cross_ks: bool,
     published: RwLock<Arc<SessionExtendedInfoSchema>>,
-    historical: Mutex<std::collections::BTreeMap<i64, Arc<SessionExtendedInfoSchema>>>,
+    historical: Mutex<tidb_infoschema::cache::InfoCache>,
     capacity: AtomicUsize,
+    gc_store: RwLock<Option<Arc<dyn tidb_txnkv::kv_storage::Storage>>>,
+    gc_check: Mutex<(i64, std::time::Instant)>,
     /// Go `Data.recentMinTS`.
-    recent_min_ts: std::sync::atomic::AtomicU64,
+    pub data: Arc<tidb_infoschema::infoschema_v2::Data>,
     /// Go `Syncer`'s `s.m`: one reload at a time, held across the load, the
     /// schema validator's update and the publication, so two reload paths
     /// never interleave their validator updates.
@@ -146,16 +148,18 @@ impl InfoCache {
     #[must_use]
     pub fn new(mut catalog: SessionExtendedInfoSchema) -> Self {
         catalog.set_uses_infoschema_v2(tidb_vardef::SCHEMA_CACHE_SIZE.load(Ordering::SeqCst) > 0);
+        let data = catalog.v2().map_or_else(|| Arc::new(tidb_infoschema::infoschema_v2::Data::new()), |v2| v2.data.clone());
         let built = Arc::new(catalog);
+        let mut historical = tidb_infoschema::cache::InfoCache::new(16);
+        historical.insert(built.clone(), built.schema_commit_ts());
         Self {
             cross_ks: false,
             published: RwLock::new(Arc::clone(&built)),
-            historical: Mutex::new(std::collections::BTreeMap::from([(
-                built.schema_meta_version(),
-                built,
-            )])),
+            historical: Mutex::new(historical),
             capacity: AtomicUsize::new(16),
-            recent_min_ts: std::sync::atomic::AtomicU64::new(0),
+            gc_store: RwLock::new(None),
+            gc_check: Mutex::new((built.schema_meta_version(), std::time::Instant::now())),
+            data,
             reload: Mutex::new(()),
             builder: RwLock::new(None),
             loading: Mutex::new(()),
@@ -173,10 +177,59 @@ impl InfoCache {
     /// Go `Loader.crossKS` / `Syncer.crossKS`.
     pub fn is_cross_ks(&self) -> bool { self.cross_ks }
 
+    /// Go `NewCache(store)`: install the store used to compact V2 btrees.
+    pub fn install_gc_store(&self, store: Arc<dyn tidb_txnkv::kv_storage::Storage>) {
+        *self.gc_store.write().unwrap() = Some(store);
+    }
+
+    /// Go `InfoCache.Insert`'s 128-version / one-minute GC trigger.
+    fn check_old_versions(&self, version: i64) {
+        let mut check = self.gc_check.lock().unwrap();
+        if check.0 == 0 { *check = (version, std::time::Instant::now()); return; }
+        if version <= check.0.saturating_add(128) || check.1.elapsed() <= std::time::Duration::from_secs(60) { return; }
+        *check = (version, std::time::Instant::now());
+        let Some(store) = self.gc_store.read().unwrap().clone() else { return; };
+        let data = self.data.clone();
+        let _ = std::thread::Builder::new().name("infoschema-gc".into()).spawn(move || {
+            if let Ok(Some(oldest)) = store.oldest_schema_version() { data.gc_old_version(oldest); }
+        });
+    }
+
     /// Go `InfoCache.GetAndResetRecentInfoSchemaTS`: the min start ts for
     /// `InfoSyncer.ReportMinStartTS`, reset to the round's current TS.
     pub fn get_and_reset_recent_info_schema_ts(&self, now: u64) -> u64 {
-        self.recent_min_ts.swap(now, Ordering::AcqRel)
+        self.data.recent_min_ts.swap(now, Ordering::AcqRel)
+    }
+
+    /// Go Loader.LoadWithTS cache hit: refresh the V2 reader timestamp even
+    /// when no DDL changed its schema version.
+    pub fn refresh_snapshot_ts(&self, ts: u64) {
+        let mut versions = self.historical.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut published = self.published.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !published.is_v2() { return; }
+        let size = tidb_vardef::SCHEMA_CACHE_SIZE.load(Ordering::Acquire);
+        if size > 0 && self.data.cache_capacity() != size { self.data.set_cache_capacity(size); }
+        let mut schema = (**published).clone();
+        schema.set_schema_ts(ts);
+        let schema = Arc::new(schema);
+        versions.insert(schema.clone(), schema.schema_commit_ts());
+        *published = schema;
+    }
+
+    /// Go `InfoCache.GetBySnapshotTS`.
+    pub fn get_by_snapshot_ts(&self, ts: u64) -> Option<Arc<SessionExtendedInfoSchema>> {
+        self.historical.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_by_snapshot_ts(ts).map(|schema| {
+            if schema.is_v2() {
+                let mut reader = (*schema).clone();
+                reader.set_schema_ts(ts);
+                Arc::new(reader)
+            } else { schema }
+        })
+    }
+
+    /// Go `InfoCache.InsertEmptySchemaVersion`.
+    pub fn insert_empty_schema_version(&self, version: i64) {
+        self.historical.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert_empty_schema_version(version);
     }
 
     /// Go's loader building one version's `InfoSchema`.
@@ -242,10 +295,8 @@ impl InfoCache {
     /// node unable to answer queries.
     #[must_use]
     pub fn get_latest(&self) -> Arc<SessionExtendedInfoSchema> {
-        match self.published.read() {
-            Ok(guard) => Arc::clone(&guard),
-            Err(poisoned) => Arc::clone(&poisoned.into_inner()),
-        }
+        let schema = self.published.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if schema.is_v2() { Arc::new((**schema).clone()) } else { Arc::clone(&schema) }
     }
 
     /// Go `Loader.LoadWithTS(ts, isSnapshot)`: the schema at the snapshot's
@@ -259,6 +310,14 @@ impl InfoCache {
     ) -> Result<Arc<SessionExtendedInfoSchema>, tidb_infoschema::cluster_catalog::ClusterCatalogError>
     {
         let version = crate::catalog_reload::get_schema_version_with_non_empty_diff(snapshot)?;
+        let start_ts = snapshot.start_ts();
+        let mut schema_ts = if version > 0 { snapshot.schema_commit_ts(version).unwrap_or(0) } else { 0 };
+        if schema_ts == 0 && version > 0 {
+            let store = self.gc_store.read().unwrap().clone();
+            if let Some(store) = store {
+                schema_ts = store.mvcc_commit_ts(&tidb_meta::key::schema_diff_kv_key(version), start_ts).unwrap_or(0);
+            }
+        }
         let found = {
             let mut versions = self
                 .historical
@@ -266,16 +325,19 @@ impl InfoCache {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             self.capacity.store(capacity, Ordering::Relaxed);
             let latest = self.get_latest();
-            versions
-                .entry(latest.schema_meta_version())
-                .or_insert(latest);
+            let commit_ts = latest.schema_commit_ts();
+            versions.insert(latest, commit_ts);
             // Go ReSize retains the newest entries before GetByVersion.
-            while versions.len() > capacity {
-                versions.pop_first();
-            }
-            versions.get(&version).map(Arc::clone)
+            versions.resize(capacity);
+            versions.get_by_version(version)
         };
         if let Some(found) = found {
+            let found = if found.is_v2() {
+                let mut cloned = (*found).clone();
+                cloned.set_schema_ts(start_ts);
+                Arc::new(cloned)
+            } else { found };
+            self.historical.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(found.clone(), schema_ts);
             return Ok(found);
         }
         let _loading = self
@@ -310,10 +372,16 @@ impl InfoCache {
                 crate::catalog_reload::ReloadedCatalog::Cached { catalog }
                 | crate::catalog_reload::ReloadedCatalog::Diffs { catalog, .. }
                 | crate::catalog_reload::ReloadedCatalog::Full { catalog, .. } => catalog,
-                crate::catalog_reload::ReloadedCatalog::Unchanged { .. } => latest.metadata_copy(),
+                crate::catalog_reload::ReloadedCatalog::Unchanged { .. } => {
+                    latest.try_metadata_copy()?
+                }
             }
         } else {
-            let mut loaded = if self.cross_ks { crate::cross_ks::load_info_schema(snapshot)? } else { crate::catalog_reload::load_info_schema(snapshot)? };
+            let mut loaded = if self.cross_ks {
+                crate::cross_ks::load_info_schema(snapshot)?
+            } else {
+                crate::catalog_reload::load_info_schema_for_mode(snapshot, latest.is_v2())?
+            };
             // The reserved counter may be ahead of the committed schema diff.
             // Use the same effective version as the live reload owner.
             loaded.set_schema_meta_version(version);
@@ -324,15 +392,18 @@ impl InfoCache {
         // Go shouldUseV2 applies to diff fallbacks as well as direct full loads.
         loaded.set_uses_infoschema_v2(latest.uses_infoschema_v2());
         let built = self.build(loaded, Some(&latest));
+        self.check_old_versions(built.schema_meta_version());
         let mut versions = self
             .historical
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let found = Arc::clone(versions.entry(version).or_insert(built));
+        for &empty in built.empty_schema_versions() { versions.insert_empty_schema_version(empty); }
+        let found = versions.get_by_version(version).unwrap_or_else(|| {
+            versions.insert(built.clone(), schema_ts);
+            built
+        });
         // A concurrent request may have resized while storage was loading.
-        while versions.len() > self.capacity.load(Ordering::Relaxed) {
-            versions.pop_first();
-        }
+        versions.resize(self.capacity.load(Ordering::Relaxed));
         Ok(found)
     }
 
@@ -347,12 +418,12 @@ impl InfoCache {
     /// Go `InfoCache.GetLatest` as the loader's diff base: a worker can
     /// cache a newer image before the domain publishes it to sessions.
     fn latest_cached(&self) -> Arc<SessionExtendedInfoSchema> {
-        self.historical
+        let latest = self
+            .historical
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .last_key_value()
-            .map(|(_, image)| Arc::clone(image))
-            .unwrap_or_else(|| self.get_latest())
+            .get_latest();
+        latest.unwrap_or_else(|| self.get_latest())
     }
 
     /// Go `InfoCache.GetByVersion`.
@@ -371,6 +442,21 @@ impl InfoCache {
         &self,
         snapshot: &mut S,
         current: &SessionExtendedInfoSchema,
+    ) -> Result<
+        crate::catalog_reload::ReloadedCatalog,
+        tidb_infoschema::cluster_catalog::ClusterCatalogError,
+    > {
+        self.reload_with_ts_at(snapshot, current, &|_| 0)
+    }
+
+    /// [`Self::reload_with_ts`] whose loaded image carries Go's
+    /// `getTimestampForSchemaVersionWithNonEmptyDiff` before it is built and
+    /// cached, as Go's `Loader.LoadWithTS` computes it before `Build`.
+    pub fn reload_with_ts_at<S: tidb_infoschema::cluster_catalog::MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        current: &SessionExtendedInfoSchema,
+        schema_commit_ts: &dyn Fn(i64) -> u64,
     ) -> Result<
         crate::catalog_reload::ReloadedCatalog,
         tidb_infoschema::cluster_catalog::ClusterCatalogError,
@@ -398,7 +484,7 @@ impl InfoCache {
             }
         }
         let reloaded = if changed {
-            let mut catalog = crate::catalog_reload::load_info_schema(snapshot)?;
+            let mut catalog = crate::catalog_reload::load_info_schema_for_mode(snapshot, use_v2)?;
             catalog.set_schema_meta_version(version);
             ReloadedCatalog::Full {
                 catalog,
@@ -414,16 +500,25 @@ impl InfoCache {
                     .as_deref(),
             )?
         };
+        let mut reloaded = reloaded;
+        if let ReloadedCatalog::Diffs { catalog, .. } | ReloadedCatalog::Full { catalog, .. } =
+            &mut reloaded
+        {
+            if catalog.schema_meta_version() > 0 {
+                catalog.set_schema_commit_ts(schema_commit_ts(catalog.schema_meta_version()));
+            }
+        }
         if let Some(catalog) = reloaded.catalog() {
             let built = self.build(catalog.clone(), Some(&base));
             let mut versions = self
                 .historical
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            versions.insert(version, built);
-            while versions.len() > self.capacity.load(Ordering::Relaxed) {
-                versions.pop_first();
+            for &empty in built.empty_schema_versions() {
+                versions.insert_empty_schema_version(empty);
             }
+            versions.insert(Arc::clone(&built), built.schema_commit_ts());
+            versions.resize(self.capacity.load(Ordering::Relaxed));
         }
         Ok(reloaded)
     }
@@ -445,6 +540,7 @@ impl InfoCache {
             .filter(|cached| cached.uses_infoschema_v2() == catalog.uses_infoschema_v2())
             .unwrap_or_else(|| self.build(catalog, Some(&self.get_latest())));
         let version = built.schema_meta_version();
+        self.check_old_versions(version);
         // Publication and retained-version admission share the same lock order
         // as historical lookup, and holding the cache lock across the version
         // comparison serializes concurrent publishers.
@@ -452,12 +548,9 @@ impl InfoCache {
             .historical
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        versions
-            .entry(version)
-            .or_insert_with(|| Arc::clone(&built));
-        while versions.len() > self.capacity.load(Ordering::Relaxed) {
-            versions.pop_first();
-        }
+        for &empty in built.empty_schema_versions() { versions.insert_empty_schema_version(empty); }
+        versions.insert(Arc::clone(&built), built.schema_commit_ts());
+        versions.resize(self.capacity.load(Ordering::Relaxed));
         let mut guard = match self.published.write() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -465,7 +558,11 @@ impl InfoCache {
         if version < guard.schema_meta_version() {
             return false;
         }
-        versions.insert(version, Arc::clone(&built));
+        if guard.is_v2() != built.is_v2() {
+            versions.upsert(Arc::clone(&built), built.schema_commit_ts());
+        } else {
+            versions.insert(Arc::clone(&built), built.schema_commit_ts());
+        }
         *guard = built;
         true
     }
@@ -561,6 +658,8 @@ pub type ReloadPass =
 /// The outcome one reload pass reports back to the thread.
 #[derive(Clone, Debug)]
 pub enum CatalogReloadPass {
+    /// Go Loader.LoadWithTS cache hit at a fresh timestamp.
+    UnchangedAt(u64),
     /// The cluster is still at the published version.
     Unchanged,
     /// Publish this catalog; it was reached by replaying diffs.
@@ -734,6 +833,10 @@ fn run_one_pass(
     let outcome = pass(&current);
     stats.passes.fetch_add(1, Ordering::AcqRel);
     match outcome {
+        Ok(CatalogReloadPass::UnchangedAt(ts)) => {
+            catalog.refresh_snapshot_ts(ts);
+            stats.unchanged.fetch_add(1, Ordering::AcqRel);
+        }
         Ok(CatalogReloadPass::Unchanged) => {
             stats.unchanged.fetch_add(1, Ordering::AcqRel);
         }
@@ -776,6 +879,38 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
+
+    /// Go Loader cache hits CloneAndUpdateTS and InfoCache's reporting atomic
+    /// are shared with V2 readers, including an older reader held by a statement.
+    #[test]
+    fn v2_reader_timestamps_feed_the_reporting_cache() {
+        struct Empty;
+        impl tidb_infoschema::infoschema_v2::TableLoader for Empty {
+            fn load_table(&self, _: i64, _: i64, _: u64) -> Result<tidb_infoschema::infoschema_v2::CachedTable, tidb_infoschema::cluster_catalog::ClusterCatalogError> { panic!("no tables") }
+            fn list_tables(&self, _: i64, _: u64) -> Result<Vec<tidb_model::GoShared<tidb_model::TableInfo>>, tidb_infoschema::cluster_catalog::ClusterCatalogError> { Ok(vec![]) }
+        }
+        let cache = InfoCache::new(catalog_at(7));
+        let data = cache.data.clone();
+        cache.install_schema_builder(Box::new(move |loaded, _| {
+            let mut schema = loaded.metadata_copy();
+            schema.set_schema_ts(42);
+            schema.set_schema_commit_ts(40);
+            schema.init_with_db_infos_v2(data.clone(), Arc::new(Empty), 1024);
+            schema
+        }));
+        let old = cache.get_latest();
+        cache.refresh_snapshot_ts(100);
+        assert_eq!(cache.get_latest().schema_ts(), 100);
+        assert_eq!(old.schema_ts(), 42);
+        cache.get_and_reset_recent_info_schema_ts(200);
+        cache.get_latest().v2().unwrap().schema_table_infos("absent").unwrap();
+        assert_eq!(cache.get_and_reset_recent_info_schema_ts(200), 100);
+        old.v2().unwrap().schema_table_infos("absent").unwrap();
+        assert_eq!(cache.get_and_reset_recent_info_schema_ts(200), 42);
+        let historic = cache.get_by_snapshot_ts(70).unwrap();
+        assert_eq!(historic.schema_ts(), 70);
+        assert_eq!(cache.get_latest().schema_ts(), 100);
+    }
 
     #[test]
     fn snapshot_provider_batch_publications_retain_previous_versions() {

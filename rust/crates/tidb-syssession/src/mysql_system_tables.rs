@@ -249,12 +249,7 @@ impl SystemTableView {
         let missing = || SystemTableError::Missing {
             name: qualified.clone(),
         };
-        let database = catalog.schema_by_name(SYSTEM_DB).ok_or_else(missing)?;
-        let info = database
-            .read().deprecated_tables
-            .iter_deref()
-            .find(|stored| stored.read().name.lowercase() == table)
-            .ok_or_else(missing)?;
+        let (_, info) = catalog.try_table_info_by_name(SYSTEM_DB, table)?.ok_or_else(missing)?;
         let view = Self::project(&qualified, &info.read(), columns);
         Ok(view)
     }

@@ -155,14 +155,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 // them apart) and in which a local temporary table hides a
                 // persistent object of its name.
                 let mut is_temp_table_local = false;
-                if let Some(table) = self.source.find_table(&schema_l, &table_l) {
+                if let Some(table) = self.source.try_find_table(&schema_l, &table_l)? {
                     if let Some(info) = &table.table_info {
                         let info = info.read();
                         is_view = info.is_view();
                         is_sequence = info.is_sequence();
                         is_temp_table_local = info.temp_table_type == TempTableType::LOCAL;
                     }
-                } else if self.source.find_view(&schema_l, &table_l).is_some() {
+                } else if self.source.try_find_view(&schema_l, &table_l)?.is_some() {
                     is_view = true;
                 } else if self.source.find_sequence(&schema_l, &table_l).is_some() {
                     is_sequence = true;
@@ -283,7 +283,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 }
             }
             T::Regions | T::Distributions => {
-                let Some(table) = self.source.find_table(&schema_l, &table_l) else {
+                let Some(table) = self.source.try_find_table(&schema_l, &table_l)? else {
                     let (schema, name) = match show.table.as_deref() {
                         Some([schema, name]) => (schema.as_str(), name.as_str()),
                         _ => ("", ""),

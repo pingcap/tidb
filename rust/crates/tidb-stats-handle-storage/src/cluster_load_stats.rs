@@ -100,6 +100,8 @@ pub enum ClusterLoadStatsError {
         /// Table named by the dump.
         table: String,
     },
+    /// Go TableInfoByName could not read lazy metadata.
+    Catalog(tidb_infoschema::cluster_catalog::ClusterCatalogError),
     /// Canonical JSON conversion failed.
     Convert(LoadStatsError),
 }
@@ -110,6 +112,7 @@ impl std::fmt::Display for ClusterLoadStatsError {
             Self::MissingTable { database, table } => {
                 write!(formatter, "Table '{database}.{table}' doesn't exist")
             }
+            Self::Catalog(error) => error.fmt(formatter),
             Self::Convert(error) => error.fmt(formatter),
         }
     }
@@ -141,17 +144,9 @@ pub(crate) fn resolve_cluster_load_stats(
     catalog: &SessionExtendedInfoSchema,
     json: &JsonTable,
 ) -> Result<ResolvedClusterLoadStats, ClusterLoadStatsError> {
-    let table = catalog
-        .stored_schemas()
-        .iter()
-        .find(|database| {
-            database.read().name.lowercase() == json.database_name.to_lowercase().as_str()
-        })
-        .and_then(|database| {
-            database.read().deprecated_tables.iter_deref().find(|table| {
-                table.read().name.lowercase() == json.table_name.to_lowercase().as_str()
-            })
-        })
+    let table = catalog.try_table_info_by_name(&json.database_name, &json.table_name)
+        .map_err(ClusterLoadStatsError::Catalog)?
+        .map(|(_, table)| table)
         .ok_or_else(|| ClusterLoadStatsError::MissingTable {
             database: json.database_name.clone(),
             table: json.table_name.clone(),

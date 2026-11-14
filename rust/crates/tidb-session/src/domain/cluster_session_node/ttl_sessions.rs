@@ -125,20 +125,7 @@ impl tidb_ttl_ttlworker::InfoSchema for CatalogInfoSchema {
     }
 
     fn list_ttl_tables(&self) -> Vec<(tidb_ast::CiString, Vec<tidb_model::GoShared<tidb_model::TableInfo>>)> {
-        self.0
-            .stored_schemas()
-            .iter()
-            .filter_map(|schema| {
-                let schema = schema.read();
-                let tables: Vec<_> = schema
-                    .deprecated_tables
-                    .iter_handles()
-                    .flatten()
-                    .filter(|table| table.read().ttl_info.is_some())
-                    .collect();
-                (!tables.is_empty()).then(|| (schema.name.clone(), tables))
-            })
-            .collect()
+        self.0.list_tables_with_special_attribute(|table| table.ttl_info.is_some())
     }
 
     fn table_info_by_name(
@@ -147,7 +134,7 @@ impl tidb_ttl_ttlworker::InfoSchema for CatalogInfoSchema {
         table: &tidb_ast::CiString,
     ) -> Result<tidb_model::GoShared<tidb_model::TableInfo>, String> {
         self.0
-            .table_info_by_name(schema.original(), table.original())
+            .try_table_info_by_name(schema.original(), table.original()).map_err(|e| e.to_string())?
             .map(|(_, table)| table)
             .ok_or_else(|| {
                 // Go `infoschema.ErrTableNotExists.FastGenByArgs(schema, table)`.

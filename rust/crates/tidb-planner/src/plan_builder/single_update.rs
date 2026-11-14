@@ -77,8 +77,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 column: IdentifierMetadata::new(column),
             })
         };
-        let non_updatable_columns = match self.source.find_table(&database, &written) {
-            None => self.source.find_view(&database, &written).map(|view| &view.columns),
+        let non_updatable_columns = match self.source.try_find_table(&database, &written)? {
+            None => self.source.try_find_view(&database, &written)?.map(|view| &view.columns),
             Some(table) if table.table_info.as_ref().is_some_and(|info| info.read().is_sequence()) => {
                 Some(&table.columns)
             }
@@ -91,7 +91,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             return Err(find_field_name(&names, &assignment.col)
                 .map_or_else(|| unknown_column(assignment), |_| not_updatable()));
         }
-        let table = self.source.find_table(&database, &written).ok_or_else(|| {
+        let table = self.source.try_find_table(&database, &written)?.ok_or_else(|| {
             PlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                     .fast_gen_by_args(&[(&database).into(), (&written).into()]),

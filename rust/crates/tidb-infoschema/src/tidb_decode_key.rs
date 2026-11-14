@@ -52,9 +52,12 @@ struct DecodeTable {
 #[derive(Clone, Debug, Default)]
 pub struct TidbDecodeKeySnapshot {
     tables: HashMap<i64, DecodeTable>,
+    lazy: Option<crate::infoschema_v2::InfoSchemaV2>,
 }
 
 impl TidbDecodeKeySnapshot {
+    pub(crate) fn set_lazy_reader(&mut self, reader: Option<crate::infoschema_v2::InfoSchemaV2>) { self.lazy = reader; }
+
     pub fn insert_table(&mut self, table: &TableCommon) {
         let metadata = DecodeTable {
             logical_id: table.table_id(),
@@ -99,7 +102,16 @@ impl TidbDecodeKeySnapshot {
         if physical_table_id <= 0 {
             return Err(invalid_key(&key));
         }
-        let table = self.tables.get(&physical_table_id);
+        let mut loaded = Self::default();
+        if !self.tables.contains_key(&physical_table_id) {
+            if let Some(reader) = &self.lazy {
+                let logical_id = reader.table_id_by_partition_id(physical_table_id).unwrap_or(physical_table_id);
+                if let Some(entry) = reader.table_by_id(logical_id, Some(false)) {
+                    if let crate::TableEntry::Kv(table) = entry.table.as_ref() { loaded.insert_table(table); }
+                }
+            }
+        }
+        let table = self.tables.get(&physical_table_id).or_else(|| loaded.tables.get(&physical_table_id));
         let output = if tidb_tablecodec::is_record_key(&key) {
             decode_record(&key, physical_table_id, table, zone)?
         } else if tidb_tablecodec::table_key::is_index_key(&key) {

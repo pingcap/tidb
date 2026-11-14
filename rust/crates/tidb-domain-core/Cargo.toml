@@ -17,6 +17,7 @@ tidb-keyspace = { path = "../tidb-keyspace" }
 tidb-domain-crossks = { path = "../tidb-domain-crossks" }
 tidb-dxf-metering = { path = "../tidb-dxf-metering" }
 tidb-metering-sdk = { path = "../tidb-metering-sdk" }
+tidb-structure = { path = "../tidb-structure" }
 tidb-ttl-ttlworker = { path = "../tidb-ttl-ttlworker" }
 tidb-dxf-storage = { path = "../tidb-dxf-storage" }
 crossbeam-channel = "0.5"

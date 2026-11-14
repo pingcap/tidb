@@ -110,22 +110,21 @@ fn json_string(value: &str) -> String {
 /// Every table's `(table_id, column_types)` a loaded catalog holds -- exactly
 /// the argument [`load_stats_snapshot_and_loader`] needs to boot-load
 /// statistics for every table this node serves.
-fn stats_targets(catalog: &SessionExtendedInfoSchema) -> Vec<tidb_stats_handle_syncload::real_tikv_stats::StatsTarget> {
-    catalog
-        .stored_schemas()
-        .iter()
-        .flat_map(|database| database.read().deprecated_tables.iter_deref())
-        .flat_map(|table| {
-            tidb_stats_handle_syncload::real_tikv_stats::StatsTarget::for_table(&table.read())
-        })
-        .collect()
+fn stats_targets(catalog: &SessionExtendedInfoSchema) -> Result<Vec<tidb_stats_handle_syncload::real_tikv_stats::StatsTarget>, String> {
+    let mut targets = Vec::new();
+    for database in catalog.stored_schemas() {
+        for table in catalog.schema_table_infos(database.read().name.original()).map_err(|e| e.to_string())? {
+            targets.extend(tidb_stats_handle_syncload::real_tikv_stats::StatsTarget::for_table(&table.read()));
+        }
+    }
+    Ok(targets)
 }
 
 /// Resolves the reload target set from the catalog currently published by the
 /// schema follower. Go's statistics handle does the equivalent on every
 /// cache update: a DDL must not leave a newly added table, or a changed column
 /// type, outside later `mysql.stats_*` reads.
-fn current_stats_targets(catalog: &InfoCache) -> Vec<tidb_stats_handle_syncload::real_tikv_stats::StatsTarget> {
+fn current_stats_targets(catalog: &InfoCache) -> Result<Vec<tidb_stats_handle_syncload::real_tikv_stats::StatsTarget>, String> {
     let current = catalog.get_latest();
     stats_targets(&current)
 }
@@ -192,7 +191,13 @@ pub fn spawn_node_stats(
         let (loader, init) = AsyncStatsLoader::spawn_waiting_for_init(
             async_interval,
             Box::new(move || {
-                let targets = current_stats_targets(&async_catalog);
+                let targets = match current_stats_targets(&async_catalog) {
+                    Ok(targets) => targets,
+                    Err(error) => {
+                        tidb_stats_handle_logutil::stats_err_verbose_sample_logger().warn("Load histograms failed", &[crate::domain::zap_error(error)]);
+                        return;
+                    }
+                };
                 if let Err(error) = tidb_stats_handle_syncload::real_tikv_stats::load_needed_histograms(
                     &tidb_domain_core::sys_session::StatsPool {
                         session_pool: Some(&async_pool),
@@ -217,7 +222,7 @@ pub fn spawn_node_stats(
         reload_interval,
         Box::new(move || {
             let shared = &published;
-            let targets = current_stats_targets(&update_catalog);
+            let targets = current_stats_targets(&update_catalog)?;
             if first_pass {
                 first_pass = false;
                 // Go `Domain.initStats`' log lines.
@@ -334,6 +339,7 @@ where
     let catalog = Arc::new(InfoCache::new(startup));
     catalog.set_row_ids(row_ids);
     let loader = Arc::clone(&catalog);
+    catalog.install_gc_store(Arc::new(transaction_opener.clone()));
     let pass_validator = Arc::clone(&validator);
     let reloader = Syncer::spawn(
         Arc::clone(&catalog),
@@ -390,7 +396,7 @@ mod tests {
     fn statistics_reload_targets_follow_the_current_catalog() {
         let shared = InfoCache::new(catalog(11, 101));
         assert_eq!(
-            current_stats_targets(&shared)
+            current_stats_targets(&shared).unwrap()
                 .into_iter()
                 .map(|target| {
                     (
@@ -407,7 +413,7 @@ mod tests {
         // 11 with its old type map forever.
         shared.upsert(catalog(22, 202));
         assert_eq!(
-            current_stats_targets(&shared)
+            current_stats_targets(&shared).unwrap()
                 .into_iter()
                 .map(|target| {
                     (

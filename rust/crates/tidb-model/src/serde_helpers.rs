@@ -58,6 +58,10 @@ impl<T> GoValueSlice<T> {
         self.len() == 0
     }
 
+    /// Go `cap`: retained backing slots, including unused capacity.
+    #[must_use]
+    pub fn capacity(&self) -> usize { self.0.as_ref().map_or(0, Vec::capacity) }
+
     /// Clears elements without changing nil versus allocated-empty identity.
     pub fn clear(&mut self) {
         if let Some(values) = &mut self.0 {

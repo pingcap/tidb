@@ -191,3 +191,27 @@ fn a_loaded_image_answers_memory_tables_by_name() {
     assert_eq!(table.read().name.lowercase(), "tables");
     assert!(image.stored_schemas().is_empty());
 }
+
+/// Go `Loader.fetchSchemasWithTables`: V2 keeps names but decodes only
+/// tables selected by `IsTableInfoMustLoad`; V1 still loads every table.
+#[test]
+fn v2_full_load_retains_only_must_loaded_metadata() {
+    let mut snapshot = recorded_cluster();
+    // Current Go TableInfo JSON includes these null/default attributes in
+    // this order. Older JSON without them is deliberately must-load.
+    for id in 77..=83 {
+        let raw = snapshot.pairs.get_mut(&key::table_kv_key(3, id)).unwrap();
+        raw.pop();
+        raw.extend_from_slice(br#","fk_info":null,"partition":null,"Lock":null,"tiflash_replica":"#);
+        raw.extend_from_slice(if id == 78 { br#"{"count":1}"# } else { b"null" });
+        raw.extend_from_slice(br#","temp_table_type":0,"policy_ref_info":null,"ttl_info":null}"#);
+    }
+    let v2 = tidb_infoschema::cluster_catalog::load_info_schema_for_mode(&mut snapshot, &mut |_, _| true, true).unwrap();
+    let db = v2.stored_schemas().into_iter().find(|db| db.read().id == 3).unwrap();
+    assert_eq!(db.read().table_name2id.as_ref().unwrap().read().len(), 7);
+    let residents: Vec<_> = db.read().deprecated_tables.iter_deref().map(|t| t.read().id).collect();
+    assert_eq!(residents, vec![78]);
+    let v1 = load_info_schema(&mut snapshot).unwrap();
+    let db = v1.stored_schemas().into_iter().find(|db| db.read().id == 3).unwrap();
+    assert_eq!(db.read().deprecated_tables.len(), 7);
+}

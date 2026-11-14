@@ -134,7 +134,7 @@ pub fn create_view<S: MetaSnapshot>(
             schema,
             name,
             or_replace,
-            find_table(&database.read(), name).map(|table| table.read().view.is_some()),
+            find_table(&catalog, &database.read(), name).map(|table| table.read().view.is_some()),
         )
         .map_err(|error| match error.code {
             tidb_mysql::errors::errcode::ErrTableExists => DdlPlanError::from(
@@ -335,7 +335,7 @@ pub(crate) fn create_table_with_info_job<S: MetaSnapshot>(
     };
     handle_table_placement(snapshot, job_context, &mut info, warnings)?;
     let mut old_view_id = 0;
-    if let Some(existing) = find_table(&database.read(), info.name.original()) {
+    if let Some(existing) = find_table(&catalog, &database.read(), info.name.original()) {
         let existing = existing.read();
         // Go `ast.Ident{Schema: schema.Name, Name: tbInfo.Name}`: the stored
         // schema's name.
@@ -602,7 +602,7 @@ fn build_create_table_like_info(
         &info,
     )
     .map_err(DdlPlanError::Admission)?;
-    if let Some(existing) = find_table(&database.read(), table) {
+    if let Some(existing) = find_table(&catalog, &database.read(), table) {
         let existing = existing.read();
         if if_not_exists {
             return Ok(Err(AddIndexSubmission::AlreadySatisfied {
@@ -908,7 +908,7 @@ fn build_alter_sequence_job(
                 .gen_with_stack_by_args(&[(schema.to_owned()).into()]),
         ));
     };
-    let Some(stored) = find_table(&database.read(), name) else {
+    let Some(stored) = find_table(&catalog, &database.read(), name) else {
         if if_exists {
             return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                 detail: format!("sequence `{schema}`.`{name}` does not exist"),

@@ -137,8 +137,8 @@ struct ReplicaTable {
 
 fn replica_tables(catalog: &tidb_infoschema::SessionExtendedInfoSchema) -> Vec<ReplicaTable> {
     let mut tables = Vec::new();
-    for database in &catalog.stored_schemas() {
-        for stored in database.read().deprecated_tables.iter_deref() {
+    for (_, table_infos) in catalog.list_tables_with_special_attribute(|t| t.tiflash_replica.is_some()) {
+        for stored in table_infos {
             let stored = stored.read();
             let Some(replica) = &stored.tiflash_replica else {
                 continue;
@@ -527,9 +527,8 @@ impl TiFlashReplicaManager {
         }
         let manager = tidb_domain_infosync::tiflash_manager::tiflash_replica_manager();
         let mut fixed = std::collections::HashSet::new();
-        for database in catalog.stored_schemas() {
-            let database = database.read();
-            for table in database.deprecated_tables.iter_deref() {
+        for (database, table_infos) in catalog.list_tables_with_special_attribute(|t| t.tiflash_replica.is_some()) {
+            for table in table_infos {
                 let table = table.read();
                 let Some(replica) = table.tiflash_replica.as_ref() else {
                     continue;
@@ -568,7 +567,7 @@ impl TiFlashReplicaManager {
                             Field::new("count", Value::U64(count)),
                         ];
                         match self.ddl.reset_tiflash_replica(
-                            database.name.original(),
+                            database.original(),
                             table.name.original(),
                             count,
                             labels.clone(),

@@ -64,6 +64,10 @@ impl CatalogTableKey {
 
 pub mod infoschema_errors;
 pub mod masking_policy;
+pub mod sieve;
+pub mod cache;
+pub mod infoschema_v2;
+mod bundle_builder;
 pub mod metric_table_def;
 pub mod session_tables;
 pub mod virtual_tables;
@@ -212,6 +216,11 @@ fn db_info(id: i64, name: &str, charset: TableCharset) -> tidb_model::db::DBInfo
 /// case-insensitive, as in MySQL.
 #[derive(Clone, Debug)]
 pub struct InfoSchema {
+    /// Go infoschemaV2, absent for the V1 implementation.
+    v2: Option<infoschema_v2::InfoSchemaV2>,
+    schema_commit_ts: u64,
+    empty_schema_versions: Vec<i64>,
+    rule_bundle_map: HashMap<i64, tidb_placement::Bundle>,
     // Snapshot creation shares schema maps. Mutation detaches only the outer
     // name map and the database it touches, retaining all other table maps.
     databases: Arc<HashMap<String, Arc<Database>>>,
@@ -291,6 +300,9 @@ pub struct InfoSchema {
 /// against one of these.
 #[derive(Clone, Debug)]
 pub struct SessionExtendedInfoSchema {
+    v2_pins: infoschema_v2::ReaderPins,
+    v2_origin: Option<Arc<infoschema_v2::BuilderOrigin>>,
+    v2_steps: Vec<(i64, Vec<tidb_model::GoShared<tidb_model::db::DBInfo>>)>,
     /// The shared schema image.
     schema: InfoSchema,    /// The planner's view of this catalog image, shared by clones like the
     /// index view and dropped by every mutator that moves [`Self::version`]
@@ -320,6 +332,276 @@ pub struct SessionExtendedInfoSchema {
 }
 
 impl SessionExtendedInfoSchema {
+    /// Go `Builder.InitWithDBInfos` for V2: retain lightweight identities,
+    /// special attributes and DBInfo, and discard eager ordinary tables.
+    pub fn init_with_db_infos_v2(
+        &mut self,
+        data: Arc<infoschema_v2::Data>,
+        loader: Arc<dyn infoschema_v2::TableLoader>,
+        capacity: u64,
+    ) {
+        let version = self.schema_meta_version();
+        data.table_cache.set_capacity(capacity);
+        let origin = self.v2_origin.take().filter(|origin| Arc::ptr_eq(&origin.source.data, &data));
+        if let Some(origin) = &origin {
+            let mut origin = (**origin).clone();
+            for (version, image) in std::mem::take(&mut self.v2_steps) { origin.apply_image(&data, version, image); }
+            origin.apply_image(&data, version, self.stored_schemas());
+        } else { data.reset_before_full_load(version); self.v2_steps.clear(); }
+        for database in self.stored_schemas() {
+            let db = database.read();
+            if origin.is_none() { data.add_db(version, db.clone()); }
+            if origin.is_none() {
+                if let Some(names) = &db.table_name2id {
+                    for (name, id) in names.read().iter() {
+                        data.add_table_item(infoschema_v2::TableItem { db_name: db.name.clone(), db_id: db.id,
+                            table_name: tidb_ast::CiString::new(name), table_id: *id, schema_version: version });
+                    }
+                }
+            }
+            for table in db.deprecated_tables.iter_deref() {
+                let ti = table.read();
+                self.schema.foreign_keys_present |= !ti.foreign_keys.is_empty();
+                self.schema.table_locks_present |= ti.lock.is_some();
+                self.schema.table_modes_present |= ti.mode != tidb_model::TableMode::NORMAL;
+                if origin.is_none() { data.add_table_info(infoschema_v2::TableItem { db_name: db.name.clone(), db_id: db.id,
+                    table_name: ti.name.clone(), table_id: ti.id, schema_version: version }, table.clone()); }
+                let changed = origin.as_ref().and_then(|o| o.tables.get(&(db.id, ti.id)))
+                    .is_none_or(|(name, old)| name != &db.name || !old.ptr_eq(&table));
+                if changed {
+                    if let Some(entry) = self.schema.databases.get(db.name.lowercase()).and_then(|db| db.tables.get(ti.name.lowercase())) {
+                        let info = match entry.as_ref() { TableEntry::Kv(t) => t.meta(), _ => table.clone() };
+                        let size = infoschema_v2::table_cache_entry_size(&info.read(), entry);
+                        let table_version = data.table_item_version(ti.id, version).unwrap_or(version);
+                        data.table_cache.set(infoschema_v2::TableCacheKey { table_id: ti.id, schema_version: table_version },
+                            Arc::new(infoschema_v2::CachedTable { info, table: entry.clone(), size }), size);
+                    }
+                }
+            }
+        }
+        for database in self.schema.databases.values().filter(|db| infoschema_v2::is_special_db(&db.name().go_to_lower())) {
+            let mut tables = HashMap::new();
+            for (name, entry) in &database.tables {
+                if let TableEntry::Kv(table) = entry.as_ref() {
+                    let info = table.meta().clone();
+                    data.add_table_info(infoschema_v2::TableItem { db_name: database.info.read().name.clone(), db_id: database.id(), table_name: info.read().name.clone(), table_id: info.read().id, schema_version: version }, info.clone());
+                    tables.insert(name.clone(), Arc::new(infoschema_v2::CachedTable { info, table: entry.clone(), size: 0 }));
+                }
+            }
+            data.add_special_db(database.info.clone(), tables);
+        }
+        let v2 = infoschema_v2::InfoSchemaV2::new(data, loader, version, self.schema_ts());
+        self.v2_pins = infoschema_v2::ReaderPins::new(&v2);
+        for database in Arc::make_mut(&mut self.schema.databases).values_mut() {
+            if infoschema_v2::is_special_db(&database.name().go_to_lower()) { continue; }
+            let database = Arc::make_mut(database);
+            let mut db = database.info.read().clone();
+            db.deprecated_tables = Default::default();
+            database.info = tidb_model::GoShared::new(db);
+            database.tables.clear();
+        }
+        self.schema.v2 = Some(v2);
+        self.update_info_schema_bundles_v2();
+        self.planner_view.take();
+        self.table_id_names = Default::default();
+        self.schema.latest_index_schema.take();
+    }
+
+    /// Go `Builder`'s load timestamp and staged V2 diff state, copied into
+    /// the table factory's newly built image without retaining old reader pins.
+    pub fn inherit_loader_state(&mut self, loaded: &Self) {
+        self.schema.schema_ts = loaded.schema.schema_ts;
+        self.schema.schema_commit_ts = loaded.schema.schema_commit_ts;
+        self.schema.uses_infoschema_v2 = loaded.schema.uses_infoschema_v2;
+        self.schema.empty_schema_versions = loaded.schema.empty_schema_versions.clone();
+        self.v2_origin = loaded.v2_origin.clone();
+        self.v2_steps = loaded.v2_steps.clone();
+        self.schema.foreign_keys_present |= loaded.schema.foreign_keys_present;
+        self.schema.table_locks_present |= loaded.schema.table_locks_present;
+        self.schema.table_modes_present |= loaded.schema.table_modes_present;
+    }
+
+    /// Go `IsV2` with the underlying implementation.
+    pub fn v2(&self) -> Option<&infoschema_v2::InfoSchemaV2> { self.schema.v2.as_ref() }
+
+    /// Go `InfoSchema.SchemaTableInfos`, including fallible lazy storage reads.
+    pub fn schema_table_infos(&self, schema: &str) -> Result<Vec<tidb_model::GoShared<tidb_model::TableInfo>>, cluster_catalog::ClusterCatalogError> {
+        if let Some(v2) = self.v2().filter(|_| !infoschema_v2::is_special_db(&schema.go_to_lower())) {
+            return v2.schema_table_infos(schema);
+        }
+        Ok(self.schema_by_name(schema).map(|db| db.read().deprecated_tables.iter_deref().collect()).unwrap_or_default())
+    }
+
+    /// Go `SessionExtendedInfoSchema.TableExists`: a local temporary table,
+    /// else the stored table by name -- under V2 from the name index alone,
+    /// without loading the table (Go `infoschemaV2.TableExists`).
+    pub fn table_exists(&self, schema: &str, table: &str) -> bool {
+        if self.local_temporary_entry(&CatalogTableKey::new(schema, table)).is_some() {
+            return true;
+        }
+        if let Some(v2) = self.v2().filter(|_| !infoschema_v2::is_special_db(&schema.go_to_lower())) {
+            return v2.table_item_by_name(schema, table).is_some();
+        }
+        self.schema_by_name(schema).is_some_and(|db| {
+            db.read().deprecated_tables.iter_deref().any(|candidate| candidate.read().name.original().go_lower_eq(table))
+        })
+    }
+
+    /// Go `InfoSchema.SchemaSimpleTableInfos`: enumerate IDs and names without loads.
+    pub fn schema_simple_table_infos(&self, schema: &str) -> Vec<infoschema_v2::TableItem> {
+        if let Some(v2) = self.v2() { return v2.schema_simple_table_infos(schema); }
+        let Some(db) = self.schema_by_name(schema) else { return Vec::new(); };
+        let db = db.read();
+        db.deprecated_tables.iter_deref().map(|table| {
+            let table = table.read();
+            infoschema_v2::TableItem { db_name: db.name.clone(), db_id: db.id, table_name: table.name.clone(), table_id: table.id, schema_version: self.schema_meta_version() }
+        }).collect()
+    }
+
+    /// Go `InfoSchema.ListTablesWithSpecialAttribute`: resident metadata in V2.
+    pub fn list_tables_with_special_attribute(&self, filter: impl Fn(&tidb_model::TableInfo) -> bool) -> Vec<(tidb_ast::CiString, Vec<tidb_model::GoShared<tidb_model::TableInfo>>)> {
+        if let Some(v2) = self.v2() {
+            return v2.list_tables_with_special_attribute(filter).into_iter().map(|(db, tables)| {
+                let name = v2.schema_by_name(&db).map(|s| s.read().name.clone()).unwrap_or_else(|| tidb_ast::CiString::new(db));
+                (name, tables)
+            }).collect();
+        }
+        self.stored_schemas().into_iter().filter_map(|db| {
+            let db = db.read();
+            let tables: Vec<_> = db.deprecated_tables.iter_deref().filter(|t| filter(&t.read())).collect();
+            (!tables.is_empty()).then(|| (db.name.clone(), tables))
+        }).collect()
+    }
+
+    /// Go `InfoSchema.TableInfoByName`, preserving lazy storage failures.
+    pub fn try_table_info_by_name(&self, schema: &str, table: &str) -> Result<Option<(tidb_model::GoShared<tidb_model::db::DBInfo>, tidb_model::GoShared<tidb_model::TableInfo>)>, cluster_catalog::ClusterCatalogError> {
+        if let Some(v2) = self.v2().filter(|_| !infoschema_v2::is_special_db(&schema.go_to_lower())) { v2.keep_alive(); }
+        let Some(db) = self.schema_by_name(schema) else { return Ok(None); };
+        if let Some(v2) = self.v2().filter(|_| !infoschema_v2::is_special_db(&schema.go_to_lower())) {
+            if v2.table_item_by_name(schema, table).is_none() { return Ok(None); }
+            return v2.table_by_name(schema, table, None).map(|t| Some((db, t.info.clone())));
+        }
+        Ok(self.table_info_by_name(schema, table))
+    }
+
+    /// Go `Builder.InitWithOldInfoSchema`: materialize metadata for the V1
+    /// diff builder, propagating snapshot read failures to the loader.
+    pub fn try_metadata_copy(&self) -> Result<Self, cluster_catalog::ClusterCatalogError> {
+        self.metadata_copy_for_diff(None)
+    }
+
+    /// Go `Builder.InitWithOldInfoSchema` / `applyDropTableV2`: load only
+    /// old table metadata addressed by the diff; dropping a schema lists it.
+    pub fn metadata_copy_for_diff(&self, selection: Option<(&std::collections::HashSet<i64>, &std::collections::HashSet<i64>)>) -> Result<Self, cluster_catalog::ClusterCatalogError> {
+        let mut databases = Vec::new();
+        for database in self.stored_schemas() {
+            if self.is_v2() {
+                let mut db = database.read().clone();
+                let tables = match selection {
+                    None => self.schema_table_infos(db.name.original())?,
+                    Some((_, dropped_schemas)) if dropped_schemas.contains(&db.id) => self.schema_table_infos(db.name.original())?,
+                    Some((ids, _)) => {
+                        let source = self.v2().unwrap();
+                        let mut tables = Vec::new();
+                        for &id in ids {
+                            if let Some(item) = source.table_item_by_id(id).or_else(|| source.table_item_by_partition_id(id)).filter(|item| item.db_id == db.id) {
+                                tables.push(source.table_by_name(item.db_name.original(), item.table_name.original(), Some(false))?.info.clone());
+                            }
+                        }
+                        tables
+                    }
+                };
+                if tables.is_empty() { databases.push(database.clone()); }
+                else {
+                    db.deprecated_tables = tidb_model::GoSharedPointerSlice::from_handles(tables.into_iter().map(Some).collect());
+                    databases.push(tidb_model::GoShared::new(db));
+                }
+            } else { databases.push(database); }
+        }
+        let mut schema = Self::init_with_db_infos(databases, self.policies().cloned().collect(), self.resource_groups().cloned().collect(), self.schema_meta_version());
+        schema.schema.masking_policies = Arc::new(self.schema.masking_policies.clone_for_builder());
+        schema.set_schema_ts(self.schema_ts());
+        schema.set_schema_commit_ts(self.schema_commit_ts());
+        schema.schema.uses_infoschema_v2 = self.schema.uses_infoschema_v2;
+
+        if let Some(source) = self.v2() {
+            let mut origin = infoschema_v2::BuilderOrigin { source: source.clone(), databases: HashMap::new(), tables: HashMap::new() };
+            for db in schema.stored_schemas() {
+                let di = db.read();
+                origin.databases.insert(di.id, db.clone());
+                for table in di.deprecated_tables.iter_deref() { let id = table.read().id; origin.tables.insert((di.id, id), (di.name.clone(), table)); }
+            }
+            schema.v2_origin = Some(Arc::new(origin));
+            schema.schema.foreign_keys_present = self.schema.foreign_keys_present;
+            schema.schema.table_locks_present = self.schema.table_locks_present;
+            schema.schema.table_modes_present = self.schema.table_modes_present;
+        }
+        Ok(schema)
+    }
+
+    /// Go `Builder.ApplyDiff`: retain each successful diff's metadata so the
+    /// shared btrees receive the table's change version, not the final batch version.
+    pub fn record_v2_diff_image(&mut self, version: i64) {
+        if self.v2_origin.is_some() { self.v2_steps.push((version, self.stored_schemas())); }
+    }
+
+    /// Go `SessionExtendedInfoSchema.TableByName`: fallible owned lookup.
+    pub fn try_table_handle_by_key(&self, key: &CatalogTableKey) -> Result<Option<Arc<TableEntry>>, cluster_catalog::ClusterCatalogError> {
+        if let Some(entry) = self.local_temporary_entry(key).or_else(|| self.schema.databases.get(&key.database).and_then(|db| db.tables.get(&key.table))) {
+            return Ok(Some(entry.clone()));
+        }
+        match self.v2() {
+            Some(v2) => self.v2_pins.get(v2, key).map(|t| t.map(|t| t.table.clone())),
+            None => Ok(None),
+        }
+    }
+
+    /// Go `InfoSchema.TableInfoByID` (storage failures return not found).
+    pub fn table_info_by_id(&self, id: i64) -> Option<tidb_model::GoShared<tidb_model::TableInfo>> {
+        if let Some(v2) = self.v2() { return v2.table_by_id(id, None).map(|t| t.info.clone()); }
+        self.stored_schemas().iter().flat_map(|db| db.read().deprecated_tables.iter_deref()).find(|t| t.read().id == id)
+    }
+
+    /// Go `InfoSchema.FindTableInfoByPartitionID`'s table metadata.
+    pub fn physical_table_info_by_id(&self, id: i64) -> Option<tidb_model::GoShared<tidb_model::TableInfo>> {
+        if let Some(v2) = self.v2() { return self.table_info_by_id(v2.table_id_by_partition_id(id).unwrap_or(id)); }
+        self.stored_schemas().iter().flat_map(|db| db.read().deprecated_tables.iter_deref()).find(|t| {
+            let t = t.read();
+            t.id == id || t.get_partition_info().is_some_and(|pi| pi.read().definitions.map_visible(|d| d.id).contains(&id))
+        })
+    }
+
+    /// Go `InfoSchema.TableItemByID`'s schema name, without table loading.
+    pub fn schema_name_by_table_id(&self, id: i64) -> Option<String> {
+        if let Some(v2) = self.v2() { return v2.table_item_by_id(id).map(|t| t.db_name.original().to_owned()); }
+        self.stored_schemas().iter().find_map(|db| db.read().deprecated_tables.iter_deref().any(|t| t.read().id == id).then(|| db.read().name.original().to_owned()))
+    }
+
+    /// Go `TableByName`: preserve storage errors at fallible SQL entrypoints.
+    pub fn try_get_in(&self, database: &str, name: &str) -> Result<Option<&TableEntry>, DriverError> {
+        let key = CatalogTableKey::new(database, name);
+        if let Some(entry) = self.local_temporary_entry(&key).or_else(|| self.schema.databases.get(&key.database).and_then(|db| db.tables.get(&key.table))) {
+            return Ok(Some(entry.as_ref()));
+        }
+        match self.v2() {
+            Some(v2) => self.v2_pins.get(v2, &key).map(|t| t.map(|t| t.table.as_ref())).map_err(|e| DriverError::from(e.to_mysql_error())),
+            None => Ok(None),
+        }
+    }
+
+    /// Go IsV2.
+    pub fn is_v2(&self) -> bool { self.schema.v2.is_some() }
+    /// Go schemaAndTimestamp.timestamp (schema-diff commit timestamp).
+    pub fn schema_commit_ts(&self) -> u64 { self.schema.schema_commit_ts }
+    /// Go `tryLoadSchemaDiffs`: versions whose schema diff is absent.
+    pub fn empty_schema_versions(&self) -> &[i64] { &self.schema.empty_schema_versions }
+    /// Go `InfoCache.InsertEmptySchemaVersion`, recorded for publication.
+    pub fn record_empty_schema_version(&mut self, version: i64) { self.schema.empty_schema_versions.push(version); }
+
+
+    /// Go Loader.getTimestampForSchemaVersionWithNonEmptyDiff.
+    pub fn set_schema_commit_ts(&mut self, ts: u64) { self.schema.schema_commit_ts = ts; }
+
     /// Go `infoschema.NewBuilder(...).InitWithDBInfos` before any stored
     /// schema: only the memory schemas Go's `initVirtualTables` builds from
     /// its `drivers` -- `INFORMATION_SCHEMA`, `PERFORMANCE_SCHEMA` and
@@ -388,10 +670,19 @@ impl SessionExtendedInfoSchema {
         &self,
         database: &str,
     ) -> impl Iterator<Item = (&String, &Arc<TableEntry>)> {
+        let database = database.to_owned();
         self.schema.databases
-            .get(database)
+            .get(&database)
             .into_iter()
             .flat_map(|database| database.tables.iter())
+            .chain(self.v2().into_iter().flat_map(move |v2| {
+                v2.schema_simple_table_infos(&database).into_iter().filter_map(move |item| {
+                    let key = CatalogTableKey::new(item.db_name.lowercase(), item.table_name.lowercase());
+                    if self.schema.databases.get(&key.database).is_some_and(|db| db.tables.contains_key(&key.table)) { return None; }
+                    let (key, table) = self.v2_pins.get_entry(v2, &key, false).ok()??;
+                    Some((&key.table, &table.table))
+                })
+            }))
     }
 
     fn virtual_schemas(with_memory_tables: bool) -> Self {
@@ -449,7 +740,14 @@ impl SessionExtendedInfoSchema {
             databases.insert(key.to_owned(), Database { info, tables });
         }
         let catalog = SessionExtendedInfoSchema {
+            v2_pins: Default::default(),
+            v2_origin: None,
+            v2_steps: Vec::new(),
             schema: InfoSchema {
+                v2: None,
+                schema_commit_ts: 0,
+                empty_schema_versions: Vec::new(),
+                rule_bundle_map: HashMap::new(),
                 databases: Arc::new(
                     databases
                         .into_iter()
@@ -714,6 +1012,12 @@ impl SessionExtendedInfoSchema {
     /// sorts them; the catalog's keys are lower-cased and only for lookup.
     #[must_use]
     pub fn table_names(&self, database: &str) -> Option<Vec<String>> {
+        if let Some(v2) = self.v2().filter(|_| !infoschema_v2::is_special_db(&database.go_to_lower())) {
+            v2.schema_by_name(database)?;
+            let mut names: Vec<_> = v2.schema_simple_table_infos(database).iter().map(|t| t.table_name.original().to_owned()).collect();
+            names.sort();
+            return Some(names);
+        }
         let database = self.schema.databases.get(&database.go_to_lower())?;
         let mut names: Vec<String> = database
             .tables
@@ -835,7 +1139,11 @@ impl SessionExtendedInfoSchema {
         tidb_model::GoShared<tidb_model::db::DBInfo>,
         tidb_model::GoShared<tidb_model::TableInfo>,
     )> {
+        if let Some(v2) = self.v2().filter(|_| !infoschema_v2::is_special_db(&schema.go_to_lower())) { v2.keep_alive(); }
         let info = self.schema_by_name(schema)?;
+        if let Some(v2) = self.v2().filter(|_| !infoschema_v2::is_special_db(&schema.go_to_lower())) {
+            return v2.table_by_name(schema, table, None).ok().map(|table| (info, table.info.clone()));
+        }
         let found = info
             .read()
             .deprecated_tables
@@ -876,6 +1184,7 @@ impl SessionExtendedInfoSchema {
     pub fn set_policy(&mut self, policy: tidb_model::PolicyInfo) {
         self.schema.policies
             .insert(policy.name.lowercase().to_owned(), policy);
+        if self.is_v2() { self.update_info_schema_bundles_v2(); }
     }
 
     /// Go `CheckPlacementPolicyNotInUseFromInfoSchema`: the first table or
@@ -887,6 +1196,12 @@ impl SessionExtendedInfoSchema {
     #[must_use]
     pub fn check_placement_policy_not_in_use_from_info_schema(&self, name: &str) -> bool {
         let folded = tidb_ast::CiString::new(name).lowercase().to_owned();
+        if let Some(v2) = self.v2() {
+            if v2.list_tables_with_special_attribute(|t| {
+                t.placement_policy_ref.as_ref().is_some_and(|p| p.read().name.lowercase() == folded)
+                    || t.partition.as_ref().is_some_and(|p| p.read().definitions.with_visible(|defs| defs.iter().any(|d| d.placement_policy_ref.as_ref().is_some_and(|p| p.read().name.lowercase() == folded))))
+            }).iter().any(|(_, tables)| !tables.is_empty()) { return true; }
+        }
         self.schema.databases.values().any(|database| {
             // Go `checkPlacementPolicyNotInUseFromInfoSchema` checks each
             // schema's default before its tables.
@@ -1106,6 +1421,13 @@ impl SessionExtendedInfoSchema {
         copied.schema.schema_ts = self.schema.schema_ts;
         copied.schema.uses_infoschema_v2 = self.schema.uses_infoschema_v2;
         copied.schema.masking_policies = Arc::new(self.schema.masking_policies.clone_for_builder());
+        copied.v2_origin = self.v2_origin.clone();
+        copied.v2_steps = self.v2_steps.clone();
+        copied.set_schema_commit_ts(self.schema_commit_ts());
+        copied.schema.empty_schema_versions = self.schema.empty_schema_versions.clone();
+        copied.schema.foreign_keys_present = self.schema.foreign_keys_present;
+        copied.schema.table_locks_present = self.schema.table_locks_present;
+        copied.schema.table_modes_present = self.schema.table_modes_present;
         copied
     }
 
@@ -1120,8 +1442,12 @@ impl SessionExtendedInfoSchema {
     }
 
     /// Go `Builder.Build(schemaTS)`.
+    /// Go `infoschemaV2.CloneAndUpdateTS` for a V2 image.
     pub fn set_schema_ts(&mut self, ts: u64) {
         self.schema.schema_ts = ts;
+        if let Some(v2) = &mut self.schema.v2 {
+            v2.ts = ts;
+        }
         let mut cache = self.schema.masking_policies.clone_for_builder();
         cache.set_snapshot_ts(ts);
         self.schema.masking_policies = Arc::new(cache);
@@ -1251,6 +1577,7 @@ impl SessionExtendedInfoSchema {
     /// map.
     pub fn delete_policy_by_id(&mut self, id: i64) {
         self.schema.policies.retain(|_, policy| policy.id != id);
+        if self.is_v2() { self.update_info_schema_bundles_v2(); }
     }
 
     /// Go `applyDropResourceGroup`'s `deleteResourceGroup`: the group with
@@ -1310,7 +1637,7 @@ impl SessionExtendedInfoSchema {
 
     /// Retains immutable statement metadata without cloning the table or its store.
     pub fn table_handle_by_key(&self, key: &CatalogTableKey) -> Option<Arc<TableEntry>> {
-        self.table_handle_ref(key).cloned()
+        self.try_table_handle_by_key(key).ok().flatten()
     }
 
     /// Go `SessionExtendedInfoSchema.TableByName`: the session's LOCAL
@@ -1323,7 +1650,8 @@ impl SessionExtendedInfoSchema {
     /// The shared schema's entry, without the session's temporary tables
     /// (Go `DetachLocalTemporaryTableInfoSchema`).
     fn schema_entry(&self, key: &CatalogTableKey) -> Option<&Arc<TableEntry>> {
-        self.schema.databases.get(&key.database)?.tables.get(&key.table)
+        self.schema.databases.get(&key.database).and_then(|db| db.tables.get(&key.table))
+            .or_else(|| self.v2().and_then(|v2| self.v2_pins.get(v2, key).ok().flatten()).map(|t| &t.table))
     }
 
     fn local_temporary_entry(&self, key: &CatalogTableKey) -> Option<&Arc<TableEntry>> {
@@ -1347,6 +1675,15 @@ impl SessionExtendedInfoSchema {
                 .tables
                 .iter()
                 .map(move |(name, entry)| (schema.clone(), name.as_str(), entry.as_ref()))
+        }).chain({
+            let mut items = Vec::new();
+            if let Some(v2) = self.v2() { v2.iterate_all_table_items(|item| { items.push(item); true }); }
+            items.into_iter().filter_map(|item| {
+                let key = CatalogTableKey::new(item.db_name.lowercase(), item.table_name.lowercase());
+                if self.schema.databases.get(&key.database).is_some_and(|db| db.tables.contains_key(&key.table)) { return None; }
+                let (key, table) = self.v2_pins.get_entry(self.v2()?, &key, true).ok()??;
+                Some((key.database.clone(), key.table.as_str(), table.table.as_ref()))
+            })
         })
     }
 
@@ -1444,6 +1781,11 @@ impl SessionExtendedInfoSchema {
     /// partition `partition_id`, or `None` when no table has a partition by
     /// that ID (a table's own ID is not a partition's).
     pub fn find_table_by_partition_id(&self, partition_id: i64) -> Option<(String, String)> {
+        if let Some(v2) = self.v2() {
+            let item = v2.table_item_by_partition_id(partition_id)?;
+            let table = v2.table_by_id(item.table_id, None)?;
+            return Some((item.db_name.original().to_owned(), table.info.read().name.original().to_owned()));
+        }
         let key = self.table_id_names().get(&partition_id)?;
         let schema = self.schema.databases.get(&key.database)?;
         match schema.tables.get(&key.table)?.as_ref() {
@@ -1465,12 +1807,25 @@ impl SessionExtendedInfoSchema {
     /// Every table carrying a `TableInfo.Lock`, with its schema name -- Go
     /// `ListTablesWithSpecialAttribute(TableLockAttribute)`.
     pub fn locked_tables(&self) -> impl Iterator<Item = (String, &crate::TableCommon)> {
-        self.table_entries()
-            .filter(|_| self.schema.table_locks_present)
-            .filter_map(|(schema, _, entry)| match entry {
-                TableEntry::Kv(table) if table.lock().is_some() => Some((schema, &**table)),
-                _ => None,
-            })
+        let mut result = Vec::new();
+        if self.schema.table_locks_present {
+            if let Some(v2) = self.v2() {
+                for (schema, tables) in v2.list_tables_with_special_attribute(|t| t.lock.is_some()) {
+                    for table in tables {
+                        let name = table.read().name.original().to_owned();
+                        if let Some(TableEntry::Kv(table)) = self.table_in(&schema, &name) {
+                            result.push((schema.clone(), table.as_ref()));
+                        }
+                    }
+                }
+            } else {
+                result.extend(self.table_entries().filter_map(|(schema, _, entry)| match entry {
+                    TableEntry::Kv(table) if table.lock().is_some() => Some((schema, &**table)),
+                    _ => None,
+                }));
+            }
+        }
+        result.into_iter()
     }
 
     /// A mutable handle on a table of `database`, for the write paths.
@@ -1498,6 +1853,10 @@ impl SessionExtendedInfoSchema {
     ) -> Option<&mut TableEntry> {
         self.schema.version += 1;
         let key = CatalogTableKey::new(database, name);
+        if self.is_v2() && self.local_temporary_entry(&key).is_none() && !self.schema.databases.get(&key.database).is_some_and(|db| db.tables.contains_key(&key.table)) {
+            let table = self.try_table_handle_by_key(&key).ok().flatten()?;
+            self.database_mut(&key.database)?.tables.insert(key.table.clone(), table);
+        }
         let entry = match self.local_temporary.iter().position(|(local, _)| *local == key) {
             Some(position) => &mut self.local_temporary[position].1,
             None => self.database_mut(&key.database)?.tables.get_mut(&key.table)?,
@@ -1572,6 +1931,7 @@ impl SessionExtendedInfoSchema {
     #[must_use]
     pub fn tidb_decode_key_snapshot(&self) -> crate::TidbDecodeKeySnapshot {
         let mut snapshot = crate::TidbDecodeKeySnapshot::default();
+        snapshot.set_lazy_reader(self.v2().cloned());
         for database in self.schema.databases.values() {
             for entry in database.tables.values() {
                 if let TableEntry::Kv(table) = &**entry {
@@ -1627,6 +1987,21 @@ impl SessionExtendedInfoSchema {
             _ => None,
         });
         local.or_else(|| {
+            if let Some(v2) = self.v2() {
+                let item = v2.table_item_by_partition_id(physical_id).or_else(|| v2.table_item_by_id(physical_id))?;
+                let key = CatalogTableKey::new(item.db_name.lowercase(), item.table_name.lowercase());
+                if let Some((database_name, database)) = self.schema.databases.get_key_value(&key.database) {
+                    if let Some(entry) = database.tables.get(&key.table) {
+                        if let TableEntry::Kv(table) = entry.as_ref() {
+                            return Some((database_name.as_str(), table));
+                        }
+                    }
+                }
+                let (key, table) = self.v2_pins.get_entry(v2, &key, false).ok()??;
+                return match table.table.as_ref() {
+                    TableEntry::Kv(table) => Some((key.database.as_str(), table)), _ => None,
+                };
+            }
             let key = self.table_id_names().get(&physical_id)?;
             match self.schema_entry(key)?.as_ref() {
                 TableEntry::Kv(table) => Some((key.database.as_str(), table)),
@@ -1639,6 +2014,20 @@ impl SessionExtendedInfoSchema {
     fn table_id_names(&self) -> &HashMap<i64, Arc<CatalogTableKey>> {
         self.table_id_names.get_or_init(|| {
             let mut names = HashMap::new();
+            if let Some(v2) = self.v2() {
+                v2.iterate_all_table_items(|item| {
+                    names.insert(item.table_id, Arc::new(CatalogTableKey::new(item.db_name.lowercase(), item.table_name.lowercase())));
+                    true
+                });
+                for (_, tables) in v2.list_tables_with_special_attribute(|t| t.get_partition_info().is_some()) {
+                    for table in tables {
+                        let ti = table.read();
+                        if let Some(key) = names.get(&ti.id).cloned() {
+                            for pid in ti.get_partition_info().unwrap().read().definitions.map_visible(|d| d.id) { names.insert(pid, key.clone()); }
+                        }
+                    }
+                }
+            }
             for (database_name, database) in self.schema.databases.iter() {
                 for (table_name, entry) in &database.tables {
                     let TableEntry::Kv(table) = entry.as_ref() else {

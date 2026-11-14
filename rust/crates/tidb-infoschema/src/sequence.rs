@@ -27,6 +27,8 @@ pub struct SequenceSnapshot {
     databases: Arc<HashMap<String, Arc<Database>>>,
     local_temporary: Vec<(CatalogTableKey, Arc<TableEntry>)>,
     current_db: String,
+    v2: Option<infoschema_v2::InfoSchemaV2>,
+    pins: infoschema_v2::ReaderPins,
 }
 
 impl SequenceSnapshot {
@@ -36,6 +38,8 @@ impl SequenceSnapshot {
             databases: Arc::clone(&catalog.schema.databases),
             local_temporary: catalog.local_temporary.clone(),
             current_db: current_db.go_to_lower(),
+            v2: catalog.v2().cloned(),
+            pins: Default::default(),
         }
     }
 }
@@ -56,7 +60,17 @@ impl tidb_util::misc::SequenceSchema for SequenceSnapshot {
             .iter()
             .find(|(local, _)| *local == key)
             .map(|(_, entry)| entry)
-            .or_else(|| self.databases.get(&key.database)?.tables.get(&key.table))
+            .or_else(|| self.databases.get(&key.database)?.tables.get(&key.table));
+        let lazy = if entry.is_none() {
+            match &self.v2 {
+                Some(v2) => self.pins.get(v2, &key).map_err(|error| {
+                    let error = error.to_mysql_error();
+                    tidb_terror::TerrorError::compatible(tidb_terror::TerrorCode::new(error.code as isize), error.message)
+                })?,
+                None => None,
+            }
+        } else { None };
+        let entry = entry.or_else(|| lazy.map(|entry| &entry.table))
             .ok_or_else(|| {
                 crate::infoschema_errors::ERR_TABLE_NOT_EXISTS
                     .gen_with_stack_by_args(&[schema.into(), sequence.into()])

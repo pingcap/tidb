@@ -233,6 +233,10 @@ pub struct SessionVars {
     /// internal session whether we do ddl analyze: such an ANALYZE also
     /// covers the indexes still in write-reorganization.
     pub enable_ddl_analyze_exec_opt: bool,
+    /// Go `SessionVars.EnableHistoricalStats`: the GLOBAL-only
+    /// `tidb_enable_historical_stats` as `UpdateSCtxVarsForStats` copies it
+    /// onto a statistics session (a field, never `SetSystemVar`).
+    pub enable_historical_stats: bool,
     /// Go's typed `SessionVars.SQLMode`, maintained by the sql_mode sysvar's
     /// `SetSession` hook and read directly by parser and executor consumers.
     sql_mode: tidb_mysql::SqlMode,
@@ -613,6 +617,7 @@ impl Default for SessionVars {
             systems: HashMap::new(),
             autocommit: true,
             enable_ddl_analyze_exec_opt: false,
+            enable_historical_stats: false,
             sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
                 .expect("the compiled default SQL mode is valid"),
             max_allowed_packet: 64 << 20,

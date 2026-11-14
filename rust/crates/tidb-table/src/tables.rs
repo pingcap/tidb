@@ -899,6 +899,7 @@ impl StorageIterator for KeysReadIterator {
     }
 }
 
+mod cache_size;
 mod error;
 pub use error::KvTableError;
 use tidb_kv::staged_writes::{StagedWrites, TxnStaging};

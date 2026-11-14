@@ -1550,17 +1550,12 @@ pub(crate) fn update_table_replica_info<S: MetaSnapshot>(
     let mut warnings = Vec::new();
     let mut shared_policy: Option<String> = None;
 
-    let schemas = catalog.stored_schemas();
-    let Some((database, stored)) = schemas.iter().find_map(|database| {
-        database
-            .read()
-            .deprecated_tables
-            .iter_deref()
-            .find(|stored| {
-                let stored = stored.read();
-                stored.id == *table_id || partition_of(&stored, *table_id)
-            })
-            .map(|stored| (database, stored))
+    // Go `is.TableByID`, else `FindTableByPartitionID`.
+    let Some((database, stored)) = catalog.physical_table_info_by_id(*table_id).and_then(|stored| {
+        let database = catalog
+            .schema_name_by_table_id(stored.read().id)
+            .and_then(|name| catalog.schema_by_name(&name))?;
+        Some((database, stored))
     }) else {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS

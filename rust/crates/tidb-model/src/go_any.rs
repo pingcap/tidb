@@ -905,6 +905,99 @@ impl GoAny {
         self.0.as_deref().map(|value| value.view())
     }
 
+    /// Go `infoschema/internal.Sizeof` for a dynamic metadata value. The
+    /// caller shares the visited set across the containing table so aliases
+    /// and cycles do not charge the same allocation twice.
+    pub fn retained_memory_usage(&self, visited: &mut HashSet<usize>) -> usize {
+        use std::mem::{size_of, size_of_val};
+        fn string(value: &GoString, visited: &mut HashSet<usize>) -> usize {
+            let bytes = value.as_bytes();
+            if visited.insert(bytes.as_ptr() as usize) {
+                bytes.len()
+            } else {
+                0
+            }
+        }
+        let Some(value) = self.0.as_deref() else {
+            return 0;
+        };
+        let header = size_of_val(value);
+        header
+            + match value.view() {
+                GoAnyView::String(v) | GoAnyView::DefinedString(_, v) => string(v, visited),
+                GoAnyView::Bytes(v) => v.bytes.with_visible(|bytes| {
+                    if !v.bytes.is_allocated() || !visited.insert(bytes.as_ptr() as usize) {
+                        0
+                    } else {
+                        v.bytes.capacity()
+                            + size_of::<std::sync::RwLock<Vec<u8>>>()
+                            + 2 * size_of::<usize>()
+                    }
+                }),
+                GoAnyView::Slice(v) => {
+                    let Some(identity) = &v.backing_identity else {
+                        return header;
+                    };
+                    if !visited.insert(identity.identity_address()) {
+                        return header;
+                    }
+                    v.values.capacity() * size_of::<GoAny>()
+                        + v.values.with_visible(|values| {
+                            values
+                                .iter()
+                                .map(|v| v.retained_memory_usage(visited))
+                                .sum::<usize>()
+                        })
+                }
+                GoAnyView::Map(v) => {
+                    let Some(values) = &v.values else {
+                        return header;
+                    };
+                    if !visited.insert(values.identity_address()) {
+                        return header;
+                    }
+                    let values = values.read();
+                    size_of::<std::sync::RwLock<BTreeMap<GoString, GoAny>>>()
+                        + 2 * size_of::<usize>()
+                        + (values.len() as f64 * 10.79) as usize
+                        + values
+                            .iter()
+                            .map(|(k, v)| {
+                                size_of::<(GoString, GoAny)>()
+                                    + string(k, visited)
+                                    + v.retained_memory_usage(visited)
+                            })
+                            .sum::<usize>()
+                }
+                GoAnyView::Pointer(v) => {
+                    let Some(value) = &v.value else {
+                        return header;
+                    };
+                    if !visited.insert(value.identity_address()) {
+                        return header;
+                    }
+                    size_of::<std::sync::RwLock<GoAny>>()
+                        + 2 * size_of::<usize>()
+                        + value.read().retained_memory_usage(visited)
+                }
+                GoAnyView::Array(v) => {
+                    v.values.capacity() * size_of::<GoAny>()
+                        + v.values
+                            .iter()
+                            .map(|v| v.retained_memory_usage(visited))
+                            .sum::<usize>()
+                }
+                GoAnyView::Struct(v) => {
+                    v.fields.capacity() * size_of::<(String, GoAny)>()
+                        + v.fields
+                            .iter()
+                            .map(|(k, v)| k.capacity() + v.retained_memory_usage(visited))
+                            .sum::<usize>()
+                }
+                _ => 0,
+            }
+    }
+
     /// Exact Go type assertion to the built-in `string` type.
     #[must_use]
     pub fn builtin_string(&self) -> Option<&GoString> {

@@ -39,6 +39,10 @@ pub trait ClusterSnapshot: fmt::Debug + Send {
     /// Installs immutable statement policy on the native snapshot, where available.
     fn set_snapshot_read_options(&mut self, _options: tidb_txnkv::SnapshotReadOptions) {}
 
+    /// Go `snapshot.SetOption(kv.RequestSourceInternal / RequestSourceType,
+    /// ...)`, as `meta.NewReader` labels a metadata snapshot.
+    fn set_request_source(&mut self, _source: &tidb_txnkv::RequestSource) {}
+
     /// Go `AdviseOptimizeWithPlan`'s answer for a pessimistic statement whose
     /// plan needs no fresh for-update timestamp: the statement keeps the
     /// transaction's latest one (repeatable read's

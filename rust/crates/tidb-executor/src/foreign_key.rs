@@ -74,7 +74,7 @@ use std::time::{Duration, Instant};
 
 use crate::driver::DriverError;
 use tidb_datatype::{Datum, FieldType};
-use tidb_hack::GoCaseCompare;
+use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_infoschema::{SessionExtendedInfoSchema, TableEntry};
 use tidb_planner_core_base::PlanIdAllocator;
 use tidb_planner_core_operator_physicalop::{FkTriggerKind, FkTriggerNode, PhysicalPlan};
@@ -1465,13 +1465,45 @@ pub(crate) fn referring(
     catalog: &SessionExtendedInfoSchema,
     database: &str,
     table: &str,
-) -> Vec<(String, String, tidb_model::GoShared<tidb_model::table::FKInfo>)> {
+) -> Vec<(
+    String,
+    String,
+    tidb_model::GoShared<tidb_model::table::FKInfo>,
+)> {
     // Sysbench and the normal TiDB bootstrap have no foreign-key declarations.
     // Avoid rebuilding and sorting the complete catalog path list for every
     // UPDATE/DELETE in that case; catalogs that do declare one retain the
     // deterministic scan below.
     if !catalog.has_foreign_keys() {
         return Vec::new();
+    }
+    if let Some(v2) = catalog.v2() {
+        let mut found = Vec::new();
+        // Go buildOnDeleteOrUpdateFKTrigger resolves only indexed children
+        // and deliberately ignores a TableByName error at this boundary.
+        for referred in
+            v2.get_table_referred_foreign_keys(&database.go_to_lower(), &table.go_to_lower())
+        {
+            let Some(TableEntry::Kv(child)) = catalog.get_in(
+                referred.child_schema.original(),
+                referred.child_table.original(),
+            ) else {
+                continue;
+            };
+            if let Some(fk) = child.meta().read().foreign_keys.iter_deref().find(|fk| {
+                let fk = fk.read();
+                fk.name.lowercase() == referred.child_fk_name.lowercase()
+                    && fk.state == tidb_model::SchemaState::PUBLIC
+                    && fk.version >= tidb_model::table::FK_VERSION1
+            }) {
+                found.push((
+                    referred.child_schema.lowercase().to_owned(),
+                    referred.child_table.lowercase().to_owned(),
+                    fk,
+                ));
+            }
+        }
+        return found;
     }
     let mut found = Vec::new();
     for (child_db, child_table, entry) in catalog.table_entries() {
@@ -1592,5 +1624,100 @@ mod tests {
         };
         assert_eq!(cascade.string(), "total:130.7µs, foreign_keys:4");
         assert_eq!(FKCascadeRuntimeStats::default().string(), "total:0s");
+    }
+    /// Go `TestReferredFKInfo` and `buildOnDeleteOrUpdateFKTrigger`: V2
+    /// resolves indexed child tables, leaving unrelated metadata unloaded.
+    #[test]
+    fn v2_referred_fk_lookup_does_not_load_unrelated_tables() {
+        use std::sync::{Arc, Mutex};
+        use tidb_infoschema::cluster_catalog::ClusterCatalogError;
+        use tidb_infoschema::infoschema_v2::{CachedTable, Data, TableLoader};
+        use tidb_model::{GoShared, SchemaState, TableInfo};
+        struct Loader {
+            child: CachedTable,
+            reads: Mutex<Vec<i64>>,
+        }
+        impl TableLoader for Loader {
+            fn load_table(
+                &self,
+                _: i64,
+                id: i64,
+                ts: u64,
+            ) -> Result<CachedTable, ClusterCatalogError> {
+                assert_eq!(ts, 42);
+                self.reads.lock().unwrap().push(id);
+                assert_eq!(id, 10, "unrelated table must not be loaded");
+                Ok(self.child.clone())
+            }
+            fn list_tables(
+                &self,
+                _: i64,
+                _: u64,
+            ) -> Result<Vec<GoShared<TableInfo>>, ClusterCatalogError> {
+                panic!("referred-key lookup must not enumerate table metadata")
+            }
+        }
+        let info = TableInfo {
+            id: 10,
+            db_id: 1,
+            name: tidb_ast::CiString::new("child"),
+            state: SchemaState::PUBLIC,
+            foreign_keys: vec![tidb_model::table::FKInfo {
+                name: tidb_ast::CiString::new("fk"),
+                ref_schema: tidb_ast::CiString::new("test"),
+                ref_table: tidb_ast::CiString::new("parent"),
+                version: tidb_model::table::FK_VERSION1,
+                state: SchemaState::PUBLIC,
+                ..Default::default()
+            }]
+            .into(),
+            ..Default::default()
+        };
+        let table = Arc::new(TableCommon::loaded(info, Vec::new()));
+        let info = table.meta();
+        let loader = Arc::new(Loader {
+            child: CachedTable {
+                info: info.clone(),
+                table: Arc::new(TableEntry::Kv(table)),
+                size: 1,
+            },
+            reads: Mutex::new(Vec::new()),
+        });
+        let database = tidb_model::db::DBInfo {
+            id: 1,
+            name: tidb_ast::CiString::new("test"),
+            state: SchemaState::PUBLIC,
+            deprecated_tables: vec![
+                info.read().clone(),
+                TableInfo {
+                    id: 11,
+                    db_id: 1,
+                    name: tidb_ast::CiString::new("unrelated"),
+                    state: SchemaState::PUBLIC,
+                    ..Default::default()
+                },
+            ]
+            .into(),
+            ..Default::default()
+        };
+        let mut catalog = SessionExtendedInfoSchema::init_with_db_infos(
+            vec![GoShared::new(database)],
+            vec![],
+            vec![],
+            2,
+        );
+        catalog.set_schema_ts(42);
+        catalog.init_with_db_infos_v2(Arc::new(Data::new()), loader.clone(), 1 << 20);
+        let refs = referring(&catalog, "test", "parent");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(
+            (
+                &refs[0].0[..],
+                &refs[0].1[..],
+                refs[0].2.read().name.original()
+            ),
+            ("test", "child", "fk")
+        );
+        assert_eq!(*loader.reads.lock().unwrap(), [10]);
     }
 }

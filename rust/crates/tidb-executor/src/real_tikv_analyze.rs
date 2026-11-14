@@ -905,16 +905,9 @@ fn find_statement_table<'catalog>(
     if let Some(table) = &statement.local_temporary_table {
         return Ok(table.clone());
     }
-    catalog
-        .stored_schemas()
-        .iter()
-        .find(|database| database.read().name.lowercase() == statement.schema.go_to_lower().as_str())
-        .and_then(|database| {
-            database
-                .read().deprecated_tables
-                .iter_deref()
-                .find(|stored| stored.read().name.lowercase() == statement.table.go_to_lower().as_str())
-        })
+    catalog.try_table_info_by_name(&statement.schema, &statement.table)
+        .map_err(|e| ClusterAnalyzeError::Mysql(e.to_mysql_error()))?
+        .map(|(_, table)| table)
         .ok_or_else(|| {
             ClusterAnalyzeError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.gen_with_stack_by_args(

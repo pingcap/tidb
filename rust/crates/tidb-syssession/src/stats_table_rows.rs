@@ -275,14 +275,9 @@ pub fn locate<'catalog>(
     catalog: &'catalog SessionExtendedInfoSchema,
     name: &str,
 ) -> Result<tidb_model::GoShared<TableInfo>, StatsWriteError> {
-    catalog
-        .schema_by_name(SYSTEM_DB)
-        .and_then(|database| {
-            database
-                .read().deprecated_tables
-                .iter_deref()
-                .find(|stored| stored.read().name.lowercase() == name)
-        })
+    catalog.try_table_info_by_name(SYSTEM_DB, name)
+        .map_err(SystemTableError::from)?
+        .map(|(_, info)| info)
         .ok_or_else(|| StatsWriteError::MissingTable(format!("{SYSTEM_DB}.{name}")))
 }
 

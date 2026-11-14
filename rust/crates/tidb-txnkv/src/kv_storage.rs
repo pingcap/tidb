@@ -91,6 +91,16 @@ pub trait Transaction: Send {
 
 /// Go `kv.Storage`, narrowed to `Begin` and `GetSnapshot`.
 pub trait Storage: Send + Sync {
+    /// Go helper.Storage's GetMvccByEncodedKeyWithTS capability. Zero denotes
+    /// a store that cannot expose commit timestamps.
+    fn mvcc_commit_ts(&self, _key: &[u8], _start_ts: u64) -> Result<u64, String> {
+        Ok(0)
+    }
+    /// Go `meta.GetOldestSchemaVersion`; None is a store without helper.Storage.
+    fn oldest_schema_version(&self) -> Result<Option<i64>, String> {
+        Ok(None)
+    }
+
     /// Go `Begin`: a writable transaction at a fresh timestamp.
     fn begin(&self) -> Result<Box<dyn Transaction>, OptimisticCoordinatorError>;
 
@@ -102,6 +112,13 @@ pub trait Storage: Send + Sync {
 /// A shared storage handle is the storage, as Go's `kv.Storage` interface
 /// value is whatever pointer carries it.
 impl<T: Storage + ?Sized> Storage for std::sync::Arc<T> {
+    fn mvcc_commit_ts(&self, key: &[u8], start_ts: u64) -> Result<u64, String> {
+        (**self).mvcc_commit_ts(key, start_ts)
+    }
+    fn oldest_schema_version(&self) -> Result<Option<i64>, String> {
+        (**self).oldest_schema_version()
+    }
+
     fn begin(&self) -> Result<Box<dyn Transaction>, OptimisticCoordinatorError> {
         (**self).begin()
     }

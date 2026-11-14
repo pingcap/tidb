@@ -745,7 +745,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let (database, table, _) = self.qualified(&split.table);
         if let Some(info) = self
             .source
-            .find_table(&database, &table)
+            .try_find_table(&database, &table)?
             .and_then(|source| source.table_info.clone())
         {
             let info = info.read();

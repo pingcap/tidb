@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 7,
-    "open": 0,
-    "partial": 7
+    "open": 1,
+    "partial": 6
   },
   "findings": [
     {
@@ -22,6 +22,14 @@
       "finding": "The ingest (fast-reorg) backfill runs: `ddl.Start` initializes Go's ingest environment (`InitGlobalLightningEnv` on TiKV, `CleanUpTempDirLoop`), ADD INDEX picks `ReorgType::INGEST` and, under `tidb_enable_dist_task`, Go's DXF backfill task (`tidb-ddl` `real_tikv_ddl/backfilling_dist.rs`, `backfilling_dist_{executor,scheduler}.rs`), whose local backend (`tidb-ddl-ingest`, `tidb-ingestor-ingestctrl`) sorts on disk and imports through TiKV's ImportSST, then merges the temporary index as its own DXF step and checks a unique index's remote duplicates; `autoPauseAddIndexJobOnKVDiskFull` (`tidb-ddl` `index.rs`), the status port's `/ingest/*` routes (`tidb-server` `ingest_handler.rs`) and the backfill executor's Top SQL attach are Go's; the testkit's mock store runs `InitDistTaskLoop` as Go's `BootstrapSession` does. A live TiKV ADD INDEX / UNIQUE INDEX / duplicate case answers as Go's (job comment `ingest, DXF, max_node_count=3`, Go's 1062 text). Left: Go's dynamic resource and task-parameter changes, the local backend's region split/scatter and retry coverage against Go's `ingestctrl` tests, global sort, and the remaining `pkg/ddl/ingest` / realtikv test inventory",
       "rust_evidence": "`rust/crates/tidb-ddl/src/real_tikv_ddl/backfilling_dist.rs`, `rust/crates/tidb-ingestor-ingestctrl`",
       "go_owner": "`pkg/ddl/backfilling*.go`, `pkg/ddl/ingest`"
+    },
+    {
+      "id": "D03",
+      "status": "open",
+      "group": "DDL: plan against Go's schema image",
+      "finding": "A DDL job step plans against `InfoCache::try_metadata_copy()` (`tidb-ddl/src/cluster_ddl.rs` `plan_persisted_ddl_job_with` and the job-delivery path, `tidb-infoschema-issyncer/src/catalog_watch.rs`), which under InfoSchema V2 loads every table of every schema (`schema_table_infos` per database) into a fresh V1 image on each step: O(all tables) per step where Go's `transitOneJobStep` reads the lazy `jobCtx.infoCache.GetLatest()`. The DDL table reads are already Go's V2 lookups (`TableByID`, `TableByName`, `TableExists`, `GetTableReferredForeignKeys`, `ListTablesWithSpecialAttribute`); left: plan job steps against the V2 image itself and drop the materializing copy",
+      "rust_evidence": "`rust/crates/tidb-ddl/src/cluster_ddl.rs` (`plan_persisted_ddl_job_with`), `rust/crates/tidb-infoschema/src/lib.rs` (`try_metadata_copy`)",
+      "go_owner": "`pkg/ddl/job_worker.go` (`transitOneJobStep`), `pkg/infoschema/infoschema_v2.go`"
     },
     {
       "id": "C01",
@@ -46,13 +54,6 @@
       "go_owner": "`pkg/expression`"
     },
     {
-      "id": "I04",
-      "status": "partial",
-      "group": "Expanded subsystem ownership review",
-      "finding": "No lazy InfoSchema V2, schema-cache-size loader/evictor or InfoCache timestamp ranges; `ReportMinStartTS` reads the InfoCache's recent-schema TS (`GetAndResetRecentInfoSchemaTS`), which nothing lowers because no V2 reader calls `keepAlive`",
-      "go_owner": "`pkg/infoschema`"
-    },
-    {
       "id": "E07",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
@@ -62,6 +63,6 @@
     }
   ],
   "unresolved": 7,
-  "open": 0,
-  "partial": 7
+  "open": 1,
+  "partial": 6
 }

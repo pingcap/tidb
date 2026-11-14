@@ -257,7 +257,7 @@ pub fn load_catalog_from_cluster(
     opener: &dyn Storage,
     timeout: Duration,
 ) -> Result<SessionExtendedInfoSchema, ClusterCatalogError> {
-    load_catalog_from_cluster_at(opener, timeout).map(|(catalog, _)| catalog)
+    load_catalog_at_for_mode(opener, timeout, false).map(|(catalog, _)| catalog)
 }
 
 /// [`load_catalog_from_cluster`] together with the PD timestamp the load read
@@ -269,14 +269,24 @@ pub fn load_catalog_from_cluster_at(
     opener: &dyn Storage,
     timeout: Duration,
 ) -> Result<(SessionExtendedInfoSchema, u64), ClusterCatalogError> {
+    load_catalog_at_for_mode(opener, timeout, tidb_vardef::SCHEMA_CACHE_SIZE.load(std::sync::atomic::Ordering::Acquire) > 0)
+}
+
+/// Go Loader.shouldUseV2: domain startup may prepare a lazy image; raw
+/// metadata consumers without a table factory require the complete image.
+fn load_catalog_at_for_mode(opener: &dyn Storage, timeout: Duration, use_v2: bool)
+    -> Result<(SessionExtendedInfoSchema, u64), ClusterCatalogError> {
     let mut transaction = opener
         .begin_read_only()
         .map_err(coordinator_catalog_error)?;
     let lease_grant_ts = transaction.start_ts();
-    let catalog = {
+    let mut catalog = {
         let mut snapshot = TransactionMetaSnapshot::new(transaction.as_mut(), timeout);
-        load_info_schema(&mut snapshot)?
+        crate::catalog_reload::load_info_schema_for_mode(&mut snapshot, use_v2)?
     };
+    if catalog.schema_meta_version() > 0 {
+        catalog.set_schema_commit_ts(opener.mvcc_commit_ts(&tidb_meta::key::schema_diff_kv_key(catalog.schema_meta_version()), lease_grant_ts).unwrap_or(0));
+    }
     transaction
         .finish_without_writes()
         .map_err(coordinator_catalog_error)?;
@@ -303,7 +313,13 @@ pub fn reload(
         // The node's allocator registry, so an applied rebase diff drops the
         // ranges reserved before it (see `catalog_reload`).
         let mut snapshot = TransactionMetaSnapshot::new(transaction.as_mut(), timeout);
-        cache.reload_with_ts(&mut snapshot, current)?
+        // Go `getTimestampForSchemaVersionWithNonEmptyDiff`: the commit TS of
+        // the version's schema diff, set before the image is built.
+        cache.reload_with_ts_at(&mut snapshot, current, &|version| {
+            opener
+                .mvcc_commit_ts(&tidb_meta::key::schema_diff_kv_key(version), lease_grant_ts)
+                .unwrap_or(0)
+        })?
     };
     transaction
         .finish_without_writes()
@@ -347,7 +363,7 @@ pub fn note_reload(
     match reloaded {
         ReloadedCatalog::Unchanged { version } => {
             validator.update(lease_grant_ts, 0, version, None);
-            crate::catalog_watch::CatalogReloadPass::Unchanged
+            crate::catalog_watch::CatalogReloadPass::UnchangedAt(lease_grant_ts)
         }
         ReloadedCatalog::Cached { catalog } => {
             // Go LoadWithTS returns cacheHit=true, oldVersion=0, changes=nil.

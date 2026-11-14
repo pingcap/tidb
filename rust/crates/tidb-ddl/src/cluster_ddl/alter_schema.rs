@@ -387,7 +387,10 @@ pub fn schema_tiflash_replica_tables<'catalog>(
                 .gen_with_stack_by_args(&[]),
         )));
     }
-    let tables = database.read().deprecated_tables.iter_deref().collect::<Vec<_>>();
+    // Go `is.SchemaTableInfos`.
+    let tables = catalog
+        .schema_table_infos(database.read().name.original())
+        .map_err(DdlPlanError::Meta)?;
     if tables.is_empty() {
         return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
             &tidb_infoschema::infoschema_errors::ERR_EMPTY_DATABASE
@@ -402,11 +405,12 @@ pub fn schema_tiflash_replica_tables<'catalog>(
 /// system schemas whose TiFlash replica is not available yet.
 #[must_use]
 pub fn pending_tiflash_table_count(catalog: &SessionExtendedInfoSchema) -> u32 {
+    // Go `is.ListTablesWithSpecialAttribute(TiFlashAttribute)`.
     let count = catalog
-        .stored_schemas()
-        .iter()
-        .filter(|database| !tidb_metadef::is_mem_or_sys_db(database.read().name.lowercase()))
-        .flat_map(|database| database.read().deprecated_tables.iter_deref())
+        .list_tables_with_special_attribute(|table| table.tiflash_replica.is_some())
+        .into_iter()
+        .filter(|(database, _)| !tidb_metadef::is_mem_or_sys_db(database.lowercase()))
+        .flat_map(|(_, tables)| tables)
         .filter(|table| {
             table
                 .read()

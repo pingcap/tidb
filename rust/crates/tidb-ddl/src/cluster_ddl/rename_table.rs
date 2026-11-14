@@ -91,12 +91,7 @@ fn check_renamable(
     table_id: i64,
     operation: &str,
 ) -> Result<(), DdlPlanError> {
-    let Some(table) = catalog
-        .stored_schemas()
-        .iter()
-        .flat_map(|database| database.read().deprecated_tables.iter_deref())
-        .find(|table| table.read().id == table_id)
-    else {
+    let Some(table) = catalog.table_info_by_id(table_id) else {
         return Ok(());
     };
     let table = table.read();
@@ -345,26 +340,16 @@ fn referred_foreign_keys(
     schema: &str,
     table: &str,
 ) -> Vec<(String, String, String)> {
-    let mut referred = Vec::new();
-    for database in &catalog.stored_schemas() {
-        for child in database.read().deprecated_tables.iter_deref() {
-            let child = child.read();
-            for fk in child.foreign_keys.iter_deref() {
-                let fk = fk.read();
-                if fk.version < tidb_model::table::FK_VERSION1 {
-                    continue;
-                }
-                if fk.ref_schema.lowercase() == schema && fk.ref_table.lowercase() == table {
-                    referred.push((
-                        database.read().name.lowercase().to_owned(),
-                        child.name.lowercase().to_owned(),
-                        fk.name.lowercase().to_owned(),
-                    ));
-                }
-            }
-        }
-    }
-    referred
+    crate::foreign_key_build::get_table_referred_foreign_keys(catalog, schema, table)
+        .into_iter()
+        .map(|referred| {
+            (
+                referred.child_schema.lowercase().to_owned(),
+                referred.child_table.lowercase().to_owned(),
+                referred.child_fk_name.lowercase().to_owned(),
+            )
+        })
+        .collect()
 }
 
 /// Go `checkAndRenameTables` and `adjustForeignKeyChildTableInfoAfterRenameTable`
@@ -621,11 +606,7 @@ pub(super) fn on_rename_table(
                 ),
             ));
         };
-        if database
-            .read().deprecated_tables
-            .iter_deref()
-            .any(|table| table.read().name.lowercase() == info.new_table_name.lowercase())
-        {
+        if catalog.table_exists(database.read().name.original(), info.new_table_name.original()) {
             return Err(cancel_ddl_job(
                 active,
                 DdlPlanError::from(

@@ -63,7 +63,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         table_name: &str,
         index: Option<&str>,
     ) -> Result<CheckTable, PlanError> {
-        let Some(table) = self.source.find_table(db_name, table_name) else {
+        let Some(table) = self.source.try_find_table(db_name, table_name)? else {
             return Err(PlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                     .fast_gen_by_args(&[db_name.into(), table_name.into()]),

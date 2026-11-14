@@ -162,7 +162,7 @@ impl<S: TableSource, C: tidb_exprctx::Columns> PlanBuilder<'_, S, C> {
                 [database, table] => (database.as_str(), table.as_str()),
                 _ => return Err(PlanError::internal("a table reference has no name")),
             };
-            if self.source.find_view(database, table).is_some() {
+            if self.source.try_find_view(database, table)?.is_some() {
                 return Err(PlanError::internal(format!(
                     "delete view {written} is not supported now"
                 )));
@@ -172,7 +172,7 @@ impl<S: TableSource, C: tidb_exprctx::Columns> PlanBuilder<'_, S, C> {
                     "delete sequence {written} is not supported now"
                 )));
             }
-            let meta = self.source.find_table(database, table).ok_or_else(|| {
+            let meta = self.source.try_find_table(database, table)?.ok_or_else(|| {
                 PlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                         .fast_gen_by_args(&[database.into(), table.into()]),

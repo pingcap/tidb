@@ -43,6 +43,7 @@ use super::node_fixture::{rows, session_context, ABC_HASH};
 use crate::domain::configured_user_store::ConfiguredUserStore;
 use crate::domain::unistore_node::{unistore_cluster_session_stack, UnistoreClusterStack};
 
+mod infoschema_v2;
 mod go_executor_protocol;
 mod chunk_allocator;
 mod upgrade;
@@ -2351,6 +2352,43 @@ fn handle_stats_schema_change(session: &mut Session, event: &SchemaChangeEvent) 
         &[tidb_stats_handle_util::FLAG_WRAP_TXN],
     )
     .unwrap_or_else(|error| panic!("stats subscriber handles the source event: {error}"));
+}
+
+/// Go `UpdateSCtxVarsForStats` copies the GLOBAL-only
+/// `tidb_enable_historical_stats` onto the statistics session as the field
+/// `SessionVars.EnableHistoricalStats`. Writing it as a session variable
+/// instead failed (and was ignored) on every statistics read, its error
+/// capturing a native backtrace -- enough to push sync loads past Go's 100 ms
+/// wait.
+#[test]
+fn statistics_sessions_copy_global_historical_stats_as_a_field_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(19011)).unwrap();
+    let pool = stack.factory.advanced_sys_session_pool();
+    let read = || {
+        let mut enabled = None;
+        tidb_stats_handle_util::call_with_sctx(
+            pool.as_ref(),
+            |sctx| {
+                let context = sctx
+                    .as_any()
+                    .downcast_ref::<super::super::sessions::ClusterStatsSessionContext>()
+                    .expect("native statistics session");
+                enabled = Some(context.with_session(|session| {
+                    Ok(session.session.vars.enable_historical_stats)
+                })?);
+                Ok(())
+            },
+            &[],
+        )
+        .unwrap();
+        enabled.unwrap()
+    };
+    assert!(!read());
+    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
+    assert!(read());
+    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = OFF");
+    assert!(!read());
 }
 
 // Go statistics DDL tests explicitly HandleNextDDLEventWithTxn before reading
@@ -4813,7 +4851,10 @@ fn drop_schema_ddl_retires_all_statistics_like_go() {
             .schema_by_name("stats_drop_schema")
             .expect("created database is published");
         let mut ids = Vec::new();
-        for table in database.read().deprecated_tables.iter_deref() {
+        for table in catalog
+            .schema_table_infos(database.read().name.original())
+            .unwrap()
+        {
             let table = table.read();
             if let Some(partition) = &table.partition {
                 ids.extend(
@@ -28165,10 +28206,16 @@ fn init_stats_on(
     mode: tidb_stats_handle::bootstrap::InitialStatsLoad,
 ) -> tidb_stats_handle_syncload::stats_watch::StatsSnapshot {
     let catalog = stack.factory.catalog.get_latest();
+    // Go `InfoSchema.SchemaTableInfos` over every schema (V2 keeps no
+    // `DBInfo.Deprecated.Tables`).
     let targets: Vec<_> = catalog
         .stored_schemas()
         .iter()
-        .flat_map(|database| database.read().deprecated_tables.iter_deref())
+        .flat_map(|database| {
+            catalog
+                .schema_table_infos(database.read().name.original())
+                .unwrap()
+        })
         .flat_map(|table| tidb_stats_handle_syncload::real_tikv_stats::StatsTarget::for_table(&table.read()))
         .collect();
     tidb_stats_handle::bootstrap::init_stats(
@@ -28425,10 +28472,7 @@ fn the_async_load_drains_the_demand_on_the_domains_sessions_as_go() {
 
     let catalog = stack.factory.catalog.get_latest();
     let table = catalog
-        .stored_schemas()
-        .iter()
-        .flat_map(|database| database.read().deprecated_tables.iter_deref())
-        .find(|table| table.read().id == table_id)
+        .table_info_by_id(table_id)
         .expect("the table is in the catalog");
     let targets = tidb_stats_handle_syncload::real_tikv_stats::StatsTarget::for_table(&table.read());
     let pool = stack.factory.advanced_sys_session_pool();
@@ -28460,11 +28504,8 @@ fn column_distribution_stats_read_on_a_statistics_session_as_go() {
     rows(&mut session, "INSERT INTO test.distribution VALUES (1, 1, 1), (2, 2, 1), (3, 3, 1)");
     rows(&mut session, "ANALYZE TABLE test.distribution COLUMNS id, v");
     let catalog = stack.factory.catalog.get_latest();
-    let table = catalog
-        .stored_schemas()
-        .iter()
-        .flat_map(|database| database.read().deprecated_tables.iter_deref())
-        .find(|table| table.read().name.original() == "distribution")
+    let (_, table) = catalog
+        .table_info_by_name("test", "distribution")
         .expect("the table is in the catalog");
     let (table_id, v_info, w_info) = {
         let table = table.read();

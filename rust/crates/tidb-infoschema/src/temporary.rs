@@ -87,7 +87,7 @@ impl SessionExtendedInfoSchema {
     /// answers an EMPTY iterator for `TempTableGlobal` so nothing outside the
     /// current transaction's own buffer is ever visible.
     pub fn global_temporary_table_ids(&self) -> Vec<(String, String)> {
-        let mut ids = Vec::new();
+        let mut ids = self.v2().map_or_else(Vec::new, |v2| v2.global_temporary_table_names());
         for (folded_database, schema) in self.schema.databases.iter() {
             for (folded_name, entry) in &schema.tables {
                 if matches!(&**entry, TableEntry::Kv(table)
@@ -98,6 +98,7 @@ impl SessionExtendedInfoSchema {
             }
         }
         ids.sort();
+        ids.dedup();
         ids
     }
 

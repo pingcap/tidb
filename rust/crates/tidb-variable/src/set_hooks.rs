@@ -155,6 +155,19 @@ impl SessionVars {
                 }
             }
         }
+        // Go TiDBSchemaCacheSize.SetGlobal persists and resizes before
+        // publishing the vardef value; INSTANCE invokes the same callback.
+        let schema_cache_size = name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE);
+        if schema_cache_size {
+            let scope = if is_global { crate::sysvar::SCOPE_GLOBAL } else { crate::sysvar::SCOPE_INSTANCE };
+            let normalized = crate::sysvar::get_sys_var(name).unwrap().validate_in_scope(&value, scope)
+                .map_err(|error| validation_var_error(name, &value, error))?.value;
+            let bytes = crate::varsutil::parse_byte_size(&normalized).map(|(bytes, _)| bytes)
+                .or_else(|| normalized.parse::<u64>().ok());
+            if bytes != Some(tidb_vardef::SCHEMA_CACHE_SIZE.load(std::sync::atomic::Ordering::Acquire)) {
+                if let Some(globals) = self.globals.clone() { globals.run_set_global_hook(name, &normalized)?; }
+            }
+        }
         let truncated = if is_global {
             self.set_global(name, value.clone())
         } else {
@@ -170,7 +183,7 @@ impl SessionVars {
             // assignment the variable layer already accepted and clamped.
             if let Some(globals) = self.globals.clone() {
                 let stored = self.get_global(name)?;
-                globals.run_set_global_hook(name, &stored)?;
+                if !schema_cache_size { globals.run_set_global_hook(name, &stored)?; }
                 if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_REDACT_LOG) {
                     self.set_enable_redact_log(stored);
                 }

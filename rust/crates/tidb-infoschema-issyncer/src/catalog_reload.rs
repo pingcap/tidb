@@ -42,7 +42,7 @@ use tidb_model::schema_state::SchemaState;
 use tidb_model::{GoShared, GoSharedPointerSlice};
 
 use tidb_infoschema::cluster_catalog::{
-    list_tables, load_info_schema_keeping, normalize_diff_loaded_table_info, with_meta_reader,
+    list_tables, normalize_diff_loaded_table_info, with_meta_reader,
     ClusterCatalogError, MetaSnapshot,
 };
 use tidb_infoschema::SessionExtendedInfoSchema;
@@ -254,7 +254,11 @@ fn reload_catalog<S: MetaSnapshot>(snapshot: &mut S, current: &SessionExtendedIn
         }
     };
 
-    let mut catalog = if cross_ks {crate::cross_ks::load_info_schema(snapshot)?} else {load_info_schema(snapshot)?};
+    let mut catalog = if cross_ks {
+        crate::cross_ks::load_info_schema(snapshot)?
+    } else {
+        load_info_schema_for_mode(snapshot, current.is_v2())?
+    };
     // The diff whose absence set `needed` back one version is still absent at
     // this snapshot, so the full load's own version reading is stepped back
     // the same way rather than trusting the raw counter.
@@ -277,6 +281,22 @@ fn apply_diff_range<S: MetaSnapshot>(
 ) -> Result<Result<ReloadedCatalog, FullReloadReason>, ClusterCatalogError> {
     // Go `InitWithOldInfoSchema`: the diffs apply to a copy over the
     // current version's `DBInfo` pointers.
+    let mut diffs = Vec::new();
+    let mut table_ids = std::collections::HashSet::new();
+    let mut dropped_schemas = std::collections::HashSet::new();
+    for version in loaded + 1..=needed {
+        let diff = read_schema_diff(snapshot, version)?;
+        if let Some(diff) = &diff {
+            if diff.regenerate_schema_map { return Ok(Err(FullReloadReason::RegenerateSchemaMap { version })); }
+            table_ids.extend([diff.table_id, diff.old_table_id]);
+            for affected in diff.affected_options.iter_handles().flatten() {
+                let affected = affected.read();
+                table_ids.extend([affected.table_id, affected.old_table_id]);
+            }
+            if diff.action_type == ActionType::ACTION_DROP_SCHEMA { dropped_schemas.insert(diff.schema_id); }
+        }
+        diffs.push((version, diff));
+    }
     let mut catalog = if cross_ks {
         SessionExtendedInfoSchema::init_with_db_infos_for_cross_ks(
             current.stored_schemas(),
@@ -285,16 +305,17 @@ fn apply_diff_range<S: MetaSnapshot>(
             current.schema_meta_version(),
         )
     } else {
-        current.metadata_copy()
+        current.metadata_copy_for_diff(Some((&table_ids, &dropped_schemas)))?
     };
     catalog.set_schema_ts(snapshot.start_ts());
     let mut applied = 0usize;
     let mut changes = RelatedSchemaChange::default();
-    for version in (loaded + 1)..=needed {
-        let Some(diff) = read_schema_diff(snapshot, version)? else {
+    for (version, diff) in diffs {
+        let Some(diff) = diff else {
             // Go skips an empty diff: the version-bumping transaction committed
             // and the DDL's did not, so the version carries no change at all.
             catalog.set_schema_meta_version(version);
+            catalog.record_empty_schema_version(version);
             continue;
         };
         if crate::cross_ks::skip_loading_diff(cross_ks, &diff) {
@@ -335,6 +356,7 @@ fn apply_diff_range<S: MetaSnapshot>(
         // Go `Builder.SetSchemaVersion(diff.Version)`; the stored diff's own
         // version field and its key agree, and the key is authoritative.
         catalog.set_schema_meta_version(version);
+        catalog.record_v2_diff_image(version);
         applied += 1;
         // Go `canSkipSchemaCheckerDDL` (`loader.go:624-630`): a TiFlash
         // replica change never invalidates a transaction.
@@ -1006,16 +1028,17 @@ fn create_table<S: MetaSnapshot>(
 pub fn load_info_schema<S: MetaSnapshot + ?Sized>(
     snapshot: &mut S,
 ) -> Result<SessionExtendedInfoSchema, ClusterCatalogError> {
+    load_info_schema_for_mode(snapshot, false)
+}
+
+/// Go `Loader.fetchAllSchemasWithTables` with the selected V1/V2 mode.
+pub fn load_info_schema_for_mode<S: MetaSnapshot + ?Sized>(snapshot: &mut S, use_v2: bool) -> Result<SessionExtendedInfoSchema, ClusterCatalogError> {
     use tidb_domainutil::REPAIR_INFO;
-    let mut schema = load_info_schema_keeping(snapshot, &mut |di, tbl| {
+    tidb_infoschema::cluster_catalog::load_info_schema_for_mode(snapshot, &mut |di, tbl| {
         !(REPAIR_INFO.in_repair_mode()
             && REPAIR_INFO.check_and_fetch_repaired_table(di, tbl)
             && tbl.read().state != tidb_model::schema_state::SchemaState::PUBLIC)
-    })?;
-    schema.set_uses_infoschema_v2(
-        tidb_vardef::SCHEMA_CACHE_SIZE.load(std::sync::atomic::Ordering::SeqCst) > 0,
-    );
-    Ok(schema)
+    }, use_v2)
 }
 
 /// Go `applyCreateTable`'s failpoint `repairFetchCreateTable`: a repair test

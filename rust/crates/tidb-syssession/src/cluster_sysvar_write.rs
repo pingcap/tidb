@@ -208,14 +208,9 @@ struct StoredRow {
 }
 
 fn locate(catalog: &SessionExtendedInfoSchema) -> Result<tidb_model::GoShared<TableInfo>, SysvarWriteError> {
-    catalog
-        .schema_by_name(SYSTEM_DB)
-        .and_then(|database| {
-            database
-                .read().deprecated_tables
-                .iter_deref()
-                .find(|stored| stored.read().name.lowercase() == GLOBAL_VARIABLES_TABLE)
-        })
+    catalog.try_table_info_by_name(SYSTEM_DB, GLOBAL_VARIABLES_TABLE)
+        .map_err(SystemTableError::from)?
+        .map(|(_, info)| info)
         .ok_or(SysvarWriteError::MissingTable)
 }
 

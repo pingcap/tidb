@@ -1728,9 +1728,12 @@ impl GlobalSysvars {
             }
             values.insert(key.clone(), stored_value.clone());
         }
-        if !def.has_global_scope() {
-            // Go `SetInstanceSysVar`: the hook is the whole write; the
-            // INSTANCE tier has no row and no cache.
+        if scope == SCOPE_INSTANCE || !def.has_global_scope() {
+            // Go `SetInstanceSysVar` (`SET INSTANCE`, or any write of an
+            // INSTANCE-only variable): the hook is the whole write -- no
+            // `mysql.global_variables` row and no sysvar-cache rebuild, which
+            // would re-run a GLOBAL|INSTANCE variable's hook with the stored
+            // GLOBAL value and undo the assignment.
             self.apply_set_global_hook(&key, &stored_value);
             self.refresh_resolved();
             self.record_instance_mutation(InstanceMutation::Set(key.clone(), stored_value));

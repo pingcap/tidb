@@ -65,7 +65,7 @@
 
 use std::collections::BTreeMap;
 use tidb_mysql::PrivilegeType;
-use tidb_model::{DBInfo, GoShared, GoSharedPointerSlice, IndexInfo, SchemaState, TableInfo};
+use tidb_model::{DBInfo, GoShared, GoSharedPointerSlice, SchemaState, TableInfo};
 
 /// Go `table.Column`: the shared `*model.ColumnInfo` and its parsed
 /// `GeneratedExpr`.
@@ -512,6 +512,20 @@ pub trait TableSource {
     /// Both names are matched case-insensitively, as Go does through `CIStr.L`.
     fn find_table(&self, db_name: &str, table_name: &str) -> Option<&SourceTable>;
 
+    /// Go `InfoSchema.TableByName`: preserve lazy storage errors during planning.
+    fn try_find_table(&self, db: &str, table: &str) -> Result<Option<&SourceTable>, tidb_terror::MysqlError> {
+        Ok(self.find_table(db, table))
+    }
+    /// Go `InfoSchema.TableByName` for view metadata.
+    fn try_find_view(&self, db: &str, table: &str) -> Result<Option<&SourceView>, tidb_terror::MysqlError> {
+        Ok(self.find_view(db, table))
+    }
+    /// Go `DetachLocalTemporaryTableInfoSchema.TableByName`.
+    fn try_find_table_ignoring_local_temporary(&self, db: &str, table: &str) -> Result<Option<&SourceTable>, tidb_terror::MysqlError> {
+        Ok(self.find_table_ignoring_local_temporary(db, table))
+    }
+
+
     /// Go `is.SchemaByName(dbName) != nil`, so an unknown DATABASE reports
     /// `ErrBadDB` rather than `ErrNoSuchTable`.
     fn database_exists(&self, db_name: &str) -> bool;
@@ -570,6 +584,11 @@ pub trait TableSource {
     ) -> Option<&SourceTable> {
         self.find_table(db_name, table_name)
             .filter(|table| !table.is_local_temporary())
+    }
+
+    /// Go `TableByName` on the detached schema, retaining lazy loader errors.
+    fn try_find_view_ignoring_local_temporary(&self, db: &str, table: &str) -> Result<Option<&SourceView>, tidb_terror::MysqlError> {
+        Ok(self.find_view_ignoring_local_temporary(db, table))
     }
 
     /// Go `privilege.GetPrivilegeManager(b.ctx)`, which the planner asks for a
@@ -746,6 +765,16 @@ pub struct LatestIndexSchema {
     pub schema_meta_version: u64,
     /// Go `InfoSchema.TableByID` followed by `TableInfo.Indices`.
     pub table_indexes: BTreeMap<i64, Vec<tidb_model::GoShared<tidb_model::IndexInfo>>>,
+    /// Go V2's lazy TableByID at the latest schema timestamp.
+    pub lazy: Option<crate::infoschema_v2::InfoSchemaV2>,
+}
+impl LatestIndexSchema {
+    /// Go `GetLatestIndexInfo`: retrieve only this logical table's indexes.
+    pub fn indexes_for_table(&self, id: i64) -> Option<Vec<tidb_model::GoShared<tidb_model::IndexInfo>>> {
+        self.table_indexes.get(&id).cloned().or_else(|| {
+            self.lazy.as_ref()?.table_by_id(id, None).map(|t| t.info.read().indices.iter_deref().collect())
+        })
+    }
 }
 
 /// Go `sctx.GetLatestInfoSchema()` as `metabuild.WithInfoSchema` keeps it

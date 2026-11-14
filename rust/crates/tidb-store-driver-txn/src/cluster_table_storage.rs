@@ -443,6 +443,12 @@ impl<S: StoreClient> ClusterSnapshot for StatementSnapshot<S> {
         }
     }
 
+    fn set_request_source(&mut self, source: &tidb_txnkv::RequestSource) {
+        if let Some(transaction) = self.transaction.as_mut() {
+            transaction.set_request_source(source);
+        }
+    }
+
     fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
         if let Some(transaction) = self.transaction.as_mut() {
             transaction.set_statement_kv_context(context.clone());

@@ -1817,8 +1817,8 @@ fn rebuilt_bundles_for_policy(
             .is_some_and(|reference| reference.read().name.lowercase() == policy.lowercase())
     };
     let mut bundles = Vec::new();
-    for database in &catalog.stored_schemas() {
-        for table in database.read().deprecated_tables.iter_deref() {
+    for (_, tables) in catalog.list_tables_with_special_attribute(placement_policy_attribute) {
+        for table in tables {
             let table = table.read();
             let definitions = table
                 .partition
@@ -2009,11 +2009,28 @@ fn find_policy<S: MetaSnapshot>(
     Ok(None)
 }
 
+/// Go `infoschemacontext.PlacementPolicyAttribute`: the table or one of its
+/// partitions names a placement policy.
+fn placement_policy_attribute(table: &TableInfo) -> bool {
+    table.placement_policy_ref.is_some()
+        || table.get_partition_info().is_some_and(|partition| {
+            partition
+                .read()
+                .definitions
+                .snapshot()
+                .iter()
+                .any(|definition| definition.placement_policy_ref.is_some())
+        })
+}
+
 /// Go `CheckPlacementPolicyNotInUseFromInfoSchema`: whether any table or
 /// partition still names this policy.
 fn policy_referenced(catalog: &SessionExtendedInfoSchema, policy: &CiString) -> bool {
-    catalog.stored_schemas().iter().any(|database| {
-        database.read().deprecated_tables.iter_deref().any(|table| {
+    catalog
+        .list_tables_with_special_attribute(placement_policy_attribute)
+        .into_iter()
+        .any(|(_, tables)| {
+        tables.into_iter().any(|table| {
             let table = table.read();
             if table
                 .placement_policy_ref
@@ -5199,17 +5216,10 @@ pub(crate) fn create_check_constraint_job(
             .expect("one ADD CHECK input appends one constraint")
             .read()
             .clone();
-        if catalog.schema_by_id(schema_id).is_some_and(|database| {
-            database
-                .read()
-                .deprecated_tables
-                .iter_deref()
-                .any(|candidate| {
-                    let candidate = candidate.read();
-                    candidate.constraints.iter_deref().any(|existing| {
-                        existing.read().name.lowercase() == constraint.name.lowercase()
-                    })
-                })
+        // Go `CreateCheckConstraint` checks the table's own constraints; the
+        // owner's `checkConstraintNamesNotExists` lists the schema from meta.
+        if stored.constraints.iter_deref().any(|existing| {
+            existing.read().name.lowercase() == constraint.name.lowercase()
         }) {
             return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
                 &tidb_dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME
@@ -5866,7 +5876,7 @@ pub fn schema_sync_before_step<S: MetaSnapshot>(
     job: &tidb_model::Job,
 ) -> Result<Option<PersistedDdlJobPlan>, DdlPlanError> {
     let catalog = match &schema_state.info_cache {
-        Some(cache) => cache.load_with_ts(snapshot, cache.capacity())?.metadata_copy(),
+        Some(cache) => cache.load_with_ts(snapshot, cache.capacity())?.try_metadata_copy()?,
         None => load_info_schema(snapshot)?,
     };
     let active = tidb_ddl_systable::ddl_job_table::ActiveDdlJob::from_job(job.clone());
@@ -5978,7 +5988,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         None => None,
     };
     let catalog = match &cached {
-        Some(cached) => cached.metadata_copy(),
+        Some(cached) => cached.try_metadata_copy()?,
         None => load_info_schema(snapshot)?,
     };
     let job_w = &schema_state.delivered_job;
@@ -8609,7 +8619,7 @@ pub fn plan_ddl<S: MetaSnapshot>(
     // Go `executor.AlterTable` refuses a view or a sequence before any
     // specification is looked at, whichever specification the statement carries.
     if let Some((schema, table)) = alter_table_target(statement) {
-        if let Some(stored) = find_database(&catalog, schema).and_then(|db| find_table(&db.read(), table)) {
+        if let Some((_, stored)) = catalog.table_info_by_name(schema, table) {
             refuse_non_base_table(&stored.read(), schema, table)?;
         }
     }
@@ -9243,7 +9253,7 @@ fn locate_table<'catalog>(
                 .gen_with_stack_by_args(&[(schema.to_owned()).into()]),
         ));
     };
-    let Some(stored) = find_table(&database.read(), table) else {
+    let Some((_, stored)) = catalog.table_info_by_name(database.read().name.original(), table) else {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.gen_with_stack_by_args(&[
                 (schema.to_owned()).into(),
@@ -9623,15 +9633,16 @@ fn find_database(catalog: &SessionExtendedInfoSchema, name: &str) -> Option<GoSh
         .find(|database| database.read().name.lowercase() == name)
 }
 
-fn find_table<'database>(
-    database: &'database DBInfo,
+/// Go `is.TableByName` within an already resolved schema: under V2 the
+/// table loads through the bounded cache, never from `DBInfo`'s table list.
+fn find_table(
+    catalog: &SessionExtendedInfoSchema,
+    database: &DBInfo,
     name: &str,
 ) -> Option<GoShared<TableInfo>> {
-    let name = name.go_to_lower();
-    database
-        .deprecated_tables
-        .iter_deref()
-        .find(|table| table.read().name.lowercase() == name)
+    catalog
+        .table_info_by_name(database.name.original(), name)
+        .map(|(_, table)| table)
 }
 
 #[cfg(test)]

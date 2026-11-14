@@ -441,13 +441,8 @@ fn table_delta_follows_commit_rollback_and_savepoint_lifecycle() {
     let table_id = node
         .catalog
         .get_latest()
-        .schema_by_name("app")
-        .and_then(|database| {
-            database
-                .read().deprecated_tables
-                .iter_deref()
-                .find(|table| table.read().name.lowercase() == "t")
-        })
+        .table_info_by_name("app", "t")
+        .map(|(_, table)| table)
         .expect("app.t exists")
         .read().id;
 

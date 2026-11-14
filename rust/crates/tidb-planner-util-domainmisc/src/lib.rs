@@ -51,8 +51,7 @@ pub fn get_latest_index_info(
     }
 
     let indexes = latest
-        .table_indexes
-        .get(&table_id)
+        .indexes_for_table(table_id)
         .into_iter()
         .flatten()
         .map(|index| (index.read().id, index.clone()))

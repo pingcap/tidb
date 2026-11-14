@@ -93,8 +93,8 @@ pub fn flash_replica_deprecated_response(
     let schema = domain.catalog_snapshot();
     let mut replica_infos = Vec::new();
     // Go `ListTablesWithSpecialAttribute(TiFlashAttribute)`.
-    for database in schema.stored_schemas() {
-        for tbl in database.read().deprecated_tables.iter_deref() {
+    for (_, tables) in schema.list_tables_with_special_attribute(|t| t.tiflash_replica.is_some()) {
+        for tbl in tables {
             append_tiflash_replica_info(&mut replica_infos, &tbl.read());
         }
     }

@@ -150,7 +150,7 @@ pub fn drop_table<S: MetaSnapshot>(
     let Some(database) = find_database(&catalog, schema) else {
         return missing();
     };
-    let Some(stored) = find_table(&database.read(), table) else {
+    let Some(stored) = find_table(&catalog, &database.read(), table) else {
         return missing();
     };
     let stored = stored.read();
@@ -186,7 +186,7 @@ pub fn drop_view<S: MetaSnapshot>(
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let catalog = load_info_schema(snapshot)?;
     let stored = find_database(&catalog, schema)
-        .and_then(|db| find_table(&db.read(), name).map(|table| (db.read().id, table)));
+        .and_then(|db| find_table(&catalog, &db.read(), name).map(|table| (db.read().id, table)));
     let Some((db_id, table)) = stored else {
         if if_exists {
             return Ok(Some(AddIndexSubmission::AlreadySatisfied {
@@ -226,7 +226,7 @@ pub fn drop_sequence<S: MetaSnapshot>(
     let catalog = load_info_schema(snapshot)?;
 
     let found = find_database(&catalog, schema).and_then(|database| {
-        find_table(&database.read(), name).map(|table| (database.read().id, table))
+        find_table(&catalog, &database.read(), name).map(|table| (database.read().id, table))
     });
     let Some((db_id, stored)) = found else {
         return Err(coded_refusal(
@@ -372,16 +372,12 @@ pub(super) fn check_database_has_foreign_key_referred(
         return Ok(());
     }
     let schema_name = database.name.original().to_owned();
+    // Go `is.SchemaSimpleTableInfos`: names only, no table loads under V2.
     let tables: Vec<(String, String)> = catalog
-        .schema_by_id(database.id)
-        .map(|loaded| {
-            loaded
-                .read().deprecated_tables
-                .iter_deref()
-                .map(|table| (schema_name.clone(), table.read().name.original().to_owned()))
-                .collect()
-        })
-        .unwrap_or_default();
+        .schema_simple_table_infos(&schema_name)
+        .into_iter()
+        .map(|table| (schema_name.clone(), table.table_name.original().to_owned()))
+        .collect();
     for (_, table_name) in &tables {
         if let Some(referred) = crate::foreign_key_build::check_table_has_foreign_key_referred(
             catalog,

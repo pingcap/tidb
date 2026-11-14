@@ -544,53 +544,8 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
         regions.into_iter().map(|region| self.decode_pd_region(region)).collect()
     }
 
-    fn mvcc_get_by_key(
-        &self,
-        encoded_key: &[u8],
-    ) -> Result<tikv_client::proto::kvrpcpb::MvccGetByKeyResponse, String> {
-        let backoffer = Arc::new(tokio::sync::Mutex::new(tikv_client::retry::RetryBackoffer::new(
-            tikv_client::async_util::Cancellation::default(),
-            MAX_BACKOFF_TIMEOUT_FOR_MVCC_GET,
-        )));
-        let pd = self.store.store().pd_client();
-        let encoded_key = self.encode_key(encoded_key)?;
-        loop {
-            let key = encoded_key.clone();
-            let located = Arc::clone(&pd);
-            let key_location = self
-                .block_on(async move { located.region_for_key(&key.into()).await })
-                .map_err(|error| error.to_string())?;
-            let request = tikv_client::transaction::lowering::new_mvcc_get_by_key_request(encoded_key.to_vec().into());
-            let sent = self.block_on(self.store.store().send_req(
-                Arc::clone(&backoffer),
-                request,
-                &key_location.ver_id(),
-                Duration::from_secs(60),
-            ));
-            let mvcc_resp = match sent {
-                Ok(response) => response,
-                Err(tikv_client::Error::RegionError(region_error)) => {
-                    let backoffer = Arc::clone(&backoffer);
-                    self.block_on(async move {
-                        backoffer
-                            .lock()
-                            .await
-                            .backoff(tikv_client::retry::BO_REGION_MISS, format!("{region_error:?}"))
-                            .await
-                    })
-                    .map_err(|error| error.to_string())?;
-                    continue;
-                }
-                Err(error) => return Err(error.to_string()),
-            };
-            if !mvcc_resp.error.is_empty() {
-                return Err(mvcc_resp.error);
-            }
-            if mvcc_resp.info.is_none() {
-                return Err("Invalid mvcc response result, the info field is nil".to_owned());
-            }
-            return Ok(mvcc_resp);
-        }
+    fn mvcc_get_by_key(&self, encoded_key: &[u8]) -> Result<kvrpcpb::MvccGetByKeyResponse, String> {
+        self.mvcc_get_by_key_with_ts(encoded_key, 0)
     }
 
     fn mvcc_get_by_start_ts(
@@ -756,4 +711,84 @@ fn pd_region(region: tikv_client::RegionWithLeader) -> crate::region_map::PdRegi
         start_key: region.region.start_key,
         end_key: region.region.end_key,
     }
+}
+
+impl<S: tikv_client::PdClient + 'static> TikvRegionStore<S> {
+    /// Go `Helper.GetMvccByEncodedKeyWithTS`: resolve pending locks before
+    /// interpreting schema-diff commit timestamps.
+    pub fn mvcc_get_by_key_with_ts(
+        &self,
+        encoded_key: &[u8],
+        start_ts: u64,
+    ) -> Result<tikv_client::proto::kvrpcpb::MvccGetByKeyResponse, String> {
+        let backoffer = Arc::new(tokio::sync::Mutex::new(tikv_client::retry::RetryBackoffer::new(
+            tikv_client::async_util::Cancellation::default(),
+            MAX_BACKOFF_TIMEOUT_FOR_MVCC_GET,
+        )));
+        let pd = self.store.store().pd_client();
+        // Go `CodecPDClient` / `codecV2.EncodeRequest`: the physical key.
+        let encoded_key = self.encode_key(encoded_key)?;
+        let encoded_key = encoded_key.as_slice();
+        loop {
+            let key = encoded_key.to_vec();
+            let located = Arc::clone(&pd);
+            let key_location = self
+                .block_on(async move { located.region_for_key(&key.into()).await })
+                .map_err(|error| error.to_string())?;
+            let request = tikv_client::transaction::lowering::new_mvcc_get_by_key_request(encoded_key.to_vec().into());
+            let sent = self.block_on(self.store.store().send_req(
+                Arc::clone(&backoffer),
+                request,
+                &key_location.ver_id(),
+                Duration::from_secs(60),
+            ));
+            let mvcc_resp = match sent {
+                Ok(response) => response,
+                Err(tikv_client::Error::RegionError(region_error)) => {
+                    let backoffer = Arc::clone(&backoffer);
+                    self.block_on(async move {
+                        backoffer
+                            .lock()
+                            .await
+                            .backoff(tikv_client::retry::BO_REGION_MISS, format!("{region_error:?}"))
+                            .await
+                    })
+                    .map_err(|error| error.to_string())?;
+                    continue;
+                }
+                Err(error) => return Err(error.to_string()),
+            };
+            if !mvcc_resp.error.is_empty() {
+                return Err(mvcc_resp.error);
+            }
+            if mvcc_resp.info.is_none() {
+                return Err("Invalid mvcc response result, the info field is nil".to_owned());
+            }
+            if let Some(lock) = mvcc_resp.info.as_ref().and_then(|info| info.lock.as_ref()).filter(|_| start_ts > 0) {
+                let latest = self.block_on(self.store.store().get_oracle().get_low_resolution_timestamp(&tikv_client::oracle::OracleOption {
+                    txn_scope: tikv_client::oracle::GLOBAL_TXN_SCOPE.to_owned(),
+                })).map_err(|error| error.to_string())?;
+                if start_ts > latest {
+                    return Err(format!("Snapshot ts={start_ts} is larger than latest allocated ts={latest}, lock could not be resolved"));
+                }
+                let lock = kvrpcpb::LockInfo {
+                    key: encoded_key.to_vec(), primary_lock: lock.primary.clone(), lock_version: lock.start_ts,
+                    lock_ttl: lock.ttl, txn_size: lock.txn_size, lock_type: lock.r#type,
+                    use_async_commit: lock.use_async_commit, lock_for_update_ts: lock.for_update_ts,
+                    ..Default::default()
+                };
+                let result = self.block_on(self.store.store().resolve_locks_with_opts(&kvrpcpb::Context::default(), backoffer.clone(),
+                    tikv_client::txnkv::txnlock::ResolveLocksOptions { caller_start_ts: start_ts, locks: vec![lock], lite: true, for_read: false, ..Default::default() }
+                )).map_err(|error| error.to_string())?;
+                if result.ttl > 0 {
+                    self.block_on(async {
+                        backoffer.lock().await.backoff_with_config_and_max_sleep(tikv_client::retry::BO_TXN_LOCK, Some(result.ttl as u64), "resolve lock fails".to_owned()).await
+                    }).map_err(|error| error.to_string())?;
+                }
+                continue;
+            }
+            return Ok(mvcc_resp);
+        }
+    }
+
 }

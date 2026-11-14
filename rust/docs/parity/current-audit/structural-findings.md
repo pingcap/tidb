@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**7 unresolved: 0 open, 7 partial.**
+**7 unresolved: 1 open, 6 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -16,7 +16,6 @@ unresolved until it is restated against its Go owner or closed.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| I04 | partial | No lazy InfoSchema V2, schema-cache-size loader/evictor or InfoCache timestamp ranges; `ReportMinStartTS` reads the InfoCache's recent-schema TS (`GetAndResetRecentInfoSchemaTS`), which nothing lowers because no V2 reader calls `keepAlive` | `pkg/infoschema` |
 
 ### DDL
 
@@ -24,6 +23,7 @@ unresolved until it is restated against its Go owner or closed.
 | --- | --- | --- | --- |
 | D01 | partial | Statements reach Go's typed executor methods from `execute_ddl` (Go `DDLExec.Next`), and most build their jobs directly (`tidb-ddl/src/executor.rs`, `cluster_ddl/executor_alter.rs`); the masking-policy snapshot cache, the shared repair loader and the table-mode checks are Go's. Go `Executor`'s `CreateSchemaWithInfo`, `CreateTableWithInfo`, `BatchCreateTableWithInfo` and `CreatePlacementPolicyWithInfo` are `ClusterDdl` methods, and CREATE TABLE / DATABASE / PLACEMENT POLICY reach them as Go's statement methods do (`create_with_info.rs`, Go's `TestCreateTableWithInfo`, `TestBatchCreateTable`, `TestCreatePlacementPolicyWithInfo`, `TestCreateTableWithBR`). Left: `CleanupTableLock` / `CreateMaskingPolicy` live in `tidb-session` rather than the DDL executor (Go's `ctx.ReleaseTableLocks` needs a `DdlSessionContext` that reaches the session's lock set); ALTER TABLE specs, DROP TABLE/VIEW/SEQUENCE lists and multi-schema changes still pass through this port's `DdlStatement` (`worker.rs` `execute_targets`, `cluster_ddl/alter_table.rs`, `multi_schema.rs`), and `lower_ddl_with_context` survives as a second lowering used by the session tests (`tests/mock_seams.rs`, `tests/schema_changes.rs`) | `pkg/ddl/executor.go` |
 | D02 | partial | The ingest (fast-reorg) backfill runs: `ddl.Start` initializes Go's ingest environment (`InitGlobalLightningEnv` on TiKV, `CleanUpTempDirLoop`), ADD INDEX picks `ReorgType::INGEST` and, under `tidb_enable_dist_task`, Go's DXF backfill task (`tidb-ddl` `real_tikv_ddl/backfilling_dist.rs`, `backfilling_dist_{executor,scheduler}.rs`), whose local backend (`tidb-ddl-ingest`, `tidb-ingestor-ingestctrl`) sorts on disk and imports through TiKV's ImportSST, then merges the temporary index as its own DXF step and checks a unique index's remote duplicates; `autoPauseAddIndexJobOnKVDiskFull` (`tidb-ddl` `index.rs`), the status port's `/ingest/*` routes (`tidb-server` `ingest_handler.rs`) and the backfill executor's Top SQL attach are Go's; the testkit's mock store runs `InitDistTaskLoop` as Go's `BootstrapSession` does. A live TiKV ADD INDEX / UNIQUE INDEX / duplicate case answers as Go's (job comment `ingest, DXF, max_node_count=3`, Go's 1062 text). Left: Go's dynamic resource and task-parameter changes, the local backend's region split/scatter and retry coverage against Go's `ingestctrl` tests, global sort, and the remaining `pkg/ddl/ingest` / realtikv test inventory | `pkg/ddl/backfilling*.go`, `pkg/ddl/ingest` |
+| D03 | open | A DDL job step plans against `InfoCache::try_metadata_copy()` (`tidb-ddl/src/cluster_ddl.rs` `plan_persisted_ddl_job_with` and the job-delivery path, `tidb-infoschema-issyncer/src/catalog_watch.rs`), which under InfoSchema V2 loads every table of every schema (`schema_table_infos` per database) into a fresh V1 image on each step: O(all tables) per step where Go's `transitOneJobStep` reads the lazy `jobCtx.infoCache.GetLatest()`. The DDL table reads are already Go's V2 lookups (`TableByID`, `TableByName`, `TableExists`, `GetTableReferredForeignKeys`, `ListTablesWithSpecialAttribute`); left: plan job steps against the V2 image itself and drop the materializing copy | `pkg/ddl/job_worker.go` (`transitOneJobStep`), `pkg/infoschema/infoschema_v2.go` |
 
 ### Executor, DML and expressions
 

@@ -165,7 +165,8 @@ fn collect_feature_usage_from_infoschema(ctx: &dyn Session, usage: &mut FeatureU
         if db_info.placement_policy_ref.is_some() {
             usage.placement_policy_usage.num_db_with_policies += 1;
         }
-        for tb_info in db_info.deprecated_tables.iter_deref() {
+        let Ok(tables) = is.schema_table_infos(db_info.name.original()) else { return; };
+        for tb_info in tables {
             let tb_info = tb_info.read();
             if tb_info.temp_table_type != TempTableType::NONE {
                 usage.temporary_table = true;

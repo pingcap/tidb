@@ -2018,21 +2018,31 @@ fn adjust_foreign_key_children(
     for fk in info.foreign_keys.iter_deref() {
         rename_ref_cols(&mut *fk.write());
     }
+    // Go: `is.GetTableReferredForeignKeys`, each child loaded once
+    // (`fkh.getTableFromStorage`), a vanished child skipped.
     let mut children: Vec<(i64, TableInfo)> = Vec::new();
-    for database in &catalog.stored_schemas() {
-        for child in database.read().deprecated_tables.iter_deref() {
-            let child = child.read();
-            if child.id == info.id {
-                continue;
+    for referred in crate::foreign_key_build::get_table_referred_foreign_keys(catalog, &schema, &table_name) {
+        let Some((database, child)) = catalog.table_info_by_name(
+            referred.child_schema.original(),
+            referred.child_table.original(),
+        ) else {
+            continue;
+        };
+        let child_id = child.read().id;
+        if child_id == info.id {
+            continue;
+        }
+        let position = match children.iter().position(|(_, loaded)| loaded.id == child_id) {
+            Some(position) => position,
+            None => {
+                children.push((database.read().id, child.read().clone_like_go()));
+                children.len() - 1
             }
-            let mut changed = false;
-            let child_info = child.clone_like_go();
-            for fk in child_info.foreign_keys.iter_deref() {
-                changed |= rename_ref_cols(&mut *fk.write());
-            }
-            if changed {
-                children.push((database.read().id, child_info));
-            }
+        };
+        if let Some(fk) = children[position].1.foreign_keys.iter_deref().find(|fk| {
+            fk.read().name.lowercase() == referred.child_fk_name.lowercase()
+        }) {
+            rename_ref_cols(&mut *fk.write());
         }
     }
     Ok(children)

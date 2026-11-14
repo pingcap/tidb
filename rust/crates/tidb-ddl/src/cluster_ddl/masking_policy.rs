@@ -232,14 +232,8 @@ fn validate_masking_policy_target(
     catalog: &SessionExtendedInfoSchema,
     policy: &mut MaskingPolicyInfo,
 ) -> Result<(), DdlPlanError> {
-    let schemas = catalog.stored_schemas();
-    let Some(stored) = schemas.iter().find_map(|database| {
-        database
-            .read()
-            .deprecated_tables
-            .iter_deref()
-            .find(|stored| stored.read().id == policy.table_id)
-    }) else {
+    // Go `is.TableByID`.
+    let Some(stored) = catalog.table_info_by_id(policy.table_id) else {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.gen_with_stack_by_args(&[
                 policy.db_name.original().into(),

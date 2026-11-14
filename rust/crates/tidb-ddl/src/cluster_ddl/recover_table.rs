@@ -177,12 +177,7 @@ pub(super) fn on_recover_table(
         ));
     };
     let schema_name = database.read().name.original().to_owned();
-    if database
-        .read()
-        .deprecated_tables
-        .iter_deref()
-        .any(|existing| existing.read().name.lowercase() == name.lowercase())
-    {
+    if catalog.table_exists(&schema_name, name.original()) {
         return Err(cancel_ddl_job(
             active,
             DdlPlanError::from(tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.gen_with_stack_by_args(&[
@@ -729,14 +724,9 @@ pub(crate) fn recover_table_by_job_or_name<S: MetaSnapshot>(
     }
     // Check that the table ID does not exist (Go `is.TableByID`, over the
     // metadata this catalog image holds).
-    let existing = catalog.stored_schemas().into_iter().find_map(|schema| {
-        schema
-            .read()
-            .deprecated_tables
-            .iter_deref()
-            .find(|table| table.read().id == table_info.id)
-            .map(|table| table.read().name.original().to_owned())
-    });
+    let existing = catalog
+        .table_info_by_id(table_info.id)
+        .map(|table| table.read().name.original().to_owned());
     if let Some(existing) = existing {
         let action = if *flashback { "flashback" } else { "recover" };
         let name = match by_name {
@@ -763,12 +753,7 @@ pub(crate) fn recover_table_by_job_or_name<S: MetaSnapshot>(
         ));
     };
     let schema_name = schema.read().name.clone();
-    if schema
-        .read()
-        .deprecated_tables
-        .iter_deref()
-        .any(|existing| existing.read().name.lowercase() == table_info.name.lowercase())
-    {
+    if catalog.table_exists(schema_name.original(), table_info.name.original()) {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
                 .gen_with_stack_by_args(&[table_info.name.original().into()]),

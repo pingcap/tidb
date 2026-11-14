@@ -82,7 +82,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ) -> Result<Vec<Option<Expression>>, PlanError> {
         let table = self
             .source
-            .find_table(&target.database, &target.table)
+            .try_find_table(&target.database, &target.table)?
             .ok_or_else(|| {
                 PlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.fast_gen_by_args(&[
@@ -183,7 +183,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let names_a_column = insert.set_syntax || insert.columns_specified;
         let table = self
             .source
-            .find_table(&target.database, &target.table)
+            .try_find_table(&target.database, &target.table)?
             .ok_or_else(|| {
                 PlanError::from(
                     tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.fast_gen_by_args(&[
@@ -376,7 +376,7 @@ pub fn resolve_insert_target(source: &impl TableSource, insert: &InsertStmt) -> 
         [database, name] => (database.as_str(), name.as_str()),
         _ => return Err(PlanError::internal("an INSERT target has no name")),
     };
-    let table = source.find_table(database, name).ok_or_else(|| {
+    let table = source.try_find_table(database, name)?.ok_or_else(|| {
         PlanError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                 .fast_gen_by_args(&[database.into(), name.into()]),

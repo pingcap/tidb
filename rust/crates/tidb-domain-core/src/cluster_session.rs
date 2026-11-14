@@ -148,11 +148,22 @@ fn build_cluster_session_catalog(
     cached_table_session: Option<&CachedTableSessionFactory>,
     cross_ks: bool,
 ) -> ClusterSessionCatalog {
+    // Go `Domain.GetSnapshotInfoSchema` returns the loader's built reader.
+    // Rebuilding a V2 reader from DBInfo.Deprecated.Tables would discard its
+    // lazy tables and the timestamp at which they must be loaded.
+    if loaded.is_v2() {
+        return ClusterSessionCatalog {
+            catalog: loaded.clone(),
+            skipped: loaded.skipped_tables().to_vec(),
+            statistics,
+        };
+    }
     let mut catalog = if cross_ks {
         SessionExtendedInfoSchema::init_with_db_infos_for_cross_ks(Vec::new(), Vec::new(), Vec::new(), loaded.schema_meta_version())
     } else {tidb_infoschema_perfschema::catalog()};
     catalog.set_schema_meta_version(loaded.schema_meta_version());
     catalog.inherit_masking_policy_cache(loaded);
+    catalog.inherit_loader_state(loaded);
     let mut skipped = Vec::new();
     // Go `infoschema`'s resource groups come from meta, so a group another
     // TiDB created is one this node's `SET RESOURCE GROUP` finds.
@@ -312,6 +323,12 @@ fn cluster_view(table: &TableInfo) -> Result<ViewDef, String> {
             table.state.0
         ));
     }
+    view_definition(table)
+}
+
+/// Go `TableFromMeta` for a view: built in any state (a DROP VIEW passes
+/// through WRITE_ONLY and DELETE_ONLY); only planning requires PUBLIC.
+fn view_definition(table: &TableInfo) -> Result<ViewDef, String> {
     let view = table
         .view
         .as_ref()
@@ -1119,3 +1136,120 @@ use tidb_table::table_from_meta::kv_index;
     }
 }
 
+/// Go `infoschemaV2.r` and `factory`: own the snapshot source and table
+/// construction dependencies so an evicted table can be rebuilt on demand.
+pub struct InfoSchemaV2TableLoader {
+    pub transactions: Arc<dyn crate::cluster_transactions::ClusterTransactions>,
+    pub auto_ids: Arc<dyn TableAutoIds>,
+    pub cached_table_session: Arc<CachedTableSessionFactory>,
+}
+impl tidb_infoschema::infoschema_v2::TableLoader for InfoSchemaV2TableLoader {
+    /// Go `infoschemaV2.loadTableInfo`.
+    fn load_table(
+        &self,
+        db_id: i64,
+        table_id: i64,
+        ts: u64,
+    ) -> Result<
+        tidb_infoschema::infoschema_v2::CachedTable,
+        tidb_infoschema::cluster_catalog::ClusterCatalogError,
+    > {
+        use tidb_infoschema::cluster_catalog::{
+            ClusterCatalogError, normalize_diff_loaded_table_info, with_meta_reader,
+        };
+        let mut snapshot = self
+            .transactions
+            .open_snapshot_at(ts, "default")
+            .map_err(ClusterCatalogError::Snapshot)?;
+        snapshot.set_snapshot_read_options(tidb_txnkv::SnapshotReadOptions {
+            read_timeout_ms: 3000,
+            ..Default::default()
+        });
+        // Go `meta.NewReader`: `RequestSourceInternal` / `InternalTxnMeta`.
+        snapshot.set_request_source(&tidb_txnkv::RequestSource {
+            internal: true,
+            source_type: tidb_txnkv::INTERNAL_TXN_META.to_owned(),
+            ..tidb_txnkv::RequestSource::default()
+        });
+        let mut snapshot =
+            tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot::new(snapshot);
+        let mut info =
+            with_meta_reader(&mut snapshot, |m| m.table(db_id, table_id))?.ok_or_else(|| {
+                ClusterCatalogError::Sql(tidb_terror::MysqlError::from_terror(
+                    &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.fast_gen_by_args(&[
+                        format!("(Schema ID {db_id})").into(),
+                        format!("(Table ID {table_id})").into(),
+                    ]),
+                ))
+            })?;
+        normalize_diff_loaded_table_info(&mut info);
+        let entry = if info.is_view() {
+            tidb_infoschema::TableEntry::View(
+                view_definition(&info).map_err(ClusterCatalogError::Decode)?,
+            )
+        } else if info.is_sequence() {
+            let sequence = self
+                .auto_ids
+                .sequence_allocator_for(db_id, &info)
+                .ok_or_else(|| {
+                    ClusterCatalogError::Decode("sequence allocator unavailable".into())
+                })?;
+            tidb_infoschema::TableEntry::Sequence(sequence)
+        } else {
+            let table = tidb_table::table_from_meta::table_from_meta(
+                &info,
+                &AutoIdSource::In {
+                    db_id,
+                    ids: self.auto_ids.as_ref(),
+                },
+            )
+            .map_err(ClusterCatalogError::Decode)?;
+            if let Some(cached) = table.cached_table() {
+                let exec = (self.cached_table_session)().map_err(ClusterCatalogError::Snapshot)?;
+                cached.init(Box::new(
+                    tidb_table::tables::state_remote::StateRemoteHandle::new(exec),
+                ));
+            }
+            tidb_infoschema::TableEntry::Kv(Arc::new(table))
+        };
+        let info = match &entry {
+            tidb_infoschema::TableEntry::Kv(table) => table.meta(),
+            _ => tidb_model::GoShared::new(info),
+        };
+        let size = tidb_infoschema::infoschema_v2::table_cache_entry_size(&info.read(), &entry);
+        Ok(tidb_infoschema::infoschema_v2::CachedTable {
+            info,
+            table: Arc::new(entry),
+            size,
+        })
+    }
+    /// Go `infoschemaV2.SchemaTableInfos`.
+    fn list_tables(
+        &self,
+        db_id: i64,
+        ts: u64,
+    ) -> Result<
+        Vec<tidb_model::GoShared<TableInfo>>,
+        tidb_infoschema::cluster_catalog::ClusterCatalogError,
+    > {
+        use tidb_infoschema::cluster_catalog::{ClusterCatalogError, list_tables_v2};
+        let mut snapshot = self
+            .transactions
+            .open_snapshot_at(ts, "default")
+            .map_err(ClusterCatalogError::Snapshot)?;
+        snapshot.set_snapshot_read_options(tidb_txnkv::SnapshotReadOptions {
+            read_timeout_ms: 3000,
+            ..Default::default()
+        });
+        // Go `meta.NewReader`: `RequestSourceInternal` / `InternalTxnMeta`.
+        snapshot.set_request_source(&tidb_txnkv::RequestSource {
+            internal: true,
+            source_type: tidb_txnkv::INTERNAL_TXN_META.to_owned(),
+            ..tidb_txnkv::RequestSource::default()
+        });
+        let mut snapshot =
+            tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot::new(snapshot);
+        list_tables_v2(&mut snapshot, db_id)
+            .map(|tables| tables.into_iter().map(tidb_model::GoShared::new).collect())
+    }
+}

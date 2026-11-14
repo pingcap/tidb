@@ -1801,18 +1801,8 @@ fn flash_replica_summary_response(path: &str, request: &str, routes: &StatusRout
         }
     }
     // Go `ListTablesWithSpecialAttribute(TiFlashAttribute)`.
-    let table_count = schema()
-        .stored_schemas()
-        .iter()
-        .map(|database| {
-            database
-                .read()
-                .deprecated_tables
-                .iter_deref()
-                .filter(|table| table.read().tiflash_replica.is_some())
-                .count()
-        })
-        .sum::<usize>();
+    let table_count = schema().list_tables_with_special_attribute(|t| t.tiflash_replica.is_some())
+        .iter().map(|(_, tables)| tables.len()).sum::<usize>();
     let enabled = match settings.get_global_var(tidb_vardef::tidb_vars::TIDB_COLUMNAR_STORAGE_ENABLED) {
         Ok(enabled) => enabled,
         Err(error) => return (500, "text/plain", error),
@@ -2057,18 +2047,9 @@ fn db_table_response(
     };
     let catalog = source();
     // Go `TableByID`, then `FindTableByPartitionID` for a partition's ID.
-    let found = catalog.stored_schemas().into_iter().find_map(|database| {
-        let table = database.read().deprecated_tables.iter_deref().find(|table| {
-            let table = table.read();
-            table.id == physical_id
-                || table.get_partition_info().is_some_and(|partitions| {
-                    partitions
-                        .read()
-                        .definitions
-                        .with_visible(|definitions| definitions.iter().any(|definition| definition.id == physical_id))
-                })
-        });
-        table.map(|table| (database.clone(), table))
+    let found = catalog.physical_table_info_by_id(physical_id).and_then(|table| {
+        let name = catalog.schema_name_by_table_id(table.read().id)?;
+        Some((catalog.schema_by_name(&name)?, table))
     });
     let Some((database, table)) = found else {
         return Some(Err(format!("[schema:1146]Table which ID = {table_id} does not exist.")));
@@ -2193,10 +2174,7 @@ fn find_table_by_id(
     catalog: &tidb_infoschema::SessionExtendedInfoSchema,
     id: i64,
 ) -> Option<tidb_model::GoShared<tidb_model::TableInfo>> {
-    catalog
-        .stored_schemas()
-        .iter()
-        .find_map(|database| database.read().deprecated_tables.iter_deref().find(|table| table.read().id == id))
+    catalog.table_info_by_id(id)
 }
 
 /// Go `SchemaHandler.ServeHTTP` (`tikvhandler/tikv_handler.go`): the three
@@ -2316,23 +2294,16 @@ fn schema_response(
             // caller that wants the listing without every column.
             if form("id_name_only") == Some("true") {
                 let mut out = String::from("[");
-                for (index, table) in found.read().deprecated_tables.iter_deref().enumerate() {
-                    let table = table.read();
-                    if index > 0 {
-                        out.push(',');
-                    }
-                    let name = table.name.original();
-                    out.push_str(&format!(
-                        "{{\"id\":{},\"name\":{{\"O\":\"{name}\",\"L\":\"{}\"}}}}",
-                        table.id,
-                        table.name.lowercase(),
-                    ));
+                for (index, table) in catalog.schema_simple_table_infos(found.read().name.original()).into_iter().enumerate() {
+                    if index > 0 { out.push(','); }
+                    out.push_str(&serde_json::json!({"id": table.table_id, "name": {"O": table.table_name.original(), "L": table.table_name.lowercase()}}).to_string());
                 }
                 out.push(']');
                 return Some(Ok(out));
             }
             let mut out = String::from("[");
-            for (index, table) in found.read().deprecated_tables.iter_deref().enumerate() {
+            let tables = match catalog.schema_table_infos(found.read().name.original()) { Ok(tables) => tables, Err(error) => return Some(Err(error.to_string())) };
+            for (index, table) in tables.into_iter().enumerate() {
                 if index > 0 {
                     out.push(',');
                 }
@@ -2346,21 +2317,10 @@ fn schema_response(
         }
         // One table: Go `WriteData(w, data.Meta())`.
         [database, table] => {
-            let found = catalog
-                .stored_schemas()
-                .iter()
-                .find(|candidate| {
-                    candidate
-                        .read().name
-                        .original()
-                        .eq_ignore_ascii_case(database)
-                })
-                .and_then(|database| {
-                    database
-                        .read().deprecated_tables
-                        .iter_deref()
-                        .find(|candidate| candidate.read().name.original().eq_ignore_ascii_case(table))
-                });
+            let found = match catalog.try_table_info_by_name(database, table) {
+                Ok(found) => found.map(|(_, table)| table),
+                Err(error) => return Some(Err(error.to_string())),
+            };
             match found {
                 Some(found) => Some(encode(tidb_infoschema::cluster_catalog::stored_table_info_json(
                     &found.read(),

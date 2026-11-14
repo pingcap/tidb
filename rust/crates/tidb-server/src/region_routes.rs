@@ -302,7 +302,7 @@ fn region_detail(store: &dyn RegionStore, schema: &Schema, region_id: &str) -> R
         if tidb_metadef::db::is_mem_db(database.name.lowercase()) {
             continue;
         }
-        for table in database.deprecated_tables.iter_deref() {
+        for table in catalog.schema_table_infos(database.name.original()).map_err(|e| e.to_string())? {
             region_detail.add_table_in_range(database.name.original(), &table.read(), &mut frame_range);
         }
     }

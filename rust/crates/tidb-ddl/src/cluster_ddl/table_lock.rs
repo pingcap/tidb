@@ -102,11 +102,9 @@ fn table_lock_job(
             .iter()
             .filter_map(|table| {
                 let database = catalog.schema_by_id(table.schema_id)?;
-                let stored = database
-                    .read()
-                    .deprecated_tables
-                    .iter_deref()
-                    .find(|stored| stored.read().id == table.table_id)?;
+                // Go `InfoSchema.TableByID`: a V2 image resolves the table
+                // lazily rather than through `DBInfo.Deprecated.Tables`.
+                let stored = catalog.table_info_by_id(table.table_id)?;
                 let stored = stored.read();
                 let database = database.read().name.lowercase().to_owned();
                 Some(tidb_model::InvolvingSchemaInfo {

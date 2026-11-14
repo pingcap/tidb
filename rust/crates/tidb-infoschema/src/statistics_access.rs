@@ -67,7 +67,18 @@ impl SessionExtendedInfoSchema {
                 }
                 schemas
             });
-        schemas.get(&table_id).cloned()
+        schemas.get(&table_id).cloned().or_else(|| {
+            let v2 = self.v2()?;
+            let id = v2.table_id_by_partition_id(table_id).unwrap_or(table_id);
+            let table = v2.table_by_id(id, None)?;
+            let item = v2.table_item_by_id(id)?;
+            let meta = table.info.read();
+            Some(Arc::new(tidb_stats::PseudoStatsTable {
+                info: table.info.clone(), partitioned: meta.get_partition_info().is_some(),
+                cacheable: meta.temp_table_type == tidb_model::TempTableType::NONE
+                    && !tidb_filter::is_system_schema(item.db_name.lowercase()),
+            }))
+        })
     }
 
 
@@ -81,6 +92,9 @@ impl SessionExtendedInfoSchema {
         table_statistics: (u64, u64, u64, u64),
         partition_statistics: &[(i64, (u64, u64, u64, u64))],
     ) {
+        if let Some(item) = self.v2().and_then(|v2| v2.table_item_by_id(table_id)) {
+            let _ = self.get_rows_mut_in(item.db_name.original(), item.table_name.original());
+        }
         for database in Arc::make_mut(&mut self.schema.databases).values_mut() {
             for entry in Arc::make_mut(database).tables.values_mut() {
                 let TableEntry::Kv(table) = Arc::make_mut(entry) else {

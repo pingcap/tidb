@@ -163,7 +163,8 @@ pub(crate) fn get_ttl_usage_info(sctx: &dyn Session) -> TtlUsageCounter {
     let is = sctx.info_schema();
     let mut ttl_tables = HashMap::new();
     for db in is.stored_schemas() {
-        for tbl_info in db.read().deprecated_tables.iter_deref() {
+        let Ok(tables) = is.schema_table_infos(db.read().name.original()) else { return counter; };
+        for tbl_info in tables {
             let tbl_info = tbl_info.read();
             let Some(ttl_info) = tbl_info.ttl_info.as_ref() else {
                 continue;

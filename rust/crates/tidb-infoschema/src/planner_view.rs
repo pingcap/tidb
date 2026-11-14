@@ -191,8 +191,30 @@ pub fn is_virtual_schema_table(database: &str, name: &str) -> bool {
 /// per catalog metadata version (the same epoch, see
 /// [`SessionExtendedInfoSchema::metadata_version`]) and hands every statement the same `Arc`,
 /// rather than converting every column of every table per statement.
-#[derive(Debug, Default)]
+///
+/// Under InfoSchema V2 the image holds only the eagerly built objects (the
+/// memory schemas and the session's local temporary tables); a stored table
+/// resolves through the statement's [`LazyPlannerSchema`], which converts
+/// only what the statement names, as Go's `infoschemaV2.TableByName` reads
+/// through the bounded table cache rather than a whole-schema map.
+#[derive(Debug)]
 pub struct PlannerSchemaView {
+    image: Arc<PlannerSchemaImage>,
+    lazy: Option<LazyPlannerSchema>,
+}
+
+impl std::ops::Deref for PlannerSchemaView {
+    type Target = PlannerSchemaImage;
+
+    fn deref(&self) -> &PlannerSchemaImage {
+        &self.image
+    }
+}
+
+/// The eagerly built part of [`PlannerSchemaView`], shared by every
+/// statement planning against the same catalog image.
+#[derive(Debug, Default)]
+pub struct PlannerSchemaImage {
     databases: std::collections::HashSet<String>,
     pub tables: HashMap<CatalogTableKey, crate::table_source::SourceTable>,
     views: HashMap<CatalogTableKey, crate::table_source::SourceView>,
@@ -202,10 +224,99 @@ pub struct PlannerSchemaView {
     /// The same image with the session's local temporary tables detached
     /// (Go `temptable.DetachLocalTemporaryTableInfoSchema`), present only
     /// while one is attached.
-    detached: Option<Arc<PlannerSchemaView>>,
+    detached: Option<Arc<PlannerSchemaImage>>,
+}
+
+#[derive(Debug)]
+enum LazySource {
+    Table(crate::table_source::SourceTable),
+    View(crate::table_source::SourceView),
+    Sequence(String),
+}
+#[derive(Debug)]
+struct LazyPlannerSchema {
+    source: infoschema_v2::InfoSchemaV2,
+    entries: infoschema_v2::BorrowCache<LazySource>,
+}
+impl LazyPlannerSchema {
+    fn new(source: infoschema_v2::InfoSchemaV2) -> Self {
+        Self { source, entries: Default::default() }
+    }
+    fn get(&self, key: &CatalogTableKey) -> Result<Option<&LazySource>, cluster_catalog::ClusterCatalogError> {
+        self.source.keep_alive();
+        if self.source.table_item_by_name(&key.database, &key.table).is_none() { return Ok(None); }
+        if let Some((_, entry)) = self.entries.get(key) { return Ok(Some(entry)); }
+        {
+            let entry = self.source.table_by_name(&key.database, &key.table, None)?;
+            // Go `tryLockMDLAndUpdateSchemaIfNecessary`: a loaded table in
+            // an intermediate DDL state is not visible to SQL planning.
+            if entry.info.read().state != tidb_model::SchemaState::PUBLIC { return Ok(None); }
+            let db = self.source.schema_by_name(&key.database).expect("table identity owns its schema");
+            let value = match entry.table.as_ref() {
+                TableEntry::Kv(table) => LazySource::Table(kv_source_table(table, db.read().name.original(), db.clone())),
+                TableEntry::View(view) => LazySource::View(crate::table_source::SourceView {
+                    db_name: db.read().name.original().to_owned(), view_name: view.name.clone(), select_sql: view.select_sql.clone(),
+                    table_id: view.id, columns: view.columns.iter().enumerate().map(|(offset, (name, ret_type))| memory_column(offset, name, ret_type)).collect(),
+                    definer_user: view.definer_user.clone(), definer_host: view.definer_host.clone(), security_definer: view.security.eq_ignore_ascii_case("DEFINER"),
+                    ..Default::default()
+                }),
+                TableEntry::Sequence(sequence) => LazySource::Sequence(sequence.name.clone()),
+            };
+            Ok(Some(self.entries.insert(key.clone(), value).1))
+        }
+    }
+}
+impl PlannerSchemaView {
+    #[cfg(test)]
+    pub(crate) fn shares_image_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.image, &other.image)
+    }
+    /// The image with the session's local temporary tables detached (Go
+    /// `DetachLocalTemporaryTableInfoSchema`); the lazy stored tables are
+    /// the same either way.
+    fn detached(&self) -> &PlannerSchemaImage {
+        self.image.detached.as_deref().unwrap_or(&self.image)
+    }
+    /// The stored object the lazy layer resolves, unless the image already
+    /// holds an object under the name: a local temporary table hides a stored
+    /// view or sequence of its name (Go's `SessionExtendedInfoSchema` answers
+    /// `TableByName` from `LocalTemporaryTables` first).
+    fn lazy_source(&self, image: &PlannerSchemaImage, key: &CatalogTableKey) -> Option<&LazySource> {
+        if image.tables.contains_key(key) || image.views.contains_key(key) || image.sequences.contains_key(key) {
+            return None;
+        }
+        self.lazy.as_ref()?.get(key).ok()?
+    }
+    fn ensure_loaded(&self, image: &PlannerSchemaImage, key: &CatalogTableKey) -> Result<(), tidb_terror::MysqlError> {
+        if image.tables.contains_key(key) || image.views.contains_key(key) || image.sequences.contains_key(key) { return Ok(()); }
+        if let Some(lazy) = &self.lazy { lazy.get(key).map_err(|e| e.to_mysql_error())?; }
+        Ok(())
+    }
+    fn find_table<'a>(&'a self, image: &'a PlannerSchemaImage, key: &CatalogTableKey) -> Option<&'a crate::table_source::SourceTable> {
+        image.tables.get(key).or_else(|| match self.lazy_source(image, key)? { LazySource::Table(table) => Some(table), _ => None })
+    }
+    fn find_view<'a>(&'a self, image: &'a PlannerSchemaImage, key: &CatalogTableKey) -> Option<&'a crate::table_source::SourceView> {
+        image.views.get(key).or_else(|| match self.lazy_source(image, key)? { LazySource::View(view) => Some(view), _ => None })
+    }
+    fn find_sequence(&self, key: &CatalogTableKey) -> Option<&str> {
+        self.image.sequences.get(key).map(String::as_str).or_else(|| match self.lazy_source(&self.image, key)? { LazySource::Sequence(name) => Some(name.as_str()), _ => None })
+    }
 }
 
 impl crate::table_source::TableSource for PlannerCatalog {
+    fn try_find_table(&self, db: &str, table: &str) -> Result<Option<&crate::table_source::SourceTable>, tidb_terror::MysqlError> {
+        self.view.ensure_loaded(&self.view.image, &CatalogTableKey::new(db, table))?;
+        Ok(self.find_table(db, table))
+    }
+    fn try_find_view(&self, db: &str, table: &str) -> Result<Option<&crate::table_source::SourceView>, tidb_terror::MysqlError> {
+        self.view.ensure_loaded(&self.view.image, &CatalogTableKey::new(db, table))?;
+        Ok(self.find_view(db, table))
+    }
+    fn try_find_table_ignoring_local_temporary(&self, db: &str, table: &str) -> Result<Option<&crate::table_source::SourceTable>, tidb_terror::MysqlError> {
+        self.view.ensure_loaded(self.view.detached(), &CatalogTableKey::new(db, table))?;
+        Ok(self.find_table_ignoring_local_temporary(db, table))
+    }
+
     fn current_database(&self) -> &str {
         &self.current_database
     }
@@ -220,12 +331,11 @@ impl crate::table_source::TableSource for PlannerCatalog {
         table_name: &str,
     ) -> Option<&crate::table_source::SourceTable> {
         self.view
-            .tables
-            .get(&CatalogTableKey::new(db_name, table_name))
+            .find_table(&self.view.image, &CatalogTableKey::new(db_name, table_name))
     }
 
     fn database_exists(&self, db_name: &str) -> bool {
-        self.view.databases.contains(&db_name.go_to_lower())
+        self.view.image.databases.contains(&db_name.go_to_lower())
     }
 
     fn latest_index_schema(&self) -> Option<&crate::table_source::LatestIndexSchema> {
@@ -266,11 +376,13 @@ impl crate::table_source::TableSource for PlannerCatalog {
         table_name: &str,
     ) -> Option<&crate::table_source::SourceTable> {
         self.view
-            .detached
-            .as_deref()
-            .unwrap_or(&self.view)
-            .tables
-            .get(&CatalogTableKey::new(db_name, table_name))
+            .find_table(self.view.detached(), &CatalogTableKey::new(db_name, table_name))
+    }
+
+    fn try_find_view_ignoring_local_temporary(&self, db: &str, table: &str) -> Result<Option<&crate::table_source::SourceView>, tidb_terror::MysqlError> {
+        let key = CatalogTableKey::new(db, table);
+        self.view.ensure_loaded(self.view.detached(), &key)?;
+        Ok(self.view.find_view(self.view.detached(), &key))
     }
 
     fn find_view_ignoring_local_temporary(
@@ -279,11 +391,7 @@ impl crate::table_source::TableSource for PlannerCatalog {
         view_name: &str,
     ) -> Option<&crate::table_source::SourceView> {
         self.view
-            .detached
-            .as_deref()
-            .unwrap_or(&self.view)
-            .views
-            .get(&CatalogTableKey::new(db_name, view_name))
+            .find_view(self.view.detached(), &CatalogTableKey::new(db_name, view_name))
     }
 
     fn find_view(
@@ -292,8 +400,7 @@ impl crate::table_source::TableSource for PlannerCatalog {
         view_name: &str,
     ) -> Option<&crate::table_source::SourceView> {
         self.view
-            .views
-            .get(&CatalogTableKey::new(db_name, view_name))
+            .find_view(&self.view.image, &CatalogTableKey::new(db_name, view_name))
     }
 
     fn privilege_verifier(
@@ -312,9 +419,7 @@ impl crate::table_source::TableSource for PlannerCatalog {
 
     fn find_sequence(&self, db_name: &str, table_name: &str) -> Option<&str> {
         self.view
-            .sequences
-            .get(&CatalogTableKey::new(db_name, table_name))
-            .map(String::as_str)
+            .find_sequence(&CatalogTableKey::new(db_name, table_name))
     }
 }
 
@@ -344,17 +449,29 @@ impl SessionExtendedInfoSchema {
     /// shared by every statement that plans against the same catalog image
     /// (Go's immutable `InfoSchema` per schema version). Any mutation drops
     /// it, so a statement never plans against a schema that has moved.
+    ///
+    /// Under V2 the statement gets a fresh lazy layer over the shared image,
+    /// so the stored tables it converts stay bounded by the V2 table cache.
     pub fn planner_schema_view(&self) -> Arc<PlannerSchemaView> {
-        Arc::clone(
-            self.planner_view
-                .get_or_init(|| Arc::new(self.build_planner_schema_view(true))),
-        )
+        let shared = self.planner_view.get_or_init(|| {
+            Arc::new(PlannerSchemaView {
+                image: Arc::new(self.build_planner_schema_view(true)),
+                lazy: None,
+            })
+        });
+        match self.v2() {
+            Some(source) => Arc::new(PlannerSchemaView {
+                image: Arc::clone(&shared.image),
+                lazy: Some(LazyPlannerSchema::new(source.clone())),
+            }),
+            None => Arc::clone(shared),
+        }
     }
 
     /// Builds the view, with the session's LOCAL temporary tables resolving
     /// first when `with_local_temporary` (Go's `SessionExtendedInfoSchema`),
     /// or without them (its `DetachLocalTemporaryTableInfoSchema`).
-    fn build_planner_schema_view(&self, with_local_temporary: bool) -> PlannerSchemaView {
+    fn build_planner_schema_view(&self, with_local_temporary: bool) -> PlannerSchemaImage {
         use crate::table_source::{SourceTable, SourceView};
 
         let databases = self.schema.databases.keys().cloned().collect();
@@ -513,7 +630,7 @@ impl SessionExtendedInfoSchema {
         // `DetachLocalTemporaryTableInfoSchema` returns it unchanged).
         let detached = (with_local_temporary && !self.local_temporary.is_empty())
             .then(|| Arc::new(self.build_planner_schema_view(false)));
-        PlannerSchemaView {
+        PlannerSchemaImage {
             databases,
             tables,
             views,
@@ -542,6 +659,7 @@ impl SessionExtendedInfoSchema {
             Arc::new(crate::table_source::LatestIndexSchema {
                 schema_meta_version: self.schema.metadata_version,
                 table_indexes,
+                lazy: self.v2().cloned(),
             })
         }))
     }

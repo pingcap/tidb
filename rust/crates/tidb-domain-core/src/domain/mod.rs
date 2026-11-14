@@ -521,11 +521,7 @@ impl tidb_stats_handle_syncload::sync_load::StatisticsItemLoader for ClusterStat
             .unwrap_or_default();
         for requested in items {
             let item = requested.table_item_id;
-            let Some(table) = catalog
-                .stored_schemas()
-                .iter()
-                .flat_map(|database| database.read().deprecated_tables.iter_deref())
-                .find(|table| table.read().id == item.table_id)
+            let Some(table) = catalog.table_info_by_id(item.table_id)
             else {
                 continue;
             };
@@ -1042,9 +1038,23 @@ impl Domain {
             let auto_ids = Arc::clone(&auto_ids);
             let masking_factory =
                 masking_policy::session_factory(Arc::clone(&schema_builder_domain));
-            let cached_table_session =
-                cached_table_session_factory(Arc::clone(&schema_builder_domain));
+            let cached_table_session: Arc<crate::cluster_session::CachedTableSessionFactory> =
+                cached_table_session_factory(Arc::clone(&schema_builder_domain)).into();
+            let data = Arc::clone(&catalog.data);
+            let loader = Arc::new(crate::cluster_session::InfoSchemaV2TableLoader {
+                transactions: transactions.clone(), auto_ids: auto_ids.clone(), cached_table_session: cached_table_session.clone(),
+            });
             move |loaded, previous| {
+                let size = tidb_vardef::SCHEMA_CACHE_SIZE.load(std::sync::atomic::Ordering::Acquire);
+                data.table_cache.set_capacity(size);
+                if loaded.uses_infoschema_v2() && loaded.schema_ts() > 0 {
+                    let built = cluster_session_catalog_with_templates(loaded, None, auto_ids.as_ref(), previous, Some(cached_table_session.as_ref()));
+                    let mut schema = built.catalog;
+                    schema.set_masking_policy_factory(Arc::clone(&masking_factory));
+                    schema.set_skipped_tables(built.skipped);
+                    schema.init_with_db_infos_v2(data.clone(), loader.clone(), size);
+                    return schema;
+                }
                 let built = cluster_session_catalog_with_templates(
                     loaded,
                     None,
@@ -1056,6 +1066,21 @@ impl Domain {
                 schema.set_masking_policy_factory(Arc::clone(&masking_factory));
                 schema.set_skipped_tables(built.skipped);
                 schema
+            }
+        }));
+        global_vars.register_set_global_hook(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE, Arc::new({
+            let transactions = transactions.clone();
+            let data = catalog.data.clone();
+            move |value| {
+                use tidb_kv::storage::KvStorage;
+                let bytes = tidb_variable::varsutil::parse_byte_size(value).map(|(bytes, _)| bytes)
+                    .or_else(|| value.parse::<u64>().ok()).ok_or_else(|| "invalid schema cache size".to_owned())?;
+                let key = tidb_structure::encode_string_data_key(tidb_tablecodec::table_key::META_PREFIX, tidb_meta::key::SCHEMA_CACHE_SIZE);
+                crate::cluster_transactions::ClusterKvStorage(transactions.clone()).run_in_new_write_txn(
+                    tidb_txnkv::INTERNAL_TXN_DDL, &mut |_, txn| txn.set(key.clone().into(), bytes.to_string().into_bytes())
+                ).map_err(|error| error.to_string())?;
+                if bytes > 0 { data.set_cache_capacity(bytes); }
+                Ok(())
             }
         }));
         let stats_usage = Arc::new(tidb_stats_handle_usage::StatsUsageHandle::new());
@@ -1848,11 +1873,7 @@ impl Domain {
     fn gc_index_usage(&self) -> Result<(), String> {
         let catalog = self.catalog.get_latest();
         self.stats_usage.gc_index_usage(|table_id| {
-            catalog
-                .stored_schemas()
-                .iter()
-                .flat_map(|database| database.read().deprecated_tables.iter_deref())
-                .find(|table| table.read().id == table_id)
+            catalog.table_info_by_id(table_id)
                 .map(|table| Arc::new(table.read().clone()))
         });
         Ok(())
@@ -2420,53 +2441,13 @@ pub struct ClusterHistoricalSchemaView {
 
 impl InfoSchemaView for ClusterHistoricalSchemaView {
     fn table_by_id(&self, table_id: i64) -> Option<TableMeta> {
-        self.catalog
-            .stored_schemas()
-            .iter()
-            .flat_map(|database| database.read().deprecated_tables.iter_deref())
-            .find(|table| table.read().id == table_id)
-            .map(|table| {
-                let table = table.read();
-                TableMeta {
-                    id: table.id,
-                    name: table.name.original().to_owned(),
-                }
-            })
+        self.catalog.table_info_by_id(table_id).map(|table| { let table = table.read(); TableMeta { id: table.id, name: table.name.original().to_owned() } })
     }
-
     fn find_table_by_partition_id(&self, partition_id: i64) -> Option<TableMeta> {
-        self.catalog
-            .stored_schemas()
-            .iter()
-            .flat_map(|database| database.read().deprecated_tables.iter_deref())
-            .find(|table| {
-                let table = table.read();
-                table.get_partition_info().is_some_and(|partition| {
-                    partition
-                        .read()
-                        .definitions
-                        .snapshot()
-                        .iter()
-                        .any(|definition| definition.id == partition_id)
-                })
-            })
-            .map(|table| {
-                let table = table.read();
-                TableMeta {
-                    id: table.id,
-                    name: table.name.original().to_owned(),
-                }
-            })
+        self.catalog.physical_table_info_by_id(partition_id).map(|table| { let table = table.read(); TableMeta { id: table.id, name: table.name.original().to_owned() } })
     }
-
     fn schema_by_table(&self, table: &TableMeta) -> Option<String> {
-        self.catalog.stored_schemas().iter().find_map(|database| {
-            database
-                .read().deprecated_tables
-                .iter_deref()
-                .any(|candidate| candidate.read().id == table.id)
-                .then(|| database.read().name.original().to_owned())
-        })
+        self.catalog.schema_name_by_table_id(table.id)
     }
 }
 
@@ -2524,22 +2505,7 @@ impl ClusterHistoricalStatsHandle {
         catalog: &'catalog SessionExtendedInfoSchema,
         physical_id: i64,
     ) -> Option<tidb_model::GoShared<tidb_model::table_info::TableInfo>> {
-        catalog
-            .stored_schemas()
-            .iter()
-            .flat_map(|database| database.read().deprecated_tables.iter_deref())
-            .find(|table| {
-                let table = table.read();
-                table.id == physical_id
-                    || table.get_partition_info().is_some_and(|partition| {
-                        partition
-                            .read()
-                            .definitions
-                            .snapshot()
-                            .iter()
-                            .any(|definition| definition.id == physical_id)
-                    })
-            })
+        catalog.physical_table_info_by_id(physical_id)
     }
 
     /// Go `statsReadWriter.tableHistoricalStatsToJSON`.
@@ -2795,11 +2761,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
         is_partition: bool,
     ) -> Result<u64, String> {
         let catalog = self.catalog.get_latest();
-        let table_info = catalog
-            .stored_schemas()
-            .iter()
-            .flat_map(|database| database.read().deprecated_tables.iter_deref())
-            .find(|candidate| candidate.read().id == table.id)
+        let table_info = catalog.table_info_by_id(table.id)
             .ok_or_else(|| format!("cannot get table by id {}", table.id))?;
         let table_info = table_info.read();
         let Some(json) = self.historical_json(
@@ -3019,25 +2981,9 @@ pub fn system_time_timestamp(value: SystemTime) -> Result<tidb_datatype::Time, S
 }
 
 pub(crate) fn stats_delta_table(catalog: &SessionExtendedInfoSchema, physical_id: i64) -> Option<(String, Option<i64>)> {
-    for database in &catalog.stored_schemas() {
-        for table in database.read().deprecated_tables.iter_deref() {
-            let table = table.read();
-            if table.id == physical_id {
-                return Some((database.read().name.lowercase().to_owned(), None));
-            }
-            if table.partition.as_ref().is_some_and(|partition| {
-                partition
-                    .read()
-                    .definitions
-                    .snapshot()
-                    .iter()
-                    .any(|definition| definition.id == physical_id)
-            }) {
-                return Some((database.read().name.lowercase().to_owned(), Some(table.id)));
-            }
-        }
-    }
-    None
+    let table = catalog.physical_table_info_by_id(physical_id)?;
+    let table = table.read();
+    Some((catalog.schema_name_by_table_id(table.id)?.to_lowercase(), (table.id != physical_id).then_some(table.id)))
 }
 
 pub(crate) fn table_and_partition_ids(table: &tidb_model::table_info::TableInfo) -> Vec<i64> {
@@ -3242,7 +3188,7 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueSource
             .map_err(|error| error.to_string())?;
         let mut tables = Vec::new();
         for database in &catalog.stored_schemas() {
-            for table in database.read().deprecated_tables.iter_deref() {
+            for table in catalog.schema_table_infos(database.read().name.original()).map_err(|error| error.to_string())? {
                 let table = table.read();
                 let global_stats = statistics
                     .get(&table.id)
@@ -3299,6 +3245,12 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext
             return tidb_stats_handle_autoanalyze_priorityqueue::TableLookup::TableMissing;
         };
         let catalog = factory.catalog.get_latest();
+        if catalog.is_v2() {
+            return match (catalog.table_info_by_id(table_id), catalog.schema_name_by_table_id(table_id)) {
+                (Some(table), Some(schema_name)) => tidb_stats_handle_autoanalyze_priorityqueue::TableLookup::Found { schema_name, table: Arc::new(table.read().clone()) },
+                _ => tidb_stats_handle_autoanalyze_priorityqueue::TableLookup::TableMissing,
+            };
+        }
         for database in &catalog.stored_schemas() {
             if let Some(table) = database
                 .read().deprecated_tables

@@ -93,6 +93,35 @@ mod session_vars {
         }
     }
 
+    /// Go TiDBSchemaCacheSize.SetGlobal: both scopes invoke ChangeSchemaCacheSize
+    /// before publishing, skip equal sizes, and retain the old value on error.
+    #[test]
+    fn schema_cache_size_hook_precedes_publication_for_both_scopes() {
+        let _lock = process_switch_tests();
+        let old = tidb_vardef::SCHEMA_CACHE_SIZE.load(std::sync::atomic::Ordering::Acquire);
+        let globals = GlobalSysvars::new();
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        globals.register_set_global_hook(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE, Arc::new({
+            let calls = calls.clone();
+            move |value| {
+                calls.lock().unwrap().push((value.to_owned(), tidb_vardef::SCHEMA_CACHE_SIZE.load(std::sync::atomic::Ordering::Acquire)));
+                if value == "384MB" || value == "402653184" { return Err("write failed".into()); }
+                Ok(())
+            }
+        }));
+        let mut vars = SessionVars::new();
+        vars.swap_globals(Some(Arc::new(globals)));
+        vars.set_global_sys_var(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE, "128MB".into()).unwrap();
+        assert_eq!(calls.lock().unwrap()[0].1, old);
+        vars.set_instance_sys_var(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE, "256MB".into()).unwrap();
+        assert_eq!(calls.lock().unwrap()[1].1, 134217728);
+        vars.set_instance_sys_var(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE, "256MB".into()).unwrap();
+        assert_eq!(calls.lock().unwrap().len(), 2);
+        assert!(vars.set_instance_sys_var(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE, "384MB".into()).is_err());
+        assert_eq!(tidb_vardef::SCHEMA_CACHE_SIZE.load(std::sync::atomic::Ordering::Acquire), 268435456);
+        tidb_vardef::SCHEMA_CACHE_SIZE.store(old, std::sync::atomic::Ordering::Release);
+    }
+
     #[test]
     fn tiflash_set_session_hooks_update_typed_state() {
         let mut vars = session_vars();

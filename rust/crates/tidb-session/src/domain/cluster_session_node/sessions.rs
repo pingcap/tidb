@@ -1021,10 +1021,13 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
     }
 
     fn set_enable_historical_stats(&self, enabled: bool) {
-        self.set_var(
-            tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS,
-            if enabled { "ON" } else { "OFF" },
-        );
+        // Go assigns `SessionVars.EnableHistoricalStats`: the variable is
+        // GLOBAL-only, so a session `SetSystemVar` would only fail.
+        self.with_session(|session| {
+            session.session.vars.enable_historical_stats = enabled;
+            Ok(())
+        })
+        .expect("the statistics session is available");
     }
 
     fn set_partition_prune_mode(&self, mode: &str) {

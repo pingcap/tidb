@@ -3381,6 +3381,7 @@ where
             at,
         ) {
             CatalogReloadPass::Unchanged => {}
+            CatalogReloadPass::UnchangedAt(ts) => self.catalog.refresh_snapshot_ts(ts),
             CatalogReloadPass::Diffs(catalog) | CatalogReloadPass::Full(catalog) => {
                 self.catalog.upsert(catalog);
             }

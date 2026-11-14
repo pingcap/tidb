@@ -86,7 +86,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         };
         let table = self
             .source
-            .find_table(database, name)
+            .try_find_table(database, name)?
             .ok_or_else(|| PlanError::internal("a fast UPDATE's table is not in the catalog"))?;
         let visible = table_ref.alias.as_deref().unwrap_or(name);
         let field = |column: &str| {

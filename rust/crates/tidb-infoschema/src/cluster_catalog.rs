@@ -57,6 +57,13 @@ impl fmt::Display for ClusterCatalogError {
 
 impl std::error::Error for ClusterCatalogError {}
 
+impl ClusterCatalogError {
+    /// Go `ToTiDBErr`: retain the storage error's SQL identity.
+    pub fn to_mysql_error(&self) -> tidb_terror::MysqlError {
+        match self { Self::Sql(error) => error.clone(), _ => tidb_terror::MysqlError::unknown(self.to_string()) }
+    }
+}
+
 /// Key/value pairs one prefix scan returned, in key order.
 pub type MetaPairs = Vec<(Vec<u8>, Vec<u8>)>;
 
@@ -67,10 +74,12 @@ pub type MetaPairs = Vec<(Vec<u8>, Vec<u8>)>;
 /// production implementation is a live transaction's snapshot (see
 /// `tidb_infoschema_issyncer::real_tikv_catalog`).
 pub trait MetaSnapshot {
-    /// Go snapshot version (zero for metadata-only test snapshots).
-    fn start_ts(&self) -> u64 {
-        0
-    }
+    /// Go snapshot.Version(): timestamp used by lazy InfoSchema V2 misses.
+    fn start_ts(&self) -> u64 { 0 }
+
+    /// Go Loader.getTimestampForSchemaVersionWithNonEmptyDiff. Zero means
+    /// unavailable, never a guessed range boundary.
+    fn schema_commit_ts(&mut self, _version: i64) -> Result<u64, ClusterCatalogError> { Ok(0) }
 
     /// Reads one meta key, `None` when the snapshot holds no value there.
     fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError>;
@@ -276,6 +285,15 @@ pub fn load_info_schema_keeping<S: MetaSnapshot + ?Sized>(
     snapshot: &mut S,
     keep: &mut dyn FnMut(&GoShared<DBInfo>, &GoShared<TableInfo>) -> bool,
 ) -> Result<crate::SessionExtendedInfoSchema, ClusterCatalogError> {
+    load_info_schema_for_mode(snapshot, keep, false)
+}
+
+/// Go `Loader.fetchSchemasWithTables`: V2 decodes only must-loaded metadata.
+pub fn load_info_schema_for_mode<S: MetaSnapshot + ?Sized>(
+    snapshot: &mut S,
+    keep: &mut dyn FnMut(&GoShared<DBInfo>, &GoShared<TableInfo>) -> bool,
+    use_v2: bool,
+) -> Result<crate::SessionExtendedInfoSchema, ClusterCatalogError> {
     let ts = snapshot.start_ts();
     let reader = meta_reader(snapshot);
     let read = |error| reader_error(&reader, error);
@@ -289,7 +307,7 @@ pub fn load_info_schema_keeping<S: MetaSnapshot + ?Sized>(
         .iter()
         .map(|group| (**group).clone())
         .collect();
-    let databases = fetch_all_schemas_with_tables(&reader, keep).map_err(read)?;
+    let databases = fetch_all_schemas_with_tables(&reader, keep, use_v2).map_err(read)?;
     let mut schema = crate::SessionExtendedInfoSchema::init_with_db_infos(
         databases,
         policies,
@@ -297,6 +315,7 @@ pub fn load_info_schema_keeping<S: MetaSnapshot + ?Sized>(
         schema_version,
     );
     schema.set_schema_ts(ts);
+    schema.set_uses_infoschema_v2(use_v2);
     Ok(schema)
 }
 
@@ -306,10 +325,22 @@ pub fn load_info_schema_keeping<S: MetaSnapshot + ?Sized>(
 fn fetch_all_schemas_with_tables<S: MetaSnapshot + ?Sized>(
     reader: &MetaReader<'_, S>,
     keep: &mut dyn FnMut(&GoShared<DBInfo>, &GoShared<TableInfo>) -> bool,
+    use_v2: bool,
 ) -> tidb_meta::Result<Vec<GoShared<DBInfo>>> {
     let mut databases = Vec::new();
-    for info in reader.databases()? {
-        let tables = database_tables(reader, info.id)?;
+    for mut info in reader.databases()? {
+        let tables = if use_v2 && !crate::infoschema_v2::is_special_db(info.name.lowercase()) {
+            let (names, mut tables) = reader.get_all_name_to_id_and_the_must_loaded_table_info(info.id)?;
+            info.table_name2id = Some(GoShared::new(names.into_iter().map(|(name, id)| (String::from_utf8_lossy(&name).into_owned(), id)).collect()));
+            if tidb_domainutil::REPAIR_INFO.in_repair_mode() {
+                let names = info.table_name2id.as_ref().unwrap().read().iter().map(|(name, id)| (name.clone(), *id)).collect();
+                for id in tidb_domainutil::REPAIR_INFO.get_must_load_repair_table_list_by_db(info.name.lowercase(), &names) {
+                    if let Some(table) = reader.table(info.id, id)? { tables.push(table); }
+                }
+            }
+            for table in &mut tables { normalize_full_loaded_table_info(table); }
+            tables
+        } else { database_tables(reader, info.id)? };
         let di = GoShared::new(info);
         let mut di_tables = Vec::with_capacity(tables.len());
         for tbl in tables {
@@ -343,6 +374,16 @@ pub fn list_tables<S: MetaSnapshot + ?Sized>(
 ) -> Result<Vec<TableInfo>, ClusterCatalogError> {
     let reader = meta_reader(snapshot);
     database_tables(&reader, db_id).map_err(|error| reader_error(&reader, error))
+}
+
+/// Go `infoschemaV2.SchemaTableInfos`: a concurrently removed database is empty.
+pub fn list_tables_v2<S: MetaSnapshot + ?Sized>(snapshot: &mut S, db_id: i64) -> Result<Vec<TableInfo>, ClusterCatalogError> {
+    let reader = meta_reader(snapshot);
+    match reader.tables(db_id) {
+        Ok(tables) => Ok(tables),
+        Err(tidb_meta::MetaError::DatabaseNotExists) => Ok(Vec::new()),
+        Err(error) => Err(reader_error(&reader, error)),
+    }
 }
 
 /// Go `ConvertCharsetCollateToLowerCaseIfNeed` (`builder.go:936-946`): a
