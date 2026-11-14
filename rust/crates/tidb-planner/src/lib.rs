@@ -77,6 +77,7 @@
 //! alternatives. EXPLAIN derives metadata from the same physical tree.
 
 pub mod access_path;
+pub mod import_into;
 pub mod cascades;
 pub mod configured_order_limit_contract;
 pub mod common_plans;

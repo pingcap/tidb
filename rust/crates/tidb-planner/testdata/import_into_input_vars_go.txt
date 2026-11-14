@@ -1,0 +1,6 @@
+import into t set a=@outside from '/file.csv'	column assignment cannot use variables set outside IMPORT INTO statement, index 0
+import into t set a=@OUTSIDE, b=@outside from '/file.csv'	column assignment cannot use variables set outside IMPORT INTO statement, index 1
+import into t set a=getvar('outside') from '/file.csv'	column assignment cannot use variables set outside IMPORT INTO statement, index 0
+import into t set a=1, b=values(a) from '/file.csv'	COLUMN reference is not supported in IMPORT INTO column assignment, index 1
+import into t (@V) set a=@v from 'relative.csv'	[executor:8158]The URI of data source is invalid. Reason: file location should be absolute path when import from server disk. Please provide a valid URI, such as 's3://import/test.csv?access-key={your_access_key_id ID}&secret-access-key={your_secret_access_key}&session-token={your_session_token}'
+import into t (@V) set a=getvar('v') from 'relative.csv'	[executor:8158]The URI of data source is invalid. Reason: file location should be absolute path when import from server disk. Please provide a valid URI, such as 's3://import/test.csv?access-key={your_access_key_id ID}&secret-access-key={your_secret_access_key}&session-token={your_session_token}'

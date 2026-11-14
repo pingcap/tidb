@@ -395,8 +395,8 @@ pub fn function_class(name: &str) -> Option<(&'static str, FunctionArity)> {
     crate::extension::extension_func(name).map(|(key, class)| (key, class.arity))
 }
 
-/// Whether Go's `funcs` map has `name`.
-pub(crate) fn is_builtin_name(name: &str) -> bool {
+/// Go `IsFunctionSupported`: whether the builtin `funcs` map has `name`.
+pub fn is_builtin_name(name: &str) -> bool {
     builtin_class(name).is_some()
 }
 
