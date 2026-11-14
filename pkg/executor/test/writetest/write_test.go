@@ -206,24 +206,21 @@ func TestLoadDataMissingColumn(t *testing.T) {
 	ctx := tk.Session().(sessionctx.Context)
 
 	deleteSQL := "delete from load_data_missing"
-	selectSQL := "select id, hour(t), minute(t) from load_data_missing;"
 
+	// Loading can cross a minute boundary, so check the full timestamp against the load interval.
 	curTime := types.CurrentTime(mysql.TypeTimestamp)
-	timeHour := curTime.Hour()
-	timeMinute := curTime.Minute()
+	selectSQL := fmt.Sprintf("select id, t between '%s' and now(6) from load_data_missing;", curTime.String())
 	tests := []testCase{
 		{[]byte(""), nil, "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
-		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{[]byte("12\n"), []string{"12|1"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 
 	tk.MustExec("alter table load_data_missing add column t2 timestamp null")
 	curTime = types.CurrentTime(mysql.TypeTimestamp)
-	timeHour = curTime.Hour()
-	timeMinute = curTime.Minute()
-	selectSQL = "select id, hour(t), minute(t), t2 from load_data_missing;"
+	selectSQL = fmt.Sprintf("select id, t between '%s' and now(6), t2 from load_data_missing;", curTime.String())
 	tests = []testCase{
-		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v|<nil>", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{[]byte("12\n"), []string{"12|1|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 }
