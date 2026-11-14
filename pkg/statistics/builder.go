@@ -326,8 +326,16 @@ func buildHist(
 			lastCount = hg.Buckets[bucketIdx].Count
 			// The bucket is full, store the item in the next bucket.
 			bucketIdx++
+			lower := &samples[i].Value
+			if vardef.AnalyzeContiguousBuckets.Load() {
+				// Start the bucket at the upper bound of the previous one, so
+				// that values between the two sampled bounds are interpolated
+				// inside this bucket. The bound itself stays in the previous
+				// bucket because a matching upper bound is found first.
+				lower = upper
+			}
 			// Refer to the comments for the first bucket for the reason why we use ndvFactor here.
-			hg.AppendBucket(&samples[i].Value, &samples[i].Value, int64(totalCount), int64(ndvFactor))
+			hg.AppendBucket(lower, &samples[i].Value, int64(totalCount), int64(ndvFactor))
 		}
 	}
 	return corrXYSum, nil
