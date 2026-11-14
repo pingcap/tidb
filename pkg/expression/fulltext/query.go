@@ -189,7 +189,16 @@ func queryNodeUsesPrefix(node queryNode) bool {
 	case prefixNode:
 		return true
 	case groupNode:
-		for _, children := range [][]queryNode{n.must, n.should, n.mustNot} {
+		// The lists read are the ones appendPostingReads names: with a
+		// required child, the optional ones only rank and are never read.
+		positive := n.must
+		if len(positive) == 0 {
+			positive = n.should
+		}
+		if len(positive) == 0 {
+			return false
+		}
+		for _, children := range [][]queryNode{positive, n.mustNot} {
 			for _, child := range children {
 				if queryNodeUsesPrefix(child) {
 					return true
