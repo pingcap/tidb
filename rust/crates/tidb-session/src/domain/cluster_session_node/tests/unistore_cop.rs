@@ -52,6 +52,7 @@ mod repair_table;
 mod masking_policy;
 mod analyzetest;
 mod ddl_analyze;
+mod ddl_delivery;
 mod dxf_framework;
 mod dxf_integrationtests;
 mod dxf_scheduler;

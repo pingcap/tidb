@@ -35,7 +35,7 @@ use tidb_ddl::cluster_ddl::DdlJobSchemaState;
 use tidb_ddl::ddl_history_table::DdlHistoryTable;
 use tidb_ddl_jobsubmit::{finish_insert_attempt, plan_insert_attempt};
 use tidb_ddl_systable::ddl_job_table::DdlJobTable;
-use tidb_ddl_systable::{SnapshotSystemTables as SystemTableManager, SystemTableManagerError};
+use tidb_ddl_systable::{Manager, SystemTableManager, SystemTableManagerError};
 use tidb_syssession::mysql_system_tables::{SystemRow, SystemTableView};
 use tidb_syssession::system_row_write::store_clustered_row;
 use tidb_ddl_build::table_info_build::{build_table_info, build_table_info_from_ast};
@@ -451,77 +451,50 @@ fn flashback_admission_reads_only_the_go_query_columns() {
     assert_eq!(store.last_range, Some((expected_start, expected_end)));
 }
 
+/// Go `TestManager` (`pkg/ddl/systable/manager_test.go`), on a store-owned
+/// SQL session pool whose DDL owner is not campaigned.
 #[test]
-fn ddl_systable_manager_matches_go_queries() {
-    let mut store = bootstrapped();
-    let catalog = load_info_schema(&mut store).expect("the bootstrap catalog loads");
-    let manager = SystemTableManager::new(&catalog);
-    assert!(matches!(
-        manager.get_job_by_id(&mut store, 9_999),
-        Err(SystemTableManagerError::NotFound)
-    ));
-    assert_eq!(manager.get_min_job_id(&mut store, 0).unwrap(), 0);
-    assert!(!manager.has_flashback_cluster_job(&mut store, 0).unwrap());
-
-    let table = DdlJobTable::locate(&catalog).expect("the active-job table exists");
-    let mut job = Job::default();
-    job.id = 9_999;
-    job.type_ = ActionType::ACTION_CREATE_SCHEMA;
-    let mut mutations = Vec::new();
-    table
-        .append_insert(&mut job, false, "1", "1", false, &mut mutations)
-        .expect("the job row encodes");
-    let expected_bytes = job.encode(true).expect("the exact job bytes encode");
-    apply_mutations(&mut store, &mutations);
-    let loaded = manager
-        .get_job_by_id(&mut store, 9_999)
-        .expect("the inserted job is found");
-    assert_eq!(loaded.bytes.snapshot(), expected_bytes);
-    assert_eq!(loaded.job.unwrap().read().id, 9_999);
-
-    assert!(matches!(
-        manager.get_mdl_ver(&mut store, 9_999),
-        Err(SystemTableManagerError::NotFound)
-    ));
-    let (_, mdl_table) = catalog
-        .table_info_by_name("mysql", "tidb_mdl_info")
-        .expect("the MDL table exists");
-    let mdl_table = mdl_table.read();
-    let mdl = MdlInfoUpdate {
-        omit_owner_id: false,
-        table: Box::new(mdl_table.clone_like_go()),
-        table_ids: "1".to_owned(),
-    };
-    let mut mutations = Vec::new();
-    mdl.append_mutations(9_999, 123, "owner", &mut mutations)
-        .expect("the MDL row encodes");
-    apply_mutations(&mut store, &mutations);
-    assert_eq!(
-        manager
-            .get_mdl_ver(&mut store, 9_999)
-            .expect("the MDL version is found"),
-        123
-    );
-
-    assert_eq!(manager.get_min_job_id(&mut store, 0).unwrap(), 9_999);
-    assert_eq!(manager.get_min_job_id(&mut store, 9_999).unwrap(), 9_999);
-    assert_eq!(manager.get_min_job_id(&mut store, 10_000).unwrap(), 0);
-    assert!(!manager.has_flashback_cluster_job(&mut store, 0).unwrap());
-
-    let mut flashback = Job::default();
-    flashback.id = 10_000;
-    flashback.type_ = ActionType::ACTION_FLASHBACK_CLUSTER;
-    let mut mutations = Vec::new();
-    table
-        .append_insert(&mut flashback, false, "0", "0", false, &mut mutations)
-        .expect("the flashback row encodes");
-    apply_mutations(&mut store, &mutations);
-    assert!(manager
-        .has_flashback_cluster_job(&mut store, 10_000)
-        .unwrap());
-    assert!(!manager
-        .has_flashback_cluster_job(&mut store, 10_001)
-        .unwrap());
+fn test_manager() {
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tidb_ddl_build::session_pool::DdlSessionPool;
+    let store = bootstrapped();
+    let (_pd, opener) = tidb_ddl::embedded_store::in_process_write_stack().unwrap();
+    let txn = opener.begin().unwrap();
+    let outcome = txn.commit(
+        store.pairs.iter().map(|(key, value)| BufferMutation::set(key.clone(), value.clone()).unwrap()).collect(),
+        &tidb_txnkv::rpc::UnaryCallContext::with_timeout(Duration::from_secs(20)),
+    ).unwrap();
+    tidb_store_driver_error::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome).unwrap();
+    let pool = tidb_session::ddl_session_pool::NodeDdlSessionPool::for_store(
+        opener, Duration::from_secs(20), Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
+        true, Duration::from_millis(500),
+    ).unwrap();
+    let manager = SystemTableManager::new(pool.sess_pool().unwrap());
+    let mut se = pool.open_sql_session().unwrap();
+    assert!(matches!(manager.get_job_by_id(9999), Err(SystemTableManagerError::NotFound)));
+    se.execute(r#"insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing)
+        values(9999, 0, '1', '1', '{"id":9999}', 1, 0)"#, &[]).unwrap();
+    let loaded = manager.get_job_by_id(9999).unwrap();
+    assert_eq!(loaded.bytes.snapshot(), br#"{"id":9999}"#);
+    assert_eq!(loaded.job.unwrap().read().id, 9999);
+    assert!(matches!(manager.get_mdl_ver(9999), Err(SystemTableManagerError::NotFound)));
+    se.execute("replace into mysql.tidb_mdl_info(job_id, version, table_ids) values(9999, 123, '1')", &[]).unwrap();
+    assert_eq!(manager.get_mdl_ver(9999).unwrap(), 123);
+    se.execute("delete from mysql.tidb_ddl_job", &[]).unwrap();
+    assert_eq!(manager.get_min_job_id(0).unwrap(), 0);
+    se.execute(r#"insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing)
+        values(123456, 0, '1', '1', '{"id":9998}', 1, 0)"#, &[]).unwrap();
+    assert_eq!(manager.get_min_job_id(0).unwrap(), 123456);
+    assert_eq!(manager.get_min_job_id(123456).unwrap(), 123456);
+    assert_eq!(manager.get_min_job_id(123457).unwrap(), 0);
+    se.execute("delete from mysql.tidb_ddl_job", &[]).unwrap();
+    assert!(!manager.has_flashback_cluster_job(0).unwrap());
+    se.execute(&format!(r#"insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing)
+        values(123, 0, '1', '1', '{{"id":9998}}', {}, 0)"#, ActionType::ACTION_FLASHBACK_CLUSTER.0), &[]).unwrap();
+    assert!(manager.has_flashback_cluster_job(0).unwrap());
+    assert!(manager.has_flashback_cluster_job(123).unwrap());
+    assert!(!manager.has_flashback_cluster_job(124).unwrap());
 }
 
 #[test]
@@ -1344,6 +1317,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
             job.id,
             10_000,
             PersistedDdlJobFailure::Error(error),
+            None,
             &|| 5,
             None, None,
         )
@@ -1442,6 +1416,7 @@ fn persisted_check_failure_uses_source_identity_for_rollback() {
             job.id,
             10_000,
             PersistedDdlJobFailure::Error(error),
+            None,
             &|| 512,
             None, None,
         )
@@ -2820,6 +2795,7 @@ fn persisted_add_check_rolls_back_after_owner_restart() {
         PersistedDdlJobFailure::Error(DdlPlanError::from(
             tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate(validation_message),
         )),
+        None,
         &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
         None, None,
     )
@@ -3133,6 +3109,7 @@ fn persisted_alter_check_validation_rolls_back_to_not_enforced() {
         PersistedDdlJobFailure::Error(DdlPlanError::from(
             tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate(validation_message),
         )),
+        None,
         &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
         None, None,
     )

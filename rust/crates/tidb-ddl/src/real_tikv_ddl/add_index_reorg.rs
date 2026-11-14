@@ -29,7 +29,6 @@ use crate::cluster_ddl::add_index::{
     AddIndexReorg, ReorgHandle, ReorgOutcome, ReorgResult, ReorgStageRequest, COLUMN_ELEMENT_KEY,
     INDEX_ELEMENT_KEY, TEMP_INDEX_PREFIX,
 };
-use crate::ddl_reorg_table::DdlReorgTable;
 use super::backfilling::{write_physical_table_record, BackfillExecutor, BatchStep, TableRecordOutcome};
 
 /// Runs what `reorg` asks for and answers its outcome. A storage or owner
@@ -46,32 +45,28 @@ pub(super) fn run_add_index_reorg<S>(
 where
     S: StoreClient,
 {
-    let tables = locate_tables(opener, timeout)?;
-    // Go `w.sessPool`: the reorg handle's statements run on its sessions; a
-    // pool without sessions yet stages the rows in the reorg transactions.
-    let sess_pool = backfiller
-        .session_pool()
-        .filter(|sess_pool| sess_pool.has_step_sessions());
+    // Go `w.sessPool`: every reorg-handle statement runs on its sessions.
+    let sess_pool = backfiller.session_pool().ok_or_else(||
+        ClusterDdlError::Backfill("the DDL worker has no session pool".to_owned()))?;
     let mut warnings = Vec::new();
     let result = match &reorg.stage {
         ReorgStageRequest::Init => init_reorg(
             opener,
             timeout,
             backfiller,
-            sess_pool.as_deref(),
+            sess_pool.as_ref(),
             reorg,
-            &tables,
         )?,
         ReorgStageRequest::Run(handle) => {
             let step_cancelled = AtomicBool::new(false);
             std::thread::scope(|scope| {
                 let (stop_checking_job_cancelled, stopped) = std::sync::mpsc::channel::<()>();
-                let (tables, step_cancelled) = (&tables, &step_cancelled);
-                let checker_pool = sess_pool.as_deref();
+                let step_cancelled = &step_cancelled;
+                let checker_pool = sess_pool.as_ref();
                 scope.spawn(move || {
                     check_job_cancelled(
                         reorg.job_id,
-                        || latest_job(opener, timeout, checker_pool, tables, reorg.job_id),
+                        || latest_job(checker_pool, reorg.job_id),
                         CHECK_JOB_CANCELLED_INTERVAL,
                         stopped,
                         step_cancelled,
@@ -81,9 +76,8 @@ where
                     opener,
                     timeout,
                     backfiller,
-                    sess_pool.as_deref(),
+                    sess_pool.as_ref(),
                     reorg,
-                    tables,
                     handle,
                     check_owner,
                     step_cancelled,
@@ -172,68 +166,14 @@ fn reorg_element(reorg: &AddIndexReorg) -> Option<(i64, &'static [u8])> {
 }
 
 /// Go `cleanupDDLReorgHandles`: best effort, once a job finished.
-pub(super) fn clean_ddl_reorg_handles<S>(
-    opener: &Arc<RealOptimisticTransactionOpener<S>>,
-    timeout: Duration,
-    sess_pool: Option<&dyn tidb_ddl_build::session_pool::DdlSessionPool>,
+pub(super) fn clean_ddl_reorg_handles(
+    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     job_id: i64,
-) -> Result<(), ClusterDdlError>
-where
-    S: StoreClient,
-{
-    if let Some(sess_pool) = sess_pool.filter(|sess_pool| sess_pool.has_step_sessions()) {
-        let mut se = sess_pool
-            .open_sql_session()
-            .map_err(DdlPlanError::from_mysql_error)?;
-        crate::ddl_reorg_table::clean_ddl_reorg_handles(se.as_mut(), job_id)
-            .map_err(DdlPlanError::from_mysql_error)?;
-        return Ok(());
-    }
-    let tables = locate_tables(opener, timeout)?;
-    reorg_transaction(opener, timeout, &crate::job_ctx::internal_ddl_source(), |meta, _, _, _| {
-        let existing = tables
-            .reorg
-            .load(meta, job_id)
-            .map_err(ClusterDdlError::Backfill)?;
-        let mutations = tables
-            .reorg
-            .remove_ddl_reorg_handle(&existing)
-            .map_err(ClusterDdlError::Backfill)?;
-        Ok(((), mutations))
-    })
-}
-
-struct ReorgTables {
-    reorg: DdlReorgTable,
-    jobs: DdlJobTable,
-    system_db_id: i64,
-}
-
-fn locate_tables<S>(
-    opener: &Arc<RealOptimisticTransactionOpener<S>>,
-    timeout: Duration,
-) -> Result<ReorgTables, ClusterDdlError>
-where
-    S: StoreClient,
-{
-    reorg_transaction(opener, timeout, &crate::job_ctx::internal_ddl_source(), |meta, _, _, _| {
-        let catalog = load_info_schema(meta).map_err(DdlPlanError::from)?;
-        let reorg = DdlReorgTable::locate(&catalog).map_err(ClusterDdlError::Backfill)?;
-        let jobs = DdlJobTable::locate(&catalog)
-            .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?;
-        let system_db_id = catalog
-            .schema_by_name("mysql")
-            .map(|database| database.read().id)
-            .ok_or_else(|| ClusterDdlError::Backfill("database mysql does not exist".to_owned()))?;
-        Ok((
-            ReorgTables {
-                reorg,
-                jobs,
-                system_db_id,
-            },
-            Vec::new(),
-        ))
-    })
+) -> Result<(), ClusterDdlError> {
+    let mut se = sess_pool.open_sql_session().map_err(DdlPlanError::from_mysql_error)?;
+    crate::ddl_reorg_table::clean_ddl_reorg_handles(se.as_mut(), job_id)
+        .map_err(DdlPlanError::from_mysql_error)?;
+    Ok(())
 }
 
 /// One reorganization transaction: `work` reads through the snapshot,
@@ -370,9 +310,8 @@ fn init_reorg<S>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
     backfiller: &dyn IndexBackfiller,
-    sess_pool: Option<&dyn tidb_ddl_build::session_pool::DdlSessionPool>,
+    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     reorg: &AddIndexReorg,
-    tables: &ReorgTables,
 ) -> Result<ReorgResult, ClusterDdlError>
 where
     S: StoreClient,
@@ -384,7 +323,6 @@ where
         .physical_ids
         .first()
         .ok_or_else(|| ClusterDdlError::Backfill("ADD INDEX reorg names no table".to_owned()))?;
-    let row_ids = backfiller.system_row_ids();
     crate::job_ctx::attach_reorg_skip_check(&reorg.query.to_utf8_lossy_go());
     let mut initialized = None;
     let result = reorg_transaction(opener, timeout, &crate::job_ctx::backfill_request_source(reorg.job_id), |meta, snapshot, buffer, start_ts| {
@@ -445,34 +383,10 @@ where
                 physical_id: first_physical,
             }
         };
-        if sess_pool.is_some() {
-            initialized = Some(handle);
-            return Ok((ReorgResult::Initialized(start_ts), Vec::new()));
-        }
-        let existing = tables
-            .reorg
-            .load(meta, reorg.job_id)
-            .map_err(ClusterDdlError::Backfill)?;
-        let id = row_ids
-            .row_allocator_for(tables.system_db_id, tables.reorg.table())
-            .alloc_next()
-            .map_err(|error| {
-                ClusterDdlError::Backfill(format!(
-                    "mysql.tidb_ddl_reorg's row-ID allocator: {error}"
-                ))
-            })?;
-        let row_id = i64::try_from(id).map_err(|_| {
-            ClusterDdlError::Backfill(
-                "mysql.tidb_ddl_reorg's row-ID allocator overflowed".to_owned(),
-            )
-        })?;
-        let mutations = tables
-            .reorg
-            .init_ddl_reorg_handle(&existing, reorg.job_id, &handle, row_id)
-            .map_err(ClusterDdlError::Backfill)?;
-        Ok((ReorgResult::Initialized(start_ts), mutations))
+        initialized = Some(handle);
+        Ok((ReorgResult::Initialized(start_ts), Vec::new()))
     })?;
-    if let (Some(sess_pool), Some(handle)) = (sess_pool, initialized) {
+    if let Some(handle) = initialized {
         let mut se = sess_pool
             .open_sql_session()
             .map_err(DdlPlanError::from_mysql_error)?;
@@ -532,40 +446,19 @@ fn check_job_cancelled(
     }
 }
 
-/// Go `sysTblMgr.GetJobByID`: the job as `mysql.tidb_ddl_job` has it now,
-/// selected on a session of the DDL's pool; a pool no node has bound reads
-/// the row off a snapshot.
-fn latest_job<S>(
-    opener: &Arc<RealOptimisticTransactionOpener<S>>,
-    timeout: Duration,
-    sess_pool: Option<&dyn tidb_ddl_build::session_pool::DdlSessionPool>,
-    tables: &ReorgTables,
+/// Go `sysTblMgr.GetJobByID` on a session of the DDL pool.
+fn latest_job(
+    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     job_id: i64,
-) -> Result<Option<tidb_model::Job>, ClusterDdlError>
-where
-    S: StoreClient,
-{
-    match sess_pool.and_then(|sess_pool| sess_pool.sess_pool()) {
-        Some(pool) => match tidb_ddl_systable::Manager::get_job_by_id(
-            &tidb_ddl_systable::SystemTableManager::new(pool),
-            job_id,
-        ) {
-            Ok(job) => Ok(job.job.map(|job| job.read().clone())),
-            Err(tidb_ddl_systable::SystemTableManagerError::NotFound) => Ok(None),
-            Err(error) => Err(ClusterDdlError::Backfill(error.to_string())),
-        },
-        None => reorg_transaction(
-            opener,
-            timeout,
-            &crate::job_ctx::internal_ddl_source(),
-            |meta, _, _, _| {
-                let job = tables
-                    .jobs
-                    .load_by_id(meta, job_id)
-                    .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?;
-                Ok((job.map(|active| active.job), Vec::new()))
-            },
-        ),
+) -> Result<Option<tidb_model::Job>, ClusterDdlError> {
+    let pool = sess_pool.sess_pool().ok_or_else(||
+        ClusterDdlError::Backfill("the DDL session pool has no sessions".to_owned()))?;
+    match tidb_ddl_systable::Manager::get_job_by_id(
+        &tidb_ddl_systable::SystemTableManager::new(pool), job_id,
+    ) {
+        Ok(job) => Ok(job.job.map(|job| job.read().clone())),
+        Err(tidb_ddl_systable::SystemTableManagerError::NotFound) => Ok(None),
+        Err(error) => Err(ClusterDdlError::Backfill(error.to_string())),
     }
 }
 
@@ -577,9 +470,8 @@ fn run_reorg<S>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
     backfiller: &dyn IndexBackfiller,
-    sess_pool: Option<&dyn tidb_ddl_build::session_pool::DdlSessionPool>,
+    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     reorg: &AddIndexReorg,
-    tables: &ReorgTables,
     handle: &ReorgHandle,
     check_owner: &(dyn Fn() -> Result<(), String> + Sync),
     step_cancelled: &AtomicBool,
@@ -665,7 +557,7 @@ where
             };
             // Go `reorgInfo.UpdateConfigFromSysTbl`.
             let reload_config = || {
-                latest_job(opener, timeout, sess_pool, tables, reorg.job_id)
+                latest_job(sess_pool, reorg.job_id)
                 .map(|job| {
                     job.filter(|job| job.state == JobState::RUNNING && job.is_alterable())
                         .map(|job| {
@@ -711,7 +603,7 @@ where
                     start_key: next_key.to_vec(),
                     ..handle.clone()
                 };
-                update_reorg_meta(opener, timeout, sess_pool, reorg, tables, &next);
+                update_reorg_meta(sess_pool, reorg, &next);
             };
             let region_store = backfiller.region_store();
             let job_query = reorg.query.to_utf8_lossy_go();
@@ -826,48 +718,21 @@ where
     })
 }
 
-/// Go `reorgInfo.UpdateReorgMeta(nextKey, sessPool)`: the handle in a
-/// transaction of its own (on the worker's sessions, or staged on the reorg
-/// table by a worker whose pool has no sessions yet); a failure is only
-/// logged.
-fn update_reorg_meta<S>(
-    opener: &Arc<RealOptimisticTransactionOpener<S>>,
-    timeout: Duration,
-    sess_pool: Option<&dyn tidb_ddl_build::session_pool::DdlSessionPool>,
+/// Go `reorgInfo.UpdateReorgMeta`: the handle's own pooled transaction;
+/// failure is only logged.
+fn update_reorg_meta(
+    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     reorg: &AddIndexReorg,
-    tables: &ReorgTables,
     next: &ReorgHandle,
-) where
-    S: StoreClient,
-{
-    let updated = match sess_pool {
-        Some(sess_pool) => sess_pool
-            .open_sql_session()
-            .and_then(|mut se| crate::ddl_reorg_table::update_reorg_meta(se.as_mut(), reorg.job_id, next))
-            .map_err(|error| error.to_string()),
-        None => reorg_transaction(opener, timeout, &crate::job_ctx::internal_ddl_source(), |meta, _, _, _| {
-            let existing = tables.reorg.load(meta, reorg.job_id).map_err(ClusterDdlError::Backfill)?;
-            let mut mutations = Vec::new();
-            if let Some(row) = existing.first() {
-                if row.handle != *next {
-                    mutations.extend(
-                        tables
-                            .reorg
-                            .update_ddl_reorg_handle(row, next)
-                            .map_err(ClusterDdlError::Backfill)?,
-                    );
-                }
-            }
-            Ok(((), mutations))
-        })
-        .map_err(|error| error.to_string()),
-    };
+) {
+    let updated = sess_pool.open_sql_session()
+        .and_then(|mut se| crate::ddl_reorg_table::update_reorg_meta(se.as_mut(), reorg.job_id, next));
     if let Err(error) = updated {
         tidb_ddl_logutil::ddl_logger().warn(
             "update reorg meta failed",
             &[
                 tidb_log::Field::new("job ID", tidb_log::Value::I64(reorg.job_id)),
-                tidb_log::Field::new("error", tidb_log::Value::Str(error)),
+                tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
             ],
         );
     }

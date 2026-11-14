@@ -45,16 +45,7 @@ impl<S: StoreClient> ClusterDdlJobHistoryStore<S> {
         Self { opener, timeout, sess_pool }
     }
 
-    /// The job table's rows in job order, off a snapshot: the read of a pool
-    /// no node has bound.
-    fn snapshot_jobs(&self) -> Result<Vec<Job>, String> {
-        tidb_ddl::real_tikv_ddl::load_active_persisted_ddl_jobs(
-            Arc::clone(&self.opener),
-            self.timeout,
-            0,
-        )
-        .map_err(|error| error.to_string())
-    }
+
 }
 
 impl<S> tidb_ddl::ddl_history::DdlJobHistoryStore for ClusterDdlJobHistoryStore<S>
@@ -66,8 +57,7 @@ where
         // order by job_id`.
         let running = tidb_ddl::ddl_history::with_pool_session(self.sess_pool.as_ref(), |se| {
             tidb_ddl::ddl_history::get_jobs_by_sql(se, "1 order by job_id")
-        })
-        .unwrap_or_else(|| self.snapshot_jobs())?;
+        })?;
         let mut storage = MetaTxnStorage::new(&self.opener, self.timeout);
         let mut transaction = storage.begin().map_err(|error| error.to_string())?;
         let history = (|| {
@@ -99,10 +89,6 @@ where
                 "reorg order by job_id limit 1",
             )?);
             Ok(jobs)
-        })
-        .unwrap_or_else(|| {
-            self.snapshot_jobs()
-                .map(|running| tidb_ddl::ddl_history::get_2_jobs_from_table(&running))
         })?;
         let mut storage = MetaTxnStorage::new(&self.opener, self.timeout);
         let mut transaction = storage.begin().map_err(|error| error.to_string())?;
