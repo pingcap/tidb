@@ -7,8 +7,8 @@
 
 #![allow(missing_docs)]
 
-use crate::cluster_ddl_source::{lower_ddl, plan_ddl};
-use tidb_ddl::cluster_ddl::DdlPlan;
+use crate::cluster_ddl_source::plan_ddl;
+use crate::fixture_ddl::{DdlPlan, FixtureDdl};
 use tidb_ddl_build::plan_error::DdlPlanError;
 use tidb_context::WarningLevel;
 use tidb_meta::key;
@@ -160,11 +160,12 @@ fn engine_attribute_resolves_table_and_partition_storage_classes() {
         vec![serde_json::json!("STANDARD"), serde_json::json!("IA")]
     );
 
-    let parsed = tidb_parser::parse("ALTER TABLE u6.t STORAGE_CLASS = 'AI'").expect("parses");
-    let error = lower_ddl(&parsed, "u6").expect_err("an unknown tier is refused");
+    let error = plan_ddl(&mut store, &statement("ALTER TABLE u6.t STORAGE_CLASS = 'AI'"), 900)
+        .expect_err("an unknown tier is refused")
+        .to_sql_error();
     assert_eq!(error.code, 8271, "{error:?}");
     assert!(
-        error.reason.contains("invalid storage class tier: AI"),
+        error.message.contains("invalid storage class tier: AI"),
         "{error:?}"
     );
 }
@@ -419,12 +420,16 @@ fn alter_database_charset_settles_the_pair_and_no_ops_when_already_true() {
 
     // A collation of another charset is refused at admission: Go
     // `AlterSchema` walks the options in order and answers 1302 (oracle).
-    let parsed = tidb_parser::parse("ALTER DATABASE u6 CHARACTER SET latin1 COLLATE utf8mb4_bin")
-        .expect("the fixture SQL parses");
-    let error = lower_ddl(&parsed, "u6").expect_err("a mismatched pair is refused");
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER DATABASE u6 CHARACTER SET latin1 COLLATE utf8mb4_bin"),
+        900,
+    )
+    .expect_err("a mismatched pair is refused")
+    .to_sql_error();
     assert_eq!(error.code, 1302, "{error:?}");
     assert!(
-        error.reason.contains(
+        error.message.contains(
             "Conflicting declarations: 'CHARACTER SET latin1' and 'CHARACTER SET utf8mb4'"
         ),
         "{error:?}"
@@ -472,13 +477,17 @@ fn create_table_stores_auto_id_cache() {
         stored["auto_id_cache"]
     );
 
-    let parsed = tidb_parser::parse(
-        "CREATE TABLE u6.big (id BIGINT PRIMARY KEY AUTO_INCREMENT) AUTO_ID_CACHE=9223372036854775808",
+    let error = plan_ddl(
+        &mut store,
+        &statement(
+            "CREATE TABLE u6.big (id BIGINT PRIMARY KEY AUTO_INCREMENT) AUTO_ID_CACHE=9223372036854775808",
+        ),
+        900,
     )
-    .expect("the fixture SQL parses");
-    let error = lower_ddl(&parsed, "u6").expect_err("an overflowing cache is refused");
+    .expect_err("an overflowing cache is refused")
+    .to_sql_error();
     assert!(
-        error.reason.contains("auto_id_cache overflows int64"),
+        error.message.contains("auto_id_cache overflows int64"),
         "{error:?}"
     );
 }
@@ -639,18 +648,22 @@ fn create_table_like_copies_the_definition_and_resets_the_identity() {
     // A view's `TableInfo` is finished at the statement ROUTE (the columns
     // come from resolving the body), so it is built here rather than lowered
     // from text like the rest of the fixture.
-    let view = tidb_ddl::cluster_ddl::DdlStatement::CreateView {
-        schema: "u6".to_owned(),
-        name: "v".to_owned(),
-        or_replace: false,
-        info: Box::new(tidb_model::TableInfo {
-            name: tidb_ast::CiString::new("v"),
-            state: tidb_model::SchemaState::PUBLIC,
-            view: Some(tidb_model::GoShared::new(tidb_model::table::ViewInfo::default())),
-            ..tidb_model::TableInfo::default()
-        }),
+    let view = tidb_model::TableInfo {
+        name: tidb_ast::CiString::new("v"),
+        state: tidb_model::SchemaState::PUBLIC,
+        view: Some(tidb_model::GoShared::new(tidb_model::table::ViewInfo::default())),
+        ..tidb_model::TableInfo::default()
     };
-    let DdlPlan::Write(write) = plan_ddl(&mut store, &view, 300).expect("the view plans") else {
+    let ddl = FixtureDdl::new(&mut store, 300);
+    let report = tidb_ddl::executor::create_view(
+        &ddl,
+        "u6",
+        "v",
+        false,
+        &view,
+        &tidb_sessionctx::StmtContext::for_query(),
+    );
+    let DdlPlan::Write(write) = ddl.answer(report).expect("the view plans") else {
         panic!("CREATE VIEW publishes a write");
     };
     apply(&mut store, &write);
@@ -982,19 +995,13 @@ fn rename_owner_batch_self_reference_and_moved_child_share_publication() {
 /// statement resolves the table and changes nothing.
 #[test]
 fn engine_and_row_format_specifications_are_no_ops() {
+    let mut store = bootstrapped();
+    plan(&mut store, "CREATE TABLE u6.t (a INT)", 100);
     for sql in ["ALTER TABLE u6.t engine=innodb, ROW_FORMAT=DYNAMIC"] {
-        let parsed = tidb_parser::parse(sql).expect("parses");
-        let lowered = lower_ddl(&parsed, "u6").expect("admitted");
-        assert!(
-            matches!(
-                lowered,
-                Some(
-                    tidb_ddl::cluster_ddl::DdlStatement::AcceptedNoOp { .. }
-                        | tidb_ddl::cluster_ddl::DdlStatement::IgnoredTableOption { .. }
-                )
-            ),
-            "{sql}: {lowered:?}"
-        );
+        let before = store.pairs.clone();
+        let answer = plan_ddl(&mut store, &statement(sql), 200).expect("admitted");
+        assert!(matches!(answer, DdlPlan::AlreadySatisfied { .. }), "{sql}");
+        assert!(store.pairs == before, "{sql} writes nothing");
     }
 }
 

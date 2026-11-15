@@ -64,9 +64,8 @@ pub mod worker;
 pub mod pre_split;
 
 pub use worker::{ClusterDdl, RealClusterDdl};
-/// Go `executor.LockTables` / `UnlockTables` / `CleanupTableLock` over a
-/// caller's schema and job submission.
-pub use worker::{cleanup_table_lock_with, lock_tables_with, unlock_tables_with, DoDdlJob};
+/// Go `executor`'s statement methods, over any [`ExecutorStore`].
+pub use worker::{executor, ExecutorStore};
 
 /// Go `JobWrapper`: a job, typed arguments and its ID-allocation ownership.
 pub use tidb_ddl_jobsubmit::JobSpec as JobWrapper;

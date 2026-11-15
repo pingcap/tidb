@@ -25,43 +25,12 @@ use tidb_model::{ColumnInfo, MaskingPolicyInfo, MaskingPolicyStatus, MaskingPoli
 use tidb_sqlescape::SqlArg;
 use tidb_terror::MysqlError;
 
-use super::add_index::{action_step, AddIndexSubmission};
+use super::add_index::action_step;
 use super::*;
 
 /// Go `maskingPolicySelectSQL`... the columns `maskingPolicyFromSysTableRow`
 /// reads, in its order.
 pub const SELECT_MASKING_POLICY_SQL: &str = "SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by FROM mysql.tidb_masking_policy";
-
-/// Go's executor halves up to `doDDLJob2`: the session already checked the
-/// statement and built the policy. `None` for any other statement.
-pub fn prepare_masking_policy_job_submission<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    start_ts: u64,
-    upgrading: bool,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let spec = match statement {
-        DdlStatement::CreateMaskingPolicy {
-            policy,
-            replace_on_exist,
-            ..
-        } => create_masking_policy_with_info(policy, *replace_on_exist, job_context),
-        DdlStatement::AlterMaskingPolicy {
-            policy,
-            policy_id,
-            schema_name,
-        } => alter_masking_policy_with_info(policy, *policy_id, schema_name, job_context),
-        DdlStatement::DropMaskingPolicy { policy } => drop_masking_policy(policy, job_context),
-        _ => return Ok(None),
-    };
-    submit_built_job(
-        snapshot,
-        Some(AddIndexSubmission::Job(Box::new(spec), Vec::new())),
-        start_ts,
-        upgrading,
-    )
-}
 
 /// Go `executor.createMaskingPolicyWithInfo`: the job before `doDDLJob2`.
 pub fn create_masking_policy_with_info(

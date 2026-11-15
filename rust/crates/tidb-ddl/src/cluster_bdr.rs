@@ -15,13 +15,10 @@
 //! Go's BDR admission for the DDL this node plans and publishes directly.
 //!
 //! A persisted job meets Go's `SubmitBatch` admission in
-//! [`tidb_ddl_jobsubmit::prepare_spec_for_submit`]. The changes
-//! [`crate::cluster_ddl::plan_ddl`] publishes in one transaction have no
-//! submitted job, so the planner asks the same questions: the ADD COLUMN /
-//! MODIFY COLUMN builders' `IsAddColumnDenied` / `IsModifyColumnDenied`
-//! while it builds the column, and the submitter's `IsDenied` over the
-//! planned change before it is published. The role is read from the same
-//! snapshot the plan reads (Go's `meta.Mutator.GetBDRRole`).
+//! [`tidb_ddl_jobsubmit::prepare_spec_for_submit`]; the ADD COLUMN / MODIFY
+//! COLUMN builders also ask Go's `IsAddColumnDenied` / `IsModifyColumnDenied`
+//! while they build the column. The role is read from the snapshot the
+//! builder reads (Go's `meta.Mutator.GetBDRRole`).
 
 use tidb_ast::BdrRole;
 

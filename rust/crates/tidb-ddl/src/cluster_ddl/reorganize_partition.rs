@@ -111,47 +111,6 @@ fn partition_info_type_none() -> tidb_model::partition::PartitionInfo {
     }
 }
 
-/// Go's executor halves (`ReorganizePartitions`, `hashPartitionManagement`,
-/// `AlterTablePartitioning`, `RemovePartitioning`) up to `doDDLJob2`.
-/// `None` for any other statement.
-pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    start_ts: u64,
-    upgrading: bool,
-    store_count: usize,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let (schema, table, action, context) = match statement {
-        DdlStatement::ReorganizePartitions {
-            schema,
-            table,
-            action,
-            context,
-        }
-        | DdlStatement::AddPartitions {
-            schema,
-            table,
-            action,
-            context,
-            ..
-        } => (schema, table, action.as_ref(), &context.0),
-        _ => return Ok(None),
-    };
-    let catalog = load_info_schema(snapshot)?;
-    let built = reorganize_partitions_job(
-        snapshot,
-        &catalog,
-        schema,
-        table,
-        action,
-        context,
-        job_context,
-        store_count,
-    )?;
-    submit_built_job(snapshot, built, start_ts, upgrading)
-}
-
 /// Go `executor.ReorganizePartitions`, `hashPartitionManagement`, `AlterTablePartitioning`, `RemovePartitioning`.
 pub(crate) fn reorganize_partitions_job<S: MetaSnapshot>(
     snapshot: &mut S,

@@ -28,7 +28,9 @@ use tidb_ddl_notifier::SchemaChangeEvent;
 use tidb_infoschema::cluster_catalog::{load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot};
 
 use tidb_kv::key::prefix_scan_end;
-use tidb_ddl::cluster_ddl::{lower_ddl_with_context, prepare_check_constraint_job_submission, AlterColumnAction, DdlPlan, DdlStatement, MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan, PersistedDdlJobStep};
+use tidb_ddl::cluster_ddl::{MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan, PersistedDdlJobStep};
+use crate::fixture_ddl::{Ddl, DdlPlan, FixtureDdl};
+use tidb_ddl::ClusterDdl as _;
 use tidb_ddl_build::plan_error::DdlPlanError;
 
 use tidb_ddl::cluster_ddl::DdlJobSchemaState;
@@ -299,12 +301,10 @@ pub(crate) fn bootstrapped() -> MetaStore {
 
 fn plan_check_constraint_job_submission(
     store: &mut MetaStore,
-    statement: &DdlStatement,
+    statement: &Ddl,
     start_ts: u64,
 ) -> Result<Option<PlannedCheckSubmission>, DdlPlanError> {
-    let Some(mut spec) =
-        prepare_check_constraint_job_submission(store, statement, start_ts, false)?
-    else {
+    let Some(mut spec) = submit_job(store, statement, start_ts, false)? else {
         return Ok(None);
     };
     let catalog = load_info_schema(store)?;
@@ -322,17 +322,13 @@ fn plan_check_constraint_job_submission(
     }))
 }
 
-pub(crate) fn statement(sql: &str) -> DdlStatement {
-    let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
-    lower_ddl(&parsed, "u6")
-        .unwrap_or_else(|error| panic!("the fixture SQL is admitted: {sql}: {error:?}"))
-        .expect("the fixture SQL is a catalog change")
+/// `sql` as a session in `u6` under TiDB's default DDL session issues it.
+pub(crate) fn statement(sql: &str) -> Ddl {
+    Ddl::new(sql, "u6", &default_ddl_statement_context())
 }
 
 fn stored_default_bytes(sql: &str) -> Vec<u8> {
-    let DdlStatement::CreateTable { build, .. } = statement(sql) else {
-        panic!("the fixture is not CREATE TABLE: {sql}");
-    };
+    let build = create_table_build(&statement(sql));
     let column = build
         .template()
         .columns
@@ -345,11 +341,27 @@ fn stored_default_bytes(sql: &str) -> Vec<u8> {
     }
 }
 
+/// Go's executor refusal of `ddl` on the bootstrapped store, raised before
+/// anything is written.
+fn refusal_of(ddl: &Ddl) -> tidb_mysql::errors::SqlError {
+    let mut store = bootstrapped();
+    let before = store.pairs.clone();
+    let error = plan_ddl(&mut store, ddl, 100)
+        .expect_err("this shape must be refused before any mutation")
+        .to_sql_error();
+    assert!(store.pairs == before, "a refusal writes nothing");
+    error
+}
+
+/// Whether Go's executor runs `ddl` on the bootstrapped store.
+fn admitted(ddl: &Ddl) -> bool {
+    plan_ddl(&mut bootstrapped(), ddl, 100).is_ok()
+}
+
+/// [`refusal_of`] for `sql` in `u6`.
 fn refusal_with_code(sql: &str) -> (u16, String) {
-    let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
-    let error =
-        lower_ddl(&parsed, "u6").expect_err("this shape must be refused before any mutation");
-    (error.code, error.reason)
+    let error = refusal_of(&statement(sql));
+    (error.code, error.message)
 }
 
 fn refusal(sql: &str) -> String {
@@ -2485,9 +2497,7 @@ fn completed_check_schema_stays_active_until_schema_sync() {
     let parsed =
         tidb_parser::parse("ALTER TABLE sync_check ADD CONSTRAINT c CHECK (a > 0)").unwrap();
     let context = tidb_sessionctx::StmtContext::for_query().with_enable_check_constraint(true);
-    let statement = lower_ddl_with_context(&parsed, "u6", &ddl_context(&context))
-        .unwrap()
-        .unwrap();
+    let statement = Ddl::of(&parsed, "u6", &context);
     let submission = plan_check_constraint_job_submission(&mut store, &statement, 2_001)
         .unwrap()
         .unwrap();
@@ -2546,9 +2556,7 @@ fn check_job_submission_precedes_every_schema_transition() {
     let parsed =
         tidb_parser::parse("ALTER TABLE queued_check ADD CONSTRAINT c_positive CHECK (a > 0)")
             .expect("CHECK DDL parses");
-    let statement = lower_ddl_with_context(&parsed, "u6", &ddl_context(&context))
-        .expect("CHECK DDL is admitted")
-        .expect("CHECK DDL owns a catalog route");
+    let statement = Ddl::of(&parsed, "u6", &context);
     let submission = plan_check_constraint_job_submission(&mut store, &statement, 2_001)
         .expect("Go submission plans")
         .expect("ADD CHECK uses the job table");
@@ -2741,10 +2749,8 @@ fn failed_job_insert_attempt_cleans_up_assigned_id_registration_before_retry() {
         tidb_parser::parse("ALTER TABLE retry_cleanup ADD CONSTRAINT c_positive CHECK (a > 0)")
             .expect("CHECK DDL parses");
     let context = tidb_sessionctx::StmtContext::for_query().with_enable_check_constraint(true);
-    let statement = lower_ddl_with_context(&parsed, "u6", &ddl_context(&context))
-        .expect("CHECK DDL is admitted")
-        .expect("CHECK DDL owns a catalog route");
-    let mut spec = prepare_check_constraint_job_submission(&mut store, &statement, 2_101, false)
+    let statement = Ddl::of(&parsed, "u6", &context);
+    let mut spec = submit_job(&mut store, &statement, 2_101, false)
         .expect("Go submission preflight succeeds")
         .expect("ADD CHECK creates a job spec");
     let catalog = load_info_schema(&mut store).expect("catalog loads");
@@ -2801,11 +2807,9 @@ fn check_job_submission_observes_the_global_upgrading_state() {
         tidb_parser::parse("ALTER TABLE upgrading_submit ADD CONSTRAINT c_positive CHECK (a > 0)")
             .expect("CHECK DDL parses");
     let context = tidb_sessionctx::StmtContext::for_query().with_enable_check_constraint(true);
-    let statement = lower_ddl_with_context(&parsed, "u6", &ddl_context(&context))
-        .expect("CHECK DDL is admitted")
-        .expect("CHECK DDL owns a catalog route");
+    let statement = Ddl::of(&parsed, "u6", &context);
 
-    let spec = prepare_check_constraint_job_submission(&mut store, &statement, 2_201, true)
+    let spec = submit_job(&mut store, &statement, 2_201, true)
         .expect("Go submission preflight succeeds")
         .expect("ADD CHECK creates a job spec");
     assert_eq!(spec.job.state, tidb_model::JobState::PAUSING);
@@ -2831,9 +2835,7 @@ fn persisted_add_check_rolls_back_after_owner_restart() {
         "ALTER TABLE queued_check_rollback ADD CONSTRAINT c_positive CHECK (a > 0)",
     )
     .expect("CHECK DDL parses");
-    let statement = lower_ddl_with_context(&parsed, "u6", &ddl_context(&context))
-        .expect("CHECK DDL is admitted")
-        .expect("CHECK DDL owns a catalog route");
+    let statement = Ddl::of(&parsed, "u6", &context);
     let submission = plan_check_constraint_job_submission(&mut store, &statement, 3_001)
         .expect("Go submission plans")
         .expect("ADD CHECK uses the job table");
@@ -2951,9 +2953,7 @@ fn persisted_drop_and_alter_check_jobs_resume_and_finish_like_go() {
     let context = tidb_sessionctx::StmtContext::for_query().with_enable_check_constraint(true);
     let lower = |sql: &str| {
         let parsed = tidb_parser::parse(sql).expect("CHECK DDL parses");
-        lower_ddl_with_context(&parsed, "u6", &ddl_context(&context))
-            .expect("CHECK DDL is admitted")
-            .expect("CHECK DDL owns a catalog route")
+        Ddl::of(&parsed, "u6", &context)
     };
 
     let create = plan_ddl(
@@ -3124,9 +3124,7 @@ fn persisted_alter_check_validation_rolls_back_to_not_enforced() {
     let context = tidb_sessionctx::StmtContext::for_query().with_enable_check_constraint(true);
     let lower = |sql: &str| {
         let parsed = tidb_parser::parse(sql).expect("CHECK DDL parses");
-        lower_ddl_with_context(&parsed, "u6", &ddl_context(&context))
-            .expect("CHECK DDL is admitted")
-            .expect("CHECK DDL owns a catalog route")
+        Ddl::of(&parsed, "u6", &context)
     };
     let create = plan_ddl(
         &mut store,
@@ -3231,66 +3229,43 @@ fn committed_table(store: &MetaStore, table_id: i64) -> tidb_model::TableInfo {
     .expect("committed table metadata decodes")
 }
 
-/// Runs `statement` as Go's persisted job, submitted at `start_ts` and
-/// stepped to completion by the owner (each step applied as it commits).
-/// The write answered carries every committed step's mutations in order
-/// (already applied; applying them again changes nothing), the last schema
-/// version published with its diff, and the table ID the job created.
-/// The fixture store has no TiFlash server.
+/// Runs `ddl` through Go's DDL executor (`ClusterDdl::execute_ddl`) over
+/// `store`, its job run to completion as the owner would. The write answered
+/// carries every committed step's mutations in order (already applied;
+/// applying them again changes nothing), the last schema version published
+/// with its diff, and the table ID the job created. The fixture store has no
+/// TiFlash server.
 pub(crate) fn plan_ddl(
     store: &mut MetaStore,
-    statement: &DdlStatement,
+    ddl: &Ddl,
     start_ts: u64,
 ) -> Result<DdlPlan, DdlPlanError> {
-    plan_ddl_with_tiflash_stores(store, statement, start_ts, 0)
+    FixtureDdl::new(store, start_ts).plan(ddl)
 }
 
 /// [`plan_ddl`] over a store with `tiflash_stores` TiFlash servers (what Go
 /// `infoschema.GetTiFlashStoreCount` answers).
 fn plan_ddl_with_tiflash_stores(
     store: &mut MetaStore,
-    statement: &DdlStatement,
+    ddl: &Ddl,
     start_ts: u64,
     tiflash_stores: u64,
 ) -> Result<DdlPlan, DdlPlanError> {
+    FixtureDdl::new(store, start_ts)
+        .with_tiflash_stores(tiflash_stores)
+        .plan(ddl)
+}
+
+/// Runs the inserted job `job_id` to its end as the owner would, from
+/// `start_ts`, adding each committed step to `write`; the job's run error,
+/// once it has been cancelled or rolled back.
+pub(crate) fn run_inserted_job(
+    store: &mut MetaStore,
+    job_id: i64,
+    start_ts: u64,
+    mut write: tidb_ddl::cluster_ddl::DdlWrite,
+) -> Result<tidb_ddl::cluster_ddl::DdlWrite, DdlPlanError> {
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let context = tidb_sessionctx::StmtContext::for_query();
-    let mut no_null = |_: &str, _: &tidb_model::TableInfo, _: i64| Ok(false);
-    let submission = tidb_ddl::real_tikv_ddl::prepare_persisted_job_submission(
-        store,
-        statement,
-        &context,
-        &[],
-        start_ts,
-        false,
-        1,
-        &|| Ok(tiflash_stores),
-        &mut no_null,
-    )?;
-    let (mut spec, warnings) = match submission {
-        Some(tidb_ddl::cluster_ddl::add_index::AddIndexSubmission::Job(spec, warnings)) => {
-            (*spec, warnings)
-        }
-        Some(tidb_ddl::cluster_ddl::add_index::AddIndexSubmission::AlreadySatisfied {
-            detail,
-            warnings,
-        }) => return Ok(DdlPlan::AlreadySatisfied { detail, warnings }),
-        // A statement Go answers without a job.
-        None => return tidb_ddl::cluster_ddl::plan_ddl(store, statement),
-    };
-    let catalog = load_info_schema(store)?;
-    let mut before_insert_with_assigned_ids =
-        |_: &[tidb_ddl_jobsubmit::JobSpec]| Option::<fn()>::None;
-    let (mutations, _) = plan_insert_attempt(
-        store,
-        &catalog,
-        std::slice::from_mut(&mut spec),
-        &mut before_insert_with_assigned_ids,
-    )?;
-    apply_mutations(store, &mutations);
-    let job_id = spec.job.id;
-    let mut write = tidb_ddl::cluster_ddl::job_only_write(job_id, mutations);
-    write.warnings = warnings;
     let mut failure = None;
     let mut outcomes = Vec::new();
     let mut ts = start_ts;
@@ -3338,7 +3313,7 @@ fn plan_ddl_with_tiflash_stores(
     if let Some(error) = failure {
         return Err(error);
     }
-    Ok(DdlPlan::Write(Box::new(write)))
+    Ok(write)
 }
 
 /// What the owner's reorganization `reorg` comes to over tables without
@@ -3524,9 +3499,7 @@ fn table_build_uses_the_loaded_database_defaults() {
 #[test]
 fn a_table_constraint_primary_key_is_the_same_clustered_handle_as_an_inline_one() {
     let template = |sql: &str| {
-        let DdlStatement::CreateTable { build, .. } = statement(sql) else {
-            panic!("a CREATE TABLE");
-        };
+        let build = create_table_build(&statement(sql));
         build.template().clone()
     };
     let inline = template("CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL)");
@@ -3588,14 +3561,13 @@ fn created_database_metadata_follows_go() {
             "utf8_general_ci",
         ),
     ] {
-        let DdlStatement::CreateDatabase {
-            charset, collate, ..
-        } = statement(sql)
-        else {
-            panic!("the fixture is CREATE DATABASE")
-        };
-        assert_eq!(charset, expected_charset, "{sql}");
-        assert_eq!(collate, expected_collate, "{sql}");
+        let mut store = bootstrapped();
+        plan(&mut store, sql, 100);
+        let catalog = load_info_schema(&mut store).unwrap();
+        let database = catalog.schema_by_name("c").expect("the database is created");
+        let database = database.read();
+        assert_eq!(database.charset, expected_charset, "{sql}");
+        assert_eq!(database.collate, expected_collate, "{sql}");
     }
 
     assert!(
@@ -3897,9 +3869,8 @@ fn the_shapes_a_bootstrap_needs_are_admitted_rather_than_refused() {
          PRIMARY KEY (id))",
         "CREATE TABLE u6.t (id BIGINT AUTO_INCREMENT PRIMARY KEY) AUTO_INCREMENT=100",
     ] {
-        let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
         assert!(
-            lower_ddl(&parsed, "u6").is_ok(),
+            admitted(&statement(sql)),
             "`{sql}` was refused: {}",
             refusal(sql)
         );
@@ -4104,11 +4075,7 @@ fn defaults_are_validated_and_persisted_against_the_final_column_type() {
         stored_default_bytes("CREATE TABLE u6.t (a BINARY(4) DEFAULT 0x61)"),
         b"a\0\0\0".as_slice()
     );
-    let DdlStatement::CreateTable { build, .. } =
-        statement("CREATE TABLE u6.t (a BIT(9) DEFAULT b'1')")
-    else {
-        panic!("the fixture is CREATE TABLE");
-    };
+    let build = create_table_build(&statement("CREATE TABLE u6.t (a BIT(9) DEFAULT b'1')"));
     let column = build
         .template()
         .columns
@@ -4142,12 +4109,7 @@ fn cluster_create_persists_a_literal_timestamp_in_utc_from_the_session_zone() {
         });
     let sql = "CREATE TABLE u6.t (a TIMESTAMP DEFAULT '2020-01-02 08:00:00')";
     let parsed = tidb_parser::parse_with_sql_mode(sql, context.sql_mode()).expect("parses");
-    let DdlStatement::CreateTable { build, .. } = lower_ddl_with_context(&parsed, "u6", &ddl_context(&context))
-        .expect("the timestamp default is admitted")
-        .expect("the statement is cluster DDL")
-    else {
-        panic!("the fixture is CREATE TABLE");
-    };
+    let build = create_table_build(&Ddl::of(&parsed, "u6", &context));
     let column_handle = build.template().columns.get(0).expect("one column");
     let column = column_handle.read();
     assert_eq!(
@@ -4169,13 +4131,7 @@ fn cluster_create_folds_a_timestamp_expression_in_the_session_zone() {
         let sql =
             "CREATE TABLE u6.t (v VARCHAR(64) DEFAULT (TIMESTAMP '2024-01-01 14:00:00+05:00'))";
         let parsed = tidb_parser::parse_with_sql_mode(sql, context.sql_mode()).expect("parses");
-        let DdlStatement::CreateTable { build, .. } =
-            lower_ddl_with_context(&parsed, "u6", &ddl_context(&context))
-                .expect("the expression default is admitted")
-                .expect("the statement is cluster DDL")
-        else {
-            panic!("the fixture is CREATE TABLE");
-        };
+        let build = create_table_build(&Ddl::of(&parsed, "u6", &context));
         let column_handle = build.template().columns.get(0).expect("one column");
         let column = column_handle.read();
         match column.default_value.view() {
@@ -4205,11 +4161,10 @@ fn cluster_create_default_admission_uses_the_captured_date_modes() {
         .with_date_modes(tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE)
         .with_time_zone(tidb_datatype::SessionTimeZone::utc());
     let parsed = tidb_parser::parse_with_sql_mode(sql, strict_default.sql_mode()).expect("parses");
-    let error = lower_ddl_with_context(&parsed, "u6", &ddl_context(&strict_default))
-        .expect_err("NO_ZERO_DATE rejects the default");
+    let error = refusal_of(&Ddl::of(&parsed, "u6", &strict_default));
     assert_eq!(
-        (error.code, error.sql_state(), error.reason.as_str()),
-        (1067, *b"42000", "Invalid default value for 'a'")
+        (error.code, error.state, error.message.as_str()),
+        (1067, "42000", "Invalid default value for 'a'")
     );
 
     // Go reads one `SQLMode` (`GetSQLMode().HasNoZeroDateMode()`): strict
@@ -4219,9 +4174,10 @@ fn cluster_create_default_admission_uses_the_captured_date_modes() {
         .with_date_modes(tidb_datatype::DateModes::default())
         .with_ddl_sql_mode(tidb_mysql::ModeStrictTransTables.0)
         .with_time_zone(tidb_datatype::SessionTimeZone::utc());
-    assert!(lower_ddl_with_context(&parsed, "u6", &ddl_context(&permissive))
-        .expect("zero dates are admitted when the mode bits allow them")
-        .is_some());
+    assert!(
+        admitted(&Ddl::of(&parsed, "u6", &permissive)),
+        "zero dates are admitted when the mode bits allow them"
+    );
 }
 
 #[test]
@@ -4230,29 +4186,33 @@ fn cluster_create_preserves_coded_default_errors() {
         (
             "CREATE TABLE u6.t (a INT DEFAULT (ABS(1)))",
             3770,
-            *b"HY000",
+            "HY000",
             "Default value expression of column 'a' contains a disallowed function: `abs`.",
         ),
         (
             "CREATE TABLE u6.t (ts TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP)",
             1067,
-            *b"42000",
+            "42000",
             "Invalid default value for 'ts'",
         ),
     ] {
-        let parsed = tidb_parser::parse(sql).expect("parses");
-        let error = lower_ddl(&parsed, "u6").expect_err("the default is refused");
-        assert_eq!((error.code, error.sql_state()), (code, state), "{sql}");
-        assert_eq!(error.reason, message, "{sql}");
+        let error = refusal_of(&statement(sql));
+        assert_eq!((error.code, error.state), (code, state), "{sql}");
+        assert_eq!(error.message, message, "{sql}");
     }
 }
 
 #[test]
 fn a_statement_this_module_does_not_own_is_left_to_its_own_path() {
     for sql in ["SELECT 1", "INSERT INTO u6.t VALUES (1, 2)"] {
-        let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
-        assert!(
-            lower_ddl(&parsed, "u6").expect("no refusal").is_none(),
+        let mut store = bootstrapped();
+        let ddl = FixtureDdl::new(&mut store, 100);
+        let statement = statement(sql);
+        let error = ddl
+            .execute_ddl(&statement.stmt, &statement.current_db, &statement.context)
+            .expect_err("not a DDL statement");
+        assert_eq!(
+            error.message, "statement has no DDL executor method",
             "`{sql}` is not a catalog change this module owns"
         );
     }
@@ -4539,12 +4499,11 @@ fn exchange_partition_builds_gos_four_way_label_rule_patch() {
 #[test]
 fn an_unqualified_name_resolves_against_the_sessions_default_schema() {
     let parsed = tidb_parser::parse("CREATE TABLE t (id BIGINT PRIMARY KEY)").expect("parses");
-    let DdlStatement::CreateTable { schema, table, .. } = lower_ddl(&parsed, "campaign31")
-        .expect("admitted")
-        .expect("a catalog change")
-    else {
-        panic!("a CREATE TABLE");
-    };
+    let tidb_ast::Stmt::Ddl(ddl) = &parsed else { panic!("a CREATE TABLE") };
+    let tidb_ast::DdlStmt::CreateTable(create) = &**ddl else { panic!("a CREATE TABLE") };
+    // Go `preprocess.go handleTableName`, as `executor.CreateTable` reads it.
+    let (schema, table) =
+        tidb_ddl::cluster_ddl::split_name(&create.name, "campaign31", "table").unwrap();
     assert_eq!((schema.as_str(), table.as_str()), ("campaign31", "t"));
 }
 
@@ -4563,12 +4522,7 @@ fn create_table_with_auto_increment_is_admitted_now_the_counter_has_a_home() {
          PRIMARY KEY (id))",
     )
     .expect("the fixture SQL parses");
-    let DdlStatement::CreateTable { build, .. } = lower_ddl(&parsed, "sbtest")
-        .expect("admitted")
-        .expect("a catalog change")
-    else {
-        panic!("a CREATE TABLE");
-    };
+    let build = create_table_build(&Ddl::of(&parsed, "sbtest", &default_ddl_statement_context()));
     assert!(
         build
             .template()
@@ -4599,12 +4553,7 @@ fn create_table_with_auto_random_persists_its_allocator_format() {
          AUTO_RANDOM_BASE=100",
     )
     .expect("the fixture SQL parses");
-    let DdlStatement::CreateTable { build, .. } = lower_ddl(&parsed, "test")
-        .expect("admitted")
-        .expect("a catalog change")
-    else {
-        panic!("a CREATE TABLE");
-    };
+    let build = create_table_build(&Ddl::of(&parsed, "test", &default_ddl_statement_context()));
     assert_eq!(build.template().auto_random_bits, 5);
     assert_eq!(build.template().auto_random_range_bits, 32);
     assert_eq!(build.template().auto_rand_id, 100);
@@ -4792,15 +4741,14 @@ fn tiflash_batch_partition_status_updates_containing_table() {
         (9002, true, true),
         (9001, false, false),
     ] {
-        let DdlPlan::Write(write) = plan_ddl(
-            &mut store,
-            &DdlStatement::UpdateTiFlashReplicaStatus {
-                table_id: physical,
-                available,
-            },
-            5000,
-        )
-        .unwrap() else {
+        let ddl = FixtureDdl::new(&mut store, 5000);
+        let report = tidb_ddl::executor::update_table_replica_info(
+            &ddl,
+            physical,
+            available,
+            &tidb_sessionctx::StmtContext::for_query(),
+        );
+        let DdlPlan::Write(write) = ddl.answer(report).unwrap() else {
             panic!("status publishes a metadata change")
         };
         assert_eq!(write.diff.table_id, id);
@@ -4977,30 +4925,6 @@ fn a_duplicate_index_name_is_refused_and_if_not_exists_is_a_no_op() {
 /// before a timestamp is spent: publishing one writes a `TableInfo` this node's
 /// own catalog loader then drops, so the table would vanish from the very
 /// connection that indexed it.
-#[test]
-fn columnar_index_shapes_lower_for_gos_table_checks() {
-    // Go `createIndex` hands a full-text, vector or columnar index to
-    // `createColumnarIndex`, whose checks need the stored table, so the
-    // statement lowers and its plan refuses it.
-    for (sql, expected) in [
-        ("CREATE FULLTEXT INDEX fi ON u6.minimal (c)", tidb_ast::IndexType::FULLTEXT),
-        (
-            "CREATE VECTOR INDEX vi ON u6.minimal ((vec_cosine_distance(v))) USING HNSW",
-            tidb_ast::IndexType::VECTOR,
-        ),
-    ] {
-        let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
-        match lower_ddl(&parsed, "u6") {
-            Ok(Some(DdlStatement::CreateIndex { columnar, .. })) => assert_eq!(
-                columnar.map(|spec| tidb_ast::IndexType(spec.option.tp)),
-                Some(expected),
-                "{sql}"
-            ),
-            other => panic!("`{sql}` lowered to {other:?}"),
-        }
-    }
-}
-
 /// Go `preprocessor.checkAutoIncrementOp`: the allocator hands out integers,
 /// so a non-numeric AUTO_INCREMENT column is refused.
 ///
@@ -5017,10 +4941,9 @@ fn a_non_numeric_auto_increment_column_is_refused_the_way_go_refuses_it() {
         "CREATE TABLE t (id DATETIME NOT NULL AUTO_INCREMENT, PRIMARY KEY(id))",
         "CREATE TABLE t (id DECIMAL(10,2) NOT NULL AUTO_INCREMENT, PRIMARY KEY(id))",
     ] {
-        let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
-        let refused = lower_ddl(&parsed, "u6").expect_err("this shape must be refused");
         assert_eq!(
-            refused.reason, "Incorrect column specifier for column 'id'",
+            refusal(sql),
+            "Incorrect column specifier for column 'id'",
             "`{sql}`"
         );
     }
@@ -5032,8 +4955,7 @@ fn a_non_numeric_auto_increment_column_is_refused_the_way_go_refuses_it() {
         "CREATE TABLE t (id FLOAT NOT NULL AUTO_INCREMENT, PRIMARY KEY(id))",
         "CREATE TABLE t (id DOUBLE NOT NULL AUTO_INCREMENT, PRIMARY KEY(id))",
     ] {
-        let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
-        assert!(lower_ddl(&parsed, "u6").is_ok(), "`{sql}` must be admitted");
+        assert!(admitted(&statement(sql)), "`{sql}` must be admitted");
     }
 }
 
@@ -5245,10 +5167,16 @@ fn prefix_index_spellings_preserve_key_part_lengths() {
     }
 }
 
-/// A resolved view definition as the route would hand it over, for the
-/// plan-arm pins below — the RESOLUTION itself is the session tier's
+/// Go `executor.CreateView` over a resolved view definition as the session
+/// hands it over — the RESOLUTION itself is the session tier's
 /// `resolve_view_definition`, tested beside `run_create_view_in`.
-fn view_statement(schema: &str, name: &str, or_replace: bool) -> DdlStatement {
+fn plan_view(
+    store: &mut MetaStore,
+    schema: &str,
+    name: &str,
+    or_replace: bool,
+    start_ts: u64,
+) -> Result<DdlPlan, DdlPlanError> {
     let view = tidb_infoschema::ViewDef {
         name: name.to_owned(),
         columns: vec![(
@@ -5266,12 +5194,17 @@ fn view_statement(schema: &str, name: &str, or_replace: bool) -> DdlStatement {
         update_ts: 0,
         id: 0,
     };
-    DdlStatement::CreateView {
-        schema: schema.to_owned(),
-        name: name.to_owned(),
+    let info = tidb_executor::view::build_view_table_info(name, &view);
+    let ddl = FixtureDdl::new(store, start_ts);
+    let report = tidb_ddl::executor::create_view(
+        &ddl,
+        schema,
+        name,
         or_replace,
-        info: Box::new(tidb_executor::view::build_view_table_info(name, &view)),
-    }
+        &info,
+        &tidb_sessionctx::StmtContext::for_query(),
+    );
+    ddl.answer(report)
 }
 
 #[test]
@@ -5287,14 +5220,14 @@ fn a_create_view_publishes_a_view_table_info() {
 
     // Recheck the actual publication snapshot: a table can appear after
     // session-side view resolution, and must never be deleted as a view.
-    let error = plan_ddl(&mut store, &view_statement("u6", "t", true), 102)
+    let error = plan_view(&mut store, "u6", "t", true, 102)
         .expect_err("OR REPLACE cannot replace a base table");
     let DdlPlanError::Admission(error) = error else {
         panic!("expected WrongObject admission: {error:?}");
     };
     assert_eq!(error.code, 1347);
 
-    let write = match plan_ddl(&mut store, &view_statement("u6", "v", false), 102)
+    let write = match plan_view(&mut store, "u6", "v", false, 102)
         .expect("a fresh view plans")
     {
         DdlPlan::Write(write) => *write,
@@ -5327,7 +5260,7 @@ fn a_create_view_publishes_a_view_table_info() {
     apply(&mut store, &write);
 
     // The same name again without OR REPLACE is Go's ErrTableExists.
-    let error = plan_ddl(&mut store, &view_statement("u6", "v", false), 103)
+    let error = plan_view(&mut store, "u6", "v", false, 103)
         .expect_err("a duplicate view name refuses");
     assert!(
         error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS),
@@ -5335,7 +5268,7 @@ fn a_create_view_publishes_a_view_table_info() {
     );
 
     // OR REPLACE drops the old id and creates a fresh one.
-    let replace = match plan_ddl(&mut store, &view_statement("u6", "v", true), 104)
+    let replace = match plan_view(&mut store, "u6", "v", true, 104)
         .expect("OR REPLACE plans")
     {
         DdlPlan::Write(write) => *write,
@@ -5357,10 +5290,7 @@ fn a_create_view_publishes_a_view_table_info() {
     // IF EXISTS is Go's Unknown table.
     let drop = match plan_ddl(
         &mut store,
-        &DdlStatement::DropView {
-            names: vec![("u6".to_owned(), "v".to_owned())],
-            if_exists: false,
-        },
+        &statement("DROP VIEW u6.v"),
         105,
     )
     .expect("the drop plans")
@@ -5376,10 +5306,7 @@ fn a_create_view_publishes_a_view_table_info() {
 
     let wrong = plan_ddl(
         &mut store,
-        &DdlStatement::DropView {
-            names: vec![("u6".to_owned(), "t".to_owned())],
-            if_exists: true,
-        },
+        &statement("DROP VIEW IF EXISTS u6.t"),
         106,
     )
     .expect_err("a base table refuses DROP VIEW even under IF EXISTS");
@@ -5387,10 +5314,7 @@ fn a_create_view_publishes_a_view_table_info() {
 
     let missing = plan_ddl(
         &mut store,
-        &DdlStatement::DropView {
-            names: vec![("u6".to_owned(), "gone".to_owned())],
-            if_exists: false,
-        },
+        &statement("DROP VIEW u6.gone"),
         107,
     )
     .expect_err("a missing view without IF EXISTS refuses");
@@ -5411,12 +5335,8 @@ fn a_check_constraint_is_ignored_with_gos_warning() {
     let parsed =
         tidb_parser::parse("CREATE TABLE ck (v INT CHECK (v > 0), CONSTRAINT big CHECK (v < 100))")
             .expect("parses");
-    let statement = lower_ddl_with_context(&parsed, "u6", &ddl_context(&context))
-        .expect("admitted")
-        .expect("a catalog change");
-    let DdlStatement::CreateTable { build, .. } = statement else {
-        panic!("a CreateTable");
-    };
+    let statement = Ddl::of(&parsed, "u6", &context);
+    let build = create_table_build(&statement);
     assert!(
         build.template().view.is_none() && build.template().columns.len() == 1,
         "one plain column, no constraint metadata"
@@ -5435,12 +5355,8 @@ fn enabled_create_check_constraints_persist_gos_metadata_and_errors() {
         "CREATE TABLE ck (v INT CHECK (v > 0), CONSTRAINT big CHECK (v < 100) NOT ENFORCED)",
     )
     .expect("parses");
-    let statement = lower_ddl_with_context(&parsed, "u6", &ddl_context(&context))
-        .expect("enabled CHECK DDL is admitted")
-        .expect("a catalog change");
-    let DdlStatement::CreateTable { build, .. } = statement else {
-        panic!("a CreateTable");
-    };
+    let statement = Ddl::of(&parsed, "u6", &context);
+    let build = create_table_build(&statement);
     let constraints = build
         .template()
         .constraints
@@ -5466,48 +5382,47 @@ fn enabled_create_check_constraints_persist_gos_metadata_and_errors() {
 
     let refusal = |sql: &str| {
         let parsed = tidb_parser::parse(sql).expect("error fixture parses");
-        lower_ddl_with_context(&parsed, "u6", &ddl_context(&context))
-            .expect_err("enabled Go CHECK validation rejects the fixture")
+        refusal_of(&Ddl::of(&parsed, "u6", &context))
     };
     let duplicate =
         refusal("CREATE TABLE ck (v INT, CONSTRAINT c CHECK(v > 0), CONSTRAINT c CHECK(v < 2))");
     assert_eq!(duplicate.code, 3822);
-    assert_eq!(duplicate.reason, "Duplicate check constraint name 'c'.");
+    assert_eq!(duplicate.message, "Duplicate check constraint name 'c'.");
     let missing = refusal("CREATE TABLE ck (v INT, CONSTRAINT c CHECK(absent > 0))");
     assert_eq!(missing.code, 3820);
     assert_eq!(
-        missing.reason,
+        missing.message,
         "Check constraint 'c' refers to non-existing column 'absent'."
     );
     let cross_column = refusal("CREATE TABLE ck (v INT CHECK(v < other), other INT)");
     assert_eq!(cross_column.code, 3813);
     assert_eq!(
-        cross_column.reason,
+        cross_column.message,
         "Column check constraint 'ck_chk_1' references other column."
     );
     let auto_increment =
         refusal("CREATE TABLE ck (v INT AUTO_INCREMENT, CONSTRAINT c CHECK(v > 0))");
     assert_eq!(auto_increment.code, 3818);
     assert_eq!(
-        auto_increment.reason,
+        auto_increment.message,
         "Check constraint 'c' cannot refer to an auto-increment column."
     );
     let non_boolean = refusal("CREATE TABLE ck (v INT, CONSTRAINT c CHECK(v + 1))");
     assert_eq!(non_boolean.code, 3812);
     assert_eq!(
-        non_boolean.reason,
+        non_boolean.message,
         "An expression of non-boolean type specified to a check constraint 'c'."
     );
     let variable = refusal("CREATE TABLE ck (v INT, CONSTRAINT c CHECK(v > @limit))");
     assert_eq!(variable.code, 3816);
     assert_eq!(
-        variable.reason,
+        variable.message,
         "An expression of a check constraint 'c' cannot refer to a user or system variable."
     );
     let function = refusal("CREATE TABLE ck (v INT, CONSTRAINT c CHECK(v < rand()))");
     assert_eq!(function.code, 3814);
     assert_eq!(
-        function.reason,
+        function.message,
         "An expression of a check constraint 'c' contains disallowed function: rand."
     );
 }
@@ -5517,9 +5432,7 @@ fn inline_add_column_check_matches_gos_discard_and_off_warning() {
     let mut store = bootstrapped();
     let enabled = tidb_sessionctx::StmtContext::for_query().with_enable_check_constraint(true);
     let create = tidb_parser::parse("CREATE TABLE ck_inline (a INT)").expect("CREATE parses");
-    let create = lower_ddl_with_context(&create, "u6", &ddl_context(&enabled))
-        .expect("CREATE is admitted")
-        .expect("CREATE owns a catalog route");
+    let create = Ddl::of(&create, "u6", &enabled);
     let create = plan_ddl(&mut store, &create, 1_200).expect("CREATE plans");
     let DdlPlan::Write(create) = create else {
         panic!("CREATE writes metadata")
@@ -5531,9 +5444,7 @@ fn inline_add_column_check_matches_gos_discard_and_off_warning() {
         "ALTER TABLE ck_inline ADD COLUMN b INT CONSTRAINT c_inline CHECK (b > 0)",
     )
     .expect("ADD COLUMN parses");
-    let add = lower_ddl_with_context(&add, "u6", &ddl_context(&enabled))
-        .expect("Go admits an inline ADD COLUMN CHECK")
-        .expect("ADD COLUMN owns a catalog route");
+    let add = Ddl::of(&add, "u6", &enabled);
     let add = plan_ddl(&mut store, &add, 1_201).expect("ADD COLUMN plans");
     let DdlPlan::Write(add) = add else {
         panic!("ADD COLUMN writes metadata")
@@ -5549,9 +5460,7 @@ fn inline_add_column_check_matches_gos_discard_and_off_warning() {
     let add_off =
         tidb_parser::parse("ALTER TABLE ck_inline ADD COLUMN c INT CONSTRAINT c_off CHECK (c > 0)")
             .expect("second ADD COLUMN parses");
-    let add_off = lower_ddl_with_context(&add_off, "u6", &ddl_context(&off))
-        .expect("Go admits the OFF form")
-        .expect("ADD COLUMN owns a catalog route");
+    let add_off = Ddl::of(&add_off, "u6", &off);
     let _ = plan_ddl(&mut store, &add_off, 1_202).expect("OFF ADD COLUMN plans");
     assert_eq!(off.warning_count(), 1);
     assert_eq!(
@@ -5566,9 +5475,7 @@ fn grouped_add_columns_admits_check_against_original_schema_then_refuses_job() {
     let context = tidb_sessionctx::StmtContext::for_query().with_enable_check_constraint(true);
     let lower = |sql: &str, context: &tidb_sessionctx::StmtContext| {
         let parsed = tidb_parser::parse(sql).expect("grouped ADD parses");
-        lower_ddl_with_context(&parsed, "u6", &ddl_context(context))
-            .expect("grouped ADD is admitted")
-            .expect("grouped ADD owns a catalog route")
+        Ddl::of(&parsed, "u6", context)
     };
     let create = lower("CREATE TABLE ck_grouped (a INT)", &context);
     let create = plan_ddl(&mut store, &create, 1_300).expect("CREATE plans");
@@ -5583,11 +5490,6 @@ fn grouped_add_columns_admits_check_against_original_schema_then_refuses_job() {
          (b INT, CONSTRAINT c_grouped CHECK (b > 0))",
         &context,
     );
-    let DdlStatement::MultiSchemaChange { actions, .. } = &grouped else {
-        panic!("Go expands grouped ADD into one multi-schema job")
-    };
-    assert!(matches!(actions[0], AlterColumnAction::Add { .. }));
-    assert!(matches!(actions[1], AlterColumnAction::AddCheck { .. }));
     // Go CreateCheckConstraint resolves the original table, then
     // fillMultiSchemaInfo refuses supported expressions as unsupported jobs.
     let error = plan_ddl(&mut store, &grouped, 1_301).unwrap_err();
@@ -5620,11 +5522,16 @@ fn grouped_add_columns_admits_check_against_original_schema_then_refuses_job() {
          (c INT, CONSTRAINT c_off CHECK (c > 0))",
         &off,
     );
-    let DdlStatement::MultiSchemaChange { actions, .. } = &grouped_off else {
-        panic!("the surviving ADD COLUMN still owns a multi-schema job")
+    // The ignored CHECK leaves the ADD COLUMN, which runs.
+    let DdlPlan::Write(_) = plan_ddl(&mut store, &grouped_off, 1_302).expect("ADD COLUMN plans")
+    else {
+        panic!("the surviving ADD COLUMN writes metadata")
     };
-    assert_eq!(actions.len(), 1);
-    assert!(matches!(actions[0], AlterColumnAction::Add { .. }));
+    let added: tidb_model::TableInfo =
+        serde_json::from_slice(store.pairs.get(&key::table_kv_key(112, table_id)).unwrap())
+            .unwrap();
+    assert_eq!(added.columns.len(), 2);
+    assert_eq!(added.constraints.len(), 0);
     assert_eq!(off.warning_count(), 1);
 }
 
@@ -5854,11 +5761,7 @@ fn alter_index_visibility_toggles_and_refuses_a_missing_index() {
 /// `GetPartitionInfo` return it at all.
 #[test]
 fn cluster_create_persists_a_partition_clause() {
-    let DdlStatement::CreateTable { build, .. } =
-        statement("CREATE TABLE u6.t (id BIGINT PRIMARY KEY) PARTITION BY HASH (id) PARTITIONS 2")
-    else {
-        panic!("the fixture is CREATE TABLE");
-    };
+    let build = create_table_build(&statement("CREATE TABLE u6.t (id BIGINT PRIMARY KEY) PARTITION BY HASH (id) PARTITIONS 2"));
     let table = build.template();
     let partition = table
         .partition
@@ -5890,12 +5793,10 @@ fn cluster_create_persists_a_partition_clause() {
 /// kept as that literal word rather than folded into a number.
 #[test]
 fn cluster_create_persists_range_bounds_as_go_spells_them() {
-    let DdlStatement::CreateTable { build, .. } = statement(
+    let build = create_table_build(&statement(
         "CREATE TABLE u6.t (id BIGINT PRIMARY KEY) PARTITION BY RANGE (id) \
          (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (MAXVALUE))",
-    ) else {
-        panic!("the fixture is CREATE TABLE");
-    };
+    ));
     let table = build.template();
     let partition = table
         .partition
@@ -5922,13 +5823,11 @@ fn cluster_create_persists_a_partition_comment() {
     // length-checked at CREATE and then dropped before it reached the stored
     // table, so a cluster round trip lost it -- invisible to the in-process
     // `SHOW CREATE TABLE`, which reads the routing spec rather than this.
-    let DdlStatement::CreateTable { build, .. } = statement(
+    let build = create_table_build(&statement(
         "CREATE TABLE u6.t (id BIGINT PRIMARY KEY) PARTITION BY RANGE (id) \
          (PARTITION p0 VALUES LESS THAN (10) COMMENT 'first', \
           PARTITION p1 VALUES LESS THAN (MAXVALUE))",
-    ) else {
-        panic!("the fixture is CREATE TABLE");
-    };
+    ));
     let table = build.template();
     let partition = table
         .partition
@@ -5955,11 +5854,7 @@ fn cluster_create_table_resolves_a_placement_policy_by_id() {
     // The resolution happens at PLANNING time, not lowering, because the
     // lookup needs the same snapshot the rest of the statement plans
     // against.
-    let DdlStatement::CreateTable { build, .. } =
-        statement("CREATE TABLE u6.t (a INT) PLACEMENT POLICY = pol")
-    else {
-        panic!("the fixture is CREATE TABLE");
-    };
+    let build = create_table_build(&statement("CREATE TABLE u6.t (a INT) PLACEMENT POLICY = pol"));
     // Lowering must NOT refuse it -- the option reaches the planner intact.
     assert!(
         build.template().placement_policy_ref.is_none(),
@@ -6054,11 +5949,8 @@ fn json_result_batch_cluster_hidden_columns_use_the_shared_type_owner() {
         let sql = format!("CREATE TABLE t (j JSON, INDEX i (({expression})))");
         assert_eq!(refusal_with_code(&sql).0, code, "{expression}");
     }
-    let DdlStatement::CreateTable { build, .. } =
-        statement("CREATE TABLE t (v VARCHAR(10), INDEX i ((JSON_UNQUOTE(v))))")
-    else {
-        panic!("CREATE TABLE expected");
-    };
+    let build =
+        create_table_build(&statement("CREATE TABLE t (v VARCHAR(10), INDEX i ((JSON_UNQUOTE(v))))"));
     let column = build.template().columns.get(1).unwrap();
     let column = column.read();
     assert!(column.hidden);
@@ -6080,19 +5972,17 @@ fn check_job_admission_uses_alter_column_errors_and_constraint_name_scope() {
     apply(&mut store, &create);
     let context = tidb_sessionctx::StmtContext::for_query().with_enable_check_constraint(true);
     let lower = |sql: &str| {
-        lower_ddl_with_context(&tidb_parser::parse(sql).unwrap(), "u6", &ddl_context(&context))
-            .unwrap()
-            .unwrap()
+        Ddl::of(&tidb_parser::parse(sql).unwrap(), "u6", &context)
     };
     let missing = lower("ALTER TABLE check_admission ADD CONSTRAINT cb CHECK(b>0)");
     let error =
-        prepare_check_constraint_job_submission(&mut store, &missing, 3_002, false).unwrap_err();
+        submit_job(&mut store, &missing, 3_002, false).unwrap_err();
     let DdlPlanError::Admission(error) = error else {
         panic!("{error:?}")
     };
     assert_eq!(error.code, 1054);
     let shares_index_name = lower("ALTER TABLE check_admission ADD CONSTRAINT ia CHECK(a>0)");
-    assert!(prepare_check_constraint_job_submission(
+    assert!(submit_job(
         &mut store,
         &shares_index_name,
         3_002,
@@ -6273,18 +6163,31 @@ fn default_ddl_statement_context() -> tidb_sessionctx::StmtContext {
         .with_time_zone(tidb_datatype::SessionTimeZone::utc())
 }
 
-/// Lowers `statement` under TiDB's default DDL session.
-pub(crate) fn lower_ddl(
-    statement: &tidb_ast::Stmt,
-    default_schema: &str,
-) -> Result<Option<DdlStatement>, tidb_ddl_build::table_info_build::DdlAdmissionError> {
-    let context = default_ddl_statement_context();
-    lower_ddl_with_context(statement, default_schema, &ddl_context(&context))
+/// Go `BuildTableInfoWithStmt`'s build of the CREATE TABLE `ddl`, as
+/// `executor.CreateTable` makes it.
+pub(crate) fn create_table_build(ddl: &Ddl) -> tidb_ddl::cluster_ddl::CreateTableBuild {
+    let tidb_ast::Stmt::Ddl(stmt) = &ddl.stmt else { panic!("the fixture is not CREATE TABLE") };
+    let tidb_ast::DdlStmt::CreateTable(create) = &**stmt else {
+        panic!("the fixture is not CREATE TABLE")
+    };
+    let (schema, _) = tidb_ddl::cluster_ddl::split_name(&create.name, &ddl.current_db, "table")
+        .expect("the fixture names a table");
+    tidb_ddl::cluster_ddl::CreateTableBuild::new(create, &schema, &ddl.context)
+        .unwrap_or_else(|error| panic!("the fixture CREATE TABLE is admitted: {error:?}"))
 }
 
-/// The shared session handle the DDL lowering keeps (Go's `sessionctx`).
-fn ddl_context(context: &tidb_sessionctx::StmtContext) -> tidb_ddl::cluster_ddl::DdlContext {
-    std::sync::Arc::new(context.clone())
+/// The job Go's executor builds for `ddl`, unsubmitted: `None` when the
+/// statement needs no job.
+pub(crate) fn submit_job(
+    store: &mut MetaStore,
+    ddl: &Ddl,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<tidb_ddl_jobsubmit::JobSpec>, DdlPlanError> {
+    FixtureDdl::new(store, start_ts)
+        .upgrading(upgrading)
+        .capture()
+        .submission(ddl)
 }
 
 /// The stored int of a meta hash field (`TxStructure.HGetInt64`; 0 when unset).
@@ -6327,9 +6230,7 @@ fn create_table_seeds_only_the_allocators_the_table_has() {
 fn a_create_tables_job_creates_each_table_as_create_table_does() {
     let mut store = bootstrapped();
     let template = |sql: &str, id: i64| {
-        let DdlStatement::CreateTable { build, .. } = statement(sql) else {
-            panic!("a CREATE TABLE");
-        };
+        let build = create_table_build(&statement(sql));
         let mut info = build.template().clone_like_go();
         info.id = id;
         info

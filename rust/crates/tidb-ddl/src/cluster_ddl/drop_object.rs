@@ -51,57 +51,6 @@ fn submission<S: MetaSnapshot>(
     Ok(Some(AddIndexSubmission::Job(Box::new(spec), Vec::new())))
 }
 
-/// Go `executor.dropTableObject` for one table, view or sequence and
-/// `executor.DropSchema`, up to `doDDLJob2`. `None` for any other statement.
-/// `targets` are every `(schema, table)` the statement names (empty: just
-/// this one), Go's `DropTableArgs.Identifiers`.
-pub fn drop_table_object<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    targets: &[(String, String)],
-    start_ts: u64,
-    upgrading: bool,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    match statement {
-        DdlStatement::DropTable {
-            schema,
-            table,
-            if_exists,
-        } => drop_table(
-            snapshot,
-            schema,
-            table,
-            *if_exists,
-            job_context,
-            targets,
-            start_ts,
-            upgrading,
-        ),
-        DdlStatement::DropView { names, if_exists } => {
-            let [(schema, name)] = names.as_slice() else {
-                return Ok(None);
-            };
-            drop_view(
-                snapshot,
-                schema,
-                name,
-                *if_exists,
-                job_context,
-                start_ts,
-                upgrading,
-            )
-        }
-        DdlStatement::DropSequence { schema, name } => {
-            drop_sequence(snapshot, schema, name, job_context, start_ts, upgrading)
-        }
-        DdlStatement::DropDatabase { name, if_exists } => {
-            drop_schema(snapshot, name, *if_exists, job_context, start_ts, upgrading)
-        }
-        _ => Ok(None),
-    }
-}
-
 /// Go `executor.dropTableObject` for DropTable.
 #[allow(clippy::too_many_arguments)]
 pub fn drop_table<S: MetaSnapshot>(

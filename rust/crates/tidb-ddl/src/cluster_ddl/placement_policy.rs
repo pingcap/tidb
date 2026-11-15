@@ -60,40 +60,6 @@ fn check_policy_not_in_use(
     Ok(())
 }
 
-/// Go's executor halves up to `doDDLJob2`. `None` for any other statement.
-pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    start_ts: u64,
-    upgrading: bool,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    match statement {
-        DdlStatement::CreatePlacementPolicy {
-            name,
-            settings,
-            if_not_exists,
-            or_replace,
-        } => create_placement_policy(
-            snapshot,
-            name,
-            settings,
-            *if_not_exists,
-            *or_replace,
-            job_context,
-            start_ts,
-            upgrading,
-        ),
-        DdlStatement::AlterPlacementPolicy { name, settings, .. } => {
-            alter_placement_policy(snapshot, name, settings, job_context, start_ts, upgrading)
-        }
-        DdlStatement::DropPlacementPolicy { name, if_exists } => {
-            drop_placement_policy(snapshot, name, *if_exists, job_context, start_ts, upgrading)
-        }
-        _ => Ok(None),
-    }
-}
-
 /// Go `executor.CreatePlacementPolicy`: the statement's policy
 /// (`buildPolicyInfo`) and its `OnExist`, then `CreatePlacementPolicyWithInfo`.
 pub fn create_placement_policy<S: MetaSnapshot>(

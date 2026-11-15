@@ -20,21 +20,6 @@
 use super::add_index::AddIndexSubmission;
 use super::*;
 
-/// Go `executor.TruncateTable` up to `doDDLJob2`. `None` for any other
-/// statement.
-pub fn truncate_table<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    start_ts: u64,
-    upgrading: bool,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let DdlStatement::TruncateTable { schema, table } = statement else {
-        return Ok(None);
-    };
-    truncate_table_by_name(snapshot, schema, table, job_context, start_ts, upgrading)
-}
-
 /// Go `executor.TruncateTable`: typed arguments through `doDDLJob2`.
 #[allow(clippy::too_many_arguments)]
 pub fn truncate_table_by_name<S: MetaSnapshot>(

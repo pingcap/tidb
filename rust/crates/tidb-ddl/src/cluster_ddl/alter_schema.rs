@@ -107,43 +107,6 @@ pub fn resolve_schema_options(
     })
 }
 
-/// Go `executor.AlterSchema` up to `DoDDLJob`. `None` for any other statement.
-pub fn alter_schema<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    start_ts: u64,
-    upgrading: bool,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    match statement {
-        DdlStatement::ModifySchemaCharsetAndCollate {
-            name,
-            charset,
-            collate,
-        } => modify_schema_charset_and_collate(
-            snapshot,
-            name,
-            charset,
-            collate,
-            job_context,
-            start_ts,
-            upgrading,
-        ),
-        DdlStatement::ModifySchemaDefaultPlacement {
-            name,
-            placement_policy,
-        } => modify_schema_default_placement(
-            snapshot,
-            name,
-            placement_policy,
-            job_context,
-            start_ts,
-            upgrading,
-        ),
-        _ => Ok(None),
-    }
-}
-
 /// Go `executor.ModifySchemaCharsetAndCollate`.
 pub fn modify_schema_charset_and_collate<S: MetaSnapshot>(
     snapshot: &mut S,

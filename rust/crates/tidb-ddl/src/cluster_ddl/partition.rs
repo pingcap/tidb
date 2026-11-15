@@ -89,40 +89,6 @@ fn scatter_region_vars(job: &mut Job, job_context: &dyn DdlSessionContext) {
     )])));
 }
 
-/// Go's executor halves up to `doDDLJob2`. `None` for any other statement,
-/// and for an ADD on a HASH or KEY table, which Go reorganizes.
-pub fn prepare_partition_job_submission<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    start_ts: u64,
-    upgrading: bool,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
-    let built = match statement {
-        DdlStatement::AddPartitions {
-            schema,
-            table,
-            action,
-            ..
-        } => add_table_partitions_job(snapshot, &catalog, schema, table, action, job_context)?,
-        DdlStatement::DropPartitions {
-            schema,
-            table,
-            action,
-            ..
-        } => drop_table_partition_job(snapshot, &catalog, schema, table, action, job_context)?,
-        DdlStatement::TruncatePartitions {
-            schema,
-            table,
-            action,
-            ..
-        } => truncate_table_partition_job(snapshot, &catalog, schema, table, action, job_context)?,
-        _ => return Ok(None),
-    };
-    submit_built_job(snapshot, built, start_ts, upgrading)
-}
-
 /// Go `executor.AddTablePartitions` before `doDDLJob2`.
 pub(crate) fn add_table_partitions_job<S: MetaSnapshot>(
     snapshot: &mut S,

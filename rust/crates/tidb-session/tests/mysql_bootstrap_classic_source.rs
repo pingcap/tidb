@@ -35,15 +35,12 @@ use tidb_infoschema::cluster_catalog::{
     load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
 use tidb_ddl::cluster_ddl::add_index::AddIndexSubmission;
-use tidb_ddl::cluster_ddl::{
-    lower_ddl_with_context, plan_persisted_ddl_job_step, PersistedDdlJobPlan,
-};
+use tidb_ddl::cluster_ddl::{plan_persisted_ddl_job_step, PersistedDdlJobPlan};
 use tidb_ddl::ddl_history_table::DdlHistoryTable;
 use tidb_ddl_jobsubmit::{plan_insert_attempt, JobSpec};
 use tidb_session::mysql_bootstrap::{
     plan_mysql_bootstrap_with_layout, BootstrapEnvironment, BootstrapLayout, BootstrapWrite,
 };
-use tidb_ddl::real_tikv_ddl::prepare_persisted_job_submission;
 use tidb_meta::key;
 use tidb_metadef::BOOTSTRAP_TABLES;
 use tidb_txnkv::transaction::{BufferMutation, BufferMutationOp};
@@ -317,20 +314,24 @@ fn the_first_user_table_is_117() {
     let sql = "create table test.t1(a int primary key, b varchar(10))";
     let context = tidb_sessionctx::StmtContext::default().with_ddl_query(sql);
     let parsed = tidb_parser::parse(sql).unwrap();
-    let statement = lower_ddl_with_context(&parsed, "test", &ddl_context(&context))
-        .unwrap()
-        .unwrap();
-    let submission = prepare_persisted_job_submission(
+    // Go `executor.CreateTable`: the table built from the statement, then
+    // its job.
+    let tidb_ast::Stmt::Ddl(ddl) = &parsed else { panic!("CREATE TABLE") };
+    let tidb_ast::DdlStmt::CreateTable(create) = &**ddl else { panic!("CREATE TABLE") };
+    let build =
+        tidb_ddl::cluster_ddl::CreateTableBuild::new(create, "test", &ddl_context(&context))
+            .unwrap();
+    let submission = tidb_ddl::cluster_ddl::create_table::create_table_job(
         &mut store,
-        &statement,
-        &context,
-        &[],
-        467_996_279_696_262_000,
+        "test",
+        "t1",
         false,
-        0,
+        &build,
+        &context,
         // A store without TiFlash.
         &|| Ok(0),
-        &mut |_, _, _| Ok(false),
+        467_996_279_696_262_000,
+        false,
     )
     .unwrap();
     let Some(AddIndexSubmission::Job(mut spec, _)) = submission else {

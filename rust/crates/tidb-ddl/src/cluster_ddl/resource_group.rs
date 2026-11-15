@@ -18,31 +18,8 @@
 //! `onAlterResourceGroup` and `onDropResourceGroup` change the meta record
 //! and tell the resource manager in the same step.
 
-use super::add_index::{action_step, AddIndexSubmission};
+use super::add_index::action_step;
 use super::*;
-
-/// Go's executor halves up to `doDDLJob2`: the session already checked the
-/// statement and resolved the group. `None` for any other statement.
-pub fn prepare_resource_group_job_submission<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    start_ts: u64,
-    upgrading: bool,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let spec = match statement {
-        DdlStatement::CreateResourceGroup { group } => add_resource_group(group, job_context),
-        DdlStatement::AlterResourceGroup { group } => alter_resource_group(group, job_context),
-        DdlStatement::DropResourceGroup { group } => drop_resource_group(group, job_context),
-        _ => return Ok(None),
-    };
-    submit_built_job(
-        snapshot,
-        Some(AddIndexSubmission::Job(Box::new(spec), Vec::new())),
-        start_ts,
-        upgrading,
-    )
-}
 
 /// Go `executor.AddResourceGroup`: the job before `doDDLJob2`.
 pub fn add_resource_group(

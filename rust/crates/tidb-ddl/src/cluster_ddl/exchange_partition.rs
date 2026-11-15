@@ -23,40 +23,6 @@ use super::add_index::{action_step, AddIndexReorg, AddIndexSubmission, ReorgOutc
 use super::add_index::{ReorgResult, ReorgStageRequest};
 use super::*;
 
-/// Go `executor.ExchangeTablePartition` up to `DoDDLJob`. `None` for any other statement.
-pub fn exchange_table_partition<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    start_ts: u64,
-    upgrading: bool,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let DdlStatement::ExchangePartition {
-        schema,
-        table,
-        partition,
-        standalone_schema,
-        standalone_table,
-        with_validation,
-        ..
-    } = statement
-    else {
-        return Ok(None);
-    };
-    let catalog = load_info_schema(snapshot)?;
-    let built = exchange_table_partition_job(
-        &catalog,
-        schema,
-        table,
-        partition,
-        standalone_schema,
-        standalone_table,
-        with_validation,
-        job_context,
-    )?;
-    submit_built_job(snapshot, built, start_ts, upgrading)
-}
-
 /// Go `executor.ExchangeTablePartition` before `doDDLJob2`.
 pub(crate) fn exchange_table_partition_job(
     catalog: &SessionExtendedInfoSchema,

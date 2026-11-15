@@ -36,48 +36,6 @@ fn invalid_table_mode_set(
     )
 }
 
-/// Go `executor.AlterTableMode` and `executor.RefreshMeta` up to
-/// `doDDLJob2`. `None` for any other statement.
-pub fn alter_table_mode<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    start_ts: u64,
-    upgrading: bool,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    match statement {
-        DdlStatement::AlterTableMode {
-            table_mode,
-            schema_id,
-            table_id,
-        } => alter_table_mode_by_id(
-            snapshot,
-            *table_mode,
-            *schema_id,
-            *table_id,
-            job_context,
-            start_ts,
-            upgrading,
-        ),
-        DdlStatement::RefreshMeta {
-            schema_id,
-            table_id,
-            involved_db,
-            involved_table,
-        } => refresh_meta(
-            snapshot,
-            *schema_id,
-            *table_id,
-            involved_db,
-            involved_table,
-            job_context,
-            start_ts,
-            upgrading,
-        ),
-        _ => Ok(None),
-    }
-}
-
 /// Go `executor.AlterTableMode` with its typed internal arguments.
 pub fn alter_table_mode_by_id<S: MetaSnapshot>(
     snapshot: &mut S,

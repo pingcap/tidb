@@ -20,38 +20,6 @@
 use super::add_index::AddIndexSubmission;
 use super::*;
 
-/// Go `executor.CreateTable` up to `doDDLJob2`. `None` for any other
-/// statement.
-pub fn prepare_create_table_job_submission<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    tiflash_stores: &dyn Fn() -> Result<u64, String>,
-    start_ts: u64,
-    upgrading: bool,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let DdlStatement::CreateTable {
-        schema,
-        table,
-        if_not_exists,
-        build,
-    } = statement
-    else {
-        return Ok(None);
-    };
-    create_table_job(
-        snapshot,
-        schema,
-        table,
-        *if_not_exists,
-        build,
-        job_context,
-        tiflash_stores,
-        start_ts,
-        upgrading,
-    )
-}
-
 /// Go `executor.CreateTable`: typed arguments through `doDDLJob2`.
 #[allow(clippy::too_many_arguments)]
 pub fn create_table_job<S: MetaSnapshot>(

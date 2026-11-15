@@ -582,11 +582,6 @@ pub(super) fn finish_recover(
     Ok(())
 }
 
-/// Go `gcutil.GetGCSafePoint` on one of the worker's sessions.
-pub(crate) fn gc_safe_point(sessions: &DdlStepWorker) -> Result<u64, DdlPlanError> {
-    get_gc_safe_point(sessions.sess_pool.as_ref())
-}
-
 /// Go `gcutil.GetGCSafePoint(sctx)` over one of the pool's sessions.
 pub fn get_gc_safe_point(sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool) -> Result<u64, DdlPlanError> {
     tidb_gcutil::get_gc_safe_point(&mut WorkerGcContext::new(sess_pool)).map_err(gc_error)
@@ -612,42 +607,6 @@ pub trait SnapshotMetaAt {
 
 fn unknown(message: String) -> DdlPlanError {
     DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown(message))
-}
-
-/// Go `DDLExec.executeRecoverTable` / `executeFlashbackTable`, then
-/// `executor.RecoverTable` up to the job: the dropped table found in the DDL
-/// history (by name, newest first, or by job id) inside the GC safe point,
-/// read with its allocators at the drop's snapshot, and the RECOVER TABLE
-/// job over it.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn build_recover_table_job<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    gc_safe_point: u64,
-    at: &dyn SnapshotMetaAt,
-) -> Result<tidb_ddl_jobsubmit::JobSpec, DdlPlanError> {
-    let DdlStatement::RecoverTable {
-        table: by_name,
-        job_id,
-        new_name,
-        flashback,
-    } = statement
-    else {
-        unreachable!("called for RECOVER / FLASHBACK TABLE");
-    };
-    recover_table_by_job_or_name(
-        snapshot,
-        catalog,
-        by_name,
-        job_id,
-        new_name,
-        flashback,
-        job_context,
-        gc_safe_point,
-        at,
-    )
 }
 
 /// Go `executor.RecoverTable` and its DDLExec history lookup.
@@ -918,30 +877,6 @@ fn recover_table_by_name<S: MetaSnapshot>(
 /// Go `model.TSConvert2Time(ts).String()`.
 fn ts_convert2_time_string(ts: u64) -> String {
     tidb_go_time_layout::go_unix_milli_string(tidb_model::GoTime::from_tso(ts).unix_milli())
-}
-
-/// Go `DDLExec.executeFlashbackDatabase` over `getRecoverDBByName`, then
-/// `executor.RecoverSchema` up to the job.
-pub(crate) fn build_recover_schema_job<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    gc_safe_point: u64,
-    at: &dyn SnapshotMetaAt,
-) -> Result<tidb_ddl_jobsubmit::JobSpec, DdlPlanError> {
-    let DdlStatement::FlashbackDatabase { name, new_name } = statement else {
-        unreachable!("called for FLASHBACK DATABASE");
-    };
-    recover_schema(
-        snapshot,
-        catalog,
-        name,
-        new_name,
-        job_context,
-        gc_safe_point,
-        at,
-    )
 }
 
 /// Go `executor.RecoverSchema` and its DDLExec history lookup.

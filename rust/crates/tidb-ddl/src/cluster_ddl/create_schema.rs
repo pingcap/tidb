@@ -19,39 +19,6 @@
 use super::add_index::AddIndexSubmission;
 use super::*;
 
-/// Go `executor.CreateSchema` -> `CreateSchemaWithInfo` up to `doDDLJob2`.
-/// `None` for any other statement.
-pub fn create_schema<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    start_ts: u64,
-    upgrading: bool,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let DdlStatement::CreateDatabase {
-        name,
-        if_not_exists,
-        charset,
-        collate,
-        placement_policy,
-    } = statement
-    else {
-        return Ok(None);
-    };
-    create_schema_with_info(
-        snapshot,
-        build_db_info(name, charset, collate, placement_policy.as_deref()),
-        if *if_not_exists {
-            crate::OnExist::Ignore
-        } else {
-            crate::OnExist::Error
-        },
-        job_context,
-        start_ts,
-        upgrading,
-    )
-}
-
 /// Go `executor.CreateSchema`'s `dbInfo`: the name, the resolved charset and
 /// collation, and the written placement policy by name.
 pub fn build_db_info(

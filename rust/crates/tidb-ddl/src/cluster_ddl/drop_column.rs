@@ -21,50 +21,6 @@
 use super::add_index::{action_step, partition_ids, update_version_and_table_info, AddIndexSubmission};
 use super::*;
 
-/// Go `executor.DropColumn` up to `doDDLJob2`. `None` for any other
-/// statement.
-pub fn drop_column<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    start_ts: u64,
-    upgrading: bool,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
-    let built = build_drop_column_job(snapshot, &catalog, statement, job_context)?;
-    submit_built_job(snapshot, built, start_ts, upgrading)
-}
-
-/// The executor half without `doDDLJob2`: the job unsubmitted, which a
-/// multi-schema change appends as a sub-job (Go `appendToSubJobs`).
-pub(super) fn build_drop_column_job<S: MetaSnapshot>(
-    _snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let DdlStatement::DropColumn {
-        schema,
-        table,
-        if_exists,
-        column,
-        allow_remove_auto_inc,
-    } = statement
-    else {
-        return Ok(None);
-    };
-    drop_column_by_name(
-        _snapshot,
-        catalog,
-        schema,
-        table,
-        if_exists,
-        column,
-        allow_remove_auto_inc,
-        job_context,
-    )
-}
-
 /// Go `executor.DropColumn` with the prepared column/index definition.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn drop_column_by_name<S: MetaSnapshot>(

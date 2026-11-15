@@ -22,59 +22,6 @@ use super::add_index::{
 };
 use super::*;
 
-/// Go `executor.dropIndex` up to `doDDLJob2` for `DROP INDEX` and
-/// `DROP PRIMARY KEY`. `None` for any other statement.
-pub fn drop_index<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    start_ts: u64,
-    upgrading: bool,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
-    let built = build_drop_index_job(snapshot, &catalog, statement, job_context)?;
-    submit_built_job(snapshot, built, start_ts, upgrading)
-}
-
-/// The executor half without `doDDLJob2`: the job unsubmitted, which a
-/// multi-schema change appends as a sub-job (Go `appendToSubJobs`).
-pub(super) fn build_drop_index_job<S: MetaSnapshot>(
-    _snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    match statement {
-        DdlStatement::DropIndex {
-            schema,
-            table,
-            index,
-            if_exists,
-            hypo,
-        } => drop_index_by_name(
-            _snapshot,
-            catalog,
-            schema,
-            table,
-            index,
-            *if_exists,
-            *hypo,
-            job_context,
-        ),
-        DdlStatement::DropPrimaryKey { schema, table } => drop_index_by_name(
-            _snapshot,
-            catalog,
-            schema,
-            table,
-            &"PRIMARY".to_owned(),
-            false,
-            false,
-            job_context,
-        ),
-        _ => Ok(None),
-    }
-}
-
 /// Go `executor.dropIndex`, shared with `DropPrimaryKey`.
 pub(crate) fn drop_index_by_name<S: MetaSnapshot>(
     _snapshot: &mut S,

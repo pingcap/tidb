@@ -21,52 +21,6 @@
 use super::add_index::{action_step, update_version_and_table_info, AddIndexSubmission};
 use super::*;
 
-/// Go `executor.AddColumn` up to `doDDLJob2`. `None` for any other
-/// statement.
-pub fn add_column<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    start_ts: u64,
-    upgrading: bool,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
-    let built = build_add_column_job(snapshot, &catalog, statement, job_context)?;
-    submit_built_job(snapshot, built, start_ts, upgrading)
-}
-
-/// The executor half without `doDDLJob2`: the job unsubmitted, which a
-/// multi-schema change appends as a sub-job (Go `appendToSubJobs`).
-pub(super) fn build_add_column_job<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let DdlStatement::AddColumn {
-        schema,
-        table,
-        if_not_exists,
-        column,
-        position,
-        context,
-    } = statement
-    else {
-        return Ok(None);
-    };
-    add_column_with_info(
-        snapshot,
-        catalog,
-        schema,
-        table,
-        if_not_exists,
-        column,
-        position,
-        context,
-        job_context,
-    )
-}
-
 /// Go `executor.AddColumn` with the prepared column/index definition.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn add_column_with_info<S: MetaSnapshot>(

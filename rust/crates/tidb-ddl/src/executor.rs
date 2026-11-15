@@ -5,14 +5,15 @@
 use super::*;
 use crate::cluster_ddl::add_index::AddIndexSubmission;
 use crate::cluster_ddl::{split_name, CreateTableBuild, DdlContext};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
 use crate::real_tikv_ddl::{check_flashback_cluster_job, ddl_transaction_options};
 use tidb_ddl_build::session_context::DdlSessionContext;
 use tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot;
 use tidb_store_driver_txn::cluster_table_storage::SessionTransaction;
 
 /// Go `executor.CreateTable`: build the table (or its LIKE copy), then submit.
-pub(super) fn create_table<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn create_table<E: ExecutorStore>(
+    executor: &E,
     statement: &tidb_ast::CreateTableStmt,
     current_db: &str,
     context: &DdlContext,
@@ -24,7 +25,7 @@ pub(super) fn create_table<S: StoreClient>(
     }
     let (schema, table) = split_name(&statement.name, current_db, "table")
         .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?;
-    let tiflash = || executor.opener.store().get_tiflash_store_count();
+    let tiflash = || ExecutorStore::tiflash_store_count(executor);
     if let Some(source) = &statement.like_table {
         let (source_schema, source_table) = split_name(source, current_db, "table")
             .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?;
@@ -63,8 +64,8 @@ pub(super) fn create_table<S: StoreClient>(
 }
 
 /// Go `executor.CreateSequence`.
-pub(super) fn create_sequence<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn create_sequence<E: ExecutorStore>(
+    executor: &E,
     statement: &tidb_ast::CreateSequenceStmt,
     current_db: &str,
     context: &DdlContext,
@@ -75,7 +76,7 @@ pub(super) fn create_sequence<S: StoreClient>(
         tidb_ddl_build::sequence::build_create_sequence(statement, &schema, &name)
             .map_err(SqlQueryError::from)?;
     let info = crate::cluster_ddl::build_sequence_table_info(&name, sequence, comment);
-    let tiflash = || executor.opener.store().get_tiflash_store_count();
+    let tiflash = || ExecutorStore::tiflash_store_count(executor);
     executor.with_meta(context.as_ref(), |snapshot, start_ts, upgrading| {
         crate::cluster_ddl::create_object::create_sequence(
             snapshot,
@@ -91,8 +92,8 @@ pub(super) fn create_sequence<S: StoreClient>(
 }
 
 /// Go `executor.AlterSequence`.
-pub(super) fn alter_sequence<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn alter_sequence<E: ExecutorStore>(
+    executor: &E,
     statement: &tidb_ast::AlterSequenceStmt,
     current_db: &str,
     context: &DdlContext,
@@ -114,8 +115,8 @@ pub(super) fn alter_sequence<S: StoreClient>(
 }
 
 /// Go `executor.TruncateTable`.
-pub(super) fn truncate_table<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn truncate_table<E: ExecutorStore>(
+    executor: &E,
     name: &[String],
     current_db: &str,
     context: &DdlContext,
@@ -147,7 +148,7 @@ pub(super) fn repair_table<S: StoreClient>(
         .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?;
     let build = CreateTableBuild::new(&statement.create, &create_schema, context)
         .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?;
-    let tiflash = || executor.opener.store().get_tiflash_store_count();
+    let tiflash = || ExecutorStore::tiflash_store_count(executor);
     let report = executor.with_meta(context.as_ref(), |snapshot, start_ts, upgrading| {
         crate::cluster_ddl::repair_table::repair_table_with_info(
             snapshot,
@@ -168,8 +169,8 @@ pub(super) fn repair_table<S: StoreClient>(
 }
 
 /// Go `executor.CreateSchema` through `CreateSchemaWithInfo`.
-pub(super) fn create_schema<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn create_schema<E: ExecutorStore>(
+    executor: &E,
     name: &str,
     if_not_exists: bool,
     options: &[tidb_ast::DatabaseOption],
@@ -203,7 +204,7 @@ pub(super) fn create_table_with_info<S: StoreClient>(
     config: crate::CreateTableConfig,
     context: &dyn DdlSessionContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
-    let tiflash = || executor.opener.store().get_tiflash_store_count();
+    let tiflash = || ExecutorStore::tiflash_store_count(executor);
     let name = info.name.original().to_owned();
     let result = executor.with_meta(context, |snapshot, start_ts, upgrading| {
         crate::cluster_ddl::create_object::create_table_with_info(
@@ -238,7 +239,7 @@ pub(super) fn batch_create_table_with_info<S: StoreClient>(
     config: crate::CreateTableConfig,
     context: &dyn DdlSessionContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
-    let tiflash = || executor.opener.store().get_tiflash_store_count();
+    let tiflash = || ExecutorStore::tiflash_store_count(executor);
     let names: Vec<String> = infos
         .iter()
         .map(|info| info.name.original().to_owned())
@@ -308,8 +309,8 @@ fn after_create_tables<S: StoreClient>(
 }
 
 /// Go `executor.CreatePlacementPolicyWithInfo`.
-pub(super) fn create_placement_policy_with_info<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn create_placement_policy_with_info<E: ExecutorStore>(
+    executor: &E,
     policy: tidb_model::PolicyInfo,
     on_exist: crate::OnExist,
     context: &dyn DdlSessionContext,
@@ -330,8 +331,8 @@ pub(super) fn create_placement_policy_with_info<S: StoreClient>(
 
 /// Go `executor.CreateSchemaWithInfo`: a job raced by another creating the
 /// database answers its note under `OnExistIgnore`.
-pub(super) fn create_schema_with_info<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn create_schema_with_info<E: ExecutorStore>(
+    executor: &E,
     info: tidb_model::DBInfo,
     on_exist: crate::OnExist,
     context: &dyn DdlSessionContext,
@@ -369,8 +370,55 @@ fn ignore_exists(
     }
 }
 
-impl<S: StoreClient> RealClusterDdl<S> {
-    /// Go `executor`'s metadata reads followed by `DoDDLJobWrapper`.
+/// What Go's `executor` statement methods read and call beyond the
+/// statement: a metadata snapshot to check it against followed by the job
+/// submission (`DoDDLJobWrapper`), the latest schema (`infoCache`), the
+/// store's TiKV and TiFlash store counts, the NOT NULL data check (its
+/// `sessPool`) and the DDL's `uuid`. [`RealClusterDdl`] is the server's; a
+/// test supplies one over its own meta store.
+pub trait ExecutorStore {
+    /// The metadata snapshot a statement is checked against.
+    type Snapshot: MetaSnapshot;
+
+    /// Go `executor`'s metadata reads followed by `DoDDLJobWrapper`: `build`
+    /// checks the statement at one snapshot (given its start timestamp and
+    /// whether the cluster is upgrading) and answers the job to submit and
+    /// wait for, or why none is needed.
+    fn with_meta(
+        &self,
+        context: &dyn DdlSessionContext,
+        build: impl FnOnce(
+            &mut Self::Snapshot,
+            u64,
+            bool,
+        ) -> Result<Option<AddIndexSubmission>, DdlPlanError>,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `e.infoCache.GetLatest()`.
+    fn latest_schema(&self) -> Arc<tidb_infoschema::SessionExtendedInfoSchema>;
+
+    /// The number of TiKV stores (Go `store.(tikv.Storage).GetRegionCache().GetAllStores()`).
+    fn store_count(&self) -> usize;
+
+    /// Go `infoschema.GetTiFlashStoreCount`.
+    fn tiflash_store_count(&self) -> Result<u64, String>;
+
+    /// Go `checkForNullValue` over the executor's session pool: whether the
+    /// column holds a NULL.
+    fn has_null_value(
+        &self,
+        schema: &str,
+        table: &tidb_model::TableInfo,
+        column_id: i64,
+    ) -> Result<bool, DdlPlanError>;
+
+    /// Go `e.uuid`, the DDL's owner-manager id.
+    fn uuid(&self) -> &str;
+}
+
+impl<S: StoreClient> ExecutorStore for RealClusterDdl<S> {
+    type Snapshot = SnapshotMetaSnapshot;
+
     fn with_meta(
         &self,
         context: &dyn DdlSessionContext,
@@ -435,6 +483,43 @@ impl<S: StoreClient> RealClusterDdl<S> {
             None => Err(SqlQueryError::unknown("DDL executor built no job")),
         }
     }
+
+    fn latest_schema(&self) -> Arc<tidb_infoschema::SessionExtendedInfoSchema> {
+        self.schema_sync.catalog.get_latest()
+    }
+
+    fn store_count(&self) -> usize {
+        self.opener
+            .store()
+            .store_addresses()
+            .map_or(0, |stores| stores.len())
+    }
+
+    fn tiflash_store_count(&self) -> Result<u64, String> {
+        self.opener.store().get_tiflash_store_count()
+    }
+
+    fn has_null_value(
+        &self,
+        schema: &str,
+        table: &tidb_model::TableInfo,
+        column_id: i64,
+    ) -> Result<bool, DdlPlanError> {
+        KvTableIndexBackfiller::new(&self.scheduler.row_ids, &self.scheduler.session_pool)
+            .with_region_store(self.scheduler.region_store.get().cloned())
+            .with_start_mode(self.scheduler.start_mode)
+            .has_null_value(schema, table, column_id)
+            .map_err(|error| {
+                DdlPlanError::from_mysql_error(
+                    tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
+                        .with_identity_opt(error.identity),
+                )
+            })
+    }
+
+    fn uuid(&self) -> &str {
+        self.owner.id()
+    }
 }
 
 /// Go `objectType` for `executor.dropTableObject`.
@@ -446,8 +531,8 @@ enum ObjectType {
 }
 
 /// Go `executor.DropTable`.
-pub(super) fn drop_table<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn drop_table<E: ExecutorStore>(
+    executor: &E,
     statement: &tidb_ast::DropTableStmt,
     current_db: &str,
     context: &DdlContext,
@@ -463,8 +548,8 @@ pub(super) fn drop_table<S: StoreClient>(
 }
 
 /// Go `executor.DropView`.
-pub(super) fn drop_view<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn drop_view<E: ExecutorStore>(
+    executor: &E,
     names: &[Vec<String>],
     if_exists: bool,
     current_db: &str,
@@ -481,8 +566,8 @@ pub(super) fn drop_view<S: StoreClient>(
 }
 
 /// Go `executor.DropSequence`.
-pub(super) fn drop_sequence<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn drop_sequence<E: ExecutorStore>(
+    executor: &E,
     statement: &tidb_ast::DropSequenceStmt,
     current_db: &str,
     context: &DdlContext,
@@ -498,8 +583,8 @@ pub(super) fn drop_sequence<S: StoreClient>(
 }
 
 /// Go `executor.dropTableObject`: one job per existing object, then missing names.
-fn drop_table_object<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+fn drop_table_object<E: ExecutorStore>(
+    executor: &E,
     paths: &[Vec<String>],
     if_exists: bool,
     object: ObjectType,
@@ -599,8 +684,8 @@ fn drop_table_object<S: StoreClient>(
 }
 
 /// Go `executor.DropSchema`.
-pub(super) fn drop_schema<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn drop_schema<E: ExecutorStore>(
+    executor: &E,
     name: &str,
     if_exists: bool,
     context: &DdlContext,
@@ -618,8 +703,8 @@ pub(super) fn drop_schema<S: StoreClient>(
 }
 
 /// Go `executor.RenameTable`, `renameTable`, and `renameTables`.
-pub(super) fn rename_table<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn rename_table<E: ExecutorStore>(
+    executor: &E,
     statement: &tidb_ast::RenameTableStmt,
     current_db: &str,
     context: &DdlContext,
@@ -655,8 +740,8 @@ pub(super) fn rename_table<S: StoreClient>(
 }
 
 /// Go `executor.DoDDLJobWrapper`: admit the built job, submit, and wait.
-pub(super) fn do_ddl_job_wrapper<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn do_ddl_job_wrapper<E: ExecutorStore>(
+    executor: &E,
     context: &dyn DdlSessionContext,
     job: crate::JobWrapper,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
@@ -669,15 +754,15 @@ pub(super) fn do_ddl_job_wrapper<S: StoreClient>(
 }
 
 /// Go `executor.CreateView` after its body has been preprocessed.
-pub(super) fn create_view<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn create_view<E: ExecutorStore>(
+    executor: &E,
     schema: &str,
     name: &str,
     or_replace: bool,
     info: &tidb_model::TableInfo,
     context: &dyn DdlSessionContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
-    let tiflash = || executor.opener.store().get_tiflash_store_count();
+    let tiflash = || ExecutorStore::tiflash_store_count(executor);
     executor.with_meta(context, |snapshot, start_ts, upgrading| {
         crate::cluster_ddl::create_object::create_view(
             snapshot, schema, name, or_replace, info, context, &tiflash, start_ts, upgrading,
@@ -686,8 +771,8 @@ pub(super) fn create_view<S: StoreClient>(
 }
 
 /// Go `executor.AlterTableMode`.
-pub(super) fn alter_table_mode<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn alter_table_mode<E: ExecutorStore>(
+    executor: &E,
     table_mode: tidb_model::TableMode,
     schema_id: i64,
     table_id: i64,
@@ -701,8 +786,8 @@ pub(super) fn alter_table_mode<S: StoreClient>(
 }
 
 /// Go `executor.RefreshMeta`.
-pub(super) fn refresh_meta<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn refresh_meta<E: ExecutorStore>(
+    executor: &E,
     schema_id: i64,
     table_id: i64,
     involved_db: &str,
@@ -724,8 +809,8 @@ pub(super) fn refresh_meta<S: StoreClient>(
 }
 
 /// Go `executor.CreatePlacementPolicy`.
-pub(super) fn create_placement_policy<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn create_placement_policy<E: ExecutorStore>(
+    executor: &E,
     statement: &tidb_ast::CreatePlacementPolicyStmt,
     context: &DdlContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
@@ -760,8 +845,8 @@ pub(super) fn create_placement_policy<S: StoreClient>(
 }
 
 /// Go `executor.AlterPlacementPolicy`.
-pub(super) fn alter_placement_policy<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn alter_placement_policy<E: ExecutorStore>(
+    executor: &E,
     statement: &tidb_ast::AlterPlacementPolicyStmt,
     context: &DdlContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
@@ -787,8 +872,8 @@ pub(super) fn alter_placement_policy<S: StoreClient>(
 }
 
 /// Go `executor.DropPlacementPolicy`.
-pub(super) fn drop_placement_policy<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn drop_placement_policy<E: ExecutorStore>(
+    executor: &E,
     statement: &tidb_ast::DropPlacementPolicyStmt,
     context: &DdlContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
@@ -812,8 +897,8 @@ pub(super) fn drop_placement_policy<S: StoreClient>(
 }
 
 /// Go `executor.AlterSchema`: charset, then placement; the session runs the TiFlash loop.
-pub(super) fn alter_schema<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn alter_schema<E: ExecutorStore>(
+    executor: &E,
     name: &str,
     options: &[tidb_ast::DatabaseOption],
     context: &DdlContext,
@@ -856,8 +941,8 @@ pub(super) fn alter_schema<S: StoreClient>(
 }
 
 /// Go `executor.AlterTableSetTiFlashReplica`.
-pub(super) fn alter_table_set_tiflash_replica<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn alter_table_set_tiflash_replica<E: ExecutorStore>(
+    executor: &E,
     schema: &str,
     table: &str,
     count: u64,
@@ -866,7 +951,7 @@ pub(super) fn alter_table_set_tiflash_replica<S: StoreClient>(
     hypo: bool,
     context: &DdlContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
-    let tiflash = || executor.opener.store().get_tiflash_store_count();
+    let tiflash = || ExecutorStore::tiflash_store_count(executor);
     executor.with_meta(context.as_ref(), |snapshot, start_ts, upgrading| {
         let catalog = tidb_infoschema::cluster_catalog::load_info_schema(snapshot)?;
         let built = crate::cluster_ddl::alter_table::alter_table_set_ti_flash_replica(
@@ -887,34 +972,17 @@ pub(super) fn alter_table_set_tiflash_replica<S: StoreClient>(
 }
 
 /// Go `executor.CreateIndex`.
-pub(super) fn create_index<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn create_index<E: ExecutorStore>(
+    executor: &E,
     statement: &tidb_ast::CreateIndexStmt,
     current_db: &str,
     context: &DdlContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
-    let store_count = executor
-        .opener
-        .store()
-        .store_addresses()
-        .map_or(0, |stores| stores.len());
-    let backfiller = KvTableIndexBackfiller::new(
-        &executor.scheduler.row_ids,
-        &executor.scheduler.session_pool,
-    )
-    .with_region_store(executor.scheduler.region_store.get().cloned())
-    .with_start_mode(executor.scheduler.start_mode);
+    let store_count = executor.store_count();
     executor.with_meta(context.as_ref(), |snapshot, start_ts, upgrading| {
         let catalog = tidb_infoschema::cluster_catalog::load_info_schema(snapshot)?;
         let mut has_null = |schema: &str, table: &tidb_model::TableInfo, column_id: i64| {
-            backfiller
-                .has_null_value(schema, table, column_id)
-                .map_err(|error| {
-                    DdlPlanError::from_mysql_error(
-                        tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
-                            .with_identity_opt(error.identity),
-                    )
-                })
+            executor.has_null_value(schema, table, column_id)
         };
         let built = crate::cluster_ddl::create_index_job(
             snapshot,
@@ -931,8 +999,8 @@ pub(super) fn create_index<S: StoreClient>(
 }
 
 /// Go `executor.DropIndex`.
-pub(super) fn drop_index<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn drop_index<E: ExecutorStore>(
+    executor: &E,
     statement: &tidb_ast::DropIndexStmt,
     current_db: &str,
     context: &DdlContext,
@@ -1026,15 +1094,15 @@ pub(super) fn recover_schema<S: StoreClient>(
 }
 
 /// Go `executor.AlterTable`: resolve specifications, then build their jobs against the schema.
-pub(super) fn alter_table<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn alter_table<E: ExecutorStore>(
+    executor: &E,
     statement: &tidb_ast::AlterTableStmt,
     current_db: &str,
     context: &DdlContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
     let statement = crate::cluster_ddl::resolve_alter_table_spec(statement, context)
         .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?;
-    let catalog = executor.schema_sync.catalog.get_latest();
+    let catalog = executor.latest_schema();
     // Go `executor.AlterTable`'s masking-policy specs.
     if let [tidb_ast::AlterTableAction::MaskingPolicy(action)] = statement.actions.as_slice() {
         let job = super::executor_masking::alter_table_masking_policy_job(
@@ -1090,28 +1158,11 @@ pub(super) fn alter_table<S: StoreClient>(
             )
         };
     }
-    let store_count = executor
-        .opener
-        .store()
-        .store_addresses()
-        .map_or(0, |stores| stores.len());
-    let tiflash = || executor.opener.store().get_tiflash_store_count();
-    let backfiller = KvTableIndexBackfiller::new(
-        &executor.scheduler.row_ids,
-        &executor.scheduler.session_pool,
-    )
-    .with_region_store(executor.scheduler.region_store.get().cloned())
-    .with_start_mode(executor.scheduler.start_mode);
+    let store_count = executor.store_count();
+    let tiflash = || ExecutorStore::tiflash_store_count(executor);
     executor.with_meta(context.as_ref(), |snapshot, start_ts, upgrading| {
         let mut has_null = |schema: &str, table: &tidb_model::TableInfo, column_id: i64| {
-            backfiller
-                .has_null_value(schema, table, column_id)
-                .map_err(|error| {
-                    DdlPlanError::from_mysql_error(
-                        tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
-                            .with_identity_opt(error.identity),
-                    )
-                })
+            executor.has_null_value(schema, table, column_id)
         };
         crate::cluster_ddl::alter_table_job(
             snapshot,
@@ -1128,13 +1179,13 @@ pub(super) fn alter_table<S: StoreClient>(
 }
 
 /// Go `executor.UpdateTableReplicaInfo`.
-pub(super) fn update_table_replica_info<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn update_table_replica_info<E: ExecutorStore>(
+    executor: &E,
     table_id: i64,
     available: bool,
     context: &dyn DdlSessionContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
-    let tiflash = || executor.opener.store().get_tiflash_store_count();
+    let tiflash = || ExecutorStore::tiflash_store_count(executor);
     executor.with_meta(context, |snapshot, start_ts, upgrading| {
         let catalog = tidb_infoschema::cluster_catalog::load_info_schema(snapshot)?;
         let built = crate::cluster_ddl::alter_table::update_table_replica_info(
@@ -1155,9 +1206,6 @@ fn table_lock_session_info(
         session_id: context.ddl_connection_id(),
     }
 }
-
-/// Submits one prepared job (Go `doDDLJob2`).
-pub type DoDdlJob<'a> = dyn Fn(crate::JobWrapper) -> Result<ClusterDdlReport, SqlQueryError> + 'a;
 
 fn mysql_query_error(error: tidb_terror::MysqlError) -> SqlQueryError {
     SqlQueryError::from(error)
@@ -1213,34 +1261,15 @@ fn lockable_table(
 }
 
 /// Go `executor.LockTables`.
-pub(super) fn lock_tables<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn lock_tables<E: ExecutorStore>(
+    executor: &E,
     locks: &[tidb_ast::TableLock],
     current_db: &str,
     context: &dyn DdlSessionContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
-    let catalog = executor.schema_sync.catalog.get_latest();
-    lock_tables_with(
-        &catalog,
-        executor.owner.id(),
-        locks,
-        current_db,
-        context,
-        &|job| do_ddl_job_wrapper(executor, context, job),
-    )
-}
-
-/// Go `executor.LockTables` over `catalog` (the executor's latest schema),
-/// the DDL's `server_id` (Go `e.uuid`) and its job submission.
-pub fn lock_tables_with(
-    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
-    server_id: &str,
-    locks: &[tidb_ast::TableLock],
-    current_db: &str,
-    context: &dyn DdlSessionContext,
-    do_job: &DoDdlJob<'_>,
-) -> Result<ClusterDdlReport, SqlQueryError> {
-    let session_info = table_lock_session_info(server_id, context);
+    let catalog = executor.latest_schema();
+    let catalog = catalog.as_ref();
+    let session_info = table_lock_session_info(executor.uuid(), context);
     let mut lock_tables = Vec::with_capacity(locks.len());
     let mut unique_table_id = std::collections::HashSet::new();
     for lock in locks {
@@ -1290,7 +1319,7 @@ pub fn lock_tables_with(
     if let Some(locks) = &session_locks {
         locks.add_table_lock(&lock_tables);
     }
-    let report = do_job(job)?;
+    let report = do_ddl_job_wrapper(executor, context, job)?;
     if let Some(locks) = &session_locks {
         locks.release_table_locks(&unlock_tables);
         locks.add_table_lock(&lock_tables);
@@ -1298,31 +1327,14 @@ pub fn lock_tables_with(
     Ok(report)
 }
 
-/// Go `executor.UnlockTables`.
-pub(super) fn unlock_tables<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+/// Go `executor.UnlockTables`: none to unlock submits no job.
+pub fn unlock_tables<E: ExecutorStore>(
+    executor: &E,
     unlock_tables: Vec<tidb_model::TableLockTpInfo>,
     context: &dyn DdlSessionContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
-    let catalog = executor.schema_sync.catalog.get_latest();
-    unlock_tables_with(
-        &catalog,
-        executor.owner.id(),
-        unlock_tables,
-        context,
-        &|job| do_ddl_job_wrapper(executor, context, job),
-    )
-}
-
-/// Go `executor.UnlockTables` (see [`lock_tables_with`]): none to unlock
-/// submits no job.
-pub fn unlock_tables_with(
-    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
-    server_id: &str,
-    unlock_tables: Vec<tidb_model::TableLockTpInfo>,
-    context: &dyn DdlSessionContext,
-    do_job: &DoDdlJob<'_>,
-) -> Result<ClusterDdlReport, SqlQueryError> {
+    let catalog = executor.latest_schema();
+    let catalog = catalog.as_ref();
     if unlock_tables.is_empty() {
         return Ok(ClusterDdlReport::AlreadySatisfied {
             detail: "no table is locked".into(),
@@ -1333,41 +1345,29 @@ pub fn unlock_tables_with(
         catalog,
         tidb_model::LockTablesArgs {
             unlock_tables,
-            session_info: table_lock_session_info(server_id, context),
+            session_info: table_lock_session_info(executor.uuid(), context),
             ..Default::default()
         },
         context,
     )
     .map_err(plan_query_error)?;
-    let report = do_job(job)?;
+    let report = do_ddl_job_wrapper(executor, context, job)?;
     if let Some(locks) = context.table_lock_context() {
         locks.release_all_table_locks();
     }
     Ok(report)
 }
 
-/// Go `executor.CleanupTableLock`.
-pub(super) fn cleanup_table_lock<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+/// Go `executor.CleanupTableLock`: no job when every named table is
+/// unlocked.
+pub fn cleanup_table_lock<E: ExecutorStore>(
+    executor: &E,
     tables: &[Vec<String>],
     current_db: &str,
     context: &dyn DdlSessionContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
-    let catalog = executor.schema_sync.catalog.get_latest();
-    cleanup_table_lock_with(&catalog, tables, current_db, context, &|job| {
-        do_ddl_job_wrapper(executor, context, job)
-    })
-}
-
-/// Go `executor.CleanupTableLock` (see [`lock_tables_with`]): no job when
-/// every named table is unlocked.
-pub fn cleanup_table_lock_with(
-    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
-    tables: &[Vec<String>],
-    current_db: &str,
-    context: &dyn DdlSessionContext,
-    do_job: &DoDdlJob<'_>,
-) -> Result<ClusterDdlReport, SqlQueryError> {
+    let catalog = executor.latest_schema();
+    let catalog = catalog.as_ref();
     let mut unique_table_id = std::collections::HashSet::new();
     let mut cleanup_tables = Vec::with_capacity(tables.len());
     let mut unlocked = 0;
@@ -1408,7 +1408,7 @@ pub fn cleanup_table_lock_with(
         context,
     )
     .map_err(plan_query_error)?;
-    let report = do_job(job)?;
+    let report = do_ddl_job_wrapper(executor, context, job)?;
     if let Some(locks) = context.table_lock_context() {
         locks.release_table_locks(&cleanup_tables);
     }
@@ -1417,13 +1417,13 @@ pub fn cleanup_table_lock_with(
 
 /// Go `executor.CreateMaskingPolicy`. An `IF NOT EXISTS` that loses the race
 /// to another creator answers the job's "exists" error as a note.
-pub(super) fn create_masking_policy<S: StoreClient>(
-    executor: &RealClusterDdl<S>,
+pub fn create_masking_policy<E: ExecutorStore>(
+    executor: &E,
     stmt: &tidb_ast::CreateMaskingPolicyStmt,
     current_db: &str,
     context: &dyn DdlSessionContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
-    let catalog = executor.schema_sync.catalog.get_latest();
+    let catalog = executor.latest_schema();
     let Some(job) =
         super::executor_masking::create_masking_policy_job(&catalog, stmt, current_db, context)
             .map_err(mysql_query_error)?

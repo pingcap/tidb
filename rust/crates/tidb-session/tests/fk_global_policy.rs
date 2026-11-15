@@ -228,7 +228,6 @@ fn foreign_key_global_policy_batch() {
 
     errno(&mut session, "CREATE TABLE other.bad_null(id INT NOT NULL, FOREIGN KEY fk(id) REFERENCES other.absent(id) ON DELETE SET NULL)", 1830);
 
-    use tidb_ddl::cluster_ddl::DdlStatement;
     use tidb_ddl::foreign_key_build::{
         check_table_foreign_keys_valid, check_table_foreign_key_valid_in_owner,
     };
@@ -236,10 +235,7 @@ fn foreign_key_global_policy_batch() {
         "CREATE TABLE test.persisted(id INT, FOREIGN KEY fk(id) REFERENCES absent(id))",
     )
     .unwrap();
-    let DdlStatement::CreateTable { build, .. } = lower_ddl(&parsed).unwrap().unwrap()
-    else {
-        panic!("create")
-    };
+    let build = create_table_build(&parsed);
     let mut table = build.template().clone_like_go();
     assert_eq!(table.foreign_keys.get(0).unwrap().read().version, 0);
     assert!(table.indices.is_empty());
@@ -260,11 +256,14 @@ fn foreign_key_global_policy_batch() {
     assert_eq!(table.foreign_keys.get(0).unwrap().read().version, 0);
 }
 
-/// Lowers `statement` into schema `test` under TiDB's default DDL session.
-fn lower_ddl(
-    statement: &tidb_ast::Stmt,
-) -> Result<Option<tidb_ddl::cluster_ddl::DdlStatement>, tidb_ddl_build::table_info_build::DdlAdmissionError> {
+/// Go `BuildTableInfoWithStmt`'s build of the CREATE TABLE `statement`
+/// in schema `test` under TiDB's default DDL session, as
+/// `executor.CreateTable` makes it.
+fn create_table_build(statement: &tidb_ast::Stmt) -> tidb_ddl::cluster_ddl::CreateTableBuild {
+    let tidb_ast::Stmt::Ddl(ddl) = statement else { panic!("create") };
+    let tidb_ast::DdlStmt::CreateTable(create) = &**ddl else { panic!("create") };
     let context: tidb_ddl::cluster_ddl::DdlContext =
         std::sync::Arc::new(tidb_ddl_build::table_info_build::default_ddl_statement_context());
-    tidb_ddl::cluster_ddl::lower_ddl_with_context(statement, "test", &context)
+    let (schema, _) = tidb_ddl::cluster_ddl::split_name(&create.name, "test", "table").unwrap();
+    tidb_ddl::cluster_ddl::CreateTableBuild::new(create, &schema, &context).unwrap()
 }

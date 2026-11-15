@@ -26,65 +26,6 @@ use super::add_index::{
 };
 use super::*;
 
-/// Go `executor.CreateForeignKey` up to `doDDLJob2`, for an ALTER TABLE
-/// with this one specification.
-#[allow(clippy::too_many_arguments)]
-pub fn prepare_add_foreign_key_job_submission<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    start_ts: u64,
-    upgrading: bool,
-    store_count: usize,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let DdlStatement::AddForeignKey {
-        schema,
-        table,
-        definition,
-        context,
-    } = statement
-    else {
-        return Ok(None);
-    };
-    let catalog = load_info_schema(snapshot)?;
-    let (_, stored) = locate_table(&catalog, schema, table)?;
-    let stored = stored.read();
-    // Go `AlterTable` names an anonymous key before any spec runs.
-    let name = foreign_key_name(definition, &stored, 0);
-    let mut specs = build_add_foreign_key_jobs(
-        snapshot,
-        &catalog,
-        schema,
-        table,
-        &name,
-        definition,
-        context,
-        job_context,
-        store_count,
-    )?;
-    let built = if specs.len() == 1 {
-        let key = specs.pop().expect("one job");
-        AddIndexSubmission::Job(Box::new(key), Vec::new())
-    } else {
-        // The key's `createIndex` set `StmtCtx.MultiSchemaInfo`, so
-        // `AlterTable` ends with `multiSchemaChange`.
-        let job = super::multi_schema::build_multi_schema_job(
-            &catalog,
-            schema,
-            table,
-            specs,
-            job_context,
-            store_count,
-        )?;
-        AddIndexSubmission::Job(Box::new(job), Vec::new())
-    };
-    submit_built_job(
-        snapshot, Some(built),
-        start_ts,
-        upgrading,
-    )
-}
-
 /// Go `AlterTable`: an anonymous key is named `fk_{MaxForeignKeyID+n}`, `n`
 /// counting the anonymous keys of the statement from one.
 pub(super) fn foreign_key_name(
@@ -119,37 +60,36 @@ pub(super) fn build_add_foreign_key_jobs<S: MetaSnapshot>(
     if created.needs_index {
         // Go `createIndex(ctx, ti, IndexKeyTypeNone, fkInfo.Name, ...)`, one
         // key part per key column without a prefix.
-        let statement = lower_create_index(
-            &tidb_ast::CreateIndexStmt {
-                kind: tidb_ast::IndexKind::Ordinary,
-                if_not_exists: false,
-                name: created.fk.name.original().to_owned(),
-                table: vec![schema.to_owned(), table.to_owned()],
-                parts: created
-                    .fk
-                    .cols
-                    .snapshot()
-                    .iter()
-                    .map(|column| tidb_ast::IndexPart::Column {
-                        name: column.original().to_owned(),
-                        prefix_len: None,
-                        desc: false,
-                    })
-                    .collect(),
-                options: Default::default(),
-                online: Default::default(),
-            },
-            schema,
-            false,
-            &context.0,
-        )
-        .map_err(DdlPlanError::Admission)?;
-        match super::add_index::build_add_index_job(
+        let statement = tidb_ast::CreateIndexStmt {
+            kind: tidb_ast::IndexKind::Ordinary,
+            if_not_exists: false,
+            name: created.fk.name.original().to_owned(),
+            table: vec![schema.to_owned(), table.to_owned()],
+            parts: created
+                .fk
+                .cols
+                .snapshot()
+                .iter()
+                .map(|column| tidb_ast::IndexPart::Column {
+                    name: column.original().to_owned(),
+                    prefix_len: None,
+                    desc: false,
+                })
+                .collect(),
+            options: Default::default(),
+            online: Default::default(),
+        };
+        // A secondary index checks no column for NULLs.
+        let mut no_null_check = |_: &str, _: &TableInfo, _: i64| Ok(false);
+        match crate::cluster_ddl::create_index_job(
             snapshot,
             catalog,
             &statement,
-            store_count,
+            schema,
+            false,
             &context.0,
+            store_count,
+            &mut no_null_check,
         )? {
             Some(AddIndexSubmission::Job(spec, _)) => specs.push(*spec),
             _ => {

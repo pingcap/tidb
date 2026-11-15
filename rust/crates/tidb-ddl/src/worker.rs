@@ -20,10 +20,10 @@
 //! catalog afterwards.
 
 #[path = "executor.rs"]
-mod executor;
+pub mod executor;
 #[path = "executor_masking.rs"]
 mod executor_masking;
-pub use executor::{cleanup_table_lock_with, lock_tables_with, unlock_tables_with, DoDdlJob};
+pub use executor::ExecutorStore;
 
 use tidb_ddl_build::partition_reorg::KvTablePartitionReorg;
 use tidb_ddl_build::table_backfill::KvTableBackfill;

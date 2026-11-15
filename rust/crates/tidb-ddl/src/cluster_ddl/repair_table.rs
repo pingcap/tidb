@@ -93,36 +93,6 @@ fn get_index_info_by_name_and_column(
     })
 }
 
-/// Go `executor.RepairTable` up to `doDDLJob2`. `None` for any other
-/// statement.
-pub fn repair_table<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    tiflash_stores: &dyn Fn() -> Result<u64, String>,
-    start_ts: u64,
-    upgrading: bool,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let DdlStatement::RepairTable {
-        schema,
-        table,
-        build,
-    } = statement
-    else {
-        return Ok(None);
-    };
-    repair_table_with_info(
-        snapshot,
-        schema,
-        table,
-        build,
-        job_context,
-        tiflash_stores,
-        start_ts,
-        upgrading,
-    )
-}
-
 /// Go `executor.RepairTable`: typed arguments through `doDDLJob2`.
 #[allow(clippy::too_many_arguments)]
 pub fn repair_table_with_info<S: MetaSnapshot>(

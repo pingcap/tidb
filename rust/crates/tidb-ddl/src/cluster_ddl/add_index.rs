@@ -228,57 +228,6 @@ pub enum AddIndexSubmission {
     },
 }
 
-/// Go `executor.createIndex` up to `doDDLJob2`: the admission checks, the
-/// job's arguments (`ModifyIndexArgs` with the hidden columns built and every
-/// key part naming a column) and its reorganization settings
-/// (`initJobReorgMetaFromVariables`). `None` when the statement is not one
-/// ADD INDEX. `store_count` is PD's store count, for Go's automatic
-/// `max_node_count`.
-pub fn create_index<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    start_ts: u64,
-    upgrading: bool,
-    store_count: usize,
-    has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
-    job_context: &dyn DdlSessionContext,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
-    let mut built = build_add_index_job(snapshot, &catalog, statement, store_count, job_context)?;
-    // Go `Job.Query` is the submitting statement's text, which the job
-    // context carries (the lowered statement's context predates it).
-    if let Some(AddIndexSubmission::Job(spec, _)) = built.as_mut() {
-        if spec.job.query.is_empty() {
-            spec.job.query = job_context.ddl_query().into();
-        }
-    }
-    if matches!(built, Some(AddIndexSubmission::Job(..))) {
-        check_added_primary_key_holds_no_null(&catalog, statement, has_null)?;
-    }
-    submit_built_job(snapshot, built, start_ts, upgrading)
-}
-
-/// Go `checkPrimaryKeyNotNull` -> `modifyColsFromNull2NotNull` ->
-/// `checkForNullValue`: a primary key over a nullable column that holds a
-/// NULL is refused with 1138. Go's owner asks during the job; this node asks
-/// in the submitting transaction, as it does for MODIFY COLUMN.
-pub(super) fn check_added_primary_key_holds_no_null(
-    catalog: &SessionExtendedInfoSchema,
-    statement: &DdlStatement,
-    has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
-) -> Result<(), DdlPlanError> {
-    let DdlStatement::CreateIndex {
-        schema,
-        table,
-        index,
-        ..
-    } = statement
-    else {
-        return Ok(());
-    };
-    check_primary_key_null_values(catalog, schema, table, index, has_null)
-}
-
 /// Go `checkPrimaryKeyNotNull` with the index's resolved definition.
 pub(crate) fn check_primary_key_null_values(
     catalog: &SessionExtendedInfoSchema,
@@ -530,44 +479,6 @@ fn create_columnar_index(
 fn check_table_type_for_columnar_index(stored: &TableInfo) -> Result<(), DdlPlanError> {
     tidb_ddl_build::table_info_build::check_table_type_for_columnar_index(stored)
         .map_err(DdlPlanError::Admission)
-}
-
-/// The executor half without `doDDLJob2`: the job unsubmitted, which a
-/// multi-schema change appends as a sub-job (Go `appendToSubJobs`).
-pub(super) fn build_add_index_job<S: MetaSnapshot>(
-    _snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    statement: &DdlStatement,
-    store_count: usize,
-    job_context: &dyn DdlSessionContext,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let DdlStatement::CreateIndex {
-        schema,
-        table,
-        if_not_exists,
-        index,
-        expressions,
-        condition,
-        context,
-        columnar,
-    } = statement
-    else {
-        return Ok(None);
-    };
-    create_index_with_info(
-        _snapshot,
-        catalog,
-        schema,
-        table,
-        if_not_exists,
-        index,
-        expressions,
-        condition,
-        context,
-        columnar,
-        store_count,
-        job_context,
-    )
 }
 
 /// Go `executor.CreateIndex` with the prepared column/index definition.

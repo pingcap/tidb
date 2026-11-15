@@ -19,57 +19,8 @@
 //! release the session's earlier locks one table per step, then take each
 //! new lock through `none -> pre-lock -> public`, a schema version each step.
 
-use super::add_index::{action_step, update_version_and_table_info, AddIndexSubmission};
+use super::add_index::{action_step, update_version_and_table_info};
 use super::*;
-
-/// Go's executor halves up to `doDDLJob2`: the session already checked the
-/// tables and holds the lock bookkeeping. `None` for any other statement.
-pub fn prepare_table_lock_job_submission<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    start_ts: u64,
-    upgrading: bool,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
-    let job = match statement {
-        DdlStatement::LockTables {
-            lock_tables,
-            unlock_tables,
-            session,
-        } => lock_tables_job(
-            &catalog,
-            tidb_model::LockTablesArgs {
-                lock_tables: lock_tables.clone(),
-                unlock_tables: unlock_tables.clone(),
-                session_info: session.clone(),
-                ..Default::default()
-            },
-            job_context,
-        )?,
-        DdlStatement::UnlockTables {
-            unlock_tables,
-            session,
-            is_cleanup,
-        } => unlock_tables_job(
-            &catalog,
-            tidb_model::LockTablesArgs {
-                unlock_tables: unlock_tables.clone(),
-                session_info: session.clone(),
-                is_cleanup: *is_cleanup,
-                ..Default::default()
-            },
-            job_context,
-        )?,
-        _ => return Ok(None),
-    };
-    submit_built_job(
-        snapshot,
-        Some(AddIndexSubmission::Job(Box::new(job), Vec::new())),
-        start_ts,
-        upgrading,
-    )
-}
 
 /// Go `executor.LockTables` after the session validates the table identities.
 pub fn lock_tables_job(

@@ -699,25 +699,6 @@ pub(super) fn finish_flashback_cluster(job: &mut Job, sessions: Option<&DdlStepW
     set_global_sys_var_from_bool(pool, tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE, args.enable_auto_analyze)
 }
 
-/// Go `executor.FlashbackCluster` from its job to `doDDLJob2`. `None` for
-/// any other statement.
-pub fn flashback_cluster<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    start_ts: u64,
-    upgrading: bool,
-) -> Result<Option<add_index::AddIndexSubmission>, DdlPlanError> {
-    let DdlStatement::FlashbackCluster { flashback_ts } = statement else {
-        return Ok(None);
-    };
-    let built = add_index::AddIndexSubmission::Job(
-        Box::new(flashback_cluster_job(*flashback_ts, job_context)),
-        Vec::new(),
-    );
-    submit_built_job(snapshot, Some(built), start_ts, upgrading)
-}
-
 /// Go `executor.FlashbackCluster`: the job after the clock check.
 pub fn flashback_cluster_job(
     flashback_ts: u64,

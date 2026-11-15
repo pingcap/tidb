@@ -110,37 +110,6 @@ pub(super) fn check_table_mode_is_normal(table: &TableInfo) -> Result<(), DdlPla
         .map_err(DdlPlanError::from)
 }
 
-/// Go `executor.RenameTable` up to `doDDLJob2`. `None` for any other
-/// statement.
-pub fn rename_table<S: MetaSnapshot>(
-    snapshot: &mut S,
-    statement: &DdlStatement,
-    job_context: &dyn DdlSessionContext,
-    start_ts: u64,
-    upgrading: bool,
-) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let (pairs, is_alter) = match statement {
-        DdlStatement::RenameTable {
-            is_alter,
-            from_schema,
-            from_table,
-            to_schema,
-            to_table,
-        } => (
-            vec![RenameTablePair {
-                from_schema: from_schema.clone(),
-                from_table: from_table.clone(),
-                to_schema: to_schema.clone(),
-                to_table: to_table.clone(),
-            }],
-            *is_alter,
-        ),
-        DdlStatement::RenameTables { pairs } => (pairs.clone(), false),
-        _ => return Ok(None),
-    };
-    rename_tables(snapshot, &pairs, is_alter, job_context, start_ts, upgrading)
-}
-
 /// Go `executor.renameTable` / `executor.renameTables` through `doDDLJob2`.
 pub fn rename_tables<S: MetaSnapshot>(
     snapshot: &mut S,
