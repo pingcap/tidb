@@ -17,6 +17,7 @@ package core
 import (
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
@@ -42,12 +43,22 @@ import (
 // exactly, which is what matters most: whether a search is selective enough
 // for the index, and how many rows it yields to the rest of the plan. A term
 // with more is known to be common, and its estimate from the column's
-// statistics, or the default, is kept, but never below the count read. A
-// table of many partitions is counted in a few of them, and the count scaled.
+// statistics, or the default, is kept, but never below the count read. When
+// every term of a search is common, one of them is counted further, up to
+// fullTextProbeDeepLimit; see probeFullTextQuery. A table of many partitions
+// is counted in a few of them, and the count scaled.
 const (
-	// fullTextProbeLimit is the most postings counted for one term in one
-	// physical table, about four kv_scan batches.
-	fullTextProbeLimit = 1024
+	// fullTextProbeLimit is the most postings first counted for one term in
+	// one physical table, within one kv_scan batch. A count costs about a
+	// round trip and a microsecond an entry, so a common term costs little
+	// more than a rare one.
+	fullTextProbeLimit = 64
+	// fullTextProbeDeepLimit is the most postings counted for a term whose
+	// first count stopped at fullTextProbeLimit, when it is counted further.
+	fullTextProbeDeepLimit = 1024
+	// fullTextProbeDeepTerms is the most terms counted further in planning
+	// one statement.
+	fullTextProbeDeepTerms = 4
 	// fullTextProbePartitions is the most partitions probed for one term;
 	// the counts of a partitioned table are scaled from those probed.
 	fullTextProbePartitions = 4
@@ -62,6 +73,8 @@ type fullTextPostingCount struct {
 	// partition: the term has at least count postings. Otherwise count is
 	// the number of postings, or its estimate from the partitions probed.
 	lowerBound bool
+	// limit is the most postings counted in one physical table.
+	limit int
 }
 
 // fullTextTermProbe sums what the partitions of a statically pruned table
@@ -84,6 +97,8 @@ type fullTextPostingCounts struct {
 	terms map[string]*fullTextTermProbe
 	// probed is the number of distinct terms probed.
 	probed int
+	// deepened is the number of terms counted up to fullTextProbeDeepLimit.
+	deepened int
 	// snapshot reads at the statement's read timestamp, keys only.
 	snapshot kv.Snapshot
 	// stopped is set once a read failed or the statement was killed: the
@@ -140,15 +155,10 @@ func (c *fullTextPostingCounts) probeSnapshot(pctx base.PlanContext) (kv.Snapsho
 //   - a read failed, which must never fail planning, or the statement was
 //     killed.
 func probeFullTextPostings(ds *logicalop.DataSource, idx *model.IndexInfo, keyPrefix []byte, term string) (fullTextPostingCount, bool) {
-	if ds.TableInfo.TempTableType != model.TempTableNone || tableHasDirtyContent(ds.SCtx(), ds.TableInfo) {
+	termValues, indexKey, cacheKey, ok := fullTextProbeKeys(ds, idx, keyPrefix, term)
+	if !ok {
 		return fullTextPostingCount{}, false
 	}
-	termValues, err := codec.EncodeKey(time.UTC, append([]byte(nil), keyPrefix...), types.NewBytesDatum([]byte(term)))
-	if err != nil {
-		return fullTextPostingCount{}, false
-	}
-	indexKey := string(codec.EncodeInt(nil, idx.ID)) + string(termValues)
-	cacheKey := string(codec.EncodeInt(nil, ds.PhysicalTableID)) + indexKey
 	counts := fullTextPostingCountsOf(ds)
 	counts.mu.Lock()
 	defer counts.mu.Unlock()
@@ -173,7 +183,7 @@ func probeFullTextPostings(ds *logicalop.DataSource, idx *model.IndexInfo, keyPr
 			counts.terms[termKey] = shared
 		}
 		if shared.partitions >= fullTextProbePartitions {
-			result := fullTextPostingCount{count: shared.sum / float64(shared.partitions), lowerBound: shared.lowerBound}
+			result := fullTextPostingCount{count: shared.sum / float64(shared.partitions), lowerBound: shared.lowerBound, limit: fullTextProbeLimit}
 			counts.counts[cacheKey] = result
 			return result, true
 		}
@@ -183,25 +193,10 @@ func probeFullTextPostings(ds *logicalop.DataSource, idx *model.IndexInfo, keyPr
 		}
 		counts.probed++
 	}
-	snapshot, ok := counts.probeSnapshot(ds.SCtx())
+	result, ok := counts.countTerm(ds, idx, termValues, fullTextProbeLimit)
 	if !ok {
-		counts.stopped = true
 		return fullTextPostingCount{}, false
 	}
-	killer := &ds.SCtx().GetSessionVars().SQLKiller
-	physicalIDs, scale := fullTextProbePhysicalIDs(ds)
-	var result fullTextPostingCount
-	for _, physicalID := range physicalIDs {
-		start := tablecodec.EncodeIndexSeekKey(physicalID, idx.ID, termValues)
-		n, saturated, err := countKeys(snapshot, start, start.PrefixNext(), fullTextProbeLimit, killer)
-		if err != nil {
-			counts.stopped = true
-			return fullTextPostingCount{}, false
-		}
-		result.count += float64(n)
-		result.lowerBound = result.lowerBound || saturated
-	}
-	result.count *= scale
 	if shared != nil {
 		shared.partitions++
 		shared.sum += result.count
@@ -209,6 +204,99 @@ func probeFullTextPostings(ds *logicalop.DataSource, idx *model.IndexInfo, keyPr
 	}
 	counts.counts[cacheKey] = result
 	return result, true
+}
+
+// fullTextProbeKeys returns the index key values of term under keyPrefix,
+// the key of the term's count across the partitions of the table, and the
+// key of its count in the physical table ds reads. It returns false when the
+// term's rows cannot be counted in TiKV: those of a temporary table, and those
+// the transaction has written, are not there.
+func fullTextProbeKeys(ds *logicalop.DataSource, idx *model.IndexInfo, keyPrefix []byte, term string) (termValues []byte, indexKey, cacheKey string, ok bool) {
+	if ds.TableInfo.TempTableType != model.TempTableNone || tableHasDirtyContent(ds.SCtx(), ds.TableInfo) {
+		return nil, "", "", false
+	}
+	termValues, err := codec.EncodeKey(time.UTC, append([]byte(nil), keyPrefix...), types.NewBytesDatum([]byte(term)))
+	if err != nil {
+		return nil, "", "", false
+	}
+	indexKey = string(codec.EncodeInt(nil, idx.ID)) + string(termValues)
+	return termValues, indexKey, string(codec.EncodeInt(nil, ds.PhysicalTableID)) + indexKey, true
+}
+
+// countTerm counts the postings of the term with index key values termValues
+// in the physical tables ds reads, at most limit in each. A failed read, or a
+// killed statement, stops the statement's probes. c.mu must be held.
+func (c *fullTextPostingCounts) countTerm(ds *logicalop.DataSource, idx *model.IndexInfo, termValues []byte, limit int) (fullTextPostingCount, bool) {
+	snapshot, ok := c.probeSnapshot(ds.SCtx())
+	if !ok {
+		c.stopped = true
+		return fullTextPostingCount{}, false
+	}
+	killer := &ds.SCtx().GetSessionVars().SQLKiller
+	physicalIDs, scale := fullTextProbePhysicalIDs(ds)
+	result := fullTextPostingCount{limit: limit}
+	for _, physicalID := range physicalIDs {
+		start := tablecodec.EncodeIndexSeekKey(physicalID, idx.ID, termValues)
+		n, saturated, err := countKeys(snapshot, start, start.PrefixNext(), limit, killer)
+		if err != nil {
+			c.stopped = true
+			return fullTextPostingCount{}, false
+		}
+		result.count += float64(n)
+		result.lowerBound = result.lowerBound || saturated
+	}
+	result.count *= scale
+	return result, true
+}
+
+// probeFullTextQuery counts the postings of the exact terms query reads.
+// When every one of them has more than fullTextProbeLimit, the longest is
+// counted further: a search is as selective as its rarest list, a longer
+// word is usually a rarer one, and a deeper count can tell a list a search
+// may still read cheaply from one too long for the index to pay. A search
+// with any term counted exactly needs no further count.
+func probeFullTextQuery(ds *logicalop.DataSource, idx *model.IndexInfo, keyPrefix []byte, query *fulltext.Query) {
+	longest := ""
+	for _, read := range query.PostingReads() {
+		if read.Prefix {
+			continue
+		}
+		known, ok := probeFullTextPostings(ds, idx, keyPrefix, read.Term)
+		if !ok || !known.lowerBound {
+			return
+		}
+		if utf8.RuneCountInString(read.Term) > utf8.RuneCountInString(longest) {
+			longest = read.Term
+		}
+	}
+	if longest != "" {
+		deepenFullTextProbe(ds, idx, keyPrefix, longest)
+	}
+}
+
+// deepenFullTextProbe counts term again, up to fullTextProbeDeepLimit, when
+// its count stopped at fullTextProbeLimit. A partition planned by itself
+// keeps its first count, which it shares with the other partitions of its
+// table.
+func deepenFullTextProbe(ds *logicalop.DataSource, idx *model.IndexInfo, keyPrefix []byte, term string) {
+	if ds.PhysicalTableID != ds.TableInfo.ID {
+		return
+	}
+	termValues, _, cacheKey, ok := fullTextProbeKeys(ds, idx, keyPrefix, term)
+	if !ok {
+		return
+	}
+	counts := fullTextPostingCountsOf(ds)
+	counts.mu.Lock()
+	defer counts.mu.Unlock()
+	known, ok := counts.counts[cacheKey]
+	if !ok || !known.lowerBound || known.limit >= fullTextProbeDeepLimit || counts.stopped || counts.deepened >= fullTextProbeDeepTerms {
+		return
+	}
+	counts.deepened++
+	if result, ok := counts.countTerm(ds, idx, termValues, fullTextProbeDeepLimit); ok {
+		counts.counts[cacheKey] = result
+	}
 }
 
 // countKeys counts the keys in [start, end), stopping at limit, or with the
@@ -286,7 +374,7 @@ func fullTextTermPostings(ds *logicalop.DataSource, idx *model.IndexInfo, keyPre
 // estimateFullTextMatchSelectivities estimates, from the postings of their
 // terms, the selectivity of every MATCH on ds that a FULLTEXT index built in
 // TiKV can answer, and records it for the statistics of ds and of every path
-// built over it.
+// built over it. It reports whether it recorded any.
 //
 // An index without key columns holds a term's postings across the table in
 // one range, so the MATCH's selectivity is its share of the table's rows. An
@@ -295,18 +383,24 @@ func fullTextTermPostings(ds *logicalop.DataSource, idx *model.IndexInfo, keyPre
 // are counted, and the selectivity is the MATCH's share of the rows the
 // statistics give the point, which the conditions on the key columns then
 // scale back to the table. Without such a point the MATCH keeps the estimate
-// from the column's statistics. An index without key columns is preferred:
-// its count needs no estimate of the point.
-func estimateFullTextMatchSelectivities(ds *logicalop.DataSource) {
+// from the column's statistics. An index with key columns pinned to a point
+// is preferred: the index path counts the same postings under the point,
+// so the estimate costs no count of its own.
+//
+// Nothing is counted when another path already reads only a few rows: no
+// posting scan could beat it, and the rows the MATCH filters are too few for
+// its estimate to matter.
+func estimateFullTextMatchSelectivities(ds *logicalop.DataSource) bool {
 	if ds.TableInfo == nil || ds.TableStats == nil || ds.TableStats.RowCount <= 0 {
-		return
+		return false
 	}
 	// The probe reads TiKV, which a statement kept from TiKV, by the
 	// isolation read engines or a TiFlash hint, must not do even to plan.
-	if !fullTextIndexReadable(ds) {
-		return
+	if !fullTextIndexReadable(ds) || cheapRegularPathExists(ds) {
+		return false
 	}
-	for _, keyed := range []bool{false, true} {
+	recorded := false
+	for _, keyed := range []bool{true, false} {
 		for _, idx := range ds.TableInfo.Indices {
 			textCol := idx.QueryableTiKVFullTextColumn()
 			if textCol == nil || (len(idx.Columns) > 1) != keyed {
@@ -319,22 +413,42 @@ func estimateFullTextMatchSelectivities(ds *logicalop.DataSource) {
 				if !ok || len(query.PostingReads()) == 0 || !query.RowsFromPostings() {
 					continue
 				}
-				if keyed && cardinality.HasFullTextMatchSelectivity(ds.SCtx(), match) {
+				if cardinality.HasFullTextMatchSelectivity(ds.SCtx(), match) {
 					continue
 				}
-				estimateFullTextMatchSelectivity(ds, idx, match, query)
+				if estimateFullTextMatchSelectivity(ds, idx, match, query) {
+					recorded = true
+				}
 			}
 		}
 	}
+	return recorded
 }
 
-func estimateFullTextMatchSelectivity(ds *logicalop.DataSource, idx *model.IndexInfo, match *expression.ScalarFunction, query *fulltext.Query) {
+// cheapRegularPathExists reports whether an access path other than a
+// full-text one reads at most fullTextProbeLimit rows. A FULLTEXT index
+// path opens a posting scan for every list it reads and looks up every row
+// it yields, so it cannot pay its way against such a path, and counting its
+// postings would cost more than the plan could gain.
+func cheapRegularPathExists(ds *logicalop.DataSource) bool {
+	for _, path := range ds.PossibleAccessPaths {
+		if len(path.PartialIndexPaths) > 0 || len(path.PartialAlternativeIndexPaths) > 0 || path.StoreType == kv.TiFlash {
+			continue
+		}
+		if path.CountAfterAccess <= fullTextProbeLimit {
+			return true
+		}
+	}
+	return false
+}
+
+func estimateFullTextMatchSelectivity(ds *logicalop.DataSource, idx *model.IndexInfo, match *expression.ScalarFunction, query *fulltext.Query) bool {
 	rows := ds.TableStats.RowCount
 	var keyPrefix []byte
 	if keyColumnCount := len(idx.Columns) - 1; keyColumnCount > 0 {
 		idxCols, idxColLens, _, _ := util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, idx)
 		if len(idxCols) < keyColumnCount {
-			return
+			return false
 		}
 		conds := make([]expression.Expression, 0, len(ds.PushedDownConds))
 		for _, cond := range ds.PushedDownConds {
@@ -344,22 +458,23 @@ func estimateFullTextMatchSelectivity(ds *logicalop.DataSource, idx *model.Index
 		}
 		res, err := fullTextKeyPoint(ds, idxCols[:keyColumnCount], idxColLens[:keyColumnCount], conds)
 		if err != nil || res == nil {
-			return
+			return false
 		}
 		keySel, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, res.AccessConds, nil)
 		if err != nil {
-			return
+			return false
 		}
 		keyPrefix, err = codec.EncodeKey(ds.SCtx().GetSessionVars().StmtCtx.TimeZone(), nil, res.Ranges[0].LowVal[:keyColumnCount]...)
 		if err != nil {
-			return
+			return false
 		}
 		rows *= keySel
 		if rows <= 0 {
-			return
+			return false
 		}
 	}
 	column := match.GetArgs()[1]
+	probeFullTextQuery(ds, idx, keyPrefix, query)
 	// The selectivity is recorded only when every term was counted: it then
 	// rests on the postings, as the statistics' estimate of the MATCH would
 	// not.
@@ -379,9 +494,10 @@ func estimateFullTextMatchSelectivity(ds *logicalop.DataSource, idx *model.Index
 		TermScans: 1,
 	})
 	if !counted {
-		return
+		return false
 	}
 	cardinality.SetFullTextMatchSelectivity(ds.SCtx(), match, min(1, cost.Rows/rows))
+	return true
 }
 
 // fullTextTermSelectivity estimates the share of rows containing a term from

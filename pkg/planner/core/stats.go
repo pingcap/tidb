@@ -142,12 +142,16 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	}
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
 	// when ds.PossibleAccessPaths are pruned.
-	estimateFullTextMatchSelectivities(ds)
 	ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, ds.AllPossibleAccessPaths))
 	// after heuristic pruning, the new path are stored into ds.PossibleAccessPaths.
 	err := derivePathStatsAndTryHeuristics(ds)
 	if err != nil {
 		return nil, false, err
+	}
+	// The postings of a MATCH are counted once the other paths are known, so
+	// that none is counted when one of them already reads only a few rows.
+	if estimateFullTextMatchSelectivities(ds) {
+		ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, ds.AllPossibleAccessPaths))
 	}
 	// index merge path is generated from all conditions from ds based on ds.PossibleAccessPath.
 	// we should renew ds.PossibleAccessPath to AllPossibleAccessPath once a new DS is generated.

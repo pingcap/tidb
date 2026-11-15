@@ -131,29 +131,29 @@ insert into clustered_docs values
 (3, 1, 'distributed sql for the third tenant');
 explain format = 'brief' select id from clustered_docs use index (idx_body) where tenant_id = 2 and match(body) against('+distributed' in boolean mode);
 id	estRows	task	access object	operator info
-Projection	0.00	root		planner__core__fulltext_index_tikv.clustered_docs.id
-└─IndexMerge	0.00	root		type: union
-  ├─FullTextIndexScan(Build)	0.00	root	table:clustered_docs, index:idx_body(body)	fulltext:"+distributed", range:[2,2], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:clustered_docs	keep order:false, stats:pseudo
+Projection	1.00	root		planner__core__fulltext_index_tikv.clustered_docs.id
+└─IndexMerge	1.00	root		type: union
+  ├─FullTextIndexScan(Build)	1.00	root	table:clustered_docs, index:idx_body(body)	fulltext:"+distributed", range:[2,2], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:clustered_docs	keep order:false, stats:pseudo
 select id from clustered_docs where tenant_id = 2 and match(body) against('+distributed' in boolean mode) order by id;
 id
 1
 explain format = 'brief' select tenant_id, id from clustered_docs use index (idx_body) where tenant_id in (1, 3) and match(body) against('+distributed' in boolean mode);
 id	estRows	task	access object	operator info
-Projection	0.01	root		planner__core__fulltext_index_tikv.clustered_docs.tenant_id, planner__core__fulltext_index_tikv.clustered_docs.id
-└─IndexMerge	0.01	root		type: union
-  ├─FullTextIndexScan(Build)	0.01	root	table:clustered_docs, index:idx_body(body)	fulltext:"+distributed", range:[1,1], [3,3], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	0.01	cop[tikv]	table:clustered_docs	keep order:false, stats:pseudo
+Projection	2.00	root		planner__core__fulltext_index_tikv.clustered_docs.tenant_id, planner__core__fulltext_index_tikv.clustered_docs.id
+└─IndexMerge	2.00	root		type: union
+  ├─FullTextIndexScan(Build)	2.00	root	table:clustered_docs, index:idx_body(body)	fulltext:"+distributed", range:[1,1], [3,3], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:clustered_docs	keep order:false, stats:pseudo
 select tenant_id, id from clustered_docs where tenant_id in (1, 3) and match(body) against('+distributed' in boolean mode) order by tenant_id, id;
 tenant_id	id
 1	1
 3	1
 explain format = 'brief' select id from clustered_docs use index (idx_body) where tenant_id = 1 and id > 1 and match(body) against('+tenant' in boolean mode);
 id	estRows	task	access object	operator info
-Projection	0.00	root		planner__core__fulltext_index_tikv.clustered_docs.id
-└─IndexMerge	0.02	root		type: union
-  ├─FullTextIndexScan(Build)	0.02	root	table:clustered_docs, index:idx_body(body)	fulltext:"+tenant", range:(1 1,1 +inf], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	0.02	cop[tikv]	table:clustered_docs	keep order:false, stats:pseudo
+Projection	1.00	root		planner__core__fulltext_index_tikv.clustered_docs.id
+└─IndexMerge	3.33	root		type: union
+  ├─FullTextIndexScan(Build)	3.33	root	table:clustered_docs, index:idx_body(body)	fulltext:"+tenant", range:(1 1,1 +inf], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	3.33	cop[tikv]	table:clustered_docs	keep order:false, stats:pseudo
 select id from clustered_docs where tenant_id = 1 and id > 1 and match(body) against('+tenant' in boolean mode) order by id;
 id
 2

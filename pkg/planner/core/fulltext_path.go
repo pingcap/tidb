@@ -108,7 +108,28 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 	// Why a plan that scans the index cannot be cached, when it cannot.
 	skipPlanCacheReason := ""
 	forced := false
-	for _, idx := range ds.TableInfo.Indices {
+	// No path is offered when another one already reads only a few rows,
+	// which no posting scan can beat; building it would count postings for
+	// nothing. A hint naming the index still has its path built.
+	cheapRegularPath := cheapRegularPathExists(ds)
+	// An index with key columns is tried before one without: when the
+	// conditions pin its key columns, it reads the postings of the point,
+	// a part of those the index without key columns reads for the same
+	// MATCH, so the latter is not offered for that MATCH.
+	type servedMatch struct {
+		column int
+		cond   expression.Expression
+	}
+	servedByKeyed := make(map[servedMatch]struct{})
+	indices := make([]*model.IndexInfo, 0, len(ds.TableInfo.Indices))
+	for _, keyed := range []bool{true, false} {
+		for _, idx := range ds.TableInfo.Indices {
+			if (len(idx.Columns) > 1) == keyed {
+				indices = append(indices, idx)
+			}
+		}
+	}
+	for _, idx := range indices {
 		textCol := idx.QueryableTiKVFullTextColumn()
 		if textCol == nil {
 			continue
@@ -119,9 +140,11 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 		if !fullTextIndexAllowedByHints(ds, idx) {
 			continue
 		}
-		if noIndexMerge || (!indexMergeEnabled && !fullTextIndexNamedByHints(ds, idx)) {
+		named := fullTextIndexNamedByHints(ds, idx)
+		if noIndexMerge || (!indexMergeEnabled && !named) || (cheapRegularPath && !named) {
 			continue
 		}
+		keyed := len(idx.Columns) > 1
 		colInfo := ds.TableInfo.Columns[textCol.Offset]
 		config := fulltext.AnalyzerConfigFromTiKVFullTextIndex(idx.TiKVFullText)
 		for _, cond := range ds.AllConds {
@@ -129,9 +152,16 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 			if !ok {
 				continue
 			}
+			served := servedMatch{column: textCol.Offset, cond: cond}
+			if _, ok := servedByKeyed[served]; ok && !keyed && !named {
+				continue
+			}
 			path, err := buildFullTextIndexPath(ds, idx, match, search, query)
 			if err != nil {
 				return err
+			}
+			if path != nil && keyed {
+				servedByKeyed[served] = struct{}{}
 			}
 			if path != nil {
 				if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), match.GetArgs()[0]) {
@@ -484,6 +514,7 @@ func estimateFullTextPostingCost(ds *logicalop.DataSource, idx *model.IndexInfo,
 		return fulltext.PostingCost{}, err
 	}
 	column := match.GetArgs()[1]
+	probeFullTextQuery(ds, idx, keyPrefix, query)
 	postings := func(read fulltext.PostingRead) float64 {
 		// A term's postings within the key-column point are probed; the
 		// handle ranges confine an exact term's to their share of them.

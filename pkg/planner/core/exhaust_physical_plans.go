@@ -1585,56 +1585,40 @@ func hasNormalPreferTask(lp base.LogicalPlan, state *enumerateState, pp base.Phy
 		// 3: mppTask is always in the cbo comparing.
 		// 4: when none copTask exists, we will consider rootTask vs mppTask.
 		// the following check priority logic is compatible with former pushLimitOrTopNForcibly prop pruning logic.
-		_, isTopN := pp.(*physicalop.PhysicalTopN)
-		if isTopN {
-			if state.topNCopExist {
-				if _, ok := childTasks[0].(*physicalop.RootTask); ok {
-					return false
-				}
-				// peer cop task should compare the cost with each other.
-				if _, ok := childTasks[0].(*physicalop.CopTask); ok {
-					return true
-				}
-			} else {
-				if _, ok := childTasks[0].(*physicalop.CopTask); ok {
-					state.topNCopExist = true
-					return true
-				}
-				// when we encounter rootTask type while still see no topNCopExist.
-				// that means there is no copTask valid before, we will consider rootTask here.
-				if _, ok := childTasks[0].(*physicalop.RootTask); ok {
-					return true
-				}
-			}
-			if _, ok := childTasks[0].(*physicalop.MppTask); ok {
-				return true
-			}
-			// shouldn't be here
+		//
+		// A copTask with conditions left for the root cannot take the Limit
+		// or TopN, which must wait for them, so attaching to it gives a root
+		// plan as a rootTask does. It is ranked as a rootTask: otherwise it
+		// would shut out the rootTasks, among them the IndexMerge, which runs
+		// only as a rootTask, though no Limit or TopN was pushed down.
+		var pushableCop, root bool
+		switch t := childTasks[0].(type) {
+		case *physicalop.CopTask:
+			pushableCop = len(t.RootTaskConds) == 0
+			root = !pushableCop
+		case *physicalop.RootTask:
+			root = true
+		case *physicalop.MppTask:
+			return true
+		default:
 			return false
 		}
-		// limit case:
-		if state.limitCopExist {
-			if _, ok := childTasks[0].(*physicalop.RootTask); ok {
-				return false
-			}
-			// peer cop task should compare the cost with each other.
-			if _, ok := childTasks[0].(*physicalop.CopTask); ok {
-				return true
-			}
-		} else {
-			if _, ok := childTasks[0].(*physicalop.CopTask); ok {
-				state.limitCopExist = true
-				return true
-			}
-			// when we encounter rootTask type while still see no limitCopExist.
-			// that means there is no copTask valid before, we will consider rootTask here.
-			if _, ok := childTasks[0].(*physicalop.RootTask); ok {
-				return true
-			}
+		_, isTopN := pp.(*physicalop.PhysicalTopN)
+		copExist := &state.limitCopExist
+		if isTopN {
+			copExist = &state.topNCopExist
 		}
-		if _, ok := childTasks[0].(*physicalop.MppTask); ok {
+		if *copExist {
+			// peer cop task should compare the cost with each other.
+			return pushableCop
+		}
+		if pushableCop {
+			*copExist = true
 			return true
 		}
+		// when we encounter rootTask type while still see no copTask, that
+		// means there is no copTask valid before, we will consider rootTask here.
+		return root
 	}
 	return false
 }

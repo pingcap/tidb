@@ -16,6 +16,7 @@ package core_test
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -604,4 +605,61 @@ func TestFullTextIndexPostingsProbeReadTimestamp(t *testing.T) {
 	other.MustExec("insert into t values (3002, 'filler rareword')")
 	require.Equal(t, 33.0, estimate(tk))
 	tk.MustExec("rollback")
+}
+
+// TestFullTextIndexPostingsProbeEconomy covers what the planning-time probe
+// counts: a first count of every term, a deeper one of a single term when all
+// are common, the index with key columns in place of the one without, and
+// nothing when another path already reads only a few rows.
+func TestFullTextIndexPostingsProbeEconomy(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, tenant int, k int, body longtext, key ik(k), fulltext index ft (body), fulltext index ftk (tenant, body))")
+	tk.MustExec("set cte_max_recursion_depth = 10000")
+	// "mid" is in 600 rows, more than a first count reads; "rare" in 3.
+	tk.MustExec(`insert into t with recursive s(n) as (select 1 union all select n + 1 from s where n < 3000)
+		select n, n % 3, n, concat('filler', if(n % 5 = 0, ' mid', ''), if(n % 1000 = 0, ' rare', '')) from s`)
+	tk.MustExec("analyze table t")
+	plan := func(sql string) (string, float64) {
+		rows := tk.MustQuery("explain format = 'brief' " + sql).Rows()
+		var sb strings.Builder
+		for _, row := range rows {
+			sb.WriteString(fmt.Sprintln(row...))
+		}
+		var est float64
+		_, err := fmt.Sscanf(fmt.Sprint(rows[0][1]), "%f", &est)
+		require.NoError(t, err)
+		return sb.String(), est
+	}
+
+	// Every term is common: the term is counted further, and its count, not
+	// the default selectivity, is the estimate.
+	_, est := plan("select id from t where match(body) against('+mid' in boolean mode)")
+	require.InDelta(t, 600, est, 1)
+
+	// The index with key columns pinned by the conditions reads the postings
+	// of the point and is the one offered; a hint still reaches the other.
+	p, _ := plan("select id from t where tenant = 1 and match(body) against('+rare' in boolean mode)")
+	require.Contains(t, p, "FullTextIndexScan", p)
+	require.Contains(t, p, "index:ftk(", p)
+	p, _ = plan("select /*+ use_index(t, ft) */ id from t where tenant = 1 and match(body) against('+rare' in boolean mode)")
+	require.Contains(t, p, "index:ft(", p)
+
+	// Another path reads a single row: nothing is counted, so the MATCH
+	// above it keeps its estimate from the statistics, where the count would
+	// have made it the 600 rows' share of the 3000, 0.2.
+	const cheap = "select id from t where k = 7 and match(body) against('+mid' in boolean mode)"
+	p, _ = plan(cheap)
+	require.NotContains(t, p, "FullTextIndexScan", p)
+	for _, row := range tk.MustQuery("explain format = 'brief' " + cheap).Rows() {
+		if strings.Contains(fmt.Sprint(row[0]), "Selection") {
+			_, err := fmt.Sscanf(fmt.Sprint(row[1]), "%f", &est)
+			require.NoError(t, err)
+			require.Greater(t, math.Abs(est-0.2), 0.05, p)
+		}
+	}
 }
