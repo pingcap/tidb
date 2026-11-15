@@ -5875,9 +5875,10 @@ pub fn schema_sync_before_step<S: MetaSnapshot>(
     schema_state: &DdlJobSchemaState,
     job: &tidb_model::Job,
 ) -> Result<Option<PersistedDdlJobPlan>, DdlPlanError> {
+    // Go: `jobCtx.infoCache` at the step's version, the lazy image itself.
     let catalog = match &schema_state.info_cache {
-        Some(cache) => cache.load_with_ts(snapshot, cache.capacity())?.try_metadata_copy()?,
-        None => load_info_schema(snapshot)?,
+        Some(cache) => cache.load_with_ts(snapshot, cache.capacity())?,
+        None => std::sync::Arc::new(load_info_schema(snapshot)?),
     };
     let active = tidb_ddl_systable::ddl_job_table::ActiveDdlJob::from_job(job.clone());
     recover_schema_before_step(snapshot, &catalog, &active, schema_state, true).map(|(_, sync)| sync)
@@ -5983,13 +5984,11 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     // Go `transitOneJobStep`: the schema from `jobCtx.infoCache` at the
     // step's version; the handlers read the job's own objects through
     // `jobCtx.metaMut`.
-    let cached = match &schema_state.info_cache {
-        Some(cache) => Some(cache.load_with_ts(snapshot, cache.capacity())?),
-        None => None,
-    };
-    let catalog = match &cached {
-        Some(cached) => cached.try_metadata_copy()?,
-        None => load_info_schema(snapshot)?,
+    // The handlers read tables through Go's V2 lookups, so the step plans
+    // against the cached image itself rather than a materialized copy.
+    let catalog = match &schema_state.info_cache {
+        Some(cache) => cache.load_with_ts(snapshot, cache.capacity())?,
+        None => std::sync::Arc::new(load_info_schema(snapshot)?),
     };
     let job_w = &schema_state.delivered_job;
     let mut active = tidb_ddl_systable::ddl_job_table::ActiveDdlJob::from_job(

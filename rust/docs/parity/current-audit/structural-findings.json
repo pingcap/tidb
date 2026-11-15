@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 7,
-    "open": 1,
-    "partial": 6
+    "open": 0,
+    "partial": 7
   },
   "findings": [
     {
@@ -25,11 +25,11 @@
     },
     {
       "id": "D03",
-      "status": "open",
+      "status": "partial",
       "group": "DDL: plan against Go's schema image",
-      "finding": "A DDL job step plans against `InfoCache::try_metadata_copy()` (`tidb-ddl/src/cluster_ddl.rs` `plan_persisted_ddl_job_with` and the job-delivery path, `tidb-infoschema-issyncer/src/catalog_watch.rs`), which under InfoSchema V2 loads every table of every schema (`schema_table_infos` per database) into a fresh V1 image on each step: O(all tables) per step where Go's `transitOneJobStep` reads the lazy `jobCtx.infoCache.GetLatest()`. The DDL table reads are already Go's V2 lookups (`TableByID`, `TableByName`, `TableExists`, `GetTableReferredForeignKeys`, `ListTablesWithSpecialAttribute`); left: plan job steps against the V2 image itself and drop the materializing copy",
-      "rust_evidence": "`rust/crates/tidb-ddl/src/cluster_ddl.rs` (`plan_persisted_ddl_job_with`), `rust/crates/tidb-infoschema/src/lib.rs` (`try_metadata_copy`)",
-      "go_owner": "`pkg/ddl/job_worker.go` (`transitOneJobStep`), `pkg/infoschema/infoschema_v2.go`"
+      "finding": "DDL job steps plan against the lazy V2 image itself (`tidb-ddl/src/cluster_ddl.rs` `plan_persisted_ddl_job_with`, `schema_sync_before_step`), reading tables through Go's V2 lookups. Left: `InfoCache::load_with_ts`'s empty-diff branch (`ReloadedCatalog::Unchanged`, `tidb-infoschema-issyncer/src/catalog_watch.rs`) still builds the needed version from `try_metadata_copy()`, which under V2 lists every table of every schema from meta, where Go's `tryLoadSchemaDiffs` builds it with `InitWithOldInfoSchema` over the shared `Data` and loads no table",
+      "rust_evidence": "`rust/crates/tidb-infoschema-issyncer/src/catalog_watch.rs` (`load_with_ts`), `rust/crates/tidb-infoschema/src/lib.rs` (`try_metadata_copy`)",
+      "go_owner": "`pkg/infoschema/issyncer/loader.go` (`tryLoadSchemaDiffs`), `pkg/infoschema/builder.go` (`InitWithOldInfoSchema`)"
     },
     {
       "id": "C01",
@@ -63,6 +63,6 @@
     }
   ],
   "unresolved": 7,
-  "open": 1,
-  "partial": 6
+  "open": 0,
+  "partial": 7
 }
