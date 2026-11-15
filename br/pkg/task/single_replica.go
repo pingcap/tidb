@@ -257,8 +257,9 @@ func startSingleReplicaRestore(
 	if !cfg.SingleReplica {
 		return nil, nil
 	}
-	// Lowering the replicas also drops them from data that is already there.
-	if err := restore.AssertUserDBsEmpty(mgr.GetDomain()); err != nil {
+	// Lowering the replicas also drops them from data that is already there. The
+	// info schema has only the databases to restore, so every database is checked.
+	if err := restore.AssertNoUserDBsInCluster(mgr.GetDomain()); err != nil {
 		return nil, errors.Annotate(err, "single replica restore needs a cluster without user tables")
 	}
 	s := &singleReplicaRestore{pd: pd, mark: mark, console: console}
