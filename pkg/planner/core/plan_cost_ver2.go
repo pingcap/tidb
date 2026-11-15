@@ -548,7 +548,9 @@ func GetPlanCostVer24PhysicalIndexMergeReader(pp base.PhysicalPlan, taskType pro
 	var tableSideCost costusage.CostVer2
 	if tablePath := p.TablePlan; tablePath != nil {
 		rows := getCardinality(tablePath, option.CostFlag)
-		rowSize := getAvgRowSize(tablePath.StatsInfo(), tablePath.Schema().Columns)
+		// Size the rows sent back as IndexLookUp's table side does, so the
+		// two readers agree on a wide table whose columns lack statistics.
+		rowSize := cardinality.GetAvgRowSize(p.SCtx(), physicalop.GetTblStats(tablePath), tablePath.Schema().Columns, false, false)
 
 		tableNetCost := netCostVer2(option, rows, rowSize, netFactor)
 		tableChildCost, err := tablePath.GetPlanCostVer2(taskType, option, true)
