@@ -207,6 +207,7 @@ mod tests {
             kv_write_batch_size: 1024,
             should_check_write_stall: false,
             checkpoint_enabled: false,
+            pause_pd_scheduler_scope: crate::local::PAUSE_PD_SCHEDULER_SCOPE_GLOBAL,
         }
     }
     /// Go `TestEngineManager`.

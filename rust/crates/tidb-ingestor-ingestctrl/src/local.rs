@@ -1,6 +1,7 @@
 // Copyright 2026 PingCAP, Inc. Licensed under Apache-2.0.
 //! Go `pkg/ingestor/ingestctrl/local.go` and `engine_mgr.go`.
 use crate::region_job::ImportClient;
+use tidb_proto::import_sstpb as sst;
 use crate::{Error, Result, engine::Engine};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,7 +30,18 @@ pub struct BackendConfig {
     pub should_check_write_stall: bool,
     /// Go `CheckpointEnabled`.
     pub checkpoint_enabled: bool,
+    /// Go `PausePDSchedulerScope` (`config.PausePDSchedulerScopeTable` or
+    /// `PausePDSchedulerScopeGlobal`).
+    pub pause_pd_scheduler_scope: &'static str,
 }
+
+/// Go `config.PausePDSchedulerScopeTable`.
+pub const PAUSE_PD_SCHEDULER_SCOPE_TABLE: &str = "table";
+/// Go `config.PausePDSchedulerScopeGlobal`.
+pub const PAUSE_PD_SCHEDULER_SCOPE_GLOBAL: &str = "global";
+/// Go `ForcePartitionRegionThreshold`: force partition ranges only for tables
+/// of at least this many regions.
+pub const FORCE_PARTITION_REGION_THRESHOLD: usize = 100;
 /// Go `Backend`, owning local engines and their import client.
 pub struct Backend {
     /// Go backend configuration.
@@ -61,24 +73,115 @@ impl Backend {
         &self,
         ctx: &Context,
         id: [u8; 16],
+        mut region_split_size: u64,
+        mut region_split_keys: usize,
+    ) -> Result<()> {
+        let split_conf = self.importer.all_stores(ctx).and_then(|stores| {
+            get_region_split_size_keys(&stores, |host| self.importer.split_conf_from_store(ctx, host))
+        });
+        match split_conf {
+            Ok((kv_region_split_size, kv_region_split_keys)) => {
+                region_split_size = region_split_size.max(kv_region_split_size.max(0) as u64);
+                region_split_keys = region_split_keys.max(kv_region_split_keys.max(0) as usize);
+            }
+            Err(error) => tidb_log::warn(
+                "fail to get region split keys and size",
+                &[tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))],
+            ),
+        }
+        // skip if engine not exist. See the comment of `CloseEngine` for more detail.
+        let Ok(engine) = self.engine(id) else {
+            return Ok(());
+        };
+        let (lf_total_size, _) = engine.kv_statistics()?;
+        if lf_total_size == 0 {
+            // engine is empty, this is likes because it's a index engine but the table contains no index
+            tidb_log::info(
+                "engine contains no kv, skip import",
+                &[tidb_log::Field::new("engine", tidb_log::Value::Str(uuid::Uuid::from_bytes(id).to_string()))],
+            );
+            return Ok(());
+        }
+        // split sorted file into range about regionSplitSize per file
+        let split_keys = engine.get_region_split_keys(region_split_size, region_split_keys as u64)?;
+        let (start_key, end_key) = (
+            split_keys.first().cloned().unwrap_or_default(),
+            split_keys.last().cloned().unwrap_or_default(),
+        );
+
+        let mut force_split_threshold = FORCE_PARTITION_REGION_THRESHOLD;
+        tidb_failpoint::inject_call(
+            "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/ForcePartitionRegionThreshold",
+            &mut force_split_threshold,
+        );
+        // We only force partition range when the table is large enough (>= 100 regions).
+        // This is to avoid unnecessary RPC calls for small tables.
+        let _remove_table_split_range = (tidb_config_kerneltype::is_classic()
+            && !start_key.is_empty()
+            && !end_key.is_empty()
+            && split_keys.len().saturating_sub(1) >= force_split_threshold)
+            .then(|| -> Result<ForceTableSplitRange<'_>> {
+                let stores = self.importer.all_stores(ctx)?;
+                Ok(self.force_table_split_range(&start_key, &end_key, &stores))
+            })
+            .transpose()?;
+
+        let _paused = if self.cfg.pause_pd_scheduler_scope == PAUSE_PD_SCHEDULER_SCOPE_TABLE {
+            let encode = |key: &[u8]| {
+                if key.is_empty() {
+                    Vec::new()
+                } else {
+                    let mut encoded = Vec::new();
+                    tidb_codec::encode_bytes(&mut encoded, key);
+                    encoded
+                }
+            };
+            let pd_http = self
+                .importer
+                .pd_http_client()
+                .ok_or_else(|| Error::Other("pd http client is not available".into()))?;
+            Some(
+                tidb_br::pdutil::pause_schedulers_by_key_range(
+                    pd_http,
+                    &encode(&start_key),
+                    &encode(&end_key),
+                )
+                .map_err(Error::Other)?,
+            )
+        } else {
+            None
+        };
+
+        tidb_failpoint::inject_call(
+            "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/ReadyForImportEngine",
+            &mut (),
+        );
+        engine.set_importing(true);
+        let result = self.do_import(ctx, &engine, &split_keys, region_split_size, region_split_keys);
+        engine.set_importing(false);
+        result
+    }
+
+    /// Go `Backend.doImport` after `prepareAndSendJob`'s split and scatter.
+    fn do_import(
+        &self,
+        ctx: &Context,
+        engine: &Arc<Engine>,
+        split_keys: &[Vec<u8>],
         region_split_size: u64,
         region_split_keys: usize,
     ) -> Result<()> {
-        let engine = self.engine(id)?;
-        let properties = engine.get_size_properties()?;
-        let total_keys: u64 = properties.index_handles.values().map(|p| p.keys).sum();
-        let split_keys =
-            engine.get_region_split_keys(region_split_size, region_split_keys as u64)?;
-        if split_keys.len() > 2
-            || properties.total_size > region_split_size
-            || total_keys > region_split_keys as u64
-            || tidb_failpoint::eval(
-                "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/forceSplitRegion",
-            )
-            .is_some()
-        {
+        let (lf_total_size, lf_length) = engine.kv_statistics()?;
+        // if all the kv can fit in one region, skip split regions. TiDB will split one region for
+        // the table when table is created.
+        let need_split = split_keys.len() > 2
+            || lf_total_size > region_split_size
+            || lf_length > region_split_keys as u64
+            || tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/forceSplitRegion")
+                .is_some();
+        if need_split {
             let mut last_error = None;
-            for attempt in 0..20 {
+            for attempt in 0..MAX_RETRY_TIMES {
                 if tidb_failpoint::eval(
                     "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/skipSplitAndScatter",
                 )
@@ -89,7 +192,7 @@ impl Backend {
                 }
                 match self.split_and_scatter_region_in_batches(
                     ctx,
-                    &split_keys,
+                    split_keys,
                     crate::rate_limiter_param::get_max_batch_split_ranges() as usize,
                     crate::rate_limiter_param::get_max_split_range_per_sec(),
                 ) {
@@ -99,9 +202,7 @@ impl Backend {
                     }
                     Err(error) => last_error = Some(error),
                 }
-                if ctx.sleep(std::time::Duration::from_secs(
-                    (10u64 << attempt.min(4)).min(120),
-                )) {
+                if ctx.sleep(std::time::Duration::from_secs((10u64 << attempt.min(4)).min(120))) {
                     return Err(Error::Other(ctx.err().unwrap().to_string()));
                 }
             }
@@ -109,18 +210,64 @@ impl Backend {
                 return Err(error);
             }
         }
-        engine.set_importing(true);
-        let result = crate::region_job::do_import_with_write_limiter(
+        crate::region_job::do_import_with_write_limiter(
             ctx,
-            &engine,
+            engine,
             self.importer.as_ref(),
             &self.cfg,
             region_split_size,
             region_split_keys,
             &self.write_limiter,
-        );
-        engine.set_importing(false);
-        result
+        )
+    }
+
+    /// Go `Backend.forceTableSplitRange`: asks every TiKV to force-partition
+    /// compactions at the table's range, refreshed every TTL/5, removed when
+    /// the returned handle drops.
+    fn force_table_split_range(
+        &self,
+        start_key: &[u8],
+        end_key: &[u8],
+        stores: &[tidb_proto::metapb::Store],
+    ) -> ForceTableSplitRange<'_> {
+        const TTL_SECOND: u64 = 3600; // default 1 hour
+        let range = sst::Range { start: start_key.to_vec(), end: end_key.to_vec() };
+        let store_ids: Vec<(u64, String)> = stores
+            .iter()
+            .filter(|store| {
+                !store.status_address.is_empty()
+                    && !store.labels.iter().any(|l| l.key == "engine" && l.value == "tiflash")
+            })
+            .map(|store| (store.id, store.status_address.clone()))
+            .collect();
+        let add = sst::AddPartitionRangeRequest { range: Some(range.clone()), ttl_seconds: TTL_SECOND };
+        let add_table_split_range = {
+            let (importer, store_ids, add) = (self.importer.clone(), store_ids.clone(), add.clone());
+            move || {
+                call_on_stores(&store_ids, "call AddForcePartitionRange", |id| {
+                    tidb_failpoint::inject_call(
+                        "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/AddPartitionRangeForTable",
+                        &mut (),
+                    );
+                    importer.add_force_partition_range(id, add.clone())
+                });
+            }
+        };
+        add_table_split_range();
+        let (cancel, cancelled) = crossbeam_channel::bounded::<()>(0);
+        let refresher = std::thread::spawn(move || loop {
+            crossbeam_channel::select! {
+                recv(cancelled) -> _ => return,
+                recv(crossbeam_channel::after(std::time::Duration::from_secs(TTL_SECOND) / 5)) -> _ => add_table_split_range(),
+            }
+        });
+        ForceTableSplitRange {
+            backend: self,
+            store_ids,
+            remove: sst::RemovePartitionRangeRequest { range: Some(range) },
+            cancel: Some(cancel),
+            refresher: Some(refresher),
+        }
     }
     /// Go `Backend.UpdateWriteSpeedLimit`.
     pub fn update_write_speed_limit(&self, limit: i64) {
@@ -624,4 +771,68 @@ mod multi_ingest_tests {
             }));
         }
     }
+}
+
+/// Go `maxRetryTimes`.
+const MAX_RETRY_TIMES: u64 = 20;
+
+/// Go `forceTableSplitRange`'s `resetter`: stops the refresh, then removes
+/// the partition range from every store.
+struct ForceTableSplitRange<'a> {
+    backend: &'a Backend,
+    store_ids: Vec<(u64, String)>,
+    remove: sst::RemovePartitionRangeRequest,
+    cancel: Option<crossbeam_channel::Sender<()>>,
+    refresher: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for ForceTableSplitRange<'_> {
+    fn drop(&mut self) {
+        drop(self.cancel.take());
+        if let Some(refresher) = self.refresher.take() {
+            let _ = refresher.join();
+        }
+        call_on_stores(&self.store_ids, "call RemoveForcePartitionRange", |id| {
+            tidb_failpoint::inject_call(
+                "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/RemovePartitionRangeRequest",
+                &mut (),
+            );
+            self.backend.importer.remove_force_partition_range(id, self.remove.clone())
+        });
+    }
+}
+
+/// The add/remove loops of Go `forceTableSplitRange`: one call per store,
+/// logging which stores succeeded and the first error.
+fn call_on_stores(stores: &[(u64, String)], message: &str, call: impl Fn(u64) -> Result<()> + Sync) {
+    let results: Vec<(String, Result<()>)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = stores
+            .iter()
+            .map(|(id, addr)| (addr.clone(), scope.spawn(|| call(*id))))
+            .collect();
+        handles
+            .into_iter()
+            .map(|(addr, handle)| (addr, handle.join().unwrap_or_else(|_| Err(Error::Other("panic".into())))))
+            .collect()
+    });
+    let mut success_stores = Vec::new();
+    let mut failed_stores = Vec::new();
+    let mut first_err = None;
+    for (addr, result) in results {
+        match result {
+            Ok(()) => success_stores.push(addr),
+            Err(error) => {
+                failed_stores.push(addr);
+                first_err.get_or_insert(error.to_string());
+            }
+        }
+    }
+    let mut fields = vec![
+        tidb_log::Field::new("success stores", tidb_log::Value::Str(format!("{success_stores:?}"))),
+        tidb_log::Field::new("failed stores", tidb_log::Value::Str(format!("{failed_stores:?}"))),
+    ];
+    if let Some(error) = first_err {
+        fields.push(tidb_log::Field::new("error", tidb_log::Value::Str(error)));
+    }
+    tidb_log::info(message, &fields);
 }

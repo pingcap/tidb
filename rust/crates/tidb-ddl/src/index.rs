@@ -189,6 +189,85 @@ pub fn modify_task_param_loop(
     }
 }
 
+/// Go `estimateTableRowSize`: the table's `AVG_ROW_LENGTH` from
+/// `information_schema.tables`, else [`estimate_row_size_from_region`]; 0
+/// (logged) when neither answers.
+pub fn estimate_table_row_size<S: tikv_client::PdClient>(
+    store: &tidb_txnkv::driver::tikv_store::TikvStore<S>,
+    exec: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    table_id: i64,
+) -> i64 {
+    let estimate = || -> Result<i64, String> {
+        let rows = exec
+            .exec_restricted_sql_with(
+                "select AVG_ROW_LENGTH from information_schema.tables where TIDB_TABLE_ID = %?",
+                &[tidb_sqlescape::SqlArg::Signed(table_id)],
+            )
+            .map_err(|error| error.to_string())?;
+        let Some(row) = rows.first() else {
+            return Err("no average row data".to_owned());
+        };
+        let avg_row_size = row.first().map_or(0, tidb_datatype::Datum::get_int64);
+        if avg_row_size != 0 {
+            return Ok(avg_row_size);
+        }
+        estimate_row_size_from_region(store, table_id)
+    };
+    // Go `defer util.Recover(...)`: a panic estimates 0.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(estimate))
+        .unwrap_or_else(|_| Err("panic in estimateTableRowSize".to_owned()));
+    let (size, error) = match result {
+        Ok(size) => (size, None),
+        Err(error) => (0, Some(error)),
+    };
+    let mut fields = vec![
+        Field::new("tableID", Value::I64(table_id)),
+        Field::new("size", Value::I64(size)),
+    ];
+    if let Some(error) = error {
+        fields.push(zap_error(&error));
+    }
+    tidb_ddl_logutil::ddl_logger().info("estimate row size", &fields);
+    size
+}
+
+/// Go `estimateRowSizeFromRegion`: PD's approximate size per key of the
+/// table's second record region (the first and last may hold neighbours).
+fn estimate_row_size_from_region<S: tikv_client::PdClient>(
+    store: &tidb_txnkv::driver::tikv_store::TikvStore<S>,
+    table_id: i64,
+) -> Result<i64, String> {
+    let pd_cli = store
+        .pd_http_client()
+        .ok_or_else(|| "pd http client is not available".to_owned())?;
+    let (sk, ek) = tidb_tablecodec::table_key::get_table_handle_key_range(table_id);
+    let (start, end) = match store.store().keyspace() {
+        tikv_client::request::Keyspace::Enable { keyspace_id } => {
+            tikv_client::request::ApiV2Codec::new(tikv_client::request::KeyMode::Txn, keyspace_id)
+                .map_err(|error| error.to_string())?
+                .encode_region_range(&sk, &ek)
+        }
+        _ => tikv_client::request::ApiV1Codec::new(tikv_client::request::KeyMode::Txn)
+            .encode_region_range(&sk, &ek),
+    };
+    // We use the second region to prevent the influence of the front and back tables.
+    let region_limit = 3;
+    let region_infos = tidb_store_driver_txn::cluster_http::block_on_pd_http(
+        pd_cli.get_regions_by_key_range(&tikv_client::pd_http::KeyRange::new(start, end), region_limit),
+    )?;
+    if region_infos.regions.len() != region_limit as usize {
+        return Err("less than 3 regions".to_owned());
+    }
+    let sample = &region_infos.regions[1];
+    // ApproximateSize is SST/blob file size (can reflect compression), while
+    // ApproximateKvSize is KV data size and usually closer to logical table size.
+    let size_in_mib = sample.approximate_size.max(sample.approximate_kv_size);
+    if sample.approximate_keys == 0 || size_in_mib == 0 {
+        return Err("zero approximate size".to_owned());
+    }
+    Ok(((size_in_mib as u64) * (1 << 20)) as i64 / sample.approximate_keys)
+}
+
 /// zap `zap.Error(err)`.
 fn zap_error(error: &dyn std::fmt::Display) -> Field {
     Field::new("error", Value::Str(error.to_string()))

@@ -27,10 +27,16 @@ sha2.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
 hex = "0.4"
+tikv-client.workspace = true
+tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
+crossbeam-channel = "0.5"
+uuid = { version = "1", features = ["v4"] }
+serde = { workspace = true }
 getrandom.workspace = true
 tidb-failpoint = { path = "../tidb-failpoint" }
 tidb-stats-util = { path = "../tidb-stats-util" }
 
 [dev-dependencies]
+tidb-txnkv = { path = "../tidb-txnkv" }
 tempfile.workspace = true
 tidb-ast = { path = "../tidb-ast" }

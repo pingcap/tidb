@@ -1013,6 +1013,11 @@ pub(super) fn execute_dist_task<S: StoreClient>(
                 ele_ids: Some(reorg.index_ids.clone()),
                 ele_type_key: INDEX_ELEMENT_KEY.to_vec(),
                 merge_temp_index: reorg.merging,
+                estimate_row_size: crate::index::estimate_table_row_size(
+                    opener.store(),
+                    sess_pool,
+                    reorg.table.id,
+                ) as _,
                 version: crate::backfilling_dist_executor::BACKFILL_TASK_META_VERSION_1,
                 ..Default::default()
             };

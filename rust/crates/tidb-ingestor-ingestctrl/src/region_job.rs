@@ -74,6 +74,35 @@ pub trait ImportClient: Send + Sync + crate::localhelper::SplitClient {
         request: sst::DuplicateDetectRequest,
         consume: &mut (dyn FnMut(sst::DuplicateDetectResponse) -> Result<()> + Send),
     ) -> Result<()>;
+    /// Go `pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())`.
+    fn all_stores(&self, _: &Context) -> Result<Vec<metapb::Store>> {
+        Ok(Vec::new())
+    }
+    /// Go `getSplitConfFromStore`: TiKV's `coprocessor.region-split-size`
+    /// and `region-split-keys` from its status port's `/config`.
+    fn split_conf_from_store(&self, _: &Context, host: &str) -> Result<(i64, i64)> {
+        Err(Error::Other(format!("no status port at {host}")))
+    }
+    /// Go `ImportSSTClient.AddForcePartitionRange` on one store.
+    fn add_force_partition_range(
+        &self,
+        _store_id: u64,
+        _: sst::AddPartitionRangeRequest,
+    ) -> Result<()> {
+        Ok(())
+    }
+    /// Go `ImportSSTClient.RemoveForcePartitionRange` on one store.
+    fn remove_force_partition_range(
+        &self,
+        _store_id: u64,
+        _: sst::RemovePartitionRangeRequest,
+    ) -> Result<()> {
+        Ok(())
+    }
+    /// Go `Backend.pdHTTPCli`.
+    fn pd_http_client(&self) -> Option<tikv_client::pd_http::Client> {
+        None
+    }
     /// Go `tikvCodec.GetAPIVersion`.
     fn api_version(&self) -> i32;
     /// Go `tikvCodec.EncodeKey`, before the import protocol's memcomparable encoding.
@@ -167,6 +196,84 @@ impl<S: tikv_client::PdClient> crate::localhelper::SplitClient for RemoteImportC
     }
 }
 impl<S: tikv_client::PdClient> ImportClient for RemoteImportClient<S> {
+    /// Go `pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())`.
+    fn all_stores(&self, ctx: &Context) -> Result<Vec<metapb::Store>> {
+        if let Some(error) = ctx.err() {
+            return Err(Error::Other(error.to_string()));
+        }
+        let pd = self.store.store().pd_client();
+        let stores = self
+            .store
+            .block_on(async move { pd.get_all_stores().await })
+            .map_err(|e| Error::Source(std::sync::Arc::new(e)))?;
+        Ok(stores
+            .into_iter()
+            .filter(|store| store.state != metapb::StoreState::Tombstone as i32)
+            .collect())
+    }
+    /// Go `getSplitConfFromStore`: `tls.WithHost(host).GetJSON(ctx, "/config")`
+    /// and `units.FromHumanSize` of the split size.
+    fn split_conf_from_store(&self, _: &Context, host: &str) -> Result<(i64, i64)> {
+        #[derive(serde::Deserialize, Default)]
+        #[serde(default)]
+        struct Coprocessor {
+            #[serde(rename = "region-split-size")]
+            region_split_size: String,
+            #[serde(rename = "region-split-keys")]
+            region_split_keys: i64,
+        }
+        #[derive(serde::Deserialize, Default)]
+        #[serde(default)]
+        struct Nested {
+            coprocessor: Coprocessor,
+        }
+        let host = host.trim_start_matches("http://").trim_start_matches("https://");
+        let scheme = if self.security.is_tls_enabled() { "https" } else { "http" };
+        let client = tidb_store_driver_txn::cluster_http::internal_http_client(&self.security)
+            .map_err(Error::Other)?;
+        let response = client
+            .get(format!("{scheme}://{host}/config"))
+            .send()
+            .map_err(|error| Error::Other(error.to_string()))?;
+        if !response.status().is_success() {
+            return Err(Error::Other(format!(
+                "get {scheme}://{host}/config failed: {}",
+                response.status()
+            )));
+        }
+        let nested: Nested = response.json().map_err(|error| Error::Other(error.to_string()))?;
+        let split_size = tidb_config_configtypes::from_human_size(&nested.coprocessor.region_split_size)
+            .map_err(Error::Other)?;
+        Ok((split_size, nested.coprocessor.region_split_keys))
+    }
+    /// Go `ImportSSTClient.AddForcePartitionRange`.
+    fn add_force_partition_range(
+        &self,
+        store_id: u64,
+        request: sst::AddPartitionRangeRequest,
+    ) -> Result<()> {
+        let mut client = self.client(store_id)?;
+        self.store
+            .block_on(async move { client.add_force_partition_range(request).await })
+            .map(|_| ())
+            .map_err(|e| Error::Other(e.to_string()))
+    }
+    /// Go `ImportSSTClient.RemoveForcePartitionRange`.
+    fn remove_force_partition_range(
+        &self,
+        store_id: u64,
+        request: sst::RemovePartitionRangeRequest,
+    ) -> Result<()> {
+        let mut client = self.client(store_id)?;
+        self.store
+            .block_on(async move { client.remove_force_partition_range(request).await })
+            .map(|_| ())
+            .map_err(|e| Error::Other(e.to_string()))
+    }
+    /// Go `Backend.pdHTTPCli`.
+    fn pd_http_client(&self) -> Option<tikv_client::pd_http::Client> {
+        self.store.pd_http_client()
+    }
     /// Go `split.SplitClient.GetRegion`.
     fn get_region(&self, key: &[u8]) -> Result<RegionInfo> {
         let pd = self.store.store().pd_client();
@@ -1240,6 +1347,7 @@ mod tests {
             kv_write_batch_size: 16 * 1024,
             should_check_write_stall: false,
             checkpoint_enabled: false,
+            pause_pd_scheduler_scope: crate::local::PAUSE_PD_SCHEDULER_SCOPE_GLOBAL,
         };
         do_import(&Context::background(), &engine, &client, &cfg, 1, 960000).unwrap();
         assert_eq!(*client.writes.lock().unwrap(), [1, 2, 3, 1, 2, 3]);
@@ -1258,6 +1366,7 @@ mod tests {
             kv_write_batch_size: 16 * 1024,
             should_check_write_stall: false,
             checkpoint_enabled: false,
+            pause_pd_scheduler_scope: crate::local::PAUSE_PD_SCHEDULER_SCOPE_GLOBAL,
         }
     }
     /// Go `TestNotLeaderErrorNeedUpdatePeers`: write and busy-check the new peers

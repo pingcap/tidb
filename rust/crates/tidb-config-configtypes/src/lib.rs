@@ -60,6 +60,18 @@ fn format_g4(v: f64) -> String {
 /// go-units `RAMInBytes`: parses a human size with binary units (both `KB`
 /// and `KiB` mean 1024).
 pub fn ram_in_bytes(size: &str) -> Result<i64, String> {
+    parse_size(size, 1024)
+}
+
+/// go-units `FromHumanSize`: parses a human size with decimal units (both
+/// `MB` and `MiB` mean 1000^2).
+pub fn from_human_size(size: &str) -> Result<i64, String> {
+    parse_size(size, 1000)
+}
+
+/// go-units `parseSize` over `binaryMap` (`base` 1024) or `decimalMap`
+/// (`base` 1000).
+fn parse_size(size: &str, base: u64) -> Result<i64, String> {
     // docker/go-units v0.5.0 `parseSize`: the numeric prefix is everything
     // through the last digit, period, or separating space. In particular,
     // this deliberately accepts the exponent and leading-plus forms accepted
@@ -102,11 +114,11 @@ pub fn ram_in_bytes(size: &str) -> Result<i64, String> {
         ));
     }
     let multiplier = match suffix[0] {
-        b'k' => 1u64 << 10,
-        b'm' => 1u64 << 20,
-        b'g' => 1u64 << 30,
-        b't' => 1u64 << 40,
-        b'p' => 1u64 << 50,
+        b'k' => base,
+        b'm' => base.pow(2),
+        b'g' => base.pow(3),
+        b't' => base.pow(4),
+        b'p' => base.pow(5),
         _ => {
             return Err(format!(
                 "invalid suffix: '{}'",
@@ -539,6 +551,31 @@ mod tests {
         }
         for s in ["", "hello", "-32", "32.5x"] {
             assert!(ram_in_bytes(s).is_err(), "case {s}");
+        }
+    }
+
+    /// go-units v0.5.0 `TestFromHumanSize`.
+    #[test]
+    fn test_from_human_size() {
+        const KB: f64 = 1000.0;
+        for (s, v) in [
+            ("0", 0.0), ("0b", 0.0), ("0B", 0.0), ("0 B", 0.0), ("32", 32.0), ("32b", 32.0),
+            ("32B", 32.0), ("32k", 32.0 * KB), ("32K", 32.0 * KB), ("32kb", 32.0 * KB),
+            ("32Kb", 32.0 * KB), ("32Mb", 32.0 * KB * KB), ("32Gb", 32.0 * KB * KB * KB),
+            ("32Tb", 32.0 * KB * KB * KB * KB), ("32Pb", 32.0 * KB * KB * KB * KB * KB),
+            ("32.5kB", 32.5 * KB), ("32.5 kB", 32.5 * KB), ("32.5 B", 32.0), ("0.3 K", 300.0),
+            (".3kB", 300.0), ("0.", 0.0), ("0. ", 0.0), ("0.b", 0.0), ("0.B", 0.0), ("-0", 0.0),
+            ("-0b", 0.0), ("-0B", 0.0), ("-0 b", 0.0), ("-0 B", 0.0), ("32.", 32.0),
+            ("32.b", 32.0), ("32.B", 32.0), ("32. b", 32.0), ("32. B", 32.0), ("0 ", 0.0),
+        ] {
+            assert_eq!(from_human_size(s).unwrap(), v as i64, "case {s:?}");
+        }
+        for s in [
+            " 0", " 0b", " 0B", " 0 B", "0b ", "0B ", "0 B ", "", "hello", ".", ". ", " ", "  ",
+            " .", " . ", "-32", "-32b", "-32B", "-32 b", "-32 B", "32b.", "32B.", "32 b.", "32 B.",
+            "32 bb", "32 BB", "32 b b", "32 B B", "32  b", "32  B", " 32 ", "32m b", "32bm",
+        ] {
+            assert!(from_human_size(s).is_err(), "case {s:?}");
         }
     }
 

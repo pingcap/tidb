@@ -4933,9 +4933,11 @@ name = "tidb-br"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "crossbeam-channel",
  "getrandom 0.3.4",
  "hex",
  "prost 0.14.4",
+ "serde",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
@@ -4950,8 +4952,12 @@ dependencies = [
  "tidb-proto",
  "tidb-redact",
  "tidb-stats-util",
+ "tidb-store-driver-txn",
  "tidb-table-filter",
  "tidb-tablecodec",
+ "tidb-txnkv",
+ "tikv-client",
+ "uuid",
 ]
 
 [[package]]
@@ -7240,8 +7246,10 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tidb-br",
  "tidb-codec",
  "tidb-config-configtypes",
+ "tidb-config-kerneltype",
  "tidb-distsql",
  "tidb-extsort",
  "tidb-failpoint",
@@ -7256,6 +7264,7 @@ dependencies = [
  "tidb-pd-client",
  "tidb-proto",
  "tidb-ranger",
+ "tidb-store-driver-txn",
  "tidb-tablecodec",
  "tidb-terror",
  "tidb-txnkv",

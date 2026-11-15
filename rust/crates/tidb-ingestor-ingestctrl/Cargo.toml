@@ -41,6 +41,9 @@ uuid = { version = "1", features = ["v4", "v5"] }
 crossbeam-channel = "0.5"
 tidb-meta = { path = "../tidb-meta" }
 tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-br = { path = "../tidb-br" }
+tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 
 [dev-dependencies]
 tempfile.workspace = true
