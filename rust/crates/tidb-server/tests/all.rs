@@ -46,3 +46,4 @@ mod secure_transport_source;
 mod server_internal_packetio_source;
 mod session_token_login_source;
 mod sql_node_lifecycle_source;
+mod realtikv_addindex_source;

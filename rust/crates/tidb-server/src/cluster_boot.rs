@@ -35,6 +35,29 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
     run_cluster_session_node_with_spill(config, spill_storage, memory_arbitrator.arbitrator())
 }
 
+/// Go `realtikvtest.CreateMockStoreAndDomainAndSetup`: the node's store and
+/// domain over a running cluster, as `BootstrapSession` leaves them (the DXF
+/// loop started), without the MySQL listener, the status port or the GC
+/// worker. A test opens its sessions from `stack.factory`.
+///
+/// # Errors
+///
+/// The store, the bootstrap or the DXF loop failed to start.
+pub fn realtikv_test_stack(
+    config: &tidb_domain_core::node_config::NodeConfig,
+) -> Result<(ClusterStack, tidb_store_driver::real_tikv_read::ProductionReadProcessAuthority), RunConfiguredNodeError> {
+    let spill_storage = crate::open_spill_storage(config)?;
+    let global_vars = tidb_domain::global_sysvars::GlobalSysvars::before_domain();
+    crate::set_global_vars::set_global_vars(config, &global_vars);
+    let (mut stack, authority) = cluster_session_stack(config, global_vars, spill_storage, None)?;
+    let dist_task_loop = stack
+        .factory
+        .init_dist_task_loop()
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    stack.workers.insert(0, Box::new(dist_task_loop));
+    Ok((stack, authority))
+}
+
 pub(crate) fn run_cluster_session_node_with_spill(
     config: NodeConfig,
     spill_storage: Arc<tidb_spill_storage::SpillStorage>,
