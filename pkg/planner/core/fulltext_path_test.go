@@ -663,3 +663,42 @@ func TestFullTextIndexPostingsProbeEconomy(t *testing.T) {
 		}
 	}
 }
+
+// TestFullTextIndexMergeRowSizeOnWideTable covers a wide table whose text
+// columns have no statistics: IndexMerge must size the rows it sends back as
+// IndexLookUp does, or each row is costed at the declared width of every TEXT
+// column and an ordered scan that reads many more rows looks cheaper.
+func TestFullTextIndexMergeRowSizeOnWideTable(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	cols := make([]string, 0, 40)
+	for i := range 40 {
+		cols = append(cols, fmt.Sprintf("c%d longtext", i))
+	}
+	tk.MustExec("create table w (id int primary key, ws int, k int, body longtext, " + strings.Join(cols, ", ") +
+		", key idx_ws_k (ws, k), fulltext index idx_ws_body (ws, body))")
+	rows := make([]string, 0, 4000)
+	for i := range 4000 {
+		body := "filler text"
+		if i%40 == 1 {
+			body = "rare filler text"
+		}
+		rows = append(rows, fmt.Sprintf("(%d, %d, %d, '%s')", i, i%2, i, body))
+	}
+	tk.MustExec("insert into w (id, ws, k, body) values " + strings.Join(rows, ","))
+	tk.MustExec("analyze table w")
+
+	// In ws 1, 100 of the 2000 rows hold 'rare': the ordered scan of
+	// idx_ws_k reads about 260 rows to find 12, the index about 100.
+	var sb strings.Builder
+	for _, row := range tk.MustQuery("explain format = 'brief' select * from w where ws = 1 and match(body) against('+rare' in boolean mode) order by k limit 12").Rows() {
+		sb.WriteString(fmt.Sprintln(row...))
+	}
+	plan := sb.String()
+	require.Contains(t, plan, "FullTextIndexScan(Build)", plan)
+	require.Contains(t, plan, "index:idx_ws_body(ws, body)", plan)
+}
