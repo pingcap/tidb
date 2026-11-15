@@ -122,6 +122,14 @@ type AdaptiveLimitSnapshot struct {
 	// LookupAdmissionBlocked is the wall-clock time with at least one blocked
 	// lookup reserver.
 	LookupAdmissionBlocked time.Duration
+	// FilterInputRows is the cumulative number of rows evaluated by an
+	// executor-side Selection between LIMIT and a direct IndexLookUp.
+	FilterInputRows uint64
+	// FilterOutputRows is the cumulative number of rows that Selection kept.
+	FilterOutputRows uint64
+	// Filtered reports whether LIMIT progress is observed after an
+	// executor-side Selection instead of at lookup-task completion.
+	Filtered bool
 	// Stopped reports whether the controller rejects future admission.
 	Stopped bool
 }
@@ -183,6 +191,16 @@ type AdaptiveLimitController struct {
 	recentLookupYield adaptiveYieldWindow
 	// recentOuterYield tracks recent consumed-outer-to-final-row yield.
 	recentOuterYield adaptiveYieldWindow
+	// recentFilterYield tracks recent Selection input-to-output yield for a
+	// filtered direct IndexLookUp.
+	recentFilterYield adaptiveYieldWindow
+	// filterInputRows and filterOutputRows are cumulative Selection counters.
+	filterInputRows  uint64
+	filterOutputRows uint64
+	// pendingFilterInput holds Selection input from chunks that kept no rows.
+	// It is paired with the next productive chunk so the recent yield includes
+	// low-selectivity gaps instead of forgetting them.
+	pendingFilterInput uint64
 	// outerGrowthBarrier records outerFetched at the latest productive growth,
 	// preventing another growth decision until consumption passes that frontier.
 	outerGrowthBarrier uint64
@@ -243,6 +261,10 @@ type AdaptiveLimitController struct {
 	// lookupInNoOutputPhase suppresses productive lookup-yield adjustment until
 	// a subsequent lookup task returns rows.
 	lookupInNoOutputPhase bool
+	// filtered marks a direct IndexLookUp under an executor-side Selection.
+	// Lookup rows are then Selection input, and only ObserveFilterProgress
+	// reports final rows toward LIMIT demand.
+	filtered bool
 	// mode selects IndexJoin accounting or direct IndexLookUp accounting.
 	mode adaptiveLimitMode
 }
@@ -257,6 +279,19 @@ func NewAdaptiveLimitController(config AdaptiveLimitConfig) *AdaptiveLimitContro
 // lookup handle budget is initialized.
 func NewAdaptiveLimitLookupController(config AdaptiveLimitConfig) *AdaptiveLimitController {
 	return newAdaptiveLimitController(config, adaptiveLimitDirectIndexLookup)
+}
+
+// NewAdaptiveLimitFilteredLookupController creates a controller for
+//
+//	Limit -> (Projection|Selection)* -> keep-order IndexLookUp
+//
+// with exactly one executor-side Selection. Lookup rows are Selection input,
+// so the lookup handle budget is scaled by the observed Selection pass ratio
+// and LIMIT progress is reported by ObserveFilterProgress.
+func NewAdaptiveLimitFilteredLookupController(config AdaptiveLimitConfig) *AdaptiveLimitController {
+	c := newAdaptiveLimitController(config, adaptiveLimitDirectIndexLookup)
+	c.filtered = true
+	return c
 }
 
 func newAdaptiveLimitController(config AdaptiveLimitConfig, mode adaptiveLimitMode) *AdaptiveLimitController {
@@ -329,6 +364,10 @@ func (c *AdaptiveLimitController) Reset() {
 	c.lookupGrowthProgress = 0
 	c.lookupOutstandingAtStop = 0
 	c.lookupAdmissionBlocked = admissionBlockStats{}
+	c.recentFilterYield = adaptiveYieldWindow{}
+	c.filterInputRows = 0
+	c.filterOutputRows = 0
+	c.pendingFilterInput = 0
 	c.stopped = false
 	c.outerChanged = make(chan struct{}, 1)
 	c.lookupChanged = make(chan struct{}, 1)
@@ -550,7 +589,7 @@ func (c *AdaptiveLimitController) CompleteLookup(reserved, handles, rows int) {
 	c.lookupReserved -= uint64(reserved)
 	c.lookupHandles = saturatingAdd(c.lookupHandles, uint64(handles))
 	c.lookupRows = saturatingAdd(c.lookupRows, uint64(rows))
-	if c.mode == adaptiveLimitDirectIndexLookup {
+	if c.mode == adaptiveLimitDirectIndexLookup && !c.filtered {
 		c.outputRows = saturatingAdd(c.outputRows, uint64(rows))
 		if c.outputRows >= c.demandRows {
 			c.stopLocked()
@@ -558,7 +597,15 @@ func (c *AdaptiveLimitController) CompleteLookup(reserved, handles, rows int) {
 			return
 		}
 	}
-	if rows > 0 {
+	if c.filtered && rows > 0 && c.filterOutputRows == 0 {
+		// The lookup yield is valid, but no Selection pass ratio exists yet, so
+		// the remaining handle demand cannot be estimated. Treat the work like a
+		// zero-output phase: grow only after the current window fully drains.
+		c.recentLookupYield.add(uint64(handles), uint64(rows))
+		c.lookupInNoOutputPhase = true
+		c.lookupNoOutputRows = saturatingAdd(c.lookupNoOutputRows, uint64(handles))
+		c.growLookupWindowIfDrainedLocked()
+	} else if rows > 0 {
 		c.recentLookupYield.add(uint64(handles), uint64(rows))
 		c.lookupNoOutputRows = 0
 		c.lookupInNoOutputPhase = false
@@ -573,6 +620,41 @@ func (c *AdaptiveLimitController) CompleteLookup(reserved, handles, rows int) {
 	}
 	c.notifyLocked(c.lookupChanged)
 	c.mu.Unlock()
+}
+
+// ObserveFilterProgress reports one evaluated chunk of the executor-side
+// Selection of a filtered direct IndexLookUp. outputRows are final rows that
+// count toward LIMIT demand; inputRows are the lookup rows they came from.
+func (c *AdaptiveLimitController) ObserveFilterProgress(inputRows, outputRows int) {
+	if inputRows <= 0 || outputRows < 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.filtered || c.stopped {
+		return
+	}
+	c.filterInputRows = saturatingAdd(c.filterInputRows, uint64(inputRows))
+	if outputRows == 0 {
+		c.pendingFilterInput = saturatingAdd(c.pendingFilterInput, uint64(inputRows))
+		return
+	}
+	c.filterOutputRows = saturatingAdd(c.filterOutputRows, uint64(outputRows))
+	c.outputRows = saturatingAdd(c.outputRows, uint64(outputRows))
+	if c.outputRows >= c.demandRows {
+		c.stopLocked()
+		return
+	}
+	c.recentFilterYield.add(saturatingAdd(c.pendingFilterInput, uint64(inputRows)), uint64(outputRows))
+	c.pendingFilterInput = 0
+	if c.lookupRows > 0 {
+		// A pass ratio now exists, so leave the no-ratio phase and size the
+		// window from the combined lookup and Selection yields.
+		c.lookupInNoOutputPhase = false
+		c.lookupNoOutputRows = 0
+		c.recomputeLookupWindowLocked()
+	}
+	c.notifyLocked(c.lookupChanged)
 }
 
 // AbortLookup releases lookup admission without using the task as a yield
@@ -629,6 +711,9 @@ func (c *AdaptiveLimitController) Snapshot() AdaptiveLimitSnapshot {
 		LookupOutstandingAtStop: c.lookupOutstandingAtStop,
 		OuterAdmissionBlocked:   c.admissionBlockedTimeLocked(adaptiveOuterRowsAdmission),
 		LookupAdmissionBlocked:  c.admissionBlockedTimeLocked(adaptiveLookupHandlesAdmission),
+		FilterInputRows:         c.filterInputRows,
+		FilterOutputRows:        c.filterOutputRows,
+		Filtered:                c.filtered,
 		Stopped:                 c.stopped,
 	}
 }
@@ -698,14 +783,18 @@ func (c *AdaptiveLimitController) recomputeDirectLookupWindowLocked() {
 		return
 	}
 	remainingOutput := c.demandRows - min(c.demandRows, c.outputRows)
+	remainingLookupRows := remainingOutput
+	if c.filtered {
+		remainingLookupRows = c.remainingFilterInputLocked(remainingOutput)
+	}
 	estimatedHandles := divideAndRoundUp(
-		saturatingMultiply(remainingOutput, c.lookupHandles),
+		saturatingMultiply(remainingLookupRows, c.lookupHandles),
 		c.lookupRows,
 	)
 	recentHandles, recentRows := c.recentLookupYield.totals()
 	if recentRows > 0 {
 		recentEstimate := divideAndRoundUp(
-			saturatingMultiply(remainingOutput, recentHandles),
+			saturatingMultiply(remainingLookupRows, recentHandles),
 			recentRows,
 		)
 		estimatedHandles = max(estimatedHandles, recentEstimate)
@@ -720,6 +809,29 @@ func (c *AdaptiveLimitController) recomputeDirectLookupWindowLocked() {
 	if grew {
 		c.lookupGrowthProgress = c.lookupHandles
 	}
+}
+
+// remainingFilterInputLocked converts remaining LIMIT output into the lookup
+// rows the Selection still needs, using the larger of the cumulative and recent
+// pass-ratio estimates. Lookup rows already returned but not yet evaluated by
+// the Selection are subtracted so they are not admitted twice.
+func (c *AdaptiveLimitController) remainingFilterInputLocked(remainingOutput uint64) uint64 {
+	if c.filterOutputRows == 0 {
+		return remainingOutput
+	}
+	estimatedInput := divideAndRoundUp(
+		saturatingMultiply(remainingOutput, c.filterInputRows),
+		c.filterOutputRows,
+	)
+	recentInput, recentOutput := c.recentFilterYield.totals()
+	if recentOutput > 0 {
+		estimatedInput = max(estimatedInput, divideAndRoundUp(
+			saturatingMultiply(remainingOutput, recentInput),
+			recentOutput,
+		))
+	}
+	unfilteredRows := c.lookupRows - min(c.lookupRows, c.filterInputRows)
+	return estimatedInput - min(estimatedInput, unfilteredRows)
 }
 
 func (c *AdaptiveLimitController) growOuterWindowIfDrainedLocked() {

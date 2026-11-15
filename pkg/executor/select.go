@@ -721,6 +721,16 @@ type SelectionExec struct {
 	childResult *chunk.Chunk
 
 	memTracker *memory.Tracker
+
+	// adaptiveLimitController is shared with the owning LimitExec when this
+	// Selection sits between LIMIT and a direct keep-order IndexLookUp. It
+	// receives pass-ratio feedback: per chunk on the batched path, and per
+	// selected row (plus leftover rejected rows at chunk end) on the
+	// row-at-a-time path.
+	adaptiveLimitController *exec.AdaptiveLimitController
+	// adaptiveRejectedRows counts rows rejected by unBatchedNext since the last
+	// feedback report.
+	adaptiveRejectedRows int
 }
 
 // Open implements the Executor Open interface.
@@ -751,6 +761,7 @@ func (e *SelectionExec) open(context.Context) error {
 	}
 	e.inputIter = chunk.NewIterator4Chunk(e.childResult)
 	e.inputRow = e.inputIter.End()
+	e.adaptiveRejectedRows = 0
 	return nil
 }
 
@@ -798,8 +809,22 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
+		if e.adaptiveLimitController != nil {
+			e.observeAdaptiveLimitFilter()
+		}
 		e.inputRow = e.inputIter.Begin()
 	}
+}
+
+func (e *SelectionExec) observeAdaptiveLimitFilter() {
+	inputRows := e.childResult.NumRows()
+	outputRows := 0
+	for _, selected := range e.selected[:inputRows] {
+		if selected {
+			outputRows++
+		}
+	}
+	e.adaptiveLimitController.ObserveFilterProgress(inputRows, outputRows)
 }
 
 // unBatchedNext filters input rows one by one and returns once an input row is selected.
@@ -816,8 +841,19 @@ func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) err
 			if selected {
 				chk.AppendRow(e.inputRow)
 				e.inputRow = e.inputIter.Next()
+				if e.adaptiveLimitController != nil {
+					e.adaptiveLimitController.ObserveFilterProgress(e.adaptiveRejectedRows+1, 1)
+					e.adaptiveRejectedRows = 0
+				}
 				return nil
 			}
+			if e.adaptiveLimitController != nil {
+				e.adaptiveRejectedRows++
+			}
+		}
+		if e.adaptiveLimitController != nil && e.adaptiveRejectedRows > 0 {
+			e.adaptiveLimitController.ObserveFilterProgress(e.adaptiveRejectedRows, 0)
+			e.adaptiveRejectedRows = 0
 		}
 		mSize := e.childResult.MemoryUsage()
 		err := exec.Next(ctx, e.Children(0), e.childResult)

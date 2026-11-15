@@ -895,10 +895,11 @@ func (b *executorBuilder) attachAdaptiveLimitController(
 	if !b.sctx.GetSessionVars().EnableAdaptiveLimitScan {
 		return
 	}
-	// V1 recognizes two roots. Unsupported reader modes retain the existing path:
+	// Recognized roots. Unsupported reader modes retain the existing path:
 	//
 	//	Limit -> Projection* -> ordered IndexLookUpJoin
 	//	Limit -> Projection* -> keep-order IndexLookUp
+	//	Limit -> (Projection|Selection)* -> keep-order IndexLookUp, one Selection
 	indexJoin := findAdaptiveLimitIndexJoin(childExec)
 	if indexJoin != nil {
 		if !indexJoin.AdaptiveLimitEligible {
@@ -920,14 +921,18 @@ func (b *executorBuilder) attachAdaptiveLimitController(
 		return
 	}
 
-	indexLookup := findAdaptiveLimitIndexLookupCandidate(childExec)
+	indexLookup, selection := findAdaptiveLimitDirectIndexLookup(childExec)
 	if indexLookup == nil {
 		return
 	}
-	controller := exec.NewAdaptiveLimitLookupController(b.buildAdaptiveLimitConfig(
-		limitPlan.Offset+limitPlan.Count,
-		indexLookup,
-	))
+	config := b.buildAdaptiveLimitConfig(limitPlan.Offset+limitPlan.Count, indexLookup)
+	var controller *exec.AdaptiveLimitController
+	if selection == nil {
+		controller = exec.NewAdaptiveLimitLookupController(config)
+	} else {
+		controller = exec.NewAdaptiveLimitFilteredLookupController(config)
+		selection.adaptiveLimitController = controller
+	}
 	indexLookup.adaptiveLimitController = controller
 	indexLookup.reportAdaptiveLimitStats = true
 	limitExec.adaptiveLimitController = controller
@@ -1001,6 +1006,32 @@ func findAdaptiveLimitIndexLookupCandidate(executor exec.Executor) *IndexLookUpE
 		default:
 			return nil
 		}
+	}
+}
+
+// findAdaptiveLimitDirectIndexLookup finds a direct keep-order IndexLookUp
+// under LIMIT. Projection preserves cardinality and is skipped. At most one
+// executor-side Selection is also allowed; it is returned so the controller
+// can learn its pass ratio, because Selection rows, not lookup rows, are what
+// LIMIT consumes.
+func findAdaptiveLimitDirectIndexLookup(executor exec.Executor) (*IndexLookUpExecutor, *SelectionExec) {
+	var selection *SelectionExec
+	for {
+		switch e := executor.(type) {
+		case *SelectionExec:
+			if selection != nil || e.adaptiveLimitController != nil {
+				return nil, nil
+			}
+			selection = e
+		case *ProjectionExec:
+		default:
+			return findAdaptiveLimitIndexLookupCandidate(executor), selection
+		}
+		children := executor.AllChildren()
+		if len(children) != 1 {
+			return nil, nil
+		}
+		executor = children[0]
 	}
 }
 

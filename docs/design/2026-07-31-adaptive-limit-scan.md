@@ -120,9 +120,13 @@ Limit
 Limit
 └─Projection*
   └─IndexLookUp (keep order)
+
+Limit
+└─(Projection | Selection)*   (exactly one executor-side Selection)
+  └─IndexLookUp (keep order)
 ```
 
-Only Projection can appear between Limit and the recognized root executor because Projection preserves row cardinality. The IndexLookUp may still contain a table-side Selection inside its coprocessor plan; lookup feedback measures the resulting handle-to-row ratio. An executor-side Selection between Limit and IndexLookUp would need a separate feedback stage. A blocking operator stops budget propagation.
+Projection preserves row cardinality, so it can appear anywhere between Limit and the recognized root executor. The IndexLookUp may still contain a table-side Selection inside its coprocessor plan; lookup feedback measures the resulting handle-to-row ratio. For a direct IndexLookUp, one executor-side Selection is also allowed and adds a separate feedback stage (see [Executor-Side Selection Feedback](#executor-side-selection-feedback)). The IndexLookUpJoin shape still accepts only Projection. A blocking operator stops budget propagation.
 
 The controller is attached while `LimitExec` is built. One controller is owned by one executor tree and one execution lifecycle.
 
@@ -281,6 +285,28 @@ The logical lookup window does not shrink below its statement-derived initial va
 
 If a stage produces no output, a ratio cannot estimate the next target. The controller waits until that stage has no outstanding reservation and the zero-output input reaches the current logical window. For the lookup stage, it then doubles both the logical window and execution batch up to their separate configured maxima. This guarantees progress without jumping directly to the maximum after one empty task, while avoiding a long sequence of tiny tasks for a small LIMIT.
 
+### Executor-Side Selection Feedback
+
+When a direct IndexLookUp sits under an executor-side Selection, lookup rows are Selection input, not LIMIT output. The controller is created in filtered mode:
+
+- `CompleteLookup` still learns the handle-to-row yield, but its rows do not count toward LIMIT demand and cannot stop admission;
+- after each evaluated chunk, the Selection calls `ObserveFilterProgress(input, output)`; output rows count toward LIMIT demand and stop admission at `offset + count`;
+- input from chunks with no output is held and paired with the next productive chunk, so the recent pass ratio includes low-selectivity gaps.
+
+The lookup target becomes:
+
+```text
+remainingFilterInput =
+    max(ceil(remainingOutput * filterInput / filterOutput),
+        ceil(remainingOutput * recentFilterInput / recentFilterOutput))
+    - lookup rows returned but not yet evaluated by the Selection
+
+lookupTarget =
+    ceil(remainingFilterInput * lookupHandles / lookupRows)   (and the recent estimate)
+```
+
+Headroom and the at-most-2x growth rule apply as before. Until the Selection has kept at least one row, no pass ratio exists, so lookup completions are handled like a zero-output phase: the window grows only after it fully drains. The window never shrinks below its initial value, so the controller can slow but never starve the LIMIT. The batched (vectorized) Selection path reports once per evaluated chunk. The row-at-a-time path, used when a filter is not vectorizable, reports each selected row together with the rows rejected before it, and reports remaining rejected rows when a chunk is exhausted.
+
 ### Batch Size and DistSQL Behavior
 
 Initial windows are derived from LIMIT demand and existing session settings:
@@ -341,7 +367,7 @@ The feature first requires all of the following shared conditions:
 
 1. `tidb_enable_adaptive_limit_scan` is enabled;
 2. the current physical operator is Limit;
-3. Projection is the only executor between Limit and the recognized IndexLookUpJoin or IndexLookUp;
+3. Projection is the only executor between Limit and the recognized IndexLookUpJoin or IndexLookUp, except that one executor-side Selection may also appear above a direct IndexLookUp;
 4. the IndexLookUp is keep-order;
 5. IndexLookUp concurrency is greater than one;
 6. the IndexLookUp is not in partition-table mode;
@@ -484,7 +510,7 @@ Controller unit tests cover:
 Executor unit tests cover:
 
 - exact plan-shape recognition through Projection;
-- rejection of Selection and unsupported reader configurations;
+- rejection of stacked Selections, Selection above IndexLookUpJoin, and unsupported reader configurations;
 - keep-order and concurrency eligibility;
 - pending-handle splitting and memory accounting;
 - Complete and Abort behavior on success, cancellation, and error;
@@ -630,7 +656,7 @@ A budget enforced within TiKV could bound processed keys, bytes, or execution ti
 Potential extensions, in increasing implementation complexity, are:
 
 1. IndexReader and TableReader range/request admission;
-2. explicit executor-side Selection feedback;
+2. executor-side Selection feedback for the IndexLookUpJoin shape;
 3. unordered IndexJoin, IndexHashJoin, and Apply with task-identified reservations and out-of-order completion;
 4. IndexMerge and partition-level budget distribution;
 5. MPP, Union, and multi-child budget allocation;
