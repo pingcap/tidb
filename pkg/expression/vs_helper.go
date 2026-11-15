@@ -39,7 +39,9 @@ type VectorHelper struct {
 	DistanceFnName model.CIStr
 	FnPbCode       tipb.ScalarFuncSig
 	Vec            types.VectorFloat32
-	Column         *Column
+	// VecParam retains a deferred vector or parameter binding. It is nil for literals.
+	VecParam *Constant
+	Column   *Column
 }
 
 // ExtractVectorHelper extracts a VectorSearchExpr from an expression.
@@ -80,12 +82,20 @@ func ExtractVectorHelper(expr Expression) *VectorHelper {
 		return nil
 	}
 
+	if vectorConstant.Value.IsNull() {
+		return nil
+	}
 	intest.Assert(vectorConstant.Value.Kind() == types.KindVectorFloat32, "internal: expect vectorFloat32 constant, but got %s", vectorConstant.Value.String())
+	var vecParam *Constant
+	if vectorConstant.DeferredExpr != nil || vectorConstant.ParamMarker != nil {
+		vecParam = vectorConstant
+	}
 
 	return &VectorHelper{
 		DistanceFnName: x.FuncName,
 		FnPbCode:       x.Function.PbCode(),
 		Vec:            vectorConstant.Value.GetVectorFloat32(),
+		VecParam:       vecParam,
 		Column:         vectorColumn,
 	}
 }

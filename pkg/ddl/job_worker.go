@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
@@ -194,6 +195,7 @@ type worker struct {
 // ReorgContext contains context info for reorg job.
 // TODO there is another reorgCtx, merge them.
 type ReorgContext struct {
+	spfresh spfreshReorgState
 	// below fields are cache for top sql
 	ddlJobCtx          context.Context
 	cacheSQL           string
@@ -408,6 +410,14 @@ func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
+	if config.SPFreshEnabled() {
+		if err := finishSPFreshBootstrap(jobCtx, job); err != nil {
+			return errors.Trace(err)
+		}
+		if err := finishSPFreshBulkCleanup(jobCtx, job); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	if JobNeedGC(job) {
 		err = w.delRangeManager.addDelRangeJob(w.workCtx, job)
 		if err != nil {
@@ -1027,6 +1037,8 @@ func (w *worker) runOneJobStep(
 		ver, err = w.onDropProcedure(jobCtx, job)
 	case model.ActionAlterProcedure:
 		ver, err = w.onAlterProcedure(jobCtx, job)
+	case model.ActionAlterVectorIndexParam:
+		ver, err = onAlterVectorIndexParam(jobCtx, job)
 	case model.ActionAlterIndexVisibility:
 		ver, err = onAlterIndexVisibility(jobCtx, job)
 	case model.ActionAlterSequence:

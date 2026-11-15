@@ -3696,6 +3696,16 @@ error = '''
 TiFlash server is busy
 '''
 
+["tikv:9015"]
+error = '''
+SPFresh vector index corruption: %s
+'''
+
+["tikv:9016"]
+error = '''
+SPFresh vector search response exceeds limit: %s
+'''
+
 ["types:1063"]
 error = '''
 Incorrect column specifier for column '%-.192s'

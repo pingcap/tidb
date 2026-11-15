@@ -573,3 +573,10 @@ func (p ScalarSubqueryEvalCtx) Init(ctx base.PlanContext, offset int) *ScalarSub
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeScalarSubQuery, offset)
 	return &p
 }
+
+// Init initializes the SPFresh vector scan plan with its context and statistics.
+func (p PhysicalSPFreshVectorScan) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int) *PhysicalSPFreshVectorScan {
+	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeSPFreshVectorScan, &p, offset)
+	p.SetStats(stats)
+	return &p
+}

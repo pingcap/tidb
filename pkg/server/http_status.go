@@ -256,6 +256,9 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/config", fn.Wrap(func() (*config.Config, error) {
 		return config.GetGlobalConfig(), nil
 	}))
+	router.HandleFunc("/api/v1/admin/spfresh/config", s.handleSPFreshAdminConfig).
+		Methods(http.MethodGet, http.MethodPost).
+		Name("SPFreshAdminConfig")
 	router.Handle("/labels", tikvhandler.LabelHandler{}).Name("Labels")
 
 	// HTTP path for get server info.

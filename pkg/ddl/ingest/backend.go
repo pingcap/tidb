@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/backend/remote"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	lightning "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -67,6 +68,10 @@ type BackendCtx interface {
 	// Ingest checks if all engines need to be flushed and imported. It's concurrent safe.
 	Ingest(ctx context.Context) (err error)
 
+	// Flush synchronizes written engine state. The backend context decides
+	// whether this close-time flush should also import the engine.
+	Flush(ctx context.Context) (flushed, imported bool, err error)
+
 	CheckpointOperator
 
 	// GetLocalBackend exposes local.Backend. It's only used in global sort based
@@ -103,22 +108,43 @@ type litBackendCtx struct {
 	jobID   int64
 	tbl     table.Table
 	// litBackendCtx doesn't manage the lifecycle of backend, caller should do it.
-	backend *local.Backend
+	backend backend.Backend
 	ctx     context.Context
-	cfg     *local.BackendConfig
+	lcfg    *local.BackendConfig
+	rcfg    *remote.BackendConfig
 	sysVars map[string]string
 
-	flushing        atomic.Bool
-	timeOfLastFlush atomicutil.Time
-	updateInterval  time.Duration
-	checkpointMgr   *CheckpointManager
-	etcdClient      *clientv3.Client
-	initTS          uint64
-	importTS        uint64
+	flushing              atomic.Bool
+	timeOfLastFlush       atomicutil.Time
+	updateInterval        time.Duration
+	checkpointMgr         *CheckpointManager
+	remoteTaskOwnerStore  RemoteTaskOwnerStore
+	spfreshBuildRoutePlan *backend.SPFreshBuildRoutePlan
+	etcdClient            *clientv3.Client
+	initTS                uint64
+	importTS              uint64
+	remoteTaskKeyspaceID  uint32
 
 	// unregisterMu prevents concurrent calls of `FinishAndUnregisterEngines`.
 	// For details, see https://github.com/pingcap/tidb/issues/53843.
 	unregisterMu sync.Mutex
+	ownsBackend  bool
+}
+
+func (bc *litBackendCtx) getDupeController() (*local.DupeController, error) {
+	if rbc, ok := bc.backend.(*remote.Backend); ok {
+		if bc.rcfg == nil {
+			return nil, errors.New("duplicate controller is not available")
+		}
+		return rbc.GetDupeController(bc.rcfg.WorkerConcurrency, nil), nil
+	}
+	if lbc, ok := bc.backend.(*local.Backend); ok {
+		if bc.lcfg == nil {
+			return nil, errors.New("duplicate controller is not available")
+		}
+		return lbc.GetDupeController(bc.lcfg.GetWorkerConcurrency(), nil), nil
+	}
+	return nil, errors.New("duplicate controller is not available")
 }
 
 func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(
@@ -160,7 +186,10 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 }
 
 func (bc *litBackendCtx) collectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
-	dupeController := bc.backend.GetDupeController(bc.cfg.GetWorkerConcurrency(), nil)
+	dupeController, err := bc.getDupeController()
+	if err != nil {
+		return err
+	}
 	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
 		SQLMode:     mysql.ModeStrictAllTables,
 		SysVars:     bc.sysVars,
@@ -176,45 +205,51 @@ func (bc *litBackendCtx) IngestIfQuotaExceeded(ctx context.Context, taskID int, 
 	if !shouldFlush {
 		return nil
 	}
-	if !bc.flushing.CompareAndSwap(false, true) {
+	flushed, imported, err := bc.flushAndMaybeImport(ctx, shouldImport)
+	if err != nil {
+		return err
+	}
+	if !flushed {
 		return nil
 	}
-	defer bc.flushing.Store(false)
-	err := bc.flushEngines(ctx)
-	if err != nil {
-		return err
-	}
-	bc.timeOfLastFlush.Store(time.Now())
-
-	if !shouldImport {
-		return bc.AdvanceWatermark(false)
-	}
-
-	release, err := bc.tryAcquireDistLock()
-	if err != nil {
-		return err
-	}
-	if release != nil {
-		defer release()
-	}
-
-	err = bc.unsafeImportAndResetAllEngines(ctx)
-	if err != nil {
-		return err
-	}
-	return bc.AdvanceWatermark(true)
+	return bc.AdvanceWatermark(imported)
 }
 
 // Ingest implements BackendContext.
 func (bc *litBackendCtx) Ingest(ctx context.Context) error {
-	err := bc.flushEngines(ctx)
+	flushed, imported, err := bc.flushAndMaybeImport(ctx, true)
 	if err != nil {
 		return err
+	}
+	if !flushed {
+		return nil
+	}
+	return bc.AdvanceWatermark(imported)
+}
+
+// Flush implements BackendCtx.
+func (bc *litBackendCtx) Flush(ctx context.Context) (flushed, imported bool, err error) {
+	return bc.flushAndMaybeImport(ctx, !bc.shouldDeferImportOnFlush())
+}
+
+func (bc *litBackendCtx) flushAndMaybeImport(ctx context.Context, shouldImport bool) (flushed, imported bool, err error) {
+	if !bc.flushing.CompareAndSwap(false, true) {
+		return false, false, nil
+	}
+	defer bc.flushing.Store(false)
+
+	if err = bc.flushEngines(ctx); err != nil {
+		return false, false, err
+	}
+	bc.timeOfLastFlush.Store(time.Now())
+
+	if !shouldImport {
+		return true, false, nil
 	}
 
 	release, err := bc.tryAcquireDistLock()
 	if err != nil {
-		return err
+		return true, false, err
 	}
 	if release != nil {
 		defer release()
@@ -226,12 +261,10 @@ func (bc *litBackendCtx) Ingest(ctx context.Context) error {
 		}
 	})
 
-	err = bc.unsafeImportAndResetAllEngines(ctx)
-	if err != nil {
-		return err
+	if err = bc.unsafeImportAndResetAllEngines(ctx); err != nil {
+		return true, false, err
 	}
-
-	return bc.AdvanceWatermark(true)
+	return true, true, nil
 }
 
 func (bc *litBackendCtx) flushEngines(ctx context.Context) error {
@@ -285,12 +318,14 @@ func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInf
 		zap.String("usage info", LitDiskRoot.UsageInfo()))
 
 	closedEngine := backend.NewClosedEngine(bc.backend, logger, ei.uuid, 0)
-	ingestTS := bc.GetImportTS()
-	logger.Info("set ingest ts before import", zap.Int64("jobID", bc.jobID), zap.Uint64("ts", ingestTS))
-	err := bc.backend.SetTSBeforeImportEngine(ctx, ei.uuid, ingestTS)
-	if err != nil {
-		logger.Error("set TS failed", zap.Int64("index ID", ei.indexID))
-		return err
+	if lbc, ok := bc.backend.(*local.Backend); ok {
+		ingestTS := bc.GetImportTS()
+		logger.Info("set ingest ts before import", zap.Int64("jobID", bc.jobID), zap.Uint64("ts", ingestTS))
+		err := lbc.SetTSBeforeImportEngine(ctx, ei.uuid, ingestTS)
+		if err != nil {
+			logger.Error("set TS failed", zap.Int64("index ID", ei.indexID))
+			return err
+		}
 	}
 
 	regionSplitSize := int64(lightning.SplitRegionSize) * int64(lightning.MaxSplitRegionSizeRatio)
@@ -302,19 +337,21 @@ func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInf
 	}
 
 	// TS will be set before local backend import. We don't need to alloc a new one when reset.
-	err = bc.backend.ResetEngineSkipAllocTS(ctx, ei.uuid)
-	failpoint.Inject("mockResetEngineFailed", func() {
-		err = fmt.Errorf("mock reset engine failed")
-	})
-	if err != nil {
-		logger.Error(LitErrResetEngineFail, zap.Int64("index ID", ei.indexID))
-		err1 := closedEngine.Cleanup(bc.ctx)
-		if err1 != nil {
-			logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err1),
-				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+	if lbc, ok := bc.backend.(*local.Backend); ok {
+		err := lbc.ResetEngineSkipAllocTS(ctx, ei.uuid)
+		failpoint.Inject("mockResetEngineFailed", func() {
+			err = fmt.Errorf("mock reset engine failed")
+		})
+		if err != nil {
+			logger.Error(LitErrResetEngineFail, zap.Int64("index ID", ei.indexID))
+			err1 := closedEngine.Cleanup(bc.ctx)
+			if err1 != nil {
+				logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err1),
+					zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+			}
+			ei.openedEngine = nil
+			return err
 		}
-		ei.openedEngine = nil
-		return err
 	}
 	return nil
 }
@@ -327,11 +364,7 @@ func (bc *litBackendCtx) checkFlush() (shouldFlush bool, shouldImport bool) {
 		// used in a manual test
 		ForceSyncFlagForTest.Store(true)
 	})
-	if ForceSyncFlagForTest.Load() {
-		return true, true
-	}
-	LitDiskRoot.UpdateUsage()
-	shouldImport = LitDiskRoot.ShouldImport()
+	forceSync := ForceSyncFlagForTest.Load()
 	interval := bc.updateInterval
 	// This failpoint will be manually set through HTTP status port.
 	failpoint.Inject("mockSyncIntervalMs", func(val failpoint.Value) {
@@ -339,24 +372,51 @@ func (bc *litBackendCtx) checkFlush() (shouldFlush bool, shouldImport bool) {
 			interval = time.Duration(v) * time.Millisecond
 		}
 	})
-	shouldFlush = shouldImport ||
-		time.Since(bc.timeOfLastFlush.Load()) >= interval
+	shouldFlushByInterval := time.Since(bc.timeOfLastFlush.Load()) >= interval
+	if bc.shouldDeferImportOnFlush() {
+		return forceSync || shouldFlushByInterval, false
+	}
+	if forceSync {
+		return true, true
+	}
+	if bc.GetLocalBackend() != nil {
+		LitDiskRoot.UpdateUsage()
+		shouldImport = LitDiskRoot.ShouldImport()
+	}
+	shouldFlush = shouldImport || shouldFlushByInterval
 	return shouldFlush, shouldImport
+}
+
+func (bc *litBackendCtx) shouldDeferImportOnFlush() bool {
+	if bc.spfreshBuildRoutePlan != nil {
+		return true
+	}
+	return bc.remoteTaskOwnerStore != nil && bc.checkpointMgr == nil
 }
 
 // GetLocalBackend returns the local backend.
 func (bc *litBackendCtx) GetLocalBackend() *local.Backend {
-	return bc.backend
+	if lbc, ok := bc.backend.(*local.Backend); ok {
+		return lbc
+	}
+	return nil
 }
 
 // GetDiskUsage returns current disk usage of underlying backend.
 func (bc *litBackendCtx) GetDiskUsage() uint64 {
-	_, _, bcDiskUsed, _ := local.CheckDiskQuota(bc.backend, math.MaxInt64)
+	lbc := bc.GetLocalBackend()
+	if lbc == nil {
+		return 0
+	}
+	_, _, bcDiskUsed, _ := local.CheckDiskQuota(lbc, math.MaxInt64)
 	return uint64(bcDiskUsed)
 }
 
 // Close closes underlying backend and remove it from disk root.
 func (bc *litBackendCtx) Close() {
+	if bc.ownsBackend && bc.backend != nil {
+		bc.backend.Close()
+	}
 	logutil.Logger(bc.ctx).Info(LitInfoCloseBackend, zap.Int64("jobID", bc.jobID),
 		zap.Int64("current memory usage", LitMemRoot.CurrentUsage()),
 		zap.Int64("max memory quota", LitMemRoot.MaxMemoryQuota()))

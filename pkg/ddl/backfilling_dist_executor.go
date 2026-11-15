@@ -24,10 +24,12 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 )
 
@@ -48,6 +50,8 @@ type BackfillTaskMeta struct {
 
 	CloudStorageURI string `json:"cloud_storage_uri"`
 	EstimateRowSize int    `json:"estimate_row_size"`
+
+	SPFreshBuildRoutePlan *backend.SPFreshBuildRoutePlan `json:"spfresh_build_route_plan,omitempty"`
 
 	Version int `json:"version,omitempty"`
 }
@@ -79,6 +83,8 @@ type BackfillSubTaskMeta struct {
 	// Only used for adding one single index.
 	// Keep this for compatibility with v7.5.
 	external.SortedKVMeta `json:",inline" external:"true"`
+
+	SPFreshBuildHasData *bool `json:"spfresh_build_has_data,omitempty"`
 }
 
 // Marshal marshals the backfill subtask meta to JSON.
@@ -138,6 +144,22 @@ func writeExternalBackfillSubTaskMeta(ctx context.Context, cloudStorageURI strin
 	return subtask.WriteJSONToExternalStorage(ctx, extStore, subtask)
 }
 
+func resolveBackfillIndexInfos(jobID, tableID int64, eleIDs []int64, indices []*model.IndexInfo) ([]*model.IndexInfo, error) {
+	indexInfos := make([]*model.IndexInfo, 0, len(eleIDs))
+	for _, eid := range eleIDs {
+		indexInfo := model.FindIndexInfoByID(indices, eid)
+		if indexInfo == nil {
+			logutil.DDLIngestLogger().Warn("index info not found",
+				zap.Int64("jobID", jobID),
+				zap.Int64("tableID", tableID),
+				zap.Int64("indexID", eid))
+			return nil, errors.Errorf("index info not found: %d", eid)
+		}
+		indexInfos = append(indexInfos, indexInfo)
+	}
+	return indexInfos, nil
+}
+
 func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 	stage proto.Step,
 ) (execute.StepExecutor, error) {
@@ -151,34 +173,30 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 		return nil, err
 	}
 	tbl := tblIface.(table.PhysicalTable)
-	eleIDs := s.taskMeta.EleIDs
-	indexInfos := make([]*model.IndexInfo, 0, len(eleIDs))
-	for _, eid := range eleIDs {
-		indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, eid)
-		if indexInfo == nil {
-			logutil.DDLIngestLogger().Warn("index info not found",
-				zap.Int64("table ID", tbl.Meta().ID),
-				zap.Int64("index ID", eid))
-			return nil, errors.Errorf("index info not found: %d", eid)
-		}
-		indexInfos = append(indexInfos, indexInfo)
+	indexInfos, err := resolveBackfillIndexInfos(jobMeta.ID, tbl.Meta().ID, s.taskMeta.EleIDs, tbl.Meta().Indices)
+	if err != nil {
+		return nil, err
 	}
 	cloudStorageURI := s.taskMeta.CloudStorageURI
 	estRowSize := s.taskMeta.EstimateRowSize
+	remoteSort := s.taskMeta.SPFreshBuildRoutePlan != nil
 
 	switch stage {
 	case proto.BackfillStepReadIndex:
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
+		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize, s.taskMeta.SPFreshBuildRoutePlan)
 	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(jobMeta.ID, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
-		if len(cloudStorageURI) == 0 {
-			return nil, errors.Errorf("local import does not have write & ingest step")
+		if len(cloudStorageURI) != 0 {
+			return newCloudImportExecutor(jobMeta, ddlObj.store, indexInfos, tbl, cloudStorageURI, s.GetTaskBase().Concurrency)
 		}
-		return newCloudImportExecutor(jobMeta, ddlObj.store, indexInfos, tbl, cloudStorageURI, s.GetTaskBase().Concurrency)
+		if remoteSort {
+			return newRemoteIngestExecutor(tbl, ddlObj.store, s.taskMeta.SPFreshBuildRoutePlan, util.InternalHTTPClient())
+		}
+		return nil, errors.Errorf("local import does not have write & ingest step")
 	default:
 		// should not happen, caller has checked the stage
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
@@ -209,17 +227,26 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 		return err
 	}
 
-	bgm := &BackfillTaskMeta{}
-	err = json.Unmarshal(s.task.Meta, bgm)
-	if err != nil {
+	return s.refreshTaskMeta(s.task)
+}
+
+func (s *backfillDistExecutor) refreshTaskMeta(task *proto.Task) error {
+	taskMeta := &BackfillTaskMeta{}
+	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
 		return errors.Trace(err)
 	}
-
-	s.taskMeta = bgm
+	if _, err := backfillTaskModeFromMeta(taskMeta); err != nil {
+		return err
+	}
+	s.task = task
+	s.taskMeta = taskMeta
 	return nil
 }
 
 func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
+	if err := s.refreshTaskMeta(task); err != nil {
+		return nil, err
+	}
 	switch task.Step {
 	case proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest:
 		return s.newBackfillSubtaskExecutor(task.Step)
@@ -228,7 +255,13 @@ func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepEx
 	}
 }
 
-func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
+func (s *backfillDistExecutor) IsIdempotent(subtask *proto.Subtask) bool {
+	if subtask != nil &&
+		subtask.Step == proto.BackfillStepReadIndex &&
+		s.taskMeta != nil &&
+		s.taskMeta.SPFreshBuildRoutePlan != nil {
+		return false
+	}
 	return true
 }
 

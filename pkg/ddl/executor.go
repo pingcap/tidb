@@ -1544,6 +1544,9 @@ func (e *executor) RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.
 		return infoschema.ErrTableExists.GenWithStackByArgs(tbInfo.Name)
 	}
 
+	if err := rejectRecoverSPFreshVectorIndexes(tbInfo); err != nil {
+		return errors.Trace(err)
+	}
 	// for "flashback table xxx to yyy"
 	// Note: this case only allow change table name, schema remains the same.
 	var involvedSchemas []model.InvolvingSchemaInfo
@@ -2138,6 +2141,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			err = e.AlterTableSetTiFlashReplica(sctx, ident, spec.TiFlashReplica)
 		case ast.AlterTableOrderByColumns:
 			err = e.OrderByColumns(sctx, ident)
+		case ast.AlterTableSetVectorIndexParam:
+			err = e.AlterVectorIndexParam(sctx, ident, spec.IndexName, spec.VectorIndexParam, spec, tbTracker)
 		case ast.AlterTableIndexInvisible:
 			err = e.AlterIndexVisibility(sctx, ident, spec.IndexName, spec.Visibility, spec, tbTracker)
 		case ast.AlterTableAlterCheck:
@@ -2226,8 +2231,15 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		})
 	}
 
+	jobVersion := model.GetJobVerInUse()
+	for _, subJob := range subJobs {
+		if subJob.Type == model.ActionAlterVectorIndexParam {
+			jobVersion = model.JobVersion2
+			break
+		}
+	}
 	job := &model.Job{
-		Version:             model.GetJobVerInUse(),
+		Version:             jobVersion,
 		SchemaID:            schema.ID,
 		TableID:             t.Meta().ID,
 		SchemaName:          schema.Name.L,
@@ -2696,6 +2708,10 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	err = buildTablePartitionInfo(NewMetaBuildContextWithSctx(ctx), spec.Partition, newMeta)
 	if err != nil {
 		return err
+	}
+
+	if err = checkTableInfoForSPFreshVectorIndex(newMeta); err != nil {
+		return errors.Trace(err)
 	}
 
 	newPartInfo := newMeta.Partition
@@ -3724,6 +3740,9 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 		return errors.Trace(err)
 	}
 
+	if spfreshIndexDependsOnColumn(currentTbl.Meta(), oldCol.ColumnInfo) {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("column has SPFresh index, drop SPFresh index first")
+	}
 	newCol := oldCol.Clone()
 	newCol.Name = newColName
 	job := &model.Job{
@@ -4403,6 +4422,9 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 	}
 
 	if err = checkIndexLengthWithNewCharset(tblInfo, toCharset, toCollate); err != nil {
+		return doNothing, err
+	}
+	if err = checkSPFreshStoredColumnsForTableCharsetChange(tblInfo, toCharset, toCollate); err != nil {
 		return doNothing, err
 	}
 
@@ -5210,6 +5232,9 @@ func checkTableTypeForVectorIndex(tblInfo *model.TableInfo) error {
 
 func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmodel.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+	if indexOption != nil && indexOption.Tp == pmodel.IndexTypeSPFresh {
+		return e.createSPFreshVectorIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
+	}
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)

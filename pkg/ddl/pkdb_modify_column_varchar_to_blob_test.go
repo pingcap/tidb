@@ -15,7 +15,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -144,11 +143,14 @@ func TestVarcharToBlobRejectsUnsupportedConversions(t *testing.T) {
 		{"longblob_full_index", "c varchar(10), key(c)", "c longblob"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.name == "xml" {
-				previous := parsertypes.EnableExtraDataType.Swap(true)
-				t.Cleanup(func() { parsertypes.EnableExtraDataType.Store(previous) })
-			}
 			tk := testkit.NewTestKit(t, store)
+			if tc.name == "xml" {
+				// Persist the switch so the domain's global-variable refresh cannot
+				// turn XML parsing back off while this subtest is running.
+				previous := tk.MustQuery("select @@global.pkdb_extra_data_type").Rows()[0][0].(string)
+				tk.MustExec("set global pkdb_extra_data_type = on")
+				t.Cleanup(func() { tk.MustExec("set global pkdb_extra_data_type = " + previous) })
+			}
 			tk.MustExec("use test")
 			tk.MustExec("drop table if exists t")
 			tk.MustExec("create table t(id int, " + tc.definition + ") charset utf8mb4")

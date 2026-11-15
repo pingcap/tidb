@@ -1201,7 +1201,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
 		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors || stmt.Tp == ast.ShowSessionStates {
 			sc.InShowWarning = true
-			sc.SetWarnings(vars.StmtCtx.GetWarnings())
+			warnings, warningCount := vars.StmtCtx.CopyWarningsWithCount(nil)
+			sc.SetWarningsWithCount(warnings, warningCount)
 		}
 	case *ast.SplitRegionStmt:
 		sc.SetTypeFlags(sc.TypeFlags().
@@ -1228,9 +1229,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(!strictSQLMode))
 	case *ast.GetDiagnosticsStmt:
 		sc.InDiagnostics = true
-		sc.LastWarningNum = len(vars.StmtCtx.GetWarnings())
+		sc.LastWarningNum = int(vars.StmtCtx.WarningTotal())
 		sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(!strictSQLMode))
-		sc.SetWarnings(vars.StmtCtx.GetWarnings())
+		warnings, warningCount := vars.StmtCtx.CopyWarningsWithCount(nil)
+		sc.SetWarningsWithCount(warnings, warningCount)
 	default:
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithIgnoreTruncateErr(true).

@@ -131,16 +131,23 @@ type WarnHandlerExt interface {
 	GetWarnings() []SQLWarn
 	// SetWarnings resets all warnings in the handler directly. The handler may ignore the given warnings.
 	SetWarnings(warns []SQLWarn)
+	// SetWarningsWithCount resets the available warning details and their logical total.
+	SetWarningsWithCount(warns []SQLWarn, total uint16)
+	// AddOmittedWarnings adds warnings whose details are unavailable.
+	AddOmittedWarnings(count uint64)
+	// CopyWarningsWithCount copies the available warning details and their logical total.
+	CopyWarningsWithCount(dst []SQLWarn) ([]SQLWarn, uint16)
 	// NumErrorWarnings returns the number of warnings with level 'Error' and the total number of warnings.
 	NumErrorWarnings() (uint16, int)
 }
 
-var _ WarnHandler = &StaticWarnHandler{}
+var _ WarnHandlerExt = &StaticWarnHandler{}
 
 // StaticWarnHandler implements the WarnHandler interface.
 type StaticWarnHandler struct {
 	sync.Mutex
-	warnings []SQLWarn
+	warnings     []SQLWarn
+	warningCount int
 }
 
 // NewStaticWarnHandler creates a new StaticWarnHandler.
@@ -158,19 +165,28 @@ func NewStaticWarnHandlerWithHandler(h WarnHandler) *StaticWarnHandler {
 		return NewStaticWarnHandler(0)
 	}
 
-	cnt := h.WarningCount()
-	newHandler := NewStaticWarnHandler(cnt)
-	if cnt > 0 {
-		newHandler.warnings = h.CopyWarnings(newHandler.warnings)
+	newHandler := NewStaticWarnHandler(0)
+	if ext, ok := h.(WarnHandlerExt); ok {
+		var count uint16
+		newHandler.warnings, count = ext.CopyWarningsWithCount(nil)
+		newHandler.warningCount = int(count)
+		return newHandler
+	}
+	newHandler.warningCount = h.WarningCount()
+	if newHandler.warningCount > 0 {
+		newHandler.warnings = h.CopyWarnings(nil)
 	}
 	return newHandler
 }
 
 // Reset resets the warnings of this handler.
 func (h *StaticWarnHandler) Reset() {
+	h.Lock()
+	defer h.Unlock()
 	if h.warnings != nil {
 		h.warnings = h.warnings[:0]
 	}
+	h.warningCount = 0
 }
 
 // AppendWarning implements the StaticWarnHandler.AppendWarning.
@@ -185,9 +201,14 @@ func (h *StaticWarnHandler) AppendWarning(warn error) {
 func (h *StaticWarnHandler) AppendWarnings(warns []SQLWarn) {
 	h.Lock()
 	defer h.Unlock()
-	if len(h.warnings) < math.MaxUint16 {
-		h.warnings = append(h.warnings, warns...)
+	if h.warningCount >= math.MaxUint16 || len(warns) == 0 {
+		return
 	}
+	appendCount := min(len(warns), math.MaxUint16-h.warningCount)
+	if h.warningCount == len(h.warnings) {
+		h.warnings = append(h.warnings, warns[:appendCount]...)
+	}
+	h.warningCount += appendCount
 }
 
 // AppendNote appends a warning with level 'Note'.
@@ -210,20 +231,29 @@ func (h *StaticWarnHandler) AppendError(warn error) {
 func (h *StaticWarnHandler) WarningCount() int {
 	h.Lock()
 	defer h.Unlock()
-	return len(h.warnings)
+	return h.warningCount
 }
 
 // TruncateWarnings implements the StaticWarnHandler.TruncateWarnings.
 func (h *StaticWarnHandler) TruncateWarnings(start int) []SQLWarn {
 	h.Lock()
 	defer h.Unlock()
-	sz := len(h.warnings) - start
+	if start >= h.warningCount {
+		return nil
+	}
+	if start < 0 {
+		start = 0
+	}
+	detailStart := min(len(h.warnings), start)
+	sz := len(h.warnings) - detailStart
 	if sz <= 0 {
+		h.warningCount = start
 		return nil
 	}
 	ret := make([]SQLWarn, sz)
-	copy(ret, h.warnings[start:])
-	h.warnings = h.warnings[:start]
+	copy(ret, h.warnings[detailStart:])
+	h.warnings = h.warnings[:detailStart]
+	h.warningCount = start
 	return ret
 }
 
@@ -249,9 +279,13 @@ func (h *StaticWarnHandler) GetWarnings() []SQLWarn {
 }
 
 func (h *StaticWarnHandler) appendWarningWithLevel(level string, warn error) {
-	if len(h.warnings) < math.MaxUint16 {
+	if h.warningCount >= math.MaxUint16 {
+		return
+	}
+	if h.warningCount == len(h.warnings) {
 		h.warnings = append(h.warnings, SQLWarn{level, warn})
 	}
+	h.warningCount++
 }
 
 // SetWarnings sets the internal warnings directly.
@@ -259,7 +293,41 @@ func (h *StaticWarnHandler) SetWarnings(warns []SQLWarn) {
 	h.Lock()
 	defer h.Unlock()
 
-	h.warnings = warns
+	h.warningCount = min(len(warns), math.MaxUint16)
+	h.warnings = warns[:h.warningCount]
+}
+
+// SetWarningsWithCount sets the available warning details and their logical total.
+func (h *StaticWarnHandler) SetWarningsWithCount(warns []SQLWarn, total uint16) {
+	h.Lock()
+	defer h.Unlock()
+
+	detailCount := min(len(warns), math.MaxUint16)
+	h.warnings = warns[:detailCount]
+	h.warningCount = max(detailCount, int(total))
+}
+
+// AddOmittedWarnings adds warnings without materializing unavailable details.
+func (h *StaticWarnHandler) AddOmittedWarnings(count uint64) {
+	h.Lock()
+	defer h.Unlock()
+
+	remaining := uint64(max(0, math.MaxUint16-h.warningCount))
+	omitted := int(min(count, remaining))
+	h.warningCount += omitted
+}
+
+// CopyWarningsWithCount copies warning details and their logical total under one lock.
+func (h *StaticWarnHandler) CopyWarningsWithCount(dst []SQLWarn) ([]SQLWarn, uint16) {
+	h.Lock()
+	defer h.Unlock()
+	if cnt := len(h.warnings); cap(dst) < cnt {
+		dst = make([]SQLWarn, cnt)
+	} else {
+		dst = dst[:cnt]
+	}
+	copy(dst, h.warnings)
+	return dst, uint16(h.warningCount)
 }
 
 // NumErrorWarnings returns the number of warnings with level 'Error' and the total number of warnings.
@@ -273,7 +341,7 @@ func (h *StaticWarnHandler) NumErrorWarnings() (uint16, int) {
 			numError++
 		}
 	}
-	return numError, len(h.warnings)
+	return numError, h.warningCount
 }
 
 type ignoreWarn struct{}

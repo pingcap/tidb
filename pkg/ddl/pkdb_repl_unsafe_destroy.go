@@ -2,6 +2,7 @@ package ddl
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"strconv"
@@ -112,8 +113,16 @@ func PaginateListSortedSourceDoneJobs(
 		}
 		for _, row := range rows {
 			jobID := row.GetInt64(0)
-			startKey := row.GetBytes(2)
-			endKey := row.GetBytes(3)
+			// The SQL GC queue stores hexadecimal text, while both storage
+			// destruction and placement selection require the original keys.
+			startKey, err := hex.DecodeString(row.GetString(2))
+			if err != nil {
+				return nil, fmt.Errorf("decode GC start key for job %d: %w", jobID, err)
+			}
+			endKey, err := hex.DecodeString(row.GetString(3))
+			if err != nil {
+				return nil, fmt.Errorf("decode GC end key for job %d: %w", jobID, err)
+			}
 			ts := row.GetUint64(4)
 			if ts >= gcSafePoint {
 				// because we process jobs in order, once we find a job that its ts
@@ -255,7 +264,7 @@ var DoUnsafeDestroyRangeRequest func(
 
 // DoGCPlacementRules will be set by gcworker package to remove placement
 // rules after standby unsafe destroy.
-var DoGCPlacementRules func(store kv.Storage, ddlJobID int64) error
+var DoGCPlacementRules func(store kv.Storage, ddlJobID int64, ranges ...kv.KeyRange) error
 
 func (s *unsafeDestroyWorker) runJobsOfOneDDL(jobs []UnsafeDestroyJob) error {
 	if len(jobs) == 0 {
@@ -288,7 +297,11 @@ func (s *unsafeDestroyWorker) runJobsOfOneDDL(jobs []UnsafeDestroyJob) error {
 	}
 	// A DDL can contain multiple ranges. Keep its placement rules until every
 	// range has been destroyed successfully.
-	if gcErr := DoGCPlacementRules(s.store, jobs[0].DDLJobID); gcErr != nil {
+	ranges := make([]kv.KeyRange, 0, len(jobs))
+	for _, job := range jobs {
+		ranges = append(ranges, kv.KeyRange{StartKey: job.StartKey, EndKey: job.EndKey})
+	}
+	if gcErr := DoGCPlacementRules(s.store, jobs[0].DDLJobID, ranges...); gcErr != nil {
 		logutil.BgLogger().Error("failed to gc placement rules after standby unsafe destroy",
 			zap.Int64("DDLJobID", jobs[0].DDLJobID),
 			zap.Error(gcErr))

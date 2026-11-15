@@ -44,6 +44,11 @@ func (w *worker) createTableWithSelect(jobCtx *jobContext, job *model.Job, args 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		// Publish the empty checkpoint before CTAS starts writing rows. Bootstrapping
+		// after the load would skip those rows in incremental ScanChanges.
+		if err = bootstrapInlineSPFreshIndexesOnCreateTable(tbInfo, job, jobCtx); err != nil {
+			return ver, errors.Trace(err)
+		}
 		tbInfo.State = model.StateWriteReorganization
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true)
 		if err != nil {

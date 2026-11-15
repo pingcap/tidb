@@ -850,8 +850,11 @@ type indexIngestBaseWorker struct {
 	se       *session.Session
 	restore  func(sessionctx.Context)
 
-	writers      []ingest.Writer
-	srcChunkPool *sync.Pool
+	writePlan      *indexWritePlan
+	writeScratch   indexWriteScratch
+	spfreshWriters []ingest.SPFreshBuildRecordWriter
+	writers        []ingest.Writer
+	srcChunkPool   *sync.Pool
 	// only available in global sort
 	totalCount *atomic.Int64
 }
@@ -944,15 +947,13 @@ func (w *indexIngestBaseWorker) WriteChunk(rs *IndexRecordChunk) (count int, nex
 	failpoint.InjectCall("writeLocalExec", rs.Done)
 
 	oprStartTime := time.Now()
-	vars := w.se.GetSessionVars()
-	sc := vars.StmtCtx
 	indexConditionCheckers := w.indexConditionCheckers
 	if rs.conditionPushed && len(w.indexes) == 1 {
 		// If the index condition has been pushed down to tikv side, and there's only one index, we can
 		// skip running the checker in TiDB side.
 		indexConditionCheckers = nil
 	}
-	cnt, lastHandle, err := writeChunk(w.ctx, w.writers, w.indexes, indexConditionCheckers, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta())
+	cnt, lastHandle, err := w.writeChunk(rs.Chunk, indexConditionCheckers)
 	if err != nil || cnt == 0 {
 		return 0, nil, err
 	}
@@ -1029,7 +1030,14 @@ func (s *indexWriteResultSink) flush() error {
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("mock flush error"))
 	})
-	return s.backendCtx.Ingest(s.ctx)
+	flushed, imported, err := s.backendCtx.Flush(s.ctx)
+	if err != nil {
+		return err
+	}
+	if !flushed {
+		return nil
+	}
+	return s.backendCtx.AdvanceWatermark(imported)
 }
 
 func (s *indexWriteResultSink) Close() error {

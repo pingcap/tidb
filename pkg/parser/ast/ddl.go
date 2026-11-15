@@ -733,14 +733,16 @@ const (
 type IndexOption struct {
 	node
 
-	KeyBlockSize uint64
-	Tp           model.IndexType
-	Comment      string
-	ParserName   model.CIStr
-	Visibility   IndexVisibility
-	PrimaryKeyTp model.PrimaryKeyType
-	Global       bool
-	Condition    ExprNode `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
+	VectorIndexParam     *string
+	SPFreshStoredColumns []model.CIStr
+	KeyBlockSize         uint64
+	Tp                   model.IndexType
+	Comment              string
+	ParserName           model.CIStr
+	Visibility           IndexVisibility
+	PrimaryKeyTp         model.PrimaryKeyType
+	Global               bool
+	Condition            ExprNode `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
 }
 
 // IsEmpty is true if only default options are given
@@ -753,7 +755,9 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Comment != "" ||
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
-		n.Condition != nil {
+		n.Condition != nil ||
+		n.VectorIndexParam != nil ||
+		len(n.SPFreshStoredColumns) > 0 {
 		return false
 	}
 	return true
@@ -802,6 +806,30 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord("COMMENT ")
 		ctx.WriteString(n.Comment)
+		hasPrevOption = true
+	}
+
+	if len(n.SPFreshStoredColumns) > 0 {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("STORING (")
+		for i, col := range n.SPFreshStoredColumns {
+			if i > 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WriteName(col.O)
+		}
+		ctx.WritePlain(")")
+		hasPrevOption = true
+	}
+
+	if n.VectorIndexParam != nil {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("VECTOR_INDEX_PARAM ")
+		ctx.WriteString(*n.VectorIndexParam)
 		hasPrevOption = true
 	}
 
@@ -3211,6 +3239,7 @@ func (a AlgorithmType) String() string {
 
 // AlterTableSpec represents alter table specification.
 type AlterTableSpec struct {
+	VectorIndexParam *string
 	node
 
 	// only supported by MariaDB 10.0.2+ (DROP COLUMN, CHANGE COLUMN, MODIFY COLUMN, DROP INDEX, DROP FOREIGN KEY, DROP PARTITION)
@@ -3811,6 +3840,15 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("IMPORT TABLESPACE")
 	case AlterTableDiscardTablespace:
 		ctx.WriteKeyWord("DISCARD TABLESPACE")
+	case AlterTableSetVectorIndexParam:
+		ctx.WriteKeyWord("ALTER INDEX ")
+		ctx.WriteName(n.IndexName.O)
+		ctx.WriteKeyWord(" SET VECTOR_INDEX_PARAM ")
+		if n.VectorIndexParam != nil {
+			ctx.WriteString(*n.VectorIndexParam)
+		} else {
+			ctx.WriteString("")
+		}
 	case AlterTableIndexInvisible:
 		ctx.WriteKeyWord("ALTER INDEX ")
 		ctx.WriteName(n.IndexName.O)
@@ -5012,3 +5050,6 @@ func tableOptionsWithRestoreTTLFlag(flags format.RestoreFlags, options []*TableO
 	}
 	return newOptions
 }
+
+// AlterTableSetVectorIndexParam adjusts the remote ANN configuration.
+const AlterTableSetVectorIndexParam AlterTableType = 300

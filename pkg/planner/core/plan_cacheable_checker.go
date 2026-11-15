@@ -404,6 +404,13 @@ func isSelectStmtNonPrepCacheableFastCheck(sctx base.PlanContext, selectStmt *as
 	if selectStmt.Kind != ast.SelectStmtKindSelect {
 		return nil, false, "not a select statement"
 	}
+	if selectStmt.OrderBy != nil && (selectStmt.Distinct || selectStmt.GroupBy != nil) {
+		for _, item := range selectStmt.OrderBy.Items {
+			if isVectorDistanceOrderByForPlanCache(item.Expr) {
+				return nil, false, "vector ORDER BY with DISTINCT or GROUP BY cannot be parameterized"
+			}
+		}
+	}
 	if !nonPreparedPlanCacheableTableHints(selectStmt.TableHints) || // unsupported hints
 		selectStmt.Having != nil || // having
 		selectStmt.WindowSpecs != nil || // window function
@@ -584,7 +591,7 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 		return in, !checker.cacheable
 	case *ast.OrderByClause:
 		for _, item := range node.Items {
-			if _, isCol := item.Expr.(*ast.ColumnNameExpr); !isCol {
+			if _, isCol := item.Expr.(*ast.ColumnNameExpr); !isCol && !isVectorDistanceOrderByForPlanCache(item.Expr) {
 				checker.cacheable = false
 				checker.reason = "only support order by {columns}'"
 				return in, !checker.cacheable
@@ -705,6 +712,10 @@ func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNu
 		return false, "get a Shuffle plan"
 	case *PhysicalMemTable:
 		return false, "PhysicalMemTable plan is un-cacheable"
+	case *PhysicalSPFreshVectorScan:
+		if paramNum != 0 && x.Filter != nil {
+			return false, "SPFresh filter parameters require rebinding"
+		}
 	case *PhysicalIndexMergeReader:
 		if x.AccessMVIndex && !enablePlanCacheForGeneratedCols(sctx) {
 			return false, "the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"

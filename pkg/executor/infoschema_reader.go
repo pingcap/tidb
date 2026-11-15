@@ -244,6 +244,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromTiDBCheckConstraints(ctx, sctx)
 		case infoschema.TableKeywords:
 			err = e.setDataFromKeywords()
+		case infoschema.TableTiDBSPFreshIndexStatus:
+			err = e.setDataFromSPFreshIndexStatus(ctx, sctx)
 		case infoschema.TableTiDBIndexUsage:
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:

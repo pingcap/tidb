@@ -502,3 +502,29 @@ func (p *PhysicalCTE) AccessObject() base.AccessObject {
 	}
 	return OtherAccessObject(fmt.Sprintf("CTE:%s AS %s", p.cteName.L, p.cteAsName.L))
 }
+
+// AccessObject returns the table and index accessed by the SPFresh scan.
+func (p *PhysicalSPFreshVectorScan) AccessObject() base.AccessObject {
+	res := &ScanAccessObject{
+		Database: p.DBName.O,
+	}
+	tblName := p.Table.Name.O
+	if p.TableAsName != nil && p.TableAsName.O != "" {
+		tblName = p.TableAsName.O
+	}
+	res.Table = tblName
+	if p.Index != nil {
+		index := IndexAccess{
+			Name: p.Index.Name.O,
+		}
+		for _, idxCol := range p.Index.Columns {
+			if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
+				index.Cols = append(index.Cols, tblCol.GeneratedExprString)
+			} else {
+				index.Cols = append(index.Cols, idxCol.Name.O)
+			}
+		}
+		res.Indexes = []IndexAccess{index}
+	}
+	return res
+}

@@ -205,13 +205,18 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 			return ver, errors.Trace(err)
 		}
 	case model.StateDeleteOnly:
-		dbInfo.State = model.StateNone
 		var tables []*model.TableInfo
 		tables, err = metaMut.ListTables(jobCtx.stepCtx, job.SchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
+		for _, tblInfo := range tables {
+			if err := teardownSPFreshIndexesForTable(jobCtx.stepCtx, jobCtx.store, tblInfo); err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
+		dbInfo.State = model.StateNone
 		// Best-effort cleanup - log errors but continue with DROP DATABASE
 		if err := batchDeleteTableAffinityGroups(jobCtx, tables); err != nil {
 			logutil.DDLLogger().Warn("failed to delete affinity groups for batch tables, but operation will continue",
@@ -268,6 +273,12 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 	recoverSchemaInfo := args.RecoverInfo
 
 	schemaInfo := recoverSchemaInfo.DBInfo
+	if !recoverSchemaInfo.LoadTablesOnExecute {
+		if err = rejectRecoverSPFreshVectorIndexesFromRecoverInfos(recoverSchemaInfo.RecoverTableInfos); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
 	// check GC and safe point
 	gcEnable, err := checkGCEnable(w)
 	if err != nil {
@@ -327,6 +338,10 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 			}
 		}
 
+		if err = rejectRecoverSPFreshVectorIndexesFromRecoverInfos(recoverTbls); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 		dbInfo := schemaInfo.Clone()
 		dbInfo.State = model.StatePublic
 		err = jobCtx.metaMut.CreateDatabase(dbInfo)

@@ -1056,7 +1056,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 			return property.PropNotMatched
 		}
 
-		if model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L] != path.Index.VectorInfo.DistanceMetric {
+		if metric, ok := model.VectorIndexDistanceMetricByFnName(path.Index.VectorInfo.Kind, prop.VectorProp.DistanceFnName.L); !ok || metric != path.Index.VectorInfo.DistanceMetric {
 			return property.PropNotMatched
 		}
 		return property.PropMatched
@@ -1700,6 +1700,9 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			}
 			currentCandidate = getTableCandidate(ds, path, prop)
 		} else {
+			if skipSPFreshCandidate(path, prop) {
+				continue
+			}
 			var matchPartialOrderIndex bool
 			if ds.SCtx().GetSessionVars().IsPartialOrderedIndexForTopNEnabled() &&
 				prop.PartialOrderInfo != nil {
@@ -1711,7 +1714,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 					path.ForcePartialOrder = true
 				}
 			}
-			keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || matchPartialOrderIndex
+			keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || matchPartialOrderIndex || (prop.VectorProp.VectorHelper != nil && path.Index != nil && path.Index.VectorInfo != nil)
 			if !keepIndex {
 				continue
 			}
@@ -2238,6 +2241,9 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 
 // convertToIndexMergeScan builds the index merge scan for intersection or union cases.
 func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidate *candidatePath, _ *optimizetrace.PhysicalOptimizeOp) (task base.Task, err error) {
+	if prop.VectorProp.VectorHelper != nil {
+		return base.InvalidTask, nil
+	}
 	if prop.IsFlashProp() || prop.TaskTp == property.CopSingleReadTaskType {
 		return base.InvalidTask, nil
 	}
@@ -2693,6 +2699,12 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *logicalop.DataSource) (*ex
 // convertToIndexScan converts the DataSource to index scan with idx.
 func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty,
 	candidate *candidatePath, _ *optimizetrace.PhysicalOptimizeOp) (task base.Task, err error) {
+	if candidate.path.Index != nil && candidate.path.Index.IsSPFreshIndex() {
+		return convertToSPFreshVectorScan(ds, prop, candidate)
+	}
+	if prop.VectorProp.VectorHelper != nil {
+		return base.InvalidTask, nil
+	}
 	if candidate.path.Index.MVIndex {
 		// MVIndex is special since different index rows may return the same _row_id and this can break some assumptions of IndexReader.
 		// Currently only support using IndexMerge to access MVIndex instead of IndexReader.
@@ -3187,6 +3199,9 @@ func isPointGetPath(ds *logicalop.DataSource, path *util.AccessPath) bool {
 
 // convertToTableScan converts the DataSource to table scan.
 func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidate *candidatePath, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, error) {
+	if prop.VectorProp.VectorHelper != nil && !isMatchVectorProp(prop, candidate.path, candidate.matchPropResult.Matched()) {
+		return base.InvalidTask, nil
+	}
 	// It will be handled in convertToIndexScan.
 	if prop.TaskTp == property.CopMultiReadTaskType {
 		return base.InvalidTask, nil
@@ -3214,7 +3229,11 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	canMppConvertToRoot := prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed() && isTiFlashPath
 	canMppConvertToRootForDisaggregatedTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash && canMppConvertToRoot
 	canMppConvertToRootForWhenTiFlashCopIsBanned := ds.SCtx().GetSessionVars().IsTiFlashCopBanned() && canMppConvertToRoot
-	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
+	canUseMppTask := prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned
+	if prop.VectorProp.VectorHelper != nil && !canUseMppTask {
+		return base.InvalidTask, nil
+	}
+	if canUseMppTask {
 		if ts.KeepOrder {
 			return base.InvalidTask, nil
 		}
@@ -3237,7 +3256,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 				PushDownQueryInfo: &tipb.ANNQueryInfo{
 					QueryType:      tipb.ANNQueryType_OrderBy,
 					DistanceMetric: tipb.VectorDistanceMetric(distanceMetricPB),
-					TopK:           prop.VectorProp.TopK,
+					TopK:           uint32(prop.VectorProp.TopK),
 					ColumnName:     ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
 					ColumnId:       prop.VectorProp.Column.ID,
 					IndexId:        candidate.path.Index.ID,
@@ -3376,6 +3395,9 @@ func convertToSampleTable(ds *logicalop.DataSource, prop *property.PhysicalPrope
 }
 
 func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidate *candidatePath) base.Task {
+	if prop.VectorProp.VectorHelper != nil {
+		return base.InvalidTask
+	}
 	if !prop.IsSortItemEmpty() && !candidate.matchPropResult.Matched() {
 		return base.InvalidTask
 	}
@@ -3455,6 +3477,9 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 }
 
 func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidate *candidatePath) base.Task {
+	if prop.VectorProp.VectorHelper != nil {
+		return base.InvalidTask
+	}
 	// For batch point get, we don't try to satisfy the sort property with an extra merge sort,
 	// so only PropMatched is allowed.
 	if !prop.IsSortItemEmpty() && candidate.matchPropResult != property.PropMatched {
@@ -3626,7 +3651,7 @@ func getOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 	if (prop.ExpectedCnt + cost.ToleranceFactor) < ds.StatsInfo().RowCount {
 		rowCount = cardinality.AdjustRowCountForTableScanByLimit(ds.SCtx(),
 			ds.StatsInfo(), ds.TableStats, ds.StatisticTable,
-			path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
+			path, prop.ExpectedCnt, isMatchSortPropDesc(prop, isMatchProp))
 	}
 	// We need NDV of columns since it may be used in cost estimation of join. Precisely speaking,
 	// we should track NDV of each histogram bucket, and sum up the NDV of buckets we actually need
@@ -3638,7 +3663,7 @@ func getOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 	if usedStats != nil && usedStats.GetUsedInfo(ts.physicalTableID) != nil {
 		ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 	}
-	if isMatchProp && prop.VectorProp.VectorHelper == nil {
+	if isMatchSortProp(prop, isMatchProp) {
 		ts.Desc = prop.SortItems[0].Desc
 		ts.KeepOrder = true
 	}
@@ -3680,7 +3705,7 @@ func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 	if (isMatchProp || prop.IsSortItemEmpty()) && prop.ExpectedCnt < ds.StatsInfo().RowCount && !ignoreExpectedCnt {
 		rowCount = cardinality.AdjustRowCountForIndexScanByLimit(ds.SCtx(),
 			ds.StatsInfo(), ds.TableStats, ds.StatisticTable,
-			path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
+			path, prop.ExpectedCnt, isMatchSortPropDesc(prop, isMatchProp))
 	}
 	// ScaleByExpectCnt only allows to scale the row count smaller than the table total row count.
 	// But for MV index, it's possible that the IndexRangeScan row count is larger than the table total row count.
@@ -3779,4 +3804,16 @@ func validateTableSamplePlan(ds *logicalop.DataSource, t base.Task, err error) e
 		}
 	}
 	return nil
+}
+
+func isMatchSortProp(prop *property.PhysicalProperty, isMatchProp bool) bool {
+	return isMatchProp && prop.VectorProp.VectorHelper == nil && len(prop.SortItems) > 0
+}
+
+func isMatchSortPropDesc(prop *property.PhysicalProperty, isMatchProp bool) bool {
+	return isMatchSortProp(prop, isMatchProp) && prop.SortItems[0].Desc
+}
+
+func isMatchVectorProp(prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool) bool {
+	return prop.VectorProp.VectorHelper != nil && path.Index != nil && path.Index.VectorInfo != nil && isMatchProp
 }

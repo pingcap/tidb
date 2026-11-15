@@ -196,6 +196,83 @@ func checkSystemSchemaID(t meta.Reader, schemaID int64, flashbackTSString string
 	return nil
 }
 
+func checkFlashbackClusterSPFreshVectorIndexes(ctx context.Context, currentMeta meta.Reader, flashbackMeta meta.Reader, flashbackTSString string) error {
+	if currentMeta == nil || flashbackMeta == nil {
+		return nil
+	}
+	schemaID, tableID, err := findSPFreshVectorIndexTableInMeta(ctx, currentMeta)
+	if err != nil {
+		return err
+	}
+	if tableID > 0 {
+		return errors.Errorf("Detected SPFresh vector index in current schema %d table %d during [%s, now), can't do flashback",
+			schemaID, tableID, flashbackTSString)
+	}
+
+	schemaID, tableID, err = findSPFreshVectorIndexTableInMeta(ctx, flashbackMeta)
+	if err != nil {
+		return err
+	}
+	if tableID > 0 {
+		return errors.Errorf("Detected SPFresh vector index in flashback target schema %d table %d during [%s, now), can't do flashback",
+			schemaID, tableID, flashbackTSString)
+	}
+	return nil
+}
+
+var errStopSPFreshVectorIndexScan = errors.New("found spfresh vector index")
+
+func findSPFreshVectorIndexTableInMeta(ctx context.Context, metaReader meta.Reader) (int64, int64, error) {
+	if metaReader == nil {
+		return 0, 0, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	dbs, err := metaReader.ListDatabases()
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	for _, dbInfo := range dbs {
+		if err := ctx.Err(); err != nil {
+			return 0, 0, errors.Trace(err)
+		}
+		if dbInfo == nil {
+			continue
+		}
+		var tableID int64
+		err := metaReader.IterTables(dbInfo.ID, func(tblInfo *model.TableInfo) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if tableInfoHasSPFreshVectorIndex(tblInfo) {
+				tableID = tblInfo.ID
+				return errStopSPFreshVectorIndexScan
+			}
+			return nil
+		})
+		if errors.Cause(err) == errStopSPFreshVectorIndexScan {
+			return dbInfo.ID, tableID, nil
+		}
+		if err != nil {
+			return 0, 0, errors.Trace(err)
+		}
+	}
+	return 0, 0, nil
+}
+
+func tableInfoHasSPFreshVectorIndex(tblInfo *model.TableInfo) bool {
+	if tblInfo == nil {
+		return false
+	}
+	for _, idxInfo := range tblInfo.Indices {
+		if idxInfo != nil && idxInfo.IsSPFreshIndex() {
+			return true
+		}
+	}
+	return false
+}
+
 func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context, store kv.Storage, t *meta.Mutator, job *model.Job, flashbackTS uint64) (err error) {
 	if err = ValidateFlashbackTS(ctx, se, flashbackTS); err != nil {
 		return err
@@ -271,6 +348,10 @@ func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context,
 		if err != nil {
 			return errors.Trace(err)
 		}
+	}
+
+	if err = checkFlashbackClusterSPFreshVectorIndexes(ctx, t, flashbackSnapshotMeta, flashbackTSString); err != nil {
+		return errors.Trace(err)
 	}
 
 	jobs, err := GetAllDDLJobs(ctx, se)

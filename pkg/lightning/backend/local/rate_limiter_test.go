@@ -17,6 +17,7 @@ package local
 import (
 	"context"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,13 +26,13 @@ import (
 
 func TestConcurrencyLimit(t *testing.T) {
 	const interval = 100 * time.Millisecond
-	l := newIngestLimiter(context.Background(), 1000, 1000)
+	l := newIngestLimiter(1000, 1000)
 
-	err := l.Acquire(0, 1000)
+	err := l.Acquire(context.Background(), 0, 1000)
 	require.NoError(t, err)
 	acquired := make(chan struct{})
 	go func() {
-		require.NoError(t, l.Acquire(0, 1))
+		require.NoError(t, l.Acquire(context.Background(), 0, 1))
 		close(acquired)
 	}()
 
@@ -51,9 +52,9 @@ func TestConcurrencyLimit(t *testing.T) {
 	l.Release(0, 1000)
 
 	acquired = make(chan struct{})
-	l.Acquire(1, 1000)
+	l.Acquire(context.Background(), 1, 1000)
 	go func() {
-		require.NoError(t, l.Acquire(2, 1))
+		require.NoError(t, l.Acquire(context.Background(), 2, 1))
 		close(acquired)
 	}()
 	select {
@@ -66,27 +67,64 @@ func TestConcurrencyLimit(t *testing.T) {
 	l.Release(2, 1)
 }
 
+func TestConcurrentImportsShareIngestLimiterWithoutSharingContext(t *testing.T) {
+	backend := &Backend{}
+	first := backend.updateIngestLimiter(1, 0)
+	ctxA, cancelA := context.WithCancel(context.Background())
+	defer cancelA()
+	ctxB, cancelB := context.WithCancel(context.Background())
+	defer cancelB()
+	require.NoError(t, first.Acquire(ctxA, 7, 1))
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			require.Same(t, first, backend.updateIngestLimiter(1, 0))
+		}()
+	}
+	wg.Wait()
+	second := backend.ingestLimiter.Load()
+	result := make(chan error, 1)
+	go func() { result <- second.Acquire(ctxB, 7, 1) }()
+	cancelA()
+	// Canceling A cannot cancel B or reset A's occupied capacity.
+	select {
+	case err := <-result:
+		t.Fatalf("second import escaped shared capacity or inherited cancellation: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	first.Release(7, 1)
+	require.NoError(t, <-result)
+	second.Release(7, 1)
+	require.ErrorIs(t, second.Acquire(ctxA, 7, 1), context.Canceled)
+	require.NoError(t, first.Acquire(ctxB, 7, 1))
+	first.Release(7, 1)
+	// A changed setting still applies to subsequent imports.
+	require.NotSame(t, first, backend.updateIngestLimiter(2, 0))
+}
+
 func TestRateLimit(t *testing.T) {
-	l := newIngestLimiter(context.Background(), 10, 10)
+	l := newIngestLimiter(10, 10)
 
 	start := time.Now()
 	for i := 0; i < 10; i++ {
-		require.NoError(t, l.Acquire(0, 1))
+		require.NoError(t, l.Acquire(context.Background(), 0, 1))
 	}
 	burstDuration := time.Since(start)
 	require.Less(t, burstDuration, 50*time.Millisecond, "burst should be immediate")
 
 	l.Release(0, 10)
 	start = time.Now()
-	require.NoError(t, l.Acquire(0, 1))
+	require.NoError(t, l.Acquire(context.Background(), 0, 1))
 	elapsed := time.Since(start)
 	require.GreaterOrEqual(t, elapsed, 90*time.Millisecond, "should respect rate limit")
 	require.Less(t, elapsed, 150*time.Millisecond, "within tolerance")
 
-	require.NoError(t, l.Acquire(1, 10))
+	require.NoError(t, l.Acquire(context.Background(), 1, 10))
 	l.Release(1, 10)
 	start = time.Now()
-	require.NoError(t, l.Acquire(2, 10))
+	require.NoError(t, l.Acquire(context.Background(), 2, 10))
 	burstDuration = time.Since(start)
 	require.Less(t, burstDuration, 50*time.Millisecond, "acquire for different storeID should be immediate")
 	l.Release(2, 10)
@@ -94,13 +132,13 @@ func TestRateLimit(t *testing.T) {
 
 func TestContextCancelDuringConcurrencyWait(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	l := newIngestLimiter(ctx, 1, 100)
+	l := newIngestLimiter(1, 100)
 
-	require.NoError(t, l.Acquire(0, 1))
+	require.NoError(t, l.Acquire(ctx, 0, 1))
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- l.Acquire(0, 1)
+		errCh <- l.Acquire(ctx, 0, 1)
 	}()
 
 	cancel()
@@ -116,13 +154,13 @@ func TestContextCancelDuringConcurrencyWait(t *testing.T) {
 
 func TestContextCancelDuringRateWait(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	l := newIngestLimiter(ctx, 100, 1)
+	l := newIngestLimiter(100, 1)
 
-	require.NoError(t, l.Acquire(0, 1))
+	require.NoError(t, l.Acquire(ctx, 0, 1))
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- l.Acquire(0, 1)
+		errCh <- l.Acquire(ctx, 0, 1)
 	}()
 
 	cancel()
@@ -135,28 +173,27 @@ func TestContextCancelDuringRateWait(t *testing.T) {
 }
 
 func TestIngestLimiterBurst(t *testing.T) {
-	ctx := context.Background()
-	l := newIngestLimiter(ctx, 0, 0)
+	l := newIngestLimiter(0, 0)
 	require.Equal(t, math.MaxInt, l.Burst())
 	require.True(t, l.NoLimit())
 
-	l = newIngestLimiter(ctx, 0, 1000)
+	l = newIngestLimiter(0, 1000)
 	require.Equal(t, 1000, l.Burst())
 	require.False(t, l.NoLimit())
 
-	l = newIngestLimiter(ctx, 1000, 0)
+	l = newIngestLimiter(1000, 0)
 	require.Equal(t, 1000, l.Burst())
 	require.False(t, l.NoLimit())
 
-	l = newIngestLimiter(ctx, 1000, 1000)
+	l = newIngestLimiter(1000, 1000)
 	require.Equal(t, 1000, l.Burst())
 	require.False(t, l.NoLimit())
 
-	l = newIngestLimiter(ctx, 1000, 567)
+	l = newIngestLimiter(1000, 567)
 	require.Equal(t, 567, l.Burst())
 	require.False(t, l.NoLimit())
 
-	l = newIngestLimiter(ctx, 567, 1000)
+	l = newIngestLimiter(567, 1000)
 	require.Equal(t, 567, l.Burst())
 	require.False(t, l.NoLimit())
 }

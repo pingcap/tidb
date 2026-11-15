@@ -3211,7 +3211,7 @@ func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sess
 	// Encode StatementContext. We encode it here to avoid circle dependency.
 	sessionStates.LastAffectedRows = s.StmtCtx.PrevAffectedRows
 	sessionStates.LastInsertID = s.StmtCtx.PrevLastInsertID
-	sessionStates.Warnings = s.StmtCtx.GetWarnings()
+	sessionStates.Warnings, sessionStates.WarningCount = s.StmtCtx.CopyWarningsWithCount(nil)
 	return
 }
 
@@ -3250,7 +3250,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	// Decode StatementContext.
 	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
 	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
-	s.StmtCtx.SetWarnings(sessionStates.Warnings)
+	s.StmtCtx.SetWarningsWithCount(sessionStates.Warnings, sessionStates.WarningCount)
 	return
 }
 

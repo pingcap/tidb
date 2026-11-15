@@ -858,12 +858,14 @@ func (s *mockGCSSuite) checkTaskMetaRedacted(jobID int64) {
 }
 
 func (s *mockGCSSuite) TestImportMode() {
+	const beforeSortChunk = "github.com/pingcap/tidb/pkg/disttask/importinto/beforeSortChunk"
 	var intoImportTime, intoNormalTime time.Time
 	controller := gomock.NewController(s.T())
 	switcher := mocklocal.NewMockTiKVModeSwitcher(controller)
 	toImportModeFn := func(ctx context.Context, ranges ...*import_sstpb.Range) error {
 		log.L().Info("ToImportMode")
 		intoImportTime = time.Now()
+		s.NoError(failpoint.Disable(beforeSortChunk))
 		return nil
 	}
 	toNormalModeFn := func(ctx context.Context, ranges ...*import_sstpb.Range) error {
@@ -897,6 +899,8 @@ func (s *mockGCSSuite) TestImportMode() {
 		ch <- struct{}{}
 	})
 	sql := fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s'`, gcsEndpoint)
+	// Keep the import step running until the scheduler has switched TiKV mode.
+	testfailpoint.Enable(s.T(), beforeSortChunk, "pause")
 	rows := s.tk.MustQuery(sql).Rows()
 	s.Len(rows, 1)
 	jobID, err := strconv.Atoi(rows[0][0].(string))
@@ -913,6 +917,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforePostProcess", "return(true)")
 	s.tk.MustExec("truncate table load_data.import_mode;")
 	sql = fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?endpoint=%s'`, gcsEndpoint)
+	testfailpoint.Enable(s.T(), beforeSortChunk, "pause")
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
 	s.tk.MustExec("truncate table load_data.import_mode;")
@@ -944,7 +949,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	intoNormalTime, intoImportTime = time.Time{}, time.Time{}
 	switcher.EXPECT().ToImportMode(gomock.Any(), gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
 	switcher.EXPECT().ToNormalMode(gomock.Any(), gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/beforeSortChunk", "sleep(3000)")
+	testfailpoint.Enable(s.T(), beforeSortChunk, "pause")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenSortChunk", "return(true)")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
 
@@ -958,6 +963,7 @@ func (s *mockGCSSuite) TestImportMode() {
 }
 
 func (s *mockGCSSuite) TestRegisterTask() {
+	const beforeSortChunk = "github.com/pingcap/tidb/pkg/disttask/importinto/beforeSortChunk"
 	var registerTime, unregisterTime time.Time
 	var taskID atomic.String
 	controller := gomock.NewController(s.T())
@@ -965,6 +971,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	mockedRegister := func(ctx context.Context) error {
 		log.L().Info("register task", zap.String("task_id", taskID.Load()))
 		registerTime = time.Now()
+		s.NoError(failpoint.Disable(beforeSortChunk))
 		return nil
 	}
 	mockedClose := func(ctx context.Context) error {
@@ -995,6 +1002,8 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	// NOTE: this case only runs when current instance is TiDB owner, if you run it locally,
 	// better start a cluster without TiDB instance.
 	sql := fmt.Sprintf(`IMPORT INTO load_data.register_task FROM 'gs://test-load/register_task-*.tsv?endpoint=%s'`, gcsEndpoint)
+	// Keep the import step running until the scheduler has registered the task.
+	testfailpoint.Enable(s.T(), beforeSortChunk, "pause")
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.register_task;").Sort().Check(testkit.Rows("1 11 111"))
 	s.Greater(unregisterTime, registerTime)
@@ -1004,7 +1013,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	taskRegister.EXPECT().RegisterTaskOnce(gomock.Any()).DoAndReturn(mockedRegister).Times(1)
 	taskRegister.EXPECT().Close(gomock.Any()).DoAndReturn(mockedClose).Times(1)
 	s.tk.MustExec("truncate table load_data.register_task;")
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/beforeSortChunk", "sleep(3000)")
+	testfailpoint.Enable(s.T(), beforeSortChunk, "pause")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenSortChunk", "return(true)")
 	err := s.tk.QueryToErr(sql)
 	s.Error(err)

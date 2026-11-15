@@ -1061,10 +1061,11 @@ func (m *dupeDetector) collectDuplicateRowsFromTiKV(
 
 // DupeController is used to collect duplicate keys from local and remote data source and resolve duplication.
 type DupeController struct {
-	splitCli  split.SplitClient
-	tikvCli   *tikv.KVStore
-	tikvCodec tikv.Codec
-	errorMgr  *errormanager.ErrorManager
+	skipRemoteDupRows bool
+	splitCli          split.SplitClient
+	tikvCli           *tikv.KVStore
+	tikvCodec         tikv.Codec
+	errorMgr          *errormanager.ErrorManager
 	// number of workers to do duplicate detection on local db and TiKV
 	// on TiKV, it is the max number of regions being checked concurrently
 	dupeConcurrency     int
@@ -1104,6 +1105,9 @@ func (local *DupeController) CollectRemoteDuplicateRows(
 	opts *encode.SessionOptions,
 	algorithm config.DuplicateResolutionAlgorithm,
 ) (hasDupe bool, err error) {
+	if local.skipRemoteDupRows {
+		return false, nil
+	}
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect remote duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
@@ -1218,4 +1222,29 @@ func (local *DupeController) deleteDuplicateRows(
 
 	logger.Debug("number of KV pairs deleted", zap.String("category", "resolve-dupe"), zap.Int("count", txn.Len()))
 	return nil
+}
+
+// NewDupeController creates a controller for collecting and resolving duplicate rows.
+func NewDupeController(
+	dupeConcurrency int,
+	errorMgr *errormanager.ErrorManager,
+	splitCli split.SplitClient,
+	tikvCli *tikv.KVStore,
+	tikvCodec tikv.Codec,
+	duplicateDB *pebble.DB,
+	keyAdapter common.KeyAdapter,
+	importClientFactory ImportClientFactory,
+	needCollectRemoteDupRows bool,
+) *DupeController {
+	return &DupeController{
+		splitCli:            splitCli,
+		tikvCli:             tikvCli,
+		tikvCodec:           tikvCodec,
+		errorMgr:            errorMgr,
+		dupeConcurrency:     dupeConcurrency,
+		duplicateDB:         duplicateDB,
+		keyAdapter:          keyAdapter,
+		importClientFactory: importClientFactory,
+		skipRemoteDupRows:   !needCollectRemoteDupRows,
+	}
 }

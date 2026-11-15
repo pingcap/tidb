@@ -1311,3 +1311,19 @@ func getTableNetFactor(copTaskPlan base.PhysicalPlan) float64 {
 		return getTableNetFactor(x.Children()[0])
 	}
 }
+
+// GetPlanCostVer1 returns the SPFresh scan cost using cost model version 1.
+func (p *PhysicalSPFreshVectorScan) GetPlanCostVer1(_ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	costFlag := option.CostFlag
+	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCost, nil
+	}
+
+	sessVars := p.SCtx().GetSessionVars()
+	startupCost := sessVars.GetNetworkFactor(p.Table)
+	perRowCost := sessVars.GetNetworkFactor(p.Table) + sessVars.GetCPUFactor()
+
+	p.PlanCost = startupCost + float64(p.TopK)*perRowCost
+	p.PlanCostInit = true
+	return p.PlanCost, nil
+}

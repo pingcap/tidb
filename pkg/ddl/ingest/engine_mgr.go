@@ -20,10 +20,17 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/remote"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
+
+// RemoteTaskOwnerStore durably returns owner bindings for remote task IDs.
+type RemoteTaskOwnerStore interface {
+	RemoteTaskOwner(taskID string) (string, error)
+}
 
 // Register implements BackendCtx.
 func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Table) ([]Engine, error) {
@@ -54,11 +61,35 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 	}
 
 	mgr := backend.MakeEngineManager(bc.backend)
-	cfg := generateLocalEngineConfig(bc.GetImportTS())
-
 	openedEngines := make(map[int64]*engineInfo, numIdx)
+	registered := false
+	defer func() {
+		if registered {
+			return
+		}
+		for _, e := range openedEngines {
+			e.Close(true)
+		}
+	}()
+	tableID := tbl.Meta().ID
 
 	for i, indexID := range indexIDs {
+		cfg := generateLocalEngineConfig(bc.GetImportTS(), tableID, bc.jobID, indexID)
+		idxInfo := model.FindIndexInfoByID(tbl.Meta().Indices, indexID)
+		if idxInfo != nil && idxInfo.IsSPFreshIndex() {
+			if _, ok := bc.backend.(*remote.Backend); !ok {
+				return nil, errors.New("SPFresh index ingest requires remote backend")
+			}
+			cfg.TableInfo.Core = tbl.Meta()
+			if err := bc.assignSPFreshBuildRouting(cfg); err != nil {
+				return nil, err
+			}
+		}
+		if _, ok := bc.backend.(*remote.Backend); ok && (idxInfo == nil || !idxInfo.IsSPFreshIndex()) {
+			if err := bc.assignRemoteTaskOwner(cfg); err != nil {
+				return nil, err
+			}
+		}
 		openedEngine, err := mgr.OpenEngine(bc.ctx, cfg, tbl.Meta().Name.L, int32(indexID))
 		if err != nil {
 			logutil.Logger(bc.ctx).Warn(LitErrCreateEngineFail,
@@ -66,9 +97,6 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 				zap.Int64("index ID", indexID),
 				zap.Error(err))
 
-			for _, e := range openedEngines {
-				e.Close(true)
-			}
 			return nil, errors.Trace(err)
 		}
 
@@ -90,12 +118,63 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 		bc.engines[indexID] = ei
 	}
 	bc.tbl = tbl
+	registered = true
 
 	logutil.Logger(bc.ctx).Info(LitInfoOpenEngine, zap.Int64("job ID", bc.jobID),
 		zap.Int64s("index IDs", indexIDs),
 		zap.Int64("current memory usage", bc.memRoot.CurrentUsage()),
 		zap.Int64("memory limitation", bc.memRoot.MaxMemoryQuota()))
 	return ret, nil
+}
+
+func (bc *litBackendCtx) assignRemoteTaskOwner(cfg *backend.EngineConfig) error {
+	if bc.remoteTaskOwnerStore == nil {
+		return errors.New("remote backend requires durable remote task owner store")
+	}
+	taskID := backend.RemoteTaskID(bc.remoteTaskKeyspaceID, cfg)
+	owner, err := bc.remoteTaskOwnerStore.RemoteTaskOwner(taskID)
+	if err != nil {
+		return err
+	}
+	cfg.RemoteTaskOwner = owner
+	return nil
+}
+
+func (bc *litBackendCtx) assignSPFreshBuildRouting(cfg *backend.EngineConfig) error {
+	routePlan := bc.spfreshBuildRoutePlan
+	if routePlan == nil {
+		return errors.New("SPFresh build route plan is not set")
+	}
+	routing, err := backend.NewSPFreshBuildRoutingConfig(routePlan)
+	if err != nil {
+		return err
+	}
+	if routePlan.KeyspaceID != bc.remoteTaskKeyspaceID ||
+		routePlan.JobID != cfg.TaskID ||
+		routePlan.PhysicalTableID != cfg.TableInfo.ID ||
+		routePlan.IndexID != int64(cfg.EngineID) ||
+		routePlan.BaseSnapshotTS != bc.initTS {
+		return errors.Errorf("SPFresh build route plan %s does not match engine identity", routePlan.IndexBuildID())
+	}
+	cfg.SPFreshBuildRouting = routing
+	return nil
+}
+
+// FinishSPFreshBuild closes the routed engine and reports whether any build
+// chunk was accepted.
+func (bc *litBackendCtx) FinishSPFreshBuild() (bool, error) {
+	if bc.spfreshBuildRoutePlan == nil {
+		return false, errors.New("SPFresh build route plan is not set")
+	}
+	ei, ok := bc.engines[bc.spfreshBuildRoutePlan.IndexID]
+	if !ok || ei == nil || ei.cfg == nil || ei.cfg.SPFreshBuildRouting == nil {
+		return false, errors.New("SPFresh build routing is not set")
+	}
+	routing := ei.cfg.SPFreshBuildRouting
+	if err := bc.FinishAndUnregisterEngines(OptCloseEngines); err != nil {
+		return false, err
+	}
+	return routing.HasData(), nil
 }
 
 // UnregisterOpt controls the behavior of backend context unregistering.
@@ -118,10 +197,16 @@ func (bc *litBackendCtx) FinishAndUnregisterEngines(opt UnregisterOpt) error {
 	if len(bc.engines) == 0 {
 		return nil
 	}
+	var closeErr error
 	for _, ei := range bc.engines {
 		ei.Close(opt&OptCleanData != 0)
+		if closeErr == nil && ei.closeErr != nil {
+			closeErr = ei.closeErr
+		}
 	}
-
+	if closeErr != nil {
+		return errors.Trace(closeErr)
+	}
 	if opt&OptCheckDup != 0 {
 		for _, ei := range bc.engines {
 			if ei.unique {

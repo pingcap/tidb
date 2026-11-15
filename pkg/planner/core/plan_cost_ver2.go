@@ -1211,3 +1211,20 @@ func getTableInfo(p base.PhysicalPlan) *model.TableInfo {
 		return getTableInfo(x.Children()[0])
 	}
 }
+
+// GetPlanCostVer2 returns the SPFresh scan cost using cost model version 2.
+func (p *PhysicalSPFreshVectorScan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
+	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	startCost := costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexStart, defaultVer2Factors.ANNIndexStart.Value, func() string {
+		return fmt.Sprintf("spfresh-start(%v)", defaultVer2Factors.ANNIndexStart)
+	})
+	topKCost := costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexScanRow, float64(p.TopK)*defaultVer2Factors.ANNIndexScanRow.Value, func() string {
+		return fmt.Sprintf("spfresh-topk(%v*%v)", p.TopK, defaultVer2Factors.ANNIndexScanRow)
+	})
+	p.PlanCostVer2 = costusage.SumCostVer2(startCost, topKCost)
+	p.PlanCostInit = true
+	return p.PlanCostVer2, nil
+}

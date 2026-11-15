@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -75,6 +76,7 @@ type jsonSQLWarn struct {
 // building a logical plan from AST.
 type LogicalPlanBuildState struct {
 	warnings             []SQLWarn
+	warningCount         uint16
 	extraWarnings        []SQLWarn
 	tables               []TableEntry
 	tableStats           map[int64]any
@@ -560,6 +562,9 @@ type StatementContext struct {
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
 	IsExplainAnalyzeDML bool
+	// VectorSearch fields also apply to EXPLAIN ANALYZE.
+	VectorSearchIsANNQuery bool
+	VectorSearchTopK       uint64
 
 	// InHandleForeignKeyTrigger indicates currently are handling foreign key trigger.
 	InHandleForeignKeyTrigger bool
@@ -731,6 +736,7 @@ func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
 	planCacheUseCache, planCacheType, planCacheUnqualified, planCacheForce, planCacheAlwaysWarn := sc.PlanCacheTracker.Save()
 	return LogicalPlanBuildState{
 		warnings:             slices.Clone(sc.GetWarnings()),
+		warningCount:         sc.WarningTotal(),
 		extraWarnings:        slices.Clone(sc.GetExtraWarnings()),
 		tables:               slices.Clone(sc.Tables),
 		tableStats:           maps.Clone(sc.TableStats),
@@ -951,6 +957,8 @@ const (
 	StmtSafeTSCacheKey
 	// StmtExternalTSCacheKey is a variable for externalTS calculation/cache of one stmt.
 	StmtExternalTSCacheKey
+	// StmtSPFreshReadVersionCacheKey owns a fresh per-attempt ANN read timestamp.
+	StmtSPFreshReadVersionCacheKey
 )
 
 // GetOrStoreStmtCache gets the cached value of the given key if it exists, otherwise stores the value.
@@ -1325,6 +1333,11 @@ func (sc *StatementContext) CopyWarnings(dst []SQLWarn) []SQLWarn {
 	return sc.WarnHandler.CopyWarnings(dst)
 }
 
+// CopyWarningsWithCount copies warning details and their logical total atomically.
+func (sc *StatementContext) CopyWarningsWithCount(dst []SQLWarn) ([]SQLWarn, uint16) {
+	return sc.WarnHandler.CopyWarningsWithCount(dst)
+}
+
 // TruncateWarnings truncates warnings begin from start and returns the truncated warnings.
 func (sc *StatementContext) TruncateWarnings(start int) []SQLWarn {
 	return sc.WarnHandler.TruncateWarnings(start)
@@ -1335,10 +1348,14 @@ func (sc *StatementContext) WarningCount() uint16 {
 	if sc.InShowWarning {
 		return 0
 	}
+	total := int(sc.WarningTotal())
 	if sc.InDiagnostics {
-		return uint16(sc.WarnHandler.WarningCount() - sc.LastWarningNum)
+		if total <= sc.LastWarningNum {
+			return 0
+		}
+		return uint16(total - sc.LastWarningNum)
 	}
-	return uint16(sc.WarnHandler.WarningCount())
+	return uint16(total)
 }
 
 // NumErrorWarnings gets warning and error count.
@@ -1424,7 +1441,8 @@ func (sc *StatementContext) CopyMuForCallProcedure(srcCtx *StatementContext) {
 	srcCtx.mu.copied = sc.mu.copied
 	srcCtx.mu.touched = sc.mu.touched
 	srcCtx.mu.message = sc.mu.message
-	srcCtx.WarnHandler.SetWarnings(sc.GetWarnings())
+	warnings, warningCount := sc.CopyWarningsWithCount(nil)
+	srcCtx.SetWarningsWithCount(warnings, warningCount)
 	//
 	d := sc.SyncExecDetails.GetExecDetails()
 	srcCtx.SyncExecDetails.Reset()
@@ -1923,6 +1941,7 @@ type BackupStmtCtx struct {
 
 	Message       string
 	Warnings      []SQLWarn
+	WarningCount  uint16
 	ErrorCount    uint16
 	ExtraWarnings []SQLWarn
 }
@@ -1940,8 +1959,7 @@ func (sc *StatementContext) BackupForHandler() (b *BackupStmtCtx) {
 	b.Copied = sc.mu.copied
 	b.Touched = sc.mu.touched
 	b.Message = sc.mu.message
-	b.Warnings = make([]SQLWarn, len(sc.WarnHandler.GetWarnings()))
-	copy(b.Warnings, sc.WarnHandler.GetWarnings())
+	b.Warnings, b.WarningCount = sc.CopyWarningsWithCount(nil)
 	b.ErrorCount = 0
 	return
 }
@@ -1957,11 +1975,44 @@ func (sc *StatementContext) ResetExecutionCaches() func() {
 	sc.rangerCtxCache = nil
 	sc.buildPBCtxCache = nil
 	sc.executionCachesMu.Unlock()
-	return func() {
+	restore := func() {
 		sc.executionCachesMu.Lock()
 		defer sc.executionCachesMu.Unlock()
 		sc.distSQLCtxCache = distSQLCtxCache
 		sc.rangerCtxCache = rangerCtxCache
 		sc.buildPBCtxCache = buildPBCtxCache
 	}
+	if !config.SPFreshEnabled() {
+		return restore
+	}
+	// Nested routine statements must not consume the caller's ANN timestamp.
+	sc.stmtCache.mu.Lock()
+	spfreshReadVersion, hadSPFreshReadVersion := sc.stmtCache.data[StmtSPFreshReadVersionCacheKey]
+	delete(sc.stmtCache.data, StmtSPFreshReadVersionCacheKey)
+	sc.stmtCache.mu.Unlock()
+	return func() {
+		restore()
+		sc.stmtCache.mu.Lock()
+		defer sc.stmtCache.mu.Unlock()
+		if hadSPFreshReadVersion {
+			sc.stmtCache.data[StmtSPFreshReadVersionCacheKey] = spfreshReadVersion
+		} else {
+			delete(sc.stmtCache.data, StmtSPFreshReadVersionCacheKey)
+		}
+	}
+}
+
+// WarningTotal returns the warning count, including omitted details, capped at 65535.
+func (sc *StatementContext) WarningTotal() uint16 {
+	return uint16(min(int(^uint16(0)), sc.WarnHandler.WarningCount()))
+}
+
+// SetWarningsWithCount replaces warning details and their logical total count.
+func (sc *StatementContext) SetWarningsWithCount(warns []SQLWarn, total uint16) {
+	sc.WarnHandler.SetWarningsWithCount(warns, total)
+}
+
+// AddOmittedWarnings adds to the warning count without storing warning details.
+func (sc *StatementContext) AddOmittedWarnings(count uint64) {
+	sc.WarnHandler.AddOmittedWarnings(count)
 }

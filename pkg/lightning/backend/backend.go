@@ -84,14 +84,21 @@ type LocalWriterConfig struct {
 	TiDB struct {
 		TableName string
 	}
+	// SPFreshWriterSlot is the 1-based TiDB ingest writer slot used for
+	// SPFresh build routing.
+	SPFreshWriterSlot int
 }
 
 // EngineConfig defines configuration used for open engine
 type EngineConfig struct {
+	// EngineID is the ID of the engine
+	EngineID int32
 	// TableInfo is the corresponding tidb table info
 	TableInfo *checkpoints.TidbTableInfo
 	// local backend specified configuration
 	Local LocalEngineConfig
+	// TaskID is the ID of the current import job, it shounld not change when retrying
+	TaskID int64
 	// local backend external engine specified configuration
 	External *ExternalEngineConfig
 	// KeepSortDir indicates whether to keep the temporary sort directory
@@ -103,6 +110,25 @@ type EngineConfig struct {
 	// - engineManager.openEngine
 	// - engineManager.closeEngine only for an external engine
 	TS uint64
+	// EstimatedDataSize is the estimated data size for this engine
+	EstimatedDataSize int64
+	// ValidCheckpoint indicates whether the checkpoint is valid
+	ValidCheckpoint bool
+
+	// RemoteTaskOwner is the persisted concrete TiKV API service endpoint for
+	// owner-bound remote tasks such as /load_data and /spfresh/build.
+	RemoteTaskOwner string
+
+	// SPFreshBuildRouting carries read-index PUT routing state for SPFresh
+	// build engines. When set, the remote backend initializes and writes
+	// shard-local /spfresh/build tasks instead of writing to RemoteTaskID.
+	SPFreshBuildRouting *SPFreshBuildRoutingConfig
+}
+
+// RemoteTaskID returns the stable remote task identifier used by TiKV API
+// service owner binding and worker requests.
+func RemoteTaskID(keyspaceID uint32, cfg *EngineConfig) string {
+	return fmt.Sprintf("%d-%d-%d-%d", keyspaceID, cfg.TaskID, cfg.TableInfo.ID, cfg.EngineID)
 }
 
 // LocalEngineConfig is the configuration used for local backend in OpenEngine.

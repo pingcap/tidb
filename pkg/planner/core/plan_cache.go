@@ -365,8 +365,8 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context, cachedVal *P
 	if err := checkPreparedPriv(ctx, sctx, stmt, is); err != nil {
 		return nil, nil, false, err
 	}
-	if !RebuildPlan4CachedPlan(cachedVal.Plan) {
-		return nil, nil, false, nil
+	if rebuilt, err := RebuildPlan4CachedPlan(cachedVal.Plan); err != nil || !rebuilt {
+		return nil, nil, false, err
 	}
 	sessVars.FoundInPlanCache = true
 	if len(bindSQL) > 0 { // We're using binding, set this to true.
@@ -442,7 +442,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	if stmtCtx.UseCache() {
 		cached := newPlanCacheValue(p, names, input, &stmtCtx.StmtHints)
 		if stmt.ReplayWarningsOnHit {
-			cached.Warnings = stmtCtx.CopyWarnings(nil)
+			cached.Warnings = spfreshPlanCacheWarnings(stmtCtx.CopyWarnings(nil))
 			cached.ExtraWarnings = append([]stmtctx.SQLWarn(nil), stmtCtx.GetExtraWarnings()...)
 		}
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)

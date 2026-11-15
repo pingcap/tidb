@@ -611,7 +611,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []base.LogicalPlan) {
 			gathers = append(gathers, ds.buildTableGather())
 			continue
 		}
-		if path.IsIntHandlePath {
+		if path.IsIntHandlePath || (path.Index != nil && path.Index.IsSPFreshIndex()) {
 			continue
 		}
 		path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/tikvapi"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -60,9 +61,14 @@ type CheckpointManager struct {
 	// Live in memory.
 	mu          sync.Mutex
 	checkpoints map[int]*taskCheckpoint // task ID -> checkpoint
+	// remoteTaskOwners stores durable owner bindings keyed by remote task ID.
+	remoteTaskOwners map[string]string
+	ownerMu          sync.Mutex
 	// we require each task ID to be continuous and start from 0.
 	minTaskIDFinished int
 	dirty             bool
+	dirtyVersion      uint64
+	isRemoteSort      bool
 
 	// Persisted to the storage.
 	flushedKeyLowWatermark  kv.Key
@@ -74,18 +80,18 @@ type CheckpointManager struct {
 
 	// For persisting the checkpoint periodically.
 	updaterWg sync.WaitGroup
-	updaterCh chan chan struct{}
+	updaterCh chan chan error
 }
 
 // taskCheckpoint is the checkpoint for a single task.
 type taskCheckpoint struct {
+	chunksTotal    int
+	chunksFinished int
 	totalKeys      int
 	writtenKeys    int
 	checksum       int64
 	endKey         kv.Key
 	lastBatchRead  bool
-	chunksTotal    int
-	chunksFinished int
 }
 
 // NewCheckpointManager creates a new checkpoint manager.
@@ -114,7 +120,7 @@ func NewCheckpointManager(
 		instanceAddr:  instanceAddr,
 		physicalID:    physicalID,
 		updaterWg:     sync.WaitGroup{},
-		updaterCh:     make(chan chan struct{}),
+		updaterCh:     make(chan chan error),
 	}
 	err := cm.resumeOrInitCheckpoint()
 	if err != nil {
@@ -261,7 +267,7 @@ func (s *CheckpointManager) afterFlush() {
 		s.minTaskIDFinished++
 		s.flushedKeyLowWatermark = cp.endKey
 		s.flushedKeyCnt += cp.totalKeys
-		s.dirty = true
+		s.markDirtyLocked()
 	}
 }
 
@@ -292,7 +298,7 @@ func (s *CheckpointManager) afterImport() error {
 	if s.ts < newTS {
 		s.ts = newTS
 	}
-	s.dirty = true
+	s.markDirtyLocked()
 	return nil
 }
 
@@ -321,6 +327,56 @@ func (s *CheckpointManager) GetTS() uint64 {
 	return s.ts
 }
 
+// RemoteTaskOwner returns the durable owner endpoint for taskID.
+//
+// If an owner is already persisted in the checkpoint, it is returned even if it
+// is no longer present in the current configuration. Otherwise this method
+// selects an owner from the current TiKV API service endpoint config and writes
+// the binding synchronously before returning it.
+func (s *CheckpointManager) RemoteTaskOwner(taskID string) (string, error) {
+	s.ownerMu.Lock()
+	defer s.ownerMu.Unlock()
+
+	s.mu.Lock()
+	owner := s.remoteTaskOwners[taskID]
+	s.mu.Unlock()
+	if owner != "" {
+		return owner, nil
+	}
+
+	endpoints, err := tikvapi.NormalizeEndpoints(config.GetGlobalConfig().TiKVAPIServiceAddrs, true)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	owner, err = tikvapi.SelectRendezvousEndpoint(taskID, endpoints)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+
+	s.mu.Lock()
+	if persisted := s.remoteTaskOwners[taskID]; persisted != "" {
+		s.mu.Unlock()
+		return persisted, nil
+	}
+	if s.remoteTaskOwners == nil {
+		s.remoteTaskOwners = make(map[string]string)
+	}
+	s.remoteTaskOwners[taskID] = owner
+	s.markDirtyLocked()
+	s.mu.Unlock()
+
+	if err := s.updateCheckpoint(); err != nil {
+		s.mu.Lock()
+		if s.remoteTaskOwners[taskID] == owner {
+			delete(s.remoteTaskOwners, taskID)
+			s.markDirtyLocked()
+		}
+		s.mu.Unlock()
+		return "", errors.Trace(err)
+	}
+	return owner, nil
+}
+
 // JobReorgMeta is the metadata for a reorg job.
 type JobReorgMeta struct {
 	Checkpoint *ReorgCheckpoint `json:"reorg_checkpoint"`
@@ -333,6 +389,8 @@ type ReorgCheckpoint struct {
 	GlobalSyncKey  kv.Key `json:"global_sync_key"`
 	GlobalKeyCount int    `json:"global_key_count"`
 	InstanceAddr   string `json:"instance_addr"`
+
+	RemoteTaskOwners map[string]string `json:"remote_task_owners,omitempty"`
 
 	PhysicalID int64 `json:"physical_id"`
 	// TS of next engine ingest.
@@ -382,9 +440,10 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 			s.importedKeyLowWatermark = cp.GlobalSyncKey
 			s.importedKeyCnt = cp.GlobalKeyCount
 			s.ts = cp.TS
+			s.remoteTaskOwners = cloneRemoteTaskOwners(cp.RemoteTaskOwners)
 			folderNotEmpty := util.FolderNotEmpty(s.localStoreDir)
-			if folderNotEmpty &&
-				(s.instanceAddr == cp.InstanceAddr || cp.InstanceAddr == "" /* initial state */) {
+			if s.isRemoteSort || (folderNotEmpty &&
+				(s.instanceAddr == cp.InstanceAddr || cp.InstanceAddr == "" /* initial state */)) {
 				s.localDataIsValid = true
 				s.flushedKeyLowWatermark = cp.LocalSyncKey
 				s.flushedKeyCnt = cp.LocalKeyCount
@@ -429,6 +488,8 @@ func (s *CheckpointManager) updateCheckpointImpl() error {
 	importedKeyCnt := s.importedKeyCnt
 	physicalID := s.physicalID
 	ts := s.ts
+	remoteTaskOwners := cloneRemoteTaskOwners(s.remoteTaskOwners)
+	dirtyVersion := s.dirtyVersion
 	s.mu.Unlock()
 
 	sessCtx, err := s.sessPool.Get()
@@ -440,14 +501,15 @@ func (s *CheckpointManager) updateCheckpointImpl() error {
 	err = ddlSess.RunInTxn(func(se *sess.Session) error {
 		template := "update mysql.tidb_ddl_reorg set reorg_meta = %s where job_id = %d and ele_type = %s;"
 		cp := &ReorgCheckpoint{
-			LocalSyncKey:   flushedKeyLowWatermark,
-			GlobalSyncKey:  importedKeyLowWatermark,
-			LocalKeyCount:  flushedKeyCnt,
-			GlobalKeyCount: importedKeyCnt,
-			InstanceAddr:   s.instanceAddr,
-			PhysicalID:     physicalID,
-			TS:             ts,
-			Version:        JobCheckpointVersionCurrent,
+			LocalSyncKey:     flushedKeyLowWatermark,
+			GlobalSyncKey:    importedKeyLowWatermark,
+			LocalKeyCount:    flushedKeyCnt,
+			GlobalKeyCount:   importedKeyCnt,
+			InstanceAddr:     s.instanceAddr,
+			RemoteTaskOwners: remoteTaskOwners,
+			PhysicalID:       physicalID,
+			TS:               ts,
+			Version:          JobCheckpointVersionCurrent,
 		}
 		rawReorgMeta, err := json.Marshal(JobReorgMeta{Checkpoint: cp})
 		if err != nil {
@@ -460,7 +522,9 @@ func (s *CheckpointManager) updateCheckpointImpl() error {
 			return errors.Trace(err)
 		}
 		s.mu.Lock()
-		s.dirty = false
+		if s.dirtyVersion == dirtyVersion {
+			s.dirty = false
+		}
 		s.mu.Unlock()
 		return nil
 	})
@@ -479,6 +543,22 @@ func (s *CheckpointManager) updateCheckpointImpl() error {
 	return err
 }
 
+func cloneRemoteTaskOwners(owners map[string]string) map[string]string {
+	if len(owners) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(owners))
+	for taskID, owner := range owners {
+		cloned[taskID] = owner
+	}
+	return cloned
+}
+
+func (s *CheckpointManager) markDirtyLocked() {
+	s.dirty = true
+	s.dirtyVersion++
+}
+
 func (s *CheckpointManager) updateCheckpointLoop() {
 	failpoint.Inject("checkpointLoopExit", func() {
 		// used in a manual test
@@ -493,6 +573,7 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 			if err != nil {
 				s.logger.Error("update checkpoint failed", zap.Error(err))
 			}
+			finishCh <- err
 			close(finishCh)
 		case <-ticker.C:
 			s.mu.Lock()
@@ -516,7 +597,7 @@ func (s *CheckpointManager) updateCheckpoint() error {
 		// used in a manual test
 		failpoint.Return(errors.New("failpoint triggered so can't update checkpoint"))
 	})
-	finishCh := make(chan struct{})
+	finishCh := make(chan error, 1)
 	select {
 	case s.updaterCh <- finishCh:
 	case <-s.ctx.Done():
@@ -524,9 +605,9 @@ func (s *CheckpointManager) updateCheckpoint() error {
 	}
 	// wait updateCheckpointLoop to finish checkpoint update.
 	select {
-	case <-finishCh:
+	case err := <-finishCh:
+		return err
 	case <-s.ctx.Done():
 		return s.ctx.Err()
 	}
-	return nil
 }

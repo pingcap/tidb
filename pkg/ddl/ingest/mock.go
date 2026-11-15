@@ -16,11 +16,13 @@ package ingest
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -48,10 +50,12 @@ func NewMockBackendCtx(job *model.Job, sessCtx sessionctx.Context, cpMgr *Checkp
 
 // MockBackendCtx is a mock backend context.
 type MockBackendCtx struct {
-	sessCtx       sessionctx.Context
-	mu            sync.Mutex
-	jobID         int64
-	checkpointMgr *CheckpointManager
+	sessCtx        sessionctx.Context
+	mu             sync.Mutex
+	jobID          int64
+	checkpointMgr  *CheckpointManager
+	flushCalls     int
+	spfreshHasData atomic.Bool
 }
 
 // Register implements BackendCtx.Register interface.
@@ -59,7 +63,7 @@ func (m *MockBackendCtx) Register(indexIDs []int64, _ []bool, _ table.Table) ([]
 	logutil.DDLIngestLogger().Info("mock backend ctx register", zap.Int64("jobID", m.jobID), zap.Int64s("indexIDs", indexIDs))
 	ret := make([]Engine, 0, len(indexIDs))
 	for range indexIDs {
-		ret = append(ret, &MockEngineInfo{sessCtx: m.sessCtx, mu: &m.mu})
+		ret = append(ret, &MockEngineInfo{sessCtx: m.sessCtx, mu: &m.mu, spfreshHasData: &m.spfreshHasData})
 	}
 	err := sessiontxn.NewTxn(context.Background(), m.sessCtx)
 	if err != nil {
@@ -74,6 +78,18 @@ func (m *MockBackendCtx) FinishAndUnregisterEngines(_ UnregisterOpt) error {
 	m.sessCtx.StmtCommit(context.Background())
 	err := m.sessCtx.CommitTxn(context.Background())
 	logutil.DDLIngestLogger().Info("mock backend ctx unregister", zap.Error(err))
+	return nil
+}
+
+// FinishAndImport implements BackendCtx interface.
+func (*MockBackendCtx) FinishAndImport(_ UnregisterOpt) error {
+	logutil.DDLIngestLogger().Info("mock backend ctx import")
+	return nil
+}
+
+// Cleanup implements BackendCtx interface.
+func (*MockBackendCtx) Cleanup() error {
+	logutil.DDLIngestLogger().Info("mock backend ctx cleanup")
 	return nil
 }
 
@@ -97,6 +113,12 @@ func (m *MockBackendCtx) Ingest(_ context.Context) error {
 		return m.checkpointMgr.AdvanceWatermark(true)
 	}
 	return nil
+}
+
+// Flush implements BackendCtx.Flush interface.
+func (m *MockBackendCtx) Flush(_ context.Context) (bool, bool, error) {
+	m.flushCalls++
+	return true, true, nil
 }
 
 // NextStartKey implements CheckpointOperator interface.
@@ -178,7 +200,8 @@ type MockEngineInfo struct {
 	sessCtx sessionctx.Context
 	mu      *sync.Mutex
 
-	onWrite MockWriteHook
+	onWrite        MockWriteHook
+	spfreshHasData *atomic.Bool
 }
 
 // NewMockEngineInfo creates a new mock engine info.
@@ -206,14 +229,15 @@ func (m *MockEngineInfo) SetHook(onWrite func(key, val []byte)) {
 // CreateWriter implements Engine.CreateWriter interface.
 func (m *MockEngineInfo) CreateWriter(id int, _ *backend.LocalWriterConfig) (Writer, error) {
 	logutil.DDLIngestLogger().Info("mock engine info create writer", zap.Int("id", id))
-	return &MockWriter{sessCtx: m.sessCtx, mu: m.mu, onWrite: m.onWrite}, nil
+	return &MockWriter{sessCtx: m.sessCtx, mu: m.mu, onWrite: m.onWrite, spfreshHasData: m.spfreshHasData}, nil
 }
 
 // MockWriter is a mock writer.
 type MockWriter struct {
-	sessCtx sessionctx.Context
-	mu      *sync.Mutex
-	onWrite MockWriteHook
+	sessCtx        sessionctx.Context
+	mu             *sync.Mutex
+	onWrite        MockWriteHook
+	spfreshHasData *atomic.Bool
 }
 
 // WriteRow implements Writer.WriteRow interface.
@@ -244,6 +268,18 @@ func (m *MockWriter) WriteRow(_ context.Context, key, idxVal []byte, _ kv.Handle
 	return nil
 }
 
+// WriteSPFreshBuildRecord implements Writer.WriteSPFreshBuildRecord.
+func (m *MockWriter) WriteSPFreshBuildRecord(ctx context.Context, encodedHandle, vectorPayload, storedPayload []byte) error {
+	payload := append(append([]byte(nil), vectorPayload...), 0, 0, 0, 0)
+	binary.LittleEndian.PutUint32(payload[len(vectorPayload):], uint32(len(storedPayload)))
+	payload = append(payload, storedPayload...)
+	err := m.WriteRow(ctx, encodedHandle, payload, nil)
+	if err == nil && m.spfreshHasData != nil {
+		m.spfreshHasData.Store(true)
+	}
+	return err
+}
+
 // LockForWrite implements Writer.LockForWrite interface.
 func (*MockWriter) LockForWrite() func() {
 	return func() {}
@@ -251,3 +287,8 @@ func (*MockWriter) LockForWrite() func() {
 
 // MockExecAfterWriteRow is only used for test.
 var MockExecAfterWriteRow func()
+
+// FinishSPFreshBuild commits mock writes and reports accepted vector records.
+func (m *MockBackendCtx) FinishSPFreshBuild() (bool, error) {
+	return m.spfreshHasData.Load(), m.FinishAndUnregisterEngines(OptCloseEngines)
+}

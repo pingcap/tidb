@@ -17,12 +17,16 @@ package ingest
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/errors"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	lightning "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -51,6 +55,9 @@ type engineInfo struct {
 	indexID      int64
 	unique       bool
 	openedEngine *backend.OpenedEngine
+	closedEngine *backend.ClosedEngine
+	// closeErr records the first error encountered in Close() which should block Import().
+	closeErr error
 
 	uuid        uuid.UUID
 	cfg         *backend.EngineConfig
@@ -108,6 +115,7 @@ func (ei *engineInfo) Close(cleanup bool) {
 	if err != nil {
 		logutil.Logger(ei.ctx).Error(LitErrCloseWriterErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		ei.setCloseErr(err)
 	}
 
 	indexEngine := ei.openedEngine
@@ -115,6 +123,7 @@ func (ei *engineInfo) Close(cleanup bool) {
 	if err != nil {
 		logutil.Logger(ei.ctx).Error(LitErrCloseEngineErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		ei.setCloseErr(err)
 		return
 	}
 	ei.openedEngine = nil
@@ -125,14 +134,55 @@ func (ei *engineInfo) Close(cleanup bool) {
 			logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err),
 				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		}
+		closedEngine = nil
 	}
+	ei.closedEngine = closedEngine
+}
+
+func (ei *engineInfo) Import() error {
+	if ei.closeErr != nil {
+		return ei.closeErr
+	}
+	if ei.closedEngine == nil {
+		return nil
+	}
+	regionSplitSize := int64(lightning.SplitRegionSize) * int64(lightning.MaxSplitRegionSizeRatio)
+	regionSplitKeys := int64(lightning.SplitRegionKeys)
+	if err := ei.closedEngine.Import(ei.ctx, regionSplitSize, regionSplitKeys); err != nil {
+		logutil.Logger(ei.ctx).Error(LitErrCloseEngineErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		return err
+	}
+	return nil
+}
+
+func (ei *engineInfo) Cleanup() {
+	if ei.closedEngine == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := ei.closedEngine.Cleanup(ctx)
+	if err != nil {
+		logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+	}
+	ei.closedEngine = nil
+}
+
+func (ei *engineInfo) setCloseErr(err error) {
+	if err == nil || ei.closeErr != nil {
+		return
+	}
+	ei.closeErr = err
 }
 
 // writerContext is used to keep a lightning local writer for each backfill worker.
 type writerContext struct {
-	ctx    context.Context
-	lWrite backend.EngineWriter
-	fLock  *sync.RWMutex
+	ctx            context.Context
+	lWrite         backend.EngineWriter
+	spfreshLWriter backend.SPFreshBuildRecordWriter
+	fLock          *sync.RWMutex
 }
 
 // CreateWriter creates a new writerContext.
@@ -171,7 +221,9 @@ func (ei *engineInfo) newWriterContext(workerID int, writerCfg *backend.LocalWri
 			return nil, genWriterAllocMemFailedErr(ei.ctx, ei.memRoot, ei.jobID, ei.indexID)
 		}
 		var err error
-		lWrite, err = ei.openedEngine.LocalWriter(ei.ctx, writerCfg)
+		localWriterCfg := *writerCfg
+		localWriterCfg.SPFreshWriterSlot = workerID
+		lWrite, err = ei.openedEngine.LocalWriter(ei.ctx, &localWriterCfg)
 		if err != nil {
 			return nil, err
 		}
@@ -182,6 +234,13 @@ func (ei *engineInfo) newWriterContext(workerID int, writerCfg *backend.LocalWri
 		ctx:    ei.ctx,
 		lWrite: lWrite,
 		fLock:  ei.flushLock,
+	}
+	wc.spfreshLWriter, _ = lWrite.(backend.SPFreshBuildRecordWriter)
+	if tableInfo := ei.cfg.TableInfo; tableInfo != nil && tableInfo.Core != nil {
+		idxInfo := model.FindIndexInfoByID(tableInfo.Core.Indices, ei.indexID)
+		if idxInfo != nil && idxInfo.IsSPFreshIndex() && wc.spfreshLWriter == nil {
+			return nil, errors.Errorf("backend writer %T does not support SPFresh build records", lWrite)
+		}
 	}
 	return wc, nil
 }

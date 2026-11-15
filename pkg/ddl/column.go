@@ -301,6 +301,9 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName pmodel.CIStr, policy dr
 	if err != nil {
 		return err
 	}
+	if col := model.FindColumnInfo(tblInfo.Columns, colName.L); col != nil && spfreshIndexDependsOnColumn(tblInfo, col) {
+		return dbterror.ErrCantDropColWithIndex.GenWithStack("can't drop column with SPFresh index covered now")
+	}
 	err = IsColumnDroppableWithCheckConstraint(colName, tblInfo)
 	if err != nil {
 		return err
@@ -1204,7 +1207,9 @@ func isColumnCanDropWithIndex(colName string, tblInfo *model.TableInfo, policy d
 			}
 			if indexInfo.Primary || len(indexInfo.Columns) > 1 || indexInfo.VectorInfo != nil {
 				errMsg := "with composite index covered or Primary Key covered now"
-				if indexInfo.VectorInfo != nil {
+				if indexInfo.IsSPFreshIndex() {
+					errMsg = "with SPFresh index covered now"
+				} else if indexInfo.VectorInfo != nil {
 					errMsg = "with Vector Key covered now"
 				}
 				return dbterror.ErrCantDropColWithIndex.GenWithStack("can't drop column %s "+errMsg, colName)

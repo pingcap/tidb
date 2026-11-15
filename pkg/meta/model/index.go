@@ -16,6 +16,7 @@ package model
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -87,8 +88,19 @@ func GenUniqueChangingIndexName(tblInfo *TableInfo, idxInfo *IndexInfo) string {
 	return newIndexName
 }
 
-// IndexableFnNameToDistanceMetric maps a distance function name to the distance metric.
-// Only indexable distance functions should be listed here!
+// VectorIndexKind is the kind of vector index.
+type VectorIndexKind string
+
+const (
+	// VectorIndexKindHNSW is HNSW index.
+	VectorIndexKindHNSW VectorIndexKind = "HNSW"
+	// VectorIndexKindSPFresh is SPFresh index.
+	VectorIndexKindSPFresh VectorIndexKind = "SPFresh"
+)
+
+// IndexableFnNameToDistanceMetric maps an indexable distance function name to
+// the persisted distance metric. Use VectorIndexDistanceMetricByFnName when
+// the target vector index kind is known.
 var IndexableFnNameToDistanceMetric = map[string]DistanceMetric{
 	ast.VecCosineDistance: DistanceMetricCosine,
 	ast.VecL2Distance:     DistanceMetricL2,
@@ -96,16 +108,37 @@ var IndexableFnNameToDistanceMetric = map[string]DistanceMetric{
 
 // IndexableDistanceMetricToFnName maps a distance metric to the distance function name.
 var IndexableDistanceMetricToFnName = map[DistanceMetric]string{
-	DistanceMetricCosine: ast.VecCosineDistance,
-	DistanceMetricL2:     ast.VecL2Distance,
+	DistanceMetricCosine:       ast.VecCosineDistance,
+	DistanceMetricL2:           ast.VecL2Distance,
+	DistanceMetricInnerProduct: ast.VecNegativeInnerProduct,
+}
+
+// VectorIndexDistanceMetricByFnName returns the vector distance metric for a
+// distance function under the target vector index kind.
+func VectorIndexDistanceMetricByFnName(kind VectorIndexKind, fnName string) (DistanceMetric, bool) {
+	if kind == VectorIndexKindSPFresh && fnName == ast.VecNegativeInnerProduct {
+		return DistanceMetricInnerProduct, true
+	}
+	metric, ok := IndexableFnNameToDistanceMetric[fnName]
+	return metric, ok
 }
 
 // VectorIndexInfo is the information of vector index of a column.
 type VectorIndexInfo struct {
+	// Kind is the kind of vector index.
+	Kind VectorIndexKind `json:"kind"`
 	// Dimension is the dimension of the vector.
 	Dimension uint64 `json:"dimension"`
 	// DistanceMetric is the distance metric used by the index.
 	DistanceMetric DistanceMetric `json:"distance_metric"`
+	// IndexOptions is the create-time SPFresh index configuration.
+	IndexOptions *SPFreshVectorIndexOptions `json:"index_options,omitempty"`
+	// SearchConfig is the search-time configuration for SPFresh vector indexes.
+	SearchConfig *SPFreshVectorSearchConfig `json:"search_config,omitempty"`
+	// RuntimeConfig is the complete online-mutable configuration for SPFresh vector indexes.
+	RuntimeConfig *SPFreshVectorRuntimeConfig `json:"runtime_config,omitempty"`
+	// StoredColumnIDs defines the ordered scalar columns persisted in SPFresh leaf values.
+	StoredColumnIDs []int64 `json:"stored_column_ids,omitempty"`
 }
 
 // IndexInfo provides meta data describing a DB index.
@@ -155,6 +188,18 @@ func (index *IndexInfo) Clone() *IndexInfo {
 		ni.AffectColumn = make([]*IndexColumn, len(index.AffectColumn))
 		for i := range index.AffectColumn {
 			ni.AffectColumn[i] = index.AffectColumn[i].Clone()
+		}
+	}
+	if index.VectorInfo != nil {
+		storedColumnIDs := slices.Clone(index.VectorInfo.StoredColumnIDs)
+		ni.VectorInfo = &VectorIndexInfo{
+			Kind:            index.VectorInfo.Kind,
+			Dimension:       index.VectorInfo.Dimension,
+			DistanceMetric:  index.VectorInfo.DistanceMetric,
+			IndexOptions:    index.VectorInfo.IndexOptions.Clone(),
+			SearchConfig:    index.VectorInfo.SearchConfig.Clone(),
+			RuntimeConfig:   index.VectorInfo.RuntimeConfig.Clone(),
+			StoredColumnIDs: storedColumnIDs,
 		}
 	}
 	return &ni
@@ -220,7 +265,7 @@ func (index *IndexInfo) IsPublic() bool {
 // IsTiFlashLocalIndex checks whether the index is a TiFlash local index.
 // For a TiFlash local index, no actual index data need to be written to KV layer.
 func (index *IndexInfo) IsTiFlashLocalIndex() bool {
-	return index.VectorInfo != nil
+	return index.VectorInfo != nil && !index.IsSPFreshIndex()
 }
 
 // HasCondition checks whether the index has a partial index condition.
@@ -446,4 +491,25 @@ func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldT
 		return col.ChangingFieldType
 	}
 	return &col.FieldType
+}
+
+// VectorIndexColumnID returns the base column ID for a vector index.
+func VectorIndexColumnID(tblInfo *TableInfo, idxInfo *IndexInfo) (int64, error) {
+	if tblInfo == nil {
+		return 0, fmt.Errorf("table info is not set")
+	}
+	if idxInfo == nil {
+		return 0, fmt.Errorf("index info is not set")
+	}
+	if idxInfo.VectorInfo == nil {
+		return 0, fmt.Errorf("index %d is not a vector index", idxInfo.ID)
+	}
+	if len(idxInfo.Columns) != 1 {
+		return 0, fmt.Errorf("vector index should have exactly 1 column, got %d", len(idxInfo.Columns))
+	}
+	colOffset := idxInfo.Columns[0].Offset
+	if colOffset < 0 || colOffset >= len(tblInfo.Columns) {
+		return 0, fmt.Errorf("vector index column offset out of range: %d", colOffset)
+	}
+	return tblInfo.Columns[colOffset].ID, nil
 }

@@ -285,7 +285,7 @@ type PhysicalProperty struct {
 
 	VectorProp struct {
 		*expression.VectorHelper
-		TopK uint32
+		TopK uint64
 	}
 
 	// PartialOrderInfo is used for TopN's partial order optimization.
@@ -490,12 +490,12 @@ func (p *PhysicalProperty) HashCode() []byte {
 		for _, col := range p.MPPPartitionCols {
 			p.hashcode = append(p.hashcode, col.hashCode()...)
 		}
-		if p.VectorProp.VectorHelper != nil {
-			// We only accpect the vector information from the TopN which is directly above the DataSource.
-			// So it's safe to not hash the vector constant.
-			p.hashcode = append(p.hashcode, p.VectorProp.Column.HashCode()...)
-			p.hashcode = codec.EncodeInt(p.hashcode, int64(p.VectorProp.FnPbCode))
-		}
+
+	}
+	if p.VectorProp.VectorHelper != nil {
+		p.hashcode = append(p.hashcode, p.VectorProp.Column.HashCode()...)
+		p.hashcode = codec.EncodeInt(p.hashcode, int64(p.VectorProp.FnPbCode))
+		p.hashcode = codec.EncodeUint(p.hashcode, p.VectorProp.TopK)
 	}
 	p.hashcode = append(p.hashcode, codec.EncodeInt(nil, int64(p.CTEProducerStatus))...)
 	if p.PartialOrderInfo != nil {
@@ -543,6 +543,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		PartialOrderInfo:      p.PartialOrderInfo,
 		AdvisorySortItems:     p.AdvisorySortItems,
 	}
+	prop.VectorProp = p.VectorProp
 	return prop
 }
 

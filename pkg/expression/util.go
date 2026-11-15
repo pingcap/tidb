@@ -2227,3 +2227,22 @@ func binaryDurationWithMS(pos int, paramValues []byte,
 	pos += 4
 	return pos, fmt.Sprintf("%s.%06d", dur, microSecond)
 }
+
+// HasColumnWithCondition reports whether e contains a column satisfying cond.
+func HasColumnWithCondition(e Expression, cond func(*Column) bool) bool {
+	return hasColumnWithCondition(e, cond)
+}
+
+func hasColumnWithCondition(e Expression, cond func(*Column) bool) bool {
+	switch v := e.(type) {
+	case *Column:
+		return cond(v)
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			if hasColumnWithCondition(arg, cond) {
+				return true
+			}
+		}
+	}
+	return false
+}

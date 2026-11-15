@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -54,8 +56,9 @@ type readIndexStepExecutor struct {
 	ptbl    table.PhysicalTable
 	jc      *ReorgContext
 
-	avgRowSize      int
-	cloudStorageURI string
+	avgRowSize       int
+	cloudStorageURI  string
+	spfreshRoutePlan *backend.SPFreshBuildRoutePlan
 
 	curRowCount *atomic.Int64
 
@@ -79,16 +82,23 @@ func newReadIndexExecutor(
 	jc *ReorgContext,
 	cloudStorageURI string,
 	avgRowSize int,
+	spfreshRoutePlan *backend.SPFreshBuildRoutePlan,
 ) (*readIndexStepExecutor, error) {
+	if spfreshRoutePlan != nil {
+		if _, err := singleSPFreshReadIndex(indexes); err != nil {
+			return nil, err
+		}
+	}
 	return &readIndexStepExecutor{
-		d:               d,
-		job:             job,
-		indexes:         indexes,
-		ptbl:            ptbl,
-		jc:              jc,
-		cloudStorageURI: cloudStorageURI,
-		avgRowSize:      avgRowSize,
-		curRowCount:     &atomic.Int64{},
+		d:                d,
+		job:              job,
+		indexes:          indexes,
+		ptbl:             ptbl,
+		jc:               jc,
+		cloudStorageURI:  cloudStorageURI,
+		avgRowSize:       avgRowSize,
+		spfreshRoutePlan: spfreshRoutePlan,
+		curRowCount:      &atomic.Int64{},
 	}, nil
 }
 
@@ -104,7 +114,7 @@ func hasUniqueIndex(indexes []*model.IndexInfo) bool {
 func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
 	cfg := config.GetGlobalConfig()
-	if cfg.Store == "tikv" {
+	if cfg.Store == "tikv" && !r.isRemoteSort() {
 		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, hasUniqueIndex(r.indexes), false, 0)
 		if err != nil {
 			return errors.Trace(err)
@@ -122,6 +132,11 @@ func (r *readIndexStepExecutor) runGlobalPipeline(
 	sm *BackfillSubTaskMeta,
 	concurrency int,
 ) error {
+	r.subtaskSummary.Store(subtask.ID, &readIndexSummary{
+		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
+	})
+	defer r.subtaskSummary.Delete(subtask.ID)
+
 	pipe, err := r.buildExternalStorePipeline(wctx, subtask.TaskID, subtask.ID, sm, concurrency)
 	if err != nil {
 		return err
@@ -148,9 +163,7 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 	// TODO(tangenta): support checkpoint manager that interact with subtask table.
 	metric := metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
 	ctx = lightningmetric.WithCommonMetric(ctx, metric)
-	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.d.store, r.job).
-		WithImportDistributedLock(r.d.etcdCli, sm.TS).
-		Build(r.backendCfg, r.backend)
+	bCtx, err := r.buildLocalBackendCtx(ctx, subtask, sm)
 	if err != nil {
 		return err
 	}
@@ -165,13 +178,20 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 	}()
 	err = executeAndClosePipeline(wctx, pipe, nil, nil, r.avgRowSize)
 	if err != nil {
-		// For dist task local based ingest, checkpoint is unsupported.
-		// If there is an error we should keep local sort dir clean.
-		err1 := bCtx.FinishAndUnregisterEngines(ingest.OptCleanData)
+		cleanupOpt := ingest.OptCleanData
+		if r.isRemoteSort() {
+			// Keep flushed remote-backend task state for the later write&ingest step.
+			cleanupOpt = ingest.OptCloseEngines
+		}
+		err1 := bCtx.FinishAndUnregisterEngines(cleanupOpt)
 		if err1 != nil {
 			logutil.DDLLogger().Warn("read index executor unregister engine failed", zap.Error(err1))
 		}
 		return err
+	}
+
+	if r.isRemoteSort() {
+		return r.finishRemoteSortReadIndex(subtask, sm, bCtx)
 	}
 
 	if err = bCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup); err != nil {
@@ -180,13 +200,29 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 	return r.onFinished(ctx, subtask)
 }
 
-func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
-	logutil.DDLLogger().Info("read index executor run subtask",
-		zap.Bool("use cloud", r.isGlobalSort()))
+func (r *readIndexStepExecutor) buildLocalBackendCtx(
+	ctx context.Context,
+	subtask *proto.Subtask,
+	sm *BackfillSubTaskMeta,
+) (ingest.BackendCtx, error) {
+	builder := ingest.NewBackendCtxBuilder(ctx, r.d.store, r.job)
+	if !r.isRemoteSort() {
+		builder = builder.WithImportDistributedLock(r.d.etcdCli, sm.TS)
+	}
+	if r.isRemoteSort() {
+		builder = builder.WithRemoteBackend(hasUniqueIndex(r.indexes), 0)
+		builder = builder.WithSPFreshBuildRoutePlan(r.spfreshRoutePlan)
+	}
+	return builder.Build(r.backendCfg, r.backend)
+}
 
-	r.subtaskSummary.Store(subtask.ID, &readIndexSummary{
-		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
-	})
+func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (retErr error) {
+	logutil.DDLLogger().Info("read index executor run subtask",
+		zap.Bool("use cloud", r.isGlobalSort()),
+		zap.Bool("use remote", r.isRemoteSort()))
+	defer func() {
+		retErr = r.runSubtaskResult(retErr)
+	}()
 
 	var err error
 	failpoint.InjectCall("beforeReadIndexStepExecRunSubtask", &err)
@@ -208,6 +244,15 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		return r.runGlobalPipeline(ctx, wctx, subtask, sm, concurrency)
 	}
 	return r.runLocalPipeline(ctx, wctx, subtask, sm, concurrency)
+}
+
+func (r *readIndexStepExecutor) runSubtaskResult(err error) error {
+	if err != nil && r.isRemoteSort() {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			"SPFresh remote read-index retry after failure: remote build PUT is not idempotent; original error: " + err.Error(),
+		)
+	}
+	return err
 }
 
 func (r *readIndexStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
@@ -309,6 +354,10 @@ func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 
 func (r *readIndexStepExecutor) isGlobalSort() bool {
 	return len(r.cloudStorageURI) > 0
+}
+
+func (r *readIndexStepExecutor) isRemoteSort() bool {
+	return r.spfreshRoutePlan != nil
 }
 
 func (r *readIndexStepExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (

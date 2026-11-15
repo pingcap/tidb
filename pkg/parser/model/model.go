@@ -206,6 +206,8 @@ func (t IndexType) String() string {
 		return "HYPO"
 	case IndexTypeHNSW:
 		return "HNSW"
+	case IndexTypeSPFresh:
+		return "SPFRESH"
 	default:
 		return ""
 	}
@@ -219,6 +221,8 @@ const (
 	IndexTypeRtree
 	IndexTypeHypo
 	IndexTypeHNSW
+	// Keep release HNSW metadata at value 5; source SPFresh uses value 8.
+	IndexTypeSPFresh IndexType = 8
 )
 
 // ReferOptionType is the type for refer options.

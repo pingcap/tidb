@@ -1305,6 +1305,30 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		if idxInfo.VectorInfo != nil {
 			funcName := model.IndexableDistanceMetricToFnName[idxInfo.VectorInfo.DistanceMetric]
 			fmt.Fprintf(buf, "((%s(%s)))", strings.ToUpper(funcName), strings.Join(cols, ","))
+			if idxInfo.Tp == pmodel.IndexTypeSPFresh {
+				buf.WriteString(" USING SPFRESH")
+				if len(idxInfo.VectorInfo.StoredColumnIDs) > 0 {
+					storedColumns, err := model.ResolveSPFreshStoredColumns(tableInfo, idxInfo)
+					if err != nil {
+						return err
+					}
+					buf.WriteString(" STORING (")
+					for i, colInfo := range storedColumns {
+						if i > 0 {
+							buf.WriteString(",")
+						}
+						buf.WriteString(stringutil.Escape(colInfo.Name.O, sqlMode))
+					}
+					buf.WriteString(")")
+				}
+				if vectorIndexParam := model.FormatSPFreshVectorIndexParam(
+					idxInfo.VectorInfo.IndexOptions,
+					idxInfo.VectorInfo.SearchConfig,
+					idxInfo.VectorInfo.RuntimeConfig,
+				); vectorIndexParam != "" {
+					fmt.Fprintf(buf, " VECTOR_INDEX_PARAM '%s'", format.OutputFormat(vectorIndexParam))
+				}
+			}
 		} else {
 			fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
 		}

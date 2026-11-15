@@ -290,6 +290,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildProjection(v)
 	case *plannercore.PhysicalMemTable:
 		return b.buildMemTable(v)
+	case *plannercore.PhysicalSPFreshVectorScan:
+		return b.buildSPFreshVectorSearch(v)
 	case *plannercore.PhysicalTableDual:
 		return b.buildTableDual(v)
 	case *plannercore.PhysicalApply:
@@ -639,6 +641,10 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) exec.Ex
 		return nil
 	}
 	idxName := strings.ToLower(v.IndexName)
+	if idxInfo := t.Meta().FindIndexByName(idxName); idxInfo != nil && idxInfo.IsSPFreshIndex() {
+		b.err = errors.Errorf("SPFresh index %q is not supported for admin recover index", v.IndexName)
+		return nil
+	}
 	index := tables.GetWritableIndexByName(idxName, t)
 	if index == nil {
 		b.err = errors.Errorf("secondary index `%v` is not found in table `%v`", v.IndexName, v.Table.Name.O)
@@ -702,6 +708,10 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 		return nil
 	}
 	idxName := strings.ToLower(v.IndexName)
+	if idxInfo := t.Meta().FindIndexByName(idxName); idxInfo != nil && idxInfo.IsSPFreshIndex() {
+		b.err = errors.Errorf("SPFresh index %q is not supported for admin cleanup index", v.IndexName)
+		return nil
+	}
 	var index table.Index
 	for _, idx := range t.Indices() {
 		if idx.Meta().State != model.StatePublic {
@@ -749,6 +759,10 @@ func (b *executorBuilder) buildCheckIndexRange(v *plannercore.CheckIndexRange) e
 		is:           b.is,
 	}
 	idxName := strings.ToLower(v.IndexName)
+	if idxInfo := tb.Meta().FindIndexByName(idxName); idxInfo != nil && idxInfo.IsSPFreshIndex() {
+		b.err = errors.Errorf("SPFresh index %q is not supported for admin check index range", v.IndexName)
+		return nil
+	}
 	for _, idx := range tb.Indices() {
 		if idx.Meta().Name.L == idxName {
 			e.index = idx.Meta()
@@ -2573,6 +2587,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableTiDBCheckConstraints),
 			strings.ToLower(infoschema.TableKeywords),
 			strings.ToLower(infoschema.TableTiDBIndexUsage),
+			strings.ToLower(infoschema.TableTiDBSPFreshIndexStatus),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
 			strings.ToLower(infoschema.TableRoutines),
 			strings.ToLower(infoschema.TableParameters),
@@ -6288,3 +6303,10 @@ func (b *executorBuilder) buildRecommendIndex(v *plannercore.RecommendIndexPlan)
 
 // GetGlobalAuditLogPathAndType is used to get audit log path and type
 var GetGlobalAuditLogPathAndType func() (string, string)
+
+func (b *executorBuilder) buildSPFreshVectorSearch(v *plannercore.PhysicalSPFreshVectorScan) exec.Executor {
+	return &SPFreshVectorSearchExec{
+		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		plan:         v,
+	}
+}

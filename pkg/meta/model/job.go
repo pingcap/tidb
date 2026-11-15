@@ -121,10 +121,12 @@ const (
 	// 200 ~ 255 are reserved for pkdb usage.
 	// 200 ~ 204 are reserved for udf.
 	// 205 ~ 207 are reserved for tablegroup.
+	ActionAlterVectorIndexParam ActionType = 209
 )
 
 // ActionMap is the map of DDL ActionType to string.
 var ActionMap = map[ActionType]string{
+	ActionAlterVectorIndexParam:                 "alter vector index param",
 	ActionCreateSchema:                          "create schema",
 	ActionDropSchema:                            "drop schema",
 	ActionCreateTable:                           "create table",
@@ -946,7 +948,7 @@ func (job *Job) IsRollbackable() bool {
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
 		ActionModifyTableCharsetAndCollate,
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
-		ActionModifyTableAutoIDCache, ActionModifySchemaDefaultPlacement, ActionDropCheckConstraint:
+		ActionModifyTableAutoIDCache, ActionAlterVectorIndexParam, ActionModifySchemaDefaultPlacement, ActionDropCheckConstraint:
 		return job.SchemaState == StateNone
 	case ActionMultiSchemaChange:
 		return job.MultiSchemaInfo.Revertible

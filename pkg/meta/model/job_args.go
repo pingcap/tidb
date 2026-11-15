@@ -1826,3 +1826,24 @@ func (a *AlterTableAffinityArgs) decodeV1(job *Job) error {
 func GetAlterTableAffinityArgs(job *Job) (*AlterTableAffinityArgs, error) {
 	return getOrDecodeArgs[*AlterTableAffinityArgs](&AlterTableAffinityArgs{}, job)
 }
+
+// AlterVectorIndexParamArgs is the arguments for ActionAlterVectorIndexParam ddl.
+type AlterVectorIndexParamArgs struct {
+	IndexName       pmodel.CIStr               `json:"index_name,omitempty"`
+	SearchConfig    *SPFreshVectorSearchConfig `json:"search_config,omitempty"`
+	RuntimeExpected SPFreshVectorRuntimeConfig `json:"runtime_expected"`
+	RuntimeDesired  SPFreshVectorRuntimeConfig `json:"runtime_desired"`
+}
+
+func (a *AlterVectorIndexParamArgs) getArgsV1(*Job) []any {
+	panic("ActionAlterVectorIndexParam requires JobVersion2")
+}
+
+func (a *AlterVectorIndexParamArgs) decodeV1(job *Job) error {
+	panic("ActionAlterVectorIndexParam requires JobVersion2")
+}
+
+// GetAlterVectorIndexParamArgs gets the args for AlterVectorIndexParam ddl.
+func GetAlterVectorIndexParamArgs(job *Job) (*AlterVectorIndexParamArgs, error) {
+	return getOrDecodeArgs[*AlterVectorIndexParamArgs](&AlterVectorIndexParamArgs{}, job)
+}

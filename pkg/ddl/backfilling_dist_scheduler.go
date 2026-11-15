@@ -49,9 +49,19 @@ import (
 // LitBackfillScheduler wraps BaseScheduler.
 type LitBackfillScheduler struct {
 	*scheduler.BaseScheduler
-	d          *ddl
+	d    *ddl
+	mode backfillTaskMode
+	// GlobalSort is retained for external test and scheduler callers.
 	GlobalSort bool
 }
+
+type backfillTaskMode uint8
+
+const (
+	backfillTaskModeLocal backfillTaskMode = iota
+	backfillTaskModeGlobalSort
+	backfillTaskModeSPFresh
+)
 
 var _ scheduler.Extension = (*LitBackfillScheduler)(nil)
 
@@ -64,14 +74,26 @@ func newLitBackfillScheduler(ctx context.Context, d *ddl, task *proto.Task, para
 }
 
 // NewBackfillingSchedulerForTest creates a new backfillingSchedulerExt, only used for test now.
-func NewBackfillingSchedulerForTest(d DDL) (scheduler.Extension, error) {
+func NewBackfillingSchedulerForTest(d DDL, tasks ...*proto.Task) (scheduler.Extension, error) {
+	var task *proto.Task
+	if len(tasks) > 0 {
+		task = tasks[0]
+	}
 	ddl, ok := d.(*ddl)
 	if !ok {
 		return nil, errors.New("The getDDL result should be the type of *ddl")
 	}
-	return &LitBackfillScheduler{
-		d: ddl,
-	}, nil
+	var taskMeta BackfillTaskMeta
+	if task != nil {
+		if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
+			return nil, err
+		}
+	}
+	mode, err := backfillTaskModeFromMeta(&taskMeta)
+	if err != nil {
+		return nil, err
+	}
+	return &LitBackfillScheduler{d: ddl, mode: mode}, nil
 }
 
 // Init implements BaseScheduler interface.
@@ -80,7 +102,11 @@ func (sch *LitBackfillScheduler) Init() (err error) {
 	if err = json.Unmarshal(sch.BaseScheduler.GetTask().Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
-	sch.GlobalSort = len(taskMeta.CloudStorageURI) > 0
+	sch.mode, err = backfillTaskModeFromMeta(taskMeta)
+	if err != nil {
+		return err
+	}
+	sch.GlobalSort = sch.mode == backfillTaskModeGlobalSort
 	sch.BaseScheduler.Extension = sch
 	return sch.BaseScheduler.Init()
 }
@@ -112,6 +138,10 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	if err := json.Unmarshal(task.Meta, &backfillMeta); err != nil {
 		return nil, err
 	}
+	mode, err := backfillTaskModeFromMeta(&backfillMeta)
+	if err != nil {
+		return nil, err
+	}
 	job := &backfillMeta.Job
 	tblInfo, err := getTblInfo(ctx, sch.d, job)
 	if err != nil {
@@ -122,14 +152,19 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	// TODO: use planner.
 	switch nextStep {
 	case proto.BackfillStepReadIndex:
+		if backfillMeta.SPFreshBuildRoutePlan != nil {
+			if err := initializeSPFreshBuild(ctx, sch.d.store, tblInfo, backfillMeta.SPFreshBuildRoutePlan); err != nil {
+				return nil, err
+			}
+		}
 		if tblInfo.Partition != nil {
 			return generatePartitionPlan(ctx, storeWithPD, tblInfo)
 		}
-		return generateNonPartitionPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs), logger)
+		return generateNonPartitionPlan(ctx, sch.d, tblInfo, job, mode, len(execIDs), logger)
 	case proto.BackfillStepMergeSort:
 		return generateMergePlan(ctx, taskHandle, task, len(execIDs), backfillMeta.CloudStorageURI, logger)
 	case proto.BackfillStepWriteAndIngest:
-		if sch.GlobalSort {
+		if mode == backfillTaskModeGlobalSort {
 			failpoint.Inject("mockWriteIngest", func() {
 				m := &BackfillSubTaskMeta{
 					MetaGroups: []*external.SortedKVMeta{},
@@ -147,10 +182,29 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 				backfillMeta.CloudStorageURI,
 				logger)
 		}
+		if mode == backfillTaskModeSPFresh {
+			return generateRemoteIngestPlan(ctx, taskHandle, task)
+		}
 		return nil, nil
 	default:
 		return nil, nil
 	}
+}
+
+func backfillTaskModeFromMeta(taskMeta *BackfillTaskMeta) (backfillTaskMode, error) {
+	if taskMeta.CloudStorageURI != "" && taskMeta.SPFreshBuildRoutePlan != nil {
+		return backfillTaskModeLocal, errors.New("backfill task cannot use cloud storage and SPFresh build routing together")
+	}
+	if taskMeta.SPFreshBuildRoutePlan != nil {
+		if err := taskMeta.SPFreshBuildRoutePlan.Validate(); err != nil {
+			return backfillTaskModeLocal, errors.Annotate(err, "invalid SPFresh build route plan")
+		}
+		return backfillTaskModeSPFresh, nil
+	}
+	if taskMeta.CloudStorageURI != "" {
+		return backfillTaskModeGlobalSort, nil
+	}
+	return backfillTaskModeLocal, nil
 }
 
 // GetNextStep implements scheduler.Extension interface.
@@ -159,8 +213,11 @@ func (sch *LitBackfillScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	case proto.StepInit:
 		return proto.BackfillStepReadIndex
 	case proto.BackfillStepReadIndex:
-		if sch.GlobalSort {
+		if sch.mode == backfillTaskModeGlobalSort || sch.GlobalSort {
 			return proto.BackfillStepMergeSort
+		}
+		if sch.mode == backfillTaskModeSPFresh {
+			return proto.BackfillStepWriteAndIngest
 		}
 		return proto.StepDone
 	case proto.BackfillStepMergeSort:
@@ -180,7 +237,27 @@ func skipMergeSort(stats []external.MultipleFilesStat, concurrency int) bool {
 }
 
 // OnDone implements scheduler.Extension interface.
-func (*LitBackfillScheduler) OnDone(_ context.Context, _ diststorage.TaskHandle, _ *proto.Task) error {
+func (sch *LitBackfillScheduler) OnDone(ctx context.Context, _ diststorage.TaskHandle, task *proto.Task) error {
+	if task == nil || len(task.Meta) == 0 {
+		return nil
+	}
+	var taskMeta BackfillTaskMeta
+	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
+		logutil.DDLLogger().Warn("skip SPFresh build cleanup for invalid backfill task meta",
+			zap.Int64("taskID", task.ID),
+			zap.Error(err))
+		return nil
+	}
+	if taskMeta.SPFreshBuildRoutePlan == nil {
+		return nil
+	}
+	if sch == nil || sch.d == nil {
+		logutil.DDLLogger().Warn("skip SPFresh build cleanup without DDL context",
+			zap.Int64("taskID", task.ID),
+			zap.Int64("jobID", taskMeta.Job.ID))
+		return nil
+	}
+	cleanupSPFreshBuildTasksForCompletedBackfill(ctx, sch.d.store, &taskMeta, logutil.DDLLogger())
 	return nil
 }
 
@@ -269,7 +346,7 @@ func generateNonPartitionPlan(
 	d *ddl,
 	tblInfo *model.TableInfo,
 	job *model.Job,
-	useCloud bool,
+	mode backfillTaskMode,
 	nodeCnt int,
 	logger *zap.Logger,
 ) (metas [][]byte, err error) {
@@ -283,12 +360,11 @@ func generateNonPartitionPlan(
 	}
 
 	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.store, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
-	if startKey == nil && endKey == nil {
-		// Empty table.
-		return nil, nil
-	}
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if startKey == nil && endKey == nil {
+		return nil, nil
 	}
 
 	subTaskMetas := make([][]byte, 0, 4)
@@ -318,12 +394,13 @@ func generateNonPartitionPlan(
 			return true, nil
 		}
 
-		regionBatch := CalculateRegionBatch(len(recordRegionMetas), nodeCnt, !useCloud)
+		useLocalDisk := mode == backfillTaskModeLocal
+		regionBatch := calculateRegionBatch(len(recordRegionMetas), nodeCnt, useLocalDisk)
 		logger.Info("calculate region batch",
 			zap.Int("totalRegionCnt", len(recordRegionMetas)),
 			zap.Int("regionBatch", regionBatch),
 			zap.Int("instanceCnt", nodeCnt),
-			zap.Bool("useCloud", useCloud),
+			zap.Uint8("mode", uint8(mode)),
 		)
 
 		for i := 0; i < len(recordRegionMetas); i += regionBatch {
@@ -365,8 +442,7 @@ func generateNonPartitionPlan(
 	return subTaskMetas, nil
 }
 
-// CalculateRegionBatch is exported for test.
-func CalculateRegionBatch(totalRegionCnt int, nodeCnt int, useLocalDisk bool) int {
+func calculateRegionBatch(totalRegionCnt int, nodeCnt int, useLocalDisk bool) int {
 	failpoint.Inject("mockRegionBatch", func(val failpoint.Value) {
 		failpoint.Return(val.(int))
 	})
@@ -387,6 +463,38 @@ func CalculateRegionBatch(totalRegionCnt int, nodeCnt int, useLocalDisk bool) in
 		regionBatch = min(4000, avgTasksPerInstance)
 	}
 	return regionBatch
+}
+
+func generateRemoteIngestPlan(
+	ctx context.Context,
+	taskHandle diststorage.TaskHandle,
+	task *proto.Task,
+) ([][]byte, error) {
+	var (
+		hasData      bool
+		missingState bool
+	)
+	if err := forEachBackfillSubtaskMeta(ctx, "", taskHandle, task.ID, proto.BackfillStepReadIndex, func(subtask *BackfillSubTaskMeta) {
+		if subtask.SPFreshBuildHasData == nil {
+			missingState = true
+			return
+		}
+		hasData = hasData || *subtask.SPFreshBuildHasData
+	}); err != nil {
+		return nil, err
+	}
+	if missingState {
+		return nil, errors.New("SPFresh read-index subtask is missing build data state")
+	}
+
+	meta := &BackfillSubTaskMeta{
+		SPFreshBuildHasData: &hasData,
+	}
+	metaBytes, err := json.Marshal(meta)
+	if err != nil {
+		return nil, err
+	}
+	return [][]byte{metaBytes}, nil
 }
 
 func generateGlobalSortIngestPlan(
@@ -722,6 +830,9 @@ func forEachBackfillSubtaskMeta(
 	step proto.Step,
 	fn func(subtask *BackfillSubTaskMeta),
 ) error {
+	if taskHandle == nil {
+		return errors.New("backfill subtask metadata requires task handle")
+	}
 	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, step)
 	if err != nil {
 		return errors.Trace(err)
@@ -735,4 +846,9 @@ func forEachBackfillSubtaskMeta(
 		fn(subtask)
 	}
 	return nil
+}
+
+// CalculateRegionBatch is exported for test.
+func CalculateRegionBatch(totalRegionCnt, nodeCnt int, useLocalDisk bool) int {
+	return calculateRegionBatch(totalRegionCnt, nodeCnt, useLocalDisk)
 }

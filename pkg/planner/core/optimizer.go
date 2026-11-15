@@ -487,6 +487,9 @@ func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.Physical
 	// see comments ahead of call of DoOptimize in function of buildUpdate().
 	plan = eliminatePhysicalProjection(plan)
 	plan = InjectExtraProjection(plan)
+	if config.SPFreshEnabled() {
+		tryEnableSPFreshVectorSearchDistanceProjection(plan)
+	}
 	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
 	plan = avoidColumnEvaluatorForProjBelowUnion(plan)

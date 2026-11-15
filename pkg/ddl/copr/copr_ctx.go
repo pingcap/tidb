@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
+
 	// make sure mock.MockInfoschema is initialized to make sure the test pass
 	_ "github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -170,7 +171,11 @@ func NewCopContextSingleIndex(
 	idxInfo *model.IndexInfo,
 	requestSource string,
 ) (*CopContextSingleIndex, error) {
-	cols := idxInfo.Columns
+	projected, err := indexColumnsForSPFreshProjection(idxInfo, tblInfo)
+	if err != nil {
+		return nil, err
+	}
+	cols := append([]*model.IndexColumn(nil), projected...)
 	neededCols, err := tables.ExtractColumnsFromCondition(exprCtx, idxInfo, tblInfo, false)
 	if err != nil {
 		return nil, err
@@ -182,7 +187,7 @@ func NewCopContextSingleIndex(
 	if err != nil {
 		return nil, err
 	}
-	idxOffsets := resolveIndicesForIndex(base.ExprColumnInfos, idxInfo, tblInfo)
+	idxOffsets := resolveIndicesForIndexColumns(base.ExprColumnInfos, projected, tblInfo)
 	return &CopContextSingleIndex{
 		CopContextBase:      base,
 		idxInfo:             idxInfo,
@@ -242,7 +247,11 @@ func NewCopContextMultiIndex(
 	}
 	allIdxCols := make([]*model.IndexColumn, 0, approxColLen)
 	for _, idxInfo := range allIdxInfo {
-		allIdxCols = append(allIdxCols, idxInfo.Columns...)
+		projected, err := indexColumnsForSPFreshProjection(idxInfo, tblInfo)
+		if err != nil {
+			return nil, err
+		}
+		allIdxCols = append(allIdxCols, projected...)
 
 		neededCols, err := tables.ExtractColumnsFromCondition(exprCtx, idxInfo, tblInfo, false)
 		if err != nil {
@@ -259,7 +268,11 @@ func NewCopContextMultiIndex(
 
 	idxOffsets := make([][]int, 0, len(allIdxInfo))
 	for _, idxInfo := range allIdxInfo {
-		idxOffsets = append(idxOffsets, resolveIndicesForIndex(base.ExprColumnInfos, idxInfo, tblInfo))
+		projected, err := indexColumnsForSPFreshProjection(idxInfo, tblInfo)
+		if err != nil {
+			return nil, err
+		}
+		idxOffsets = append(idxOffsets, resolveIndicesForIndexColumns(base.ExprColumnInfos, projected, tblInfo))
 	}
 	return &CopContextMultiIndex{
 		CopContextBase:      base,
@@ -420,4 +433,22 @@ func (c *CopContextBase) GetSchemaAndNames() (*expression.Schema, types.NameSlic
 	schema := expression.NewSchema(exprColumns...)
 
 	return schema, names
+}
+
+func resolveIndicesForIndexColumns(
+	outputCols []*expression.Column,
+	idxCols []*model.IndexColumn,
+	tblInfo *model.TableInfo,
+) []int {
+	offsets := make([]int, 0, len(idxCols))
+	for _, idxCol := range idxCols {
+		hid := tblInfo.Columns[idxCol.Offset].ID
+		for j, col := range outputCols {
+			if col.ID == hid {
+				offsets = append(offsets, j)
+				break
+			}
+		}
+	}
+	return offsets
 }

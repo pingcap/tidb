@@ -141,7 +141,7 @@ func generateProcedurePlanCacheStmt(
 	vars := sctx.GetSessionVars()
 	stmtCtx := vars.StmtCtx
 	relatedTableIDs := stmtCtx.RelatedTableIDs
-	savedWarnings := stmtCtx.CopyWarnings(nil)
+	savedWarnings, savedWarningCount := stmtCtx.CopyWarningsWithCount(nil)
 	savedExtraWarnings := append([]stmtctx.SQLWarn(nil), stmtCtx.GetExtraWarnings()...)
 	savedPlanCacheParams := append([]types.Datum(nil), vars.PlanCacheParams.AllParamValues()...)
 	savedParamsHidden := vars.PlanCacheParams.String() == "" && len(savedPlanCacheParams) > 0
@@ -157,7 +157,7 @@ func generateProcedurePlanCacheStmt(
 	}
 	defer func() {
 		stmtCtx.RelatedTableIDs = relatedTableIDs
-		stmtCtx.SetWarnings(savedWarnings)
+		stmtCtx.SetWarningsWithCount(savedWarnings, savedWarningCount)
 		stmtCtx.SetExtraWarnings(savedExtraWarnings)
 		vars.PlanCacheParams.Reset()
 		if len(savedPlanCacheParams) > 0 {
@@ -178,19 +178,22 @@ func executeWithProcedurePlanCacheWarningIsolation(vars *variable.SessionVars, f
 		return fn()
 	}
 	originalStmtCtx := vars.StmtCtx
-	savedWarnings := originalStmtCtx.CopyWarnings(nil)
+	savedWarnings, savedWarningCount := originalStmtCtx.CopyWarningsWithCount(nil)
 	savedExtraWarnings := append([]stmtctx.SQLWarn(nil), originalStmtCtx.GetExtraWarnings()...)
 	err := fn()
 	currentStmtCtx := vars.StmtCtx
 	if currentStmtCtx == nil {
 		return err
 	}
+	currentWarnings, currentWarningCount := currentStmtCtx.CopyWarningsWithCount(nil)
 	if currentStmtCtx == originalStmtCtx {
-		currentStmtCtx.SetWarnings(filterProcedurePlanCacheWarnings(savedWarnings, currentStmtCtx.GetWarnings()))
+		filtered, filteredCount := filteredProcedurePlanCacheWarnings(savedWarnings, currentWarnings, currentWarningCount)
+		currentStmtCtx.SetWarningsWithCount(filtered, max(savedWarningCount, filteredCount))
 		currentStmtCtx.SetExtraWarnings(filterProcedurePlanCacheWarnings(savedExtraWarnings, currentStmtCtx.GetExtraWarnings()))
 		return err
 	}
-	currentStmtCtx.SetWarnings(filterProcedurePlanCacheWarnings(nil, currentStmtCtx.GetWarnings()))
+	filtered, filteredCount := filteredProcedurePlanCacheWarnings(nil, currentWarnings, currentWarningCount)
+	currentStmtCtx.SetWarningsWithCount(filtered, filteredCount)
 	currentStmtCtx.SetExtraWarnings(filterProcedurePlanCacheWarnings(nil, currentStmtCtx.GetExtraWarnings()))
 	return err
 }
@@ -458,4 +461,11 @@ func (r *procedurePlanCacheParamRewriter) newParamMarker(name model.CIStr, field
 		fieldType:   fieldType.Clone(),
 	})
 	return param
+}
+
+func filteredProcedurePlanCacheWarnings(base, current []stmtctx.SQLWarn, currentCount uint16) ([]stmtctx.SQLWarn, uint16) {
+	filtered := filterProcedurePlanCacheWarnings(base, current)
+	removedCount := len(current) - len(filtered)
+	filteredCount := max(len(filtered), int(currentCount)-removedCount)
+	return filtered, uint16(filteredCount)
 }

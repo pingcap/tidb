@@ -602,3 +602,28 @@ Checklist:
 - Instance plan cache: node-level plan cache shared across sessions; requires cloning.
 - Volcano: rule-based optimizer pipeline with cost-based physical selection.
 - Cascades: memo-based optimizer pipeline (normalize -> explore -> implement).
+
+## SPFresh release integration
+
+`core/pkdb_spfresh.go` owns the root-only ANN scan. Filter eligibility and
+encoding live in `pkdb_spfresh_filter.go`; distance projection lives in
+`pkdb_spfresh_distance_projection.go`. Unsupported filters, ordinary queries
+and Cascades must retain ordinary access paths. Only matching metrics and
+bounded TopK/candidate budgets admit SPFresh. The release HNSW path remains MPP.
+
+Release PhysicalTopN inherits its child's schema. Distance projection must
+remove columns from that child only once. Release LogicalTopN may also inherit
+filter-only columns; SPFresh Limit output must match the remote scan projection.
+Keep plan clones independent: clone query vectors, filter protobufs, bindings
+and mutable metadata before rebinding cached parameters.
+
+`pkg/sessiontxn/pkdb_spfresh_ts.go` prefetches a fresh read timestamp per execution
+attempt. Nested routine execution saves/restores its caller's future through
+StatementContext, and retry/reset discards old futures. Skip transaction warmup
+only for a final SPFresh plan with supported row-consuming wrappers.
+
+The release tipb dependency includes both SPFresh and shared MPP CTE messages.
+Use `github.com/pingcap/tipb/go-tipb` for SPFresh messages and its forward-writing
+`MarshalTo` method for request buffers. Omitted worker warnings contribute to the
+logical warning count even when detail storage is capped; SHOW, routines and
+session-state transfer must preserve that count.

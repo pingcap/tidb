@@ -23,6 +23,8 @@ import (
 )
 
 var (
+	// ErrUnsupportedSPFreshVectorIndexPartitionedTable rejects unsupported ANN table layouts.
+	ErrUnsupportedSPFreshVectorIndexPartitionedTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("SPFresh vector index does not support partitioned tables", nil))
 	// ErrInvalidWorker means the worker is invalid.
 	ErrInvalidWorker = ClassDDL.NewStd(mysql.ErrInvalidDDLWorker)
 	// ErrNotOwner means we are not owner and can't handle DDL jobs.

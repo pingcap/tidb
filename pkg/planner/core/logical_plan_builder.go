@@ -5765,6 +5765,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName pmodel.CIStr, tabl
 			p.Extractor = NewInfoSchemaSchemataExtractor()
 		case infoschema.TableSequences:
 			p.Extractor = NewInfoSchemaSequenceExtractor()
+		case infoschema.TableTiDBSPFreshIndexStatus:
+			p.Extractor = NewInfoSchemaTiDBIndexUsageExtractor()
 		case infoschema.TableTiDBIndexUsage:
 			p.Extractor = NewInfoSchemaTiDBIndexUsageExtractor()
 		case infoschema.TableDDLJobs:

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/spfreshtest"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -45,6 +46,27 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	"golang.org/x/sync/singleflight"
 )
+
+func TestResetExecutionCachesSPFreshReadVersion(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			spfreshtest.SetEnabled(t, enabled)
+			sc := stmtctx.NewStmtCtx()
+			sc.GetOrStoreStmtCache(stmtctx.StmtSPFreshReadVersionCacheKey, "outer")
+			sc.GetOrStoreStmtCache(stmtctx.StmtExternalTSCacheKey, "external")
+			restore := sc.ResetExecutionCaches()
+			value := sc.GetOrStoreStmtCache(stmtctx.StmtSPFreshReadVersionCacheKey, "inner")
+			if enabled {
+				require.Equal(t, "inner", value)
+			} else {
+				require.Equal(t, "outer", value)
+			}
+			require.Equal(t, "external", sc.GetOrStoreStmtCache(stmtctx.StmtExternalTSCacheKey, "changed"))
+			restore()
+			require.Equal(t, "outer", sc.GetOrStoreStmtCache(stmtctx.StmtSPFreshReadVersionCacheKey, "changed"))
+		})
+	}
+}
 
 func TestResetExecutionCachesDoesNotOverwriteActiveDistSQLCache(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()

@@ -1582,3 +1582,6 @@ func (t *SoftdeleteInfo) Clone() *SoftdeleteInfo {
 	cloned := *t
 	return &cloned
 }
+
+// VirtualColVecSearchDistanceID identifies an ANN distance projection.
+const VirtualColVecSearchDistanceID int64 = -2000

@@ -54,6 +54,9 @@ func TestRunJobs(t *testing.T) {
 	collected := [][2][]byte{}
 	collectedMu := sync.Mutex{}
 	var gcPlacementRuleJobIDs []int64
+	var gcPlacementRanges []kv.KeyRange
+	oldDestroy, oldPlacement := DoUnsafeDestroyRangeRequest, DoGCPlacementRules
+	t.Cleanup(func() { DoUnsafeDestroyRangeRequest, DoGCPlacementRules = oldDestroy, oldPlacement })
 
 	DoUnsafeDestroyRangeRequest = func(ctx context.Context,
 		startKey []byte,
@@ -67,7 +70,12 @@ func TestRunJobs(t *testing.T) {
 		collectedMu.Unlock()
 		return nil
 	}
-	DoGCPlacementRules = func(_ kv.Storage, ddlJobID int64) error {
+	DoGCPlacementRules = func(_ kv.Storage, ddlJobID int64, ranges ...kv.KeyRange) error {
+		// All physical ranges must drain before the job's placement cleanup.
+		collectedMu.Lock()
+		require.Len(t, collected, len(gcPlacementRanges)+len(ranges))
+		collectedMu.Unlock()
+		gcPlacementRanges = append(gcPlacementRanges, ranges...)
 		gcPlacementRuleJobIDs = append(gcPlacementRuleJobIDs, ddlJobID)
 		return nil
 	}
@@ -92,4 +100,8 @@ func TestRunJobs(t *testing.T) {
 	require.Equal(t, unsafeDestroyNextDDLJobIDKey, mockCli.lastCalledKey)
 	require.Equal(t, "106", mockCli.lastCalledValue)
 	require.Equal(t, []int64{100, 101, 102, 103, 105}, gcPlacementRuleJobIDs)
+	require.Len(t, gcPlacementRanges, len(jobs))
+	for i, job := range jobs {
+		require.Equal(t, kv.KeyRange{StartKey: job.StartKey, EndKey: job.EndKey}, gcPlacementRanges[i])
+	}
 }

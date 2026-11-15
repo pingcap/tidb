@@ -187,7 +187,8 @@ func detectControlPath(cgroupFilePath string, controller string) (string, error)
 	scanner := bufio.NewScanner(cgroup)
 	var unifiedPathIfFound string
 	for scanner.Scan() {
-		fields := bytes.Split(scanner.Bytes(), []byte{':'})
+		// Only the first two colons delimit fields; the path may contain colons.
+		fields := bytes.SplitN(scanner.Bytes(), []byte{':'}, 3)
 		if len(fields) < 3 {
 			// The lines should always have three fields, there's something fishy here.
 			continue
@@ -200,14 +201,7 @@ func detectControlPath(cgroupFilePath string, controller string) (string, error)
 		if f0 == "0" && f1 == "" {
 			unifiedPathIfFound = string(fields[2])
 		} else if controllerMatch(f1, controller) {
-			var result []byte
-			// In some case, the cgroup path contains `:`. We need to join them back.
-			if len(fields) > 3 {
-				result = bytes.Join(fields[2:], []byte(":"))
-			} else {
-				result = fields[2]
-			}
-			return string(result), nil
+			return string(fields[2]), nil
 		}
 	}
 

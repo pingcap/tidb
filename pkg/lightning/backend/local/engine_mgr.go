@@ -673,3 +673,6 @@ func prepareSortDir(config BackendConfig) error {
 	}
 	return nil
 }
+
+// OpenDuplicateDB opens the release duplicate store for a remote ingest backend.
+func OpenDuplicateDB(storeDir string) (*pebble.DB, error) { return openDuplicateDB(storeDir) }

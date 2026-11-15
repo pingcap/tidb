@@ -331,6 +331,9 @@ type Config struct {
 
 	// LowerCaseTableNamesOnFirstBootstrap indicates how table names are stored on disk and compared.
 	LowerCaseTableNamesOnFirstBootstrap int `toml:"lower-case-table-names" json:"lower-case-table-names"`
+
+	// TiKVAPIServiceAddrs are TiKV status endpoints serving SPFresh APIs.
+	TiKVAPIServiceAddrs []string `toml:"tikv-api-service-addrs" json:"tikv-api-service-addrs"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -1602,4 +1605,19 @@ func ContainHiddenConfig(s string) bool {
 // from config file or command line.
 func GetGlobalKeyspaceName() string {
 	return GetGlobalConfig().KeyspaceName
+}
+
+func hasNonEmptyTiKVAPIServiceAddrs(addrs []string) bool {
+	for _, addr := range addrs {
+		if strings.TrimSpace(addr) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// SPFreshEnabled reports whether SPFresh service endpoints are configured.
+// Ordinary index builds select their backend independently.
+func SPFreshEnabled() bool {
+	return hasNonEmptyTiKVAPIServiceAddrs(GetGlobalConfig().TiKVAPIServiceAddrs)
 }

@@ -86,6 +86,7 @@ type SessionStates struct {
 	LastAffectedRows     int64                        `json:"affected-rows,omitempty"`
 	LastInsertID         uint64                       `json:"last-insert-id,omitempty"`
 	Warnings             []contextutil.SQLWarn        `json:"warnings,omitempty"`
+	WarningCount         uint16                       `json:"warning-count,omitempty"`
 	// Define it as string to avoid cycle import.
 	Bindings            string                                            `json:"bindings,omitempty"`
 	ResourceGroupName   string                                            `json:"rs-group,omitempty"`

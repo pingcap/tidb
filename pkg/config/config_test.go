@@ -1436,3 +1436,47 @@ enforce-mpp = 1
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "toml: line 5 (last key \"performance.enforce-mpp\"): incompatible types: TOML value has type int64; destination has type boolean")
 }
+
+func TestTiKVAPIServiceAddrsConfigKey(t *testing.T) {
+	var conf Config
+	_, err := toml.Decode(`tikv-api-service-addrs = ["http://worker-0:19000", "worker-1:19000"]`, &conf)
+	require.NoError(t, err)
+	require.Equal(t, []string{"http://worker-0:19000", "worker-1:19000"}, conf.TiKVAPIServiceAddrs)
+
+	err = json.Unmarshal([]byte(`{"tikv-api-service-addrs":["http://worker-2:19000"]}`), &conf)
+	require.NoError(t, err)
+	require.Equal(t, []string{"http://worker-2:19000"}, conf.TiKVAPIServiceAddrs)
+}
+
+func TestTiKVAPIServiceAddrConfigKeyRejected(t *testing.T) {
+	// Release config loading retains instance warnings globally; isolate this
+	// unknown-key check from tests that intentionally produce those warnings.
+	conflicts, deprecated := ConflictOptions, DeprecatedOptions
+	ConflictOptions, DeprecatedOptions = nil, nil
+	t.Cleanup(func() { ConflictOptions, DeprecatedOptions = conflicts, deprecated })
+	path := filepath.Join(t.TempDir(), "tidb.toml")
+	err := os.WriteFile(path, []byte(`tikv-api-service-addr = "http://worker-0:19000"`), 0o644)
+	require.NoError(t, err)
+
+	var conf Config
+	err = conf.Load(path)
+	require.Error(t, err)
+	validationErr, ok := err.(*ErrConfigValidationFailed)
+	require.Truef(t, ok, "Config.Load() error type = %T, want *ErrConfigValidationFailed", err)
+	require.Equal(t, []string{"tikv-api-service-addr"}, validationErr.UndecodedItems)
+}
+
+func TestSPFreshEnabledWithTiKVAPIServiceAddrs(t *testing.T) {
+	restore := RestoreFunc()
+	defer restore()
+
+	UpdateGlobal(func(conf *Config) {
+		conf.TiKVAPIServiceAddrs = []string{"http://worker-0:19000"}
+	})
+	require.True(t, SPFreshEnabled())
+
+	UpdateGlobal(func(conf *Config) {
+		conf.TiKVAPIServiceAddrs = []string{"", " "}
+	})
+	require.False(t, SPFreshEnabled())
+}

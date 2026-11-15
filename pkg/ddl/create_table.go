@@ -18,9 +18,14 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"unicode/utf8"
+
+	"github.com/pingcap/tidb/pkg/lightning/backend/remote"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/tikv/client-go/v2/tikv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -240,6 +245,10 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		return ver, errors.Trace(err)
 	}
 
+	if err = bootstrapInlineSPFreshIndexesOnCreateTable(tbInfo, job, jobCtx); err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -268,6 +277,11 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 			autoidCli: w.autoidCli,
 		}, args)
 		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Bootstrap before entering the foreign-key state transition: once the
+		// delete-only table is persisted, release DDL cannot cancel this job.
+		if err = bootstrapInlineSPFreshIndexesOnCreateTable(tbInfo, job, jobCtx); err != nil {
 			return ver, errors.Trace(err)
 		}
 		tbInfo.State = model.StateDeleteOnly
@@ -344,6 +358,12 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			tableInfos = append(tableInfos, tbInfo)
 		}
 	}
+	for _, tbInfo := range tableInfos {
+		if err := bootstrapInlineSPFreshIndexesOnCreateTable(tbInfo, job, jobCtx); err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
+
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -606,7 +626,7 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName pmodel.CIStr, table
 func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, dbName pmodel.CIStr, tblInfo *model.TableInfo) error {
 	var hasVectorIndex bool
 	for _, idx := range tblInfo.Indices {
-		if idx.VectorInfo != nil {
+		if idx.IsTiFlashLocalIndex() {
 			hasVectorIndex = true
 			break
 		}
@@ -667,6 +687,9 @@ func checkTableInfoValidExtra(ec errctx.Context, store kv.Storage, dbName pmodel
 		return errors.Trace(err)
 	}
 	if err := checkGlobalIndexes(ec, tbInfo); err != nil {
+		return errors.Trace(err)
+	}
+	if err := checkTableInfoForSPFreshVectorIndex(tbInfo); err != nil {
 		return errors.Trace(err)
 	}
 	if err := checkVectorIndexIfNeedTiFlashReplica(store, dbName, tbInfo); err != nil {
@@ -1467,7 +1490,7 @@ func BuildTableInfo(
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			unique = true
 		case ast.ConstraintVector:
-			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
+			if constr.Option.Tp != pmodel.IndexTypeSPFresh && constr.Option.Visibility == ast.IndexVisibilityInvisible {
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
 			}
 			vector = true
@@ -1861,4 +1884,135 @@ func BuildViewInfo(s *ast.CreateViewStmt) (*model.ViewInfo, error) {
 
 	return &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
 		Security: s.Security, SelectStmt: sb.String(), CheckOption: s.CheckOption, Cols: nil}, nil
+}
+
+var bootstrapSPFreshReadyIndexes = func(
+	ctx context.Context,
+	store kv.Storage,
+	workerAddr string,
+	tbInfo *model.TableInfo,
+	indexIDs []int64,
+	baseSnapshotTS uint64,
+) error {
+	if workerAddr == "" {
+		return errors.New("create table SPFresh bootstrap requires TiKV API service address")
+	}
+	targets, err := resolveSPFreshWorkerTargets(ctx, store)
+	if err != nil {
+		return err
+	}
+	return bootstrapSPFreshReadyIndexesWithTargets(ctx, util.InternalHTTPClient(), targets, workerAddr, tbInfo, indexIDs, baseSnapshotTS)
+}
+
+func bootstrapSPFreshReadyIndexesWithTargets(
+	ctx context.Context,
+	httpClient *http.Client,
+	targets spfreshWorkerTargets,
+	workerAddr string,
+	tbInfo *model.TableInfo,
+	indexIDs []int64,
+	baseSnapshotTS uint64,
+) error {
+	return remote.BootstrapReadySPFreshIndexes(
+		ctx,
+		httpClient,
+		workerAddr,
+		targets.clusterID,
+		targets.keyspaceID,
+		tbInfo,
+		indexIDs,
+		baseSnapshotTS,
+	)
+}
+
+func bootstrapInlineSPFreshIndexesOnCreateTable(tbInfo *model.TableInfo, job *model.Job, jobCtx *jobContext) error {
+	indexIDs := collectInlineSPFreshVectorIndexes(tbInfo)
+	if len(indexIDs) == 0 {
+		return nil
+	}
+	if jobCtx == nil || jobCtx.store == nil {
+		return errors.New("create table SPFresh bootstrap requires job context store")
+	}
+	if _, ok := jobCtx.store.(tikv.Storage); !ok {
+		return errors.New("create table SPFresh bootstrap requires TiKV storage")
+	}
+	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return bootstrapInlineSPFreshIndexes(ctx, jobCtx.store, tbInfo, job, indexIDs)
+}
+
+func prepareSPFreshBootstrapJob(job *model.Job) *model.Job {
+	if job == nil {
+		return nil
+	}
+
+	jobCopy := *job
+	if jobCopy.Type != model.ActionAddIndex &&
+		jobCopy.Type != model.ActionAddPrimaryKey &&
+		jobCopy.Type != model.ActionModifyColumn {
+		jobCopy.Type = model.ActionAddIndex
+	}
+
+	var reorgMeta model.DDLReorgMeta
+	if jobCopy.ReorgMeta != nil {
+		reorgMeta = *jobCopy.ReorgMeta
+	}
+	if reorgMeta.Version == 0 {
+		reorgMeta.Version = model.CurrentReorgMetaVersion
+	}
+	jobCopy.ReorgMeta = &reorgMeta
+
+	return &jobCopy
+}
+
+func bootstrapInlineSPFreshIndexes(
+	ctx context.Context,
+	store kv.Storage,
+	tbInfo *model.TableInfo,
+	job *model.Job,
+	indexIDs []int64,
+) (err error) {
+	if len(indexIDs) == 0 {
+		return nil
+	}
+	job = prepareSPFreshBootstrapJob(job)
+	if job == nil {
+		return errors.New("create table SPFresh bootstrap requires job metadata")
+	}
+	baseSnapshotTS := job.RealStartTS
+	if tbInfo.UpdateTS != 0 {
+		baseSnapshotTS = tbInfo.UpdateTS
+	}
+	if !config.SPFreshEnabled() {
+		return dbterror.ErrUnsupportedIndexType.FastGen("SPFresh vector index requires remote backend; set tikv-api-service-addrs")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	failpoint.Inject("MockBootstrapInlineSPFreshIndexes", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil)
+		}
+	})
+	target, err := registerSPFreshBootstrap(ctx, store, job, tbInfo, indexIDs, baseSnapshotTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(bootstrapSPFreshReadyIndexes(
+		ctx,
+		store,
+		target.Owner,
+		tbInfo,
+		indexIDs,
+		target.BaseSnapshotTS,
+	))
+}
+
+func collectInlineSPFreshVectorIndexes(tbInfo *model.TableInfo) []int64 {
+	if tbInfo == nil {
+		return nil
+	}
+	return collectSPFreshIndexIDsFromIndexInfos(tbInfo.Indices)
 }

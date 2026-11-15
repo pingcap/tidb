@@ -232,6 +232,8 @@ const (
 	TableKeywords = "KEYWORDS"
 	// TableTiDBIndexUsage is a table to show the usage stats of indexes in the current instance.
 	TableTiDBIndexUsage = "TIDB_INDEX_USAGE"
+	// TableTiDBSPFreshIndexStatus exposes persisted remote ANN progress.
+	TableTiDBSPFreshIndexStatus = "TIDB_SPFRESH_INDEX_STATUS"
 	// TableRegions is the string constant of table regions.
 	TableRegions = "TABLE_REGIONS"
 	// TableLogReplStatusGlobal is the table to show the global log replication status.
@@ -362,6 +364,7 @@ var tableIDMap = map[string]int64{
 	TableTiDBCheckConstraints:            autoid.InformationSchemaDBID + 91,
 	TableKeywords:                        autoid.InformationSchemaDBID + 92,
 	TableTiDBIndexUsage:                  autoid.InformationSchemaDBID + 93,
+	TableTiDBSPFreshIndexStatus:          autoid.InformationSchemaDBID + 100,
 	ClusterTableTiDBIndexUsage:           autoid.InformationSchemaDBID + 94,
 	TableTiFlashIndexes:                  autoid.InformationSchemaDBID + 95,
 }
@@ -2495,6 +2498,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
 	TableKeywords:                           tableKeywords,
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
+	TableTiDBSPFreshIndexStatus:             tableTiDBSPFreshIndexStatus,
 	TableUserLoginHistory:                   tableUserLoginHistoryCols,
 	TableRegions:                            TableRegionsCols,
 	TableLogReplStatusGlobal:                TableLogReplStatusGlobalCols,
@@ -2851,4 +2855,21 @@ func FilterClusterServerInfo(serversInfo []ServerInfo, nodeTypes, addresses set.
 		filterServers = append(filterServers, srv)
 	}
 	return filterServers
+}
+
+var tableTiDBSPFreshIndexStatus = []columnInfo{
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "INDEX_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "KEYSPACE_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "DIMENSIONS", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "DISTANCE_METRIC", tp: mysql.TypeVarchar, size: 32},
+	{name: "APPLIED_BASE_TS", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "LAG_SECONDS", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "INDEX_STATE", tp: mysql.TypeVarchar, size: 32},
+	{name: "IS_READY", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
+	{name: "OWNER_LEASE_EXPIRE_TS", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "OBSERVED_AT", tp: mysql.TypeTimestamp, size: 26, decimal: 6},
 }

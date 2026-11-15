@@ -926,3 +926,31 @@ func (p *physicalSchemaProducer) ResolveIndices() (err error) {
 func (*baseSchemaProducer) ResolveIndices() (err error) {
 	return
 }
+
+func resolveIndexForInlineProjection(p *physicalSchemaProducer) error {
+	// To avoid that two plan shares the same column slice.
+	shallowColSlice := make([]*expression.Column, p.Schema().Len())
+	copy(shallowColSlice, p.Schema().Columns)
+	p.schema = expression.NewSchema(shallowColSlice...)
+	foundCnt := 0
+	// The two column sets are all ordered. And the colsNeedResolving is the subset of the mergedSchema.
+	// So we can just move forward j if there's no matching is found.
+	// We don't use the normal ResolvIndices here since there might be duplicate columns in the schema.
+	//   e.g. The schema of child_0 is [col0, col0, col1]
+	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
+	for i, j := 0, 0; i < p.Schema().Len() && j < p.Children()[0].Schema().Len(); {
+		if !p.Schema().Columns[i].EqualColumn(p.Children()[0].Schema().Columns[j]) {
+			j++
+			continue
+		}
+		p.Schema().Columns[i] = p.schema.Columns[i].Clone().(*expression.Column)
+		p.Schema().Columns[i].Index = j
+		i++
+		j++
+		foundCnt++
+	}
+	if foundCnt < p.Schema().Len() {
+		return errors.Errorf("Some columns of %v cannot find the reference from its child(ren)", p.ExplainID().String())
+	}
+	return nil
+}

@@ -28,28 +28,33 @@ import (
 )
 
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
-func RebuildPlan4CachedPlan(p base.Plan) (ok bool) {
+func RebuildPlan4CachedPlan(p base.Plan) (bool, error) {
 	rebuildRoot := planCacheRebuildRoot(p)
 	if rebuildRoot == nil {
-		return false
+		return false, nil
 	}
 	sc := rebuildRoot.SCtx().GetSessionVars().StmtCtx
 	if !sc.UseCache() {
-		return false // plan-cache is disabled for this query
+		return false, nil
 	}
 
 	sc.InPreparedPlanBuilding = true
 	defer func() { sc.InPreparedPlanBuilding = false }()
 	if err := rebuildRange(rebuildRoot); err != nil {
+		if parameterErr, ok := err.(*spfreshVectorParameterError); ok {
+			// Invalid vector input must fail this execution, not replace the ANN
+			// cache entry with a plan optimized for an invalid constant.
+			return false, parameterErr.Unwrap()
+		}
 		sc.AppendWarning(errors.NewNoStackErrorf("skip plan-cache: plan rebuild failed, %s", err.Error()))
-		return false // fail to rebuild ranges
+		return false, nil // fail to rebuild ranges
 	}
 	if !sc.UseCache() {
 		// in this case, the UseCache flag changes from `true` to `false`, then there must be some
 		// over-optimized operations were triggered, return `false` for safety here.
-		return false
+		return false, nil
 	}
-	return true
+	return true, nil
 }
 
 func planCacheRebuildRoot(p base.Plan) base.Plan {
@@ -90,6 +95,8 @@ func rebuildRange(p base.Plan) error {
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	var err error
 	switch x := p.(type) {
+	case *PhysicalSPFreshVectorScan:
+		return x.rebuildForPlanCache()
 	case *PhysicalIndexHashJoin:
 		return rebuildRange(&x.PhysicalIndexJoin)
 	case *PhysicalIndexMergeJoin:

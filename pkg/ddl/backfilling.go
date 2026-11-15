@@ -796,6 +796,10 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 		hasUnique = hasUnique || indexInfo.Unique
 	}
 
+	if hasSPFreshIndex(indexInfos) {
+		return dc.addSPFreshIndexWithLocalIngest(ctx, sessPool, t, reorgInfo, indexInfos)
+	}
+
 	var (
 		cfg *local.BackendConfig
 		bd  *local.Backend
@@ -888,11 +892,11 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 			failpoint.InjectCall("onUpdateJobParam")
 			reorgInfo.UpdateConfigFromSysTbl(ctx)
 			maxWriteSpeed := reorgInfo.ReorgMeta.GetMaxWriteSpeedOrDefault()
-			if maxWriteSpeed != bcCtx.GetLocalBackend().GetWriteSpeedLimit() {
-				bcCtx.GetLocalBackend().UpdateWriteSpeedLimit(maxWriteSpeed)
+			if localBackend := bcCtx.GetLocalBackend(); localBackend != nil && maxWriteSpeed != localBackend.GetWriteSpeedLimit() {
+				localBackend.UpdateWriteSpeedLimit(maxWriteSpeed)
 				logutil.DDLIngestLogger().Info("adjust ddl job config success",
 					zap.Int64("jobID", reorgInfo.ID),
-					zap.Int("max write speed", bcCtx.GetLocalBackend().GetWriteSpeedLimit()))
+					zap.Int("max write speed", localBackend.GetWriteSpeedLimit()))
 			}
 
 			concurrency := reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))

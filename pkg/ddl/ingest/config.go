@@ -23,6 +23,7 @@ import (
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/backend/remote"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	lightning "github.com/pingcap/tidb/pkg/lightning/config"
@@ -46,10 +47,24 @@ func genConfig(
 	concurrency int,
 	maxWriteSpeed int,
 	globalSort bool,
-) *local.BackendConfig {
+	useRemote bool,
+) (*local.BackendConfig, *remote.BackendConfig, error) {
 	workerConcurrency := int32(concurrency * 2)
 	if ImporterRangeConcurrencyForTest != nil {
 		workerConcurrency = ImporterRangeConcurrencyForTest.Load() * 2
+	}
+
+	if useRemote {
+		cfg := &remote.BackendConfig{
+			WorkerConcurrency: int(workerConcurrency),
+			KeyspaceName:      tidb.GetGlobalKeyspaceName(),
+			SortedKVDir:       jobSortPath,
+			CheckpointEnabled: true,
+		}
+		if checkDup && !globalSort {
+			cfg.DuplicateResolution = lightning.ErrorOnDup
+		}
+		return nil, cfg, nil
 	}
 
 	cfg := &local.BackendConfig{
@@ -83,7 +98,7 @@ func genConfig(
 		cfg.DuplicateDetectOpt = common.DupDetectOpt{ReportErrOnDup: true}
 	}
 
-	return cfg
+	return cfg, nil, nil
 }
 
 // CopReadBatchSize is the batch size of coprocessor read.
@@ -124,15 +139,19 @@ var (
 	compactConcurrency = 4
 )
 
-func generateLocalEngineConfig(ts uint64) *backend.EngineConfig {
+func generateLocalEngineConfig(ts uint64, tableID, jobID, indexID int64) *backend.EngineConfig {
 	return &backend.EngineConfig{
+		EngineID: int32(indexID),
+		TaskID:   jobID,
 		Local: backend.LocalEngineConfig{
 			Compact:            true,
 			CompactThreshold:   int64(compactMemory),
 			CompactConcurrency: compactConcurrency,
 			BlockSize:          16 * 1024, // using default for DDL
 		},
-		TableInfo:   &checkpoints.TidbTableInfo{},
+		TableInfo: &checkpoints.TidbTableInfo{
+			ID: tableID,
+		},
 		KeepSortDir: true,
 		TS:          ts,
 	}

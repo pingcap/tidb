@@ -392,7 +392,22 @@ func BuildIndexInfo(
 		Unique:  isUnique,
 	}
 
-	if isVector {
+	isSPFresh := indexOption != nil && indexOption.Tp == pmodel.IndexTypeSPFresh
+	if indexOption != nil && !isSPFresh {
+		if len(indexOption.SPFreshStoredColumns) > 0 {
+			return nil, dbterror.ErrUnsupportedIndexType.FastGen("STORING can be only used in SPFresh VECTOR INDEX")
+		}
+		if indexOption.VectorIndexParam != nil {
+			return nil, dbterror.ErrUnsupportedIndexType.FastGen("VECTOR_INDEX_PARAM can be only used in SPFresh VECTOR INDEX")
+		}
+	}
+	if isSPFresh {
+		vectorInfo, _, err := buildSPFreshVectorInfoWithCheck(indexPartSpecifications, indexOption, tblInfo, vectorIndexDuplicateCheckAll)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		idxInfo.VectorInfo = vectorInfo
+	} else if isVector {
 		vectorInfo, _, err := buildVectorInfoWithCheck(indexPartSpecifications, tblInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -402,7 +417,7 @@ func BuildIndexInfo(
 
 	var err error
 	allTableColumns := tblInfo.Columns
-	idxInfo.Columns, idxInfo.MVIndex, err = buildIndexColumns(ctx, allTableColumns, indexPartSpecifications, isVector)
+	idxInfo.Columns, idxInfo.MVIndex, err = buildIndexColumns(ctx, allTableColumns, indexPartSpecifications, isVector || isSPFresh)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -596,7 +611,7 @@ func validateAlterIndexVisibility(ctx sessionctx.Context, indexName pmodel.CIStr
 			return true, nil
 		}
 	}
-	if idx.VectorInfo != nil {
+	if idx.IsTiFlashLocalIndex() {
 		return false, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
 	}
 	return false, nil
@@ -1017,6 +1032,9 @@ func (w *worker) checkVectorIndexProcessOnce(jobCtx *jobContext, tbl table.Table
 func (w *worker) onCreateIndex(jobCtx *jobContext, job *model.Job, isPK bool) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
+		if err := abortSPFreshBuild(w, jobCtx, job); err != nil {
+			return 0, errors.Trace(err)
+		}
 		ver, err = onDropIndex(jobCtx, job)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -1042,6 +1060,14 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, job *model.Job, isPK bool) (v
 
 	allIndexInfos := make([]*model.IndexInfo, 0, len(args.IndexArgs))
 	for _, arg := range args.IndexArgs {
+		if arg.FuncExpr != "" && arg.IndexOption != nil && arg.IndexOption.Tp == pmodel.IndexTypeSPFresh {
+			defer func(part *ast.IndexPartSpecification) { part.Expr = nil }(arg.IndexPartSpecifications[0])
+			arg.IndexPartSpecifications[0].Expr, err = generatedexpr.ParseExpression(arg.FuncExpr)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
 		indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, false, job.Type == model.ActionAddPrimaryKey, arg)
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -1060,6 +1086,14 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, job *model.Job, isPK bool) (v
 		allIndexInfos = append(allIndexInfos, indexInfo)
 	}
 
+	if err := ensureSPFreshBuildAdmission(job, allIndexInfos); err != nil {
+		if allIndexInfos[0].State == model.StateNone {
+			job.State = model.JobStateCancelled
+			job.Error = toTError(err)
+			return 0, err
+		}
+		return convertAddIdxJob2RollbackJob(jobCtx, job, tblInfo, allIndexInfos, err)
+	}
 	originalState := allIndexInfos[0].State
 	replacePrimaryKey := isPK && len(args.IndexArgs) == 1 && len(allIndexInfos) == 1 && pkdbIsReplacePrimaryKeyJob(job)
 
@@ -1067,7 +1101,11 @@ SwitchIndexState:
 	switch allIndexInfos[0].State {
 	case model.StateNone:
 		// none -> delete only
-		err = initForReorgIndexes(w, job, allIndexInfos)
+		if hasSPFreshIndex(allIndexInfos) {
+			err = initSPFreshReorg(w, jobCtx, job, tblInfo, allIndexInfos)
+		} else {
+			err = initForReorgIndexes(w, job, allIndexInfos)
+		}
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
@@ -1139,6 +1177,9 @@ SwitchIndexState:
 			intest.Assert(job.MultiSchemaInfo == nil, "multi schema change shouldn't reach here")
 			w.startAnalyzeAndWait(job, tblInfo)
 		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+			if err = requireSPFreshBulkReadyBeforePublic(w, job, allIndexInfos); err != nil {
+				return ver, err
+			}
 			if replacePrimaryKey {
 				if err = UpdateColsNull2NotNull(tblInfo, allIndexInfos[0]); err != nil {
 					return ver, errors.Trace(err)
@@ -1180,6 +1221,7 @@ SwitchIndexState:
 				return ver, errors.Trace(err)
 			}
 
+			logSPFreshBulkPublic(w, job, allIndexInfos)
 			a := &model.ModifyIndexArgs{
 				PartitionIDs: getPartitionIDs(tbl.Meta()),
 				OpType:       model.OpAddIndex,
@@ -1688,6 +1730,9 @@ func doReorgWorkForCreateIndex(
 	tbl table.Table,
 	allIndexInfos []*model.IndexInfo,
 ) (done bool, ver int64, err error) {
+	if hasSPFreshIndex(allIndexInfos) {
+		return doSPFreshReorg(w, jobCtx, job, tbl, allIndexInfos)
+	}
 	var reorgTp model.ReorgType
 	reorgTp, err = pickBackfillType(job)
 	if err != nil {
@@ -1811,6 +1856,10 @@ func runIngestReorgJob(w *worker, jobCtx *jobContext, job *model.Job,
 }
 
 func isRetryableJobError(err error, jobErrCnt int64) bool {
+	var updateErr *spfreshRuntimeConfigUpdateError
+	if goerrors.As(err, &updateErr) {
+		return !isSPFreshRuntimeConfigTerminalError(err)
+	}
 	if jobErrCnt+1 >= variable.GetDDLErrorCountLimit() {
 		return false
 	}
@@ -1952,6 +2001,31 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		}
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
+		spfreshIndexIDs := collectSPFreshIndexIDsFromIndexInfos(allIndexInfos)
+		if len(spfreshIndexIDs) > 0 {
+			if job.IsRollingback() {
+				cleanupSPFreshBuildTasksForRollback(jobCtx.stepCtx, jobCtx.store, job, logutil.DDLLogger())
+				if err := teardownSPFreshIndexesByIDWithShortRetry(
+					jobCtx.stepCtx, jobCtx.store, tblInfo.ID, spfreshIndexIDs,
+				); err != nil {
+					retryDelay := GetWaitTimeWhenErrorOccurred()
+					logutil.DDLLogger().Warn("SPFresh teardown during rollback is pending",
+						zap.Stringer("job", job),
+						zap.Duration("retryDelay", retryDelay),
+						zap.Error(err))
+					select {
+					case <-jobCtx.stepCtx.Done():
+					case <-time.After(retryDelay):
+					}
+					// Keep both the job and index in their durable rollback fence.
+					// A nil error avoids treating this expected no-progress retry as
+					// another rollback failure and incrementing job.ErrorCount.
+					return ver, nil
+				}
+			} else if err := teardownSPFreshIndexesByID(jobCtx.stepCtx, jobCtx.store, tblInfo.ID, spfreshIndexIDs); err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateDeleteReorganization
 		}
@@ -2034,7 +2108,9 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 				return ver, errors.Trace(err)
 			}
 			dropArgs.IndexArgs[0].IndexID = indexIDs[0]
-			dropArgs.IndexArgs[0].IsVector = allIndexInfos[0].VectorInfo != nil
+			// Only TiFlash-owned vector indexes omit TiKV delete ranges.
+			// SPFresh metadata and partitions live under the TiKV index prefix.
+			dropArgs.IndexArgs[0].IsVector = allIndexInfos[0].VectorInfo != nil && !allIndexInfos[0].IsSPFreshIndex()
 			if !allIndexInfos[0].Global {
 				dropArgs.PartitionIDs = getPartitionIDs(tblInfo)
 			}
@@ -2545,56 +2621,114 @@ func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
 	return writerCfg
 }
 
-func writeChunk(
-	ctx context.Context,
-	writers []ingest.Writer,
-	indexes []table.Index,
-	indexConditionCheckers []func(row chunk.Row) (bool, error),
-	copCtx copr.CopContext,
-	loc *time.Location,
-	errCtx errctx.Context,
-	writeStmtBufs *variable.WriteStmtBufs,
-	copChunk *chunk.Chunk,
-	tblInfo *model.TableInfo,
-) (int, kv.Handle, error) {
-	iter := chunk.NewIterator4Chunk(copChunk)
-	c := copCtx.GetBase()
-	ectx := c.ExprCtx.GetEvalCtx()
+type indexWriteScratch struct {
+	handleData  []types.Datum
+	restoreData []types.Datum
+	indexData   []types.Datum
+	unlockFns   []func()
+	spfresh     spfreshVectorRecordBuffers
+}
 
-	maxIdxColCnt := maxIndexColumnCount(indexes)
-	idxDataBuf := make([]types.Datum, maxIdxColCnt)
-	handleDataBuf := make([]types.Datum, len(c.HandleOutputOffsets))
-	var restoreDataBuf []types.Datum
+func newIndexWriteScratch(plan *indexWritePlan, copCtx copr.CopContext, writerCount int) indexWriteScratch {
+	handleColumnCount := len(copCtx.GetBase().HandleOutputOffsets)
+	scratch := indexWriteScratch{
+		handleData: make([]types.Datum, handleColumnCount),
+		indexData:  make([]types.Datum, plan.maxIdxColCnt),
+		unlockFns:  make([]func(), 0, writerCount),
+	}
+	if plan.restore {
+		scratch.restoreData = make([]types.Datum, handleColumnCount)
+	}
+	if plan.maxSPFreshStoredColCnt > 0 {
+		scratch.spfresh.storedValues = make([]types.Datum, plan.maxSPFreshStoredColCnt*2)
+	}
+	return scratch
+}
+
+type indexWritePlan struct {
+	indexes                []indexWritePlanItem
+	maxIdxColCnt           int
+	maxSPFreshStoredColCnt int
+	restore                bool
+}
+
+type indexWritePlanItem struct {
+	outputOffsets     []int
+	needRestore       bool
+	spfreshVectorInfo *model.VectorIndexInfo
+}
+
+func newIndexWritePlan(indexes []table.Index, copCtx copr.CopContext) *indexWritePlan {
+	c := copCtx.GetBase()
+	plan := &indexWritePlan{
+		indexes: make([]indexWritePlanItem, len(indexes)),
+	}
+	pkNeedRestore := false
+	if c.PrimaryKeyInfo != nil && c.TableInfo.IsCommonHandle && c.TableInfo.CommonHandleVersion != 0 {
+		pkNeedRestore = tables.NeedRestoredData(c.PrimaryKeyInfo.Columns, c.TableInfo.Columns)
+	}
+	for i, index := range indexes {
+		idxInfo := index.Meta()
+		indexPlan := &plan.indexes[i]
+		indexPlan.outputOffsets = copCtx.IndexColumnOutputOffsets(idxInfo.ID)
+		plan.maxIdxColCnt = max(plan.maxIdxColCnt, len(indexPlan.outputOffsets))
+		if idxInfo.IsSPFreshIndex() {
+			indexPlan.spfreshVectorInfo = idxInfo.VectorInfo
+			storedColumnIDs := idxInfo.VectorInfo.StoredColumnIDs
+			plan.maxSPFreshStoredColCnt = max(plan.maxSPFreshStoredColCnt, len(storedColumnIDs))
+			continue
+		}
+		needRestore := pkNeedRestore || tables.NeedRestoredData(idxInfo.Columns, c.TableInfo.Columns)
+		indexPlan.needRestore = needRestore
+		plan.restore = plan.restore || needRestore
+	}
+	return plan
+}
+
+func (w *indexIngestBaseWorker) writeChunk(copChunk *chunk.Chunk, conditionCheckers ...[]func(chunk.Row) (bool, error)) (int, kv.Handle, error) {
+	if w.writePlan == nil {
+		w.writePlan = newIndexWritePlan(w.indexes, w.copCtx)
+		w.writeScratch = newIndexWriteScratch(w.writePlan, w.copCtx, len(w.writers))
+		var err error
+		w.spfreshWriters, err = spfreshBuildRecordWriters(w.writers, w.writePlan)
+		if err != nil {
+			return 0, nil, err
+		}
+	}
+	iter := chunk.NewIterator4Chunk(copChunk)
+	c := w.copCtx.GetBase()
+	ectx := c.ExprCtx.GetEvalCtx()
+	vars := w.se.GetSessionVars()
+	stmtCtx := vars.StmtCtx
+	loc := stmtCtx.TimeZone()
+	errCtx := stmtCtx.ErrCtx()
+	writeStmtBufs := vars.GetWriteStmtBufs()
+	tblInfo := w.tbl.Meta()
+
+	handleDataBuf := w.writeScratch.handleData
+	restoreDataBuf := w.writeScratch.restoreData
 	count := 0
 	var lastHandle kv.Handle
+	idxDataBuf := w.writeScratch.indexData
 
-	unlockFns := make([]func(), 0, len(writers))
-	for _, w := range writers {
-		unlock := w.LockForWrite()
+	unlockFns := w.writeScratch.unlockFns[:0]
+	for _, writer := range w.writers {
+		unlock := writer.LockForWrite()
 		unlockFns = append(unlockFns, unlock)
 	}
 	defer func() {
 		for _, unlock := range unlockFns {
 			unlock()
 		}
+		w.writeScratch.handleData = handleDataBuf
+		w.writeScratch.restoreData = restoreDataBuf
+		w.writeScratch.indexData = idxDataBuf
+		clear(unlockFns)
+		w.writeScratch.unlockFns = unlockFns[:0]
 	}()
-	needRestoreForIndexes := make([]bool, len(indexes))
-	restore, pkNeedRestore := false, false
-	if c.PrimaryKeyInfo != nil && c.TableInfo.IsCommonHandle && c.TableInfo.CommonHandleVersion != 0 {
-		pkNeedRestore = tables.NeedRestoredData(c.PrimaryKeyInfo.Columns, c.TableInfo.Columns)
-	}
-	for i, index := range indexes {
-		needRestore := pkNeedRestore || tables.NeedRestoredData(index.Meta().Columns, c.TableInfo.Columns)
-		needRestoreForIndexes[i] = needRestore
-		restore = restore || needRestore
-	}
-	if restore {
-		restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
-	}
-
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		handleDataBuf := ExtractDatumByOffsets(ectx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
-		if restore {
+		handleDataBuf = ExtractDatumByOffsets(ectx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
+		if w.writePlan.restore {
 			// restoreDataBuf should not truncate index values.
 			for i, datum := range handleDataBuf {
 				restoreDataBuf[i] = *datum.Clone()
@@ -2604,11 +2738,9 @@ func writeChunk(
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		for i, index := range indexes {
-			// If the `IndexRecordChunk.conditionPushed` is true and we have only 1 index, the `indexConditionCheckers`
-			// will not be initialized.
-			if index.Meta().HasCondition() && indexConditionCheckers != nil {
-				ok, err := indexConditionCheckers[i](row)
+		for i, index := range w.indexes {
+			if index.Meta().HasCondition() && len(conditionCheckers) > 0 && conditionCheckers[0] != nil {
+				ok, err := conditionCheckers[0][i](row)
 				if err != nil {
 					return 0, nil, errors.Trace(err)
 				}
@@ -2616,18 +2748,34 @@ func writeChunk(
 					continue
 				}
 			}
-
-			idxID := index.Meta().ID
+			indexPlan := &w.writePlan.indexes[i]
+			idxInfo := index.Meta()
+			idxID := idxInfo.ID
 			idxDataBuf = ExtractDatumByOffsets(ectx,
-				row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
-			idxData := idxDataBuf[:len(index.Meta().Columns)]
-			var rsData []types.Datum
-			if needRestoreForIndexes[i] {
-				rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
+				row, indexPlan.outputOffsets, c.ExprColumnInfos, idxDataBuf)
+			idxData := idxDataBuf[:len(indexPlan.outputOffsets)]
+			if indexPlan.spfreshVectorInfo != nil {
+				err := writeVectorIndexRecord(
+					w.ctx,
+					w.spfreshWriters[i],
+					indexPlan.spfreshVectorInfo,
+					idxData,
+					h,
+					loc,
+					&w.writeScratch.spfresh,
+				)
+				if err != nil {
+					return 0, nil, err
+				}
+				continue
 			}
-			err = writeOneKV(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
+			var rsData []types.Datum
+			if indexPlan.needRestore {
+				rsData = getRestoreData(c.TableInfo, w.copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
+			}
+			err = writeOneKV(w.ctx, w.writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 			if err != nil {
-				err = ingest.TryConvertToKeyExistsErr(err, index.Meta(), tblInfo)
+				err = ingest.TryConvertToKeyExistsErr(err, idxInfo, tblInfo)
 				return 0, nil, errors.Trace(err)
 			}
 		}
@@ -2948,6 +3096,23 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 		if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
 			return errors.Trace(err)
 		}
+		indexInfos, err := resolveBackfillIndexInfos(
+			reorgInfo.Job.ID,
+			t.Meta().ID,
+			taskMeta.EleIDs,
+			t.Meta().Indices,
+		)
+		if err != nil {
+			return err
+		}
+		if hasSPFreshIndex(indexInfos) {
+			if taskMeta.SPFreshBuildRoutePlan == nil {
+				return errors.New("SPFresh backfill task has no build route plan")
+			}
+			if err := taskMeta.SPFreshBuildRoutePlan.Validate(); err != nil {
+				return errors.Annotate(err, "invalid SPFresh build route plan")
+			}
+		}
 		taskID = task.ID
 		lastConcurrency = task.Concurrency
 		lastBatchSize = taskMeta.Job.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
@@ -2987,9 +3152,21 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			Job:             *job.Clone(),
 			EleIDs:          extractElemIDs(reorgInfo),
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
-			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
 			EstimateRowSize: rowSize,
 			Version:         BackfillTaskMetaVersion1,
+		}
+
+		indexInfos, err := resolveBackfillIndexInfos(job.ID, t.Meta().ID, taskMeta.EleIDs, t.Meta().Indices)
+		if err != nil {
+			return err
+		}
+		routePlan, err := buildSPFreshBuildRoutePlan(w.store, job, t.Meta(), indexInfos)
+		if err != nil {
+			return err
+		}
+		taskMeta.SPFreshBuildRoutePlan = routePlan
+		if routePlan == nil {
+			taskMeta.CloudStorageURI = w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI
 		}
 
 		metaData, err := json.Marshal(taskMeta)

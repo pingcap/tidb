@@ -139,7 +139,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	}
 
 	// Perform optimization and initialization related to the transaction level.
-	if err = sessiontxn.AdviseOptimizeWithPlanAndThenWarmUp(c.Ctx, stmt.Plan); err != nil {
+	if err = AdviseTxnWithPlan(ctx, c.Ctx, stmt.Plan); err != nil {
 		return nil, err
 	}
 

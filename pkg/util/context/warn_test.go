@@ -220,3 +220,30 @@ func warnSliceInnerArrayEqual(a []SQLWarn, b []SQLWarn) bool {
 	header2 := (*reflect.SliceHeader)(unsafe.Pointer(&b))
 	return header1.Data == header2.Data
 }
+
+func TestStaticWarnHandlerOmittedDetailsRemainAPrefix(t *testing.T) {
+	h := NewStaticWarnHandler(0)
+	h.AppendWarning(errors.NewNoStackError("before"))
+	h.AddOmittedWarnings(2)
+	h.AppendWarning(errors.NewNoStackError("after"))
+
+	require.Equal(t, 4, h.WarningCount())
+	require.Len(t, h.GetWarnings(), 1)
+
+	truncated := h.TruncateWarnings(3)
+	require.Empty(t, truncated)
+	require.Equal(t, 3, h.WarningCount())
+	require.Len(t, h.GetWarnings(), 1)
+
+	h.TruncateWarnings(2)
+	require.Equal(t, 2, h.WarningCount())
+	require.Len(t, h.GetWarnings(), 1)
+
+	h.AppendWarning(errors.NewNoStackError("replacement"))
+	require.Equal(t, 3, h.WarningCount())
+	require.Len(t, h.GetWarnings(), 1)
+
+	h.TruncateWarnings(1)
+	require.Equal(t, 1, h.WarningCount())
+	require.Len(t, h.GetWarnings(), 1)
+}

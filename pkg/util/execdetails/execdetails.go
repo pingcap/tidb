@@ -1041,6 +1041,8 @@ const (
 	TpFKCascadeRuntimeStats
 	// TpRURuntimeStats is the tp for RURuntimeStats
 	TpRURuntimeStats
+	// TpVectorSearchRuntimeStats contains remote ANN execution details.
+	TpVectorSearchRuntimeStats
 	// TpAuditLogRuntimeStat is the tp for TpAuditLogRuntimeStat
 	TpAuditLogRuntimeStat
 )

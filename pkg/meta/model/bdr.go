@@ -50,6 +50,7 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 		ActionAddTablePartition,
 		ActionDropPrimaryKey,
 		ActionAlterIndexVisibility,
+		ActionAlterVectorIndexParam,
 		ActionCreateTables,
 		ActionAlterTTLInfo,
 		ActionAlterTTLRemove,

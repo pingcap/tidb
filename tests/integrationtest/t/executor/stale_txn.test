@@ -1,7 +1,11 @@
 # TestIssue35686
 ## This query should not panic
+# Obtain the snapshot from PD to avoid local clock skew and second-level truncation.
 --disable_result_log
-select * from information_schema.ddl_jobs as of timestamp now();
+start transaction with consistent snapshot;
+set @ddl_jobs_snapshot = tidb_parse_tso(@@tidb_current_ts);
+commit;
+select * from information_schema.ddl_jobs as of timestamp @ddl_jobs_snapshot;
 --enable_result_log
 
 # TestIssue31954

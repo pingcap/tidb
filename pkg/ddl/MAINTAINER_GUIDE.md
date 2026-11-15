@@ -508,3 +508,38 @@ For exact commands, follow the repository root `AGENTS.md` testing sections (fai
 - MDL: metadata lock mechanism used to gate schema sync (see `mysql.tidb_mdl_info` and `pkg/ddl/schema_version.go`).
 - Dist-task: distributed backfill framework used by some DDL reorg modes.
 - Ingest: Lightning-based acceleration path for backfill (`pkg/ddl/ingest/*`).
+
+## SPFresh integration on release7.1.9-0
+
+SPFresh-specific code lives in `pkdb_spfresh*` files. Shared index handling
+calls admission, reorg and publication barriers; ordinary indexes retain the
+release local SST/temp-index path. SPFresh writers never write normal local
+index KVs. `backfilling.go` dispatches its local scan to
+`addSPFreshIndexWithLocalIngest`; distributed scan metadata must persist and
+validate `SPFreshBuildRoutePlan`. Failed non-idempotent remote scans abort the
+build instead of replaying writes.
+
+`SPFreshBuildGeneration` and `RealStartTS` identify the same durable snapshot.
+Storage acknowledges Begin before scanning, owns GC protection and catchup,
+and acknowledges Ready before SQL publication. Empty builds go through the
+same admitted generation. Rollback/drop retain a durable cleanup fence;
+TRUNCATE bootstraps the replacement before retiring the old index. Recover and
+flashback reject SPFresh indexes because deleted remote state is not recovered.
+
+The bulk route freezes S3 URI and endpoints at admission. Its manifests, proof,
+refinement and import helpers live in `pkdb_spfresh_bulk*`. Cleanup records in
+`pkg/meta/pkdb_spfresh_bulk_cleanup.go` outlive terminal DDL jobs. The owner
+cleanup loop retires workers and removes only the recorded build prefix;
+partial object-deletion errors remain retryable. The release port uses AWS SDK
+v2 and retains this ordering.
+
+Keep HNSW's persisted enum value and release partial-index metadata. SPFresh
+add-index and parameter jobs use v2 arguments; serialize FuncExpr, never an
+ExprNode. The worker restores the expression for one step and clears it before
+persisting arguments. Runtime parameter CAS must retain expected/desired values
+across retries. Multi-schema parameter updates propagate pause state; building
+SPFresh within multi-schema DDL is rejected.
+
+TiDB APIv1 uses client-go's null keyspace sentinel, distinct from APIv2
+keyspace zero. Bulk prefix validation accepts that sentinel and emits bare table
+index keys. Test both namespaces without changing old ordinary-index behavior.

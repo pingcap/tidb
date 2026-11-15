@@ -335,6 +335,10 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	if spfreshIndexDependsOnColumn(tblInfo, oldCol) {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("column has SPFresh index, drop SPFresh index first"))
+	}
 	if isColumnarIndexColumn(tblInfo, oldCol) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("vector indexes on the column"))
@@ -1690,6 +1694,19 @@ func GetModifiableColumnJob(
 		return nil, errors.Trace(err)
 	}
 	mayNeedChangeColData := !noReorgDataStrict(t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
+	// An SPFresh index embeds the handle column and every stored column, so any
+	// modification of those columns requires dropping the index first. The indexed
+	// vector column only requires it when its values are rewritten or the column is
+	// renamed; a modification that leaves the embedded values untouched, such as
+	// changing nullability, stays allowed.
+	switch spfreshColumnDependencyOf(t.Meta(), col.ColumnInfo) {
+	case spfreshColumnStored:
+		return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("column has SPFresh index, drop SPFresh index first")
+	case spfreshColumnIndexed:
+		if mayNeedChangeColData || col.Name.L != newCol.ColumnInfo.Name.L {
+			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("column has SPFresh index, drop SPFresh index first")
+		}
+	}
 	if mayNeedChangeColData {
 		if err = isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)

@@ -534,6 +534,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeRename
 		p.flag |= inCreateOrDropTable
 		p.checkRenameTableGrammar(node)
+	case *ast.Constraint:
+		p.err = checkSPFreshIndexOptions(node.Tp == ast.ConstraintVector, node.Option, node.Keys)
 	case *ast.CreateIndexStmt:
 		p.stmtTp = TypeCreate
 		p.checkCreateIndexGrammar(node)
@@ -1541,6 +1543,9 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		return
 	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
+	if p.err == nil {
+		p.err = checkSPFreshIndexOptions(stmt.KeyType == ast.IndexKeyTypeVector, stmt.IndexOption, stmt.IndexPartSpecifications)
+	}
 }
 
 func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
@@ -2660,4 +2665,26 @@ func extractReplaceAbleVarsForUDV(sctx sessionctx.Context, getV, setV map[string
 		}
 	}
 	sctx.GetSessionVars().ReplaceAbleUserDefVars = replaceAbleVars
+}
+
+// checkSPFreshIndexOptions validates the new options without rewriting release
+// HNSW enums or the existing fulltext/partial-index syntax.
+func checkSPFreshIndexOptions(isVector bool, option *ast.IndexOption, parts []*ast.IndexPartSpecification) error {
+	if option == nil {
+		return nil
+	}
+	isSPFresh := isVector && option.Tp == pmodel.IndexTypeSPFresh
+	if option.VectorIndexParam != nil && !isSPFresh {
+		return dbterror.ErrUnsupportedIndexType.FastGen("VECTOR_INDEX_PARAM can be only used in SPFresh VECTOR INDEX")
+	}
+	if len(option.SPFreshStoredColumns) > 0 && !isSPFresh {
+		return dbterror.ErrUnsupportedIndexType.FastGen("STORING can be only used in SPFresh VECTOR INDEX")
+	}
+	if option.Tp == pmodel.IndexTypeSPFresh && !isVector {
+		return dbterror.ErrUnsupportedIndexType.FastGen("'USING SPFresh' can be only used for VECTOR INDEX")
+	}
+	if isSPFresh && (len(parts) != 1 || parts[0].Expr == nil) {
+		return dbterror.ErrUnsupportedAddVectorIndex.FastGen("VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))")
+	}
+	return nil
 }

@@ -145,9 +145,16 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		if sub.IsFinished() {
 			continue
 		}
+		if sub.State == model.JobStatePaused {
+			sub.State = model.JobStateQueueing
+		}
 		proxyJob := sub.ToProxyJob(job, i)
 		ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
 		sub.FromProxyJob(&proxyJob, ver)
+		if proxyJob.IsPaused() {
+			job.State = model.JobStatePaused
+			job.AdminOperator = proxyJob.AdminOperator
+		}
 		return ver, err
 	}
 	return finishMultiSchemaJob(job, metaMut)
@@ -188,7 +195,7 @@ func handleRollbackException(runJobErr error, proxyJobErr *terror.Error) error {
 
 func checkMultiSchemaJobType(jobType model.ActionType) error {
 	switch jobType {
-	case model.ActionAddColumn, model.ActionDropColumn, model.ActionDropIndex, model.ActionDropPrimaryKey, model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionRenameIndex, model.ActionModifyColumn, model.ActionSetDefaultValue, model.ActionAlterIndexVisibility, model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate, model.ActionAddForeignKey, model.ActionDropForeignKey, model.ActionModifyTableAutoIDCache:
+	case model.ActionAddColumn, model.ActionDropColumn, model.ActionDropIndex, model.ActionDropPrimaryKey, model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionRenameIndex, model.ActionModifyColumn, model.ActionSetDefaultValue, model.ActionAlterIndexVisibility, model.ActionAlterVectorIndexParam, model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate, model.ActionAddForeignKey, model.ActionDropForeignKey, model.ActionModifyTableAutoIDCache:
 		return nil
 	default:
 		return dbterror.ErrRunMultiSchemaChanges.FastGenByArgs(jobType.String())
@@ -313,6 +320,9 @@ func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.T
 }
 
 func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
+	if err := checkMultiSchemaAddSPFreshIndex(info); err != nil {
+		return err
+	}
 	if err := pkdbCheckMultiSchemaAutoIncrementWithNonclusteredPK(info, t); err != nil {
 		return err
 	}

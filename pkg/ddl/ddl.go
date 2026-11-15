@@ -945,6 +945,10 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 
 	// Start some background routine to manage TiFlash replica.
 	d.wg.Run(d.PollTiFlashRoutine)
+	if config.SPFreshEnabled() {
+		d.wg.Run(d.runSPFreshBulkCleanupLoop)
+		d.wg.Run(d.runSPFreshBootstrapCleanupLoop)
+	}
 
 	ingestDataDir, err := ingest.GenIngestTempDataDir()
 	if err != nil {

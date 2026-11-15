@@ -1612,10 +1612,10 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 					continue
 				}
 			}
-			if index.VectorInfo != nil {
+			if index.IsTiFlashLocalIndex() {
 				// Because the value of `TiFlashReplica.Available` changes as the user modify replica, it is not ideal if the state of index changes accordingly.
 				// So the current way to use the vector indexes is to require the TiFlash Replica to be available.
-				if !tblInfo.TiFlashReplica.Available {
+				if tblInfo.TiFlashReplica == nil || !tblInfo.TiFlashReplica.Available {
 					continue
 				}
 				path := genTiFlashPath(tblInfo)
@@ -1931,11 +1931,17 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		}
 	case ast.AdminRecoverIndex:
 		tnW := b.resolveCtx.GetTableName(as.Tables[0])
+		if err := rejectSPFreshAdminIndex(tnW.TableInfo.FindIndexByName(strings.ToLower(as.Index)), as.Index, "admin recover index"); err != nil {
+			return nil, err
+		}
 		p := &RecoverIndex{Table: tnW, IndexName: as.Index}
 		p.setSchemaAndNames(buildRecoverIndexFields())
 		ret = p
 	case ast.AdminCleanupIndex:
 		tnW := b.resolveCtx.GetTableName(as.Tables[0])
+		if err := rejectSPFreshAdminIndex(tnW.TableInfo.FindIndexByName(strings.ToLower(as.Index)), as.Index, "admin cleanup index"); err != nil {
+			return nil, err
+		}
 		p := &CleanupIndex{Table: tnW, IndexName: as.Index}
 		p.setSchemaAndNames(buildCleanupIndexFields())
 		ret = p
@@ -2238,6 +2244,9 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 			// Skip checking clustered index.
 			continue
 		}
+		if idxInfo.IsSPFreshIndex() {
+			continue
+		}
 		if idxInfo.State != model.StatePublic {
 			logutil.Logger(ctx).Info("build physical index lookup reader, the index isn't public",
 				zap.String("index", idxInfo.Name.O),
@@ -2322,6 +2331,9 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 		if idx.Meta().State != model.StatePublic {
 			return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.Meta().State)
 		}
+		if err := rejectSPFreshAdminIndex(idx.Meta(), as.Index, "admin check index"); err != nil {
+			return nil, err
+		}
 		p.CheckIndex = true
 		readerPlans, indexInfos, err = b.buildPhysicalIndexLookUpReaders(ctx, tblName.Schema, tbl, []table.Index{idx})
 	} else {
@@ -2349,6 +2361,9 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 	for _, idxInfo := range indicesInfo {
 		if idxInfo.Name.L != indexName {
 			continue
+		}
+		if err := rejectSPFreshAdminIndex(idxInfo, indexName, "admin check index range"); err != nil {
+			return nil, nil, err
 		}
 		for _, idxCol := range idxInfo.Columns {
 			col := cols[idxCol.Offset]
@@ -7226,4 +7241,11 @@ func GetMaxWriteSpeedFromExpression(opt *AlterDDLJobOpt) (maxWriteSpeed int64, e
 		return 0, fmt.Errorf("the value %v for %s is invalid", v.Value.GetValue(), opt.Name)
 	}
 	return maxWriteSpeed, nil
+}
+
+func rejectSPFreshAdminIndex(idxInfo *model.IndexInfo, indexName, adminOp string) error {
+	if idxInfo == nil || !idxInfo.IsSPFreshIndex() {
+		return nil
+	}
+	return errors.Errorf("SPFresh index %q is not supported for %s", indexName, adminOp)
 }

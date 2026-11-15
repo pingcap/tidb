@@ -101,7 +101,14 @@ var retryableErrorIDs = map[errors.ErrorID]struct{}{
 var ErrWriteTooSlow = errors.New("write too slow, maybe gRPC is blocked forever")
 
 func isSingleRetryableError(err error) bool {
+	var retryable interface{ Retryable() bool }
+	if goerrors.As(err, &retryable) {
+		return retryable.Retryable()
+	}
 	err = errors.Cause(err)
+	if retryable, ok := err.(interface{ Retryable() bool }); ok {
+		return retryable.Retryable()
+	}
 
 	switch err {
 	case nil, context.Canceled, context.DeadlineExceeded, io.EOF, sql.ErrNoRows:

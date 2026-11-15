@@ -67,13 +67,27 @@ func ProjectionExpressionsToPBList(ctx EvalContext, exprs []Expression, client k
 
 // PbConverter supplies methods to convert TiDB expressions to TiPB.
 type PbConverter struct {
-	client kv.Client
-	ctx    EvalContext
+	client            kv.Client
+	ctx               EvalContext
+	columnRefEncoding columnRefEncoding
 }
+
+type columnRefEncoding uint8
+
+const (
+	columnRefByClientCapability columnRefEncoding = iota
+	columnRefByOffset
+)
 
 // NewPBConverter creates a PbConverter.
 func NewPBConverter(client kv.Client, ctx EvalContext) PbConverter {
 	return PbConverter{client: client, ctx: ctx}
+}
+
+// NewPBConverterWithColumnOffsets creates a converter for a request-local
+// schema whose ColumnRef values must always be dense column offsets.
+func NewPBConverterWithColumnOffsets(client kv.Client, ctx EvalContext) PbConverter {
+	return PbConverter{client: client, ctx: ctx, columnRefEncoding: columnRefByOffset}
 }
 
 // ExprToPB converts Expression to TiPB.
@@ -231,7 +245,8 @@ func (pc PbConverter) columnToPBExpr(column *Column, checkType bool) *tipb.Expr 
 		}
 	}
 
-	if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
+	if pc.columnRefEncoding == columnRefByOffset ||
+		pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
 		return &tipb.Expr{
 			Tp:        tipb.ExprType_ColumnRef,
 			Val:       codec.EncodeInt(nil, int64(column.Index)),

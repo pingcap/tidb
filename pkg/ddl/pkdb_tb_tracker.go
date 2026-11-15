@@ -169,6 +169,8 @@ func (tracker *TableTracker) AlterTable(spec *ast.AlterTableSpec) error {
 		return tracker.dropIndex(spec)
 	case ast.AlterTableRenameIndex:
 		return tracker.renameIndex(spec)
+	case ast.AlterTableSetVectorIndexParam:
+		return tracker.alterVectorIndexParam(spec)
 	case ast.AlterTableIndexInvisible:
 		return tracker.alterIndexVisibility(spec)
 	case ast.AlterTableAddConstraint:
@@ -866,4 +868,21 @@ func cloneIndexPartSpecifications(parts []*ast.IndexPartSpecification) []*ast.In
 		cloned = append(cloned, &clonedPart)
 	}
 	return cloned
+}
+
+func (tracker *TableTracker) alterVectorIndexParam(spec *ast.AlterTableSpec) error {
+	if err := validateAlterVectorIndexParam(spec.IndexName, tracker.tableInfo); err != nil {
+		return err
+	}
+	idx := tracker.tableInfo.FindIndexByName(spec.IndexName.L)
+	if spec.VectorIndexParam == nil || idx.VectorInfo.RuntimeConfig == nil {
+		return dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("SPFresh runtime config is missing")
+	}
+	searchConfig, runtimeConfig, err := model.ParseSPFreshVectorMutableConfig(*spec.VectorIndexParam, *idx.VectorInfo.RuntimeConfig)
+	if err != nil {
+		return err
+	}
+	idx.VectorInfo.SearchConfig = idx.VectorInfo.SearchConfig.Apply(searchConfig)
+	idx.VectorInfo.RuntimeConfig = &runtimeConfig
+	return nil
 }

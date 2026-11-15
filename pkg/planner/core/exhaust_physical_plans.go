@@ -2682,42 +2682,58 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 			ret = append(ret, topN)
 		}
 	}
-	// If we can generate MPP task and there's vector distance function in the order by column.
-	// We will try to generate a property for possible vector indexes.
-	if mppAllowed {
-		if len(lt.ByItems) != 1 {
-			return ret
-		}
-		vs := expression.ExtractVectorHelper(lt.ByItems[0].Expr)
-		if vs == nil {
-			return ret
-		}
-		// Currently vector index only accept ascending order.
-		if lt.ByItems[0].Desc {
-			return ret
-		}
-		// Currently, we only deal with the case the TopN is directly above a DataSource.
-		ds, ok := lt.Children()[0].(*logicalop.DataSource)
-		if !ok {
-			return ret
-		}
-		// Reject any filters.
-		if len(ds.PushedDownConds) > 0 {
-			return ret
-		}
+	// If there is a vector distance function in the order by column, generate an extra property for possible vector indexes.
+	// Note: This is required for exploring vector-index paths in both RootTask (SPFresh) and MPPTask (TiFlash/HNSW).
+	ds, vs, ok := extractVectorTopNSourceAndHelper(lt)
+	if !ok {
+		return ret
+	}
+	hasFilters := hasDataSourceFilters(ds)
+	hasSPFreshPath := hasMatchingSPFreshVectorPath(ds, vs)
+	if hasFilters && !hasSPFreshPath {
+		return ret
+	}
+
+	if lt.Count == 0 || lt.Offset > math.MaxUint64-lt.Count {
+		return ret
+	}
+	topK := lt.Count + lt.Offset
+
+	// Respect LIMIT_TO_COP hint. If it's applicable, don't explore the RootTask vector-index path.
+	if !lt.PreferLimitToCop && len(lt.PartitionBy) == 0 && hasSPFreshPath && topK <= maxSPFreshTopK {
 		resultProp := &property.PhysicalProperty{
-			TaskTp:            property.MppTaskType,
+			TaskTp:            property.RootTaskType,
 			ExpectedCnt:       math.MaxFloat64,
 			CTEProducerStatus: prop.CTEProducerStatus,
 		}
 		resultProp.VectorProp.VectorHelper = vs
-		resultProp.VectorProp.TopK = uint32(lt.Count + lt.Offset)
+		resultProp.VectorProp.TopK = topK
 		topN := PhysicalTopN{
 			ByItems:     lt.ByItems,
 			PartitionBy: lt.PartitionBy,
 			Count:       lt.Count,
 			Offset:      lt.Offset,
 		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+
+		ret = append(ret, topN)
+	}
+
+	// Explore MPP vector-index path (TiFlash/HNSW).
+	if mppAllowed && !hasFilters && topK <= math.MaxUint32 {
+		resultProp := &property.PhysicalProperty{
+			TaskTp:            property.MppTaskType,
+			ExpectedCnt:       math.MaxFloat64,
+			CTEProducerStatus: prop.CTEProducerStatus,
+		}
+		resultProp.VectorProp.VectorHelper = vs
+		resultProp.VectorProp.TopK = topK
+		topN := PhysicalTopN{
+			ByItems:     lt.ByItems,
+			PartitionBy: lt.PartitionBy,
+			Count:       lt.Count,
+			Offset:      lt.Offset,
+		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+
 		ret = append(ret, topN)
 	}
 	return ret
@@ -2776,7 +2792,38 @@ func getPhysTopNWithPartialOrderProperty(lt *logicalop.LogicalTopN, prop *proper
 func getPhysLimits(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	p, canPass := GetPropByOrderByItems(lt.ByItems)
 	if !canPass {
-		return nil
+		// Vector TopK on SPFresh is already ordered by the remote worker, so a root Limit is enough.
+		ds, vs, ok := extractVectorTopNSourceAndHelper(lt)
+		if !ok || lt.PreferLimitToCop || len(lt.PartitionBy) > 0 || !hasMatchingSPFreshVectorPath(ds, vs) {
+			return nil
+		}
+		if lt.Count == 0 || lt.Offset > math.MaxUint64-lt.Count {
+			return nil
+		}
+		topK := lt.Count + lt.Offset
+		if topK > maxSPFreshTopK {
+			return nil
+		}
+		resultProp := &property.PhysicalProperty{
+			TaskTp:            property.RootTaskType,
+			ExpectedCnt:       float64(topK),
+			CTEProducerStatus: prop.CTEProducerStatus,
+		}
+		resultProp.VectorProp.VectorHelper = vs
+		resultProp.VectorProp.TopK = topK
+		limit := PhysicalLimit{
+			Count:       lt.Count,
+			Offset:      lt.Offset,
+			PartitionBy: lt.GetPartitionBy(),
+		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+		// Release TopN inherits its child's schema, including filter-only columns.
+		// The remote scan evaluates those filters and returns only projected columns.
+		limit.SetSchema(lt.Schema().Clone())
+		if _, direct := lt.Children()[0].(*logicalop.DataSource); direct {
+			_, columns := spfreshScanOutputColumns(ds)
+			limit.SetSchema(expression.NewSchema(columns...))
+		}
+		return []base.PhysicalPlan{limit}
 	}
 
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
@@ -3836,4 +3883,50 @@ func hasNormalPreferTask(lp base.LogicalPlan, state *enumerateState, pp base.Phy
 		}
 	}
 	return false
+}
+func hasDataSourceFilters(ds *logicalop.DataSource) bool {
+	return ds != nil && len(ds.AllConds) > 0
+}
+
+func extractVectorTopNSourceAndHelper(lt *logicalop.LogicalTopN) (*logicalop.DataSource, *expression.VectorHelper, bool) {
+	if len(lt.ByItems) != 1 || lt.ByItems[0].Desc {
+		return nil, nil, false
+	}
+
+	// Accept vector-distance order-by in two shapes:
+	//  1) TopN(order by vec_*_distance(vec_col, const)) -> DataSource
+	//  2) TopN(order by Column(distance)) -> Projection(distance=vec_*_distance(vec_col, const)) -> DataSource
+	vs := expression.ExtractVectorHelper(lt.ByItems[0].Expr)
+	switch child := lt.Children()[0].(type) {
+	case *logicalop.DataSource:
+		if vs == nil {
+			return nil, nil, false
+		}
+		return child, vs, true
+	case *logicalop.LogicalProjection:
+		if len(child.Children()) != 1 {
+			return nil, nil, false
+		}
+		ds, ok := child.Children()[0].(*logicalop.DataSource)
+		if !ok {
+			return nil, nil, false
+		}
+		if vs == nil {
+			orderByCol, ok := lt.ByItems[0].Expr.(*expression.Column)
+			if !ok {
+				return nil, nil, false
+			}
+			orderIdx := child.Schema().ColumnIndex(orderByCol)
+			if orderIdx < 0 || orderIdx >= len(child.Exprs) {
+				return nil, nil, false
+			}
+			vs = expression.ExtractVectorHelper(child.Exprs[orderIdx])
+		}
+		if vs == nil {
+			return nil, nil, false
+		}
+		return ds, vs, true
+	default:
+		return nil, nil, false
+	}
 }

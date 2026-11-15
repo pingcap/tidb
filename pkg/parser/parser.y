@@ -836,6 +836,9 @@ type likeEscapeSpec struct {
 	metadata              "METADATA"
 	min                   "MIN"
 	hnsw                  "HNSW"
+	spfresh               "SPFRESH"
+	storing               "STORING"
+	vectorIndexParam      "VECTOR_INDEX_PARAM"
 	next_row_id           "NEXT_ROW_ID"
 	now                   "NOW"
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
@@ -2933,6 +2936,15 @@ AlterTableSpec:
 			Visibility: $4.(ast.IndexVisibility),
 		}
 	}
+|	"ALTER" "INDEX" Identifier "SET" "VECTOR_INDEX_PARAM" stringLit
+	{
+		param := $6
+		$$ = &ast.AlterTableSpec{
+			Tp:               ast.AlterTableSetVectorIndexParam,
+			IndexName:        model.NewCIStr($3),
+			VectorIndexParam: &param,
+		}
+	}
 // 	Support caching or non-caching a table in memory for tidb, It can be found in the official Oracle document, see: https://docs.oracle.com/database/121/SQLRF/statements_3001.htm
 |	"CACHE"
 	{
@@ -4496,7 +4508,7 @@ CreateIndexStmt:
 		if isVectorIndex && indexOption.Tp == model.IndexTypeInvalid {
 			indexOption.Tp = model.IndexTypeHNSW
 		}
-		if (isVectorIndex && indexOption.Tp != model.IndexTypeHNSW) || (!isVectorIndex && indexOption.Tp == model.IndexTypeHNSW) {
+		if (isVectorIndex && indexOption.Tp != model.IndexTypeHNSW && indexOption.Tp != model.IndexTypeSPFresh) || (!isVectorIndex && indexOption.Tp == model.IndexTypeHNSW) {
 			yylex.AppendError(ErrSyntax)
 			return 1
 		}
@@ -6937,6 +6949,14 @@ IndexOptionList:
 				opt1.Visibility = opt2.Visibility
 			} else if opt2.PrimaryKeyTp != model.PrimaryKeyTypeDefault {
 				opt1.PrimaryKeyTp = opt2.PrimaryKeyTp
+			} else if opt2.VectorIndexParam != nil {
+				opt1.VectorIndexParam = opt2.VectorIndexParam
+			} else if len(opt2.SPFreshStoredColumns) > 0 {
+				if len(opt1.SPFreshStoredColumns) > 0 {
+					yylex.AppendError(yylex.Errorf("duplicate STORING clause"))
+				} else {
+					opt1.SPFreshStoredColumns = opt2.SPFreshStoredColumns
+				}
 			} else if opt2.Global {
 				opt1.Global = true
 			} else if opt2.Condition != nil {
@@ -6971,6 +6991,24 @@ IndexOption:
 	{
 		$$ = &ast.IndexOption{
 			Comment: $2,
+		}
+	}
+|	"VECTOR_INDEX_PARAM" stringLit
+	{
+		param := $2
+		$$ = &ast.IndexOption{
+			VectorIndexParam: &param,
+		}
+	}
+|	"STORING" '(' ColumnNameList ')'
+	{
+		cols := $3.([]*ast.ColumnName)
+		storedCols := make([]model.CIStr, 0, len(cols))
+		for _, col := range cols {
+			storedCols = append(storedCols, col.Name)
+		}
+		$$ = &ast.IndexOption{
+			SPFreshStoredColumns: storedCols,
 		}
 	}
 |	IndexInvisible
@@ -7073,6 +7111,10 @@ IndexTypeName:
 |	"HNSW"
 	{
 		$$ = model.IndexTypeHNSW
+	}
+|	"SPFRESH"
+	{
+		$$ = model.IndexTypeSPFresh
 	}
 
 IndexInvisible:
@@ -7618,6 +7660,9 @@ NotKeywordToken:
 |	"GET_FORMAT"
 |	"GROUP_CONCAT"
 |	"HNSW"
+|	"SPFRESH"
+|	"STORING"
+|	"VECTOR_INDEX_PARAM"
 |	"INPLACE"
 |	"INSTANT"
 |	"INTERNAL"
@@ -13196,7 +13241,7 @@ ConstraintVectorIndex:
 		} else if c.Option.Tp == model.IndexTypeInvalid {
 			c.Option.Tp = model.IndexTypeHNSW
 		}
-		if c.Option.Tp != model.IndexTypeHNSW {
+		if c.Option.Tp != model.IndexTypeHNSW && c.Option.Tp != model.IndexTypeSPFresh {
 			yylex.AppendError(ErrSyntax)
 			return 1
 		}

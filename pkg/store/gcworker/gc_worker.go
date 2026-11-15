@@ -1640,10 +1640,22 @@ func doGCPlacementRules(se sessiontypes.Session, _ uint64,
 		}
 		physicalTableIDs = append(args.OldPartitionIDs, historyJob.TableID)
 	case model.ActionTruncateTable, model.ActionTruncateTablePartition:
+		if historyJob.Type == model.ActionTruncateTable && (historyJob.IsCancelled() || historyJob.IsRollbackDone()) {
+			// Failed SPFresh admission owns a fresh replacement range, not the
+			// still-live old table. Canceled history may have no finished args.
+			physicalTableIDs, err = spfreshBootstrapCleanupPlacementIDs(se.GetStore(), historyJob.TableID, dr)
+			if err != nil {
+				return err
+			}
+			break
+		}
 		var args *model.TruncateTableArgs
 		args, err = model.GetFinishedTruncateTableArgs(historyJob)
 		if err != nil {
 			return
+		}
+		if args == nil {
+			return errors.New("truncate GC has no finished arguments")
 		}
 		physicalTableIDs = args.OldPartitionIDs
 		if historyJob.Type == model.ActionTruncateTable {
@@ -1696,10 +1708,22 @@ func doGCPlacementRules(se sessiontypes.Session, _ uint64,
 	return nil
 }
 
-func doGCPlacementRulesForDDLJob(store kv.Storage, ddlJobID int64) error {
+func doGCPlacementRulesForDDLJob(store kv.Storage, ddlJobID int64, ranges ...kv.KeyRange) error {
 	se := createSession(store)
 	defer se.Close()
-	return doGCPlacementRules(se, 0, util.DelRangeTask{JobID: ddlJobID}, &sync.Map{})
+	if len(ranges) == 0 {
+		// Keep the existing completed-DDL entry point. Canceled SPFresh
+		// truncate must still fail closed without its exact abandoned range.
+		ranges = []kv.KeyRange{{}}
+	}
+	var cache sync.Map
+	for _, keyRange := range ranges {
+		task := util.DelRangeTask{JobID: ddlJobID, StartKey: keyRange.StartKey, EndKey: keyRange.EndKey}
+		if err := doGCPlacementRules(se, 0, task, &cache); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {

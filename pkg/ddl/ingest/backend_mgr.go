@@ -20,20 +20,25 @@ import (
 	"net"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/backend/remote"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/pd/client/servicediscovery"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -63,6 +68,11 @@ type BackendCtxBuilder struct {
 	sessPool   *sess.Pool
 	physicalID int64
 	checkDup   bool
+
+	useRemote                 bool
+	hasUnique                 bool
+	adjustedWorkerConcurrency int
+	spfreshBuildRoutePlan     *backend.SPFreshBuildRoutePlan
 }
 
 // WithImportDistributedLock needs a etcd client to maintain a distributed lock during partial import.
@@ -89,6 +99,21 @@ func (b *BackendCtxBuilder) ForDuplicateCheck() *BackendCtxBuilder {
 	return b
 }
 
+// WithRemoteBackend asks the builder to create a remote backend context itself.
+func (b *BackendCtxBuilder) WithRemoteBackend(hasUnique bool, adjustedWorkerConcurrency int) *BackendCtxBuilder {
+	b.useRemote = true
+	b.hasUnique = hasUnique
+	b.adjustedWorkerConcurrency = adjustedWorkerConcurrency
+	return b
+}
+
+// WithSPFreshBuildRoutePlan sets the durable route plan for routed SPFresh
+// build PUT chunks.
+func (b *BackendCtxBuilder) WithSPFreshBuildRoutePlan(routePlan *backend.SPFreshBuildRoutePlan) *BackendCtxBuilder {
+	b.spfreshBuildRoutePlan = routePlan.Clone()
+	return b
+}
+
 // BackendCounterForTest is only used in test.
 var BackendCounterForTest = atomic.Int64{}
 
@@ -109,7 +134,8 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	})
 
 	//nolint: forcetypeassert
-	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
+	tikvStore := store.(tikv.Storage)
+	pdCli := tikvStore.GetRegionCache().PDClient()
 	var cpMgr *CheckpointManager
 	if b.sessPool != nil {
 		cpMgr, err = NewCheckpointManager(ctx, b.sessPool, b.physicalID, job.ID, jobSortPath, pdCli)
@@ -120,6 +146,10 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 			return nil, err
 		}
 	}
+	var remoteTaskOwnerStore RemoteTaskOwnerStore
+	if cpMgr != nil {
+		remoteTaskOwnerStore = cpMgr
+	}
 
 	var mockBackend BackendCtx
 	failpoint.InjectCall("mockNewBackendContext", b.job, cpMgr, &mockBackend)
@@ -128,8 +158,47 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 		return mockBackend, nil
 	}
 
-	bCtx := newBackendContext(ctx, job.ID, bd, cfg,
-		defaultImportantVariables, LitMemRoot, b.etcdClient, job.RealStartTS, b.importTS, cpMgr)
+	var (
+		lcfg        = cfg
+		rcfg        *remote.BackendConfig
+		be          backend.Backend = bd
+		ownsBackend                 = false
+	)
+	if b.useRemote {
+		useSPFreshRoutePlan := b.spfreshBuildRoutePlan != nil
+		if useSPFreshRoutePlan {
+			if err := b.spfreshBuildRoutePlan.Validate(); err != nil {
+				return nil, err
+			}
+		}
+		if remoteTaskOwnerStore == nil && !useSPFreshRoutePlan {
+			return nil, errors.New("remote backend requires durable remote task owner store")
+		}
+		resourceGroup := ""
+		concurrency := int(variable.GetDDLReorgWorkerCounter())
+		maxWriteSpeed := 0
+		useCloudStorage := false
+		if job.ReorgMeta != nil {
+			resourceGroup = job.ReorgMeta.ResourceGroupName
+			concurrency = job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+			maxWriteSpeed = job.ReorgMeta.GetMaxWriteSpeedOrDefault()
+			useCloudStorage = job.ReorgMeta.UseCloudStorage
+		}
+		lcfg, rcfg, err = genConfig(ctx, jobSortPath, LitMemRoot, b.hasUnique, resourceGroup, concurrency, maxWriteSpeed, useCloudStorage, true)
+		if err != nil {
+			return nil, err
+		}
+		be, err = openBackend(ctx, store, lcfg, rcfg, b.adjustedWorkerConcurrency)
+		if err != nil {
+			logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", job.ID), zap.Error(err))
+			return nil, err
+		}
+		ownsBackend = true
+	}
+
+	bCtx := newBackendContext(ctx, job.ID, be, lcfg, rcfg,
+		defaultImportantVariables, LitMemRoot, b.etcdClient, job.RealStartTS, b.importTS, uint32(store.GetCodec().GetKeyspaceID()), cpMgr, remoteTaskOwnerStore, ownsBackend)
+	bCtx.spfreshBuildRoutePlan = b.spfreshBuildRoutePlan
 
 	LitDiskRoot.Add(job.ID, bCtx)
 	BackendCounterForTest.Add(1)
@@ -158,11 +227,35 @@ func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, h
 	resGroupName := job.ReorgMeta.ResourceGroupName
 	concurrency := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
-	cfg := genConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, concurrency, maxWriteSpeed, job.ReorgMeta.UseCloudStorage)
-	if adjustedWorkerConcurrency > 0 {
-		cfg.WorkerConcurrency.Store(int32(adjustedWorkerConcurrency))
+	lcfg, rcfg, err := genConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, concurrency, maxWriteSpeed, job.ReorgMeta.UseCloudStorage, false)
+	if err != nil {
+		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", job.ID), zap.Error(err))
+		return nil, nil, err
 	}
+	be, err := openBackend(ctx, store, lcfg, rcfg, adjustedWorkerConcurrency)
+	if err != nil {
+		return nil, nil, err
+	}
+	lb, ok := be.(*local.Backend)
+	if !ok {
+		return nil, nil, errors.New("unexpected non-local backend")
+	}
+	return lcfg, lb, nil
+}
 
+func openBackend(
+	ctx context.Context,
+	store kv.Storage,
+	lcfg *local.BackendConfig,
+	rcfg *remote.BackendConfig,
+	adjustedWorkerConcurrency int,
+) (backend.Backend, error) {
+	if lcfg != nil && adjustedWorkerConcurrency > 0 {
+		lcfg.WorkerConcurrency.Store(int32(adjustedWorkerConcurrency))
+	}
+	if rcfg != nil && adjustedWorkerConcurrency > 0 {
+		rcfg.WorkerConcurrency = adjustedWorkerConcurrency
+	}
 	tidbCfg := config.GetGlobalConfig()
 	tls, err := common.NewTLS(
 		tidbCfg.Security.ClusterSSLCA,
@@ -173,22 +266,31 @@ func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, h
 	)
 	if err != nil {
 		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Error(err))
-		return nil, nil, err
+		return nil, err
 	}
-
-	ddllogutil.DDLIngestLogger().Info("create local backend for adding index",
-		zap.String("sortDir", cfg.LocalStoreDir),
-		zap.String("keyspaceName", cfg.KeyspaceName),
-		zap.Int64("job ID", job.ID),
-		zap.Int64("current memory usage", LitMemRoot.CurrentUsage()),
-		zap.Int64("max memory quota", LitMemRoot.MaxMemoryQuota()),
-		zap.Bool("has unique index", hasUnique),
-	)
 
 	//nolint: forcetypeassert
 	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
-	be, err := local.NewBackend(ctx, tls, *cfg, pdCli.GetServiceDiscovery())
-	return cfg, be, err
+	pdSvcDiscovery := pdCli.GetServiceDiscovery()
+	if rcfg != nil {
+		fillRemoteBackendPDAddr(rcfg, pdSvcDiscovery)
+		ddllogutil.DDLIngestLogger().Info("create remote backend for adding index",
+			zap.String("sortDir", rcfg.SortedKVDir),
+			zap.String("keyspaceName", rcfg.KeyspaceName))
+		return remote.NewBackend(ctx, tls, rcfg, pdSvcDiscovery)
+	}
+
+	ddllogutil.DDLIngestLogger().Info("create local backend for adding index",
+		zap.String("sortDir", lcfg.LocalStoreDir),
+		zap.String("keyspaceName", lcfg.KeyspaceName))
+	return local.NewBackend(ctx, tls, *lcfg, pdSvcDiscovery)
+}
+
+func fillRemoteBackendPDAddr(cfg *remote.BackendConfig, pdSvcDiscovery servicediscovery.ServiceDiscovery) {
+	if cfg == nil || pdSvcDiscovery == nil {
+		return
+	}
+	cfg.PdAddr = strings.Join(pdSvcDiscovery.GetServiceURLs(), ",")
 }
 
 const checkpointUpdateInterval = 10 * time.Minute
@@ -196,27 +298,35 @@ const checkpointUpdateInterval = 10 * time.Minute
 func newBackendContext(
 	ctx context.Context,
 	jobID int64,
-	be *local.Backend,
-	cfg *local.BackendConfig,
+	be backend.Backend,
+	lcfg *local.BackendConfig,
+	rcfg *remote.BackendConfig,
 	vars map[string]string,
 	memRoot MemRoot,
 	etcdClient *clientv3.Client,
 	initTS, importTS uint64,
+	remoteTaskKeyspaceID uint32,
 	cpMgr *CheckpointManager,
+	remoteTaskOwnerStore RemoteTaskOwnerStore,
+	ownsBackend bool,
 ) *litBackendCtx {
 	bCtx := &litBackendCtx{
-		engines:        make(map[int64]*engineInfo, 10),
-		memRoot:        memRoot,
-		jobID:          jobID,
-		backend:        be,
-		ctx:            ctx,
-		cfg:            cfg,
-		sysVars:        vars,
-		updateInterval: checkpointUpdateInterval,
-		etcdClient:     etcdClient,
-		initTS:         initTS,
-		importTS:       importTS,
-		checkpointMgr:  cpMgr,
+		engines:              make(map[int64]*engineInfo, 10),
+		memRoot:              memRoot,
+		jobID:                jobID,
+		backend:              be,
+		ctx:                  ctx,
+		lcfg:                 lcfg,
+		rcfg:                 rcfg,
+		sysVars:              vars,
+		updateInterval:       checkpointUpdateInterval,
+		etcdClient:           etcdClient,
+		initTS:               initTS,
+		importTS:             importTS,
+		remoteTaskKeyspaceID: remoteTaskKeyspaceID,
+		checkpointMgr:        cpMgr,
+		remoteTaskOwnerStore: remoteTaskOwnerStore,
+		ownsBackend:          ownsBackend,
 	}
 	bCtx.timeOfLastFlush.Store(time.Now())
 	return bCtx

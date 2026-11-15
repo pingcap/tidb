@@ -1507,3 +1507,6 @@ func isHTTP2ConnAborted(err error) bool {
 	}
 	return false
 }
+
+// GetS3APIHandle exposes the configured SDK client for bounded lifecycle operations.
+func (rs *S3Storage) GetS3APIHandle() S3API { return rs.svc }

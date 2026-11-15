@@ -92,6 +92,9 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 			return ver, errors.Trace(err)
 		}
 	case model.StateDeleteOnly:
+		if err := teardownSPFreshIndexesForTable(jobCtx.stepCtx, jobCtx.store, tblInfo); err != nil {
+			return ver, errors.Trace(err)
+		}
 		tblInfo.State = model.StateNone
 		oldIDs := getPartitionIDs(tblInfo)
 		ruleIDs := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
@@ -161,6 +164,10 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 
 	schemaID := recoverInfo.SchemaID
 	tblInfo := recoverInfo.TableInfo
+	if err = rejectRecoverSPFreshVectorIndexes(tblInfo); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
 	if tblInfo.TTLInfo != nil {
 		// force disable TTL job schedule for recovered table
 		tblInfo.TTLInfo.Enable = false
@@ -447,13 +454,25 @@ func getTableInfo(t *meta.Mutator, tableID, schemaID int64) (*model.TableInfo, e
 // As all the old data is encoded with old table ID, it can not be accessed anymore.
 // A background job will be created to delete old data.
 func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
-	schemaID := job.SchemaID
 	args, err := model.GetTruncateTableArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	jobCtx.jobArgs = args
+
+	switch job.SchemaState {
+	case model.StateNone:
+		return w.onTruncateTableReplaceMeta(jobCtx, job, args)
+	case model.StateDeleteReorganization:
+		return w.onTruncateTableCleanupOldSPFreshIndexes(jobCtx, job, args)
+	default:
+		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", job.SchemaState)
+	}
+}
+
+func (w *worker) onTruncateTableReplaceMeta(jobCtx *jobContext, job *model.Job, args *model.TruncateTableArgs) (ver int64, _ error) {
+	schemaID := job.SchemaID
 	metaMut := jobCtx.metaMut
 	tblInfo, err := GetTableInfoAndCancelFaultJob(metaMut, job, schemaID)
 	if err != nil {
@@ -604,6 +623,9 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 		}
 	}
 
+	if err := bootstrapSPFreshIndexesForTruncatedTable(jobCtx.stepCtx, jobCtx.store, tblInfo, job); err != nil {
+		return ver, errors.Trace(err)
+	}
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -614,10 +636,42 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 		return ver, errors.Trace(err)
 	}
 
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	// see truncateTableByReassignPartitionIDs for why they might change.
 	args.OldPartitionIDs = oldPartitionIDs
 	args.NewPartitionIDs = newPartitionIDs
+	if len(collectInlineSPFreshVectorIndexes(tblInfo)) > 0 {
+		job.SchemaState = model.StateDeleteReorganization
+		if job.BinlogInfo == nil {
+			job.BinlogInfo = &model.HistoryInfo{}
+		}
+		job.BinlogInfo.AddTableInfo(ver, tblInfo)
+		return ver, nil
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	job.FillFinishedArgs(args)
+	return ver, nil
+}
+
+func (w *worker) onTruncateTableCleanupOldSPFreshIndexes(
+	jobCtx *jobContext,
+	job *model.Job,
+	args *model.TruncateTableArgs,
+) (ver int64, _ error) {
+	tblInfo, err := getTableInfo(jobCtx.metaMut, args.NewTableID, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if err := cleanupTruncatedTableOldSPFreshIndexes(jobCtx.stepCtx, jobCtx.store, job.TableID, tblInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+	if job.BinlogInfo == nil {
+		job.BinlogInfo = &model.HistoryInfo{}
+	}
+	if job.BinlogInfo.TableInfo == nil {
+		job.BinlogInfo.AddTableInfo(job.BinlogInfo.SchemaVersion, tblInfo)
+	}
+	job.State = model.JobStateDone
+	job.SchemaState = model.StatePublic
 	job.FillFinishedArgs(args)
 	return ver, nil
 }

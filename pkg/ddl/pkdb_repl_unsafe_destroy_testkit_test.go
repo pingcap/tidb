@@ -6,6 +6,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -27,19 +28,19 @@ func TestPaginateListSortedSourceDoneJobs(t *testing.T) {
 
 	tk.MustExec(`insert into mysql2.gc_delete_range_done
 		(job_id, element_id, start_key, end_key, ts) values
-		(100, 1, 'k001', 'k002', 1),
-		(101, 10, 'k003', 'k004', 2),
-		(101, 20, 'k005', 'k006', 3),
-		(102, -1, 'k007', 'k008', 4),
-		(103, -100, 'k009', 'k010', 5),
-		(105, 5, 'k011', 'k012', 6),
-		(105, 2, 'k013', 'k014', 7),
-		(105, 4, 'k015', 'k016', 8),
-		(105, 1, 'k017', 'k018', 9),
-		(105, 6, 'k019', 'k020', 10),
-		(105, 0, 'k021', 'k022', 11),
-		(105, 3, 'k023', 'k024', 12),
-		(106, 0, 'k025', 'k026', 13)`)
+		(100, 1, hex('k001'), hex('k002'), 1),
+		(101, 10, hex('k003'), hex('k004'), 2),
+		(101, 20, hex('k005'), hex('k006'), 3),
+		(102, -1, hex('k007'), hex('k008'), 4),
+		(103, -100, hex('k009'), hex('k010'), 5),
+		(105, 5, hex('k011'), hex('k012'), 6),
+		(105, 2, hex('k013'), hex('k014'), 7),
+		(105, 4, hex('k015'), hex('k016'), 8),
+		(105, 1, hex('k017'), hex('k018'), 9),
+		(105, 6, hex('k019'), hex('k020'), 10),
+		(105, 0, hex('k021'), hex('k022'), 11),
+		(105, 3, hex('k023'), hex('k024'), 12),
+		(106, 0, hex('k025'), hex('k026'), 13)`)
 	jobs, err := ddl.PaginateListSortedSourceDoneJobs(
 		ctx,
 		sess.NewSession(tk.Session()),
@@ -199,19 +200,19 @@ func TestPaginateListSourceQueuingJobIDs(t *testing.T) {
 
 	tk.MustExec(`insert into mysql2.gc_delete_range
 		(job_id, element_id, start_key, end_key, ts) values
-		(100, 1, 'k001', 'k002', 1),
-		(101, 10, 'k003', 'k004', 2),
-		(101, 20, 'k005', 'k006', 3),
-		(102, -1, 'k007', 'k008', 4),
-		(103, -100, 'k009', 'k010', 5),
-		(105, 5, 'k011', 'k012', 6),
-		(105, 2, 'k013', 'k014', 7),
-		(105, 4, 'k015', 'k016', 8),
-		(105, 1, 'k017', 'k018', 9),
-		(105, 6, 'k019', 'k020', 10),
-		(105, 0, 'k021', 'k022', 11),
-		(105, 3, 'k023', 'k024', 12),
-		(106, 0, 'k025', 'k026', 13)`)
+		(100, 1, hex('k001'), hex('k002'), 1),
+		(101, 10, hex('k003'), hex('k004'), 2),
+		(101, 20, hex('k005'), hex('k006'), 3),
+		(102, -1, hex('k007'), hex('k008'), 4),
+		(103, -100, hex('k009'), hex('k010'), 5),
+		(105, 5, hex('k011'), hex('k012'), 6),
+		(105, 2, hex('k013'), hex('k014'), 7),
+		(105, 4, hex('k015'), hex('k016'), 8),
+		(105, 1, hex('k017'), hex('k018'), 9),
+		(105, 6, hex('k019'), hex('k020'), 10),
+		(105, 0, hex('k021'), hex('k022'), 11),
+		(105, 3, hex('k023'), hex('k024'), 12),
+		(106, 0, hex('k025'), hex('k026'), 13)`)
 
 	jobIDSet, err := ddl.PaginateListSourceQueuingJobIDs(
 		ctx,
@@ -307,4 +308,28 @@ func TestPaginateListSourceQueuingJobIDs(t *testing.T) {
 	)
 	require.NoError(t, err2)
 	require.Len(t, jobIDSet2, 0)
+}
+
+func TestPaginateListSortedSourceDoneJobsHexKeys(t *testing.T) {
+	ddl.MySQLDB = "mysql_spfresh_hex"
+	t.Cleanup(func() { ddl.MySQLDB = "mysql" })
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE mysql_spfresh_hex")
+	tk.MustExec("CREATE TABLE mysql_spfresh_hex.gc_delete_range_done LIKE mysql.gc_delete_range_done")
+	prefix := tablecodec.GenTablePrefix(20001)
+	end := prefix.PrefixNext()
+	tk.MustExec("INSERT INTO mysql_spfresh_hex.gc_delete_range_done VALUES(100,1,HEX(?),HEX(?),1)", []byte(prefix), []byte(end))
+	load := func() ([]ddl.UnsafeDestroyJob, error) {
+		return ddl.PaginateListSortedSourceDoneJobs(context.Background(), sess.NewSession(tk.Session()), 0, 200, 1, 100)
+	}
+	jobs, err := load()
+	require.NoError(t, err)
+	require.Equal(t, []ddl.UnsafeDestroyJob{{DDLJobID: 100, StartKey: []byte(prefix), EndKey: []byte(end)}}, jobs)
+	tk.MustExec("UPDATE mysql_spfresh_hex.gc_delete_range_done SET start_key='zz'")
+	_, err = load()
+	require.ErrorContains(t, err, "decode GC start key")
+	tk.MustExec("UPDATE mysql_spfresh_hex.gc_delete_range_done SET start_key=HEX(?),end_key='0'", []byte(prefix))
+	_, err = load()
+	require.ErrorContains(t, err, "decode GC end key")
 }

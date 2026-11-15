@@ -213,6 +213,7 @@ type Metrics struct {
 	SSTSecondsHistogram         *prometheus.HistogramVec
 	LocalStorageUsageBytesGauge *prometheus.GaugeVec
 	ProgressGauge               *prometheus.GaugeVec
+	RemoteClientRetryCounter    *prometheus.CounterVec
 	*Common
 }
 
@@ -322,6 +323,13 @@ func NewMetrics(factory promutil.Factory) *Metrics {
 				Name:      "progress",
 				Help:      "progress of lightning phase",
 			}, []string{"phase"}),
+
+		RemoteClientRetryCounter: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "lightning",
+				Name:      "remote_client_retry",
+				Help:      "counting the number of retries for remote backend",
+			}, []string{"task_id"}),
 	}
 }
 
@@ -343,6 +351,7 @@ func (m *Metrics) RegisterTo(r promutil.Registry) {
 		m.SSTSecondsHistogram,
 		m.LocalStorageUsageBytesGauge,
 		m.ProgressGauge,
+		m.RemoteClientRetryCounter,
 	)
 }
 
@@ -363,6 +372,7 @@ func (m *Metrics) UnregisterFrom(r promutil.Registry) {
 	r.Unregister(m.SSTSecondsHistogram)
 	r.Unregister(m.LocalStorageUsageBytesGauge)
 	r.Unregister(m.ProgressGauge)
+	r.Unregister(m.RemoteClientRetryCounter)
 }
 
 // RecordTableCount records the number of tables processed.

@@ -58,11 +58,19 @@ type paramReplacer struct {
 
 func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch n := in.(type) {
-	case *ast.SelectField, *ast.GroupByClause, *ast.Limit, *ast.OrderByClause:
+	case *ast.SelectField, *ast.GroupByClause, *ast.Limit:
 		// Skip replacing values in these case:
 		// 1. SelectField: to keep the output field names be corresponding to these values.
-		// 2. GroupByClause, OrderByClause: to avoid breaking the full_group_by check.
+		// 2. GroupByClause: to avoid breaking the full_group_by check.
 		// 3. Limit: to generate different plans for queries with different limit values.
+		return in, true
+	case *ast.OrderByClause:
+		for _, item := range n.Items {
+			if isVectorDistanceOrderByForPlanCache(item.Expr) {
+				parameterized, _ := item.Expr.Accept(pr)
+				item.Expr = parameterized.(ast.ExprNode)
+			}
+		}
 		return in, true
 	case *ast.FuncCallExpr:
 		switch n.FnName.L {
