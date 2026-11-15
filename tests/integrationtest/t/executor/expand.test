@@ -316,3 +316,12 @@ EXPLAIN SELECT
      ) AS 'PROFIT'
 FROM  (select tr.a as DATE from tr) T0
 GROUP BY T0.DATE WITH ROLLUP;
+
+# Issue 71477: grouping expressions of the form NOT f(...) must stay distinct under ROLLUP.
+drop table if exists t_not_rollup;
+create table t_not_rollup (a int, b int);
+insert into t_not_rollup values (1, null), (null, 2), (3, 4), (5, 6);
+--sorted_result
+select a is not null as x, b is not null as y, count(*) as c from t_not_rollup group by a is not null, b is not null with rollup;
+--sorted_result
+select not (a in (1, 3)) as x, not (b in (2, 4)) as y, count(*) as c from t_not_rollup group by not (a in (1, 3)), not (b in (2, 4)) with rollup;

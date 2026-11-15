@@ -416,6 +416,11 @@ type IndexJoinRuntimeProp struct {
 	// deeper side like through join, the deeper DS's countAfterAccess should be
 	// thought twice.
 	AvgInnerRowCnt float64
+	// InnerCondsImpliedByOuter are predicates the outer side guarantees on OuterJoinKeys, rewritten
+	// onto the matching InnerJoinKeys. A probe-side filter equal to one of them is satisfied by every
+	// probed row, so it is not independent of the join keys and must not be divided out of
+	// AvgInnerRowCnt when estimating the rows a probe scans.
+	InnerCondsImpliedByOuter []expression.Expression
 	// since tableRangeScan and indexRangeScan can't be told which one is better at
 	// copTask phase because of the latter attached operators into cop and the single
 	// and double reader cost consideration. Therefore, we introduce another bool to
@@ -665,6 +670,9 @@ func (p *PhysicalProperty) HashCode() []byte {
 			p.hashcode = append(p.hashcode, col.HashCode()...)
 		}
 		p.hashcode = codec.EncodeFloat(p.hashcode, p.IndexJoinProp.AvgInnerRowCnt)
+		for _, expr := range p.IndexJoinProp.InnerCondsImpliedByOuter {
+			p.hashcode = append(p.hashcode, expr.HashCode()...)
+		}
 		if p.IndexJoinProp.TableRangeScan {
 			p.hashcode = codec.EncodeInt(p.hashcode, 1)
 		} else {

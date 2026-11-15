@@ -4343,9 +4343,25 @@
           "  │   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
           "  └─IndexLookUp(Probe) 4000.00 root  ",
           "    ├─Selection(Build) 2000000.00 cop[tikv]  lt(test.t.b, 1), not(isnull(test.t.b))",
-          "    │ └─IndexRangeScan 500000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+          "    │ └─IndexRangeScan 2000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
           "    └─Selection(Probe) 4000.00 cop[tikv]  eq(test.t.a, 0)",
           "      └─TableRowIDScan 2000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select /*+ inl_join(t2) */ * from t t1 join t t2 where t2.a = 0 and t1.a = t2.b and t2.b < 1 and t1.b < 1",
+        "Result": [
+          "Projection 32.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
+          "└─IndexJoin 32.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+          "  ├─IndexLookUp(Build) 8.00 root  ",
+          "  │ ├─IndexRangeScan(Build) 2000.00 cop[tikv] table:t1, index:idx(b) range:[-inf,1), keep order:false, stats:pseudo",
+          "  │ └─Selection(Probe) 8.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
+          "  │   └─TableRowIDScan 2000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─IndexLookUp(Probe) 32.00 root  ",
+          "    ├─Selection(Build) 16000.00 cop[tikv]  lt(test.t.b, 1), not(isnull(test.t.b))",
+          "    │ └─IndexRangeScan 16000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 32.00 cop[tikv]  eq(test.t.a, 0)",
+          "      └─TableRowIDScan 16000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -4365,6 +4381,22 @@
           "    │ └─IndexRangeScan 2000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
           "    └─Selection(Probe) 4000.00 cop[tikv]  eq(test.t.a, 0)",
           "      └─TableRowIDScan 2000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select /*+ inl_join(t2) */ * from t t1 join t t2 where t2.a = 0 and t1.a = t2.b and t2.b < 1 and t1.b < 1",
+        "Result": [
+          "Projection 32.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
+          "└─IndexJoin 32.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+          "  ├─IndexLookUp(Build) 8.00 root  ",
+          "  │ ├─IndexRangeScan(Build) 2000.00 cop[tikv] table:t1, index:idx(b) range:[-inf,1), keep order:false, stats:pseudo",
+          "  │ └─Selection(Probe) 8.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
+          "  │   └─TableRowIDScan 2000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─IndexLookUp(Probe) 32.00 root  ",
+          "    ├─Selection(Build) 8000.00 cop[tikv]  lt(test.t.b, 1), not(isnull(test.t.b))",
+          "    │ └─IndexRangeScan 8000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 32.00 cop[tikv]  eq(test.t.a, 0)",
+          "      └─TableRowIDScan 8000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       }
     ]
