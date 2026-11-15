@@ -1642,6 +1642,53 @@ fn test_import_into_build_plan() {
     }
 }
 
+/// Go `buildImportInto`'s source URL checks: `url.Parse` errors become
+/// `ErrLoadDataInvalidURI` (with the quoted URL's credentials redacted),
+/// and SEM v1 refuses a server-disk source before any option is checked.
+#[test]
+fn import_into_source_url_is_checked_like_go() {
+    let mut session = Session::new();
+    session.run("create table t (a int)").unwrap();
+    let error = session.run("IMPORT INTO t FROM '1invalid:'").unwrap_err().to_mysql_error();
+    assert_eq!(error.code, 8158);
+    assert!(
+        error.message.starts_with(
+            r#"The URI of data source is invalid. Reason: parse "1invalid:": first path segment in URL cannot contain colon. Please provide a valid URI"#
+        ),
+        "{}",
+        error.message
+    );
+    let error = session
+        .run("IMPORT INTO t FROM 's3://bad bucket/a.csv?access-key=AKSECRET&secret-access-key=SKSECRET'")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 8158);
+    assert!(error.message.contains(r#"invalid character " " in host name"#), "{}", error.message);
+    assert!(!error.message.contains("AKSECRET") && !error.message.contains("SKSECRET"));
+
+    tidb_sem::enable();
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            tidb_sem::disable();
+        }
+    }
+    let _reset = Reset;
+    for source in ["/tmp/a.csv", "local:///tmp/a.csv", "FILE:///tmp/a.csv", "a.csv"] {
+        let error = session
+            .run(&format!("IMPORT INTO t FROM '{source}' WITH thread=1"))
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(error.code, 8132, "{source}");
+        assert_eq!(
+            error.message,
+            "Feature 'IMPORT INTO from server disk' is not supported when security enhanced mode is enabled"
+        );
+    }
+    let error = session.run("IMPORT INTO t FROM 's3://bucket/a.csv'").unwrap_err();
+    assert!(error.to_string().contains("IMPORT INTO is not supported yet"), "{error}");
+}
+
 /// Go testkit `zzprobe/e05.TestImportIntoPlannerHandoff`, captured with
 /// `go test --tags=intest -p 6 ./zzprobe/e05 -run '^TestImportIntoPlannerHandoff$'`.
 #[test]

@@ -78,20 +78,33 @@ fn test_show_via_sql() {
     }
 }
 
+/// Serializes the tests that read the store type `buildBRIE` checks, since
+/// one of them sets Go's `modifyStore` failpoint for the whole process.
+static STORE_TYPE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Go `TestShowBackupQueryRedact`: query inspection over the registered job.
-/// Registration is direct here; the physical BACKUP runner is not ported.
+/// The job information is `buildBRIE`'s (the S3 options are moved out of the
+/// parsed destination); registration is direct, since the physical BACKUP
+/// runner is not ported.
 #[test]
 fn test_show_backup_query_redact() {
     use tidb_ast::{AdminStmt, Stmt};
-    use tidb_executor::brie::{BrieTaskInfo, GLOBAL_BRIE_QUEUE};
+    use tidb_executor::brie::{build_brie, GLOBAL_BRIE_QUEUE};
     let Stmt::Admin(admin) = tidb_parser::parse("backup database * to 's3://nonexist/real?endpoint=http://127.0.0.1&access-key=notleaked&secret-access-key=notleaked'").unwrap() else { panic!() };
     let AdminStmt::Brie(stmt) = &*admin else {
         panic!()
     };
-    let (_, id) = GLOBAL_BRIE_QUEUE.register_task(
-        &tidb_gocontext::Context::background(),
-        BrieTaskInfo::new(&stmt),
-    );
+    let info = {
+        let _store = STORE_TYPE.lock().unwrap_or_else(|e| e.into_inner());
+        let _tikv = tidb_failpoint::enable_for_test(
+            "github.com/pingcap/tidb/pkg/executor/modifyStore",
+            "return(\"tikv\")",
+        );
+        build_brie(stmt, &tidb_datatype::SessionTimeZone::default())
+            .unwrap()
+            .info
+    };
+    let (_, id) = GLOBAL_BRIE_QUEUE.register_task(&tidb_gocontext::Context::background(), info);
     let mut session = Session::new();
     let StmtOutput::Rows { rows, .. } = session
         .run_with_columns(&format!("show br job query {id}"))
@@ -179,6 +192,7 @@ fn test_visit_info_brie() {
 /// UniStore and SEM v1's local/hdfs restrictions, in Go's order.
 #[test]
 fn test_security_enhanced_local_backup_restore() {
+    let _store = STORE_TYPE.lock().unwrap_or_else(|e| e.into_inner());
     let mut session = Session::new();
     for (sql, expected) in [
         (

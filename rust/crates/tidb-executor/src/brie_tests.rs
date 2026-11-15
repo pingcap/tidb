@@ -80,14 +80,79 @@ fn test_fetch_show_brie() {
     assert!(queue.fetch_show_brie(BrieKind::Restore).is_empty());
 }
 
+/// Go's `modifyStore` failpoint set to `tikv`, held exclusively: the
+/// failpoint is process-wide and its guard disables it on drop.
+fn tikv_store() -> (tidb_failpoint::Guard, std::sync::MutexGuard<'static, ()>) {
+    static STORE_TYPE: Mutex<()> = Mutex::new(());
+    let lock = STORE_TYPE.lock().unwrap_or_else(|e| e.into_inner());
+    // Tuple fields drop in order: the failpoint is disabled before unlocking.
+    let failpoint = tidb_failpoint::enable_for_test(
+        "github.com/pingcap/tidb/pkg/executor/modifyStore",
+        "return(\"tikv\")",
+    );
+    (failpoint, lock)
+}
+
+fn parse_brie(sql: &str) -> BrieStmt {
+    let tidb_ast::Stmt::Admin(admin) = tidb_parser::parse(sql).unwrap() else {
+        panic!()
+    };
+    let tidb_ast::AdminStmt::Brie(stmt) = &*admin else {
+        panic!()
+    };
+    (**stmt).clone()
+}
+
+/// Go `buildBRIE`'s destination handling: `objstore.ParseRawURL` errors are
+/// annotated `invalid destination URL`, an S3 or GCS query moves into the
+/// backend options, and `cfg.Storage` / the job's storage and query are the
+/// parsed URL's `String`. Go echoes the URL in the parse error; here its
+/// credentials are redacted.
+#[test]
+fn build_brie_parses_the_destination_like_go() {
+    let _guard = tikv_store();
+    let zone = tidb_datatype::SessionTimeZone::default();
+    let build = |sql: &str| build_brie(&parse_brie(sql), &zone);
+    let err = build("BACKUP DATABASE * TO '1invalid:'").err().unwrap();
+    assert_eq!(
+        err.to_string(),
+        r#"invalid destination URL: parse "1invalid:": first path segment in URL cannot contain colon"#
+    );
+    let err = build("BACKUP DATABASE * TO 's3://bad bucket/p?access-key=AKSECRET&secret-access-key=SKSECRET'")
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(err.starts_with("invalid destination URL: parse "), "{err}");
+    assert!(err.ends_with(r#": invalid character " " in host name"#), "{err}");
+    assert!(!err.contains("AKSECRET") && !err.contains("SKSECRET"), "{err}");
+
+    let exec = build("BACKUP DATABASE * TO 's3://bucket/prefix?access-key=AK&secret-access-key=a+b/c&force_path_style=false&Region=us'").unwrap();
+    let cfg = exec.backup_cfg.unwrap().config;
+    let s3 = &cfg.backend_options.s3;
+    assert_eq!((s3.access_key.as_str(), s3.secret_access_key.as_str()), ("AK", "a+b/c"));
+    assert_eq!(s3.region, "us");
+    assert!(!s3.force_path_style);
+    assert_eq!(cfg.storage, "s3://bucket/prefix");
+    assert_eq!(exec.info.storage, "s3://bucket/prefix");
+    assert_eq!(exec.info.query, "BACKUP DATABASE * TO 's3://bucket/prefix'");
+
+    let exec = build("RESTORE DATABASE * FROM 'gcs://bucket/p?credentials-file=%2Ftmp%2Fc&endpoint=http://e/'").unwrap();
+    let cfg = exec.restore_cfg.unwrap().config;
+    assert_eq!(cfg.backend_options.gcs.credentials_file, "/tmp/c");
+    assert_eq!(cfg.backend_options.gcs.endpoint, "http://e/");
+    assert_eq!(cfg.storage, "gcs://bucket/p");
+
+    // Other schemes keep their query; Go lowercases the scheme.
+    let exec = build("BACKUP DATABASE * TO 'LOCAL:///tmp/a%20b?x=1'").unwrap();
+    assert_eq!(exec.backup_cfg.unwrap().config.storage, "local:///tmp/a%20b?x=1");
+    assert_eq!(exec.info.storage, "local:///tmp/a%20b?x=1");
+}
+
 /// Go `TestBRIEBuilderOptions`, both BACKUP and RESTORE assertions.
 #[test]
 fn test_brie_builder_options() {
     use tidb_proto::{backup::CompressionType, encryptionpb::EncryptionMethod};
-    let _guard = tidb_failpoint::enable_for_test(
-        "github.com/pingcap/tidb/pkg/executor/modifyStore",
-        "return(\"tikv\")",
-    );
+    let _guard = tikv_store();
     let keyfile = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(keyfile.path(), "A".repeat(128)).unwrap();
     let parse = |sql: &str| {

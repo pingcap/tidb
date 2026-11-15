@@ -211,3 +211,43 @@ final capture comparison includes those regressions. One intermediate build
 saw the new local helper before its metadata dependency was rebuilt; the final
 check and test run rebuild both from the completed source. Full crate suites
 and successful import execution are still outstanding.
+
+### Source URL increment (2026-11-15)
+
+Go `buildImportInto` begins, for a file source, with `url.Parse(ld.Path)`: an
+error answers `ErrLoadDataInvalidURI` with `ImportIntoDataSource` and the
+error text; `objstore.IsLocal` decides `importFromServer`; SEM v1 refuses a
+server-disk source; and a next-generation kernel under SEM runs
+`checkNextGenS3PathWithSem` for an S3-like source and rewrites the path with
+the keyspace as `external-id`. The Rust builder classified the scheme with a
+hand-written split (`import_into::import_from_server`) and had none of the
+other checks.
+
+- [x] `plan_builder/import_into.rs::check_import_source_path` and
+  `check_next_gen_s3_path_with_sem` follow Go, over `tidb-go-url` (Go 1.25
+  `net/url`) and `tidb-objstore` (`IsLocal`, `IsS3Like`,
+  `NormalizeQueryParameterKey`, the `s3like` query keys), all added for E07's
+  destination URL in the same change. `import_from_server` is gone.
+- [x] The checks run before option rewriting and the assignment checks, in
+  Go's order.
+- [ ] The importer's local discovery (`importer/local.rs`) still reserializes
+  the URI by hand; it moves to the parsed URL with the controller's
+  `InitDataStore`.
+
+Deliberate difference: the URL quoted in Go's parse error is redacted with
+`tidb_ast::redact_url` before it reaches the client (root `AGENTS.md` rule 7).
+
+Evidence: `plan_builder::import_into::tests::test_process_next_gen_s3_path`
+ports Go `TestProcessNextGenS3Path`. Session regression
+`tests_core::dml::import_into_source_url_is_checked_like_go` covers the 8158
+parse error (also with credentials in the URL) and SEM v1's 8132 refusal for
+four server-disk spellings; with the two planner files restored to the
+original source it fails (recorded below). The next-generation stamping runs
+only in a next-generation kernel build and was not executed here.
+
+    cargo nextest run -p tidb-planner -p tidb-session -E 'test(import_into) | test(test_process_next_gen_s3_path)'
+
+Baseline: with `tidb-planner/src/import_into.rs` and
+`plan_builder/import_into.rs` restored from the original source, the session
+regression failed at its first assertion (code 1105 instead of 8158); with the
+change restored, all ten targeted tests passed.

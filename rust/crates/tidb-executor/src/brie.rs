@@ -101,18 +101,10 @@ pub struct BrieTaskInfo {
 
 impl BrieTaskInfo {
     /// Go `executorBuilder.buildBRIE`'s job identity and `restoreQuery`.
+    /// `stmt.storage` is already Go's `cfg.Storage` (the parsed destination,
+    /// S3/GCS options removed). The displayed storage is redacted too, so a
+    /// credential left in another scheme's query is never shown.
     pub fn new(stmt: &BrieStmt) -> Self {
-        let mut stmt = stmt.clone();
-        if matches!(stmt.storage.split(':').next(), Some("s3" | "gs" | "gcs")) {
-            if let Some(query) = stmt.storage.find('?') {
-                let fragment = stmt.storage[query..]
-                    .find('#')
-                    .map(|offset| stmt.storage[query + offset..].to_owned())
-                    .unwrap_or_default();
-                stmt.storage.truncate(query);
-                stmt.storage.push_str(&fragment);
-            }
-        }
         Self {
             id: 0,
             query: stmt.secure_text(),
@@ -421,7 +413,7 @@ fn parse_ts_string(value: &str, zone: &tidb_datatype::SessionTimeZone) -> Result
 }
 
 /// Go `executorBuilder.buildBRIE`, backup/restore configuration branches.
-/// Remote backend option extraction and physical runners remain unported.
+/// The physical runners remain unported.
 pub fn build_brie(
     stmt: &BrieStmt,
     zone: &tidb_datatype::SessionTimeZone,
@@ -429,21 +421,45 @@ pub fn build_brie(
     use tidb_ast::BrieOptionValue as V;
     use tidb_proto::{backup::CompressionType, encryptionpb::EncryptionMethod};
     let global = tidb_config::config_tree::config::get_global_config();
-    let scheme = stmt
-        .storage
-        .split_once(':')
-        .filter(|(s, _)| !s.contains('/'))
-        .map_or("".into(), |(s, _)| s.to_ascii_lowercase());
-    if tidb_sem::is_enabled() && matches!(scheme.as_str(), "local" | "file" | "" | "hdfs") {
-        let storage = if scheme == "hdfs" {
-            "hdfs storage"
-        } else {
-            "local storage"
-        };
-        return Err(DriverError::from(
-            tidb_plannererrors::ERR_NOT_SUPPORTED_WITH_SEM
-                .gen_with_stack_by_args(&[storage.into()]),
-        ));
+    let mut config = tidb_br::task::common::default_config();
+    config.pd = global.path.split(',').map(str::to_owned).collect();
+    config.tls = tidb_br::task::common::TLSConfig {
+        ca: global.security.cluster_ssl_ca.clone(),
+        cert: global.security.cluster_ssl_cert.clone(),
+        key: global.security.cluster_ssl_key.clone(),
+    };
+    // Go annotates the url.Error, whose text quotes the destination; the
+    // quoted URL is redacted so no credential reaches the client.
+    let mut storage_url = tidb_objstore::parse_raw_url(&stmt.storage).map_err(|err| {
+        DriverError::unsupported(format!(
+            "invalid destination URL: {}",
+            err.redact_url(tidb_ast::redact_url)
+        ))
+    })?;
+    match storage_url.scheme.as_slice() {
+        b"s3" => tidb_objstore::extract_query_parameters(
+            &mut storage_url,
+            &mut config.backend_options.s3,
+        ),
+        b"gs" | b"gcs" => tidb_objstore::extract_query_parameters(
+            &mut storage_url,
+            &mut config.backend_options.gcs,
+        ),
+        // Go checks only SEM v1 here; SEM v2 limits the statement through
+        // its RESTRICTED_SQL rules in `PlanBuilder.Build`.
+        b"hdfs" if tidb_sem::is_enabled() => {
+            return Err(DriverError::from(
+                tidb_plannererrors::ERR_NOT_SUPPORTED_WITH_SEM
+                    .gen_with_stack_by_args(&["hdfs storage".into()]),
+            ));
+        }
+        b"local" | b"file" | b"" if tidb_sem::is_enabled() => {
+            return Err(DriverError::from(
+                tidb_plannererrors::ERR_NOT_SUPPORTED_WITH_SEM
+                    .gen_with_stack_by_args(&["local storage".into()]),
+            ));
+        }
+        _ => {}
     }
     let store = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/modifyStore")
         .map_or_else(|| global.store.0.clone(), |value| value.string());
@@ -457,14 +473,7 @@ pub fn build_brie(
             "{kind} requires tikv store, not {store}"
         )));
     }
-    let mut config = tidb_br::task::common::default_config();
-    config.pd = global.path.split(',').map(str::to_owned).collect();
-    config.tls = tidb_br::task::common::TLSConfig {
-        ca: global.security.cluster_ssl_ca.clone(),
-        cert: global.security.cluster_ssl_cert.clone(),
-        key: global.security.cluster_ssl_key.clone(),
-    };
-    config.storage = stmt.storage.clone();
+    config.storage = storage_url.string();
     for option in &stmt.options {
         let uint = match &option.value {
             V::Unsigned(n) | V::RateLimitBytes(n) | V::MicrosecondsAgo(n) => *n,
@@ -533,8 +542,12 @@ pub fn build_brie(
         tidb_table_filter::all()
     };
     config.table_filter = tidb_table_filter::case_insensitive(config.table_filter);
+    // Go `s.Storage = e.info.storage` before `restoreQuery(s)`: the job's
+    // query shows the destination as parsed, without its options.
+    let mut stored = stmt.clone();
+    stored.storage.clone_from(&config.storage);
     let mut exec = BRIEExec {
-        info: BrieTaskInfo::new(stmt),
+        info: BrieTaskInfo::new(&stored),
         backup_cfg: None,
         restore_cfg: None,
     };

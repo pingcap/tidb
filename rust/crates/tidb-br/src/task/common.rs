@@ -31,6 +31,8 @@ pub struct TLSConfig {
 /// Go `task.Config`, fields consumed by `executorBuilder.buildBRIE`.
 /// Deliberately no Debug: Storage and CipherInfo can contain credentials.
 pub struct Config {
+    /// Go's embedded `objstore.BackendOptions`.
+    pub backend_options: tidb_objstore::BackendOptions,
     /// Go `Storage` (private task input, never SHOW output).
     pub storage: String,
     /// Go `PD`.
@@ -58,6 +60,14 @@ pub struct Config {
 /// Go `DefaultConfig`'s SQL-builder fields. Values from `TestDefault`.
 pub fn default_config() -> Config {
     Config {
+        // Go `S3BackendOptions.ParseFromFlags` always sets ForcePathStyle.
+        backend_options: tidb_objstore::BackendOptions {
+            s3: tidb_objstore_s3like::S3BackendOptions {
+                force_path_style: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
         storage: String::new(),
         pd: vec!["127.0.0.1:2379".into()],
         tls: TLSConfig::default(),
@@ -126,6 +136,14 @@ mod tests {
     #[test]
     fn test_default() {
         let cfg = default_config();
+        let backend = tidb_objstore::BackendOptions {
+            s3: tidb_objstore_s3like::S3BackendOptions {
+                force_path_style: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(cfg.backend_options == backend);
         assert_eq!(cfg.pd, ["127.0.0.1:2379"]);
         assert!(!cfg.checksum);
         assert!(cfg.send_creds);

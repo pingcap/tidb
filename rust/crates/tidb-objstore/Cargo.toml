@@ -1,0 +1,21 @@
+[package]
+name = "tidb-objstore"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/objstore: storage URL parsing into the BR storage backend and backend options (Rust rewrite)."
+
+[dependencies]
+base64 = { workspace = true }
+sha2 = { workspace = true }
+tidb-go-url = { path = "../tidb-go-url" }
+tidb-objstore-s3like = { path = "../tidb-objstore-s3like" }
+tidb-proto = { path = "../tidb-proto" }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

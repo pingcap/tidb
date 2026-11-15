@@ -128,3 +128,59 @@ The physical-runner continuation is blocked at its first required coherent commi
 Final changed-crate suite: `cargo nextest run -j6 -p tidb-br` passed 68 tests, with 2 skipped, in 0.713 seconds (test execution). All Cargo commands use the required four environment settings plus CARGO_BUILD_JOBS=6. Only tidb-br code changed. Go source under pkg/ was unchanged; uncommitted zzprobe/e07writer holds the three source probes. Physical BACKUP/RESTORE, real cluster execution, server build, corpus replay, compatibility checks, statistics-file transfer, and the task/backup/restore clients remain unverified or unimplemented. No whole-Go-package completion is claimed. The metadata prerequisite is reviewable; the requested physical task runner is not delivered.
 
 Both E07 rows retain partial status. The JSON had stale duplicate top-level open/partial values (3/10) despite counts and rows being 2/11; these duplicate values now agree with the actual 13 rows and the Markdown header. See e07-physical-runner-report.md for the exact command record and recovery requirements.
+
+
+## Destination URL increment (2026-11-15)
+
+
+Go `buildBRIE` reads the destination through `objstore.ParseRawURL`, then,
+for `s3` and `gs`/`gcs`, `objstore.ExtractQueryParameters` into the task
+config's embedded `BackendOptions`; `cfg.Storage` (and the job's storage and
+`restoreQuery` text) is the parsed URL's `String`. The Rust builder split the
+scheme off by hand, kept the raw text as `cfg.Storage`, and `BrieTaskInfo::new`
+stripped S3/GCS queries with its own string slicing.
+
+- [x] Port Go 1.25 `net/url` (the toolchain `go.mod` pins) as `tidb-go-url`:
+  `Parse`, `ParseRequestURI`, escaping, `Values`/`ParseQuery`/`Encode`, `String`,
+  `EscapedPath`/`EscapedFragment`, `Redacted`, `RequestURI`, `Hostname`/`Port`,
+  and the `netip.ParseAddr` error paths `parseHost` reports. Components are
+  bytes, as Go strings are. Not ported: `ResolveReference`, `JoinPath`, the
+  binary marshalers.
+- [x] Port `pkg/objstore/parse.go` as `tidb-objstore` (`ParseRawURL`,
+  `ParseBackend`, `ParseBackendFromURL`, `ExtractQueryParameters`,
+  `NormalizeQueryParameterKey`, `FormatBackendURL`, `IsLocal*`, `IsS3Like`,
+  `BackendOptions`, GCS/Azblob options and their `apply`), and the S3 options of
+  `pkg/objstore/s3like` as `tidb-objstore-s3like` (`S3BackendOptions.Apply`,
+  `SetForcePathStyle`, the query-key and provider constants).
+- [x] `build_brie` follows Go's order: parse, scheme switch (option extraction
+  or SEM v1 refusal), store check, `cfg.Storage = storageURL.String()`;
+  `task::common::Config` carries `backend_options` with Go's default
+  `ForcePathStyle: true`.
+- [ ] Remote storage construction from the parsed backend, BR CLI flag parsing
+  and the physical runners remain as listed above.
+
+Deliberate difference: Go's `invalid destination URL: parse "<url>": ...`
+echoes the raw destination; here the quoted URL passes through
+`tidb_ast::redact_url` first (root `AGENTS.md` rule 7). `ExtractQueryParameters`
+walks the query in byte order; Go walks a map, so two keys that normalize to
+the same tag have an arbitrary winner there.
+
+Evidence. `tidb-go-url/testdata/net_url_go.jsonl` was printed by an uncommitted
+probe that copied Go 1.25.12's `url_test.go` tables with go/ast and ran them, plus
+the inputs of `TestParseErrors`, `TestRejectControlCharacters`,
+`TestInvalidUserPassword`, `TestURLHostnameAndPort`, netip error paths and BR /
+IMPORT INTO storage URLs (`GOTOOLCHAIN=go1.25.12 go run .`): 324 records, all
+matched. `tidb-objstore` ports every test of Go's `parse_test.go` (the fake keys
+of `TestParseRawURL` are replaced by other fake ones). New BRIE regression
+`brie::tests::build_brie_parses_the_destination_like_go` covers the annotated
+parse error, credential redaction, S3/GCS option extraction and the stored
+storage/query; `brie_source::test_show_backup_query_redact` now takes its job
+information from `build_brie` rather than a hand-built `BrieTaskInfo`. The new
+regression reads `Config::backend_options`, which did not exist before, so it
+cannot be compiled against the original source; there `build_brie` accepted
+`1invalid:` (no URL parse) and kept the raw S3 query as `cfg.Storage`.
+
+    cargo test -p tidb-go-url -p tidb-objstore -p tidb-objstore-s3like
+    cargo nextest run -p tidb-br -p tidb-executor -E 'test(brie) | test(task::) | test(test_show_backup_query_redact) | test(test_cancel) | test(test_security_enhanced_local_backup_restore) | test(test_visit_info_brie) | test(test_show_via_sql)'
+
+No physical backup or restore is claimed; E07 stays partial.

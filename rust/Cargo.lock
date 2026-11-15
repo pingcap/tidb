@@ -4947,6 +4947,8 @@ dependencies = [
  "tidb-goruntime",
  "tidb-log",
  "tidb-model",
+ "tidb-objstore",
+ "tidb-objstore-s3like",
  "tidb-proto",
  "tidb-redact",
  "tidb-stats-util",
@@ -6442,6 +6444,7 @@ dependencies = [
  "tidb-model",
  "tidb-murmur3",
  "tidb-mysql",
+ "tidb-objstore",
  "tidb-parser",
  "tidb-parser-types",
  "tidb-password-validation",
@@ -7078,6 +7081,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-go-url"
+version = "0.0.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "tidb-go-strconv",
+]
+
+[[package]]
 name = "tidb-gocontext"
 version = "0.0.0"
 dependencies = [
@@ -7680,8 +7693,28 @@ name = "tidb-nocopy"
 version = "0.0.0"
 
 [[package]]
+name = "tidb-objstore"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "sha2 0.10.9",
+ "tempfile",
+ "tidb-go-url",
+ "tidb-objstore-s3like",
+ "tidb-proto",
+]
+
+[[package]]
 name = "tidb-objstore-recording"
 version = "0.0.0"
+
+[[package]]
+name = "tidb-objstore-s3like"
+version = "0.0.0"
+dependencies = [
+ "tidb-go-url",
+ "tidb-proto",
+]
 
 [[package]]
 name = "tidb-oss-sdk"
@@ -7867,6 +7900,7 @@ dependencies = [
  "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
+ "tidb-config",
  "tidb-config-deploymode",
  "tidb-config-kerneltype",
  "tidb-context",
@@ -7882,6 +7916,7 @@ dependencies = [
  "tidb-filter",
  "tidb-fixcontrol",
  "tidb-go-regexp",
+ "tidb-go-url",
  "tidb-hack",
  "tidb-hint",
  "tidb-infoschema",
@@ -7893,6 +7928,8 @@ dependencies = [
  "tidb-metadef",
  "tidb-model",
  "tidb-mysql",
+ "tidb-objstore",
+ "tidb-objstore-s3like",
  "tidb-paging",
  "tidb-parser",
  "tidb-parser-types",
@@ -7920,6 +7957,7 @@ dependencies = [
  "tidb-proto",
  "tidb-ranger",
  "tidb-resolve",
+ "tidb-sem",
  "tidb-sem-compat",
  "tidb-sem-v2",
  "tidb-sessionctx",

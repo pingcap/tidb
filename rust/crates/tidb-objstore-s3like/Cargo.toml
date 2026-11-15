@@ -1,0 +1,15 @@
+[package]
+name = "tidb-objstore-s3like"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/objstore/s3like: S3 backend options and their application to the BR storage backend (Rust rewrite)."
+
+[dependencies]
+tidb-go-url = { path = "../tidb-go-url" }
+tidb-proto = { path = "../tidb-proto" }
+
+[lints]
+workspace = true
