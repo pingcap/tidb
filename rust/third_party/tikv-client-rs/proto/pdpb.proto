@@ -112,6 +112,8 @@ service PD {
 
   rpc GetAllKeyspacesGCStates(GetAllKeyspacesGCStatesRequest) returns (GetAllKeyspacesGCStatesResponse) {}
 
+  rpc WatchGCStates(WatchGCStatesRequest) returns (stream WatchGCStatesResponse) {}
+
   rpc SyncRegions(stream SyncRegionRequest) returns (stream SyncRegionResponse) {}
 
   rpc GetOperator(GetOperatorRequest) returns (GetOperatorResponse) {}
@@ -573,6 +575,9 @@ message RegionHeartbeatRequest {
   // Approximate size of column-based key-value pairs for billing.
   // It's counted on size of user key & value (excluding metadata fields), before compression, and latest versions only.
   uint64 approximate_columnar_kv_size = 19;
+  // Approximate size of row-based key-value pairs stored in the IA tier for billing.
+  // It is a subset of approximate_kv_size and follows the same size accounting rules.
+  uint64 approximate_ia_kv_size = 22;
 
   // BucketMeta is the bucket version and keys of this region if TiKV enabled the bucket feature
   metapb.BucketMeta bucket_meta = 20;
@@ -1243,6 +1248,21 @@ message GCState {
   repeated GCBarrierInfo gc_barriers = 5;
 }
 
+// GCStateChange describes a change to a keyspace's effective GC state.
+// GCState values sent by WatchGCStates omit gc_barriers because barriers are
+// internal inputs used by PD to calculate effective safe points; the stream
+// reports only changes to the resulting effective state.
+message GCStateChange {
+  oneof change {
+    // Insert or replace the complete GC state of this keyspace.
+    GCState upsert = 1;
+
+    // Remove this keyspace from the client's materialized GC-state view.
+    // This does not necessarily mean the keyspace metadata was physically deleted.
+    KeyspaceScope removed = 2;
+  }
+}
+
 // GlobalGCBarriersInfo carries presence independently from the barrier list.
 message GlobalGCBarriersInfo {
   repeated GlobalGCBarrierInfo barriers = 1;
@@ -1270,6 +1290,26 @@ message GetAllKeyspacesGCStatesResponse {
 
   repeated GCState gc_states = 2;
   repeated GlobalGCBarrierInfo global_gc_barriers = 3;
+}
+
+message WatchGCStatesRequest {
+  RequestHeader header = 1;
+
+  // If false, when the stream is established, the server first sends the current
+  // GC states of all keyspaces.
+  bool skip_loading_initial = 2;
+}
+
+message WatchGCStatesResponse {
+  ResponseHeader header = 1;
+
+  // Clients apply changes in order within this response and across successive
+  // responses on the stream. A client must not observe an older state for a
+  // keyspace after a newer update. After disconnection, the client reconnects
+  // and reloads the initial state. The stream omits GC barrier details and does
+  // not emit changes for barrier-only updates. If a barrier update changes an
+  // effective GC state, the resulting state change is emitted.
+  repeated GCStateChange changes = 2;
 }
 
 message RegionStat {

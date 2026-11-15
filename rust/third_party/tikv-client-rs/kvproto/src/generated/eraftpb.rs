@@ -9,6 +9,7 @@
 /// For configuration changes, the data will contain the ConfChange message and the
 /// context will provide anything needed to assist the configuration change. The context
 /// if for the user to set and use in this case.
+#[allow(clippy::all)]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Entry {
     #[prost(enumeration = "EntryType", tag = "1")]
@@ -36,6 +37,7 @@ impl ::prost::Name for Entry {
         "/eraftpb.Entry".into()
     }
 }
+#[allow(clippy::all)]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SnapshotMetadata {
     /// The current `ConfState`.
@@ -58,6 +60,7 @@ impl ::prost::Name for SnapshotMetadata {
         "/eraftpb.SnapshotMetadata".into()
     }
 }
+#[allow(clippy::all)]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Snapshot {
     #[prost(bytes = "vec", tag = "1")]
@@ -75,6 +78,7 @@ impl ::prost::Name for Snapshot {
         "/eraftpb.Snapshot".into()
     }
 }
+#[allow(clippy::all)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Message {
     #[prost(enumeration = "MessageType", tag = "1")]
@@ -123,6 +127,7 @@ impl ::prost::Name for Message {
         "/eraftpb.Message".into()
     }
 }
+#[allow(clippy::all)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct HardState {
     #[prost(uint64, tag = "1")]
@@ -142,6 +147,7 @@ impl ::prost::Name for HardState {
         "/eraftpb.HardState".into()
     }
 }
+#[allow(clippy::all)]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConfState {
     #[prost(uint64, repeated, tag = "1")]
@@ -171,6 +177,7 @@ impl ::prost::Name for ConfState {
         "/eraftpb.ConfState".into()
     }
 }
+#[allow(clippy::all)]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConfChange {
     #[prost(enumeration = "ConfChangeType", tag = "2")]
@@ -194,6 +201,7 @@ impl ::prost::Name for ConfChange {
 }
 /// ConfChangeSingle is an individual configuration change operation. Multiple
 /// such operations can be carried out atomically via a ConfChangeV2.
+#[allow(clippy::all)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConfChangeSingle {
     #[prost(enumeration = "ConfChangeType", tag = "1")]
@@ -243,6 +251,7 @@ impl ::prost::Name for ConfChangeSingle {
 /// For details on Raft membership changes, see:
 ///
 /// \[1\]: <https://github.com/ongardie/dissertation/blob/master/online-trim.pdf>
+#[allow(clippy::all)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ConfChangeV2 {
     #[prost(enumeration = "ConfChangeTransition", tag = "1")]
@@ -262,6 +271,7 @@ impl ::prost::Name for ConfChangeV2 {
         "/eraftpb.ConfChangeV2".into()
     }
 }
+#[allow(clippy::all)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum EntryType {
@@ -291,6 +301,7 @@ impl EntryType {
         }
     }
 }
+#[allow(clippy::all)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum MessageType {
@@ -368,6 +379,7 @@ impl MessageType {
         }
     }
 }
+#[allow(clippy::all)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum ConfChangeTransition {
@@ -409,6 +421,7 @@ impl ConfChangeTransition {
         }
     }
 }
+#[allow(clippy::all)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum ConfChangeType {

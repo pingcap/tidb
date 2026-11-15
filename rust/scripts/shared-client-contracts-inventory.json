@@ -1,13 +1,13 @@
 {
-  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
-  "kvproto": "v0.0.0-20260820070758-623e58e60fa9",
+  "go_master": "eca4674a6f6675fa79ef78ca7a30078234e800ab",
+  "kvproto": "v0.0.0-20261029034354-9192d38c8b67",
   "integration": "complete native packages; shared types and descriptor-derived TiKV transport",
   "packages": {
     "kvrpcpb": {
       "go_artifacts": [
         {
           "path": "pkg/kvrpcpb/kvrpcpb.pb.go",
-          "sha256": "6e5bc4de1c373792f1d33800f61136a4855c244c4e31320a9a463f552bd0a367"
+          "sha256": "9c3552b50e536ce75c9c55dba4567c2765a93ffdc94b36cb7c7d1ad5cf17ffd8"
         },
         {
           "path": "pkg/kvrpcpb/shared_lock_lost_test.go",
@@ -16,7 +16,7 @@
       ],
       "rust_output": {
         "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/kvrpcpb.rs",
-        "sha256": "6f3e0b9347f21b2057dbf6f0dc9b2ab6ed80483667dabd8e36d8fbca0029f7a6"
+        "sha256": "5a04edc26cb05fd8c46846b20877f22655c12edd8f95617626e566a159ec4e13"
       },
       "integration": "whole-package re-export and prost extern_path"
     },
@@ -24,12 +24,12 @@
       "go_artifacts": [
         {
           "path": "pkg/errorpb/errorpb.pb.go",
-          "sha256": "19ab9db6c540b1e345a66aeeccbb5bfeb7e47c42ec0af565609eeeb3970b9353"
+          "sha256": "86cb32cb2d84f8f053b92b2954ef4a1f734a7d17bf280162c0d8071514a5dc72"
         }
       ],
       "rust_output": {
         "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/errorpb.rs",
-        "sha256": "a7693310bc6f0058c54aa7e5728f97832f1ee94c01c3746e3b1fc98082834210"
+        "sha256": "18d4b4783caac7142d6706dbded797f8ec65a6c6ac0f5f462db4be353efd8396"
       },
       "integration": "whole-package re-export and prost extern_path"
     },
@@ -37,12 +37,12 @@
       "go_artifacts": [
         {
           "path": "pkg/metapb/metapb.pb.go",
-          "sha256": "3e3056a2d8ee22b919fc899b1b78c6472a19bd2dd01e6b2c33d372e2728145ba"
+          "sha256": "d08a9237de301050df86c98af48309a08e3900e7c997dda6bd32c2da9103ad61"
         }
       ],
       "rust_output": {
         "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/metapb.rs",
-        "sha256": "059cfdff8795c9eb20b9b05be8554562e778f4ce70691d75768c4447c38b5a48"
+        "sha256": "cb9fb8acf90c1e4d9282b7992646be2860dcfdec178486cab85c1612659b00c8"
       },
       "integration": "whole-package re-export and prost extern_path"
     },
@@ -55,7 +55,7 @@
       ],
       "rust_output": {
         "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/encryptionpb.rs",
-        "sha256": "93d2a0a0fac1729e7dc26029f4b4ca25ac49ebcec6e3351f65c20124ff755df9"
+        "sha256": "7ecf92fdd89724298f27ac2286642721ab9da149fcefd4238e38811663171613"
       },
       "integration": "whole-package re-export and prost extern_path"
     },
@@ -68,7 +68,7 @@
       ],
       "rust_output": {
         "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/coprocessor.rs",
-        "sha256": "c6b45465d66982393c7627917b77f17061fc9e5e2827687790915ebc790a31f9"
+        "sha256": "002b4fd324f02e6ca57b51e442e9b1fe8dcbf8f9b0477db90c71f7b912a89239"
       },
       "integration": "whole-package re-export and prost extern_path"
     },
@@ -81,7 +81,7 @@
       ],
       "rust_output": {
         "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/mpp.rs",
-        "sha256": "ede302e01053d2254678840704cecf33e4c58d083daf7b3011291c416986dcfa"
+        "sha256": "18c166f13eb17024a43be682ce6c6f09da591fcd75b3f75d3083d10a2cf1c708"
       },
       "integration": "whole-package re-export and prost extern_path"
     },
@@ -93,12 +93,16 @@
         },
         {
           "path": "pkg/pdpb/pdpb.pb.go",
-          "sha256": "c69aefe0a670ddc58786db7604b64d9a4d74e5c07ff01910187b704c73366589"
+          "sha256": "6743c75cc6e77ac70059a0d63ae1518f0ca21f42bfe1f89ab797ef668f4a024c"
+        },
+        {
+          "path": "pkg/pdpb/region_heartbeat_ia_kv_size_compat_test.go",
+          "sha256": "553332508ec96a20e210a789a59afd2f4fcc8a6bc620e726f752e175ff068fe7"
         }
       ],
       "rust_output": {
         "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/pdpb.rs",
-        "sha256": "f9e00de6add3d6f7148358d5618c8b2468abca1a7b4769ae481a83d75ddaff9a"
+        "sha256": "ef6b0768b2c27897a62adae64a87ce265faf59d2b2f8560d71ad61e99f0bbdb2"
       },
       "integration": "whole-package re-export and prost extern_path"
     },
@@ -111,7 +115,7 @@
       ],
       "rust_output": {
         "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/tikvpb.rs",
-        "sha256": "2cae574a36cc46c6d996f67010cb8ecec6f6d9030993b937eed2880e1a944ba3"
+        "sha256": "c208b4ddbe58a59bbebda161dd8bb277ca27bb0c435d0226b9931b226b7bef87"
       },
       "integration": "complete descriptor-derived transport with opaque batch bodies"
     },
@@ -119,16 +123,16 @@
       "go_artifacts": [
         {
           "path": "pkg/brpb/backup_schema_version.go",
-          "sha256": "c5fc97ab47cf46abdf79db0a5eb4445e0744fc77a9a76fedeb481963d0694750"
+          "sha256": "da36daf40d30dacea3015999e632219e8472e8f5a21ccb34a22895c2a1a322a4"
         },
         {
           "path": "pkg/brpb/brpb.pb.go",
-          "sha256": "5f2b3777779ce1e056da715381fa8a5701068ae6f23dd9eea583ba518dcb791f"
+          "sha256": "f4e72ac968367c696562d2768106c2332ee935b7b3c99f44745d2dc7925c5738"
         }
       ],
       "rust_output": {
         "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/backup.rs",
-        "sha256": "905e60ab406dd971be438a2be2b176752ade39642973972b686c4ccb7cde6250"
+        "sha256": "d77d5b246bb7ff62336a9fb47693814345d38213de47d391f54ad8b4c8fea870"
       },
       "integration": "whole-package re-export and prost extern_path"
     },
@@ -141,7 +145,7 @@
       ],
       "rust_output": {
         "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/import_sstpb.rs",
-        "sha256": "467796907d05344614a3af9a3b0a5169114d6c9554912d55acd2a0bc00d5da6f"
+        "sha256": "a4fc3853e9c43809f6233d358d00d9d545b45911145cd13d3b1be07f1c1b4d4e"
       },
       "integration": "whole-package re-export and prost extern_path"
     }
@@ -169,7 +173,7 @@
     },
     {
       "path": ".github/workflows/golang-test.yaml",
-      "sha256": "18c1a3a868a61a7c60dacf6e91a5d0dcaeea678f2475d75bbff5947aad2f256d"
+      "sha256": "c21421bd857c92c36ee48976f1df6235122f53aee3ba56bd87a49719510addea"
     },
     {
       "path": ".github/workflows/rust-test.yaml",
@@ -193,7 +197,7 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "099057e389f8e2c3706b2c1a207b53bf9f0972018ce85c9938670b06ca8e026f"
+      "sha256": "b64726ab0a13044cac51d9f5be69d9b034197c9679c7242df9338ec7efb84ef3"
     },
     {
       "path": "LICENSE",
@@ -209,11 +213,15 @@
     },
     {
       "path": "OWNERS_ALIASES",
-      "sha256": "d099cb9056e8153e98e6dfb8f536b7bb19f70b01db1b68f641d88ddcdb7f48a4"
+      "sha256": "84386af01bd5c06c10206786db908b61d8246b03a500f0e6982c1b17af672a64"
     },
     {
       "path": "README.md",
       "sha256": "54f9a38d51b93b4d4de5f0453406c0ed4db1fd538d32c2a9e9d4f930eb9a3f5e"
+    },
+    {
+      "path": "ThirdPartyNotices.txt",
+      "sha256": "9c0a8e3dfc1a4ce453c9fa968c466c9c62608dc4c6dadec708dc24b650805938"
     },
     {
       "path": "build.rs",
@@ -253,7 +261,7 @@
     },
     {
       "path": "go.mod",
-      "sha256": "8360bbdfb4e41e85f78730f64ce087862e58d6d3087d8e497583f01acf01b497"
+      "sha256": "f8cb27d05d1a2129bd7bc480090131972f4d838f0a1a1c7aac63f171c16201c0"
     },
     {
       "path": "go.sum",
@@ -337,11 +345,11 @@
     },
     {
       "path": "pkg/brpb/backup_schema_version.go",
-      "sha256": "c5fc97ab47cf46abdf79db0a5eb4445e0744fc77a9a76fedeb481963d0694750"
+      "sha256": "da36daf40d30dacea3015999e632219e8472e8f5a21ccb34a22895c2a1a322a4"
     },
     {
       "path": "pkg/brpb/brpb.pb.go",
-      "sha256": "5f2b3777779ce1e056da715381fa8a5701068ae6f23dd9eea583ba518dcb791f"
+      "sha256": "f4e72ac968367c696562d2768106c2332ee935b7b3c99f44745d2dc7925c5738"
     },
     {
       "path": "pkg/cdcpb/cdcpb.pb.go",
@@ -397,7 +405,7 @@
     },
     {
       "path": "pkg/errorpb/errorpb.pb.go",
-      "sha256": "19ab9db6c540b1e345a66aeeccbb5bfeb7e47c42ec0af565609eeeb3970b9353"
+      "sha256": "86cb32cb2d84f8f053b92b2954ef4a1f734a7d17bf280162c0d8071514a5dc72"
     },
     {
       "path": "pkg/externalworkloadpb/externalworkloadpb.pb.go",
@@ -425,7 +433,7 @@
     },
     {
       "path": "pkg/kvrpcpb/kvrpcpb.pb.go",
-      "sha256": "6e5bc4de1c373792f1d33800f61136a4855c244c4e31320a9a463f552bd0a367"
+      "sha256": "9c3552b50e536ce75c9c55dba4567c2765a93ffdc94b36cb7c7d1ad5cf17ffd8"
     },
     {
       "path": "pkg/kvrpcpb/shared_lock_lost_test.go",
@@ -441,7 +449,7 @@
     },
     {
       "path": "pkg/metapb/metapb.pb.go",
-      "sha256": "3e3056a2d8ee22b919fc899b1b78c6472a19bd2dd01e6b2c33d372e2728145ba"
+      "sha256": "d08a9237de301050df86c98af48309a08e3900e7c997dda6bd32c2da9103ad61"
     },
     {
       "path": "pkg/mpp/mpp.pb.go",
@@ -453,7 +461,11 @@
     },
     {
       "path": "pkg/pdpb/pdpb.pb.go",
-      "sha256": "c69aefe0a670ddc58786db7604b64d9a4d74e5c07ff01910187b704c73366589"
+      "sha256": "6743c75cc6e77ac70059a0d63ae1518f0ca21f42bfe1f89ab797ef668f4a024c"
+    },
+    {
+      "path": "pkg/pdpb/region_heartbeat_ia_kv_size_compat_test.go",
+      "sha256": "553332508ec96a20e210a789a59afd2f4fcc8a6bc620e726f752e175ff068fe7"
     },
     {
       "path": "pkg/raft_cmdpb/raft_cmdpb.pb.go",
@@ -473,7 +485,7 @@
     },
     {
       "path": "pkg/resource_manager/resource_manager.pb.go",
-      "sha256": "89f58c017786819b9544b08253254645bca45e027e1165b47270c2fe76095249"
+      "sha256": "3b13500c6d31cd404f6ab97a3826eb44e3e9723685753f5e802af94874cfcc47"
     },
     {
       "path": "pkg/resource_usage_agent/resource_usage_agent.pb.go",
@@ -509,7 +521,7 @@
     },
     {
       "path": "proto/OWNERS",
-      "sha256": "ed04862f5cd355e5617f436585c4d23f4dc3a292351af814f3497aecda99dc4e"
+      "sha256": "d3ad694a7301c58228592312dccbf79e7cba711bdd2f1ea2aadc42b58e0fb0b4"
     },
     {
       "path": "proto/apipb.proto",
@@ -521,7 +533,7 @@
     },
     {
       "path": "proto/brpb.proto",
-      "sha256": "799b592e4c4c3b049adc955ac40ee19e295212f6709158559879e7fbafcd3918"
+      "sha256": "99b726454072cee6e6289bfd0f3fef86c37395c6a18c16c5ef78d58114f6d80b"
     },
     {
       "path": "proto/cdcpb.proto",
@@ -569,7 +581,7 @@
     },
     {
       "path": "proto/errorpb.proto",
-      "sha256": "9a217e2ab8a8a77ab407a508ee3224a26c5f99a9911192b1acc52d3d9c93e1ea"
+      "sha256": "db8d7bc5037e262f14f85e18755adaa0b266de9a168253fd685dfa4444657473"
     },
     {
       "path": "proto/externalworkloadpb.proto",
@@ -597,7 +609,7 @@
     },
     {
       "path": "proto/kvrpcpb.proto",
-      "sha256": "a04481c7bc93576374217e84f1111f266725531ae4722139be6a8ee0c62b6b56"
+      "sha256": "4839152b83a07bde6f2fdfe8f11294ea1226ea6b8037422116090791a5151a0b"
     },
     {
       "path": "proto/logbackuppb.proto",
@@ -609,7 +621,7 @@
     },
     {
       "path": "proto/metapb.proto",
-      "sha256": "e1f5ea1f9f7701d087847a6a18385f3fa25f3355996fedc8435c55b8bca3a045"
+      "sha256": "bd8d88d8724fc1742feadd01900983980a0901be70a9a95537e8641c00d6b42b"
     },
     {
       "path": "proto/mpp.proto",
@@ -617,7 +629,7 @@
     },
     {
       "path": "proto/pdpb.proto",
-      "sha256": "5c839bbead427a88cbb46eecd8f53fee9b6c66d7764cd53b898f0eef51213c6e"
+      "sha256": "bc8c1a97f8883b3d2a3bef1aa36b9d595a56229f32d56b65224d688f63055614"
     },
     {
       "path": "proto/raft_cmdpb.proto",
@@ -637,7 +649,7 @@
     },
     {
       "path": "proto/resource_manager.proto",
-      "sha256": "cb7067e7b28da0d4b97021bffd225e93ff13842f0a2f4fe2eac8d74f0a990815"
+      "sha256": "086573ddb1b4d3852330dce58e44802c4ef4a7ef3fc1d616c2ad6685745a0177"
     },
     {
       "path": "proto/resource_usage_agent.proto",
@@ -689,7 +701,7 @@
     },
     {
       "path": "scripts/proto.lock",
-      "sha256": "4b8db32606644cf9b1b9a435d3220829b38bae9e4b8a213be4a4288ef309e762"
+      "sha256": "44dadab10b69c1a25f825e9716a92bf4157f16cf3fc96833dae86d9a5451e846"
     },
     {
       "path": "scripts/proto_format.sh",
@@ -707,7 +719,7 @@
   "build_inputs": [
     {
       "path": "rust/third_party/tikv-client-rs/proto-build/src/main.rs",
-      "sha256": "3af2bfcf97e43d94fec7ef8d68a9d239728a9d58f9641f4a948ec56e8dad881a"
+      "sha256": "e75bf6b2dd13fd5c6581dee7f58176f9b26fa7df9a2bd3f5d420c1c77d616c1c"
     },
     {
       "path": "rust/third_party/tikv-client-rs/proto-build/Cargo.toml",
@@ -727,7 +739,7 @@
     },
     {
       "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/file_descriptor_set.bin",
-      "sha256": "dd2f2687d2f6dcb8d2209636da5234820ff705f287b719d73a0802fd6de9ee12"
+      "sha256": "61312199f55633c532e1ff7fd804c521450630bace8fc4b6529e7c086eb7fbe2"
     }
   ]
 }
