@@ -2204,17 +2204,12 @@ var defaultSysVars = []*SysVar{
 		s.IndexJoinBatchSize = tidbOptPositiveInt32(val, DefIndexJoinBatchSize)
 		return nil
 	}},
-<<<<<<< HEAD
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIndexLookupSize, Value: strconv.Itoa(DefIndexLookupSize), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
-		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
-=======
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableAdaptiveLimitScan, Value: BoolToOnOff(vardef.DefTiDBEnableAdaptiveLimitScan), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAdaptiveLimitScan, Value: BoolToOnOff(DefTiDBEnableAdaptiveLimitScan), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableAdaptiveLimitScan = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBIndexLookupSize, Value: strconv.Itoa(vardef.DefIndexLookupSize), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
-		s.IndexLookupSize = tidbOptPositiveInt32(val, vardef.DefIndexLookupSize)
->>>>>>> 0b505ecc58b (executor: add adaptive admission control for ordered LIMIT scans (#70252))
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIndexLookupSize, Value: strconv.Itoa(DefIndexLookupSize), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
+		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIndexLookupConcurrency, Value: strconv.Itoa(DefIndexLookupConcurrency), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency, AllowAutoValue: true, SetSession: func(s *SessionVars, val string) error {
@@ -3812,7 +3807,6 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 	// FOR NEW INSTALLS ONLY. In most cases you don't want to do this.
 	// It is better to change the value in the Sysvar struct, so that
 	// all installs will have the same value.
-<<<<<<< HEAD
 	case TiDBRowFormatVersion:
 		varVal = strconv.Itoa(DefTiDBRowFormatV2)
 	case TiDBTxnAssertionLevel:
@@ -3821,26 +3815,8 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 		varVal = On
 	case TiDBPessimisticTransactionFairLocking:
 		varVal = On
-=======
-	case vardef.TiDBRowFormatVersion:
-		varVal = strconv.Itoa(vardef.DefTiDBRowFormatV2)
-	case vardef.TiDBTxnAssertionLevel:
-		if kerneltype.IsNextGen() {
-			varVal = vardef.GetDefaultTxnAssertionLevel()
-		} else {
-			varVal = vardef.AssertionFastStr
-		}
-	case vardef.TiDBEnableMutationChecker:
-		varVal = vardef.On
-	case vardef.TiDBEnableAdaptiveLimitScan:
-		varVal = vardef.On
-	case vardef.TiDBPessimisticTransactionFairLocking:
-		if kerneltype.IsNextGen() {
-			varVal = vardef.Off
-		} else {
-			varVal = vardef.On
-		}
->>>>>>> 0b505ecc58b (executor: add adaptive admission control for ordered LIMIT scans (#70252))
+	case TiDBEnableAdaptiveLimitScan:
+		varVal = On
 	}
 	return varVal
 }

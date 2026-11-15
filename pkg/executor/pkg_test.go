@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
@@ -30,14 +29,11 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-=======
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/table/tables"
->>>>>>> 0b505ecc58b (executor: add adaptive admission control for ordered LIMIT scans (#70252))
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -47,8 +43,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-<<<<<<< HEAD
-=======
 type oversizedChunkSelectResult struct {
 	rows     []int64
 	returned bool
@@ -61,6 +55,10 @@ type partialThenErrorSelectResult struct {
 
 func (*oversizedChunkSelectResult) NextRaw(context.Context) ([]byte, error) { return nil, nil }
 func (*oversizedChunkSelectResult) Close() error                            { return nil }
+
+func (*oversizedChunkSelectResult) IntoIter([][]*types.FieldType) (distsql.SelectResultIter, error) {
+	return nil, nil
+}
 
 func (r *oversizedChunkSelectResult) Next(_ context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
@@ -84,16 +82,6 @@ func (r *partialThenErrorSelectResult) Next(ctx context.Context, chk *chunk.Chun
 	return r.err
 }
 
-func (*oversizedChunkSelectResult) IntoIter([][]*types.FieldType) (distsql.SelectResultIter, error) {
-	return nil, nil
-}
-
-// CancelAndWaitImportJobForTest exposes cancelAndWaitImportJob to external package tests.
-func CancelAndWaitImportJobForTest(ctx context.Context, jobID int64) error {
-	return cancelAndWaitImportJob(ctx, jobID)
-}
-
->>>>>>> 0b505ecc58b (executor: add adaptive admission control for ordered LIMIT scans (#70252))
 func TestNestedLoopApply(t *testing.T) {
 	ctx := context.Background()
 	sctx := mock.NewContext()
@@ -200,7 +188,7 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 8, directLookup),
 	}
 	require.Nil(t, findAdaptiveLimitIndexLookupCandidate(directSelection))
-	directLookup.PushedLimit = &physicalop.PushedDownLimit{Count: 10}
+	directLookup.PushedLimit = &plannercore.PushedDownLimit{Count: 10}
 	require.Nil(t, findAdaptiveLimitIndexLookupCandidate(directLookup))
 	directLookup.PushedLimit = nil
 	directController := exec.NewAdaptiveLimitLookupController(exec.AdaptiveLimitConfig{
@@ -282,7 +270,7 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	require.Empty(t, worker.pendingHandles)
 	require.Zero(t, worker.pendingHandlesMemUsage)
 	require.Zero(t, pendingTracker.BytesConsumed())
-	worker.PushedLimit = &physicalop.PushedDownLimit{Count: 5}
+	worker.PushedLimit = &plannercore.PushedDownLimit{Count: 5}
 	worker.scannedKeys = 5
 	worker.pendingHandles = []kv.Handle{kv.IntHandle(5)}
 	require.False(t, worker.reachedPushedLimit())
@@ -292,7 +280,7 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	indexLookup.table = tables.MockTableFromMeta(&model.TableInfo{})
 	indexLookup.index = &model.IndexInfo{}
 	handleColumn := &expression.Column{ID: model.ExtraHandleID, Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	indexScan := physicalop.PhysicalIndexScan{}.Init(sctx, 0)
+	indexScan := plannercore.PhysicalIndexScan{}.Init(sctx, 0)
 	indexScan.SetSchema(expression.NewSchema(handleColumn))
 	indexLookup.idxPlans = []base.PhysicalPlan{indexScan}
 	indexLookup.dagPB = &tipb.DAGRequest{OutputOffsets: []uint32{0}}
@@ -308,7 +296,7 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 		batchSize:               2,
 		maxBatchSize:            2,
 		maxChunkSize:            32,
-		PushedLimit:             &physicalop.PushedDownLimit{Count: 5},
+		PushedLimit:             &plannercore.PushedDownLimit{Count: 5},
 		memTracker:              pendingTracker,
 	}
 	result := &oversizedChunkSelectResult{rows: []int64{1, 2, 3, 4, 5}}
@@ -383,7 +371,7 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	indexLookup.adaptiveLimitController = controller
 	require.Same(t, controller, indexLookup.adaptiveLimitController)
 	indexLookup.idxPlans = []base.PhysicalPlan{
-		&physicalop.PhysicalIndexScan{GroupByColIdxs: []int{0}},
+		&plannercore.PhysicalIndexScan{GroupByColIdxs: []int{0}},
 	}
 	assertIneligible()
 	indexLookup.byItems = nil
@@ -391,7 +379,7 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	indexLookup.indexLookUpPushDown = true
 	assertIneligible()
 	indexLookup.indexLookUpPushDown = false
-	indexLookup.PushedLimit = &physicalop.PushedDownLimit{Count: 10}
+	indexLookup.PushedLimit = &plannercore.PushedDownLimit{Count: 10}
 	assertIneligible()
 }
 
@@ -420,7 +408,7 @@ func TestAdaptiveLimitReservationExitPaths(t *testing.T) {
 			Index:   0,
 			RetType: types.NewFieldType(mysql.TypeLonglong),
 		}
-		indexScan := physicalop.PhysicalIndexScan{}.Init(sctx, 0)
+		indexScan := plannercore.PhysicalIndexScan{}.Init(sctx, 0)
 		indexScan.SetSchema(expression.NewSchema(handleColumn))
 		indexLookup := &IndexLookUpExecutor{
 			BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 1),
@@ -486,8 +474,8 @@ func TestAdaptiveLimitReservationExitPaths(t *testing.T) {
 		worker.finished = make(chan struct{})
 		worker.idxLookup.adaptiveLimitController = controller
 		worker.idxLookup.resultCh = resultCh
-		worker.idxLookup.tblWorkerWg = &sync.WaitGroup{}
-		worker.idxLookup.pool = &workerPool{}
+		workCh := make(chan *lookupTableTask, 1)
+		worker.workCh = workCh
 		worker.idxLookup.finished = make(chan struct{})
 		close(worker.idxLookup.finished)
 
@@ -503,7 +491,7 @@ func TestAdaptiveLimitReservationExitPaths(t *testing.T) {
 		require.False(t, worker.buildAndDispatchLookupTasks(context.Background(), 0, &taskID, &data))
 		require.Zero(t, data.adaptiveLimitReservation)
 		task := <-resultCh
-		worker.idxLookup.tblWorkerWg.Wait()
+		require.Same(t, task, <-workCh)
 		require.Len(t, task.handles, 1)
 		require.Equal(t, 1, task.adaptiveLimitReservation)
 		require.Equal(t, uint64(1), controller.Snapshot().LookupReserved)

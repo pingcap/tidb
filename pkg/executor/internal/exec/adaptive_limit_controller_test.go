@@ -210,11 +210,12 @@ func TestAdaptiveLimitControllerStopInterruptsReservation(t *testing.T) {
 		result <- reservationResult{admitted: admitted, err: err}
 	}()
 
-	select {
-	case <-result:
-		require.Fail(t, "reservation should wait for consumption or stop")
-	case <-time.After(20 * time.Millisecond):
-	}
+	require.Eventually(t, func() bool {
+		controller.mu.Lock()
+		defer controller.mu.Unlock()
+		return controller.outerAdmissionBlocked.waiters == 1
+	}, time.Second, time.Millisecond)
+	require.Empty(t, result)
 
 	controller.Stop()
 	snapshot := controller.Snapshot()
@@ -270,11 +271,12 @@ func TestAdaptiveLimitControllerStopInterruptsReservation(t *testing.T) {
 		_, admitted, err := blockedOuterController.ReserveOuter(blockedOuterCtx, 1)
 		blockedOuterResult <- reservationResult{admitted: admitted, err: err}
 	}()
-	select {
-	case <-blockedOuterResult:
-		require.Fail(t, "outer reservation did not block")
-	case <-time.After(20 * time.Millisecond):
-	}
+	require.Eventually(t, func() bool {
+		blockedOuterController.mu.Lock()
+		defer blockedOuterController.mu.Unlock()
+		return blockedOuterController.outerAdmissionBlocked.waiters == 1
+	}, time.Second, time.Millisecond)
+	require.Empty(t, blockedOuterResult)
 	cancelBlockedOuter()
 	select {
 	case result := <-blockedOuterResult:
@@ -295,11 +297,12 @@ func TestAdaptiveLimitControllerStopInterruptsReservation(t *testing.T) {
 		_, admitted, err := blockedLookupController.ReserveLookup(blockedLookupCtx, 1)
 		blockedLookupResult <- reservationResult{admitted: admitted, err: err}
 	}()
-	select {
-	case <-blockedLookupResult:
-		require.Fail(t, "lookup reservation did not block")
-	case <-time.After(20 * time.Millisecond):
-	}
+	require.Eventually(t, func() bool {
+		blockedLookupController.mu.Lock()
+		defer blockedLookupController.mu.Unlock()
+		return blockedLookupController.lookupAdmissionBlocked.waiters == 1
+	}, time.Second, time.Millisecond)
+	require.Empty(t, blockedLookupResult)
 	cancelBlockedLookup()
 	select {
 	case result := <-blockedLookupResult:

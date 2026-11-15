@@ -756,25 +756,10 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize int) error {
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
-<<<<<<< HEAD
 	ctx, cancel := context.WithCancel(ctx)
 	e.cancelFunc = cancel
 	workCh := make(chan *lookupTableTask, 1)
 	if err := e.startIndexWorker(ctx, workCh, initBatchSize); err != nil {
-=======
-	e.workerCtx, e.cancelFunc = context.WithCancel(ctx)
-	e.pool = &workerPool{
-		needSpawn: func(workers, tasks uint32) bool {
-			if e.adaptiveLimitController != nil {
-				// A small admission window may expose only one lookup task. Spawn
-				// its table worker immediately instead of waiting for a second task.
-				return workers < uint32(e.indexLookupConcurrency) && tasks > 0
-			}
-			return workers < uint32(e.indexLookupConcurrency) && tasks > 1
-		},
-	}
-	if err := e.startIndexWorker(ctx, initBatchSize); err != nil {
->>>>>>> 0b505ecc58b (executor: add adaptive admission control for ordered LIMIT scans (#70252))
 		return err
 	}
 	e.startTableWorker(ctx, workCh)
@@ -1795,31 +1780,17 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 		}
 
 		if tableLookUpTask != nil {
-<<<<<<< HEAD
+			tableLookUpTask.adaptiveLimitReservation = data.takeAdaptiveLimitReservation()
 			select {
 			case <-ctx.Done():
+				tableLookUpTask.abortAdaptiveLimitReservation(w.adaptiveLimitController)
 				return true
 			case <-w.finished:
+				tableLookUpTask.abortAdaptiveLimitReservation(w.adaptiveLimitController)
 				return true
 			case w.workCh <- tableLookUpTask:
 				w.resultCh <- tableLookUpTask
 			}
-=======
-			tableLookUpTask.adaptiveLimitReservation = data.takeAdaptiveLimitReservation()
-			e := w.idxLookup
-			e.tblWorkerWg.Add(1)
-			e.pool.submit(func() {
-				defer e.tblWorkerWg.Done()
-				select {
-				case <-e.finished:
-					return
-				default:
-					growWorkerStack16K()
-					execTableTask(e, tableLookUpTask)
-				}
-			})
-			w.resultCh <- tableLookUpTask
->>>>>>> 0b505ecc58b (executor: add adaptive admission control for ordered LIMIT scans (#70252))
 		}
 	}
 	if w.idxLookup.stats != nil {
@@ -1979,9 +1950,6 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	return handles, retChk, nil
 }
 
-<<<<<<< HEAD
-func (*indexWorker) buildCompletedTask(rows []chunk.Row) *lookupTableTask {
-=======
 func (w *indexWorker) takePendingHandles(handles []kv.Handle) []kv.Handle {
 	// A DistSQL chunk can contain more handles than the current reservation.
 	// Retain the excess locally and admit it under later reservations. Retained
@@ -2051,8 +2019,7 @@ func (w *indexWorker) releasePendingHandles() {
 	w.pendingHandlesMemUsage = 0
 }
 
-func (*indexWorker) buildCompletedTask(taskID int, rows []chunk.Row) *lookupTableTask {
->>>>>>> 0b505ecc58b (executor: add adaptive admission control for ordered LIMIT scans (#70252))
+func (*indexWorker) buildCompletedTask(rows []chunk.Row) *lookupTableTask {
 	task := &lookupTableTask{
 		rows:   rows,
 		doneCh: make(chan error, 1),

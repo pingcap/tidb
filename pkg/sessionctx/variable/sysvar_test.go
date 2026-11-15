@@ -1614,20 +1614,14 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 			Off,
 		},
 		{
-<<<<<<< HEAD
 			TiDBRedactLog,
 			On,
 			Off,
-=======
-			vardef.TiDBEnableAdaptiveLimitScan,
-			BoolToOnOff(vardef.DefTiDBEnableAdaptiveLimitScan),
-			vardef.On,
 		},
 		{
-			vardef.TiDBRowFormatVersion,
-			strconv.Itoa(vardef.DefTiDBRowFormatV1),
-			strconv.Itoa(vardef.DefTiDBRowFormatV2),
->>>>>>> 0b505ecc58b (executor: add adaptive admission control for ordered LIMIT scans (#70252))
+			TiDBEnableAdaptiveLimitScan,
+			BoolToOnOff(DefTiDBEnableAdaptiveLimitScan),
+			On,
 		},
 		{
 			TiDBRowFormatVersion,

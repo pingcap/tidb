@@ -350,7 +350,7 @@ The feature first requires all of the following shared conditions:
 
 The IndexLookUpJoin shape additionally requires that its outer property preserves order and that its outer child is `Projection* -> IndexLookUp`. The direct shape requires `Projection* -> IndexLookUp` and is skipped when the reader already has a pushed-down LIMIT, because that path already bounds lookup work.
 
-The keep-order requirement narrows the experimental rollout to the high-risk case from #66658. It is not a mathematical requirement of admission control. IndexLookUp concurrency must be greater than one because its index worker and table workers share one worker pool. With only one worker, attaching the controller cannot run index production and table lookup concurrently, so this path keeps the existing executor behavior.
+The keep-order requirement narrows the experimental rollout to the high-risk case from #66658. It is not a mathematical requirement of admission control. This v8.5 backport retains the initial implementation's IndexLookUp concurrency-greater-than-one eligibility gate. Unlike master's shared worker pool, v8.5 uses separate index and table workers connected by `workCh`; the backport preserves those workers and adds admission accounting around task dispatch.
 
 If the feature is disabled or any condition is not met, the executor uses the existing path without a controller.
 

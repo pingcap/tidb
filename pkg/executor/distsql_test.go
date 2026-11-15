@@ -321,7 +321,7 @@ func TestAdaptiveLimitExecution(t *testing.T) {
 	var adaptiveRequestConcurrency atomic.Int64
 	budgetCtx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
 		recordKeepOrderConcurrency(&adaptiveRequestConcurrency, req)
-		if req.CoprRequestLimiter != nil {
+		if req.CoprRequestRateLimit != nil {
 			adaptiveRequestLimiterSeen.Store(true)
 		}
 	})

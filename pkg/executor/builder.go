@@ -846,7 +846,7 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) exec.Executor
 }
 
 func (b *executorBuilder) attachAdaptiveLimitController(
-	limitPlan *physicalop.PhysicalLimit, limitExec *LimitExec, childExec exec.Executor,
+	limitPlan *plannercore.PhysicalLimit, limitExec *LimitExec, childExec exec.Executor,
 ) {
 	if !b.sctx.GetSessionVars().EnableAdaptiveLimitScan {
 		return
@@ -963,8 +963,8 @@ func findAdaptiveLimitIndexLookupCandidate(executor exec.Executor) *IndexLookUpE
 func adaptiveLimitIndexLookupEligible(indexLookup *IndexLookUpExecutor) bool {
 	// Merge-sort double reads create all SelectResults before rolling handle
 	// admission. PushedLimit already applies its own index-side offset/count
-	// boundary, and pushed-down lookup does not preserve order. Concurrency 1
-	// cannot run the index and table workers at the same time in the shared pool.
+	// boundary, and pushed-down lookup does not preserve order. Retain the v1
+	// concurrency gate when backporting to the separate v8.5 worker channels.
 	// Keep these paths unchanged in v1.
 	return indexLookup.PushedLimit == nil && indexLookup.keepOrder && indexLookup.indexLookupConcurrency > 1 &&
 		!adaptiveLimitIndexLookupMayNeedMergeSort(indexLookup) && !indexLookup.indexLookUpPushDown
@@ -981,7 +981,7 @@ func adaptiveLimitIndexLookupMayNeedMergeSort(indexLookup *IndexLookUpExecutor) 
 		return true
 	}
 	// Correlated access can rebuild groupedRanges from GroupByColIdxs in Open.
-	indexScan, ok := indexLookup.idxPlans[0].(*physicalop.PhysicalIndexScan)
+	indexScan, ok := indexLookup.idxPlans[0].(*plannercore.PhysicalIndexScan)
 	return !ok || len(indexScan.GroupByColIdxs) > 0
 }
 
