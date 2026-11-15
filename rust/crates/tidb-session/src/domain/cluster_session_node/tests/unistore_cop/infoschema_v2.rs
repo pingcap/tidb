@@ -299,3 +299,34 @@ fn v2_ddl_reads_tables_through_go_v2_lookups() {
         create[0][1]
     );
 }
+
+/// A table re-partitioned (`ALTER TABLE ... PARTITION BY`, a new table id)
+/// and then dropped leaves no placement-policy user behind: the V2 diff
+/// copy of the partitioning step resolved the table and each of its
+/// partitions to the same table and listed it once per id, so the diff's
+/// drop of the old id left a copy that outlived the table. Go replays
+/// `ddl/bdr_mode`'s sequence with `DROP PLACEMENT POLICY` succeeding.
+#[test]
+fn v2_dropped_repartitioned_table_releases_its_placement_policy() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(19012)).unwrap();
+    for sql in [
+        "USE test",
+        "CREATE PLACEMENT POLICY pp1 FOLLOWERS=1",
+        "CREATE TABLE t (a INT)",
+        "ALTER TABLE t PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (1000000), PARTITION pMax VALUES LESS THAN (MAXVALUE) PLACEMENT POLICY pp1)",
+        "DROP TABLE t",
+    ] {
+        session.node_conn().execute_write(sql).unwrap();
+    }
+    let latest = stack.factory.catalog.get_latest();
+    assert!(latest
+        .v2()
+        .unwrap()
+        .list_tables_with_special_attribute(|_| true)
+        .is_empty());
+    session
+        .node_conn()
+        .execute_write("DROP PLACEMENT POLICY pp1")
+        .unwrap();
+}

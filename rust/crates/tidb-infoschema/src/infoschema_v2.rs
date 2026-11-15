@@ -594,7 +594,9 @@ impl InfoSchemaV2 {
         }
         self.table_for_item(&item, refill.unwrap_or(false)).ok()
     }
-    fn table_for_item(
+    /// The table an item names, by its id (Go `TableByID` reads by id, so
+    /// an old and a new table sharing a name stay distinct).
+    pub(crate) fn table_for_item(
         &self,
         item: &TableItem,
         refill: bool,

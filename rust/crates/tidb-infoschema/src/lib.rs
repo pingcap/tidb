@@ -503,9 +503,17 @@ impl SessionExtendedInfoSchema {
                     Some((ids, _)) => {
                         let source = self.v2().unwrap();
                         let mut tables = Vec::new();
+                        let mut loaded = std::collections::HashSet::new();
                         for &id in ids {
                             if let Some(item) = source.table_item_by_id(id).or_else(|| source.table_item_by_partition_id(id)).filter(|item| item.db_id == db.id) {
-                                tables.push(source.table_by_name(item.db_name.original(), item.table_name.original(), Some(false))?.info.clone());
+                                // A table and its partitions resolve to one
+                                // table, loaded once: a duplicate survived the
+                                // diff's drop of the table.
+                                if !loaded.insert(item.table_id) { continue; }
+                                // Go applies a diff over `TableByID(diff.OldTableID)`:
+                                // by id, since a re-partitioned table's old and new
+                                // ids share its name.
+                                tables.push(source.table_for_item(&item, false)?.info.clone());
                             }
                         }
                         tables
