@@ -2657,9 +2657,9 @@ func TestTiDBMLogAutoAnalyzeRatio(t *testing.T) {
 	require.Equal(t, "20", val)
 }
 
-func TestRemovedHistoricalStatsVarsWarn(t *testing.T) {
-	// The historical stats feature was removed; its variables are kept as no-op
-	// variables for compatibility and warn on a value that had an effect before.
+func TestRemovedFeatureVarsWarn(t *testing.T) {
+	// Variables of removed features are kept as no-op variables for compatibility
+	// and warn on a value that had an effect before.
 	for _, name := range []string{vardef.TiDBEnableHistoricalStats, vardef.TiDBEnableHistoricalStatsForCapture} {
 		sv := GetSysVar(name)
 		vars := NewSessionVars(nil)
@@ -2687,4 +2687,19 @@ func TestRemovedHistoricalStatsVarsWarn(t *testing.T) {
 	warns := vars.StmtCtx.GetWarnings()
 	require.Len(t, warns, 1)
 	require.Contains(t, warns[0].Err.Error(), "the historical statistics feature has been removed")
+
+	// Only OFF warns, because ON selects the async merge that TiDB now always uses.
+	sv = GetSysVar(vardef.TiDBEnableAsyncMergeGlobalStats)
+	vars = NewSessionVars(nil)
+	val, err = sv.Validate(vars, "OFF", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+	warns = vars.StmtCtx.GetWarnings()
+	require.Len(t, warns, 1)
+	require.Contains(t, warns[0].Err.Error(), "global statistics are always merged asynchronously")
+	vars = NewSessionVars(nil)
+	val, err = sv.Validate(vars, "ON", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+	require.Len(t, vars.StmtCtx.GetWarnings(), 0)
 }

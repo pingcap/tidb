@@ -130,7 +130,6 @@ func newStatsSessionContextForRestoreTest(t *testing.T) *mock.Context {
 	accessor := variable.NewMockGlobalAccessor4Tests()
 	vars.GlobalVarsAccessor = accessor
 	for _, setting := range []struct{ name, global, session string }{
-		{vardef.TiDBEnableAsyncMergeGlobalStats, "ON", "OFF"},
 		{vardef.TiDBAnalyzePartitionConcurrency, "3", "1"},
 		{vardef.TiDBAnalyzeVersion, "2", "2"},
 		{vardef.TiDBAnalyzeStoreBatchSize, "6", "7"},
@@ -146,7 +145,6 @@ func newStatsSessionContextForRestoreTest(t *testing.T) *mock.Context {
 			require.NoError(t, vars.SetSystemVar(setting.name, setting.session))
 		}
 	}
-	vars.EnableAsyncMergeGlobalStats = false
 	vars.AnalyzeVersion = 1
 	vars.StmtCtx.SetTimeZone(time.UTC)
 	return sctx
@@ -155,7 +153,6 @@ func newStatsSessionContextForRestoreTest(t *testing.T) *mock.Context {
 func checkRestoredStatsSessionVars(t *testing.T, sctx sessionctx.Context) {
 	t.Helper()
 	vars := sctx.GetSessionVars()
-	require.False(t, vars.EnableAsyncMergeGlobalStats)
 	require.Equal(t, 1, vars.AnalyzePartitionConcurrency)
 	require.Equal(t, 1, vars.AnalyzeVersion)
 	require.Equal(t, 7, vars.AnalyzeStoreBatchSize)
@@ -346,7 +343,6 @@ func (a failingStatsGlobalAccessor) GetGlobalSysVar(name string) (string, error)
 func TestUpdateSCtxVarsForStatsRestore(t *testing.T) {
 	for _, failOn := range []string{
 		"",
-		vardef.TiDBEnableAsyncMergeGlobalStats,
 		vardef.TiDBAnalyzePartitionConcurrency,
 		vardef.TiDBAnalyzeVersion,
 		vardef.TiDBAnalyzeStoreBatchSize,
@@ -377,7 +373,6 @@ func TestUpdateSCtxVarsForStatsRestore(t *testing.T) {
 				require.Nil(t, restore)
 			} else {
 				require.NoError(t, err)
-				require.True(t, vars.EnableAsyncMergeGlobalStats)
 				require.Equal(t, 3, vars.AnalyzePartitionConcurrency)
 				require.Equal(t, 2, vars.AnalyzeVersion)
 				require.Equal(t, 6, vars.AnalyzeStoreBatchSize)

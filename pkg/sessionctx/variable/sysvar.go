@@ -3491,15 +3491,13 @@ var defaultSysVars = []*SysVar{
 	{
 		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:  vardef.TiDBEnableAsyncMergeGlobalStats,
-		Value: BoolToOnOff(vardef.DefTiDBEnableAsyncMergeGlobalStats),
+		Value: vardef.On,
 		Type:  vardef.TypeBool,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-			vars.StmtCtx.AppendWarning(errors.NewNoStackError("The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a future release; changing it is discouraged."))
+			if !TiDBOptOn(normalizedValue) {
+				vars.StmtCtx.AppendWarning(errors.NewNoStackError("global statistics are always merged asynchronously, so this will have no effect"))
+			}
 			return normalizedValue, nil
-		},
-		SetSession: func(s *SessionVars, val string) error {
-			s.EnableAsyncMergeGlobalStats = TiDBOptOn(val)
-			return nil
 		},
 	},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptPrefixIndexSingleScan, Value: BoolToOnOff(vardef.DefTiDBOptPrefixIndexSingleScan), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
