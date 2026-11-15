@@ -21,13 +21,44 @@ pub struct RegionInfo {
 }
 /// Go `importClientFactory` and `split.SplitClient` operations used by jobs.
 /// The production implementation below uses PD and the generated ImportSST client.
-pub trait ImportClient: Send + Sync {
+pub trait ImportClient: Send + Sync + crate::localhelper::SplitClient {
     /// Go `SplitClient.GetRegion`.
     fn get_region(&self, key: &[u8]) -> Result<RegionInfo>;
     /// Go region-cache invalidation before rescanning changed peers or epochs.
     fn invalidate_region(&self, region: &RegionInfo);
     /// Go `ImportSST.Write` to one peer, including the metadata first.
     fn write(&self, store_id: u64, requests: Vec<sst::WriteRequest>) -> Result<sst::WriteResponse>;
+    /// Go `Backend.doWrite`: throttle each batch before sending it to a peer.
+    fn write_limited(
+        &self,
+        ctx: &Context,
+        store_id: u64,
+        requests: Vec<sst::WriteRequest>,
+        limiter: &crate::localhelper::StoreWriteLimiter,
+    ) -> Result<sst::WriteResponse> {
+        for request in &requests {
+            if let Some(sst::write_request::Chunk::Batch(batch)) = &request.chunk {
+                limiter.wait_n(
+                    ctx,
+                    store_id,
+                    batch
+                        .pairs
+                        .iter()
+                        .map(|p| p.key.len() + p.value.len())
+                        .sum(),
+                )?;
+            }
+        }
+        self.write(store_id, requests)
+    }
+    /// Go `checkMultiIngestSupport`, initialized by `NewBackend`.
+    fn check_multi_ingest_support(&self, _: &Context) -> Result<bool> {
+        Ok(true)
+    }
+    /// Go `Backend.supportMultiIngest` after the capability probe.
+    fn supports_multi_ingest(&self) -> bool {
+        true
+    }
     /// Go `ImportSST.MultiIngest`.
     fn multi_ingest(
         &self,
@@ -52,6 +83,7 @@ pub trait ImportClient: Send + Sync {
 pub struct RemoteImportClient<S: tikv_client::PdClient> {
     store: tidb_txnkv::driver::tikv_store::TikvStore<S>,
     security: tidb_pd_client::ClusterSecurity,
+    support_multi_ingest: std::sync::OnceLock<bool>,
     clients:
         Mutex<HashMap<u64, sst::import_sst_client::ImportSstClient<tonic::transport::Channel>>>,
 }
@@ -64,9 +96,11 @@ impl<S: tikv_client::PdClient> RemoteImportClient<S> {
         Self {
             store,
             security,
+            support_multi_ingest: std::sync::OnceLock::new(),
             clients: Mutex::new(HashMap::new()),
         }
     }
+    /// Go `importClientFactoryImpl.create`.
     fn client(
         &self,
         store_id: u64,
@@ -78,20 +112,20 @@ impl<S: tikv_client::PdClient> RemoteImportClient<S> {
         let stores = self
             .store
             .block_on(async move { pd.get_all_stores().await })
-            .map_err(|e| Error::Other(e.to_string()))?;
+            .map_err(|e| Error::Source(std::sync::Arc::new(e)))?;
         let address = stores
             .into_iter()
             .find(|s| s.id == store_id)
             .ok_or_else(|| Error::Other(format!("store {store_id} not found")))?
             .address;
         let endpoint = tidb_pd_client::secure_endpoint(&address, &self.security)
-            .map_err(|e| Error::Other(e.to_string()))?
+            .map_err(|e| Error::Source(std::sync::Arc::new(e)))?
             .connect_timeout(Duration::from_secs(30))
             .timeout(Duration::from_secs(600));
         let channel = self
             .store
             .block_on(endpoint.connect())
-            .map_err(|e| Error::Other(e.to_string()))?;
+            .map_err(|e| Error::Source(std::sync::Arc::new(e)))?;
         let client = sst::import_sst_client::ImportSstClient::new(channel)
             .max_decoding_message_size(usize::MAX);
         self.clients
@@ -101,29 +135,62 @@ impl<S: tikv_client::PdClient> RemoteImportClient<S> {
         Ok(client)
     }
 }
+impl<S: tikv_client::PdClient> crate::localhelper::SplitClient for RemoteImportClient<S> {
+    /// Go `SplitClient.SplitKeysAndScatter`, through TiKV's split RPC and PD scatter.
+    fn split_keys_and_scatter(&self, ctx: &Context, keys: &[Vec<u8>]) -> Result<Vec<u64>> {
+        if let Some(error) = ctx.err() {
+            return Err(Error::Other(error.to_string()));
+        }
+        let keys = keys.iter().map(|key| self.encode_key(key)).collect();
+        let (ids, result) = self
+            .store
+            .block_on(self.store.store().split_regions(keys, true, None));
+        result.map_err(|error| Error::Other(error.to_string()))?;
+        Ok(ids)
+    }
+    /// Go `SplitClient.WaitRegionsScattered`.
+    fn wait_regions_scattered(&self, ctx: &Context, regions: &[u64]) -> Result<usize> {
+        let mut remaining = regions.len();
+        for id in regions {
+            if let Some(error) = ctx.err() {
+                return Err(Error::Other(error.to_string()));
+            }
+            if self
+                .store
+                .block_on(self.store.store().wait_scatter_region_finish(*id, 120_000))
+                .is_ok()
+            {
+                remaining -= 1;
+            }
+        }
+        Ok(remaining)
+    }
+}
 impl<S: tikv_client::PdClient> ImportClient for RemoteImportClient<S> {
+    /// Go `split.SplitClient.GetRegion`.
     fn get_region(&self, key: &[u8]) -> Result<RegionInfo> {
         let pd = self.store.store().pd_client();
         let key = tikv_client::Key::from(self.encode_key(key));
         let region = self
             .store
             .block_on(async move { pd.region_for_key(&key).await })
-            .map_err(|e| Error::Other(e.to_string()))?;
+            .map_err(|e| Error::Source(std::sync::Arc::new(e)))?;
         let mut metadata = region.region;
         if let tikv_client::request::Keyspace::Enable { keyspace_id } =
             self.store.store().keyspace()
         {
             let codec = tikv_client::request::ApiV2Codec::new(KeyMode::Txn, keyspace_id)
-                .map_err(|e| Error::Other(e.to_string()))?;
+                .map_err(|e| Error::Source(std::sync::Arc::new(e)))?;
             (metadata.start_key, metadata.end_key) = codec
                 .decode_range(&metadata.start_key, &metadata.end_key)
-                .map_err(|e| Error::Other(e.to_string()))?;
+                .map_err(|e| Error::Source(std::sync::Arc::new(e)))?;
         }
         Ok(RegionInfo {
             region: metadata,
             leader: region.leader,
         })
     }
+    /// Go `Backend.generateJobForRange region-cache invalidation`.
     fn invalidate_region(&self, region: &RegionInfo) {
         let epoch = region.region.region_epoch.unwrap_or_default();
         let ver = tikv_client::RegionVerId {
@@ -135,13 +202,93 @@ impl<S: tikv_client::PdClient> ImportClient for RemoteImportClient<S> {
         self.store
             .block_on(async move { pd.invalidate_region_cache(ver).await });
     }
+    /// Go `ImportSST.Write`.
     fn write(&self, id: u64, requests: Vec<sst::WriteRequest>) -> Result<sst::WriteResponse> {
         let mut client = self.client(id)?;
         self.store
             .block_on(async move { client.write(tokio_stream::iter(requests)).await })
             .map(|r| r.into_inner())
-            .map_err(|e| Error::Other(e.to_string()))
+            .map_err(|e| Error::Source(std::sync::Arc::new(e)))
     }
+    /// Go `Backend.doWrite`: the bounded stream applies live rate changes
+    /// between network batches, rather than delaying and then bursting the file.
+    fn write_limited(
+        &self,
+        ctx: &Context,
+        id: u64,
+        requests: Vec<sst::WriteRequest>,
+        limiter: &crate::localhelper::StoreWriteLimiter,
+    ) -> Result<sst::WriteResponse> {
+        let mut client = self.client(id)?;
+        let (ctx, cancel) = Context::with_cancel(ctx);
+        std::thread::scope(|scope| {
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            let write_ctx = ctx.clone();
+            let (stop_watch, stopped) = crossbeam_channel::bounded::<()>(0);
+            let (interrupt, interrupted) = tokio::sync::oneshot::channel();
+            let watch_ctx = ctx.clone();
+            scope.spawn(move || { crossbeam_channel::select! { recv(watch_ctx.done()) -> _ => { let _ = interrupt.send(()); },recv(stopped) -> _ => {} } });
+            let producer = scope.spawn(move || -> Result<()> {
+                for request in requests {
+                    if let Some(sst::write_request::Chunk::Batch(batch)) = &request.chunk {
+                        limiter.wait_n(
+                            &ctx,
+                            id,
+                            batch
+                                .pairs
+                                .iter()
+                                .map(|p| p.key.len() + p.value.len())
+                                .sum(),
+                        )?;
+                    }
+                    if tx.blocking_send(request).is_err() {
+                        break;
+                    }
+                }
+                Ok(())
+            });
+            let result = self.store.block_on(async move {
+                tokio::select! {
+                    result = client.write(tokio_stream::wrappers::ReceiverStream::new(rx)) => result.map(|r| r.into_inner()).map_err(|e| Error::Source(std::sync::Arc::new(e))),
+                    _ = interrupted => Err(Error::Source(std::sync::Arc::new(write_ctx.err().unwrap_or(tidb_gocontext::CtxError::Canceled)))),
+                }
+            });
+            drop(stop_watch);
+            cancel.cancel();
+            let produced = producer
+                .join()
+                .map_err(|_| Error::Other("write producer panicked".into()))?;
+            match result {
+                Err(error) => Err(error),
+                Ok(response) => {
+                    produced?;
+                    Ok(response)
+                }
+            }
+        })
+    }
+    /// Go `checkMultiIngestSupport`, retaining the result for all region workers.
+    fn check_multi_ingest_support(&self, ctx: &Context) -> Result<bool> {
+        if let Some(supported) = self.support_multi_ingest.get() {
+            return Ok(*supported);
+        }
+        let pd = self.store.store().pd_client();
+        let stores = self
+            .store
+            .block_on(pd.get_all_stores())
+            .map_err(|e| Error::Source(std::sync::Arc::new(e)))?;
+        let supported = crate::local::check_multi_ingest_support(ctx, &stores, |id| {
+            self.multi_ingest(id, sst::MultiIngestRequest::default())
+                .map(|_| ())
+        })?;
+        let _ = self.support_multi_ingest.set(supported);
+        Ok(supported)
+    }
+    /// Go `Backend.supportMultiIngest`.
+    fn supports_multi_ingest(&self) -> bool {
+        self.support_multi_ingest.get().copied().unwrap_or(true)
+    }
+    /// Go `ImportSST.MultiIngest`.
     fn multi_ingest(
         &self,
         id: u64,
@@ -151,15 +298,17 @@ impl<S: tikv_client::PdClient> ImportClient for RemoteImportClient<S> {
         self.store
             .block_on(async move { client.multi_ingest(request).await })
             .map(|r| r.into_inner())
-            .map_err(|e| Error::Other(e.to_string()))
+            .map_err(|e| Error::Source(std::sync::Arc::new(e)))
     }
+    /// Go `ImportSST.Ingest`.
     fn ingest(&self, id: u64, request: sst::IngestRequest) -> Result<sst::IngestResponse> {
         let mut client = self.client(id)?;
         self.store
             .block_on(async move { client.ingest(request).await })
             .map(|r| r.into_inner())
-            .map_err(|e| Error::Other(e.to_string()))
+            .map_err(|e| Error::Source(std::sync::Arc::new(e)))
     }
+    /// Go `ImportSST.DuplicateDetect`.
     fn duplicate_detect(
         &self,
         id: u64,
@@ -171,21 +320,23 @@ impl<S: tikv_client::PdClient> ImportClient for RemoteImportClient<S> {
             let mut stream = client
                 .duplicate_detect(request)
                 .await
-                .map_err(|e| Error::Other(e.to_string()))?
+                .map_err(|e| Error::Source(std::sync::Arc::new(e)))?
                 .into_inner();
             while let Some(response) = stream
                 .message()
                 .await
-                .map_err(|e| Error::Other(e.to_string()))?
+                .map_err(|e| Error::Source(std::sync::Arc::new(e)))?
             {
                 consume(response)?;
             }
             Ok(())
         })
     }
+    /// Go `tikv.Codec.GetAPIVersion`.
     fn api_version(&self) -> i32 {
         self.store.store().keyspace().api_version() as i32
     }
+    /// Go `tikv.Codec.EncodeKey`.
     fn encode_key(&self, key: &[u8]) -> Vec<u8> {
         tikv_client::Key::from(key.to_vec())
             .encode_keyspace(self.store.store().keyspace(), KeyMode::Txn)
@@ -220,81 +371,283 @@ pub fn do_import(
     split_size: u64,
     split_keys: usize,
 ) -> Result<()> {
+    do_import_with_write_limiter(
+        ctx,
+        engine,
+        client,
+        cfg,
+        split_size,
+        split_keys,
+        &crate::localhelper::StoreWriteLimiter::new(0),
+    )
+}
+/// Go `Backend.doImport`, retaining the backend's live per-store write limiter.
+pub fn do_import_with_write_limiter(
+    ctx: &Context,
+    engine: &Engine,
+    client: &dyn ImportClient,
+    cfg: &BackendConfig,
+    split_size: u64,
+    split_keys: usize,
+    write_limiter: &crate::localhelper::StoreWriteLimiter,
+) -> Result<()> {
+    let (ctx, cancel) = Context::with_cancel(ctx);
     let limiter = IngestLimiter::new(
         ctx.clone(),
         rate_limiter_param::get_max_ingest_concurrency() as usize,
         rate_limiter_param::get_max_ingest_per_sec(),
     );
-    let mut start = Vec::new();
-    loop {
-        if let Some(e) = ctx.err() {
-            return Err(Error::Other(e.to_string()));
+    if engine.get_first_and_last_key(&[], &[])?.is_none() {
+        return Ok(());
+    }
+    let tracker = JobTracker::default();
+    let generating = tracker.acquire();
+    let errors = Mutex::new(None);
+    let fail = |error: Error| {
+        errors.lock().unwrap().get_or_insert(error);
+        cancel.cancel();
+    };
+    let (to_jobs, jobs) = crossbeam_channel::bounded(0);
+    let (to_worker, worker_jobs) = crossbeam_channel::bounded(0);
+    let (from_worker, done_jobs) = crossbeam_channel::bounded(0);
+    let retryer = RegionJobRetryer::new(&ctx, to_jobs.clone());
+    let balancer = StoreBalancer::default();
+    let write = |ctx: &Context, job: &mut RegionJob<'_>| {
+        let mut iter = engine.new_iter(&job.key_range.0, &job.key_range.1)?;
+        let mut pairs = Vec::new();
+        let mut bytes = 0;
+        let mut remaining = None;
+        while let Some((key, value)) = iter.next_pair()? {
+            if !pairs.is_empty() && (bytes >= split_size || pairs.len() >= split_keys) {
+                remaining = Some(key);
+                break;
+            }
+            bytes += (key.len() + value.len()) as u64;
+            pairs.push(sst::Pair {
+                key,
+                value,
+                ..Default::default()
+            });
         }
-        let mut probe = engine.new_iter(&start, &[])?;
-        let Some((first, _)) = probe.next_pair()? else {
-            return Ok(());
-        };
-        drop(probe);
-        let mut last_error = None;
-        let mut completed = None;
-        for _ in 0..20 {
-            let region = client.get_region(&first)?;
-            let mut it = engine.new_iter(&first, &region.region.end_key)?;
-            let mut pairs = Vec::new();
-            let mut bytes = 0u64;
-            let mut next = Vec::new();
-            while let Some((key, value)) = it.next_pair()? {
-                if !pairs.is_empty() && (bytes >= split_size || pairs.len() >= split_keys) {
-                    next = key;
-                    break;
-                }
-                bytes += (key.len() + value.len()) as u64;
-                pairs.push(sst::Pair {
-                    key,
-                    value,
-                    ..Default::default()
-                });
-            }
-            if pairs.is_empty() {
-                return Err(Error::Other("region does not contain ingest key".into()));
-            }
-            if next.is_empty() {
-                next = region.region.end_key.clone();
-            }
-            match write_and_ingest(ctx, client, cfg, &limiter, &region, &pairs, engine.get_ts()) {
-                Ok(()) => {
-                    completed = Some(next);
-                    break;
-                }
-                Err(e) => {
-                    if tidb_ingestor_errdef::is_kv_disk_full_error(&e) {
-                        return Err(e);
-                    }
-                    client.invalidate_region(&region);
-                    last_error = Some(e);
-                    if ctx.sleep(Duration::from_secs(1)) {
-                        return Err(Error::Other(ctx.err().unwrap().to_string()));
-                    }
-                }
-            }
+        if pairs.is_empty() {
+            return Ok(TiKVWriteResult {
+                empty_job: true,
+                ..Default::default()
+            });
         }
-        match completed {
-            Some(next) if next.is_empty() => return Ok(()),
-            Some(next) => start = next,
-            None => return Err(last_error.unwrap()),
+        let region = job.region.as_ref().unwrap();
+        let mut result = do_write(
+            ctx,
+            client,
+            cfg,
+            region,
+            &pairs,
+            engine.get_ts(),
+            write_limiter,
+        )
+        .inspect_err(|_| client.invalidate_region(region))?;
+        result.remaining_start_key = remaining;
+        Ok(result)
+    };
+    let ingest = |ctx: &Context, job: &mut RegionJob<'_>| {
+        let region = job.region.as_ref().unwrap();
+        do_ingest(
+            ctx,
+            client,
+            cfg,
+            &limiter,
+            region,
+            &mut job.write_result.as_mut().unwrap().sst_meta,
+        )
+        .inspect_err(|error| {
+            if get_next_stage_on_ingest_error(error) == JobStage::NeedRescan {
+                client.invalidate_region(region);
+            }
+        })
+    };
+    let pre = |_: &Context, _: &mut RegionJob<'_>| {
+        if tidb_failpoint::eval(
+            "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/WriteToTiKVNotEnoughDiskSpace",
+        )
+        .is_some()
+        {
+            return Err(Error::Ingest(tidb_ingestor_errdef::ERR_KV_DISK_FULL.gen_with_stack("the remaining storage capacity of TiKV is less than 10%; please increase the storage capacity of TiKV and try again")));
+        }
+        Ok(())
+    };
+    let after = |peers: &[metapb::Peer]| balancer.release_store_load(peers);
+    let regenerate = |ctx: &Context, job: &RegionJob<'_>| {
+        generate_region_jobs(
+            ctx,
+            engine,
+            client,
+            &job.key_range,
+            split_size,
+            split_keys as u64,
+        )
+    };
+    let worker = crate::job_worker::RegionJobBaseWorker {
+        ctx: ctx.clone(),
+        write_fn: &write,
+        ingest_fn: &ingest,
+        pre_run_job_fn: &pre,
+        after_run_job_fn: Some(&after),
+        regenerate_jobs_fn: &regenerate,
+    };
+    std::thread::scope(|scope| {
+        scope.spawn(|| retryer.run());
+        scope.spawn(|| balancer.run(&ctx, jobs, to_worker));
+        scope.spawn(|| {
+            if let Err(error) = (Dispatcher {
+                ctx: ctx.clone(),
+                input: done_jobs,
+                retryer: &retryer,
+            })
+            .run()
+            {
+                fail(error);
+            }
+        });
+        for _ in 0..cfg.worker_concurrency.max(1) {
+            let input = worker_jobs.clone();
+            let output = from_worker.clone();
+            let worker = &worker;
+            let fail = &fail;
+            let ctx = &ctx;
+            scope.spawn(move || loop {
+                let job = crossbeam_channel::select! { recv(ctx.done()) -> _ => return,recv(input) -> job => match job { Ok(job) => job,Err(_) => return } };
+                let result = worker.handle_task(job,&mut |job| { crossbeam_channel::select! { recv(ctx.done()) -> _ => {},send(output,job) -> _ => {} } });
+                if let Err(error) = result { fail(error);return; }
+            });
+        }
+        let generated = engine.load_ingest_data(&ctx, |range| {
+            tidb_failpoint::inject(
+                "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeGenerateJob",
+                |_| {},
+            );
+            if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/sendDummyJob")
+                .is_some()
+            {
+                let dummy = RegionJob::new(
+                    RegionInfo {
+                        region: metapb::Region::default(),
+                        leader: None,
+                    },
+                    None,
+                    vec![],
+                    vec![],
+                    0,
+                    0,
+                );
+                send_region_jobs(&ctx, &tracker, vec![dummy], &to_jobs);
+                ctx.sleep(Duration::from_secs(5));
+            }
+            let jobs =
+                generate_region_jobs(&ctx, engine, client, &range, split_size, split_keys as u64)?;
+            send_region_jobs(&ctx, &tracker, jobs, &to_jobs);
+            Ok(())
+        });
+        if let Err(error) = generated {
+            fail(error);
+        }
+        drop(generating);
+        tracker.wait(&ctx);
+        cancel.cancel();
+    });
+    // The receivers own any buffered jobs not accepted before cancellation.
+    drop(worker_jobs);
+    drop(from_worker);
+    drop(to_jobs);
+    if let Some(error) = errors.into_inner().unwrap() {
+        return Err(error);
+    }
+    Ok(())
+}
+/// Go `Backend.generateAndSendJob`: ref every job before publishing any job;
+/// ownership releases unsent references on cancellation.
+fn send_region_jobs<'a>(
+    ctx: &Context,
+    tracker: &JobTracker,
+    mut jobs: Vec<RegionJob<'a>>,
+    output: &crossbeam_channel::Sender<RegionJob<'a>>,
+) {
+    for job in &mut jobs {
+        job.completion = Some(tracker.acquire());
+    }
+    for job in jobs {
+        crossbeam_channel::select! {
+            recv(ctx.done()) -> _ => return,
+            send(output, job) -> result => if result.is_err() { return; },
         }
     }
 }
-/// Go `Backend.doWrite` followed by `Backend.ingest`.
-fn write_and_ingest(
+
+/// Go `Backend.generateJobForIngestData`, scanning fresh region metadata for
+/// both initial jobs and a stale region's remaining range.
+fn generate_region_jobs<'a>(
+    ctx: &Context,
+    engine: &'a Engine,
+    client: &dyn ImportClient,
+    range: &(Vec<u8>, Vec<u8>),
+    size: u64,
+    keys: u64,
+) -> Result<Vec<RegionJob<'a>>> {
+    let mut jobs = Vec::new();
+    let mut start = range.0.clone();
+    while crate::localhelper::before_end(&start, &range.1) {
+        if let Some(error) = ctx.err() {
+            return Err(Error::Source(std::sync::Arc::new(error)));
+        }
+        let mut region = None;
+        let mut error = None;
+        for attempt in 0..20 {
+            match client.get_region(&start) {
+                Ok(found) => {
+                    region = Some(found);
+                    break;
+                }
+                Err(err) => error = Some(err),
+            }
+            if attempt != 19 && ctx.sleep(Duration::from_secs(1)) {
+                return Err(Error::Source(std::sync::Arc::new(ctx.err().unwrap())));
+            }
+        }
+        let region = region.ok_or_else(|| error.unwrap())?;
+        let end = if region.region.end_key.is_empty() {
+            range.1.clone()
+        } else if range.1.is_empty() {
+            region.region.end_key.clone()
+        } else {
+            region.region.end_key.clone().min(range.1.clone())
+        };
+        if !end.is_empty() && end <= start {
+            return Err(Error::Other("region does not contain ingest key".into()));
+        }
+        jobs.push(RegionJob::new(
+            region,
+            Some(engine),
+            start,
+            end.clone(),
+            size,
+            keys,
+        ));
+        if end.is_empty() {
+            break;
+        }
+        start = end;
+    }
+    Ok(jobs)
+}
+/// Go `Backend.doWrite`, writing all peers and retaining the leader SST metadata.
+fn do_write(
     ctx: &Context,
     client: &dyn ImportClient,
     cfg: &BackendConfig,
-    limiter: &IngestLimiter,
     region: &RegionInfo,
     pairs: &[sst::Pair],
     ts: u64,
-) -> Result<()> {
+    write_limiter: &crate::localhelper::StoreWriteLimiter,
+) -> Result<TiKVWriteResult> {
     if ts == 0 {
         return Err(Error::Other("data commitTS is 0".into()));
     }
@@ -356,7 +709,7 @@ fn write_and_ingest(
     }
     let mut metas = Vec::new();
     for peer in &region.region.peers {
-        let response = client.write(peer.store_id, requests.clone())?;
+        let response = client.write_limited(ctx, peer.store_id, requests.clone(), write_limiter)?;
         if let Some(error) = response.error {
             return Err(Error::Other(format!("resp error: {}", error.message)));
         }
@@ -370,26 +723,15 @@ fn write_and_ingest(
                 .gen_with_stack_by_args(&[(region.region.id as i64).into()]),
         ));
     }
-    let mut last_error = None;
-    for _ in 0..20 {
-        if let Some(e) = ctx.err() {
-            return Err(Error::Other(e.to_string()));
-        }
-        match do_ingest(ctx, client, cfg, limiter, region, &mut metas) {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                if get_next_stage_on_ingest_error(&e) != JobStage::Wrote {
-                    return Err(e);
-                }
-                let busy = tidb_ingestor_errdef::ERR_KV_SERVER_IS_BUSY.equal(Some(&e));
-                last_error = Some(e);
-                if busy && ctx.sleep(Duration::from_secs(1)) {
-                    return Err(Error::Other(ctx.err().unwrap().to_string()));
-                }
-            }
-        }
-    }
-    Err(last_error.unwrap())
+    Ok(TiKVWriteResult {
+        count: pairs.len() as u64,
+        total_bytes: pairs
+            .iter()
+            .map(|pair| (pair.key.len() + pair.value.len()) as u64)
+            .sum(),
+        sst_meta: metas,
+        ..Default::default()
+    })
 }
 /// Go `Backend.doIngest`: remove successfully imported SSTs before retrying.
 fn do_ingest(
@@ -418,7 +760,7 @@ fn do_ingest(
     {
         return Err(Error::Other("injected error".into()));
     }
-    if cfg.should_check_write_stall && limiter.no_limit() {
+    if cfg.should_check_write_stall && limiter.no_limit() && client.supports_multi_ingest() {
         for peer in &region.region.peers {
             let response =
                 client.multi_ingest(peer.store_id, sst::MultiIngestRequest::default())?;
@@ -448,20 +790,54 @@ fn do_ingest(
         if let Some(e) = ctx.err() {
             return Err(Error::Other(e.to_string()));
         }
-        let count = metas.len().min(limiter.burst().max(1));
+        let count = if client.supports_multi_ingest() {
+            metas.len().min(limiter.burst().max(1))
+        } else {
+            1
+        };
         limiter
             .acquire(leader.store_id, count)
-            .map_err(|e| Error::Other(e.to_string()))?;
-        let response = client.multi_ingest(
-            leader.store_id,
-            sst::MultiIngestRequest {
-                context: Some(request_context.clone()),
-                ssts: metas[..count].to_vec(),
-            },
-        );
+            .map_err(|e| Error::Source(std::sync::Arc::new(e)))?;
+        let response = if client.supports_multi_ingest() {
+            client.multi_ingest(
+                leader.store_id,
+                sst::MultiIngestRequest {
+                    context: Some(request_context.clone()),
+                    ssts: metas[..count].to_vec(),
+                },
+            )
+        } else {
+            client.ingest(
+                leader.store_id,
+                sst::IngestRequest {
+                    context: Some(request_context.clone()),
+                    sst: Some(metas[0].clone()),
+                },
+            )
+        };
         limiter.release(leader.store_id, count);
         if let Some(error) = response?.error {
-            return Err(ingest_api_error(error));
+            let replacement = error.epoch_not_match.as_ref().and_then(|epoch| {
+                epoch
+                    .current_regions
+                    .iter()
+                    .find(|candidate| crate::localhelper::inside_region(candidate, metas))
+                    .and_then(|candidate| {
+                        candidate
+                            .peers
+                            .iter()
+                            .find(|peer| peer.store_id == leader.store_id)
+                            .map(|peer| RegionInfo {
+                                region: candidate.clone(),
+                                leader: Some(*peer),
+                            })
+                    })
+            });
+            let error = ingest_api_error(error);
+            return Err(match (error, replacement) {
+                (Error::Ingest(error), Some(region)) => Error::IngestRegion { error, region },
+                (error, _) => error,
+            });
         }
         metas.drain(..count);
     }
@@ -476,9 +852,14 @@ pub enum JobStage {
     Wrote,
     /// Go `needRescan`.
     NeedRescan,
+    /// Go `ingested`.
+    Ingested,
 }
 /// Go `getNextStageOnIngestError` (without a replacement region).
 pub fn get_next_stage_on_ingest_error(error: &Error) -> JobStage {
+    if matches!(error, Error::IngestRegion { .. }) {
+        return JobStage::RegionScanned;
+    }
     if let Error::Ingest(e) = error {
         if tidb_ingestor_errdef::ERR_KV_INGEST_FAILED.equal(Some(e)) {
             JobStage::RegionScanned
@@ -662,14 +1043,50 @@ mod tests {
             assert!(kind.equal(Some(&ingest_api_error(error))));
         }
     }
+    #[derive(Default)]
     struct MockImportClient {
         writes: Mutex<Vec<u64>>,
         ingests: Mutex<Vec<u64>>,
         busy: AtomicBool,
+        not_leader: AtomicBool,
+        changed_peers: AtomicBool,
+        single_ingest: bool,
+        busy_store: Option<u64>,
+        region_boundaries: Vec<Vec<u8>>,
+        scans: std::sync::atomic::AtomicUsize,
+        write_errors: Mutex<HashMap<Vec<u8>, std::collections::VecDeque<Error>>>,
+        ingest_errors: Mutex<HashMap<Vec<u8>, std::collections::VecDeque<errorpb::Error>>>,
+        region_fail_after: Option<usize>,
+    }
+    impl crate::localhelper::SplitClient for MockImportClient {
+        /// Go `split.SplitClient.SplitKeysAndScatter`.
+        fn split_keys_and_scatter(&self, _: &Context, _: &[Vec<u8>]) -> Result<Vec<u64>> {
+            Ok(Vec::new())
+        }
+        /// Go `split.SplitClient.WaitRegionsScattered`.
+        fn wait_regions_scattered(&self, _: &Context, _: &[u64]) -> Result<usize> {
+            Ok(0)
+        }
     }
     impl ImportClient for MockImportClient {
-        fn get_region(&self, _: &[u8]) -> Result<RegionInfo> {
-            let peers = (1..=3)
+        /// Go `split.SplitClient.GetRegion`.
+        fn get_region(&self, key: &[u8]) -> Result<RegionInfo> {
+            let scan = self.scans.fetch_add(1, Ordering::SeqCst);
+            if self.region_fail_after.is_some_and(|count| scan >= count) {
+                return Err(Error::Other("meet error when generateJobForRange".into()));
+            }
+            let end_key = self
+                .region_boundaries
+                .iter()
+                .find(|end| end.as_slice() > key)
+                .cloned()
+                .unwrap_or_default();
+            let offset = if self.changed_peers.load(Ordering::SeqCst) {
+                10
+            } else {
+                0
+            };
+            let peers = (1 + offset..=3 + offset)
                 .map(|id| metapb::Peer {
                     id,
                     store_id: id,
@@ -681,13 +1098,27 @@ mod tests {
                 region: metapb::Region {
                     id: 1,
                     peers,
+                    end_key,
                     ..Default::default()
                 },
             })
         }
+        /// Go `Backend.generateJobForRange region-cache invalidation`.
         fn invalidate_region(&self, _: &RegionInfo) {}
+        /// Go `ImportSST.Write`.
         fn write(&self, id: u64, requests: Vec<sst::WriteRequest>) -> Result<sst::WriteResponse> {
             self.writes.lock().unwrap().push(id);
+            if let Some(sst::write_request::Chunk::Batch(batch)) = &requests[1].chunk {
+                if let Some(error) = self
+                    .write_errors
+                    .lock()
+                    .unwrap()
+                    .get_mut(&batch.pairs[0].key)
+                    .and_then(|errors| errors.pop_front())
+                {
+                    return Err(error);
+                }
+            }
             let Some(sst::write_request::Chunk::Meta(meta)) = requests[0].chunk.clone() else {
                 panic!("missing metadata");
             };
@@ -699,10 +1130,49 @@ mod tests {
                 ..Default::default()
             })
         }
-        fn multi_ingest(&self, id: u64, _: sst::MultiIngestRequest) -> Result<sst::IngestResponse> {
+        /// Go `Backend.supportMultiIngest`.
+        fn supports_multi_ingest(&self) -> bool {
+            !self.single_ingest
+        }
+        /// Go `ImportSST.MultiIngest`.
+        fn multi_ingest(
+            &self,
+            id: u64,
+            request: sst::MultiIngestRequest,
+        ) -> Result<sst::IngestResponse> {
+            assert!(!self.single_ingest);
             self.ingests.lock().unwrap().push(id);
+            if let Some(range) = request.ssts.first().and_then(|meta| meta.range.as_ref()) {
+                let (_, key) = tidb_codec::decode_bytes(&range.start).unwrap();
+                if let Some(error) = self
+                    .ingest_errors
+                    .lock()
+                    .unwrap()
+                    .get_mut(&key)
+                    .and_then(|errors| errors.pop_front())
+                {
+                    return Ok(sst::IngestResponse { error: Some(error) });
+                }
+            }
+            if !request.ssts.is_empty() && self.not_leader.swap(false, Ordering::SeqCst) {
+                self.changed_peers.store(true, Ordering::SeqCst);
+                return Ok(sst::IngestResponse {
+                    error: Some(errorpb::Error {
+                        not_leader: Some(errorpb::NotLeader {
+                            leader: Some(metapb::Peer {
+                                store_id: 11,
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                });
+            }
             Ok(sst::IngestResponse {
-                error: if self.busy.swap(false, Ordering::SeqCst) {
+                error: if self.busy_store.is_none_or(|store| store == id)
+                    && self.busy.swap(false, Ordering::SeqCst)
+                {
                     Some(errorpb::Error {
                         server_is_busy: Some(Default::default()),
                         ..Default::default()
@@ -712,9 +1182,14 @@ mod tests {
                 },
             })
         }
-        fn ingest(&self, _: u64, _: sst::IngestRequest) -> Result<sst::IngestResponse> {
-            unreachable!()
+        /// Go `ImportSST.Ingest`.
+        fn ingest(&self, id: u64, request: sst::IngestRequest) -> Result<sst::IngestResponse> {
+            assert!(self.single_ingest);
+            assert!(request.sst.is_some());
+            self.ingests.lock().unwrap().push(id);
+            Ok(sst::IngestResponse::default())
         }
+        /// Go `ImportSST.DuplicateDetect`.
         fn duplicate_detect(
             &self,
             _: u64,
@@ -723,9 +1198,11 @@ mod tests {
         ) -> Result<()> {
             Ok(())
         }
+        /// Go `tikv.Codec.GetAPIVersion`.
         fn api_version(&self) -> i32 {
             0
         }
+        /// Go `tikv.Codec.EncodeKey`.
         fn encode_key(&self, key: &[u8]) -> Vec<u8> {
             key.to_vec()
         }
@@ -750,6 +1227,7 @@ mod tests {
             writes: Mutex::new(vec![]),
             ingests: Mutex::new(vec![]),
             busy: AtomicBool::new(true),
+            ..Default::default()
         };
         let cfg = BackendConfig {
             local_store_dir: dir.path().into(),
@@ -761,10 +1239,346 @@ mod tests {
             dupe_detect_enabled: false,
             kv_write_batch_size: 16 * 1024,
             should_check_write_stall: false,
+            checkpoint_enabled: false,
         };
         do_import(&Context::background(), &engine, &client, &cfg, 1, 960000).unwrap();
         assert_eq!(*client.writes.lock().unwrap(), [1, 2, 3, 1, 2, 3]);
         assert_eq!(*client.ingests.lock().unwrap(), [1, 1, 1]);
+    }
+    /// Go `TestNotLeaderErrorNeedUpdatePeers` and partial-write test setup.
+    fn import_test_config(path: &std::path::Path) -> BackendConfig {
+        BackendConfig {
+            local_store_dir: path.into(),
+            resource_group_name: String::new(),
+            task_type: String::new(),
+            worker_concurrency: 1,
+            mem_table_size: 1024,
+            local_writer_mem_cache_size: 1024,
+            dupe_detect_enabled: false,
+            kv_write_batch_size: 16 * 1024,
+            should_check_write_stall: false,
+            checkpoint_enabled: false,
+        }
+    }
+    /// Go `TestNotLeaderErrorNeedUpdatePeers`: write and busy-check the new peers
+    /// after rescanning, including replacement of the old leader.
+    #[test]
+    fn test_not_leader_error_need_update_peers() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::open(dir.path().join("engine"), 42, false, 1024).unwrap();
+        engine
+            .append_rows(0, &[(b"a".to_vec(), b"a".to_vec(), vec![])])
+            .unwrap();
+        engine.flush().unwrap();
+        let client = MockImportClient {
+            not_leader: AtomicBool::new(true),
+            ..Default::default()
+        };
+        let mut cfg = import_test_config(dir.path());
+        cfg.should_check_write_stall = true;
+        do_import(
+            &Context::background(),
+            &engine,
+            &client,
+            &cfg,
+            96 * 1024 * 1024,
+            960_000,
+        )
+        .unwrap();
+        assert_eq!(*client.writes.lock().unwrap(), [1, 2, 3, 11, 12, 13]);
+        assert_eq!(
+            *client.ingests.lock().unwrap(),
+            [1, 2, 3, 1, 11, 12, 13, 11]
+        );
+        assert_eq!(engine.imported_statistics(), (2, 1));
+    }
+    /// Go `TestPartialWriteIngestErrorWontPanic`: a not-leader response after a
+    /// partial write must rescan without dereferencing the cleared write result.
+    #[test]
+    fn test_partial_write_ingest_error_wont_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::open(dir.path().join("engine"), 42, false, 1024).unwrap();
+        engine
+            .append_rows(
+                0,
+                &[
+                    (b"a".to_vec(), b"a".to_vec(), vec![]),
+                    (b"a2".to_vec(), b"a2".to_vec(), vec![]),
+                ],
+            )
+            .unwrap();
+        engine.flush().unwrap();
+        let client = MockImportClient {
+            not_leader: AtomicBool::new(true),
+            ..Default::default()
+        };
+        do_import(
+            &Context::background(),
+            &engine,
+            &client,
+            &import_test_config(dir.path()),
+            1,
+            960_000,
+        )
+        .unwrap();
+        assert_eq!(
+            *client.writes.lock().unwrap(),
+            [1, 2, 3, 11, 12, 13, 11, 12, 13]
+        );
+        assert_eq!(*client.ingests.lock().unwrap(), [1, 11, 11]);
+        assert_eq!(engine.imported_statistics(), (6, 2));
+    }
+    /// Go `TestMultiIngest`'s unsupported-cluster fallback through `doIngest`:
+    /// single-SST imports remove completed entries and bypass MultiIngest probes.
+    #[test]
+    fn test_multi_ingest_fallback() {
+        let client = MockImportClient {
+            single_ingest: true,
+            ..Default::default()
+        };
+        let mut cfg = import_test_config(std::path::Path::new("unused"));
+        cfg.should_check_write_stall = true;
+        let ctx = Context::background();
+        let limiter = IngestLimiter::new(ctx.clone(), 0, 0.0);
+        let mut metas = vec![sst::SstMeta::default(); 3];
+        do_ingest(
+            &ctx,
+            &client,
+            &cfg,
+            &limiter,
+            &client.get_region(&[]).unwrap(),
+            &mut metas,
+        )
+        .unwrap();
+        assert!(metas.is_empty());
+        assert_eq!(*client.ingests.lock().unwrap(), [1, 1, 1]);
+    }
+    /// Go `TestCtxCancelIsIgnored`: cancellation from a failed worker must not
+    /// replace the disk-full cause while the generator prepares its next range.
+    #[test]
+    fn test_ctx_cancel_is_ignored() {
+        let _delay = tidb_failpoint::enable_for_test(
+            "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeGenerateJob",
+            "sleep(1000)",
+        );
+        let _disk = tidb_failpoint::enable_for_test(
+            "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/WriteToTiKVNotEnoughDiskSpace",
+            "return()",
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::open(dir.path().join("engine"), 42, false, 1024).unwrap();
+        for key in [b'a', b'b', b'c'] {
+            engine
+                .append_rows(0, &[(vec![key], vec![key], vec![])])
+                .unwrap();
+            engine.flush().unwrap();
+        }
+        assert_eq!(
+            engine.get_region_split_keys(1, 1).unwrap(),
+            [vec![b'a'], vec![b'b'], vec![b'c', 0]]
+        );
+        let client = MockImportClient {
+            region_boundaries: vec![vec![b'b'], vec![b'c']],
+            ..Default::default()
+        };
+        let error = do_import(
+            &Context::background(),
+            &engine,
+            &client,
+            &import_test_config(dir.path()),
+            1,
+            1,
+        )
+        .unwrap_err();
+        assert!(tidb_ingestor_errdef::ERR_KV_DISK_FULL.equal(Some(&error)));
+        assert_eq!(
+            client.scans.load(Ordering::SeqCst),
+            1,
+            "cancelled generator must not scan the next range"
+        );
+    }
+    /// Go `TestWorkerFailedWhenGeneratingJobs`: worker failure before the first
+    /// PD scan cancels the generator and releases all outstanding references.
+    #[test]
+    fn test_worker_failed_when_generating_jobs() {
+        let _dummy = tidb_failpoint::enable_for_test(
+            "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/sendDummyJob",
+            "return()",
+        );
+        let _disk = tidb_failpoint::enable_for_test(
+            "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/WriteToTiKVNotEnoughDiskSpace",
+            "return()",
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::open(dir.path().join("engine"), 42, false, 1024).unwrap();
+        engine
+            .append_rows(0, &[(b"a".to_vec(), b"a".to_vec(), vec![])])
+            .unwrap();
+        engine.flush().unwrap();
+        let client = MockImportClient::default();
+        let error = do_import(
+            &Context::background(),
+            &engine,
+            &client,
+            &import_test_config(dir.path()),
+            96 * 1024 * 1024,
+            960_000,
+        )
+        .unwrap_err();
+        assert!(tidb_ingestor_errdef::ERR_KV_DISK_FULL.equal(Some(&error)));
+        assert_eq!(client.scans.load(Ordering::SeqCst), 0);
+    }
+    /// Go `TestCheckPeersBusy`: follower 12 stalls only its own region; region
+    /// 21/22/23 still ingests, and the unfinished range retains its retry count.
+    #[test]
+    fn test_check_peers_busy() {
+        let client = MockImportClient {
+            busy: AtomicBool::new(true),
+            busy_store: Some(12),
+            ..Default::default()
+        };
+        let mut cfg = import_test_config(std::path::Path::new("unused"));
+        cfg.should_check_write_stall = true;
+        let ctx = Context::background();
+        let limiter = IngestLimiter::new(ctx.clone(), 0, 0.0);
+        let write_limiter = crate::localhelper::StoreWriteLimiter::new(0);
+        let mut retry = None;
+        for (base, start, end) in [(10, b'a', b'b'), (20, b'b', b'c')] {
+            let peers: Vec<_> = (1..=3)
+                .map(|i| metapb::Peer {
+                    id: base + i,
+                    store_id: base + i,
+                    ..Default::default()
+                })
+                .collect();
+            let region = RegionInfo {
+                region: metapb::Region {
+                    id: base,
+                    peers: peers.clone(),
+                    ..Default::default()
+                },
+                leader: Some(peers[0]),
+            };
+            let mut result = do_write(
+                &ctx,
+                &client,
+                &cfg,
+                &region,
+                &[sst::Pair {
+                    key: vec![start],
+                    value: vec![start],
+                    ..Default::default()
+                }],
+                42,
+                &write_limiter,
+            )
+            .unwrap();
+            let mut job = RegionJob::new(region.clone(), None, vec![start], vec![end], 0, 0);
+            job.retry_count = 20;
+            job.stage = JobStage::Wrote;
+            if let Err(error) =
+                do_ingest(&ctx, &client, &cfg, &limiter, &region, &mut result.sst_meta)
+            {
+                job.last_retryable_error = Some(error);
+                retry = Some(job);
+            } else {
+                assert!(result.sst_meta.is_empty());
+            }
+        }
+        assert_eq!(*client.writes.lock().unwrap(), [11, 12, 13, 21, 22, 23]);
+        assert_eq!(*client.ingests.lock().unwrap(), [11, 12, 21, 22, 23, 21]);
+        let (tx, rx) = crossbeam_channel::unbounded();
+        tx.send(retry.unwrap()).unwrap();
+        drop(tx);
+        let (out, _) = crossbeam_channel::bounded(0);
+        let retryer = RegionJobRetryer::new(&ctx, out);
+        Dispatcher {
+            ctx,
+            input: rx,
+            retryer: &retryer,
+        }
+        .run()
+        .unwrap();
+        let queue = retryer.queue.lock().unwrap();
+        let job = &queue.2.first_key_value().unwrap().1;
+        assert_eq!(job.stage, JobStage::Wrote);
+        assert_eq!(job.retry_count, 21);
+        assert_eq!(job.key_range, (b"a".to_vec(), b"b".to_vec()));
+    }
+    /// Go `TestDoImport`: write retry, partial writes, ingest/write rescans,
+    /// initial-generation failure, rescan-generation failure and fatal write.
+    #[test]
+    fn test_do_import() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::open(dir.path().join("engine"), 42, false, 1024).unwrap();
+        let rows: Vec<_> = ["a", "b", "b2", "c", "c2"]
+            .map(|key| (key.as_bytes().to_vec(), key.as_bytes().to_vec(), vec![]))
+            .into();
+        engine.append_rows(0, &rows).unwrap();
+        engine.flush().unwrap();
+        let client = MockImportClient {
+            region_boundaries: vec![b"b".to_vec(), b"c".to_vec(), b"c2".to_vec(), b"d".to_vec()],
+            ..Default::default()
+        };
+        for (key, message) in [
+            (b"a".as_slice(), "RequestTooNew"),
+            (b"c2".as_slice(), "is not fully replicated"),
+        ] {
+            client.write_errors.lock().unwrap().insert(
+                key.to_vec(),
+                [Error::Source(std::sync::Arc::new(tonic::Status::unknown(
+                    message,
+                )))]
+                .into(),
+            );
+        }
+        client.ingest_errors.lock().unwrap().insert(
+            b"c".to_vec(),
+            [errorpb::Error {
+                epoch_not_match: Some(Default::default()),
+                ..Default::default()
+            }]
+            .into(),
+        );
+        let mut cfg = import_test_config(dir.path());
+        cfg.worker_concurrency = 2;
+        do_import(&Context::background(), &engine, &client, &cfg, 1, 960_000).unwrap();
+        assert_eq!(engine.imported_statistics().1, 5);
+        assert!(
+            client
+                .write_errors
+                .lock()
+                .unwrap()
+                .values()
+                .all(|errors| errors.is_empty())
+        );
+        assert!(
+            client
+                .ingest_errors
+                .lock()
+                .unwrap()
+                .values()
+                .all(|errors| errors.is_empty())
+        );
+        for rescan in [false, true] {
+            let client = MockImportClient {
+                region_fail_after: Some(usize::from(rescan)),
+                not_leader: AtomicBool::new(rescan),
+                ..Default::default()
+            };
+            let error =
+                do_import(&Context::background(), &engine, &client, &cfg, 1, 960_000).unwrap_err();
+            assert_eq!(error.to_string(), "meet error when generateJobForRange");
+        }
+        let client = MockImportClient::default();
+        client
+            .write_errors
+            .lock()
+            .unwrap()
+            .insert(b"a".to_vec(), [Error::Other("fatal error".into())].into());
+        let error =
+            do_import(&Context::background(), &engine, &client, &cfg, 1, 960_000).unwrap_err();
+        assert_eq!(error.to_string(), "fatal error");
     }
     /// Go `ingestcli/ingest_err_test.go:TestGetIngestFailedMsg`.
     #[test]
@@ -889,5 +1703,700 @@ mod tests {
             }),
             "the message"
         );
+    }
+}
+
+impl<S: tikv_client::PdClient> crate::tikv_mode::ModeClient for RemoteImportClient<S> {
+    /// Go `pd.Client.GetAllStores` for mode switching.
+    fn stores(&self, ctx: &Context) -> Result<Vec<metapb::Store>> {
+        if let Some(error) = ctx.err() {
+            return Err(Error::Other(error.to_string()));
+        }
+        let pd = self.store.store().pd_client();
+        self.store
+            .block_on(async move { pd.get_all_stores().await })
+            .map_err(|error| Error::Other(error.to_string()))
+    }
+    /// Go `tikv.SwitchMode`, ignoring Unimplemented for TiFlash as Go does.
+    fn switch_mode(
+        &self,
+        ctx: &Context,
+        store_id: u64,
+        mode: sst::SwitchMode,
+        ranges: &[sst::Range],
+    ) -> Result<()> {
+        if let Some(error) = ctx.err() {
+            return Err(Error::Other(error.to_string()));
+        }
+        let mut client = self.client(store_id)?;
+        let result = self
+            .store
+            .block_on(client.switch_mode(sst::SwitchModeRequest {
+                mode: mode as i32,
+                ranges: ranges.to_vec(),
+            }));
+        match result {
+            Ok(_) => Ok(()),
+            Err(error) if error.code() == tonic::Code::Unimplemented => Ok(()),
+            Err(error) => Err(Error::Other(error.to_string())),
+        }
+    }
+}
+
+/// Go `tikvWriteResult`.
+#[derive(Default, Clone)]
+pub struct TiKVWriteResult {
+    /// Go `emptyJob`.
+    pub empty_job: bool,
+    /// Go `count`.
+    pub count: u64,
+    /// Go `totalBytes`.
+    pub total_bytes: u64,
+    /// Go `remainingStartKey`.
+    pub remaining_start_key: Option<Vec<u8>>,
+    /// Go `sstMeta`.
+    pub sst_meta: Vec<sst::SstMeta>,
+}
+/// Go `regionJob`; Rust's lifetime keeps the ingest data alive through retries.
+pub struct RegionJob<'a> {
+    /// Go `keyRange`.
+    pub key_range: (Vec<u8>, Vec<u8>),
+    /// Go `region`.
+    pub region: Option<RegionInfo>,
+    /// Go `stage`.
+    pub stage: JobStage,
+    /// Go `writeResult`.
+    pub write_result: Option<TiKVWriteResult>,
+    /// Go `ingestData` (local Engine).
+    pub ingest_data: Option<&'a Engine>,
+    /// Go `regionSplitSize`.
+    pub region_split_size: u64,
+    /// Go `regionSplitKeys`.
+    pub region_split_keys: u64,
+    /// Go `retryCount`.
+    pub retry_count: usize,
+    /// Go `waitUntil`.
+    pub wait_until: std::time::Instant,
+    /// Go `lastRetryableErr`.
+    pub last_retryable_error: Option<Error>,
+    pub(crate) completion: Option<JobRef>,
+}
+impl<'a> RegionJob<'a> {
+    /// Go `newRegionJob`.
+    pub fn new(
+        region: RegionInfo,
+        data: Option<&'a Engine>,
+        start: Vec<u8>,
+        end: Vec<u8>,
+        size: u64,
+        keys: u64,
+    ) -> Self {
+        Self {
+            key_range: (start, end),
+            region: Some(region),
+            stage: JobStage::RegionScanned,
+            write_result: None,
+            ingest_data: data,
+            region_split_size: size,
+            region_split_keys: keys,
+            retry_count: 0,
+            wait_until: std::time::Instant::now(),
+            last_retryable_error: None,
+            completion: None,
+        }
+    }
+    /// Go `regionJob.convertStageTo`.
+    pub fn convert_stage_to(&mut self, stage: JobStage) {
+        self.stage = stage;
+        match stage {
+            JobStage::RegionScanned => self.write_result = None,
+            JobStage::NeedRescan => self.region = None,
+            JobStage::Ingested => {
+                if let (Some(data), Some(result)) = (self.ingest_data, self.write_result.as_ref()) {
+                    data.finish(result.total_bytes, result.count);
+                }
+            }
+            JobStage::Wrote => {}
+        }
+    }
+}
+/// Go `newRegionJobs`. RegionInfo already contains decoded logical bounds.
+pub fn new_region_jobs<'a>(
+    regions: &[RegionInfo],
+    data: Option<&'a Engine>,
+    ranges: &[(Vec<u8>, Vec<u8>)],
+    size: u64,
+    keys: u64,
+) -> Vec<RegionJob<'a>> {
+    let mut jobs = Vec::new();
+    for range in ranges {
+        for region in regions {
+            let start = range.0.clone().max(region.region.start_key.clone());
+            let end = if region.region.end_key.is_empty() {
+                range.1.clone()
+            } else if range.1.is_empty() {
+                region.region.end_key.clone()
+            } else {
+                range.1.clone().min(region.region.end_key.clone())
+            };
+            if crate::localhelper::before_end(&start, &end) {
+                jobs.push(RegionJob::new(region.clone(), data, start, end, size, keys));
+            }
+        }
+    }
+    jobs
+}
+/// Go `extractRegionFromErr`, retaining the leader store if SSTs still fit.
+pub fn extract_region_from_err(
+    job: &RegionJob<'_>,
+    regions: &[metapb::Region],
+    nextgen: bool,
+) -> Option<RegionInfo> {
+    if nextgen {
+        return None;
+    }
+    let metas = &job.write_result.as_ref()?.sst_meta;
+    let store = job.region.as_ref()?.leader?.store_id;
+    for region in regions {
+        if crate::localhelper::inside_region(region, metas) {
+            let leader = region
+                .peers
+                .iter()
+                .find(|peer| peer.store_id == store)
+                .copied()?;
+            return Some(RegionInfo {
+                region: region.clone(),
+                leader: Some(leader),
+            });
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod job_tests {
+    use super::*;
+    /// Go `TestNewRegionJobs`, all six range-intersection cases.
+    #[test]
+    fn test_new_region_jobs() {
+        for (regions, ranges, expected) in [
+            (vec![1, 0], vec![2, 3, 4], vec![2, 3, 4]),
+            (vec![1, 4], vec![1, 2, 3, 4], vec![1, 2, 3, 4]),
+            (vec![1, 2, 3, 4], vec![1, 4], vec![1, 2, 3, 4]),
+            (vec![1, 3, 5, 7], vec![2, 4, 6], vec![2, 3, 4, 5, 6]),
+            (vec![1, 4, 7], vec![2, 3, 4, 5, 6], vec![2, 3, 4, 5, 6]),
+            (
+                vec![1, 5, 6, 7, 8, 12],
+                vec![1, 2, 3, 4, 9, 10, 12],
+                vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12],
+            ),
+        ] {
+            let regions: Vec<_> = regions
+                .windows(2)
+                .map(|keys| RegionInfo {
+                    region: metapb::Region {
+                        start_key: vec![keys[0]],
+                        end_key: if keys[1] == 0 { vec![] } else { vec![keys[1]] },
+                        ..Default::default()
+                    },
+                    leader: None,
+                })
+                .collect();
+            let ranges: Vec<_> = ranges
+                .windows(2)
+                .map(|keys| (vec![keys[0]], vec![keys[1]]))
+                .collect();
+            let jobs = new_region_jobs(&regions, None, &ranges, 0, 0);
+            assert_eq!(
+                jobs.into_iter()
+                    .map(|job| job.key_range)
+                    .collect::<Vec<_>>(),
+                expected
+                    .windows(2)
+                    .map(|keys| (vec![keys[0]], vec![keys[1]]))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+    /// Go `TestExtractRegionFromErrForNextGen`.
+    #[test]
+    fn test_extract_region_from_err_for_next_gen() {
+        let region = RegionInfo {
+            region: metapb::Region {
+                id: 1,
+                ..Default::default()
+            },
+            leader: Some(metapb::Peer {
+                store_id: 1,
+                ..Default::default()
+            }),
+        };
+        let job = RegionJob::new(region.clone(), None, vec![1], vec![3], 0, 0);
+        assert!(extract_region_from_err(&job, &[region.region], true).is_none());
+    }
+}
+
+/// Go `regionJobRetryer`; owned jobs replace Go's reference-counted queue.
+/// The queue lock is never held while delivering a job to a blocked worker.
+pub struct RegionJobRetryer<'a> {
+    ctx: Context,
+    cancel: tidb_gocontext::CancelFunc,
+    queue: Mutex<(
+        bool,
+        u64,
+        std::collections::BTreeMap<(std::time::Instant, u64), RegionJob<'a>>,
+    )>,
+    reload: crossbeam_channel::Sender<()>,
+    wake: crossbeam_channel::Receiver<()>,
+    output: Mutex<Option<crossbeam_channel::Sender<RegionJob<'a>>>>,
+}
+impl<'a> RegionJobRetryer<'a> {
+    /// Go `newRegionJobRetryer`.
+    pub fn new(ctx: &Context, output: crossbeam_channel::Sender<RegionJob<'a>>) -> Self {
+        let (ctx, cancel) = Context::with_cancel(ctx);
+        let (reload, wake) = crossbeam_channel::bounded(1);
+        Self {
+            ctx,
+            cancel,
+            queue: Mutex::new((false, 0, Default::default())),
+            reload,
+            wake,
+            output: Mutex::new(Some(output)),
+        }
+    }
+    /// Go `regionJobRetryer.push`, returning ownership when the queue is closed.
+    pub fn push(&self, job: RegionJob<'a>) -> std::result::Result<(), RegionJob<'a>> {
+        let mut queue = self.queue.lock().unwrap();
+        if queue.0 {
+            return Err(job);
+        }
+        let id = queue.1;
+        queue.1 += 1;
+        queue.2.insert((job.wait_until, id), job);
+        let _ = self.reload.try_send(());
+        Ok(())
+    }
+    /// Go `regionJobRetryer.run`; cancellation drops queued and in-flight jobs.
+    pub fn run(&self) {
+        let Some(output) = self.output.lock().unwrap().clone() else {
+            return;
+        };
+        loop {
+            if self.ctx.err().is_some() {
+                break;
+            }
+            let deadline = self
+                .queue
+                .lock()
+                .unwrap()
+                .2
+                .first_key_value()
+                .map(|(key, _)| key.0);
+            match deadline {
+                None => {
+                    crossbeam_channel::select! { recv(self.ctx.done()) -> _ => break,recv(self.wake) -> _ => {} }
+                }
+                Some(deadline) => {
+                    let wait = crossbeam_channel::after(
+                        deadline.saturating_duration_since(std::time::Instant::now()),
+                    );
+                    crossbeam_channel::select! { recv(self.ctx.done()) -> _ => break,recv(self.wake) -> _ => continue,recv(wait) -> _ => {} }
+                    let Some((_, job)) = self.queue.lock().unwrap().2.pop_first() else {
+                        continue;
+                    };
+                    crossbeam_channel::select! { recv(self.ctx.done()) -> _ => break,send(output,job) -> result => if result.is_err() { break; } }
+                }
+            }
+        }
+        self.cleanup_unprocessed_jobs();
+    }
+    /// Go `regionJobRetryer.close`, after all jobs have completed.
+    pub fn close(&self) {
+        self.cancel.cancel();
+        self.output.lock().unwrap().take();
+    }
+    /// Go `regionJobRetryer.cleanupUnprocessedJobs`.
+    fn cleanup_unprocessed_jobs(&self) {
+        let mut queue = self.queue.lock().unwrap();
+        queue.0 = true;
+        queue.2.clear();
+    }
+}
+/// Go `dispatcher`: stage-driven completion and capped exponential retries.
+pub struct Dispatcher<'a, 'b> {
+    /// Go `workerCtx`.
+    pub ctx: Context,
+    /// Go `jobFromWorkerCh`.
+    pub input: crossbeam_channel::Receiver<RegionJob<'a>>,
+    /// Go `retryer`.
+    pub retryer: &'b RegionJobRetryer<'a>,
+}
+impl Dispatcher<'_, '_> {
+    /// Go `dispatcher.run`.
+    pub fn run(&self) -> Result<()> {
+        loop {
+            let mut job = crossbeam_channel::select! { recv(self.ctx.done()) -> _ => return Ok(()),recv(self.input) -> job => match job { Ok(job) => job,Err(_) => { self.retryer.close();return Ok(()); } } };
+            match job.stage {
+                JobStage::RegionScanned | JobStage::Wrote => {
+                    job.retry_count += 1;
+                    if job.retry_count > 30 {
+                        return Err(job
+                            .last_retryable_error
+                            .take()
+                            .unwrap_or_else(|| Error::Other("retry limit exceeded".into())));
+                    }
+                    let mut backoff =
+                        Duration::from_secs((1_u64 << job.retry_count.min(5)).min(30));
+                    tidb_failpoint::inject_call(
+                        "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/adjustRegionJobRetryBackoff",
+                        &mut backoff,
+                    );
+                    job.wait_until = std::time::Instant::now() + backoff;
+                    let _ = self.retryer.push(job);
+                }
+                JobStage::Ingested => {}
+                JobStage::NeedRescan => panic!("should not reach here"),
+            }
+        }
+    }
+}
+struct BalanceState<'a> {
+    jobs: std::collections::BTreeMap<u64, RegionJob<'a>>,
+    next: u64,
+    load: HashMap<u64, usize>,
+}
+/// Go `storeBalancer`; a single mutex makes selection and peer-load accounting
+/// atomic, including repeated peer store IDs.
+pub struct StoreBalancer<'a> {
+    state: Mutex<BalanceState<'a>>,
+}
+impl<'a> Default for StoreBalancer<'a> {
+    /// Go `newStoreBalancer`.
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(BalanceState {
+                jobs: Default::default(),
+                next: 0,
+                load: Default::default(),
+            }),
+        }
+    }
+}
+impl<'a> StoreBalancer<'a> {
+    /// Go `storeBalancer.runReadToWorkerCh` queue insertion.
+    pub fn push(&self, job: RegionJob<'a>) {
+        let mut state = self.state.lock().unwrap();
+        let id = state.next;
+        state.next += 1;
+        state.jobs.insert(id, job);
+    }
+    /// Go `storeBalancer.jobLen`.
+    pub fn job_len(&self) -> usize {
+        self.state.lock().unwrap().jobs.len()
+    }
+    /// Go `storeBalancer.pickJob`.
+    pub fn pick_job(&self) -> Option<RegionJob<'a>> {
+        let mut state = self.state.lock().unwrap();
+        let id = *state
+            .jobs
+            .iter()
+            .min_by_key(|(_, job)| {
+                job.region.as_ref().map_or(0, |region| {
+                    region
+                        .region
+                        .peers
+                        .iter()
+                        .map(|p| state.load.get(&p.store_id).copied().unwrap_or(0))
+                        .sum::<usize>()
+                })
+            })
+            .map(|(id, _)| id)?;
+        let job = state.jobs.remove(&id).unwrap();
+        if let Some(region) = &job.region {
+            for peer in &region.region.peers {
+                *state.load.entry(peer.store_id).or_default() += 1;
+            }
+        }
+        Some(job)
+    }
+    /// Go `storeBalancer.releaseStoreLoad`.
+    pub fn release_store_load(&self, peers: &[metapb::Peer]) {
+        let mut state = self.state.lock().unwrap();
+        for peer in peers {
+            if let Some(load) = state.load.get_mut(&peer.store_id) {
+                assert!(*load > 0);
+                *load -= 1;
+            }
+        }
+    }
+    /// Go `storeBalancer.run`: read while the delivery worker is blocked.
+    pub fn run(
+        &self,
+        ctx: &Context,
+        input: crossbeam_channel::Receiver<RegionJob<'a>>,
+        output: crossbeam_channel::Sender<RegionJob<'a>>,
+    ) {
+        let (wake_tx, wake) = crossbeam_channel::bounded(1);
+        let (ctx, cancel) = Context::with_cancel(ctx);
+        std::thread::scope(|scope| {
+            scope.spawn(|| loop {
+                crossbeam_channel::select! {
+                    recv(ctx.done()) -> _ => return,
+                    recv(wake) -> _ => {}
+                }
+                while let Some(job) = self.pick_job() {
+                    let peers = job.region.as_ref().map(|r| r.region.peers.clone()).unwrap_or_default();
+                    crossbeam_channel::select! {
+                        recv(ctx.done()) -> _ => { self.release_store_load(&peers);return; },
+                        send(output,job) -> sent => if sent.is_err() { self.release_store_load(&peers);cancel.cancel();return; }
+                    }
+                }
+            });
+            loop {
+                crossbeam_channel::select! {
+                    recv(ctx.done()) -> _ => break,
+                    recv(input) -> job => match job {
+                        Ok(job) => { self.push(job);let _ = wake_tx.try_send(()); },
+                        Err(_) => break,
+                    }
+                }
+            }
+            cancel.cancel();
+        });
+        self.state.lock().unwrap().jobs.clear();
+    }
+}
+#[cfg(test)]
+mod scheduling_tests {
+    use super::*;
+    /// Go `TestStoreBalancerPick region-job fixture`.
+    fn job(id: u64, stores: &[u64]) -> RegionJob<'static> {
+        RegionJob::new(
+            RegionInfo {
+                region: metapb::Region {
+                    id,
+                    peers: stores
+                        .iter()
+                        .enumerate()
+                        .map(|(n, id)| metapb::Peer {
+                            id: n as u64 + 1,
+                            store_id: *id,
+                            ..Default::default()
+                        })
+                        .collect(),
+                    ..Default::default()
+                },
+                leader: None,
+            },
+            None,
+            vec![],
+            vec![],
+            0,
+            0,
+        )
+    }
+    /// Go `TestRegionJobRetryer`, wake earlier deadline, blocked-send push,
+    /// cancel cleanup, and happy-path channel closure.
+    #[test]
+    fn test_region_job_retryer() {
+        let (ctx, cancel) = Context::with_cancel(&Context::background());
+        let (tx, rx) = crossbeam_channel::bounded(0);
+        let queue = RegionJobRetryer::new(&ctx, tx);
+        std::thread::scope(|scope| {
+            scope.spawn(|| queue.run());
+            for id in 0..8 {
+                let mut job = job(id, &[]);
+                job.wait_until += Duration::from_secs(3600);
+                assert!(queue.push(job).is_ok());
+            }
+            assert!(rx.recv_timeout(Duration::from_millis(20)).is_err());
+            assert!(queue.push(job(123, &[])).is_ok());
+            assert_eq!(
+                rx.recv_timeout(Duration::from_secs(1))
+                    .unwrap()
+                    .region
+                    .unwrap()
+                    .region
+                    .id,
+                123
+            );
+            assert!(queue.push(job(456, &[])).is_ok());
+            std::thread::sleep(Duration::from_millis(20));
+            assert!(queue.push(job(789, &[])).is_ok());
+            cancel.cancel();
+        });
+        assert!(queue.queue.lock().unwrap().2.is_empty());
+        assert!(queue.push(job(1, &[])).is_err());
+        let (tx, rx) = crossbeam_channel::bounded(0);
+        let queue = RegionJobRetryer::new(&Context::background(), tx);
+        std::thread::scope(|scope| {
+            scope.spawn(|| queue.run());
+            assert!(queue.push(job(1, &[])).is_ok());
+            rx.recv().unwrap();
+            queue.close();
+        });
+        assert!(rx.recv().is_err());
+    }
+    /// Go `TestStoreBalancerPick`, including two peers on the same busy store.
+    #[test]
+    fn test_store_balancer_pick() {
+        let b = StoreBalancer::default();
+        b.push(job(1, &[1, 2]));
+        let first = b.pick_job().unwrap();
+        b.push(job(2, &[2, 2]));
+        b.push(job(3, &[3, 4]));
+        let idle = b.pick_job().unwrap();
+        let busy = b.pick_job().unwrap();
+        assert_eq!(idle.region.as_ref().unwrap().region.id, 3);
+        assert_eq!(busy.region.as_ref().unwrap().region.id, 2);
+        for j in [first, idle, busy] {
+            b.release_store_load(&j.region.unwrap().region.peers);
+        }
+        assert!(b.state.lock().unwrap().load.values().all(|n| *n == 0));
+    }
+    /// Go `TestCancelBalancer`.
+    #[test]
+    fn test_cancel_balancer() {
+        let (ctx, cancel) = Context::with_cancel(&Context::background());
+        let (tx, rx) = crossbeam_channel::bounded(0);
+        let (out, _rx) = crossbeam_channel::bounded(0);
+        let b = StoreBalancer::default();
+        std::thread::scope(|scope| {
+            scope.spawn(|| b.run(&ctx, rx, out));
+            for n in 0..20 {
+                tx.send(job(n, &[n % 10])).unwrap();
+            }
+            cancel.cancel();
+        });
+        assert_eq!(b.job_len(), 0);
+        assert!(b.state.lock().unwrap().load.values().all(|n| *n == 0));
+    }
+    /// Go `TestStoreBalancerNoRace`, concurrent load release while picking.
+    #[test]
+    fn test_store_balancer_no_race() {
+        let b = StoreBalancer::default();
+        for n in 0..200 {
+            b.push(job(n, &[n % 10, (n * 7) % 10]));
+        }
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let b = &b;
+                scope.spawn(move || {
+                    while let Some(j) = b.pick_job() {
+                        b.release_store_load(&j.region.unwrap().region.peers);
+                    }
+                });
+            }
+        });
+        assert_eq!(b.job_len(), 0);
+        assert!(b.state.lock().unwrap().load.values().all(|n| *n == 0));
+    }
+    /// Go `TestUpdateAndGetLimiterConcurrencySafety`.
+    #[test]
+    fn test_update_and_get_limiter_concurrency_safety() {
+        let limiter = crate::localhelper::StoreWriteLimiter::new(0);
+        std::thread::scope(|scope| {
+            for n in 0..100 {
+                let limiter = &limiter;
+                scope.spawn(move || limiter.update_limit(n));
+                scope.spawn(move || {
+                    let _ = limiter.limit();
+                });
+            }
+        });
+    }
+}
+
+/// Go `regionJob.ref/done` and `jobWg`, with scoped ownership instead of
+/// manually pairing WaitGroup.Add/Done across every cancellation branch.
+#[derive(Clone, Default)]
+pub(crate) struct JobTracker(std::sync::Arc<(Mutex<usize>, std::sync::Condvar)>);
+pub(crate) struct JobRef(JobTracker);
+impl JobTracker {
+    /// Go `regionJob.ref`.
+    pub(crate) fn acquire(&self) -> JobRef {
+        *self.0.0.lock().unwrap() += 1;
+        JobRef(self.clone())
+    }
+    /// Go `jobWg.Wait`, interrupted by worker failure/cancellation.
+    pub(crate) fn wait(&self, ctx: &Context) {
+        let mut count = self.0.0.lock().unwrap();
+        while *count != 0 && ctx.err().is_none() {
+            count = self
+                .0
+                .1
+                .wait_timeout(count, Duration::from_millis(20))
+                .unwrap()
+                .0;
+        }
+    }
+}
+impl JobRef {
+    /// Go rescan's references for every regenerated job before publication.
+    pub(crate) fn acquire(&self) -> Self {
+        self.0.acquire()
+    }
+}
+impl Drop for JobRef {
+    /// Go `regionJob.done`.
+    fn drop(&mut self) {
+        let mut count = self.0.0.0.lock().unwrap();
+        *count -= 1;
+        if *count == 0 {
+            self.0.0.1.notify_all();
+        }
+    }
+}
+
+#[cfg(test)]
+mod job_reference_tests {
+    use super::*;
+    /// Go `TestRefAllJobsBeforeSending` job ranges, including empty jobs.
+    fn jobs(count: usize) -> Vec<RegionJob<'static>> {
+        (0..count)
+            .map(|index| {
+                RegionJob::new(
+                    RegionInfo {
+                        region: metapb::Region::default(),
+                        leader: None,
+                    },
+                    None,
+                    vec![b'a' + index as u8],
+                    vec![b'b' + index as u8],
+                    0,
+                    0,
+                )
+            })
+            .collect()
+    }
+    /// Go `TestRefAllJobsBeforeSending`: no early cleanup when an empty first job finishes.
+    #[test]
+    fn test_ref_all_jobs_before_sending() {
+        let tracker = JobTracker::default();
+        let (sender, receiver) = crossbeam_channel::bounded(0);
+        std::thread::scope(|scope| {
+            scope.spawn(|| send_region_jobs(&Context::background(), &tracker, jobs(5), &sender));
+            for remaining in (1..=5).rev() {
+                let job = receiver.recv().unwrap();
+                assert_eq!(*tracker.0.0.lock().unwrap(), remaining);
+                drop(job);
+            }
+        });
+        assert_eq!(*tracker.0.0.lock().unwrap(), 0);
+    }
+    /// Go `TestGenerateAndSendJobDoneAllRefedJobsOnCancel`: cancel after first job.
+    #[test]
+    fn test_generate_and_send_job_done_all_refed_jobs_on_cancel() {
+        let tracker = JobTracker::default();
+        let (ctx, cancel) = Context::with_cancel(&Context::background());
+        let (sender, receiver) = crossbeam_channel::bounded(0);
+        std::thread::scope(|scope| {
+            scope.spawn(|| send_region_jobs(&ctx, &tracker, jobs(4), &sender));
+            let job = receiver.recv().unwrap();
+            assert_eq!(*tracker.0.0.lock().unwrap(), 4);
+            drop(job);
+            cancel.cancel();
+        });
+        assert_eq!(*tracker.0.0.lock().unwrap(), 0);
     }
 }

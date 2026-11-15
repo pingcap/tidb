@@ -3,6 +3,7 @@
 //! Immutable sorted runs use the existing native external sorter. A flush
 //! freezes a generation; imports remove only that generation's files, leaving
 //! rows arriving during import for the next flush.
+pub use crate::iterator::EngineIterator;
 use crate::{Error, Result};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -41,8 +42,12 @@ struct State {
     next_run: u64,
     closed: bool,
     buffered_bytes: u64,
+    ingest_error: Option<String>,
+    region_split_keys: Option<Vec<Vec<u8>>>,
+    region_split_size: u64,
 }
 /// Go `Engine`: sorted index data on local disk, with a stable import TS.
+/// Storage differs from Go: `tidb-extsort` disk runs replace Pebble.
 pub struct Engine {
     path: PathBuf,
     duplicate_detection: bool,
@@ -50,6 +55,8 @@ pub struct Engine {
     state: Mutex<State>,
     ts: AtomicU64,
     importing: AtomicBool,
+    imported_size: AtomicU64,
+    imported_count: AtomicU64,
 }
 impl Engine {
     /// Go `engineManager.OpenEngine`: reopen durable runs and retain their TS.
@@ -102,9 +109,14 @@ impl Engine {
                 next_run,
                 closed: false,
                 buffered_bytes: 0,
+                ingest_error: None,
+                region_split_keys: None,
+                region_split_size: 0,
             }),
             ts: AtomicU64::new(ts),
             importing: AtomicBool::new(false),
+            imported_size: AtomicU64::new(0),
+            imported_count: AtomicU64::new(0),
         })
     }
     /// Go `localWriter.AppendRows`, retaining RowID for duplicate detection.
@@ -165,6 +177,7 @@ impl Engine {
             s.runs.insert(id, sorter);
         }
         s.active = None;
+        s.region_split_keys = None;
         s.buffered_bytes = 0;
         Ok(())
     }
@@ -186,14 +199,13 @@ impl Engine {
             }
             cursors.push(it);
         }
-        Ok(EngineIterator {
+        Ok(EngineIterator::new(
             cursors,
-            duplicate_detection: self.duplicate_detection,
-            end: end.to_vec(),
-            last_encoded: None,
-            last_key: None,
-        })
+            self.duplicate_detection,
+            end.to_vec(),
+        ))
     }
+
     /// Go `Engine.GetFirstAndLastKey` for the half-open range.
     pub fn get_first_and_last_key(
         &self,
@@ -201,6 +213,7 @@ impl Engine {
         end: &[u8],
     ) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
         let mut it = self.new_iter(start, end)?;
+        it.ignore_duplicates();
         let Some((first, _)) = it.next_pair()? else {
             return Ok(None);
         };
@@ -240,6 +253,7 @@ impl Engine {
             return Ok(());
         };
         let mut s = self.state.lock().unwrap();
+        s.region_split_keys = None;
         s.closed = false;
         let ids = s
             .runs
@@ -251,6 +265,68 @@ impl Engine {
             s.runs.remove(&id);
         }
         Ok(())
+    }
+    /// Go `Engine.finishWrite`: stop writes but retain readable sorted data.
+    pub fn finish_write(&self) -> Result<()> {
+        self.flush()?;
+        let mut state = self.state.lock().unwrap();
+        state.closed = true;
+        match &state.ingest_error {
+            Some(error) => Err(Error::Other(error.clone())),
+            None => Ok(()),
+        }
+    }
+    /// Go `Engine.setError`: retain the first ingest failure.
+    pub fn set_error(&self, error: String) {
+        self.state.lock().unwrap().ingest_error.get_or_insert(error);
+    }
+    /// Go `Engine.TotalMemorySize`; extsort owns writer buffers instead of Pebble memtables.
+    pub fn total_memory_size(&self) -> u64 {
+        self.state
+            .lock()
+            .unwrap()
+            .writers
+            .values()
+            .map(|writer| writer.memory_size() as u64)
+            .sum()
+    }
+    /// Go `Engine.ImportedStatistics`.
+    pub fn imported_statistics(&self) -> (u64, u64) {
+        (
+            self.imported_size.load(Ordering::SeqCst),
+            self.imported_count.load(Ordering::SeqCst),
+        )
+    }
+    /// Go `Engine.Finish`.
+    pub fn finish(&self, bytes: u64, count: u64) {
+        self.imported_size.fetch_add(bytes, Ordering::SeqCst);
+        self.imported_count.fetch_add(count, Ordering::SeqCst);
+    }
+    /// Go `Engine.KVStatistics` over the durable sorted runs.
+    pub fn kv_statistics(&self) -> Result<(u64, u64)> {
+        let properties = self.get_size_properties()?;
+        Ok((
+            properties.total_size,
+            properties.index_handles.values().map(|p| p.keys).sum(),
+        ))
+    }
+    /// Go `engineManager.resetEngine`; extsort generations are removed and
+    /// recreated instead of deleting and reopening a Pebble DB.
+    pub fn reset(&self, ts: u64) -> Result<()> {
+        self.flush()?;
+        let mut state = self.state.lock().unwrap();
+        for sorter in state.runs.values() {
+            sorter.close_and_cleanup()?;
+        }
+        state.runs.clear();
+        state.active = None;
+        state.writers.clear();
+        state.closed = false;
+        state.ingest_error = None;
+        state.buffered_bytes = 0;
+        self.imported_size.store(0, Ordering::SeqCst);
+        self.imported_count.store(0, Ordering::SeqCst);
+        self.set_ts(ts)
     }
     /// Go `Engine.Close`; cleanup is owned by the backend.
     pub fn close(&self) -> Result<()> {
@@ -276,7 +352,7 @@ impl Engine {
         crate::disk_quota::EngineFileSize {
             uuid,
             disk_size: directory_size(&self.path) as i64,
-            mem_size: self.state.lock().unwrap().buffered_bytes as i64,
+            mem_size: self.total_memory_size() as i64,
             is_importing: self.importing.load(Ordering::SeqCst),
         }
     }
@@ -285,6 +361,7 @@ impl Engine {
         self.importing.store(value, Ordering::SeqCst);
     }
 }
+/// Go `engineManager.openEngine (extsort options replace Pebble options)`.
 fn options(writer_buffer_size: usize) -> DiskSorterOptions {
     DiskSorterOptions {
         writer_buffer_size,
@@ -292,6 +369,7 @@ fn options(writer_buffer_size: usize) -> DiskSorterOptions {
         ..Default::default()
     }
 }
+/// Go `Engine.getEngineFileSize`.
 fn directory_size(path: &Path) -> u64 {
     std::fs::read_dir(path)
         .map(|entries| {
@@ -304,65 +382,6 @@ fn directory_size(path: &Path) -> u64 {
                 .sum()
         })
         .unwrap_or(0)
-}
-/// Go `EngineIterator`, skipping identical storage keys and detecting distinct
-/// handles for the same unique index key.
-pub struct EngineIterator {
-    cursors: Vec<Box<dyn tidb_extsort::Iterator>>,
-    duplicate_detection: bool,
-    end: Vec<u8>,
-    last_encoded: Option<Vec<u8>>,
-    last_key: Option<Vec<u8>>,
-}
-impl EngineIterator {
-    /// Go `EngineIterator.Next/Key/Value` as one owned pair.
-    pub fn next_pair(&mut self) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
-        loop {
-            for it in &self.cursors {
-                if let Some(e) = it.error() {
-                    return Err(Error::Other(e.to_string()));
-                }
-            }
-            // For repeated identical keys the newest run wins, like Pebble Set.
-            let selected = self
-                .cursors
-                .iter()
-                .enumerate()
-                .filter(|(_, it)| it.valid())
-                .min_by(|(ia, a), (ib, b)| a.unsafe_key().cmp(b.unsafe_key()).then(ib.cmp(ia)))
-                .map(|(i, _)| i);
-            let Some(i) = selected else {
-                return Ok(None);
-            };
-            let encoded = self.cursors[i].unsafe_key().to_vec();
-            let value = self.cursors[i].unsafe_value().to_vec();
-            self.cursors[i].next();
-            if self.last_encoded.as_deref() == Some(encoded.as_slice()) {
-                continue;
-            }
-            let key = if self.duplicate_detection {
-                decode_duplicate_key(&encoded)?
-            } else {
-                encoded.clone()
-            };
-            if !self.end.is_empty() && key >= self.end {
-                return Ok(None);
-            }
-            self.last_encoded = Some(encoded);
-            if self.duplicate_detection && self.last_key.as_deref() == Some(key.as_slice()) {
-                return Err(Error::Duplicate { key, value });
-            }
-            self.last_key = Some(key.clone());
-            return Ok(Some((key, value)));
-        }
-    }
-}
-impl Drop for EngineIterator {
-    fn drop(&mut self) {
-        for it in &mut self.cursors {
-            let _ = it.close();
-        }
-    }
 }
 
 #[cfg(test)]
@@ -395,6 +414,7 @@ mod tests {
             );
         }
     }
+    /// Go `testMergeSSTs`.
     fn merge_ssts(duplicate: bool) {
         let dir = tempfile::tempdir().unwrap();
         let engine = Engine::open(dir.path().join("engine"), 1, false, 128).unwrap();
@@ -479,5 +499,560 @@ mod writer_tests {
             assert!(it.next_pair().unwrap().is_none());
             assert_eq!(size, 144 * 20000);
         }
+    }
+}
+
+/// Go `defaultPropSizeIndexDistance`.
+pub const DEFAULT_PROP_SIZE_INDEX_DISTANCE: u64 = 4 << 20;
+/// Go `defaultPropKeysIndexDistance`.
+pub const DEFAULT_PROP_KEYS_INDEX_DISTANCE: u64 = 40 * 1024;
+/// Go `engineMetaKey`.
+pub const ENGINE_META_KEY: &[u8] = b"\0meta";
+/// Go `rangeProperty`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RangeProperty {
+    /// Go `Key`.
+    pub key: Vec<u8>,
+    /// Go `rangeOffsets.Size`.
+    pub size: u64,
+    /// Go `rangeOffsets.Keys`.
+    pub keys: u64,
+}
+/// Go `rangeProperties.Encode`.
+pub fn encode_range_properties(properties: &[RangeProperty]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for p in properties {
+        bytes.extend_from_slice(&(p.key.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&p.key);
+        bytes.extend_from_slice(&p.size.to_be_bytes());
+        bytes.extend_from_slice(&p.keys.to_be_bytes());
+    }
+    bytes
+}
+/// Go `decodeRangeProperties`, with the engine's key adapter.
+pub fn decode_range_properties(
+    mut data: &[u8],
+    duplicate_detection: bool,
+) -> Result<Vec<RangeProperty>> {
+    let mut properties = Vec::new();
+    while !data.is_empty() {
+        if data.len() < 4 {
+            return Err(Error::Other("unexpected EOF".into()));
+        }
+        let len = u32::from_be_bytes(data[..4].try_into().unwrap()) as usize;
+        data = &data[4..];
+        if data.len() < len + 16 {
+            return Err(Error::Other("unexpected EOF".into()));
+        }
+        let key = &data[..len];
+        let size = u64::from_be_bytes(data[len..len + 8].try_into().unwrap());
+        let keys = u64::from_be_bytes(data[len + 8..len + 16].try_into().unwrap());
+        data = &data[len + 16..];
+        if key != ENGINE_META_KEY {
+            let key = if duplicate_detection {
+                decode_duplicate_key(key)?
+            } else {
+                key.to_vec()
+            };
+            properties.push(RangeProperty { key, size, keys });
+        }
+    }
+    Ok(properties)
+}
+/// Go `RangePropertiesCollector`. extsort computes these from sorted runs,
+/// replacing Pebble's table-property callback without changing the encoding.
+pub struct RangePropertiesCollector {
+    props: Vec<RangeProperty>,
+    last_offsets: (u64, u64),
+    current_offsets: (u64, u64),
+    last_key: Vec<u8>,
+    prop_size_idx_distance: u64,
+    prop_keys_idx_distance: u64,
+}
+impl Default for RangePropertiesCollector {
+    /// Go `newRangePropertiesCollector`.
+    fn default() -> Self {
+        Self::new(
+            DEFAULT_PROP_SIZE_INDEX_DISTANCE,
+            DEFAULT_PROP_KEYS_INDEX_DISTANCE,
+        )
+    }
+}
+impl RangePropertiesCollector {
+    /// Go `newRangePropertiesCollector`, with injectable test distances.
+    pub fn new(size_distance: u64, keys_distance: u64) -> Self {
+        Self {
+            props: Vec::new(),
+            last_offsets: (0, 0),
+            current_offsets: (0, 0),
+            last_key: Vec::new(),
+            prop_size_idx_distance: size_distance,
+            prop_keys_idx_distance: keys_distance,
+        }
+    }
+    /// Go `RangePropertiesCollector.insertNewPoint`.
+    fn insert_new_point(&mut self, key: &[u8]) {
+        self.last_offsets = self.current_offsets;
+        self.props.push(RangeProperty {
+            key: key.to_vec(),
+            size: self.current_offsets.0,
+            keys: self.current_offsets.1,
+        });
+    }
+    /// Go `RangePropertiesCollector.Add`, for a Pebble Set / extsort KV.
+    pub fn add(&mut self, key: &[u8], value: &[u8]) {
+        if key == ENGINE_META_KEY {
+            return;
+        }
+        self.current_offsets.0 += (key.len() + value.len()) as u64;
+        self.current_offsets.1 += 1;
+        if self.last_key.is_empty()
+            || self.current_offsets.0 - self.last_offsets.0 >= self.prop_size_idx_distance
+            || self.current_offsets.1 - self.last_offsets.1 >= self.prop_keys_idx_distance
+        {
+            self.insert_new_point(key);
+        }
+        self.last_key = key.to_vec();
+    }
+    /// Go `RangePropertiesCollector.Finish`.
+    pub fn finish(&mut self) -> Vec<RangeProperty> {
+        if self.current_offsets != self.last_offsets {
+            self.insert_new_point(&self.last_key.clone());
+        }
+        self.props.clone()
+    }
+    /// Go `RangePropertiesCollector.Name`.
+    pub fn name(&self) -> &'static str {
+        "tikv.range_index"
+    }
+}
+/// Go `sizeProperties`.
+#[derive(Default)]
+pub struct SizeProperties {
+    /// Go `totalSize`.
+    pub total_size: u64,
+    /// Go `indexHandles`, ordered by key.
+    pub index_handles: BTreeMap<Vec<u8>, RangeProperty>,
+}
+impl SizeProperties {
+    /// Go `sizeProperties.add`: combine offsets at the same split key.
+    pub fn add(&mut self, item: RangeProperty) {
+        let old = self
+            .index_handles
+            .entry(item.key.clone())
+            .or_insert_with(|| RangeProperty {
+                key: item.key.clone(),
+                ..Default::default()
+            });
+        old.size += item.size;
+        old.keys += item.keys;
+    }
+    /// Go `sizeProperties.addAll`: cumulative file offsets become additive deltas.
+    pub fn add_all(&mut self, properties: &[RangeProperty]) {
+        let mut previous = (0, 0);
+        for p in properties {
+            self.add(RangeProperty {
+                key: p.key.clone(),
+                size: p.size - previous.0,
+                keys: p.keys - previous.1,
+            });
+            previous = (p.size, p.keys);
+        }
+        self.total_size += previous.0;
+    }
+}
+impl Engine {
+    /// Go `getSizeProperties`; the storage substitution reads extsort runs
+    /// instead of Pebble SST table properties.
+    pub fn get_size_properties(&self) -> Result<SizeProperties> {
+        let state = self.state.lock().unwrap();
+        let mut result = SizeProperties::default();
+        for sorter in state.runs.values() {
+            let mut iter = sorter.new_iterator(&AtomicBool::new(false))?;
+            let mut collector = RangePropertiesCollector::default();
+            iter.first();
+            while iter.valid() {
+                collector.add(iter.unsafe_key(), iter.unsafe_value());
+                iter.next();
+            }
+            if let Some(error) = iter.error() {
+                return Err(Error::Other(error.to_string()));
+            }
+            iter.close()?;
+            let properties = decode_range_properties(
+                &encode_range_properties(&collector.finish()),
+                self.duplicate_detection,
+            )?;
+            result.add_all(&properties);
+        }
+        Ok(result)
+    }
+    /// Go `Engine.GetKeyRange`.
+    pub fn get_key_range(&self) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+        Ok(self
+            .get_first_and_last_key(&[], &[])?
+            .map(|(first, last)| (first, crate::local::next_key(&last))))
+    }
+    /// Go `Engine.getRegionSplitKeys`.
+    pub fn get_region_split_keys(&self, size_limit: u64, keys_limit: u64) -> Result<Vec<Vec<u8>>> {
+        let Some((first, end)) = self.get_key_range()? else {
+            return Ok(Vec::new());
+        };
+        let properties = self.get_size_properties()?;
+        let ranges = crate::local::split_range_by_size_props(
+            (first, end),
+            &properties,
+            size_limit,
+            keys_limit,
+        );
+        let mut keys: Vec<_> = ranges.iter().map(|range| range.0.clone()).collect();
+        if let Some(range) = ranges.last() {
+            keys.push(range.1.clone());
+        }
+        let mut state = self.state.lock().unwrap();
+        state.region_split_keys = Some(keys.clone());
+        state.region_split_size = size_limit;
+        Ok(keys)
+    }
+    /// Go `Engine.LoadIngestData`, delivering bounded local ranges. Rust borrows
+    /// this engine for the scoped pipeline instead of an engineapi interface.
+    pub fn load_ingest_data(
+        &self,
+        ctx: &tidb_gocontext::Context,
+        mut send: impl FnMut((Vec<u8>, Vec<u8>)) -> Result<()>,
+    ) -> Result<()> {
+        let (cached, size) = {
+            let state = self.state.lock().unwrap();
+            (state.region_split_keys.clone(), state.region_split_size)
+        };
+        let keys = load_ingest_data_keys(cached, size, |size, keys| {
+            self.get_region_split_keys(size, keys)
+        })?;
+        for range in keys.windows(2) {
+            if let Some(error) = ctx.err() {
+                return Err(Error::Source(std::sync::Arc::new(error)));
+            }
+            send((range[0].clone(), range[1].clone()))?;
+        }
+        Ok(())
+    }
+}
+
+/// Go `Engine.LoadIngestData`'s cached-range decision and default job-size limit.
+/// `get_keys` is Go's `getRegionSplitKeys` / `getSizePropertiesFn` boundary.
+fn load_ingest_data_keys(
+    cached: Option<Vec<Vec<u8>>>,
+    region_split_size: u64,
+    get_keys: impl FnOnce(u64, u64) -> Result<Vec<Vec<u8>>>,
+) -> Result<Vec<Vec<u8>>> {
+    if region_split_size <= 2 * 96 * 1024 * 1024 {
+        if let Some(keys) = cached {
+            return Ok(keys);
+        }
+    }
+    get_keys(96 * 1024 * 1024, 960_000)
+}
+
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    /// Go `TestRangeProperties`, including merged files and both key-count limits.
+    #[test]
+    fn test_range_properties() {
+        let d = DEFAULT_PROP_SIZE_INDEX_DISTANCE;
+        let k = DEFAULT_PROP_KEYS_INDEX_DISTANCE;
+        let cases = [
+            ("a", 0, 1),
+            ("b", d / 8, 1),
+            ("c", d / 4, 1),
+            ("d", d / 2, 1),
+            ("e", d / 8, 1),
+            ("f", d / 4, 1),
+            ("g", d / 2, 1),
+            ("h", d / 8, 1),
+            ("i", d / 4, 1),
+            ("j", d / 2, 1),
+            ("k", d / 2, 1),
+            ("l", 0, k / 2),
+            ("m", 0, k / 2),
+            ("n", 1, k),
+            ("o", 1, 1),
+        ];
+        let mut collector = RangePropertiesCollector::default();
+        for (key, size, count) in cases {
+            let value = vec![0; size as usize];
+            for _ in 0..count {
+                collector.add(key.as_bytes(), &value);
+            }
+        }
+        let encoded = encode_range_properties(&collector.finish());
+        let props = decode_range_properties(&encoded, false).unwrap();
+        assert_eq!(props.len(), 7);
+        assert_eq!(props[0].key, b"a");
+        assert_eq!(props[6].key, b"o");
+        for n in 1..encoded.len() {
+            if !props
+                .iter()
+                .scan(0, |offset, p| {
+                    *offset += 20 + p.key.len();
+                    Some(*offset)
+                })
+                .any(|offset| offset == n)
+            {
+                assert!(decode_range_properties(&encoded[..n], false).is_err());
+            }
+        }
+        let props2: Vec<_> = [
+            ("b", d + 10, k / 2),
+            ("h", d * 3 / 2, k * 3 / 2),
+            ("k", d * 3, k * 7 / 4),
+            ("mm", d * 5, k * 2),
+            ("q", d * 7, k * 9 / 4 + 10),
+            ("y", d * 7 + 100, k * 9 / 4 + 1010),
+        ]
+        .into_iter()
+        .map(|(key, size, keys)| RangeProperty {
+            key: key.as_bytes().to_vec(),
+            size,
+            keys,
+        })
+        .collect();
+        let mut sizes = SizeProperties::default();
+        sizes.add_all(&props);
+        sizes.add_all(&props2);
+        let expected = [
+            ("a", 1, 1),
+            ("b", d + 10, k / 2),
+            ("e", d + 4, 4),
+            ("h", d / 2 - 10, k),
+            ("i", d * 9 / 8 + 4, 4),
+            ("k", d * 5 / 2 + 2, k / 4 + 2),
+            ("m", k, k),
+            ("mm", d * 2, k / 4),
+            ("n", k * 2, k),
+            ("o", 2, 1),
+            ("q", d * 2, k / 4 + 10),
+            ("y", 100, 1000),
+        ];
+        assert_eq!(sizes.index_handles.len(), expected.len());
+        for (got, (key, size, keys)) in sizes.index_handles.values().zip(expected) {
+            assert_eq!(
+                got,
+                &RangeProperty {
+                    key: key.as_bytes().to_vec(),
+                    size,
+                    keys
+                }
+            );
+        }
+        for (limit, expected) in [
+            (k * 5 / 2, vec!["a", "e", "k", "mm", "q", "z"]),
+            (k, vec!["a", "e", "h", "k", "m", "mm", "n", "q", "z"]),
+        ] {
+            let ranges = crate::local::split_range_by_size_props(
+                (b"a".to_vec(), b"z".to_vec()),
+                &sizes,
+                d * 2,
+                limit,
+            );
+            assert_eq!(
+                ranges,
+                expected
+                    .windows(2)
+                    .map(|pair| (pair[0].as_bytes().to_vec(), pair[1].as_bytes().to_vec()))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+    /// Go `TestRangePropertiesWithPebble`; extsort replaces Pebble storage.
+    #[test]
+    fn test_range_properties_with_pebble() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::open(dir.path().join("e"), 1, false, 1024).unwrap();
+        let mut collector = RangePropertiesCollector::default();
+        for i in 0u64..1000 {
+            let key = i.to_be_bytes().to_vec();
+            let value = vec![0; (i % 50) as usize];
+            collector.add(&key, &value);
+            engine.append_rows(0, &[(key, value, vec![])]).unwrap();
+        }
+        engine.flush().unwrap();
+        let mut expected = SizeProperties::default();
+        expected.add_all(&collector.finish());
+        let got = engine.get_size_properties().unwrap();
+        assert_eq!(got.total_size, expected.total_size);
+        assert_eq!(got.index_handles, expected.index_handles);
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    /// Go `TestGetEngineSizeWhenImport`; querying size must not block on the
+    /// import state and must report that state.
+    #[test]
+    fn test_get_engine_size_when_import() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::open(dir.path().join("engine"), 1, false, 1024).unwrap();
+        engine.set_importing(true);
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let size = engine.file_size([1; 16]);
+                    assert_eq!(size.uuid, [1; 16]);
+                    assert!(size.is_importing);
+                })
+                .join()
+                .unwrap();
+        });
+        engine.set_importing(false);
+        engine.close().unwrap();
+    }
+    /// Go `TestIngestSSTWithClosedEngine`; extsort run ingestion goes through
+    /// AppendRows/Flush instead of Pebble's ingestion of SST file paths.
+    #[test]
+    fn test_ingest_sst_with_closed_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::open(dir.path().join("engine"), 1, false, 1024).unwrap();
+        let rows: Vec<_> = (0..10)
+            .map(|i| (format!("key{i}").into_bytes(), vec![], vec![]))
+            .collect();
+        engine.append_rows(0, &rows).unwrap();
+        engine.flush().unwrap();
+        engine.close().unwrap();
+        assert_eq!(
+            engine.append_rows(0, &rows).unwrap_err().to_string(),
+            "engine is closed"
+        );
+    }
+    /// Go `TestIterOutputHasUniqueMemorySpace`; Rust owns every returned pair,
+    /// so releasing/closing the iterator cannot invalidate earlier outputs.
+    #[test]
+    fn test_iter_output_has_unique_memory_space() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::open(dir.path().join("engine"), 1, false, 1024).unwrap();
+        let rows: Vec<_> = [b'a', b'c', b'e', b'g']
+            .map(|k| (vec![k], vec![k], vec![]))
+            .into();
+        engine.append_rows(0, &rows).unwrap();
+        engine.flush().unwrap();
+        let mut iter = engine.new_iter(&[], &[]).unwrap();
+        let first = [
+            iter.next_pair().unwrap().unwrap(),
+            iter.next_pair().unwrap().unwrap(),
+        ];
+        let next = [
+            iter.next_pair().unwrap().unwrap(),
+            iter.next_pair().unwrap().unwrap(),
+        ];
+        assert!(iter.next_pair().unwrap().is_none());
+        iter.close().unwrap();
+        assert_eq!(first, [(vec![b'a'], vec![b'a']), (vec![b'c'], vec![b'c'])]);
+        assert_eq!(next, [(vec![b'e'], vec![b'e']), (vec![b'g'], vec![b'g'])]);
+    }
+    /// Go `TestTotalMemoryConsume`'s phases, with extsort allocations replacing
+    /// Go's manual buffers. Unlike Go's skipped heap calibration, this checks
+    /// the actual writer's allocation accounting through spill and flush.
+    #[test]
+    fn test_total_memory_consume() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::open(dir.path().join("engine"), 1, false, 64).unwrap();
+        assert_eq!(engine.total_memory_size(), 0);
+        for i in 0..1000 {
+            engine
+                .append_rows(
+                    0,
+                    &[(format!("key{i:04}").into_bytes(), vec![0; 16], vec![])],
+                )
+                .unwrap();
+        }
+        assert!(engine.total_memory_size() > 0);
+        assert!(
+            engine.total_memory_size() < 1024,
+            "spilled KV bytes are disk data, not resident memory"
+        );
+        engine.flush().unwrap();
+        assert_eq!(engine.total_memory_size(), 0);
+    }
+    /// Go `TestLocalIngestLoop`: four concurrent producers, 500 entries each,
+    /// interleaved flushes, final size/count and the durable completion boundary.
+    /// Extsort flush completion replaces Pebble's SST metadata sequence.
+    #[test]
+    fn test_local_ingest_loop() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::open(dir.path().join("engine"), 42, false, 1024).unwrap();
+        let total = AtomicU64::new(0);
+        std::thread::scope(|scope| {
+            for worker in 0..4 {
+                let engine = &engine;
+                let total = &total;
+                scope.spawn(move || {
+                    for index in 0..500 {
+                        let key = ((worker * 500 + index) as u64).to_be_bytes().to_vec();
+                        let value = vec![worker as u8; 1 + index % 50];
+                        total.fetch_add((key.len() + value.len()) as u64, Ordering::SeqCst);
+                        engine.append_rows(worker, &[(key, value, vec![])]).unwrap();
+                        if index % 10 == 9 {
+                            engine.flush().unwrap();
+                        }
+                    }
+                });
+            }
+        });
+        engine.finish_write().unwrap();
+        assert_eq!(
+            engine.kv_statistics().unwrap(),
+            (total.load(Ordering::SeqCst), 2000)
+        );
+        let generation = engine.flushed_generation();
+        engine.close().unwrap();
+        let reopened = Engine::open(dir.path().join("engine"), 0, false, 1024).unwrap();
+        assert_eq!(reopened.flushed_generation(), generation);
+        assert_eq!(
+            reopened.kv_statistics().unwrap(),
+            (total.load(Ordering::SeqCst), 2000)
+        );
+    }
+
+    /// Go `TestSplitRangeAgain4BigRegion`, including its mockGetSizeProperties:
+    /// 20 properties of 50 MiB produce ten jobs inside a single 1 GiB region.
+    #[test]
+    fn test_split_range_again4_big_region() {
+        let mut properties = SizeProperties::default();
+        for i in 1..=10u8 {
+            for key in [vec![i], vec![i, 1]] {
+                properties.add(RangeProperty {
+                    key,
+                    size: 50 * 1024 * 1024,
+                    keys: 100_000,
+                });
+            }
+        }
+        let keys = load_ingest_data_keys(Some(vec![vec![1], vec![11]]), 1 << 30, |size, count| {
+            assert_eq!((size, count), (96 * 1024 * 1024, 960_000));
+            let ranges = crate::local::split_range_by_size_props(
+                (vec![1], vec![10, 1, 0]),
+                &properties,
+                size,
+                count,
+            );
+            let mut keys: Vec<_> = ranges.iter().map(|r| r.0.clone()).collect();
+            keys.push(ranges.last().unwrap().1.clone());
+            Ok(keys)
+        })
+        .unwrap();
+        assert_eq!(keys.len(), 11);
+        for (i, key) in keys[..10].iter().enumerate() {
+            assert_eq!(key, &vec![i as u8 + 1]);
+        }
+        assert_eq!(keys[10], vec![10, 1, 0]);
+        let cached = vec![vec![1], vec![11]];
+        assert_eq!(
+            load_ingest_data_keys(Some(cached.clone()), 96 * 1024 * 1024, |_, _| panic!(
+                "cached ordinary ranges must be reused"
+            ))
+            .unwrap(),
+            cached
+        );
     }
 }

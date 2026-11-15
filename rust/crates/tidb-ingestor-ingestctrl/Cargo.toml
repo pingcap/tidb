@@ -11,6 +11,17 @@ description = "Go pkg/ingestor/ingestctrl: local engines and TiKV ingest control
 workspace = true
 
 [dependencies]
+tidb-lightning-verification = { path = "../tidb-lightning-verification" }
+tidb-lightning-importdef = { path = "../tidb-lightning-importdef" }
+tidb-log = { path = "../tidb-log" }
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
+prost.workspace = true
+tidb-distsql = { path = "../tidb-distsql" }
+tidb-ranger = { path = "../tidb-ranger" }
+tidb-model = { path = "../tidb-model" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-lightning-common = { path = "../tidb-lightning-common" }
+flate2.workspace = true
 tikv-client.workspace = true
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-extsort = { path = "../tidb-extsort" }

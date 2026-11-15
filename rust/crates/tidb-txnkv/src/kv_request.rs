@@ -151,7 +151,7 @@ impl std::fmt::Debug for SessionMemTracker {
 /// This mirrors the source ownership split: request construction is finished
 /// before `kv.Client.Send` receives the request, and a client cannot
 /// accidentally mutate the metadata while claiming transport ownership.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TransportRequest {
     metadata: KvRequestMetadata,
     rpc_interceptor: crate::option::RpcInterceptorOption,
@@ -159,6 +159,8 @@ pub struct TransportRequest {
     /// `util.ExecDetailsKey`) the copr worker's `bo.GetCtx()` carries to
     /// every send.
     kv_context: StatementKvContext,
+    /// Go `kv.Client.Send` vars, retained by every region worker.
+    variables: Option<Arc<tikv_client::Variables>>,
     cop_lite_worker: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// Go `kv.ClientSendOption.SessionMemTracker` and
     /// `EnabledRateLimitAction`: the tracker the coprocessor iterator's
@@ -171,6 +173,29 @@ pub struct TransportRequest {
     request_cancellation: Option<Arc<CancelHandle>>,
     bound_at: Option<Instant>,
     binding: Option<TransportBinding>,
+}
+
+impl std::fmt::Debug for TransportRequest {
+    /// Go `kv.Client.Send`: diagnostic metadata without opaque variable callbacks.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TransportRequest")
+            .field("metadata", &self.metadata)
+            .field("rpc_interceptor", &self.rpc_interceptor)
+            .field("kv_context", &self.kv_context)
+            .field(
+                "backoff_weight",
+                &self.variables.as_ref().map(|v| v.backoff_weight),
+            )
+            .field("cop_lite_worker", &self.cop_lite_worker)
+            .field("session_mem_tracker", &self.session_mem_tracker)
+            .field("enabled_rate_limit_action", &self.enabled_rate_limit_action)
+            .field("append_warning", &self.append_warning)
+            .field("execution_cancellation", &self.execution_cancellation)
+            .field("request_cancellation", &self.request_cancellation)
+            .field("bound_at", &self.bound_at)
+            .field("binding", &self.binding)
+            .finish()
+    }
 }
 
 /// Go `kv.ClientSendOption.AppendWarning`: the statement's warning sink.
@@ -191,6 +216,7 @@ impl TransportRequest {
             metadata,
             rpc_interceptor: Default::default(),
             kv_context: StatementKvContext::default(),
+            variables: None,
             cop_lite_worker: None,
             session_mem_tracker: None,
             enabled_rate_limit_action: false,
@@ -261,6 +287,19 @@ impl TransportRequest {
     pub fn with_kv_context(mut self, kv_context: StatementKvContext) -> Self {
         self.kv_context = kv_context;
         self
+    }
+
+    /// Go `kv.Client.Send` vars: operation-specific client backoff parameters.
+    #[must_use]
+    pub fn with_variables(mut self, variables: Arc<tikv_client::Variables>) -> Self {
+        self.variables = Some(variables);
+        self
+    }
+
+    /// Go `kv.Client.Send` vars passed to each coprocessor worker.
+    #[must_use]
+    pub fn variables(&self) -> Option<Arc<tikv_client::Variables>> {
+        self.variables.clone()
     }
 
     /// The statement's ctx values every send of this request carries.
@@ -345,6 +384,7 @@ impl TransportRequest {
             metadata: self.metadata.clone(),
             rpc_interceptor: self.rpc_interceptor.clone(),
             kv_context: self.kv_context.clone(),
+            variables: self.variables.clone(),
             cop_lite_worker: self.cop_lite_worker.clone(),
             session_mem_tracker: self.session_mem_tracker.clone(),
             enabled_rate_limit_action: self.enabled_rate_limit_action,
@@ -376,6 +416,7 @@ impl TransportRequest {
             metadata,
             rpc_interceptor: self.rpc_interceptor.clone(),
             kv_context: self.kv_context.clone(),
+            variables: self.variables.clone(),
             cop_lite_worker: self.cop_lite_worker.clone(),
             session_mem_tracker: self.session_mem_tracker.clone(),
             enabled_rate_limit_action: self.enabled_rate_limit_action,

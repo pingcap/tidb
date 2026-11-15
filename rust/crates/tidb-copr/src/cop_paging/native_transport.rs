@@ -370,6 +370,7 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
             call,
             rpc_interceptor: request.rpc_interceptor(),
             kv_context,
+            variables: request.variables(),
             timeout,
             metadata: Arc::new(metadata),
             runtime,
@@ -434,6 +435,7 @@ pub struct NativeCopResponse<S: ?Sized> {
     /// Go `bo.GetCtx()`'s statement values: the `RUDetails` and
     /// `ExecDetails` charged for every send and lock resolution of the read.
     kv_context: tidb_txnkv::StatementKvContext,
+    variables: Option<Arc<tikv_client::Variables>>,
     timeout: Duration,
     metadata: Arc<tidb_txnkv::KvRequestMetadata>,
     runtime: CopReadTaskRuntime,
@@ -492,6 +494,7 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
         let interceptor = self.rpc_interceptor.handle().cloned();
         let trace_parent = self.trace_parent.clone();
         let statement_ctx = self.kv_context.trace_context();
+        let variables = self.variables.clone();
         Arc::clone(self.backoffers.entry(logical_task_id).or_insert_with(|| {
             // Go `distsql.WithSQLKvExecCounterInterceptor` on the request's
             // ctx: TopSQL's counter sees every RPC the task's sends issue,
@@ -506,10 +509,7 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             // whose `TxnStartKey` its `retry later` lines report.
             let backoffer =
                 tidb_txnkv::rpc::trace::build_in_ctx(trace_parent, statement_ctx, || {
-                    tikv_client::tikv::Backoffer::new(
-                        tikv_client::async_util::Cancellation::default(),
-                        COP_NEXT_MAX_BACKOFF_MS,
-                    )
+                    new_cop_backoffer(variables)
                     .with_rpc_interceptor(interceptors)
                 });
             Arc::new(tokio::sync::Mutex::new(backoffer))
@@ -1149,6 +1149,7 @@ impl<S: NativeCopStore + ?Sized> super::cop_iterator::CopWorkerSource for Native
                 call: self.call.clone(),
                 rpc_interceptor: self.rpc_interceptor.clone(),
                 kv_context: self.kv_context.clone(),
+                variables: self.variables.clone(),
                 timeout: self.timeout,
                 metadata: Arc::clone(&self.metadata),
                 runtime,
@@ -1227,6 +1228,41 @@ mod tests {
         assert!(
             matches!(stale, QueryResponseError::Sql { code: 9001, .. }),
             "{stale:?}"
+        );
+    }
+}
+
+/// Go `backoff.NewBackofferWithVars` on the coprocessor worker's request.
+fn new_cop_backoffer(
+    variables: Option<Arc<tikv_client::Variables>>,
+) -> tikv_client::tikv::Backoffer {
+    tikv_client::tikv::Backoffer::with_variables(
+        tikv_client::async_util::Cancellation::default(),
+        COP_NEXT_MAX_BACKOFF_MS,
+        variables.unwrap_or_else(|| Arc::new(tikv_client::Variables::default())),
+    )
+}
+#[cfg(test)]
+mod checksum_variables_tests {
+    /// Go `ingestctrl.TestDoChecksumWithTikv` through `checksum.Executor.Execute`:
+    /// the worker backoffer must receive the executor's per-request variables.
+    #[test]
+    fn test_do_checksum_with_tikv() {
+        let mut variables = tikv_client::Variables::default();
+        variables.backoff_weight = 30;
+        let variables = std::sync::Arc::new(variables);
+        let request = tidb_txnkv::TransportRequest::new(
+            Default::default(),
+            std::sync::Arc::new(tidb_txnkv::CancelHandle::default()),
+        )
+        .with_variables(variables.clone());
+        let request = request.bind(tidb_txnkv::TransportBinding::new()).unwrap();
+        let backoffer = super::new_cop_backoffer(request.variables());
+        assert!(std::sync::Arc::ptr_eq(backoffer.variables(), &variables));
+        assert_eq!(backoffer.variables().backoff_weight, 30);
+        assert_eq!(
+            super::new_cop_backoffer(None).variables().backoff_weight,
+            tikv_client::Variables::default().backoff_weight
         );
     }
 }

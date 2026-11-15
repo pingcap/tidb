@@ -138,6 +138,8 @@ pub(super) fn add_index_with_local_ingest<S: StoreClient>(
             check_owner,
             step_cancelled,
             warnings,
+            None,
+            0,
         );
         match result {
             Ok(()) => bc
@@ -170,6 +172,97 @@ pub(super) fn add_index_with_local_ingest<S: StoreClient>(
         Err(PipelineError::Ingest(error)) => Err(ClusterDdlError::Backfill(error.to_string())),
     }
 }
+/// Go `Operator.TuneWorkerPoolSize` for workers borrowing the running subtask.
+/// The supervisor owns scoped threads so tuning cannot outlive scan transactions.
+struct ScopedPoolTuner {
+    requests: crossbeam_channel::Sender<(usize, crossbeam_channel::Sender<()>)>,
+    count: Arc<std::sync::atomic::AtomicUsize>,
+}
+impl ScopedPoolTuner {
+    /// Go `WorkerPool.Tune`, waiting until retired workers finish their current task.
+    fn tune(&self, count: usize) -> Result<(), String> {
+        let (tx, rx) = crossbeam_channel::bounded(0);
+        self.requests
+            .send((count.max(1), tx))
+            .map_err(|_| "no subtask running".to_owned())?;
+        rx.recv().map_err(|_| "no subtask running".to_owned())
+    }
+}
+/// Go `Operator.GetWorkerPoolSize` and `Operator.TuneWorkerPoolSize`.
+pub(super) struct IngestPipelineWorkers {
+    reader: ScopedPoolTuner,
+    writer: ScopedPoolTuner,
+}
+impl IngestPipelineWorkers {
+    /// Go `readIndexStepExecutor.ResourceModified` on the current pipeline.
+    pub(super) fn tune(
+        &self,
+        concurrency: usize,
+        avg_row_size: usize,
+        global_sort: bool,
+    ) -> Result<(), String> {
+        let (readers, writers) = expected_ingest_worker_cnt(concurrency, avg_row_size, global_sort);
+        if self.reader.count.load(Ordering::SeqCst) != readers {
+            self.reader.tune(readers)?;
+        }
+        if self.writer.count.load(Ordering::SeqCst) != writers {
+            self.writer.tune(writers)?;
+        }
+        Ok(())
+    }
+}
+/// Go `WorkerPool.runWorker` and `WorkerPool.Tune`, with Rust scoped lifetimes.
+fn start_scoped_pool<'scope, 'env: 'scope>(
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+    count: usize,
+    run: impl Fn(usize, crossbeam_channel::Receiver<()>) + Send + Sync + 'scope,
+) -> ScopedPoolTuner {
+    let (requests, changes) =
+        crossbeam_channel::unbounded::<(usize, crossbeam_channel::Sender<()>)>();
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(count.max(1)));
+    let live_count = count.clone();
+    scope.spawn(move || {
+        // A nested scope permits borrowing the worker factory while adding threads.
+        std::thread::scope(|workers| {
+            let (done_tx, done_rx) = crossbeam_channel::unbounded();
+            let mut active = std::collections::BTreeMap::new();
+            let mut next_id = 0;
+            let spawn = |id| {
+                let (quit, stop) = crossbeam_channel::bounded(1);
+                let done = done_tx.clone();
+                let run = &run;
+                let join = workers.spawn(tidb_cpuprofile::labels::inherit(move || {
+                    struct Finished { id: usize, done: crossbeam_channel::Sender<usize> }
+                    impl Drop for Finished { fn drop(&mut self) { let _ = self.done.send(self.id); } }
+                    let _finished = Finished { id, done };
+                    run(id, stop);
+                }));
+                (quit, join)
+            };
+            for _ in 0..live_count.load(Ordering::SeqCst) { active.insert(next_id,spawn(next_id)); next_id += 1; }
+            while !active.is_empty() {
+                crossbeam_channel::select! {
+                    recv(done_rx) -> id => {
+                        if let Ok(id) = id { if let Some((_,join)) = active.remove(&id) { let _ = join.join(); } }
+                    }
+                    recv(changes) -> change => {
+                        let Ok((target,ack)) = change else { break; };
+                        while active.len() > target {
+                            let (_, (quit,join)) = active.pop_last().unwrap();
+                            let _ = quit.send(());
+                            let _ = join.join();
+                        }
+                        while active.len() < target { active.insert(next_id,spawn(next_id)); next_id += 1; }
+                        live_count.store(target,Ordering::SeqCst);
+                        let _ = ack.send(());
+                    }
+                }
+            }
+        });
+    });
+    ScopedPoolTuner { requests, count }
+}
+
 /// Go `executeAndClosePipeline`, composed scan / index-ingest / result-sink workers.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn execute_and_close_pipeline<S: StoreClient>(
@@ -186,8 +279,11 @@ pub(super) fn execute_and_close_pipeline<S: StoreClient>(
     check_owner: &(dyn Fn() -> Result<(), String> + Sync),
     step_cancelled: &AtomicBool,
     warnings: &mut Vec<(u16, String, i64)>,
+    current_pipe: Option<&Mutex<Option<Arc<IngestPipelineWorkers>>>>,
+    avg_row_size: usize,
 ) -> Result<(), PipelineError> {
-    let (reader_cnt, writer_cnt) = expected_ingest_worker_cnt(reorg.concurrency, 0, false);
+    let (reader_cnt, writer_cnt) =
+        expected_ingest_worker_cnt(reorg.concurrency, avg_row_size, false);
     let stop = AtomicBool::new(false);
     let error = Mutex::new(None);
     let collected_warnings = Mutex::new(Vec::new());
@@ -199,162 +295,163 @@ pub(super) fn execute_and_close_pipeline<S: StoreClient>(
         let stop = &stop;
         let error = &error;
         let collected_warnings = &collected_warnings;
-        for _ in 0..reader_cnt {
-            let task_rx = task_rx.clone();
-            let chunk_tx = chunk_tx.clone();
-            scope.spawn(tidb_cpuprofile::labels::inherit(move || {
-                for task in task_rx {
-                    if stop.load(Ordering::SeqCst) {
-                        continue;
-                    }
-                    crate::job_ctx::attach_top_profiling_info(
-                        reorg.job_id,
-                        &reorg.query.to_utf8_lossy_go(),
-                    );
-                    let result = catch_reorg_panic(|| {
-                        scan_records(
-                            opener,
-                            timeout,
-                            backfiller,
-                            reorg,
-                            physical_id,
-                            &task,
-                            bc.as_ref(),
-                            reorg_meta,
-                            check_owner,
-                            step_cancelled,
-                        )
-                    });
-                    match result {
-                        Ok(batches) => {
-                            for batch in &batches {
-                                bc.update_chunk(
-                                    task.id,
-                                    batch.batch.added as i64,
-                                    batch.batch.done,
-                                );
-                            }
-                            if chunk_tx
-                                .send(IndexRecordChunk {
-                                    id: task.id,
-                                    batches,
-                                })
-                                .is_err()
-                            {
-                                return;
-                            }
-                        }
-                        Err(e) => {
-                            let mut first = error.lock().unwrap();
-                            if first.is_none() {
-                                *first = Some(e);
-                            }
-                            stop.store(true, Ordering::SeqCst);
-                        }
-                    }
-                }
-            }));
-        }
-        drop(task_rx);
-        drop(chunk_tx);
-        for worker_id in 0..writer_cnt {
-            let chunk_rx = chunk_rx.clone();
-            let result_tx = result_tx.clone();
-            scope.spawn(tidb_cpuprofile::labels::inherit(move || {
-                let writers = engines
-                    .iter()
-                    .zip(&reorg.index_ids)
-                    .map(|(engine, index_id)| {
-                        engine
-                            .clone()
-                            .create_writer(
-                                worker_id,
-                                bc.get_local_backend()
-                                    .map_or(0, |b| b.cfg.local_writer_mem_cache_size),
-                            )
-                            .map(|w| (*index_id, w))
-                    })
-                    .collect::<tidb_ddl_ingest::Result<std::collections::HashMap<_, _>>>();
-                let mut writers = match writers {
-                    Ok(w) => w,
-                    Err(e) => {
-                        let mut first = error.lock().unwrap();
-                        if first.is_none() {
-                            *first = Some(e.into());
-                        }
-                        stop.store(true, Ordering::SeqCst);
-                        return;
-                    }
+        let readers = start_scoped_pool(scope, reader_cnt, move |_, quit| {
+            loop {
+                let task = crossbeam_channel::select! {
+                    recv(quit) -> _ => break,
+                    recv(task_rx) -> task => match task { Ok(task) => task, Err(_) => break },
                 };
-                for record in chunk_rx {
-                    if stop.load(Ordering::SeqCst) {
-                        continue;
-                    }
-                    crate::job_ctx::attach_top_profiling_info(
-                        reorg.job_id,
-                        &reorg.query.to_utf8_lossy_go(),
-                    );
-                    for batch in record.batches {
-                        let result = catch_reorg_panic(|| {
-                            if tidb_failpoint::eval(
-                                "github.com/pingcap/tidb/pkg/ddl/mockWriteLocalError",
-                            )
-                            .is_some()
-                            {
-                                return Err(tidb_ddl_ingest::Error::Other(
-                                    "mock write local error".into(),
-                                )
-                                .into());
-                            }
-                            for entry in batch.entries {
-                                if tidb_failpoint::eval(
-                                    "github.com/pingcap/tidb/pkg/ddl/mockLocalWriterPanic",
-                                )
-                                .is_some()
-                                {
-                                    panic!("mock panic");
-                                }
-                                writers
-                                    .get_mut(&entry.index_id)
-                                    .expect("registered index writer")
-                                    .write_row(&entry.key, &entry.value, &entry.row_id)?;
-                                if tidb_failpoint::eval(
-                                    "github.com/pingcap/tidb/pkg/ddl/mockLocalWriterError",
-                                )
-                                .is_some()
-                                {
-                                    return Err(tidb_ddl_ingest::Error::Other(
-                                        "mock engine error".into(),
-                                    )
-                                    .into());
-                                }
-                            }
-                            Ok(())
-                        });
-                        if let Err(e) = result {
-                            let mut first = error.lock().unwrap();
-                            if first.is_none() {
-                                *first = Some(e.into());
-                            }
-                            stop.store(true, Ordering::SeqCst);
-                            break;
+                if stop.load(Ordering::SeqCst) {
+                    continue;
+                }
+                crate::job_ctx::attach_top_profiling_info(
+                    reorg.job_id,
+                    &reorg.query.to_utf8_lossy_go(),
+                );
+                let result = catch_reorg_panic(|| {
+                    scan_records(
+                        opener,
+                        timeout,
+                        backfiller,
+                        reorg,
+                        physical_id,
+                        &task,
+                        bc.as_ref(),
+                        reorg_meta,
+                        check_owner,
+                        step_cancelled,
+                    )
+                });
+                match result {
+                    Ok(batches) => {
+                        for batch in &batches {
+                            bc.update_chunk(task.id, batch.batch.added as i64, batch.batch.done);
                         }
-                        if result_tx
-                            .send(IndexWriteResult {
-                                id: record.id,
-                                count: batch.batch.added as i64,
-                                warnings: batch.batch.warnings,
+                        if chunk_tx
+                            .send(IndexRecordChunk {
+                                id: task.id,
+                                batches,
                             })
                             .is_err()
                         {
                             return;
                         }
                     }
+                    Err(e) => {
+                        let mut first = error.lock().unwrap();
+                        if first.is_none() {
+                            *first = Some(e);
+                        }
+                        stop.store(true, Ordering::SeqCst);
+                    }
                 }
-            }));
+            }
+        });
+        let writers = start_scoped_pool(scope, writer_cnt, move |worker_id, quit| {
+            let writers = engines
+                .iter()
+                .zip(&reorg.index_ids)
+                .map(|(engine, index_id)| {
+                    engine
+                        .clone()
+                        .create_writer(
+                            worker_id,
+                            bc.get_local_backend()
+                                .map_or(0, |b| b.cfg.local_writer_mem_cache_size),
+                        )
+                        .map(|w| (*index_id, w))
+                })
+                .collect::<tidb_ddl_ingest::Result<std::collections::HashMap<_, _>>>();
+            let mut writers = match writers {
+                Ok(w) => w,
+                Err(e) => {
+                    let mut first = error.lock().unwrap();
+                    if first.is_none() {
+                        *first = Some(e.into());
+                    }
+                    stop.store(true, Ordering::SeqCst);
+                    return;
+                }
+            };
+            loop {
+                let record = crossbeam_channel::select! {
+                    recv(quit) -> _ => break,
+                    recv(chunk_rx) -> record => match record { Ok(record) => record, Err(_) => break },
+                };
+                if stop.load(Ordering::SeqCst) {
+                    continue;
+                }
+                crate::job_ctx::attach_top_profiling_info(
+                    reorg.job_id,
+                    &reorg.query.to_utf8_lossy_go(),
+                );
+                for batch in record.batches {
+                    let result = catch_reorg_panic(|| {
+                        if tidb_failpoint::eval(
+                            "github.com/pingcap/tidb/pkg/ddl/mockWriteLocalError",
+                        )
+                        .is_some()
+                        {
+                            return Err(tidb_ddl_ingest::Error::Other(
+                                "mock write local error".into(),
+                            )
+                            .into());
+                        }
+                        for entry in batch.entries {
+                            if tidb_failpoint::eval(
+                                "github.com/pingcap/tidb/pkg/ddl/mockLocalWriterPanic",
+                            )
+                            .is_some()
+                            {
+                                panic!("mock panic");
+                            }
+                            writers
+                                .get_mut(&entry.index_id)
+                                .expect("registered index writer")
+                                .write_row(&entry.key, &entry.value, &entry.row_id)?;
+                            if tidb_failpoint::eval(
+                                "github.com/pingcap/tidb/pkg/ddl/mockLocalWriterError",
+                            )
+                            .is_some()
+                            {
+                                return Err(tidb_ddl_ingest::Error::Other(
+                                    "mock engine error".into(),
+                                )
+                                .into());
+                            }
+                        }
+                        Ok(())
+                    });
+                    if let Err(e) = result {
+                        let mut first = error.lock().unwrap();
+                        if first.is_none() {
+                            *first = Some(e.into());
+                        }
+                        stop.store(true, Ordering::SeqCst);
+                        break;
+                    }
+                    if result_tx
+                        .send(IndexWriteResult {
+                            id: record.id,
+                            count: batch.batch.added as i64,
+                            warnings: batch.batch.warnings,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            }
+        });
+        let pipe = Arc::new(IngestPipelineWorkers {
+            reader: readers,
+            writer: writers,
+        });
+        if let Some(current) = current_pipe {
+            *current.lock().unwrap() = Some(pipe.clone());
         }
-        drop(chunk_rx);
-        drop(result_tx);
+        // Keep tuning channels alive until all scoped workers have finished.
+        let _pipe = pipe;
         let sink_ctx = &ctx;
         scope.spawn(tidb_cpuprofile::labels::inherit(move || {
             for result in result_rx {
@@ -420,6 +517,9 @@ pub(super) fn execute_and_close_pipeline<S: StoreClient>(
         }
         drop(task_tx);
     });
+    if let Some(current) = current_pipe {
+        current.lock().unwrap().take();
+    }
     if let Some(error) = error.into_inner().unwrap() {
         return Err(error);
     }
@@ -485,7 +585,14 @@ fn scan_records<S: StoreClient>(
                         physical_id,
                         start: &start,
                         end: &task.end,
-                        batch_size: reorg.batch_size,
+                        batch_size: reorg_meta.map_or(reorg.batch_size, |meta| {
+                            meta.read()
+                                .get_batch_size(tidb_model::DDLReorgProcessDefaults::new(
+                                    || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_WORKER_COUNT,
+                                    || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_BATCH_SIZE,
+                                ))
+                                .max(1) as usize
+                        }),
                     };
                     let chunk =
                         match backfiller.reorg_add_index(reorg, work, snapshot.clone(), buffer) {
@@ -527,6 +634,53 @@ fn catch_reorg_panic<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Go `workerpool/workpool_test.go:TestTunePoolSize`, running grow/shrink
+    /// cases on the scoped pools used by readIndexStepExecutor.ResourceModified.
+    #[test]
+    fn test_tune_pool_size() {
+        let active = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let (done, finish) = crossbeam_channel::unbounded::<()>();
+            let active = &active;
+            let pool = start_scoped_pool(scope, 3, move |_, quit| {
+                active.fetch_add(1, Ordering::SeqCst);
+                crossbeam_channel::select! { recv(quit) -> _ => {}, recv(finish) -> _ => {} }
+                active.fetch_sub(1, Ordering::SeqCst);
+            });
+            for count in [5, 2, 10, 1, 4, 2] {
+                pool.tune(count).unwrap();
+                assert_eq!(pool.count.load(Ordering::SeqCst), count);
+                // Go Tune(wait=true) waits for retired workers. Newly spawned
+                // workers may not yet have entered their first task.
+                assert!(active.load(Ordering::SeqCst) <= count);
+            }
+            drop(done);
+        });
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+    }
+    /// Go `addindextest2.TestAlterJobOnDXF`: thread=8 tunes the live local
+    /// pipeline to four readers and six writers, waiting for retired workers.
+    #[test]
+    fn test_alter_job_on_dxf() {
+        std::thread::scope(|scope| {
+            let (done, finish) = crossbeam_channel::unbounded::<()>();
+            let read_finish = finish.clone();
+            let reader = start_scoped_pool(scope, 1, move |_, quit| {
+                crossbeam_channel::select! { recv(quit) -> _ => {},recv(read_finish) -> _ => {} }
+            });
+            let writer = start_scoped_pool(scope, 2, move |_, quit| {
+                crossbeam_channel::select! { recv(quit) -> _ => {},recv(finish) -> _ => {} }
+            });
+            let pipe = IngestPipelineWorkers { reader, writer };
+            pipe.tune(8, 0, false).unwrap();
+            assert_eq!(pipe.reader.count.load(Ordering::SeqCst), 4);
+            assert_eq!(pipe.writer.count.load(Ordering::SeqCst), 6);
+            pipe.tune(1, 0, false).unwrap();
+            assert_eq!(pipe.reader.count.load(Ordering::SeqCst), 1);
+            assert_eq!(pipe.writer.count.load(Ordering::SeqCst), 2);
+            drop(done);
+        });
+    }
     /// Go `backfilling_txn_executor_test.go:TestExpectedIngestWorkerCnt`.
     #[test]
     fn test_expected_ingest_worker_cnt() {

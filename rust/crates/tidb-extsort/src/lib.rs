@@ -104,6 +104,12 @@ pub trait Writer: Send {
     /// Adds one key-value pair without retaining the input slices.
     fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()>;
 
+    /// Go `ingestctrl.Engine.TotalMemorySize` storage adapter: memory owned by
+    /// the writer, including retained vector capacity after a spill.
+    fn memory_size(&self) -> usize {
+        0
+    }
+
     /// Flushes buffered pairs while keeping the writer reusable.
     fn flush(&mut self) -> Result<()>;
 

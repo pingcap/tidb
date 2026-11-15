@@ -1375,6 +1375,16 @@ impl DiskSorterWriter {
 }
 
 impl Writer for DiskSorterWriter {
+    /// Go `ingestctrl.Engine.TotalMemorySize`, for extsort's writer buffers.
+    fn memory_size(&self) -> usize {
+        self.key_values.capacity() * std::mem::size_of::<KeyValue>()
+            + self
+                .key_values
+                .iter()
+                .map(|pair| pair.key.capacity() + pair.value.capacity())
+                .sum::<usize>()
+    }
+
     fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
         if self.buffered_bytes + key.len() + value.len() > self.sorter.options.writer_buffer_size {
             self.flush_inner()?;

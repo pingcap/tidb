@@ -177,10 +177,12 @@ pub fn create_local_backend<S: tikv_client::PdClient>(
         security.cluster_ssl_key,
         security.cluster_verify_cn,
     );
-    Ok(Arc::new(Backend::new(
+    let backend = Arc::new(Backend::new(
         cfg,
         Arc::new(RemoteImportClient::new(store, security)),
-    )?))
+    )?);
+    backend.update_write_speed_limit(meta.get_max_write_speed());
+    Ok(backend)
 }
 
 /// Go `mockNewBackendContext` InjectCall arguments.

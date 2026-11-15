@@ -374,3 +374,6 @@ pub use crate::transaction::{
 pub use crate::transaction::{PointReadScanDetail, PointResponseStats};
 pub use crate::transaction::{DEFAULT_SCAN_BATCH_SIZE, GET_MAX_BACKOFF_MS};
 pub use crate::util::RequestSource;
+
+/// Go `pd/client/errs`, including checksum TSO leader-change retry classification.
+pub use crate::pd::errs as pd_errs;

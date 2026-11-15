@@ -637,6 +637,7 @@ impl<S: StoreClient> tidb_dxf_taskexecutor::Extension for BackfillDistExecutor<S
                     table,
                     meta: RwLock::new(meta),
                     backend: Mutex::new(None),
+                    curr_pipe: Mutex::new(None),
                     summary: Arc::new(SubtaskSummary::default()),
                 }))
             }
@@ -687,6 +688,7 @@ struct ReadIndexStepExecutor<S: StoreClient> {
     table: tidb_model::TableInfo,
     meta: RwLock<BackfillTaskMeta>,
     backend: Mutex<Option<Arc<tidb_ingestor_ingestctrl::local::Backend>>>,
+    curr_pipe: Mutex<Option<Arc<super::ingest::IngestPipelineWorkers>>>,
     summary: Arc<SubtaskSummary>,
 }
 impl<S: StoreClient> StepExecFrameworkInfo for ReadIndexStepExecutor<S> {
@@ -801,6 +803,8 @@ impl<S: StoreClient> StepExecutor for ReadIndexStepExecutor<S> {
                 &check,
                 &stopped,
                 &mut warnings,
+                Some(&self.curr_pipe),
+                meta.estimate_row_size,
             );
             match result {
                 Ok(()) => bc
@@ -833,12 +837,115 @@ impl<S: StoreClient> StepExecutor for ReadIndexStepExecutor<S> {
         }
         Ok(())
     }
+    /// Go `readIndexStepExecutor.TaskMetaModified`: mutate shared reorg metadata,
+    /// so a running scanner observes the new batch size at its next chunk.
     fn task_meta_modified(&self, _: &Context, new: &[u8]) -> tidb_dxf_execute::Result<()> {
-        *self.meta.write().unwrap() = serde_json::from_slice(new)?;
-        Ok(())
+        modify_read_index_task_meta(&self.meta.read().unwrap(), new, |limit| {
+            if let Some(backend) = self.backend.lock().unwrap().as_ref() {
+                backend.update_write_speed_limit(limit);
+            }
+        })
     }
-    fn resource_modified(&self, _: &Context, _: &StepResource) -> tidb_dxf_execute::Result<()> {
-        Err(Box::new(std::io::Error::other("no subtask running")))
+
+    /// Go `readIndexStepExecutor.ResourceModified`.
+    fn resource_modified(&self, _: &Context, new: &StepResource) -> tidb_dxf_execute::Result<()> {
+        let pipe = self
+            .curr_pipe
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| std::io::Error::other("no subtask running"))?;
+        let meta = self.meta.read().unwrap();
+        let global_sort = meta
+            .job
+            .reorg_meta
+            .as_ref()
+            .is_some_and(|meta| meta.read().use_cloud_storage);
+        let avg_row_size = meta.estimate_row_size;
+        drop(meta);
+        pipe.tune(new.cpu.capacity() as usize, avg_row_size, global_sort)
+            .map_err(|error| Box::new(std::io::Error::other(error)) as tidb_dxf_execute::Error)
+    }
+}
+/// Go `readIndexStepExecutor.TaskMetaModified`: update the shared job in place.
+fn modify_read_index_task_meta(
+    meta: &BackfillTaskMeta,
+    new: &[u8],
+    mut update_write_speed: impl FnMut(i64),
+) -> tidb_dxf_execute::Result<()> {
+    let new: BackfillTaskMeta = serde_json::from_slice(new)?;
+    if let (Some(old), Some(new)) = (meta.job.reorg_meta.as_ref(), new.job.reorg_meta.as_ref()) {
+        let old = old.read();
+        let new = new.read();
+        let defaults = tidb_model::DDLReorgProcessDefaults::new(
+            || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_WORKER_COUNT,
+            || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_BATCH_SIZE,
+        );
+        let batch_size = new.get_batch_size(defaults);
+        if old.get_batch_size(defaults) != batch_size {
+            old.set_batch_size(batch_size);
+        }
+        if meta.cloud_storage_uri.is_empty()
+            && old.get_max_write_speed() != new.get_max_write_speed()
+        {
+            old.set_max_write_speed(new.get_max_write_speed());
+            update_write_speed(new.get_max_write_speed());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod modification_tests {
+    use super::*;
+    /// Go `addindextest2.TestAlterJobOnDXF`: 32->256 batch, 16->1024 write
+    /// speed on the already-running job; global sort only changes the batch.
+    #[test]
+    fn test_alter_job_on_dxf() {
+        for global in [false, true] {
+            let mut meta = BackfillTaskMeta::default();
+            let reorg = tidb_model::DDLReorgMeta::default();
+            reorg.set_batch_size(32);
+            reorg.set_max_write_speed(16);
+            meta.job.reorg_meta = Some(tidb_model::GoShared::new(reorg));
+            if global {
+                meta.cloud_storage_uri = "file:///tmp/global-sort".into();
+            }
+            let running = meta.job.reorg_meta.clone().unwrap();
+            let mut updated = BackfillTaskMeta::default();
+            let reorg = tidb_model::DDLReorgMeta::default();
+            reorg.set_batch_size(256);
+            reorg.set_max_write_speed(1024);
+            updated.job.reorg_meta = Some(tidb_model::GoShared::new(reorg));
+            let bytes = serde_json::to_vec(&updated).unwrap();
+            let limiter = tidb_ingestor_ingestctrl::localhelper::StoreWriteLimiter::new(16);
+            let mut calls = 0;
+            for _ in 0..2 {
+                modify_read_index_task_meta(&meta, &bytes, |limit| {
+                    calls += 1;
+                    limiter.update_limit(limit);
+                })
+                .unwrap();
+            }
+            assert_eq!(
+                running
+                    .read()
+                    .get_batch_size(tidb_model::DDLReorgProcessDefaults::new(|| 4, || 256)),
+                256
+            );
+            assert_eq!(
+                running.read().get_max_write_speed(),
+                if global { 16 } else { 1024 }
+            );
+            assert_eq!(limiter.limit(), if global { 16 } else { 1024 });
+            assert_eq!(calls, usize::from(!global));
+            assert!(
+                modify_read_index_task_meta(&meta, b"invalid json", |_| panic!(
+                    "invalid metadata reached backend"
+                ))
+                .is_err()
+            );
+        }
     }
 }
 fn pipeline_error(error: super::ingest::PipelineError) -> tidb_dxf_execute::Error {

@@ -23,6 +23,7 @@ pub fn gen_config(
         dupe_detect_enabled: check_dup && !global_sort,
         kv_write_batch_size: 16 << 10,
         should_check_write_stall: true,
+        checkpoint_enabled: true,
     };
     adjust_import_memory(mem_root, &mut cfg);
     cfg
