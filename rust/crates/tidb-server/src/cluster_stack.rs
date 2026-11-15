@@ -199,12 +199,40 @@ pub fn cluster_session_stack(
                 || (mode == tidb_ddl::StartMode::Bootstrap && bootstrap.already_bootstrapped());
             if mode == tidb_ddl::StartMode::Bootstrap && !bootstrap.already_bootstrapped() {
                 let started = std::time::Instant::now();
-                let (outcome, schema_version, bootstrap_splits) =
-                    tidb_session::bootstrap_publish::publish_bootstrap_with_splits(
-                        opener,
-                        COPROCESSOR_QUERY_TIMEOUT,
-                    )
-                    .map_err(|error| error.to_string())?;
+                let published = tidb_session::bootstrap_publish::publish_bootstrap_with_splits(
+                    opener,
+                    COPROCESSOR_QUERY_TIMEOUT,
+                );
+                let published = match published {
+                    Ok(published) => Some(published),
+                    // Go `bootstrap`: only one node bootstraps a store; the
+                    // others wait for it, checking `checkBootstrapped` every
+                    // 200ms. A node whose publish lost the race to another
+                    // waits the same way and boots from the winner's tables.
+                    Err(error) => {
+                        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                        loop {
+                            let state = tidb_domain_core::real_tikv_privileges::read_bootstrap_state_from_cluster(
+                                opener,
+                                COPROCESSOR_QUERY_TIMEOUT,
+                            )
+                            .map_err(|error| error.to_string())?;
+                            if state.already_bootstrapped() {
+                                // Go's next `checkBootstrapped` round finds
+                                // it bootstrapped and runs `upgrade`.
+                                run_upgrade = true;
+                                break None;
+                            }
+                            if std::time::Instant::now() >= deadline {
+                                return Err(error);
+                            }
+                            tidb_logutil::bg_logger()
+                                .info("bootstrap not done yet, waiting for owner to finish", &[]);
+                            std::thread::sleep(std::time::Duration::from_millis(200));
+                        }
+                    }
+                };
+                if let Some((outcome, schema_version, bootstrap_splits)) = published {
                 tidb_session::bootstrap_publish::notify_committed_bootstrap(
                     &outcome,
                     schema_version,
@@ -219,6 +247,7 @@ pub fn cluster_session_stack(
                         region_store.as_ref(),
                         &bootstrap_splits,
                     );
+                }
                 }
             }
             loaded = Some(
