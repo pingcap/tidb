@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -29,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
@@ -220,7 +223,13 @@ func getNominalSort(ls *logicalop.LogicalSort, reqProp *property.PhysicalPropert
 func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (_ *property.PhysicalProperty, _, _ bool) {
 	propItems := make([]property.SortItem, 0, len(items))
 	onlyColumn := true
-	for _, item := range items {
+	for i := 0; i < len(items); i++ {
+		item := items[i]
+		if col, nullsHigh, ok := matchIsNullPair(items, i); ok {
+			propItems = append(propItems, property.SortItem{Col: col, Desc: items[i+1].Desc, NullsHigh: nullsHigh})
+			i++
+			continue
+		}
 		switch expr := item.Expr.(type) {
 		case *expression.Column:
 			propItems = append(propItems, property.SortItem{Col: expr, Desc: item.Desc})
@@ -256,13 +265,29 @@ func getNominalSortSimple(ls *logicalop.LogicalSort, reqProp *property.PhysicalP
 }
 
 // MatchItems checks if this prop's columns can match by items totally.
+// The items are converted the same way as GetPropByOrderByItems, so an
+// `ISNULL(col), col` pair matches a single NullsHigh (or plain) sort item on col.
+// Only the prefix that p requires is converted, so later items that are not
+// columns do not prevent a match.
 func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
-	if len(items) < len(p.SortItems) {
-		return false
-	}
-	for i, col := range p.SortItems {
-		sortItem := items[i]
-		if sortItem.Desc != col.Desc || !col.Col.EqualColumn(sortItem.Expr) {
+	i := 0
+	for _, propItem := range p.SortItems {
+		if i >= len(items) {
+			return false
+		}
+		var item property.SortItem
+		if col, nullsHigh, ok := matchIsNullPair(items, i); ok {
+			item = property.SortItem{Col: col, Desc: items[i+1].Desc, NullsHigh: nullsHigh}
+			i += 2
+		} else {
+			col, ok := items[i].Expr.(*expression.Column)
+			if !ok {
+				return false
+			}
+			item = property.SortItem{Col: col, Desc: items[i].Desc}
+			i++
+		}
+		if item.Desc != propItem.Desc || item.NullsHigh != propItem.NullsHigh || !item.Col.EqualColumn(propItem.Col) {
 			return false
 		}
 	}
@@ -273,7 +298,13 @@ func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
 // consider the case that all expression are columns.
 func GetPropByOrderByItems(items []*util.ByItems) (*property.PhysicalProperty, bool) {
 	propItems := make([]property.SortItem, 0, len(items))
-	for _, item := range items {
+	for i := 0; i < len(items); i++ {
+		item := items[i]
+		if col, nullsHigh, ok := matchIsNullPair(items, i); ok {
+			propItems = append(propItems, property.SortItem{Col: col, Desc: items[i+1].Desc, NullsHigh: nullsHigh})
+			i++
+			continue
+		}
 		col, ok := item.Expr.(*expression.Column)
 		if !ok {
 			return nil, false
@@ -281,6 +312,109 @@ func GetPropByOrderByItems(items []*util.ByItems) (*property.PhysicalProperty, b
 		propItems = append(propItems, property.SortItem{Col: col, Desc: item.Desc})
 	}
 	return &property.PhysicalProperty{SortItems: propItems}, true
+}
+
+// matchIsNullPair checks whether items[i] and items[i+1] are a NULL indicator
+// of col followed by col, such as `ISNULL(col), col` or
+// `CASE WHEN col IS NULL THEN 1 ELSE 0 END, col`, the usual ways to write
+// NULLS LAST in MySQL (see nullIndicator). The pair
+// orders exactly like col alone, except that NULLs sort high when the indicator
+// puts NULLs in the same place as a NULLs-high order of col would.
+func matchIsNullPair(items []*util.ByItems, i int) (col *expression.Column, nullsHigh, ok bool) {
+	if i+1 >= len(items) {
+		return nil, false, false
+	}
+	col, highForNull, ok := nullIndicator(items[i].Expr)
+	if !ok || !col.EqualColumn(items[i+1].Expr) {
+		return nil, false, false
+	}
+	// NULLs come last iff the indicator gives them the higher key in an ASC item,
+	// or the lower key in a DESC item. A NULLs-high order of col puts NULLs last
+	// iff col is ASC.
+	nullsLast := highForNull != items[i].Desc
+	return col, nullsLast != items[i+1].Desc, true
+}
+
+// nullIndicator checks whether expr takes exactly two distinct values, one for
+// the rows where col is NULL and another for the rest. highForNull reports
+// whether the value for NULL rows is the higher one in sort order. It accepts:
+//   - ISNULL(col) and NOT(ISNULL(col)), that is col IS [NOT] NULL;
+//   - CASE WHEN c THEN x [ELSE y] END and IF(c, x, y), where c is one of the
+//     above and x, y are distinct literals. A missing ELSE is NULL, which sorts
+//     lowest.
+func nullIndicator(expr expression.Expression) (col *expression.Column, highForNull, ok bool) {
+	if col, trueForNull, ok := nullTest(expr); ok {
+		// TRUE (1) sorts higher than FALSE (0).
+		return col, trueForNull, true
+	}
+	sf, isFunc := expr.(*expression.ScalarFunction)
+	if !isFunc || (sf.FuncName.L != ast.Case && sf.FuncName.L != ast.If) {
+		return nil, false, false
+	}
+	args := sf.GetArgs()
+	if len(args) != 3 && (sf.FuncName.L == ast.If || len(args) != 2) {
+		return nil, false, false
+	}
+	col, condTrueForNull, ok := nullTest(args[0])
+	if !ok {
+		return nil, false, false
+	}
+	thenVal, ok := literalForOrder(args[1], sf.RetType)
+	if !ok {
+		return nil, false, false
+	}
+	var elseVal types.Datum // NULL when there is no ELSE.
+	if len(args) == 3 {
+		if elseVal, ok = literalForOrder(args[2], sf.RetType); !ok {
+			return nil, false, false
+		}
+	}
+	cmp, err := thenVal.Compare(types.DefaultStmtNoWarningContext, &elseVal, collate.GetCollator(sf.RetType.GetCollate()))
+	if err != nil || cmp == 0 {
+		return nil, false, false
+	}
+	// The NULL rows get the THEN value when the condition is true for them.
+	return col, (cmp > 0) == condTrueForNull, true
+}
+
+// nullTest checks whether expr is `col IS NULL` or `col IS NOT NULL`, and
+// reports whether it is true for the rows where col is NULL.
+func nullTest(expr expression.Expression) (col *expression.Column, trueForNull, ok bool) {
+	sf, isFunc := expr.(*expression.ScalarFunction)
+	if !isFunc {
+		return nil, false, false
+	}
+	trueForNull = true
+	if sf.FuncName.L == ast.UnaryNot {
+		if sf, isFunc = sf.GetArgs()[0].(*expression.ScalarFunction); !isFunc {
+			return nil, false, false
+		}
+		trueForNull = false
+	}
+	if sf.FuncName.L != ast.IsNull {
+		return nil, false, false
+	}
+	col, ok = sf.GetArgs()[0].(*expression.Column)
+	return col, trueForNull, ok
+}
+
+// literalForOrder returns the value of expr when it is a literal of the same
+// evaluation type as the CASE/IF result, so that comparing the two branch
+// values gives the order the result is sorted in. Parameters of prepared
+// statements are rejected, so a cached plan does not depend on their values.
+func literalForOrder(expr expression.Expression, retType *types.FieldType) (types.Datum, bool) {
+	c, ok := expr.(*expression.Constant)
+	if !ok || c.ParamMarker != nil || c.DeferredExpr != nil {
+		return types.Datum{}, false
+	}
+	if c.Value.IsNull() {
+		return c.Value, true
+	}
+	switch et := retType.EvalType(); et {
+	case types.ETInt, types.ETReal, types.ETDecimal, types.ETString:
+		return c.Value, c.RetType.EvalType() == et
+	}
+	return types.Datum{}, false
 }
 
 // resolveIndicesForSort is a helper function to resolve indices for sort operators.
