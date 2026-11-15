@@ -55,6 +55,7 @@ type encodeAndSortOperator struct {
 	errCh             chan error
 	indicesGenKV      map[int64]importer.GenKVIndex
 	onDupKey          importer.OnDupKeyMode
+	keepInMemory      bool
 }
 
 var _ operator.Operator = (*encodeAndSortOperator)(nil)
@@ -80,6 +81,7 @@ func newEncodeAndSortOperator(
 		errCh:         make(chan error),
 		indicesGenKV:  executor.indicesGenKV,
 		onDupKey:      executor.taskMeta.Plan.GetOnDupKeyMode(),
+		keepInMemory:  useMemoryFastPath(&executor.taskMeta.Plan),
 	}
 	pool := workerpool.NewWorkerPool(
 		"encodeAndSortOperator",
@@ -135,6 +137,7 @@ func newChunkWorker(
 				SetMemorySizeLimit(perIndexKVMemSizePerCon).
 				SetBlockSize(indexBlockSize).
 				SetOnDup(onDup).
+				SetKeepInMemory(op.keepInMemory).
 				SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
@@ -152,6 +155,7 @@ func newChunkWorker(
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(dataBlockSize).
 			SetOnDup(getOnDupForConflictedKV(op.onDupKey)).
+			SetKeepInMemory(op.keepInMemory).
 			SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}

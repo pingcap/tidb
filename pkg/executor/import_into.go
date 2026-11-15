@@ -127,6 +127,16 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return e.importFromSelect(ctx)
 	}
 
+	// One bounded probe of the data source, before anything else is decided: a
+	// source that fits in one listing page is small enough to prepare here
+	// instead of on the DXF node, and small enough to encode and ingest in a
+	// single step.
+	small, err2 := e.controller.ProbeSmallSource(ctx)
+	if err2 != nil {
+		return err2
+	}
+	e.controller.Plan.SmallSource = small
+
 	useAsyncPrepare := importinto.ShouldUseAsyncPrepare(e.controller.Plan)
 	if e.controller.DataSourceType == importer.DataSourceTypeFile && !useAsyncPrepare {
 		if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
@@ -260,6 +270,15 @@ func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase
 	}
 	// if tidb_enable_dist_task=true, we import distributively, otherwise we import on current node.
 	if vardef.EnableDistTask.Load() {
+		if e.controller.Plan.SmallSource {
+			// prepare already ran here, so hand the chunks over instead of
+			// making the DXF node list the source again.
+			chunkMap, err2 := e.controller.PopulateChunks(ctx)
+			if err2 != nil {
+				return 0, nil, err2
+			}
+			return importinto.SubmitTaskWithChunkMap(ctx, e.controller.Plan, e.stmt, chunkMap)
+		}
 		return importinto.SubmitTask(ctx, e.controller.Plan, e.stmt)
 	}
 	return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, nil)

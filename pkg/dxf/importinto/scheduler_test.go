@@ -298,3 +298,25 @@ func TestIsImporting2TiKV(t *testing.T) {
 	require.True(t, ext.isImporting2TiKV(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepImport}}))
 	require.True(t, ext.isImporting2TiKV(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepWriteAndIngest}}))
 }
+
+func TestSmallImportFastPathGate(t *testing.T) {
+	base := importer.Plan{CloudStorageURI: "s3://bucket", SmallSource: true, TotalFileSize: importer.SmallImportMaxSize}
+	require.True(t, useMemoryFastPath(&base))
+	for _, mutate := range []func(*importer.Plan){
+		func(p *importer.Plan) { p.CloudStorageURI = "" },
+		func(p *importer.Plan) { p.SmallSource = false },
+		func(p *importer.Plan) { p.TotalFileSize++ },
+		func(p *importer.Plan) { p.OnDupKey = importer.OnDupKeyModeCapture },
+		func(p *importer.Plan) { p.QuerySource = &importer.QuerySource{} },
+		func(p *importer.Plan) { p.ForceMergeStep = true },
+	} {
+		plan := base
+		mutate(&plan)
+		require.False(t, useMemoryFastPath(&plan))
+	}
+	require.False(t, useMemoryFastPath(nil))
+	sch := &importScheduler{sourceStep: proto.ImportStepQuery, FastPath: true}
+	require.Equal(t, proto.ImportStepQuery, sch.GetNextStep(&proto.TaskBase{Step: proto.StepInit}))
+	require.Equal(t, proto.ImportStepMergeSort, sch.GetNextStep(&proto.TaskBase{Step: proto.ImportStepQuery}))
+	require.Equal(t, proto.ImportStepPostProcess, sch.GetNextStep(&proto.TaskBase{Step: proto.ImportStepEncodeAndSort}))
+}

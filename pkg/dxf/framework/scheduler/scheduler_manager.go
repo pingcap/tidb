@@ -43,7 +43,7 @@ import (
 var (
 	// CheckTaskRunningInterval is the interval for loading tasks.
 	// It is exported for testing.
-	CheckTaskRunningInterval = 3 * time.Second
+	CheckTaskRunningInterval = 300 * time.Millisecond
 	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
 	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
 	// DefaultCleanUpInterval is the interval of task cleanup.

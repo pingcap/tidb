@@ -1041,3 +1041,37 @@ func TestPlanMetadataCompatibility(t *testing.T) {
 	}
 	require.NotContains(t, actual, "LineFieldsInfo")
 }
+
+func TestProbeSmallSource(t *testing.T) {
+	ctx := context.Background()
+	probe := func(path string) bool {
+		t.Helper()
+		controller := &LoadDataController{Plan: &Plan{Path: path}, ASTArgs: &ASTArgs{}}
+		t.Cleanup(controller.Close)
+		small, err := controller.ProbeSmallSource(ctx)
+		require.NoError(t, err)
+		return small
+	}
+	t.Run("single-file-size", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "data.csv")
+		file, err := os.Create(path)
+		require.NoError(t, err)
+		require.NoError(t, file.Truncate(SmallImportMaxSize))
+		require.NoError(t, file.Close())
+		require.True(t, probe(path))
+		require.NoError(t, os.Truncate(path, SmallImportMaxSize+1))
+		require.False(t, probe(path))
+	})
+	t.Run("bounded-glob", func(t *testing.T) {
+		dir := t.TempDir()
+		for i := range SmallImportMaxFiles - 1 {
+			require.NoError(t, os.WriteFile(filepath.Join(dir, fmt.Sprintf("%03d.csv", i)), []byte("1\n"), 0600))
+		}
+		require.True(t, probe(filepath.Join(dir, "*.csv")))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "last.csv"), []byte("2\n"), 0600))
+		require.False(t, probe(filepath.Join(dir, "*.csv")))
+	})
+	t.Run("missing-file", func(t *testing.T) {
+		require.False(t, probe(filepath.Join(t.TempDir(), "missing.csv")))
+	})
+}

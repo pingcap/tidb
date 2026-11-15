@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -187,4 +188,23 @@ func TestNormalizeSubtaskErr(t *testing.T) {
 		err := normalizeSubtaskErr(otherErr)
 		require.Equal(t, otherErr, err)
 	})
+}
+
+func TestSmallImportRejectsSpilledFiles(t *testing.T) {
+	for _, indexSpill := range []bool{false, true} {
+		shared := &SharedVars{
+			SortedDataMeta:   &globalsort.SortedKVMeta{},
+			SortedIndexMetas: make(map[int64]*globalsort.SortedKVMeta),
+			memGroups:        map[string][]simplesst.KVPair{globalsort.DataKVGroup: {{Key: []byte("a"), Value: []byte("v")}}},
+		}
+		files := []simplesst.MultipleFilesStat{{Filenames: [][2]string{{"data", "stat"}}}}
+		if indexSpill {
+			shared.SortedIndexMetas[1] = &globalsort.SortedKVMeta{MultipleFilesStats: files}
+		} else {
+			shared.SortedDataMeta.MultipleFilesStats = files
+		}
+		var err error
+		require.NotPanics(t, func() { err = (&importStepExecutor{}).ingestFromMemory(context.Background(), &proto.Subtask{}, shared) })
+		require.ErrorContains(t, err, "spilled")
+	}
 }

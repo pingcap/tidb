@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "engine.go",
         "kvgroup.go",
+        "memory_engine.go",
         "merge.go",
         "merge_v2.go",
         "reader.go",
@@ -22,6 +23,7 @@ go_library(
         "//pkg/ingestor/simplesst",
         "//pkg/kv",
         "//pkg/lightning/common",
+        "//pkg/lightning/config",
         "//pkg/lightning/log",
         "//pkg/lightning/membuf",
         "//pkg/lightning/metric",
@@ -64,7 +66,7 @@ go_test(
     ],
     embed = [":globalsort"],
     flaky = True,
-    shard_count = 41,
+    shard_count = 42,
     deps = [
         "//pkg/dxf/framework/taskexecutor/execute",
         "//pkg/ingestor/engineapi",

@@ -1405,11 +1405,11 @@ func (local *Backend) ImportEngine(
 	return local.ingestEngine(ctx, localEngine, regionSplitSize, regionSplitKeys)
 }
 
-// IngestExternalEngine ingests an external engine created by
-// globalsort.NewExternalEngine to TiKV.
+// IngestExternalEngine ingests a caller-owned sorted engine to TiKV.
+// The caller must keep its data alive until ingestion completes and close it afterward.
 func (local *Backend) IngestExternalEngine(
 	ctx context.Context,
-	e *globalsort.Engine,
+	e engineapi.Engine,
 	regionSplitSize, regionSplitKeys int64,
 ) error {
 	regionSplitSize, regionSplitKeys = local.adjustRegionSplitSizeKeys(ctx, regionSplitSize, regionSplitKeys)

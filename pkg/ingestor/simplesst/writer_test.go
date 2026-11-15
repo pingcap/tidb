@@ -936,3 +936,37 @@ func TestRandPartitionedPrefix(t *testing.T) {
 	require.True(t, IsValidPartition([]byte("p00000000")))
 	require.True(t, IsValidPartition([]byte("p11110000")))
 }
+
+func TestWriterKeepInMemory(t *testing.T) {
+	for _, limit := range []uint64{64, 1024} {
+		t.Run(fmt.Sprintf("buffer-%d", limit), func(t *testing.T) {
+			var summary *WriterSummary
+			w := NewWriterBuilder().SetKeepInMemory(true).SetBlockSize(int(limit)).SetMemorySizeLimit(limit).
+				SetOnCloseFunc(func(s *WriterSummary) { summary = s }).Build(objstore.NewMemStorage(), "memory", "0")
+			for _, key := range []string{"c", "a", "b"} {
+				require.NoError(t, w.WriteRow(context.Background(), []byte(key), bytes.Repeat([]byte("v"), 20), nil))
+			}
+			require.NoError(t, w.Close(context.Background()))
+			require.EqualValues(t, 3, summary.TotalCnt)
+			if limit == 64 {
+				require.Empty(t, summary.MemKVs)
+				require.Positive(t, summary.KVFileCount)
+			} else {
+				require.Zero(t, summary.KVFileCount)
+				require.Len(t, summary.MemKVs, 3)
+				for i, key := range []string{"a", "b", "c"} {
+					require.Equal(t, key, string(summary.MemKVs[i].Key))
+					require.Equal(t, bytes.Repeat([]byte("v"), 20), summary.MemKVs[i].Value)
+				}
+			}
+		})
+	}
+	t.Run("reject-duplicates", func(t *testing.T) {
+		w := NewWriterBuilder().SetKeepInMemory(true).SetOnDup(engineapi.OnDuplicateKeyError).
+			Build(objstore.NewMemStorage(), "memory", "0")
+		for range 2 {
+			require.NoError(t, w.WriteRow(context.Background(), []byte("same"), []byte("v"), nil))
+		}
+		require.Error(t, w.Close(context.Background()))
+	})
+}

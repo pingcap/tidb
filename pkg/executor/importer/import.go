@@ -332,6 +332,11 @@ type Plan struct {
 	IsRaftKV2 bool
 	// total data file size in bytes.
 	TotalFileSize int64
+	// SmallSource is set by ProbeSmallSource before the task is submitted: the
+	// whole data source was seen within one listing page and is below
+	// SmallImportMaxSize. It's the admission check for encoding and ingesting
+	// in a single step.
+	SmallSource bool
 	// used in tests to force enable merge-step when using global sort.
 	ForceMergeStep bool
 	// see ManualRecovery in proto.ExtraParams
@@ -1480,6 +1485,72 @@ func (r *compressionEstimator) estimate(
 		r.ratio.Store(compressTp, compressRatio)
 	}
 	return compressRatio
+}
+
+const (
+	// SmallImportMaxFiles is how many entries ProbeSmallSource looks at before
+	// giving up. One listing request covers it, and both S3 and GCS cap a page
+	// at 1000 anyway.
+	SmallImportMaxFiles = 100
+	// SmallImportMaxSize is the largest source ProbeSmallSource will call small.
+	SmallImportMaxSize int64 = 8 << 20
+)
+
+// errProbeBudgetExceeded stops the walk once the source is known to be too big
+// to bother measuring exactly.
+var errProbeBudgetExceeded = errors.New("probe budget exceeded")
+
+// ProbeSmallSource reports whether the data source is small enough to be
+// encoded and ingested in one step, by looking at no more than
+// SmallImportMaxFiles entries. Seeing fewer than that many means the listing
+// finished, so the count and the total size are both final.
+//
+// A probe that cannot answer returns false: the caller then takes the normal
+// path, which measures the source properly during prepare.
+func (e *LoadDataController) ProbeSmallSource(ctx context.Context) (bool, error) {
+	u, err := objstore.ParseRawURL(e.Path)
+	if err != nil {
+		return false, nil
+	}
+	fileNameKey := strings.Trim(u.Path, "/")
+	if objstore.IsLocal(u) {
+		fileNameKey = filepath.Base(e.Path)
+	}
+	if err = e.InitDataStore(ctx); err != nil {
+		return false, nil
+	}
+	// No glob means the path is one file: its size is one request away, no
+	// listing needed at all.
+	idx := strings.IndexAny(fileNameKey, "*[")
+	if idx == -1 {
+		reader, err2 := e.dataStore.Open(ctx, fileNameKey, nil)
+		if err2 != nil {
+			return false, nil
+		}
+		defer func() {
+			terror.Log(reader.Close())
+		}()
+		size, err3 := reader.Seek(0, io.SeekEnd)
+		if err3 != nil {
+			return false, nil
+		}
+		return size <= SmallImportMaxSize, nil
+	}
+	var cnt int
+	var total int64
+	walkErr := e.dataStore.WalkDir(ctx,
+		&storeapi.WalkOption{ObjPrefix: fileNameKey[:idx], SkipSubDir: true, ListCount: SmallImportMaxFiles},
+		func(_ string, size int64) error {
+			cnt++
+			total += size
+			if cnt >= SmallImportMaxFiles || total > SmallImportMaxSize {
+				return errProbeBudgetExceeded
+			}
+			return nil
+		})
+	// the walk is over the common prefix, so it may count files the glob
+	// would not match; over-counting only makes the answer more conservative.
+	return walkErr == nil, nil
 }
 
 // InitDataFiles initializes the data store and files.
