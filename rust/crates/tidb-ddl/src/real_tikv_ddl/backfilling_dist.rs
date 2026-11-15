@@ -480,10 +480,11 @@ impl<S: StoreClient> StepExecutor for MergeTempIndexStepExecutor<S> {
                     return Err(Box::new(tidb_gocontext::CtxError::Canceled));
                 }
                 BatchStep::Failed(error) => {
-                    return Err(Box::new(tidb_terror::MysqlError::sql_error(
-                        error.code,
-                        error.message,
-                    )));
+                    // Go hands DXF the `*errors.Error` itself.
+                    return Err(Box::new(
+                        tidb_terror::MysqlError::sql_error(error.code, error.message)
+                            .with_identity_opt(error.identity),
+                    ));
                 }
             }
         }
@@ -956,7 +957,7 @@ fn pipeline_error(error: super::ingest::PipelineError) -> tidb_dxf_execute::Erro
         super::ingest::PipelineError::Ingest(e) => Box::new(e),
         super::ingest::PipelineError::Storage(e) => Box::new(e),
         super::ingest::PipelineError::Sql(e) => {
-            Box::new(tidb_terror::MysqlError::sql_error(e.code, e.message))
+            Box::new(tidb_terror::MysqlError::sql_error(e.code, e.message).with_identity_opt(e.identity))
         }
         super::ingest::PipelineError::Interrupted => Box::new(tidb_gocontext::CtxError::Canceled),
     }

@@ -807,3 +807,46 @@ fn test_add_global_index_in_ingest() {
     let non_unique = check(&mut tk, "alter table t add index idx_7(b) global, add index idx_8(b) global", "idx_7", "idx_8");
     assert!(non_unique > global);
 }
+
+/// Go `TestAddIndexDuplicateMessage`: a duplicate written by DML while the
+/// unique index backfills fails it with Go's 1062 text.
+#[test]
+fn test_add_index_duplicate_message() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    let _backend = inject_mock_backend_ctx();
+    tk.must_exec("create table t(id int primary key, b int, k int);");
+    tk.must_exec("insert into t values (1, 1, 1);");
+    let tk1 = std::sync::Mutex::new(tk.new_tk());
+    tk1.lock().unwrap().must_exec("use test");
+    let err_dml = Arc::new(std::sync::Mutex::new(None));
+    let recorded = err_dml.clone();
+    let once = std::sync::Once::new();
+    let _hook = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/ingest/afterMockWriterWriteRow",
+        move |_| {
+            once.call_once(|| {
+                *recorded.lock().unwrap() =
+                    Some(tk1.lock().unwrap().exec("insert into t values (2, 1, 2);").err());
+            });
+        },
+    );
+    tk.must_get_err_msg(
+        "alter table t add unique index idx(b);",
+        "[kv:1062]Duplicate entry '1' for key 't.idx'",
+    );
+    assert_eq!(err_dml.lock().unwrap().take(), Some(None));
+    tk.must_exec("admin check table t;");
+    tk.must_query("select * from t;").check(["1 1 1", "2 1 2"]);
+}
+
+/// Go `TestAddIndexIngestClientError`.
+#[test]
+fn test_add_index_ingest_client_error() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    let _backend = inject_mock_backend_ctx();
+    tk.must_exec("CREATE TABLE t1 (f1 json);");
+    tk.must_exec(r#"insert into t1(f1) values (cast("null" as json));"#);
+    tk.must_get_err_code("create index i1 on t1((cast(f1 as unsigned array)));", 3903);
+}

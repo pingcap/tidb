@@ -1826,7 +1826,18 @@ fn convert_add_index_to_rollback(
         start_ts,
     )?;
     active.job.state = JobState::ROLLINGBACK;
-    Ok((write, error))
+    // TODO(tangenta): get duplicate column and match index.
+    Ok((write, complete_err(error, &indexes[0].read())))
+}
+
+/// Go `completeErr`: an expression index's invalid-JSON CAST error names
+/// the index.
+fn complete_err(error: DdlPlanError, index: &IndexInfo) -> DdlPlanError {
+    let proto = &tidb_expr::expression_errors::ERR_INVALID_JSON_FOR_FUNC_INDEX;
+    if error.identity() == Some(proto.identity()) {
+        return DdlPlanError::Source(proto.gen_with_stack_by_args(&[index.name.original().into()]));
+    }
+    error
 }
 
 /// Go `onDropIndex` for a rolled-back ADD INDEX: delete-only ->

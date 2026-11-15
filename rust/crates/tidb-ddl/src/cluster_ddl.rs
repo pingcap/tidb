@@ -1726,6 +1726,7 @@ pub(crate) fn checked_refusal(code: u16, message: impl Into<String>) -> DdlPlanE
         1451 => Some(&tidb_plannererrors::ERR_ROW_IS_REFERENCED2),
         1452 => Some(&tidb_dbterror::ERR_NO_REFERENCED_ROW2),
         3819 => Some(&tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED),
+        3903 => Some(&tidb_expr::expression_errors::ERR_INVALID_JSON_FOR_FUNC_INDEX),
         _ => None,
     };
     match proto {

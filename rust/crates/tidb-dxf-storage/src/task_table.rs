@@ -476,12 +476,19 @@ pub(crate) fn serialize_err(in_err: Option<&(dyn std::error::Error + 'static)>) 
         Some(storage_err) => storage_err.as_go_error(),
         None => in_err,
     };
-    // Go `goerrors.As(inErr, &tErr)`.
+    // Go `goerrors.As(inErr, &tErr)`: a `*terror.Error` is either a
+    // `TerrorError` or a `MysqlError` that remembers its terror identity.
     let mut cause = Some(in_err);
     let mut found = None;
     while let Some(error) = cause {
         if let Some(t_err) = error.downcast_ref::<tidb_terror::TerrorError>() {
-            found = Some(t_err);
+            found = Some((t_err.id().into_owned(), t_err.code()));
+            break;
+        }
+        if let Some(identity) =
+            error.downcast_ref::<tidb_terror::MysqlError>().and_then(|e| e.identity)
+        {
+            found = Some((identity.rfc_code(), identity.code()));
             break;
         }
         cause = error.source();
@@ -489,7 +496,7 @@ pub(crate) fn serialize_err(in_err: Option<&(dyn std::error::Error + 'static)>) 
     // We want to keep the original message to have more context info.
     let message = tidb_terror::get_err_stack_msg(Some(in_err));
     let t_err = match found {
-        Some(t_err) => tidb_terror::TerrorError::normalize(message, t_err.id(), t_err.code()),
+        Some((rfc_code, code)) => tidb_terror::TerrorError::normalize(message, rfc_code, code),
         None => tidb_terror::TerrorError::normalize(message, "", tidb_terror::TerrorCode::new(0)),
     };
     Some(tidb_stringutil::go_json_marshal(&t_err).into_bytes())
@@ -897,7 +904,12 @@ mod tests {
     #[test]
     fn serialize_err_writes_gos_bytes() {
         let undetermined = tidb_terror::ERR_RESULT_UNDETERMINED.clone();
-        let cases: [(Box<dyn std::error::Error>, &str); 5] = [
+        let cases: [(Box<dyn std::error::Error>, &str); 6] = [
+            // A `MysqlError` raised as a terror is Go's `*errors.Error`.
+            (
+                Box::new(tidb_terror::MysqlError::from_terror(&undetermined)),
+                r#"{"class":21,"code":2,"message":"execution result undetermined","rfccode":"global:2"}"#,
+            ),
             (
                 Box::new(TaskError("a<b && c>d".to_owned())),
                 r#"{"class":0,"code":0,"message":"a\u003cb \u0026\u0026 c\u003ed","rfccode":""}"#,
