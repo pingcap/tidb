@@ -437,10 +437,12 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 		"A schema created for a rename is retained even if the restore ends up dropping every table in it")
 	flags.Bool(flagLoadStats, true, "Run load stats or update stats_meta to trigger auto-analyze at end of snapshot restore task")
 	flags.Bool(flagFastLoadSysTables, true, "load system tables (including statistics) by renaming the temporary system tables")
-	flags.Bool(flagSingleReplica, false, "restore with one replica of each region, then put the replica count back "+
+	flags.Bool(FlagSingleReplica, false, "restore with one replica of each region, then put the replica count back "+
 		"so PD adds the other replicas in the background. The target cluster must have no user tables, so it cannot "+
 		"resume an interrupted restore from its checkpoint: run that one without this flag. "+
-		"Until PD finishes the cluster has no redundancy: losing a TiKV loses the regions it holds.")
+		"Until PD finishes the cluster has no redundancy: losing a TiKV loses the regions it holds. "+
+		"Tables restored with a placement policy keep the replica count of the policy. "+
+		"When the restore is killed, the next br restore or br abort restore puts the replica count back.")
 	// Do not expose this flag
 	_ = flags.MarkHidden(flagNoSchema)
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
@@ -563,7 +565,7 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.SingleReplica, err = flags.GetBool(flagSingleReplica)
+	cfg.SingleReplica, err = flags.GetBool(FlagSingleReplica)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1131,6 +1133,9 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if err := cfg.validateNameRouting(cmdName); err != nil {
 		return errors.Trace(err)
 	}
+	if err := cfg.checkSingleReplica(); err != nil {
+		return errors.Trace(err)
+	}
 
 	etcdCLI, err := dialEtcdWithCfg(c, cfg.Config)
 	if err != nil {
@@ -1172,16 +1177,14 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	defer mgr.Close()
 	defer cfg.CloseCheckpointMetaManager()
-	if cfg.SingleReplica {
-		singleReplica, err := enterSingleReplicaRestore(c, mgr, glue.GetConsole(g).Out())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer func() {
+	// The replica count is lowered after the checks below. It is put back from
+	// this defer, once the defers below have done their work with the cluster.
+	var singleReplica *singleReplicaRestore
+	defer func() {
+		if singleReplica != nil {
 			restoreErr = singleReplica.leave(c, restoreErr)
-		}()
-		cfg.replicasAfterRestore = uint64(singleReplica.effectiveReplicas())
-	}
+		}
+	}()
 	defer func() {
 		if logTaskBackend == nil || restoreErr != nil {
 			return
@@ -1251,6 +1254,13 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), verChecker); err != nil {
 			return errors.Trace(err)
 		}
+	}
+	singleReplica, err = startSingleReplicaRestore(c, cfg, mgr, etcdCLI, glue.GetConsole(g).Out())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if singleReplica != nil {
+		cfg.replicasAfterRestore = singleReplica.replicasAfterRestore()
 	}
 	if IsStreamRestore(cmdName) {
 		restoreErr = RunStreamRestore(c, mgr, g, cfg)
@@ -3105,6 +3115,8 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
+
+	putBackSingleReplicaOnAbort(ctx, cfg, mgr, glue.GetConsole(g).Out())
 
 	// get upstream cluster ID and startTS from backup storage if not already set
 	if cfg.UpstreamClusterID == 0 {
