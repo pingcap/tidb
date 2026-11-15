@@ -890,8 +890,9 @@ pub struct Session {
     /// SQL bindings created with `CREATE [SESSION] BINDING`. Session-scoped
     /// and unshared. Cluster GLOBAL bindings use the node cache below.
     session_bindings: binding::SessionBindings,
-    /// Node-owned committed bindings, independent of this session's transaction.
-    global_binding_cache: Option<binding_cache::SharedBindingCache>,
+    /// Where Go's global binding handle comes from (see
+    /// [`crate::binding_arm::GlobalBindingSource`]).
+    global_binding_source: crate::binding_arm::GlobalBindingSource,
     /// Independent transaction owner for cluster global-binding commands.
     global_binding_writer: Option<Arc<dyn crate::binding_arm::GlobalBindingWriter>>,
     /// Go's `DefaultExprPushDownBlacklist` and
@@ -1158,7 +1159,7 @@ impl Session {
             protocol_session_states: Default::default(),
             prepared_params: None,
             session_bindings: binding::SessionBindings::default(),
-            global_binding_cache: None,
+            global_binding_source: crate::binding_arm::GlobalBindingSource::Storage,
             global_binding_writer: None,
             pushdown_blacklists: blacklist::PushdownBlacklists::default(),
             client_local_file_reader: None,

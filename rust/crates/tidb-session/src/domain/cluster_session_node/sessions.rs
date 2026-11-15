@@ -100,8 +100,11 @@ impl DomainSessions for Domain {
             stats: super::statistics::stats_statement_service(self),
             domain: self.binding_session_factory.clone(),
         });
+        // Go `GetBindingHandle(sctx)` reads the domain's handle at match time:
+        // a session opened while the domain initializes (bootstrap, pooled
+        // system sessions) matches no global binding until it exists.
+        session.set_global_binding_slot(self.binding_handle_slot());
         if let Some(bindings) = self.binding_handle() {
-            session.set_global_binding_cache(bindings.cache());
             session.set_global_binding_writer(Arc::new(InternalBindingWriter {
                 factory: self.binding_session_factory.clone(),
                 bindings: Arc::clone(bindings),
@@ -297,6 +300,7 @@ impl DomainSessions for Domain {
         let mut session = Session::over_catalog(crate::SharedCatalog::new((*loaded).clone()), node);
         session.set_transaction_store(Box::new(storage.clone()));
         session.set_stats_handle(stats_handle);
+        session.set_global_binding_slot(self.binding_handle_slot());
         session.set_global_id_generator(Arc::new(ClusterGlobalIds {
             transactions: Arc::clone(&self.transactions),
             global_vars: self.global_vars.clone(),

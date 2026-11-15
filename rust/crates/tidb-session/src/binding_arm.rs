@@ -45,10 +45,42 @@ fn may_have_dml_binding(dml: &tidb_ast::DmlStmt) -> bool {
 
 use tidb_bindinfo::binding::BIND_INFO_COLUMNS;
 
+/// Go `GetBindingHandle(sctx)`: the global binding handle a statement
+/// matches against.
+#[derive(Clone, Default)]
+pub enum GlobalBindingSource {
+    /// A session outside any domain (the in-process tier) reads
+    /// `mysql.bind_info` itself.
+    #[default]
+    Storage,
+    /// A fixed committed cache.
+    Cache(tidb_bindinfo::binding_cache::SharedBindingCache),
+    /// The domain's handle, read at match time as Go's `GetBindingHandle`
+    /// reads `domain.BindingHandle()`: none until the domain initializes it,
+    /// and then no global binding matches (Go's nil handle).
+    Domain(tidb_domain_core::domain::BindingHandleSlot),
+}
+
+impl GlobalBindingSource {
+    /// `None` reads storage; `Some(None)` is Go's nil handle.
+    fn cache(&self) -> Option<Option<tidb_bindinfo::binding_cache::SharedBindingCache>> {
+        match self {
+            Self::Storage => None,
+            Self::Cache(cache) => Some(Some(cache.clone())),
+            Self::Domain(slot) => Some(slot.get().map(|handle| handle.cache())),
+        }
+    }
+}
+
 impl Session {
     /// Install the node's committed global-binding cache.
     pub fn set_global_binding_cache(&mut self, cache: tidb_bindinfo::binding_cache::SharedBindingCache) {
-        self.global_binding_cache = Some(cache);
+        self.global_binding_source = GlobalBindingSource::Cache(cache);
+    }
+
+    /// Match against the domain's binding handle, read at match time.
+    pub fn set_global_binding_slot(&mut self, slot: tidb_domain_core::domain::BindingHandleSlot) {
+        self.global_binding_source = GlobalBindingSource::Domain(slot);
     }
 
     /// Install the cluster's independent global-binding transaction owner.
@@ -109,12 +141,13 @@ impl Session {
     /// matching the statement's no-DB digest and tables -- the matched
     /// binding's hints and bind SQL.
     fn match_statement_binding(&mut self, stmt: &Stmt) -> Option<(tidb_hint::HintsSet, String)> {
-        let global = self.global_binding_cache.as_ref().map(|cache| cache.load());
-        let has_global = match &global {
-            Some(cache) => cache.size() != 0,
-            // A session without the domain's binding cache reads
-            // `mysql.bind_info` itself (Go always has the cache).
-            None => true,
+        let source = self.global_binding_source.cache();
+        let global = source.clone().flatten().map(|cache| cache.load());
+        let has_global = match (&source, &global) {
+            (_, Some(cache)) => cache.size() != 0,
+            // A session outside any domain reads `mysql.bind_info` itself;
+            // Go's nil handle matches no global binding.
+            (source, None) => source.is_none(),
         };
         if self.session_bindings.is_empty() && !has_global {
             return None;
@@ -153,6 +186,7 @@ impl Session {
                 }
                 (matched.hints.clone(), matched.bind_sql.clone())
             }
+            None if source.is_some() => return None,
             None => {
                 let global = self.load_global_bindings().ok()?;
                 let matched = global.match_session_binding(
@@ -316,7 +350,7 @@ impl Session {
     /// Materialize the published bindings for SHOW. Standalone in-memory
     /// sessions without a node cache decode their local catalog instead.
     pub(crate) fn load_global_bindings(&mut self) -> Result<binding::SessionBindings, DriverError> {
-        if let Some(shared) = &self.global_binding_cache {
+        if let Some(Some(shared)) = self.global_binding_source.cache() {
             let mut loaded = binding::SessionBindings::default();
             for binding in shared.load().get_all_bindings() {
                 loaded.create(binding.as_ref().clone());
