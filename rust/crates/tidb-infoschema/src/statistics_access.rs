@@ -95,7 +95,7 @@ impl SessionExtendedInfoSchema {
         if let Some(item) = self.v2().and_then(|v2| v2.table_item_by_id(table_id)) {
             let _ = self.get_rows_mut_in(item.db_name.original(), item.table_name.original());
         }
-        for database in Arc::make_mut(&mut self.schema.databases).values_mut() {
+        for database in Arc::make_mut(&mut self.schema_mut().databases).values_mut() {
             for entry in Arc::make_mut(database).tables.values_mut() {
                 let TableEntry::Kv(table) = Arc::make_mut(entry) else {
                     continue;
@@ -118,7 +118,7 @@ impl SessionExtendedInfoSchema {
     /// never fails a query over a stats refresh error; the zeroed statement is
     /// the seam fallback for providers that surface their own errors.
     pub fn clear_table_storage_statistics(&mut self) {
-        for database in Arc::make_mut(&mut self.schema.databases).values_mut() {
+        for database in Arc::make_mut(&mut self.schema_mut().databases).values_mut() {
             for entry in Arc::make_mut(database).tables.values_mut() {
                 let TableEntry::Kv(table) = Arc::make_mut(entry) else {
                     continue;

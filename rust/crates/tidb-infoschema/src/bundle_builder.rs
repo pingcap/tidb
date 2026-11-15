@@ -55,7 +55,7 @@ impl SessionExtendedInfoSchema {
                 }
             }
         }
-        self.schema.rule_bundle_map = bundles;
+        self.schema_mut().rule_bundle_map = bundles;
     }
 
     /// Go `infoSchemaMisc.PlacementBundleByPhysicalTableID`.

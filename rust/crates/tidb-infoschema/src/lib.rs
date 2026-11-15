@@ -304,7 +304,11 @@ pub struct SessionExtendedInfoSchema {
     v2_origin: Option<Arc<infoschema_v2::BuilderOrigin>>,
     v2_steps: Vec<(i64, Vec<tidb_model::GoShared<tidb_model::db::DBInfo>>)>,
     /// The shared schema image.
-    schema: InfoSchema,    /// The planner's view of this catalog image, shared by clones like the
+    /// Shared by every reader of this version (Go hands every reader the
+    /// same `InfoSchema`); a mutation copies it first (`Arc::make_mut`), so
+    /// a reader's clone is a pointer copy plus its own table pins.
+    schema: Arc<InfoSchema>,
+    /// The planner's view of this catalog image, shared by clones like the
     /// index view and dropped by every mutator that moves [`Self::version`]
     /// or the metadata epoch.
     planner_view: std::sync::OnceLock<Arc<PlannerSchemaView>>,
@@ -361,9 +365,9 @@ impl SessionExtendedInfoSchema {
             }
             for table in db.deprecated_tables.iter_deref() {
                 let ti = table.read();
-                self.schema.foreign_keys_present |= !ti.foreign_keys.is_empty();
-                self.schema.table_locks_present |= ti.lock.is_some();
-                self.schema.table_modes_present |= ti.mode != tidb_model::TableMode::NORMAL;
+                self.schema_mut().foreign_keys_present |= !ti.foreign_keys.is_empty();
+                self.schema_mut().table_locks_present |= ti.lock.is_some();
+                self.schema_mut().table_modes_present |= ti.mode != tidb_model::TableMode::NORMAL;
                 if origin.is_none() { data.add_table_info(infoschema_v2::TableItem { db_name: db.name.clone(), db_id: db.id,
                     table_name: ti.name.clone(), table_id: ti.id, schema_version: version }, table.clone()); }
                 let changed = origin.as_ref().and_then(|o| o.tables.get(&(db.id, ti.id)))
@@ -392,7 +396,7 @@ impl SessionExtendedInfoSchema {
         }
         let v2 = infoschema_v2::InfoSchemaV2::new(data, loader, version, self.schema_ts());
         self.v2_pins = infoschema_v2::ReaderPins::new(&v2);
-        for database in Arc::make_mut(&mut self.schema.databases).values_mut() {
+        for database in Arc::make_mut(&mut self.schema_mut().databases).values_mut() {
             if infoschema_v2::is_special_db(&database.name().go_to_lower()) { continue; }
             let database = Arc::make_mut(database);
             let mut db = database.info.read().clone();
@@ -400,25 +404,35 @@ impl SessionExtendedInfoSchema {
             database.info = tidb_model::GoShared::new(db);
             database.tables.clear();
         }
-        self.schema.v2 = Some(v2);
+        self.schema_mut().v2 = Some(v2);
         self.update_info_schema_bundles_v2();
         self.planner_view.take();
         self.table_id_names = Default::default();
-        self.schema.latest_index_schema.take();
+        self.schema_mut().latest_index_schema.take();
     }
 
     /// Go `Builder`'s load timestamp and staged V2 diff state, copied into
     /// the table factory's newly built image without retaining old reader pins.
     pub fn inherit_loader_state(&mut self, loaded: &Self) {
-        self.schema.schema_ts = loaded.schema.schema_ts;
-        self.schema.schema_commit_ts = loaded.schema.schema_commit_ts;
-        self.schema.uses_infoschema_v2 = loaded.schema.uses_infoschema_v2;
-        self.schema.empty_schema_versions = loaded.schema.empty_schema_versions.clone();
+        self.schema_mut().schema_ts = loaded.schema.schema_ts;
+        self.schema_mut().schema_commit_ts = loaded.schema.schema_commit_ts;
+        self.schema_mut().uses_infoschema_v2 = loaded.schema.uses_infoschema_v2;
+        self.schema_mut().empty_schema_versions = loaded.schema.empty_schema_versions.clone();
         self.v2_origin = loaded.v2_origin.clone();
         self.v2_steps = loaded.v2_steps.clone();
-        self.schema.foreign_keys_present |= loaded.schema.foreign_keys_present;
-        self.schema.table_locks_present |= loaded.schema.table_locks_present;
-        self.schema.table_modes_present |= loaded.schema.table_modes_present;
+        self.schema_mut().foreign_keys_present |= loaded.schema.foreign_keys_present;
+        self.schema_mut().table_locks_present |= loaded.schema.table_locks_present;
+        self.schema_mut().table_modes_present |= loaded.schema.table_modes_present;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_schema_image_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.schema, &other.schema)
+    }
+
+    /// The image for writing: copied first while another reader shares it.
+    pub(crate) fn schema_mut(&mut self) -> &mut InfoSchema {
+        Arc::make_mut(&mut self.schema)
     }
 
     /// Go `IsV2` with the underlying implementation.
@@ -484,12 +498,6 @@ impl SessionExtendedInfoSchema {
         Ok(self.table_info_by_name(schema, table))
     }
 
-    /// Go `Builder.InitWithOldInfoSchema`: materialize metadata for the V1
-    /// diff builder, propagating snapshot read failures to the loader.
-    pub fn try_metadata_copy(&self) -> Result<Self, cluster_catalog::ClusterCatalogError> {
-        self.metadata_copy_for_diff(None)
-    }
-
     /// Go `Builder.InitWithOldInfoSchema` / `applyDropTableV2`: load only
     /// old table metadata addressed by the diff; dropping a schema lists it.
     pub fn metadata_copy_for_diff(&self, selection: Option<(&std::collections::HashSet<i64>, &std::collections::HashSet<i64>)>) -> Result<Self, cluster_catalog::ClusterCatalogError> {
@@ -527,10 +535,10 @@ impl SessionExtendedInfoSchema {
             } else { databases.push(database); }
         }
         let mut schema = Self::init_with_db_infos(databases, self.policies().cloned().collect(), self.resource_groups().cloned().collect(), self.schema_meta_version());
-        schema.schema.masking_policies = Arc::new(self.schema.masking_policies.clone_for_builder());
+        schema.schema_mut().masking_policies = Arc::new(self.schema.masking_policies.clone_for_builder());
         schema.set_schema_ts(self.schema_ts());
         schema.set_schema_commit_ts(self.schema_commit_ts());
-        schema.schema.uses_infoschema_v2 = self.schema.uses_infoschema_v2;
+        schema.schema_mut().uses_infoschema_v2 = self.schema.uses_infoschema_v2;
 
         if let Some(source) = self.v2() {
             let mut origin = infoschema_v2::BuilderOrigin { source: source.clone(), databases: HashMap::new(), tables: HashMap::new() };
@@ -540,9 +548,9 @@ impl SessionExtendedInfoSchema {
                 for table in di.deprecated_tables.iter_deref() { let id = table.read().id; origin.tables.insert((di.id, id), (di.name.clone(), table)); }
             }
             schema.v2_origin = Some(Arc::new(origin));
-            schema.schema.foreign_keys_present = self.schema.foreign_keys_present;
-            schema.schema.table_locks_present = self.schema.table_locks_present;
-            schema.schema.table_modes_present = self.schema.table_modes_present;
+            schema.schema_mut().foreign_keys_present = self.schema.foreign_keys_present;
+            schema.schema_mut().table_locks_present = self.schema.table_locks_present;
+            schema.schema_mut().table_modes_present = self.schema.table_modes_present;
         }
         Ok(schema)
     }
@@ -604,11 +612,11 @@ impl SessionExtendedInfoSchema {
     /// Go `tryLoadSchemaDiffs`: versions whose schema diff is absent.
     pub fn empty_schema_versions(&self) -> &[i64] { &self.schema.empty_schema_versions }
     /// Go `InfoCache.InsertEmptySchemaVersion`, recorded for publication.
-    pub fn record_empty_schema_version(&mut self, version: i64) { self.schema.empty_schema_versions.push(version); }
+    pub fn record_empty_schema_version(&mut self, version: i64) { self.schema_mut().empty_schema_versions.push(version); }
 
 
     /// Go Loader.getTimestampForSchemaVersionWithNonEmptyDiff.
-    pub fn set_schema_commit_ts(&mut self, ts: u64) { self.schema.schema_commit_ts = ts; }
+    pub fn set_schema_commit_ts(&mut self, ts: u64) { self.schema_mut().schema_commit_ts = ts; }
 
     /// Go `infoschema.NewBuilder(...).InitWithDBInfos` before any stored
     /// schema: only the memory schemas Go's `initVirtualTables` builds from
@@ -751,7 +759,7 @@ impl SessionExtendedInfoSchema {
             v2_pins: Default::default(),
             v2_origin: None,
             v2_steps: Vec::new(),
-            schema: InfoSchema {
+            schema: Arc::new(InfoSchema {
                 v2: None,
                 schema_commit_ts: 0,
                 empty_schema_versions: Vec::new(),
@@ -776,7 +784,7 @@ impl SessionExtendedInfoSchema {
                 table_locks_present: false,
                 table_modes_present: false,
                 skipped: Arc::from(Vec::new()),
-            },
+            }),
             planner_view: std::sync::OnceLock::new(),
             table_id_names: Arc::default(),
             local_temporary: Vec::new(),
@@ -931,7 +939,7 @@ impl TableEntry {
 
 impl SessionExtendedInfoSchema {
     fn database_mut(&mut self, folded_name: &str) -> Option<&mut Database> {
-        Arc::make_mut(&mut self.schema.databases)
+        Arc::make_mut(&mut self.schema_mut().databases)
             .get_mut(folded_name)
             .map(Arc::make_mut)
     }
@@ -982,9 +990,9 @@ impl SessionExtendedInfoSchema {
         schema
             .tables
             .insert(name.go_to_lower(), std::sync::Arc::new(table));
-        self.schema.foreign_keys_present |= table_has_foreign_keys;
-        self.schema.table_locks_present |= table_is_locked;
-        self.schema.table_modes_present |= table_mode_is_set;
+        self.schema_mut().foreign_keys_present |= table_has_foreign_keys;
+        self.schema_mut().table_locks_present |= table_is_locked;
+        self.schema_mut().table_modes_present |= table_mode_is_set;
         self.bump_version();
         Ok(())
     }
@@ -1104,7 +1112,7 @@ impl SessionExtendedInfoSchema {
 
     /// Records the schema version the loader built this image at.
     pub fn set_schema_meta_version(&mut self, version: i64) {
-        self.schema.schema_meta_version = version;
+        self.schema_mut().schema_meta_version = version;
     }
 
     /// Go `InfoSchema.AllSchemas` without the memory schemas (whose ids carry
@@ -1182,7 +1190,7 @@ impl SessionExtendedInfoSchema {
     /// stored.
     pub fn set_resource_group(&mut self, group: tidb_model::ResourceGroupInfo) {
         self.bump_metadata_version();
-        self.schema.resource_groups
+        self.schema_mut().resource_groups
             .insert(group.name.lowercase().to_owned(), group);
         self.bump_version();
     }
@@ -1190,7 +1198,7 @@ impl SessionExtendedInfoSchema {
     /// Go `infoSchemaMisc.setPolicy`: a policy loaded from meta, as stored
     /// (the references to it are by id).
     pub fn set_policy(&mut self, policy: tidb_model::PolicyInfo) {
-        self.schema.policies
+        self.schema_mut().policies
             .insert(policy.name.lowercase().to_owned(), policy);
         if self.is_v2() { self.update_info_schema_bundles_v2(); }
     }
@@ -1272,10 +1280,10 @@ impl SessionExtendedInfoSchema {
                 info.collate = charset.collation.name().to_owned();
                 existing.info = tidb_model::GoShared::new(info);
             }
-            self.schema.version += u64::from(changed);
+            self.schema_mut().version += u64::from(changed);
             return false;
         }
-        Arc::make_mut(&mut self.schema.databases)
+        Arc::make_mut(&mut self.schema_mut().databases)
             .insert(key, Arc::new(Database::new(db_info(id, database, charset))));
         self.bump_version();
         true
@@ -1300,11 +1308,11 @@ impl SessionExtendedInfoSchema {
             return false;
         };
         self.bump_metadata_version();
-        Arc::make_mut(&mut self.schema.databases).insert(key, Arc::clone(database));
+        Arc::make_mut(&mut self.schema_mut().databases).insert(key, Arc::clone(database));
         // The flags are sticky: a stale `true` only costs a scan.
-        self.schema.foreign_keys_present |= previous.schema.foreign_keys_present;
-        self.schema.table_locks_present |= previous.schema.table_locks_present;
-        self.schema.table_modes_present |= previous.schema.table_modes_present;
+        self.schema_mut().foreign_keys_present |= previous.schema.foreign_keys_present;
+        self.schema_mut().table_locks_present |= previous.schema.table_locks_present;
+        self.schema_mut().table_modes_present |= previous.schema.table_modes_present;
         self.bump_version();
         true
     }
@@ -1347,9 +1355,9 @@ impl SessionExtendedInfoSchema {
             return false;
         };
         schema.tables.insert(name, entry);
-        self.schema.foreign_keys_present |= table_has_foreign_keys;
-        self.schema.table_locks_present |= table_is_locked;
-        self.schema.table_modes_present |= table_mode_is_set;
+        self.schema_mut().foreign_keys_present |= table_has_foreign_keys;
+        self.schema_mut().table_locks_present |= table_is_locked;
+        self.schema_mut().table_modes_present |= table_mode_is_set;
         self.bump_version();
         true
     }
@@ -1365,7 +1373,7 @@ impl SessionExtendedInfoSchema {
             self.bump_version();
             return false;
         }
-        Arc::make_mut(&mut self.schema.databases).insert(
+        Arc::make_mut(&mut self.schema_mut().databases).insert(
             key,
             Arc::new(Database {
                 info,
@@ -1410,7 +1418,7 @@ impl SessionExtendedInfoSchema {
         schema_version: i64,
     ) -> Self {
         let mut schema = Self::init_with_db_infos(databases, policies, resource_groups, schema_version);
-        Arc::make_mut(&mut schema.schema.databases).retain(|name, _| !tidb_metadef::is_mem_db(name));
+        Arc::make_mut(&mut schema.schema_mut().databases).retain(|name, _| !tidb_metadef::is_mem_db(name));
         schema
     }
 
@@ -1426,16 +1434,16 @@ impl SessionExtendedInfoSchema {
             self.resource_groups().cloned().collect(),
             self.schema_meta_version(),
         );
-        copied.schema.schema_ts = self.schema.schema_ts;
-        copied.schema.uses_infoschema_v2 = self.schema.uses_infoschema_v2;
-        copied.schema.masking_policies = Arc::new(self.schema.masking_policies.clone_for_builder());
+        copied.schema_mut().schema_ts = self.schema.schema_ts;
+        copied.schema_mut().uses_infoschema_v2 = self.schema.uses_infoschema_v2;
+        copied.schema_mut().masking_policies = Arc::new(self.schema.masking_policies.clone_for_builder());
         copied.v2_origin = self.v2_origin.clone();
         copied.v2_steps = self.v2_steps.clone();
         copied.set_schema_commit_ts(self.schema_commit_ts());
-        copied.schema.empty_schema_versions = self.schema.empty_schema_versions.clone();
-        copied.schema.foreign_keys_present = self.schema.foreign_keys_present;
-        copied.schema.table_locks_present = self.schema.table_locks_present;
-        copied.schema.table_modes_present = self.schema.table_modes_present;
+        copied.schema_mut().empty_schema_versions = self.schema.empty_schema_versions.clone();
+        copied.schema_mut().foreign_keys_present = self.schema.foreign_keys_present;
+        copied.schema_mut().table_locks_present = self.schema.table_locks_present;
+        copied.schema_mut().table_modes_present = self.schema.table_modes_present;
         copied
     }
 
@@ -1446,19 +1454,19 @@ impl SessionExtendedInfoSchema {
 
     /// Go `NewBuilder(..., useV2)`.
     pub fn set_uses_infoschema_v2(&mut self, use_v2: bool) {
-        self.schema.uses_infoschema_v2 = use_v2;
+        self.schema_mut().uses_infoschema_v2 = use_v2;
     }
 
     /// Go `Builder.Build(schemaTS)`.
     /// Go `infoschemaV2.CloneAndUpdateTS` for a V2 image.
     pub fn set_schema_ts(&mut self, ts: u64) {
-        self.schema.schema_ts = ts;
-        if let Some(v2) = &mut self.schema.v2 {
+        self.schema_mut().schema_ts = ts;
+        if let Some(v2) = &mut self.schema_mut().v2 {
             v2.ts = ts;
         }
         let mut cache = self.schema.masking_policies.clone_for_builder();
         cache.set_snapshot_ts(ts);
-        self.schema.masking_policies = Arc::new(cache);
+        self.schema_mut().masking_policies = Arc::new(cache);
     }
 
     /// Go `infoSchema.ts`.
@@ -1471,7 +1479,7 @@ impl SessionExtendedInfoSchema {
         &mut self,
         factory: masking_policy::MaskingPolicySessionFactory,
     ) {
-        self.schema.masking_policies = Arc::new(
+        self.schema_mut().masking_policies = Arc::new(
             self.schema
                 .masking_policies
                 .clone_for_builder()
@@ -1481,16 +1489,16 @@ impl SessionExtendedInfoSchema {
 
     /// Go's table builder retains the schema's cache when building table objects.
     pub fn inherit_masking_policy_cache(&mut self, source: &Self) {
-        self.schema.masking_policies = Arc::clone(&source.schema.masking_policies);
-        self.schema.schema_ts = source.schema.schema_ts;
-        self.schema.uses_infoschema_v2 = source.schema.uses_infoschema_v2;
+        self.schema_mut().masking_policies = Arc::clone(&source.schema.masking_policies);
+        self.schema_mut().schema_ts = source.schema.schema_ts;
+        self.schema_mut().uses_infoschema_v2 = source.schema.uses_infoschema_v2;
     }
 
     /// Go `infoSchema.resetMaskingPolicyCache` on a new schema image.
     pub fn reset_masking_policy_cache(&mut self) {
         let mut cache = self.schema.masking_policies.clone_for_builder();
         cache.reset_masking_policy_cache();
-        self.schema.masking_policies = Arc::new(cache);
+        self.schema_mut().masking_policies = Arc::new(cache);
     }
 
     /// Go `infoSchema.CloneMaskingPoliciesByTableColumn`.
@@ -1554,7 +1562,7 @@ impl SessionExtendedInfoSchema {
             .find(|(_, database)| database.id() == id)
             .map(|(key, _)| key.clone())?;
         self.bump_metadata_version();
-        let dropped = Arc::make_mut(&mut self.schema.databases).remove(&key)?;
+        let dropped = Arc::make_mut(&mut self.schema_mut().databases).remove(&key)?;
         self.bump_version();
         Some(dropped.info.clone())
     }
@@ -1584,7 +1592,7 @@ impl SessionExtendedInfoSchema {
     /// Go `applyDropPolicy`'s `deletePolicy`: the policy with `id` leaves the
     /// map.
     pub fn delete_policy_by_id(&mut self, id: i64) {
-        self.schema.policies.retain(|_, policy| policy.id != id);
+        self.schema_mut().policies.retain(|_, policy| policy.id != id);
         if self.is_v2() { self.update_info_schema_bundles_v2(); }
     }
 
@@ -1592,7 +1600,7 @@ impl SessionExtendedInfoSchema {
     /// `id` leaves the map.
     pub fn delete_resource_group_by_id(&mut self, id: i64) {
         self.bump_metadata_version();
-        self.schema.resource_groups.retain(|_, group| group.id != id);
+        self.schema_mut().resource_groups.retain(|_, group| group.id != id);
         self.bump_version();
     }
 
@@ -1604,7 +1612,7 @@ impl SessionExtendedInfoSchema {
 
     /// Records the stored tables the domain's builder could not build.
     pub fn set_skipped_tables(&mut self, skipped: Vec<cluster_catalog::SkippedTable>) {
-        self.schema.skipped = skipped.into();
+        self.schema_mut().skipped = skipped.into();
     }
 
     /// Resolves a table in `database`.
@@ -1859,7 +1867,7 @@ impl SessionExtendedInfoSchema {
         database: &str,
         name: &str,
     ) -> Option<&mut TableEntry> {
-        self.schema.version += 1;
+        self.schema_mut().version += 1;
         let key = CatalogTableKey::new(database, name);
         if self.is_v2() && self.local_temporary_entry(&key).is_none() && !self.schema.databases.get(&key.database).is_some_and(|db| db.tables.contains_key(&key.table)) {
             let table = self.try_table_handle_by_key(&key).ok().flatten()?;
@@ -1915,13 +1923,13 @@ impl SessionExtendedInfoSchema {
     /// write (every `get_mut_in` caller in production) never reassigns a
     /// table's id or its key, so it does not owe this cache a rebuild.
     fn bump_version(&mut self) {
-        self.schema.version += 1;
+        self.schema_mut().version += 1;
         self.planner_view.take();
     }
 
     fn bump_metadata_version(&mut self) {
-        self.schema.metadata_version = next_metadata_version();
-        self.schema.latest_index_schema.take();
+        self.schema_mut().metadata_version = next_metadata_version();
+        self.schema_mut().latest_index_schema.take();
         self.planner_view.take();
         self.statistics_schemas = Arc::default();
         self.invalidate_table_id_names();
@@ -2100,7 +2108,7 @@ impl SessionExtendedInfoSchema {
     /// (`stats_meta.count`), which `I_S.TABLES`' TABLE_ROWS reads back.
     /// A DML that changed `delta` rows adjusts the stored estimate.
     pub fn adjust_table_row_count(&mut self, database: &str, name: &str, delta: i64) {
-        let Some(database) = Arc::make_mut(&mut self.schema.databases).get_mut(database) else {
+        let Some(database) = Arc::make_mut(&mut self.schema_mut().databases).get_mut(database) else {
             return;
         };
         let database = std::sync::Arc::make_mut(database);

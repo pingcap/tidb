@@ -1273,3 +1273,34 @@ fn v2_statements_share_the_planner_image_and_resolve_stored_tables_lazily() {
             .is_some());
     }
 }
+
+/// Go hands every reader the same `InfoSchema`: a reader's handle shares the
+/// image (its own table pins aside), and a mutation of one handle copies the
+/// image first, leaving the others as they were.
+#[test]
+fn readers_share_the_schema_image_and_a_mutation_copies_it() {
+    let store = Arc::new(Store::default());
+    store
+        .tables
+        .lock()
+        .unwrap()
+        .insert((1, 10), table(10, "test"));
+    let mut db = database(1, "testDB");
+    db.table_name2id = Some(GoShared::new(BTreeMap::from([("test".to_owned(), 10)])));
+    let mut published = crate::SessionExtendedInfoSchema::init_with_db_infos(
+        vec![GoShared::new(db)],
+        vec![],
+        vec![],
+        2,
+    );
+    published.set_schema_ts(42);
+    published.init_with_db_infos_v2(Arc::new(Data::new()), store, 1 << 20);
+    let reader = published.clone();
+    assert!(reader.shares_schema_image_with(&published));
+    let mut writer = published.clone();
+    writer.set_schema_ts(43);
+    assert!(!writer.shares_schema_image_with(&published));
+    assert_eq!(published.schema_ts(), 42);
+    assert_eq!(reader.schema_ts(), 42);
+    assert!(reader.table_info_by_name("testDB", "test").is_some());
+}

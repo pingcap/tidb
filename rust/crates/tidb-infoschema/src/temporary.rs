@@ -66,7 +66,7 @@ impl SessionExtendedInfoSchema {
         }
         self.bump_metadata_version();
         if let Some(base) = restored {
-            self.schema.metadata_version = base;
+            self.schema_mut().metadata_version = base;
         }
         std::mem::take(&mut self.local_temporary)
             .into_iter()
@@ -114,7 +114,7 @@ impl SessionExtendedInfoSchema {
             .as_ref()
             .is_none_or(|(at, _)| *at != epoch)
         {
-            self.schema.temporary_sweep = Some((epoch, self.global_temporary_table_ids()));
+            self.schema_mut().temporary_sweep = Some((epoch, self.global_temporary_table_ids()));
         }
         match self.schema.temporary_sweep.as_ref() {
             Some((_, globals)) => globals.as_slice(),
