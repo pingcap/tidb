@@ -82,7 +82,8 @@ pub(crate) struct StoreRequests {
 
 /// Runs `body` on `session` and counts the requests for table data (keys of
 /// the `t` prefix) its store received meanwhile; the node's own reads of
-/// meta keys are not the statement's.
+/// meta keys, and its background internal SQL over the `mysql` system tables
+/// (statistics, DDL notifier, MDL), are not the statement's.
 pub(crate) fn store_requests<R>(
     session: &mut Session,
     body: impl FnOnce(&mut Session) -> R,
@@ -90,12 +91,19 @@ pub(crate) fn store_requests<R>(
     use tikv_client::proto::{coprocessor, kvrpcpb};
     let counted = std::sync::Arc::new(std::sync::Mutex::new(StoreRequests::default()));
     let recorder = std::sync::Arc::clone(&counted);
+    let catalog = tidb_telemetry::Session::info_schema(&*session);
     session.set_store_send_hook(Some(std::sync::Arc::new(move |request| {
         let any = request.as_any();
         // Go `rowcodec.RemoveKeyspacePrefix`: the transport hook sees API V2 wire keys.
-        let table_key = |key: &[u8]| tidb_rowcodec::remove_keyspace_prefix(
-            key, tidb_config_kerneltype::is_classic(), true, false,
-        ).first() == Some(&b't');
+        let table_key = |key: &[u8]| {
+            let key = tidb_rowcodec::remove_keyspace_prefix(
+                key, tidb_config_kerneltype::is_classic(), true, false,
+            );
+            key.first() == Some(&b't')
+                && !catalog
+                    .table_by_id(tidb_tablecodec::table_key::decode_table_id(key))
+                    .is_some_and(|(schema, _)| schema.eq_ignore_ascii_case("mysql"))
+        };
         let mut counted = recorder.lock().unwrap();
         if let Some(get) = any.downcast_ref::<kvrpcpb::GetRequest>() {
             if table_key(&get.key) {
