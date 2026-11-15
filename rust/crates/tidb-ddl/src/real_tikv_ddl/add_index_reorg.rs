@@ -552,9 +552,28 @@ where
             })?;
             match range {
                 Ok(Some((start, end))) => items.push((None, start, end)),
-                Ok(None) => {}
+                // Go `getTableRange` of an empty table: no start, no end.
+                Ok(None) => items.push((None, Vec::new(), Vec::new())),
                 Err(error) => return Ok(sql_failure(&error, total)),
             }
+        }
+        if !resuming {
+            // Go `updateReorgInfo` after the previous partition: the next
+            // partition (an empty one too) and its range, persisted, then
+            // `afterUpdatePartitionReorgInfo`.
+            let (start, end) = match (items.first(), items.last()) {
+                (Some(first), Some(last)) => (first.1.clone(), last.2.clone()),
+                _ => (Vec::new(), Vec::new()),
+            };
+            let next = ReorgHandle {
+                element_id: items.first().and_then(|item| item.0).unwrap_or(current.element_id),
+                element_type: element_type.to_vec(),
+                start_key: start,
+                end_key: end,
+                physical_id: *physical_id,
+            };
+            update_reorg_meta(sess_pool, reorg, &next);
+            after_update_partition_reorg_info(sess_pool, reorg)?;
         }
         for (index_id, start, end) in items {
             current = ReorgHandle {
@@ -676,7 +695,27 @@ where
             }
         }
     }
+    if reorg.table.get_partition_info().is_some() {
+        // Go's last `updateReorgInfo` finds no next partition and still
+        // reaches `afterUpdatePartitionReorgInfo`.
+        after_update_partition_reorg_info(sess_pool, reorg)?;
+    }
     Ok(ReorgResult::Done(total))
+}
+
+/// Go `failpoint.InjectCall("afterUpdatePartitionReorgInfo", reorgInfo.Job)`;
+/// the job is read only while the failpoint is enabled.
+fn after_update_partition_reorg_info(
+    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    reorg: &AddIndexReorg,
+) -> Result<(), ClusterDdlError> {
+    const NAME: &str = "github.com/pingcap/tidb/pkg/ddl/afterUpdatePartitionReorgInfo";
+    if tidb_failpoint::eval(NAME).is_some() {
+        if let Some(mut job) = latest_job(sess_pool, reorg.job_id)? {
+            tidb_failpoint::inject_call(NAME, &mut job);
+        }
+    }
+    Ok(())
 }
 
 /// Go `BackfillData` for one batch of `[start, end)`, in its own

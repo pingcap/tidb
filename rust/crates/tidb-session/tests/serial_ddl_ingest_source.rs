@@ -850,3 +850,66 @@ fn test_add_index_ingest_client_error() {
     tk.must_exec(r#"insert into t1(f1) values (cast("null" as json));"#);
     tk.must_get_err_code("create index i1 on t1((cast(f1 as unsigned array)));", 3903);
 }
+
+/// Go `TestAddIndexWithEmptyPartitions`: after each partition the next one,
+/// empty or not, is what `mysql.tidb_ddl_reorg` records.
+#[test]
+fn test_add_index_with_empty_partitions() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    let _backend = inject_mock_backend_ctx();
+    tk.must_exec("set global tidb_enable_dist_task = 0;");
+    // Create partitioned table with empty partitions (p1, p3 are empty)
+    tk.must_exec("create table t (
+		a int primary key,
+		b int
+	) partition by range(a) (
+		partition p0 values less than (100),
+		partition p1 values less than (200),
+		partition p2 values less than (300),
+		partition p3 values less than (400)
+	);");
+    // Only insert into p0 and p2, leaving p1 and p3 empty
+    for i in (0..10).chain(200..210) {
+        tk.must_exec(&format!("insert into t values ({i}, {i});"));
+    }
+    let partition_rows = tk.must_query(
+        "select TIDB_PARTITION_ID from information_schema.partitions where table_schema='test' and table_name='t';",
+    );
+    assert_eq!(partition_rows.rows().len(), 4);
+    let all_part_ids: std::collections::HashSet<i64> =
+        partition_rows.rows().iter().map(|row| row[0].parse().unwrap()).collect();
+    let observed_ids = Arc::new(std::sync::Mutex::new(Vec::<i64>::new()));
+    let observed = observed_ids.clone();
+    let tk2 = std::sync::Mutex::new(tk.new_tk());
+    let _hook = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/afterUpdatePartitionReorgInfo",
+        move |arg| {
+            let job = arg.downcast_mut::<tidb_model::Job>().unwrap();
+            if job.type_ != tidb_model::ActionType::ACTION_ADD_INDEX {
+                return;
+            }
+            // The NEXT partition to process.
+            let rows = tk2.lock().unwrap().must_query(&format!(
+                "select physical_id from mysql.tidb_ddl_reorg where job_id = {} limit 1;",
+                job.id
+            ));
+            if let Some(pid) = rows.rows().first().and_then(|row| row[0].parse::<i64>().ok()) {
+                if pid != 0 {
+                    observed.lock().unwrap().push(pid);
+                }
+            }
+        },
+    );
+    tk.must_exec("alter table t add index idx(b);");
+    tk.must_exec("admin check table t;");
+    let rs1 = tk.must_query("select count(*) from t use index(idx);");
+    let rs2 = tk.must_query("select count(*) from t ignore index(idx);");
+    assert_eq!(rs1.rows(), rs2.rows());
+    assert_eq!(rs1.rows()[0][0], "20");
+    let observed_ids = observed_ids.lock().unwrap();
+    assert!(observed_ids.len() >= 3, "should observe at least 3 partition switches for 4 partitions: {observed_ids:?}");
+    for pid in observed_ids.iter() {
+        assert!(all_part_ids.contains(pid), "physical_id {pid} should be a valid partition ID");
+    }
+}
