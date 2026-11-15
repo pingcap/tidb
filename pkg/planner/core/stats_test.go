@@ -16,6 +16,8 @@ package core_test
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -346,4 +348,33 @@ func findDataSource(plan base.LogicalPlan, result **logicalop.DataSource) {
 	for _, child := range plan.Children() {
 		findDataSource(child, result)
 	}
+}
+
+// TestIndexFilterCountKeepsAccessCorrelation covers the rows an index path
+// expects its index filters to keep. Each value of b occurs under one value of
+// a only, so the filter on b keeps 200 of the 1000 rows a = 1 reads from
+// iacb, though b = 101 holds for 200 of the table's 10000 rows. The statistics
+// of iab know that; selectivities multiplied as if a and b were independent
+// would expect 20.
+func TestIndexFilterCountKeepsAccessCorrelation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, c int, d int, key iacb(a, c, b), key iab(a, b))")
+	tk.MustExec("set @@cte_max_recursion_depth = 10000")
+	tk.MustExec("insert into t with recursive s(n) as (select 0 union all select n + 1 from s where n < 9999) " +
+		"select n div 1000, (n div 1000) * 100 + n % 5, n, n % 100 from s")
+	tk.MustExec("analyze table t all columns")
+
+	rows := tk.MustQuery("explain format = 'brief' select /*+ use_index(t, iacb) */ * from t where a = 1 and b = 101 and d = 5").Rows()
+	var indexSide string
+	for _, row := range rows {
+		if strings.Contains(row[0].(string), "Selection") && strings.Contains(row[0].(string), "Build") {
+			indexSide = row[1].(string)
+		}
+	}
+	require.NotEmpty(t, indexSide, "no index-side selection in %v", rows)
+	est, err := strconv.ParseFloat(indexSide, 64)
+	require.NoError(t, err)
+	require.InDelta(t, 200, est, 50, "plan: %v", rows)
 }
