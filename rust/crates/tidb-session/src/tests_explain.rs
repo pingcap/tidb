@@ -10365,6 +10365,10 @@ fn the_correlate_round_keeps_null_semantics_and_chooses_apply_like_go() {
 /// Apply's inner side is the cloned subquery under a `Limit 1` with the join
 /// key pushed into its index range, a nullable key of a scalar `IN` keeps the
 /// join, and a decorrelated `EXISTS` beside a preferred `IN` is its own Apply.
+/// The unordered `limit 5` subquery's plan and rows are Go master's with the
+/// fix for pingcap/tidb#73169 (`cloneDataSource` keeping the clone's
+/// `PossibleAccessPaths` the derived `AllPossibleAccessPaths` objects); without
+/// it Go's probe side is a `TableDual` and the query returns no rows.
 #[test]
 fn the_correlate_round_builds_gos_apply_plans() {
     let cases: serde_json::Value =
