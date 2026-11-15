@@ -1061,7 +1061,7 @@ fn brie_secure_text() {
         "BACKUP DATABASE * TO 's3://bucket/prefix?access-key=xxxxxx&force-path-style=true&secret-access-key=xxxxxx'"
     );
 
-    // gcs: access-key and credentials-file are NOT redacted for gcs.
+    // gcs: the unknown access-key is dropped and credentials-file masked.
     let gcs_backup = brie(
         BrieKind::Backup,
         "gcs://bucket/prefix?access-key=irrelevant&credentials-file=/home/user/secrets.txt",
@@ -1069,7 +1069,7 @@ fn brie_secure_text() {
     );
     assert_eq!(
         secure_of_brie(&gcs_backup),
-        "BACKUP DATABASE * TO 'gcs://bucket/prefix?access-key=irrelevant&credentials-file=/home/user/secrets.txt'"
+        "BACKUP DATABASE * TO 'gcs://bucket/prefix?credentials-file=xxxxxx'"
     );
 
 }
@@ -1215,65 +1215,105 @@ impl BinaryGtAHundred {
     }
 }
 
-/// `pkg/parser/ast/misc_test.go::TestRedactURL`.
+/// `pkg/parser/ast/misc_test.go::TestRedactURL` (Go master).
 #[test]
 fn redact_url() {
-    use tidb_ast::redact_url;
-    let cases: [(&str, &str); 22] = [
+    let leaks = [
+        "s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?Access_Key=FAKE_AST_AK&secret_access_key=FAKE_AST_SK&other-key=benign",
+        "azure://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?SAS_Token=FAKE_AST_SAS&account-name=benign",
+        "s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path%zz?access-key=FAKE_AST_AK&secret-access-key=FAKE_AST_SK",
+        "azure://bucket/path?account-name=benign&sas-token=sv=2020-08-04&sig=FAKE_AST_SAS&FAKE_AST_SK",
+        "s3://bucket/path?region=us-east-1&new-secret=FAKE_AST_SK&FAKE_AST_AK=unknown",
+        "s3://bucket/path?endpoint=https%3A%2F%2FFAKE_AST_USER%3AFAKE_AST_PASS%40host%2F%3Fsig%3DFAKE_AST_SK",
+        r#"s3://bucket/path?sse-kms-context={"a":"x&region=FAKE_AST_SK"}"#,
+    ];
+    let cases = [
         ("", ""),
         (":", ":"),
+        ("s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path%zz?access-key=FAKE_AST_AK", tidb_ast::INVALID_URL_PLACEHOLDER),
+        ("s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?Access_Key=FAKE_AST_AK&other-key=benign", "s3://bucket/path?Access_Key=xxxxxx"),
+        ("azure://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?SAS_Token=FAKE_AST_SAS&account-name=benign", "azure://bucket/path?SAS_Token=xxxxxx&account-name=benign"),
         ("~/file", "~/file"),
+        ("/data/my files/100%off#name", "/data/my files/100%off#name"),
+        ("s3://bucket/%zz?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D", "(invalid URL)"),
         ("gs://bucket/file", "gs://bucket/file"),
-        // gs has no access-key/secret-access-key, so nothing is redacted.
-        ("gs://bucket/file?access-key=123", "gs://bucket/file?access-key=123"),
-        (
-            "gs://bucket/file?secret-access-key=123",
-            "gs://bucket/file?secret-access-key=123",
-        ),
+        ("gs://bucket/file?storage-class=NEARLINE&predefined-acl=private&unknown=secret", "gs://bucket/file?predefined-acl=private&storage-class=NEARLINE"),
+        ("gcs://bucket/file?storage-class=COLDLINE&predefined-acl=private&credentials-file=secret", "gcs://bucket/file?credentials-file=xxxxxx&predefined-acl=private&storage-class=COLDLINE"),
+        ("GS://user:pass@bucket/file?Credentials_File=first-secret&Credentials_File=second-secret&EndPoint=https%3A%2F%2Fuser%3Apass%40host%2F%3Fsig%3Dsecret#fragment", "gs://bucket/file?Credentials_File=xxxxxx&EndPoint=xxxxxx"),
+        ("gcs://bucket/file?endpoint=first-secret&endpoint=second-secret&storage-class=STANDARD", "gcs://bucket/file?endpoint=xxxxxx&storage-class=STANDARD"),
+        ("gs://bucket/file?access-key=123", "gs://bucket/file"),
+        ("gs://bucket/file?secret-access-key=123", "gs://bucket/file"),
+        ("gcs://user:pass@bucket/file?credentials-file=secret#fragment", "gcs://bucket/file?credentials-file=xxxxxx"),
+        ("file:///tmp/backup?token=secret#fragment", "file:///tmp/backup"),
+        ("local:///tmp/backup?token=secret#fragment", "local:///tmp/backup"),
+        ("hdfs://user:pass@host/backup?token=secret#fragment", "hdfs://host/backup"),
+        ("noop:///?token=secret#fragment", "noop:///"),
+        ("https://user:pass@host/backup?token=secret#fragment", "https://host/backup"),
+        ("/tmp/backup?token=secret#fragment", "/tmp/backup"),
+        ("gcs://bucket/file?token=secret%zz", "gcs://bucket/file"),
+        ("GCS://bucket/file#fragment", "gcs://bucket/file"),
+        ("gcs://bucket/file?", "gcs://bucket/file"),
+        ("local:///tmp/backup?", "local:///tmp/backup"),
         ("s3://bucket/file", "s3://bucket/file"),
-        ("s3://bucket/file?other-key=123", "s3://bucket/file?other-key=123"),
+        ("s3://bucket/file?other-key=123", "s3://bucket/file"),
+        ("s3://bucket/file?acl=private&force-path-style=true&provider=aws&region=us-east-1&sse=AES256&storage-class=STANDARD", "s3://bucket/file?acl=private&force-path-style=true&provider=aws&region=us-east-1&sse=AES256&storage-class=STANDARD"),
+        ("ks3://bucket/file?region=us-east-1&unknown-key=secret", "ks3://bucket/file?region=us-east-1"),
+        ("oss://bucket/file?provider=alibaba&access-key-typo=secret", "oss://bucket/file?provider=alibaba"),
+        ("azure://container/file?account-name=a&unknown-key=secret", "azure://container/file?account-name=a"),
+        ("azblob://container/file?access-tier=Hot&secret-name&%73ig=secret", "azblob://container/file?access-tier=Hot"),
+        ("S3://bucket/file?Region=us-east-1&Force_Path_Style=true&Region=us-west-2&unknown=secret", "s3://bucket/file?Force_Path_Style=true&Region=us-east-1&Region=us-west-2"),
+        ("s3://bucket/file?region=us-east-1&session-token=secret&session-token=another#fragment-secret", "s3://bucket/file?region=us-east-1&session-token=xxxxxx"),
+        ("s3://bucket/file?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D", "s3://bucket/file?sse-kms-context=xxxxxx"),
+        (r##"s3://bucket/file?sse-kms-context={"tenant":"#context-value"}"##, "s3://bucket/file"),
+        (r#"s3://bucket/file?sse=aws:kms&sse-kms-context={"tenant":"a&private-context-value"}"#, "s3://bucket/file"),
+        (r#"s3://bucket/file?sse=aws:kms&sse-kms-context={"tenant":"x&y"}"#, "s3://bucket/file"),
+        (r#"s3://bucket/file?sse-kms-context={"a":"x&region=private-context-value"}"#, "s3://bucket/file"),
+        (r#"ks3://bucket/file?sse-kms-context={"a":"x&region=private-context-value"}"#, "ks3://bucket/file"),
+        (r#"oss://bucket/file?SSE_KMS_CONTEXT={"a":"x&provider=private-context-value"}"#, "oss://bucket/file"),
+        (r#"s3://bucket/file?sse=aws:kms&sse-kms-context={"tenant":"a;x&private-context-value"}"#, "s3://bucket/file"),
+        (r#"s3://bucket/file?sse=aws:kms&sse-kms-context={"tenant":"a%zz&private-context-value"}"#, "s3://bucket/file"),
+        ("s3://bucket/file?SSE_KMS_CONTEXT=%7B%7D&SSE_KMS_CONTEXT=%7B%22a%22%3A%22b%22%7D", "s3://bucket/file?SSE_KMS_CONTEXT=xxxxxx"),
+        (r#"s3://bucket/file?sse-kms-context=%7B%7D&sse-kms-context={"a":"x&region=private-context-value"}"#, "s3://bucket/file"),
+        (r#"s3://bucket/file?sse-kms-context={"a":"x&region=private-context-value"}&sse-kms-context=%7B%7D"#, "s3://bucket/file"),
+        (r#"s3://bucket/file?sse-kms-context=%7B%7D&SSE_KMS_CONTEXT={"a":"x&region=private-context-value"}"#, "s3://bucket/file"),
+        ("s3://bucket/file?sse-kms-context=%7B%22a%22%3A%22x%26region%3Dprivate-context-value%22%7D&region=us-east-1", "s3://bucket/file?region=us-east-1&sse-kms-context=xxxxxx"),
         ("s3://bucket/file?access-key=123", "s3://bucket/file?access-key=xxxxxx"),
-        (
-            "s3://bucket/file?secret-access-key=123",
-            "s3://bucket/file?secret-access-key=xxxxxx",
-        ),
+        ("s3://bucket/file?secret-access-key=123", "s3://bucket/file?secret-access-key=xxxxxx"),
+        ("s3://bucket/file?external-id=tenant-123&role-arn=role&profile=default", "s3://bucket/file?external-id=tenant-123&profile=default&role-arn=role"),
         ("ks3://bucket/file?access-key=123", "ks3://bucket/file?access-key=xxxxxx"),
-        (
-            "ks3://bucket/file?secret-access-key=123",
-            "ks3://bucket/file?secret-access-key=xxxxxx",
-        ),
+        ("ks3://bucket/file?secret-access-key=123", "ks3://bucket/file?secret-access-key=xxxxxx"),
         ("oss://bucket/file?access-key=123", "oss://bucket/file?access-key=xxxxxx"),
-        (
-            "oss://bucket/file?secret-access-key=123",
-            "oss://bucket/file?secret-access-key=xxxxxx",
-        ),
-        // Underscore spellings normalize onto the dash keys for detection.
+        ("oss://bucket/file?secret-access-key=123", "oss://bucket/file?secret-access-key=xxxxxx"),
         ("s3://bucket/file?access_key=123", "s3://bucket/file?access_key=xxxxxx"),
-        (
-            "s3://bucket/file?secret_access_key=123",
-            "s3://bucket/file?secret_access_key=xxxxxx",
-        ),
+        ("s3://bucket/file?secret_access_key=123", "s3://bucket/file?secret_access_key=xxxxxx"),
         ("azure://bucket/file?sas-token=123", "azure://bucket/file?sas-token=xxxxxx"),
-        (
-            "azblob://container/file?sas-token=123",
-            "azblob://container/file?sas-token=xxxxxx",
-        ),
-        (
-            "azure://container/file?account-name=test&sas_token=123",
-            "azure://container/file?account-name=test&sas_token=xxxxxx",
-        ),
-        (
-            "azure://container/file?account-name=test&account-key=123",
-            "azure://container/file?account-key=xxxxxx&account-name=test",
-        ),
+        ("azure://c/p?account-name=a&sas-token=sv=2020-08-04&ss=b&sig=SECRETSIG", "azure://c/p?account-name=a&sas-token=xxxxxx"),
+        ("azblob://c/p?account-name=a&sas-token=sv=2020-08-04&ss=b&sig=SECRETSIG", "azblob://c/p?account-name=a&sas-token=xxxxxx"),
+        ("azblob://container/file?sas-token=123", "azblob://container/file?sas-token=xxxxxx"),
+        ("azure://container/file?account-name=test&sas_token=123", "azure://container/file?account-name=test&sas_token=xxxxxx"),
+        ("azure://container/file?account-name=test&account-key=123", "azure://container/file?account-key=xxxxxx&account-name=test"),
+        ("azure://container/file?access-tier=Hot&account-name=test&encryption-scope=scope", "azure://container/file?access-tier=Hot&account-name=test&encryption-scope=scope"),
         ("azblob://container/file?encryption-key=123", "azblob://container/file?encryption-key=xxxxxx"),
-        (
-            "azure://container/file?account_key=123&encryption_key=456",
-            "azure://container/file?account_key=xxxxxx&encryption_key=xxxxxx",
-        ),
+        ("azure://container/file?account_key=123&encryption_key=456", "azure://container/file?account_key=xxxxxx&encryption_key=xxxxxx"),
+        ("azure://container/file?account-name=acct&endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%3Fsv%3D2023-11-03%26sig%3Dsecret&sas-token=token", "azure://container/file?account-name=acct&endpoint=xxxxxx&sas-token=xxxxxx"),
+        ("azblob://container/file?EndPoint=https%3A%2F%2Facct.blob.core.windows.net%2F%3Fsig%3Dsecret&access-tier=Hot", "azblob://container/file?EndPoint=xxxxxx&access-tier=Hot"),
+        ("azure://container/file?endpoint=https%3A%2F%2Facct.blob.core.windows.net", "azure://container/file?endpoint=xxxxxx"),
+        ("azure://container/file?endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%25zz%3Fsig%3Dsecret", "azure://container/file?endpoint=xxxxxx"),
+        ("azblob://container/file?endpoint=first-secret&endpoint=second-secret", "azblob://container/file?endpoint=xxxxxx"),
+        ("s3://bucket/file?endpoint=https%3A%2F%2Fs3.example.com", "s3://bucket/file?endpoint=xxxxxx"),
+        ("ks3://bucket/file?endpoint=https%3A%2F%2Fuser%3Apass%40host%2F%3Fsig%3Dsecret", "ks3://bucket/file?endpoint=xxxxxx"),
+        ("oss://bucket/file?EndPoint=first-secret&EndPoint=second-secret", "oss://bucket/file?EndPoint=xxxxxx"),
+        ("s3://user:pass@b/p?region=r", "s3://b/p?region=r"),
+        ("gs://user:pass@bucket/file", "gs://bucket/file"),
     ];
+    for raw in leaks {
+        let output = tidb_ast::redact_url(raw);
+        for secret in ["FAKE_AST_USER", "FAKE_AST_PASS", "FAKE_AST_AK", "FAKE_AST_SK", "FAKE_AST_SAS"] {
+            assert!(!output.contains(secret), "{raw} -> {output}");
+        }
+    }
     for (input, want) in cases {
-        assert_eq!(redact_url(input), want, "input {input}");
+        assert_eq!(tidb_ast::redact_url(input), want, "input {input}");
     }
 }
 

@@ -1,12 +1,13 @@
-//! Go 1.25 `net/url` behavior captured from Go's own test tables.
+//! Go 1.27 `net/url` behavior captured from Go's own test tables.
 //!
 //! `testdata/net_url_go.jsonl` was produced by a throwaway Go program that
 //! copied `urltests`, `stringURLTests`, `unescapeTests`, `queryEscapeTests`,
-//! `pathEscapeTests`, `encodeQueryTests` and `parseTests` out of Go 1.25.12's
+//! `pathEscapeTests`, `encodeQueryTests` and `parseTests` out of Go 1.27.3's
 //! `net/url/url_test.go` (with go/ast) and the inputs of `TestParseErrors`,
 //! `TestRejectControlCharacters`, `TestInvalidUserPassword`,
-//! `TestParseFailure` and `TestURLHostnameAndPort`, plus netip error paths
-//! and TiDB storage URLs, and printed what the real package answered.
+//! `TestParseFailure` and `TestURLHostnameAndPort`, plus netip error paths,
+//! the strict-colon hosts and TiDB storage URLs, and printed what the real
+//! package answered (`GOTOOLCHAIN=go1.27.3 go run .`).
 
 use super::*;
 use serde_json::Value;
@@ -166,12 +167,12 @@ fn net_url_matches_go_capture() {
         }
     }
     let want = [
-        ("encode", 5),
+        ("encode", 6),
         ("escape", 12),
         ("hostport", 21),
-        ("parse", 184),
+        ("parse", 192),
         ("parse_query", 26),
-        ("string", 63),
+        ("string", 66),
         ("unescape", 13),
     ];
     assert_eq!(counts, want.map(|(k, n)| (k.to_owned(), n)).into());

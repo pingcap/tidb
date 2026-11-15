@@ -132,6 +132,7 @@ query_parameters!(S3BackendOptions, strings {
     "storage-class" => storage_class,
     "sse" => sse,
     "sse-kms-key-id" => sse_kms_key_id,
+    "sse-kms-context" => sse_kms_context,
     "acl" => acl,
     "access-key" => access_key,
     "secret-access-key" => secret_access_key,

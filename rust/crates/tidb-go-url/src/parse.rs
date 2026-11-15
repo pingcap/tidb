@@ -104,7 +104,7 @@ fn parse_inner(raw_url: &[u8], via_request: bool) -> Result<URL, Error> {
         if let Some(i) = authority.iter().position(|&c| c == b'/') {
             (authority, rest) = (&authority[..i], &authority[i..]);
         }
-        (url.user, url.host) = parse_authority(authority)?;
+        (url.user, url.host) = parse_authority(&url.scheme, authority)?;
     } else if !url.scheme.is_empty() && rest.starts_with(b"/") {
         url.omit_host = true;
     }
@@ -113,9 +113,9 @@ fn parse_inner(raw_url: &[u8], via_request: bool) -> Result<URL, Error> {
 }
 
 /// Go `parseAuthority`.
-fn parse_authority(authority: &[u8]) -> Result<(Option<Userinfo>, Vec<u8>), Error> {
+fn parse_authority(scheme: &[u8], authority: &[u8]) -> Result<(Option<Userinfo>, Vec<u8>), Error> {
     let at = authority.iter().rposition(|&c| c == b'@');
-    let host = parse_host(at.map_or(authority, |i| &authority[i + 1..]))?;
+    let host = parse_host(scheme, at.map_or(authority, |i| &authority[i + 1..]))?;
     let Some(i) = at else {
         return Ok((None, host));
     };
@@ -136,7 +136,7 @@ fn parse_authority(authority: &[u8]) -> Result<(Option<Userinfo>, Vec<u8>), Erro
 }
 
 /// Go `parseHost`: `host[:port]` without user information.
-fn parse_host(host: &[u8]) -> Result<Vec<u8>, Error> {
+fn parse_host(scheme: &[u8], host: &[u8]) -> Result<Vec<u8>, Error> {
     let open = host.iter().rposition(|&c| c == b'[');
     if open.is_some_and(|i| i > 0) {
         return Err(msg("invalid IP-literal"));
@@ -171,7 +171,14 @@ fn parse_host(host: &[u8]) -> Result<Vec<u8>, Error> {
         out.extend(unescaped_colon_port);
         return Ok(out);
     }
-    if let Some(i) = host.iter().rposition(|&c| c == b':') {
+    if let Some(mut i) = host.iter().position(|&c| c == b':') {
+        // Go allows colons inside the host (comma-separated host lists)
+        // except for http and https, which take the port after the first
+        // colon. Go's `urlstrictcolons=0` GODEBUG has no counterpart here.
+        let last_colon = host.iter().rposition(|&c| c == b':').unwrap_or(i);
+        if last_colon != i && !matches!(scheme, b"http" | b"https") {
+            i = last_colon;
+        }
         let colon_port = &host[i..];
         if !valid_optional_port(colon_port) {
             return Err(invalid_port(colon_port));

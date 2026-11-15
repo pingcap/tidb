@@ -511,8 +511,7 @@ fn import_into_secure_text() {
         "IMPORT INTO `t` FROM 's3://bucket/prefix?access-key=xxxxxx&secret-access-key=xxxxxx'"
     );
 
-    // Case 2: gcs keys are NOT redacted — secured text equals the plain
-    // restore byte-for-byte.
+    // Case 2: gcs knows neither key, so the secured text drops both.
     let gcs = build(
         "gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb".to_string(),
         None,
@@ -520,7 +519,7 @@ fn import_into_secure_text() {
     let expected_plain =
         "IMPORT INTO `t` FROM 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'";
     assert_eq!(gcs.restore(), expected_plain);
-    assert_eq!(secure_text(&gcs), expected_plain);
+    assert_eq!(secure_text(&gcs), "IMPORT INTO `t` FROM 'gcs://bucket/prefix'");
 
     // Case 3: s3 path plus WITH cloud_storage_uri whose own URL also gets
     // redacted; the rewritten option restores as a plain quoted string.

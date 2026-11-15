@@ -1,9 +1,8 @@
 //! Go `pkg/objstore/parse.go`: storage URLs parsed into `backuppb`
 //! storage backends, and the URL helpers BR and IMPORT INTO read.
 //!
-//! Errors are Go's `error.Error()` text. Go's `url.Error` text quotes the
-//! URL it failed on, which can hold credentials; callers that surface an
-//! error to a client redact it first.
+//! Errors are Go's `error.Error()` text; as in Go, none of them quotes a
+//! credential-bearing URL unredacted.
 
 mod options;
 
@@ -27,10 +26,67 @@ pub struct BackendOptions {
     pub azblob: AzblobBackendOptions,
 }
 
+/// Go `BackendOptions.Redacted`: a copy with the credentials masked, so the
+/// options can be logged.
+impl BackendOptions {
+    pub fn redacted(&self) -> Self {
+        let mut o = self.clone();
+        for secret in [
+            &mut o.s3.access_key,
+            &mut o.s3.secret_access_key,
+            &mut o.s3.session_token,
+            &mut o.s3.sse_kms_context,
+            &mut o.azblob.account_key,
+            &mut o.azblob.sas_token,
+            &mut o.azblob.encryption_key,
+        ] {
+            mask_if_set(secret);
+        }
+        // A SAS token or userinfo may be written into the endpoint.
+        for endpoint in [
+            &mut o.s3.endpoint,
+            &mut o.gcs.endpoint,
+            &mut o.azblob.endpoint,
+        ] {
+            *endpoint = redact_endpoint(endpoint);
+        }
+        o
+    }
+}
+
+/// Go `redactEndpoint`: unlike storage URLs, endpoints cannot be local
+/// paths, so a scheme and host are required before `RedactURL`.
+fn redact_endpoint(endpoint: &str) -> String {
+    if endpoint.is_empty() {
+        return String::new();
+    }
+    match tidb_go_url::parse(endpoint) {
+        Ok(u) if !u.scheme.is_empty() && !u.host.is_empty() => redact_url(endpoint),
+        _ => INVALID_URL_PLACEHOLDER.into(),
+    }
+}
+
+/// Go `maskIfSet`: an unset credential stays empty.
+fn mask_if_set(secret: &mut String) {
+    if !secret.is_empty() {
+        *secret = tidb_ast::REDACTED_VALUE.into();
+    }
+}
+
+/// Go `InvalidURLPlaceholder`.
+pub const INVALID_URL_PLACEHOLDER: &str = tidb_ast::INVALID_URL_PLACEHOLDER;
+
+/// Go `RedactURL`, which is `ast.RedactURL`.
+pub fn redact_url(raw_url: &str) -> String {
+    tidb_ast::redact_url(raw_url)
+}
+
 /// Go `ParseRawURL`: `+` is escaped first, because an AWS secret key may
-/// hold one and a query `+` decodes to a space.
-pub fn parse_raw_url(raw_url: &str) -> Result<URL, tidb_go_url::Error> {
+/// hold one and a query `+` decodes to a space. The error names no part of
+/// the URL: Go's `url.Error` and its reason can both quote it.
+pub fn parse_raw_url(raw_url: &str) -> Result<URL, String> {
     tidb_go_url::parse(raw_url.replace('+', "%2B"))
+        .map_err(|_| invalid_config("parse storage URL failed: invalid format"))
 }
 
 /// Go `ParseBackendFromURL`.
@@ -49,7 +105,7 @@ pub fn parse_backend(
     if raw_url.is_empty() {
         return Err(invalid_config("empty store is not allowed"));
     }
-    let mut u = parse_raw_url(raw_url).map_err(|e| e.to_string())?;
+    let mut u = parse_raw_url(raw_url)?;
     parse_backend_inner(&mut u, raw_url, options)
 }
 
@@ -99,7 +155,8 @@ fn parse_backend_inner(
         b"s3" | b"ks3" | b"oss" => {
             if bucket.is_empty() {
                 return Err(invalid_config(&format!(
-                    "please specify the bucket for s3 in {raw_url}"
+                    "please specify the bucket for s3 in {}",
+                    redact_url(&raw_url)
                 )));
             }
             let mut s3 = S3 {
@@ -114,7 +171,7 @@ fn parse_backend_inner(
                 },
                 |options| options.s3.clone(),
             );
-            extract_query_parameters(u, &mut s3_options);
+            extract_query_parameters(u, &mut s3_options)?;
             s3_options.set_force_path_style(&raw_url);
             s3_options.apply(&mut s3)?;
             match u.scheme.as_slice() {
@@ -127,7 +184,8 @@ fn parse_backend_inner(
         b"gs" | b"gcs" => {
             if bucket.is_empty() {
                 return Err(invalid_config(&format!(
-                    "please specify the bucket for gcs in {raw_url}"
+                    "please specify the bucket for gcs in {}",
+                    redact_url(&raw_url)
                 )));
             }
             let mut gcs = Gcs {
@@ -136,14 +194,15 @@ fn parse_backend_inner(
                 ..Gcs::default()
             };
             let mut gcs_options = options.map(|o| o.gcs.clone()).unwrap_or_default();
-            extract_query_parameters(u, &mut gcs_options);
+            extract_query_parameters(u, &mut gcs_options)?;
             gcs_options.apply(&mut gcs)?;
             Ok(backend(Backend::Gcs(gcs)))
         }
         b"azure" | b"azblob" => {
             if bucket.is_empty() {
                 return Err(invalid_config(&format!(
-                    "please specify the bucket for azblob in {raw_url}"
+                    "please specify the bucket for azblob in {}",
+                    redact_url(&raw_url)
                 )));
             }
             let mut azblob = AzureBlobStorage {
@@ -152,7 +211,7 @@ fn parse_backend_inner(
                 ..AzureBlobStorage::default()
             };
             let mut azblob_options = options.map(|o| o.azblob.clone()).unwrap_or_default();
-            extract_query_parameters(u, &mut azblob_options);
+            extract_query_parameters(u, &mut azblob_options)?;
             azblob_options.apply(&mut azblob)?;
             Ok(backend(Backend::AzureBlobStorage(azblob)))
         }
@@ -167,9 +226,21 @@ fn parse_backend_inner(
 /// `options`, matching each normalized key to a json tag, then clears the
 /// query. Go walks the query map in random order, so two keys that
 /// normalize alike pick an arbitrary winner there; here the later key in
-/// byte order wins.
-pub fn extract_query_parameters(u: &mut URL, options: &mut dyn QueryParameters) {
-    for (key, params) in u.query().0 {
+/// byte order wins. A query that cannot be fully decoded is an error and
+/// leaves `options` unchanged: `URL.Query` would silently drop a pair such
+/// as `sse-kms-context`.
+pub fn extract_query_parameters(
+    u: &mut URL,
+    options: &mut dyn QueryParameters,
+) -> Result<(), String> {
+    let (values, err) = tidb_go_url::parse_query(&u.raw_query);
+    if err.is_some() {
+        // The decoder error may quote part of the query.
+        return Err(invalid_config(
+            "parse storage URL query failed: invalid format",
+        ));
+    }
+    for (key, params) in values.0 {
         let Some(param) = params.first() else {
             continue;
         };
@@ -177,6 +248,7 @@ pub fn extract_query_parameters(u: &mut URL, options: &mut dyn QueryParameters) 
         options.set_query_parameter(&key, param);
     }
     u.raw_query.clear();
+    Ok(())
 }
 
 /// Go `NormalizeQueryParameterKey`: `_` becomes `-`, then lowercase.
@@ -198,7 +270,11 @@ pub fn format_backend_url(backend: &StorageBackend) -> URL {
             u.path = b"/".to_vec();
         }
         Some(Backend::S3(s3)) => {
-            u.scheme = b"s3".to_vec();
+            u.scheme = match s3.provider.as_str() {
+                OSS_PROVIDER => b"oss".to_vec(),
+                KS3_SDK_PROVIDER => b"ks3".to_vec(),
+                _ => b"s3".to_vec(),
+            };
             u.host = s3.bucket.clone().into_bytes();
             u.path = s3.prefix.clone().into_bytes();
         }
@@ -218,8 +294,10 @@ pub fn format_backend_url(backend: &StorageBackend) -> URL {
 }
 
 /// Go `IsLocalPath`.
-pub fn is_local_path(p: &str) -> Result<bool, tidb_go_url::Error> {
-    tidb_go_url::parse(p).map(|u| is_local(&u))
+pub fn is_local_path(p: &str) -> Result<bool, String> {
+    tidb_go_url::parse(p)
+        .map(|u| is_local(&u))
+        .map_err(|_| invalid_config("invalid storage URL"))
 }
 
 /// Go `IsLocal`: the `local`, `file` or empty scheme.

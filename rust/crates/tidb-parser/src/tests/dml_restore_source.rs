@@ -614,7 +614,7 @@ fn test_import_into_secure_text() {
         ),
         (
             "import into t from 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'",
-            "IMPORT INTO `t` FROM 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'",
+            "IMPORT INTO `t` FROM 'gcs://bucket/prefix'",
         ),
         (
             "import into t from 's3://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb' with CLOUD_STORAGE_uri='s3://bucket/prefix?access-key=cccccc&secret-access-key=dddddd'",

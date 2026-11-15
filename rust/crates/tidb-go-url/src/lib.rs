@@ -1,4 +1,4 @@
-//! Go `net/url` (Go 1.25, the toolchain TiDB's `go.mod` pins): URL parsing,
+//! Go `net/url` (Go 1.27, the toolchain Go TiDB master's `go.mod` pins): URL parsing,
 //! escaping and query values, for code ported from Go that reads storage
 //! URLs (`pkg/objstore`, BR destinations, IMPORT INTO sources).
 //!
@@ -223,7 +223,16 @@ impl URL {
                 }
                 buf.extend(escape(&self.host, Encoding::Host));
             }
-            let path = self.escaped_path();
+            let mut path = self.escaped_path();
+            if self.omit_host
+                && self.host.is_empty()
+                && self.user.is_none()
+                && path.starts_with(b"//")
+            {
+                // Re-parsing must not turn such a path into an authority.
+                buf.extend_from_slice(b"%2F");
+                path.remove(0);
+            }
             if path.first().is_some_and(|&c| c != b'/') && !self.host.is_empty() {
                 buf.push(b'/');
             }

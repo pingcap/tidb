@@ -85,6 +85,36 @@ pub fn default_config() -> Config {
     }
 }
 
+/// Go `ApplyTiDBRuntimeConfig`: a BRIE statement inside TiDB reaches the
+/// cluster through TiDB's own PD addresses (blank entries dropped) and, when
+/// any is set, its cluster TLS files.
+pub fn apply_tidb_runtime_config(cfg: &mut Config) {
+    let tidb_cfg = tidb_config::config_tree::config::get_global_config();
+    if !tidb_cfg.path.is_empty() {
+        let pds: Vec<String> = tidb_cfg
+            .path
+            .split(',')
+            .map(str::trim)
+            .filter(|pd| !pd.is_empty())
+            .map(str::to_owned)
+            .collect();
+        if !pds.is_empty() {
+            cfg.pd = pds;
+        }
+    }
+    let security = &tidb_cfg.security;
+    if !security.cluster_ssl_ca.is_empty()
+        || !security.cluster_ssl_cert.is_empty()
+        || !security.cluster_ssl_key.is_empty()
+    {
+        cfg.tls = TLSConfig {
+            ca: security.cluster_ssl_ca.clone(),
+            cert: security.cluster_ssl_cert.clone(),
+            key: security.cluster_ssl_key.clone(),
+        };
+    }
+}
+
 /// Go `checkCipherKey`.
 fn check_cipher_key(key: &str, file: &str) -> Result<(), String> {
     if key.is_empty() == file.is_empty() {

@@ -89,57 +89,105 @@ pub fn back_quote(name: &str) -> String {
     format!("`{}`", name.replace('`', "``"))
 }
 
-/// Redacts credentials carried in an external-storage URL.
-///
-/// This is the Rust transcreation of `ast.RedactURL`. Query keys are sorted
-/// because Go's `url.Values.Encode` sorts them before rebuilding the URL.
-pub fn redact_url(value: &str) -> String {
-    let Some((scheme, _)) = value.split_once("://") else {
-        return value.to_string();
-    };
-    let sensitive_keys: &[&str] = match identifier_to_lower(scheme).as_str() {
-        "s3" | "ks3" | "oss" => &["access-key", "secret-access-key", "session-token"],
-        "azure" | "azblob" => &["account-key", "encryption-key", "sas-token"],
-        _ => return value.to_string(),
-    };
-    let Some((base, query_and_fragment)) = value.split_once('?') else {
-        return value.to_string();
-    };
-    let (query, fragment) = query_and_fragment
-        .split_once('#')
-        .map_or((query_and_fragment, None), |(query, fragment)| {
-            (query, Some(fragment))
-        });
-    let mut fields: Vec<(String, String)> = query
-        .split('&')
-        .filter(|field| !field.is_empty())
-        .map(|field| {
-            let (key, value) = field.split_once('=').unwrap_or((field, ""));
-            let normalized = identifier_to_lower(key).replace('_', "-");
-            let value = if sensitive_keys.contains(&normalized.as_str()) {
-                "xxxxxx"
-            } else {
-                value
-            };
-            (key.to_string(), value.to_string())
-        })
-        .collect();
-    fields.sort();
+/// Go `ast.RedactedValue`: replaces a secret in redacted output.
+pub const REDACTED_VALUE: &str = "xxxxxx";
 
-    let mut result = format!("{base}?");
-    for (index, (key, value)) in fields.iter().enumerate() {
-        if index > 0 {
-            result.push('&');
+/// Go `ast.InvalidURLPlaceholder`: replaces a value that cannot be parsed as
+/// a URL, because such a value cannot be reliably masked.
+pub const INVALID_URL_PLACEHOLDER: &str = "(invalid URL)";
+
+/// Go `ast.RedactURL`: removes userinfo and fragments; for S3-like, GCS and
+/// Azure URLs keeps only known query options and masks the sensitive ones;
+/// drops the query of every other scheme. A plain local path is unchanged
+/// and an invalid URL becomes [`INVALID_URL_PLACEHOLDER`].
+pub fn redact_url(value: &str) -> String {
+    if !value.contains("://") && !value.contains('?') {
+        return value.to_string();
+    }
+    let Ok(mut u) = tidb_go_url::parse(value) else {
+        return INVALID_URL_PLACEHOLDER.to_string();
+    };
+    u.user = None;
+    u.fragment.clear();
+    u.raw_fragment.clear();
+    // The allowlist maps known options to whether their values are masked.
+    // Unknown keys may be new secrets, misspellings or parts of split values.
+    let query_keys: &[(&str, bool)] = match identifier_to_lower(&String::from_utf8_lossy(&u.scheme)).as_str() {
+        "s3" | "ks3" | "oss" => &[
+            // Endpoints can embed userinfo or signed query credentials.
+            ("endpoint", true),
+            ("region", false),
+            ("storage-class", false),
+            ("sse", false),
+            ("sse-kms-key-id", false),
+            ("acl", false),
+            ("provider", false),
+            ("force-path-style", false),
+            ("use-accelerate-endpoint", false),
+            ("role-arn", false),
+            ("external-id", false),
+            ("profile", false),
+            ("object-lock-enabled", false),
+            ("access-key", true),
+            ("secret-access-key", true),
+            ("session-token", true),
+            ("sse-kms-context", true),
+        ],
+        "gs" | "gcs" => {
+            u.force_query = false;
+            &[
+                ("endpoint", true),
+                ("storage-class", false),
+                ("predefined-acl", false),
+                ("credentials-file", true),
+            ]
         }
-        result.push_str(key);
-        result.push('=');
-        result.push_str(value);
+        "azure" | "azblob" => &[
+            ("account-name", false),
+            ("access-tier", false),
+            ("encryption-scope", false),
+            ("account-key", true),
+            ("encryption-key", true),
+            ("sas-token", true),
+            // Azure endpoints can contain SAS tokens the client uses directly.
+            ("endpoint", true),
+        ],
+        _ => &[],
+    };
+    if query_keys.is_empty() {
+        u.raw_query.clear();
+        u.force_query = false;
+        return u.string();
     }
-    if let Some(fragment) = fragment {
-        result.push('#');
-        result.push_str(fragment);
+    // URL.Query skips undecodable pairs, which may hide a split secret.
+    let (mut values, err) = tidb_go_url::parse_query(&u.raw_query);
+    if err.is_some() {
+        u.raw_query.clear();
+        return u.string();
     }
-    result
+    let keys: Vec<Vec<u8>> = values.0.keys().cloned().collect();
+    for key in keys {
+        let normalized = tidb_mysql::to_lowercase(&String::from_utf8_lossy(&key).replace('_', "-"));
+        match query_keys.iter().find(|(name, _)| *name == normalized) {
+            None => values.del(&key),
+            Some((_, true)) => {
+                // An unescaped '&' can split a JSON context into an allowed
+                // key; drop the whole query if any context is invalid JSON.
+                if normalized == "sse-kms-context"
+                    && values.0[&key]
+                        .iter()
+                        .any(|v| serde_json::from_slice::<serde_json::Value>(v).is_err())
+                {
+                    u.raw_query.clear();
+                    return u.string();
+                }
+                values.set(key, REDACTED_VALUE);
+            }
+            Some((_, false)) => {}
+        }
+    }
+    u.raw_query = values.encode();
+    u.string()
 }
 
 /// Escapes a string literal's body (backslash and quote doubling) without

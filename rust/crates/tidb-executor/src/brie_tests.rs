@@ -103,28 +103,36 @@ fn parse_brie(sql: &str) -> BrieStmt {
     (**stmt).clone()
 }
 
-/// Go `buildBRIE`'s destination handling: `objstore.ParseRawURL` errors are
-/// annotated `invalid destination URL`, an S3 or GCS query moves into the
-/// backend options, and `cfg.Storage` / the job's storage and query are the
-/// parsed URL's `String`. Go echoes the URL in the parse error; here its
-/// credentials are redacted.
+/// Go `buildBRIE`'s destination handling: `objstore.ParseRawURL` and
+/// `ExtractQueryParameters` errors are annotated `invalid destination URL`
+/// and quote no part of the URL, an S3 or GCS query moves into the backend
+/// options, and `cfg.Storage` is the parsed URL's `String`. The job shows
+/// that storage through `ast.RedactURL`.
 #[test]
 fn build_brie_parses_the_destination_like_go() {
     let _guard = tikv_store();
     let zone = tidb_datatype::SessionTimeZone::default();
     let build = |sql: &str| build_brie(&parse_brie(sql), &zone);
-    let err = build("BACKUP DATABASE * TO '1invalid:'").err().unwrap();
-    assert_eq!(
-        err.to_string(),
-        r#"invalid destination URL: parse "1invalid:": first path segment in URL cannot contain colon"#
-    );
-    let err = build("BACKUP DATABASE * TO 's3://bad bucket/p?access-key=AKSECRET&secret-access-key=SKSECRET'")
+    for sql in [
+        "BACKUP DATABASE * TO '1invalid:'",
+        "BACKUP DATABASE * TO 's3://bad bucket/p?access-key=AKSECRET&secret-access-key=SKSECRET'",
+    ] {
+        let err = build(sql).err().unwrap().to_string();
+        assert!(
+            err.starts_with("invalid destination URL: parse storage URL failed: invalid format"),
+            "{err}"
+        );
+        assert!(!err.contains("AKSECRET") && !err.contains("1invalid"), "{err}");
+    }
+    let err = build("BACKUP DATABASE * TO 's3://b/p?access-key=AK%zz&secret-access-key=SKSECRET'")
         .err()
         .unwrap()
         .to_string();
-    assert!(err.starts_with("invalid destination URL: parse "), "{err}");
-    assert!(err.ends_with(r#": invalid character " " in host name"#), "{err}");
-    assert!(!err.contains("AKSECRET") && !err.contains("SKSECRET"), "{err}");
+    assert!(
+        err.starts_with("invalid destination URL: parse storage URL query failed: invalid format"),
+        "{err}"
+    );
+    assert!(!err.contains("SKSECRET"), "{err}");
 
     let exec = build("BACKUP DATABASE * TO 's3://bucket/prefix?access-key=AK&secret-access-key=a+b/c&force_path_style=false&Region=us'").unwrap();
     let cfg = exec.backup_cfg.unwrap().config;
@@ -142,10 +150,29 @@ fn build_brie_parses_the_destination_like_go() {
     assert_eq!(cfg.backend_options.gcs.endpoint, "http://e/");
     assert_eq!(cfg.storage, "gcs://bucket/p");
 
-    // Other schemes keep their query; Go lowercases the scheme.
+    // Other schemes keep their query in the task storage; Go lowercases the
+    // scheme. The job's shown storage drops a query `RedactURL` cannot vet.
     let exec = build("BACKUP DATABASE * TO 'LOCAL:///tmp/a%20b?x=1'").unwrap();
     assert_eq!(exec.backup_cfg.unwrap().config.storage, "local:///tmp/a%20b?x=1");
-    assert_eq!(exec.info.storage, "local:///tmp/a%20b?x=1");
+    assert_eq!(exec.info.storage, "local:///tmp/a%20b");
+}
+
+/// Go `TestClearTaskKeepsUnfinishedBRIETasks`.
+#[test]
+fn test_clear_task_keeps_unfinished_brie_tasks() {
+    let queue = BrieQueue::new();
+    let (_, running) =
+        queue.register_task(&Context::background(), BrieTaskInfo::new(&statement(BrieKind::Backup, "noop://running")));
+    *queue.last_clear_time.lock().unwrap() = Some(Instant::now() - CLEAR_INTERVAL - Duration::from_secs(1));
+    queue.clear_task();
+    assert!(queue.tasks.lock().unwrap().contains_key(&running), "still-running BRIE tasks must survive queue cleanup");
+    assert!(queue.cancel_task(running));
+    let mut finished = BrieTaskInfo::new(&statement(BrieKind::Backup, "noop://finished"));
+    finished.finish_time = Some(chrono::Local::now().timestamp() - OUTDATED_DURATION - 60);
+    let (_, finished) = queue.register_task(&Context::background(), finished);
+    *queue.last_clear_time.lock().unwrap() = Some(Instant::now() - CLEAR_INTERVAL - Duration::from_secs(1));
+    queue.clear_task();
+    assert!(!queue.tasks.lock().unwrap().contains_key(&finished), "outdated finished BRIE tasks should still be garbage-collected");
 }
 
 /// Go `TestBRIEBuilderOptions`, both BACKUP and RESTORE assertions.

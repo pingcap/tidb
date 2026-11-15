@@ -11,6 +11,7 @@ description = "Go br/pkg/streamhelper/spans, br/pkg/rtree, br/pkg/restore/utils 
 workspace = true
 
 [dependencies]
+tidb-config = { path = "../tidb-config" }
 tidb-objstore = { path = "../tidb-objstore" }
 tidb-objstore-s3like = { path = "../tidb-objstore-s3like" }
 tidb-table-filter = { path = "../tidb-table-filter" }

@@ -254,3 +254,14 @@ change restored, all ten targeted tests passed.
 
 Changed-crate suites: see the E07 plan's destination URL increment (one shared
 run, 6377/6386 passed; the 9 failures reproduce on the unchanged tip).
+
+### Go master baseline (2026-11-15)
+
+Go master's `buildImportInto` adds Starter handling: a Starter deployment
+requires an explicit non-empty external ID (`checkStarterS3Path`, answering
+ErrLoadDataInvalidURI), `checkNextGenS3PathWithSem` skips the external-ID
+check there, and only non-Starter deployments stamp the keyspace. Ported
+with master's `TestProcessNextGenS3Path` Starter cases (`checkStarterS3Path`
+reads no mode, so its cases run in every build). Master still quotes
+`url.Parse`'s error in ErrLoadDataInvalidURI; that URL goes through master's
+`RedactURL`, which turns an unparseable URL into `(invalid URL)`.

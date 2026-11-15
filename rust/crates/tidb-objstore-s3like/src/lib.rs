@@ -21,6 +21,10 @@ pub const S3_EXTERNAL_ID: &str = "external-id";
 
 /// Go `domainAWS`.
 const DOMAIN_AWS: &str = "amazonaws.com";
+/// Go `sseAWSKMS`: an SSE-KMS mode that accepts an encryption context.
+const SSE_AWS_KMS: &str = "aws:kms";
+/// Go `sseAWSKMSDSSE`.
+const SSE_AWS_KMS_DSSE: &str = "aws:kms:dsse";
 
 /// Go `berrors.ErrStorageInvalidConfig` annotated with `msg`.
 pub fn invalid_config(msg: &str) -> String {
@@ -40,6 +44,9 @@ pub struct S3BackendOptions {
     pub sse: String,
     /// Go `SseKmsKeyID` (json `sse-kms-key-id`).
     pub sse_kms_key_id: String,
+    /// Go `SseKmsContext` (json `sse-kms-context`): raw JSON, which
+    /// [`S3BackendOptions::apply`] encodes for the protocol.
+    pub sse_kms_context: String,
     /// Go `ACL` (json `acl`).
     pub acl: String,
     /// Go `AccessKey` (json `access-key`).
@@ -69,7 +76,9 @@ impl S3BackendOptions {
     /// then copies the options onto `s3`.
     pub fn apply(&self, s3: &mut S3) -> Result<(), String> {
         if !self.endpoint.is_empty() {
-            let u = tidb_go_url::parse(&self.endpoint).map_err(|e| e.to_string())?;
+            // The parser error would quote the credential-bearing endpoint.
+            let u = tidb_go_url::parse(&self.endpoint)
+                .map_err(|_| invalid_config("invalid S3 endpoint URL"))?;
             if u.scheme.is_empty() {
                 return Err("scheme not found in endpoint".into());
             }
@@ -85,6 +94,18 @@ impl S3BackendOptions {
                 return Err(invalid_config("secret_access_key not found"));
             }
         }
+        let encryption_context = encode_sse_kms_context(&self.sse_kms_context)?;
+        // AWS rejects a context header unless the request explicitly selects
+        // SSE-KMS, even when the bucket default is SSE-KMS.
+        if !encryption_context.is_empty()
+            && matches!(self.provider.as_str(), "" | "aws")
+            && self.sse != SSE_AWS_KMS
+            && self.sse != SSE_AWS_KMS_DSSE
+        {
+            return Err(invalid_config(&format!(
+                "sse-kms-context requires sse={SSE_AWS_KMS} or sse={SSE_AWS_KMS_DSSE}"
+            )));
+        }
         s3.endpoint = self
             .endpoint
             .strip_suffix('/')
@@ -94,6 +115,7 @@ impl S3BackendOptions {
         s3.storage_class.clone_from(&self.storage_class);
         s3.sse.clone_from(&self.sse);
         s3.sse_kms_key_id.clone_from(&self.sse_kms_key_id);
+        s3.sse_kms_encryption_context = encryption_context;
         s3.acl.clone_from(&self.acl);
         s3.access_key.clone_from(&self.access_key);
         s3.secret_access_key.clone_from(&self.secret_access_key);
@@ -129,3 +151,24 @@ fn use_virtual_host_style_for_aws_s3(opts: &S3BackendOptions, raw_url: &str) -> 
     }
     opts.provider == "aws" || opts.endpoint.contains(DOMAIN_AWS) || !opts.role_arn.is_empty()
 }
+
+/// Go `encodeSSEKMSContext`: the user's JSON object of string pairs,
+/// re-marshaled (keys sorted, Go's escaping) and base64-encoded once, before
+/// the backend is persisted or sent to TiKV. Errors never quote the input.
+pub fn encode_sse_kms_context(raw: &str) -> Result<String, String> {
+    if raw.is_empty() {
+        return Ok(String::new());
+    }
+    let values = json::parse_string_object(raw.as_bytes()).ok_or_else(|| {
+        invalid_config(
+            "sse-kms-context must be a UTF-8 JSON object with unique keys and string values",
+        )
+    })?;
+    use base64::Engine as _;
+    Ok(base64::engine::general_purpose::STANDARD.encode(json::marshal_string_map(&values)))
+}
+
+mod json;
+
+#[cfg(test)]
+mod tests;

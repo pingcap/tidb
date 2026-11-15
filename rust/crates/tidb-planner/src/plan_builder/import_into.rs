@@ -211,27 +211,58 @@ pub(crate) fn check_import_source_path(path: &str) -> Result<(String, bool), Pla
                 .gen_with_stack_by_args(&["IMPORT INTO from server disk".into()]),
         ));
     }
-    // A next-generation cluster can be shared by tenants that share the AWS
-    // role reading the source bucket; the external ID limits that access to
-    // the current tenant.
+    // A next-generation cluster can be shared by tenants that use the same
+    // AWS role; the external ID restricts access to the intended tenant.
     if tidb_config_kerneltype::is_next_gen()
         && tidb_sem_compat::is_enabled()
         && tidb_objstore::is_s3_like(&u)
     {
+        let is_starter = tidb_config_deploymode::is_starter();
+        if is_starter {
+            check_starter_s3_path(&u)?;
+        }
         check_next_gen_s3_path_with_sem(&u)?;
-        let mut values = u.query();
-        values.set(
-            tidb_objstore_s3like::S3_EXTERNAL_ID,
-            tidb_config::config_tree::config::get_global_keyspace_name(),
-        );
-        u.raw_query = values.encode();
-        return Ok((u.string(), import_from_server));
+        // Non-Starter deployments derive the external ID from the keyspace.
+        if !is_starter {
+            let mut values = u.query();
+            values.set(
+                tidb_objstore_s3like::S3_EXTERNAL_ID,
+                tidb_config::config_tree::config::get_global_keyspace_name(),
+            );
+            u.raw_query = values.encode();
+            return Ok((u.string(), import_from_server));
+        }
     }
     Ok((path.to_owned(), import_from_server))
 }
 
-/// Go `checkNextGenS3PathWithSem`: under SEM a tenant may not choose the
-/// external ID and must bring its own key pair or role ARN.
+/// Go `checkStarterS3Path`: a Starter deployment requires an explicit,
+/// non-empty external ID. Go walks the query map and stops at the first
+/// empty external ID, so any empty one fails whatever the map order.
+pub(crate) fn check_starter_s3_path(u: &tidb_go_url::URL) -> Result<(), PlanError> {
+    let values = u.query();
+    let mut has_external_id = false;
+    for (key, vs) in &values.0 {
+        let key = tidb_objstore::normalize_query_parameter_key(&String::from_utf8_lossy(key));
+        if key != tidb_objstore_s3like::S3_EXTERNAL_ID {
+            continue;
+        }
+        has_external_id = vs.first().is_some_and(|v| !v.is_empty());
+        if !has_external_id {
+            break;
+        }
+    }
+    if !has_external_id {
+        return Err(PlanError::from(tidb_exeerrors::ERR_LOAD_DATA_INVALID_URI.fast_gen_by_args(&[
+            "data source".into(),
+            "external ID is required for Starter deployments".into(),
+        ])));
+    }
+    Ok(())
+}
+
+/// Go `checkNextGenS3PathWithSem`: under SEM a tenant must bring its own key
+/// pair or role ARN, and outside Starter may not choose the external ID.
 pub(crate) fn check_next_gen_s3_path_with_sem(u: &tidb_go_url::URL) -> Result<(), PlanError> {
     use tidb_objstore_s3like::{S3_ACCESS_KEY, S3_EXTERNAL_ID, S3_ROLE_ARN, S3_SECRET_ACCESS_KEY};
     let not_supported = |feature: &str| {
@@ -242,12 +273,13 @@ pub(crate) fn check_next_gen_s3_path_with_sem(u: &tidb_go_url::URL) -> Result<()
     };
     let values = u.query();
     let expected_external_id = tidb_config::config_tree::config::get_global_keyspace_name();
+    let is_starter = tidb_config_deploymode::is_starter();
     let (mut has_access_key, mut has_secret_access_key, mut has_role_arn) = (false, false, false);
     for (key, vs) in &values.0 {
         let normalized = tidb_objstore::normalize_query_parameter_key(&String::from_utf8_lossy(key));
         let has_value = !values.get(key).is_empty();
         match normalized.as_str() {
-            S3_EXTERNAL_ID => {
+            S3_EXTERNAL_ID if !is_starter => {
                 if vs.iter().any(|v| v.as_slice() != expected_external_id.as_bytes()) {
                     return Err(not_supported("IMPORT INTO with explicit external ID"));
                 }
@@ -324,6 +356,28 @@ mod tests {
                 err.contains("IMPORT INTO from S3-like storage without access key/secret access key or role ARN"),
                 "{u}: {err}"
             );
+        }
+        // Go runs its Starter cases only in a next-generation build, where
+        // the deployment mode can be set. `checkStarterS3Path` itself reads
+        // no mode, so its cases run in every build here.
+        let starter = |u: &str| check_starter_s3_path(&tidb_go_url::parse(u).unwrap());
+        for u in [
+            "S3://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
+            "s3://bucket?external_id=abc&access-key=ak&secret-access-key=sk",
+            "s3://bucket?external-id=aaa&external_id=abc&access-key=ak&secret-access-key=sk",
+            "oss://bucket?External-id=abc&role-arn=arn",
+            "s3://bucket?external-id=allowed",
+        ] {
+            assert!(starter(u).is_ok(), "{u}");
+        }
+        for u in [
+            "s3://bucket?access-key=ak&secret-access-key=sk",
+            "s3://bucket?external-id=&access-key=ak&secret-access-key=sk",
+            "s3://bucket?external-id=abc&external_id=&access-key=ak&secret-access-key=sk",
+            "oss://bucket?role-arn=arn",
+        ] {
+            let err = starter(u).unwrap_err().to_string();
+            assert!(err.contains("external ID is required for Starter deployments"), "{u}: {err}");
         }
     }
 }

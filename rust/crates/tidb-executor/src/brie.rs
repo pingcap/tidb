@@ -222,12 +222,13 @@ impl BrieQueue {
             return;
         }
         *last_clear = Some(Instant::now());
+        // Unfinished tasks have no finish time; Go does not collect them.
         self.tasks.lock().unwrap().retain(|_, item| {
             item.info
                 .lock()
                 .unwrap()
                 .finish_time
-                .is_some_and(|finish| now - finish <= OUTDATED_DURATION)
+                .is_none_or(|finish| now - finish <= OUTDATED_DURATION)
         });
     }
     /// Go `ShowExec.fetchShowBRIE`: fetch BEFORE opportunistic cleanup.
@@ -422,29 +423,20 @@ pub fn build_brie(
     use tidb_proto::{backup::CompressionType, encryptionpb::EncryptionMethod};
     let global = tidb_config::config_tree::config::get_global_config();
     let mut config = tidb_br::task::common::default_config();
-    config.pd = global.path.split(',').map(str::to_owned).collect();
-    config.tls = tidb_br::task::common::TLSConfig {
-        ca: global.security.cluster_ssl_ca.clone(),
-        cert: global.security.cluster_ssl_cert.clone(),
-        key: global.security.cluster_ssl_key.clone(),
-    };
-    // Go annotates the url.Error, whose text quotes the destination; the
-    // quoted URL is redacted so no credential reaches the client.
-    let mut storage_url = tidb_objstore::parse_raw_url(&stmt.storage).map_err(|err| {
-        DriverError::unsupported(format!(
-            "invalid destination URL: {}",
-            err.redact_url(tidb_ast::redact_url)
-        ))
-    })?;
+    tidb_br::task::common::apply_tidb_runtime_config(&mut config);
+    let invalid = |err: String| DriverError::unsupported(format!("invalid destination URL: {err}"));
+    let mut storage_url = tidb_objstore::parse_raw_url(&stmt.storage).map_err(invalid)?;
     match storage_url.scheme.as_slice() {
         b"s3" => tidb_objstore::extract_query_parameters(
             &mut storage_url,
             &mut config.backend_options.s3,
-        ),
+        )
+        .map_err(invalid)?,
         b"gs" | b"gcs" => tidb_objstore::extract_query_parameters(
             &mut storage_url,
             &mut config.backend_options.gcs,
-        ),
+        )
+        .map_err(invalid)?,
         // Go checks only SEM v1 here; SEM v2 limits the statement through
         // its RESTRICTED_SQL rules in `PlanBuilder.Build`.
         b"hdfs" if tidb_sem::is_enabled() => {

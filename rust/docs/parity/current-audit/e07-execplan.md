@@ -192,3 +192,39 @@ unchanged tip (a detached `ngaut/hparser-integration` worktree, same filter):
 six HTTP tests against local test servers (a 502 from this machine's network
 path), `load_stats_*` (two; the `tests/integrationtest/s/` fixture is absent),
 and the live cluster-config / Prometheus reads. `cargo build --locked -p tidb-server` passes.
+
+
+## Go master baseline (2026-11-15)
+
+
+The user set Go master (pingcap/tidb `eca4674a6f`, Go 1.27.3, kvproto
+`9192d38c8b67`) as the source of truth for E05/E07; earlier increments read
+this branch's in-tree `pkg/`. The destination URL increment was re-ported:
+
+- `tidb-go-url` follows Go 1.27 `net/url`: strict colons for http/https
+  hosts (other schemes keep Go's last-colon port), and `String` escaping a
+  `//` path without authority. The capture was redone with
+  `GOTOOLCHAIN=go1.27.3` (336 records).
+- kvproto refreshed to master's pin first (separate PR), for
+  `backup.S3.sse_kms_encryption_context`.
+- `ast.RedactURL` is master's: `net/url` parse, userinfo and fragment
+  removed, a per-scheme allowlist of query options (unknown keys dropped,
+  secrets and endpoints masked), an invalid URL shown as `(invalid URL)`, a
+  split SSE-KMS JSON context dropping the whole query. Every caller of
+  `tidb_ast::redact_url` gets it; master's `TestRedactURL`,
+  `TestBRIESecureText` and `TestImportIntoSecureText` tables replace the old
+  ones.
+- `objstore`: `ParseRawURL` and `IsLocalPath` errors quote no URL;
+  `ExtractQueryParameters` fails on an undecodable query; missing-bucket
+  errors redact the URL; `FormatBackendURL` keeps `oss`/`ks3`;
+  `BackendOptions.Redacted`; `S3BackendOptions.SseKmsContext` and
+  `encodeSSEKMSContext` (Go `encoding/json` decode and `Marshal` rules,
+  pinned by a 129-record capture of `S3BackendOptions.Apply`).
+- `buildBRIE` uses `task.ApplyTiDBRuntimeConfig` and annotates extraction
+  errors; `brieQueue.clearTask` keeps unfinished tasks
+  (`TestClearTaskKeepsUnfinishedBRIETasks`).
+
+Go master's own `ParseRawURL` no longer echoes the URL, so the earlier
+deliberate redaction difference for BRIE is gone. The job's shown storage is
+still `RedactURL(cfg.Storage)` rather than Go's raw `cfg.Storage` (AGENTS.md
+rule 7: Go shows an Azure query's credentials in SHOW BACKUPS).

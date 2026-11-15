@@ -13,7 +13,7 @@ pub(super) fn find_local_data_files(
     if !in_import_into {
         return Err(DriverError::from(
             tidb_exeerrors::ERR_LOAD_DATA_FROM_SERVER_DISK
-                .gen_with_stack_by_args(&[tidb_ast::redact_url(path).as_str().into()]),
+                .gen_with_stack_by_args(&[path.into()]),
         ));
     }
     let p = Path::new(path);
@@ -137,15 +137,13 @@ fn cant_read(reason: &str, hint: &str) -> DriverError {
             .gen_with_stack_by_args(&[reason.into(), hint.into()]),
     )
 }
-/// Go `os.PathError.Error` with URL redaction before including the location.
+/// Go `os.PathError.Error`. The location is a server-disk path, which Go
+/// reports as is; `RedactURL` would cut it at a `?`.
 fn io_message(operation: &str, path: &Path, error: &std::io::Error) -> String {
     let reason = match error.kind() {
         std::io::ErrorKind::NotFound => "no such file or directory".to_owned(),
         std::io::ErrorKind::PermissionDenied => "permission denied".to_owned(),
         _ => error.to_string(),
     };
-    format!(
-        "{operation} {}: {reason}",
-        tidb_ast::redact_url(&path.to_string_lossy())
-    )
+    format!("{operation} {}: {reason}", path.display())
 }
