@@ -184,3 +184,11 @@ cannot be compiled against the original source; there `build_brie` accepted
     cargo nextest run -p tidb-br -p tidb-executor -E 'test(brie) | test(task::) | test(test_show_backup_query_redact) | test(test_cancel) | test(test_security_enhanced_local_backup_restore) | test(test_visit_info_brie) | test(test_show_via_sql)'
 
 No physical backup or restore is claimed; E07 stays partial.
+
+Changed-crate suites (shared with E05's source URL increment):
+`cargo nextest run --locked -p tidb-go-url -p tidb-objstore -p tidb-objstore-s3like -p tidb-br -p tidb-planner -p tidb-executor -p tidb-session --no-fail-fast`
+ran 6386 tests: 6377 passed, 9 failed, 9 skipped. The same 9 fail on the
+unchanged tip (a detached `ngaut/hparser-integration` worktree, same filter):
+six HTTP tests against local test servers (a 502 from this machine's network
+path), `load_stats_*` (two; the `tests/integrationtest/s/` fixture is absent),
+and the live cluster-config / Prometheus reads. `cargo build --locked -p tidb-server` passes.

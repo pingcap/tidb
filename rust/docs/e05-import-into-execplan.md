@@ -251,3 +251,6 @@ Baseline: with `tidb-planner/src/import_into.rs` and
 `plan_builder/import_into.rs` restored from the original source, the session
 regression failed at its first assertion (code 1105 instead of 8158); with the
 change restored, all ten targeted tests passed.
+
+Changed-crate suites: see the E07 plan's destination URL increment (one shared
+run, 6377/6386 passed; the 9 failures reproduce on the unchanged tip).
