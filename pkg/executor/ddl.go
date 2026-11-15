@@ -450,7 +450,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	var tblInfo *model.TableInfo
 	// Let check table first. Related isssue #46296.
 	if s.Table != nil {
-		job, tblInfo, err = e.getRecoverTableByTableName(s.Table)
+		job, tblInfo, err = e.getRecoverTableByTableName(s.Table, s.JobNum)
 	} else {
 		job, tblInfo, err = e.getRecoverTableByJobID(s, dom)
 	}
@@ -540,7 +540,7 @@ func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, d
 	return ddl.GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, getTable, fn)
 }
 
-func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.Job, *model.TableInfo, error) {
+func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName, jobNum int64) (*model.Job, *model.TableInfo, error) {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return nil, nil, err
@@ -574,8 +574,18 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 		}
 		return false, nil
 	}
+	remaining := jobNum
 	fn := func(jobs []*model.Job) (bool, error) {
-		return GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
+		// Count all history jobs, not just matching DROP/TRUNCATE jobs.
+		// A zero limit retains the unbounded RECOVER/FLASHBACK behavior.
+		if jobNum > 0 {
+			if int64(len(jobs)) > remaining {
+				jobs = jobs[:remaining]
+			}
+			remaining -= int64(len(jobs))
+		}
+		found, err := GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
+		return found || (jobNum > 0 && remaining == 0), err
 	}
 	err = ddl.IterHistoryDDLJobs(txn, fn)
 	if err != nil {
@@ -615,7 +625,7 @@ func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error
 }
 
 func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
-	job, tblInfo, err := e.getRecoverTableByTableName(s.Table)
+	job, tblInfo, err := e.getRecoverTableByTableName(s.Table, 0)
 	if err != nil {
 		return err
 	}
