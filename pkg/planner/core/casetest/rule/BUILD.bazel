@@ -19,11 +19,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 24,
-=======
-    shard_count = 27,
->>>>>>> e2f85cd60aa (planner: keep access path sharing when cloning a DataSource for the correlate round (#73170))
+    shard_count = 25,
     deps = [
         "//pkg/config",
         "//pkg/domain",
