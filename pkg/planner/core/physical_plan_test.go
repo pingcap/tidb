@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -367,6 +368,97 @@ func TestJoinHintCompatibilityWithVariable(t *testing.T) {
 		tk.MustExec("select /*+ leading(t2), hash_join(t2) */ * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.b = t3.b;")
 		res := tk.MustQuery("show warnings").Rows()
 		require.Equal(t, len(res) > 0, true)
+	})
+}
+
+func TestJoinHintRebindAfterSubqueryOptimization(t *testing.T) {
+	// Issue #65838: join-method hints on joins whose children are rebuilt by recursive
+	// join-group optimization must retain their vertex binding and warnings.
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists table_insurant, table_house, table_role_connection")
+		tk.MustExec("create table table_insurant(actualid varchar(32), serialNo varchar(32), key idx_actualid(actualid))")
+		tk.MustExec("create table table_house(actualid varchar(32), planNo varchar(32), topId varchar(32), insurantNo varchar(32), key idx_actualid(actualid), key idx_insurantNo(insurantNo))")
+		tk.MustExec("create table table_role_connection(actualid varchar(32), parentId varchar(32), specid varchar(32), key idx_parent_spec_actual(parentId, specid, actualid), key idx_actualid(actualid))")
+
+		tk.MustExec(`insert into table_insurant values
+			('a1', '2'),
+			('a2', '3')`)
+		tk.MustExec(`insert into table_house values
+			('h1', 'p1', 't1', '2'),
+			('h2', 'p2', 't2', '9')`)
+		tk.MustExec(`insert into table_role_connection values
+			('a1', '3561703379345', '14535'),
+			('h1', '3561703379345', '14550')`)
+
+		buildSQL := func(hintStr string) string {
+			return fmt.Sprintf(`select
+  count(*)
+from
+  (
+    select /*+ %s */
+      t2.actualId,
+      t2.planNo,
+      t2.topId,
+      t2.insurantNo
+    from
+      (
+        select *
+        from table_insurant
+        where actualid in (
+            select actualid
+            from table_role_connection
+            where parentId = '3561703379345'
+              and specid = '14535'
+          )
+      ) t1,
+      (
+        select *
+        from table_house
+        where actualid in (
+            select actualid
+            from table_role_connection
+            where parentId = '3561703379345'
+              and specid = '14550'
+          )
+      ) t2
+    where t1.serialNo = t2.insurantNo
+      and t2.insurantNo = '2'
+  ) s`, hintStr)
+		}
+
+		defer func() {
+			tk.MustExec("set @@session.tidb_opt_enable_advanced_join_reorder=DEFAULT")
+			tk.MustExec("set @@session.tidb_opt_advanced_join_hint=DEFAULT")
+		}()
+
+		inljWarn := "Warning 1815 Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable"
+
+		for _, advReorder := range []int{1, 0} {
+			tk.MustExec(fmt.Sprintf("set @@session.tidb_opt_enable_advanced_join_reorder=%d", advReorder))
+			for _, advHint := range []int{0, 1} {
+				tk.MustExec(fmt.Sprintf("set @@session.tidb_opt_advanced_join_hint=%d", advHint))
+
+				tk.MustQuery("explain " + buildSQL("inl_join(t1)")).Rows()
+				tk.MustQuery("show warnings").Check(testkit.Rows(inljWarn))
+
+				tk.MustQuery("explain " + buildSQL("shuffle_join(t1)")).Rows()
+				shuffleWarns := tk.MustQuery("show warnings").Rows()
+				require.NotEmpty(t, shuffleWarns)
+				require.Equal(t, "The join can not push down to the MPP side, the shuffle_join() hint is invalid", shuffleWarns[0][2])
+
+				planRows := tk.MustQuery("explain format = 'plan_tree' " + buildSQL("merge_join(t1)")).Rows()
+				tk.MustQuery("show warnings").Check(testkit.Rows())
+				hasT1T2MergeJoin := slices.ContainsFunc(planRows, func(row []any) bool {
+					idCol := fmt.Sprint(row[0])
+					opInfo := fmt.Sprint(row[3])
+					return strings.Contains(idCol, "MergeJoin") &&
+						strings.Contains(opInfo, "test.table_insurant.serialno") &&
+						strings.Contains(opInfo, "test.table_house.insurantno")
+				})
+				require.True(t, hasT1T2MergeJoin, "expected MergeJoin between t1 and t2 for advReorder=%d advHint=%d, got plan: %v", advReorder, advHint, planRows)
+			}
+		}
 	})
 }
 

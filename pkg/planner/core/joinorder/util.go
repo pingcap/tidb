@@ -15,6 +15,7 @@
 package joinorder
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -31,6 +32,123 @@ import (
 type JoinMethodHint struct {
 	PreferJoinMethod uint
 	HintInfo         *hint.PlanHints
+}
+
+// RebindJoinMethodHints remaps hint keys from pre-optimization plan IDs to the
+// optimized vertex IDs after recursive subtree optimization rebuilds the child
+// plans participating in join reorder.
+func RebindJoinMethodHints(hints map[int]*JoinMethodHint, vertexMap map[int]base.LogicalPlan) map[int]*JoinMethodHint {
+	if len(hints) == 0 || len(vertexMap) == 0 {
+		return hints
+	}
+	changed := false
+	for oldID := range hints {
+		optimizedVertex, ok := vertexMap[oldID]
+		intest.Assert(ok, "join method hint vertex must be present in optimized vertex map")
+		if ok && optimizedVertex.ID() != oldID {
+			changed = true
+		}
+	}
+	if !changed {
+		return hints
+	}
+	rebuilt := make(map[int]*JoinMethodHint, len(hints))
+	for oldID, hintInfo := range hints {
+		if optimizedVertex, ok := vertexMap[oldID]; ok {
+			rebuilt[optimizedVertex.ID()] = hintInfo
+			continue
+		}
+		// Keep the original key in non-intest builds so we do not silently drop
+		// the hint if a future caller violates the rebinding invariant.
+		rebuilt[oldID] = hintInfo
+	}
+	return rebuilt
+}
+
+// PropagateJoinMethodHint copies a vertex's join method hint onto a newly
+// injected wrapper plan (such as a pass-through LogicalProjection built to
+// materialize a swapped join key expression) while retaining the original
+// vertex entry for alternative candidate join trees.
+func PropagateJoinMethodHint(hints map[int]*JoinMethodHint, oldPlanID, newPlanID int) {
+	if oldPlanID == newPlanID || len(hints) == 0 {
+		return
+	}
+	if _, exists := hints[newPlanID]; exists {
+		return
+	}
+	if hintInfo, ok := hints[oldPlanID]; ok {
+		hints[newPlanID] = hintInfo
+	}
+}
+
+func canReuseInjectedJoinExpr(expr expression.Expression) bool {
+	return !expression.IsMutableEffectsExpr(expr) && !expression.CheckNonDeterministic(expr)
+}
+
+func cloneLogicalProjection(proj *logicalop.LogicalProjection) *logicalop.LogicalProjection {
+	cloned := logicalop.LogicalProjection{
+		Exprs:            slices.Clone(proj.Exprs),
+		CalculateNoDelay: proj.CalculateNoDelay,
+		Proj4Expand:      proj.Proj4Expand,
+	}.Init(proj.SCtx(), proj.QueryBlockOffset())
+	cloned.SetSchema(proj.Schema().Clone())
+	if names := proj.OutputNames(); names != nil {
+		cloned.SetOutputNames(slices.Clone(names))
+	}
+	cloned.SetMaxOneRow(proj.MaxOneRow())
+	cloned.SetFlag(proj.Flag)
+	cloned.SetChildren(proj.Children()...)
+	return cloned
+}
+
+// InjectJoinExpr materializes expr as a column on top of p so rewritten join
+// equality edges can keep using column arguments only.
+//
+//   - If p is already a LogicalProjection and already projects a semantically
+//     equivalent deterministic expression, that existing output column is reused
+//     without cloning or mutating p.
+//   - If p is a shared candidate LogicalProjection (cloneExistingProj == true),
+//     it is cloned copy-on-write before appending so DP/Greedy candidate trials
+//     never mutate shared vertex Exprs or Schema in place.
+//   - Otherwise a pass-through LogicalProjection is created (or reused when p
+//     was already created/cloned for the current candidate join) and any join
+//     method hint on p is propagated to the new projection ID.
+func InjectJoinExpr(
+	p base.LogicalPlan,
+	expr expression.Expression,
+	cloneExistingProj bool,
+	hints map[int]*JoinMethodHint,
+) (base.LogicalPlan, *expression.Column) {
+	if col, ok := expr.(*expression.Column); ok {
+		return p, col
+	}
+	originalPlanID := p.ID()
+	proj, isProj := p.(*logicalop.LogicalProjection)
+	if !isProj {
+		proj = logicalop.LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
+		proj.SetSchema(p.Schema().Clone())
+		proj.SetChildren(p)
+		PropagateJoinMethodHint(hints, originalPlanID, proj.ID())
+	} else {
+		// Substitute through the current projection first so reuse works even when proj
+		// already contains derived expressions, pass-through aliases, or earlier injections.
+		substituted := expression.ColumnSubstitute(proj.SCtx().GetExprCtx(), expr, proj.Schema(), proj.Exprs)
+		if canReuseInjectedJoinExpr(substituted) {
+			for i, e := range proj.Exprs {
+				if expression.ExpressionsSemanticEqual(e, substituted) {
+					return proj, proj.Schema().Columns[i]
+				}
+			}
+		}
+		if cloneExistingProj {
+			proj = cloneLogicalProjection(proj)
+			PropagateJoinMethodHint(hints, originalPlanID, proj.ID())
+		}
+	}
+	// AppendExpr substitutes against the current projection schema again, so passing
+	// the original expr is intentional here. Using the pre-substituted child-space
+	// expression would incorrectly rematerialize non-reusable projection outputs.
+	return proj, proj.AppendExpr(expr)
 }
 
 // CheckAndGenerateLeadingHint used to check and generate the valid leading hint.
