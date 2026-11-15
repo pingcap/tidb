@@ -102,6 +102,20 @@ pub trait DdlService {
         let _ = kind;
         Ok(tidb_executor::admin::ddl_jobs_not_found(job_ids))
     }
+
+    /// Go `AlterDDLJobExec.Open` on a system session (`GetSysSession`). A
+    /// session without the domain's DDL finds no job, as Go's executor does
+    /// in an empty `mysql.tidb_ddl_job`.
+    ///
+    /// # Errors
+    ///
+    /// Go `processAlterDDLJobConfig`'s error.
+    fn alter_ddl_job(
+        &self,
+        plan: &tidb_planner::common_plans::AlterDdlJob,
+    ) -> Result<(), DriverError> {
+        Err(DriverError::Mysql(tidb_executor::operate_ddl_jobs::ddl_job_not_running(plan.job_id)))
+    }
 }
 
 impl Session {

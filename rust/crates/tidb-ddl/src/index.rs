@@ -51,6 +51,173 @@ pub fn should_auto_pause_existing_kv_disk_full_task(job: &Job, task: &tidb_dxf::
             .is_some_and(|e| tidb_ingestor_errdef::is_kv_disk_full_error(e.as_ref()))
         && !job.has_resume_reason(JOB_RESUME_REASON_KV_DISK_FULL)
 }
+
+use tidb_log::{Field, Value};
+
+/// Go `UpdateDDLJobReorgCfgInterval` (a `var` tests shorten), in
+/// milliseconds.
+pub static UPDATE_DDL_JOB_REORG_CFG_INTERVAL_MS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(2000);
+
+/// Go `ReorgMeta.GetConcurrency` / `GetBatchSize` over the job's reorg meta.
+pub(crate) fn reorg_defaults() -> tidb_model::DDLReorgProcessDefaults {
+    tidb_model::DDLReorgProcessDefaults::new(
+        || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_WORKER_COUNT,
+        || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_BATCH_SIZE,
+    )
+}
+
+/// Go `modifyTaskParamLoop`: every `UpdateDDLJobReorgCfgInterval` until
+/// `done`, the job's latest reorg config (thread, batch size, max write
+/// speed) is carried to its DXF task through `ModifyTaskByID`.
+///
+/// Go notes that `ADMIN ALTER DDL JOB` could call `ModifyTaskByID` itself,
+/// but a task not yet created must still start with the altered config, so
+/// the DDL side polls.
+#[allow(clippy::too_many_arguments)]
+pub fn modify_task_param_loop(
+    ctx: &tidb_gocontext::Context,
+    sys_tbl_mgr: &dyn tidb_ddl_systable::Manager,
+    task_manager: &dyn tidb_dxf_storage::Manager,
+    done: &crossbeam_channel::Receiver<()>,
+    job_id: i64,
+    task_id: i64,
+    mut last_required_slots: i64,
+    mut last_batch_size: i64,
+    mut last_max_write_speed: i64,
+) {
+    let logger = tidb_ddl_logutil::ddl_logger().with_fields(&[
+        Field::new("jobID", Value::I64(job_id)),
+        Field::new("taskID", Value::I64(task_id)),
+    ]);
+    loop {
+        let interval = std::time::Duration::from_millis(
+            UPDATE_DDL_JOB_REORG_CFG_INTERVAL_MS.load(std::sync::atomic::Ordering::Relaxed),
+        );
+        crossbeam_channel::select! {
+            recv(done) -> _ => return,
+            recv(crossbeam_channel::after(interval)) -> _ => {}
+        }
+
+        let latest_job = match sys_tbl_mgr.get_job_by_id(job_id) {
+            Ok(job) => job,
+            Err(tidb_ddl_systable::SystemTableManagerError::NotFound) => {
+                logger.info("job not found, might already finished", &[]);
+                return;
+            }
+            Err(error) => {
+                logger.error("get job failed, will retry later", &[zap_error(&error)]);
+                continue;
+            }
+        };
+        let latest_job = latest_job.job.expect("GetJobByID returns a job");
+        let latest_job = latest_job.read();
+        let reorg_meta = latest_job.reorg_meta.as_ref().expect("a DXF job has reorg meta").read();
+
+        let mut modifies = Vec::with_capacity(3);
+        let worker_cnt_limit = reorg_meta.get_concurrency(reorg_defaults());
+        let required_slots = match adjust_concurrency(ctx, task_manager, worker_cnt_limit) {
+            Ok(slots) => slots,
+            Err(error) => {
+                logger.error("adjust required slots failed", &[zap_error(&error)]);
+                continue;
+            }
+        };
+        if required_slots != last_required_slots {
+            modifies.push(tidb_dxf::Modification {
+                tp: tidb_dxf::MODIFY_REQUIRED_SLOTS,
+                to: required_slots,
+            });
+        }
+        let batch_size = reorg_meta.get_batch_size(reorg_defaults());
+        if batch_size != last_batch_size {
+            modifies.push(tidb_dxf::Modification { tp: tidb_dxf::MODIFY_BATCH_SIZE, to: batch_size });
+        }
+        let max_write_speed = reorg_meta.get_max_write_speed();
+        if max_write_speed != last_max_write_speed {
+            modifies.push(tidb_dxf::Modification {
+                tp: tidb_dxf::MODIFY_MAX_WRITE_SPEED,
+                to: max_write_speed,
+            });
+        }
+        drop(reorg_meta);
+        drop(latest_job);
+        if modifies.is_empty() {
+            continue;
+        }
+        let curr_task = match task_manager.get_task_by_id(ctx, task_id) {
+            Ok(task) => task,
+            Err(error) if error.is(&tidb_dxf_storage::StorageError::TaskNotFound) => {
+                logger.info("task not found, might already finished", &[]);
+                return;
+            }
+            Err(error) => {
+                logger.error("get task failed, will retry later", &[zap_error(&error)]);
+                continue;
+            }
+        };
+        if !curr_task.base.state.can_move_to_modifying() {
+            // user might modify param again while another modify is ongoing.
+            logger.info(
+                "task state is not suitable for modifying, will retry later",
+                &[Field::new("state", Value::Str(curr_task.base.state.to_string()))],
+            );
+            continue;
+        }
+        if let Err(error) = task_manager.modify_task_by_id(
+            ctx,
+            task_id,
+            &tidb_dxf::ModifyParam { prev_state: curr_task.base.state, modifications: modifies },
+        ) {
+            logger.error("modify task failed", &[zap_error(&error)]);
+            continue;
+        }
+        logger.info(
+            "modify task success",
+            &[
+                Field::new("oldRequiredSlots", Value::I64(last_required_slots)),
+                Field::new("newRequiredSlots", Value::I64(required_slots)),
+                Field::new("oldBatchSize", Value::I64(last_batch_size)),
+                Field::new("newBatchSize", Value::I64(batch_size)),
+                Field::new("oldMaxWriteSpeed", Value::Str(human_size(last_max_write_speed as f64))),
+                Field::new("newMaxWriteSpeed", Value::Str(human_size(max_write_speed as f64))),
+            ],
+        );
+        last_required_slots = required_slots;
+        last_batch_size = batch_size;
+        last_max_write_speed = max_write_speed;
+    }
+}
+
+/// zap `zap.Error(err)`.
+fn zap_error(error: &dyn std::fmt::Display) -> Field {
+    Field::new("error", Value::Str(error.to_string()))
+}
+
+/// go-units `HumanSize`: `%.4g` of the size in decimal (1000) units.
+fn human_size(mut size: f64) -> String {
+    const ABBRS: [&str; 9] = ["B", "kB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
+    let mut i = 0;
+    while size >= 1000.0 && i < ABBRS.len() - 1 {
+        size /= 1000.0;
+        i += 1;
+    }
+    format!("{}{}", tidb_goruntime::go_strconv::format_float(size, b'g', 4, 64), ABBRS[i])
+}
+
+/// Go `adjustConcurrency`.
+///
+/// # Errors
+///
+/// `GetCPUCountOfNode`'s error.
+pub fn adjust_concurrency(
+    ctx: &tidb_gocontext::Context,
+    task_mgr: &dyn tidb_dxf_storage::Manager,
+    worker_cnt: i64,
+) -> tidb_dxf_storage::Result<i64> {
+    let cpu_count = task_mgr.get_cpu_count_of_node(ctx)?;
+    Ok(worker_cnt.min(cpu_count as i64))
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,6 +265,155 @@ mod tests {
         );
         assert!(job.resume_reason.is_none());
     }
+
+    /// One scripted gomock expectation of `TestModifyTaskParamLoop`, in call
+    /// order.
+    enum Call {
+        GetJobByID(Result<i64, tidb_ddl_systable::SystemTableManagerError>),
+        GetCpuCount(tidb_dxf_storage::Result<isize>),
+        GetTaskByID(tidb_dxf_storage::Result<tidb_dxf::TaskState>),
+        ModifyTaskByID(Vec<(tidb_dxf::ModificationType, i64)>, tidb_dxf_storage::Result<()>),
+    }
+
+    /// Go `ddlmock.MockManager` and `mock.MockManager` under one controller:
+    /// each call must be the next expectation (`GetJobByID` answers a job
+    /// whose reorg meta is `jobs[i]`).
+    struct Script {
+        calls: std::sync::Mutex<std::collections::VecDeque<Call>>,
+        jobs: Vec<(i64, i64, i64)>,
+    }
+    impl Script {
+        fn next(&self) -> Call {
+            self.calls.lock().unwrap().pop_front().expect("unexpected call")
+        }
+        fn satisfied(&self) -> bool {
+            self.calls.lock().unwrap().is_empty()
+        }
+    }
+    impl tidb_ddl_systable::Manager for Script {
+        fn get_job_by_id(&self, job_id: i64) -> Result<tidb_model::JobW, tidb_ddl_systable::SystemTableManagerError> {
+            assert_eq!(job_id, 1);
+            let Call::GetJobByID(result) = self.next() else { panic!("expected GetJobByID") };
+            result.map(|i| {
+                let (concurrency, batch_size, speed) = self.jobs[i as usize];
+                let meta = tidb_model::DDLReorgMeta::default();
+                meta.set_concurrency(concurrency);
+                meta.set_batch_size(batch_size);
+                meta.set_max_write_speed(speed);
+                let mut job = Job::default();
+                job.reorg_meta = Some(GoShared::new(meta));
+                tidb_model::JobW { job: Some(GoShared::new(job)), bytes: Default::default() }
+            })
+        }
+        fn get_job_bytes_by_id_with_se(&self, _: &tidb_ddl_systable::DdlSession, _: i64) -> Result<Vec<u8>, tidb_ddl_systable::SystemTableManagerError> {
+            unreachable!()
+        }
+        fn get_mdl_ver(&self, _: i64) -> Result<i64, tidb_ddl_systable::SystemTableManagerError> {
+            unreachable!()
+        }
+        fn get_min_job_id(&self, _: i64) -> Result<i64, tidb_ddl_systable::SystemTableManagerError> {
+            unreachable!()
+        }
+        fn has_flashback_cluster_job(&self, _: i64) -> Result<bool, tidb_ddl_systable::SystemTableManagerError> {
+            unreachable!()
+        }
+    }
+    impl tidb_dxf_storage::Manager for Script {
+        fn get_cpu_count_of_node(&self, _: &tidb_gocontext::Context) -> tidb_dxf_storage::Result<isize> {
+            let Call::GetCpuCount(result) = self.next() else { panic!("expected GetCPUCountOfNode") };
+            result
+        }
+        fn get_task_by_id(&self, _: &tidb_gocontext::Context, task_id: i64) -> tidb_dxf_storage::Result<tidb_dxf::Task> {
+            assert_eq!(task_id, 1);
+            let Call::GetTaskByID(result) = self.next() else { panic!("expected GetTaskByID") };
+            result.map(|state| tidb_dxf::Task {
+                base: tidb_dxf::TaskBase { state, ..Default::default() },
+                ..Default::default()
+            })
+        }
+        fn modify_task_by_id(&self, _: &tidb_gocontext::Context, task_id: i64, param: &tidb_dxf::ModifyParam) -> tidb_dxf_storage::Result<()> {
+            assert_eq!(task_id, 1);
+            let Call::ModifyTaskByID(expected, result) = self.next() else { panic!("expected ModifyTaskByID") };
+            assert_eq!(param.prev_state, tidb_dxf::TASK_STATE_RUNNING);
+            let got: Vec<_> = param.modifications.iter().map(|m| (m.tp.clone(), m.to)).collect();
+            assert_eq!(got, expected);
+            result
+        }
+    }
+
+    /// Go `pkg/ddl/index_nokit_test.go:TestModifyTaskParamLoop`.
+    #[test]
+    fn test_modify_task_param_loop() {
+        use tidb_ddl_systable::SystemTableManagerError::{NotFound, Sql};
+        use tidb_dxf_storage::StorageError::{Other, TaskNotFound};
+        use Call::*;
+        UPDATE_DDL_JOB_REORG_CFG_INTERVAL_MS.store(10, std::sync::atomic::Ordering::Relaxed);
+        // jobs[0] is Go's currentJob, jobs[1] its modifiedJob, jobs[2] modifiedJob2.
+        let jobs = vec![(1, 2, 3), (4, 5, 6), (7, 8, 9)];
+        let err = || Other("some error".to_owned());
+        let modify = |slots, batch, speed| {
+            vec![
+                (tidb_dxf::MODIFY_REQUIRED_SLOTS, slots),
+                (tidb_dxf::MODIFY_BATCH_SIZE, batch),
+                (tidb_dxf::MODIFY_MAX_WRITE_SPEED, speed),
+            ]
+        };
+        let run = |calls: Vec<Call>, close_done: bool| {
+            let script = Script { calls: std::sync::Mutex::new(calls.into()), jobs: jobs.clone() };
+            let (done_tx, done) = crossbeam_channel::bounded::<()>(0);
+            if close_done {
+                drop(done_tx);
+            } else {
+                std::mem::forget(done_tx);
+            }
+            modify_task_param_loop(&tidb_gocontext::Context::background(), &script, &script, &done, 1, 1, 1, 2, 3);
+            assert!(script.satisfied());
+        };
+        // return on done
+        run(vec![], true);
+        // retry on get job error; return on job not found
+        run(vec![GetJobByID(Err(Sql("some error".to_owned()))), GetJobByID(Err(NotFound))], false);
+        // adjust concurrency failed, retry
+        run(vec![GetJobByID(Ok(0)), GetCpuCount(Err(err())), GetJobByID(Err(NotFound))], false);
+        // nothing modified, retry
+        run(vec![GetJobByID(Ok(0)), GetCpuCount(Ok(123)), GetJobByID(Err(NotFound))], false);
+        // detect modify, but the task has done
+        run(vec![GetJobByID(Ok(1)), GetCpuCount(Ok(123)), GetTaskByID(Err(TaskNotFound))], false);
+        // detect modify, fail to get task, after retry, found task state is un-modifiable
+        run(
+            vec![
+                GetJobByID(Ok(1)), GetCpuCount(Ok(123)), GetTaskByID(Err(err())),
+                GetJobByID(Ok(1)), GetCpuCount(Ok(123)), GetTaskByID(Ok(tidb_dxf::TASK_STATE_CANCELLING)),
+                GetJobByID(Ok(1)), GetCpuCount(Ok(123)), GetTaskByID(Err(TaskNotFound)),
+            ],
+            false,
+        );
+        // detect modify, success after retry, and we update internal variable to avoid modify twice
+        run(
+            vec![
+                GetJobByID(Ok(1)), GetCpuCount(Ok(123)), GetTaskByID(Ok(tidb_dxf::TASK_STATE_RUNNING)),
+                ModifyTaskByID(modify(4, 5, 6), Err(err())),
+                GetJobByID(Ok(1)), GetCpuCount(Ok(123)), GetTaskByID(Ok(tidb_dxf::TASK_STATE_RUNNING)),
+                ModifyTaskByID(modify(4, 5, 6), Ok(())),
+                GetJobByID(Ok(1)), GetCpuCount(Ok(123)),
+                GetJobByID(Err(NotFound)),
+            ],
+            false,
+        );
+        // modify twice, both success
+        run(
+            vec![
+                GetJobByID(Ok(1)), GetCpuCount(Ok(123)), GetTaskByID(Ok(tidb_dxf::TASK_STATE_RUNNING)),
+                ModifyTaskByID(modify(4, 5, 6), Ok(())),
+                GetJobByID(Ok(1)), GetCpuCount(Ok(123)),
+                GetJobByID(Ok(2)), GetCpuCount(Ok(123)), GetTaskByID(Ok(tidb_dxf::TASK_STATE_RUNNING)),
+                ModifyTaskByID(modify(7, 8, 9), Ok(())),
+                GetJobByID(Ok(2)), GetCpuCount(Ok(123)),
+                GetJobByID(Err(NotFound)),
+            ],
+            false,
+        );
+    }
 }
 
 /// Go `isRetryableError`, with the original DDL message and SQL-code tables.
@@ -134,6 +450,7 @@ impl Default for TaskKeyBuilder {
     fn default() -> Self {
         Self::new()
     }
+
 }
 impl TaskKeyBuilder {
     /// Go `NewTaskKeyBuilder`.

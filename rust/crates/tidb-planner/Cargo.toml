@@ -38,6 +38,7 @@ tidb-autoid = { path = "../tidb-autoid" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-parser-types = { path = "../tidb-parser-types" }
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-config-deploymode = { path = "../tidb-config-deploymode" }
 tidb-planner-coreusage = { path = "../tidb-planner-coreusage" }

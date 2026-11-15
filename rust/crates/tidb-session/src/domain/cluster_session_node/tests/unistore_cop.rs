@@ -57,6 +57,7 @@ mod create_with_info;
 mod analyzetest;
 mod ddl_analyze;
 mod ddl_delivery;
+mod admin_alter_ddl_job;
 mod dxf_framework;
 mod cross_ks;
 mod dxf_integrationtests;

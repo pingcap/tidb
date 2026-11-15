@@ -55,6 +55,7 @@ pub mod stats_stmt_ctx;
 pub use stats_stmt_ctx::{PendingStatisticsLoad, StatsStmtCtx, StatsStmtCtxData};
 pub use sessionctx::StmtOutput;
 pub mod admin;
+pub mod operate_ddl_jobs;
 pub mod ddl_exec;
 pub mod stats_exec;
 pub mod record_set;

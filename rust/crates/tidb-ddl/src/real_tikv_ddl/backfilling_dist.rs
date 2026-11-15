@@ -980,6 +980,8 @@ pub(super) fn execute_dist_task<S: StoreClient>(
     };
     let manager = tidb_dxf_storage::get_dxf_svc_task_mgr()
         .map_err(|e| ClusterDdlError::Backfill(e.to_string()))?;
+    // Go `lastRequiredSlots, lastBatchSize, lastMaxWriteSpeed`.
+    let mut last = (0, 0, 0);
     let task = match manager.get_task_by_key_with_history(&ctx, &key) {
         Ok(task) => {
             if crate::index::should_auto_pause_existing_kv_disk_full_task(job, &task) {
@@ -989,6 +991,15 @@ pub(super) fn execute_dist_task<S: StoreClient>(
                 tidb_dxf_handle::resume_task(&ctx, &key)
                     .map_err(|e| ClusterDdlError::Backfill(e.to_string()))?;
             }
+            let task_meta: BackfillTaskMeta = serde_json::from_slice(&task.meta)
+                .map_err(|e| ClusterDdlError::Backfill(e.to_string()))?;
+            let reorg_meta = task_meta.job.reorg_meta.as_ref().expect("a backfill task's job has reorg meta").read();
+            last = (
+                task.base.required_slots as i64,
+                reorg_meta.get_batch_size(crate::index::reorg_defaults()),
+                reorg_meta.get_max_write_speed(),
+            );
+            drop(reorg_meta);
             task
         }
         Err(error) if error.is(&tidb_dxf_storage::StorageError::TaskNotFound) => {
@@ -1006,6 +1017,11 @@ pub(super) fn execute_dist_task<S: StoreClient>(
                 ..Default::default()
             };
             let config = job.reorg_meta.as_ref().unwrap().read();
+            last = (
+                required_slots as i64,
+                config.get_batch_size(crate::index::reorg_defaults()),
+                config.get_max_write_speed(),
+            );
             tidb_dxf_handle::submit_task_with_extra_params(
                 &ctx,
                 &key,
@@ -1024,6 +1040,47 @@ pub(super) fn execute_dist_task<S: StoreClient>(
         }
         Err(error) => return Err(ClusterDdlError::Backfill(error.to_string())),
     };
+    let pool = sess_pool
+        .sess_pool()
+        .ok_or_else(|| ClusterDdlError::Backfill("the DDL session pool has no sessions".to_owned()))?;
+    let sys_tbl_mgr = tidb_ddl_systable::SystemTableManager::new(pool);
+    // Go `done`: closed when the task wait returns, which ends the modify loop.
+    let (done_tx, done) = crossbeam_channel::bounded::<()>(0);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            crate::index::modify_task_param_loop(
+                &ctx,
+                &sys_tbl_mgr,
+                manager.as_ref(),
+                &done,
+                job.id,
+                task.base.id,
+                last.0,
+                last.1,
+                last.2,
+            );
+        });
+        let result = wait_dist_task(opener, sess_pool, reorg, job, check_owner, step_cancelled, &ctx, &key, &manager, &task);
+        drop(done_tx);
+        result
+    })
+}
+
+/// Go `executeDistTask`'s wait and its `checkRunnableOrHandlePauseOrCanceled`
+/// loop, while [`crate::index::modify_task_param_loop`] runs beside it.
+#[allow(clippy::too_many_arguments)]
+fn wait_dist_task<S: StoreClient>(
+    opener: &Arc<RealOptimisticTransactionOpener<S>>,
+    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    reorg: &AddIndexReorg,
+    job: &Job,
+    check_owner: &(dyn Fn() -> Result<(), String> + Sync),
+    step_cancelled: &AtomicBool,
+    ctx: &Context,
+    key: &str,
+    manager: &Arc<tidb_dxf_storage::TaskManager>,
+    task: &Task,
+) -> Result<ReorgResult, ClusterDdlError> {
     loop {
         if !reorg_runnable(step_cancelled, check_owner)? {
             if let Some(job) = latest_job(sess_pool, reorg.job_id)? {

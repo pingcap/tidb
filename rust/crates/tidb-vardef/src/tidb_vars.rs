@@ -116,6 +116,10 @@ pub const TIDB_DML_BATCH_SIZE: &str = "tidb_dml_batch_size";
 /// MaxConfigurableConcurrency is the maximum number of "threads" (goroutines) that can be specified
 /// Go `MaxConfigurableConcurrency`.
 pub const MAX_CONFIGURABLE_CONCURRENCY: u64 = 256;
+/// Go `MaxDDLReorgBatchSize`.
+pub const MAX_DDL_REORG_BATCH_SIZE: i32 = 10240;
+/// Go `MinDDLReorgBatchSize`.
+pub const MIN_DDL_REORG_BATCH_SIZE: i32 = 32;
 /// TiDBMemQuotaQuery controls the memory quota of a query.
 /// Go `TiDBMemQuotaQuery`.
 pub const TIDB_MEM_QUOTA_QUERY: &str = "tidb_mem_quota_query";

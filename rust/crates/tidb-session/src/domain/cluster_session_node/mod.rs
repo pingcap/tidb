@@ -3365,6 +3365,28 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
             .map_err(sql_query_error_to_driver)
     }
 
+    fn alter_ddl_job(
+        &self,
+        plan: &tidb_planner::common_plans::AlterDdlJob,
+    ) -> Result<(), tidb_driver_error::DriverError> {
+        let domain = self.domain.upgrade().ok_or_else(|| {
+            tidb_driver_error::DriverError::unsupported("the node's domain is closed")
+        })?;
+        let mut session = domain
+            .open_system_session()
+            .map_err(sql_query_error_to_driver)?;
+        // Go `AlterDDLJobExec.Open` releases its system session under
+        // `kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)`.
+        session.set_internal_request_source(tidb_txnkv::INTERNAL_TXN_DDL);
+        let mut sess = crate::ddl_session_pool::NodeSqlSession::new(session);
+        tidb_executor::operate_ddl_jobs::process_alter_ddl_job_config(
+            &mut sess,
+            plan.job_id,
+            &plan.options,
+        )
+        .map_err(tidb_driver_error::DriverError::Mysql)
+    }
+
     fn command_ddl_jobs(
         &self,
         kind: tidb_ast::AdminDdlJobControlKind,

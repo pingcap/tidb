@@ -396,6 +396,18 @@ impl Session {
             }
             Plan::Ddl(_) => self.ddl_exec(stmt),
             Plan::CompactTable(compact) => self.compact_table_tiflash_exec(compact).map(Some),
+            // Go `AlterDDLJobExec`: the job's row rewritten, no result set.
+            Plan::AlterDdlJob(alter) => {
+                match self.domain_services() {
+                    Some(services) => services.ddl.alter_ddl_job(alter)?,
+                    None => {
+                        return Err(DriverError::Mysql(
+                            tidb_executor::operate_ddl_jobs::ddl_job_not_running(alter.job_id),
+                        ))
+                    }
+                }
+                Ok(Some(StmtOutput::Done(true)))
+            }
             Plan::Logical(_) | Plan::Physical(_) | Plan::ShowNextRowID(_) | Plan::Set(_) => {
                 Ok(None)
             }

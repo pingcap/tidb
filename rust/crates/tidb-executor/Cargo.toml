@@ -145,6 +145,7 @@ tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-stats-handle = { path = "../tidb-stats-handle" }
 tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
+tidb-ddl-jobsubmit = { path = "../tidb-ddl-jobsubmit" }
 tidb-ddl = { path = "../tidb-ddl" }
 tidb-ddl-label = { path = "../tidb-ddl-label" }
 tidb-domain = { path = "../tidb-domain" }

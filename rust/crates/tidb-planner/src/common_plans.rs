@@ -75,6 +75,35 @@ pub struct Simple {
     pub stale_txn_start_ts: u64,
 }
 
+/// Go `AlterDDLJobThread`: alter reorg worker count.
+pub const ALTER_DDL_JOB_THREAD: &str = "thread";
+/// Go `AlterDDLJobBatchSize`: alter reorg batch size.
+pub const ALTER_DDL_JOB_BATCH_SIZE: &str = "batch_size";
+/// Go `AlterDDLJobMaxWriteSpeed`: alter reorg max write speed.
+pub const ALTER_DDL_JOB_MAX_WRITE_SPEED: &str = "max_write_speed";
+
+/// Go `allowedAlterDDLJobParams`.
+pub(crate) const ALLOWED_ALTER_DDL_JOB_PARAMS: [&str; 3] =
+    [ALTER_DDL_JOB_THREAD, ALTER_DDL_JOB_BATCH_SIZE, ALTER_DDL_JOB_MAX_WRITE_SPEED];
+
+/// Go `AlterDDLJobOpt`: one alter ddl job option.
+#[derive(Clone, Debug)]
+pub struct AlterDdlJobOpt {
+    /// Go `Name`.
+    pub name: String,
+    /// Go `Value`: the option's rewritten literal.
+    pub value: Option<Expression>,
+}
+
+/// Go `AlterDDLJob`: the plan of `ADMIN ALTER DDL JOBS`.
+#[derive(Clone, Debug)]
+pub struct AlterDdlJob {
+    /// Go `JobID`.
+    pub job_id: i64,
+    /// Go `Options`.
+    pub options: Vec<AlterDdlJobOpt>,
+}
+
 /// Go `DDL` (`common_plans.go`): a DDL statement `DDLExec` runs.
 #[derive(Clone, Debug)]
 pub struct Ddl {
@@ -170,7 +199,7 @@ pub enum Plan {
     /// Go `CancelDDLJobs` / `PauseDDLJobs` / `ResumeDDLJobs`.
     DdlJobControl(Box<tidb_ast::AdminDdlJobControlStmt>),
     /// Go `AlterDDLJob`.
-    AlterDdlJob(Box<tidb_ast::AdminAlterDdlJobsStmt>),
+    AlterDdlJob(AlterDdlJob),
     /// Go `ReloadExprPushdownBlacklist`.
     ReloadExprPushdownBlacklist,
     /// Go `ReloadOptRuleBlacklist`.

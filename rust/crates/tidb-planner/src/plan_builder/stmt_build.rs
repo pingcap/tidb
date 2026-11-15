@@ -31,7 +31,9 @@ use tidb_mysql::PrivilegeType;
 use tidb_infoschema::table_source::TableSource;
 use super::visit_info::{VisitAuthError, VisitInfo};
 use super::PlanBuilder;
-use crate::common_plans::{Ddl, Plan, ShowNextRowID, Simple, SqlBindOp, SqlBindPlan};
+use crate::common_plans::{
+    AlterDdlJob, AlterDdlJobOpt, Ddl, Plan, ShowNextRowID, Simple, SqlBindOp, SqlBindPlan,
+};
 use tidb_planner_core_base::PlanError;
 use crate::show_schema::build_show_next_row_id;
 
@@ -832,7 +834,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             AdminStmt::FlushPlanCache(_) => return Ok(simple(stmt)),
             AdminStmt::SetBdrRole(_) | AdminStmt::UnsetBdrRole => simple(stmt),
             AdminStmt::ShowBdrRole => Plan::AdminShowBdrRole,
-            AdminStmt::AlterDdlJobs(alter) => Plan::AlterDdlJob(alter.clone()),
+            AdminStmt::AlterDdlJobs(alter) => self.build_admin_alter_ddl_job(alter)?,
             AdminStmt::CreateWorkloadSnapshot => Plan::WorkloadRepoCreate,
             _ => {
                 return Err(PlanError::from(
@@ -847,6 +849,38 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         self.visit_info
             .push(visit(tidb_mysql::SuperPriv, "", "", VisitAuthError::None));
         Ok(plan)
+    }
+
+    /// Go `buildAdminAlterDDLJob`: each option's name is checked against
+    /// Go's allowed parameters, its literal rewritten over a column-less dual
+    /// (Go's `mockTablePlan`) and its value range-checked.
+    ///
+    /// # Errors
+    ///
+    /// Go's unsupported-config and value errors (plain errors, 1105).
+    fn build_admin_alter_ddl_job(
+        &mut self,
+        stmt: &tidb_ast::AdminAlterDdlJobsStmt,
+    ) -> Result<Plan, PlanError> {
+        let mut options = Vec::with_capacity(stmt.options.len());
+        for opt in &stmt.options {
+            if !crate::common_plans::ALLOWED_ALTER_DDL_JOB_PARAMS.contains(&opt.name.as_str()) {
+                return Err(plain_error(format!(
+                    "unsupported admin alter ddl jobs config: {}",
+                    opt.name
+                )));
+            }
+            let value = self.rewrite_scalar(
+                &opt.value,
+                &tidb_expr::schema::Schema::default(),
+                &[],
+                &std::collections::BTreeMap::new(),
+            )?;
+            let alter_ddl_job_opt = AlterDdlJobOpt { name: opt.name.clone(), value: Some(value) };
+            check_alter_ddl_job_opt_value(&alter_ddl_job_opt)?;
+            options.push(alter_ddl_job_opt);
+        }
+        Ok(Plan::AlterDdlJob(AlterDdlJob { job_id: stmt.job_number, options }))
     }
 
     /// Go `buildDDL`: the statement as Go's `DDL`, with its visit infos.
@@ -1391,5 +1425,109 @@ pub fn visit_info_4_priv_check(
         },
         Stmt::Admin(admin) if matches!(admin.as_ref(), AdminStmt::Grant(_)) => visits,
         _ => visits.into_iter().filter(need_check).collect(),
+    }
+}
+
+/// A Go `fmt.Errorf` / `errors.New` value: no terror code, so the client
+/// sees 1105.
+fn plain_error(message: impl Into<String>) -> PlanError {
+    PlanError::from(tidb_terror::MysqlError::unknown(message))
+}
+
+/// Go `opt.Value.(*expression.Constant)`: the rewritten literal.
+fn alter_ddl_job_constant(opt: &AlterDdlJobOpt) -> &tidb_expr::constant::Constant {
+    match opt.value.as_ref() {
+        Some(tidb_expr::expression::Expression::Constant(constant)) => constant,
+        // Go's type assertion panics; the parser admits only literals, which
+        // the rewriter folds to constants.
+        other => panic!("admin alter ddl jobs option {} is not a constant: {other:?}", opt.name),
+    }
+}
+
+/// Go `Constant.RetType.EvalType()`.
+fn constant_eval_type(constant: &tidb_expr::constant::Constant) -> tidb_parser_types::EvalType {
+    constant.ret_type.as_ref().map_or(tidb_parser_types::EvalType::String, |tp| tp.eval_type())
+}
+
+/// Go `checkAlterDDLJobOptValue`.
+fn check_alter_ddl_job_opt_value(opt: &AlterDdlJobOpt) -> Result<(), PlanError> {
+    match opt.name.as_str() {
+        crate::common_plans::ALTER_DDL_JOB_THREAD => {
+            let thread = get_thread_or_batch_size_from_expression(opt)?;
+            let max = tidb_vardef::tidb_vars::MAX_CONFIGURABLE_CONCURRENCY as i64;
+            if thread < 1 || thread > max {
+                return Err(plain_error(format!(
+                    "the value {thread} for {} is out of range [1, {max}]",
+                    opt.name
+                )));
+            }
+        }
+        crate::common_plans::ALTER_DDL_JOB_BATCH_SIZE => {
+            let batch_size = get_thread_or_batch_size_from_expression(opt)?;
+            let bs = batch_size as i32;
+            let (min, max) = (
+                tidb_vardef::tidb_vars::MIN_DDL_REORG_BATCH_SIZE,
+                tidb_vardef::tidb_vars::MAX_DDL_REORG_BATCH_SIZE,
+            );
+            if bs < min || bs > max {
+                return Err(plain_error(format!(
+                    "the value {bs} for {} is out of range [{min}, {max}]",
+                    opt.name
+                )));
+            }
+        }
+        crate::common_plans::ALTER_DDL_JOB_MAX_WRITE_SPEED => {
+            let speed = get_max_write_speed_from_expression(opt).map_err(plain_error)?;
+            if !(0..=PIB).contains(&speed) {
+                return Err(plain_error(format!(
+                    "the value {speed} for {} is out of range [0, {PIB}]",
+                    opt.name
+                )));
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Go `units.PiB`.
+const PIB: i64 = 1 << 50;
+
+/// Go `GetThreadOrBatchSizeFromExpression`.
+///
+/// # Errors
+///
+/// Go's "only integer is allowed" error for a non-integer literal.
+fn get_thread_or_batch_size_from_expression(opt: &AlterDdlJobOpt) -> Result<i64, PlanError> {
+    let v = alter_ddl_job_constant(opt);
+    match constant_eval_type(v) {
+        tidb_parser_types::EvalType::Int => Ok(v.value.get_int64()),
+        _ => Err(plain_error(format!(
+            "the value for {} is invalid, only integer is allowed",
+            opt.name
+        ))),
+    }
+}
+
+/// Go `GetMaxWriteSpeedFromExpression`: a string literal is a human size
+/// (`units.RAMInBytes`), an integer literal is bytes.
+///
+/// # Errors
+///
+/// Go's parse or invalid-value message.
+pub fn get_max_write_speed_from_expression(opt: &AlterDdlJobOpt) -> Result<i64, String> {
+    let v = alter_ddl_job_constant(opt);
+    match constant_eval_type(v) {
+        tidb_parser_types::EvalType::String => {
+            let speed_str = String::from_utf8_lossy(v.value.go_bytes());
+            tidb_config_configtypes::ram_in_bytes(&speed_str)
+                .map_err(|error| format!("parse max_write_speed value error: {error}"))
+        }
+        tidb_parser_types::EvalType::Int => Ok(v.value.get_int64()),
+        _ => Err(format!(
+            "the value {} for {} is invalid",
+            String::from_utf8_lossy(&v.value.truncated_stringify().unwrap_or_default()),
+            opt.name
+        )),
     }
 }
