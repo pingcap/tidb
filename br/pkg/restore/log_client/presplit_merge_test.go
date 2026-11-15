@@ -17,7 +17,7 @@ package logclient_test
 import (
 	"context"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -31,24 +31,24 @@ import (
 )
 
 func randomDMLFiles(r *rand.Rand, n int) []*logclient.LogDataFileInfo {
-	key := func() []byte { return fmt.Appendf(nil, "k%06d", r.Intn(5000)) }
+	key := func() []byte { return fmt.Appendf(nil, "k%06d", r.IntN(5000)) }
 	files := make([]*logclient.LogDataFileInfo, 0, n)
 	for range n {
-		tableID := int64(r.Intn(40))
-		if r.Intn(2) == 0 {
+		tableID := int64(r.IntN(40))
+		if r.IntN(2) == 0 {
 			tableID = 7
 		}
 		start, end := key(), key()
-		if r.Intn(20) != 0 && string(start) > string(end) {
+		if r.IntN(20) != 0 && string(start) > string(end) {
 			start, end = end, start
 		}
 		files = append(files, &logclient.LogDataFileInfo{DataFileInfo: &backuppb.DataFileInfo{
 			TableId:         tableID,
-			IsMeta:          r.Intn(30) == 0,
+			IsMeta:          r.IntN(30) == 0,
 			StartKey:        start,
 			EndKey:          end,
-			Length:          uint64(r.Intn(1 << 20)),
-			NumberOfEntries: int64(r.Intn(1000)),
+			Length:          uint64(r.IntN(1 << 20)),
+			NumberOfEntries: int64(r.IntN(1000)),
 		}})
 	}
 	return files
@@ -90,7 +90,7 @@ func contents(helpers map[int64]*split.SplitHelper) map[int64][]split.Valued {
 }
 
 func TestMergeDMLFilesByTableMatchesOneByOne(t *testing.T) {
-	r := rand.New(rand.NewSource(42))
+	r := rand.New(rand.NewPCG(42, 0))
 	files := randomDMLFiles(r, 30000)
 	rules := make(map[int64]*restoreutils.RewriteRules)
 	for tableID := range int64(40) {
@@ -109,7 +109,7 @@ func TestMergeDMLFilesByTableMatchesOneByOne(t *testing.T) {
 }
 
 func TestMergeDMLFilesByTableStopsOnIterError(t *testing.T) {
-	r := rand.New(rand.NewSource(7))
+	r := rand.New(rand.NewPCG(7, 0))
 	files := randomDMLFiles(r, 20000)
 	rules := map[int64]*restoreutils.RewriteRules{7: {}}
 	boom := errors.New("meta read failed")
@@ -122,7 +122,7 @@ func TestMergeDMLFilesByTableStopsOnIterError(t *testing.T) {
 }
 
 func TestMergeDMLFilesByTableStopsOnCancel(t *testing.T) {
-	r := rand.New(rand.NewSource(11))
+	r := rand.New(rand.NewPCG(11, 0))
 	files := randomDMLFiles(r, 50000)
 	rules := map[int64]*restoreutils.RewriteRules{}
 	for _, f := range files {
@@ -145,7 +145,7 @@ func TestMergeDMLFilesByTableStopsOnCancel(t *testing.T) {
 }
 
 func TestMergeDMLFilesByTableStopsOnCancelWhileDraining(t *testing.T) {
-	r := rand.New(rand.NewSource(13))
+	r := rand.New(rand.NewPCG(13, 0))
 	files := randomDMLFiles(r, 20000)
 	rules := map[int64]*restoreutils.RewriteRules{}
 	for _, f := range files {

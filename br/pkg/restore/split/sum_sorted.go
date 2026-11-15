@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/google/btree"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -55,10 +54,6 @@ func (v Valued) MemSize() int {
 
 func (v Valued) String() string {
 	return fmt.Sprintf("(%s, %.2f MB, %d)", logutil.StringifyRange(v.Key), float64(v.Value.Size)/1024/1024, v.Value.Number)
-}
-
-func (v Valued) Less(other btree.Item) bool {
-	return bytes.Compare(v.Key.StartKey, other.(Valued).Key.StartKey) < 0
 }
 
 // implement for `AppliedFile`

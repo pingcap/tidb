@@ -7,7 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"testing"
 
 	"github.com/google/btree"
@@ -20,6 +20,11 @@ import (
 // current implementation must match exactly.
 type legacySplitHelper struct {
 	inner *btree.BTree
+}
+
+// Less orders the ranges in the btree of legacySplitHelper by start key.
+func (v Valued) Less(other btree.Item) bool {
+	return bytes.Compare(v.Key.StartKey, other.(Valued).Key.StartKey) < 0
 }
 
 func newLegacySplitHelper() *legacySplitHelper {
@@ -152,36 +157,60 @@ func requireSameAsLegacy(t *testing.T, input []Valued, checkEveryStep bool) *Spl
 		legacy.Merge(v)
 		current.Merge(v)
 		if checkEveryStep || i == len(input)-1 {
-			require.Equal(t, collectValueds(legacy), collectValueds(current), "after merging #%d %v", i, v)
+			got := collectValueds(current)
+			require.Equal(t, collectValueds(legacy), got, "after merging #%d %v", i, v)
+			if !current.fragmented {
+				requirePartition(t, got, "after merging #%d %v", i, v)
+			}
 		}
 	}
 	return current
 }
 
+// requirePartition checks what the fast path of Merge relies on: the ranges
+// cover the full key space, with no gap, no overlap and no empty range.
+func requirePartition(t *testing.T, ranges []Valued, format string, args ...any) {
+	fail := func(what string) {
+		require.FailNowf(t, "ranges are not a partition", "%s: %s", what, fmt.Sprintf(format, args...))
+	}
+	if len(ranges) == 0 {
+		fail("no range")
+	}
+	if len(ranges[0].Key.StartKey) != 0 || len(ranges[len(ranges)-1].Key.EndKey) != 0 {
+		fail("the key space is not covered up to both ends")
+	}
+	for i := 1; i < len(ranges); i++ {
+		prev, cur := ranges[i-1].Key, ranges[i].Key
+		if !bytes.Equal(prev.EndKey, cur.StartKey) || bytes.Compare(prev.StartKey, cur.StartKey) >= 0 {
+			fail(fmt.Sprintf("%v is followed by %v", ranges[i-1], ranges[i]))
+		}
+	}
+}
+
 func randomValue(r *rand.Rand) Value {
-	switch r.Intn(6) {
+	switch r.IntN(6) {
 	case 0:
 		return Value{}
 	case 1:
-		return Value{Size: math.MaxUint64 - uint64(r.Intn(1000)), Number: math.MaxInt64 - int64(r.Intn(1000))}
+		return Value{Size: math.MaxUint64 - uint64(r.IntN(1000)), Number: math.MaxInt64 - int64(r.IntN(1000))}
 	case 2:
-		return Value{Size: uint64(r.Intn(7)), Number: -int64(r.Intn(7))}
+		return Value{Size: uint64(r.IntN(7)), Number: -int64(r.IntN(7))}
 	default:
-		return Value{Size: uint64(r.Int63n(1 << 40)), Number: r.Int63n(1 << 20)}
+		return Value{Size: uint64(r.Int64N(1 << 40)), Number: r.Int64N(1 << 20)}
 	}
 }
 
 func randomKey(r *rand.Rand, alphabet, maxLen int) []byte {
-	n := r.Intn(maxLen + 1)
+	n := r.IntN(maxLen + 1)
 	if n == 0 {
-		if r.Intn(2) == 0 {
+		if r.IntN(2) == 0 {
 			return nil
 		}
 		return []byte{}
 	}
 	k := make([]byte, n)
 	for i := range k {
-		k[i] = byte('a' + r.Intn(alphabet))
+		k[i] = byte('a' + r.IntN(alphabet))
 	}
 	return k
 }
@@ -190,12 +219,12 @@ func randomRanges(r *rand.Rand, n, alphabet, maxLen int, inverted bool) []Valued
 	out := make([]Valued, 0, n)
 	for len(out) < n {
 		start, end := randomKey(r, alphabet, maxLen), randomKey(r, alphabet, maxLen)
-		switch r.Intn(10) {
+		switch r.IntN(10) {
 		case 0:
 			end = start
 		case 1:
 			if len(out) > 0 {
-				prev := out[r.Intn(len(out))]
+				prev := out[r.IntN(len(out))]
 				start, end = prev.Key.StartKey, prev.Key.EndKey
 			}
 		case 2:
@@ -207,7 +236,7 @@ func randomRanges(r *rand.Rand, n, alphabet, maxLen int, inverted bool) []Valued
 				start, end = end, start
 			}
 		}
-		if bytes.Compare(start, end) > 0 && !(inverted && r.Intn(4) == 0) {
+		if bytes.Compare(start, end) > 0 && !(inverted && r.IntN(4) == 0) {
 			start, end = end, start
 		}
 		out = append(out, NewValued(start, end, randomValue(r)))
@@ -215,29 +244,40 @@ func randomRanges(r *rand.Rand, n, alphabet, maxLen int, inverted bool) []Valued
 	return out
 }
 
+// equivalenceSeeds are fixed, so a failure is the same on every run and a
+// retry cannot hide it, plus a new one each run to keep exploring. The seed
+// is in the subtest name.
+func equivalenceSeeds() []uint64 {
+	return []uint64{1, 2, 3, rand.Uint64()}
+}
+
 func TestSplitHelperMatchesLegacyOnRandomRanges(t *testing.T) {
-	seed := rand.Int63()
-	t.Logf("seed %d", seed)
-	r := rand.New(rand.NewSource(seed))
-	for range 500 {
-		h := requireSameAsLegacy(t, randomRanges(r, 1+r.Intn(60), 2+r.Intn(4), 1+r.Intn(3), false), true)
-		require.False(t, h.fragmented)
-	}
-	for range 10 {
-		h := requireSameAsLegacy(t, randomRanges(r, 3000, 26, 4, false), false)
-		require.False(t, h.fragmented)
+	for _, seed := range equivalenceSeeds() {
+		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
+			r := rand.New(rand.NewPCG(seed, 0))
+			for range 150 {
+				h := requireSameAsLegacy(t, randomRanges(r, 1+r.IntN(60), 2+r.IntN(4), 1+r.IntN(3), false), true)
+				require.False(t, h.fragmented)
+			}
+			for range 3 {
+				h := requireSameAsLegacy(t, randomRanges(r, 3000, 26, 4, false), false)
+				require.False(t, h.fragmented)
+			}
+		})
 	}
 }
 
 func TestSplitHelperMatchesLegacyWithInvertedRanges(t *testing.T) {
-	seed := rand.Int63()
-	t.Logf("seed %d", seed)
-	r := rand.New(rand.NewSource(seed))
-	for range 500 {
-		requireSameAsLegacy(t, randomRanges(r, 1+r.Intn(60), 2+r.Intn(4), 1+r.Intn(3), true), true)
-	}
-	for range 10 {
-		requireSameAsLegacy(t, randomRanges(r, 2000, 26, 4, true), false)
+	for _, seed := range equivalenceSeeds() {
+		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
+			r := rand.New(rand.NewPCG(seed, 0))
+			for range 150 {
+				requireSameAsLegacy(t, randomRanges(r, 1+r.IntN(60), 2+r.IntN(4), 1+r.IntN(3), true), true)
+			}
+			for range 3 {
+				requireSameAsLegacy(t, randomRanges(r, 2000, 26, 4, true), false)
+			}
+		})
 	}
 }
 
@@ -310,8 +350,8 @@ func TestSplitHelperMatchesLegacyOnAdversarialRanges(t *testing.T) {
 
 func TestSplitHelperMatchesLegacyOnLogBackupWorkload(t *testing.T) {
 	for name, files := range map[string][]tableFile{
-		"overlapping": logBackupLikeFiles(rand.New(rand.NewSource(7)), 8, 25, 40),
-		"disjoint":    disjointFiles(rand.New(rand.NewSource(7)), 8, 2000),
+		"overlapping": logBackupLikeFiles(rand.New(rand.NewPCG(7, 0)), 8, 25, 40),
+		"disjoint":    disjointFiles(rand.New(rand.NewPCG(7, 0)), 8, 2000),
 	} {
 		t.Run(name, func(t *testing.T) {
 			legacy := map[int64]*legacySplitHelper{}
@@ -325,8 +365,10 @@ func TestSplitHelperMatchesLegacyOnLogBackupWorkload(t *testing.T) {
 				current[f.tableID].Merge(f.Valued)
 			}
 			for id := range legacy {
-				require.Equal(t, collectValueds(legacy[id]), collectValueds(current[id]), "table %d", id)
+				got := collectValueds(current[id])
+				require.Equal(t, collectValueds(legacy[id]), got, "table %d", id)
 				require.False(t, current[id].fragmented)
+				requirePartition(t, got, "table %d", id)
 			}
 		})
 	}
@@ -362,24 +404,24 @@ func logBackupLikeFiles(r *rand.Rand, tables, stores, flushes int) []tableFile {
 				var lo, hi uint64
 				switch kind {
 				case 0, 1:
-					lo = uint64(r.Int63n(handleSpace / 50))
-					hi = handleSpace - uint64(r.Int63n(handleSpace/50))
+					lo = uint64(r.Int64N(handleSpace / 50))
+					hi = handleSpace - uint64(r.Int64N(handleSpace/50))
 				case 2:
 					tail := uint64(flush+1) * (handleSpace / uint64(flushes+1))
-					lo = tail - uint64(r.Int63n(int64(handleSpace/(4*flushes))))
-					hi = tail + uint64(r.Int63n(int64(handleSpace/(4*flushes))))
+					lo = tail - uint64(r.Int64N(int64(handleSpace/(4*flushes))))
+					hi = tail + uint64(r.Int64N(int64(handleSpace/(4*flushes))))
 				default:
-					lo = uint64(r.Int63n(handleSpace))
-					hi = lo + uint64(r.Int63n(handleSpace/20))
+					lo = uint64(r.Int64N(handleSpace))
+					hi = lo + uint64(r.Int64N(handleSpace/20))
 				}
-				if r.Intn(50) == 0 {
+				if r.IntN(50) == 0 {
 					hi = lo
 				}
 				files = append(files, tableFile{
 					tableID: tableID,
 					Valued: NewValued(rowKey(tableID, lo), rowKey(tableID, hi), Value{
-						Size:   uint64(1<<10 + r.Intn(8<<20)),
-						Number: int64(1 + r.Intn(50000)),
+						Size:   uint64(1<<10 + r.IntN(8<<20)),
+						Number: int64(1 + r.IntN(50000)),
 					}),
 				})
 			}
@@ -398,9 +440,9 @@ func disjointFiles(r *rand.Rand, tables, perTable int) []tableFile {
 			lo := uint64(i) << 20
 			files = append(files, tableFile{
 				tableID: tableID,
-				Valued: NewValued(rowKey(tableID, lo), rowKey(tableID, lo+uint64(r.Intn(1<<19))), Value{
-					Size:   uint64(1<<10 + r.Intn(8<<20)),
-					Number: int64(1 + r.Intn(50000)),
+				Valued: NewValued(rowKey(tableID, lo), rowKey(tableID, lo+uint64(r.IntN(1<<19))), Value{
+					Size:   uint64(1<<10 + r.IntN(8<<20)),
+					Number: int64(1 + r.IntN(50000)),
 				}),
 			})
 		}
@@ -428,7 +470,7 @@ func BenchmarkSplitHelperMerge(b *testing.B) {
 		{"current", func() splitMerger { return NewSplitHelper() }},
 	}
 	for _, w := range workloads {
-		files := w.files(rand.New(rand.NewSource(1)))
+		files := w.files(rand.New(rand.NewPCG(1, 0)))
 		for _, impl := range impls {
 			b.Run(w.name+"/"+impl.name, func(b *testing.B) {
 				b.ReportAllocs()

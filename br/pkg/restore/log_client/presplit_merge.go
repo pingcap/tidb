@@ -51,6 +51,10 @@ func mergeDMLFilesByTable(
 	workers int,
 ) (map[int64]*split.SplitHelper, int, error) {
 	workers = max(1, workers)
+	// workerCtx is also canceled when the iteration fails, so the workers drop
+	// the batches already queued.
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	queues := make([]chan []preSplitFile, workers)
 	helpers := make([]map[int64]*split.SplitHelper, workers)
 	var wg sync.WaitGroup
@@ -61,7 +65,7 @@ func mergeDMLFilesByTable(
 		go func(queue <-chan []preSplitFile, owned map[int64]*split.SplitHelper) {
 			defer wg.Done()
 			for batch := range queue {
-				if ctx.Err() != nil {
+				if workerCtx.Err() != nil {
 					continue
 				}
 				for _, f := range batch {
@@ -130,6 +134,9 @@ func mergeDMLFilesByTable(
 	}
 	for i := 0; iterErr == nil && i < workers; i++ {
 		iterErr = flush(i)
+	}
+	if iterErr != nil {
+		cancel()
 	}
 	failpoint.InjectCall("pre-split-merge-before-wait")
 	for _, queue := range queues {
