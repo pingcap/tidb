@@ -558,6 +558,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::statement_locked_tables(self)
     }
 
+    fn table_lock_context(&self) -> Option<tidb_sessionctx::SessionTableLocks> {
+        Some(self.locked_tables.clone())
+    }
+
     fn point_plan_val(&self) -> Option<std::sync::Arc<dyn std::any::Any + Send + Sync>> {
         self.point_plan_val.clone()
     }

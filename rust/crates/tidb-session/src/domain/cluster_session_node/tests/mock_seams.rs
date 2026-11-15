@@ -416,6 +416,38 @@ impl ClusterDdl for MockDdl {
         )
     }
 
+    fn lock_tables(
+        &self,
+        locks: &[tidb_ast::TableLock],
+        current_db: &str,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        tidb_ddl::lock_tables_with(&self.catalog.get_latest(), "mock-ddl", locks, current_db, context, &|job| {
+            self.do_ddl_job_wrapper(context, job)
+        })
+    }
+
+    fn unlock_tables(
+        &self,
+        unlock_tables: Vec<tidb_model::TableLockTpInfo>,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        tidb_ddl::unlock_tables_with(&self.catalog.get_latest(), "mock-ddl", unlock_tables, context, &|job| {
+            self.do_ddl_job_wrapper(context, job)
+        })
+    }
+
+    fn cleanup_table_lock(
+        &self,
+        tables: &[Vec<String>],
+        current_db: &str,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        tidb_ddl::cleanup_table_lock_with(&self.catalog.get_latest(), tables, current_db, context, &|job| {
+            self.do_ddl_job_wrapper(context, job)
+        })
+    }
+
     fn create_view(
         &self,
         schema: &str,

@@ -117,6 +117,15 @@ impl crate::session_context::DdlSessionContext for StmtContext {
         StmtContext::ddl_connection_id(self)
     }
 
+    fn table_lock_context(&self) -> Option<tidb_sessionctx::SessionTableLocks> {
+        StmtContext::table_lock_context(self).cloned()
+    }
+
+    fn ddl_login_user(&self) -> Option<(String, String)> {
+        let (user, host) = self.login_user_name()?.split_once('@')?;
+        Some((user.to_owned(), host.to_owned()))
+    }
+
     fn connection_charset_info(&self) -> (&str, &str) {
         StmtContext::connection_charset_info(self)
     }

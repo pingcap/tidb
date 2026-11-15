@@ -739,7 +739,12 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 uint_var(tidb_vardef::tidb_vars::TIDB_PRE_SPLIT_REGIONS),
             );
         let reorg_vars = self.ddl_reorg_vars(&context);
-        context.with_ddl_reorg_vars(reorg_vars)
+        let context = context.with_ddl_reorg_vars(reorg_vars);
+        // Go's DDL executor changes the session's own table locks.
+        match self.table_lock_context() {
+            Some(locks) => context.with_table_lock_context(locks),
+            None => context,
+        }
     }
 
     /// The values Go `NewDDLReorgMeta` / `initJobReorgMetaFromVariables`
@@ -2831,6 +2836,12 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Go `TableLockReadContext`: the table locks this session holds
     /// (`StmtContext::locked_tables`); `None` with table locks disabled.
     fn locked_tables(&self) -> Option<crate::LockedTables>;
+
+    /// Go `sessionctx.Context`'s `TableLockContext`: the session's lock set
+    /// the DDL executor changes. `None` outside a session.
+    fn table_lock_context(&self) -> Option<tidb_sessionctx::SessionTableLocks> {
+        None
+    }
     /// Go `sctx.Value(plannercore.PointPlanKey)`: the
     /// [`crate::driver::PointPlanVal`] a multi-statement query's prefetch
     /// handed the running statement, if any.

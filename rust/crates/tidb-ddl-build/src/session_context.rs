@@ -59,6 +59,16 @@ pub trait DdlSessionContext: Send + Sync {
     fn ddl_reorg_priority(&self) -> i64;
     /// `SessionVars.ConnectionID`.
     fn ddl_connection_id(&self) -> u64;
+    /// Go `sessionctx.Context`'s `TableLockContext`: the session's held
+    /// table locks, which `LockTables` / `UnlockTables` / `CleanupTableLock`
+    /// change. `None` outside a session.
+    fn table_lock_context(&self) -> Option<tidb_sessionctx::SessionTableLocks> {
+        None
+    }
+    /// Go `SessionVars.User` as `(username, hostname)`.
+    fn ddl_login_user(&self) -> Option<(String, String)> {
+        None
+    }
     /// The connection's `(charset, collation)`.
     fn connection_charset_info(&self) -> (&str, &str);
     /// The session time zone.
@@ -111,6 +121,14 @@ pub trait DdlSessionContext: Send + Sync {
 impl<T: DdlSessionContext + ?Sized> DdlSessionContext for std::sync::Arc<T> {
     fn metabuild_context(&self) -> tidb_metabuild::Context {
         (**self).metabuild_context()
+    }
+
+    fn table_lock_context(&self) -> Option<tidb_sessionctx::SessionTableLocks> {
+        (**self).table_lock_context()
+    }
+
+    fn ddl_login_user(&self) -> Option<(String, String)> {
+        (**self).ddl_login_user()
     }
 
     fn enable_row_level_checksum(&self) -> bool {

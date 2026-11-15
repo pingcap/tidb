@@ -327,7 +327,7 @@ impl Session {
         service: &dyn DdlService,
     ) -> Result<Option<i64>, DriverError> {
         let current_db = self.vars.current_db.clone();
-        self.run_executor_call(sql, parsed, service, None, |service, context| {
+        self.run_executor_call(sql, parsed, service, |service, context| {
             service.execute_ddl(parsed, &current_db, context)
         })
     }
@@ -343,7 +343,7 @@ impl Session {
         labels: &[String],
         service: &dyn DdlService,
     ) -> Result<Option<i64>, DriverError> {
-        self.run_executor_call(sql, parsed, service, None, |service, context| {
+        self.run_executor_call(sql, parsed, service, |service, context| {
             service.set_tiflash_replica(schema, table, count, labels, context)
         })
     }
@@ -359,7 +359,7 @@ impl Session {
         info: &tidb_model::TableInfo,
         service: &dyn DdlService,
     ) -> Result<Option<i64>, DriverError> {
-        self.run_executor_call(sql, parsed, service, None, |service, context| {
+        self.run_executor_call(sql, parsed, service, |service, context| {
             service.create_view(schema, name, or_replace, info, context)
         })
     }
@@ -372,15 +372,9 @@ impl Session {
         job: tidb_ddl::JobWrapper,
         service: &dyn DdlService,
     ) -> Result<Option<i64>, DriverError> {
-        let locks = match &job.args {
-            tidb_model::JobArgsValue::LockTables(Some(args)) => Some(args.read().clone()),
-            _ => None,
-        };
-        let result =
-            self.run_executor_call(sql, parsed, service, locks.as_ref(), |service, context| {
-                service.do_ddl_job_wrapper(context, job)
-            });
-        result
+        self.run_executor_call(sql, parsed, service, |service, context| {
+            service.do_ddl_job_wrapper(context, job)
+        })
     }
 
     /// Go `DDLExec.Next`: common context and session effects around an executor call.
@@ -389,7 +383,6 @@ impl Session {
         sql: &str,
         parsed: &tidb_ast::Stmt,
         service: &dyn DdlService,
-        locks: Option<&tidb_model::LockTablesArgs>,
         execute: impl FnOnce(&dyn DdlService, &StmtContext) -> Result<ClusterDdlReport, DriverError>,
     ) -> Result<Option<i64>, DriverError> {
         let drop_database = match parsed {
@@ -407,9 +400,6 @@ impl Session {
         }
         service.check_cached_table_ddl(parsed, &self.vars.current_db)?;
         self.validate_executor_ddl_references(parsed)?;
-        if let Some(args) = locks {
-            self.begin_lock_tables_args(args);
-        }
         let lock_effect = self.cluster_executor_lock_effect(parsed);
         let context = self.ddl_statement_context().with_ddl_query(sql);
         let report = execute(service, &context);
@@ -423,9 +413,6 @@ impl Session {
             } => (created_id, true, warnings),
             ClusterDdlReport::AlreadySatisfied { warnings, .. } => (None, false, warnings),
         };
-        if let Some(args) = locks {
-            self.finish_lock_tables_args(args);
-        }
         self.finish_cluster_ddl_lock_effect(lock_effect, created_id);
         if applied {
             self.record_last_ddl_info(sql);

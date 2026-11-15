@@ -300,6 +300,33 @@ impl ClusterDdl for ReportDdl {
         )
     }
 
+    fn lock_tables(
+        &self,
+        _: &[tidb_ast::TableLock],
+        _: &str,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        unreachable!("these tests take no table lock")
+    }
+
+    fn unlock_tables(
+        &self,
+        unlock_tables: Vec<tidb_model::TableLockTpInfo>,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        assert!(unlock_tables.is_empty(), "these tests take no table lock");
+        Ok(ClusterDdlReport::AlreadySatisfied { detail: "no table is locked".into(), warnings: Vec::new() })
+    }
+
+    fn cleanup_table_lock(
+        &self,
+        _: &[Vec<String>],
+        _: &str,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        unreachable!("these tests take no table lock")
+    }
+
     fn create_view(
         &self,
         schema: &str,
@@ -790,6 +817,33 @@ impl ClusterDdl for UndeterminedDdl {
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         let _ = (table_mode, schema_id, table_id, context);
         Err(self.0.clone())
+    }
+
+    fn lock_tables(
+        &self,
+        _: &[tidb_ast::TableLock],
+        _: &str,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        unreachable!("these tests take no table lock")
+    }
+
+    fn unlock_tables(
+        &self,
+        unlock_tables: Vec<tidb_model::TableLockTpInfo>,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        assert!(unlock_tables.is_empty(), "these tests take no table lock");
+        Ok(ClusterDdlReport::AlreadySatisfied { detail: "no table is locked".into(), warnings: Vec::new() })
+    }
+
+    fn cleanup_table_lock(
+        &self,
+        _: &[Vec<String>],
+        _: &str,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        unreachable!("these tests take no table lock")
     }
 
     fn create_view(

@@ -1034,6 +1034,35 @@ pub(super) fn alter_table<S: StoreClient>(
 ) -> Result<ClusterDdlReport, SqlQueryError> {
     let statement = crate::cluster_ddl::resolve_alter_table_spec(statement, context)
         .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?;
+    // Go `executor.AlterTable`'s `AlterTableWriteable` case: READ ONLY is a
+    // READ ONLY table lock, READ WRITE its cleanup; nothing without the
+    // experimental table lock.
+    if let [tidb_ast::AlterTableAction::ReadOnly(read_only)] = statement.actions.as_slice() {
+        if !tidb_config::config_tree::config::table_lock_enabled() {
+            return Ok(ClusterDdlReport::AlreadySatisfied {
+                detail: "table lock is disabled".into(),
+                warnings: Vec::new(),
+            });
+        }
+        return if *read_only {
+            lock_tables(
+                executor,
+                &[tidb_ast::TableLock {
+                    table: statement.name.clone(),
+                    lock_type: tidb_ast::TableLockType::READ_ONLY,
+                }],
+                current_db,
+                context.as_ref(),
+            )
+        } else {
+            cleanup_table_lock(
+                executor,
+                &[statement.name.clone()],
+                current_db,
+                context.as_ref(),
+            )
+        };
+    }
     let store_count = executor
         .opener
         .store()
@@ -1086,4 +1115,275 @@ pub(super) fn update_table_replica_info<S: StoreClient>(
         )?;
         crate::cluster_ddl::submit_built_job(snapshot, built, start_ts, upgrading)
     })
+}
+
+/// Go's `SessionInfo{ServerID: e.uuid, SessionID: ConnectionID}`; the DDL's
+/// uuid is its owner manager's id.
+fn table_lock_session_info(
+    server_id: &str,
+    context: &dyn DdlSessionContext,
+) -> tidb_model::SessionInfo {
+    tidb_model::SessionInfo {
+        server_id: server_id.to_owned(),
+        session_id: context.ddl_connection_id(),
+    }
+}
+
+/// Submits one prepared job (Go `doDDLJob2`).
+pub type DoDdlJob<'a> = dyn Fn(crate::JobWrapper) -> Result<ClusterDdlReport, SqlQueryError> + 'a;
+
+fn mysql_query_error(error: tidb_terror::MysqlError) -> SqlQueryError {
+    SqlQueryError::from(error)
+}
+
+fn plan_query_error(error: DdlPlanError) -> SqlQueryError {
+    SqlQueryError::from(tidb_terror::MysqlError::from_sql_error(
+        error.to_sql_error(),
+    ))
+}
+
+/// Go `throwErrIfInMemOrSysDB`.
+fn throw_err_if_in_mem_or_sys_db(
+    context: &dyn DdlSessionContext,
+    db: &str,
+) -> Result<(), SqlQueryError> {
+    let login = context.ddl_login_user();
+    tidb_ddl_build::table_lock::throw_err_if_in_mem_or_sys_db(
+        login
+            .as_ref()
+            .map(|(user, host)| (user.as_str(), host.as_str())),
+        db,
+    )
+    .map_err(mysql_query_error)
+}
+
+/// Go `executor.getSchemaAndTableByIdent` over the latest schema, then the
+/// lock statements' refusal of a view or a sequence.
+fn lockable_table(
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    db: &str,
+    name: &str,
+) -> Result<(i64, tidb_model::GoShared<tidb_model::TableInfo>), SqlQueryError> {
+    let Some(database) = catalog.schema_by_name(db) else {
+        return Err(mysql_query_error(tidb_terror::MysqlError::from_terror(
+            &tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
+                .gen_with_stack_by_args(&[db.to_owned().into()]),
+        )));
+    };
+    let Some((_, table)) = catalog.table_info_by_name(db, name) else {
+        return Err(mysql_query_error(tidb_terror::MysqlError::from_terror(
+            &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                .gen_with_stack_by_args(&[db.to_owned().into(), name.to_owned().into()]),
+        )));
+    };
+    if table.read().is_view() || table.read().is_sequence() {
+        return Err(mysql_query_error(tidb_terror::MysqlError::from_terror(
+            &tidb_table::table_errors::ERR_UNSUPPORTED_OP.gen_with_stack_by_args(&[]),
+        )));
+    }
+    let schema_id = database.read().id;
+    Ok((schema_id, table))
+}
+
+/// Go `executor.LockTables`.
+pub(super) fn lock_tables<S: StoreClient>(
+    executor: &RealClusterDdl<S>,
+    locks: &[tidb_ast::TableLock],
+    current_db: &str,
+    context: &dyn DdlSessionContext,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    let catalog = executor.schema_sync.catalog.get_latest();
+    lock_tables_with(
+        &catalog,
+        executor.owner.id(),
+        locks,
+        current_db,
+        context,
+        &|job| do_ddl_job_wrapper(executor, context, job),
+    )
+}
+
+/// Go `executor.LockTables` over `catalog` (the executor's latest schema),
+/// the DDL's `server_id` (Go `e.uuid`) and its job submission.
+pub fn lock_tables_with(
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    server_id: &str,
+    locks: &[tidb_ast::TableLock],
+    current_db: &str,
+    context: &dyn DdlSessionContext,
+    do_job: &DoDdlJob<'_>,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    let session_info = table_lock_session_info(server_id, context);
+    let mut lock_tables = Vec::with_capacity(locks.len());
+    let mut unique_table_id = std::collections::HashSet::new();
+    for lock in locks {
+        let (db, name) = split_name(&lock.table, current_db, "table")
+            .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?;
+        throw_err_if_in_mem_or_sys_db(context, &db)?;
+        let (schema_id, table) = lockable_table(catalog, &db, &name)?;
+        let table = table.read();
+        let held = table.lock.as_ref().map(|lock| lock.read().clone());
+        tidb_ddl_build::table_lock::check_table_locked(
+            table.name.lowercase(),
+            held.as_ref(),
+            lock.lock_type,
+            &session_info,
+        )
+        .map_err(mysql_query_error)?;
+        if !unique_table_id.insert(table.id) {
+            return Err(mysql_query_error(tidb_terror::MysqlError::from_terror(
+                &tidb_infoschema::infoschema_errors::ERR_NONUNIQ_TABLE
+                    .gen_with_stack_by_args(&[table.name.original().to_owned().into()]),
+            )));
+        }
+        lock_tables.push(tidb_model::TableLockTpInfo {
+            schema_id,
+            table_id: table.id,
+            tp: lock.lock_type,
+        });
+    }
+    let session_locks = context.table_lock_context();
+    let unlock_tables = session_locks
+        .as_ref()
+        .map(|locks| locks.get_all_table_locks())
+        .unwrap_or_default();
+    let job = crate::cluster_ddl::table_lock::lock_tables_job(
+        catalog,
+        tidb_model::LockTablesArgs {
+            lock_tables: lock_tables.clone(),
+            unlock_tables: unlock_tables.clone(),
+            session_info,
+            ..Default::default()
+        },
+        context,
+    )
+    .map_err(plan_query_error)?;
+    // Go: added before the job, so a session killed once the job has run
+    // still holds what it locked.
+    if let Some(locks) = &session_locks {
+        locks.add_table_lock(&lock_tables);
+    }
+    let report = do_job(job)?;
+    if let Some(locks) = &session_locks {
+        locks.release_table_locks(&unlock_tables);
+        locks.add_table_lock(&lock_tables);
+    }
+    Ok(report)
+}
+
+/// Go `executor.UnlockTables`.
+pub(super) fn unlock_tables<S: StoreClient>(
+    executor: &RealClusterDdl<S>,
+    unlock_tables: Vec<tidb_model::TableLockTpInfo>,
+    context: &dyn DdlSessionContext,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    let catalog = executor.schema_sync.catalog.get_latest();
+    unlock_tables_with(
+        &catalog,
+        executor.owner.id(),
+        unlock_tables,
+        context,
+        &|job| do_ddl_job_wrapper(executor, context, job),
+    )
+}
+
+/// Go `executor.UnlockTables` (see [`lock_tables_with`]): none to unlock
+/// submits no job.
+pub fn unlock_tables_with(
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    server_id: &str,
+    unlock_tables: Vec<tidb_model::TableLockTpInfo>,
+    context: &dyn DdlSessionContext,
+    do_job: &DoDdlJob<'_>,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    if unlock_tables.is_empty() {
+        return Ok(ClusterDdlReport::AlreadySatisfied {
+            detail: "no table is locked".into(),
+            warnings: Vec::new(),
+        });
+    }
+    let job = crate::cluster_ddl::table_lock::unlock_tables_job(
+        catalog,
+        tidb_model::LockTablesArgs {
+            unlock_tables,
+            session_info: table_lock_session_info(server_id, context),
+            ..Default::default()
+        },
+        context,
+    )
+    .map_err(plan_query_error)?;
+    let report = do_job(job)?;
+    if let Some(locks) = context.table_lock_context() {
+        locks.release_all_table_locks();
+    }
+    Ok(report)
+}
+
+/// Go `executor.CleanupTableLock`.
+pub(super) fn cleanup_table_lock<S: StoreClient>(
+    executor: &RealClusterDdl<S>,
+    tables: &[Vec<String>],
+    current_db: &str,
+    context: &dyn DdlSessionContext,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    let catalog = executor.schema_sync.catalog.get_latest();
+    cleanup_table_lock_with(&catalog, tables, current_db, context, &|job| {
+        do_ddl_job_wrapper(executor, context, job)
+    })
+}
+
+/// Go `executor.CleanupTableLock` (see [`lock_tables_with`]): no job when
+/// every named table is unlocked.
+pub fn cleanup_table_lock_with(
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    tables: &[Vec<String>],
+    current_db: &str,
+    context: &dyn DdlSessionContext,
+    do_job: &DoDdlJob<'_>,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    let mut unique_table_id = std::collections::HashSet::new();
+    let mut cleanup_tables = Vec::with_capacity(tables.len());
+    let mut unlocked = 0;
+    for path in tables {
+        let (db, name) = split_name(path, current_db, "table")
+            .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?;
+        throw_err_if_in_mem_or_sys_db(context, &db)?;
+        let (schema_id, table) = lockable_table(catalog, &db, &name)?;
+        let table = table.read();
+        if !table.is_locked() {
+            unlocked += 1;
+        }
+        if !unique_table_id.insert(table.id) {
+            return Err(mysql_query_error(tidb_terror::MysqlError::from_terror(
+                &tidb_infoschema::infoschema_errors::ERR_NONUNIQ_TABLE
+                    .gen_with_stack_by_args(&[table.name.original().to_owned().into()]),
+            )));
+        }
+        cleanup_tables.push(tidb_model::TableLockTpInfo {
+            schema_id,
+            table_id: table.id,
+            ..Default::default()
+        });
+    }
+    if cleanup_tables.is_empty() || cleanup_tables.len() == unlocked {
+        return Ok(ClusterDdlReport::AlreadySatisfied {
+            detail: "no named table is locked".into(),
+            warnings: Vec::new(),
+        });
+    }
+    let job = crate::cluster_ddl::table_lock::unlock_tables_job(
+        catalog,
+        tidb_model::LockTablesArgs {
+            unlock_tables: cleanup_tables.clone(),
+            is_cleanup: true,
+            ..Default::default()
+        },
+        context,
+    )
+    .map_err(plan_query_error)?;
+    let report = do_job(job)?;
+    if let Some(locks) = context.table_lock_context() {
+        locks.release_table_locks(&cleanup_tables);
+    }
+    Ok(report)
 }

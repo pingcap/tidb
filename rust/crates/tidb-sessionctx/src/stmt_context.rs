@@ -729,6 +729,73 @@ pub type RuntimeTableStats = Arc<dyn std::any::Any + Send + Sync>;
 /// keyed by table id.
 pub type LockedTables = Arc<BTreeMap<i64, tidb_model::TableLockTpInfo>>;
 
+/// Go `tablelock.TableLockContext`: a session's held table locks, the one
+/// set the session reads and the DDL executor changes (Go's executor calls
+/// `ctx.AddTableLock` / `ctx.ReleaseTableLocks` on the session itself).
+/// Clones share the set.
+#[derive(Clone, Debug, Default)]
+pub struct SessionTableLocks(Arc<Mutex<BTreeMap<i64, tidb_model::TableLockTpInfo>>>);
+
+impl SessionTableLocks {
+    fn locks(&self) -> std::sync::MutexGuard<'_, BTreeMap<i64, tidb_model::TableLockTpInfo>> {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Go `session.AddTableLock`: a READ ONLY lock is session-unrelated.
+    pub fn add_table_lock(&self, locks: &[tidb_model::TableLockTpInfo]) {
+        let mut held = self.locks();
+        for lock in locks {
+            if lock.tp != tidb_ast::TableLockType::READ_ONLY {
+                held.insert(lock.table_id, *lock);
+            }
+        }
+    }
+
+    /// Go `session.ReleaseTableLocks`.
+    pub fn release_table_locks(&self, locks: &[tidb_model::TableLockTpInfo]) {
+        let mut held = self.locks();
+        for lock in locks {
+            held.remove(&lock.table_id);
+        }
+    }
+
+    /// Go `session.ReleaseTableLockByTableIDs`.
+    pub fn release_table_lock_by_table_ids(&self, table_ids: &[i64]) {
+        let mut held = self.locks();
+        for table_id in table_ids {
+            held.remove(table_id);
+        }
+    }
+
+    /// Go `session.ReleaseAllTableLocks`.
+    pub fn release_all_table_locks(&self) {
+        self.locks().clear();
+    }
+
+    /// Go `session.CheckTableLocked`.
+    pub fn check_table_locked(&self, table_id: i64) -> (bool, tidb_ast::TableLockType) {
+        match self.locks().get(&table_id) {
+            Some(lock) => (true, lock.tp),
+            None => (false, tidb_ast::TableLockType::NONE),
+        }
+    }
+
+    /// Go `session.GetAllTableLocks`.
+    pub fn get_all_table_locks(&self) -> Vec<tidb_model::TableLockTpInfo> {
+        self.locks().values().copied().collect()
+    }
+
+    /// Go `session.HasLockedTables`.
+    pub fn has_locked_tables(&self) -> bool {
+        !self.locks().is_empty()
+    }
+
+    /// The held locks as one statement reads them (Go `TableLockReadContext`).
+    pub fn snapshot(&self) -> BTreeMap<i64, tidb_model::TableLockTpInfo> {
+        self.locks().clone()
+    }
+}
+
 /// Private configuration payload exposed only as the context's dereference
 /// target. Access and mutation remain on [`StmtContext`].
 #[doc(hidden)]
@@ -845,6 +912,8 @@ pub struct StmtContextData {
     auth_plugin: String,
     connection_info: Option<Arc<tidb_variable::connection_info::ConnectionInfo>>,
     login_user: Option<String>,
+    /// Go `tablelock.TableLockContext` of the session running the statement.
+    table_lock_context: Option<SessionTableLocks>,
     /// Go `SessionVars.GlobalVarsAccessor`, consulted by the expression
     /// builtins that need live GLOBAL state.
     global_sysvars: Option<Arc<dyn GlobalSysvarAccessor>>,
@@ -2792,6 +2861,12 @@ context_configuration! {
         self
     }
 
+    /// Go `sessionctx.Context`'s `TableLockContext`: the session's lock set.
+    pub fn with_table_lock_context(mut self, locks: SessionTableLocks) -> Self {
+        self.table_lock_context = Some(locks);
+        self
+    }
+
     /// Go `SessionVars.User`.
     pub fn with_user(mut self, current_user: Option<String>, login_user: Option<String>) -> Self {
         self.current_user = current_user;
@@ -3165,6 +3240,7 @@ impl StmtContext {
             connection_info: None,
             active_roles: None,
             login_user: None,
+            table_lock_context: None,
             global_sysvars: None,
             connection_id: None,
             decode_key_from_string: None,
@@ -4642,6 +4718,17 @@ impl StmtContext {
     /// See [`StmtContextSessionState::locked_tables`].
     pub fn locked_tables(&self) -> Option<&LockedTables> {
         self.locked_tables.as_ref()
+    }
+
+    /// The session's lock set (Go `TableLockContext`), when the statement
+    /// runs in a session.
+    pub fn table_lock_context(&self) -> Option<&SessionTableLocks> {
+        self.table_lock_context.as_ref()
+    }
+
+    /// Go `SessionVars.User`, as `user@host`.
+    pub fn login_user_name(&self) -> Option<&str> {
+        self.login_user.as_deref()
     }
 
     /// The privilege answer the planner asks for a DEFINER view's definer.

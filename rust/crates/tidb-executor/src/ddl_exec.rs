@@ -81,12 +81,14 @@ pub trait DdlExec {
 
     /// Go `DDLExec.Next`'s statement checks before `NewTxnInStmt`.
     fn begin_ddl_statement(&mut self, parsed: &Stmt) -> Result<(), DriverError>;
-    /// Go `DDLExec.executeCleanupTableLock`'s job, none when nothing is locked.
-    fn cluster_cleanup_table_lock_job(
+    /// Go `DDLExec.executeLockTables` / `executeCleanupTableLock`: a LOCAL
+    /// temporary table among the names is refused (`statement` names the
+    /// statement) before the DDL executor runs.
+    fn refuse_local_temporary_lock_targets(
         &self,
         tables: &[Vec<String>],
-        sql: &str,
-    ) -> Result<Option<tidb_ddl::JobWrapper>, DriverError>;
+        statement: &str,
+    ) -> Result<(), DriverError>;
     /// A DROP that also names LOCAL temporary tables: the DROP without them
     /// and the LOCAL tables `dropLocalTemporaryTables` drops after the job;
     /// `None` for every other DDL that runs as a job.
@@ -102,14 +104,6 @@ pub trait DdlExec {
     fn session_vars(&self) -> &tidb_variable::SessionVars;
     /// The DDL executor's target checks against the session's catalog.
     fn ddl_target_checks(&mut self, stmt: &Stmt) -> Result<(), DriverError>;
-    /// Go `executor.LockTables`' checks, building the lock job.
-    fn cluster_lock_tables_job(
-        &mut self,
-        locks: &[tidb_ast::TableLock],
-        sql: &str,
-    ) -> Result<tidb_ddl::JobWrapper, DriverError>;
-    /// The job releasing every table lock the session holds, if any.
-    fn cluster_unlock_tables_job(&self) -> Result<Option<tidb_ddl::JobWrapper>, DriverError>;
     /// Go's preprocessor resolving one named table (1146 / 1046).
     fn require_table_exists(&mut self, path: &[String]) -> Result<(), DriverError>;
     /// Starts the statement's own warnings.
@@ -203,13 +197,9 @@ pub trait DdlExec {
         // table is locked.
         if let Stmt::Ddl(ddl) = stmt {
             if let tidb_ast::DdlStmt::CleanupTableLock(cleanup) = ddl.as_ref() {
-                if let Some(job) = self
-                    .cluster_cleanup_table_lock_job(&cleanup.tables, sql)
-                    .map_err(map_error)?
-                {
-                    self.run_ddl_job_wrapper(sql, stmt, job)
-                        .map_err(map_error)?;
-                }
+                self.refuse_local_temporary_lock_targets(&cleanup.tables, "ADMIN CLEANUP TABLE LOCK")
+                    .map_err(map_error)?;
+                self.run_executor_statement(sql, stmt).map_err(map_error)?;
                 return Ok(());
             }
         }
@@ -268,18 +258,15 @@ pub trait DdlExec {
             if let tidb_ast::Stmt::Ddl(ddl) = stmt {
                 match &**ddl {
                     tidb_ast::DdlStmt::LockTables(locks) => {
-                        let job = self
-                            .cluster_lock_tables_job(locks, sql)
+                        let tables: Vec<Vec<String>> =
+                            locks.iter().map(|lock| lock.table.clone()).collect();
+                        self.refuse_local_temporary_lock_targets(&tables, "LOCK TABLES")
                             .map_err(map_error)?;
-                        self.run_ddl_job_wrapper(sql, stmt, job)
-                            .map_err(map_error)?;
+                        self.run_executor_statement(sql, stmt).map_err(map_error)?;
                         return Ok(());
                     }
                     tidb_ast::DdlStmt::UnlockTables => {
-                        if let Some(job) = self.cluster_unlock_tables_job().map_err(map_error)? {
-                            self.run_ddl_job_wrapper(sql, stmt, job)
-                                .map_err(map_error)?;
-                        }
+                        self.run_executor_statement(sql, stmt).map_err(map_error)?;
                         return Ok(());
                     }
                     _ => {}
@@ -433,34 +420,6 @@ pub trait DdlExec {
                 self.begin_routed_statement_warnings();
                 self.drain_context_warnings(&context);
                 let resolved = resolved.map_err(|e| SqlQueryError::from(e.to_mysql_error()))?;
-                // Go `executor.AlterTable`'s `AlterTableWriteable` case.
-                if let [tidb_ast::AlterTableAction::ReadOnly(read_only)] =
-                    resolved.actions.as_slice()
-                {
-                    if !tidb_config::config_tree::config::table_lock_enabled() {
-                        return Ok(());
-                    }
-                    let job = if *read_only {
-                        Some(
-                            self.cluster_lock_tables_job(
-                                &[tidb_ast::TableLock {
-                                    table: resolved.name.clone(),
-                                    lock_type: tidb_ast::TableLockType::READ_ONLY,
-                                }],
-                                sql,
-                            )
-                            .map_err(map_error)?,
-                        )
-                    } else {
-                        self.cluster_cleanup_table_lock_job(&[resolved.name.clone()], sql)
-                            .map_err(map_error)?
-                    };
-                    if let Some(job) = job {
-                        self.run_ddl_job_wrapper(sql, stmt, job)
-                            .map_err(map_error)?;
-                    }
-                    return Ok(());
-                }
                 self.probe_masking_policy_on_modify_column(ddl)?;
                 let parts = tidb_ddl::cluster_ddl::split_table_option_alter(&resolved)
                     .unwrap_or_else(|| vec![resolved]);

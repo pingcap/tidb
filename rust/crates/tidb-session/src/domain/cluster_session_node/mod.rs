@@ -530,23 +530,13 @@ impl ClusterServerSession<'_> {
         // runs through the cluster job, never the in-process catalog the
         // driver session would otherwise edit when it drops.
         if tidb_config::config_tree::config::table_lock_enabled() {
-            let failed = match self.session.cluster_unlock_tables_job() {
-                Ok(Some(job)) => {
-                    let args = match &job.args {
-                        tidb_model::JobArgsValue::LockTables(Some(args)) => args.read().clone(),
-                        _ => unreachable!("UnlockTables carries LockTablesArgs"),
-                    };
-                    let result = self
-                        .node
-                        .domain()
-                        .ddl
-                        .do_ddl_job_wrapper(&self.session.ddl_statement_context(), job);
-                    self.session.finish_lock_tables_args(&args);
-                    result.is_err()
-                }
-                Ok(None) => false,
-                Err(_) => true,
-            };
+            let held = self.session.get_all_table_locks();
+            let failed = self
+                .node
+                .domain()
+                .ddl
+                .unlock_tables(held, &self.session.ddl_statement_context())
+                .is_err();
             if failed {
                 tidb_logutil::bg_logger().error(
                     "release table lock failed",
@@ -1565,12 +1555,12 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         self.session.begin_ddl_statement(parsed)
     }
 
-    fn cluster_cleanup_table_lock_job(
+    fn refuse_local_temporary_lock_targets(
         &self,
         tables: &[Vec<String>],
-        sql: &str,
-    ) -> Result<Option<tidb_ddl::JobWrapper>, tidb_driver_error::DriverError> {
-        self.session.cluster_cleanup_table_lock_job(tables, sql)
+        statement: &str,
+    ) -> Result<(), tidb_driver_error::DriverError> {
+        self.session.refuse_local_temporary_lock_targets(tables, statement)
     }
 
     fn drop_table_job(
@@ -1601,19 +1591,6 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         self.session.ddl_target_checks(stmt)
     }
 
-    fn cluster_lock_tables_job(
-        &mut self,
-        locks: &[tidb_ast::TableLock],
-        sql: &str,
-    ) -> Result<tidb_ddl::JobWrapper, tidb_driver_error::DriverError> {
-        self.session.cluster_lock_tables_job(locks, sql)
-    }
-
-    fn cluster_unlock_tables_job(
-        &self,
-    ) -> Result<Option<tidb_ddl::JobWrapper>, tidb_driver_error::DriverError> {
-        self.session.cluster_unlock_tables_job()
-    }
 
     fn require_table_exists(&mut self, path: &[String]) -> Result<(), tidb_driver_error::DriverError> {
         self.session.require_table_exists(path)

@@ -55,7 +55,8 @@ impl Runtime<dyn SessionContext> for DomainSqlServer {
         let session=pool.get().map_err(|error|error.to_string())?;
         let result=session.with_session_context(|context| -> tidb_syssession::Result<()> {
             let vars=context.ddl_statement_context().map_err(tidb_syssession::SysSessionError::new)?;
-            self.0.ddl.execute(&tidb_ddl::cluster_ddl::DdlStatement::AlterTableMode {table_mode:target.target_mode,schema_id:target.schema_id,table_id:target.table_id},&vars)
+            // Go `Domain.AlterTableMode` calls `executor.AlterTableMode`.
+            self.0.ddl.alter_table_mode(target.target_mode,target.schema_id,target.table_id,&vars)
                 .map(|_|()).map_err(|error|tidb_syssession::SysSessionError::new(error.message))
         });
         pool.put(&session);

@@ -570,7 +570,7 @@ pub struct Session {
     advisory_locks: tidb_sessionctx::advisory_lock_state::AdvisoryLockSession,
     /// Go `session.lockedTables`: the tables this session holds a
     /// `LOCK TABLES` lock on, by table ID ([`crate::table_lock`]).
-    locked_tables: std::collections::BTreeMap<i64, tidb_model::TableLockTpInfo>,
+    locked_tables: tidb_sessionctx::SessionTableLocks,
     selected_lock_keys: Option<tidb_sessionctx::select_lock::SelectedLockKeys>,
     /// Go `TxnCtx.IsPessimistic` for an autocommit statement whose implicit
     /// transaction `decideTxnMode` made pessimistic, set by the storage owner
@@ -1053,7 +1053,7 @@ impl Session {
             pending_plan_cache_refusal: None,
             in_show_warning: false,
             advisory_locks: tidb_sessionctx::advisory_lock_state::AdvisoryLockSession::default(),
-            locked_tables: std::collections::BTreeMap::new(),
+            locked_tables: tidb_sessionctx::SessionTableLocks::default(),
             selected_lock_keys: None,
             autocommit_pessimistic_statement: false,
             statement_message: String::new(),

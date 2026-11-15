@@ -21,6 +21,7 @@
 
 #[path = "executor.rs"]
 mod executor;
+pub use executor::{cleanup_table_lock_with, lock_tables_with, unlock_tables_with, DoDdlJob};
 
 use tidb_ddl_build::partition_reorg::KvTablePartitionReorg;
 use tidb_ddl_build::table_backfill::KvTableBackfill;
@@ -178,6 +179,30 @@ pub trait ClusterDdl: Send + Sync {
         context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
     ) -> Result<ClusterDdlReport, SqlQueryError>;
 
+    /// Go `executor.LockTables`: the session's locks change through
+    /// `context.table_lock_context()`.
+    fn lock_tables(
+        &self,
+        locks: &[tidb_ast::TableLock],
+        current_db: &str,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.UnlockTables` over the session's held locks.
+    fn unlock_tables(
+        &self,
+        unlock_tables: Vec<tidb_model::TableLockTpInfo>,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go `executor.CleanupTableLock`.
+    fn cleanup_table_lock(
+        &self,
+        tables: &[Vec<String>],
+        current_db: &str,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
     /// Go `executor.CreateView` after `DDLExec.executeCreateView` resolves its body.
     fn create_view(
         &self,
@@ -331,6 +356,22 @@ pub trait ClusterDdl: Send + Sync {
             return match &**ddl {
                 tidb_ast::DdlStmt::AlterTable(statement) => {
                     self.alter_table(statement, current_db, context)
+                }
+                // Go `DDLExec.executeLockTables` / `executeUnlockTables` /
+                // `executeCleanupTableLock`: the executor changes the
+                // session's locks through `context.table_lock_context()`.
+                tidb_ast::DdlStmt::LockTables(locks) => {
+                    self.lock_tables(locks, current_db, context.as_ref())
+                }
+                tidb_ast::DdlStmt::UnlockTables => self.unlock_tables(
+                    context
+                        .table_lock_context()
+                        .map(|locks| locks.get_all_table_locks())
+                        .unwrap_or_default(),
+                    context.as_ref(),
+                ),
+                tidb_ast::DdlStmt::CleanupTableLock(statement) => {
+                    self.cleanup_table_lock(&statement.tables, current_db, context.as_ref())
                 }
                 tidb_ast::DdlStmt::RecoverTable(statement) => self.recover_table(
                     &statement.table,
@@ -3579,6 +3620,32 @@ where
         context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         executor::alter_table_mode(self, table_mode, schema_id, table_id, context)
+    }
+
+    fn lock_tables(
+        &self,
+        locks: &[tidb_ast::TableLock],
+        current_db: &str,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::lock_tables(self, locks, current_db, context)
+    }
+
+    fn unlock_tables(
+        &self,
+        unlock_tables: Vec<tidb_model::TableLockTpInfo>,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::unlock_tables(self, unlock_tables, context)
+    }
+
+    fn cleanup_table_lock(
+        &self,
+        tables: &[Vec<String>],
+        current_db: &str,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::cleanup_table_lock(self, tables, current_db, context)
     }
 
     fn create_view(
