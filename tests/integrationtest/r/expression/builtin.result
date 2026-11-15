@@ -3475,3 +3475,20 @@ GET_FORMAT(TIME, 'usa')	GET_FORMAT(TIME, 'USA')	GET_FORMAT(TIME, 'UsA')	GET_FORM
 SELECT GET_FORMAT(DATE, 'jis'),GET_FORMAT(DATETIME, 'iso'),GET_FORMAT(TIMESTAMP, 'eur'),GET_FORMAT(TIME, 'internal');
 GET_FORMAT(DATE, 'jis')	GET_FORMAT(DATETIME, 'iso')	GET_FORMAT(TIMESTAMP, 'eur')	GET_FORMAT(TIME, 'internal')
 %Y-%m-%d	%Y-%m-%d %H:%i:%s	%Y-%m-%d %H.%i.%s	%H%i%s
+drop table if exists t;
+create table t (a int, b int, x int);
+insert into t values (10, NULL, 1);
+select interval(5, a, b, x) from t;
+interval(5, a, b, x)
+0
+set tidb_enable_vectorized_expression = 0;
+select interval(5, a, b, x) from t;
+interval(5, a, b, x)
+0
+set tidb_enable_vectorized_expression = default;
+select interval(5, 10, NULL, 1);
+interval(5, 10, NULL, 1)
+0
+select interval(5.5, a, b, x) from t;
+interval(5.5, a, b, x)
+0
