@@ -462,6 +462,28 @@ impl KvTableBackfill for TableCommon {
                 let elements = tidb_tablecodec::decode_temp_index_value(iter.value())
                     .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
                 scanned += elements.len() as u64;
+                // Go `decodeTempIndexHandleFromIndexKV`, before `FilterOverwritten`:
+                // an element without a handle in its value names the row
+                // through the key or the original index value.
+                let elements = elements
+                    .into_iter()
+                    .map(|mut element| {
+                        if element.handle.is_none() {
+                            element.handle = Some(
+                                tidb_tablecodec::decode_index_handle(
+                                    &key,
+                                    &element.value,
+                                    index.column_offsets.len(),
+                                )
+                                .map_err(|error| KvTableError::Decode(format!("{error:?}")))?
+                                .ok_or_else(|| {
+                                    KvTableError::Decode("temporary entry names no row".to_owned())
+                                })?,
+                            );
+                        }
+                        Ok(element)
+                    })
+                    .collect::<Result<Vec<_>, KvTableError>>()?;
                 let elements = tidb_tablecodec::filter_overwritten_temp_index_values(elements);
                 let mut origin_key = key.clone();
                 tidb_tablecodec::temp_index_key_to_index_key(&mut origin_key)
@@ -472,21 +494,9 @@ impl KvTableBackfill for TableCommon {
                     {
                         continue;
                     }
-                    // Go `decodeTempIndexHandleFromIndexKV`.
-                    let handle = match &element.handle {
-                        Some(handle) => convert_handle(handle),
-                        None => convert_handle(
-                            &tidb_tablecodec::decode_index_handle(
-                                &key,
-                                &element.value,
-                                index.column_offsets.len(),
-                            )
-                            .map_err(|error| KvTableError::Decode(format!("{error:?}")))?
-                            .ok_or_else(|| {
-                                KvTableError::Decode("temporary entry names no row".to_owned())
-                            })?,
-                        ),
-                    };
+                    let handle = convert_handle(
+                        element.handle.as_ref().expect("decoded before FilterOverwritten"),
+                    );
                     let distinct =
                         !element.delete && tidb_tablecodec::index_kv_is_unique(&element.value);
                     records.push(TempRecord {

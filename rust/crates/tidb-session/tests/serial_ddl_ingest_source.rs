@@ -766,3 +766,44 @@ fn test_checkpoint_physical_id_validation() {
     assert_ne!(physical_id, 0, "should have observed physical_id in checkpoint");
     assert!(valid_part_ids.contains(&physical_id), "physical_id {physical_id} should be a valid partition ID");
 }
+
+/// Go `TestAddGlobalIndexInIngest`: rows written while each chunk is
+/// ingested land in normal and global indexes alike.
+#[test]
+fn test_add_global_index_in_ingest() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    let _backend = inject_mock_backend_ctx();
+    tk.must_exec("drop table if exists t");
+    tk.must_exec("create table t (a int, b int) partition by hash(a) partitions 5");
+    tk.must_exec("insert into t (a, b) values (1, 1), (2, 2), (3, 3)");
+    let i = Arc::new(std::sync::atomic::AtomicI32::new(3));
+    let tk2 = std::sync::Mutex::new(tk.new_tk());
+    let _hook = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/writeLocalExec",
+        move |_| {
+            let tmp = i.fetch_add(1, Ordering::SeqCst) + 1;
+            assert!(tk2.lock().unwrap().exec(&format!("insert into test.t values ({tmp}, {tmp})")).is_ok());
+        },
+    );
+    let mut check = |tk: &mut TestKit, alter: &str, first: &str, second: &str| -> usize {
+        tk.must_exec(alter);
+        let rs_first = tk.must_query(&format!("select * from t use index({first})")).sort();
+        let rs_table = tk.must_query("select * from t use index()").sort();
+        let rs_second = tk.must_query(&format!("select * from t use index({second})")).sort();
+        assert_eq!(rs_first.rows(), rs_table.rows(), "{alter}");
+        assert_eq!(rs_first.rows(), rs_second.rows(), "{alter}");
+        rs_first.rows().len()
+    };
+    let num = check(&mut tk, "alter table t add index idx_1(b), add unique index idx_2(b) global", "idx_2", "idx_1");
+    assert!(num > 3);
+    // for indexes have different columns
+    let global = check(&mut tk, "alter table t add index idx_3(a), add unique index idx_4(b) global", "idx_4", "idx_3");
+    assert!(global > num);
+    // for all global indexes
+    let all_global = check(&mut tk, "alter table t add unique index idx_5(b) global, add unique index idx_6(b) global", "idx_6", "idx_5");
+    assert!(all_global > global);
+    // for non-unique global indexes
+    let non_unique = check(&mut tk, "alter table t add index idx_7(b) global, add index idx_8(b) global", "idx_7", "idx_8");
+    assert!(non_unique > global);
+}

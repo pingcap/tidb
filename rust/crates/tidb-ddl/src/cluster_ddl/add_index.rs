@@ -818,6 +818,22 @@ pub(super) fn physical_ids(table: &TableInfo) -> Vec<i64> {
     }
 }
 
+/// The physical IDs a temporary-index merge walks (Go `getReorgInfo` with
+/// `mergingTmpIdx` and `getNextPartitionInfo`): a global index's temporary
+/// entries are prefixed with the table ID, so any global index starts the
+/// merge there; the partitions follow unless every index is global.
+fn merge_physical_ids(table: &TableInfo, indexes: &[GoShared<IndexInfo>]) -> Vec<i64> {
+    let partitions = partition_ids(table);
+    if partitions.is_empty() || !indexes.iter().any(|index| index.read().global) {
+        return physical_ids(table);
+    }
+    let mut ids = vec![table.id];
+    if !indexes.iter().all(|index| index.read().global) {
+        ids.extend(partitions);
+    }
+    ids
+}
+
 /// Go `pickBackfillType`.
 pub(super) fn pick_backfill_type(job: &Job) -> tidb_model::ReorgType {
     let Some(meta) = job.reorg_meta.as_ref() else {
@@ -1662,7 +1678,7 @@ pub(super) fn do_reorg_work_for_create_index(
             table: Box::new(info.clone_like_go()),
             index_ids: indexes.iter().map(|index| index.read().id).collect(),
             merging,
-            physical_ids: physical_ids(info),
+            physical_ids: if merging { merge_physical_ids(info, indexes) } else { physical_ids(info) },
             batch_size: job_batch_size(&active.job),
             concurrency: job_concurrency(&active.job),
             session_vars: ReorgSessionVars::of_job(&active.job),

@@ -313,13 +313,19 @@ impl TableCommon {
                 (Some(temp_key), true) => self.get_key_in_txn(store, temp_key)?.unwrap_or_default(),
                 _ => Vec::new(),
             };
+            // Go: a global index's delete names the row's partition too.
+            let global = kv_index.read().global;
             let element = TempIndexValueElem {
                 value: Vec::new(),
-                handle: Some(deleted_handle.clone()),
+                handle: Some(if global {
+                    tidb_txnkv::PartitionHandle::new(physical_id, Some(deleted_handle.clone())).into()
+                } else {
+                    deleted_handle.clone()
+                }),
                 key_version,
                 delete: true,
                 distinct: entry.distinct,
-                global: false,
+                global,
             };
             if let Some(key) = key {
                 let mut ok_to_delete = true;
