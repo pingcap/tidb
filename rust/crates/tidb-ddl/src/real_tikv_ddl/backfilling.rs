@@ -165,6 +165,9 @@ fn validate_and_fill_ranges(
     start_key: &[u8],
     end_key: &[u8],
 ) -> Result<(), ClusterDdlError> {
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/validateAndFillRangesErr").is_some() {
+        return Err(invalid_split_region_ranges("mock".to_owned()));
+    }
     if ranges.is_empty() {
         return Err(invalid_split_region_ranges(format!(
             "cannot find region in range [{}, {}]",
@@ -237,24 +240,50 @@ pub(super) fn load_table_ranges(
         info("load table ranges failed, unsupported storage", vec![pid]);
         return Ok(vec![(start_key.to_vec(), end_key.to_vec())]);
     };
-    let mut attempt = 0;
+    let mut limit = limit;
+    if let Some(value) =
+        tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/setLimitForLoadTableRanges")
+    {
+        limit = value.int() as usize;
+    }
+    let mut max_retry_times = DEFAULT_MAX_RETRIES;
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/loadTableRangesNoRetry").is_some() {
+        max_retry_times = 1;
+    }
+    // Go `util.RunWithRetry`: an invalid split is retried after
+    // `RetryInterval * i`; a PD error is returned at once.
+    let mut i = 1;
     let ranges = loop {
         info(
             "load table ranges from PD",
             vec![pid.clone(), hex_field("start key", start_key), hex_field("end key", end_key)],
         );
+        if let Some(value) =
+            tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/loadTableRangesFromPDErr")
+        {
+            let msg = value.string();
+            if !msg.is_empty() {
+                return Err(ClusterDdlError::Backfill(msg));
+            }
+        }
         let mut ranges = region_store
             .batch_load_regions_with_key_range(start_key, end_key, limit)
             .map_err(ClusterDdlError::Backfill)?;
-        // Go `RunWithRetry`: an invalid split is retried, a PD error is not.
+        let mut mock_err = false;
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/beforeLoadRangeFromPD", &mut mock_err);
+        if mock_err {
+            return Err(ClusterDdlError::Backfill(
+                tidb_kv::kv_errors::ERR_TXN_RETRYABLE.gen_with_stack_by_args(&[]).to_string(),
+            ));
+        }
         match validate_and_fill_ranges(&mut ranges, start_key, end_key) {
             Ok(()) => break ranges,
             Err(error) => {
-                attempt += 1;
-                if attempt >= DEFAULT_MAX_RETRIES {
+                if i >= max_retry_times {
                     return Err(error);
                 }
-                std::thread::sleep(RETRY_INTERVAL);
+                std::thread::sleep(RETRY_INTERVAL * i as u32);
+                i += 1;
             }
         }
     };

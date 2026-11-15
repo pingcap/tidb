@@ -1693,6 +1693,9 @@ pub(super) fn do_reorg_work_for_create_index(
             // Go `onCreateIndex` on `ErrWaitReorgTimeout`: the job keeps
             // its state and records the count so far.
             active.job.row_count = *rows;
+            if backfill_state == tidb_model::BackfillState::RUNNING {
+                after_run_ingest_reorg_job(&active.job, reorg_type, false);
+            }
             return Ok(CreateIndexReorg::Step(action_step(job_only_write(
                 active.job.id,
                 Vec::new(),
@@ -1725,6 +1728,7 @@ pub(super) fn do_reorg_work_for_create_index(
     if active.job.reorg_meta.as_ref().is_some_and(|m|m.read().is_dist_reorg) { active.job.clear_resume_reason(); }
     if reorg_type.need_merge_process() {
         if backfill_state == tidb_model::BackfillState::RUNNING {
+            after_run_ingest_reorg_job(&active.job, reorg_type, true);
             for index in indexes {
                 index.write().backfill_state = tidb_model::BackfillState::READY_TO_MERGE;
             }
@@ -1737,6 +1741,19 @@ pub(super) fn do_reorg_work_for_create_index(
         }
     }
     Ok(CreateIndexReorg::Done)
+}
+
+/// Go `runIngestReorgJob` (the local ingest, not DXF) ends a run without
+/// error with `InjectCall("afterRunIngestReorgJob", job, done)`.
+fn after_run_ingest_reorg_job(job: &Job, reorg_type: tidb_model::ReorgType, done: bool) {
+    if reorg_type == tidb_model::ReorgType::INGEST
+        && !job.reorg_meta.as_ref().is_some_and(|m| m.read().is_dist_reorg)
+    {
+        tidb_failpoint::inject_call(
+            "github.com/pingcap/tidb/pkg/ddl/afterRunIngestReorgJob",
+            &mut (job.clone(), done),
+        );
+    }
 }
 
 /// Go `convertAddIdxJob2RollbackJob`: the indexes back to delete-only, the

@@ -176,6 +176,9 @@ impl IngestWriter for MockWriter {
             .buffer
             .set(tidb_txnkv::Key::from_bytes(key.to_vec()), value.to_vec())
             .map_err(|e| Error::Other(e.to_string()))?;
+        if let Some(hook) = MOCK_EXEC_AFTER_WRITE_ROW.lock().unwrap().as_ref() {
+            hook();
+        }
         tidb_failpoint::inject_call(
             "github.com/pingcap/tidb/pkg/ddl/ingest/afterMockWriterWriteRow",
             &mut (),
@@ -186,3 +189,8 @@ impl IngestWriter for MockWriter {
         0
     }
 }
+
+/// Go `MockExecAfterWriteRow`: a test hook the mock writer calls after each
+/// row it writes.
+pub static MOCK_EXEC_AFTER_WRITE_ROW: std::sync::Mutex<Option<Box<dyn Fn() + Send>>> =
+    std::sync::Mutex::new(None);

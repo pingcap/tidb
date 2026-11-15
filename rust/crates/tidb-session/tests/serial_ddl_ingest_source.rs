@@ -247,3 +247,522 @@ fn test_lit_backend_ctx_mgr() {
     assert!(!stale_job_dir2.exists());
     clean_up(&mut tk, std::path::Path::new("unknown_path"));
 }
+
+/// Go `ingest.LitDiskRoot.Count()`: the jobs whose local sort still holds disk.
+fn lit_disk_root_count() -> usize {
+    tidb_ddl_ingest::env::lightning_env().map_or(0, |env| env.disk_root.count())
+}
+
+/// Go `TestIngestError`. Go's first failpoint, `mockCopSenderError`, no longer
+/// has an injection site, so that half is a plain ingest ADD INDEX.
+#[test]
+fn test_ingest_error() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    tk.must_exec("set global tidb_enable_dist_task = 0");
+    let _backend = inject_mock_backend_ctx();
+    tk.must_exec("set @@tidb_ddl_reorg_worker_cnt = 1;");
+    for failpoint in [
+        "github.com/pingcap/tidb/pkg/ddl/mockCopSenderError",
+        "github.com/pingcap/tidb/pkg/ddl/mockLocalWriterError",
+    ] {
+        tk.must_exec("drop table if exists t;");
+        tk.must_exec("create table t (a int primary key, b int);");
+        for i in 0..4 {
+            tk.must_exec(&format!("insert into t values ({}, {});", i * 10000, i * 10000));
+        }
+        tk.must_query("split table t between (0) and (50000) regions 5;").check(["4 1"]);
+        let fp = crate::support::testkit::enable_failpoint(failpoint, "1*return");
+        tk.must_exec("alter table t add index idx(a);");
+        drop(fp);
+        tk.must_exec("admin check table t;");
+        let rows = tk.must_query("admin show ddl jobs 1;");
+        let job_tp = &rows.rows()[0][12];
+        assert!(job_tp.contains("ingest"), "{job_tp}");
+    }
+}
+
+/// Go `TestAddIndexIngestCancel`: cancelled while its backfill runs.
+#[test]
+fn test_add_index_ingest_cancel() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    let _backend = inject_mock_backend_ctx();
+    tk.must_exec("create table t (a int, b int);");
+    tk.must_exec("insert into t (a, b) values (1, 1), (2, 2), (3, 3);");
+    let tk2 = std::sync::Mutex::new(tk.new_tk());
+    let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = cancelled.clone();
+    let hook = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep",
+        move |arg| {
+            if seen.load(Ordering::SeqCst) {
+                return;
+            }
+            let job = arg.downcast_mut::<tidb_model::Job>().unwrap();
+            if job.type_ == tidb_model::ActionType::ACTION_ADD_INDEX
+                && job.schema_state == tidb_model::SchemaState::WRITE_REORGANIZATION
+            {
+                let mut tk2 = tk2.lock().unwrap();
+                let tidb_infoschema::TableEntry::Kv(table) = tk2.get_table_by_name("test", "t") else {
+                    return;
+                };
+                let running = table.meta().read().indices.iter_deref().any(|index| {
+                    let index = index.read();
+                    index.name.lowercase() == "idx"
+                        && index.backfill_state == tidb_model::BackfillState::RUNNING
+                });
+                if running {
+                    tk2.must_exec(&format!("admin cancel ddl jobs {}", job.id));
+                    seen.store(true, Ordering::SeqCst);
+                }
+            }
+        },
+    );
+    tk.must_get_err_code("alter table t add index idx(b);", 8214);
+    assert!(cancelled.load(Ordering::SeqCst));
+    drop(hook);
+    assert_eq!(lit_disk_root_count(), 0);
+}
+
+/// Go `TestAddIndexGetChunkCancel`: cancelled before the scan reads a chunk.
+#[test]
+fn test_add_index_get_chunk_cancel() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    let _backend = inject_mock_backend_ctx();
+    tk.must_exec("create table t (a int primary key, b int);");
+    for i in 0..100 {
+        tk.must_exec(&format!("insert into t values ({}, {});", i * 10000, i * 10000));
+    }
+    tk.must_exec("split table t between (0) and (1000000) regions 10;");
+    let job_id = Arc::new(std::sync::atomic::AtomicI64::new(0));
+    let recorded = job_id.clone();
+    let _job = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep",
+        move |arg| {
+            let job = arg.downcast_mut::<tidb_model::Job>().unwrap();
+            if recorded.load(Ordering::SeqCst) == 0 && job.type_ == tidb_model::ActionType::ACTION_ADD_INDEX {
+                recorded.store(job.id, Ordering::SeqCst);
+            }
+        },
+    );
+    let tk2 = std::sync::Mutex::new(tk.new_tk());
+    let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = cancelled.clone();
+    let _chunk = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/beforeGetChunk",
+        move |_| {
+            if !seen.swap(true, Ordering::SeqCst) {
+                tk2.lock()
+                    .unwrap()
+                    .must_exec(&format!("admin cancel ddl jobs {}", job_id.load(Ordering::SeqCst)));
+            }
+        },
+    );
+    tk.must_get_err_code("alter table t add index idx(b);", 8214);
+    assert!(cancelled.load(Ordering::SeqCst));
+    tk.must_exec("admin check table t;");
+}
+
+
+/// Go `TestAddIndexCancelOnNoneState`.
+#[test]
+fn test_add_index_cancel_on_none_state() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    let tk_cancel = std::sync::Mutex::new(tk.new_tk());
+    let _backend = inject_mock_backend_ctx();
+    tk.must_exec("create table t (c1 int, c2 int, c3 int)");
+    tk.must_exec("insert into t values(1, 1, 1);");
+    let first = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let _hook = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep",
+        move |arg| {
+            let job = arg.downcast_mut::<tidb_model::Job>().unwrap();
+            if job.schema_state == tidb_model::SchemaState::NONE && first.swap(false, Ordering::SeqCst) {
+                assert!(tk_cancel
+                    .lock()
+                    .unwrap()
+                    .exec(&format!("admin cancel ddl jobs {}", job.id))
+                    .is_ok());
+            }
+        },
+    );
+    tk.must_get_err_code("alter table t add index idx1(c1)", 8214);
+    assert_eq!(lit_disk_root_count(), 0);
+}
+
+
+/// Go `TestAddIndexValidateRangesFailed`: two invalid region splits, then a
+/// valid one, with `loadTableRanges` not retrying.
+#[test]
+fn test_add_index_validate_ranges_failed() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    let _backend = inject_mock_backend_ctx();
+    tk.must_exec("create table t (a int primary key, b int);");
+    tk.must_exec("insert into t values (1, 1);");
+    let _no_retry = crate::support::testkit::enable_failpoint(
+        "github.com/pingcap/tidb/pkg/ddl/loadTableRangesNoRetry",
+        "return",
+    );
+    let _err = crate::support::testkit::enable_failpoint(
+        "github.com/pingcap/tidb/pkg/ddl/validateAndFillRangesErr",
+        "2*return",
+    );
+    tk.must_exec("alter table t add index idx(b);");
+    tk.must_exec("admin check table t;");
+}
+
+/// The three reorg modes of Go's modify-column ingest cases.
+const MODIFY_COLUMN_CASES: [(&str, &str, &str); 3] =
+    [("txn", "off", "off"), ("local ingest", "off", "on"), ("dxf ingest", "on", "on")];
+
+/// Go `TestModifyColumnWithMultipleIndex`.
+#[test]
+fn test_modify_column_with_multiple_index() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    let _backend = inject_mock_backend_ctx();
+    let create_table_sql = "CREATE TABLE t (
+		a int(11) DEFAULT NULL,
+		b varchar(10) DEFAULT NULL,
+		c decimal(10,2) DEFAULT NULL,
+		KEY idx1 (a),
+		UNIQUE KEY idx2 (a),
+		KEY idx3 (a,b),
+		KEY idx4 (a,b,c)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin";
+    for (case_name, enable_dist_task, enable_fast_reorg) in MODIFY_COLUMN_CASES {
+        tk.must_exec(&format!("set global tidb_enable_dist_task = {enable_dist_task};"));
+        tk.must_exec(&format!("set global tidb_ddl_enable_fast_reorg = {enable_fast_reorg};"));
+        tk.must_exec("DROP TABLE IF EXISTS t");
+        tk.must_exec(create_table_sql);
+        tk.must_exec("insert into t values(19,1,1),(17,2,2)");
+        tk.must_exec("admin check table t;");
+        if let Some(error) = tk.exec_to_err("alter table t modify a bit(5) not null") {
+            panic!("{case_name}: {error}");
+        }
+        tk.must_exec("admin check table t;");
+    }
+    tk.must_exec("set global tidb_ddl_enable_fast_reorg = on;");
+}
+
+/// Go `TestModifyColumnWithIndexWithDefaultValue`.
+#[test]
+fn test_modify_column_with_index_with_default_value() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    let _backend = inject_mock_backend_ctx();
+    for (case_name, enable_dist_task, enable_fast_reorg) in MODIFY_COLUMN_CASES {
+        tk.must_exec(&format!("set global tidb_enable_dist_task = {enable_dist_task};"));
+        tk.must_exec(&format!("set global tidb_ddl_enable_fast_reorg = {enable_fast_reorg};"));
+        for sql in [
+            "drop table if exists t1",
+            "create table t1 (c int(10), c1 datetime default (date_format(now(),'%Y-%m-%d')));",
+            "insert into t1(c) values (1), (2);",
+            "alter table t1 add index idx(c1);",
+            "insert into t1 values (3, default);",
+            "alter table t1 modify column c1 varchar(30) default 'xx';",
+            "alter table t1 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));",
+            "insert into t1 values (5, default);",
+            "alter table t1 drop index idx;",
+        ] {
+            if let Some(error) = tk.exec_to_err(sql) {
+                panic!("{case_name}: {sql}: {error}");
+            }
+        }
+    }
+    tk.must_exec("set global tidb_ddl_enable_fast_reorg = on;");
+}
+
+/// Go `TestMultiSchemaAddIndexMerge`: DML lands during a multi-schema ADD
+/// INDEX backfill and the merged indexes stay consistent.
+#[test]
+fn test_multi_schema_add_index_merge() {
+    struct ResetHook;
+    impl Drop for ResetHook {
+        fn drop(&mut self) {
+            *tidb_ddl_ingest::mock::MOCK_EXEC_AFTER_WRITE_ROW.lock().unwrap() = None;
+        }
+    }
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    let _backend = inject_mock_backend_ctx();
+    let tk2 = Arc::new(std::sync::Mutex::new(tk.new_tk()));
+    tk2.lock().unwrap().must_exec("use test");
+    let _reset = ResetHook;
+    for create_table_sql in [
+        "create table t (a int, b int);",
+        "create table t (a int, b int) PARTITION BY HASH (`a`) PARTITIONS 4;",
+    ] {
+        tk.must_exec("drop table if exists t;");
+        tk.must_exec(create_table_sql);
+        tk.must_exec("insert into t values (1, 1), (2, 2), (3, 3);");
+        let first = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let tk2_err = Arc::new(std::sync::Mutex::new(None));
+        let (hook_first, hook_err, hook_tk2) = (first.clone(), tk2_err.clone(), tk2.clone());
+        *tidb_ddl_ingest::mock::MOCK_EXEC_AFTER_WRITE_ROW.lock().unwrap() = Some(Box::new(move || {
+            if !hook_first.swap(false, Ordering::SeqCst) {
+                return;
+            }
+            *hook_err.lock().unwrap() =
+                hook_tk2.lock().unwrap().exec("insert into t values (4, 4), (5, 5);").err();
+        }));
+        tk.must_exec("alter table t add index idx1(a), add index idx2(b);");
+        assert!(!first.load(Ordering::SeqCst));
+        assert!(tk2_err.lock().unwrap().is_none());
+        tk.must_exec("admin check table t;");
+    }
+}
+
+/// Go `TestCheckpointInstanceAddrValidation`: the checkpoint's instance is
+/// `AdvertiseAddress:Port:TempDir`.
+#[test]
+fn test_checkpoint_instance_addr_validation() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    let _backend = inject_mock_backend_ctx();
+    tk.must_exec("set global tidb_enable_dist_task = 0;");
+    tk.must_exec("create table t (a int primary key, b int);");
+    for i in 0..10 {
+        tk.must_exec(&format!("insert into t values ({i}, {i});"));
+    }
+    let cfg = tidb_config::config_tree::config::get_global_config();
+    let instance_addr = tidb_ddl_ingest::env::instance_addr();
+    assert!(!instance_addr.is_empty());
+    assert!(!cfg.temp_dir.is_empty());
+    let temp_dir_suffix = format!(":{}", cfg.temp_dir);
+    let dsn = instance_addr
+        .strip_suffix(&temp_dir_suffix)
+        .unwrap_or_else(|| panic!("instance addr should end with temp dir, got: {instance_addr}"));
+    let (host, port) = dsn.rsplit_once(':').expect("host:port");
+    assert_eq!(port, cfg.port.to_string());
+    if cfg.advertise_address.is_empty() {
+        assert_ne!(host, "0.0.0.0", "instance addr should not use default host");
+    } else {
+        assert_eq!(host.trim_matches(['[', ']']), cfg.advertise_address);
+    }
+    let exercised = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = exercised.clone();
+    let _hook = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/ingest/afterMockWriterWriteRow",
+        move |_| seen.store(true, Ordering::SeqCst),
+    );
+    tk.must_exec("alter table t add index idx(b);");
+    assert!(exercised.load(Ordering::SeqCst), "checkpoint mechanism should have been exercised during add index");
+    tk.must_exec("admin check table t;");
+}
+
+/// Go `TestIndexChangeWithModifyColumn`: a MODIFY COLUMN started while ADD
+/// INDEX is in its none state refuses the collation change on an indexed column.
+#[test]
+fn test_index_change_with_modify_column() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    let _backend = inject_mock_backend_ctx();
+    tk.must_exec("create table t (b int, c varchar(100) collate utf8mb4_unicode_ci)");
+    tk.must_exec("insert t values (1, 'aa'), (2, 'bb'), (3, 'cc');");
+    let tkddl = Arc::new(std::sync::Mutex::new(tk.new_tk()));
+    tkddl.lock().unwrap().must_exec("use test");
+    let check_err = Arc::new(std::sync::Mutex::new(None));
+    let handle = Arc::new(std::sync::Mutex::new(None));
+    let run_modify_column = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (hook_err, hook_handle, hook_tk) = (check_err.clone(), handle.clone(), tkddl.clone());
+    let _hook = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep",
+        move |arg| {
+            let job = arg.downcast_mut::<tidb_model::Job>().unwrap();
+            if job.schema_state != tidb_model::SchemaState::NONE
+                || run_modify_column.swap(true, Ordering::SeqCst)
+            {
+                return;
+            }
+            let (err, tkddl) = (hook_err.clone(), hook_tk.clone());
+            *hook_handle.lock().unwrap() = Some(std::thread::spawn(move || {
+                *err.lock().unwrap() = tkddl
+                    .lock()
+                    .unwrap()
+                    .exec("alter table t modify column c varchar(120) default 'aaaaa' collate utf8mb4_general_ci first;")
+                    .err();
+            }));
+        },
+    );
+    tk.must_exec("alter table t add index idx(c);");
+    handle.lock().unwrap().take().expect("the modify column ran").join().unwrap();
+    let error = check_err.lock().unwrap().take().expect("the modify column fails");
+    assert!(error.to_string().contains("when index is defined"), "{error}");
+    tk.must_exec("admin check table t");
+    tk.must_exec("delete from t;");
+}
+
+/// Go `TestAddGlobalIndexInIngestWithUpdate`: rows inserted and moved while
+/// a global unique index is added stay consistent with the table.
+#[test]
+fn test_add_global_index_in_ingest_with_update() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    let _backend = inject_mock_backend_ctx();
+    tk.must_exec("drop table if exists t");
+    tk.must_exec("create table t (a int, b int) partition by hash(a) partitions 5");
+    tk.must_exec("insert into t (a, b) values (1, 1), (2, 2), (3, 3)");
+    let i = Arc::new(std::sync::atomic::AtomicI32::new(3));
+    let tk2 = std::sync::Mutex::new(tk.new_tk());
+    let _hook = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced",
+        move |arg| {
+            let job = arg.downcast_mut::<tidb_model::Job>().unwrap();
+            if job.state != tidb_model::JobState::SYNCED {
+                let mut tk2 = tk2.lock().unwrap();
+                let tmp = i.fetch_add(1, Ordering::SeqCst) + 1;
+                assert!(tk2.exec(&format!("insert into test.t values ({tmp}, {tmp})")).is_ok());
+                assert!(tk2
+                    .exec(&format!("update test.t set b = b + 20, a = b where b = {}", tmp - 1))
+                    .is_ok());
+            }
+        },
+    );
+    tk.must_exec("alter table t add unique index idx(b) global");
+    let rs_global_index = tk.must_query("select *,_tidb_rowid from t use index(idx)").sort();
+    let rs_table = tk.must_query("select *,_tidb_rowid from t use index()").sort();
+    assert_eq!(rs_global_index.rows(), rs_table.rows());
+}
+
+/// Go `TestAddIndexIngestPartitionCheckpoint`: a re-delivered job resumes at
+/// the checkpointed partition, writing each row once.
+#[test]
+fn test_add_index_ingest_partition_checkpoint() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    let _backend = inject_mock_backend_ctx();
+    tk.must_exec("set global tidb_enable_dist_task = off;");
+    tk.must_exec("create table t (a int primary key, b int) partition by hash(a) partitions 4;");
+    for i in 0..20 {
+        tk.must_exec(&format!("insert into t values ({i}, {i})"));
+    }
+    let job_id = Arc::new(std::sync::atomic::AtomicI64::new(0));
+    let recorded = job_id.clone();
+    let _delivery = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob",
+        move |arg| {
+            recorded.store(arg.downcast_mut::<tidb_model::Job>().unwrap().id, Ordering::SeqCst);
+        },
+    );
+    let row_cnt = Arc::new(AtomicUsize::new(0));
+    let counted = row_cnt.clone();
+    let tk2 = std::sync::Mutex::new(tk.new_tk());
+    let _write = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/ingest/onMockWriterWriteRow",
+        move |_| {
+            if counted.fetch_add(1, Ordering::SeqCst) + 1 == 10 {
+                let mut tk2 = tk2.lock().unwrap();
+                tk2.must_exec("use test");
+                let job_id = job_id.load(Ordering::SeqCst);
+                tk2.must_exec(&format!("update mysql.tidb_ddl_job set processing = 0 where job_id = {job_id}"));
+                tk2.must_exec(&format!("update mysql.tidb_ddl_job set processing = 1 where job_id = {job_id}"));
+            }
+        },
+    );
+    tk.must_exec("alter table t add index idx(b);");
+    // It should resume to correct partition.
+    assert_eq!(row_cnt.load(Ordering::SeqCst), 20);
+    tk.must_exec("admin check table t;");
+}
+
+
+/// Go `TestAddIndexIngestJobWriteConflict`: a write conflict on the job row
+/// after the backfill must not rerun the whole backfill.
+#[test]
+fn test_add_index_ingest_job_write_conflict() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    let _backend = inject_mock_backend_ctx();
+    tk.must_exec("create table t (a int primary key, b int);");
+    tk.must_exec("insert into t values (1, 1), (2, 2), (3, 3);");
+    tk.must_exec("set global tidb_enable_dist_task = off;");
+    let injected = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = injected.clone();
+    let tk2 = std::sync::Mutex::new(tk.new_tk());
+    let _hook = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/afterRunIngestReorgJob",
+        move |arg| {
+            let (job, done) = arg.downcast_mut::<(tidb_model::Job, bool)>().unwrap();
+            if *done && !seen.load(Ordering::SeqCst) {
+                let mut tk2 = tk2.lock().unwrap();
+                tk2.must_exec("use test");
+                // Simulate write-conflict on ddl job table.
+                tk2.must_exec(&format!("update mysql.tidb_ddl_job set processing = 0 where job_id = {}", job.id));
+                tk2.must_exec(&format!("update mysql.tidb_ddl_job set processing = 1 where job_id = {}", job.id));
+                seen.store(true, Ordering::SeqCst);
+            }
+        },
+    );
+    let row_cnt = Arc::new(AtomicUsize::new(0));
+    let counted = row_cnt.clone();
+    let _rows = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/ingest/onMockWriterWriteRow",
+        move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+        },
+    );
+    tk.must_exec("alter table t add index idx(b);");
+    assert!(injected.load(Ordering::SeqCst));
+    // Write conflict error should not retry the whole job.
+    assert_eq!(row_cnt.load(Ordering::SeqCst), 3); // it should not be 6
+    tk.must_exec("admin check table t;");
+}
+
+/// Go `TestCheckpointPhysicalIDValidation`: the ingest checkpoint persisted in
+/// `mysql.tidb_ddl_reorg` names a real partition.
+#[test]
+fn test_checkpoint_physical_id_validation() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    let _backend = inject_mock_backend_ctx();
+    tk.must_exec("set global tidb_enable_dist_task = 0;");
+    tk.must_exec("create table t (
+		a int primary key,
+		b int
+	) partition by hash(a) partitions 4;");
+    for i in 0..20 {
+        tk.must_exec(&format!("insert into t values ({i}, {i});"));
+    }
+    let partition_rows = tk.must_query(
+        "select TIDB_PARTITION_ID from information_schema.partitions where table_schema='test' and table_name='t';",
+    );
+    assert_eq!(partition_rows.rows().len(), 4);
+    let valid_part_ids: std::collections::HashSet<i64> =
+        partition_rows.rows().iter().map(|row| row[0].parse().unwrap()).collect();
+    let observed = Arc::new(std::sync::atomic::AtomicI64::new(0));
+    let seen = observed.clone();
+    let tk2 = std::sync::Mutex::new(tk.new_tk());
+    let _hook = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/ingest/onMockWriterWriteRow",
+        move |_| {
+            if seen.load(Ordering::SeqCst) != 0 {
+                return;
+            }
+            let rows = tk2
+                .lock()
+                .unwrap()
+                .must_query("select reorg_meta from mysql.tidb_ddl_reorg where ele_type = '_idx_' limit 1;");
+            let Some(raw) = rows.rows().first().map(|row| row[0].clone()) else {
+                return;
+            };
+            let Ok(meta) = serde_json::from_str::<tidb_ddl_ingest::checkpoint::JobReorgMeta>(&raw) else {
+                return;
+            };
+            if let Some(checkpoint) = meta.reorg_checkpoint {
+                if checkpoint.physical_id > 0 {
+                    seen.store(checkpoint.physical_id, Ordering::SeqCst);
+                }
+            }
+        },
+    );
+    tk.must_exec("alter table t add index idx(b);");
+    tk.must_exec("admin check table t;");
+    let physical_id = observed.load(Ordering::SeqCst);
+    assert_ne!(physical_id, 0, "should have observed physical_id in checkpoint");
+    assert!(valid_part_ids.contains(&physical_id), "physical_id {physical_id} should be a valid partition ID");
+}

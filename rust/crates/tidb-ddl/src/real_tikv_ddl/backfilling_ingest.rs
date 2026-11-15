@@ -402,6 +402,10 @@ pub(super) fn execute_and_close_pipeline<S: StoreClient>(
                             )
                             .into());
                         }
+                        tidb_failpoint::inject_call(
+                            "github.com/pingcap/tidb/pkg/ddl/writeLocalExec",
+                            &mut batch.batch.done.clone(),
+                        );
                         for entry in batch.entries {
                             if tidb_failpoint::eval(
                                 "github.com/pingcap/tidb/pkg/ddl/mockLocalWriterPanic",

@@ -939,6 +939,9 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
     check_owner: &(dyn Fn() -> Result<(), String> + Sync),
     wait_retry: &dyn Fn(Duration) -> Result<(), String>,
 ) -> Result<PersistedDdlJobOutcome, ClusterDdlError> {
+    if let Some(job) = job_w.job.as_ref() {
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", &mut *job.write());
+    }
     let sess_pool = backfiller.session_pool().ok_or_else(||
         ClusterDdlError::NotCommitted("the DDL worker has no session pool".to_owned()))?;
     let worker = crate::cluster_ddl::DdlStepWorker {
