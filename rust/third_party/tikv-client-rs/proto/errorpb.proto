@@ -88,8 +88,30 @@ message EpochNotMatch {
   repeated metapb.Region current_regions = 1;
 }
 
+// Reasons for rejecting an incompatible transaction protocol request.
+enum IncompatibleRequestReason {
+  IncompatibleRequestReasonUnknown = 0;
+  // The declared version is outside the compatible range returned in the error.
+  IncompatibleRequestReasonTxnProtocolVersionOutOfRange = 1;
+}
+
+// A transaction protocol compatibility rejection.
+// The compatible range is inclusive: admission reports the store's global range;
+// feature checks report [required feature version, store's maximum version].
+message IncompatibleRequest {
+  IncompatibleRequestReason reason = 1;
+  // Diagnostic text; clients must use structured fields for control flow.
+  string message = 2;
+  // The request's declaration; missing and explicit zero both mean legacy.
+  uint32 provided_txn_protocol_version = 3;
+  uint32 min_compatible_txn_protocol_version = 4;
+  uint32 max_compatible_txn_protocol_version = 5;
+}
+
 // ServerIsBusy is the error variant that tells the server is too busy to response.
 message ServerIsBusy {
+  // "txn_protocol_incompatible" is a legacy fallback for IncompatibleRequest,
+  // not an overload signal.
   string reason = 1;
   // The suggested backoff time
   uint64 backoff_ms = 2;
@@ -214,4 +236,14 @@ message Error {
 
   // UndeterminedResult is the error variant that tells the result is not determined yet.
   UndeterminedResult undetermined_result = 22;
+
+  // A compatibility rejection with no usable business result.
+  // For a zero declaration, also set server_is_busy.reason to
+  // "txn_protocol_incompatible"; omit that fallback for nonzero declarations.
+  // Clients must handle this error before fallback or ordinary retry logic.
+  // Only client-c may reselect and resend when the reason is version out of range,
+  // the returned range is valid, and provided > max. The selected version must
+  // satisfy the request's requirements. Such admission rejections must have no
+  // transaction side effects. All other incompatibilities are terminal.
+  IncompatibleRequest incompatible_request = 23;
 }

@@ -4,6 +4,7 @@
 /// For V3 tenant-scoped APIs, namespace_id must be non-zero and keyspace_id must
 /// satisfy 0 \< keyspace_id \< 2^24. Namespace 0 and keyspace 0 mean
 /// missing/invalid identity and must be rejected by V3 validators.
+#[allow(clippy::all)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct KeyspaceIdentity {
     #[prost(uint32, tag = "1")]

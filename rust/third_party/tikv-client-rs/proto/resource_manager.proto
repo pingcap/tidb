@@ -182,6 +182,43 @@ message Consumption {
   double tidb_r_u_v2 = 12;
   // tiflash_r_u_v2 equals tiflash RRU + tiflash WRU.
   double tiflash_r_u_v2 = 13;
+  // Optional per-second RU for observation; never used for token allocation or
+  // billing. Nil means the request carries no timeline, not zero: the client does
+  // not support it or left it out to fit the RPC size limit. Its interval differs
+  // from the scalar deltas.
+  RUConsumptionBySecond ru_by_second = 14;
+}
+
+message RUConsumptionBySecond {
+  // UTC Unix second of the first second covered by this report. Bucket offsets
+  // are relative to it; the first bucket is not necessarily at start. A client
+  // never changes a second it has reported, so a retry may replay it; the outer
+  // client_unique_id identifies the client. Buckets are sparse: a second not
+  // listed is zero, and the sparse encoding keeps idle groups from inflating
+  // every request.
+  int64 start_unix_sec = 1;
+  repeated RUConsumptionBucket buckets = 2;
+  // The first second after the seconds this report covers. Seconds in
+  // [start_unix_sec, end_unix_sec) that are not listed are reported as zero. A
+  // successful response acknowledges the whole report up to its watermark,
+  // including seconds the receiver ignores because they fall outside the
+  // window it can still summarize. A retry may replay earlier seconds, and the
+  // receiver deduplicates them per client, keyspace, resource group and
+  // second. Only foreground consumption carries this field; requests
+  // flagged background or TiFlash do not. A report whose interval is empty or
+  // reversed, including one without a watermark (zero), reports nothing.
+  int64 end_unix_sec = 3;
+}
+
+message RUConsumptionBucket {
+  // Signed settlement values; refunds must not be clamped to zero.
+  double rru = 1;
+  double wru = 2;
+  // Second offset from start_unix_sec; 0-based. Offsets are strictly increasing
+  // and less than end_unix_sec - start_unix_sec; otherwise the receiver drops the
+  // whole report. Only non-zero seconds are listed, and an empty bucket list is
+  // valid.
+  uint32 offset = 3;
 }
 
 message RequestUnitItem {

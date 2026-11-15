@@ -67,6 +67,18 @@ message Store {
   bool physically_destroyed = 12;
   // NodeState is used to replace StoreState which will be deprecated in the future.
   NodeState node_state = 13;
+  // The store's current transaction RPC admission range, not a feature switch or
+  // a value derived from Store.version. Absence means legacy/unknown; clients
+  // conservatively use [0, 0] while preserving absence versus an explicit [0, 0].
+  // Consumers must fail closed if min > max. TiKV reports this on every startup,
+  // including upgrades and rollbacks; PD updates and persists it.
+  TxnProtocolVersionRange txn_protocol_version_range = 14;
+}
+
+// Inclusive transaction protocol version bounds; see kvrpcpb.TxnProtocolVersion.
+message TxnProtocolVersionRange {
+  uint32 min = 1;
+  uint32 max = 2;
 }
 
 message RegionEpoch {

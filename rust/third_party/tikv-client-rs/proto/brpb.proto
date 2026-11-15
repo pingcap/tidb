@@ -100,6 +100,10 @@ message BackupMeta {
   // Backup metadata compatibility version for restore.
   // 0 means the backup was created before this field existed.
   uint32 backup_schema_version = 26;
+  // Canonical restore rename-rule fingerprint associated with a persisted
+  // PiTR ID map. Empty means the ID map was created without rename rules or by
+  // a BR version that predates restore rename support.
+  string pitr_id_map_route_fingerprint = 27;
 
   // If in raw kv mode, `start_versions`, `end_versions` and `schemas` will be
   // ignored, and the backup data's range is represented by raw_ranges.
@@ -267,12 +271,25 @@ message IDMap {
   int64 downstream_id = 2;
 }
 
+message PitrForeignKeyReference {
+  string schema = 1;
+  string table = 2;
+}
+
 message PitrTableMap {
   string name = 1;
   IDMap id_map = 2;
   repeated IDMap partitions = 3;
   // whether this table has been filtered out
   bool filtered_out = 4;
+  // The downstream database identity used when a table is restored to a
+  // different database than its parent PitrDBMap. Zero/empty values inherit
+  // the downstream database identity from the parent map.
+  int64 downstream_db_id = 5;
+  string downstream_db_name = 6;
+  bool has_foreign_keys = 7;
+  bool is_view = 8;
+  repeated PitrForeignKeyReference foreign_key_references = 9;
 }
 
 message PitrDBMap {
@@ -284,6 +301,15 @@ message PitrDBMap {
   // whether this db has been reused
   // skip restoring the metakv of database in log restore if it is true
   bool reused = 5;
+  // whether an explicit schema-level rename rule matched this source schema, so
+  // the target schema is restored even when all of its tables are routed to
+  // another target schema
+  bool schema_routed = 6;
+  // The upstream source schema name bound to this upstream schema ID. `name`
+  // holds the effective downstream name once a schema-level route is applied, so
+  // the source name is persisted separately to keep route resolution stable
+  // across a log-only restore or a checkpoint resume.
+  string source_name = 7;
 }
 
 message RawRange {
@@ -492,6 +518,9 @@ message S3 {
   string session_token = 15;
   string provider = 16;
   string profile = 17;
+  // Base64-encoded UTF-8 JSON encryption context for SSE-KMS. Writers pass this
+  // value through without encoding it again. Empty preserves existing behavior.
+  string sse_kms_encryption_context = 18;
 }
 
 // GCS storage backend saves files into google cloud storage.
