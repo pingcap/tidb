@@ -894,6 +894,20 @@ func (cfg *RestoreConfig) newSnapshotCheckpointMetaManagerOfTask(
 	return m, errors.Trace(err)
 }
 
+// snapshotCheckpointMetaManagerOfTask returns how to open the snapshot checkpoint of the task
+// when the run has no snapshot checkpoint meta manager, or nil when the task has no checkpoint.
+func (cfg *RestoreConfig) snapshotCheckpointMetaManagerOfTask(
+	g glue.Glue,
+	mgr *conn.Mgr,
+) func(context.Context) (checkpoint.SnapshotMetaManagerT, error) {
+	if !cfg.UseCheckpoint || cfg.RestoreID == 0 {
+		return nil
+	}
+	return func(ctx context.Context) (checkpoint.SnapshotMetaManagerT, error) {
+		return cfg.newSnapshotCheckpointMetaManagerOfTask(ctx, g, mgr)
+	}
+}
+
 func (cfg *RestoreConfig) CloseCheckpointMetaManager() {
 	if cfg.logCheckpointMetaManager != nil {
 		cfg.logCheckpointMetaManager.Close()
@@ -1270,13 +1284,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return errors.Trace(restoreErr)
 		}
 		// if checkpoint is not persisted, let's just unregister the task since we don't need it
-		var newSnapshotManager func(context.Context) (checkpoint.SnapshotMetaManagerT, error)
-		if cfg.UseCheckpoint {
-			newSnapshotManager = func(ctx context.Context) (checkpoint.SnapshotMetaManagerT, error) {
-				return cfg.newSnapshotCheckpointMetaManagerOfTask(ctx, g, mgr)
-			}
-		}
-		checkpointPersisted, err := hasCheckpointPersisted(c, cfg, newSnapshotManager)
+		checkpointPersisted, err := hasCheckpointPersisted(c, cfg, cfg.snapshotCheckpointMetaManagerOfTask(g, mgr))
 		if err != nil {
 			log.Error("failed to check if checkpoint is persisted", zap.Error(err))
 			// on error, assume checkpoint is not persisted and unregister the task
@@ -1325,11 +1333,18 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	// Clear the checkpoint data if needed
-	cleanUpCheckpoints(c, cfg)
+	cleanUpCheckpoints(c, cfg, cfg.snapshotCheckpointMetaManagerOfTask(g, mgr))
 	return nil
 }
 
-func cleanUpCheckpoints(ctx context.Context, cfg *RestoreConfig) {
+// cleanUpCheckpoints removes the checkpoint data of the task. A run without a full backup storage
+// has no snapshot checkpoint meta manager but can finish or abort a task whose snapshot checkpoint
+// is persisted, so newSnapshotManager is used to remove it then.
+func cleanUpCheckpoints(
+	ctx context.Context,
+	cfg *RestoreConfig,
+	newSnapshotManager func(context.Context) (checkpoint.SnapshotMetaManagerT, error),
+) {
 	if cfg.UseCheckpoint {
 		log.Info("start to remove checkpoint data restore")
 		if cfg.logCheckpointMetaManager != nil {
@@ -1344,12 +1359,13 @@ func cleanUpCheckpoints(ctx context.Context, cfg *RestoreConfig) {
 				log.Warn("failed to remove checkpoint data for compacted restore", zap.Error(err))
 			}
 		}
-		// Skip removing snapshot checkpoint data if this is a pure log restore
-		// (i.e. restoring only from log backup without a base snapshot backup),
-		// since snapshotCheckpointMetaManager would be nil in that case
 		if cfg.snapshotCheckpointMetaManager != nil {
 			err := cfg.snapshotCheckpointMetaManager.RemoveCheckpointData(ctx)
 			if err != nil {
+				log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
+			}
+		} else if newSnapshotManager != nil {
+			if err := removeSnapshotCheckpointOfTask(ctx, newSnapshotManager); err != nil {
 				log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
 			}
 		}
@@ -1357,6 +1373,23 @@ func cleanUpCheckpoints(ctx context.Context, cfg *RestoreConfig) {
 	} else {
 		log.Info("checkpoint not enabled, skip to remove checkpoint data")
 	}
+}
+
+// removeSnapshotCheckpointOfTask removes the snapshot checkpoint of the task if it has one.
+func removeSnapshotCheckpointOfTask(
+	ctx context.Context,
+	newSnapshotManager func(context.Context) (checkpoint.SnapshotMetaManagerT, error),
+) error {
+	m, err := newSnapshotManager(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer m.Close()
+	exists, err := m.ExistsCheckpointMetadata(ctx)
+	if err != nil || !exists {
+		return errors.Trace(err)
+	}
+	return errors.Trace(m.RemoveCheckpointData(ctx))
 }
 
 // hasCheckpointPersisted checks if there are any checkpoint data persisted in storage or tables.
@@ -3237,7 +3270,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 	}
 
 	// clean up checkpoint data
-	cleanUpCheckpoints(ctx, cfg)
+	cleanUpCheckpoints(ctx, cfg, cfg.snapshotCheckpointMetaManagerOfTask(g, mgr))
 
 	log.Info("successfully aborted restore task and cleaned up checkpoint data. "+
 		"Use drop statements to clean up the restored data from the cluster if you want to.",

@@ -256,6 +256,77 @@ func TestHasCheckpointPersistedChecksSnapshotCheckpointOfTheTask(t *testing.T) {
 	}
 }
 
+func TestCleanUpCheckpointsRemovesSnapshotCheckpointOfTheTask(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	checkpointStorage, err := objstore.NewLocalStorage(base)
+	require.NoError(t, err)
+	snapshotManagerOf := func(restoreID uint64) func(context.Context) (checkpoint.SnapshotMetaManagerT, error) {
+		return func(context.Context) (checkpoint.SnapshotMetaManagerT, error) {
+			return checkpoint.NewSnapshotStorageMetaManager(checkpointStorage, nil, 1, "snapshot", restoreID), nil
+		}
+	}
+	snapshotCheckpointExists := func(restoreID uint64) bool {
+		m, err := snapshotManagerOf(restoreID)(ctx)
+		require.NoError(t, err)
+		exists, err := m.ExistsCheckpointMetadata(ctx)
+		require.NoError(t, err)
+		return exists
+	}
+	// logOnly is a run without a full backup storage that works on the task with the restore id 1.
+	logOnly := func(useCheckpoint bool) *RestoreConfig {
+		for _, restoreID := range []uint64{1, 2} {
+			m, err := snapshotManagerOf(restoreID)(ctx)
+			require.NoError(t, err)
+			require.NoError(t, m.SaveCheckpointMetadata(ctx, &checkpoint.CheckpointMetadataForSnapshotRestore{}))
+		}
+		cfg := &RestoreConfig{CheckpointStorage: "local://" + base, UseCheckpoint: useCheckpoint}
+		require.NoError(t, cfg.newStorageCheckpointMetaManagerPITR(ctx, 1, 1))
+		require.Nil(t, cfg.snapshotCheckpointMetaManager)
+		require.NoError(t, cfg.logCheckpointMetaManager.SaveCheckpointMetadata(ctx, &checkpoint.CheckpointMetadataForLogRestore{}))
+		return cfg
+	}
+	logCheckpointExists := func(cfg *RestoreConfig) bool {
+		exists, err := cfg.logCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
+		require.NoError(t, err)
+		return exists
+	}
+
+	cfg := logOnly(true)
+	cleanUpCheckpoints(ctx, cfg, snapshotManagerOf(1))
+	require.False(t, snapshotCheckpointExists(1))
+	require.True(t, snapshotCheckpointExists(2))
+	require.False(t, logCheckpointExists(cfg))
+	// The task has no snapshot checkpoint any more.
+	cleanUpCheckpoints(ctx, cfg, snapshotManagerOf(1))
+
+	cfg = logOnly(true)
+	cleanUpCheckpoints(ctx, cfg, func(context.Context) (checkpoint.SnapshotMetaManagerT, error) {
+		return nil, errors.New("cannot create session")
+	})
+	require.True(t, snapshotCheckpointExists(1))
+	require.False(t, logCheckpointExists(cfg))
+
+	cfg = logOnly(false)
+	cleanUpCheckpoints(ctx, cfg, snapshotManagerOf(1))
+	require.True(t, snapshotCheckpointExists(1))
+	require.True(t, logCheckpointExists(cfg))
+
+	// A task that is not registered has no restore id to find its checkpoint by.
+	require.Nil(t, (&RestoreConfig{UseCheckpoint: true}).snapshotCheckpointMetaManagerOfTask(nil, nil))
+	require.Nil(t, (&RestoreConfig{RestoreID: 1}).snapshotCheckpointMetaManagerOfTask(nil, nil))
+	require.NotNil(t, (&RestoreConfig{UseCheckpoint: true, RestoreID: 1}).snapshotCheckpointMetaManagerOfTask(nil, nil))
+
+	withFullBackup := &RestoreConfig{CheckpointStorage: "local://" + base, UseCheckpoint: true}
+	withFullBackup.FullBackupStorage = "local://" + t.TempDir()
+	require.NoError(t, withFullBackup.newStorageCheckpointMetaManagerPITR(ctx, 1, 2))
+	cleanUpCheckpoints(ctx, withFullBackup, func(context.Context) (checkpoint.SnapshotMetaManagerT, error) {
+		t.Fatal("the snapshot checkpoint meta manager of the run must be used")
+		return nil, nil
+	})
+	require.False(t, snapshotCheckpointExists(2))
+}
+
 type unreadableSnapshotMetaManager struct {
 	checkpoint.SnapshotMetaManagerT
 }
