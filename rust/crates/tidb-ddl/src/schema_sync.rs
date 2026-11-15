@@ -557,9 +557,16 @@ fn run_ack_loop<S>(
                             // the same fresh snapshot before retrying.
                             let _reload = catalog.lock_reload();
                             let current = catalog.get_latest();
-                            match tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster(
+                            // Published to the node's cache, so loaded in the
+                            // node's implementation (Go `shouldUseV2`): a V1
+                            // image here republished the version as V1 and
+                            // the next reload switched back, full-loading it
+                            // into the shared V2 `Data` under its readers.
+                            match tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster_at(
                                 opener, timeout,
-                            ) {
+                            )
+                            .map(|(refreshed, _)| refreshed)
+                            {
                                 Ok(refreshed)
                                     if refreshed.schema_meta_version() >= current.schema_meta_version() =>
                                 {

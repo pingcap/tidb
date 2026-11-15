@@ -246,7 +246,14 @@ impl InfoCache {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         Arc::new(match builder.as_ref() {
-            Some(build) => build(&loaded, previous),
+            Some(build) => {
+                let mut built = build(&loaded, previous);
+                // Go `IsV2(is)` is what the image is: a catalog loaded as V1
+                // and rebuilt V2 must say so, or the loader takes it for a
+                // V1/V2 switch and full-loads its version into `Data` again.
+                built.set_uses_infoschema_v2(built.is_v2());
+                built
+            }
             None => loaded,
         })
     }
@@ -254,6 +261,15 @@ impl InfoCache {
     /// Installs what builds each version's tables and rebuilds the versions
     /// this cache holds with it.
     pub fn install_schema_builder(&self, builder: SchemaBuilder) {
+        // Rebuilding fills the shared V2 `Data`; a concurrent load (the reload
+        // loop, a DDL step's `load_with_ts`) filling it at the same version
+        // would interleave the two full loads' resets with readers of the
+        // published image. Go's loader is never concurrent with itself.
+        let _reload = self.lock_reload();
+        let _loading = self
+            .loading
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *self
             .builder
             .write()
@@ -517,7 +533,16 @@ impl InfoCache {
             for &empty in built.empty_schema_versions() {
                 versions.insert_empty_schema_version(empty);
             }
-            versions.insert(Arc::clone(&built), built.schema_commit_ts());
+            // Go `Loader.LoadWithTS`: a V1/V2 switch with a known schema ts
+            // `Upsert`s, leaving only the new image, so the old same-version
+            // image can never be read back as the loader's base and taken
+            // for another switch (each one a full load into the shared V2
+            // `Data`, resetting it under readers of the published image).
+            if changed && built.schema_commit_ts() > 0 {
+                versions.upsert(Arc::clone(&built), built.schema_commit_ts());
+            } else {
+                versions.insert(Arc::clone(&built), built.schema_commit_ts());
+            }
             versions.resize(self.capacity.load(Ordering::Relaxed));
         }
         Ok(reloaded)
@@ -535,6 +560,12 @@ impl InfoCache {
         // Go Loader inserts the built image before Syncer publishes it. Keep
         // that image (including a lazy load already started by another reader).
         // An implementation switch replaces its same-version entry in the loader.
+        // A build fills the shared V2 `Data`, so it is serialized with every
+        // other build (`load_with_ts`, `reload_with_ts_at`, the builder install).
+        let _loading = self
+            .loading
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let built = self
             .cached_version(catalog.schema_meta_version())
             .filter(|cached| cached.uses_infoschema_v2() == catalog.uses_infoschema_v2())
