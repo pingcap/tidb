@@ -505,11 +505,12 @@ func TestRangeFallbackForAnalyzeLookUpFilters(t *testing.T) {
 	require.Greater(t, ijHelper.chosenRanges.Range().MemUsage(), ijCase.rangeMaxSize)
 }
 
-// TestNormalPreferTaskRanksRootCondCopTaskAsRoot covers the preference for a
-// Limit or TopN pushed down to the coprocessor. A copTask with conditions left
-// for the root cannot take it, so it must not shut out the rootTasks, among
-// them the IndexMerge, which runs only as a rootTask.
-func TestNormalPreferTaskRanksRootCondCopTaskAsRoot(t *testing.T) {
+// TestNormalPreferTaskKeepsIndexMergeBesideRootCondCopTasks covers the
+// preference for a Limit or TopN pushed down to the coprocessor. A copTask
+// shuts out the rootTasks, except the IndexMerge, which runs only as a
+// rootTask, while every copTask leaves conditions for the root and so takes no
+// Limit or TopN either.
+func TestNormalPreferTaskKeepsIndexMergeBesideRootCondCopTasks(t *testing.T) {
 	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
@@ -520,6 +521,12 @@ func TestNormalPreferTaskRanksRootCondCopTaskAsRoot(t *testing.T) {
 	pushableCop := &physicalop.CopTask{}
 	rootCondCop := &physicalop.CopTask{RootTaskConds: []expression.Expression{rootCond}}
 	root := &physicalop.RootTask{}
+	root.SetPlan(&physicalop.PhysicalTableReader{})
+	// The IndexMerge under the selection of a condition left for the root.
+	indexMerge := &physicalop.RootTask{}
+	sel := physicalop.PhysicalSelection{Conditions: []expression.Expression{rootCond}}.Init(pctx, stats, 0)
+	sel.SetChildren(&physicalop.PhysicalIndexMergeReader{})
+	indexMerge.SetPlan(sel)
 
 	topN := logicalop.LogicalTopN{Count: 10}.Init(pctx, 0)
 	physTopN := physicalop.PhysicalTopN{Count: 10}.Init(pctx, stats, 0)
@@ -531,19 +538,24 @@ func TestNormalPreferTaskRanksRootCondCopTaskAsRoot(t *testing.T) {
 		lp   base.LogicalPlan
 		pp   base.PhysicalPlan
 	}{{"topn", topN, physTopN}, {"limit", limit, physLimit}} {
-		// A copTask that takes the pushdown shuts out the rootTasks, and peer
-		// copTasks that take it compete.
+		// A copTask that takes the pushdown shuts out every rootTask, the
+		// IndexMerge too, and the copTasks compete.
 		state := &enumerateState{}
 		require.True(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{pushableCop}), c.name)
-		require.True(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{pushableCop}), c.name)
+		require.True(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{rootCondCop}), c.name)
 		require.False(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{root}), c.name)
-		require.False(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{rootCondCop}), c.name)
+		require.False(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{indexMerge}), c.name)
 
-		// A copTask with root conditions is ranked as a rootTask: it shuts
-		// nothing out, and the rootTask after it is still preferred.
+		// A copTask with root conditions still shuts out the other rootTasks,
+		// but not the IndexMerge.
 		state = &enumerateState{}
 		require.True(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{rootCondCop}), c.name)
+		require.False(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{root}), c.name)
+		require.True(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{indexMerge}), c.name)
+
+		// Before any copTask, every rootTask is preferred.
+		state = &enumerateState{}
 		require.True(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{root}), c.name)
-		require.True(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{pushableCop}), c.name)
+		require.True(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{indexMerge}), c.name)
 	}
 }

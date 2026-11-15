@@ -84,6 +84,10 @@ func prepareIterationDownElems(super base.LogicalPlan) (*memo.GroupExpression, *
 type enumerateState struct {
 	topNCopExist  bool
 	limitCopExist bool
+	// A pushable copTask leaves no conditions for the root, so it can take
+	// the pushed-down TopN or Limit.
+	topNPushableCopExist  bool
+	limitPushableCopExist bool
 }
 
 func buildPhysPlanPartInfo(ds *logicalop.DataSource) *physicalop.PhysPlanPartInfo {

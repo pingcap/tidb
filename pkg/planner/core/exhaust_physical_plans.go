@@ -1585,42 +1585,50 @@ func hasNormalPreferTask(lp base.LogicalPlan, state *enumerateState, pp base.Phy
 		// 3: mppTask is always in the cbo comparing.
 		// 4: when none copTask exists, we will consider rootTask vs mppTask.
 		// the following check priority logic is compatible with former pushLimitOrTopNForcibly prop pruning logic.
-		//
-		// A copTask with conditions left for the root cannot take the Limit
-		// or TopN, which must wait for them, so attaching to it gives a root
-		// plan as a rootTask does. It is ranked as a rootTask: otherwise it
-		// would shut out the rootTasks, among them the IndexMerge, which runs
-		// only as a rootTask, though no Limit or TopN was pushed down.
-		var pushableCop, root bool
+		_, isTopN := pp.(*physicalop.PhysicalTopN)
+		copExist, pushableCopExist := &state.limitCopExist, &state.limitPushableCopExist
+		if isTopN {
+			copExist, pushableCopExist = &state.topNCopExist, &state.topNPushableCopExist
+		}
 		switch t := childTasks[0].(type) {
 		case *physicalop.CopTask:
-			pushableCop = len(t.RootTaskConds) == 0
-			root = !pushableCop
+			// peer cop task should compare the cost with each other.
+			*copExist = true
+			if len(t.RootTaskConds) == 0 {
+				*pushableCopExist = true
+			}
+			return true
 		case *physicalop.RootTask:
-			root = true
+			// when we encounter rootTask type while still see no copTask.
+			// that means there is no copTask valid before, we will consider rootTask here.
+			if !*copExist {
+				return true
+			}
+			// An IndexMerge runs only as a rootTask. While every copTask
+			// leaves conditions for the root, none of them takes the Limit or
+			// TopN either, so the IndexMerge still competes with them on cost.
+			return !*pushableCopExist && rootTaskReadsByIndexMerge(t)
 		case *physicalop.MppTask:
 			return true
+		}
+	}
+	return false
+}
+
+// rootTaskReadsByIndexMerge reports whether a rootTask reads its rows with an
+// IndexMerge, under only the selections and projections left for the root.
+func rootTaskReadsByIndexMerge(t *physicalop.RootTask) bool {
+	p := t.GetPlan()
+	for {
+		switch p.(type) {
+		case *physicalop.PhysicalIndexMergeReader:
+			return true
+		case *physicalop.PhysicalSelection, *physicalop.PhysicalProjection:
+			p = p.Children()[0]
 		default:
 			return false
 		}
-		_, isTopN := pp.(*physicalop.PhysicalTopN)
-		copExist := &state.limitCopExist
-		if isTopN {
-			copExist = &state.topNCopExist
-		}
-		if *copExist {
-			// peer cop task should compare the cost with each other.
-			return pushableCop
-		}
-		if pushableCop {
-			*copExist = true
-			return true
-		}
-		// when we encounter rootTask type while still see no copTask, that
-		// means there is no copTask valid before, we will consider rootTask here.
-		return root
 	}
-	return false
 }
 
 // hash join has two types:
