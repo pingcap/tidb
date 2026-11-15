@@ -448,6 +448,15 @@ impl ClusterDdl for MockDdl {
         })
     }
 
+    fn create_masking_policy(
+        &self,
+        _: &tidb_ast::CreateMaskingPolicyStmt,
+        _: &str,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        unreachable!("these tests create no masking policy")
+    }
+
     fn create_view(
         &self,
         schema: &str,

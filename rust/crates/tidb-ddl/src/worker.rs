@@ -21,6 +21,8 @@
 
 #[path = "executor.rs"]
 mod executor;
+#[path = "executor_masking.rs"]
+mod executor_masking;
 pub use executor::{cleanup_table_lock_with, lock_tables_with, unlock_tables_with, DoDdlJob};
 
 use tidb_ddl_build::partition_reorg::KvTablePartitionReorg;
@@ -203,6 +205,14 @@ pub trait ClusterDdl: Send + Sync {
         context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
     ) -> Result<ClusterDdlReport, SqlQueryError>;
 
+    /// Go `executor.CreateMaskingPolicy`.
+    fn create_masking_policy(
+        &self,
+        stmt: &tidb_ast::CreateMaskingPolicyStmt,
+        current_db: &str,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
     /// Go `executor.CreateView` after `DDLExec.executeCreateView` resolves its body.
     fn create_view(
         &self,
@@ -372,6 +382,9 @@ pub trait ClusterDdl: Send + Sync {
                 ),
                 tidb_ast::DdlStmt::CleanupTableLock(statement) => {
                     self.cleanup_table_lock(&statement.tables, current_db, context.as_ref())
+                }
+                tidb_ast::DdlStmt::CreateMaskingPolicy(statement) => {
+                    self.create_masking_policy(statement, current_db, context.as_ref())
                 }
                 tidb_ast::DdlStmt::RecoverTable(statement) => self.recover_table(
                     &statement.table,
@@ -3646,6 +3659,15 @@ where
         context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         executor::cleanup_table_lock(self, tables, current_db, context)
+    }
+
+    fn create_masking_policy(
+        &self,
+        stmt: &tidb_ast::CreateMaskingPolicyStmt,
+        current_db: &str,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::create_masking_policy(self, stmt, current_db, context)
     }
 
     fn create_view(

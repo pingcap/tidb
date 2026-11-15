@@ -4731,6 +4731,11 @@ impl StmtContext {
         self.login_user.as_deref()
     }
 
+    /// Go `SessionVars.User.String()` (the current user).
+    pub fn current_user_name(&self) -> Option<&str> {
+        self.current_user.as_deref()
+    }
+
     /// The privilege answer the planner asks for a DEFINER view's definer.
     pub fn view_definer_privilege(&self) -> Option<&ViewDefinerPrivilegeCheck> {
         self.view_definer_privilege.as_ref()

@@ -1349,7 +1349,6 @@ use record_set::StatementCompletion;
 pub use record_set::{SessionRecordSet, StatementExecution};
 use tidb_executor::record_set::OpenedStatement;
 use tidb_executor::record_set::StatementRecordSet;
-mod masking_policy;
 mod resource_group;
 mod table_lock;
 mod temptable;

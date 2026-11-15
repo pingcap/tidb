@@ -1670,20 +1670,6 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         })
     }
 
-    fn probe_masking_policy_job(
-        &mut self,
-        ddl: &tidb_ast::DdlStmt,
-        sql: &str,
-    ) -> Result<Option<tidb_ddl::JobWrapper>, SqlQueryError> {
-        let context = self.session.ddl_statement_context().with_ddl_query(sql);
-        let resource_group = self.session.current_resource_group().to_owned();
-        self.probe_statement(StatementReadShape::Unknown, &resource_group, |session| {
-            session
-                .cluster_masking_policy_job(ddl, &context)
-                .map_err(map_error)
-        })
-    }
-
     fn flashback_cluster_job(
         &mut self,
         stmt: &tidb_ast::FlashbackToTimestampStmt,
@@ -1727,25 +1713,6 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
                 &self.session.ddl_statement_context().with_ddl_query(sql),
             ),
         )
-    }
-
-    fn is_masking_policy_statement(&self, ddl: &tidb_ast::DdlStmt) -> bool {
-        Session::is_masking_policy_statement(ddl)
-    }
-
-    fn probe_masking_policy_on_modify_column(
-        &mut self,
-        ddl: &tidb_ast::DdlStmt,
-    ) -> Result<(), SqlQueryError> {
-        if !Session::modifies_column_type(ddl) {
-            return Ok(());
-        }
-        let resource_group = self.session.current_resource_group().to_owned();
-        self.probe_statement(StatementReadShape::Unknown, &resource_group, |session| {
-            session
-                .check_masking_policy_on_modify_column(ddl)
-                .map_err(map_error)
-        })
     }
 
     fn probe_cluster_view(

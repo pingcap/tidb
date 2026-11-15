@@ -327,6 +327,15 @@ impl ClusterDdl for ReportDdl {
         unreachable!("these tests take no table lock")
     }
 
+    fn create_masking_policy(
+        &self,
+        _: &tidb_ast::CreateMaskingPolicyStmt,
+        _: &str,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        unreachable!("these tests create no masking policy")
+    }
+
     fn create_view(
         &self,
         schema: &str,
@@ -844,6 +853,15 @@ impl ClusterDdl for UndeterminedDdl {
         _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         unreachable!("these tests take no table lock")
+    }
+
+    fn create_masking_policy(
+        &self,
+        _: &tidb_ast::CreateMaskingPolicyStmt,
+        _: &str,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        unreachable!("these tests create no masking policy")
     }
 
     fn create_view(

@@ -1034,6 +1034,33 @@ pub(super) fn alter_table<S: StoreClient>(
 ) -> Result<ClusterDdlReport, SqlQueryError> {
     let statement = crate::cluster_ddl::resolve_alter_table_spec(statement, context)
         .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?;
+    let catalog = executor.schema_sync.catalog.get_latest();
+    // Go `executor.AlterTable`'s masking-policy specs.
+    if let [tidb_ast::AlterTableAction::MaskingPolicy(action)] = statement.actions.as_slice() {
+        let job = super::executor_masking::alter_table_masking_policy_job(
+            &catalog,
+            &statement,
+            action,
+            current_db,
+            context.as_ref(),
+        )
+        .map_err(mysql_query_error)?;
+        return match job {
+            Some(job) => do_ddl_job_wrapper(executor, context.as_ref(), job),
+            None => Ok(ClusterDdlReport::AlreadySatisfied {
+                detail: "no masking policy change".into(),
+                warnings: Vec::new(),
+            }),
+        };
+    }
+    // Go `checkMaskingPolicyOnModifyColumn` (`ModifyColumn` / `ChangeColumn`).
+    super::executor_masking::check_masking_policy_on_modify_column(
+        &catalog,
+        &statement,
+        current_db,
+        context.as_ref(),
+    )
+    .map_err(mysql_query_error)?;
     // Go `executor.AlterTable`'s `AlterTableWriteable` case: READ ONLY is a
     // READ ONLY table lock, READ WRITE its cleanup; nothing without the
     // experimental table lock.
@@ -1386,4 +1413,37 @@ pub fn cleanup_table_lock_with(
         locks.release_table_locks(&cleanup_tables);
     }
     Ok(report)
+}
+
+/// Go `executor.CreateMaskingPolicy`. An `IF NOT EXISTS` that loses the race
+/// to another creator answers the job's "exists" error as a note.
+pub(super) fn create_masking_policy<S: StoreClient>(
+    executor: &RealClusterDdl<S>,
+    stmt: &tidb_ast::CreateMaskingPolicyStmt,
+    current_db: &str,
+    context: &dyn DdlSessionContext,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    let catalog = executor.schema_sync.catalog.get_latest();
+    let Some(job) =
+        super::executor_masking::create_masking_policy_job(&catalog, stmt, current_db, context)
+            .map_err(mysql_query_error)?
+    else {
+        return Ok(ClusterDdlReport::AlreadySatisfied {
+            detail: "the masking policy exists".into(),
+            warnings: Vec::new(),
+        });
+    };
+    match do_ddl_job_wrapper(executor, context, job).map_err(tidb_terror::MysqlError::from) {
+        Err(note)
+            if stmt.if_not_exists
+                && note.equal(&tidb_meta::meta_errors::ERR_MASKING_POLICY_EXISTS) =>
+        {
+            context.append_note_parts(note.code, &note.message);
+            Ok(ClusterDdlReport::AlreadySatisfied {
+                detail: "the masking policy exists".into(),
+                warnings: Vec::new(),
+            })
+        }
+        other => other.map_err(SqlQueryError::from),
+    }
 }

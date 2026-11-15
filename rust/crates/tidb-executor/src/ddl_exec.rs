@@ -142,15 +142,6 @@ pub trait DdlExec {
         ddl: &tidb_ast::DdlStmt,
         sql: &str,
     ) -> Result<Option<tidb_ddl::JobWrapper>, SqlQueryError>;
-    /// Go `executor.CreateMaskingPolicy` and the `ALTER TABLE ... MASKING
-    /// POLICY` functions' checks through the snapshot's lazy infoschema cache;
-    /// `None` is an
-    /// `IF NOT EXISTS` that filed its note.
-    fn probe_masking_policy_job(
-        &mut self,
-        ddl: &tidb_ast::DdlStmt,
-        sql: &str,
-    ) -> Result<Option<tidb_ddl::JobWrapper>, SqlQueryError>;
     /// Go `DDLExec.executeFlashBackCluster` and `executor.FlashbackCluster`
     /// up to the job: the `TO TSO` value or the `TO TIMESTAMP` expression's
     /// timestamp, and the warning for a local clock away from PD's.
@@ -159,14 +150,6 @@ pub trait DdlExec {
         stmt: &tidb_ast::FlashbackToTimestampStmt,
         sql: &str,
     ) -> Result<tidb_ddl::JobWrapper, SqlQueryError>;
-    /// Whether `ddl` is one of Go's masking-policy statements.
-    fn is_masking_policy_statement(&self, ddl: &tidb_ast::DdlStmt) -> bool;
-    /// Go `checkMaskingPolicyOnModifyColumn`, run once `ModifyColumn` /
-    /// `ChangeColumn` built its job.
-    fn probe_masking_policy_on_modify_column(
-        &mut self,
-        ddl: &tidb_ast::DdlStmt,
-    ) -> Result<(), SqlQueryError>;
     /// Go `executeCreateView`'s preprocess of the body, over a statement
     /// snapshot: the database, name, `OR REPLACE` and the resolved view.
     fn probe_cluster_view(
@@ -330,31 +313,11 @@ pub trait DdlExec {
                 return Ok(());
             }
         }
-        // Go `executor.CreateMaskingPolicy` and the masking-policy
-        // `ALTER TABLE` specs check against the session's schema and
-        // `mysql.tidb_masking_policy` before the job.
+        // Go `executor.CreateMaskingPolicy` (the `ALTER TABLE` masking specs
+        // run in `executor.AlterTable`).
         if let Stmt::Ddl(ddl) = stmt {
-            if self.is_masking_policy_statement(ddl) {
-                if let Some(job) = self.probe_masking_policy_job(ddl, sql)? {
-                    let result = self.run_ddl_job_wrapper(sql, stmt, job);
-                    match result {
-                        Err(error)
-                            if matches!(&**ddl, DdlStmt::CreateMaskingPolicy(create) if create.if_not_exists)
-                                && error
-                                    .equal(&tidb_meta::meta_errors::ERR_MASKING_POLICY_EXISTS) =>
-                        {
-                            let note = error.to_mysql_error();
-                            self.append_warning(
-                                tidb_context::WarningLevel::Note,
-                                note.code,
-                                note.message,
-                            );
-                        }
-                        other => {
-                            other.map_err(map_error)?;
-                        }
-                    }
-                }
+            if matches!(&**ddl, DdlStmt::CreateMaskingPolicy(_)) {
+                self.run_executor_statement(sql, stmt).map_err(map_error)?;
                 return Ok(());
             }
         }
@@ -420,7 +383,6 @@ pub trait DdlExec {
                 self.begin_routed_statement_warnings();
                 self.drain_context_warnings(&context);
                 let resolved = resolved.map_err(|e| SqlQueryError::from(e.to_mysql_error()))?;
-                self.probe_masking_policy_on_modify_column(ddl)?;
                 let parts = tidb_ddl::cluster_ddl::split_table_option_alter(&resolved)
                     .unwrap_or_else(|| vec![resolved]);
                 for part in parts {

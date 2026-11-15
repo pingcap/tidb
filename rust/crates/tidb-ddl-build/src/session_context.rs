@@ -69,6 +69,10 @@ pub trait DdlSessionContext: Send + Sync {
     fn ddl_login_user(&self) -> Option<(String, String)> {
         None
     }
+    /// Go `SessionVars.User.String()`.
+    fn ddl_current_user(&self) -> Option<String> {
+        None
+    }
     /// The connection's `(charset, collation)`.
     fn connection_charset_info(&self) -> (&str, &str);
     /// The session time zone.
@@ -129,6 +133,10 @@ impl<T: DdlSessionContext + ?Sized> DdlSessionContext for std::sync::Arc<T> {
 
     fn ddl_login_user(&self) -> Option<(String, String)> {
         (**self).ddl_login_user()
+    }
+
+    fn ddl_current_user(&self) -> Option<String> {
+        (**self).ddl_current_user()
     }
 
     fn enable_row_level_checksum(&self) -> bool {

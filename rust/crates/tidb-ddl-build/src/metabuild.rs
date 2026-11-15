@@ -121,6 +121,10 @@ impl crate::session_context::DdlSessionContext for StmtContext {
         StmtContext::table_lock_context(self).cloned()
     }
 
+    fn ddl_current_user(&self) -> Option<String> {
+        self.current_user_name().map(str::to_owned)
+    }
+
     fn ddl_login_user(&self) -> Option<(String, String)> {
         let (user, host) = self.login_user_name()?.split_once('@')?;
         Some((user.to_owned(), host.to_owned()))
