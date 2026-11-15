@@ -286,22 +286,13 @@ pub(crate) fn extremum_with_signature(
     // `greatest('a' collate utf8mb4_general_ci, 'B')` is `B` and `least(...)`
     // is `a`, the SWAP of the byte answer; and under the PAD SPACE default
     // `greatest('a', 'a ')` is `a`, because the two compare EQUAL and Go keeps
-    // the earlier argument. Go's `vecEvalString` keeps the running value only
-    // when it compares strictly ahead of the next argument (`CompareString(
-    // src, arg) > 0` for GREATEST, `< 0` for LEAST), so a vectorized call
-    // answers the LATER of two equal arguments: over a column holding `a`,
-    // `greatest(c, 'a ')` is `a ` (CAPTURED: its length is 2).
+    // the earlier argument. (Its `vecEvalString`, which answers the LATER of
+    // two equal arguments, is `builtin_compare_vec.rs`'s.)
     let collator = tidb_datatype::get_collator(collation.name());
-    let vectorized = crate::chunk_executor::in_vec_eval();
     let mut best = extremum_string_value(&vals[0])?;
     for v in &vals[1..] {
         let candidate = extremum_string_value(v)?;
-        let replace = if vectorized {
-            collator.compare(&best, &candidate) != want
-        } else {
-            collator.compare(&candidate, &best) == want
-        };
-        if replace {
+        if collator.compare(&candidate, &best) == want {
             best = candidate;
         }
     }
@@ -734,10 +725,8 @@ pub(crate) fn inet_aton(value: &Datum) -> Result<Datum, EvalError> {
     };
     match inet_aton_text(&text) {
         Some(address) => Ok(Datum::UInt(address)),
-        // Go `builtinInetAtonSig.vecEvalInt` sets NULL for a malformed
-        // address; `evalInt` is `errWrongValueForType("string", val,
-        // "inet_aton")` (1411).
-        None if crate::chunk_executor::in_vec_eval() => Ok(Datum::Null),
+        // Go `evalInt`: `errWrongValueForType("string", val, "inet_aton")`
+        // (1411); its `vecEvalInt` is `builtin_miscellaneous_vec.rs`'s.
         None => Err(EvalError::WrongValueForType {
             value_class: "string",
             value: text,
@@ -835,10 +824,8 @@ pub(crate) fn inet6_aton(value: &Datum) -> Result<Datum, EvalError> {
     };
     match inet6_aton_text(&text) {
         Some(bytes) => Ok(bytes),
-        // Go `builtinInet6AtonSig.vecEvalString` appends NULL for an empty
-        // or unparseable address; `evalString` is
-        // `errWrongValueForType("string", val, "inet_aton6")` (1411).
-        None if crate::chunk_executor::in_vec_eval() => Ok(Datum::Null),
+        // Go `evalString`: `errWrongValueForType("string", val, "inet_aton6")`
+        // (1411); its `vecEvalString` is `builtin_miscellaneous_vec.rs`'s.
         None => Err(EvalError::WrongValueForType {
             value_class: "string",
             value: text,
@@ -849,7 +836,7 @@ pub(crate) fn inet6_aton(value: &Datum) -> Result<Datum, EvalError> {
 
 /// The address bytes, or `None` where Go's `net.ParseIP` is nil (the empty
 /// string included).
-fn inet6_aton_text(text: &str) -> Option<Datum> {
+pub(crate) fn inet6_aton_text(text: &str) -> Option<Datum> {
     // Keep the source's four-byte result only when the original spelling is
     // plain IPv4.  `Ipv6Addr::from_str` handles all colon-containing forms,
     // including embedded IPv4 and mapped IPv4, and its octets are exactly the
@@ -1132,12 +1119,6 @@ mod tests {
                 }),
                 "INET_ATON({invalid:?})"
             );
-            let _vec_eval = crate::chunk_executor::enter_vec_eval(true);
-            assert_eq!(
-                eval_builtin_func("INET_ATON", &[s(invalid)], &crate::NoColumns).unwrap(),
-                Ok(Datum::Null),
-                "INET_ATON({invalid:?})"
-            );
         }
     }
 
@@ -1208,11 +1189,6 @@ mod tests {
                             value: text.to_owned(),
                             function: "inet_aton6",
                         })
-                    );
-                    let _vec_eval = crate::chunk_executor::enter_vec_eval(true);
-                    assert_eq!(
-                        eval_builtin_func("INET6_ATON", &[s(text)], &crate::NoColumns).unwrap(),
-                        Ok(Datum::Null)
                     );
                 }
                 want => assert_eq!(call("INET6_ATON", &[s(text)]), want),

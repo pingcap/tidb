@@ -100,6 +100,26 @@ pub(crate) fn kinds_of_signature(
     })
 }
 
+/// `+1` for an `ADDTIME` signature, `-1` for a `SUBTIME` one.
+pub(crate) fn sign_of_signature(signature: tidb_proto::tipb::ScalarFuncSig) -> Option<i64> {
+    use tidb_proto::tipb::ScalarFuncSig as Sig;
+    kinds_of_signature(signature)?;
+    Some(match signature {
+        Sig::AddDatetimeAndDuration
+        | Sig::AddTimeDateTimeNull
+        | Sig::AddDatetimeAndString
+        | Sig::AddDateAndDuration
+        | Sig::AddTimeStringNull
+        | Sig::AddDateAndString
+        | Sig::AddDurationAndDuration
+        | Sig::AddTimeDurationNull
+        | Sig::AddDurationAndString
+        | Sig::AddStringAndDuration
+        | Sig::AddStringAndString => 1,
+        _ => -1,
+    })
+}
+
 fn truncated_time_warning(cols: &dyn Columns, value: &str) -> Datum {
     cols.append_go_warning(
         &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL,

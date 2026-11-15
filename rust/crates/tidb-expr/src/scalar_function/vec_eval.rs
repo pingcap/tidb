@@ -152,7 +152,6 @@ pub(crate) fn eval_into(
     input: &Chunk,
     result: &mut Column,
 ) -> Result<(), EvalError> {
-    let _scope = crate::chunk_executor::enter_vec_eval(true);
     match expression {
         Expression::Constant(constant) => {
             if let Some(deferred) = constant.deferred_expr.as_deref() {

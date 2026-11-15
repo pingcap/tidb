@@ -140,7 +140,6 @@ fn filter_physical_rows<C: Columns>(
     // filter is not vectorizable. Keep the same filter-major order and
     // three-valued truth handling in that branch.
     if row_based {
-        let _vec_eval = crate::chunk_executor::enter_vec_eval(false);
         for filter in filters {
             let int_type = filter
                 .static_type()
@@ -212,7 +211,6 @@ fn filter_physical_rows<C: Columns>(
                 is_zero.push(typed_truth_code(&value, filter)?);
             }
         } else {
-            let _vec_eval = crate::chunk_executor::enter_vec_eval(false);
             if vec_enabled && matches!(filter, Expression::ScalarSubQuery(_)) {
                 return Err(crate::scalar_subquery::vec_eval_error());
             }
@@ -507,7 +505,6 @@ impl EvaluatorSuite {
                 // Go `defaultEvaluator.run`: each expression independently
                 // selects its signature's typed vector kernel or row evaluation.
                 let vectorized = vec_enabled && crate::chunk_executor::vectorized(expression);
-                let _vec_eval = crate::chunk_executor::enter_vec_eval(vectorized);
                 if vectorized
                     && crate::scalar_function::vec_eval::eval_one(
                         expression,
@@ -525,7 +522,6 @@ impl EvaluatorSuite {
                 }
             }
         } else {
-            let _vec_eval = crate::chunk_executor::enter_vec_eval(false);
             for row_index in 0..rows {
                 for (output_index, expression) in program
                     .calculated_output_indexes

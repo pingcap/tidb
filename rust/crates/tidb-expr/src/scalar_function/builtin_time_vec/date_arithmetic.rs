@@ -16,7 +16,6 @@ pub(super) fn eval(
     result: &mut Column,
 ) -> Result<(), EvalError> {
     let unit = {
-        let _scope = crate::chunk_executor::enter_vec_eval(false);
         super::super::eval_numeric_row(&function.args[2], ctx, Row::empty(), EvalType::String)?
     };
     let target = function
@@ -44,7 +43,6 @@ pub(super) fn eval(
             && !crate::time_fn::calendar::is_composite_unit(&unit)
             && !unit.eq_ignore_ascii_case("SECOND")
         {
-            let _scope = crate::chunk_executor::enter_vec_eval(false);
             amount = super::super::eval_numeric_row(
                 &function.args[1],
                 ctx,

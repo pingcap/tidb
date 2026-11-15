@@ -488,20 +488,13 @@ pub(crate) fn ord(function: &ScalarFunction, values: &[Datum], _: &dyn Columns) 
 
 /// Go `builtinRepeatSig`: `vecEvalString` bounds the result by the return
 /// type's flen where `evalString` bounds it by `max_allowed_packet`.
-pub(crate) fn repeat(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    let vec_flen = function
-        .runs_vectorized_body()
-        .then(|| function.get_static_type().map(FieldType::flen))
-        .flatten();
-    crate::string_packet::repeat_in_mode(values, vec_flen, ctx)
+pub(crate) fn repeat(_function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::string_packet::repeat_in_mode(values, None, ctx)
 }
 
-/// Go `builtinPasswordSig`: `vecEvalString` appends an empty string for a
-/// NULL argument where `evalString` returns NULL.
-pub(crate) fn password(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    if values[0].is_null() && function.runs_vectorized_body() {
-        return Ok(Datum::new_string_datum(String::new()));
-    }
+/// Go `builtinPasswordSig.evalString` (its `vecEvalString`, which hashes a
+/// NULL to "", is `builtin_encryption_vec.rs`'s).
+pub(crate) fn password(_function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     crate::builtin_ext::crypto::password_hash(&values[0], ctx)
 }
 

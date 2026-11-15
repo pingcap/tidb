@@ -1171,12 +1171,6 @@ impl ScalarFunction {
         }
     }
 
-    /// Go `EvalExpr`: the selected kernel, including a control function's
-    /// explicit row fallback, determines which body is currently running.
-    fn runs_vectorized_body(&self) -> bool {
-        crate::chunk_executor::in_vec_eval()
-    }
-
     /// The collation this function's own evaluation runs under (Go's
     /// `baseBuiltinFunc.collator`, set from `ExprCollation.Collation`): the
     /// derivation's collation, which a non-string result does not carry on

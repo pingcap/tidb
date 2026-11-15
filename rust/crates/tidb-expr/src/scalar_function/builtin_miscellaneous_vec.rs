@@ -105,18 +105,142 @@ pub(super) fn eval(
         }
         return Ok(());
     }
-    vec_eval::map_arguments(function, ctx, input, result, None, |values| match function
-        .pb_builtin
-        .eval_values(function, values, ctx)
-    {
-        Err(EvalError::WrongValueForType { .. })
-            if matches!(
-                function.pb_code(),
-                ScalarFuncSig::InetAton | ScalarFuncSig::Inet6Aton
-            ) =>
-        {
-            Ok(Datum::Null)
+    use ScalarFuncSig::*;
+    let n = input.num_rows();
+    if function.pb_code() == InetAton {
+        return inet_aton(function, ctx, input, result);
+    }
+    if function.pb_code() == Inet6Aton {
+        return inet6_aton(function, ctx, input, result);
+    }
+    let arg_type = |index: usize| match (function.pb_code(), index) {
+        (InetNtoa | VitessHash, 0) => EvalType::Int,
+        (_, 1) => EvalType::Int,
+        _ => EvalType::String,
+    };
+    let mut bufs = Vec::with_capacity(function.args.len());
+    for (index, arg) in function.args.iter().enumerate() {
+        bufs.push(vec_eval::argument(arg, arg_type(index), ctx, input)?);
+    }
+    let cell = |buf: usize, i: usize| {
+        vec_eval::value(&bufs[buf], i, arg_type(buf), function.args[buf].static_type())
+    };
+    // Go's fixed-width results: the argument's NULLs merged into the result,
+    // every other row computed in place.
+    if domain != EvalType::String {
+        crate::chunk_executor::allocate(domain, n, result);
+        result.merge_nulls(&[&bufs[0]]);
+        for i in 0..n {
+            if result.is_null(i) {
+                continue;
+            }
+            let value = function.pb_builtin.eval_values(function, vec![cell(0, i)], ctx)?;
+            vec_eval::put(result, i, domain, &value)?;
         }
-        value => value,
-    })
+        return Ok(());
+    }
+    // Go's string results: a NULL argument appends NULL; `UUID_TO_BIN` /
+    // `BIN_TO_UUID`'s NULL swap flag swaps nothing.
+    result.reserve_string(n);
+    for i in 0..n {
+        if bufs[0].is_null(i) {
+            result.append_null();
+            continue;
+        }
+        let mut values = vec![cell(0, i)];
+        if bufs.len() == 2 {
+            values.push(if bufs[1].is_null(i) { Datum::Int(0) } else { cell(1, i) });
+        }
+        let value = function.pb_builtin.eval_values(function, values, ctx)?;
+        vec_eval::put(result, i, EvalType::String, &value)?;
+    }
+    Ok(())
+}
+
+/// Go `builtinInetAtonSig.vecEvalInt`: unlike its row form, a malformed
+/// address is NULL without an error.
+fn inet_aton(
+    function: &ScalarFunction,
+    ctx: &dyn Columns,
+    input: &Chunk,
+    result: &mut Column,
+) -> Result<(), EvalError> {
+    let n = input.num_rows();
+    let buf = vec_eval::argument(&function.args[0], EvalType::String, ctx, input)?;
+    result.resize_int64(n, false);
+    result.merge_nulls(&[&buf]);
+    for i in 0..n {
+        if result.is_null(i) {
+            continue;
+        }
+        let ip_addr = buf.get_bytes(i);
+        let ip_addr = ip_addr.as_ref();
+        if ip_addr.is_empty() || ip_addr[ip_addr.len() - 1] == b'.' {
+            result.set_null(i, true);
+            continue;
+        }
+        let mut byte_result: u64 = 0;
+        let mut res: u64 = 0;
+        let mut dot_count = 0;
+        // Go ranges over the string's runes; every byte of a multi-byte rune
+        // is an illegal character either way.
+        for c in String::from_utf8_lossy(ip_addr).chars() {
+            if c.is_ascii_digit() {
+                byte_result = byte_result * 10 + u64::from(c as u8 - b'0');
+                if byte_result > 255 {
+                    result.set_null(i, true);
+                    break;
+                }
+            } else if c == '.' {
+                dot_count += 1;
+                if dot_count > 3 {
+                    result.set_null(i, true);
+                    break;
+                }
+                res = (res << 8) + byte_result;
+                byte_result = 0;
+            } else {
+                result.set_null(i, true);
+                break;
+            }
+        }
+        if !result.is_null(i) {
+            if dot_count == 1 {
+                res <<= 16;
+            }
+            if dot_count == 2 {
+                res <<= 8;
+            }
+            let value = ((res << 8) + byte_result) as i64;
+            result.with_int64s_mut(|i64s| i64s[i] = value);
+        }
+    }
+    Ok(())
+}
+
+/// Go `builtinInet6AtonSig.vecEvalString`: unlike its row form, an empty or
+/// unparseable address is NULL without an error.
+fn inet6_aton(
+    function: &ScalarFunction,
+    ctx: &dyn Columns,
+    input: &Chunk,
+    result: &mut Column,
+) -> Result<(), EvalError> {
+    let n = input.num_rows();
+    let buf = vec_eval::argument(&function.args[0], EvalType::String, ctx, input)?;
+    result.reserve_string(n);
+    for i in 0..n {
+        if buf.is_null(i) {
+            result.append_null();
+            continue;
+        }
+        let bytes = buf.get_bytes(i);
+        // IP syntax is ASCII: an invalid UTF-8 byte is the same parse failure.
+        let text = String::from_utf8_lossy(bytes.as_ref());
+        match crate::builtin_ext::compare2::inet6_aton_text(&text) {
+            Some(address) => vec_eval::put(result, i, EvalType::String, &address)?,
+            None => result.append_null(),
+        }
+    }
+    Ok(())
 }

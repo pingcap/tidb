@@ -182,11 +182,16 @@ fn time_diff_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Colum
 
 /// Go `builtinAdd*Sig` / `builtinSub*Sig` of `ADDTIME` / `SUBTIME`: the
 /// signature carries the two kinds its class switched on.
-fn add_sub_time_of(function: &ScalarFunction, values: &[Datum], sign: i64, ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(super) fn add_sub_time_of(
+    function: &ScalarFunction,
+    values: &[Datum],
+    sign: i64,
+    row_path: bool,
+    ctx: &dyn Columns,
+) -> Result<Datum, EvalError> {
     use tidb_datatype::{FieldTypeCode, TimeType};
     let kinds = crate::time_fn::add_sub::kinds_of_signature(function.pb_code())
         .ok_or(EvalError::Unsupported("not an ADDTIME/SUBTIME signature"))?;
-    let row_path = !function.runs_vectorized_body();
     let result = crate::time_fn::add_sub::add_sub_time(values, kinds, sign, row_path, ctx)?;
     match function.get_static_type().map(FieldType::code) {
         Some(FieldTypeCode::Datetime) => {
@@ -198,11 +203,11 @@ fn add_sub_time_of(function: &ScalarFunction, values: &[Datum], sign: i64, ctx: 
 }
 
 fn add_time_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    add_sub_time_of(function, values, 1, ctx)
+    add_sub_time_of(function, values, 1, true, ctx)
 }
 
 fn sub_time_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    add_sub_time_of(function, values, -1, ctx)
+    add_sub_time_of(function, values, -1, true, ctx)
 }
 
 /// Go `builtinTimestamp1ArgSig` / `builtinTimestamp2ArgsSig`.

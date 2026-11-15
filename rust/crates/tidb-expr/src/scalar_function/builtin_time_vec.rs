@@ -190,6 +190,11 @@ pub(super) fn eval(
                 }
             }
         }
+        // Go `builtin{Add,Sub}*Sig.vecEval*`: their own string parsing, not
+        // the row form's (`add_sub_time`'s `row_path`).
+        if let Some(sign) = crate::time_fn::add_sub::sign_of_signature(sig) {
+            return super::pb_builtin::add_sub_time_of(function, &values, sign, false, ctx);
+        }
         if sig == ConvertTz {
             return super::pb_builtin::temporal_of_ret_type(
                 function,

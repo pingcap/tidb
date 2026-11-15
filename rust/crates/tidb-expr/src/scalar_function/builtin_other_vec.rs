@@ -54,39 +54,115 @@ pub(super) fn eval(
         }
         return Ok(());
     }
-    let field = function.get_static_type().expect("variable result type");
-    vec_eval::map_arguments(function, ctx, input, result, None, |values| {
-        if name == "getparam" {
-            return super::class_kernels::getparam(&values, ctx);
-        }
-        if values.iter().any(Datum::is_null) {
-            return Ok(Datum::Null);
-        }
-        let variable = tidb_goruntime::GoString::from_bytes(
-            crate::arg_eval_type::eval_string(&values[0])?.expect("not NULL"),
-        )
+    let domain = function
+        .get_static_type()
+        .expect("variable result type")
+        .eval_type();
+    match name {
+        "getparam" => get_param_string(function, ctx, input, result),
+        "setvar" => set_var(function, domain, ctx, input, result),
+        _ => get_var(function, domain, ctx, input, result),
+    }
+}
+
+/// Go `strings.ToLower(buf0.GetString(i))`.
+fn variable_name(column: &Column, row: usize) -> String {
+    tidb_goruntime::GoString::from_bytes(column.get_bytes(row).as_ref().to_vec())
         .to_utf8_lossy_go()
-        .to_lowercase();
-        if name == "setvar" {
-            let value = match field.eval_type() {
-                EvalType::Int => Datum::Int(values[1].get_int64()),
-                EvalType::String => Datum::new_collation_string_datum(
-                    crate::arg_eval_type::eval_string(&values[1])?.expect("not NULL"),
-                    tidb_charset::Collation::from_name(ctx.connection_charset_info().1)
-                        .unwrap_or(tidb_charset::Collation::DEFAULT),
-                ),
-                _ => values[1].clone(),
-            };
-            ctx.set_uservar(&variable, value.clone());
-            return Ok(value);
+        .to_lowercase()
+}
+
+/// Go `builtinGetParamStringSig.vecEvalString`.
+fn get_param_string(
+    function: &ScalarFunction,
+    ctx: &dyn Columns,
+    input: &Chunk,
+    result: &mut Column,
+) -> Result<(), EvalError> {
+    let n = input.num_rows();
+    let idx = vec_eval::argument(&function.args[0], EvalType::Int, ctx, input)?;
+    result.reserve_string(n);
+    for i in 0..n {
+        if idx.is_null(i) {
+            result.append_null();
+            continue;
         }
-        let kind = match field.eval_type() {
-            EvalType::Int if field.is_unsigned() => "uint",
-            EvalType::Int => "int",
-            EvalType::Real => "real",
-            EvalType::Decimal => "decimal",
-            _ => "string",
+        let index = usize::try_from(idx.get_int64(i))
+            .map_err(|_| EvalError::ParamIndexExceedParamCounts)?;
+        let value = ctx.get_param_value(index)?;
+        // Go: a value `ToString` cannot render is NULL.
+        match value.sql_string() {
+            Ok(text) => result.append_bytes(text.as_bytes()),
+            Err(_) => result.append_null(),
+        }
+    }
+    Ok(())
+}
+
+/// Go `builtinSet{String,Int,Real,Decimal}VarSig.vecEval*`.
+fn set_var(
+    function: &ScalarFunction,
+    domain: EvalType,
+    ctx: &dyn Columns,
+    input: &Chunk,
+    result: &mut Column,
+) -> Result<(), EvalError> {
+    let n = input.num_rows();
+    let buf0 = vec_eval::argument(&function.args[0], EvalType::String, ctx, input)?;
+    let buf1 = vec_eval::argument(&function.args[1], domain, ctx, input)?;
+    crate::chunk_executor::allocate(domain, n, result);
+    let collation = tidb_charset::Collation::from_name(ctx.connection_charset_info().1)
+        .unwrap_or(tidb_charset::Collation::DEFAULT);
+    for i in 0..n {
+        if buf0.is_null(i) || buf1.is_null(i) {
+            vec_eval::put(result, i, domain, &Datum::Null)?;
+            continue;
+        }
+        let var_name = variable_name(&buf0, i);
+        let res = match domain {
+            EvalType::String => {
+                Datum::new_collation_string_datum(buf1.get_bytes(i).as_ref().to_vec(), collation)
+            }
+            _ => vec_eval::value(&buf1, i, domain, None),
         };
-        super::uservar_as_kind(kind, ctx.get_uservar(&variable).unwrap_or(Datum::Null), ctx)
-    })
+        ctx.set_uservar(&var_name, res.clone());
+        vec_eval::put(result, i, domain, &res)?;
+    }
+    Ok(())
+}
+
+/// Go `builtinGet{String,Int,Real,Decimal}VarSig.vecEval*`.
+fn get_var(
+    function: &ScalarFunction,
+    domain: EvalType,
+    ctx: &dyn Columns,
+    input: &Chunk,
+    result: &mut Column,
+) -> Result<(), EvalError> {
+    let n = input.num_rows();
+    let field = function.get_static_type().expect("variable result type");
+    let kind = match domain {
+        EvalType::Int if field.is_unsigned() => "uint",
+        EvalType::Int => "int",
+        EvalType::Real => "real",
+        EvalType::Decimal => "decimal",
+        _ => "string",
+    };
+    let buf0 = vec_eval::argument(&function.args[0], EvalType::String, ctx, input)?;
+    crate::chunk_executor::allocate(domain, n, result);
+    for i in 0..n {
+        if buf0.is_null(i) {
+            vec_eval::put(result, i, domain, &Datum::Null)?;
+            continue;
+        }
+        let var_name = variable_name(&buf0, i);
+        // Go `GetUserVarVal`, then `ToString` / `GetInt64` / `ToFloat64` /
+        // `ToDecimal`; an unset variable is NULL.
+        let value = match ctx.get_uservar(&var_name) {
+            Some(value) => super::uservar_as_kind(kind, value, ctx)?,
+            None => Datum::Null,
+        };
+        vec_eval::put(result, i, domain, &value)?;
+    }
+    Ok(())
 }

@@ -82,6 +82,9 @@ pub(super) fn eval(
         }
         return Ok(());
     }
+    if matches!(sig, CeilDecToInt | FloorDecToInt) {
+        return dec_to_int(function, sig == CeilDecToInt, ctx, input, result);
+    }
     let reuse = match sig {
         Pow => Some(1),
         Sign | CeilIntToDec | CeilDecToInt | FloorIntToDec | FloorDecToInt | Pi | Conv | Crc32
@@ -101,4 +104,37 @@ pub(super) fn eval(
             .eval_values(function, values, ctx)
             .map_err(|error| super::math_overflow_error(function, error, ctx)),
     })
+}
+
+/// Go `builtin{Ceil,Floor}DecToIntSig.vecEvalInt`: `ToInt`'s truncation moves
+/// the value one step away from zero, and unlike the row form an overflow
+/// keeps `ToInt`'s border value without an error.
+fn dec_to_int(
+    function: &ScalarFunction,
+    ceiling: bool,
+    ctx: &dyn Columns,
+    input: &Chunk,
+    result: &mut Column,
+) -> Result<(), EvalError> {
+    use tidb_datatype::EvalType;
+    let n = input.num_rows();
+    let buf = vec_eval::argument(&function.args[0], EvalType::Decimal, ctx, input)?;
+    result.resize_int64(n, false);
+    result.merge_nulls(&[&buf]);
+    for i in 0..n {
+        if result.is_null(i) {
+            continue;
+        }
+        let d = buf.get_my_decimal(i);
+        let (mut value, error) = d.to_int();
+        if error == Some(tidb_datatype::DecimalError::Truncated) {
+            if ceiling && !d.is_negative() {
+                value += 1;
+            } else if !ceiling && d.is_negative() {
+                value -= 1;
+            }
+        }
+        result.with_int64s_mut(|i64s| i64s[i] = value);
+    }
+    Ok(())
 }

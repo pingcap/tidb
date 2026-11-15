@@ -102,6 +102,7 @@ pub(super) fn eval(
         ConcatWs => return concat_ws(function, ctx, input, result),
         FindInSet => return find_in_set(function, ctx, input, result),
         Elt => return elt(function, ctx, input, result),
+        Repeat => return repeat(function, ctx, input, result),
         Convert | Char => return charset(function, ctx, input, result),
         _ => {}
     }
@@ -365,7 +366,6 @@ fn find_in_set(
         let lookup = function
             .find_in_set_cache
             .get_or_init_cache(ctx.context_id(), || {
-                let _scope = crate::chunk_executor::enter_vec_eval(false);
                 let list = function.args[1].eval(ctx, tidb_chunk::row::Row::empty())?;
                 crate::builtin_ext::build_find_in_set_lookup(&list, collation)
             })?;
@@ -404,6 +404,34 @@ fn find_in_set(
             .collect::<Vec<_>>();
         let value = crate::builtin_ext::find_in_set_with_collation(&values, collation)?;
         vec_eval::put(result, row, EvalType::Int, &value)?;
+    }
+    Ok(())
+}
+
+/// Go `builtinRepeatSig.vecEvalString`: after the packet check a cell longer
+/// than `flen / num` is a silent NULL, a check its row form does not have.
+fn repeat(
+    function: &ScalarFunction,
+    ctx: &dyn Columns,
+    input: &Chunk,
+    result: &mut Column,
+) -> Result<(), EvalError> {
+    let n = input.num_rows();
+    let buf = vec_eval::argument(&function.args[0], EvalType::String, ctx, input)?;
+    let buf2 = vec_eval::argument(&function.args[1], EvalType::Int, ctx, input)?;
+    let flen = function.get_static_type().expect("REPEAT type").flen();
+    result.reserve_string(n);
+    for i in 0..n {
+        if buf.is_null(i) || buf2.is_null(i) {
+            result.append_null();
+            continue;
+        }
+        let values = [
+            vec_eval::value(&buf, i, EvalType::String, function.args[0].static_type()),
+            Datum::Int(buf2.get_int64(i)),
+        ];
+        let value = crate::string_packet::repeat_in_mode(&values, Some(flen), ctx)?;
+        vec_eval::put(result, i, EvalType::String, &value)?;
     }
     Ok(())
 }

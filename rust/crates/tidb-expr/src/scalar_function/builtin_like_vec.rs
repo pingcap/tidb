@@ -27,17 +27,27 @@ pub(super) fn eval(
     if function.pb_code() == ScalarFuncSig::IlikeSig {
         return ilike(function, ctx, input, result);
     }
-    vec_eval::map_arguments(function, ctx, input, result, None, |values| {
-        if values.iter().any(Datum::is_null) {
-            return Ok(Datum::Null);
+    use tidb_datatype::EvalType;
+    let n = input.num_rows();
+    let buf_val = vec_eval::argument(&function.args[0], EvalType::String, ctx, input)?;
+    let buf_pattern = vec_eval::argument(&function.args[1], EvalType::String, ctx, input)?;
+    let buf_escape = vec_eval::argument(&function.args[2], EvalType::Int, ctx, input)?;
+    result.resize_int64(n, false);
+    result.merge_nulls(&[&buf_val, &buf_pattern, &buf_escape]);
+    for i in 0..n {
+        if result.is_null(i) {
+            continue;
         }
-        let text = crate::arg_eval_type::eval_string(&values[0])?.expect("not NULL");
-        let pattern = crate::arg_eval_type::eval_string(&values[1])?.expect("not NULL");
-        let escape = crate::arg_eval_type::eval_int(&values[2])?.expect("not NULL") as u8;
-        let pattern =
-            crate::like::CompiledLikePattern::new(&pattern, escape, function.derived_collation());
-        Ok(Datum::Int(i64::from(pattern.is_match(&text))))
-    })
+        // Go compiles into its own `collator().Pattern()`, never `b.pattern`.
+        let pattern = crate::like::CompiledLikePattern::new(
+            &buf_pattern.get_bytes(i),
+            buf_escape.get_int64(i) as u8,
+            function.derived_collation(),
+        );
+        let matched = i64::from(pattern.is_match(&buf_val.get_bytes(i)));
+        result.with_int64s_mut(|i64s| i64s[i] = matched);
+    }
+    Ok(())
 }
 
 /// Go `builtinIlikeSig.vecEvalInt`, `buildStringParam`, and `getEscape`:
@@ -55,7 +65,6 @@ fn ilike(
     for arg in &function.args[..2] {
         if arg.const_level() >= ConstLevel::ONLY_IN_CONTEXT {
             let value = {
-                let _scope = crate::chunk_executor::enter_vec_eval(false);
                 super::eval_numeric_row(arg, ctx, Row::empty(), EvalType::String)
             }
             .map_err(crate::regexp::err_regexp_wrapping)?;
@@ -83,7 +92,6 @@ fn ilike(
         return Err(EvalError::Raw("escape should be const".into()));
     }
     let escape = {
-        let _scope = crate::chunk_executor::enter_vec_eval(false);
         super::eval_numeric_row(&function.args[2], ctx, Row::empty(), EvalType::Int)?
     };
     if escape.is_null() {

@@ -20,7 +20,6 @@ pub(super) fn fallback(
         .expect("control type")
         .eval_type();
     crate::chunk_executor::allocate(domain, input.num_rows(), result);
-    let _scope = crate::chunk_executor::enter_vec_eval(false);
     for i in 0..input.num_rows() {
         vec_eval::put(result, i, domain, &function.eval(ctx, input.get_row(i))?)?;
     }

@@ -1599,3 +1599,150 @@ fn extract_from_string_keeps_go_non_vectorized_signature() {
     .unwrap();
     assert!(!crate::chunk_executor::vectorized(&expression));
 }
+
+/// Runs `name` over `rows` (one column per field) through its Go vector
+/// kernel, answering the result column's cells.
+fn vec_cells(name: &str, fields: &[FieldType], rows: &[Vec<Datum>]) -> (Expression, Vec<Datum>) {
+    let expression = crate::new_function::new_function_base(
+        &NoColumns,
+        name,
+        FieldType::new(FieldTypeCode::LongLong),
+        fields
+            .iter()
+            .enumerate()
+            .map(|(i, ft)| column(i as i64, ft))
+            .collect(),
+    )
+    .unwrap();
+    let Expression::ScalarFunction(function) = &expression else {
+        panic!("unfolded signature");
+    };
+    assert!(has_kernel(function), "{name}: missing Go vector kernel");
+    let field = expression.static_type().unwrap().clone();
+    let mut input = Chunk::new_chunk_with_capacity(fields, rows.len());
+    for row in rows {
+        for (j, value) in row.iter().enumerate() {
+            input.append_datum(j, value);
+        }
+    }
+    let mut result = Column::default();
+    eval_into(&expression, field.eval_type(), &NoColumns, &input, &mut result).unwrap();
+    let cells = (0..rows.len())
+        .map(|i| go_vec(value(&result, i, field.eval_type(), Some(&field))))
+        .collect();
+    (expression, cells)
+}
+
+fn text_field() -> FieldType {
+    let mut field = FieldType::new(FieldTypeCode::VarString);
+    field.set_charset_name("utf8mb4");
+    field.set_collation_name("utf8mb4_bin");
+    field
+}
+
+fn row_of(values: &[Datum]) -> Chunk {
+    let fields: Vec<_> = values
+        .iter()
+        .map(|value| match value {
+            Datum::Int(_) => FieldType::new(FieldTypeCode::LongLong),
+            _ => text_field(),
+        })
+        .collect();
+    let mut chunk = Chunk::new_chunk_with_capacity(&fields, 1);
+    for (j, value) in values.iter().enumerate() {
+        chunk.append_datum(j, value);
+    }
+    chunk
+}
+
+/// Go `builtinInetAtonSig.vecEvalInt` answers NULL for a malformed address
+/// where `evalInt` answers `errWrongValueForType` (1411).
+#[test]
+fn inet_aton_vector_kernel_nulls_what_the_row_form_refuses() {
+    let text = text_field();
+    let rows: Vec<Vec<Datum>> = ["", "0.0.0.256", "127.0.0.1", "123.2.1."]
+        .iter()
+        .map(|s| vec![Datum::new_string_datum(*s)])
+        .collect();
+    let (expression, cells) = vec_cells("inet_aton", &[text], &rows);
+    assert_eq!(cells[0], Datum::Null);
+    assert_eq!(cells[1], Datum::Null);
+    assert_eq!(cells[3], Datum::Null);
+    assert!(matches!(cells[2], Datum::UInt(2130706433) | Datum::Int(2130706433)), "{:?}", cells[2]);
+    let row = row_of(&[Datum::new_string_datum("0.0.0.256")]);
+    assert!(matches!(
+        expression.eval(&NoColumns, row.get_row(0)),
+        Err(EvalError::WrongValueForType { .. })
+    ));
+}
+
+/// Go `builtinInet6AtonSig.vecEvalString`: an empty or unparseable address is
+/// NULL; `evalString` answers `errWrongValueForType`.
+#[test]
+fn inet6_aton_vector_kernel_nulls_what_the_row_form_refuses() {
+    let rows: Vec<Vec<Datum>> = ["", "zzz", "::1"]
+        .iter()
+        .map(|s| vec![Datum::new_string_datum(*s)])
+        .collect();
+    let (expression, cells) = vec_cells("inet6_aton", &[text_field()], &rows);
+    assert_eq!(cells[0], Datum::Null);
+    assert_eq!(cells[1], Datum::Null);
+    let mut loopback = [0u8; 16];
+    loopback[15] = 1;
+    assert_eq!(cells[2], Datum::Bytes(loopback.to_vec()));
+    let row = row_of(&[Datum::new_string_datum("zzz")]);
+    assert!(matches!(
+        expression.eval(&NoColumns, row.get_row(0)),
+        Err(EvalError::WrongValueForType { .. })
+    ));
+}
+
+/// Go `builtinPasswordSig.vecEvalString` hashes a NULL to "" where
+/// `evalString` answers NULL.
+#[test]
+fn password_vector_kernel_hashes_null_to_the_empty_string() {
+    let (expression, cells) = vec_cells("password", &[text_field()], &[vec![Datum::Null]]);
+    assert_eq!(cells[0], Datum::Bytes(Vec::new()));
+    let row = row_of(&[Datum::Null]);
+    assert_eq!(expression.eval(&NoColumns, row.get_row(0)).unwrap(), Datum::Null);
+}
+
+/// Go `builtinRepeatSig.vecEvalString`: past the packet check, a cell longer
+/// than `flen / num` is NULL -- a check `evalString` does not have.
+#[test]
+fn repeat_vector_kernel_nulls_a_cell_past_flen_over_count() {
+    let int = FieldType::new(FieldTypeCode::LongLong);
+    let count = 20_000_000;
+    let (expression, cells) = vec_cells(
+        "repeat",
+        &[text_field(), int],
+        &[vec![Datum::new_string_datum("a"), Datum::Int(count)]],
+    );
+    let flen = expression.static_type().unwrap().flen();
+    assert!(flen / count < 1, "the fixture must cross flen/num: flen {flen}");
+    assert_eq!(cells[0], Datum::Null);
+    let row = row_of(&[Datum::new_string_datum("a"), Datum::Int(count)]);
+    let value = expression.eval(&NoColumns, row.get_row(0)).unwrap();
+    assert_eq!(
+        crate::arg_eval_type::eval_string(&value).unwrap().map(|bytes| bytes.len()),
+        Some(count as usize)
+    );
+}
+
+/// Go `builtinGreatestStringSig.vecEvalString` keeps the running value only
+/// when it compares strictly ahead, so of two equal arguments it answers the
+/// later; `evalString` keeps the earlier.
+#[test]
+fn greatest_string_vector_kernel_answers_the_later_of_equal_arguments() {
+    let (expression, cells) = vec_cells(
+        "greatest",
+        &[text_field(), text_field()],
+        &[vec![Datum::new_string_datum("a"), Datum::new_string_datum("a ")]],
+    );
+    assert_eq!(cells[0], Datum::Bytes(b"a ".to_vec()));
+    let row = row_of(&[Datum::new_string_datum("a"), Datum::new_string_datum("a ")]);
+    assert_eq!(
+        expression.eval(&NoColumns, row.get_row(0)).unwrap(),
+        Datum::new_string_datum("a")
+    );
+}

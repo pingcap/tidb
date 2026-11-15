@@ -70,10 +70,21 @@ pub(super) fn eval(
         }
         return Ok(());
     }
+    // Go `builtinTiDBDecodeKeySig.vecEvalString`.
     if function.func_name.lowercase() == "tidb_decode_key" {
-        return vec_eval::map_arguments(function, ctx, input, result, None, |values| {
-            function.pb_builtin.eval_values(function, values, ctx)
-        });
+        let n = input.num_rows();
+        let buf = vec_eval::argument(&function.args[0], EvalType::String, ctx, input)?;
+        result.reserve_string(n);
+        for i in 0..n {
+            if buf.is_null(i) {
+                result.append_null();
+                continue;
+            }
+            let key = vec_eval::value(&buf, i, EvalType::String, function.args[0].static_type());
+            let decoded = function.pb_builtin.eval_values(function, vec![key], ctx)?;
+            vec_eval::put(result, i, EvalType::String, &decoded)?;
+        }
+        return Ok(());
     }
     let value = function.pb_builtin.eval_values(function, Vec::new(), ctx)?;
     crate::chunk_executor::allocate(domain, input.num_rows(), result);
