@@ -210,7 +210,7 @@ type memoryOpsHistory struct {
 	killTime         time.Time
 	memoryLimit      uint64
 	memoryCurrent    uint64
-	processInfoDatum []types.Datum // id,user,host,db,command,time,state,info,digest,mem,disk,txnStart
+	processInfoDatum []types.Datum // id,user,host,db,command,time,state,info,digest,mem,memArbitration,memWaitArbitrateStartTime,memWaitArbitrateBytes,disk
 }
 
 func (m *memoryOpsHistoryManager) init() {
@@ -221,7 +221,21 @@ func (m *memoryOpsHistoryManager) init() {
 func (m *memoryOpsHistoryManager) recordOne(info *sessmgr.ProcessInfo, killTime time.Time, memoryLimit uint64, memoryCurrent uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	op := memoryOpsHistory{killTime: killTime, memoryLimit: memoryLimit, memoryCurrent: memoryCurrent, processInfoDatum: types.MakeDatums(info.ToRow(time.UTC)...)}
+
+	bytesConsumed := int64(0)
+	if info.MemTracker != nil {
+		bytesConsumed = info.MemTracker.BytesConsumed()
+	}
+	diskConsumed := int64(0)
+	if info.DiskTracker != nil {
+		diskConsumed = info.DiskTracker.BytesConsumed()
+	}
+	// The trailing fields align with sessmgr.ProcessInfo.ToRow(): mem arbitration (3 cols) then disk.
+	var memArbitration, memWaitArbitrateStartTime, memWaitArbitrateBytes any
+	processInfo := append(info.ToRowForShow(true), info.Digest,
+		bytesConsumed, memArbitration, memWaitArbitrateStartTime, memWaitArbitrateBytes, diskConsumed,
+	)
+	op := memoryOpsHistory{killTime: killTime, memoryLimit: memoryLimit, memoryCurrent: memoryCurrent, processInfoDatum: types.MakeDatums(processInfo...)}
 	sqlInfo := op.processInfoDatum[7]
 	sqlInfo.SetString(fmt.Sprintf("%.256v", sqlInfo.GetString()), mysql.DefaultCollationName) // Truncated
 	// Only record the last 50 history ops

@@ -1929,6 +1929,7 @@ func TestUnusedIndexView(t *testing.T) {
 	// range scan 0-10 through t1 id1
 	tk.MustQuery("select * from t use index(id1) where id1 >= 0 and id1 < 10")
 	tk.MustHavePlan("select * from t use index(id1) where id1 >= 0 and id1 < 10", "IndexLookUp")
+	tk.Session().Close()
 	tk.RefreshSession()
 	// the index `id2` is unused
 	require.Eventually(t, func() bool {
