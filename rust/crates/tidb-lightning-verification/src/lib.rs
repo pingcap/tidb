@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use tidb_log::{Field, Value};
 
 /// Native representation of the Go `common.KvPair` dependency.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct KvPair {
     /// Go `KvPair.Key`.
     pub key: Vec<u8>,

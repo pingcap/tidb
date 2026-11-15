@@ -7062,6 +7062,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-go-rand"
+version = "0.0.0"
+
+[[package]]
 name = "tidb-go-regexp"
 version = "0.0.0"
 dependencies = [
@@ -7348,14 +7352,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-lightning-backend-encode"
+version = "0.0.0"
+dependencies = [
+ "tidb-datatype",
+ "tidb-lightning-verification",
+ "tidb-model",
+]
+
+[[package]]
+name = "tidb-lightning-backend-kv"
+version = "0.0.0"
+dependencies = [
+ "hex",
+ "serde_json",
+ "tidb-chunk",
+ "tidb-datatype",
+ "tidb-expr",
+ "tidb-exprctx",
+ "tidb-go-rand",
+ "tidb-kv",
+ "tidb-lightning-backend-encode",
+ "tidb-lightning-common",
+ "tidb-lightning-verification",
+ "tidb-meta",
+ "tidb-model",
+ "tidb-mysql",
+ "tidb-table",
+ "tidb-tablecodec",
+ "tidb-tblctx",
+ "tidb-terror",
+ "tidb-timeutil",
+ "tidb-txnkv",
+ "tidb-vardef",
+]
+
+[[package]]
 name = "tidb-lightning-common"
 version = "0.0.0"
 dependencies = [
  "rustix 1.1.4",
  "tempfile",
+ "tidb-codec",
  "tidb-errno",
  "tidb-gocontext",
  "tidb-ingestor-errdef",
+ "tidb-model",
  "tidb-terror",
  "tonic",
 ]

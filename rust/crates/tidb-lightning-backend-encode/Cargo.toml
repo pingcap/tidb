@@ -1,0 +1,16 @@
+[package]
+name = "tidb-lightning-backend-encode"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/lightning/backend/encode: the encoder contract shared by Lightning backends and IMPORT INTO (Rust rewrite)."
+
+[dependencies]
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-lightning-verification = { path = "../tidb-lightning-verification" }
+tidb-model = { path = "../tidb-model" }
+
+[lints]
+workspace = true

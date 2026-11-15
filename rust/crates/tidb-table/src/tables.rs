@@ -901,6 +901,13 @@ impl StorageIterator for KeysReadIterator {
 
 mod cache_size;
 mod error;
+
+/// The NULL half of Go `TableCommon.canSkip`: a NULL with no default and no
+/// origin default is left out of the row value, since a read fills it back
+/// as NULL.
+fn skips_null_without_default(column: &tidb_model::ColumnInfo, value: &Datum) -> bool {
+    value.is_null() && column.get_default_value().is_nil() && column.get_origin_default_value().is_nil()
+}
 pub use error::KvTableError;
 use tidb_kv::staged_writes::{StagedWrites, TxnStaging};
 
@@ -2553,8 +2560,12 @@ impl TableCommon {
             if lossless_handle || crate::generated_column::is_virtual(column) {
                 continue;
             }
+            let value = row.get(offset).cloned().unwrap_or(Datum::Null);
+            if skips_null_without_default(&column.read(), &value) {
+                continue;
+            }
             ids.push(column.read().id);
-            values.push(row.get(offset).cloned().unwrap_or(Datum::Null));
+            values.push(value);
         }
         // Go `AddRecord` / `updateRecord`: a write row past the public
         // columns carries the writable non-public ones too.
@@ -2564,7 +2575,7 @@ impl TableCommon {
                 .iter()
                 .zip(&row[self.columns.len()..])
             {
-                if column.is_writable() {
+                if column.is_writable() && !skips_null_without_default(&column.column.read(), value) {
                     ids.push(column.column.read().id);
                     values.push(value.clone());
                 }
@@ -4051,15 +4062,8 @@ impl TableCommon {
         let pessimistic = stats_ctx.is_some_and(|ctx| ctx.pessimistic_transaction());
         let check_in_prewrite =
             stats_ctx.is_some_and(|ctx| ctx.pessimistic_check_in_prewrite());
-        self.write_index_entries(store, 
-            row,
-            &handle,
-            physical_id,
-            &zone,
-            lazy_dup_check,
-            pessimistic,
-            check_in_prewrite,
-        )?;
+        // Go `addRecord`: the record (`WriteMemBufferEncoded`), then
+        // `addIndices`.
         if let Some(stats_ctx) = stats_ctx {
             stats_ctx
                 .staged_writes()
@@ -4077,6 +4081,15 @@ impl TableCommon {
                 set_presume && pessimistic && check_in_prewrite,
             )
             .map_err(KvTableError::from)?;
+        self.write_index_entries(store, 
+            row,
+            &handle,
+            physical_id,
+            &zone,
+            lazy_dup_check,
+            pessimistic,
+            check_in_prewrite,
+        )?;
         self.double_write_insert(store, 
             physical_id,
             row,
