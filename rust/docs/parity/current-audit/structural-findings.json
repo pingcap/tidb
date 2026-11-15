@@ -2,9 +2,9 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 7,
+    "unresolved": 6,
     "open": 0,
-    "partial": 7
+    "partial": 6
   },
   "findings": [
     {
@@ -22,14 +22,6 @@
       "finding": "The ingest (fast-reorg) backfill runs: `ddl.Start` initializes Go's ingest environment (`InitGlobalLightningEnv` on TiKV, `CleanUpTempDirLoop`), ADD INDEX picks `ReorgType::INGEST` and, under `tidb_enable_dist_task`, Go's DXF backfill task (`tidb-ddl` `real_tikv_ddl/backfilling_dist.rs`, `backfilling_dist_{executor,scheduler}.rs`), whose local backend (`tidb-ddl-ingest`, `tidb-ingestor-ingestctrl`) sorts on disk and imports through TiKV's ImportSST, then merges the temporary index as its own DXF step and checks a unique index's remote duplicates; `autoPauseAddIndexJobOnKVDiskFull` (`tidb-ddl` `index.rs`), the status port's `/ingest/*` routes (`tidb-server` `ingest_handler.rs`) and the backfill executor's Top SQL attach are Go's; the testkit's mock store runs `InitDistTaskLoop` as Go's `BootstrapSession` does. A live TiKV ADD INDEX / UNIQUE INDEX / duplicate case answers as Go's (job comment `ingest, DXF, max_node_count=3`, Go's 1062 text). Left: Go's dynamic resource and task-parameter changes, the local backend's region split/scatter and retry coverage against Go's `ingestctrl` tests, global sort, and the remaining `pkg/ddl/ingest` / realtikv test inventory",
       "rust_evidence": "`rust/crates/tidb-ddl/src/real_tikv_ddl/backfilling_dist.rs`, `rust/crates/tidb-ingestor-ingestctrl`",
       "go_owner": "`pkg/ddl/backfilling*.go`, `pkg/ddl/ingest`"
-    },
-    {
-      "id": "D03",
-      "status": "partial",
-      "group": "DDL: plan against Go's schema image",
-      "finding": "DDL job steps plan against the lazy V2 image itself (`tidb-ddl/src/cluster_ddl.rs` `plan_persisted_ddl_job_with`, `schema_sync_before_step`), reading tables through Go's V2 lookups. Left: `InfoCache::load_with_ts`'s empty-diff branch (`ReloadedCatalog::Unchanged`, `tidb-infoschema-issyncer/src/catalog_watch.rs`) still builds the needed version from `try_metadata_copy()`, which under V2 lists every table of every schema from meta, where Go's `tryLoadSchemaDiffs` builds it with `InitWithOldInfoSchema` over the shared `Data` and loads no table",
-      "rust_evidence": "`rust/crates/tidb-infoschema-issyncer/src/catalog_watch.rs` (`load_with_ts`), `rust/crates/tidb-infoschema/src/lib.rs` (`try_metadata_copy`)",
-      "go_owner": "`pkg/infoschema/issyncer/loader.go` (`tryLoadSchemaDiffs`), `pkg/infoschema/builder.go` (`InitWithOldInfoSchema`)"
     },
     {
       "id": "C01",
@@ -62,7 +54,7 @@
       "rust_evidence": "`rust/crates/tidb-executor/src/brie.rs`, `rust/crates/tidb-br/src/task`, `rust/crates/tidb-br/src/metautil.rs`, `rust/crates/tidb-br/src/metautil`, `rust/docs/parity/current-audit/e07-execplan.md`"
     }
   ],
-  "unresolved": 7,
+  "unresolved": 6,
   "open": 0,
-  "partial": 7
+  "partial": 6
 }

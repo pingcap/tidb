@@ -388,8 +388,16 @@ impl InfoCache {
                 crate::catalog_reload::ReloadedCatalog::Cached { catalog }
                 | crate::catalog_reload::ReloadedCatalog::Diffs { catalog, .. }
                 | crate::catalog_reload::ReloadedCatalog::Full { catalog, .. } => catalog,
+                // The version and the reload's needed version come from one
+                // snapshot, so this is the latest image itself, published by
+                // another loader since the cache lookup: Go's `GetByVersion`
+                // hit, with a V2 reader at this load's timestamp.
                 crate::catalog_reload::ReloadedCatalog::Unchanged { .. } => {
-                    latest.try_metadata_copy()?
+                    let mut image = (*latest).clone();
+                    if image.is_v2() {
+                        image.set_schema_ts(start_ts);
+                    }
+                    return Ok(Arc::new(image));
                 }
             }
         } else {
@@ -1184,6 +1192,53 @@ mod tests {
             "a cached schema cannot suppress metadata decoding errors"
         );
         assert_eq!(shared.get_latest().schema_meta_version(), 11);
+    }
+
+    /// Go `tryLoadSchemaDiffs` over empty diffs builds the new version from
+    /// the old image (`InitWithOldInfoSchema`): under V2 it shares `Data`
+    /// and lists or loads no table.
+    #[test]
+    fn empty_schema_diffs_advance_a_v2_image_without_loading_tables() {
+        struct NoTables;
+        impl tidb_infoschema::infoschema_v2::TableLoader for NoTables {
+            fn load_table(&self, _: i64, _: i64, _: u64) -> Result<tidb_infoschema::infoschema_v2::CachedTable, tidb_infoschema::cluster_catalog::ClusterCatalogError> { panic!("an empty diff loads no table") }
+            fn list_tables(&self, _: i64, _: u64) -> Result<Vec<tidb_model::GoShared<tidb_model::TableInfo>>, tidb_infoschema::cluster_catalog::ClusterCatalogError> { panic!("an empty diff lists no table") }
+        }
+        struct Snapshot;
+        impl tidb_infoschema::cluster_catalog::MetaSnapshot for Snapshot {
+            fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, tidb_infoschema::cluster_catalog::ClusterCatalogError> {
+                // Version 12 with no diff at 12 or 11: Go's
+                // `getSchemaVersionWithNonEmptyDiff` loads 11, an empty diff.
+                Ok((key == tidb_meta::key::schema_version_kv_key()).then(|| b"12".to_vec()))
+            }
+            fn scan_prefix(&mut self, _: &[u8]) -> Result<tidb_infoschema::cluster_catalog::MetaPairs, tidb_infoschema::cluster_catalog::ClusterCatalogError> {
+                panic!("an empty diff scans no metadata")
+            }
+        }
+        let database = tidb_model::db::DBInfo {
+            id: 2,
+            name: tidb_ast::CiString::new("app"),
+            state: tidb_model::SchemaState::PUBLIC,
+            ..Default::default()
+        };
+        let cache = InfoCache::new(SessionExtendedInfoSchema::init_with_db_infos(
+            vec![tidb_model::GoShared::new(database)],
+            Vec::new(),
+            Vec::new(),
+            10,
+        ));
+        let data = cache.data.clone();
+        cache.install_schema_builder(Box::new(move |loaded, _| {
+            let mut schema = loaded.metadata_copy();
+            schema.set_schema_ts(42);
+            schema.init_with_db_infos_v2(data.clone(), Arc::new(NoTables), 1024);
+            schema
+        }));
+        assert!(cache.get_latest().is_v2());
+        let loaded = cache.load_with_ts(&mut Snapshot, 16).unwrap();
+        assert_eq!(loaded.schema_meta_version(), 11);
+        assert!(loaded.is_v2());
+        assert!(loaded.schema_by_name("app").is_some());
     }
 
     fn catalog_at(version: i64) -> SessionExtendedInfoSchema {
