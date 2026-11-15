@@ -217,7 +217,7 @@ fn start_scoped_pool<'scope, 'env: 'scope>(
     count: usize,
     run: impl Fn(usize, crossbeam_channel::Receiver<()>) + Send + Sync + 'scope,
 ) -> ScopedPoolTuner {
-    let (requests, changes) =
+    let (requests, mut changes) =
         crossbeam_channel::unbounded::<(usize, crossbeam_channel::Sender<()>)>();
     let count = Arc::new(std::sync::atomic::AtomicUsize::new(count.max(1)));
     let live_count = count.clone();
@@ -246,7 +246,12 @@ fn start_scoped_pool<'scope, 'env: 'scope>(
                         if let Ok(id) = id { if let Some((_,join)) = active.remove(&id) { let _ = join.join(); } }
                     }
                     recv(changes) -> change => {
-                        let Ok((target,ack)) = change else { break; };
+                        // With no tuner left, the workers still run until
+                        // their input ends (Go's pool outlives its tuners).
+                        let Ok((target,ack)) = change else {
+                            changes = crossbeam_channel::never();
+                            continue;
+                        };
                         while active.len() > target {
                             let (_, (quit,join)) = active.pop_last().unwrap();
                             let _ = quit.send(());
@@ -657,6 +662,38 @@ mod tests {
             drop(done);
         });
         assert_eq!(active.load(Ordering::SeqCst), 0);
+    }
+    /// Go's worker pool runs until its input ends whether or not anyone
+    /// tunes it: the local (non-DXF) ADD INDEX path keeps no tuner, and its
+    /// writers must still drain every chunk the readers produced.
+    #[test]
+    fn a_pool_without_a_tuner_drains_its_input() {
+        let (tx, rx) = crossbeam_channel::unbounded::<usize>();
+        let (start_tx, start_rx) = crossbeam_channel::bounded::<()>(0);
+        let seen = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let (rx, start_rx, seen) = (&rx, &start_rx, &seen);
+            let tuner = start_scoped_pool(scope, 4, move |_, quit| {
+                let _ = start_rx.recv();
+                loop {
+                    crossbeam_channel::select! {
+                        recv(quit) -> _ => break,
+                        recv(rx) -> item => match item {
+                            Ok(_) => { seen.fetch_add(1, Ordering::SeqCst); }
+                            Err(_) => break,
+                        },
+                    }
+                }
+            });
+            drop(tuner);
+            for i in 0..1000 {
+                tx.send(i).unwrap();
+            }
+            drop(tx);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            drop(start_tx);
+        });
+        assert_eq!(seen.load(Ordering::SeqCst), 1000);
     }
     /// Go `addindextest2.TestAlterJobOnDXF`: thread=8 tunes the live local
     /// pipeline to four readers and six writers, waiting for retired workers.
