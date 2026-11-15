@@ -186,8 +186,6 @@ use tidb_infoschema_issyncer::catalog_watch::InfoCache;
 use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot;
 use tidb_infoschema_isvalidator::SchemaValidator;
-#[cfg(test)]
-use tidb_ddl::cluster_ddl::DdlStatement;
 use tidb_executor::cluster_analyze::AnalyzeStatement;
 use tidb_stats_handle_storage::cluster_load_stats::prepare_cluster_load_stats_parsed;
 use tidb_executor_lockstats::{prepare_cluster_stats_lock_parsed, ClusterStatsLockStatement};

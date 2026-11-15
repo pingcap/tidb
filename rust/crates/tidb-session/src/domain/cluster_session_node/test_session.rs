@@ -63,11 +63,9 @@ impl DomainTestSessions for Domain {
         available: bool,
     ) -> Result<(), SqlQueryError> {
         self.ddl
-            .execute(
-                &tidb_ddl::cluster_ddl::DdlStatement::UpdateTiFlashReplicaStatus {
-                    table_id: physical_id,
-                    available,
-                },
+            .update_table_replica_info(
+                physical_id,
+                available,
                 &tidb_sessionctx::StmtContext::for_query(),
             )
             .map(drop)

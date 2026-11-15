@@ -487,14 +487,9 @@ fn an_explicit_transaction_does_not_lock_what_go_would_lock() {
 fn a_prepared_update_the_cached_executor_declines_binds_its_parameters() {
     use tidb_param::PreparedValue;
 
-    let (mut session, _node) = open_session();
-    session
-        .node_conn()
-        .execute_write(
-            "CREATE TABLE dist (w INT NOT NULL, d INT NOT NULL, \
-             ytd DECIMAL(10,2) NOT NULL DEFAULT 0, PRIMARY KEY (w, d))",
-        )
-        .expect("create");
+    let (mut session, _node) = open_session_with_tables(&[
+        "CREATE TABLE dist (w INT NOT NULL, d INT NOT NULL, ytd DECIMAL(10,2) NOT NULL DEFAULT 0, PRIMARY KEY (w, d))",
+    ]);
     session
         .node_conn()
         .execute_write("INSERT INTO dist (w, d, ytd) VALUES (1, 1, 100.00)")

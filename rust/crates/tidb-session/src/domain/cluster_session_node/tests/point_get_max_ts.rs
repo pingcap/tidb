@@ -73,13 +73,9 @@ fn seed(session: &mut Session) {
 fn cached_prepared_index_lookup_uses_one_timestamp() {
     use tidb_param::PreparedValue;
 
-    let (mut session, node) = open_session();
-    session
-        .node_conn()
-        .execute_write(
-            "CREATE TABLE indexed_read (id BIGINT PRIMARY KEY, a BIGINT, v BIGINT, INDEX ia(a))",
-        )
-        .unwrap();
+    let (mut session, node) = open_session_with_tables(&[
+        "CREATE TABLE indexed_read (id BIGINT PRIMARY KEY, a BIGINT, v BIGINT, INDEX ia(a))",
+    ]);
     session
         .node_conn()
         .execute_write("INSERT INTO indexed_read VALUES (1, 7, 10), (2, 7, 20), (3, 8, 30)")
@@ -906,11 +902,9 @@ fn a_double_reads_row_lookup_does_not_take_the_shortcut() {
 fn a_prepared_unique_index_point_get_does_not_take_the_shortcut() {
     use tidb_param::PreparedValue;
 
-    let (mut session, node) = open_session();
-    session
-        .node_conn()
-        .execute_write("CREATE TABLE u (id BIGINT PRIMARY KEY, uk BIGINT UNIQUE, v BIGINT)")
-        .expect("create");
+    let (mut session, node) = open_session_with_tables(&[
+        "CREATE TABLE u (id BIGINT PRIMARY KEY, uk BIGINT UNIQUE, v BIGINT)",
+    ]);
     session
         .node_conn()
         .execute_write("INSERT INTO u (id, uk, v) VALUES (1, 10, 100), (2, 20, 200)")

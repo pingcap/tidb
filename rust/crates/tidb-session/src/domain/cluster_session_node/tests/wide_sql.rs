@@ -241,7 +241,9 @@ fn wide_sql_runs_over_cluster_storage() {
 /// chunk column read.
 #[test]
 fn a_derived_aggregate_answers_its_output_over_cluster_storage() {
-    let (mut session, _) = open_session();
+    let (mut session, _) = open_session_with_tables(&[
+        "CREATE TABLE p33 (id BIGINT PRIMARY KEY, gg BIGINT, vv BIGINT)",
+    ]);
     session
         .node_conn()
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10), (2, 20), (3, 30)")
@@ -291,10 +293,6 @@ fn a_derived_aggregate_answers_its_output_over_cluster_storage() {
     // The live shape: a THREE-column table whose derived select prunes the
     // primary key away — the pruned cop scan must not shift the aggregate's
     // input columns.
-    session
-        .node_conn()
-        .execute_write("CREATE TABLE p33 (id BIGINT PRIMARY KEY, gg BIGINT, vv BIGINT)")
-        .expect("create");
     session
         .node_conn()
         .execute_write("INSERT INTO p33 VALUES (1,1,10),(2,1,20),(3,2,30),(4,2,40),(5,2,50)")

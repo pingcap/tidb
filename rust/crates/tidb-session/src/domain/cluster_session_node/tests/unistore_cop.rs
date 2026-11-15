@@ -50,6 +50,7 @@ mod upgrade;
 mod tiflash_partition;
 mod table_mode;
 mod repair_table;
+mod session_schema_changes;
 mod masking_policy;
 mod ddl_executor;
 mod create_with_info;

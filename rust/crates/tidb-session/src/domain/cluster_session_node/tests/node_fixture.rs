@@ -126,6 +126,11 @@ pub(super) fn named_value_column(
 /// shape, an `ENUM('N','Y')` privilege column beside a `SET` one, which is
 /// what a `SELECT ... FROM mysql.user` has to serve.
 pub(super) fn loaded_catalog() -> SessionExtendedInfoSchema {
+    loaded_catalog_with(Vec::new())
+}
+
+/// [`loaded_catalog`] whose `app` database also holds `extra`.
+pub(super) fn loaded_catalog_with(extra: Vec<TableInfo>) -> SessionExtendedInfoSchema {
     let acct = TableInfo {
         id: 104,
         name: CiString::new("acct"),
@@ -213,7 +218,7 @@ pub(super) fn loaded_catalog() -> SessionExtendedInfoSchema {
         vec![tidb_model::GoShared::new(DBInfo {
             id: 5,
             name: CiString::new("app"),
-            deprecated_tables: vec![t, g, pending, acct, hnd, ai].into(),
+            deprecated_tables: [t, g, pending, acct, hnd, ai].into_iter().chain(extra).collect::<Vec<_>>().into(),
             ..DBInfo::default()
         })],
         Vec::new(),
@@ -248,9 +253,9 @@ pub(super) fn scramble(password: &[u8], salt: &[u8]) -> [u8; 20] {
     response
 }
 
-/// One mock node: the committed rows, the published catalog, and the
-/// catalog writer, all shared by every connection opened on it -- which is
-/// what lets a test watch one connection's DDL reach another's.
+/// One mock node: the committed rows, the published catalog, and a DDL
+/// executor that refuses every DDL, all shared by every connection opened
+/// on it.
 pub(super) struct MockNode {
     pub(super) cluster: Arc<MockCluster>,
     pub(super) catalog: Arc<InfoCache>,
@@ -312,6 +317,37 @@ impl MockNode {
             auto_ids: Arc::default(),
         }
     }
+}
+
+/// One connection over a mock node whose `app` database also holds the
+/// tables `creates` define -- built by Go's `buildTableInfoWithStmt` and
+/// published as a `CREATE TABLE` job would: the fixture for a test whose
+/// subject is not the DDL itself.
+pub(super) fn open_session_with_tables(creates: &[&str]) -> (Session, MockNode) {
+    let tables = creates
+        .iter()
+        .enumerate()
+        .map(|(offset, sql)| {
+            let statement = tidb_parser::parse(sql).expect("fixture CREATE TABLE parses");
+            let tidb_ast::Stmt::Ddl(ddl) = statement else { panic!("not DDL: {sql}") };
+            let tidb_ast::DdlStmt::CreateTable(create) = &*ddl else { panic!("not CREATE TABLE: {sql}") };
+            let mut info = tidb_ddl_build::table_info_build::build_table_info_with_stmt(
+                create,
+                "app",
+                "utf8mb4",
+                "utf8mb4_bin",
+                &tidb_metabuild::Context::default(),
+                false,
+            )
+            .expect("fixture CREATE TABLE builds");
+            info.id = 300 + offset as i64;
+            info.state = SchemaState::PUBLIC;
+            info
+        })
+        .collect();
+    let node = MockNode::over(loaded_catalog_with(tables));
+    let session = open_session_on(&node);
+    (session, node)
 }
 
 /// One authenticated connection over a fresh mock node, plus the node the

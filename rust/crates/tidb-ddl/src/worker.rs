@@ -37,7 +37,7 @@ use tidb_store_driver_txn::transaction::StoreClient;
 use tidb_ddl_serverstate::{EtcdSyncer, MemSyncer, Syncer};
 use tidb_timeutil::SleepContext;
 use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadPass, InfoCache};
-use crate::cluster_ddl::{CheckConstraintValidation, DdlStatement, ExchangePartitionValidation};
+use crate::cluster_ddl::{CheckConstraintValidation, ExchangePartitionValidation};
 use tidb_ddl_build::plan_error::DdlPlanError;
 use crate::ddl_job_scheduler::{must_reload_schemas, SchemaLoader};
 use tidb_ddl_systable::ddl_job_table::DdlJobTable;
@@ -45,7 +45,7 @@ use tidb_ddl_systable::MinJobIdRefresher;
 use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_infoschema_issyncer::real_tikv_catalog::reload;
 use crate::real_tikv_ddl::{
-    answer_ddl_without_job, load_history_persisted_ddl_job, run_persisted_ddl_job,
+    load_history_persisted_ddl_job, run_persisted_ddl_job,
     CheckConstraintValidator, ClusterDdlReport,
     DdlSchemaSync, IndexBackfiller, PersistedDdlJobOutcome, SchemaVersionNotifier,
 };
@@ -471,24 +471,6 @@ pub trait ClusterDdl: Send + Sync {
             "statement has no DDL executor method",
         ))
     }
-
-    /// Compatibility entry for recorded DDL fixtures and mock adapters.
-    /// Serving SQL and internal jobs use the typed methods above.
-    ///
-    /// Publishes one admitted catalog change, then brings this node's own
-    /// catalog up to it before answering.
-    ///
-    /// The two halves are one method because a caller that published without
-    /// refreshing would answer the next statement from a catalog it knows to
-    /// be stale. `job_context` is what Go's submitter copies from the issuing
-    /// session into the job: the statement text (`Job.Query`), SQL mode and
-    /// `tidb_cdc_write_source`, which exempts a change TiCDC replicates from
-    /// the BDR submit admission.
-    fn execute(
-        &self,
-        statement: &DdlStatement,
-        job_context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
-    ) -> Result<ClusterDdlReport, SqlQueryError>;
 
     /// Go `do.DDL().OwnerManager().IsOwner()`: whether this node owns the DDL
     /// job queue right now.
@@ -3850,226 +3832,6 @@ where
             .store()
             .get_tiflash_store_count()
             .map_err(SqlQueryError::unknown)
-    }
-
-    fn execute(
-        &self,
-        statement: &DdlStatement,
-        job_context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
-    ) -> Result<ClusterDdlReport, SqlQueryError> {
-        self.execute_targets(statement, job_context, &[])
-    }
-}
-
-impl<S> RealClusterDdl<S>
-where
-    S: StoreClient,
-{
-    /// [`ClusterDdl::execute`] for one target of a statement naming
-    /// `targets` (Go's `DropTableArgs.Identifiers`: every table the DROP
-    /// names, which the owner's foreign-key check ignores).
-    fn execute_targets(
-        &self,
-        statement: &DdlStatement,
-        job_context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
-        targets: &[(String, String)],
-    ) -> Result<ClusterDdlReport, SqlQueryError> {
-        // Go `dropTableObject`: each target is its own job, a missing name is
-        // collected and reported once the list ends.
-        #[derive(Clone, Copy, PartialEq)]
-        enum DropObject {
-            Table,
-            View,
-            Sequence,
-        }
-        let drop_list = match statement {
-            DdlStatement::DropTables { names, if_exists } => {
-                Some((names, *if_exists, DropObject::Table))
-            }
-            DdlStatement::DropView { names, if_exists } if names.len() != 1 => {
-                Some((names, *if_exists, DropObject::View))
-            }
-            DdlStatement::DropSequences { names, if_exists } => {
-                Some((names, *if_exists, DropObject::Sequence))
-            }
-            _ => None,
-        };
-        if let Some((names, if_exists, object)) = drop_list {
-            use tidb_ddl_build::table_lifecycle::{drop_objects, DropObjectsError};
-            let mut last = ClusterDdlReport::AlreadySatisfied {
-                detail: "no existing DROP targets".into(),
-                warnings: Vec::new(),
-            };
-            let mut notes = Vec::new();
-            // Go `dropTableObject`'s `dropExistErr`.
-            let missing_error: &tidb_terror::TerrorError = if object == DropObject::Sequence {
-                &tidb_infoschema::infoschema_errors::ERR_SEQUENCE_DROP_EXISTS
-            } else {
-                &tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
-            };
-            let missing_raised =
-                |names: &str| missing_error.gen_with_stack_by_args(&[names.into()]);
-            let missing = drop_objects(names, if_exists, |schema, name| {
-                let target = match object {
-                    DropObject::View => DdlStatement::DropView {
-                        names: vec![(schema.to_owned(), name.to_owned())],
-                        if_exists: false,
-                    },
-                    DropObject::Table => DdlStatement::DropTable {
-                        schema: schema.to_owned(),
-                        table: name.to_owned(),
-                        if_exists: false,
-                    },
-                    DropObject::Sequence => DdlStatement::DropSequence {
-                        schema: schema.to_owned(),
-                        name: name.to_owned(),
-                    },
-                };
-                let statement_targets: &[(String, String)] = if object == DropObject::Table {
-                    names
-                } else {
-                    &[]
-                };
-                match self.execute_targets(&target, job_context, statement_targets) {
-                    Ok(report) => {
-                        last = report;
-                        Ok(true)
-                    }
-                    Err(error) if error.code == missing_error.to_sql_error().code => Ok(false),
-                    // Go: a target that is not a sequence is a note under
-                    // IF EXISTS, and the list goes on.
-                    Err(error)
-                        if object == DropObject::Sequence
-                            && if_exists
-                            && error.code == tidb_mysql::errors::errcode::ErrWrongObject =>
-                    {
-                        notes.push(tidb_context::SqlWarn::from_error(
-                            tidb_context::WarningLevel::Note,
-                            error.code,
-                            error.message,
-                            error.identity,
-                        ));
-                        Ok(true)
-                    }
-                    Err(error) => Err(error),
-                }
-            })
-            .map_err(|error| match error {
-                DropObjectsError::Target(error) => error,
-                DropObjectsError::Missing(names) => SqlQueryError::from(
-                    tidb_terror::MysqlError::from_terror(&missing_raised(&names.join(","))),
-                ),
-            })?;
-            let (ClusterDdlReport::Applied { warnings, .. }
-            | ClusterDdlReport::AlreadySatisfied { warnings, .. }) = &mut last;
-            warnings.extend(notes);
-            // The same error, appended as a note for each name IF EXISTS skipped.
-            warnings.extend(
-                missing
-                    .into_iter()
-                    .map(|name| crate::real_tikv_ddl::ddl_note(missing_raised(&name))),
-            );
-            return Ok(last);
-        }
-        let single_view =
-            matches!(statement, DdlStatement::DropView { names, .. } if names.len() == 1);
-        if single_view
-            || matches!(
-                statement,
-                DdlStatement::CreateIndex { .. }
-                    | DdlStatement::DropIndex { .. }
-                    | DdlStatement::DropPrimaryKey { .. }
-                    | DdlStatement::DropTable { .. }
-                    | DdlStatement::DropSequence { .. }
-                    | DdlStatement::DropDatabase { .. }
-                    | DdlStatement::TruncateTable { .. }
-                    | DdlStatement::RecoverTable { .. }
-                    | DdlStatement::FlashbackDatabase { .. }
-                    | DdlStatement::CreateTable { .. }
-                    | DdlStatement::AddColumn { .. }
-                    | DdlStatement::DropColumn { .. }
-                    | DdlStatement::CreateDatabase { .. }
-                    | DdlStatement::RenameTable { .. }
-                    | DdlStatement::RenameTables { .. }
-                    | DdlStatement::ModifyColumn { .. }
-                    | DdlStatement::RenameColumn { .. }
-                    | DdlStatement::MultiSchemaChange { .. }
-                    | DdlStatement::AddForeignKey { .. }
-                    | DdlStatement::CreateView { .. }
-                    | DdlStatement::CreateSequence { .. }
-                    | DdlStatement::CreateTableLike { .. }
-                    | DdlStatement::AlterSequence { .. }
-                    | DdlStatement::ModifySchemaCharsetAndCollate { .. }
-                    | DdlStatement::ModifySchemaDefaultPlacement { .. }
-                    | DdlStatement::CreatePlacementPolicy { .. }
-                    | DdlStatement::AlterPlacementPolicy { .. }
-                    | DdlStatement::DropPlacementPolicy { .. }
-                    | DdlStatement::CreateResourceGroup { .. }
-                    | DdlStatement::AlterResourceGroup { .. }
-                    | DdlStatement::DropResourceGroup { .. }
-                    | DdlStatement::CreateMaskingPolicy { .. }
-                    | DdlStatement::AlterMaskingPolicy { .. }
-                    | DdlStatement::DropMaskingPolicy { .. }
-                    | DdlStatement::LockTables { .. }
-                    | DdlStatement::UnlockTables { .. }
-                    | DdlStatement::AlterTableMode { .. }
-                    | DdlStatement::RefreshMeta { .. }
-                    | DdlStatement::FlashbackCluster { .. }
-                    | DdlStatement::RepairTable { .. }
-                    | DdlStatement::AddPartitions { .. }
-                    | DdlStatement::DropPartitions { .. }
-                    | DdlStatement::TruncatePartitions { .. }
-                    | DdlStatement::ExchangePartition { .. }
-                    | DdlStatement::ReorganizePartitions { .. }
-                    | DdlStatement::AddCheckConstraint { .. }
-                    | DdlStatement::DropCheckConstraint { .. }
-                    | DdlStatement::AlterCheckConstraint { .. }
-            )
-            || crate::cluster_ddl::alter_table::is_alter_table_statement(statement)
-        {
-            use crate::cluster_ddl::add_index::AddIndexSubmission;
-            return match crate::real_tikv_ddl::build_ddl_job(
-                Arc::clone(&self.opener),
-                statement,
-                job_context,
-                targets,
-                self.timeout,
-                self.server_state.is_upgrading_state(),
-                self.scheduler.session_pool.as_ref(),
-                self.min_job_id_refresher.get_curr_min_job_id(),
-                &KvTableIndexBackfiller::new(&self.scheduler.row_ids, &self.scheduler.session_pool)
-                    .with_region_store(self.scheduler.region_store.get().cloned())
-                    .with_start_mode(self.scheduler.start_mode),
-                self.auto_ids.as_ref(),
-            )
-            .map_err(cluster_ddl_error)?
-            {
-                AddIndexSubmission::AlreadySatisfied { detail, warnings } => {
-                    Ok(ClusterDdlReport::AlreadySatisfied { detail, warnings })
-                }
-                AddIndexSubmission::Job(spec, executor_warnings) => {
-                    let mut report = self.deliver_job_and_wait(job_context, *spec)?;
-                    if let DdlStatement::RepairTable { schema, table, .. } = statement {
-                        // Go `RepairTable`: remove the old TableInfo from
-                        // repairInfo before domain reload.
-                        tidb_domainutil::REPAIR_INFO.remove_from_repair_info(
-                            tidb_ast::CiString::new(schema.clone()).lowercase(),
-                            tidb_ast::CiString::new(table.clone()).lowercase(),
-                        );
-                    }
-                    // The executor's warnings precede the job's.
-                    let (ClusterDdlReport::Applied { warnings, .. }
-                    | ClusterDdlReport::AlreadySatisfied { warnings, .. }) = &mut report;
-                    let job_warnings = std::mem::take(warnings);
-                    *warnings = executor_warnings;
-                    warnings.extend(job_warnings);
-                    Ok(report)
-                }
-            };
-        }
-        // A statement Go's executor finishes without a job.
-        answer_ddl_without_job(Arc::clone(&self.opener), statement, self.timeout)
-            .map_err(cluster_ddl_error)
     }
 }
 

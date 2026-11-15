@@ -139,33 +139,6 @@ fn set_password_and_set_default_role_leave_the_transaction_open() {
     assert_eq!(count(&mut peer, "cp_pw"), "0");
 }
 
-/// Go refuses CHECK PARTITION and the STATS_PERSISTENT option inside
-/// `executor.AlterTable`'s spec walk (`ddl/executor.go:1767`, `:1952`),
-/// after `DDLExec.Next`'s `NewTxnInStmt` (`executor/ddl.go:151`) committed
-/// the user's transaction.
-#[test]
-fn an_executor_time_alter_refusal_commits_the_open_transaction_first() {
-    let (mut session, node) = open_session();
-    for (id, sql, message) in [
-        (1, "ALTER TABLE t CHECK PARTITION p0", "Unsupported check partition"),
-        (
-            2,
-            "ALTER TABLE t STATS_PERSISTENT = DEFAULT",
-            "This type of ALTER TABLE is currently unsupported",
-        ),
-    ] {
-        session.node_conn().control_transaction("BEGIN").unwrap();
-        session
-            .node_conn()
-            .execute_write(&format!("INSERT INTO t (id, v) VALUES ({id}, 10)"))
-            .unwrap();
-        let refused = session.node_conn().execute_write(sql).unwrap_err();
-        assert_eq!((refused.code, refused.message.as_str()), (8200, message));
-        assert_eq!(node.rows(), id, "{sql} commits the transaction first");
-        assert!(!session.in_transaction(), "{sql}");
-    }
-}
-
 /// Go `DDLExec.Next` commits the open transaction with `NewTxnInStmt`
 /// (`executor/ddl.go:151`) before the job, and a commit whose verdict was
 /// lost is the statement's error: the connection closes without a packet and
@@ -185,10 +158,7 @@ fn an_undetermined_implicit_commit_is_connection_fatal_and_runs_no_job() {
         .execute_write("CREATE TABLE after_lost (id BIGINT PRIMARY KEY)")
         .unwrap_err();
     assert_undetermined_closes_without_packet(&error);
-    assert_eq!(
-        node.ddl.applied.load(std::sync::atomic::Ordering::Acquire),
-        0
-    );
+    assert_eq!(node.catalog.get_latest().schema_meta_version(), 11);
 }
 
 /// Restores the process-wide REPAIR MODE flag a test switched on.
