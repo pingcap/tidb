@@ -4,6 +4,7 @@
 
 use super::{vec_eval, ScalarFunction};
 mod date_arithmetic;
+mod week;
 use crate::{Columns, EvalError};
 use tidb_chunk::{chunk::Chunk, column::Column};
 use tidb_datatype::{Datum, EvalType};
@@ -118,6 +119,9 @@ pub(super) fn eval(
     if let super::Kernel::DateArithmetic { subtract } = function.pb_builtin.kernel {
         return date_arithmetic::eval(function, subtract, ctx, input, result);
     }
+    if week::supported(function) {
+        return week::eval(function, ctx, input, result);
+    }
     if matches!(sig, CurrentTime1Arg | UtcTimeWithArg) {
         return clock_duration(function, ctx, input, result);
     }
@@ -192,6 +196,9 @@ pub(super) fn eval(
         }
         // Go `builtin{Add,Sub}*Sig.vecEval*`: their own string parsing, not
         // the row form's (`add_sub_time`'s `row_path`).
+        if matches!(sig, StrToDateDate | StrToDateDatetime | StrToDateDuration) {
+            return super::pb_builtin::str_to_date_of(function, &values, false, ctx);
+        }
         if let Some(sign) = crate::time_fn::add_sub::sign_of_signature(sig) {
             return super::pb_builtin::add_sub_time_of(function, &values, sign, false, ctx);
         }

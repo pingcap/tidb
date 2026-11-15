@@ -1461,6 +1461,18 @@ struct ParsedDateTime {
 /// relaxed mode, and answered `0000-05-01` for `str_to_date('01,5','%d,%m')`
 /// where the default mode's TiDB answers NULL.
 pub(crate) fn str_to_date(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    str_to_date_with(vals, true, cols)
+}
+
+/// [`str_to_date`] for Go's row form (`row_form`, `builtinStrToDate*Sig.eval*`)
+/// or its vector form (`vecEval*`), which differ in one place: the DATE
+/// signature's `NO_ZERO_DATE` rejection names the input text (1411) in the
+/// row form and the parsed time (1292) in the vector form.
+pub(crate) fn str_to_date_with(
+    vals: &[Datum],
+    row_form: bool,
+    cols: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
     if vals.len() != 2 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -1470,7 +1482,7 @@ pub(crate) fn str_to_date(vals: &[Datum], cols: &dyn crate::Columns) -> Result<D
     if matches!(vals[0], Datum::Null) || matches!(vals[1], Datum::Null) {
         return Ok(Datum::Null);
     }
-    let result = str_to_date_inner(vals, cols)?;
+    let result = str_to_date_inner(vals, row_form, cols)?;
     // Every failure goes through Go's `handleInvalidTimeError`: an error
     // under a strict write's truncate level, a warning otherwise.
     match result {
@@ -1529,7 +1541,11 @@ fn handle_invalid_time(cols: &dyn Columns, code: u16, message: String) -> Result
     }
 }
 
-fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum, EvalError> {
+fn str_to_date_inner(
+    vals: &[Datum],
+    row_form: bool,
+    cols: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
     let (Some(date), Some(format)) = (coerce_str(&vals[0])?, coerce_str(&vals[1])?) else {
         return Ok(Datum::Null);
     };
@@ -1805,10 +1821,10 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
         return Ok(Datum::Bytes(datetime.into_bytes()));
     }
     // The signatures' own `NO_ZERO_DATE` rejection, as sentinels the wrapper
-    // reports: empty bytes for the DATE signature (1411 naming the input),
-    // the parsed time for the DATETIME one (1292 naming it).
+    // reports: empty bytes for the DATE signature's row form (1411 naming the
+    // input), the parsed time otherwise (1292 naming it).
     if modes.no_zero_date && (value.year == 0 || value.month == 0 || value.day == 0) {
-        return Ok(Datum::Bytes(if is_date && !is_duration {
+        return Ok(Datum::Bytes(if is_date && !is_duration && row_form {
             Vec::new()
         } else {
             datetime.into_bytes()

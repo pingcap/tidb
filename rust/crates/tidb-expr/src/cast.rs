@@ -783,6 +783,20 @@ pub(crate) fn cast_to_duration(
     ctx: &dyn crate::Columns,
     fsp: i64,
 ) -> Result<Datum, EvalError> {
+    cast_to_duration_in(v, source, ctx, fsp, false)
+}
+
+/// [`cast_to_duration`] as Go's `builtinCast*AsDurationSig` runs it: a JSON
+/// value of no temporal or string kind warns naming `TypeStr(TypeDuration)`
+/// ("time") in `builtinCastJSONAsDurationSig.vecEvalDuration`
+/// (`vectorized`) and "TIME" in its `evalDuration`.
+pub(crate) fn cast_to_duration_in(
+    v: &Datum,
+    source: Option<&tidb_datatype::FieldType>,
+    ctx: &dyn crate::Columns,
+    fsp: i64,
+    vectorized: bool,
+) -> Result<Datum, EvalError> {
     let input = v.sql_string().unwrap_or_else(|_| "<binary>".to_owned());
     let target = FieldType::new(FieldTypeCode::Duration).with_decimal(fsp);
     let source_eval_type = source.map(FieldType::eval_type);
@@ -827,7 +841,8 @@ pub(crate) fn cast_to_duration(
             }
             _ => {
                 crate::expression_errors::handle_truncate(ctx, &format!(
-                    "Truncated incorrect TIME value: '{}'",
+                    "Truncated incorrect {} value: '{}'",
+                    if vectorized { "time" } else { "TIME" },
                     tidb_datatype::warning_subject_byte_cap(&input)
                 ))?;
                 return Ok(Datum::Null);
@@ -1613,7 +1628,22 @@ pub(crate) fn cast_to_time(
     kind: tidb_datatype::TimeType,
     fsp: i64,
 ) -> Result<Datum, EvalError> {
-    let Some(time) = cast_to_time_value(v, source, ctx, kind, Some(fsp))? else {
+    cast_to_time_in(v, source, ctx, kind, fsp, true)
+}
+
+/// [`cast_to_time`] as Go's `builtinCastStringAsTimeSig` runs it: its
+/// `vecEvalTime` (`vectorized`) reports a `strconv` failure inside `ParseTime`
+/// as `ErrIncorrectDatetimeValue` naming the text, a warning in a read; its
+/// `evalTime` returns that failure as is (1105).
+pub(crate) fn cast_to_time_in(
+    v: &Datum,
+    source: Option<&tidb_datatype::FieldType>,
+    ctx: &dyn crate::Columns,
+    kind: tidb_datatype::TimeType,
+    fsp: i64,
+    vectorized: bool,
+) -> Result<Datum, EvalError> {
+    let Some(time) = cast_to_time_value_in(v, source, ctx, kind, Some(fsp), vectorized)? else {
         return Ok(Datum::Null);
     };
     Ok(Datum::Time(time))
@@ -1650,6 +1680,18 @@ fn cast_to_time_value(
     ctx: &dyn crate::Columns,
     kind: tidb_datatype::TimeType,
     fsp: Option<i64>,
+) -> Result<Option<tidb_datatype::Time>, EvalError> {
+    cast_to_time_value_in(v, source, ctx, kind, fsp, true)
+}
+
+/// [`cast_to_time_value`] with [`cast_to_time_in`]'s `vectorized`.
+fn cast_to_time_value_in(
+    v: &Datum,
+    source: Option<&tidb_datatype::FieldType>,
+    ctx: &dyn crate::Columns,
+    kind: tidb_datatype::TimeType,
+    fsp: Option<i64>,
+    vectorized: bool,
 ) -> Result<Option<tidb_datatype::Time>, EvalError> {
     let json_string;
     let is_json_string =
@@ -1807,8 +1849,14 @@ fn cast_to_time_value(
     let parsed = parse_time_by_source(v, &s, kind, fsp, ctx.type_flags(), &ctx.time_zone());
     let (time, truncated, dst_adjusted) = match parsed {
         Ok(parsed) => parsed,
-        // Go `builtinCastStringAsTimeSig.vecEvalTime`: a `ParseTime` failure
-        // inside strconv is `ErrIncorrectDatetimeValue` with the raw text.
+        // Go `builtinCastStringAsTimeSig.evalTime`: a `ParseTime` failure
+        // inside strconv is returned as is.
+        Err(Some(tidb_datatype::TimeError::Syntax(message)))
+            if !vectorized && matches!(v, Datum::String(_) | Datum::Bytes(_)) =>
+        {
+            return Err(EvalError::Raw(message));
+        }
+        // Its `vecEvalTime`: `ErrIncorrectDatetimeValue` with the raw text.
         Err(Some(tidb_datatype::TimeError::Syntax(_)))
             if matches!(v, Datum::String(_) | Datum::Bytes(_)) =>
         {

@@ -67,7 +67,7 @@ pub(super) fn eval(
                 super::cast_string_as_decimal(&bytes, field, ctx, true)?
             }
         } else {
-            function.pb_builtin.cast_value(function, value, ctx)?
+            function.pb_builtin.cast_value_in(function, value, true, ctx)?
         };
         vec_eval::put(result, i, target, &value)?;
     }

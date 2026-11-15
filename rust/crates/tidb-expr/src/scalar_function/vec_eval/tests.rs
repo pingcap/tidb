@@ -1746,3 +1746,182 @@ fn greatest_string_vector_kernel_answers_the_later_of_equal_arguments() {
         Datum::new_string_datum("a")
     );
 }
+
+fn datetime_field() -> FieldType {
+    let mut field = FieldType::new(FieldTypeCode::Datetime);
+    field.set_decimal(0);
+    field
+}
+
+/// A DATETIME with a zero month, which `ALLOW_INVALID_DATES`-free reads keep
+/// (Go `IgnoreZeroInDate`).
+fn zero_month_datetime() -> Datum {
+    Datum::Time(
+        tidb_datatype::Time::new(
+            tidb_datatype::CoreTime::from_date(2020, 0, 10, 0, 0, 0, 0),
+            tidb_datatype::TimeType::DateTime,
+            0,
+        )
+        .unwrap(),
+    )
+}
+
+/// Go `builtin{WeekDay,WeekWithMode,YearWeekWithMode,WeekOfYear}Sig.vecEvalInt`
+/// reject only a zero date: a zero-month date computes on (`Weekday`
+/// normalizing 2020-00-10 to 2019-12-10, a Tuesday; `Week` answering 0),
+/// where the row forms warn and answer NULL.
+#[test]
+fn week_vector_kernels_compute_on_an_invalid_zero_date() {
+    let int = FieldType::new(FieldTypeCode::LongLong);
+    let date = zero_month_datetime();
+    for (name, fields, row, vector) in [
+        ("weekday", vec![datetime_field()], vec![date.clone()], Datum::Int(1)),
+        ("weekofyear", vec![datetime_field()], vec![date.clone()], Datum::Int(0)),
+        ("week", vec![datetime_field(), int.clone()], vec![date.clone(), Datum::Int(0)], Datum::Int(0)),
+    ] {
+        let (expression, cells) = vec_cells(name, &fields, &[row.clone()]);
+        assert_eq!(cells[0], vector, "{name} vector");
+        let mut chunk = Chunk::new_chunk_with_capacity(&fields, 1);
+        for (j, value) in row.iter().enumerate() {
+            chunk.append_datum(j, value);
+        }
+        assert_eq!(
+            expression.eval(&NoColumns, chunk.get_row(0)).unwrap(),
+            Datum::Null,
+            "{name} row"
+        );
+    }
+}
+
+/// Go `builtinStrToDateDateSig`: under `NO_ZERO_DATE` a zero component is
+/// rejected naming the INPUT (1411, `ErrWrongValueForType`) in `evalTime` but
+/// naming the parsed TIME (1292, `ErrWrongValue`) in `vecEvalTime`.
+#[test]
+fn str_to_date_vector_kernel_names_the_parsed_time() {
+    struct Warnings(std::cell::RefCell<Vec<(u16, String)>>);
+    impl crate::Columns for Warnings {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+        fn append_warning(&self, code: u16, message: &str) {
+            self.0.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+    let expression = crate::new_function::new_function_base(
+        &NoColumns,
+        "str_to_date",
+        FieldType::new(FieldTypeCode::LongLong),
+        vec![
+            column(0, &text_field()),
+            Expression::Constant(crate::constant::Constant::new(Datum::new_string_datum("%Y"), text_field())),
+        ],
+    )
+    .unwrap();
+    let Expression::ScalarFunction(function) = &expression else {
+        panic!("unfolded signature");
+    };
+    assert_eq!(function.pb_code(), tidb_proto::tipb::ScalarFuncSig::StrToDateDate);
+    let field = expression.static_type().unwrap().clone();
+    let mut input = Chunk::new_chunk_with_capacity(&[text_field()], 1);
+    input.append_datum(0, &Datum::new_string_datum("2020"));
+
+    let vector = Warnings(Default::default());
+    let mut result = Column::default();
+    eval_into(&expression, field.eval_type(), &vector, &input, &mut result).unwrap();
+    assert!(result.is_null(0));
+    assert_eq!(
+        *vector.0.borrow(),
+        [(1292, "Incorrect datetime value: '2020-00-00 00:00:00'".to_owned())]
+    );
+
+    let row = Warnings(Default::default());
+    assert_eq!(expression.eval(&row, input.get_row(0)).unwrap(), Datum::Null);
+    assert_eq!(
+        *row.0.borrow(),
+        [(1411, "Incorrect datetime value: '2020' for function str_to_date".to_owned())]
+    );
+}
+
+/// Go `builtinCastStringAsTimeSig`: a `strconv` failure inside `ParseTime`
+/// ('2020-01-0a') is `ErrIncorrectDatetimeValue` (8034), a warning, in
+/// `vecEvalTime` but the raw strconv error (1105) in `evalTime` (testkit
+/// probe with `tidb_enable_vectorized_expression` on and off).
+#[test]
+fn cast_string_as_time_vector_kernel_warns_where_the_row_form_fails() {
+    struct Warnings(std::cell::RefCell<Vec<(u16, String)>>);
+    impl crate::Columns for Warnings {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+        fn append_warning(&self, code: u16, message: &str) {
+            self.0.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+    let target = datetime_field();
+    let expression = crate::builtin_cast::build_cast_function_with_check(
+        &crate::builtin::ColumnsBuildContext(&NoColumns),
+        column(0, &text_field()),
+        target.clone(),
+        false,
+        false,
+    )
+    .unwrap();
+    let mut input = Chunk::new_chunk_with_capacity(&[text_field()], 1);
+    input.append_datum(0, &Datum::new_string_datum("2020-01-0a"));
+
+    let vector = Warnings(Default::default());
+    let mut result = Column::default();
+    eval_into(&expression, EvalType::Datetime, &vector, &input, &mut result).unwrap();
+    assert!(result.is_null(0));
+    assert_eq!(
+        *vector.0.borrow(),
+        [(8034, "Incorrect datetime value: '2020-01-0a'".to_owned())]
+    );
+
+    let row = Warnings(Default::default());
+    assert_eq!(
+        expression.eval(&row, input.get_row(0)),
+        Err(EvalError::Raw("strconv.Atoi: parsing \"0a\": invalid syntax".to_owned()))
+    );
+    assert!(row.0.borrow().is_empty());
+}
+
+/// Go `builtinCastJSONAsDurationSig`: a JSON value of no temporal or string
+/// kind warns `Truncated incorrect time value` (`TypeStr(TypeDuration)`) in
+/// `vecEvalDuration` and `Truncated incorrect TIME value` in `evalDuration`.
+#[test]
+fn cast_json_as_duration_vector_kernel_names_the_type_in_lowercase() {
+    struct Warnings(std::cell::RefCell<Vec<(u16, String)>>);
+    impl crate::Columns for Warnings {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+        fn append_warning(&self, code: u16, message: &str) {
+            self.0.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+    let json = FieldType::new(FieldTypeCode::Json);
+    let mut target = FieldType::new(FieldTypeCode::Duration);
+    target.set_decimal(0);
+    let expression = crate::builtin_cast::build_cast_function_with_check(
+        &crate::builtin::ColumnsBuildContext(&NoColumns),
+        column(0, &json),
+        target,
+        false,
+        false,
+    )
+    .unwrap();
+    let mut input = Chunk::new_chunk_with_capacity(&[json], 1);
+    input.append_datum(0, &Datum::Json(tidb_datatype::BinaryJSON::parse("[1]").unwrap()));
+
+    let vector = Warnings(Default::default());
+    let mut result = Column::default();
+    eval_into(&expression, EvalType::Duration, &vector, &input, &mut result).unwrap();
+    assert!(result.is_null(0));
+    let messages = |w: &Warnings| w.0.borrow().iter().map(|(_, m)| m.clone()).collect::<Vec<_>>();
+    assert_eq!(messages(&vector), ["Truncated incorrect time value: '[1]'"]);
+
+    let row = Warnings(Default::default());
+    assert_eq!(expression.eval(&row, input.get_row(0)).unwrap(), Datum::Null);
+    assert_eq!(messages(&row), ["Truncated incorrect TIME value: '[1]'"]);
+}

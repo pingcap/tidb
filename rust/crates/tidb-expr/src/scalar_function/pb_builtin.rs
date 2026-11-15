@@ -269,7 +269,18 @@ fn sec_to_time_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Col
 /// `builtinStrToDateDurationSig`: a time-only parse under the datetime
 /// signature is the zero date with that time, which NO_ZERO_DATE refuses.
 fn str_to_date_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    let mut result = crate::time_fn::calendar::str_to_date(values, ctx)?;
+    str_to_date_of(function, values, true, ctx)
+}
+
+/// Go `builtinStrToDate{Date,Datetime,Duration}Sig`'s row form (`row_form`)
+/// or vector form; see [`crate::time_fn::calendar::str_to_date_with`].
+pub(super) fn str_to_date_of(
+    function: &ScalarFunction,
+    values: &[Datum],
+    row_form: bool,
+    ctx: &dyn Columns,
+) -> Result<Datum, EvalError> {
+    let mut result = crate::time_fn::calendar::str_to_date_with(values, row_form, ctx)?;
     if function.pb_code() == ScalarFuncSig::StrToDateDatetime {
         if let Ok(text) = result.sql_string() {
             if text.contains(':') && !text.contains('-') {
@@ -1424,6 +1435,18 @@ impl PbBuiltin {
 
     /// Go `builtinCast*Sig`: the conversion shared by scalar and vector kernels.
     pub(super) fn cast_value(self, function: &ScalarFunction, value: Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
+        self.cast_value_in(function, value, false, ctx)
+    }
+
+    /// [`Self::cast_value`] as Go's `builtinCast*Sig.evalX` (`!vectorized`) or
+    /// `vecEvalX` (`vectorized`) converts one value.
+    pub(super) fn cast_value_in(
+        self,
+        function: &ScalarFunction,
+        value: Datum,
+        vectorized: bool,
+        ctx: &dyn Columns,
+    ) -> Result<Datum, EvalError> {
         let Kernel::Cast { source, target, in_union } = self.kernel else { unreachable!() };
         let args = &function.args;
                 if value.is_null() {
@@ -1466,10 +1489,10 @@ impl PbBuiltin {
                             tidb_datatype::FieldTypeCode::Date => (tidb_datatype::TimeType::Date, 0),
                             _ => (tidb_datatype::TimeType::DateTime, fsp),
                         };
-                        crate::cast::cast_to_time(&value, args[0].static_type(), ctx, tp, fsp)
+                        crate::cast::cast_to_time_in(&value, args[0].static_type(), ctx, tp, fsp, vectorized)
                     }
                     EvalType::Duration => {
-                        crate::cast::cast_to_duration(&value, args[0].static_type(), ctx, fsp)
+                        crate::cast::cast_to_duration_in(&value, args[0].static_type(), ctx, fsp, vectorized)
                     }
                     EvalType::VectorFloat32 => crate::cast::cast_as_vector_float32(value, field),
                     _ => Err(EvalError::Unsupported("protobuf cast target")),
