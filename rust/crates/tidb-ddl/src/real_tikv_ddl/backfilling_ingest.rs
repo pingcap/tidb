@@ -301,6 +301,10 @@ pub(super) fn execute_and_close_pipeline<S: StoreClient>(
         let error = &error;
         let collected_warnings = &collected_warnings;
         let readers = start_scoped_pool(scope, reader_cnt, move |_, quit| {
+            // Go `tableScanWorker.se`: each reader scans on a pooled internal
+            // session (`sessPool.Get`), so the session manager lists its
+            // snapshot among the internal sessions' start timestamps.
+            let mut se = backfiller.session_pool().and_then(|pool| pool.open_sql_session().ok());
             loop {
                 let task = crossbeam_channel::select! {
                     recv(quit) -> _ => break,
@@ -317,6 +321,7 @@ pub(super) fn execute_and_close_pipeline<S: StoreClient>(
                     scan_records(
                         opener,
                         timeout,
+                        &mut se,
                         backfiller,
                         reorg,
                         physical_id,
@@ -548,6 +553,7 @@ pub(super) fn execute_and_close_pipeline<S: StoreClient>(
 fn scan_records<S: StoreClient>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
+    se: &mut Option<Box<dyn tidb_ddl_build::session_pool::StepSqlSession>>,
     backfiller: &dyn IndexBackfiller,
     reorg: &AddIndexReorg,
     physical_id: i64,
@@ -557,10 +563,54 @@ fn scan_records<S: StoreClient>(
     check_owner: &(dyn Fn() -> Result<(), String> + Sync),
     step_cancelled: &AtomicBool,
 ) -> Result<Vec<IngestBatch>, PipelineError> {
-    reorg_transaction(
+    // Go `wrapInBeginRollback(w.se, ...)`: the scan reads at the start
+    // timestamp of a transaction the pooled session opens and rolls back.
+    let mut start_ts = match se.as_deref_mut() {
+        Some(se) => {
+            se.begin().map_err(|error| PipelineError::Sql(LockSqlError::from(error)))?;
+            match se.txn_start_ts() {
+                Ok(start_ts) => Some(start_ts),
+                Err(error) => {
+                    se.rollback();
+                    return Err(PipelineError::Sql(LockSqlError::from(error)));
+                }
+            }
+        }
+        None => None,
+    };
+    if let Some(start_ts) = start_ts.as_mut() {
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackStartTS", start_ts);
+    }
+    let result = scan_records_at(
+        opener, timeout, start_ts, backfiller, reorg, physical_id, task, bc, reorg_meta, check_owner, step_cancelled,
+    );
+    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackAfterFn", &mut ());
+    if let Some(se) = se.as_deref_mut() {
+        se.rollback();
+    }
+    result
+}
+
+/// The scan of [`scan_records`] at `start_ts` (the session's, when it has one).
+#[allow(clippy::too_many_arguments)]
+fn scan_records_at<S: StoreClient>(
+    opener: &Arc<RealOptimisticTransactionOpener<S>>,
+    timeout: Duration,
+    start_ts: Option<u64>,
+    backfiller: &dyn IndexBackfiller,
+    reorg: &AddIndexReorg,
+    physical_id: i64,
+    task: &TableScanTask,
+    bc: &dyn BackendCtx,
+    reorg_meta: Option<&tidb_model::GoShared<tidb_model::DDLReorgMeta>>,
+    check_owner: &(dyn Fn() -> Result<(), String> + Sync),
+    step_cancelled: &AtomicBool,
+) -> Result<Vec<IngestBatch>, PipelineError> {
+    super::reorg_transaction_at(
         opener,
         timeout,
         &crate::job_ctx::backfill_request_source(reorg.job_id),
+        start_ts,
         |_, snapshot, buffer, _| {
             let result = (|| {
                 if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockScanRecordError")

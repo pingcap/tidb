@@ -188,6 +188,27 @@ pub(super) fn reorg_transaction<S, T>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
     source: &tidb_txnkv::RequestSource,
+    work: impl FnMut(
+        &mut SnapshotMetaSnapshot,
+        Arc<Mutex<dyn ClusterSnapshot>>,
+        &MutationBuffer,
+        u64,
+    ) -> Result<(T, Vec<BufferMutation>), ClusterDdlError>,
+) -> Result<T, ClusterDdlError>
+where
+    S: StoreClient,
+{
+    reorg_transaction_at(opener, timeout, source, None, work)
+}
+
+/// [`reorg_transaction`] reading at `start_ts` when given: the start
+/// timestamp of a transaction a pooled session opened (Go
+/// `wrapInBeginRollback`'s `txn.StartTS()`).
+pub(super) fn reorg_transaction_at<S, T>(
+    opener: &Arc<RealOptimisticTransactionOpener<S>>,
+    timeout: Duration,
+    source: &tidb_txnkv::RequestSource,
+    start_ts: Option<u64>,
     mut work: impl FnMut(
         &mut SnapshotMetaSnapshot,
         Arc<Mutex<dyn ClusterSnapshot>>,
@@ -200,14 +221,14 @@ where
 {
     let mut attempt: u32 = 0;
     loop {
-        let transaction = SessionTransaction::begin(
-            Arc::clone(opener),
-            timeout,
-            tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions::from(
-                tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
-            )
-            .with_request_source(source.clone()),
-        )?;
+        let options = tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions::from(
+            tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
+        )
+        .with_request_source(source.clone());
+        let transaction = match start_ts {
+            Some(start_ts) => SessionTransaction::begin_at(Arc::clone(opener), start_ts, timeout, options)?,
+            None => SessionTransaction::begin(Arc::clone(opener), timeout, options)?,
+        };
         let start_ts = transaction.start_ts();
         let buffer = MutationBuffer::new();
         let staged = (|| {

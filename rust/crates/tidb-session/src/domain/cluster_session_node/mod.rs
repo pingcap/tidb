@@ -720,6 +720,12 @@ impl<'s> ClusterServerSession<'s> {
         self.end_or_enter_txn(&begin)
     }
 
+    /// Go `Session.Txn().StartTS()` of the transaction [`Self::new_txn`]
+    /// opened.
+    pub fn explicit_start_ts(&self) -> Option<u64> {
+        self.node.txn.explicit.as_ref().map(|transaction| transaction.start_ts())
+    }
+
     /// Go `StmtCommit` + `CommitTxn` (`pkg/ddl/session.Session.Commit`).
     pub fn commit_txn(&mut self) -> Result<(), SqlQueryError> {
         let commit = Stmt::Session(tidb_ast::NodeBox::new(tidb_ast::SessionStmt::Commit(

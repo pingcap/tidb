@@ -627,6 +627,12 @@ impl tidb_ddl_build::session_pool::StepSqlSession for NodeSqlSession {
         // Go `RollbackTxn` returns nothing.
         let _ = self.0.with_session(|session| session.node_conn().rollback_txn());
     }
+
+    fn txn_start_ts(&mut self) -> Result<u64, MysqlError> {
+        self.0
+            .with_session(|session| session.node_conn().explicit_start_ts())
+            .ok_or_else(|| MysqlError::unknown("the session has no transaction"))
+    }
 }
 
 /// A node system session serving as one DDL step's `w.sess`.

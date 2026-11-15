@@ -913,3 +913,40 @@ fn test_add_index_with_empty_partitions() {
         assert!(all_part_ids.contains(pid), "physical_id {pid} should be a valid partition ID");
     }
 }
+
+/// Go `TestAddIndexSetInternalSessions`: the ingest scan's snapshot is a
+/// transaction of a pooled internal session, listed by the session manager.
+#[test]
+fn test_add_index_set_internal_sessions() {
+    use tidb_executor::show::exec::ShowExec as _;
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    let _backend = inject_mock_backend_ctx();
+    tk.must_exec("set global tidb_enable_dist_task = 0;");
+    tk.must_exec("set @@tidb_ddl_reorg_worker_cnt = 1;");
+    tk.must_exec("create table t (a int);");
+    tk.must_exec("insert into t values (1);");
+    let expect_internal_ts = Arc::new(std::sync::Mutex::new(Vec::<u64>::new()));
+    let actual_internal_ts = Arc::new(std::sync::Mutex::new(Vec::<u64>::new()));
+    let expected = expect_internal_ts.clone();
+    let _start = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackStartTS",
+        move |arg| expected.lock().unwrap().push(*arg.downcast_mut::<u64>().unwrap()),
+    );
+    let registry = tk.session().process_registry().expect("the session manager");
+    let actual = actual_internal_ts.clone();
+    let _scan = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/scanRecordExec",
+        move |_| {
+            *actual.lock().unwrap() = registry
+                .internal_session_start_ts(|id| tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(id));
+        },
+    );
+    tk.must_exec("alter table t add index idx(a);");
+    let expect_internal_ts = expect_internal_ts.lock().unwrap();
+    let actual_internal_ts = actual_internal_ts.lock().unwrap();
+    assert_eq!(expect_internal_ts.len(), 1);
+    for ts in expect_internal_ts.iter() {
+        assert!(actual_internal_ts.contains(ts), "{ts} not in {actual_internal_ts:?}");
+    }
+}

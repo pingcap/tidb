@@ -302,4 +302,14 @@ pub trait StepSqlSession: Send {
 
     /// Go `Session.Rollback`: `RollbackTxn`, which returns nothing.
     fn rollback(&mut self);
+
+    /// Go `Session.Txn()` then `StartTS()`: the start timestamp of the
+    /// transaction [`Self::begin`] opened.
+    ///
+    /// # Errors
+    ///
+    /// No transaction is open.
+    fn txn_start_ts(&mut self) -> Result<u64, tidb_terror::MysqlError> {
+        Err(tidb_terror::MysqlError::unknown("the session has no transaction"))
+    }
 }
