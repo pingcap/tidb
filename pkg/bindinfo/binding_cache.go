@@ -177,7 +177,7 @@ type digestBiMap interface {
 	// All returns all the sqlDigests.
 	All() (sqlDigests []string)
 
-	// NoDBDigest2SQLDigest converts noDBDigest to sqlDigest.
+	// NoDBDigest2SQLDigest returns a read-only snapshot of the sqlDigests for noDBDigest.
 	NoDBDigest2SQLDigest(noDBDigest string) []string
 
 	// SQLDigest2NoDBDigest converts sqlDigest to noDBDigest.
@@ -185,7 +185,9 @@ type digestBiMap interface {
 }
 
 type digestBiMapImpl struct {
-	mu                   sync.RWMutex
+	mu sync.RWMutex
+	// Published slices are immutable. Updates replace them so lookups can
+	// iterate their snapshots after releasing mu.
 	noDBDigest2SQLDigest map[string][]string // noDBDigest --> sqlDigests
 	sqlDigest2noDBDigest map[string]string   // sqlDigest --> noDBDigest
 }
@@ -211,7 +213,7 @@ func (b *digestBiMapImpl) Add(noDBDigest, sqlDigest string) {
 		}
 	}
 	if !exist { // avoid adding duplicated binding digests
-		b.noDBDigest2SQLDigest[noDBDigest] = append(b.noDBDigest2SQLDigest[noDBDigest], sqlDigest)
+		b.noDBDigest2SQLDigest[noDBDigest] = slices.Concat(b.noDBDigest2SQLDigest[noDBDigest], []string{sqlDigest})
 	}
 	b.sqlDigest2noDBDigest[sqlDigest] = noDBDigest
 }
@@ -227,8 +229,8 @@ func (b *digestBiMapImpl) Del(sqlDigest string) {
 	digestList := b.noDBDigest2SQLDigest[noDBDigest]
 	for i := range digestList { // remove sqlDigest from this list
 		if digestList[i] == sqlDigest {
-			// Deleting binding is a low-frequently operation, so the O(n) performance is enough.
-			digestList = slices.Delete(digestList, i, i+1)
+			// Publish a new slice to preserve snapshots held by ongoing lookups.
+			digestList = slices.Concat(digestList[:i], digestList[i+1:])
 			break
 		}
 	}
@@ -251,7 +253,7 @@ func (b *digestBiMapImpl) All() []string {
 	return sqlDigests
 }
 
-// NoDBDigest2SQLDigest converts noDBDigest to sqlDigest.
+// NoDBDigest2SQLDigest returns a read-only snapshot of the sqlDigests for noDBDigest.
 func (b *digestBiMapImpl) NoDBDigest2SQLDigest(noDBDigest string) []string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()

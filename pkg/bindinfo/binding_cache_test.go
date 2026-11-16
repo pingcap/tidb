@@ -74,6 +74,103 @@ func TestCrossDBBindingCache(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestBindingCacheDigestSnapshot(t *testing.T) {
+	b1 := &Binding{BindSQL: "SELECT * FROM db1.t1", SQLDigest: "b1"}
+	b2 := &Binding{BindSQL: "SELECT * FROM db2.t1", SQLDigest: "b2"}
+	noDBDigest := bindingNoDBDigest(t, b1)
+	require.Equal(t, noDBDigest, bindingNoDBDigest(t, b2))
+
+	t.Run("lookup does not allocate", func(t *testing.T) {
+		digests := newDigestBiMap()
+		digests.Add(noDBDigest, b1.SQLDigest)
+		digests.Add(noDBDigest, b2.SQLDigest)
+		var snapshot []string
+		allocs := testing.AllocsPerRun(100, func() {
+			snapshot = digests.NoDBDigest2SQLDigest(noDBDigest)
+		})
+		require.Zero(t, allocs)
+		require.Equal(t, []string{b1.SQLDigest, b2.SQLDigest}, snapshot)
+	})
+
+	t.Run("snapshots survive updates", func(t *testing.T) {
+		digests := newDigestBiMap()
+		digests.Add(noDBDigest, b1.SQLDigest)
+		first := digests.NoDBDigest2SQLDigest(noDBDigest)
+		digests.Add(noDBDigest, b2.SQLDigest)
+		both := digests.NoDBDigest2SQLDigest(noDBDigest)
+		digests.Add(noDBDigest, b2.SQLDigest) // duplicate insertion must not change membership
+		require.Equal(t, []string{b1.SQLDigest, b2.SQLDigest}, digests.NoDBDigest2SQLDigest(noDBDigest))
+		digests.Del(b1.SQLDigest)
+		remaining := digests.NoDBDigest2SQLDigest(noDBDigest)
+		digests.Del(b2.SQLDigest)
+		require.Nil(t, digests.NoDBDigest2SQLDigest(noDBDigest))
+		digests.Add(noDBDigest, b2.SQLDigest)
+		require.Equal(t, []string{b2.SQLDigest}, digests.NoDBDigest2SQLDigest(noDBDigest))
+		require.Equal(t, []string{b1.SQLDigest}, first)
+		require.Equal(t, []string{b1.SQLDigest, b2.SQLDigest}, both)
+		require.Equal(t, []string{b2.SQLDigest}, remaining)
+	})
+
+	t.Run("delete during iteration", func(t *testing.T) {
+		cache := newBindingCache(context.Background(), 1000000000).(*bindingCache)
+		defer cache.Close()
+		require.NoError(t, cache.SetBinding(b1.SQLDigest, b1))
+		require.NoError(t, cache.SetBinding(b2.SQLDigest, b2))
+
+		deleteBinding := make(chan struct{})
+		deleted := make(chan struct{})
+		go func() {
+			<-deleteBinding
+			cache.RemoveBinding(b1.SQLDigest)
+			close(deleted)
+		}()
+
+		// Pause a lookup after the first candidate, then delete it. Deletion must
+		// not move the surviving candidate out of the lookup's snapshot.
+		var bindings []*Binding
+		for i, digest := range cache.digestBiMap.NoDBDigest2SQLDigest(noDBDigest) {
+			if binding := cache.GetBinding(digest); binding != nil {
+				bindings = append(bindings, binding)
+			}
+			if i == 0 {
+				close(deleteBinding)
+				<-deleted
+			}
+		}
+		require.Equal(t, []*Binding{b1, b2}, bindings)
+		require.Equal(t, []string{b2.SQLDigest}, cache.digestBiMap.NoDBDigest2SQLDigest(noDBDigest))
+		require.Same(t, b2, cache.GetBinding(b2.SQLDigest))
+	})
+
+	t.Run("concurrent lookup and delete", func(t *testing.T) {
+		digests := newDigestBiMap()
+		digests.Add(noDBDigest, b1.SQLDigest)
+		digests.Add(noDBDigest, b2.SQLDigest)
+		start := make(chan struct{})
+		result := make(chan bool)
+		go func() {
+			<-start
+			allFound := true
+			for range 1000 {
+				found := false
+				for _, digest := range digests.NoDBDigest2SQLDigest(noDBDigest) {
+					if digest == b2.SQLDigest {
+						found = true
+					}
+				}
+				allFound = allFound && found
+			}
+			result <- allFound
+		}()
+		close(start)
+		for range 1000 {
+			digests.Del(b1.SQLDigest)
+			digests.Add(noDBDigest, b1.SQLDigest)
+		}
+		require.True(t, <-result, "the surviving binding must always be present")
+	})
+}
+
 func TestDuplicatedBinding(t *testing.T) {
 	// 3 bindings with the same noDBDigest
 	bindingDB1 := &Binding{BindSQL: "SELECT * FROM db1.t1"}
