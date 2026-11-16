@@ -39,6 +39,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannercorebase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	mvmerge "github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -773,7 +774,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		// In theory, a concurrently-started purge should still be safe because purge computes safePurgeTSO
 		// from persisted LAST_SUCCESS_READ_TSO, which does not advance until this refresh commits.
 		is := e.Ctx().GetLatestInfoSchema().(infoschema.InfoSchema)
-		mlogIntegrity, err := checkFastRefreshMLogIntegrity(kctx, histSQLExec, is, schemaName, tblInfo, lockedRefreshInfo.lastSuccessReadTSO)
+		mlogIntegrity, err := checkFastRefreshMLogIntegrity(kctx, histSQLExec, is, tblInfo, lockedRefreshInfo.lastSuccessReadTSO)
 		if err != nil {
 			return err
 		}
@@ -1703,36 +1704,12 @@ func (e *RefreshMaterializedViewExec) resolveRefreshMaterializedViewTarget(
 	return schemaName, tblInfo, nil
 }
 
-func resolveRefreshMaterializedViewLogInfo(
-	is infoschema.InfoSchema,
-	schemaName ast.CIStr,
-	tblInfo *model.TableInfo,
-) (int64, error) {
-	if tblInfo == nil || tblInfo.MaterializedView == nil {
-		return 0, errors.New("refresh materialized view: target is not a materialized view")
+func resolveRefreshMaterializedViewLogInfo(is infoschema.InfoSchema, tblInfo *model.TableInfo) (int64, error) {
+	fastSource, err := mvmerge.ResolveFastRefreshSource(is, tblInfo)
+	if err != nil {
+		return 0, errors.Annotate(err, "refresh materialized view fast")
 	}
-	if len(tblInfo.MaterializedView.BaseTableIDs) != 1 {
-		return 0, errors.New("refresh materialized view: fast refresh requires exactly one base table")
-	}
-
-	baseTableID := tblInfo.MaterializedView.BaseTableIDs[0]
-	baseTable, ok := is.TableByID(context.Background(), baseTableID)
-	if !ok {
-		return 0, errors.Errorf("refresh materialized view: cannot resolve base table %d for materialized view %s.%s", baseTableID, schemaName.O, tblInfo.Name.O)
-	}
-	baseTableInfo := baseTable.Meta()
-	if baseTableInfo.MaterializedViewBase == nil {
-		return 0, errors.Errorf("refresh materialized view: base table %d is missing materialized view base metadata", baseTableID)
-	}
-	mlogID := baseTableInfo.MaterializedViewBase.MLogID
-	if mlogID == 0 {
-		return 0, errors.Errorf(
-			"refresh materialized view: materialized view log does not exist for base table %s.%s",
-			schemaName.O,
-			baseTableInfo.Name.O,
-		)
-	}
-	return mlogID, nil
+	return fastSource.MLogTableID, nil
 }
 
 func checkRefreshMaterializedViewReady(schemaName ast.CIStr, tblInfo *model.TableInfo) error {
@@ -2044,11 +2021,10 @@ func checkFastRefreshMLogIntegrity(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
 	is infoschema.InfoSchema,
-	schemaName ast.CIStr,
 	tblInfo *model.TableInfo,
 	lastSuccessfulRefreshReadTSO uint64,
 ) (fastRefreshMLogIntegrity, error) {
-	mlogID, err := resolveRefreshMaterializedViewLogInfo(is, schemaName, tblInfo)
+	mlogID, err := resolveRefreshMaterializedViewLogInfo(is, tblInfo)
 	if err != nil {
 		return fastRefreshMLogIntegrity{}, err
 	}

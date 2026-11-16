@@ -347,6 +347,8 @@ func TestMaterializedViewRefreshFastDryRun(t *testing.T) {
 		err = tk.QueryToErr("refresh materialized view mv_fast_dry_run_purge_guard fast dry run")
 		require.Error(t, err)
 		require.ErrorContains(t, err, "materialized view log may have been purged beyond LAST_SUCCESS_READ_TSO")
+		err = tk.ExecToErr("refresh materialized view mv_fast_dry_run_purge_guard fast")
+		require.ErrorContains(t, err, "materialized view log may have been purged beyond LAST_SUCCESS_READ_TSO")
 	})
 
 	t.Run("noop_skips_purge", func(t *testing.T) {
@@ -386,6 +388,11 @@ func TestMaterializedViewRefreshFastDryRun(t *testing.T) {
 			"refresh materialized view mv_fast_dry_run_noop_purge_guard fast as of timestamp '%s'",
 			targetTime.Format("2006-01-02 15:04:05.000"),
 		))
+		tk.MustQuery("select * from mv_fast_dry_run_noop_purge_guard order by a").Check(testkit.Rows("1 10 1", "2 20 1"))
+		tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mvID)).
+			Check(testkit.Rows(fmt.Sprint(targetTSO)))
+		tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mvID)).
+			Check(testkit.Rows("0"))
 	})
 
 	t.Run("as_of_window", func(t *testing.T) {
@@ -2794,6 +2801,7 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverFailure(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, mlogTable.Meta().MaterializedViewLog)
 		require.Equal(t, []int64{oldMViewID}, mlogTable.Meta().MaterializedViewLog.DependentMViewIDs)
+		tk.MustQuery("select MVIEW_ID, MLOG_ID from mysql.tidb_mview_fast_refresh_source_info").Check(testkit.Rows(fmt.Sprintf("%d %d", oldMViewID, mlogTable.Meta().ID)))
 		tk.MustQuery("select MVIEW_ID from mysql.tidb_mview_refresh_info").Check(testkit.Rows(fmt.Sprintf("%d", oldMViewID)))
 		tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 	})
@@ -2832,6 +2840,7 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverFailure(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, oldMViewID, mvTable.Meta().ID)
 		tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", oldMViewID)).Check(testkit.Rows("1"))
+		tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = %d", oldMViewID)).Check(testkit.Rows("1"))
 		tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where MVIEW_ID = %d", oldMViewID)).Check(testkit.Rows("1"))
 
 		tk.MustExec("refresh materialized view mv_cutover_publish_error complete out of place")
