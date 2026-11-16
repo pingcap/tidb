@@ -499,7 +499,12 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             // Go `distsql.WithSQLKvExecCounterInterceptor` on the request's
             // ctx: TopSQL's counter sees every RPC the task's sends issue,
             // the sender's retries and lock resolution included.
-            let mut interceptors = tikv_client::RpcInterceptorChain::new();
+            // The statement ctx's own interceptor runs first, as Go's
+            // `WithSQLKvExecCounterInterceptor` chains onto the ctx's.
+            let mut interceptors = statement_ctx
+                .as_ref()
+                .and_then(tikv_client::get_rpc_interceptor_from_ctx)
+                .unwrap_or_default();
             if let Some(interceptor) = interceptor {
                 interceptors.link(interceptor);
             }

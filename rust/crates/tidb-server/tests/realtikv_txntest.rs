@@ -2608,7 +2608,9 @@ fn test_check_txn_status_on_optimistic_txn_break_consistency() {
                 assert!(std::time::Instant::now() < deadline, "test did not release primary prewrite");
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
-            Err(tikv_client::Error::StringError("injected rpc error in onRPCFinishedHook".into()))
+            // Go's hook returns `errors.New(...)` as the send's error; the
+            // Rust client's send errors are gRPC statuses.
+            Err(tikv_client::Error::GrpcAPI(tonic::Status::unavailable("injected rpc error in onRPCFinishedHook")))
         })
     });
     let (send, recv) = std::sync::mpsc::channel();

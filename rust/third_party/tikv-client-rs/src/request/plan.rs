@@ -512,8 +512,22 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 }
             }) as futures::future::BoxFuture<'_, crate::interceptor::RpcDispatchResult>
         });
+        // client-go `interceptedClient.SendRequest`: the ctx's interceptor
+        // runs around every send, with the transaction's own chained after
+        // it (`interceptor.WithRPCInterceptor(ctx, txn.interceptor)`).
+        let interceptor = match (
+            crate::interceptor::get_rpc_interceptor_from_ctx(&self.trace_context),
+            &self.interceptor,
+        ) {
+            (Some(mut chain), Some(own)) => {
+                chain.link(Arc::new(own.clone()));
+                Some(chain)
+            }
+            (Some(chain), None) => Some(chain),
+            (None, own) => own.clone(),
+        };
         let result = match admission_result {
-            Ok(()) => match &self.interceptor {
+            Ok(()) => match &interceptor {
                 Some(interceptor) => interceptor.dispatch(&self.target, &request, next).await,
                 None => next().await,
             },
