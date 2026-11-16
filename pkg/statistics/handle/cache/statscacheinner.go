@@ -87,7 +87,7 @@ func (sc *statsCache) putCache(id int64, t *statistics.Table) bool {
 	return ok
 }
 
-// Put puts the table statistics to the cache.
+// put puts the table statistics to the cache and retries until the cache accepts them.
 func (sc *statsCache) put(id int64, t *statistics.Table) {
 	i := 1
 	for {

@@ -132,18 +132,18 @@ func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
 	return s.cache.Set(tblID, tbl, cost)
 }
 
-// Del implements statsCacheInner
+// Del removes the table from both cache layers.
 func (s *LFU) Del(tblID int64) {
 	s.cache.Del(tblID)
 	s.resultKeySet.Remove(tblID)
 }
 
-// Cost implements statsCacheInner
+// Cost returns the tracked memory usage of the cached tables.
 func (s *LFU) Cost() int64 {
 	return s.cost.Load()
 }
 
-// Values implements statsCacheInner
+// Values returns all tables, including evicted tables whose column and index data was dropped.
 func (s *LFU) Values() []*statistics.Table {
 	result := make([]*statistics.Table, 0, 512)
 	for _, k := range s.resultKeySet.Keys() {
@@ -226,7 +226,7 @@ func (s *LFU) onExit(val any) {
 	s.addCost(-val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
 }
 
-// Len implements statsCacheInner
+// Len returns the number of tables, including evicted tables.
 func (s *LFU) Len() int {
 	return s.resultKeySet.Len()
 }
@@ -236,7 +236,7 @@ func (s *LFU) Copy() internal.StatsCacheInner {
 	return s
 }
 
-// SetCapacity implements statsCacheInner
+// SetCapacity sets the memory quota. A value of 0 means 20% of the total memory.
 func (s *LFU) SetCapacity(maxCost int64) {
 	cost, err := adjustMemCost(maxCost)
 	if err != nil {
@@ -259,7 +259,7 @@ func (s *LFU) metrics() *ristretto.Metrics {
 	return s.cache.Metrics
 }
 
-// Close implements statsCacheInner
+// Close clears the cache and stops the Ristretto goroutines. Calls after the first do nothing.
 func (s *LFU) Close() {
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
@@ -275,7 +275,7 @@ func (s *LFU) addCost(v int64) {
 	metrics.CostGauge.Set(float64(newv))
 }
 
-// TriggerEvict implements statsCacheInner
+// TriggerEvict makes Ristretto evict tables when the cost is above the memory quota.
 func (s *LFU) TriggerEvict() {
 	s.triggerEvict()
 }

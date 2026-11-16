@@ -44,7 +44,7 @@ import (
 // See more at where it is used.
 const LeaseOffset = 5
 
-// StatsCacheImpl implements util.StatsCache.
+// StatsCacheImpl implements types.StatsCache.
 type StatsCacheImpl struct {
 	atomic.Pointer[statsCache]
 
@@ -114,7 +114,7 @@ func newCacheOfBatchUpdate(batchSize int, op func(toUpdate []*statistics.Table, 
 	}
 }
 
-// Update reads stats meta from store and updates the stats map.
+// Update reads stats meta from store and updates the stats cache.
 func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) (err error) {
 	// loadStatsWorker does not restart after a panic, so return the panic as an error.
 	// The worker then logs the error and tries again at the next tick.
