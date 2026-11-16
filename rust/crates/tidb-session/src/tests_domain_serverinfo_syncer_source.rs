@@ -39,7 +39,7 @@ use tidb_domain_serverinfo::serverinfo::{DynamicInfo, ServerInfo, StaticInfo, To
 use tidb_domain_serverinfo::serverinfo_syncer::{server_info_key_path, EtcdOps, Syncer};
 
 /// The DDL-owner key path prefix, `pkg/ddl/util/util.go:58`.
-const DDL_OWNER_KEY: &str = "/tidb/ddl/fg/owner";
+use tidb_ddl_util::DDL_OWNER_KEY;
 
 /// A recording etcd: key -> (value, lease). `lease == 0` is a leaseless PUT.
 #[derive(Default)]

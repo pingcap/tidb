@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-kv = { path = "../tidb-kv" }
 tidb-infoschema-context = { path = "../tidb-infoschema-context" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-ast = { path = "../tidb-ast" }

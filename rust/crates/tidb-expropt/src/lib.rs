@@ -137,30 +137,16 @@ pub trait RequireOptionalEvalProps {
     fn required_optional_eval_props(&self) -> OptionalEvalPropKeySet;
 }
 
-/// The stored, downcastable form of a Go `exprctx.OptionalEvalPropProvider`
-/// interface value.
-///
-/// Go stores the bare interface and recovers the concrete provider with a type
-/// assertion; Rust needs an explicit route to [`Any`] for the same move, so
-/// every provider gets one through this blanket-implemented extension trait.
-pub trait DynOptionalEvalPropProvider: OptionalEvalPropProvider + Any + Send + Sync {
-    /// Erases the provider to [`Any`] so [`get_prop_provider`] can recover the
-    /// concrete type, which is Go's `val.(T)`. `Send + Sync` is required
-    /// because that is what `Arc::downcast` needs, and because an
-    /// `EvalContext` and its providers are shared across threads.
-    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
+pub use tidb_exprctx::DynOptionalEvalPropProvider;
 
-    /// Borrowing form of [`DynOptionalEvalPropProvider::into_any`].
-    fn as_any(&self) -> &dyn Any;
-}
-
-impl<T: OptionalEvalPropProvider + Any + Send + Sync> DynOptionalEvalPropProvider for T {
-    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
-        self
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
+/// Go's `exprctx.EvalContext` is the one context every reader takes; the
+/// live statement context answers `GetOptionalPropProvider` itself.
+impl EvalPropContext for dyn tidb_exprctx::Columns + '_ {
+    fn get_optional_prop_provider(
+        &self,
+        key: OptionalEvalPropKey,
+    ) -> Option<Arc<dyn DynOptionalEvalPropProvider>> {
+        tidb_exprctx::Columns::get_optional_prop_provider(self, key)
     }
 }
 
@@ -269,7 +255,7 @@ fn provider_type_matches_key(val: &dyn DynOptionalEvalPropProvider) -> bool {
 /// it needs a zero value of the type parameter — so it is dropped; the failed
 /// cast below still reports the same mismatch.
 pub fn get_prop_provider<T: DynOptionalEvalPropProvider>(
-    ctx: &dyn EvalPropContext,
+    ctx: &(impl EvalPropContext + ?Sized),
     key: OptionalEvalPropKey,
 ) -> Result<Arc<T>, ExprOptError> {
     let Some(val) = ctx.get_optional_prop_provider(key) else {

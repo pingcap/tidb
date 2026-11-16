@@ -102,7 +102,7 @@ impl AdvisoryLockPropReader {
     /// is the lock context.
     pub fn advisory_lock_ctx(
         self,
-        ctx: &dyn EvalPropContext,
+        ctx: &(impl EvalPropContext + ?Sized),
     ) -> Result<Arc<AdvisoryLockPropProvider>, ExprOptError> {
         get_prop_provider::<AdvisoryLockPropProvider>(ctx, OptionalEvalPropKey::AdvisoryLock)
     }

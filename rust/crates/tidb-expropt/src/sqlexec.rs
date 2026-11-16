@@ -67,7 +67,7 @@ impl SqlExecutorPropReader {
     /// returned unchanged.
     pub fn get_sql_executor(
         self,
-        ctx: &dyn EvalPropContext,
+        ctx: &(impl EvalPropContext + ?Sized),
     ) -> Result<Arc<dyn SqlExecutor>, ExprOptError> {
         let provider =
             get_prop_provider::<SqlExecutorPropProvider>(ctx, OptionalEvalPropKey::SqlExecutor)?;

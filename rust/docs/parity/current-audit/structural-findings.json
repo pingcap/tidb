@@ -2,8 +2,8 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 10,
-    "open": 6,
+    "unresolved": 9,
+    "open": 5,
     "partial": 4
   },
   "findings": [
@@ -78,17 +78,9 @@
       "finding": "Only the distributed (DXF) reorganization runs as Go's `runReorgJob` does (`DistReorgSlot`: `reorgFn` on its own thread, each step waiting on `doneCh` until the progress tick); the local backfill still runs inside the step against a cooperative deadline (`BackfillExecutor::deadline`). Go runs every `reorgFn` asynchronously under the job's `reorgCtx`",
       "go_owner": "`pkg/ddl/reorg.go` (`runReorgJob`, `reorgCtx`)",
       "rust_evidence": "`rust/crates/tidb-ddl/src/real_tikv_ddl/add_index_reorg.rs`, `rust/crates/tidb-ddl/src/real_tikv_ddl/backfilling.rs`"
-    },
-    {
-      "id": "S05",
-      "status": "open",
-      "group": "Structure: Go's shape before more ports",
-      "finding": "Go's `pkg/ddl/util` constants have no crate: `DDLOwnerKey` (`/tidb/ddl/fg/owner`) is defined in `tidb-ddl` `worker.rs`, `tidb-session` `sync_upgrade.rs`, `tidb-domain-serverinfo` `serverinfo_syncer.rs` and a test",
-      "go_owner": "`pkg/ddl/util/util.go`",
-      "rust_evidence": "`rust/crates/tidb-ddl/src/worker.rs`, `rust/crates/tidb-session/src/sync_upgrade.rs`, `rust/crates/tidb-domain-serverinfo/src/serverinfo_syncer.rs`"
     }
   ],
-  "unresolved": 10,
-  "open": 6,
+  "unresolved": 9,
+  "open": 5,
   "partial": 4
 }

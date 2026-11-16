@@ -19,7 +19,7 @@ pub mod optional;
 
 pub use context::{BlockEncryptionMode, Columns, CurrentTso, DecodeKeyFromString, EncodeKeyArgs, EncodeKeyError, EncodeKeyFromRow, ErrorLevel, EvalError, JsonError, NoColumns, PlanCacheParams, SequenceEvalError, ZonedNoColumns};
 pub use optional::{
-    optional_property_desc_list, EmptyParamValues, OptionalEvalPropDesc, OptionalEvalPropKey,
+    optional_property_desc_list, DynOptionalEvalPropProvider, EmptyParamValues, OptionalEvalPropDesc, OptionalEvalPropKey,
     OptionalEvalPropKeySet, OptionalEvalPropProvider, ParamIndexExceedParamCounts, ParamValues,
     PlanColumnIdAllocator, SimplePlanColumnIdAllocator, EMPTY_PARAM_VALUES,
     ERR_PARAM_INDEX_EXCEED_PARAM_COUNTS, OPT_PROPS_CNT,

@@ -133,7 +133,7 @@ impl<S: StoreClient> DdlClient<S> {
         self.submit_batch(ctx, &mut specs)?;
         if let Some(etcd) = &self.etcd {
             // Go NotifyDDLOwnerByEtcd is best effort; history remains authoritative.
-            let _ = etcd.put(b"/tidb/ddl/add_ddl_job_general", b"0");
+            let _ = etcd.put(tidb_ddl_util::ADDING_DDL_JOB_NOTIFY_KEY.as_bytes(), b"0");
         }
         self.wait_ddl_finished(ctx, specs[0].job.id)
     }

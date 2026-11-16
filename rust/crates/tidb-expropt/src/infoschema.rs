@@ -68,7 +68,7 @@ impl InfoSchemaPropReader {
     /// which is `p(false)`.
     pub fn get_session_info_schema(
         self,
-        ctx: &dyn EvalPropContext,
+        ctx: &(impl EvalPropContext + ?Sized),
     ) -> Result<Arc<dyn MetaOnlyInfoSchema + Send + Sync>, ExprOptError> {
         Ok(self.get_provider(ctx)?.call(false))
     }
@@ -77,14 +77,14 @@ impl InfoSchemaPropReader {
     /// which is `p(true)`.
     pub fn get_latest_info_schema(
         self,
-        ctx: &dyn EvalPropContext,
+        ctx: &(impl EvalPropContext + ?Sized),
     ) -> Result<Arc<dyn MetaOnlyInfoSchema + Send + Sync>, ExprOptError> {
         Ok(self.get_provider(ctx)?.call(true))
     }
 
     fn get_provider(
         self,
-        ctx: &dyn EvalPropContext,
+        ctx: &(impl EvalPropContext + ?Sized),
     ) -> Result<Arc<InfoSchemaPropProvider>, ExprOptError> {
         get_prop_provider::<InfoSchemaPropProvider>(ctx, OptionalEvalPropKey::InfoSchema)
     }

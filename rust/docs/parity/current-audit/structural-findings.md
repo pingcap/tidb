@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**10 unresolved: 6 open, 4 partial.**
+**9 unresolved: 5 open, 4 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -40,7 +40,6 @@ unresolved until it is restated against its Go owner or closed.
 | S02 | open | `TableCommon` keeps the public columns and the non-public (adding or changing) columns as two lists, and an index's `column_offsets` index whichever list it was loaded against (public for a public index, public then non-public for a non-public one). Go's `TableCommon.Columns` is every `tblInfo.Columns` entry in metadata order, `Cols()` / `VisibleCols()` / `WritableCols()` / `DeletableCols()` are slices derived from it, and `IndexColumn.Offset` always indexes `tblInfo.Columns`; the two bases caused the MODIFY COLUMN mutation-checker panic | `pkg/table/tables/tables.go` (`TableCommon`, `initTableCommon`) |
 | S03 | open | DDL and reorg errors lose their Go identity on the way to the job: `ClusterDdlError::Backfill(String)` drops the code, and `DdlPlanError::Encode` stands for Go's plain `errors.New`, so `is_retryable_job_error` tells a plain error from a `*terror.Error` only through that variant. Go keeps one `err` whose cause `isRetryableError` type-checks (`*terror.Error` with a retryable code, else any plain error retries) | `pkg/ddl/job_worker.go` (`isRetryableJobError`), `pkg/ddl/index.go` (`runReorgJobAndHandleErr`) |
 | S04 | open | Only the distributed (DXF) reorganization runs as Go's `runReorgJob` does (`DistReorgSlot`: `reorgFn` on its own thread, each step waiting on `doneCh` until the progress tick); the local backfill still runs inside the step against a cooperative deadline (`BackfillExecutor::deadline`). Go runs every `reorgFn` asynchronously under the job's `reorgCtx` | `pkg/ddl/reorg.go` (`runReorgJob`, `reorgCtx`) |
-| S05 | open | Go's `pkg/ddl/util` constants have no crate: `DDLOwnerKey` (`/tidb/ddl/fg/owner`) is defined in `tidb-ddl` `worker.rs`, `tidb-session` `sync_upgrade.rs`, `tidb-domain-serverinfo` `serverinfo_syncer.rs` and a test | `pkg/ddl/util/util.go` |
 
 ### Domain and process services
 

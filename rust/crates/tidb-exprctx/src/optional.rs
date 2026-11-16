@@ -242,6 +242,33 @@ pub trait OptionalEvalPropProvider {
     fn desc(&self) -> &'static OptionalEvalPropDesc;
 }
 
+/// The stored, downcastable form of a Go `exprctx.OptionalEvalPropProvider`
+/// interface value.
+///
+/// Go stores the bare interface and recovers the concrete provider with a type
+/// assertion; Rust needs an explicit route to [`Any`] for the same move, so
+/// every provider gets one through this blanket-implemented extension trait.
+pub trait DynOptionalEvalPropProvider: OptionalEvalPropProvider + std::any::Any + Send + Sync {
+    /// Erases the provider to [`Any`] so `tidb_expropt::get_prop_provider` can recover the
+    /// concrete type, which is Go's `val.(T)`. `Send + Sync` is required
+    /// because that is what `Arc::downcast` needs, and because an
+    /// `EvalContext` and its providers are shared across threads.
+    fn into_any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync>;
+
+    /// Borrowing form of [`DynOptionalEvalPropProvider::into_any`].
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
+impl<T: OptionalEvalPropProvider + std::any::Any + Send + Sync> DynOptionalEvalPropProvider for T {
+    fn into_any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> {
+        self
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 /// Go `OptionalEvalPropKeySet`: a bitmap of which optional properties a
 /// context provides.
 ///

@@ -26,7 +26,14 @@ use tidb_exprctx::{
 /// client (`tidb-txnkv`) is an async tonic/tokio stack whose direction of
 /// dependency runs the other way from this expression crate, and expropt only
 /// stores the handle and hands it back, so an opaque marker trait suffices.
-pub trait KvStorage: Any + Send + Sync {}
+pub trait KvStorage: Any + Send + Sync {
+    /// Go `store.(helper.Storage)`: the store's region cache and RPC, which
+    /// `helper.NewHelper(store).GetMvccByEncodedKey` reads; `None` is a store
+    /// that is not a `helper.Storage`.
+    fn as_helper_storage(&self) -> Option<&dyn tidb_kv::region_map::RegionStore> {
+        None
+    }
+}
 
 /// Go `KVStorePropProvider`: `func() kv.Storage`.
 pub struct KvStorePropProvider(Box<dyn Fn() -> Arc<dyn KvStorage> + Send + Sync>);
@@ -65,7 +72,7 @@ impl KvStorePropReader {
     /// Go `KVStorePropReader.GetKVStore`.
     pub fn get_kv_store(
         self,
-        ctx: &dyn EvalPropContext,
+        ctx: &(impl EvalPropContext + ?Sized),
     ) -> Result<Arc<dyn KvStorage>, ExprOptError> {
         let provider = get_prop_provider::<KvStorePropProvider>(ctx, OptionalEvalPropKey::KvStore)?;
         Ok(provider.call())

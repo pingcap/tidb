@@ -81,7 +81,7 @@ impl SequenceOperatorPropReader {
     /// error is returned unchanged.
     pub fn get_sequence_operator(
         self,
-        ctx: &dyn EvalPropContext,
+        ctx: &(impl EvalPropContext + ?Sized),
         db: &str,
         name: &str,
     ) -> Result<Arc<dyn SequenceOperator>, ExprOptError> {

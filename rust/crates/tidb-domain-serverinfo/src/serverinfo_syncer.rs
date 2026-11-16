@@ -77,8 +77,7 @@ use crate::status_endpoint_claim::{
     StatusEndpointClaim, StatusEndpointClaimCreate, StatusEndpointClaimResult,
 };
 
-/// Go `pkg/ddl/util.DDLOwnerKey`: the DDL owner election path in etcd.
-pub const DDL_OWNER_KEY: &str = "/tidb/ddl/fg/owner";
+use tidb_ddl_util::DDL_OWNER_KEY;
 
 /// Go `owner.DeleteOwnerKeyByID`: deletes the campaign key under
 /// `owner_path` whose owner ID is `id`.
@@ -102,7 +101,7 @@ fn delete_owner_key_by_id(etcd: &dyn EtcdOps, owner_path: &str, id: &str) {
 }
 
 /// Go `pkg/ddl/util.SessionTTL`: the server-info session's TTL, seconds.
-pub const SESSION_TTL_SECONDS: i64 = 90;
+pub const SESSION_TTL_SECONDS: i64 = tidb_ddl_util::SESSION_TTL;
 
 /// The etcd calls this syncer makes, as a seam.
 ///

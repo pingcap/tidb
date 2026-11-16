@@ -77,7 +77,7 @@ impl PrivilegeCheckerPropReader {
     /// Go `PrivilegeCheckerPropReader.GetPrivilegeChecker`.
     pub fn get_privilege_checker(
         self,
-        ctx: &dyn EvalPropContext,
+        ctx: &(impl EvalPropContext + ?Sized),
     ) -> Result<Arc<dyn PrivilegeChecker>, ExprOptError> {
         let provider = get_prop_provider::<PrivilegeCheckerProvider>(
             ctx,

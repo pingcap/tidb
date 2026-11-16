@@ -2454,7 +2454,7 @@ mod schema_route_tests {
             ..Default::default()
         };
         let syncer = tidb_domain_serverinfo::serverinfo_syncer::Syncer::new(info, None);
-        let owner = tidb_owner::MockManager::new(tidb_owner::Context::background(), "node-1", None, "/tidb/ddl/fg/owner");
+        let owner = tidb_owner::MockManager::new(tidb_owner::Context::background(), "node-1", None, tidb_ddl_util::DDL_OWNER_KEY);
         tidb_owner::Manager::campaign_owner(&owner, &[]).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while !tidb_owner::Manager::is_owner(&owner) && std::time::Instant::now() < deadline {

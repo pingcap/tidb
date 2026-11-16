@@ -83,7 +83,7 @@ impl SessionVarsPropReader {
     /// `exprctx`, and it is an assertion only, with no release-build effect.
     pub fn get_session_vars(
         self,
-        ctx: &dyn EvalPropContext,
+        ctx: &(impl EvalPropContext + ?Sized),
     ) -> Result<Arc<dyn SessionVars>, ExprOptError> {
         let provider =
             get_prop_provider::<SessionVarsPropProvider>(ctx, OptionalEvalPropKey::SessionVars)?;

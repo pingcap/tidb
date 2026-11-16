@@ -1,0 +1,11 @@
+[package]
+name = "tidb-ddl-util"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/ddl/util's etcd paths and session TTL."
+
+[lints]
+workspace = true

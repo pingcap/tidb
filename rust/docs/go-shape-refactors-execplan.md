@@ -11,8 +11,9 @@ Five places in the Rust rewrite differ from Go's structure in ways that make eve
 ## Progress
 
 - [x] (2026-11-16) Rows S01–S05 recorded in the register, each checked against the Go source.
-- [ ] S05: `pkg/ddl/util` constants crate (smallest; lands with S01's first commit or alone).
+- [ ] S05 (in progress): `tidb-ddl-util` holds Go `util.go`'s constants; `tidb-schemaver`, `tidb-pd-client`, `tidb-ddl-serverstate`, `tidb-domain-serverinfo`, `tidb-session` and `tidb-ddl` use it (workspace check pending).
 - [ ] S01: the live session builds Go's `sessionexpr` expression context; builtins read the optional eval-property providers.
+  - [ ] (2026-11-16, in progress) Step 1: `Columns::get_optional_prop_provider`; `StmtContext` installs Go's KV-store and privilege-checker providers; `TIDB_MVCC_INFO` reads them through `KVStorePropReader` / `PrivilegeCheckerPropReader`, and the `has_super_privilege` / `get_mvcc_by_encoded_key` hooks are gone. `expropt`'s readers take any `EvalPropContext`, sized or not, so the live `dyn Columns` is one.
 - [ ] S02: `TableCommon` holds Go's one `Columns` list in metadata order; `Cols` / `VisibleCols` / `WritableCols` / `DeletableCols` are views; index offsets are `IndexColumn.Offset`.
 - [ ] S04: the local backfill runs under the job's `reorgCtx` like the DXF path (`DistReorgSlot` generalised to Go's `reorgCtx`).
 - [ ] S03: one Go-faithful DDL/reorg error type (plain error vs `*terror.Error`) through backfill, DXF and `is_retryable_job_error`.
@@ -32,6 +33,10 @@ Five places in the Rust rewrite differ from Go's structure in ways that make eve
 - Decision: global sort (D02's remainder) is not in this plan; another agent owns it.
   Date/Author: 2026-11-16, user.
 
+- Decision: S01's first step moves `DynOptionalEvalPropProvider` (the `Any`-capable form of Go's `exprctx.OptionalEvalPropProvider`) from `tidb-expropt` into `tidb-exprctx`, and gives `tidb_exprctx::Columns` Go's `GetOptionalPropProvider(key)`; `OptionalEvalPropProviders` stays in `tidb-expropt`, as Go's does (`expropt/optional.go`).
+  Rationale: Go's `GetOptionalPropProvider` is a method of `pkg/expression/exprctx`'s `EvalContext` (`exprctx/context.go:94`) returning `exprctx.OptionalEvalPropProvider`; `tidb-expropt` depends on `tidb-exprctx`, so the method cannot name an `expropt` type without a cycle. `expropt`'s readers then take any `Columns`.
+  Date/Author: 2026-11-16, Claude.
+
 ## Outcomes & Retrospective
 
 (none yet)
@@ -47,7 +52,7 @@ S05 `pkg/ddl/util/util.go`.
 
 ## Plan of Work
 
-Each row is its own commit (or short series), gated and pushed before the next starts. For S01: build `tidb_sessionexpr`'s context in the live session with Go's providers, move each hand-built hook's builtin onto its Go reader (`KVStorePropReader`, `InfoSchemaPropReader`, `PrivilegeCheckerPropReader`, `SessionVarsPropReader`, `SQLExecutorPropReader`), then delete the hooks and their four-layer plumbing. For S02: give `TableCommon` Go's `Columns` and derived views, address rows and index key parts by `col.Offset`, and delete `nonpublic_columns`' separate list and `write_column`. For S04: generalise `DistReorgSlot` into Go's `reorgCtx` and run the local `reorgFn` under it, deleting the cooperative deadline. For S03: one error enum with Go's plain-error and terror variants carried from backfill and DXF to `run_reorg_job_error`.
+Each row is its own commit (or short series), gated and pushed before the next starts. For S01, incrementally, since `tidb_exprctx::Columns` (the live eval context) has 87 methods and 75 implementations: (1) give `Columns` Go's `GetOptionalPropProvider` (one method answering the statement's `OptionalEvalPropProviders`, `None` by default) and have `StmtContext` install Go's providers, built from what the session already hands it (KV store with the region store as Go's `helper.Storage`, latest infoschema snapshot, privilege checker over `session_privilege`, session vars, SQL executor); (2) move one hand-built hook at a time onto its Go reader (`KVStorePropReader` / `PrivilegeCheckerPropReader` for `TIDB_MVCC_INFO`; `InfoSchemaPropReader` / `PrivilegeCheckerPropReader` / `SessionVarsPropReader` for `TIDB_ENCODE_*_KEY` and `TIDB_DECODE_KEY`; `PrivilegeCheckerPropReader` for `TIDB_DECODE_SQL_DIGESTS`' PROCESS check), deleting that hook and its `StmtContext` / `stmt_ctx_build.rs` / `stmt_ctx_session.rs` plumbing in the same commit; (3) when no hook is left, `tidb-sessionexpr`'s `EvalContext` and `StmtContext`'s provider set are one thing, as Go's `sessionexpr.NewExprContext` is. For S02: give `TableCommon` Go's `Columns` and derived views, address rows and index key parts by `col.Offset`, and delete `nonpublic_columns`' separate list and `write_column`. For S04: generalise `DistReorgSlot` into Go's `reorgCtx` and run the local `reorgFn` under it, deleting the cooperative deadline. For S03: one error enum with Go's plain-error and terror variants carried from backfill and DXF to `run_reorg_job_error`.
 
 ## Concrete Steps
 

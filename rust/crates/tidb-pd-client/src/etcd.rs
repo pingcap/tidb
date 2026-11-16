@@ -67,7 +67,7 @@ pub const KEY_OP_RETRY_INTERVAL: Duration = Duration::from_millis(30);
 /// The etcd key TiDB publishes the cluster's schema version under.
 ///
 /// Source of truth: `pkg/ddl/util/util.go` `DDLGlobalSchemaVersion`.
-pub const DDL_GLOBAL_SCHEMA_VERSION_KEY: &str = "/tidb/ddl/global_schema_version";
+pub const DDL_GLOBAL_SCHEMA_VERSION_KEY: &str = tidb_ddl_util::DDL_GLOBAL_SCHEMA_VERSION;
 
 /// The etcd key TiDB notifies privilege changes on.
 ///

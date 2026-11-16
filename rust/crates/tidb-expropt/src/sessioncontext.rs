@@ -90,7 +90,7 @@ impl SessionContextPropReader {
     /// Go `SessionContextPropReader.GetSessionContext`.
     pub fn get_session_context(
         self,
-        ctx: &dyn EvalPropContext,
+        ctx: &(impl EvalPropContext + ?Sized),
     ) -> Result<Option<Arc<dyn SessionContext>>, ExprOptError> {
         let provider = get_prop_provider::<SessionContextPropProvider>(
             ctx,

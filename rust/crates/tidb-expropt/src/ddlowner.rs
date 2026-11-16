@@ -55,7 +55,7 @@ impl RequireOptionalEvalProps for DdlOwnerPropReader {
 
 impl DdlOwnerPropReader {
     /// Go `DDLOwnerPropReader.IsDDLOwner`.
-    pub fn is_ddl_owner(self, ctx: &dyn EvalPropContext) -> Result<bool, ExprOptError> {
+    pub fn is_ddl_owner(self, ctx: &(impl EvalPropContext + ?Sized)) -> Result<bool, ExprOptError> {
         let provider =
             get_prop_provider::<DdlOwnerInfoProvider>(ctx, OptionalEvalPropKey::DdlOwnerInfo)?;
         Ok(provider.call())

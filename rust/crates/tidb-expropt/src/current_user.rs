@@ -66,7 +66,7 @@ impl CurrentUserPropReader {
     /// Go `CurrentUserPropReader.CurrentUser`.
     pub fn current_user(
         self,
-        ctx: &dyn EvalPropContext,
+        ctx: &(impl EvalPropContext + ?Sized),
     ) -> Result<Option<Arc<UserIdentity>>, ExprOptError> {
         Ok(self.get_provider(ctx)?.call().0)
     }
@@ -74,7 +74,7 @@ impl CurrentUserPropReader {
     /// Go `CurrentUserPropReader.ActiveRoles`.
     pub fn active_roles(
         self,
-        ctx: &dyn EvalPropContext,
+        ctx: &(impl EvalPropContext + ?Sized),
     ) -> Result<Vec<Arc<RoleIdentity>>, ExprOptError> {
         Ok(self.get_provider(ctx)?.call().1)
     }
@@ -82,7 +82,7 @@ impl CurrentUserPropReader {
     /// Go `CurrentUserPropReader.getProvider`.
     fn get_provider(
         self,
-        ctx: &dyn EvalPropContext,
+        ctx: &(impl EvalPropContext + ?Sized),
     ) -> Result<Arc<CurrentUserPropProvider>, ExprOptError> {
         get_prop_provider::<CurrentUserPropProvider>(ctx, OptionalEvalPropKey::CurrentUser)
     }

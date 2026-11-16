@@ -706,8 +706,8 @@ fn detect_and_update_job_version(
     Some((stop, worker))
 }
 
-const DDL_OWNER_KEY: &str = "/tidb/ddl/fg/owner";
-const ADDING_DDL_JOB_NOTIFY_KEY: &[u8] = b"/tidb/ddl/add_ddl_job_general";
+use tidb_ddl_util::DDL_OWNER_KEY;
+const ADDING_DDL_JOB_NOTIFY_KEY: &[u8] = tidb_ddl_util::ADDING_DDL_JOB_NOTIFY_KEY.as_bytes();
 const DDL_SCHEDULER_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Go `generalWorkerCnt`.
@@ -1926,7 +1926,7 @@ mod schema_sync_tests {
                 tidb_owner::Context::background(),
                 id,
                 Some(&format!("start-owner-{id}")),
-                "/tidb/ddl/fg/owner",
+                DDL_OWNER_KEY,
             )
         };
         let refused = manager("refused");
@@ -3500,7 +3500,7 @@ where
         let Some(etcd) = self.notifier.as_ref() else {
             return Ok(());
         };
-        etcd.delete_prefix(format!("/tidb/ddl/all_schema_by_job_versions/{ddl_job_id}/").as_bytes())
+        etcd.delete_prefix(format!("{}/{ddl_job_id}/", tidb_ddl_util::DDL_ALL_SCHEMA_VERSIONS_BY_JOB).as_bytes())
             .map_err(|error| error.to_string())
     }
 }

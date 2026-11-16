@@ -368,6 +368,7 @@ members = [
     "crates/tidb-ddl-resourcegroup",
     "crates/tidb-ddl-session",
     "crates/tidb-ddl-serverstate",
+    "crates/tidb-ddl-util",
     "crates/tidb-ddl-testargsv1",
     "crates/tidb-schemaver",
     "difftests",

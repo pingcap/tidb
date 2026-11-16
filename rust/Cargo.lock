@@ -5339,6 +5339,7 @@ dependencies = [
  "tidb-ddl-serverstate",
  "tidb-ddl-session",
  "tidb-ddl-systable",
+ "tidb-ddl-util",
  "tidb-domain-affinity",
  "tidb-domain-infosync",
  "tidb-domain-serverinfo",
@@ -5611,6 +5612,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tidb-ddl-logutil",
+ "tidb-ddl-util",
  "tidb-failpoint",
  "tidb-log",
  "tidb-metrics",
@@ -5654,6 +5656,10 @@ dependencies = [
 
 [[package]]
 name = "tidb-ddl-testargsv1"
+version = "0.0.0"
+
+[[package]]
+name = "tidb-ddl-util"
 version = "0.0.0"
 
 [[package]]
@@ -5955,6 +5961,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tidb-config",
+ "tidb-ddl-util",
  "tidb-mysql",
  "tidb-owner",
  "tracing",
@@ -6807,6 +6814,7 @@ dependencies = [
  "tidb-errctx",
  "tidb-errno",
  "tidb-exprctx",
+ "tidb-expropt",
  "tidb-exprstatic",
  "tidb-extension",
  "tidb-go-regexp",
@@ -6880,6 +6888,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-exprctx",
  "tidb-infoschema-context",
+ "tidb-kv",
  "tidb-mysql",
  "tidb-parser",
  "tidb-resolve",
@@ -7839,6 +7848,7 @@ dependencies = [
  "etcd-client",
  "prost 0.14.4",
  "rustls",
+ "tidb-ddl-util",
  "tidb-log",
  "tidb-logutil",
  "tidb-proto",
@@ -8657,6 +8667,7 @@ dependencies = [
  "tidb-config",
  "tidb-config-kerneltype",
  "tidb-ddl-logutil",
+ "tidb-ddl-util",
  "tidb-domain-serverinfo",
  "tidb-go-strconv",
  "tidb-hack",
@@ -8775,6 +8786,7 @@ dependencies = [
  "tidb-ddl-ingest",
  "tidb-ddl-serverstate",
  "tidb-ddl-systable",
+ "tidb-ddl-util",
  "tidb-deadlockhistory",
  "tidb-disk",
  "tidb-domain",
@@ -9002,6 +9014,7 @@ dependencies = [
  "tidb-ddl-serverstate",
  "tidb-ddl-session",
  "tidb-ddl-systable",
+ "tidb-ddl-util",
  "tidb-deadlockhistory",
  "tidb-distsql",
  "tidb-domain",
@@ -9194,6 +9207,7 @@ dependencies = [
  "tidb-exeerrors",
  "tidb-expr",
  "tidb-exprctx",
+ "tidb-expropt",
  "tidb-fastrand",
  "tidb-fixcontrol",
  "tidb-hack",

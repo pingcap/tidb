@@ -12,6 +12,7 @@ description = "Go pkg/ddl's worker side: the owner-stepped DDL job scheduler, th
 workspace = true
 
 [dependencies]
+tidb-ddl-util = { path = "../tidb-ddl-util" }
 tidb-ddl-ingest = { path = "../tidb-ddl-ingest" }
 tidb-ingestor-ingestctrl = { path = "../tidb-ingestor-ingestctrl" }
 tidb-ingestor-errdef = { path = "../tidb-ingestor-errdef" }

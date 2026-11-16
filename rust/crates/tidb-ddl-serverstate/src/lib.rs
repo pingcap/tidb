@@ -29,7 +29,7 @@ use tidb_pd_client::{EtcdClient, EtcdError, EtcdLeaseSession, EtcdWatcher};
 use tidb_timeutil::{sleep, SleepContext, SleepError};
 
 /// Go `util.ServerGlobalState`.
-pub const SERVER_GLOBAL_STATE: &str = "/tidb/server/global_state";
+pub use tidb_ddl_util::SERVER_GLOBAL_STATE;
 /// Go `StateUpgrading`.
 pub const STATE_UPGRADING: &str = "upgrading";
 /// Go `StateNormalRunning`.

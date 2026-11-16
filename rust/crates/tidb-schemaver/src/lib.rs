@@ -69,14 +69,11 @@ use std::time::Duration;
 
 use tidb_domain_serverinfo::serverinfo::ServerInfo;
 
-/// Go `util.DDLAllSchemaVersions`.
-pub const DDL_ALL_SCHEMA_VERSIONS: &str = "/tidb/ddl/all_schema_versions";
-/// Go `util.DDLAllSchemaVersionsByJob`.
-pub const DDL_ALL_SCHEMA_VERSIONS_BY_JOB: &str = "/tidb/ddl/all_schema_by_job_versions";
-/// Go `util.DDLGlobalSchemaVersion`.
-pub const DDL_GLOBAL_SCHEMA_VERSION: &str = "/tidb/ddl/global_schema_version";
+/// Go `util.DDLAllSchemaVersions`, `DDLAllSchemaVersionsByJob` and
+/// `DDLGlobalSchemaVersion`.
+pub use tidb_ddl_util::{DDL_ALL_SCHEMA_VERSIONS, DDL_ALL_SCHEMA_VERSIONS_BY_JOB, DDL_GLOBAL_SCHEMA_VERSION};
 /// Go `util.SessionTTL`, seconds.
-pub const SESSION_TTL_SECONDS: i64 = 90;
+pub const SESSION_TTL_SECONDS: i64 = tidb_ddl_util::SESSION_TTL;
 /// Go `InitialVersion`: the initial schema version for every server,
 /// exported by upstream for testing.
 pub const INITIAL_VERSION: &str = "0";

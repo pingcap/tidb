@@ -670,6 +670,52 @@ pub type SequencePrivilegeCheck = Arc<dyn Fn(&str, &str, bool) -> bool + Send + 
 /// an extension function asks it while building and evaluating.
 pub type DynamicPrivilegeCheck = Arc<dyn Fn(&str, bool) -> bool + Send + Sync>;
 
+/// Go `kv.Storage` as `sessionexpr` hands it to expressions: the session's
+/// store, a `helper.Storage` over its regions.
+struct SessionKvStorage(Arc<dyn tidb_kv::region_map::RegionStore>);
+
+impl tidb_expropt::KvStorage for SessionKvStorage {
+    fn as_helper_storage(&self) -> Option<&dyn tidb_kv::region_map::RegionStore> {
+        Some(&*self.0)
+    }
+}
+
+/// Go `privilege.GetPrivilegeManager(sctx)` with the session's active roles.
+/// A session without a privilege manager (Go's internal sessions) is
+/// unrestricted.
+struct SessionPrivilegeChecker {
+    session: Option<SessionPrivilegeCheck>,
+    dynamic: Option<DynamicPrivilegeCheck>,
+}
+
+impl tidb_expropt::PrivilegeChecker for SessionPrivilegeChecker {
+    fn request_verification(&self, db: &str, table: &str, column: &str, privilege: tidb_mysql::PrivilegeType) -> bool {
+        self.session.as_ref().is_none_or(|check| check(db, table, column, privilege))
+    }
+
+    fn request_dynamic_verification(&self, priv_name: &str, grantable: bool) -> bool {
+        self.dynamic.as_ref().is_none_or(|check| check(priv_name, grantable))
+    }
+}
+
+/// Go `sessionexpr.NewExprContext`'s `setOptionalProp` calls, for the
+/// properties the session already holds.
+fn optional_eval_props(
+    regions: &Arc<dyn tidb_kv::region_map::RegionStore>,
+    session_privilege: &Option<SessionPrivilegeCheck>,
+    dynamic_privilege: &Option<DynamicPrivilegeCheck>,
+) -> tidb_expropt::OptionalEvalPropProviders {
+    let mut props = tidb_expropt::OptionalEvalPropProviders::new();
+    let store: Arc<dyn tidb_expropt::KvStorage> = Arc::new(SessionKvStorage(Arc::clone(regions)));
+    props.add(Arc::new(tidb_expropt::KvStorePropProvider::new(move || Arc::clone(&store))));
+    let checker: Arc<dyn tidb_expropt::PrivilegeChecker> = Arc::new(SessionPrivilegeChecker {
+        session: session_privilege.clone(),
+        dynamic: dynamic_privilege.clone(),
+    });
+    props.add(Arc::new(tidb_expropt::PrivilegeCheckerProvider::new(move || Arc::clone(&checker))));
+    props
+}
+
 /// Go `kv.Storage.GetMinSafeTS(txnScope)`.
 pub type MinSafeTsProvider = Arc<dyn Fn(&str) -> u64 + Send + Sync>;
 
@@ -801,6 +847,9 @@ impl SessionTableLocks {
 #[doc(hidden)]
 #[derive(Clone, Default)]
 pub struct StmtContextData {
+    /// Go `sessionexpr`'s `OptionalEvalPropProviders`: what builtins that
+    /// need session state read through `expropt`'s readers.
+    optional_props: tidb_expropt::OptionalEvalPropProviders,
     mpp_query_info: Arc<tidb_kv::mpp_query::MppQueryInfo>,
     mpp_server_id: u64,
     tiflash_compute_dispatch_policy: String,
@@ -3203,6 +3252,7 @@ impl StmtContext {
         session: StmtContextSessionState,
     ) -> Self {
         Self(Arc::new(StmtContextData {
+            optional_props: optional_eval_props(&session.regions, &session.session_privilege, &session.dynamic_privilege),
             mpp_query_info: session.mpp_query_info,
             mpp_server_id: session.mpp_server_id,
             tiflash_compute_dispatch_policy: session.tiflash_compute_dispatch_policy,
@@ -7428,22 +7478,11 @@ impl Columns for StmtContext {
         self.process_privilege
     }
 
-    /// Go `RequestVerification("", "", "", mysql.SuperPriv)`, asked only
-    /// when `TIDB_MVCC_INFO` evaluates.
-    fn has_super_privilege(&self) -> bool {
-        self.session_privilege
-            .as_ref()
-            .is_none_or(|check| check("", "", "", tidb_mysql::SuperPriv))
-    }
-
-    fn get_mvcc_by_encoded_key(&self, key: &[u8]) -> Option<Result<(String, bool), String>> {
-        Some(self.region_store().mvcc_get_by_key(key).map(|response| {
-            let has_info = response
-                .info
-                .as_ref()
-                .is_some_and(|info| !info.writes.is_empty() || !info.values.is_empty() || info.lock.is_some());
-            (tidb_kv::mvcc_json::marshal(&response), has_info)
-        }))
+    fn get_optional_prop_provider(
+        &self,
+        key: tidb_exprctx::OptionalEvalPropKey,
+    ) -> Option<Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+        self.optional_props.get(key)
     }
 
     fn has_privilege_checker(&self) -> bool {

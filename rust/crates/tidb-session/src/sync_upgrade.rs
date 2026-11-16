@@ -22,7 +22,7 @@ use tidb_log::{Field, Value};
 use tidb_timeutil::SleepContext;
 
 /// Go `util.DDLOwnerKey`.
-const DDL_OWNER_KEY: &str = "/tidb/ddl/fg/owner";
+use tidb_ddl_util::DDL_OWNER_KEY;
 
 fn upgrading_logger() -> tidb_logutil::Logger {
     tidb_logutil::bg_logger().with_fields(&[Field::new("category", Value::Str("upgrading".to_owned()))])

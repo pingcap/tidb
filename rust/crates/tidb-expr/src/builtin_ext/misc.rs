@@ -76,7 +76,9 @@ pub(crate) fn tidb_encode_key(values: &[Datum], index: bool, ctx: &dyn crate::Co
 /// hex-encoded key, and, for an index key, its temporary index key's when
 /// that holds anything, as a JSON array of `{"key", "mvcc"}`.
 pub(crate) fn tidb_mvcc_info(key: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
-    if !ctx.has_super_privilege() {
+    let opt_error = |error: tidb_expropt::ExprOptError| EvalError::Raw(error.message().to_owned());
+    let priv_checker = tidb_expropt::PrivilegeCheckerPropReader.get_privilege_checker(ctx).map_err(opt_error)?;
+    if !priv_checker.request_verification("", "", "", tidb_mysql::SuperPriv) {
         return Err(err_specific_access_denied_for("SUPER"));
     }
     let Some(s) = crate::arg_eval_type::eval_string(key)? else {
@@ -84,9 +86,22 @@ pub(crate) fn tidb_mvcc_info(key: &Datum, ctx: &dyn crate::Columns) -> Result<Da
     };
     let s = String::from_utf8_lossy(&s).into_owned();
     let mut encoded_key = tidb_goruntime::go_hex::decode_string(&s).map_err(EvalError::Raw)?;
+    let store = tidb_expropt::KvStorePropReader.get_kv_store(ctx).map_err(opt_error)?;
+    let Some(h_store) = store.as_helper_storage() else {
+        return Err(EvalError::Raw("storage is not a helper.Storage".to_owned()));
+    };
+    // Go `helper.NewHelper(hStore).GetMvccByEncodedKey`, and whether its
+    // MVCC info holds a write, a value or a lock.
     let get_mvcc = |key: &[u8]| {
-        ctx.get_mvcc_by_encoded_key(key)
-            .unwrap_or_else(|| Err("storage is not a helper.Storage".to_owned()))
+        h_store
+            .mvcc_get_by_key(key)
+            .map(|response| {
+                let has_info = response
+                    .info
+                    .as_ref()
+                    .is_some_and(|info| !info.writes.is_empty() || !info.values.is_empty() || info.lock.is_some());
+                (tidb_kv::mvcc_json::marshal(&response), has_info)
+            })
             .map_err(EvalError::Raw)
     };
     let (resp, _) = get_mvcc(&encoded_key)?;
@@ -1273,10 +1288,65 @@ use tidb_charset::Collation;
         assert!(eval_builtin_func("VITESS_HASH", &[]).is_none());
     }
 
-    /// A store helper over canned MVCC records, keyed by encoded key.
-    struct MvccContext {
-        super_privilege: bool,
-        records: std::collections::HashMap<Vec<u8>, (String, bool)>,
+    /// A region store over canned MVCC records, keyed by encoded key.
+    #[derive(Debug, Default)]
+    struct MvccRegions(std::collections::HashMap<Vec<u8>, tikv_client::proto::kvrpcpb::MvccGetByKeyResponse>);
+
+    impl tidb_kv::region_map::RegionStore for MvccRegions {
+        fn split_regions(&self, _: Vec<Vec<u8>>, _: bool, _: Option<i64>) -> (Vec<u64>, Option<String>) {
+            unreachable!()
+        }
+
+        fn wait_scatter_region_finish(&self, _: u64, _: i64) -> Result<(), String> {
+            unreachable!()
+        }
+
+        fn check_region_in_scattering(&self, _: u64) -> Result<bool, String> {
+            unreachable!()
+        }
+
+        fn load_regions_in_key_range(&self, _: &[u8], _: &[u8]) -> Result<Vec<tidb_kv::region_map::RegionMeta>, String> {
+            unreachable!()
+        }
+
+        fn mvcc_get_by_key(&self, key: &[u8]) -> Result<tikv_client::proto::kvrpcpb::MvccGetByKeyResponse, String> {
+            Ok(self.0.get(key).cloned().unwrap_or_default())
+        }
+    }
+
+    /// A `kv.Storage` that is a `helper.Storage` over `MvccRegions`, or not.
+    struct MvccStore(Option<MvccRegions>);
+
+    impl tidb_expropt::KvStorage for MvccStore {
+        fn as_helper_storage(&self) -> Option<&dyn tidb_kv::region_map::RegionStore> {
+            self.0.as_ref().map(|regions| regions as &dyn tidb_kv::region_map::RegionStore)
+        }
+    }
+
+    struct SuperChecker(bool);
+
+    impl tidb_expropt::PrivilegeChecker for SuperChecker {
+        fn request_verification(&self, _: &str, _: &str, _: &str, privilege: tidb_mysql::PrivilegeType) -> bool {
+            privilege == tidb_mysql::SuperPriv && self.0
+        }
+
+        fn request_dynamic_verification(&self, _: &str, _: bool) -> bool {
+            unreachable!()
+        }
+    }
+
+    /// An eval context with Go's KV-store and privilege-checker properties.
+    struct MvccContext(tidb_expropt::OptionalEvalPropProviders);
+
+    impl MvccContext {
+        fn new(super_privilege: bool, store: Option<MvccRegions>) -> Self {
+            let mut props = tidb_expropt::OptionalEvalPropProviders::new();
+            let store: std::sync::Arc<dyn tidb_expropt::KvStorage> = std::sync::Arc::new(MvccStore(store));
+            props.add(std::sync::Arc::new(tidb_expropt::KvStorePropProvider::new(move || std::sync::Arc::clone(&store))));
+            let checker: std::sync::Arc<dyn tidb_expropt::PrivilegeChecker> = std::sync::Arc::new(SuperChecker(super_privilege));
+            props.add(std::sync::Arc::new(tidb_expropt::PrivilegeCheckerProvider::new(move || std::sync::Arc::clone(&checker))));
+            MvccContext(props)
+        }
     }
 
     impl crate::Columns for MvccContext {
@@ -1284,12 +1354,11 @@ use tidb_charset::Collation;
             None
         }
 
-        fn has_super_privilege(&self) -> bool {
-            self.super_privilege
-        }
-
-        fn get_mvcc_by_encoded_key(&self, key: &[u8]) -> Option<Result<(String, bool), String>> {
-            Some(Ok(self.records.get(key).cloned().unwrap_or_else(|| ("{}".to_owned(), false))))
+        fn get_optional_prop_provider(
+            &self,
+            key: tidb_exprctx::OptionalEvalPropKey,
+        ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+            self.0.get(key)
         }
     }
 
@@ -1312,11 +1381,17 @@ use tidb_charset::Collation;
         index_key.extend_from_slice(b"\x03\x80\x00\x00\x00\x00\x00\x00\x01");
         let mut temp_key = index_key.clone();
         tidb_tablecodec::index_key_to_temp_index_key(&mut temp_key).unwrap();
-        let write = r#"{"info":{"writes":[{"start_ts":1,"commit_ts":2}]}}"#.to_owned();
-        let mut ctx = MvccContext {
-            super_privilege: true,
-            records: [(record_key.clone(), (write.clone(), true)), (index_key.clone(), (write.clone(), true))].into(),
+        let response = tikv_client::proto::kvrpcpb::MvccGetByKeyResponse {
+            info: Some(tikv_client::proto::kvrpcpb::MvccInfo {
+                writes: vec![tikv_client::proto::kvrpcpb::MvccWrite { start_ts: 1, commit_ts: 2, ..Default::default() }],
+                ..Default::default()
+            }),
+            ..Default::default()
         };
+        let write = tidb_kv::mvcc_json::marshal(&response);
+        assert!(write.contains("\"commit_ts\":2"), "{write}");
+        let mut regions = MvccRegions([(record_key.clone(), response.clone()), (index_key.clone(), response.clone())].into());
+        let ctx = MvccContext::new(true, Some(MvccRegions(regions.0.clone())));
         assert_eq!(
             text(eval(&ctx, &hex(&record_key)).unwrap()),
             format!(r#"[{{"key":"{}","mvcc":{write}}}]"#, hex(&record_key))
@@ -1326,7 +1401,8 @@ use tidb_charset::Collation;
             text(eval(&ctx, &hex(&index_key)).unwrap()),
             format!(r#"[{{"key":"{}","mvcc":{write}}}]"#, hex(&index_key))
         );
-        ctx.records.insert(temp_key.clone(), (write.clone(), true));
+        regions.0.insert(temp_key.clone(), response.clone());
+        let ctx = MvccContext::new(true, Some(regions));
         assert_eq!(
             text(eval(&ctx, &hex(&index_key)).unwrap()),
             format!(r#"[{{"key":"{}","mvcc":{write}}},{{"key":"{}","mvcc":{write}}}]"#, hex(&index_key), hex(&temp_key))
@@ -1336,10 +1412,13 @@ use tidb_charset::Collation;
             crate::EvalError::Raw(message) if message == "encoding/hex: invalid byte: U+0067 'g'"
         ));
         assert!(eval(&ctx, "").is_ok());
-        ctx.super_privilege = false;
+        let ctx = MvccContext::new(false, Some(MvccRegions::default()));
         assert!(format!("{:?}", eval(&ctx, &hex(&record_key)).unwrap_err()).contains("SUPER"));
-        // A context whose store is not a store helper.
-        let error = super::tidb_mvcc_info(&Datum::new_string_datum(hex(&record_key)), &crate::NoColumns).unwrap_err();
+        // A store that is not a `helper.Storage`.
+        let error = eval(&MvccContext::new(true, None), &hex(&record_key)).unwrap_err();
         assert!(matches!(error, crate::EvalError::Raw(message) if message == "storage is not a helper.Storage"));
+        // A context without the properties: Go's `getPropProvider` error.
+        let error = super::tidb_mvcc_info(&Datum::new_string_datum(hex(&record_key)), &crate::NoColumns).unwrap_err();
+        assert!(matches!(error, crate::EvalError::Raw(ref message) if message.contains("not exists in EvalContext")), "{error:?}");
     }
 }
