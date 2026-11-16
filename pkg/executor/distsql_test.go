@@ -412,6 +412,94 @@ func TestAdaptiveLimitExecution(t *testing.T) {
 	require.NotContains(t, fmt.Sprint(tk.MustQuery("explain analyze "+sql).Rows()), "adaptive:{")
 }
 
+func TestAdaptiveLimitSingleReadIndexJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table adaptive_single_outer (
+		id bigint primary key clustered, ord int not null, join_key bigint not null,
+		key idx_ord(ord, id, join_key))`)
+	tk.MustExec("create table adaptive_single_inner (id bigint primary key clustered, v int not null)")
+	tk.MustExec("insert into adaptive_single_outer values (1,30,101),(2,10,102),(3,50,103),(4,20,104),(5,40,105),(6,60,106)")
+	tk.MustExec("insert into adaptive_single_inner values (101,1),(102,2),(104,4),(105,5),(106,6)")
+
+	for _, test := range []struct {
+		name, access, filter, order, limit, reader, scan string
+		rows                                             [][]any
+	}{
+		{"table", "primary", "o.id between 1 and 100", "o.id", "3",
+			"TableReader", "TableRangeScan", testkit.Rows("1", "2", "4")},
+		{"index", "idx_ord", "o.ord between 10 and 60", "o.ord, o.id", "3",
+			"IndexReader", "IndexRangeScan", testkit.Rows("2", "4", "1")},
+		{"index-desc-offset", "idx_ord", "o.ord between 10 and 60", "o.ord desc, o.id desc", "2 offset 1",
+			"IndexReader", "IndexRangeScan", testkit.Rows("5", "1")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set tidb_index_lookup_concurrency = 1")
+			sql := fmt.Sprintf(`select /*+ inl_join(i) */ o.id
+				from adaptive_single_outer o use index(%s) join adaptive_single_inner i on i.id = o.join_key
+				where %s order by %s limit %s`, test.access, test.filter, test.order, test.limit)
+			plan := fmt.Sprint(tk.MustQuery("explain format = 'brief' " + sql).Rows())
+			require.Contains(t, plan, "IndexJoin")
+			require.Contains(t, plan, test.reader+"(Build)")
+			require.Regexp(t, test.scan+`.*keep order:true`, plan)
+
+			tk.MustExec("set tidb_enable_adaptive_limit_scan = off")
+			tk.MustQuery(sql).Check(test.rows)
+			require.NotContains(t, fmt.Sprint(tk.MustQuery("explain analyze "+sql).Rows()), "adaptive:{")
+			tk.MustExec("set tidb_enable_adaptive_limit_scan = on")
+			tk.MustQuery(sql).Check(test.rows)
+			analyze := fmt.Sprint(tk.MustQuery("explain analyze " + sql).Rows())
+			require.Regexp(t, `adaptive:\{outer:[0-9]+/[0-9]+, outstanding:[0-9]+, blocked:[^}]+\}`, analyze)
+		})
+	}
+
+	t.Run("one empty outer batch", func(t *testing.T) {
+		tk.MustExec("set tidb_enable_adaptive_limit_scan = on")
+		sql := `select /*+ inl_join(i) */ o.id from adaptive_single_outer o use index(primary)
+			join adaptive_single_inner i on i.id = o.join_key where o.id between 3 and 5 order by o.id limit 1`
+		tk.MustQuery(sql).Check(testkit.Rows("4"))
+		analyze := fmt.Sprint(tk.MustQuery("explain analyze " + sql).Rows())
+		require.Contains(t, analyze, "adaptive:{outer:2/2, outstanding:0,")
+	})
+
+	var outerValues []string
+	for id := 7; id <= 128; id++ {
+		outerValues = append(outerValues, fmt.Sprintf("(%d,%d,%d)", id, id+100, id+100))
+	}
+	tk.MustExec("insert into adaptive_single_outer values " + strings.Join(outerValues, ","))
+	tk.MustExec("insert into adaptive_single_inner values (228,128)")
+	sparse := `select /*+ inl_join(i) */ o.id from adaptive_single_outer o use index(primary)
+		join adaptive_single_inner i on i.id = o.join_key where o.id between 7 and 128 order by o.id limit 1`
+	tk.MustExec("prepare single_read from '" + sparse + "'")
+	for _, state := range []string{"on", "off", "on"} {
+		tk.MustExec("set tidb_enable_adaptive_limit_scan = " + state)
+		tk.MustQuery("execute single_read").Check(testkit.Rows("128"))
+	}
+	tk.MustQuery(strings.Replace(sparse, "7 and 128", "7 and 127", 1)).Check(testkit.Rows())
+	require.Contains(t, fmt.Sprint(tk.MustQuery("explain analyze "+sparse).Rows()), "adaptive:{outer:")
+	unordered := strings.Replace(sparse, "order by o.id ", "", 1)
+	require.NotContains(t, fmt.Sprint(tk.MustQuery("explain analyze "+unordered).Rows()), "adaptive:{")
+
+	tk.MustExec("create table adaptive_single_multi (id int primary key, join_key bigint, key idx_join_key(join_key))")
+	tk.MustExec("insert into adaptive_single_multi values (1,101),(2,101),(3,102)")
+	oneToMany := `select /*+ inl_join(i) */ o.id from adaptive_single_outer o use index(primary)
+		join adaptive_single_multi i use index(idx_join_key) on i.join_key = o.join_key
+		where o.id between 1 and 3 order by o.id limit 2 offset 1`
+	tk.MustQuery(oneToMany).Check(testkit.Rows("1", "2"))
+	require.Contains(t, fmt.Sprint(tk.MustQuery("explain analyze "+oneToMany).Rows()), "adaptive:{outer:")
+
+	leftJoin := `select /*+ inl_join(i) */ o.id from adaptive_single_outer o use index(primary)
+		left join adaptive_single_multi i use index(idx_join_key) on i.join_key = o.join_key
+		where o.id between 1 and 3 order by o.id limit 2 offset 2`
+	tk.MustQuery(leftJoin).Check(testkit.Rows("2", "3"))
+	leftPlan := fmt.Sprint(tk.MustQuery("explain format = 'brief' " + leftJoin).Rows())
+	require.Contains(t, leftPlan, "Limit(Build)")
+	require.NotContains(t, fmt.Sprint(tk.MustQuery("explain analyze "+leftJoin).Rows()), "adaptive:{")
+}
+
 func TestAdaptiveLimitDirectIndexLookUpExecution(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
