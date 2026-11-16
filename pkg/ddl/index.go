@@ -89,6 +89,7 @@ import (
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -1628,7 +1629,7 @@ func (w *worker) analyzeTableInner(job *model.Job, tblInfo *model.TableInfo, dbN
 				w.sessPool.Put(sessCtx)
 				close(doneCh)
 			}()
-			dbTable := fmt.Sprintf("`%s`.`%s`", dbName, tblName)
+			dbTable := sqlescape.MustEscapeSQL("%n.%n", dbName, tblName)
 
 			exec, ok := sessCtx.(sqlexec.RestrictedSQLExecutor)
 			if !ok {
