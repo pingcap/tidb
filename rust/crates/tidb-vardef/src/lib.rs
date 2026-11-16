@@ -305,6 +305,11 @@ pub static INSTANCE_PLAN_CACHE_MAX_MEM_SIZE: AtomicI64 =
 pub static INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE: AtomicU64 =
     AtomicU64::new(defaults::DEF_TIDB_INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE.to_bits());
 
+/// Go `vardef.TxnEntrySizeLimit`: the GLOBAL `tidb_txn_entry_size_limit`,
+/// which DDL backfill transactions take (`updateTxnEntrySizeLimitIfNeeded`).
+pub static TXN_ENTRY_SIZE_LIMIT: AtomicU64 =
+    AtomicU64::new(defaults::DEF_TIDB_TXN_ENTRY_SIZE_LIMIT as u64);
+
 /// Go `vardef.SchemaCacheSize`, the process-wide byte count used by the
 /// infoschema cache after a GLOBAL/INSTANCE update.
 pub static SCHEMA_CACHE_SIZE: AtomicU64 =

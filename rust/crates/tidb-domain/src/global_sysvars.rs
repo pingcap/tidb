@@ -1403,6 +1403,14 @@ impl GlobalSysvars {
                 tidb_vardef::SCHEMA_CACHE_SIZE.store(bytes, SeqCst);
             }
             TIDB_ENABLE_AUTO_ANALYZE => tidb_vardef::RUN_AUTO_ANALYZE.store(on, SeqCst),
+            // Go `SetGlobal`: `vardef.TxnEntrySizeLimit.Store(TidbOptUint64(val, Def))`.
+            TIDB_TXN_ENTRY_SIZE_LIMIT => tidb_vardef::TXN_ENTRY_SIZE_LIMIT.store(
+                tidb_variable::varsutil::tidb_opt_uint64(
+                    value,
+                    tidb_vardef::defaults::DEF_TIDB_TXN_ENTRY_SIZE_LIMIT as u64,
+                ),
+                SeqCst,
+            ),
             TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE => {
                 tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE.store(on, SeqCst)
             }

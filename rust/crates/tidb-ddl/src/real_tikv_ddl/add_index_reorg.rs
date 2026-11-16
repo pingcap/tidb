@@ -232,10 +232,13 @@ where
 {
     let mut attempt: u32 = 0;
     loop {
-        let options = tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions::from(
+        let mut options = tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions::from(
             tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
         )
         .with_request_source(source.clone());
+        // Go `updateTxnEntrySizeLimitIfNeeded`: the GLOBAL limit, not the
+        // session's, bounds a backfill transaction's entries.
+        options.entry_size_limit = tidb_vardef::TXN_ENTRY_SIZE_LIMIT.load(std::sync::atomic::Ordering::SeqCst);
         let transaction = match start_ts {
             Some(start_ts) => SessionTransaction::begin_at(Arc::clone(opener), start_ts, timeout, options)?,
             None => SessionTransaction::begin(Arc::clone(opener), timeout, options)?,

@@ -1624,6 +1624,7 @@ impl Session {
             )));
         }
         self.validate_statement_read_only_in_staleness(&stmt)?;
+        self.check_explain_target_for_update_ts(&stmt)?;
         if self.vars.snapshot_ts() != 0
             && self.in_transaction()
             && self.historical_read_ts() != Some(self.vars.snapshot_ts())
@@ -2361,6 +2362,33 @@ impl Session {
                     "only support read-only statement during read-only staleness transactions",
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// Go `buildExplain` builds the EXPLAIN's target executor; for an INSERT,
+    /// UPDATE or DELETE that is `updateForUpdateTS`, which a stale
+    /// transaction's provider refuses (`StalenessTxnContextProvider
+    /// .GetStmtForUpdateTS`). A SELECT ... FOR UPDATE is refused before this
+    /// (`validateStatementReadOnlyInStaleness`).
+    fn check_explain_target_for_update_ts(&self, stmt: &Stmt) -> Result<(), DriverError> {
+        if !self.is_staleness_txn() {
+            return Ok(());
+        }
+        let Stmt::Admin(admin) = stmt else {
+            return Ok(());
+        };
+        let tidb_ast::AdminStmt::Explain(explain) = admin.as_ref() else {
+            return Ok(());
+        };
+        if matches!(
+            explain.statement(),
+            Some(Stmt::Dml(dml)) if matches!(
+                dml.as_ref(),
+                tidb_ast::DmlStmt::Insert(_) | tidb_ast::DmlStmt::Update(_) | tidb_ast::DmlStmt::Delete(_)
+            )
+        ) {
+            return Err(DriverError::unsupported("GetForUpdateTS not supported for stalenessTxnProvider"));
         }
         Ok(())
     }
