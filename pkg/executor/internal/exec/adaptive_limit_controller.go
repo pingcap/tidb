@@ -543,6 +543,15 @@ func (c *AdaptiveLimitController) ObserveJoinProgress(consumedRows, outputRows i
 		c.mu.Unlock()
 		return
 	}
+	if outputRows > 0 && c.joinLookupBatchSize != 0 {
+		// A match ends the temporary lookup batch increase even when the
+		// current outer row still has matches to consume.
+		c.joinLookupBatchSize = 0
+		if consumed == 0 {
+			// Batch rounding can change lookup capacity without a yield sample.
+			c.notifyLocked(c.lookupChanged)
+		}
+	}
 	if consumed == 0 {
 		if outputRows > 0 {
 			c.pendingOuterOutput = saturatingAdd(c.pendingOuterOutput, uint64(outputRows))
@@ -559,7 +568,6 @@ func (c *AdaptiveLimitController) ObserveJoinProgress(consumedRows, outputRows i
 		c.recentOuterYield.add(consumed, pairedOutput)
 		c.outerNoOutputRows = 0
 		c.outerInNoOutputGrowth = false
-		c.joinLookupBatchSize = 0
 		c.recomputeOuterWindowLocked()
 		c.recomputeLookupWindowLocked()
 	} else {
