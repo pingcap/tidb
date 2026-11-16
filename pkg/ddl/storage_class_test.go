@@ -459,6 +459,36 @@ func TestBuildStorageClassForPartitions(t *testing.T) {
 			expected: []string{"IA", "IA", "STANDARD"},
 		},
 		{
+			name: "names_in overrides values_in when values_in comes first",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA", ValuesIn: []string{"2", "3"}},
+					{Tier: "STANDARD", NamesIn: []string{"part1"}},
+				},
+			},
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}, InValues: [][]string{{"1"}, {"2"}}},
+				{Name: ast.CIStr{L: "part2"}, InValues: [][]string{{"3"}}},
+				{Name: ast.CIStr{L: "part3"}, InValues: [][]string{{"4"}}},
+			},
+			expected: []string{"STANDARD", "IA", "STANDARD"},
+		},
+		{
+			name: "names_in overrides values_in when names_in comes first",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "STANDARD", NamesIn: []string{"part1"}},
+					{Tier: "IA", ValuesIn: []string{"2", "3"}},
+				},
+			},
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}, InValues: [][]string{{"1"}, {"2"}}},
+				{Name: ast.CIStr{L: "part2"}, InValues: [][]string{{"3"}}},
+				{Name: ast.CIStr{L: "part3"}, InValues: [][]string{{"4"}}},
+			},
+			expected: []string{"STANDARD", "IA", "STANDARD"},
+		},
+		{
 			name: "less_than maxvalue includes literal and maxvalue upper bounds",
 			settings: &model.StorageClassSettings{
 				Defs: []*model.StorageClassDef{
@@ -575,6 +605,33 @@ func TestBuildStorageClassForPartitions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStorageClassNamesInVsLessThanOrder(t *testing.T) {
+	lt := "200"
+	run := func(defs []*model.StorageClassDef) []string {
+		parts := []model.PartitionDefinition{
+			{Name: ast.CIStr{L: "part1"}, LessThan: []string{"100"}},
+			{Name: ast.CIStr{L: "part2"}, LessThan: []string{"200"}},
+			{Name: ast.CIStr{L: "part3"}, LessThan: []string{"1000"}},
+		}
+		tbInfo := &model.TableInfo{Partition: &model.PartitionInfo{Type: ast.PartitionTypeRange, Definitions: parts}}
+		require.NoError(t, ddl.BuildStorageClassForPartitions(parts, tbInfo, &model.StorageClassSettings{Defs: defs}))
+		var out []string
+		for _, p := range tbInfo.Partition.Definitions {
+			out = append(out, p.StorageClassTier)
+		}
+		return out
+	}
+
+	require.Equal(t, []string{"STANDARD", "IA", "STANDARD"}, run([]*model.StorageClassDef{
+		{Tier: "IA", LessThan: &lt},
+		{Tier: "STANDARD", NamesIn: []string{"part1"}},
+	}))
+	require.Equal(t, []string{"STANDARD", "IA", "STANDARD"}, run([]*model.StorageClassDef{
+		{Tier: "STANDARD", NamesIn: []string{"part1"}},
+		{Tier: "IA", LessThan: &lt},
+	}))
 }
 
 func TestStorageClassPartitionScopesUseNormalizedValues(t *testing.T) {
