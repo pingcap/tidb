@@ -508,6 +508,68 @@ func TestAdaptiveLimitControllerDirectLookupGrowsOnNoOutput(t *testing.T) {
 	}
 }
 
+func TestAdaptiveLimitControllerFilteredLookupUsesSelectionYield(t *testing.T) {
+	controller := NewAdaptiveLimitFilteredLookupController(AdaptiveLimitConfig{
+		DemandRows:             8,
+		InitialLookupWindow:    8,
+		MaxLookupWindow:        2048,
+		InitialLookupBatchSize: 32,
+		MaxLookupBatchSize:     32,
+	})
+	reserved, ok := reserveLookupForTest(t, controller, 32)
+	require.True(t, ok)
+	require.Equal(t, 32, reserved)
+	// Lookup rows feed the Selection; they must not count as LIMIT output.
+	// Counting them would stop admission after 8 rows and starve the LIMIT.
+	controller.CompleteLookup(reserved, reserved, 32)
+	snapshot := controller.Snapshot()
+	require.True(t, snapshot.Filtered)
+	require.False(t, snapshot.Stopped)
+	require.Zero(t, snapshot.OutputRows)
+	require.Equal(t, uint64(32), snapshot.LookupRows)
+	// No pass ratio yet: the drained window grows like a zero-output phase.
+	require.Equal(t, uint64(16), snapshot.LookupWindow)
+
+	controller.ObserveFilterProgress(32, 2)
+	snapshot = controller.Snapshot()
+	require.Equal(t, uint64(2), snapshot.OutputRows)
+	require.Equal(t, uint64(32), snapshot.FilterInputRows)
+	require.Equal(t, uint64(2), snapshot.FilterOutputRows)
+	// Growth still waits for new lookup progress.
+	require.Equal(t, uint64(16), snapshot.LookupWindow)
+
+	reserved, ok = reserveLookupForTest(t, controller, 32)
+	require.True(t, ok)
+	controller.CompleteLookup(reserved, reserved, reserved)
+	// 6 rows remain at a 1/16 pass ratio: 96 Selection input rows, minus 32
+	// returned rows not yet filtered, with 25% headroom is 80 handles; one
+	// growth step caps the window at 2x.
+	require.Equal(t, uint64(32), controller.Snapshot().LookupWindow)
+
+	controller.ObserveFilterProgress(32, 0)
+	require.Equal(t, uint64(2), controller.Snapshot().OutputRows)
+	controller.ObserveFilterProgress(16, 6)
+	snapshot = controller.Snapshot()
+	require.Equal(t, uint64(8), snapshot.OutputRows)
+	require.True(t, snapshot.Stopped)
+
+	controller.Reset()
+	snapshot = controller.Snapshot()
+	require.False(t, snapshot.Stopped)
+	require.True(t, snapshot.Filtered)
+	require.Zero(t, snapshot.FilterInputRows)
+	require.Zero(t, snapshot.FilterOutputRows)
+	require.Equal(t, uint64(8), snapshot.LookupWindow)
+
+	direct := NewAdaptiveLimitLookupController(AdaptiveLimitConfig{
+		DemandRows: 8, InitialLookupWindow: 8, MaxLookupWindow: 2048,
+		InitialLookupBatchSize: 32, MaxLookupBatchSize: 32,
+	})
+	direct.ObserveFilterProgress(32, 8)
+	require.Zero(t, direct.Snapshot().OutputRows)
+	require.False(t, direct.Snapshot().Filtered)
+}
+
 func TestAdaptiveLimitControllerMergesConcurrentLookupBlocks(t *testing.T) {
 	controller := newAdaptiveLimitControllerForTest(1000, 1, 1, 1, 1)
 	reserved, ok := reserveLookupForTest(t, controller, 1)

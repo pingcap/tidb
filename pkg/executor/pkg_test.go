@@ -193,6 +193,18 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 8, directLookup),
 	}
 	require.Nil(t, findAdaptiveLimitIndexLookupCandidate(directSelection))
+	foundLookup, foundSelection := findAdaptiveLimitDirectIndexLookup(directSelection)
+	require.Same(t, directLookup, foundLookup)
+	require.Same(t, directSelection, foundSelection)
+	foundLookup, foundSelection = findAdaptiveLimitDirectIndexLookup(directProjection)
+	require.Same(t, directLookup, foundLookup)
+	require.Nil(t, foundSelection)
+	stackedSelection := &SelectionExec{
+		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 9, directSelection),
+	}
+	foundLookup, foundSelection = findAdaptiveLimitDirectIndexLookup(stackedSelection)
+	require.Nil(t, foundLookup)
+	require.Nil(t, foundSelection)
 	directLookup.PushedLimit = &physicalop.PushedDownLimit{Count: 10}
 	require.Nil(t, findAdaptiveLimitIndexLookupCandidate(directLookup))
 	directLookup.PushedLimit = nil

@@ -2222,9 +2222,14 @@ func (e *IndexLookUpRunTimeStats) String() string {
 			separator = ", "
 		}
 		snapshot := e.adaptiveLimitSnapshot
-		fmt.Fprintf(&buf, "%sadaptive:{lookup:%d/%d, outstanding:%d, blocked:%s}", separator,
+		filter := ""
+		if snapshot.Filtered {
+			filter = fmt.Sprintf(", filter:%d/%d", snapshot.FilterInputRows, snapshot.FilterOutputRows)
+		}
+		fmt.Fprintf(&buf, "%sadaptive:{lookup:%d/%d%s, outstanding:%d, blocked:%s}", separator,
 			snapshot.LookupHandles,
 			snapshot.LookupRows,
+			filter,
 			snapshot.LookupOutstandingAtStop,
 			execdetails.FormatDuration(snapshot.LookupAdmissionBlocked),
 		)

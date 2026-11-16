@@ -482,6 +482,106 @@ func TestAdaptiveLimitDirectIndexLookUpExecution(t *testing.T) {
 	require.NotContains(t, fmt.Sprint(tk.MustQuery("explain analyze "+sql).Rows()), "adaptive:{")
 }
 
+func TestAdaptiveLimitRootSelectionIndexLookUpExecution(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table adaptive_root_sel (
+		id int primary key, order_key int not null, filter_col int not null,
+		payload varchar(32), key idx_order_key(order_key))`)
+	const rowCount = 2048
+	values := make([]string, 0, rowCount)
+	for i := 1; i <= rowCount; i++ {
+		values = append(values, fmt.Sprintf("(%d,%d,%d,'payload_%d')", i, i, i, i))
+	}
+	tk.MustExec("insert into adaptive_root_sel values " + strings.Join(values, ","))
+	// Keep mod() in TiDB so the filter becomes a root Selection between Limit
+	// and IndexLookUp, the shape adaptive admission previously skipped.
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('mod', 'tikv', 'adaptive root selection test')")
+	tk.MustExec("admin reload expr_pushdown_blacklist")
+	defer func() {
+		tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'mod'")
+		tk.MustExec("admin reload expr_pushdown_blacklist")
+	}()
+	tk.MustExec("set tidb_index_lookup_size = 32")
+	tk.MustExec("set tidb_index_lookup_concurrency = 2")
+	tk.MustExec("set tidb_init_chunk_size = 32")
+	tk.MustExec("set tidb_max_chunk_size = 32")
+
+	// One row in 16 passes, so LIMIT 8 needs the first 128 handles.
+	sql := `select order_key, payload
+		from adaptive_root_sel use index(idx_order_key)
+		where order_key between 1 and 2048 and mod(filter_col, 16) = 0
+		order by order_key limit 8`
+	plan := tk.MustQuery("explain format='brief' " + sql).Rows()
+	require.Equal(t, "Limit", plan[0][0], fmt.Sprint(plan))
+	require.Equal(t, "└─Selection", plan[1][0], fmt.Sprint(plan))
+	require.Equal(t, "root", plan[1][2], fmt.Sprint(plan))
+	require.Equal(t, "  └─Projection", plan[2][0], fmt.Sprint(plan))
+	require.Equal(t, "    └─IndexLookUp", plan[3][0], fmt.Sprint(plan))
+
+	expected := make([]string, 0, 8)
+	for i := 1; i <= 8; i++ {
+		expected = append(expected, fmt.Sprintf("%d payload_%d", i*16, i*16))
+	}
+	tk.MustExec("set tidb_enable_adaptive_limit_scan = on")
+	tk.MustQuery(sql).Check(testkit.Rows(expected...))
+	offsetSQL := strings.Replace(sql, "limit 8", "limit 6, 2", 1)
+	tk.MustQuery(offsetSQL).Check(testkit.Rows(expected[6:]...))
+	emptySQL := strings.Replace(sql, "= 0", "= 99", 1)
+	tk.MustQuery(emptySQL).Check(testkit.Rows())
+	largeLimitSQL := strings.Replace(sql, "limit 8", "limit 1000", 1)
+	require.Len(t, tk.MustQuery(largeLimitSQL).Rows(), rowCount/16)
+
+	re := regexp.MustCompile(`adaptive:\{lookup:([0-9]+)/([0-9]+), filter:([0-9]+)/([0-9]+), outstanding:([0-9]+),`)
+	analyze := fmt.Sprint(tk.MustQuery("explain analyze " + sql).Rows())
+	matched := re.FindStringSubmatch(analyze)
+	require.NotNil(t, matched, analyze)
+	lookupHandles, err := strconv.Atoi(matched[1])
+	require.NoError(t, err)
+	outstanding, err := strconv.Atoi(matched[5])
+	require.NoError(t, err)
+	filterOut, err := strconv.Atoi(matched[4])
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, filterOut, 8, analyze)
+	// The lookup window is sized from the observed 1/16 pass ratio: admitted
+	// handles stay near the 128 needed plus bounded headroom instead of
+	// following unbounded prefetch toward all 2048 handles.
+	require.GreaterOrEqual(t, lookupHandles+outstanding, 128, analyze)
+	require.LessOrEqual(t, lookupHandles+outstanding, 384, analyze)
+
+	// SETVAR makes expression.Vectorizable false, so this Selection evaluates
+	// rows one at a time (unBatchedNext) and must report feedback from that
+	// path too.
+	rowSQL := strings.Replace(sql, "= 0", "= 0 and (@adaptive_seen := filter_col) > 0", 1)
+	rowPlan := fmt.Sprint(tk.MustQuery("explain format='brief' " + rowSQL).Rows())
+	require.Regexp(t, `└─Selection [0-9.]+ root  .*setvar\("adaptive_seen"`, rowPlan)
+	tk.MustQuery(rowSQL).Check(testkit.Rows(expected...))
+	rowOffsetSQL := strings.Replace(rowSQL, "limit 8", "limit 6, 2", 1)
+	tk.MustQuery(rowOffsetSQL).Check(testkit.Rows(expected[6:]...))
+	rowAnalyze := fmt.Sprint(tk.MustQuery("explain analyze " + rowSQL).Rows())
+	matched = re.FindStringSubmatch(rowAnalyze)
+	require.NotNil(t, matched, rowAnalyze)
+	lookupHandles, err = strconv.Atoi(matched[1])
+	require.NoError(t, err)
+	outstanding, err = strconv.Atoi(matched[5])
+	require.NoError(t, err)
+	filterIn, err := strconv.Atoi(matched[3])
+	require.NoError(t, err)
+	filterOut, err = strconv.Atoi(matched[4])
+	require.NoError(t, err)
+	require.Equal(t, 8, filterOut, rowAnalyze)
+	require.Equal(t, 128, filterIn, rowAnalyze)
+	require.GreaterOrEqual(t, lookupHandles+outstanding, 128, rowAnalyze)
+	require.LessOrEqual(t, lookupHandles+outstanding, 384, rowAnalyze)
+
+	tk.MustExec("set tidb_enable_adaptive_limit_scan = off")
+	tk.MustQuery(sql).Check(testkit.Rows(expected...))
+	tk.MustQuery(offsetSQL).Check(testkit.Rows(expected[6:]...))
+	tk.MustQuery(rowSQL).Check(testkit.Rows(expected...))
+	require.NotContains(t, fmt.Sprint(tk.MustQuery("explain analyze "+sql).Rows()), "adaptive:{")
+}
+
 func TestIndexLookUpStats(t *testing.T) {
 	stats := &executor.IndexLookUpRunTimeStats{
 		FetchHandleTotal:         int64(5 * time.Second),
