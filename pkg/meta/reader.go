@@ -63,6 +63,7 @@ type Reader interface {
 	GetSystemDBID() (int64, error)
 	GetSchemaCacheSize() (size uint64, isNull bool, err error)
 	GetBootstrapVersion() (int64, error)
+	GetLegacyECDSASessionTokenDisabled() (bool, error)
 	GetStarterBootstrapVersion() (int64, error)
 }
 

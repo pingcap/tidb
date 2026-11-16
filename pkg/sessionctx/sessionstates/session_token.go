@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -350,12 +351,20 @@ func (sc *signingCert) checkSignature(content, signature []byte) error {
 			break
 		}
 		switch certInfo.privKey.(type) {
-		// ESDSA is special: `PrivateKey.Sign` doesn't match with `Certificate.CheckSignature`.
+		// ECDSA is special: `PrivateKey.Sign` doesn't match with `Certificate.CheckSignature`.
 		case *ecdsa.PrivateKey:
+			key := certInfo.cert.PublicKey.(*ecdsa.PublicKey)
 			hashed := sha256.Sum256(content)
-			if !ecdsa.VerifyASN1(certInfo.cert.PublicKey.(*ecdsa.PublicKey), hashed[:], signature) {
-				err = errors.New("x509: ECDSA verification failure")
+			if ecdsa.VerifyASN1(key, hashed[:], signature) {
+				return nil
 			}
+			// Older servers sign raw JSON, which ECDSA truncates to a curve-order
+			// prefix and can leave timestamps unauthenticated. Accept it only
+			// during an upgrade; new tokens always sign the full payload digest.
+			if !vardef.IsLegacyECDSASessionTokenDisabled() && ecdsa.VerifyASN1(key, content, signature) {
+				return nil
+			}
+			err = errors.New("x509: ECDSA verification failure")
 		default:
 			err = certInfo.cert.CheckSignature(certInfo.cert.SignatureAlgorithm, content, signature)
 		}

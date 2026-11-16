@@ -15,6 +15,8 @@
 package sessionstates
 
 import (
+	"crypto/ecdsa"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
@@ -25,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
@@ -221,6 +224,70 @@ func TestVerifyToken(t *testing.T) {
 		require.NotContains(t, string(hostlessBytes), `"hostname"`)
 		require.NoError(t, ValidateSessionToken(hostlessBytes, "test_user", "%"))
 	})
+}
+
+func TestLegacyECDSASessionToken(t *testing.T) {
+	originalDisabled := vardef.IsLegacyECDSASessionTokenDisabled()
+	t.Cleanup(func() { vardef.SetLegacyECDSASessionTokenDisabled(originalDisabled) })
+	vardef.SetLegacyECDSASessionTokenDisabled(false)
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "cert.pem")
+	keyPath := filepath.Join(tempDir, "key.pem")
+	require.NoError(t, util.CreateCertificates(certPath, keyPath, 0, x509.ECDSA, x509.ECDSAWithSHA256))
+	SetKeyPath(keyPath)
+	SetCertPath(certPath)
+
+	now := time.Now()
+	token := &SessionToken{Username: "legacy_user", SignTime: now, ExpireTime: now.Add(tokenLifetime)}
+	payload, err := json.Marshal(token)
+	require.NoError(t, err)
+	// Older TiDB versions pass the JSON directly to ECDSA instead of hashing it.
+	key := globalSigningCert.certs[0].privKey.(*ecdsa.PrivateKey)
+	token.Signature, err = ecdsa.SignASN1(rand.Reader, key, payload)
+	require.NoError(t, err)
+	tokenBytes, err := json.Marshal(token)
+	require.NoError(t, err)
+	require.NoError(t, ValidateSessionToken(tokenBytes, token.Username, "%"))
+
+	// Legacy signatures do not authenticate timestamps beyond the curve-order
+	// prefix. This compatibility path must be disabled after the upgrade.
+	token.ExpireTime = token.ExpireTime.Add(time.Hour)
+	tamperedBytes, err := json.Marshal(token)
+	require.NoError(t, err)
+	require.NoError(t, ValidateSessionToken(tamperedBytes, token.Username, "%"))
+	vardef.SetLegacyECDSASessionTokenDisabled(true)
+	require.ErrorContains(t, ValidateSessionToken(tokenBytes, token.Username, "%"), "verification")
+	require.ErrorContains(t, ValidateSessionToken(tamperedBytes, token.Username, "%"), "verification")
+
+	// New tokens always hash the complete payload, even during an upgrade.
+	for _, disabled := range []bool{false, true} {
+		vardef.SetLegacyECDSASessionTokenDisabled(disabled)
+		modernToken, modernBytes := createNewToken(t, token.Username)
+		require.NoError(t, ValidateSessionToken(modernBytes, token.Username, "%"))
+		signature := modernToken.Signature
+		modernToken.Signature = nil
+		payload, err := json.Marshal(modernToken)
+		require.NoError(t, err)
+		require.False(t, ecdsa.VerifyASN1(&key.PublicKey, payload, signature))
+	}
+
+	// Verification must try older certificates after the newest one fails,
+	// for both signature formats while legacy verification is enabled.
+	_, modernBytes := createNewToken(t, token.Username)
+	newCertPath := filepath.Join(tempDir, "new_cert.pem")
+	newKeyPath := filepath.Join(tempDir, "new_key.pem")
+	require.NoError(t, util.CreateCertificates(newCertPath, newKeyPath, 0, x509.ECDSA, x509.ECDSAWithSHA256))
+	SetKeyPath(newKeyPath)
+	SetCertPath(newCertPath)
+	for _, disabled := range []bool{false, true} {
+		vardef.SetLegacyECDSASessionTokenDisabled(disabled)
+		require.NoError(t, ValidateSessionToken(modernBytes, token.Username, "%"))
+		if disabled {
+			require.ErrorContains(t, ValidateSessionToken(tokenBytes, token.Username, "%"), "verification")
+		} else {
+			require.NoError(t, ValidateSessionToken(tokenBytes, token.Username, "%"))
+		}
+	}
 }
 
 func TestStarterSessionTokenLifetime(t *testing.T) {
