@@ -38,7 +38,11 @@ go_test(
     timeout = "short",
     srcs = ["indexusage_test.go"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 6,
+=======
+    shard_count = 16,
+>>>>>>> 33bdc22d43d (executor: adapt LIMIT for ordered IndexJoin outer inputs (#72863))
     deps = [
         ":exec",
         "//pkg/domain",

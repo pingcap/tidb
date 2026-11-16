@@ -78,7 +78,10 @@ go_test(
         "hash_table_v1_test.go",
         "hash_table_v2_test.go",
         "index_lookup_join_test.go",
+<<<<<<< HEAD
         "index_lookup_merge_join_test.go",
+=======
+>>>>>>> 33bdc22d43d (executor: adapt LIMIT for ordered IndexJoin outer inputs (#72863))
         "inner_join_probe_test.go",
         "inner_join_spill_test.go",
         "join_row_table_test.go",
