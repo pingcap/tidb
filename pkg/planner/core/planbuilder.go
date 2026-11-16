@@ -961,10 +961,10 @@ func fetchRecordFromClusterStmtSummary(sctx base.PlanContext, planDigest string)
 		prefix = ""
 	}
 	fields := "stmt_type, schema_name, digest_text, sample_user, prepared, query_sample_text, charset, collation, plan_hint, plan_digest"
-	sql := fmt.Sprintf("select %s from information_schema.%stidb_statements_stats where plan_digest = '%s' union distinct ", fields, prefix, planDigest) +
-		fmt.Sprintf("select %s from information_schema.%sstatements_summary_history where plan_digest = '%s' ", fields, prefix, planDigest) +
+	sql := fmt.Sprintf("select %s from information_schema.%stidb_statements_stats where plan_digest = %%? union distinct ", fields, prefix) +
+		fmt.Sprintf("select %s from information_schema.%sstatements_summary_history where plan_digest = %%? ", fields, prefix) +
 		"order by length(plan_digest) desc"
-	rs, err := exec.ExecuteInternal(ctx, sql)
+	rs, err := exec.ExecuteInternal(ctx, sql, planDigest, planDigest)
 	if err != nil {
 		return "", "", "", "", "", err
 	}
