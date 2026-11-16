@@ -3597,6 +3597,7 @@ func InitTiDBSchemaCacheSize(store kv.Storage) error {
 	return nil
 }
 
+<<<<<<< HEAD
 // InitMDLVariableForUpgrade initializes the metadata lock variable.
 func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
 	isNull := false
@@ -3642,6 +3643,34 @@ func InitMDLVariable(store kv.Storage) error {
 	})
 	variable.EnableMDL.Store(enable)
 	return err
+=======
+// initLegacyECDSASessionToken loads the one-way compatibility gate. Only the
+// owner of a fresh bootstrap may persist it without checking cluster versions.
+func initLegacyECDSASessionToken(store kv.Storage, bootstrap bool) error {
+	if kerneltype.IsNextGen() {
+		return nil
+	}
+	disabled := false
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		if bootstrap {
+			disabled = true
+			return m.SetLegacyECDSASessionTokenDisabled()
+		}
+		var err error
+		disabled, err = m.GetLegacyECDSASessionTokenDisabled()
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	if disabled {
+		// Publish only after persistence succeeds, and never undo an observed gate.
+		vardef.SetLegacyECDSASessionTokenDisabled(true)
+	}
+	return nil
+>>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 }
 
 // BootstrapSession bootstrap session and domain.
@@ -3666,7 +3695,32 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // - initialization global variables from system table that's required to use sessionCtx,
 // such as system time zone
 // - start domain and other routines.
+<<<<<<< HEAD
 func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
+=======
+func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error), extWorkloadMgr extworkload.Manager) (*domain.Domain, error) {
+	// Load before any bootstrap, upgrade, normal, or diagnostic domain can start.
+	if err := initLegacyECDSASessionToken(store, false); err != nil {
+		return nil, err
+	}
+	if diagnosticmode.Enabled() {
+		return bootstrapSessionImplDiagnostic(ctx, store)
+	}
+	ver := getStoreBootstrapVersionWithCache(store)
+	failpoint.InjectCall("afterGetStoreBootstrapVersion", ver)
+	if kv.IsUserKS(store) {
+		targetVer := currentBootstrapVersion
+		systemKSVer := waitSystemBootVersion()
+		if systemKSVer == notBootstrapped {
+			logutil.BgLogger().Fatal("SYSTEM keyspace is not bootstrapped")
+		} else if targetVer > systemKSVer {
+			logutil.BgLogger().Fatal("bootstrap version of user keyspace must be smaller or equal to that of SYSTEM keyspace. if you are upgrading user keyspace, please make sure to upgrade SYSTEM keyspace first",
+				zap.Int64("userCurr", ver), zap.Int64("userTarget", targetVer),
+				zap.Int64("system", systemKSVer))
+		}
+	}
+
+>>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
 	cfg := config.GetGlobalConfig()
 	if len(cfg.Instance.PluginLoad) > 0 {
@@ -3700,7 +3754,18 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	}
 	ver := getStoreBootstrapVersionWithCache(store)
 	if ver < currentBootstrapVersion {
+<<<<<<< HEAD
 		runInBootstrapSession(store, ver)
+=======
+		err = runInBootstrapSession(store, ver, domainCreateOptions{extWorkloadMgr: extWorkloadMgr})
+		if err != nil {
+			return nil, err
+		}
+		// Another node may have completed fresh bootstrap while this node waited.
+		if err = initLegacyECDSASessionToken(store, false); err != nil {
+			return nil, err
+		}
+>>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 	} else {
 		err = InitMDLVariable(store)
 		if err != nil {

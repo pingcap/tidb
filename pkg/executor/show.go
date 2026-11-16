@@ -2400,7 +2400,24 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	if user := e.Ctx().GetSessionVars().User; user != nil {
 		// The token may be leaked without secure transport, but the cloud can ensure security in some situations,
 		// so we don't enforce secure connections.
+<<<<<<< HEAD
 		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
+=======
+		if token, err = sessionstates.CreateSessionToken(user.AuthUsername, user.AuthHostname); err != nil {
+			// Some users deploy TiProxy after the cluster is running and configuring signing certs will restart TiDB.
+			// The users may don't need connection migration, e.g. they only want traffic replay, which requires session states
+			// but not session tokens. So we don't return errors, just log it.
+			logutil.Logger(ctx).Warn("create session token failed", zap.Error(err))
+		}
+	}
+	if token != nil {
+		tokenBytes, err := gjson.Marshal(token)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tokenJSON := types.BinaryJSON{}
+		if err = tokenJSON.UnmarshalJSON(tokenBytes); err != nil {
+>>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 			return err
 		}
 	}
