@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain/affinity"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -205,4 +206,54 @@ func BuildAffinityGroupDefinitionsForTest(
 	partitionDefs []model.PartitionDefinition,
 ) (map[string][]pdhttp.AffinityGroupKeyRange, error) {
 	return buildAffinityGroupDefinitions(codec, tblInfo, partitionDefs)
+}
+
+// expectedAffinityGroups returns the affinity group IDs that the table metadata
+// in m expects, mapped to the name of the table that owns each group.
+func expectedAffinityGroups(codec tikv.Codec, m meta.Reader) (map[string]string, error) {
+	groups := make(map[string]string)
+	err := m.IterDatabases(func(dbInfo *model.DBInfo) error {
+		return m.IterTables(dbInfo.ID, func(tblInfo *model.TableInfo) error {
+			if tblInfo.Affinity == nil {
+				return nil
+			}
+			defs, err := buildAffinityGroupDefinitions(codec, tblInfo, nil)
+			if err != nil {
+				return err
+			}
+			for id := range defs {
+				groups[id] = dbInfo.Name.O + "." + tblInfo.Name.O
+			}
+			return nil
+		})
+	})
+	return groups, errors.Trace(err)
+}
+
+// checkFlashbackAffinityGroups rejects FLASHBACK CLUSTER when the affinity
+// groups expected by the table metadata at the flashback point differ from the
+// ones expected now. Flashback restores the metadata but not the groups in PD,
+// so the two would no longer match. Only the net difference between the two
+// points is checked: a group created and deleted again in between does not
+// block the flashback, and groups that already drifted in PD are not detected.
+func checkFlashbackAffinityGroups(codec tikv.Codec, flashbackMeta, currentMeta meta.Reader, flashbackTS string) error {
+	before, err := expectedAffinityGroups(codec, flashbackMeta)
+	if err != nil {
+		return errors.Errorf("Get history affinity groups failed, can't do flashback: %v", err)
+	}
+	now, err := expectedAffinityGroups(codec, currentMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for id, tbl := range before {
+		if _, ok := now[id]; !ok {
+			return errors.Errorf("Detected affinity changes of table %s during [%s, now), can't do flashback", tbl, flashbackTS)
+		}
+	}
+	for id, tbl := range now {
+		if _, ok := before[id]; !ok {
+			return errors.Errorf("Detected affinity changes of table %s during [%s, now), can't do flashback", tbl, flashbackTS)
+		}
+	}
+	return nil
 }
