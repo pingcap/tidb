@@ -69,14 +69,13 @@ type PlanReplayerCaptureInfo struct {
 
 // PlanReplayerDumpInfo indicates dump info
 type PlanReplayerDumpInfo struct {
-	ExecStmts         []ast.StmtNode
-	Analyze           bool
-	HistoricalStatsTS uint64
-	StartTS           uint64
-	Path              string
-	File              io.WriteCloser
-	FileName          string
-	ctx               sessionctx.Context
+	ExecStmts []ast.StmtNode
+	Analyze   bool
+	StartTS   uint64
+	Path      string
+	File      io.WriteCloser
+	FileName  string
+	ctx       sessionctx.Context
 }
 
 // Next implements the Executor Next interface.
@@ -213,7 +212,7 @@ func (e *PlanReplayerExec) createFile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile(ctx, storage, false, false, false)
+	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile(ctx, storage, false, false)
 	if err != nil {
 		return err
 	}
@@ -224,14 +223,13 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	fileName := e.FileName
 	zf := e.File
 	task := &domain.PlanReplayerDumpTask{
-		StartTS:           e.StartTS,
-		FileName:          fileName,
-		Zf:                zf,
-		SessionVars:       e.ctx.GetSessionVars(),
-		TblStats:          nil,
-		ExecStmts:         e.ExecStmts,
-		Analyze:           e.Analyze,
-		HistoricalStatsTS: e.HistoricalStatsTS,
+		StartTS:     e.StartTS,
+		FileName:    fileName,
+		Zf:          zf,
+		SessionVars: e.ctx.GetSessionVars(),
+		TblStats:    nil,
+		ExecStmts:   e.ExecStmts,
+		Analyze:     e.Analyze,
 	}
 	err = domain.DumpPlanReplayerInfo(ctx, e.ctx, task)
 	if err != nil {

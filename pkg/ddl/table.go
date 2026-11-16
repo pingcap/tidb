@@ -129,6 +129,13 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 	switch tblInfo.State {
 	case model.StatePublic:
 		// public -> write only
+		if job.Type == model.ActionDropMaterializedView {
+			// An owned MLog may have been created after the executor precheck.
+			if err = checkBaseTableMaterializedViewDependencyConstraints(tblInfo, "DROP MATERIALIZED VIEW"); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
 		if job.Type == model.ActionDropTable {
 			if err = checkTableMaterializedViewConstraints(nil, tblInfo, "DROP TABLE"); err != nil {
 				job.State = model.JobStateCancelled
@@ -1668,6 +1675,9 @@ func updateVersionAndTableInfo(jobCtx *jobContext, job *model.Job, tblInfo *mode
 			return 0, errors.Trace(err)
 		}
 	}
+	if jobCtx.multiSchemaDiff != nil {
+		SetSchemaDiffForMultiInfos(jobCtx.multiSchemaDiff, multiInfos...)
+	}
 	return ver, nil
 }
 
@@ -2160,6 +2170,10 @@ func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobC
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrWrongObject.GenWithStackByArgs(job.SchemaName, job.TableName, "MATERIALIZED VIEW")
 	}
+	if err := validateMaterializedViewCompleteOutOfPlaceTarget(job.SchemaName, oldMViewTblInfo); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, err
+	}
 	if len(oldMViewTblInfo.MaterializedView.BaseTableIDs) != 1 {
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrWrongObject.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: materialized view must reference exactly one base table in Stage-1, got %d", len(oldMViewTblInfo.MaterializedView.BaseTableIDs))
@@ -2404,4 +2418,19 @@ func convertMViewRefreshInfoTableNotExistsErrOnOutOfPlaceCutover(err error) erro
 		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: required system table mysql.tidb_mview_refresh_info does not exist")
 	}
 	return err
+}
+
+func validateMaterializedViewCompleteOutOfPlaceTarget(schemaName string, tblInfo *model.TableInfo) error {
+	if tblInfo == nil || tblInfo.MaterializedViewBase == nil {
+		return nil
+	}
+	baseInfo := tblInfo.MaterializedViewBase
+	if baseInfo.MLogID == 0 && len(baseInfo.MViewIDs) == 0 {
+		return nil
+	}
+	return errors.Errorf(
+		"refresh materialized view complete OUT OF PLACE is not supported for materialized view %s.%s with a materialized view log or dependent materialized view",
+		schemaName,
+		tblInfo.Name.O,
+	)
 }

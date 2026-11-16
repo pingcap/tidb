@@ -2574,6 +2574,7 @@ func TestMaterializedViewRefreshCompleteDeltaApply(t *testing.T) {
 		tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
 		tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 		tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
+		tk.MustExec("create materialized view log on mv (a, s, cnt)")
 		tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 
 		is := dom.InfoSchema()
@@ -2600,6 +2601,7 @@ func TestMaterializedViewRefreshCompleteDeltaApply(t *testing.T) {
 		require.ErrorContains(t, err, "mock refresh data change failure")
 
 		tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+		tk.MustQuery("select * from `$mlog$mv`").Check(testkit.Rows())
 		tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO = %d from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", oldTS, mviewID)).
 			Check(testkit.Rows("1"))
 		tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_END_TIME is not null, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).

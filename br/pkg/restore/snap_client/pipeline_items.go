@@ -480,7 +480,7 @@ func (buffer *statsMetaItemBuffer) saveMetaToStorageWithRetry(
 ) error {
 	state := utils.InitialRetryState(8, 500*time.Millisecond, 500*time.Millisecond)
 	err := utils.WithRetry(ctx, func() error {
-		if err := statsHandler.SaveMetaToStorage("br restore", false, metaUpdates...); err != nil {
+		if err := statsHandler.SaveMetaToStorage(false, metaUpdates...); err != nil {
 			log.Error("failed to save meta to storage", zap.Error(err))
 			return errors.Trace(err)
 		}

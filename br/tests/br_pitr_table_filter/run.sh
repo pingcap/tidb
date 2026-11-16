@@ -330,7 +330,30 @@ test_cover_all_ddl() {
     run_br --pd $PD_ADDR log start --task-name $TASK_NAME -s "local://$TEST_DIR/$TASK_NAME/log"
     run_br backup full -s "local://$TEST_DIR/$TASK_NAME/full" --pd $PD_ADDR
 
-    run_sql_file $CUR/sqls/log.sql -vvv
+    # Capture live state if log-phase DDL stalls, before CI kills the services.
+    (
+        sleep 120 &
+        timer_pid=$!
+        trap 'kill "$timer_pid" 2>/dev/null || true' EXIT
+        trap 'exit 0' TERM
+        wait "$timer_pid"
+        trap - EXIT
+        echo "Log-phase SQL is still running; collecting DDL and TiFlash diagnostics"
+        export TEST_NAME="${TEST_NAME}_diagnostic"
+        timeout 20 run_curl "https://$TIDB_STATUS_ADDR/debug/pprof/goroutine?debug=2" || true
+        tail -n 100 "$TEST_DIR/tidb.log" "$TEST_DIR"/tiflash*.log || true
+        timeout 20 run_sql "select @@global.tidb_enable_metadata_lock; admin show ddl jobs 10;" || true
+        timeout 20 run_sql "show full processlist;" || true
+        timeout 20 run_sql "select * from information_schema.tiflash_replica where table_name='t_add_vector_index';" || true
+    ) &
+    local probe_pid=$!
+    local sql_status=0
+    run_sql_file $CUR/sqls/log.sql -vvv || sql_status=$?
+    kill "$probe_pid" 2>/dev/null || true
+    wait "$probe_pid" 2>/dev/null || true
+    if [ "$sql_status" -ne 0 ]; then
+        return "$sql_status"
+    fi
 
     . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
 
