@@ -23,32 +23,57 @@ pub mod show;
 use prost::Message;
 use tidb_proto::backup::{BackupMeta, CipherInfo};
 
-/// Go `task.ReadBackupMeta`, for the local storage backend.
+/// Go `taskcommon.GetStorage`: the backend of `storage_name` and its
+/// storage.
+///
+/// # Errors
+/// The URL cannot be parsed, or the storage cannot be created.
+pub fn get_storage(
+    ctx: &tidb_gocontext::Context,
+    storage_name: &str,
+    backend_options: &tidb_objstore::BackendOptions,
+    no_creds: bool,
+    send_creds: bool,
+) -> Result<(tidb_proto::backup::StorageBackend, crate::metautil::Storage), String> {
+    let u = tidb_objstore::parse_backend(storage_name, Some(backend_options))?;
+    let opts = tidb_objstore::storeapi::Options { no_credentials: no_creds, send_credentials: send_creds, ..Default::default() };
+    let s = tidb_objstore::new(ctx, &u, Some(&opts)).map_err(|e| format!("create storage failed: {e}"))?;
+    Ok((u, s))
+}
+
+/// Go `metautil.DecryptFullBackupMetaIfNeeded`: the backupmeta file is the
+/// IV followed by the encrypted backupmeta under an effective cipher.
+///
+/// # Errors
+/// The content cannot be decrypted.
+pub fn decrypt_full_backup_meta_if_needed(meta_data: &[u8], cipher: &CipherInfo) -> Result<Vec<u8>, String> {
+    if cipher.cipher_type == tidb_proto::encryptionpb::EncryptionMethod::Plaintext as i32
+        || cipher.cipher_type == tidb_proto::encryptionpb::EncryptionMethod::Unknown as i32
+    {
+        return Ok(meta_data.to_vec());
+    }
+    if meta_data.len() < 16 {
+        return Err("decrypt failed with wrong key: truncated backupmeta IV".into());
+    }
+    let (iv, content) = meta_data.split_at(16);
+    crate::utils::decrypt(content, Some(cipher), iv).map_err(|err| format!("decrypt failed with wrong key: {err}"))
+}
+
+/// Go `task.ReadBackupMeta` for `SHOW BACKUP METADATA`'s task config
+/// (`show.Config.lameTaskConfig`: default backend options and
+/// `CheckRequirements` off). Go's GCS object-not-found retry under the
+/// parent prefix is not ported.
 pub fn read_backup_meta(
     storage: &str,
     cipher: &CipherInfo,
 ) -> Result<crate::metautil::MetaReader, String> {
-    let storage = crate::local_storage::LocalStorage::from_url(storage)?;
+    let ctx = tidb_gocontext::Context::background();
+    let (_, storage) = get_storage(&ctx, storage, &tidb_objstore::BackendOptions::default(), false, false)?;
     let data = storage
-        .read_file("backupmeta")
+        .read_file(&ctx, crate::metautil::META_FILE)
         .map_err(|err| format!("load backupmeta failed: {err}"))?;
-    let (iv, content) =
-        if cipher.cipher_type == tidb_proto::encryptionpb::EncryptionMethod::Plaintext as i32 {
-            (&[][..], data.as_slice())
-        } else {
-            if data.len() < 16 {
-                return Err("decrypt failed with wrong key: truncated backupmeta IV".into());
-            }
-            data.split_at(16)
-        };
-    let data = crate::utils::decrypt(content, Some(cipher), iv)
-        .map_err(|err| format!("decrypt failed with wrong key: {err}"))?;
+    let data = decrypt_full_backup_meta_if_needed(&data, cipher)?;
     let meta = BackupMeta::decode(data.as_slice())
         .map_err(|err| format!("parse backupmeta failed because of wrong aes cipher: {err}"))?;
-    // Go show.Config.lameTaskConfig leaves CheckRequirements false.
-    Ok(crate::metautil::MetaReader::new(
-        meta,
-        storage,
-        cipher.clone(),
-    ))
+    Ok(crate::metautil::MetaReader::new(meta, storage, cipher.clone()))
 }

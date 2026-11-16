@@ -40,6 +40,8 @@ pub struct MockPdClient {
     pub stores: Mutex<Vec<metapb::Store>>,
     pub gc_safe_point: Mutex<u64>,
     pub service_calls: Mutex<Vec<(String, i64, u64)>>,
+    /// The TSO answer; `None` is `(1, 2)`, `Some((-1, _))` the wall clock.
+    pub ts: Mutex<Option<(i64, i64)>>,
 }
 
 impl MockPdClient {
@@ -56,7 +58,14 @@ impl PdClient for MockPdClient {
         Ok(self.stores.lock().unwrap().clone())
     }
     fn get_ts(&self, _: &Context) -> Result<(i64, i64)> {
-        Ok((1, 2))
+        match *self.ts.lock().unwrap() {
+            None => Ok((1, 2)),
+            Some((-1, l)) => {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
+                Ok((now.as_millis() as i64, l))
+            }
+            Some(ts) => Ok(ts),
+        }
     }
     fn update_gc_safe_point(&self, _: &Context, _: u64) -> Result<u64> {
         Ok(*self.gc_safe_point.lock().unwrap())

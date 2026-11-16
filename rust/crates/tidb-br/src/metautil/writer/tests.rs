@@ -26,7 +26,7 @@ fn test_meta_file_size() {
 fn test_new_meta_writer_initializes_backup_schema_version() {
     let dir = tempfile::tempdir().unwrap();
     let writer = MetaWriter::new(
-        LocalStorage::from_url(dir.path().to_str().unwrap()).unwrap(),
+        std::sync::Arc::new(tidb_objstore::LocalStorage::new(dir.path().to_str().unwrap()).unwrap()) as crate::metautil::Storage,
         META_FILE_SIZE,
         false,
         "",
@@ -101,7 +101,7 @@ fn test_meta_writer() {
     for v2 in [false, true] {
         let ctx = Context::background();
         let dir = tempfile::tempdir().unwrap();
-        let storage = LocalStorage::from_url(dir.path().to_str().unwrap()).unwrap();
+        let storage = std::sync::Arc::new(tidb_objstore::LocalStorage::new(dir.path().to_str().unwrap()).unwrap()) as crate::metautil::Storage;
         let mut writer = MetaWriter::new(storage.clone(), 16, v2, "", None);
         writer.update(|meta| {
             meta.start_version = 10;
@@ -162,7 +162,7 @@ fn test_meta_writer() {
             let name = name.to_str().unwrap();
             actual.push_str(&format!(
                 "E07 {name} {}\n",
-                hex::encode(storage.read_file(name).unwrap())
+                hex::encode(storage.read_file(&Context::background(), name).unwrap())
             ));
         }
     }
@@ -177,14 +177,14 @@ fn test_metadata_edges() {
     use tidb_proto::encryptionpb::EncryptionMethod;
     let ctx = Context::background();
     let dir = tempfile::tempdir().unwrap();
-    let storage = LocalStorage::from_url(dir.path().to_str().unwrap()).unwrap();
+    let storage = std::sync::Arc::new(tidb_objstore::LocalStorage::new(dir.path().to_str().unwrap()).unwrap()) as crate::metautil::Storage;
     let mut actual = String::new();
     for name in ["file", "/nested/file"] {
-        let before = storage.file_exists(name).unwrap();
-        storage.write_file(name, b"first").unwrap();
-        storage.write_file(name, b"second").unwrap();
-        let after = storage.file_exists(name).unwrap();
-        let data = String::from_utf8(storage.read_file(name).unwrap()).unwrap();
+        let before = storage.file_exists(&ctx, name).unwrap();
+        storage.write_file(&ctx, name, b"first").unwrap();
+        storage.write_file(&ctx, name, b"second").unwrap();
+        let after = storage.file_exists(&ctx, name).unwrap();
+        let data = String::from_utf8(storage.read_file(&ctx, name).unwrap()).unwrap();
         actual.push_str(&format!(
             "E07 local={name} before={before} after={after} data={data}\n"
         ));
@@ -248,7 +248,7 @@ fn test_metadata_edges() {
         writer.send(MetaItem::Ddl(br#"{"id":1}"#.to_vec())).unwrap();
         writer.finish_write_metas(&ctx, AppendOp::Ddl).unwrap();
         writer.flush_backup_meta(&ctx).unwrap();
-        let bytes = storage.read_file("encrypted").unwrap();
+        let bytes = storage.read_file(&ctx, "encrypted").unwrap();
         let plain = crate::utils::decrypt(&bytes[16..], Some(&cipher), &bytes[..16]).unwrap();
         let meta = BackupMeta::decode(plain.as_slice()).unwrap();
         let version = meta.version;

@@ -37,26 +37,90 @@ pub enum GlueClient {
     Sql,
 }
 
-/// Go `kv.Storage` and `tikv.Storage` of the cluster BR works on.
-#[derive(Clone)]
-pub struct Storage {
-    /// Go `tikv.Storage`.
-    pub tikv: tidb_txnkv::driver::tikv_store::TikvStore,
-    /// Go `kv.Storage`.
-    pub kv: Arc<dyn tidb_txnkv::kv_storage::Storage>,
-    /// Go `GetCodec().GetKeyspaceID()`: the keyspace ID, `NullspaceID`
-    /// without one.
-    pub keyspace_id: u32,
-    /// Go `GetCodec().GetKeyspace()`: the keyspace's key prefix, empty
-    /// without one.
-    pub keyspace_prefix: Vec<u8>,
-    /// Go `GetCodec().GetAPIVersion()`.
-    pub api_version: i32,
+/// Go `kv.Snapshot`: reads of the cluster at one timestamp.
+pub trait KvSnapshot: Send {
+    /// Go `Get`: `None` for a missing key.
+    ///
+    /// # Errors
+    /// The read error.
+    fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>>;
+    /// Go `Iter` over `[start, end)`, up to `limit` pairs.
+    ///
+    /// # Errors
+    /// The read error.
+    fn scan(&mut self, start: &[u8], end: &[u8], limit: Option<usize>) -> Result<Vec<(Vec<u8>, Vec<u8>)>>;
 }
 
-/// Go `*domain.Domain`, the parts BR reads.
-pub trait Domain: Send + Sync {}
+/// Go `kv.Storage` and `tikv.Storage` of the cluster BR works on.
+pub trait Storage: Send + Sync {
+    /// Go `tikv.Storage`: the TiKV store.
+    fn tikv(&self) -> &tidb_txnkv::driver::tikv_store::TikvStore;
+    /// Go `GetSnapshot(kv.NewVersion(ts))`.
+    fn get_snapshot(&self, ts: u64) -> Box<dyn KvSnapshot>;
+    /// Go `CurrentVersion(kv.GlobalTxnScope)`.
+    ///
+    /// # Errors
+    /// PD's error.
+    fn current_version(&self) -> Result<u64>;
+    /// Go `GetClient`: the coprocessor client.
+    fn get_client(&self) -> Arc<dyn tidb_txnkv::Client>;
+    /// Go `GetCodec().GetKeyspaceID()`: `NullspaceID` without a keyspace.
+    fn keyspace_id(&self) -> u32;
+    /// Go `GetCodec().GetKeyspace()`: the keyspace's key prefix, empty
+    /// without one.
+    fn keyspace_prefix(&self) -> Vec<u8>;
+    /// Go `GetCodec().GetAPIVersion()`.
+    fn api_version(&self) -> i32;
+    /// Go `GetCodec().EncodeRange`: the range in the store's key space.
+    fn encode_range(&self, start: &[u8], end: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        let prefix = self.keyspace_prefix();
+        if prefix.is_empty() {
+            return (start.to_vec(), end.to_vec());
+        }
+        let encode = |k: &[u8]| [prefix.as_slice(), k].concat();
+        let end = if end.is_empty() {
+            // The keyspace's range ends at the next keyspace prefix.
+            let mut next = prefix.clone();
+            for i in (0..next.len()).rev() {
+                if next[i] < 0xff {
+                    next[i] += 1;
+                    next.truncate(i + 1);
+                    break;
+                }
+            }
+            next
+        } else {
+            encode(end)
+        };
+        (encode(start), end)
+    }
+}
 
+/// A PD region label rule: its ID and `(key, value)` labels.
+pub type LabelRule = (String, Vec<(String, String)>);
+
+/// Go `*domain.Domain`, the parts BR reads.
+pub trait Domain: Send + Sync {
+    /// Go `statsHandle.PersistStatsBySnapshot`: each physical table's
+    /// statistics at `snapshot`, as Go `util.JSONTable` JSON (`None` for Go's
+    /// nil table), handed to `persist` with the physical table ID.
+    ///
+    /// # Errors
+    /// The read error, or `persist`'s.
+    fn persist_stats_by_snapshot(
+        &self,
+        db_name: &str,
+        table: &TableInfo,
+        snapshot: u64,
+        persist: &mut dyn FnMut(Option<Vec<u8>>, i64) -> Result<()>,
+    ) -> Result<()>;
+    /// Go `infosync.GetLabelRules`: the PD region label rules with the IDs,
+    /// as `(rule ID, [(key, value)])`.
+    ///
+    /// # Errors
+    /// PD's error.
+    fn get_label_rules(&self, rule_ids: &[String]) -> Result<Vec<LabelRule>>;
+}
 /// Go `Glue`.
 pub trait Glue: Send + Sync {
     /// Go `GetDomain`.
@@ -73,7 +137,7 @@ pub trait Glue: Send + Sync {
     ///
     /// # Errors
     /// The storage cannot be opened.
-    fn open(&self) -> Result<Storage>;
+    fn open(&self) -> Result<Arc<dyn Storage>>;
     /// Go `OwnsStorage`.
     fn owns_storage(&self) -> bool;
     /// Go `StartProgress`.
@@ -148,6 +212,11 @@ pub trait Session: Send {
     /// # Errors
     /// An unknown variable, or the read error.
     fn get_global_sys_var(&self, name: &str) -> Result<String>;
+    /// Go `ddl.GetAllDDLJobs(se.GetSessionCtx())`: the queued DDL jobs.
+    ///
+    /// # Errors
+    /// The read error.
+    fn get_all_ddl_jobs(&self, ctx: &Context) -> Result<Vec<tidb_model::Job>>;
     /// Go `AlterTableMode`.
     ///
     /// # Errors

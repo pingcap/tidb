@@ -262,9 +262,14 @@ PRs, each stacked on the previous one (the first on #56):
    `strconv.Unquote` in `tidb-go-strconv`, and the PD client's keyspace
    GC barriers (vendored-client patch 120). Pinned by a Go capture
    (`zzprobe/e07conn`, `tidb-br/testdata/conn_go.jsonl`) and Go's tests.
-2. Backup client: `backup` (ranges and schemas, the per-store push-down),
-   `checksum`, the backup checkpoint, statistics files, DDL jobs for
-   incremental backup.
+2. Done: backup client: `backup` (`client.go`, `schema.go`, `store.go`,
+   `limit.go`: ranges and schemas, the per-store push-down loop with lock
+   resolution and store watching), `checksum`, the checkpoint runner and
+   its backup flavour, statistics files, DDL jobs for incremental backup,
+   `utils/storewatch` and the schema helpers; the catalog at a TS is read
+   through `tidb-meta` over a glue snapshot (`metareader`). Pinned by Go's
+   unit tests that need no cluster; schema building and DDL jobs are
+   checked live in PR 3.
 3. `task.RunBackup` and BRIE backup execution. Live: Rust backup restored
    by Go and by Rust.
 4. Restore split and import: `restore/split`, `restore/utils`,

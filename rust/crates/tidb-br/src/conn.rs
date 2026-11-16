@@ -31,6 +31,7 @@ use crate::config::KvConfig;
 use crate::errors::{self, Result, ERR_PD_INVALID_RESPONSE};
 use crate::gc;
 use crate::glue::{Domain, Glue, Storage};
+
 use crate::pdclient::{PdClient, TikvPdClient};
 use crate::pdutil::PdController;
 use crate::utils::backoff::new_aggressive_pd_backoff_strategy;
@@ -321,7 +322,7 @@ pub struct Mgr {
     /// Go's embedded `*pdutil.PdController`.
     pub pd_controller: Arc<PdController>,
     dom: Option<Arc<dyn Domain>>,
-    storage: Storage,
+    storage: Arc<dyn Storage>,
     owns_storage: bool,
     gc_manager: Arc<dyn gc::Manager>,
     /// Go's embedded `*utils.StoreManager`.
@@ -356,12 +357,12 @@ impl Mgr {
     pub fn new(ctx: &Context, g: &dyn Glue, opts: MgrOptions<'_>) -> Result<Self> {
         tidb_log::info("new mgr", &[Field::new("pdAddrs", Value::Str(format!("{:?}", opts.pd_addrs)))]);
         let storage = g.open()?;
-        let pd_client: Arc<dyn PdClient> = Arc::new(TikvPdClient::new(storage.tikv.clone()));
+        let pd_client: Arc<dyn PdClient> = Arc::new(TikvPdClient::new(storage.tikv().clone()));
         let pd_http = storage
-            .tikv
+            .tikv()
             .pd_http_client()
             .ok_or_else(|| errors::new(&errors::ERR_KV_NOT_TIKV))?;
-        let runtime = Arc::clone(storage.tikv.runtime());
+        let runtime = Arc::clone(storage.tikv().runtime());
         let controller = PdController::new(Arc::clone(&pd_client), pd_http, Arc::clone(&runtime)).inspect_err(|err| {
             tidb_log::error("failed to create pd controller", &[Field::new("error", Value::Str(err.to_string()))]);
         })?;
@@ -391,7 +392,7 @@ impl Mgr {
         } else {
             None
         };
-        let gc_manager = gc::new_manager(Arc::clone(&pd_client), storage.keyspace_id);
+        let gc_manager = gc::new_manager(Arc::clone(&pd_client), storage.keyspace_id());
         let store_manager = StoreManager::new(Arc::clone(&pd_client), opts.keepalive, opts.security, runtime);
         Ok(Self {
             pd_controller: Arc::new(controller),
@@ -423,7 +424,7 @@ impl Mgr {
 
     /// Go `GetStorage` and `GetStore`.
     #[must_use]
-    pub fn get_storage(&self) -> &Storage {
+    pub fn get_storage(&self) -> &Arc<dyn Storage> {
         &self.storage
     }
 

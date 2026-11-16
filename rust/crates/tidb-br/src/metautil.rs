@@ -14,13 +14,23 @@
 
 //! Go `br/pkg/metautil`: backup metadata writing and schema/file loading.
 
-use crate::local_storage::LocalStorage;
+/// The storage backups are read from and written to (Go `storeapi.Storage`).
+pub type Storage = std::sync::Arc<dyn tidb_objstore::storeapi::Storage>;
+
+/// Go `MetaFile`.
+pub const META_FILE: &str = "backupmeta";
+/// Go `LockFile`.
+pub const LOCK_FILE: &str = "backup.lock";
+/// Go `CrypterIvLen`.
+pub const CRYPTER_IV_LEN: usize = 16;
 use prost::Message;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use tidb_proto::backup::{BackupMeta, CipherInfo, MetaFile, Schema};
 
 mod writer;
+mod statsfile;
+pub use statsfile::{get_stats_file_name, StatsWriter};
 pub use writer::{AppendOp, MetaItem, MetaWriter, SizedMetaFile, encrypt};
 pub use writer::{BACKUP_SCHEMA_VERSION, META_FILE_SIZE};
 
@@ -39,7 +49,7 @@ pub struct ReadSchemaConfig {
 /// Go `metautil.MetaReader`.
 pub struct MetaReader {
     backup_meta: BackupMeta,
-    storage: LocalStorage,
+    storage: Storage,
     cipher: CipherInfo,
 }
 
@@ -120,7 +130,7 @@ pub fn archive_tables_size(tables: &[Table]) -> u64 {
 
 impl MetaReader {
     /// Go `NewMetaReader`.
-    pub fn new(backup_meta: BackupMeta, storage: LocalStorage, cipher: CipherInfo) -> Self {
+    pub fn new(backup_meta: BackupMeta, storage: Storage, cipher: CipherInfo) -> Self {
         Self {
             backup_meta,
             storage,
@@ -292,7 +302,7 @@ fn parse_schema_file(schema: &Schema, skip_stats: bool) -> Result<Table, String>
 /// Go `walkLeafMetaFile`: decrypt and verify every child before decoding it.
 fn walk_leaf_meta_file(
     ctx: &tidb_gocontext::Context,
-    storage: &LocalStorage,
+    storage: &Storage,
     file: Option<&MetaFile>,
     cipher: &CipherInfo,
     output: &mut dyn FnMut(&MetaFile) -> Result<(), String>,
@@ -305,7 +315,7 @@ fn walk_leaf_meta_file(
         return output(file);
     }
     for node in &file.meta_files {
-        let content = storage.read_file(&node.name)?;
+        let content = storage.read_file(ctx, &node.name).map_err(|e| e.to_string())?;
         let content = crate::utils::decrypt(&content, Some(cipher), &node.cipher_iv)?;
         let checksum = Sha256::digest(&content);
         if node.sha256.as_slice() != checksum.as_slice() {
@@ -348,7 +358,7 @@ mod tests {
     #[test]
     fn test_walk_meta_file_empty() {
         let dir = tempfile::tempdir().unwrap();
-        let store = LocalStorage::from_url(dir.path().to_str().unwrap()).unwrap();
+        let store: Storage = std::sync::Arc::new(tidb_objstore::LocalStorage::new(dir.path().to_str().unwrap()).unwrap());
         let mut files = Vec::new();
         walk_leaf_meta_file(&Context::background(), &store, None, &cipher(), &mut |f| {
             files.push(f.clone());
@@ -374,7 +384,7 @@ mod tests {
     #[test]
     fn test_walk_meta_file_leaf() {
         let dir = tempfile::tempdir().unwrap();
-        let store = LocalStorage::from_url(dir.path().to_str().unwrap()).unwrap();
+        let store: Storage = std::sync::Arc::new(tidb_objstore::LocalStorage::new(dir.path().to_str().unwrap()).unwrap());
         let file = leaf("db", "table");
         let mut files = Vec::new();
         walk_leaf_meta_file(
@@ -395,7 +405,7 @@ mod tests {
     #[test]
     fn test_walk_meta_file_invalid() {
         let dir = tempfile::tempdir().unwrap();
-        let store = LocalStorage::from_url(dir.path().to_str().unwrap()).unwrap();
+        let store: Storage = std::sync::Arc::new(tidb_objstore::LocalStorage::new(dir.path().to_str().unwrap()).unwrap());
         std::fs::write(dir.path().join("leaf"), leaf("db", "table").encode_to_vec()).unwrap();
         let root = MetaFile {
             meta_files: vec![File {
@@ -419,7 +429,7 @@ mod tests {
     #[test]
     fn test_walk_meta_file() {
         let dir = tempfile::tempdir().unwrap();
-        let store = LocalStorage::from_url(dir.path().to_str().unwrap()).unwrap();
+        let store: Storage = std::sync::Arc::new(tidb_objstore::LocalStorage::new(dir.path().to_str().unwrap()).unwrap());
         let write = |name: &str, file: &MetaFile| {
             let bytes = file.encode_to_vec();
             std::fs::write(dir.path().join(name), &bytes).unwrap();

@@ -293,6 +293,13 @@ impl RequestBuilder {
         self
     }
 
+    /// Go `builder.Request.Priority = priority`, as BR's checksum builder
+    /// sets `kv.PriorityLow` before building.
+    pub fn set_priority(&mut self, priority: Priority) -> &mut Self {
+        self.request.priority = priority;
+        self
+    }
+
     /// Applies Checksum's source request defaults to opaque encoded bytes.
     pub fn set_checksum_request(&mut self, data: impl Into<Vec<u8>>) -> &mut Self {
         if self.error.is_some() {

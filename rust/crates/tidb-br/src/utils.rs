@@ -18,9 +18,11 @@
 
 pub mod backoff;
 pub mod error_handling;
+pub mod misc;
 pub mod register;
 pub mod retry;
 pub mod store_manager;
+pub mod storewatch;
 #[cfg(test)]
 mod tests;
 
