@@ -2057,13 +2057,14 @@ fn test_replica_read_effect_scope() {
         for cond in ["id = 1", "id IN (1, 2)", "id > 1"] {
             let seen = Arc::new(AtomicUsize::new(0));
             let observed = seen.clone();
+            let case = sql.replace("%s", cond);
             let interceptor = tikv_client::new_rpc_interceptor("replica-read-effect-scope", move |_, req, next| {
                 let context = if let Some(req) = req.as_any().downcast_ref::<kvrpcpb::GetRequest>() { req.context.as_ref() }
                     else if let Some(req) = req.as_any().downcast_ref::<kvrpcpb::BatchGetRequest>() { req.context.as_ref() }
                     else if let Some(req) = req.as_any().downcast_ref::<coprocessor::Request>() { req.context.as_ref() }
                     else { None };
                 if let Some(context) = context {
-                    assert_eq!(context.replica_read, replica_read);
+                    assert_eq!(context.replica_read, replica_read, "{case}");
                     observed.fetch_add(1, Ordering::SeqCst);
                 }
                 Box::pin(async move { next().await })
