@@ -6246,13 +6246,11 @@ impl<PdC: PdClient> Transaction<PdC> {
         }
 
         // Go `KVTxn.asyncPessimisticRollback`.
-        if cfg!(feature = "failpoints") {
-            if let Some(value) = crate::failpoint::eval("tikvclient/beforeAsyncPessimisticRollback") {
-                match value.as_string() {
-                    Some("skip") => return Ok(()),
-                    Some("delay") => tokio::time::sleep(Duration::from_millis(rand::random::<u64>() % 2000)).await,
-                    _ => {},
-                }
+        if let Some(value) = crate::failpoint::eval("tikvclient/beforeAsyncPessimisticRollback") {
+            match value.as_string() {
+                Some("skip") => return Ok(()),
+                Some("delay") => tokio::time::sleep(Duration::from_millis(rand::random::<u64>() % 2000)).await,
+                _ => {},
             }
         }
         let mut req = new_pessimistic_rollback_request(
