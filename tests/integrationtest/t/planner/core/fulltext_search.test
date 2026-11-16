@@ -372,6 +372,17 @@ select id, title from articles order by match(title) against('+MySQL' in boolean
 # Test 54: The local path is chosen independently of alternative logical plans.
 set @@tidb_opt_enable_alternative_logical_plans=OFF;
 select id, title from articles where match(title) against('+MySQL -tutorial' in boolean mode);
+
+# Test 56: A subquery before the MATCH leaves the MATCH in the enclosing
+# clause, in either order: a filter is still evaluated locally and a score
+# still errors.
+select id, title from articles where exists (select 1 from articles a2) and match(title) against('+MySQL -tutorial' in boolean mode);
+select id, title from articles where match(title) against('+MySQL -tutorial' in boolean mode) and exists (select 1 from articles a2);
+select id, title from articles where exists (select 1 from articles a2 where a2.id = 0) or match(title) against('+MySQL -tutorial' in boolean mode);
+-- error 1235
+select (select 1 having true), match(title) against('+MySQL' in boolean mode) from articles;
+-- error 1235
+select match(title) against('+MySQL' in boolean mode), (select 1 having true) from articles;
 set @@tidb_opt_enable_alternative_logical_plans=ON;
 
 # Test 55: Turning the switch off restores the previous behaviour, so Boolean
