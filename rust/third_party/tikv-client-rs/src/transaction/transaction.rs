@@ -1205,6 +1205,9 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     /// client-go `ctx.Value(util.ExecDetailsKey)` for this transaction's
     /// operations when the caller does not supply it in the trace context.
     exec_details: Option<Arc<crate::util::ExecDetails>>,
+    /// The statement's caller ctx (client-go's `ctx` argument, with its RPC
+    /// interceptor), the base of every operation's statement ctx.
+    caller_context: Option<crate::trace::TraceContext>,
     /// Snapshot-only callers may replace this with source replica-read
     /// settings; ordinary transactions retain direct leader reads.
     replica_read_config: ReplicaReadConfig,
@@ -1365,6 +1368,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             resource_control: None,
             ru_details: None,
             exec_details: None,
+            caller_context: None,
             replica_read_config: ReplicaReadConfig::default(),
             replica_read_adjuster: None,
             sample_step: 0,
@@ -2051,6 +2055,12 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.exec_details = Some(exec_details);
     }
 
+    /// The ctx the statement's calls are made with (client-go passes it to
+    /// `Get`, `BatchGet`, `LockKeys` and `Commit`), interceptor included.
+    pub fn set_caller_context(&mut self, context: crate::trace::TraceContext) {
+        self.caller_context = Some(context);
+    }
+
     /// The statement ctx for one operation: the caller's trace context with
     /// [`Self::set_exec_details`]' value as client-go's `ExecDetailsKey`.
     /// `None` once the operation already runs under it.
@@ -2062,8 +2072,9 @@ impl<PdC: PdClient> Transaction<PdC> {
         {
             return None;
         }
+        let base = self.caller_context.as_ref().unwrap_or(&active);
         Some(crate::util::context_with_exec_details(
-            &active,
+            base,
             Arc::clone(details),
         ))
     }

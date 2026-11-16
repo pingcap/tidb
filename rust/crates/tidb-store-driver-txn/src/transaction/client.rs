@@ -239,6 +239,10 @@ impl<S: PdClient> TikvTxn<S> {
         if let Some(session_id) = context.session_id {
             self.engine.transaction_mut().inner_mut().set_context_session_id(session_id);
         }
+        // The ctx Go passes the transaction's calls, with its interceptor.
+        if let Some(caller) = &context.caller_context {
+            self.engine.transaction_mut().inner_mut().set_caller_context(caller.clone());
+        }
         if let Some(ru_details) = &context.ru_details {
             let applied = self
                 .applied_kv_context
@@ -695,6 +699,9 @@ impl<S: PdClient> TikvTxn<S> {
         }
         if let Some(exec_details) = &self.applied_kv_context.exec_details {
             transaction.set_exec_details(Arc::clone(exec_details));
+        }
+        if let Some(caller) = &self.applied_kv_context.caller_context {
+            transaction.set_caller_context(caller.clone());
         }
         if let Some(tagger) = &self.applied_kv_context.resource_group_tagger {
             let tagger = Arc::clone(tagger);

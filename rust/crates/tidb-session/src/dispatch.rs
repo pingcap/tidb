@@ -1345,17 +1345,9 @@ impl Session {
             return Ok(None);
         }
         // Go `staleReadProcessor.OnSelectTable`, table by table: a table
-        // without `AS OF` is timestamp 0. The first table that evaluates the
-        // processor (its `AS OF`, or with none `@@tx_read_ts` or
-        // `@@tidb_read_staleness`) fixes the statement's timestamp; every
-        // later table must name the same one.
-        let staleness_evaluates = self.vars.txn_read_ts() != 0
-            || self
-                .vars
-                .get_system("tidb_read_staleness")
-                .unwrap_or_default()
-                .parse::<i64>()
-                .is_ok_and(|seconds| seconds != 0);
+        // without `AS OF` is timestamp 0. The first table evaluates the
+        // processor (stale or, `setAsNonStaleRead`, not) and fixes the
+        // statement's timestamp; every later table must name the same one.
         let mut evaluated: Option<u64> = None;
         let mut resolved: Option<u64> = None;
         for expr in &visitor.taken {
@@ -1370,8 +1362,7 @@ impl Session {
                 // Go refuses `AS OF` under `@@tx_read_ts` at this table,
                 // before any later table is compared (below).
                 None if ts > 0 && self.vars.txn_read_ts() != 0 => break,
-                None if ts > 0 || staleness_evaluates => evaluated = Some(ts),
-                None => {}
+                None => evaluated = Some(ts),
                 Some(previous) if previous == ts => {}
                 Some(_) => {
                     // Go refuses a statement naming two different instants.

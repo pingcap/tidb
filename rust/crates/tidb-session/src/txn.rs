@@ -464,6 +464,13 @@ impl Session {
         *self.assert_lock_errors.get_or_insert_with(Default::default).entry(name.into()).or_default() += 1;
     }
 
+    /// Go `LazyTxn.Commit`'s `updateState(txninfo.TxnCommitting)`.
+    pub(crate) fn publish_transaction_committing(&self) {
+        if let Some(process) = &self.process {
+            process.registry().transaction_state(process.id(), "Committing");
+        }
+    }
+
     /// Go `SessionVars.ForeignKeyCheckInSharedLock`.
     pub(crate) fn foreign_key_check_in_shared_lock(&self) -> bool {
         self.vars
@@ -887,11 +894,7 @@ impl Session {
         let Some(txn) = self.txn_ctx.take() else {
             return;
         };
-        if let Some(process) = &self.process {
-            process
-                .registry()
-                .transaction_state(process.id(), "Committing");
-        }
+        self.publish_transaction_committing();
         if let Some((ts, _)) = txn.stale {
             // Go's stale transaction is read-only by construction; its
             // COMMIT publishes nothing, and `setLastTxnInfoBeforeTxnEnd`

@@ -246,6 +246,7 @@ impl Tk {
     }
 
     /// Go `testkit.TestKit.MustQuery` and `testkit.Result.Check(testkit.Rows(...))`.
+    #[track_caller]
     pub(crate) fn check(&mut self, sql: &str, expected: &[&str]) {
         // Go Result.Check compares fmt.Sprintf("%s", row), whose cells are joined by spaces.
         let actual: Vec<String> = self.must_query(sql).iter().map(|row| row.join(" ")).collect();
@@ -253,6 +254,7 @@ impl Tk {
     }
 
     /// Go `testkit.Result.Sort().Check(testkit.Rows(...))`.
+    #[track_caller]
     pub(crate) fn check_sorted(&mut self, sql: &str, expected: &[&str]) {
         let mut actual = self.must_query(sql);
         actual.sort();
@@ -261,12 +263,14 @@ impl Tk {
     }
 
     /// Go `testkit.TestKit.MustContainErrMsg`.
+    #[track_caller]
     pub(crate) fn must_contain_err_msg(&mut self, sql: &str, message: &str) {
         let error = self.exec_to_err(sql);
         assert!(error.contains(message), "{sql}: expected {message:?}, got {error:?}");
     }
 
     /// Go `testkit.TestKit.MustHavePlan`.
+    #[track_caller]
     pub(crate) fn must_have_plan(&mut self, sql: &str, plan: &str) {
         let rows = self.must_query(&format!("explain {sql}"));
         assert!(rows.iter().any(|row| row[0].contains(plan)), "{sql}: expected {plan}, got {rows:?}");
@@ -318,16 +322,22 @@ impl Tk {
         Ok(rows)
     }
 
+    #[track_caller]
     pub(crate) fn must_exec(&mut self, sql: &str) {
         if let Err(error) = self.exec(sql) {
             panic!("{sql}: {error}");
         }
     }
 
+    #[track_caller]
     pub(crate) fn must_query(&mut self, sql: &str) -> Vec<Vec<String>> {
-        self.exec(sql).unwrap_or_else(|error| panic!("{sql}: {error}"))
+        match self.exec(sql) {
+            Ok(rows) => rows,
+            Err(error) => panic!("{sql}: {error}"),
+        }
     }
 
+    #[track_caller]
     pub(crate) fn must_get_err_code(&mut self, sql: &str, code: u16) {
         match self.exec_coded(sql) {
             Ok(_) => panic!("{sql}: expected error {code}"),
@@ -340,6 +350,7 @@ impl Tk {
         self.session.affected_rows()
     }
 
+    #[track_caller]
     pub(crate) fn exec_to_err(&mut self, sql: &str) -> String {
         match self.exec(sql) {
             Ok(_) => panic!("{sql}: expected an error"),

@@ -11,9 +11,10 @@ Exercise the Rust server against real TiKV with the complete tests from Go's `te
 
 
 - [x] Read root guidance, runner skill, harness, and Go test inventory; initial worktree is clean.
-- [ ] Port all 71 transaction tests and 76 pessimistic tests, retaining Go skip reasons and classic/nextgen conditions.
-- [ ] Extend the testkit harness for Go helpers used by these tests.
-- [ ] Run live tests serially, fix Rust bugs and prove regression assertions fail before their fixes.
+- [x] (codex) Port all 71 transaction tests and 75 pessimistic tests (7 ignored, each a Go skip), retaining Go skip reasons and classic/nextgen conditions.
+- [x] (codex) Extend the testkit harness for Go helpers used by these tests.
+- [ ] (2026-11-16, in progress) Run live tests serially, fix Rust bugs and prove regression assertions fail before their fixes. txntest run 2: 51/71. Fixed since: the DDL owner lease (each test waited ~45s for the previous test's owner), client failpoint `pause` blocking runtime workers (the FK test hung), the transaction's session ID never reaching the committer (every `sessionID > 0` client failpoint was dead), `KeyError` text, per-table `AS OF`, the pessimistic FK shared lock, the interceptor helper's nested executor, and MODIFY COLUMN's storage-error identity. Open: stale-read group (`test_stale_*`, `test_staleness_and_history_read`, `test_stmt_ctx_stale_flag`, `test_validate_read_only_in_staleness_transaction`), `test_replica_read_effect_scope`, the transaction-info digests of prepared statements and subqueries.
+- [ ] Run `realtikv_pessimistictest::` on its own fresh cluster.
 - [ ] Run changed crates' unit suites, reconcile both register formats, and clean up the owned cluster.
 
 ## Context and Orientation
@@ -28,6 +29,12 @@ First port SQL-only transaction and isolation cases as one coherent batch, prese
 
 ## Concrete Steps
 
+
+Live runs, one package per fresh playground (PD 24891, stopped and cleaned afterwards by the runner):
+
+    WT=txn /Users/qiliu/projects/tidb-wt/scripts/realtikv-run.sh <log> 'test(realtikv_txntest::)'
+
+The paragraphs below were codex's setup and are superseded where they differ.
 
 Run all Cargo commands from `rust/`, with `CARGO_CACHE_AUTO_CLEAN_FREQUENCY=never CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`. Use the default shared target directory and only one Cargo command at a time. Do not commit, push, clean Cargo artifacts or change other worktrees.
 
@@ -50,6 +57,9 @@ Preserve unrelated changes. Only remove `/tmp/txn-live` after the owned playgrou
 
 ## Surprises & Discoveries
 
+- Observation: every realtikv test after the first waited about 45s in its first DDL. The previous test process's DDL owner key stayed in etcd until its 60s lease expired, because Rust stops the DDL only when the last `Arc` of the domain drops; Go's harness calls `ddl.CloseOwnerManager`. Register row S06.
+- Observation: `fail`'s `pause` blocks the OS thread. Evaluated inside a tokio task it blocks a runtime worker, and PD timestamp futures on that runtime starve (`test_dml_with_add_foreign_key` hung for 10 minutes). Client-go's pause parks one goroutine; `util::eval_failpoint_async` parks the task instead.
+- Observation: Go sets `kv.SessionID` (`SetOptionsOnTxnActive`) and `util.SessionID` in the statement ctx (`ExecStmt.Exec`, `doCommit`); Rust set neither, so client failpoints gated on `sessionID > 0` (`beforePrewrite`, `beforePessimisticLock`, ...) never fired from SQL.
 
 The checked-in register has five unrelated rows and no transaction-test row. Both Go packages together contain 8,762 source lines, including support functions. Some `t.Skip` calls are conditional on mock storage and therefore do not skip this live port.
 

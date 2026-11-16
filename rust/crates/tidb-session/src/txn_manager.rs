@@ -474,6 +474,10 @@ impl TxnManager {
         }
         let write_details = self.buffer_write_details();
         self.autocommit_txn_bytes = self.buffer.staged_bytes();
+        // Go `autoCommitAfterStmt` -> `LazyTxn.Commit`: the transaction is
+        // committing from here on.
+        session.publish_transaction_committing();
+        tidb_failpoint::eval("github.com/pingcap/tidb/pkg/session/mockSlowCommit");
         if let Some(write_transaction) = write_transaction {
             let transaction = write_transaction
                 .lock()
