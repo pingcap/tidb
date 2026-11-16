@@ -1817,6 +1817,11 @@ impl<'s> ClusterServerSession<'s> {
         // Go `LoadDataExec` / `LoadStatsExec`: the statement runs far enough
         // to be admitted, then parks its file request on the session.
         if let Some(path) = self.local_infile_path_parsed(sql, stmt)? {
+            // Go `ExecuteStmt`'s `validateStatementReadOnlyInStaleness`
+            // refuses the LOAD DATA before its executor asks for the file.
+            self.session
+                .validate_statement_read_only_in_staleness(stmt)
+                .map_err(map_error)?;
             self.accept_local_infile_parsed(sql, stmt)?;
             self.node.parked_local_infile = Some(ParkedLocalInfile {
                 sql: sql.to_owned(),

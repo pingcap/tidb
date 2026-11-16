@@ -238,13 +238,19 @@ where
         .with_request_source(source.clone());
         // Go `updateTxnEntrySizeLimitIfNeeded`: the GLOBAL limit, not the
         // session's, bounds a backfill transaction's entries.
-        options.entry_size_limit = tidb_vardef::TXN_ENTRY_SIZE_LIMIT.load(std::sync::atomic::Ordering::SeqCst);
+        let options_entry_limit = tidb_vardef::TXN_ENTRY_SIZE_LIMIT.load(std::sync::atomic::Ordering::SeqCst);
+        options.entry_size_limit = options_entry_limit;
         let transaction = match start_ts {
             Some(start_ts) => SessionTransaction::begin_at(Arc::clone(opener), start_ts, timeout, options)?,
             None => SessionTransaction::begin(Arc::clone(opener), timeout, options)?,
         };
         let start_ts = transaction.start_ts();
         let buffer = MutationBuffer::new();
+        // Go `updateTxnEntrySizeLimitIfNeeded`'s `kv.SizeLimits{Entry,
+        // Total: kv.TxnTotalSizeLimit}` over the batch's writes.
+        if options_entry_limit > 0 {
+            buffer.set_pending_size_limits(options_entry_limit, tidb_txnkv::txn_total_size_limit());
+        }
         let staged = (|| {
             let slot = Arc::new(Mutex::new(SwappableSnapshot::new()));
             slot.lock()
