@@ -1033,6 +1033,8 @@ func setDefaultValueWithBinaryPadding(col *table.Column, value any) error {
 		if col.GetType() == mysql.TypeString && types.IsBinaryStr(&col.FieldType) && len(value.(string)) < col.GetFlen() {
 			padding := make([]byte, col.GetFlen()-len(value.(string)))
 			col.DefaultValue = string(append([]byte(col.DefaultValue.(string)), padding...))
+			// Keep the raw-bytes copy in sync, GetDefaultValue returns it in preference to DefaultValue.
+			col.DefaultValueBit = []byte(col.DefaultValue.(string))
 		}
 	}
 	return nil
