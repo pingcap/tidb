@@ -121,14 +121,14 @@ func TestAdaptiveLimitScanUpgradeDefault(t *testing.T) {
 	assertValue(variable.On)
 
 	// Upgrading preserves a value that was already configured.
-	upgradeFromVersion := session.CurrentBootstrapVersion - 1
+	const upgradeFromVersion int64 = 232 // v8.5.8 bootstrap version.
 	session.MustExec(t, se, "set global tidb_enable_adaptive_limit_scan=ON")
 	resetToUpgradeVersion := func() {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		require.NoError(t, meta.NewMutator(txn).FinishBootstrap(upgradeFromVersion))
-		revertVersionAndVariables(t, se, int(upgradeFromVersion))
 		require.NoError(t, txn.Commit(ctx))
+		revertVersionAndVariables(t, se, int(upgradeFromVersion))
 		session.UnsetStoreBootstrapped(store.UUID())
 	}
 	resetToUpgradeVersion()
