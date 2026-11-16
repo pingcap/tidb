@@ -6231,6 +6231,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-dxf-importinto"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tidb-ast",
+ "tidb-config",
+ "tidb-config-configtypes",
+ "tidb-config-kerneltype",
+ "tidb-datatype",
+ "tidb-domain-serverinfo",
+ "tidb-driver-error",
+ "tidb-dxf",
+ "tidb-dxf-execute",
+ "tidb-dxf-handle",
+ "tidb-dxf-importinto-taskkey",
+ "tidb-dxf-planner",
+ "tidb-dxf-scheduler",
+ "tidb-dxf-storage",
+ "tidb-dxf-taskexecutor",
+ "tidb-executor",
+ "tidb-exeerrors",
+ "tidb-gocontext",
+ "tidb-ingestor-ingestctrl",
+ "tidb-lightning-backend",
+ "tidb-lightning-backend-kv",
+ "tidb-lightning-common",
+ "tidb-lightning-verification",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-model",
+ "tidb-objstore",
+ "tidb-parser",
+ "tidb-sqlescape",
+ "tidb-sqlexec",
+ "tidb-stringutil",
+ "tidb-table",
+ "tidb-terror",
+ "tidb-txnkv",
+ "tidb-vardef",
+]
+
+[[package]]
 name = "tidb-dxf-importinto-jobhistory"
 version = "0.0.0"
 dependencies = [
@@ -9023,6 +9067,7 @@ dependencies = [
  "tidb-dxf",
  "tidb-dxf-dxfmetric",
  "tidb-dxf-handle",
+ "tidb-dxf-importinto",
  "tidb-dxf-importinto-jobhistory",
  "tidb-dxf-storage",
  "tidb-errmsg",
@@ -9048,6 +9093,7 @@ dependencies = [
  "tidb-ingestor-ingestctrl",
  "tidb-keyspace",
  "tidb-kv",
+ "tidb-lightning-backend-kv",
  "tidb-log",
  "tidb-logutil",
  "tidb-memory",
@@ -9224,6 +9270,7 @@ dependencies = [
  "tidb-config-kerneltype",
  "tidb-context",
  "tidb-copr",
+ "tidb-cpu",
  "tidb-cpuprofile",
  "tidb-datatype",
  "tidb-dbterror",
@@ -9253,6 +9300,7 @@ dependencies = [
  "tidb-dxf-example",
  "tidb-dxf-execute",
  "tidb-dxf-handle",
+ "tidb-dxf-importinto",
  "tidb-dxf-importinto-jobhistory",
  "tidb-dxf-importinto-taskkey",
  "tidb-dxf-mock",
@@ -9300,6 +9348,7 @@ dependencies = [
  "tidb-metrics",
  "tidb-model",
  "tidb-mysql",
+ "tidb-objstore",
  "tidb-owner",
  "tidb-param",
  "tidb-parser",

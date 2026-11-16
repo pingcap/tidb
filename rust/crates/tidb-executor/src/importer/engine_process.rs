@@ -5,7 +5,7 @@ use tidb_gocontext::Context;
 use tidb_lightning_backend::{EngineWriter, LocalWriterConfig, OpenedEngine};
 use tidb_lightning_verification::KvGroupChecksum;
 
-use super::chunk_process::{Chunk, ChunkProcessor, ParserEncodeReader};
+use super::chunk_process::{Chunk, ChunkError, ChunkProcessor, ParserEncodeReader};
 use super::table_import::TableImporter;
 
 /// Go `ProcessChunk`: opens the engines' writers and processes the chunk.
@@ -17,7 +17,7 @@ pub fn process_chunk(
     index_engine: &OpenedEngine<'_>,
     group_checksum: &mut KvGroupChecksum,
     collector: Option<&dyn tidb_dxf_execute::Collector>,
-) -> Result<(), String> {
+) -> Result<(), ChunkError> {
     let meta = ti.controller.table.meta().read().clone();
     let has_auto_increment_auto_id = tidb_lightning_common::table_has_auto_row_id(&meta)
         && meta.auto_random_bits == 0
@@ -41,7 +41,7 @@ pub fn process_chunk_with_writer(
     index_writer: &mut dyn EngineWriter,
     group_checksum: &mut KvGroupChecksum,
     collector: Option<&dyn tidb_dxf_execute::Collector>,
-) -> Result<(), String> {
+) -> Result<(), ChunkError> {
     let mut encoder = ti.get_kv_encoder(chunk)?;
     let mut parser = ti.controller.get_parser(ctx, chunk)?;
     let reader = ParserEncodeReader { parser: parser.as_mut(), end_offset: chunk.end_offset, filename: chunk.get_key() };
@@ -56,5 +56,4 @@ pub fn process_chunk_with_writer(
         collector,
     )
     .process(ctx, group_checksum)
-    .map_err(|e| e.0)
 }

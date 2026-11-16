@@ -97,7 +97,7 @@ fn test_verify_checksum() {
     let equal = || Ok(RemoteChecksum { checksum: 1, total_kvs: 1, total_bytes: 1, ..Default::default() });
     let unequal = || Ok(RemoteChecksum { checksum: 2, total_kvs: 2, total_bytes: 2, ..Default::default() });
     verify_checksum(&plan, &local, equal).unwrap();
-    let error = verify_checksum(&plan, &local, unequal).unwrap_err().to_mysql_error();
+    let error = crate::DriverError::from(verify_checksum(&plan, &local, unequal).unwrap_err()).to_mysql_error();
     assert_eq!(
         error.error_string(),
         "[Lighting:Restore:ErrChecksumMismatch]checksum mismatched remote vs local => (checksum: 2 vs 1) (total_kvs: 2 vs 1) (total_bytes:2 vs 1)"

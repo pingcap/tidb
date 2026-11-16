@@ -387,12 +387,21 @@ impl Session {
                     tidb_executor::simple::exec::SimpleExec::simple_next(session, stmt)
                 })
             }
+            // Go `ImportIntoActionExec`.
+            Plan::Simple(_)
+                if matches!(stmt, Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::CancelImportJob(_))) =>
+            {
+                let Stmt::Admin(admin) = stmt else { unreachable!() };
+                let tidb_ast::AdminStmt::CancelImportJob(job_id) = &**admin else { unreachable!() };
+                self.cancel_import_job(*job_id).map(Some)
+            }
             Plan::Simple(_) => tidb_executor::simple::exec::SimpleExec::simple_next(self, stmt),
             Plan::ImportInto(_) => {
                 let Stmt::Dml(dml) = stmt else { unreachable!("ImportInto plan has an IMPORT statement") };
                 let tidb_ast::DmlStmt::ImportInto(import) = dml.as_ref() else { unreachable!("ImportInto plan has an IMPORT statement") };
                 tidb_executor::import_into_options::validate_import_into_options(import)?;
-                Err(DriverError::unsupported("IMPORT INTO is not supported yet"))
+                let Plan::ImportInto(plan) = plan else { unreachable!() };
+                self.import_into_exec(plan, import).map(Some)
             }
             Plan::Ddl(_) => self.ddl_exec(stmt),
             Plan::CompactTable(compact) => self.compact_table_tiflash_exec(compact).map(Some),

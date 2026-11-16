@@ -320,11 +320,54 @@ Remaining, in order:
    `kv_encode.go`, `chunk_process.go`, `engine_process.go`,
    `table_import.go`, `job.go` (`mysql.tidb_import_jobs`), `precheck.go`,
    `sampler.go`, `query_source.go`.
-4. `pkg/dxf/importinto`: `proto.go`, `job.go`, `planner.go`,
-   `scheduler.go`, `task_executor.go`, `encode_and_sort_operator.go`,
-   `subtask_executor.go`, `clean_up.go`, conflict collection/resolution.
+4. Partly done (the PR after #47): `pkg/dxf/importinto` as
+   `tidb-dxf-importinto` (`proto.go`, `job.go`, `planner.go`, `scheduler.go`,
+   `task_executor.go` for local sort, `RuntimeInfo`), the server's
+   `ImportStore` over TiKV (import client, keyspace, allocator rebase, PD
+   store count, KV emptiness check), and `pkg/executor/import_into.go`'s
+   file path: `ImportIntoExec` (standalone and DETACHED),
+   `ImportIntoActionExec` (CANCEL IMPORT JOB), SHOW IMPORT JOB(S) and SHOW
+   IMPORT GROUP(S). Pinned by the SHOW/CANCEL capture `zzprobe/e05show` as a
+   unistore session test, and by a live run (below). Still open from this
+   step: `encode_and_sort_operator.go`, `subtask_executor.go`'s global sort
+   half, `clean_up.go`, conflict collection/resolution, IMPORT FROM SELECT,
+   TiKV import mode and the PD scheduler pause.
 5. `pkg/ingestor/globalsort` + `simplesst` (CLOUD_STORAGE_URI global sort).
-6. `pkg/executor/import_into.go` (`ImportIntoExec`, IMPORT FROM SELECT,
-   `ImportIntoActionExec` for CANCEL), SHOW IMPORT JOB(S)/GROUPS, session
-   dispatch; live TiUP + MinIO acceptance against a Go master tidb-server;
-   delete the E05 row.
+6. IMPORT FROM SELECT, conflict resolution, the rest of the live
+   acceptance; delete the E05 row.
+
+### Live acceptance of the file path (2026-11-16)
+
+A TiUP nightly playground (1 PD, 1 TiKV) per server: Go master
+`eca4674a6f` (go1.27.3) as the playground's tidb-server, and this tree's
+debug `tidb-server --store tikv` on its own playground. The same script
+(`/tmp/e05-data/accept.sh`, not committed) imports 2000 rows into indexed
+tables from local CSV with a header, gzip CSV, SQL, Parquet, a CSV glob, S3
+(MinIO) CSV, an S3 glob, S3 Parquet with a column list and `SET`, and S3
+gzip CSV `WITH DETACHED`; then checks count/sum/min/max and `ADMIN CHECK
+TABLE`, the non-empty-target precheck (8173), `SHOW IMPORT JOBS`, the
+AUTO_INCREMENT rebase, and CANCEL of a finished job (8171). With table IDs
+masked the two outputs are identical. A header row imported without
+`skip_rows` fails the job with Go's client error and stored job error, and
+CANCEL of a DETACHED job leaves it `cancelled|cancelled by user`.
+
+Found by the live run, each with a regression test:
+- `ImportStore::keyspace` built `'x'` + 3 bytes from API V1's
+  `NULL_KEYSPACE_ID`, so every local checksum had 4 extra bytes per KV.
+- `ErrChecksumMismatch` and the chunk encode error became 1105 MySQL errors,
+  which `common.IsRetryableError` retries (Go's `*mysql.MySQLError` rule), so
+  the subtask looped forever. Go returns `*errors.Error` / plain errors here,
+  which it does not retry.
+- The emptiness precheck ran SQL against a table in Import mode (8258); Go
+  `CheckImportIntoTableIsEmpty` scans the record prefix at a snapshot.
+- IMPORT INTO from files was routed as a write ("a write statement
+  unexpectedly produced rows"); Go gives it the `importIntoSchemaNames`
+  result schema.
+- The client error and the stored job error kept every RFC prefix; Go keeps
+  the error chain, so DXF stores `[outer RFC]` + `GetErrStackMsg` and the
+  scheduler fails the job with `task.Error.Error()`.
+
+Environment notes: the Rust server reads the macOS system HTTP proxy
+(reqwest), Go's `net/http` does not; the Rust run needs
+`NO_PROXY=127.0.0.1` to reach PD's HTTP API and MinIO. The Go playground has
+`tidb_redact_log=ON` by default, which redacts the encode error's value.

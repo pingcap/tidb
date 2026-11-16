@@ -165,20 +165,41 @@ pub fn get_backoff_weight(plan: &super::Plan) -> i64 {
         .unwrap_or(default)
 }
 
+/// A failed Go `VerifyChecksum`.
+#[derive(Debug)]
+pub enum VerifyChecksumError {
+    /// The remote checksum could not be read.
+    Remote(crate::DriverError),
+    /// Go `common.ErrChecksumMismatch`, kept as the normalized error so the
+    /// DXF retry check sees its ID like Go's `*errors.Error`.
+    Mismatch(tidb_terror::TerrorError),
+}
+
+impl From<VerifyChecksumError> for crate::DriverError {
+    fn from(error: VerifyChecksumError) -> Self {
+        match error {
+            VerifyChecksumError::Remote(error) => error,
+            // Go's lightning errors have no MySQL code: the client sees 1105
+            // with the `[RFC code]` text.
+            VerifyChecksumError::Mismatch(error) => super::import::plain(error.to_string()),
+        }
+    }
+}
+
 /// Go `VerifyChecksum`: compares the local checksum with the remote one
 /// under the plan's `checksum_table` level.
 pub fn verify_checksum(
     plan: &super::Plan,
     local: &tidb_lightning_verification::KvChecksum,
     get_remote: impl FnOnce() -> Result<tidb_ingestor_ingestctrl::checksum::RemoteChecksum, crate::DriverError>,
-) -> Result<(), crate::DriverError> {
+) -> Result<(), VerifyChecksumError> {
     use super::PostOpLevel;
     if plan.checksum == PostOpLevel::Off {
         return Ok(());
     }
     let remote = match get_remote() {
         Ok(remote) => remote,
-        Err(e) if plan.checksum != PostOpLevel::Optional => return Err(e),
+        Err(e) if plan.checksum != PostOpLevel::Optional => return Err(VerifyChecksumError::Remote(e)),
         Err(_) => return Ok(()),
     };
     if remote.is_equal(local) {
@@ -187,16 +208,14 @@ pub fn verify_checksum(
     if plan.checksum == PostOpLevel::Optional {
         return Ok(());
     }
-    // Go's lightning errors have no MySQL code: the client sees 1105 with
-    // the `[RFC code]` text.
-    Err(super::import::plain(tidb_lightning_common::errors::ERR_CHECKSUM_MISMATCH.gen_with_stack_by_args(&[
+    Err(VerifyChecksumError::Mismatch(tidb_lightning_common::errors::ERR_CHECKSUM_MISMATCH.gen_with_stack_by_args(&[
         remote.checksum.into(),
         local.sum().into(),
         remote.total_kvs.into(),
         local.sum_kvs().into(),
         remote.total_bytes.into(),
         local.sum_size().into(),
-    ]).to_string()))
+    ])))
 }
 
 /// The session `RemoteChecksumTableBySQL` runs `ADMIN CHECKSUM TABLE` in.
@@ -332,7 +351,7 @@ pub fn post_process(
     local_checksum: &tidb_lightning_verification::KvGroupChecksum,
 ) -> Result<(), crate::DriverError> {
     rebase_allocator_bases(rebaser, max_ids, plan)?;
-    verify_checksum(plan, &local_checksum.merged_checksum(), || remote_checksum_table_by_sql(se, plan))
+    Ok(verify_checksum(plan, &local_checksum.merged_checksum(), || remote_checksum_table_by_sql(se, plan))?)
 }
 
 fn source_type_of(t: i32) -> SourceType {

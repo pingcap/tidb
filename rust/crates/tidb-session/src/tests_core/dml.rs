@@ -1555,10 +1555,14 @@ fn import_into_refusal_preserves_file_targets_and_options() {
                 "{sql}"
             );
             let error = result.expect_err("partial import execution must be withdrawn");
+            // Without a TiKV store to ingest into, the import stops after
+            // reading the file list, before any job is created.
             let expected = if sql.contains("SET v=CONCAT(v") {
                 "COLUMN reference is not supported in IMPORT INTO column assignment, index 0"
+            } else if sql.contains(".missing") {
+                "the file suffix is not supported when import from server disk"
             } else {
-                "IMPORT INTO is not supported yet"
+                "IMPORT INTO needs a TiKV store, and this instance has none"
             };
             assert!(error.to_string().contains(expected), "{sql}: {error}");
             session.run("INSERT INTO t VALUES (3, 'ordinary')").unwrap();
@@ -1595,7 +1599,7 @@ fn import_into_refusal_preserves_select_targets_and_transaction() {
         assert!(result
             .expect_err("private INSERT SELECT rewrite must be withdrawn")
             .to_string()
-            .contains("IMPORT INTO is not supported yet"));
+            .contains("IMPORT INTO ... FROM SELECT is not supported yet"));
         assert_eq!(
             row_text(session.run("SELECT * FROM source ORDER BY id")),
             [["1", "alpha"], ["2", "beta"]]
@@ -1685,8 +1689,13 @@ fn import_into_source_url_is_checked_like_go() {
             "Feature 'IMPORT INTO from server disk' is not supported when security enhanced mode is enabled"
         );
     }
-    let error = session.run("IMPORT INTO t FROM 's3://bucket/a.csv'").unwrap_err();
-    assert!(error.to_string().contains("IMPORT INTO is not supported yet"), "{error}");
+    // SEM v1 lets a remote source through to the data store, which this
+    // endpoint refuses.
+    let error = session
+        .run("IMPORT INTO t FROM 's3://bucket/a.csv?endpoint=http://127.0.0.1:1&access-key=a&secret-access-key=b'")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_ne!(error.code, 8132, "{}", error.message);
 }
 
 /// Go testkit `zzprobe/e05.TestImportIntoPlannerHandoff`, captured with

@@ -13,6 +13,8 @@ workspace = true
 
 [dependencies]
 tidb-ingestor-ingestctrl = { path = "../tidb-ingestor-ingestctrl" }
+tidb-dxf-importinto = { path = "../tidb-dxf-importinto" }
+tidb-lightning-backend-kv = { path = "../tidb-lightning-backend-kv" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-dxf-importinto-jobhistory = { path = "../tidb-dxf-importinto-jobhistory" }
 percent-encoding = "2"

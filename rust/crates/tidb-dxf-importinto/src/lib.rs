@@ -1,0 +1,149 @@
+// Copyright 2026 PingCAP, Inc. Licensed under Apache-2.0.
+//! Go `pkg/dxf/importinto`: IMPORT INTO as a DXF task.
+//!
+//! The task's steps for local sort are `import` (encode the chunks of one
+//! engine into local engines, then ingest them) and `post-process`
+//! (rebase the allocators and verify the checksum).
+
+pub mod job;
+pub mod planner;
+pub mod proto;
+pub mod runtime_info;
+pub mod scheduler;
+pub mod task_executor;
+
+use std::sync::{Arc, RwLock};
+
+pub use tidb_dxf_importinto_taskkey::for_job as task_key;
+
+/// A failure of this package: Go's error text, or a MySQL error.
+pub type Error = Arc<dyn std::error::Error + Send + Sync>;
+
+/// A Go error without a code (`errors.New`, `errors.Errorf`). It is not a
+/// MySQL error, so `common.IsRetryableError` only retries it by message,
+/// like Go.
+pub(crate) fn plain(message: impl Into<String>) -> Error {
+    Arc::new(tidb_dxf_storage::StorageError::Other(message.into()))
+}
+
+/// A statement error, kept as the Go `terror` it was raised as, so the DXF
+/// task error and the job's error message read like Go's `err.Error()`.
+pub(crate) fn driver(error: tidb_driver_error::DriverError) -> Error {
+    let m = error.to_mysql_error();
+    match m.identity {
+        Some(identity) => {
+            Arc::new(tidb_terror::TerrorError::normalize(m.message.as_str(), &identity.rfc_code(), identity.code()))
+        }
+        None => Arc::new(m),
+    }
+}
+
+/// A failed `VerifyChecksum`: a mismatch stays Go's normalized
+/// `ErrChecksumMismatch`, which `common.IsRetryableError` does not retry.
+pub(crate) fn verify_checksum_error(error: tidb_executor::importer::table_import::VerifyChecksumError) -> Error {
+    use tidb_executor::importer::table_import::VerifyChecksumError;
+    match error {
+        VerifyChecksumError::Remote(error) => driver(error),
+        VerifyChecksumError::Mismatch(error) => Arc::new(error),
+    }
+}
+
+/// What Go's import reaches through the TiKV store (`kv.Storage` with its
+/// PD client and codec) and the instance's server info.
+pub trait ImportStore: Send + Sync {
+    /// Go `ingestctrl.NewBackend`'s import client over the store's PD.
+    ///
+    /// # Errors
+    /// The store has no TiKV to import into.
+    fn import_client(&self) -> Result<Arc<dyn tidb_ingestor_ingestctrl::region_job::ImportClient>, String>;
+    /// Go `GetCodec().GetKeyspace()`: the keyspace prefix of encoded keys.
+    fn keyspace(&self) -> Vec<u8>;
+    /// Go `autoid.NewAllocator(...).Rebase(ctx, base, false)` of the
+    /// table's allocator `tp`.
+    ///
+    /// # Errors
+    /// The allocator's store failed.
+    fn rebase_allocator(
+        &self,
+        db_id: i64,
+        table: &tidb_model::TableInfo,
+        tp: tidb_lightning_backend_kv::AllocatorType,
+        base: i64,
+    ) -> Result<(), String>;
+    /// Go `store.NewEtcdCli(store)`, for the PiTR and changefeed prechecks.
+    fn etcd(&self) -> Option<Arc<dyn tidb_domain_serverinfo::serverinfo_syncer::EtcdOps>>;
+    /// Go `infosync.GetServerInfo()`: this instance's server info JSON.
+    fn local_server_info(&self) -> Option<serde_json::Value>;
+    /// Go `GetPDClient().GetClusterID(ctx)`.
+    fn cluster_id(&self) -> Option<u64>;
+    /// Go `ddl.CheckImportIntoTableIsEmpty`: whether no physical table of
+    /// `table` has a record key (`existsTableRow`), at a fresh snapshot.
+    ///
+    /// # Errors
+    /// The snapshot could not be read.
+    fn table_is_empty(&self, table: &tidb_model::TableInfo) -> Result<bool, String>;
+    /// Go `CalcMaxNodeCountByStoresNum`: `max(3, stores / 3)`, or 0 when
+    /// PD cannot list the stores.
+    fn max_node_count_by_stores(&self) -> usize;
+}
+
+static STORE: RwLock<Option<Arc<dyn ImportStore>>> = RwLock::new(None);
+
+/// Sets the store the IMPORT INTO tasks of this instance import into.
+pub fn set_import_store(store: Option<Arc<dyn ImportStore>>) {
+    *STORE.write().unwrap_or_else(std::sync::PoisonError::into_inner) = store;
+}
+
+/// The store set by [`set_import_store`].
+///
+/// # Errors
+/// No store is set on this instance.
+pub fn import_store() -> Result<Arc<dyn ImportStore>, Error> {
+    STORE
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+        .ok_or_else(|| plain("IMPORT INTO needs a TiKV store, and this instance has none"))
+}
+
+/// Go `importinto`'s `init`: registers the task type's scheduler,
+/// executor and cleanup factories.
+pub fn register() {
+    scheduler::register();
+    task_executor::register();
+}
+
+#[cfg(test)]
+mod tests {
+    use tidb_executor::importer::{Plan, PostOpLevel};
+    use tidb_executor::importer::table_import::verify_checksum;
+    use tidb_ingestor_ingestctrl::checksum::RemoteChecksum;
+
+    /// Go `common.IsRetryableError` does not retry `ErrChecksumMismatch`
+    /// (it is not in `retryableErrorIDs`), so a post-process subtask with a
+    /// mismatched checksum fails instead of running again forever.
+    /// Go `importStepExecutor.RunSubtask` returns the chunk's
+    /// `errors.Annotatef(ErrEncodeKV...)`, which is not retryable: a bad row
+    /// fails the subtask instead of running it again forever.
+    #[test]
+    fn plain_errors_are_not_retryable() {
+        let error = super::plain(
+            "when encoding 1-th data row in this chunk: [Lightning:Restore:ErrEncodeKV]encode kv error in file t1.csv:0 at offset 0",
+        );
+        assert!(!tidb_lightning_common::is_retryable_error(error.as_ref()));
+        assert!(tidb_lightning_common::is_retryable_error(super::plain("rate: wait").as_ref()));
+    }
+
+    #[test]
+    fn checksum_mismatch_is_not_retryable() {
+        let local = tidb_lightning_verification::KvChecksum::make(1, 1, 1);
+        let plan = Plan { checksum: PostOpLevel::Required, ..Plan::default() };
+        let unequal = || Ok(RemoteChecksum { checksum: 2, total_kvs: 2, total_bytes: 2, ..Default::default() });
+        let error = super::verify_checksum_error(verify_checksum(&plan, &local, unequal).unwrap_err());
+        assert!(!tidb_lightning_common::is_retryable_error(error.as_ref()));
+        assert_eq!(
+            error.to_string(),
+            "[Lighting:Restore:ErrChecksumMismatch]checksum mismatched remote vs local => (checksum: 2 vs 1) (total_kvs: 2 vs 1) (total_bytes:2 vs 1)"
+        );
+    }
+}

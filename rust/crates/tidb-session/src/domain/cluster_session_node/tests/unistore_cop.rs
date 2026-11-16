@@ -64,6 +64,7 @@ mod dxf_scheduler;
 mod dxf_taskexecutor;
 mod import_into_job;
 mod import_into_precheck;
+mod import_into_show;
 mod fts_resolve_index;
 mod mpp_to_pb;
 mod mpp_execution;

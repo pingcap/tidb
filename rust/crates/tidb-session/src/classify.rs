@@ -316,6 +316,18 @@ impl Session {
             Stmt::Dml(dml) if matches!(dml.as_ref(), tidb_ast::DmlStmt::Batch(_)) => {
                 StmtKind::Query
             }
+            // Go `buildImportInto` gives an IMPORT INTO from files the
+            // `importIntoSchemaNames` schema (the job row, DETACHED too);
+            // FROM SELECT has no schema and answers with affected rows.
+            Stmt::Dml(dml)
+                if matches!(
+                    dml.as_ref(),
+                    tidb_ast::DmlStmt::ImportInto(import)
+                        if matches!(import.source, tidb_ast::ImportSource::File { .. })
+                ) =>
+            {
+                StmtKind::Query
+            }
             // `USE`, `SET` and the transaction controls answer with an OK
             // packet, the same shape a write uses.
             Stmt::Dml(_) | Stmt::Ddl(_) => StmtKind::Write,

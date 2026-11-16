@@ -438,6 +438,17 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             .collect())
     }
 
+    /// Go `ShowExec.fetchShowImportJobs`: the import jobs this user may
+    /// see, or the one `job_id` names.
+    fn fetch_show_import_jobs(&mut self, _job_id: Option<i64>) -> Result<Vec<Vec<Datum>>, DriverError> {
+        Ok(Vec::new())
+    }
+
+    /// Go `ShowExec.fetchShowImportGroups`.
+    fn fetch_show_import_groups(&mut self, _group_key: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
+        Ok(Vec::new())
+    }
+
     /// Go `ShowExec.fetchAll`: the rows of one planned SHOW, by its type.
     /// Only the kinds [`is_planned_show`] lists reach it.
     fn fetch_show(
@@ -464,9 +475,8 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             // `ShowEvents` / `ShowProfiles` / `ShowFunctionStatus` arms
             // answer nothing; `fetchShowOpenTables` answers the empty set;
             // `fetchShowPlugins` lists an empty `plugin.GetAll()`.
-            // Go `fetchShowImportJobs` / `fetchShowImportGroups` read the
-            // dist-task framework, which runs no IMPORT job here.
-            T::ImportJobs | T::ImportGroups => Vec::new(),
+            T::ImportJobs => self.fetch_show_import_jobs(contents.import_job_id)?,
+            T::ImportGroups => self.fetch_show_import_groups(&contents.import_group_key)?,
             T::ProcedureStatus
             | T::FunctionStatus
             | T::Triggers

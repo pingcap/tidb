@@ -67,22 +67,43 @@ impl Chunk {
     }
 }
 
-/// A chunk failure: Go's error text.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ChunkError(pub String);
+/// A chunk failure: Go's error value, its chain kept (`errors.Annotatef`
+/// over `ErrEncodeKV.Wrap(cause)`), so the DXF task error keeps the outer
+/// error code and `common.IsRetryableError` sees the cause.
+#[derive(Clone, Debug)]
+pub struct ChunkError(pub std::sync::Arc<dyn std::error::Error + Send + Sync>);
 
-impl std::fmt::Display for ChunkError {
+/// A Go error without a code (`errors.New`).
+#[derive(Debug)]
+struct TextError(String);
+
+impl std::fmt::Display for TextError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
     }
 }
 
-impl std::error::Error for ChunkError {}
+impl std::error::Error for TextError {}
+
+impl From<String> for ChunkError {
+    fn from(text: String) -> Self {
+        Self(std::sync::Arc::new(TextError(text)))
+    }
+}
+
+impl std::fmt::Display for ChunkError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 /// Go `common.ErrEncodeKV.Wrap(err).GenWithStackByArgs(file, offset)`.
-fn encode_kv_error(cause: &str, file: &str, offset: i64) -> String {
-    let wrapped = tidb_lightning_common::errors::ERR_ENCODE_KV.gen_with_stack_by_args(&[file.into(), offset.into()]);
-    format!("{wrapped}: {cause}")
+fn encode_kv_error(
+    cause: std::sync::Arc<dyn std::error::Error + Send + Sync>,
+    file: &str,
+    offset: i64,
+) -> tidb_terror::TerrorError {
+    tidb_lightning_common::errors::ERR_ENCODE_KV.wrap(cause).gen_with_stack_by_args(&[file.into(), offset.into()])
 }
 
 /// Go `rowToEncode`.
@@ -97,7 +118,7 @@ struct RowToEncode {
 /// Go `encodeReaderFn`: the next row, or `None` when the chunk is done.
 pub trait EncodeReader: Send {
     /// Reads the next row.
-    fn read_row(&mut self, ctx: &Context) -> Result<Option<(Vec<Datum>, i64, i64, i64)>, String>;
+    fn read_row(&mut self, ctx: &Context) -> Result<Option<(Vec<Datum>, i64, i64, i64)>, ChunkError>;
 }
 
 /// Go `parserEncodeReader`: rows of a file chunk up to `end_offset`.
@@ -111,7 +132,7 @@ pub struct ParserEncodeReader<'a> {
 }
 
 impl EncodeReader for ParserEncodeReader<'_> {
-    fn read_row(&mut self, _ctx: &Context) -> Result<Option<(Vec<Datum>, i64, i64, i64)>, String> {
+    fn read_row(&mut self, _ctx: &Context) -> Result<Option<(Vec<Datum>, i64, i64, i64)>, ChunkError> {
         let (read_pos, _) = self.parser.pos();
         if read_pos >= self.end_offset {
             return Ok(None);
@@ -121,7 +142,10 @@ impl EncodeReader for ParserEncodeReader<'_> {
         match result {
             Ok(()) => {}
             Err(CsvError::Eof) => return Ok(None),
-            Err(e) => return Err(encode_kv_error(&e.to_string(), &self.filename, read_pos)),
+            Err(e) => {
+                let cause = std::sync::Arc::new(TextError(e.to_string()));
+                return Err(ChunkError(std::sync::Arc::new(encode_kv_error(cause, &self.filename, read_pos))));
+            }
         }
         let last = self.parser.last_row();
         Ok(Some((last.row.clone(), last.row_id, curr_offset, read_pos)))
@@ -154,11 +178,11 @@ impl QueryChunkEncodeReader {
 }
 
 impl EncodeReader for QueryChunkEncodeReader {
-    fn read_row(&mut self, ctx: &Context) -> Result<Option<(Vec<Datum>, i64, i64, i64)>, String> {
+    fn read_row(&mut self, ctx: &Context) -> Result<Option<(Vec<Datum>, i64, i64, i64)>, ChunkError> {
         while self.curr.as_ref().is_none_or(|c| self.cursor >= c.rows.len()) {
             loop {
                 if let Some(e) = ctx.err() {
-                    return Err(e.to_string());
+                    return Err(e.to_string().into());
                 }
                 match self.chunk_ch.recv_timeout(std::time::Duration::from_millis(50)) {
                     Ok(chunk) => {
@@ -305,8 +329,9 @@ impl<'a> ChunkProcessor<'a> {
         // Go's errgroup returns the first failure; a cancellation the other
         // loop caused is not the cause.
         match (enc_result, deliver_result) {
-            (Err(e), Ok(())) | (Ok(()), Err(e)) => Err(ChunkError(e)),
-            (Err(e), Err(d)) => Err(ChunkError(if e == "context canceled" { d } else { e })),
+            (Err(e), Ok(())) => Err(e),
+            (Ok(()), Err(d)) => Err(d.into()),
+            (Err(e), Err(d)) => Err(if e.to_string() == "context canceled" { d.into() } else { e }),
             (Ok(()), Ok(())) => Ok(()),
         }
     }
@@ -326,7 +351,7 @@ fn encode_loop(
     min_deliver_bytes: u64,
     min_deliver_row_cnt: usize,
     group_checksum: &mut KvGroupChecksum,
-) -> Result<(), String> {
+) -> Result<(), ChunkError> {
     let mut row_batch: Vec<tidb_lightning_backend_kv::Pairs> = Vec::with_capacity(min_deliver_row_cnt);
     let mut row_batch_byte_size = 0u64;
     let mut curr_offset = 0i64;
@@ -363,10 +388,15 @@ fn encode_loop(
         let kvs = encoder.encode(&data.row, data.row_id);
         curr_offset = data.end_offset;
         let kvs = kvs.map_err(|e| {
-            format!(
-                "when encoding {row_number}-th data row in this chunk: {}",
-                encode_kv_error(&e.to_string(), chunk_name, data.start_pos)
-            )
+            let cause: std::sync::Arc<dyn std::error::Error + Send + Sync> = match e {
+                tidb_lightning_backend_kv::EncodeError::Terror(e) => std::sync::Arc::new(e),
+                other => std::sync::Arc::new(TextError(other.to_string())),
+            };
+            let wrapped = encode_kv_error(cause, chunk_name, data.start_pos);
+            ChunkError(std::sync::Arc::new(tidb_terror::annotate(
+                std::sync::Arc::new(wrapped),
+                format!("when encoding {row_number}-th data row in this chunk"),
+            )))
         })?;
         row_batch_byte_size += tidb_lightning_backend_encode::Row::size(&kvs);
         row_batch.push(kvs);
@@ -375,7 +405,7 @@ fn encode_loop(
             row_batch_byte_size = 0;
         }
     }
-    record_send_reset(&mut row_batch, curr_offset)
+    Ok(record_send_reset(&mut row_batch, curr_offset)?)
 }
 
 /// Go `dataDeliver.sendEncodedData`.

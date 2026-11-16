@@ -134,12 +134,16 @@ pub const IMPORT_STEP_COLLECT_CONFLICTS: Step = Step(6);
 /// Other global-sort steps record detected conflicts in external storage; this
 /// step resolves them, and so may have 0 subtasks.
 pub const IMPORT_STEP_CONFLICT_RESOLUTION: Step = Step(7);
+/// Go `ImportStepQuery`: run a SELECT and write its encoded, sorted KVs to
+/// global storage.
+pub const IMPORT_STEP_QUERY: Step = Step(8);
 
 fn import_into_step2str(s: Step) -> String {
     match s {
         IMPORT_STEP_IMPORT => "import".to_owned(),
         IMPORT_STEP_POST_PROCESS => "post-process".to_owned(),
         IMPORT_STEP_ENCODE_AND_SORT => "encode".to_owned(),
+        IMPORT_STEP_QUERY => "query".to_owned(),
         IMPORT_STEP_MERGE_SORT => "merge-sort".to_owned(),
         IMPORT_STEP_WRITE_AND_INGEST => "ingest".to_owned(),
         IMPORT_STEP_COLLECT_CONFLICTS => "collect-conflicts".to_owned(),

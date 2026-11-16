@@ -73,8 +73,29 @@ fn file_chunk_process_matches_go_capture() {
         let result = ChunkProcessor::new("x.csv:0".to_owned(), Box::new(reader), 0, &mut encoder, &[], &mut dw, &mut iw, None)
             .process(&Context::background(), &mut checksum);
         match rec["err"].as_str() {
-            None => assert_eq!(result, Ok(()), "{name}"),
-            Some(want) => assert_eq!(result.unwrap_err().0, want, "{name}"),
+            None => assert!(result.is_ok(), "{name}: {result:?}"),
+            Some(want) => {
+                let err = result.unwrap_err();
+                assert_eq!(err.to_string(), want, "{name}");
+                // DXF `serializeErr` keeps the first `*errors.Error`'s RFC
+                // code and `errors.GetErrStackMsg`, and Go does not retry it.
+                let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(&*err.0);
+                let mut rfc = String::new();
+                while let Some(e) = cause {
+                    if let Some(t) = e.downcast_ref::<tidb_terror::TerrorError>() {
+                        rfc = t.id().into_owned();
+                        break;
+                    }
+                    cause = e.source();
+                }
+                assert_eq!(rfc, rec["err_rfc"].as_str().unwrap_or_default(), "{name}: rfc");
+                assert_eq!(
+                    tidb_terror::get_err_stack_msg(Some(&*err.0)),
+                    rec["err_stack_msg"].as_str().unwrap_or_default(),
+                    "{name}: stack msg"
+                );
+                assert!(!tidb_lightning_common::is_retryable_error(&*err.0), "{name}: retryable");
+            }
         }
         let want = |key: &str| -> Vec<[String; 3]> { serde_json::from_value(rec[key].clone()).unwrap_or_default() };
         assert_eq!(dw.0, want("data_kvs"), "{name}: data KVs");
