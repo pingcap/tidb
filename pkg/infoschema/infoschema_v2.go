@@ -1005,6 +1005,15 @@ func (h *tableByNameHelper) onItem(item *tableItem) bool {
 	return true
 }
 
+func (is *infoschemaV2) searchTableItemByName(schema, name ast.CIStr) (*tableItem, bool) {
+	h := tableByNameHelper{
+		end:           tableItem{dbName: schema, tableName: name, schemaVersion: math.MaxInt64},
+		schemaVersion: is.schemaMetaVersion,
+	}
+	is.byName.Load().DescendLessOrEqual(&h.end, h.onItem)
+	return h.res, h.found
+}
+
 // TableByName implements the InfoSchema interface.
 // When schema cache miss, it will fetch the TableInfo from TikV and refill cache.
 func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl ast.CIStr) (t table.Table, err error) {
@@ -1020,15 +1029,10 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl ast.CIStr) 
 
 	is.keepAlive()
 	start := time.Now()
-	var h tableByNameHelper
-	h.end = tableItem{dbName: schema, tableName: tbl, schemaVersion: math.MaxInt64}
-	h.schemaVersion = is.infoSchema.schemaMetaVersion
-	is.byName.Load().DescendLessOrEqual(&h.end, h.onItem)
-
-	if !h.found {
+	itm, ok := is.searchTableItemByName(schema, tbl)
+	if !ok {
 		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
-	itm := h.res
 
 	// Get from the cache with old key
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
@@ -1054,6 +1058,60 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl ast.CIStr) 
 
 	metrics.TableByNameMissDuration.Observe(float64(time.Since(start)))
 	return ret, nil
+}
+
+// tableInfosByNames reuses cached definitions and batches only the missing ones.
+func (is *infoschemaV2) tableInfosByNames(ctx context.Context, schema ast.CIStr, names []ast.CIStr) ([]*model.TableInfo, error) {
+	is.keepAlive()
+	db, ok := is.SchemaByName(schema)
+	if !ok {
+		return nil, nil
+	}
+	cached := make([]*model.TableInfo, 0, len(names))
+	missing := make([]int64, 0, len(names))
+	for _, name := range names {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		item, ok := is.searchTableItemByName(schema, name)
+		if !ok {
+			continue
+		}
+		if tbl, found := is.tableCache.Get(tableCacheKey{item.tableID, item.schemaVersion}); found && tbl != nil {
+			cached = append(cached, tbl.Meta())
+		} else {
+			missing = append(missing, item.tableID)
+		}
+	}
+	if len(missing) == 0 {
+		return cached, nil
+	}
+	// Keep the existing metadata-load region for SQL trace consumers.
+	defer tracing.StartRegion(ctx, "infoschema.loadTableInfo").End()
+	return retryOnFlashbackInProgress(ctx, func() ([]*model.TableInfo, error) {
+		// Keep partial results local to an attempt so flashback retries cannot
+		// return duplicates. Bound each response for large table-name lists.
+		const batchSize = 128
+		tables := slices.Clone(cached)
+		snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
+		snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000))
+		m := meta.NewReader(snapshot)
+		for start := 0; start < len(missing); start += batchSize {
+			batch, err := m.GetTables(ctx, db.ID, missing[start:min(start+batchSize, len(missing))])
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			for _, tbl := range batch {
+				if tbl == nil {
+					continue
+				}
+				ConvertCharsetCollateToLowerCaseIfNeed(tbl)
+				ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbl)
+				tables = append(tables, tbl)
+			}
+		}
+		return tables, nil
+	})
 }
 
 // TableInfoByName implements InfoSchema.TableInfoByName

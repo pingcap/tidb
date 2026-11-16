@@ -140,6 +140,11 @@ func TestDDLTable(t *testing.T) {
 	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
+
+	// A panic in handling an event does not escape HandleDDLEvent. The event has no table info.
+	require.NotPanics(t, func() {
+		require.NoError(t, h.HandleDDLEvent(context.Background(), nil, notifier.NewDropTableEvent(nil)))
+	})
 }
 
 func TestSystemTableDDLHasNoEvent(t *testing.T) {
@@ -239,9 +244,6 @@ func TestMViewRefreshOutOfPlaceCutoverStats(t *testing.T) {
 	h := do.StatsHandle()
 	testKit.MustExec("use test")
 	testKit.MustExec("set tidb_mview_enable = on")
-	originalHistoricalStats := testKit.MustQuery("select @@global.tidb_enable_historical_stats").Rows()[0][0]
-	testKit.MustExec("set global tidb_enable_historical_stats = 1")
-	defer testKit.MustExec(fmt.Sprintf("set global tidb_enable_historical_stats = %v", originalHistoricalStats))
 	testKit.MustExec("create table t_mv_oop_stats (a int not null, b int not null)")
 	testKit.MustExec("insert into t_mv_oop_stats values (1, 10), (1, 5), (2, 7)")
 	testKit.MustExec("create materialized view log on t_mv_oop_stats (a, b) purge next date_add(now(), interval 1 hour)")
@@ -279,11 +281,6 @@ func TestMViewRefreshOutOfPlaceCutoverStats(t *testing.T) {
 	).Rows()
 	require.Len(t, rows, 1)
 	require.NotEqual(t, oldVersion, rows[0][0].(string))
-	testKit.MustQuery(
-		"select count(*) from mysql.stats_meta_history where table_id = ? and source = ?",
-		oldTableInfo.ID,
-		statsutil.StatsMetaHistorySourceSchemaChange,
-	).Check(testkit.Rows("1"))
 }
 
 func TestTruncateAPartitionedTable(t *testing.T) {

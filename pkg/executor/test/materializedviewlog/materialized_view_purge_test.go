@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -297,41 +299,71 @@ func TestPurgeMaterializedViewLogDefaultMVMaintainIsolationReadEnginesDoesNotInh
 	tk.MustQuery(fmt.Sprintf("select @@session.%s", vardef.TiDBIsolationReadEngines)).Check(testkit.Rows(currentIsolationReadEngines))
 }
 
-func TestPurgeMaterializedViewLogUsesConfiguredTiFlashThreadsForCountAndDelete(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := newMViewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_purge_tiflash_threads (id int primary key, v int)")
-	tk.MustExec("create materialized view log on t_purge_tiflash_threads (id, v) purge next date_add(now(), interval 1 hour)")
-	tk.MustExec("insert into t_purge_tiflash_threads values (1, 10), (2, 20), (3, 30)")
-	tk.MustExec(fmt.Sprintf("set @@session.%s = 9", vardef.TiDBMaxTiFlashThreads))
-	tk.MustExec(fmt.Sprintf("set @@session.%s = 2", vardef.TiDBMLogPurgeDeleteTiFlashThreads))
+func TestPurgeMaterializedViewLogTiFlashThreads(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		internal     bool
+		countFailure bool
+		empty        bool
+	}{
+		{name: "manual"},
+		{name: "internal", internal: true},
+		{name: "count failure", countFailure: true},
+		{name: "empty", empty: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond, mockstore.WithMockTiFlash(2))
+			tk := newMViewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t_purge_tiflash_threads (id int primary key, v int)")
+			tk.MustExec("create materialized view log on t_purge_tiflash_threads (id, v) purge next date_add(now(), interval 1 hour)")
+			testkit.SetTiFlashReplica(t, dom, "test", "$mlog$t_purge_tiflash_threads")
+			if !tc.empty {
+				tk.MustExec("insert into t_purge_tiflash_threads values (1, 10), (2, 20), (3, 30)")
+			}
+			tk.MustExec(fmt.Sprintf("set @@session.%s = 9", vardef.TiDBMaxTiFlashThreads))
+			tk.MustExec(fmt.Sprintf("set @@session.%s = 2", vardef.TiDBMLogPurgeDeleteTiFlashThreads))
+			tk.MustExec("set @@session.tidb_mlog_purge_batch_size = 1")
 
-	applied := false
-	gotTiFlashThreads := int64(0)
-	gotTargetTiFlashThreads := int64(0)
-	gotCountTiFlashThreads := int64(0)
-	deleteFailpointName := "github.com/pingcap/tidb/pkg/executor/mvMLogPurgeDeleteTiFlashThreadsAppliedOnPurgeDeleteSession"
-	require.NoError(t, failpoint.EnableCall(deleteFailpointName, func(currentTiFlashThreads int64, targetTiFlashThreads int64) {
-		applied = true
-		gotTiFlashThreads = currentTiFlashThreads
-		gotTargetTiFlashThreads = targetTiFlashThreads
-	}))
-	countFailpointName := "github.com/pingcap/tidb/pkg/executor/mvMLogPurgeCountTiFlashThreadsUsed"
-	require.NoError(t, failpoint.EnableCall(countFailpointName, func(tiFlashThreads int64) {
-		gotCountTiFlashThreads = tiFlashThreads
-	}))
-	defer func() {
-		require.NoError(t, failpoint.Disable(deleteFailpointName))
-		require.NoError(t, failpoint.Disable(countFailpointName))
-	}()
+			applyCalls, countCalls := 0, 0
+			var gotTiFlashThreads, gotTargetTiFlashThreads, gotCountTiFlashThreads int64
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvMLogPurgeDeleteTiFlashThreadsAppliedOnPurgeDeleteSession", func(currentTiFlashThreads int64, targetTiFlashThreads int64) {
+				applyCalls++
+				gotTiFlashThreads = currentTiFlashThreads
+				gotTargetTiFlashThreads = targetTiFlashThreads
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvMLogPurgeCountTiFlashThreadsUsed", func(tiFlashThreads int64) {
+				countCalls++
+				gotCountTiFlashThreads = tiFlashThreads
+			})
+			if tc.countFailure {
+				testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockMLogPurgeAdaptiveCountErr", "return(true)")
+			}
 
-	tk.MustExec("purge materialized view log on t_purge_tiflash_threads")
-	require.True(t, applied)
-	require.Equal(t, int64(2), gotTargetTiFlashThreads)
-	require.Equal(t, gotTargetTiFlashThreads, gotTiFlashThreads)
-	require.Equal(t, gotTargetTiFlashThreads, gotCountTiFlashThreads)
-	tk.MustQuery(fmt.Sprintf("select @@session.%s", vardef.TiDBMaxTiFlashThreads)).Check(testkit.Rows("9"))
+			if tc.internal {
+				mustExecMViewPurgeInternal(t, tk, "purge materialized view log on t_purge_tiflash_threads")
+			} else {
+				tk.MustExec("purge materialized view log on t_purge_tiflash_threads")
+			}
+			if tc.countFailure {
+				require.Zero(t, countCalls)
+			} else {
+				require.Equal(t, 1, countCalls)
+				require.Equal(t, int64(vardef.DefTiFlashMaxThreads), gotCountTiFlashThreads)
+			}
+			if tc.empty {
+				require.Zero(t, applyCalls)
+				require.Zero(t, tk.Session().AffectedRows())
+			} else {
+				require.Equal(t, 1, applyCalls)
+				require.Equal(t, int64(2), gotTargetTiFlashThreads)
+				require.Equal(t, gotTargetTiFlashThreads, gotTiFlashThreads)
+				require.Equal(t, uint64(3), tk.Session().AffectedRows())
+			}
+			tk.MustQuery("select count(*) from `$mlog$t_purge_tiflash_threads`").Check(testkit.Rows("0"))
+			tk.MustQuery(fmt.Sprintf("select @@session.%s", vardef.TiDBMaxTiFlashThreads)).Check(testkit.Rows("9"))
+		})
+	}
 }
 
 func TestPurgeMaterializedViewLogPrivilege(t *testing.T) {
@@ -957,6 +989,21 @@ func TestPurgeMaterializedViewLogEarlyFailureWritesHist(t *testing.T) {
 	mlogTable, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("$mlog$t_purge_early_fail"))
 	require.NoError(t, err)
 	mlogID := mlogTable.Meta().ID
+
+	t.Run("panic preserves error", func(t *testing.T) {
+		tk := testkit.NewTestKitWithSession(t, store, tk.Session())
+		panicErr := exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvMaintainMemQuotaAppliedOnPurgeSession", func(int64, int64) {
+			panic(panicErr)
+		})
+		err := tk.ExecToErr("purge materialized view log on t_purge_early_fail")
+		require.Error(t, err)
+		require.Same(t, errors.Cause(panicErr), errors.Cause(err))
+		require.True(t, exeerrors.ErrQueryInterrupted.Equal(err))
+		tk.MustQuery("select count(*) from `$mlog$t_purge_early_fail`").Check(testkit.Rows("3"))
+		tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ROWS, PURGE_END_TIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+			Check(testkit.Rows("failed 0 1"))
+	})
 
 	histCountBeforeRows := tk.MustQuery(fmt.Sprintf(
 		"select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d",

@@ -70,9 +70,11 @@ func TestInitCreateMaterializedViewBuildSessionAppliesDefinitionDivPrecisionIncr
 		before[name] = sessionVar(name)
 	}
 	sqlMode := sessVars.SQLMode
+	originalInMViewMaintenance := sessVars.InMViewMaintenance
 
 	restore, err := initCreateMaterializedViewBuildSession(sessCtx, job, mviewTableInfo, "test")
 	require.NoError(t, err)
+	require.True(t, sessVars.InMViewMaintenance)
 	require.Equal(t, 9, sessVars.DivPrecisionIncrement)
 	require.Equal(t, "test", sessVars.CurrentDB)
 	require.Equal(t, "9", sessionVar(vardef.DivPrecisionIncrement))
@@ -85,6 +87,7 @@ func TestInitCreateMaterializedViewBuildSessionAppliesDefinitionDivPrecisionIncr
 	require.Equal(t, vardef.On, sessionVar(vardef.TiDBEnableParallelHashaggSpill))
 
 	restore()
+	require.Equal(t, originalInMViewMaintenance, sessVars.InMViewMaintenance)
 	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
 	require.Equal(t, "before", sessVars.CurrentDB)
 	require.Equal(t, sqlMode, sessVars.SQLMode)

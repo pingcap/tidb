@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -36,7 +37,7 @@ func TestCaptureQuerySource(t *testing.T) {
 	tk.MustExec("create table unused_target(i bigint)")
 	capture := func(se sessionctx.Context, sel string) (*importer.QuerySource, error) {
 		sql := "import into unused_target from " + sel
-		if err := importer.PlanImportQueryForTest(se, sql); err != nil {
+		if err := executor.PlanImportQueryForTest(se, sql); err != nil {
 			return nil, err
 		}
 		return importer.CaptureQuerySource(se, sql)

@@ -498,6 +498,67 @@ func TestDuplicateEntryMessage(t *testing.T) {
 		tk.MustExec("insert into t values(18446744073709551615);")
 		tk.MustGetErrMsg("insert into t values(18446744073709551615);", "[kv:1062]Duplicate entry '18446744073709551615' for key 't.PRIMARY'")
 	}
+
+	tk.MustExec("rollback")
+	// Local duplicate checks must escape binary values just like commit and locking errors.
+	for _, tc := range []struct {
+		columnType string
+		value      string
+		key        string
+	}{
+		{"binary(16)", "x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d6'", `1-\xA1\xB2\xC3\xD4\x00\xF6\xA7\xB8\xC9\xD0\xE1\xF2\xA3\xB4\xC5\x`},
+		{"varbinary(16)", "x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d6'", `1-\xA1\xB2\xC3\xD4\x00\xF6\xA7\xB8\xC9\xD0\xE1\xF2\xA3\xB4\xC5\x`},
+		{"bit(16)", "b'1000000100000000'", `1-\x81\x00-p`},
+		{"varbinary(4)", "x'41004200'", `1-A\x00B\x00-p`},
+		{"varchar(16)", "'中文'", "1-中文-p"},
+	} {
+		for _, index := range []struct {
+			definition string
+			name       string
+		}{
+			{"unique key k (firm, cu, product)", "k"},
+			{"primary key (firm, cu, product) clustered", "PRIMARY"},
+		} {
+			for _, mode := range []string{"optimistic", "pessimistic"} {
+				t.Run(tc.columnType+"/"+index.name+"/"+mode, func(t *testing.T) {
+					tk := testkit.NewTestKit(t, store)
+					defer tk.Session().Close()
+					tk.MustExec("use test")
+					tk.MustExec("drop table if exists t")
+					tk.MustExec(fmt.Sprintf("create table t (firm bigint not null, cu %s not null, product varchar(255) not null, %s)", tc.columnType, index.definition))
+					insert := fmt.Sprintf("insert into t values (1, %s, 'p')", tc.value)
+					expected := fmt.Sprintf("[kv:1062]Duplicate entry '%s' for key 't.%s'", tc.key, index.name)
+
+					tk.MustExec("begin " + mode)
+					tk.MustExec(insert)
+					tk.MustGetErrMsg(insert, expected)
+					tk.MustExec("commit")
+
+					// Check the same conflict against the committed row.
+					tk.MustExec("begin " + mode)
+					if mode == "optimistic" {
+						tk.MustExec(insert)
+						require.ErrorContains(t, tk.ExecToErr("commit"), expected)
+					} else {
+						tk.MustGetErrMsg(insert, expected)
+					}
+					tk.MustExec("rollback")
+
+					tk.MustExec(fmt.Sprintf("insert into t values (2, %s, 'p')", tc.value))
+					tk.MustExec("begin " + mode)
+					tk.MustGetErrMsg("update t set firm=1 where firm=2", expected)
+					tk.MustExec("rollback")
+					tk.MustQuery("select firm from t order by firm").Check(testkit.Rows("1", "2"))
+
+					tk.MustExec("delete from t")
+					tk.MustExec("begin " + mode)
+					tk.MustGetErrMsg(fmt.Sprintf("insert into t values (1, %s, 'p'), (1, %s, 'p')", tc.value, tc.value), expected)
+					tk.MustExec("rollback")
+					tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
+				})
+			}
+		}
+	}
 }
 
 func TestGlobalTempTableParallel(t *testing.T) {

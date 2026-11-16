@@ -638,15 +638,17 @@ timezone.*
      curl http://{TiDBIP}:10080/stats/dump/{db}/{table}
      ```
 
-30. Get statistics data of specific table and timestamp.
+30. Download a plan replayer file.
 
      ```shell
-     curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyyMMddHHmmss}
+     curl http://{TiDBIP}:10080/plan_replayer/dump/{filename} --output plan_replayer.zip
      ```
 
-     ```shell
-     curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyy-MM-dd HH:mm:ss}
-     ```
+     Method: `GET`. `{filename}` is the file token that `PLAN REPLAYER DUMP` returns, or a `token` value in `mysql.plan_replayer_status`.
+
+     The response is the ZIP file. If this TiDB instance does not have the file, it requests the file from the other TiDB instances. If no instance has the file, the API returns HTTP 404.
+
+     TiDB returns the file as it is stored and does not add statistics to it. A `capture_replayer_*` file from an older TiDB version can have no statistics, if `tidb_enable_historical_stats_for_capture` was `ON` when TiDB captured it. TiDB writes a warning to its log for each request for a `capture_replayer_*` file.
 
 31. Resume the binlog writing when Pump is recovered.
 

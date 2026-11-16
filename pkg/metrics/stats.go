@@ -38,7 +38,6 @@ var (
 	StatsDeltaUpdateHistogram prometheus.Histogram
 	StatsUsageUpdateHistogram prometheus.Histogram
 
-	HistoricalStatsCounter        *prometheus.CounterVec
 	PlanReplayerTaskCounter       *prometheus.CounterVec
 	PlanReplayerRegisterTaskGauge prometheus.Gauge
 )
@@ -134,13 +133,6 @@ func InitStatsMetrics() {
 		Name:      "stats_healthy",
 		Help:      "Gauge of stats healthy",
 	}, []string{LblType})
-
-	HistoricalStatsCounter = metricscommon.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "tidb",
-		Subsystem: "statistics",
-		Name:      "historical_stats",
-		Help:      "counter of the historical stats operation",
-	}, []string{LblType, LblResult})
 
 	PlanReplayerTaskCounter = metricscommon.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tidb",
