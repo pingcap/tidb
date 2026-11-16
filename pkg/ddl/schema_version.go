@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -413,7 +413,7 @@ func waitVersionSynced(
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.DDLWaitSchemaSynced, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
-	checkAssumedSvr := shouldCheckAssumedServer(job, jobCtx.infoCache.GetLatest(), jobCtx.isLegacyNextGen)
+	checkAssumedSvr := shouldCheckAssumedServer(job, jobCtx.isLegacyNextGen)
 	logger := logutil.DDLLogger().With(zap.Int64("ver", latestSchemaVersion), zap.Bool("checkAssumedSvr", checkAssumedSvr))
 	// WaitVersionSynced returns only when all TiDB schemas are synced(exclude the isolated TiDB).
 	sum, err := jobCtx.schemaVerSyncer.WaitVersionSynced(ctx, job.ID, latestSchemaVersion, checkAssumedSvr)
@@ -432,15 +432,19 @@ func waitVersionSynced(
 // assumedServer is the virtual server that involved in the online schema change
 // of some keyspace, it's run on a real server with different keyspace, it's only
 // used in cross keyspace scenario.
-func shouldCheckAssumedServer(job *model.Job, is infoschema.InfoSchema, isLegacyNextGen bool) bool {
+func shouldCheckAssumedServer(job *model.Job, isLegacyNextGen bool) bool {
 	if kerneltype.IsClassic() {
 		return false
+	}
+	if isLegacyNextGen {
+		// The owner's InfoSchema may not have loaded a newly created built-in yet.
+		return metadef.IsBuiltinSystemTable(job.SchemaName, job.TableName)
 	}
 
 	// check the table ID is enough, as we forbid doing DDL which involve multiple
 	// table IDs on system tables in nextgen, such as RenameTables, TruncateTable,
 	// ExchangePartition, etc.
-	return infoschema.IsSystemTableInNextGen(is, isLegacyNextGen, job.TableID)
+	return metadef.IsReservedID(job.TableID)
 }
 
 // waitVersionSyncedWithoutMDL handles the following situation:

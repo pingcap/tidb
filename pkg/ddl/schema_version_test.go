@@ -18,10 +18,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,25 +29,25 @@ func TestShouldCheckAssumedServer(t *testing.T) {
 		if isLegacyNextGen {
 			mysqlID, tableID = 1, 9999
 		}
-		db := &model.DBInfo{ID: mysqlID, Name: ast.NewCIStr("mysql"), State: model.StatePublic}
-		db.Deprecated.Tables = []*model.TableInfo{
-			{ID: tableID, DBID: mysqlID, Name: ast.NewCIStr("tidb"), State: model.StatePublic},
-			{ID: 10000, DBID: mysqlID, Name: ast.NewCIStr("custom_table"), State: model.StatePublic},
-		}
-		builder := infoschema.NewBuilder(nil, 0, nil, infoschema.NewData(), false).WithCrossKS(true)
-		require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{db}, nil, nil, nil, 1))
-		is := builder.Build(0)
-		require.Equal(t, kerneltype.IsNextGen(), shouldCheckAssumedServer(&model.Job{TableID: tableID}, is, isLegacyNextGen))
+		require.Equal(t, kerneltype.IsNextGen(), shouldCheckAssumedServer(&model.Job{
+			TableID: tableID, SchemaName: "mysql", TableName: "tidb",
+		}, isLegacyNextGen))
+		// The owner's InfoSchema may not contain a newly created legacy built-in yet.
+		require.Equal(t, kerneltype.IsNextGen() && isLegacyNextGen,
+			shouldCheckAssumedServer(&model.Job{
+				Type: model.ActionCreateTable, TableID: 10001, SchemaName: "mysql", TableName: "tidb_import_jobs",
+			}, isLegacyNextGen))
 		for _, job := range []*model.Job{
 			{TableID: 100},
 			{SchemaID: mysqlID},
 			{TableID: 10000, SchemaName: "mysql", TableName: "custom_table"},
+			{TableID: 10001, SchemaName: "test", TableName: "tidb_import_jobs"},
 			{TableID: 100, InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{Database: "mysql", Table: "tidb"}}},
 		} {
-			require.False(t, shouldCheckAssumedServer(job, is, isLegacyNextGen))
+			require.False(t, shouldCheckAssumedServer(job, isLegacyNextGen))
 		}
 		// Native NextGen recognizes reserved IDs even before the new table is loaded.
 		require.Equal(t, kerneltype.IsNextGen() && !isLegacyNextGen,
-			shouldCheckAssumedServer(&model.Job{TableID: metadef.ReservedGlobalIDLowerBound + 1}, is, isLegacyNextGen))
+			shouldCheckAssumedServer(&model.Job{TableID: metadef.ReservedGlobalIDLowerBound + 1}, isLegacyNextGen))
 	}
 }
