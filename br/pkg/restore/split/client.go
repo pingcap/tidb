@@ -181,7 +181,7 @@ func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*RegionI
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if region == nil {
+	if region == nil || region.Meta == nil {
 		return nil, nil
 	}
 	return &RegionInfo{
@@ -376,8 +376,14 @@ func sendSplitRegionRequest(ctx context.Context, c *pdClient, regionInfo *Region
 				if findLeaderErr != nil {
 					return false, nil, findLeaderErr
 				}
+				if newRegionInfo == nil || newRegionInfo.Region == nil {
+					return false, nil, berrors.ErrKVEpochNotMatch
+				}
 				if !CheckRegionEpoch(newRegionInfo, regionInfo) {
 					return false, nil, berrors.ErrKVEpochNotMatch
+				}
+				if newRegionInfo.Leader == nil {
+					return false, nil, berrors.ErrPDLeaderNotFound
 				}
 				log.Info("find new leader", zap.Uint64("new leader", newRegionInfo.Leader.Id))
 				regionInfo = newRegionInfo
