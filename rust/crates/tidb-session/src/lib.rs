@@ -1403,12 +1403,42 @@ mod tests_variable_session;
 use tidb_domain::global_sysvars::GlobalSysvars;
 pub use vars::{SessionVars, VarError};
 
+/// Go `SQLKiller` as client-go's `KillSignalHandler`: `HandleSignal` (which
+/// also probes the connection) and its kill error, carried as the signal the
+/// store driver maps back to Go's error (`ToTiDBErr`).
+struct SqlKillerSignalHandler(Arc<tidb_sqlkiller::SqlKiller>);
+
+impl tikv_client::kv::KillSignalHandler for SqlKillerSignalHandler {
+    fn handle_signal(&self) -> tikv_client::Result<()> {
+        match self.0.handle_signal() {
+            None => Ok(()),
+            Some(_) => Err(tikv_client::Error::QueryInterruptedWithSignal(
+                tikv_client::error::QueryInterruptedWithSignalError {
+                    signal: self.0.signal.load(std::sync::atomic::Ordering::SeqCst),
+                },
+            )),
+        }
+    }
+}
+
 impl Session {
     /// The session's SQL killer (Go `SessionVars.SQLKiller`), where the
     /// connection installs its liveness probe.
     #[must_use]
     pub fn sql_killer(&self) -> Arc<tidb_sqlkiller::SqlKiller> {
         Arc::clone(self.session_memory.sql_killer())
+    }
+
+    /// Go `SessionVars.KVVars`' kill half: the killer's signal and the
+    /// killer itself as client-go's `KillSignalHandler`
+    /// (`vars.KVVars.KillSignalHandler = &vars.SQLKiller`).
+    #[must_use]
+    pub fn kv_kill_signal(&self) -> tidb_store_driver_txn::session_commit_protocol::KvKillSignal {
+        let killer = self.sql_killer();
+        tidb_store_driver_txn::session_commit_protocol::KvKillSignal {
+            killed: Arc::clone(&killer.signal),
+            handler: Arc::new(SqlKillerSignalHandler(killer)),
+        }
     }
 
     /// Starts the cancellation lifetime for the next wire command.

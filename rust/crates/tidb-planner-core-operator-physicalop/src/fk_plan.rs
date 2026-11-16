@@ -156,12 +156,11 @@ pub fn build_fk_triggers(
         }
     }
     if let Some(table) = &own_table {
-        let foreign_keys = table
-            .read()
-            .foreign_keys
-            .iter_deref()
-            .filter(|fk| fk.read().state == tidb_model::SchemaState::PUBLIC)
-            .collect::<Vec<_>>();
+        // Go `buildOnInsertFKTriggers` / `buildOnUpdateFKTriggers` check every
+        // foreign key of the child, whatever its state: a key `ADD FOREIGN
+        // KEY` made write-only is already enforced while its owner checks the
+        // existing rows (`onCreateForeignKey`).
+        let foreign_keys = table.read().foreign_keys.iter_deref().collect::<Vec<_>>();
         for fk in &foreign_keys {
             let fk = fk.read();
             if fk.version < tidb_model::table::FK_VERSION1 {
@@ -489,6 +488,35 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    /// Go `buildOnInsertFKTriggers` / `buildOnUpdateChildFKChecks` check a
+    /// child's foreign key in every state: one `ADD FOREIGN KEY` left
+    /// write-only is enforced while its owner checks the existing rows.
+    #[test]
+    fn a_write_only_foreign_key_is_checked_on_its_child() {
+        let ids = PlanIdAllocator::new();
+        let catalog = fake(ReferOptionType::Restrict, &["parent"]);
+        for state in [
+            tidb_model::SchemaState::WRITE_ONLY,
+            tidb_model::SchemaState::WRITE_REORGANIZATION,
+        ] {
+            catalog.tables[&("test".to_owned(), "child".to_owned())]
+                .read()
+                .foreign_keys
+                .iter_deref()
+                .for_each(|fk| fk.write().state = state);
+            let insert = build_fk_triggers(&catalog, true, "Insert", &spec("child"), &ids).unwrap();
+            assert_eq!(insert.len(), 1, "{state:?}");
+            assert_eq!(insert[0].info, "foreign_key:fk_child, check_exist");
+            let mut update = spec("child");
+            update.updated_cols = vec!["PID".to_owned()];
+            assert_eq!(
+                build_fk_triggers(&catalog, true, "Update", &update, &ids).unwrap().len(),
+                1,
+                "{state:?}"
+            );
+        }
     }
 
     #[test]

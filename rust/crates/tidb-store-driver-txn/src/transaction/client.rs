@@ -350,16 +350,27 @@ impl<S: PdClient> TikvTxn<S> {
             .set_assertion_level(level);
     }
     /// Go `KVTxn.SetVars(sessVars.KVVars)`: the backoff knobs the client's
-    /// lock-fast and weighted backoffs read.
-    pub fn set_kv_variables(&mut self, backoff_lock_fast: i32, backoff_weight: i32) {
+    /// lock-fast and weighted backoffs read, and the session's kill signal
+    /// and handler (a transaction no session owns keeps its own signal).
+    pub fn set_kv_variables(
+        &mut self,
+        backoff_lock_fast: i32,
+        backoff_weight: i32,
+        kill_signal: Option<&crate::session_commit_protocol::KvKillSignal>,
+    ) {
+        let mut variables = tikv_client::kv::Variables {
+            backoff_lock_fast,
+            backoff_weight,
+            ..tikv_client::kv::Variables::default()
+        };
+        if let Some(kill_signal) = kill_signal {
+            variables.killed = Arc::clone(&kill_signal.killed);
+            variables.kill_signal_handler = Some(Arc::clone(&kill_signal.handler));
+        }
         self.engine
             .transaction_mut()
             .inner_mut()
-            .set_variables(std::sync::Arc::new(tikv_client::kv::Variables {
-                backoff_lock_fast,
-                backoff_weight,
-                ..tikv_client::kv::Variables::default()
-            }));
+            .set_variables(std::sync::Arc::new(variables));
     }
     /// Go `KVTxn.SetCausalConsistency`.
     pub fn set_causal_consistency(&mut self, causal: bool) {

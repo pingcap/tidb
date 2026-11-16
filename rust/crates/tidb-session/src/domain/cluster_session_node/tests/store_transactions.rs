@@ -235,6 +235,7 @@ fn session_activation_retains_options_after_timestamp_future_failure() {
             low_resolution_tso: false,
             backoff_lock_fast: tikv_client::kv::DEF_BACKOFF_LOCK_FAST,
             backoff_weight: tikv_client::kv::DEF_BACKOFF_WEIGHT,
+            kill_signal: None,
             commit_ts_upper_bound_check: None,
             request_source: None,
         };

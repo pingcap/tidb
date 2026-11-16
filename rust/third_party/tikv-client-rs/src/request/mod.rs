@@ -73,6 +73,14 @@ pub trait KvRequest: Request + Sized + Clone + Sync + Send + 'static {
         )
     }
 
+    /// client-go `tikvrpc.Request.IsInterruptible`: every command but
+    /// `PessimisticRollback`, `BatchRollback` and `Commit` stops once the
+    /// query is killed.
+    fn is_interruptible(&self) -> bool {
+        crate::store::CommandType::from_request_label(self.label())
+            .is_none_or(crate::store::CommandType::is_interruptible)
+    }
+
     /// Source `CmdCop` requests carrying per-store tasks must not retry to a
     /// replica after `ServerIsBusy`, because those tasks already belong to
     /// concrete regions. Ordinary coprocessor requests retain the normal

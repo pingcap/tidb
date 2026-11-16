@@ -12054,6 +12054,56 @@ mod tests {
 
     struct RejectCleanupKillHandler(Arc<AtomicUsize>);
 
+    /// client-go `sendReqState.next`: an interruptible request asks the
+    /// query's `KillSignalHandler` before each attempt, so a killed query (a
+    /// dead client connection, for TiDB) never sends the pessimistic lock.
+    #[tokio::test]
+    async fn a_killed_query_stops_an_interruptible_request_before_sending_it() {
+        for kill in [false, true] {
+            let sent = Arc::new(AtomicUsize::new(0));
+            let captured = Arc::clone(&sent);
+            let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+                move |request: &dyn Any| {
+                    // A failed lock is cleaned up with a pessimistic
+                    // rollback, which is not interruptible.
+                    if request.is::<kvrpcpb::PessimisticRollbackRequest>() {
+                        return Ok(Box::new(kvrpcpb::PessimisticRollbackResponse::default())
+                            as Box<dyn Any>);
+                    }
+                    assert!(request.is::<kvrpcpb::PessimisticLockRequest>());
+                    captured.fetch_add(1, Ordering::SeqCst);
+                    Ok(Box::new(kvrpcpb::PessimisticLockResponse::default()) as Box<dyn Any>)
+                },
+            )));
+            rpc.set_timestamp(Timestamp::from_version(4));
+            let handler_calls = Arc::new(AtomicUsize::new(0));
+            let mut variables = crate::Variables::new(Arc::new(std::sync::atomic::AtomicU32::new(0)));
+            if kill {
+                variables.kill_signal_handler =
+                    Some(Arc::new(RejectCleanupKillHandler(Arc::clone(&handler_calls))));
+            }
+            let mut txn = Transaction::new(
+                Timestamp::from_version(3),
+                rpc,
+                TransactionOptions::new_pessimistic()
+                    .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                    .drop_check(CheckLevel::None),
+                Keyspace::Disable,
+            );
+            txn.set_variables(Arc::new(variables));
+            txn.set_lock_resolver_context(ResolveLocksContext::default());
+            let result = txn.lock_keys(["k".to_owned()]).await;
+            if kill {
+                assert!(result.is_err(), "a killed query must not lock");
+                assert_eq!(sent.load(Ordering::SeqCst), 0, "nothing is sent");
+                assert!(handler_calls.load(Ordering::SeqCst) >= 1);
+            } else {
+                result.unwrap();
+                assert_eq!(sent.load(Ordering::SeqCst), 1);
+            }
+        }
+    }
+
     impl crate::kv::KillSignalHandler for RejectCleanupKillHandler {
         fn handle_signal(&self) -> crate::Result<()> {
             self.0.fetch_add(1, Ordering::SeqCst);

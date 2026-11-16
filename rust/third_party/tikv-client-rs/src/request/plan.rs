@@ -892,6 +892,12 @@ pub(crate) trait RegionRetryState: Clone + Send + Sync + 'static {
         false
     }
 
+    /// client-go `Backoffer.CheckKilled`: the query's kill signal and its
+    /// `KillSignalHandler`. Legacy strategies carry neither.
+    async fn check_killed(&self) -> Result<()> {
+        Ok(())
+    }
+
     /// Shared snapshot retry owner, when region and lock retries charge one
     /// client-go Backoffer budget.
     fn snapshot_retry_owner(&self) -> Option<Arc<Mutex<RetryBackoffer>>> {
@@ -981,6 +987,10 @@ impl SnapshotRegionBackoff {
 
 #[async_trait]
 impl RegionRetryState for SnapshotRegionBackoff {
+    async fn check_killed(&self) -> Result<()> {
+        self.backoff.lock().await.check_killed().map_err(Error::from)
+    }
+
     async fn backoff(&mut self, config: RetryConfig, _reason: String) -> Result<bool> {
         if self.disabled {
             return Ok(false);
@@ -1190,6 +1200,10 @@ impl RegionRetryState for RetryBackoffer {
             .map_err(Error::from)
     }
 
+    async fn check_killed(&self) -> Result<()> {
+        RetryBackoffer::check_killed(self).map_err(Error::from)
+    }
+
     fn fork(&self) -> (Self, Cancellation) {
         RetryBackoffer::fork(self)
     }
@@ -1243,6 +1257,10 @@ impl RegionRetryState for SenderBackoffer {
     async fn backoff(&mut self, config: RetryConfig, reason: String) -> Result<bool> {
         let mut owner = self.owner.lock().await;
         RegionRetryState::backoff(&mut *owner, config, reason).await
+    }
+
+    async fn check_killed(&self) -> Result<()> {
+        self.owner.lock().await.check_killed().map_err(Error::from)
     }
 
     // A one-region send never fans out; a fork shares the same owner.
@@ -1725,6 +1743,13 @@ where
     ) -> SendReqOutcome<P, <Self as Plan>::Result, R> {
         if backoff.is_cancelled() {
             return SendReqOutcome::Done(Err(Error::ContextCanceled), backoff);
+        }
+        // client-go `sendReqState.next`: an interruptible request stops
+        // before each attempt once its query is killed.
+        if plan.is_interruptible() {
+            if let Err(error) = backoff.check_killed().await {
+                return SendReqOutcome::Done(Err(error), backoff);
+            }
         }
         let region_ver_id = region.ver_id();
         let store_id = region.get_store_id().ok();

@@ -2573,7 +2573,15 @@ fn run_connection_commands<S: QuerySession>(
                     // Go `conn.go:1908`: only pre-build point plans for a
                     // multi-statement query.
                     if statements.len() > 1 {
-                        if let Err(error) = engine.prefetch_point_plan_keys(&statements, sql) {
+                        // Go `prefetchPointPlanKeys` runs before `handleStmt` and
+                        // can wait on pessimistic locks, so it installs its own
+                        // liveness probe (Go installs it once there are keys to
+                        // read; with none, no KV request asks the killer).
+                        let connection_alive_guard =
+                            set_sql_killer_connection_alive(engine, &connection_alive);
+                        let prefetched = engine.prefetch_point_plan_keys(&statements, sql);
+                        drop(connection_alive_guard);
+                        if let Err(error) = prefetched {
                             for statement in &statements {
                                 let node = engine.parse_statement(statement).ok();
                                 pending_extension = None;

@@ -491,7 +491,8 @@ impl StatementLifecycle<'_> {
                     tidb_domain_core::session_transaction::set_options_on_txn_active(vars)
                         .with_statement_kv_context(self.session.statement_kv_context_cell())
                         .with_temporary_tables(self.session.temporary_table_ids())
-                        .with_guarantee_linearizability(self.session.guarantee_linearizability()),
+                        .with_guarantee_linearizability(self.session.guarantee_linearizability())
+                        .with_kill_signal(self.session.kv_kill_signal()),
                 )
             } else {
                 match self.open_read_snapshot(shape, retry_read_ts, read_ts, resource_group, is_dml)

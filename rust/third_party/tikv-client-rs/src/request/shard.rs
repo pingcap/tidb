@@ -162,6 +162,10 @@ macro_rules! impl_inner_shardable {
             self.inner.is_read_request()
         }
 
+        fn is_interruptible(&self) -> bool {
+            self.inner.is_interruptible()
+        }
+
         fn max_execution_duration_ms(&self) -> u64 {
             self.inner.max_execution_duration_ms()
         }
@@ -311,6 +315,12 @@ pub trait Shardable {
 
     fn is_read_request(&self) -> bool {
         false
+    }
+
+    /// client-go `tikvrpc.Request.IsInterruptible` of the request this plan
+    /// sends.
+    fn is_interruptible(&self) -> bool {
+        true
     }
 
     /// Source `MaxExecutionDurationMs` used to distinguish a caller's short
@@ -744,6 +754,10 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         KvRequest::is_read_request(&self.request)
     }
 
+    fn is_interruptible(&self) -> bool {
+        KvRequest::is_interruptible(&self.request)
+    }
+
     fn max_execution_duration_ms(&self) -> u64 {
         Request::max_execution_duration_ms(&self.request)
     }
@@ -903,6 +917,10 @@ impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
         self.inner.is_read_request()
     }
 
+    fn is_interruptible(&self) -> bool {
+        self.inner.is_interruptible()
+    }
+
     fn is_batched_coprocessor_read(&self) -> bool {
         self.inner.is_batched_coprocessor_read()
     }
@@ -951,6 +969,10 @@ impl<P: Plan + Shardable, PdC: PdClient> Shardable for ResolveLock<P, PdC> {
 
 impl<P: Plan + Shardable, PdC: PdClient> Shardable for CleanupLocks<P, PdC> {
     type Shard = P::Shard;
+
+    fn is_interruptible(&self) -> bool {
+        self.inner.is_interruptible()
+    }
 
     fn shards(
         &self,

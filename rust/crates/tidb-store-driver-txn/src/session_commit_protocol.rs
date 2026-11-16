@@ -21,6 +21,34 @@ use tidb_vardef::global_sysvar_initial::{
     ON,
 };
 
+/// Go `SessionVars.KVVars`' kill half, which `txn.SetVars` hands every
+/// backoffer of the transaction: `Killed` (`&SQLKiller.Signal`) and
+/// `KillSignalHandler` (`&SQLKiller`), whose `HandleSignal` also probes the
+/// client connection. client-go checks both before each attempt of an
+/// interruptible request (`Backoffer.CheckKilled`).
+#[derive(Clone)]
+pub struct KvKillSignal {
+    pub killed: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    pub handler: std::sync::Arc<dyn tikv_client::kv::KillSignalHandler>,
+}
+
+impl PartialEq for KvKillSignal {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.killed, &other.killed)
+    }
+}
+
+impl Eq for KvKillSignal {}
+
+impl std::fmt::Debug for KvKillSignal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("KvKillSignal")
+            .field("killed", &self.killed)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Options copied once when a SQL transaction becomes active (Go
 /// `SetOptionsOnTxnActive`). The native client owns their commit-time meaning.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,6 +81,9 @@ pub struct SessionTransactionOptions {
     /// and `tidb_backoff_weight`, which scale the client's backoffs.
     pub backoff_lock_fast: i32,
     pub backoff_weight: i32,
+    /// Go `SessionVars.KVVars`' kill half (`Killed`, `KillSignalHandler`).
+    /// `None` for a transaction no SQL session owns.
+    pub kill_signal: Option<KvKillSignal>,
     /// Go `kv.CommitTSUpperBoundCheck`, set by `SetOptionsBeforeCommit`: the
     /// write leases of the cached tables the transaction wrote.
     pub commit_ts_upper_bound_check: Option<CommitTsUpperBoundCheck>,
@@ -119,7 +150,11 @@ impl SessionTransactionOptions {
             transaction.set_entry_size_limit(self.entry_size_limit);
         }
         transaction.set_causal_consistency(!self.guarantee_linearizability);
-        transaction.set_kv_variables(self.backoff_lock_fast, self.backoff_weight);
+        transaction.set_kv_variables(
+            self.backoff_lock_fast,
+            self.backoff_weight,
+            self.kill_signal.as_ref(),
+        );
         if let Some(check) = self.commit_ts_upper_bound_check {
             transaction.set_commit_ts_upper_bound_check(check);
         }
@@ -159,6 +194,13 @@ impl SessionTransactionOptions {
     #[must_use]
     pub fn with_low_resolution_tso(mut self, low_resolution: bool) -> Self {
         self.low_resolution_tso = low_resolution;
+        self
+    }
+
+    /// The session's `KVVars` kill half; see [`KvKillSignal`].
+    #[must_use]
+    pub fn with_kill_signal(mut self, kill_signal: KvKillSignal) -> Self {
+        self.kill_signal = Some(kill_signal);
         self
     }
 
@@ -246,6 +288,7 @@ impl From<CommitProtocol> for SessionTransactionOptions {
             low_resolution_tso: false,
             backoff_lock_fast: tikv_client::kv::DEF_BACKOFF_LOCK_FAST,
             backoff_weight: tikv_client::kv::DEF_BACKOFF_WEIGHT,
+            kill_signal: None,
             commit_ts_upper_bound_check: None,
             request_source: None,
         }

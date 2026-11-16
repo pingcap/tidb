@@ -2,8 +2,8 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 10,
-    "open": 6,
+    "unresolved": 11,
+    "open": 7,
     "partial": 4
   },
   "findings": [
@@ -48,6 +48,14 @@
       "rust_evidence": "`rust/crates/tidb-expression-aggregation/src/lib.rs` (module doc)"
     },
     {
+      "id": "E28",
+      "status": "open",
+      "group": "Expanded subsystem ownership review",
+      "finding": "A transaction keeps the catalog it pinned at `BEGIN` for every statement (`tidb-session` `catalog_follower.rs` `rebuild_if_stale` skips inside a transaction), and `SessionExtendedInfoSchema` has no Go `MdlTables`. Go's `tryLockMDLAndUpdateSchemaIfNecessary` reads a table the transaction first touches from the latest infoschema, refuses a public column whose ID changed (`ErrInfoSchemaChanged`), demotes a public index the pinned image lacks to write-reorganization, and attaches that table to the transaction's `MdlTables` (`UpdateTableInfo`). Without it a pessimistic transaction begun before `DROP INDEX` keeps planning through the dropped unique index: `TestPlanCacheSchemaChange`'s `UPDATE ... WHERE v = 2` updates the row tk3 moved to `v = 3` (affected 1, Go 0). Go's plan cache runs the same check per cached table (`GetPlanFromPlanCache` step 3: `PlanCacheStmt.RelateVersion` keyed by `TableInfo.Revision`), which Rust lacks too.",
+      "go_owner": "`pkg/planner/core/preprocess.go` (`tryLockMDLAndUpdateSchemaIfNecessary`), `pkg/infoschema/infoschema.go` (`SessionExtendedInfoSchema.MdlTables`, `UpdateTableInfo`), `pkg/planner/core/plan_cache.go` (`GetPlanFromPlanCache`)",
+      "rust_evidence": "`rust/crates/tidb-session/src/domain/cluster_session_node/catalog_follower.rs` (`rebuild_if_stale`), `rust/crates/tidb-infoschema/src/lib.rs` (`SessionExtendedInfoSchema`), `rust/crates/tidb-planner/src/plan_builder.rs` (records the MDL table only)"
+    },
+    {
       "id": "S01",
       "status": "open",
       "group": "Structure: Go's shape before more ports",
@@ -88,7 +96,7 @@
       "rust_evidence": "`tidb-ddl` `worker.rs` (`Drop` calls `owner.close()`), `tidb-server` `process_shutdown.rs`, `tidb-server/tests/realtikvtest.rs` (`Drop for RealTiKV`)"
     }
   ],
-  "unresolved": 10,
-  "open": 6,
+  "unresolved": 11,
+  "open": 7,
   "partial": 4
 }
