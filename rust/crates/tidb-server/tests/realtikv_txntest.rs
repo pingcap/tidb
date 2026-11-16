@@ -2595,18 +2595,20 @@ fn test_check_txn_status_on_optimistic_txn_break_consistency() {
         let count = count.clone();
         let released = released.clone();
         Box::pin(async move {
-            let response = next().await;
-            let handled = response.as_ref().ok().and_then(|response| response.downcast_ref::<kvrpcpb::PrewriteResponse>()).is_some_and(|response| response.region_error.is_none());
-            if primary && handled && count.fetch_add(1, Ordering::SeqCst) == 0 {
-                drop(response);
-                let deadline = std::time::Instant::now() + Duration::from_secs(20);
-                while !released.load(Ordering::SeqCst) {
-                    assert!(std::time::Instant::now() < deadline, "test did not release primary prewrite");
-                    tokio::time::sleep(Duration::from_millis(5)).await;
+            // The response (not `Send`) leaves scope before the wait below.
+            {
+                let response = next().await;
+                let handled = response.as_ref().ok().and_then(|response| response.downcast_ref::<kvrpcpb::PrewriteResponse>()).is_some_and(|response| response.region_error.is_none());
+                if !(primary && handled && count.fetch_add(1, Ordering::SeqCst) == 0) {
+                    return response;
                 }
-                return Err(tikv_client::Error::StringError("injected rpc error in onRPCFinishedHook".into()));
             }
-            response
+            let deadline = std::time::Instant::now() + Duration::from_secs(20);
+            while !released.load(Ordering::SeqCst) {
+                assert!(std::time::Instant::now() < deadline, "test did not release primary prewrite");
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            Err(tikv_client::Error::StringError("injected rpc error in onRPCFinishedHook".into()))
         })
     });
     let (send, recv) = std::sync::mpsc::channel();

@@ -10914,7 +10914,6 @@ dependencies = [
  "serde_json",
  "take_mut",
  "thiserror 1.0.69",
- "tidb-failpoint",
  "tikv-client-kvproto",
  "tokio",
  "tonic",

@@ -2762,7 +2762,7 @@ fn test_issue_batch_resolve_locks() {
     tk.must_exec("set @@tidb_enable_1pc=0");
     let table_id: i64 = tk.must_query("select tidb_table_id from information_schema.tables where table_schema='test' and table_name='t2'")[0][0].parse().unwrap();
 let key = tidb_tablecodec::table_key::encode_table_prefix(table_id);
-{ use tikv_client::PdClient as _; store.tikv_store().block_on(store.tikv_store().store().pd_client().split_regions(vec![key])).unwrap(); }
+{ use tikv_client::PdClient as _; store.tikv_store().block_on(store.tikv_store().store().pd_client().split_regions(vec![key], 0)).unwrap(); }
     let mut tk2 = store.new_tk();
     tk2.must_exec("use test");
     let mut tk3 = store.new_tk();

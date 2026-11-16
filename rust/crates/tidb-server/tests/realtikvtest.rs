@@ -136,7 +136,7 @@ impl RealTiKV {
     pub(crate) fn run_resolve_locks(&self, safe_point: u64) {
         let deps = tidb_gcworker::node::gc_worker_deps(&self.stack.factory, &self.tikv_store,
             std::sync::Arc::new(self.authority.transaction_opener()));
-        tidb_gcworker::gc_worker::run_resolve_locks(deps, safe_point, "gc-worker-test-batch-resolve-locks", 1).unwrap();
+        tidb_gcworker::run_resolve_locks(deps, safe_point, "gc-worker-test-batch-resolve-locks", 1).unwrap();
     }
 
     /// Go `startTiDBServer` / `openDB`: a real TCP connection over this domain.
@@ -148,7 +148,7 @@ impl RealTiKV {
         let worker = std::thread::spawn(move || {
             let (stream, peer) = listener.accept().unwrap();
             let _ = tidb_server::serve_mysql_connection(stream, peer, Default::default(),
-                factory.as_ref(), users.as_ref(), &tidb_server::ConnectionTracker::default(),
+                factory.as_ref(), users.as_ref(), &std::sync::Arc::new(tidb_server::ConnectionTracker::default()),
                 tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET);
         });
         (TcpTk::connect(address, multi_statements), worker)
