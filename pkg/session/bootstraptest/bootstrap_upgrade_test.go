@@ -36,13 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-<<<<<<< HEAD:pkg/session/bootstraptest/bootstrap_upgrade_test.go
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-=======
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/structure"
->>>>>>> 35599163cae (session: initialize MDL before starting the DDL scheduler during upgrade (#70464)):pkg/session/test/bootstraptest/bootstrap_upgrade_test.go
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -299,13 +294,13 @@ func TestUpgradeVersion75(t *testing.T) {
 
 func probeFirstMDLSchedulerDispatch(t *testing.T) func(bool) {
 	t.Helper()
-	original := vardef.IsMDLEnabled()
-	vardef.SetEnableMDL(false)
-	t.Cleanup(func() { vardef.SetEnableMDL(original) })
+	original := variable.EnableMDL.Load()
+	variable.EnableMDL.Store(false)
+	t.Cleanup(func() { variable.EnableMDL.Store(original) })
 	observed := make(chan bool, 1)
 	var first sync.Once
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
-		first.Do(func() { observed <- vardef.IsMDLEnabled() })
+		first.Do(func() { observed <- variable.EnableMDL.Load() })
 	})
 	return func(expected bool) {
 		t.Helper()
@@ -327,14 +322,11 @@ func testBootstrapMDLBeforeScheduler(t *testing.T) {
 }
 
 func testUpgradeMDLStartupState(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("Legacy MDL migration only applies to the classic kernel")
-	}
 	originalMockUpgrade := session.WithMockUpgrade
 	session.WithMockUpgrade = nil
 	t.Cleanup(func() { session.WithMockUpgrade = originalMockUpgrade })
-	originalMDL := vardef.IsMDLEnabled()
-	t.Cleanup(func() { vardef.SetEnableMDL(originalMDL) })
+	originalMDL := variable.EnableMDL.Load()
+	t.Cleanup(func() { variable.EnableMDL.Store(originalMDL) })
 	for _, state := range []string{"enabled", "disabled", "missing"} {
 		t.Run(state, func(t *testing.T) {
 			store, dom := session.CreateStoreAndBootstrap(t)
@@ -365,8 +357,8 @@ func testUpgradeMDLStartupState(t *testing.T) {
 				require.NoError(t, m.SetMetadataLock(state == "enabled"))
 			}
 			require.NoError(t, txn.Commit(context.Background()))
-			store.SetOption(session.StoreBootstrappedKey, nil)
-			vardef.SetEnableMDL(state != "enabled")
+			session.UnsetStoreBootstrapped(store.UUID())
+			variable.EnableMDL.Store(state != "enabled")
 
 			type observation struct {
 				mode    ddl.StartMode
@@ -383,14 +375,14 @@ func testUpgradeMDLStartupState(t *testing.T) {
 				mu.Lock()
 				defer mu.Unlock()
 				mode = startMode
-				starts <- observation{mode, vardef.IsMDLEnabled()}
+				starts <- observation{mode, variable.EnableMDL.Load()}
 			})
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
 				mu.Lock()
 				defer mu.Unlock()
 				if !seen[mode] {
 					seen[mode] = true
-					dispatches <- observation{mode, vardef.IsMDLEnabled()}
+					dispatches <- observation{mode, variable.EnableMDL.Load()}
 				}
 			})
 			upgraded, err := session.BootstrapSession(store)

@@ -16,76 +16,13 @@ package session
 
 import (
 	"context"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
-
-// upgradeWithMDLMigration runs upgrade work with the legacy MDL migration selected
-// before starting the temporary upgrade domain.
-func upgradeWithMDLMigration(s sessionapi.Session, migration legacyMDLMigration) {
-	// Do upgrade works then update bootstrap version.
-	var ver int64
-	ver, err := getBootstrapVersion(s)
-	terror.MustNil(err)
-	if ver >= currentBootstrapVersion {
-		// It is already bootstrapped/upgraded by a higher version TiDB server.
-		return
-	}
-
-	printClusterState(s, ver)
-
-	// when upgrade from v6.4.0 or earlier, enables metadata lock automatically,
-	// but during upgrade we disable it.
-	if migration == requireLegacyMDLMigration {
-		upgradeToVer99Before(s)
-	}
-
-	// It is only used in test.
-	upgradeFns := addMockBootstrapVersionForTest(s)
-	for _, verFn := range upgradeFns {
-		if ver < verFn.version {
-			verFn.fn(s, ver)
-			logutil.BgLogger().Info("upgrade to bootstrap version.",
-				zap.Int64("old-start-version", ver),
-				zap.Int64("in-progress-version", verFn.version),
-				zap.Int64("target-version", currentBootstrapVersion))
-		}
-	}
-	if migration == requireLegacyMDLMigration {
-		upgradeToVer99After(s)
-	}
-
-	updateBootstrapVer(s)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	_, err = s.ExecuteInternal(ctx, "COMMIT")
-
-	if err != nil {
-		sleepTime := 1 * time.Second
-		logutil.BgLogger().Info("update bootstrap ver failed",
-			zap.Error(err), zap.Duration("sleeping time", sleepTime))
-		time.Sleep(sleepTime)
-		// Check if TiDB is already upgraded.
-		v, err1 := getBootstrapVersion(s)
-		if err1 != nil {
-			logutil.BgLogger().Fatal("upgrade failed", zap.Error(err1))
-		}
-		if v >= currentBootstrapVersion {
-			// It is already bootstrapped/upgraded by a higher version TiDB server.
-			return
-		}
-		logutil.BgLogger().Fatal("[upgrade] upgrade failed",
-			zap.Int64("from", ver),
-			zap.Int64("to", currentBootstrapVersion),
-			zap.Error(err))
-	}
-}
 
 type mdlInitPolicy int
 
@@ -153,14 +90,6 @@ func initMDLVariable(store kv.Storage, policy mdlInitPolicy) (isNull bool, err e
 	if err != nil {
 		return isNull, err
 	}
-	vardef.SetEnableMDL(enable)
+	variable.EnableMDL.Store(enable)
 	return isNull, nil
-}
-
-func printClusterState(s sessionapi.Session, ver int64) {
-	// After SupportUpgradeHTTPOpVer version, the upgrade by paused user DDL can be notified through the HTTP API.
-	// We check the global state see if we are upgrading by paused the user DDL.
-	if ver >= SupportUpgradeHTTPOpVer {
-		isUpgradingClusterStateWithRetry(s, ver, currentBootstrapVersion, time.Duration(internalSQLTimeout)*time.Second)
-	}
 }

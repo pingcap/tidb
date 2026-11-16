@@ -3524,7 +3524,6 @@ func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables 
 	return nil
 }
 
-<<<<<<< HEAD
 // InitMDLTable is to create tidb_mdl_info, which is used for metadata lock.
 func InitMDLTable(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
@@ -3559,21 +3558,6 @@ func InitMDLTable(store kv.Storage) error {
 	})
 }
 
-// InitMDLVariableForBootstrap initializes the metadata lock variable.
-func InitMDLVariableForBootstrap(store kv.Storage) error {
-	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMutator(txn)
-		return t.SetMetadataLock(true)
-	})
-	if err != nil {
-		return err
-	}
-	variable.EnableMDL.Store(true)
-	return nil
-}
-
-=======
->>>>>>> 35599163cae (session: initialize MDL before starting the DDL scheduler during upgrade (#70464))
 // InitTiDBSchemaCacheSize initializes the tidb schema cache size.
 func InitTiDBSchemaCacheSize(store kv.Storage) error {
 	var (
@@ -3600,56 +3584,6 @@ func InitTiDBSchemaCacheSize(store kv.Storage) error {
 	return nil
 }
 
-<<<<<<< HEAD
-// InitMDLVariableForUpgrade initializes the metadata lock variable.
-func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
-	isNull := false
-	enable := false
-	var err error
-	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMutator(txn)
-		enable, isNull, err = t.GetMetadataLock()
-		if err != nil {
-			return err
-		}
-		return nil
-	})
-	if isNull || !enable {
-		variable.EnableMDL.Store(false)
-	} else {
-		variable.EnableMDL.Store(true)
-	}
-	return isNull, err
-}
-
-// InitMDLVariable initializes the metadata lock variable.
-func InitMDLVariable(store kv.Storage) error {
-	isNull := false
-	enable := false
-	var err error
-	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMutator(txn)
-		enable, isNull, err = t.GetMetadataLock()
-		if err != nil {
-			return err
-		}
-		if isNull {
-			// Workaround for version: nightly-2022-11-07 to nightly-2022-11-17.
-			enable = true
-			logutil.BgLogger().Warn("metadata lock is null")
-			err = t.SetMetadataLock(true)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	variable.EnableMDL.Store(enable)
-	return err
-}
-
-=======
->>>>>>> 35599163cae (session: initialize MDL before starting the DDL scheduler during upgrade (#70464))
 // BootstrapSession bootstrap session and domain.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	return bootstrapSessionImpl(context.Background(), store, createSessions)
@@ -3708,12 +3642,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if ver < currentBootstrapVersion {
 		runInBootstrapSession(store, ver)
 	} else {
-<<<<<<< HEAD
-		err = InitMDLVariable(store)
-		if err != nil {
-			return nil, err
-		}
-=======
 		logutil.BgLogger().Info("cluster already bootstrapped", zap.Int64("version", ver))
 	}
 	// The temporary upgrade domain can enable persisted MDL during the legacy
@@ -3721,7 +3649,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// starts; the later sysvar-cache loop cannot safely repair this with queued jobs.
 	if _, err = initMDLVariable(store, mdlInitEnableOnNull); err != nil {
 		return nil, err
->>>>>>> 35599163cae (session: initialize MDL before starting the DDL scheduler during upgrade (#70464))
 	}
 
 	// initiate disttask framework components which need a store
@@ -4016,9 +3943,6 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 			startMode = ddl.Normal
 		}
 	}
-<<<<<<< HEAD
-	s, err := createSession(store)
-=======
 	// The scheduler can run as soon as the domain starts. Initialize runtime
 	// MDL first and remember whether the upgrade needs the legacy migration.
 	mdlMigration, err := initMDLForBootstrap(store, startMode)
@@ -4026,8 +3950,7 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 		logutil.BgLogger().Fatal("init metadata lock before starting domain failed",
 			zap.String("startMode", string(startMode)), zap.Error(err))
 	}
-	s, err := createSessionWithDomainOptions(store, opts)
->>>>>>> 35599163cae (session: initialize MDL before starting the DDL scheduler during upgrade (#70464))
+	s, err := createSession(store)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))

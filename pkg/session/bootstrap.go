@@ -1611,17 +1611,11 @@ func acquireLock(store kv.Storage) (func(), error) {
 	}, nil
 }
 
-// upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
+// upgradeWithMDLMigration upgrades a store bootstrapped by an older TiDB server.
 // For example, add new system variables into mysql.global_variables table.
-func upgrade(s sessiontypes.Session) {
+func upgradeWithMDLMigration(s sessiontypes.Session, migration legacyMDLMigration) {
 	// Do upgrade works then update bootstrap version.
-	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
-	if err != nil {
-		logutil.BgLogger().Fatal("init metadata lock failed during upgrade", zap.Error(err))
-	}
-
-	var ver int64
-	ver, err = getBootstrapVersion(s)
+	ver, err := getBootstrapVersion(s)
 	terror.MustNil(err)
 	if ver >= currentBootstrapVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
@@ -1632,7 +1626,7 @@ func upgrade(s sessiontypes.Session) {
 
 	// when upgrade from v6.4.0 or earlier, enables metadata lock automatically,
 	// but during upgrade we disable it.
-	if isNull {
+	if migration == requireLegacyMDLMigration {
 		upgradeToVer99Before(s)
 	}
 
@@ -1641,7 +1635,7 @@ func upgrade(s sessiontypes.Session) {
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
 	}
-	if isNull {
+	if migration == requireLegacyMDLMigration {
 		upgradeToVer99After(s)
 	}
 
