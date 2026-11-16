@@ -12,6 +12,7 @@ go_library(
         "nominal_sort.go",
         "physical_apply.go",
         "physical_batch_point_get.go",
+        "physical_calc_found_rows.go",
         "physical_common_plans.go",
         "physical_cte.go",
         "physical_cte_table.go",

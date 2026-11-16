@@ -60,6 +60,14 @@ func (e *ExplainExec) Open(ctx context.Context) error {
 	return nil
 }
 
+// FoundRows forwards the analyzed query's total instead of counting plan rows.
+func (e *ExplainExec) FoundRows() (uint64, bool) {
+	if e.explain.Analyze && e.analyzeExec != nil {
+		return e.analyzeExec.FoundRows()
+	}
+	return 0, false
+}
+
 // Close implements the Executor Close interface.
 func (e *ExplainExec) Close() error {
 	e.rows = nil
