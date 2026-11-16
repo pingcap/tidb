@@ -296,7 +296,7 @@ impl PessimisticLockDispatchTiming {
     fn prepare(&self, request: &mut kvrpcpb::PessimisticLockRequest) -> Result<()> {
         request.lock_ttl = self.start_instant.elapsed().as_millis() as u64 + managed_lock_ttl();
         // Go `actionPessimisticLock.handleSingleBatch`.
-        if crate::failpoint::eval("tikvclient/shortPessimisticLockTTL").is_some() {
+        if crate::util::eval_failpoint("shortPessimisticLockTTL", crate::util::FailpointValue).ok().flatten().is_some() {
             request.lock_ttl = 1;
         }
         if let Some(wait_time) = self.wait_time {
@@ -4271,7 +4271,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.buffer.to_proto_mutations()
         };
         let skip_assertion_check_from_lock =
-            crate::util::eval_failpoint("assertionSkipCheckFromLock", |_| ())
+            crate::util::eval_failpoint_async("assertionSkipCheckFromLock", |_| ()).await
                 .ok()
                 .flatten()
                 .is_some();
@@ -4576,7 +4576,7 @@ impl<PdC: PdClient> Transaction<PdC> {
 
         // Go `KVTxn.Rollback`: this test hook leaves only pessimistic locks behind.
         if matches!(self.options.kind, TransactionKind::Pessimistic(_)) && !prewritten {
-            if let Some(value) = crate::failpoint::eval("tikvclient/onRollback") {
+            if let Some(value) = crate::util::eval_failpoint_async("onRollback", crate::util::FailpointValue).await.ok().flatten() {
                 if value.as_string() == Some("skipRollbackPessimisticLock") {
                     self.set_status(TransactionStatus::Rolledback);
                     return Ok(());
@@ -5770,9 +5770,8 @@ impl<PdC: PdClient> Transaction<PdC> {
 
         // Go `twoPhaseCommitter.pessimisticLockMutations`.
         if self.commit_settings.session_id > 0 {
-            if let Some(value) = tokio::task::spawn_blocking(||
-                crate::failpoint::eval("tikvclient/beforePessimisticLock"))
-                .await.expect("beforePessimisticLock failpoint task")
+            if let Some(value) =
+                crate::util::eval_failpoint_async("beforePessimisticLock", crate::util::FailpointValue).await.ok().flatten()
             {
                 if let Some(actions) = value.as_string() {
                     for action in actions.split(',') {
@@ -5838,7 +5837,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             },
         };
         // Go `actionPessimisticLock.handleSingleBatch`: injected conflict before sending.
-        if crate::failpoint::eval("tikvclient/PessimisticLockErrWriteConflict").is_some() {
+        if crate::util::eval_failpoint_async("PessimisticLockErrWriteConflict", crate::util::FailpointValue).await.ok().flatten().is_some() {
             tokio::time::sleep(Duration::from_millis(300)).await;
             return Err(crate::error::new_write_conflict(kvrpcpb::WriteConflict::default()).into());
         }
@@ -6246,7 +6245,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         }
 
         // Go `KVTxn.asyncPessimisticRollback`.
-        if let Some(value) = crate::failpoint::eval("tikvclient/beforeAsyncPessimisticRollback") {
+        if let Some(value) = crate::util::eval_failpoint_async("beforeAsyncPessimisticRollback", crate::util::FailpointValue).await.ok().flatten() {
             match value.as_string() {
                 Some("skip") => return Ok(()),
                 Some("delay") => tokio::time::sleep(Duration::from_millis(rand::random::<u64>() % 2000)).await,
@@ -6353,7 +6352,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         lock_context: Option<&LockContext>,
     ) -> Option<AutoHeartbeatStarter> {
         // Go `ttlManager.run`.
-        if crate::failpoint::eval("tikvclient/doNotKeepAlive").is_some() {
+        if crate::util::eval_failpoint("doNotKeepAlive", crate::util::FailpointValue).ok().flatten().is_some() {
             return None;
         }
         if self.is_pipelined() || !self.options.heartbeat_option.is_auto_heartbeat() {
@@ -7594,8 +7593,7 @@ impl<PdC: PdClient> Committer<PdC> {
         }
         // Go `twoPhaseCommitter.execute`: after calculateMaxCommitTS, before prewrite starts.
         if self.settings.session_id > 0 {
-            tokio::task::spawn_blocking(|| crate::failpoint::eval("tikvclient/beforePrewrite"))
-                .await.expect("beforePrewrite failpoint task");
+            crate::util::eval_failpoint_async("beforePrewrite", |_| ()).await.ok();
         }
         self.pre_split_large_transaction_regions().await;
         let binlog = self.settings.binlog.clone();
@@ -7690,7 +7688,7 @@ impl<PdC: PdClient> Committer<PdC> {
             pre();
         }
         tokio::spawn(async move {
-            let skip_async_commit = crate::util::eval_failpoint("asyncCommitDoNothing", |_| ())
+            let skip_async_commit = crate::util::eval_failpoint_async("asyncCommitDoNothing", |_| ()).await
                 .ok()
                 .flatten()
                 .is_some();
@@ -9459,7 +9457,7 @@ impl<PdC: PdClient> Committer<PdC> {
 
     fn check_schema_valid(&self, check_timestamp: u64) -> Result<()> {
         // Go `twoPhaseCommitter.checkSchemaValid`.
-        if crate::failpoint::eval("tikvclient/failCheckSchemaValid").is_some() {
+        if crate::util::eval_failpoint("failCheckSchemaValid", crate::util::FailpointValue).ok().flatten().is_some() {
             return Err(Error::StringError("mock check schema valid failure".to_owned()));
         }
         let (Some(checker), Some(schema_version)) = (
@@ -9582,7 +9580,7 @@ impl<PdC: PdClient> Committer<PdC> {
             lock_ttl = lock_ttl.max(safe_ttl);
         }
         // Go `actionPrewrite.handleSingleBatch` applies this after the async-commit TTL bound.
-        if self.settings.session_id > 0 && crate::failpoint::eval("tikvclient/twoPCShortLockTTL").is_some() {
+        if self.settings.session_id > 0 && crate::util::eval_failpoint_async("twoPCShortLockTTL", crate::util::FailpointValue).await.ok().flatten().is_some() {
             lock_ttl = 1;
         }
         let pessimistic_for_update_ts = match &self.options.kind {
@@ -9613,7 +9611,7 @@ impl<PdC: PdClient> Committer<PdC> {
         request.use_async_commit = self.options.async_commit;
         request.try_one_pc = self.options.try_one_pc;
         let skip_assertion_check_from_prewrite =
-            crate::util::eval_failpoint("assertionSkipCheckFromPrewrite", |_| ())
+            crate::util::eval_failpoint_async("assertionSkipCheckFromPrewrite", |_| ()).await
                 .ok()
                 .flatten()
                 .is_some();
@@ -9913,7 +9911,7 @@ impl<PdC: PdClient> Committer<PdC> {
         self.validate_commit_timestamp(&commit_version)?;
         // Go `twoPhaseCommitter.execute`'s beforeCommit test actions.
         if self.settings.session_id > 0 {
-            if let Some(value) = crate::failpoint::eval("tikvclient/beforeCommit") {
+            if let Some(value) = crate::util::eval_failpoint_async("beforeCommit", crate::util::FailpointValue).await.ok().flatten() {
                 if let Some(actions) = value.as_string() {
                     for action in actions.split(',') {
                         if action == "fail" && !self.options.async_commit {
@@ -10091,7 +10089,7 @@ impl<PdC: PdClient> Committer<PdC> {
             .filter(|key| region.contains(key))
             .collect();
         keys.sort();
-        let limit = if crate::failpoint::eval("tikvclient/twoPCRequestBatchSizeLimit").is_some() { 1 }
+        let limit = if crate::util::eval_failpoint_async("twoPCRequestBatchSizeLimit", crate::util::FailpointValue).await.ok().flatten().is_some() { 1 }
             else { crate::kv::TXN_COMMIT_BATCH_SIZE.load(atomic::Ordering::Relaxed) };
         let mut batch = Vec::new();
         let mut size = 0_u64;
@@ -10315,7 +10313,7 @@ impl<PdC: PdClient> Committer<PdC> {
     async fn commit_secondary_in_background(mut self, commit_version: Timestamp) -> Result<()> {
         // Go `doActionOnMutations`: only ordinary 2PC secondaries use this hook.
         if self.settings.session_id > 0 && !self.options.async_commit {
-            if let Some(value) = crate::failpoint::eval("tikvclient/beforeCommitSecondaries") {
+            if let Some(value) = crate::util::eval_failpoint_async("beforeCommitSecondaries", crate::util::FailpointValue).await.ok().flatten() {
                 match value.as_string() {
                     Some("skip") => return Ok(()),
                     None => tokio::time::sleep(Duration::from_secs(2)).await,

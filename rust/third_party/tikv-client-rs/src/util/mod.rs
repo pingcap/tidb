@@ -21,7 +21,7 @@ pub use crate::trace::{
 pub use dns::{wrap_with_domain, CustomDnsDialer};
 pub use duration::format_duration;
 pub use execdetails::*;
-pub use failpoint::{enable_failpoints, eval_failpoint, FailpointsDisabled};
+pub use failpoint::{enable_failpoints, eval_failpoint, eval_failpoint_async, FailpointValue, FailpointsDisabled};
 pub use misc::{
     bytes_to_string, compatible_parse_gc_time, format_bytes, get_max_start_key, get_min_end_key,
     session_id, with_recovery, with_session_id, GC_TIME_FORMAT,

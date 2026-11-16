@@ -190,6 +190,12 @@ impl Drop for RealTiKV {
             drop(worker);
         }
         self.stack.stop_resource_groups();
+        // Go `ddl.CloseOwnerManager(store)`: revoke the DDL owner's etcd
+        // lease now, or the next test's node waits out its TTL before it
+        // can own DDL.
+        if let Some(owner) = self.stack.factory.ddl.owner_manager() {
+            owner.close();
+        }
         for lease in self.stack.leases.drain(..) {
             drop(lease);
         }

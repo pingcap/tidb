@@ -642,7 +642,7 @@ impl Shardable for kvrpcpb::PrewriteRequest {
         let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
         // Go `batched.appendBatchMutationsBySize`.
-        let batch_size = if crate::failpoint::eval("tikvclient/twoPCRequestBatchSizeLimit").is_some() { 1 }
+        let batch_size = if crate::util::eval_failpoint("twoPCRequestBatchSizeLimit", crate::util::FailpointValue).ok().flatten().is_some() { 1 }
             else { TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed) };
 
         region_stream_for_keys(mutations.into_iter(), pd_client.clone())
@@ -861,7 +861,7 @@ impl Shardable for kvrpcpb::CommitRequest {
         let mut keys = self.keys.clone();
         keys.sort();
         // Go `batched.appendBatchMutationsBySize`.
-        let batch_size = if crate::failpoint::eval("tikvclient/twoPCRequestBatchSizeLimit").is_some() { 1 }
+        let batch_size = if crate::util::eval_failpoint("twoPCRequestBatchSizeLimit", crate::util::FailpointValue).ok().flatten().is_some() { 1 }
             else { TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed) };
 
         region_stream_for_keys(keys.into_iter(), pd_client.clone())
@@ -975,7 +975,7 @@ impl Shardable for kvrpcpb::BatchRollbackRequest {
         let mut keys = self.keys.clone();
         keys.sort();
         // Go `batched.appendBatchMutationsBySize`.
-        let batch_size = if crate::failpoint::eval("tikvclient/twoPCRequestBatchSizeLimit").is_some() { 1 }
+        let batch_size = if crate::util::eval_failpoint("twoPCRequestBatchSizeLimit", crate::util::FailpointValue).ok().flatten().is_some() { 1 }
             else { TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed) };
         region_stream_for_keys(keys.into_iter(), pd_client.clone())
             .flat_map(move |result| match result {
@@ -1071,7 +1071,7 @@ impl Shardable for kvrpcpb::PessimisticRollbackRequest {
         let mut keys = self.keys.clone();
         keys.sort();
         // Go `batched.appendBatchMutationsBySize`.
-        let batch_size = if crate::failpoint::eval("tikvclient/twoPCRequestBatchSizeLimit").is_some() { 1 }
+        let batch_size = if crate::util::eval_failpoint("twoPCRequestBatchSizeLimit", crate::util::FailpointValue).ok().flatten().is_some() { 1 }
             else { TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed) };
         region_stream_for_keys(keys.into_iter(), pd_client.clone())
             .flat_map(move |result| match result {
@@ -1182,7 +1182,7 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
         let wake_up_mode = self.wake_up_mode;
         // Go `batched.appendBatchMutationsBySize`.
-        let batch_size = if crate::failpoint::eval("tikvclient/twoPCRequestBatchSizeLimit").is_some() { 1 }
+        let batch_size = if crate::util::eval_failpoint("twoPCRequestBatchSizeLimit", crate::util::FailpointValue).ok().flatten().is_some() { 1 }
             else { TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed) };
         region_stream_for_keys(mutations.into_iter(), pd_client.clone())
             .flat_map(move |result| match result {
@@ -2196,7 +2196,7 @@ impl Shardable for kvrpcpb::FlushRequest {
         let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
         // Go `batched.appendBatchMutationsBySize`.
-        let batch_size = if crate::failpoint::eval("tikvclient/twoPCRequestBatchSizeLimit").is_some() { 1 }
+        let batch_size = if crate::util::eval_failpoint("twoPCRequestBatchSizeLimit", crate::util::FailpointValue).ok().flatten().is_some() { 1 }
             else { TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed) };
         region_stream_for_keys(mutations.into_iter(), pd_client.clone())
             .flat_map(move |result| match result {
