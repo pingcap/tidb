@@ -308,6 +308,20 @@ fn cached_dml_plan<'a>(
     }
     Ok(Some(plan))
 }
+/// Go preprocessor's `stmtTp == TypeSelect` when it reaches the statement's
+/// tables, which is when `staleReadProcessor.OnSelectTable` runs: a SELECT,
+/// or an EXPLAIN of one (`ExplainStmt` sets no statement type of its own).
+fn reads_as_select(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Query(_) => true,
+        Stmt::Admin(admin) => match admin.as_ref() {
+            tidb_ast::AdminStmt::Explain(explain) => explain.statement().is_some_and(reads_as_select),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 impl Session {
     /// The checks every compiled statement passes before its executor: the
     /// `tidb_snapshot` write refusal, the implicit commit Go's `DDLExec`,
@@ -315,7 +329,7 @@ impl Session {
     /// `Compile`, and the DDL preprocess runs inside it.)
     pub(crate) fn statement_preamble(&mut self, stmt: &Stmt) -> Result<(), DriverError> {
         self.check_txn_aborted(stmt)?;
-        self.statement_is_staleness = matches!(stmt, Stmt::Query(_)) && self.is_staleness_txn();
+        self.statement_is_staleness = reads_as_select(stmt) && self.is_staleness_txn();
         // Go `ExecStmt.Exec` verifies the statement provider's read timestamp.
         if self.statement_is_staleness {
             if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/assertStaleTSO") {
@@ -1640,7 +1654,7 @@ impl Session {
         // (`StalenessTxnContextProvider` for one statement). Intercepted at
         // this one funnel so text and prepared spellings share the rules.
         if !self.in_transaction()
-            && matches!(&stmt, Stmt::Query(_))
+            && reads_as_select(&stmt)
             && !scan.has_as_of
             && (!scan.names.is_empty() || prepared.is_some() || self.vars.snapshot_ts() != 0)
         {

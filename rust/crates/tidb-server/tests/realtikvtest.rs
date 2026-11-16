@@ -25,6 +25,18 @@ use tidb_session::domain::resultset_source::ResultSetSource as _;
 use tidb_session::domain::session_api::SessionContext;
 use tidb_session::Session;
 
+/// Go `session.ResultSetToStringSlice`'s rendering of one datum: NULL is
+/// `<nil>`, anything else `Datum.ToString`.
+fn go_string(datum: &tidb_datatype::Datum) -> String {
+    if datum.is_null() {
+        return "<nil>".to_owned();
+    }
+    let bytes = datum
+        .sql_bytes()
+        .unwrap_or_else(|error| panic!("Datum.ToString of {datum:?}: {error:?}"));
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 /// Go `realtikvtest.CreateMockStoreAndSetup`: the domain over the cluster,
 /// `None` when no cluster is configured.
 pub(crate) struct RealTiKV {
@@ -238,8 +250,7 @@ impl Tk {
         loop {
             let batch = source.next_batch(64).map_err(|error| error.error_string())?;
             if batch.is_empty() { break; }
-            rows.extend(batch.into_iter().map(|row| row.iter().map(|datum|
-                datum.sql_string().unwrap_or_else(|_| "<nil>".to_owned())).collect()));
+            rows.extend(batch.into_iter().map(|row| row.iter().map(go_string).collect()));
         }
         source.finish().map_err(|error| error.error_string())?;
         Ok(rows)
@@ -313,9 +324,7 @@ impl Tk {
                 break;
             }
             rows.extend(batch.into_iter().map(|row| {
-                row.iter()
-                    .map(|datum| datum.sql_string().unwrap_or_else(|_| "<nil>".to_owned()))
-                    .collect()
+                row.iter().map(go_string).collect()
             }));
         }
         source.finish().map_err(|error| (error.code, error.error_string()))?;
