@@ -409,21 +409,24 @@ func (c *AdaptiveLimitController) reserve(
 			c.mu.Unlock()
 			return 0, false, nil
 		}
-		window := c.lookupPhysicalWindowLocked()
-		outstanding := c.lookupReserved
-		changed := c.lookupChanged
+		var window, outstanding uint64
+		var changed chan struct{}
 		minUnits := uint64(1)
 		if stage == adaptiveOuterRowsAdmission {
 			window = c.outerWindow
 			// Fetched-but-unconsumed rows and uncommitted reservations both
 			// consume outer admission capacity.
-			outstanding = c.outerFetched - min(c.outerFetched, c.outerConsumed) + c.outerReserved
+			outstanding = c.outerBufferedRowsLocked() + c.outerReserved
 			changed = c.outerChanged
 			// An in-flight task can free enough room for a full batch. With no
 			// task to consume, admit a partial batch to guarantee progress.
 			if c.mode == adaptiveLimitIndexJoinOuterOnly && c.outerInNoOutputGrowth && outstanding != 0 {
 				minUnits = uint64(maxUnits)
 			}
+		} else {
+			window = c.lookupPhysicalWindowLocked()
+			outstanding = c.lookupReserved
+			changed = c.lookupChanged
 		}
 		if outstanding < window && window-outstanding >= minUnits {
 			if waiting {
@@ -692,31 +695,37 @@ func (c *AdaptiveLimitController) recomputeOuterWindowLocked() {
 }
 
 func (c *AdaptiveLimitController) recomputeLookupWindowLocked() {
-	if c.mode == adaptiveLimitDirectIndexLookup {
-		c.recomputeDirectLookupWindowLocked()
-		return
-	}
 	if c.lookupRows == 0 || c.lookupInNoOutputPhase {
 		return
 	}
-	lookupBuffered := c.lookupRows - min(c.lookupRows, c.outerConsumed)
-	outerBuffered := c.outerFetched - min(c.outerFetched, c.outerConsumed)
-	// Both stages can already hold rows that will satisfy the outer window. Use
-	// the larger visible buffer to avoid admitting the same demand twice.
-	bufferedRows := max(lookupBuffered, outerBuffered)
-	remainingOuter := c.outerWindow - min(c.outerWindow, bufferedRows)
-	target := divideAndRoundUp(saturatingMultiply(remainingOuter, c.lookupHandles), c.lookupRows)
+	var remainingRows uint64
+	if c.mode == adaptiveLimitDirectIndexLookup {
+		remainingRows = c.demandRows - min(c.demandRows, c.outputRows)
+	} else {
+		lookupBuffered := c.lookupRows - min(c.lookupRows, c.outerConsumed)
+		// Use the larger visible buffer so rows already held by either stage
+		// can satisfy the outer window without admitting the same demand twice.
+		bufferedRows := max(lookupBuffered, c.outerBufferedRowsLocked())
+		remainingRows = c.outerWindow - min(c.outerWindow, bufferedRows)
+	}
+	target := divideAndRoundUp(
+		saturatingMultiply(remainingRows, c.lookupHandles),
+		c.lookupRows,
+	)
 	recentHandles, recentRows := c.recentLookupYield.totals()
 	if recentRows > 0 {
-		recentTarget := divideAndRoundUp(
-			saturatingMultiply(remainingOuter, recentHandles),
+		recentEstimate := divideAndRoundUp(
+			saturatingMultiply(remainingRows, recentHandles),
 			recentRows,
 		)
-		target = max(target, recentTarget)
+		target = max(target, recentEstimate)
 	}
-	// Productive feedback adjusts the logical budget. Execution granularity is
-	// tracked separately by lookupBatchSize, so shrinking this window does not
-	// turn a small LIMIT into row-at-a-time table RPCs.
+	// The Join path already includes headroom in its outer window.
+	if c.mode == adaptiveLimitDirectIndexLookup {
+		target = addAdaptiveWindowHeadroom(target, remainingRows, c.demandRows)
+	}
+	// Only the logical window changes here. The execution batch is tracked
+	// separately so shrinking the window does not cause tiny lookup RPCs.
 	var grew bool
 	c.lookupWindow, grew = adjustAdaptiveWindow(
 		target, c.lookupWindow, c.initialLookupWindow, c.maxLookupWindow,
@@ -727,41 +736,17 @@ func (c *AdaptiveLimitController) recomputeLookupWindowLocked() {
 	}
 }
 
-func (c *AdaptiveLimitController) recomputeDirectLookupWindowLocked() {
-	if c.lookupRows == 0 || c.lookupInNoOutputPhase {
-		return
-	}
-	remainingOutput := c.demandRows - min(c.demandRows, c.outputRows)
-	estimatedHandles := divideAndRoundUp(
-		saturatingMultiply(remainingOutput, c.lookupHandles),
-		c.lookupRows,
-	)
-	recentHandles, recentRows := c.recentLookupYield.totals()
-	if recentRows > 0 {
-		recentEstimate := divideAndRoundUp(
-			saturatingMultiply(remainingOutput, recentHandles),
-			recentRows,
-		)
-		estimatedHandles = max(estimatedHandles, recentEstimate)
-	}
-
-	target := addAdaptiveWindowHeadroom(estimatedHandles, remainingOutput, c.demandRows)
-	var grew bool
-	c.lookupWindow, grew = adjustAdaptiveWindow(
-		target, c.lookupWindow, c.initialLookupWindow, c.maxLookupWindow,
-		c.lookupHandles > c.lookupGrowthProgress,
-	)
-	if grew {
-		c.lookupGrowthProgress = c.lookupHandles
-	}
+func (c *AdaptiveLimitController) outerBufferedRowsLocked() uint64 {
+	return c.outerFetched - min(c.outerFetched, c.outerConsumed)
 }
 
 func (c *AdaptiveLimitController) growOuterWindowOnNoOutputLocked() {
 	if c.outerNoOutputRows < c.outerWindow {
 		return
 	}
-	outstanding := c.outerFetched - min(c.outerFetched, c.outerConsumed) + c.outerReserved
-	if c.mode == adaptiveLimitIndexJoinOuterOnly {
+	outstanding := c.outerBufferedRowsLocked() + c.outerReserved
+	switch c.mode {
+	case adaptiveLimitIndexJoinOuterOnly:
 		// Retry the first empty window at its original size in case matches
 		// begin in the next batch. After that, use newly consumed input to
 		// grow even when the producer keeps the window partially occupied.
@@ -769,7 +754,7 @@ func (c *AdaptiveLimitController) growOuterWindowOnNoOutputLocked() {
 			c.outerNoOutputRows = 0
 			return
 		}
-	} else {
+	default:
 		// If lookup is delivering input, consumed rows already prove that the
 		// join is making progress through a low-yield interval. Refilling the
 		// window must not prevent growth.
@@ -832,7 +817,7 @@ func (c *AdaptiveLimitController) stopLocked() {
 	c.finishAdmissionBlockedLocked(adaptiveOuterRowsAdmission, now)
 	c.finishAdmissionBlockedLocked(adaptiveLookupHandlesAdmission, now)
 	c.outerOutstandingAtStop = saturatingAdd(
-		c.outerFetched-min(c.outerFetched, c.outerConsumed),
+		c.outerBufferedRowsLocked(),
 		c.outerReserved,
 	)
 	c.lookupOutstandingAtStop = c.lookupReserved

@@ -896,13 +896,13 @@ func (b *executorBuilder) attachAdaptiveLimitController(
 		return
 	}
 	// Only projections may intervene between Limit and an eligible join or reader.
-	indexJoin := findAdaptiveLimitIndexJoin(childExec)
-	if indexJoin != nil {
+	root := skipAdaptiveLimitProjections(childExec)
+	if indexJoin, ok := root.(*join.IndexLookUpJoin); ok && indexJoin != nil {
 		if !indexJoin.AdaptiveLimitEligible {
 			return
 		}
 		outer := skipAdaptiveLimitProjections(indexJoin.Children(0))
-		outerIndexLookup := findAdaptiveLimitIndexLookupCandidate(outer)
+		outerIndexLookup := adaptiveLimitIndexLookupCandidate(outer)
 		if outerIndexLookup == nil && !adaptiveLimitSingleReadEligible(outer) {
 			return
 		}
@@ -929,7 +929,7 @@ func (b *executorBuilder) attachAdaptiveLimitController(
 		return
 	}
 
-	indexLookup := findAdaptiveLimitIndexLookupCandidate(childExec)
+	indexLookup := adaptiveLimitIndexLookupCandidate(root)
 	if indexLookup == nil {
 		return
 	}
@@ -979,13 +979,8 @@ func adaptiveLimitInitialLookupBatchSize(initialWindow uint64, indexPaging bool,
 	return min(max(initialWindow, uint64(maxChunkSize)), uint64(maxBatchSize))
 }
 
-func findAdaptiveLimitIndexJoin(executor exec.Executor) *join.IndexLookUpJoin {
-	indexJoin, _ := skipAdaptiveLimitProjections(executor).(*join.IndexLookUpJoin)
-	return indexJoin
-}
-
-func findAdaptiveLimitIndexLookupCandidate(executor exec.Executor) *IndexLookUpExecutor {
-	indexLookup, ok := skipAdaptiveLimitProjections(executor).(*IndexLookUpExecutor)
+func adaptiveLimitIndexLookupCandidate(executor exec.Executor) *IndexLookUpExecutor {
+	indexLookup, ok := executor.(*IndexLookUpExecutor)
 	if !ok || indexLookup.adaptiveLimitController != nil || !adaptiveLimitIndexLookupEligible(indexLookup) {
 		return nil
 	}
