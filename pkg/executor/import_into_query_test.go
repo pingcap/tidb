@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -42,7 +43,7 @@ const importQueryMemQuota = 32 << 20
 // captureImportQuery captures the IMPORT INTO statement sql that tk runs, and
 // returns it as a worker decodes it from the task meta.
 func captureImportQuery(t *testing.T, tk *testkit.TestKit, sql string) *importer.QuerySource {
-	require.NoError(t, importer.PlanImportQueryForTest(tk.Session(), sql))
+	require.NoError(t, executor.PlanImportQueryForTest(tk.Session(), sql))
 	q, err := importer.CaptureQuerySource(tk.Session(), sql)
 	require.NoError(t, err)
 	data, err := json.Marshal(q)

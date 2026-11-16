@@ -63,10 +63,6 @@ var bootstrapOwnerKey = "/tidb/distributeDDLOwnerLock/"
 // bootstrap initiates system DB for a store.
 func bootstrap(s sessionapi.Session) {
 	startTime := time.Now()
-	err := InitMDLVariableForBootstrap(s.GetStore())
-	if err != nil {
-		logutil.BgLogger().Fatal("init metadata lock failed during bootstrap", zap.Error(err))
-	}
 	dom := domain.GetDomain(s)
 	bootLogger := logutil.SampleLoggerFactory(30*time.Second, 1)()
 	for {
@@ -77,7 +73,9 @@ func bootstrap(s sessionapi.Session) {
 		}
 		// For rolling upgrade, we can't do upgrade only in the owner.
 		if b {
-			upgrade(s)
+			// Bootstrap initialization has already persisted and enabled MDL
+			// before the domain started, so no legacy MDL migration is needed.
+			upgradeWithMDLMigration(s, skipLegacyMDLMigration)
 			logutil.BgLogger().Info("upgrade successful in bootstrap",
 				zap.Duration("take time", time.Since(startTime)))
 			return
@@ -344,6 +342,10 @@ var (
 		{ID: metadef.TiDBMViewRefreshAlertTableID, Name: metadef.TiDBMViewRefreshAlertTableName, SQL: metadef.CreateTiDBMViewRefreshAlertTable},
 		{ID: metadef.TiDBMLogPurgeHistTableID, Name: metadef.TiDBMLogPurgeHistTableName, SQL: metadef.CreateTiDBMLogPurgeHistTable},
 	}
+	// systemTablesOfMaterializedViewRefreshSourceNextGenVersion contains the MV input-log baseline table.
+	systemTablesOfMaterializedViewRefreshSourceNextGenVersion = []TableBasicInfo{
+		{ID: metadef.TiDBMViewFastRefreshSourceInfoTableID, Name: metadef.TiDBMViewFastRefreshSourceInfoTableName, SQL: metadef.CreateTiDBMViewFastRefreshSourceInfoTable},
+	}
 	// systemTablesOfStorageClassTransitionNextGenVersion contains the durable
 	// operation table used by the NextGen storage-class transition poller.
 	systemTablesOfStorageClassTransitionNextGenVersion = []TableBasicInfo{
@@ -373,6 +375,9 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	}, nextGenOnly: true},
 	{ver: meta.MaterializedViewNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaterializedViewNextGenVersion},
+	}},
+	{ver: meta.MaterializedViewRefreshSourceNextGenBootTableVersion, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaterializedViewRefreshSourceNextGenVersion},
 	}},
 }
 

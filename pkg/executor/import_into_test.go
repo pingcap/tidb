@@ -16,8 +16,10 @@ package executor_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -28,18 +30,26 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/stretchr/testify/require"
@@ -119,7 +129,7 @@ func TestClassicS3ExternalID(t *testing.T) {
 				t.Cleanup(func() {
 					fns[1](t, tk)
 				})
-				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/NewImportPlan", func(plan *plannercore.ImportInto) {
 					u, err := url.Parse(plan.Path)
 					require.NoError(t, err)
 					require.Contains(t, u.Query(), s3like.S3ExternalID)
@@ -134,7 +144,7 @@ func TestClassicS3ExternalID(t *testing.T) {
 
 	t.Run("SEM disabled, explicit external ID is also allowed, and we don't change it", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/NewImportPlan", func(plan *plannercore.ImportInto) {
 			u, err := url.Parse(plan.Path)
 			require.NoError(t, err)
 			require.Contains(t, u.Query(), s3like.S3ExternalID)
@@ -206,7 +216,7 @@ func TestNextGenS3ExternalID(t *testing.T) {
 				t.Cleanup(func() {
 					fns[1](t, tk)
 				})
-				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/NewImportPlan", func(plan *plannercore.ImportInto) {
 					u, err := url.Parse(plan.Path)
 					require.NoError(t, err)
 					require.Contains(t, u.Query(), s3like.S3ExternalID)
@@ -233,7 +243,7 @@ func TestNextGenS3ExternalID(t *testing.T) {
 				conf.KeyspaceName = bak
 			})
 		})
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/NewImportPlan", func(plan *plannercore.ImportInto) {
 			u, err := url.Parse(plan.Path)
 			require.NoError(t, err)
 			require.Contains(t, u.Query(), s3like.S3ExternalID)
@@ -286,7 +296,7 @@ func TestNextGenS3ExternalID(t *testing.T) {
 					{name: "alias", param: "EXTERNAL_ID", value: "caller-provided"},
 				} {
 					t.Run(tc.name, func(t *testing.T) {
-						testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+						testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/NewImportPlan", func(plan *plannercore.ImportInto) {
 							u, err := url.Parse(plan.Path)
 							require.NoError(t, err)
 							require.Equal(t, []string{tc.value}, u.Query()[tc.param])
@@ -308,7 +318,7 @@ func TestNextGenS3ExternalID(t *testing.T) {
 			require.NoError(t, deploymode.Set(deploymode.Premium))
 		})
 		tk := testkit.NewTestKit(t, store)
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/NewImportPlan", func(plan *plannercore.ImportInto) {
 			u, err := url.Parse(plan.Path)
 			require.NoError(t, err)
 			require.NotContains(t, u.Query(), s3like.S3ExternalID)
@@ -601,4 +611,64 @@ func TestImportQueryRouting(t *testing.T) {
 	vardef.CloudStorageURI.Store("s3://query-sort")
 	tk.MustExec("insert into query_route_dst values (1)")
 	require.ErrorContains(t, tk.ExecToErr(sql), "target table is not empty")
+}
+
+type importPlanKeyspaceStore struct {
+	kv.Storage
+}
+
+func (importPlanKeyspaceStore) GetKeyspace() string {
+	return ""
+}
+
+func TestNewImportPlanMatchesResolvedInput(t *testing.T) {
+	ctx := context.Background()
+	sctx := mock.NewContext()
+	defer sctx.Close()
+	sctx.Store = importPlanKeyspaceStore{}
+	tblInfo := &model.TableInfo{ID: 42, Name: ast.NewCIStr("t"), State: model.StatePublic}
+	tbl := tables.MockTableFromMeta(tblInfo)
+	format := importer.DataFormatCSV
+	value := &expression.Constant{Value: types.NewIntDatum(2), RetType: types.NewFieldType(mysql.TypeLonglong)}
+	for _, sourceType := range []importer.DataSourceType{importer.DataSourceTypeFile, importer.DataSourceTypeQuery} {
+		t.Run(sourceType.String(), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "data.csv")
+			input := &importer.Input{
+				DBName: "test", DBID: 7, TableInfo: tblInfo,
+				Path: path, Format: &format, DataSourceType: sourceType,
+				Options: []*importer.ImportOption{{Name: "thread", Value: value}},
+			}
+			physical := &plannercore.ImportInto{
+				Table: &resolve.TableNameW{
+					TableName: &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("t")},
+					DBInfo:    &model.DBInfo{ID: 7, Name: ast.NewCIStr("test")},
+				},
+				Path: path, Format: &format,
+				Options: []*plannercore.LoadDataOpt{{Name: "thread", Value: value}},
+			}
+			if sourceType == importer.DataSourceTypeQuery {
+				physical.SelectPlan = &physicalop.PhysicalSelection{}
+			}
+			fromSQL, err := executor.NewImportPlan(ctx, sctx, physical, tbl)
+			require.NoError(t, err)
+			require.Equal(t, sourceType, fromSQL.DataSourceType)
+			direct, err := importer.NewImportPlanFromInput(ctx, sctx, input)
+			require.NoError(t, err)
+			require.Equal(t, fromSQL, direct)
+			encoded, err := json.Marshal(fromSQL)
+			require.NoError(t, err)
+			directEncoded, err := json.Marshal(direct)
+			require.NoError(t, err)
+			require.JSONEq(t, string(encoded), string(directEncoded))
+
+			// Both entrypoints reject the same invalid numeric option.
+			bad := &expression.Constant{Value: types.NewStringDatum("bad"), RetType: types.NewFieldType(mysql.TypeVarString)}
+			input.Options[0].Value = bad
+			physical.Options[0].Value = bad
+			_, sqlErr := executor.NewImportPlan(ctx, sctx, physical, tbl)
+			_, directErr := importer.NewImportPlanFromInput(ctx, sctx, input)
+			require.Error(t, sqlErr)
+			require.EqualError(t, directErr, sqlErr.Error())
+		})
+	}
 }

@@ -2656,3 +2656,35 @@ func TestTiDBMLogAutoAnalyzeRatio(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "20", val)
 }
+
+func TestRemovedHistoricalStatsVarsWarn(t *testing.T) {
+	// The historical stats feature was removed; its variables are kept as no-op
+	// variables for compatibility and warn on a value that had an effect before.
+	for _, name := range []string{vardef.TiDBEnableHistoricalStats, vardef.TiDBEnableHistoricalStatsForCapture} {
+		sv := GetSysVar(name)
+		vars := NewSessionVars(nil)
+		val, err := sv.Validate(vars, "ON", vardef.ScopeGlobal)
+		require.NoError(t, err)
+		require.Equal(t, "ON", val)
+		warns := vars.StmtCtx.GetWarnings()
+		require.Len(t, warns, 1)
+		require.Contains(t, warns[0].Err.Error(), "the historical statistics feature has been removed")
+
+		// Turning the switch off must not warn.
+		vars = NewSessionVars(nil)
+		val, err = sv.Validate(vars, "OFF", vardef.ScopeGlobal)
+		require.NoError(t, err)
+		require.Equal(t, "OFF", val)
+		require.Len(t, vars.StmtCtx.GetWarnings(), 0)
+	}
+
+	// No retention value has an effect, because TiDB no longer deletes the legacy rows.
+	sv := GetSysVar(vardef.TiDBHistoricalStatsDuration)
+	vars := NewSessionVars(nil)
+	val, err := sv.Validate(vars, "24h", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "24h0m0s", val)
+	warns := vars.StmtCtx.GetWarnings()
+	require.Len(t, warns, 1)
+	require.Contains(t, warns[0].Err.Error(), "the historical statistics feature has been removed")
+}
