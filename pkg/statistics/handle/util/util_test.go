@@ -263,8 +263,8 @@ func TestCallWithSCtxSyncsStmtCtxTimeZone(t *testing.T) {
 	var stmtTZ string
 	err = util.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		// No SQL execution here; some stats paths read StmtCtx directly without SQL.
-		// Example: AsyncMergePartitionStats2GlobalStats.MergePartitionStats2GlobalStats
-		// reads sctx.GetSessionVars().StmtCtx.TimeZone() (global_stats_async.go:315)
+		// Example: globalStatsMerger.MergePartitionStats2GlobalStats (global_stats_merger.go)
+		// passes sctx.GetSessionVars().StmtCtx to the merge, which reads its TimeZone()
 		// before any SQL is executed.
 		varsTZ = sctx.GetSessionVars().Location().String()
 		stmtTZ = sctx.GetSessionVars().StmtCtx.TimeZone().String()

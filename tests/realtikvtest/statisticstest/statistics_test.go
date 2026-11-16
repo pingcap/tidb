@@ -132,14 +132,10 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	))
 }
 
-func TestAsyncMergeFMSketch(t *testing.T) {
+func TestMergeFMSketch(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	checkFMSketch(tk)
-}
-
-func checkFMSketch(tk *testkit.TestKit) {
 	tk.MustExec(`CREATE TABLE employees  (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,fname VARCHAR(25) NOT NULL,lname VARCHAR(25) NOT NULL,store_id INT NOT NULL,department_id INT NOT NULL
 ) PARTITION BY RANGE(id)  (
     PARTITION p0 VALUES LESS THAN (5),

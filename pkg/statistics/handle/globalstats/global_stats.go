@@ -91,11 +91,8 @@ func MergePartitionStats2GlobalStats(
 	isIndex bool,
 	histIDs []int64,
 ) (*GlobalStats, error) {
-	worker, err := NewAsyncMergePartitionStats2GlobalStats(statsHandle, globalTableInfo, histIDs, is)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	err = worker.MergePartitionStats2GlobalStats(sc, opts, isIndex)
+	worker := newGlobalStatsMerger(statsHandle, globalTableInfo, histIDs, is)
+	err := worker.MergePartitionStats2GlobalStats(sc, opts, isIndex)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
