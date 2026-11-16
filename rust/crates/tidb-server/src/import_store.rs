@@ -95,6 +95,36 @@ impl tidb_dxf_importinto::ImportStore for TikvImportStore {
         Ok(true)
     }
 
+    /// Go `importer.GetRegionSplitSizeKeys` (`ingestctrl.GetRegionSplitSizeKeys`):
+    /// the `coprocessor` config of the first non-TiFlash, non-tombstone
+    /// store with a status address that answers `GET /config`.
+    fn region_split_size_keys(&self) -> Result<(i64, i64), String> {
+        let pd = self.store.store().pd_client();
+        let stores = self.store.block_on(async move { pd.get_all_stores().await }).map_err(|e| e.to_string())?;
+        let security = &tidb_config::config_tree::config::get_global_config().security;
+        let tls = !security.cluster_ssl_ca.is_empty();
+        for store in stores {
+            let tiflash = store.labels.iter().any(|l| l.key == "engine" && (l.value == "tiflash" || l.value == "tiflash_compute"));
+            if store.status_address.is_empty()
+                || tiflash
+                || store.state == tidb_proto::metapb::StoreState::Tombstone as i32
+            {
+                continue;
+            }
+            match get_split_conf_from_store(&store.status_address, tls) {
+                Ok(conf) => return Ok(conf),
+                Err(error) => tidb_logutil::bg_logger().warn(
+                    "get region split size and keys failed",
+                    &[
+                        tidb_log::Field::new("error", tidb_log::Value::Str(error)),
+                        tidb_log::Field::new("store", tidb_log::Value::Str(store.status_address.clone())),
+                    ],
+                ),
+            }
+        }
+        Err("get region split size and keys failed".to_owned())
+    }
+
     fn max_node_count_by_stores(&self) -> usize {
         let pd = self.store.store().pd_client();
         match self.store.block_on(async move { pd.get_all_stores().await }) {
@@ -108,4 +138,24 @@ impl tidb_dxf_importinto::ImportStore for TikvImportStore {
             }
         }
     }
+}
+
+/// Go `getSplitConfFromStore`: `coprocessor.region-split-size` (a go-units
+/// decimal size) and `region-split-keys` from the store's `/config`.
+fn get_split_conf_from_store(host: &str, tls: bool) -> Result<(i64, i64), String> {
+    let scheme = if tls { "https" } else { "http" };
+    let body: serde_json::Value = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?
+        .get(format!("{scheme}://{host}/config"))
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|e| e.to_string())?
+        .json()
+        .map_err(|e| e.to_string())?;
+    let coprocessor = &body["coprocessor"];
+    let size = tidb_config_configtypes::from_human_size(coprocessor["region-split-size"].as_str().unwrap_or_default())?;
+    Ok((size, coprocessor["region-split-keys"].as_i64().unwrap_or_default()))
 }

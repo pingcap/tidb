@@ -48,6 +48,7 @@ pub struct Backend {
     pub cfg: BackendConfig,
     engines: Mutex<HashMap<[u8; 16], Arc<Engine>>>,
     importer: Arc<dyn ImportClient>,
+    collector: Mutex<Option<crate::region_job::Collector>>,
 }
 impl Backend {
     /// Go `NewBackend`.
@@ -57,7 +58,14 @@ impl Backend {
             cfg,
             engines: Mutex::new(HashMap::new()),
             importer,
+            collector: Mutex::new(None),
         })
+    }
+
+    /// Go `SetCollector`: told the bytes and pairs of every written job of
+    /// an external engine.
+    pub fn set_collector(&self, collector: Option<crate::region_job::Collector>) {
+        *self.collector.lock().unwrap() = collector;
     }
     /// Go `Backend.OpenEngine` and `engineManager.OpenEngine`.
     pub fn open_engine(&self, id: [u8; 16], ts: u64) -> Result<Arc<Engine>> {
@@ -174,7 +182,7 @@ impl Backend {
                     );
                     return Ok(());
                 }
-                let data = crate::region_job::IngestDataJob(batch.data.as_ref());
+                let data = crate::region_job::IngestDataJob(batch.data.as_ref(), self.collector.lock().unwrap().clone());
                 for r in ranges {
                     crate::region_job::import_range(
                         ctx,

@@ -5,6 +5,7 @@
 //! engine into local engines, then ingest them) and `post-process`
 //! (rebase the allocators and verify the checksum).
 
+mod clean_up;
 pub mod job;
 pub mod planner;
 pub mod proto;
@@ -85,6 +86,15 @@ pub trait ImportStore: Send + Sync {
     /// Go `CalcMaxNodeCountByStoresNum`: `max(3, stores / 3)`, or 0 when
     /// PD cannot list the stores.
     fn max_node_count_by_stores(&self) -> usize;
+    /// Go `importer.GetRegionSplitSizeKeys`: TiKV's
+    /// `coprocessor.region-split-size` and `region-split-keys`, from the
+    /// first store that answers.
+    ///
+    /// # Errors
+    /// No store answered.
+    fn region_split_size_keys(&self) -> Result<(i64, i64), String> {
+        Err("get region split size and keys failed".to_owned())
+    }
 }
 
 static STORE: RwLock<Option<Arc<dyn ImportStore>>> = RwLock::new(None);
@@ -111,6 +121,7 @@ pub fn import_store() -> Result<Arc<dyn ImportStore>, Error> {
 pub fn register() {
     scheduler::register();
     task_executor::register();
+    clean_up::register();
 }
 
 #[cfg(test)]

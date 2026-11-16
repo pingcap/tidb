@@ -29,6 +29,14 @@ tidb-dxf-taskexecutor = { path = "../tidb-dxf-taskexecutor" }
 tidb-executor = { path = "../tidb-executor" }
 tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-ingestor-ingestctrl = { path = "../tidb-ingestor-ingestctrl" }
+tidb-ingestor-engineapi = { path = "../tidb-ingestor-engineapi" }
+tidb-ingestor-globalsort = { path = "../tidb-ingestor-globalsort" }
+tidb-ingestor-simplesst = { path = "../tidb-ingestor-simplesst" }
+tidb-ingestor-errdef = { path = "../tidb-ingestor-errdef" }
+base64.workspace = true
+hex = "0.4"
+tidb-failpoint = { path = "../tidb-failpoint" }
+uuid = { version = "1", features = ["v4"] }
 tidb-lightning-backend = { path = "../tidb-lightning-backend" }
 tidb-lightning-backend-kv = { path = "../tidb-lightning-backend-kv" }
 tidb-lightning-common = { path = "../tidb-lightning-common" }
@@ -37,6 +45,7 @@ tidb-logutil = { path = "../tidb-logutil" }
 tidb-log = { path = "../tidb-log" }
 tidb-stringutil = { path = "../tidb-stringutil" }
 tidb-model = { path = "../tidb-model" }
+tidb-lightning-log = { path = "../tidb-lightning-log" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
@@ -51,3 +60,4 @@ tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 chrono.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true

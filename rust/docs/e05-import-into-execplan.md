@@ -362,10 +362,40 @@ Remaining, in order:
    duplicate action. Go sorts a loaded batch with an unstable parallel sort,
    so which duplicate an error names and the order of a key's recorded
    duplicates vary between Go runs; the test compares those loosely.
-8. The DXF global-sort steps (encode and sort, merge sort, write and
-   ingest), `clean_up.go`, and next-gen async prepare.
+8. Done (the PR after the globalsort PR): the DXF global-sort steps.
+   `proto.go`'s step metas with `BaseExternalMeta`'s two encodings
+   (subtask meta without the external fields, external file with only
+   them), `planner.go`'s merge-sort, write-and-ingest, collect-conflicts and
+   conflict-resolution specs and `writeExternalPlanMeta`, the scheduler's
+   step transitions, `task_executor.go`'s encode-and-sort path
+   (`encodeAndSortOperator`, `IndexRouteWriter`), merge-sort and
+   write-and-ingest executors, `normalizeSubtaskErr`, `clean_up.go`'s
+   `ImportCleaner` (task meta redaction, table mode, sort file cleanup), and
+   `GetRegionSplitSizeKeys` over TiKV's `/config`. IMPORT INTO with a
+   `cloud_storage_uri` now runs. Pinned by a Go capture of every step meta's
+   encodings (`zzprobe/e05dxf`) and by a live MinIO run against Go (below).
+   `on_duplicate_key='capture'` is refused until the conflict steps land.
+   Next-gen async prepare (`PreparedMeta`) is not ported.
 9. Conflict collection and resolution, the global-sort live acceptance;
    delete the E05 row.
+
+### Live acceptance of global sort (2026-11-16)
+
+Same playgrounds and MinIO. `/tmp/e05-data/gsort.sh` (not committed)
+imports with `cloud_storage_uri` into tables with a primary key, a unique
+and a plain index: 400000 rows from S3 CSV with `thread=4` (encode, then
+write-and-ingest, the merge sort skipped), the same with
+`__force_merge_step` and `__max_engine_size='2MB'` (3 encode, 3 merge-sort
+and 3 ingest subtasks), Parquet into a clustered table, a glob `WITH
+DETACHED`, a duplicate primary key and a duplicate unique key (both 8167
+`ErrLoadDataDuplicateKeyConflict`, the job failed in `global-sorting`), and
+`on_duplicate_key` with local sort (8166). It checks the data and `ADMIN
+CHECK TABLE`, the step subtask counts, that the sort prefix is empty after
+cleanup, and that task history keeps no statement or credential. Go and
+Rust give the same output, except `on_duplicate_key='capture'`, which Go
+imports ("2 conflicted rows.") and this port refuses for now. Tasks this
+port moved to history before `ImportCleaner` existed still hold the
+statement and the S3 keys; Go's never do.
 
 ### Live acceptance of FROM SELECT and the TiKV hooks (2026-11-16)
 

@@ -451,3 +451,61 @@ fn deliver_loop(
         index_writer.append_rows(ctx, &[], index_kvs).map_err(|e| e.to_string())?;
     }
 }
+
+/// Go `WriterFactory`: the global-sort writer of an index.
+pub type WriterFactory = Box<dyn FnMut(i64) -> Result<tidb_ingestor_simplesst::Writer, String> + Send>;
+
+/// Go `IndexRouteWriter`: with global sort, routes each index KV to its
+/// index's writer, made on first use.
+pub struct IndexRouteWriter {
+    writers: std::collections::HashMap<i64, tidb_ingestor_simplesst::Writer>,
+    writer_factory: WriterFactory,
+}
+
+impl IndexRouteWriter {
+    /// Go `NewIndexRouteWriter`.
+    #[must_use]
+    pub fn new(writer_factory: WriterFactory) -> Self {
+        Self { writers: std::collections::HashMap::new(), writer_factory }
+    }
+}
+
+impl EngineWriter for IndexRouteWriter {
+    /// Go `AppendRows`. Go gets the pairs grouped by index ID; here they
+    /// come flattened, so the ID is decoded from each key.
+    fn append_rows(&mut self, ctx: &Context, _: &[String], rows: Vec<KvPair>) -> tidb_lightning_backend::Result<()> {
+        for item in rows {
+            let index_id = tidb_tablecodec::table_key::decode_index_id(&item.key)
+                .map_err(|e| tidb_lightning_backend::Error::other(format!("{e:?}")))?;
+            let writer = match self.writers.entry(index_id) {
+                std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert((self.writer_factory)(index_id).map_err(tidb_lightning_backend::Error::other)?)
+                }
+            };
+            writer
+                .write_row(ctx, &item.key, &item.val)
+                .map_err(|e| tidb_lightning_backend::Error::other(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn is_synced(&self) -> bool {
+        true
+    }
+
+    /// Go `Close`: closes every writer, returning the first failure.
+    fn close(&mut self, ctx: &Context) -> tidb_lightning_backend::Result<tidb_lightning_backend::ChunkFlushStatus> {
+        let mut first_err = None;
+        for writer in self.writers.values_mut() {
+            if let Err(e) = writer.close(ctx) {
+                tidb_log::error("close index writer failed", &[tidb_log::Field::new("error", tidb_log::Value::Str(e.to_string()))]);
+                first_err.get_or_insert(e);
+            }
+        }
+        match first_err {
+            Some(e) => Err(tidb_lightning_backend::Error::other(e.to_string())),
+            None => Ok(tidb_lightning_backend::ChunkFlushStatus { flushed: true }),
+        }
+    }
+}

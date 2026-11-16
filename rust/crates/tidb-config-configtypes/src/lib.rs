@@ -60,6 +60,17 @@ fn format_g4(v: f64) -> String {
 /// go-units `RAMInBytes`: parses a human size with binary units (both `KB`
 /// and `KiB` mean 1024).
 pub fn ram_in_bytes(size: &str) -> Result<i64, String> {
+    parse_size(size, true)
+}
+
+/// go-units `FromHumanSize`: parses a human size with decimal units (both
+/// `KB` and `KiB` mean 1000).
+pub fn from_human_size(size: &str) -> Result<i64, String> {
+    parse_size(size, false)
+}
+
+/// go-units `parseSize` over its binary or decimal unit map.
+fn parse_size(size: &str, binary: bool) -> Result<i64, String> {
     // docker/go-units v0.5.0 `parseSize`: the numeric prefix is everything
     // through the last digit, period, or separating space. In particular,
     // this deliberately accepts the exponent and leading-plus forms accepted
@@ -101,12 +112,13 @@ pub fn ram_in_bytes(size: &str) -> Result<i64, String> {
             String::from_utf8_lossy(suffix)
         ));
     }
+    let base: u64 = if binary { 1024 } else { 1000 };
     let multiplier = match suffix[0] {
-        b'k' => 1u64 << 10,
-        b'm' => 1u64 << 20,
-        b'g' => 1u64 << 30,
-        b't' => 1u64 << 40,
-        b'p' => 1u64 << 50,
+        b'k' => base,
+        b'm' => base.pow(2),
+        b'g' => base.pow(3),
+        b't' => base.pow(4),
+        b'p' => base.pow(5),
         _ => {
             return Err(format!(
                 "invalid suffix: '{}'",
@@ -512,6 +524,14 @@ mod tests {
 
     // Supplementary coverage of the go-units / stdlib semantics the wrappers
     // delegate to in the source.
+    #[test]
+    fn from_human_size_is_decimal() {
+        assert_eq!(super::from_human_size("96MiB"), Ok(96_000_000));
+        assert_eq!(super::from_human_size("1.5kb"), Ok(1500));
+        assert_eq!(super::from_human_size("10"), Ok(10));
+        assert_eq!(super::from_human_size("1x"), Err("invalid suffix: 'x'".to_owned()));
+    }
+
     #[test]
     fn ram_in_bytes_semantics() {
         for (s, v) in [

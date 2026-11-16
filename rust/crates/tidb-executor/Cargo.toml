@@ -77,6 +77,7 @@ tidb-lightning-backend-kv = { path = "../tidb-lightning-backend-kv" }
 tidb-lightning-common = { path = "../tidb-lightning-common" }
 tidb-lightning-verification = { path = "../tidb-lightning-verification" }
 tidb-ingestor-ingestctrl = { path = "../tidb-ingestor-ingestctrl" }
+tidb-ingestor-simplesst = { path = "../tidb-ingestor-simplesst" }
 tidb-dumpformat-parquetfile = { path = "../tidb-dumpformat-parquetfile" }
 tidb-dxf-execute = { path = "../tidb-dxf-execute" }
 tidb-cdcutil = { path = "../tidb-cdcutil" }

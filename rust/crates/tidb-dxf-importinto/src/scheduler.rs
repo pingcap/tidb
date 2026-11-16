@@ -481,6 +481,30 @@ impl tidb_dxf_scheduler::Extension for ImportScheduler {
                 let step = if global_sort { importer_job::JOB_STEP_GLOBAL_SORTING } else { importer_job::JOB_STEP_IMPORTING };
                 self.start_job(ctx, &meta, step)?;
             }
+            IMPORT_STEP_MERGE_SORT => {
+                let metas = h.get_previous_subtask_metas(task.base.id, source_step).map_err(|e| Arc::new(e) as Error)?;
+                previous.insert(source_step, metas);
+            }
+            IMPORT_STEP_WRITE_AND_INGEST => {
+                if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/dxf/importinto/failWhenDispatchWriteIngestSubtask").is_some() {
+                    return Err(plain("injected error"));
+                }
+                // The merge sort may skip a group, so the encode metas are
+                // needed too.
+                let encoded = h.get_previous_subtask_metas(task.base.id, source_step).map_err(|e| Arc::new(e) as Error)?;
+                let merged =
+                    h.get_previous_subtask_metas(task.base.id, IMPORT_STEP_MERGE_SORT).map_err(|e| Arc::new(e) as Error)?;
+                previous.insert(source_step, encoded);
+                previous.insert(IMPORT_STEP_MERGE_SORT, merged);
+                self.job_2_step(ctx, &meta, importer_job::JOB_STEP_IMPORTING)?;
+            }
+            IMPORT_STEP_COLLECT_CONFLICTS | IMPORT_STEP_CONFLICT_RESOLUTION => {
+                for step in [source_step, IMPORT_STEP_MERGE_SORT, IMPORT_STEP_WRITE_AND_INGEST] {
+                    let metas = h.get_previous_subtask_metas(task.base.id, step).map_err(|e| Arc::new(e) as Error)?;
+                    previous.insert(step, metas);
+                }
+                self.job_2_step(ctx, &meta, importer_job::JOB_STEP_RESOLVING_CONFLICTS)?;
+            }
             IMPORT_STEP_POST_PROCESS => {
                 self.switch_tikv_2_normal_mode(ctx, task);
                 self.job_2_step(ctx, &meta, importer_job::JOB_STEP_VALIDATING)?;

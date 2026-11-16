@@ -328,8 +328,15 @@ pub(crate) fn engine_error(e: tidb_ingestor_engineapi::Error) -> Error {
     Error::Other(e.to_string())
 }
 
-/// [`tidb_ingestor_engineapi::IngestData`] as [`JobData`].
-pub(crate) struct IngestDataJob<'a>(pub(crate) &'a dyn tidb_ingestor_engineapi::IngestData);
+/// Go `execute.Collector.Processed`: the bytes and pairs written.
+pub type Collector = std::sync::Arc<dyn Fn(i64, i64) + Send + Sync>;
+
+/// [`tidb_ingestor_engineapi::IngestData`] as [`JobData`], reporting each
+/// written job to the backend's collector.
+pub(crate) struct IngestDataJob<'a>(
+    pub(crate) &'a dyn tidb_ingestor_engineapi::IngestData,
+    pub(crate) Option<Collector>,
+);
 
 struct IngestDataIter<'a>(Box<dyn tidb_ingestor_engineapi::ForwardIter + 'a>);
 
@@ -347,6 +354,9 @@ impl JobData for IngestDataJob<'_> {
         self.0.get_ts()
     }
     fn finished(&self, bytes: i64, count: i64) {
+        if let Some(c) = &self.1 {
+            c(bytes, count);
+        }
         self.0.finish(bytes, count);
     }
 }

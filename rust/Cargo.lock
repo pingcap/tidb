@@ -6234,9 +6234,12 @@ dependencies = [
 name = "tidb-dxf-importinto"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
+ "hex",
  "serde",
  "serde_json",
+ "tempfile",
  "tidb-ast",
  "tidb-br",
  "tidb-config",
@@ -6255,11 +6258,17 @@ dependencies = [
  "tidb-dxf-taskexecutor",
  "tidb-executor",
  "tidb-exeerrors",
+ "tidb-failpoint",
  "tidb-gocontext",
+ "tidb-ingestor-engineapi",
+ "tidb-ingestor-errdef",
+ "tidb-ingestor-globalsort",
  "tidb-ingestor-ingestctrl",
+ "tidb-ingestor-simplesst",
  "tidb-lightning-backend",
  "tidb-lightning-backend-kv",
  "tidb-lightning-common",
+ "tidb-lightning-log",
  "tidb-lightning-verification",
  "tidb-log",
  "tidb-logutil",
@@ -6273,6 +6282,7 @@ dependencies = [
  "tidb-terror",
  "tidb-txnkv",
  "tidb-vardef",
+ "uuid",
 ]
 
 [[package]]
@@ -6622,6 +6632,7 @@ dependencies = [
  "tidb-infoschema-issyncer",
  "tidb-infoschema-perfschema",
  "tidb-ingestor-ingestctrl",
+ "tidb-ingestor-simplesst",
  "tidb-intest",
  "tidb-keydecoder",
  "tidb-keyspace",
