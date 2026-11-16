@@ -21,7 +21,6 @@ import (
 	"io/fs"
 	"maps"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -1241,11 +1240,7 @@ func setupLog() error {
 	if err != nil {
 		return err
 	}
-	logFile := cfg.Log.File.Filename
-	if logFile == "" {
-		logFile = cfg.Log.SlowQueryFile
-	}
-	if err := diagnosticlog.Initialize(cfg.DiagnosticLog.Types, filepath.Dir(logFile)); err != nil {
+	if err := diagnosticlog.Initialize(cfg.DiagnosticLog.Types, "diagnostic-log"); err != nil {
 		return err
 	}
 

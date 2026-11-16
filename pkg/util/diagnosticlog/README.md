@@ -8,10 +8,11 @@ tables. Configure it at server startup:
 types = ["deadlock", "index_usage"]
 ```
 
-The default is an empty list; either type can be enabled alone. Files use the main
-log directory, falling back to the slow-query log directory. Collectors must bind
-that directory to the original node identity. This package does not upload files
-or aggregate data across nodes.
+An empty list disables both types. Either type can be enabled alone. TiDB writes
+`diagnostic-log/tidb-deadlock.log` and `diagnostic-log/index-usage/` under the
+server's working directory. Deployments can mount storage at the corresponding
+absolute directory and must bind that storage to the original node identity
+for collection.
 
 Diagnostic files are created with owner-only permissions (0600). A file collector
 must use the TiDB file owner's UID or an existing authorized node-level reader;

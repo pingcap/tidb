@@ -147,7 +147,7 @@ in-mem-slow-query-topn-num = 30
 in-mem-slow-query-recent-num = 500
 
 # Optional startup-only diagnostic JSONL files. Empty disables both types.
-# Files use the main log directory (slow-query directory when main log is stdout).
+# Files are written to diagnostic-log/ under the tidb-server working directory.
 [diagnostic-log]
 types = [] # Supported: "deadlock", "index_usage".
 
