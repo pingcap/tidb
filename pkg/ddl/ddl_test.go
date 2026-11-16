@@ -799,18 +799,23 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 }
 
 func TestSetGlobalIndexVersionFlag(t *testing.T) {
-	tblInfo := &model.TableInfo{} // non-clustered (zero value)
-	idxInfo := &model.IndexInfo{Global: true, Unique: false}
+	originalSupported := model.GetGlobalIndexV1Supported()
+	t.Run("version_selection", func(t *testing.T) {
+		tblInfo := &model.TableInfo{} // non-clustered (zero value)
+		idxInfo := &model.IndexInfo{Global: true, Unique: false}
 
-	model.SetGlobalIndexV1Supported(false)
-	t.Cleanup(func() { model.SetGlobalIndexV1Supported(false) })
+		model.SetGlobalIndexV1Supported(false)
+		t.Cleanup(func() { model.SetGlobalIndexV1Supported(originalSupported) })
 
-	setGlobalIndexVersion(tblInfo, idxInfo)
-	require.Equal(t, uint8(0), idxInfo.GlobalIndexVersion)
+		setGlobalIndexVersion(tblInfo, idxInfo)
+		require.Equal(t, uint8(0), idxInfo.GlobalIndexVersion)
 
-	model.SetGlobalIndexV1Supported(true)
-	setGlobalIndexVersion(tblInfo, idxInfo)
-	require.Equal(t, model.GlobalIndexVersionV1, idxInfo.GlobalIndexVersion)
+		model.SetGlobalIndexV1Supported(true)
+		setGlobalIndexVersion(tblInfo, idxInfo)
+		require.Equal(t, model.GlobalIndexVersionV1, idxInfo.GlobalIndexVersion)
+	})
+	// Cleanup must preserve the capability negotiated before this test.
+	require.Equal(t, originalSupported, model.GetGlobalIndexV1Supported())
 }
 
 func TestGetJobCheckIntervalForCreateMaterializedView(t *testing.T) {
