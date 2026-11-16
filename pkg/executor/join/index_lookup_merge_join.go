@@ -160,6 +160,9 @@ type indexMergeJoinResult struct {
 
 // Open implements the Executor interface
 func (e *IndexLookUpMergeJoin) Open(ctx context.Context) error {
+	for _, w := range e.Joiners {
+		w.resetJoinedRows(e.RuntimeStats() != nil)
+	}
 	err := exec.Open(ctx, e.Children(0))
 	if err != nil {
 		return err
@@ -726,6 +729,11 @@ func (imw *innerMergeWorker) fetchNextInnerResult(ctx context.Context, task *loo
 
 // Close implements the Executor interface.
 func (e *IndexLookUpMergeJoin) Close() error {
+	defer func() {
+		for _, w := range e.Joiners {
+			w.registerJoinedRows(e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl, e.ID())
+		}
+	}()
 	if e.RuntimeStats() != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.RuntimeStats())
 	}
