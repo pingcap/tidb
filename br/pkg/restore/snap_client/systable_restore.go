@@ -842,6 +842,7 @@ func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
 		return nil
 	}
 	colCount := 0
+	upstreamCollations := make(map[string]string, len(collateCompatibilityColumnMap.columns))
 	for _, col := range upstreamTable.Columns {
 		if _, exists := collateCompatibilityColumnMap.columns[col.Name.L]; exists {
 			if col.GetCollate() != "utf8mb4_bin" && col.GetCollate() != "utf8mb4_general_ci" {
@@ -849,6 +850,7 @@ func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
 					"incompatible column collate, upstream table %s.%s column %s collate is %s but should be utf8mb4_bin",
 					dbNameL, tableNameL, col.Name.L, col.GetCollate())
 			}
+			upstreamCollations[col.Name.L] = col.GetCollate()
 			colCount += 1
 		}
 	}
@@ -857,12 +859,23 @@ func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
 			"incompatible column collate, upstream table %s.%s has only %d columns with collate utf8mb4_bin",
 			dbNameL, tableNameL, colCount)
 	}
+	matchingCollations := 0
+	for _, col := range downstreamTable.Columns {
+		if upstreamCollation, exists := upstreamCollations[col.Name.L]; exists && upstreamCollation == col.GetCollate() {
+			matchingCollations++
+		}
+	}
+	// Only collation conversions can introduce collisions between privilege rows.
+	// Upgraded clusters may retain bin columns, so matching bin-to-bin schemas are valid too.
+	if matchingCollations == len(collateCompatibilityColumnMap.columns) {
+		return nil
+	}
 	colCount = 0
 	for _, col := range downstreamTable.Columns {
 		if _, exists := collateCompatibilityColumnMap.columns[col.Name.L]; exists {
 			if col.GetCollate() != "utf8mb4_general_ci" {
 				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
-					"incompatible column collate, downstream table %s.%s column %s collate should be %s",
+					"incompatible column collate, downstream table %s.%s column %s collate is %s but should be utf8mb4_general_ci",
 					dbNameL, tableNameL, col.Name.L, col.GetCollate())
 			}
 			colCount += 1

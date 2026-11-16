@@ -547,6 +547,67 @@ func TestCheckPrivilegeTableRowsCollateCompatibility(t *testing.T) {
 		require.NoError(t, err)
 	}
 	mse.MustExecute("DROP TABLE __TiDB_BR_Temporary_mysql.columns_priv")
+
+	for _, cs := range []struct {
+		name      string
+		createSQL string
+		columns   string
+		values    string
+	}{
+		{"db", CreateDBSQL, "Host, DB, User", "('%','test','newroot'),('%','Test','newroot')"},
+		{"tables_priv", CreateTableSQL, "Host, DB, User, Table_name", "('%','test','newroot','ta1'),('%','Test','newroot','ta1')"},
+		{"columns_priv", CreateColumnSQL, "Host, DB, User, Table_name, Column_name", "('%','test','newroot','ta1','ca1'),('%','Test','newroot','ta1','ca1')"},
+	} {
+		t.Run(cs.name, func(t *testing.T) {
+			mse.MustExecute(cs.createSQL)
+			defer mse.MustExecute("DROP TABLE __TiDB_BR_Temporary_mysql." + cs.name)
+			upstream, err := restore.GetTableSchema(cluster.Domain, ast.NewCIStr("__TiDB_BR_Temporary_mysql"), ast.NewCIStr(cs.name))
+			require.NoError(t, err)
+			downstream := upstream.Clone()
+			// Column order may differ between the backup and the destination.
+			for i, j := 0, len(downstream.Columns)-1; i < j; i, j = i+1, j-1 {
+				downstream.Columns[i], downstream.Columns[j] = downstream.Columns[j], downstream.Columns[i]
+			}
+			mse.MustExecute(fmt.Sprintf("INSERT INTO __TiDB_BR_Temporary_mysql.%s (%s) VALUES %s", cs.name, cs.columns, cs.values))
+			// These rows only collide when converting to general_ci; bin-to-bin must preserve them.
+			require.NoError(t, rc.CheckPrivilegeTableRowsCollateCompatibility(ctx, "mysql", cs.name, upstream, downstream))
+
+			missingUpstream := upstream.Clone()
+			missingDownstream := downstream.Clone()
+			for i, col := range missingUpstream.Columns {
+				if col.Name.L == "db" {
+					missingUpstream.Columns = append(missingUpstream.Columns[:i], missingUpstream.Columns[i+1:]...)
+					break
+				}
+			}
+			for i, col := range missingDownstream.Columns {
+				if col.Name.L == "db" {
+					missingDownstream.Columns = append(missingDownstream.Columns[:i], missingDownstream.Columns[i+1:]...)
+					break
+				}
+			}
+			require.Error(t, rc.CheckPrivilegeTableRowsCollateCompatibility(ctx, "mysql", cs.name, missingUpstream, downstream))
+			require.Error(t, rc.CheckPrivilegeTableRowsCollateCompatibility(ctx, "mysql", cs.name, upstream, missingDownstream))
+			unsupported := upstream.Clone()
+			for _, col := range unsupported.Columns {
+				if col.Name.L == "db" {
+					col.SetCollate("utf8mb4_unicode_ci")
+				}
+			}
+			require.Error(t, rc.CheckPrivilegeTableRowsCollateCompatibility(ctx, "mysql", cs.name, unsupported, unsupported.Clone()))
+
+			for _, col := range downstream.Columns {
+				if col.Name.L == "db" || col.Name.L == "table_name" || col.Name.L == "column_name" {
+					col.SetCollate("utf8mb4_general_ci")
+				}
+			}
+			require.ErrorContains(t, rc.CheckPrivilegeTableRowsCollateCompatibility(ctx, "mysql", cs.name, upstream, downstream), "duplicated rows")
+			require.ErrorContains(t, rc.CheckPrivilegeTableRowsCollateCompatibility(ctx, "mysql", cs.name, downstream, upstream), "collate is utf8mb4_bin but should be utf8mb4_general_ci")
+
+			mse.MustExecute("DELETE FROM __TiDB_BR_Temporary_mysql." + cs.name + " WHERE DB = 'Test'")
+			require.NoError(t, rc.CheckPrivilegeTableRowsCollateCompatibility(ctx, "mysql", cs.name, downstream, downstream.Clone()))
+		})
+	}
 }
 
 func TestRestoreSystemSchemasUpgradeOperateViewPrivilege(t *testing.T) {
