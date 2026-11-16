@@ -4229,6 +4229,7 @@ func InitTiDBSchemaCacheSize(store kv.Storage) error {
 	return nil
 }
 
+<<<<<<< HEAD
 // InitMDLVariable initializes the metadata lock variable.
 func InitMDLVariable(store kv.Storage) error {
 	isNull := false
@@ -4253,6 +4254,39 @@ func InitMDLVariable(store kv.Storage) error {
 	})
 	vardef.SetEnableMDL(enable)
 	return err
+=======
+// initLegacyECDSASessionToken loads the one-way compatibility gate. Only the
+// owner of a fresh bootstrap may persist it without checking cluster versions.
+func initLegacyECDSASessionToken(store kv.Storage, bootstrap bool) error {
+	if kerneltype.IsNextGen() {
+		return nil
+	}
+	disabled := false
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		if bootstrap {
+			disabled = true
+			return m.SetLegacyECDSASessionTokenDisabled()
+		}
+		var err error
+		disabled, err = m.GetLegacyECDSASessionTokenDisabled()
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	if disabled {
+		// Publish only after persistence succeeds, and never undo an observed gate.
+		vardef.SetLegacyECDSASessionTokenDisabled(true)
+	}
+	return nil
+}
+
+// BootstrapSession bootstrap session and domain.
+func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
+	return BootstrapSessionWithExternalWorkloadManager(store, nil)
+>>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 }
 
 // BootstrapSession bootstrap session and domain.
@@ -4277,7 +4311,15 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // - initialization global variables from system table that's required to use sessionCtx,
 // such as system time zone
 // - start domain and other routines.
+<<<<<<< HEAD
 func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
+=======
+func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error), extWorkloadMgr extworkload.Manager) (*domain.Domain, error) {
+	// Load before any bootstrap, upgrade, normal, or diagnostic domain can start.
+	if err := initLegacyECDSASessionToken(store, false); err != nil {
+		return nil, err
+	}
+>>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 	if diagnosticmode.Enabled() {
 		return bootstrapSessionImplDiagnostic(ctx, store)
 	}
@@ -4326,6 +4368,21 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		if err != nil {
 			return nil, err
 		}
+<<<<<<< HEAD
+=======
+		// Another node may have completed fresh bootstrap while this node waited.
+		if err = initLegacyECDSASessionToken(store, false); err != nil {
+			return nil, err
+		}
+	} else {
+		logutil.BgLogger().Info("cluster already bootstrapped", zap.Int64("version", ver))
+	}
+	// The temporary upgrade domain can enable persisted MDL during the legacy
+	// migration. Reload it after that domain closes and before the final domain
+	// starts; the later sysvar-cache loop cannot safely repair this with queued jobs.
+	if _, err = initMDLVariable(store, mdlInitEnableOnNull); err != nil {
+		return nil, err
+>>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 	}
 	skipInitGlobalVarFromSystemDB := false
 	failpoint.Inject("skipInitGlobalVarFromSystemDB", func(val failpoint.Value) {
