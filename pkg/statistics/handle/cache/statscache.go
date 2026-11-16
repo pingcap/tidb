@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -293,15 +292,9 @@ func (s *StatsCacheImpl) replace(newCache *statsCache) {
 	metrics.CostGauge.Set(float64(newCache.Cost()))
 }
 
-// UpdateStatsCache updates the cache with the new cache.
+// UpdateStatsCache applies the updates and deletions to the current cache in place.
 func (s *StatsCacheImpl) UpdateStatsCache(cacheUpdate types.CacheUpdate) {
-	if enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota; enableQuota {
-		s.Load().Update(cacheUpdate.Updated, cacheUpdate.Deleted, cacheUpdate.Options.SkipMoveForward)
-	} else {
-		// TODO: remove this branch because we will always enable quota.
-		newCache := s.Load().CopyAndUpdate(cacheUpdate.Updated, cacheUpdate.Deleted)
-		s.replace(newCache)
-	}
+	s.Load().Update(cacheUpdate.Updated, cacheUpdate.Deleted, cacheUpdate.Options.SkipMoveForward)
 }
 
 // Close closes this cache.

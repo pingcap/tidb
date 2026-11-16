@@ -9,7 +9,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/cache",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/config",
         "//pkg/infoschema",
         "//pkg/metrics",
         "//pkg/sessionctx",
@@ -17,7 +16,6 @@ go_library(
         "//pkg/statistics",
         "//pkg/statistics/handle/cache/internal",
         "//pkg/statistics/handle/cache/internal/lfu",
-        "//pkg/statistics/handle/cache/internal/mapcache",
         "//pkg/statistics/handle/cache/metrics",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/metrics",

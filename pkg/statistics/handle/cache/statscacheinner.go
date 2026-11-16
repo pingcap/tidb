@@ -18,34 +18,25 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/lfu"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/mapcache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/metrics"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-// newStatsCache creates a new statsCache.
+// newStatsCache creates a statsCache backed by an LFU cache sized by tidb_stats_cache_mem_quota.
 func newStatsCache() (*statsCache, error) {
-	enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota
-	if enableQuota {
-		capacity := vardef.StatsCacheMemQuota.Load()
-		stats, err := lfu.NewLFU(capacity)
-		if err != nil {
-			return nil, err
-		}
-		return &statsCache{
-			c: stats,
-		}, nil
+	capacity := vardef.StatsCacheMemQuota.Load()
+	stats, err := lfu.NewLFU(capacity)
+	if err != nil {
+		return nil, err
 	}
-
 	return &statsCache{
-		c: mapcache.NewMapCache(),
+		c: stats,
 	}, nil
 }
 
@@ -135,27 +126,6 @@ func (sc *statsCache) Close() {
 // the max table stats version the cache has in its lifecycle.
 func (sc *statsCache) Version() uint64 {
 	return sc.maxTblStatsVer.Load()
-}
-
-// CopyAndUpdate copies a new cache and updates the new statistics table cache. It is only used in the COW mode.
-func (sc *statsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int64) *statsCache {
-	newCache := &statsCache{c: sc.c.Copy()}
-	newCache.maxTblStatsVer.Store(sc.maxTblStatsVer.Load())
-	for _, tbl := range tables {
-		id := tbl.PhysicalID
-		newCache.c.Put(id, tbl)
-	}
-	for _, id := range deletedIDs {
-		newCache.c.Del(id)
-	}
-
-	// update the maxTblStatsVer
-	for _, t := range tables {
-		if t.Version > newCache.maxTblStatsVer.Load() {
-			newCache.maxTblStatsVer.Store(t.Version)
-		}
-	}
-	return newCache
 }
 
 // Update updates the new statistics table cache.
