@@ -224,6 +224,8 @@ type PlanBuilder struct {
 	tableHintInfo []*hint.PlanHints
 	// optFlag indicates the flags of the optimizer rules.
 	optFlag uint64
+	// foundRowsPlan counts the unlimited output of the top-level SELECT.
+	foundRowsPlan base.LogicalPlan
 	// capFlag indicates the capability flags.
 	capFlag capFlagType
 
@@ -651,6 +653,9 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 	case *ast.SelectStmt:
 		if x.SelectIntoOpt != nil {
 			return b.buildSelectInto(ctx, x)
+		}
+		if x.SelectStmtOpts != nil && x.SelectStmtOpts.CalcFoundRows {
+			return b.buildSelectWithFoundRows(ctx, x)
 		}
 		return b.buildSelect(ctx, x)
 	case *ast.SetOprStmt:

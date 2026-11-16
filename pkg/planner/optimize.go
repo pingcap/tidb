@@ -576,6 +576,14 @@ func buildAndOptimizeLogicalPlanRound(
 	if err != nil {
 		return nil, nil, false, err
 	}
+	if countLogic := builder.GetFoundRowsPlan(); countLogic != nil {
+		countPlan, countCost, err := core.DoOptimize(ctx, sctx, optFlag, countLogic)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		finalPlan = physicalop.NewPhysicalCalcFoundRows(sctx, finalPlan, countPlan)
+		cost += countCost
+	}
 
 	// Record predicate-context MATCH for cost competition. The fts-like-fallback
 	// alternative round reads this signal to decide whether to build a competing
