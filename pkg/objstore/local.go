@@ -317,6 +317,13 @@ func (l *LocalStorage) Create(_ context.Context, name string, option *storeapi.W
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if option != nil && option.DirectIO {
+		writer, err := newLocalDirectWriter(filename, option.PartSize)
+		if err != nil {
+			return nil, err
+		}
+		return writer, nil
+	}
 	file, err := os.Create(filename)
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -15,7 +15,9 @@
 package objstore
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -24,10 +26,122 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLocalDirectIO(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	for _, partSize := range []int64{0, 1, 4097, 16384} {
+		for _, size := range []int{0, 1, 4095, 4096, 4097, 65537} {
+			for _, chunkSize := range []int{1, 3000, 65537} {
+				t.Run(fmt.Sprintf("part%d/size%d/chunk%d", partSize, size, chunkSize), func(t *testing.T) {
+					w, err := store.Create(ctx, "nested/data", &storeapi.WriterOption{DirectIO: true, PartSize: partSize})
+					require.NoError(t, err)
+					_, buffered := w.(*flushStorageWriter)
+					require.False(t, buffered, "DirectIO must select the direct writer")
+					data := make([]byte, size)
+					for i := range data {
+						data[i] = byte(i%251 + 1)
+					}
+					expected := bytes.Clone(data)
+					for offset := 0; offset < len(data); offset += chunkSize {
+						chunk := data[offset:min(offset+chunkSize, len(data))]
+						n, err := w.Write(ctx, chunk)
+						require.NoError(t, err)
+						require.Equal(t, len(chunk), n)
+						// The writer must own any buffered bytes after Write returns.
+						clear(chunk)
+					}
+					require.NoError(t, w.Close(ctx))
+					got, err := store.ReadFile(ctx, "nested/data")
+					require.NoError(t, err)
+					require.Equal(t, expected, got)
+				})
+			}
+		}
+	}
+
+	for _, option := range []*storeapi.WriterOption{nil, {}, {PartSize: 8192}} {
+		w, err := store.Create(ctx, "buffered", option)
+		require.NoError(t, err)
+		require.IsType(t, &flushStorageWriter{}, w)
+		_, err = w.Write(ctx, bytes.Repeat([]byte("x"), 17))
+		require.NoError(t, err)
+		require.NoError(t, w.Close(ctx))
+	}
+
+	for _, compression := range []compressedio.CompressType{compressedio.Gzip, compressedio.Snappy, compressedio.Zstd} {
+		t.Run(compression.FileSuffix(), func(t *testing.T) {
+			compressed := WithCompression(store, compression, compressedio.DecompressConfig{})
+			w, err := compressed.Create(ctx, "compressed", &storeapi.WriterOption{DirectIO: true, PartSize: 4097})
+			require.NoError(t, err)
+			data := bytes.Repeat([]byte("direct I/O with compression\n"), 10000)
+			n, err := w.Write(ctx, data)
+			require.NoError(t, err)
+			require.Equal(t, len(data), n)
+			require.NoError(t, w.Close(ctx))
+			got, err := compressed.ReadFile(ctx, "compressed")
+			require.NoError(t, err)
+			require.Equal(t, data, got)
+		})
+	}
+}
+
+func TestLocalDirectIOErrors(t *testing.T) {
+	ctx := context.Background()
+	filename := filepath.Join(t.TempDir(), "data")
+	for _, stage := range []string{"write", "close", "truncate", "buffered-close"} {
+		t.Run(stage, func(t *testing.T) {
+			w, err := newLocalDirectWriter(filename, 4096)
+			require.NoError(t, err)
+			require.NoError(t, w.file.Close())
+			// A real read-only descriptor makes writes or truncation fail while
+			// still allowing us to verify that the writer releases it on error.
+			w.file, err = os.Open(filename)
+			require.NoError(t, err)
+			switch stage {
+			case "write":
+				n, err := w.Write(ctx, make([]byte, 4097))
+				require.Equal(t, 4096, n)
+				require.Error(t, err)
+			case "close":
+				_, err = w.Write(ctx, []byte("tail"))
+				require.NoError(t, err)
+				require.Error(t, w.Close(ctx))
+			case "truncate":
+				require.Error(t, w.Close(ctx))
+			case "buffered-close":
+				buffered := objectio.NewBufferedWriter(w, 4096, compressedio.NoCompression, nil)
+				_, err = buffered.Write(ctx, make([]byte, 4096))
+				require.NoError(t, err)
+				require.Error(t, buffered.Close(ctx))
+			}
+			_, err = w.file.Stat()
+			require.ErrorIs(t, err, os.ErrClosed)
+			require.Error(t, w.err)
+			require.Same(t, w.err, w.Close(ctx))
+			n, err := w.Write(ctx, []byte("retry"))
+			require.Zero(t, n)
+			require.Same(t, w.err, err)
+		})
+	}
+
+	_, err := newLocalDirectWriter(filename, int64(^uint64(0)>>1))
+	require.ErrorContains(t, err, "part size is too large")
+	_, err = newLocalDirectWriter(filepath.Join(filename, "missing"), 4096)
+	require.Error(t, err)
+
+	store, err := NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	w, err := store.Create(ctx, "data", &storeapi.WriterOption{DirectIO: true, PartSize: int64(^uint64(0) >> 1)})
+	require.Error(t, err)
+	require.True(t, w == nil, "failed Create must return a nil writer interface")
+}
 
 func TestDeleteFile(t *testing.T) {
 	dir := t.TempDir()

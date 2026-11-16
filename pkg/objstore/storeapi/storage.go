@@ -128,6 +128,9 @@ type Uploader interface {
 type WriterOption struct {
 	Concurrency int
 	PartSize    int64
+	// DirectIO bypasses the OS page cache for local streaming writes. Other
+	// backends ignore it. Unsupported local filesystems return an error.
+	DirectIO bool
 }
 
 // MaxUploadParts is the maximum number of parts a single multipart-uploaded
