@@ -365,6 +365,10 @@ pub(super) fn on_exchange_table_partition(
     }
     // The standalone table restricts its writes from here on: a failure
     // rolls that back rather than cancelling.
+    // Go `delayForAsyncCommit`, once per visit of this state.
+    if reorg_outcome.filter(|outcome| outcome.job_id == active.job.id).is_none() {
+        crate::delay_for_async_commit();
+    }
     let mut args = args;
     if args.partition_id != definition.id {
         args.partition_id = definition.id;

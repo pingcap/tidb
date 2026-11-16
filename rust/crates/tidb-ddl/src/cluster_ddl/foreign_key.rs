@@ -250,6 +250,11 @@ pub(super) fn on_create_foreign_key(
             Ok(action_step(write))
         }
         SchemaState::WRITE_ONLY => {
+            // Go `onCreateForeignKey`: `delayForAsyncCommit` before the
+            // write-only constraint check, once per visit of this state.
+            if outcome.is_none() {
+                crate::delay_for_async_commit();
+            }
             if fk_check {
                 match checked_outcome(active, outcome) {
                     None => {

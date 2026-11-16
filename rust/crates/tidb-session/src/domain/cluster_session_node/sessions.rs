@@ -389,6 +389,8 @@ impl DomainSessions for Domain {
             session.set_min_safe_ts_provider(Arc::new(move |txn_scope| {
                 safe_ts_transactions.min_safe_ts(txn_scope)
             }));
+            let stale_ts_transactions = Arc::clone(&transactions);
+            session.set_stale_timestamp_provider(Arc::new(move || stale_ts_transactions.stale_timestamp()));
             session.set_snapshot_schema_provider(Arc::new(move |ts, resource_group, validate| {
                 let _hold = tidb_txnkv::ACTIVE_START_TS.hold(ts);
                 let snapshot = transactions

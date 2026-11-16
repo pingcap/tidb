@@ -370,6 +370,10 @@ where
         .ok_or_else(|| ClusterDdlError::Backfill("ADD INDEX reorg names no table".to_owned()))?;
     crate::job_ctx::attach_reorg_skip_check(&reorg.query.to_utf8_lossy_go());
     let mut initialized = None;
+    // Go `getReorgInfo` / `getReorgInfoFromPartitions`: `delayForAsyncCommit`
+    // before the reorganization's version, which is this transaction's
+    // start timestamp.
+    crate::delay_for_async_commit();
     let result = reorg_transaction(opener, timeout, &crate::job_ctx::backfill_request_source(reorg.job_id), |meta, snapshot, buffer, start_ts| {
         let handle = if reorg.merging {
             // Go `checkIfTempIndexReorgWorkCanSkip`.

@@ -691,6 +691,11 @@ pub struct Session {
     snapshot_schema_provider: Option<Arc<txn::SnapshotSchemaProvider>>,
     /// Go `sctx.GetStore().GetMinSafeTS(txnScope)`.
     min_safe_ts_provider: Option<Arc<txn::MinSafeTsProvider>>,
+    /// Go `GetOracle().GetStaleTimestamp`, the provider `AS OF` installs.
+    stale_timestamp_provider: Option<Arc<txn::StaleTimestampProvider>>,
+    /// Go `StmtCtx.StaleTSOProvider`'s value for the running statement, in
+    /// seconds: `NOW()` reads it (`getStmtTimestamp`).
+    pub(crate) stale_tso_now: Option<f64>,
     /// How many top-level compiles (Go `executor.Compile`) have succeeded:
     /// a prepared EXECUTE, which may compile once per attempt, counts its
     /// statement once if any attempt planned it.
@@ -1101,6 +1106,8 @@ impl Session {
             statement_txn_activator: None,
             snapshot_schema_provider: None,
             min_safe_ts_provider: None,
+            stale_timestamp_provider: None,
+            stale_tso_now: None,
             successful_compiles: 0,
             snapshot_schema: None,
             statement_snapshot: None,
@@ -3004,6 +3011,8 @@ impl Session {
             return Ok(());
         }
         self.begin_process_plan_info();
+        // Go's fresh `StmtCtx.StaleTSOProvider` per statement.
+        self.stale_tso_now = None;
         self.check_sandbox_mode(sql)?;
         self.begin_statement_observation(sql);
         self.publish_statement_start(sql);

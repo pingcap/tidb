@@ -1912,7 +1912,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                             .get_system(tidb_vardef::tidb_vars::TIFLASH_REPLICA_READ)
                             .unwrap_or_default(),
                     ))
-                    .with_lazy_clock(snapshot.timestamp, zone);
+                    .with_lazy_clock(self.stale_tso_timestamp().or(snapshot.timestamp), zone);
                 if let Some(latest_index_schema) = latest_index_schema {
                     let _ = ctx.with_latest_info_schema(crate::LatestInfoSchema::new(latest_index_schema));
                 }
@@ -2040,7 +2040,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_replica_read(replica_read)
                 .with_coprocessor_read_policy(snapshot.coprocessor_read_policy.clone())
-                .with_lazy_clock(snapshot.timestamp, zone)
+                .with_lazy_clock(self.stale_tso_timestamp().or(snapshot.timestamp), zone)
                 .with_parser_config(self.session_vars().build_parser_switches())
                 .with_ddl_job_context(
                     snapshot.ddl_cdc_write_source,
@@ -2843,6 +2843,12 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// view's body included -- joins the transaction's map at the node's
     /// schema version then. `None` when this statement locks nothing.
     fn mdl_related_table_recorder(&self) -> Option<crate::MdlRelatedTableRecorder>;
+    /// Go `StmtCtx.GetStaleTSO` as `getStmtTimestamp` reads it before
+    /// `@@timestamp`: the statement's stale-read TSO, in seconds, once an
+    /// `AS OF` expression installed its provider.
+    fn stale_tso_timestamp(&self) -> Option<f64> {
+        None
+    }
     /// Go `TableLockReadContext`: the table locks this session holds
     /// (`StmtContext::locked_tables`); `None` with table locks disabled.
     fn locked_tables(&self) -> Option<crate::LockedTables>;

@@ -216,6 +216,10 @@ pub trait ClusterTransactions: Send + Sync {
     fn min_safe_ts(&self, _txn_scope: &str) -> u64 {
         0
     }
+    /// Go `GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)`.
+    fn stale_timestamp(&self) -> Result<u64, String> {
+        Err("a stale timestamp is unavailable from this storage owner".into())
+    }
     /// PD region count and approximate storage-key count for one physical
     /// table's record range. Embedded stores have no PD HTTP authority.
     fn record_region_stats(
@@ -1440,6 +1444,10 @@ where
 
     fn min_safe_ts(&self, txn_scope: &str) -> u64 {
         self.opener.store().get_min_safe_ts(txn_scope)
+    }
+
+    fn stale_timestamp(&self) -> Result<u64, String> {
+        self.opener.store().get_stale_timestamp()
     }
 
     fn record_region_stats(

@@ -160,3 +160,24 @@ pub(crate) fn isolate_process_globals() -> bool {
 pub mod backfilling_dist_executor;
 /// Go distributed backfill scheduler.
 pub mod backfilling_dist_scheduler;
+
+/// Go `delayForAsyncCommit` (`pkg/ddl/ddl.go`): without the metadata lock,
+/// a DDL step that must not race an async-commit or 1PC transaction still
+/// using the previous schema sleeps for the async-commit safe window plus
+/// the allowed clock drift, after which such a transaction's `maxCommitTS`
+/// has passed and it falls back to a 2PC commit that checks the schema.
+pub(crate) fn delay_for_async_commit() {
+    if tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen()) {
+        return;
+    }
+    let config = tikv_client::config::get_global_config();
+    let duration = config.tikv_client.async_commit.safe_window + config.tikv_client.async_commit.allowed_clock_drift;
+    tidb_ddl_logutil::ddl_logger().info(
+        "sleep before DDL finishes to make async commit and 1PC safe",
+        &[tidb_log::Field::new(
+            "duration",
+            tidb_log::Value::Duration(i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX)),
+        )],
+    );
+    std::thread::sleep(duration);
+}

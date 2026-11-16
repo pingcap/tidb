@@ -248,6 +248,18 @@ impl<PdC: PdClient> TikvStore<PdC> {
         self.store.get_min_safe_ts(txn_scope)
     }
 
+    /// Go `store.GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope,
+    /// 0)`: the oracle's estimate of now from its last PD timestamp.
+    pub fn get_stale_timestamp(&self) -> Result<u64, String> {
+        let oracle = self.store.get_oracle();
+        self.block_on(async move {
+            oracle
+                .get_stale_timestamp(tikv_client::oracle::GLOBAL_TXN_SCOPE, 0)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
+
     /// Go `store.GetOracle().SetExternalTimestamp` with `Some`, and
     /// `GetExternalTimestamp` with `None`.
     pub fn external_timestamp(&self, value: Option<u64>) -> Result<u64, String> {

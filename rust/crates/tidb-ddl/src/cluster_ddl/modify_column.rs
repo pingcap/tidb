@@ -3464,6 +3464,7 @@ pub fn check_modify_column_data(
     if sql.is_empty() {
         return Ok(());
     }
+    crate::delay_for_async_commit();
     let rows = pool.exec_restricted_sql(&sql).map_err(|error| (false, error))?;
     let Some(value) = rows.first().and_then(|row| row.first()) else {
         return Ok(());

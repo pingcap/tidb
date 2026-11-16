@@ -56,6 +56,9 @@ pub type StatementTxnActivator = dyn Fn() + Send + Sync;
 /// Go `kv.Storage.GetMinSafeTS(txnScope)`.
 pub type MinSafeTsProvider = dyn Fn(&str) -> u64 + Send + Sync;
 
+/// Go `GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)`.
+pub type StaleTimestampProvider = dyn Fn() -> Result<u64, String> + Send + Sync;
+
 /// SET-time validation and schema loading, without replacing the active row snapshot.
 pub type SnapshotSchemaProvider =
     dyn Fn(u64, &str, bool) -> Result<SessionExtendedInfoSchema, DriverError> + Send + Sync;
@@ -580,6 +583,24 @@ impl Session {
     pub(crate) fn calculate_as_of_ts_expr(&mut self, expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
         // 2013-01-01 00:00:00 UTC in milliseconds, Go's `minTSO` bound.
         const MIN_PHYSICAL_MS: u64 = 1_356_998_400_000;
+        // Go `SetStaleTSOProviderIfNotExist`: the statement's `NOW()` reads
+        // the store's stale timestamp (`mockStaleReadTSO` in tests).
+        if self.stale_tso_now.is_none() {
+            let stale = match tidb_failpoint::eval("github.com/pingcap/tidb/pkg/sessiontxn/staleread/mockStaleReadTSO") {
+                Some(value) => Ok(value.int() as u64),
+                None => self
+                    .stale_timestamp_provider
+                    .as_ref()
+                    .map_or(Ok(0), |provider| provider()),
+            };
+            match stale {
+                // Go `oracle.GetTimeFromTS`: the physical milliseconds.
+                Ok(ts) if ts != 0 => self.stale_tso_now = Some((ts >> 18) as f64 / 1000.0),
+                Ok(_) => {}
+                // Go logs "get stale tso failed" and reads the wall clock.
+                Err(error) => tidb_log::error("get stale tso failed", &[tidb_logutil::zap_error(&error)]),
+            }
+        }
         let value = self.eval_value(expr)?;
         let as_of_error = |cause: &str| {
             DriverError::from(
@@ -663,6 +684,11 @@ impl Session {
     /// Installs the store's min SafeTS (Go `GetMinSafeTS`).
     pub fn set_min_safe_ts_provider(&mut self, provider: std::sync::Arc<MinSafeTsProvider>) {
         self.min_safe_ts_provider = Some(provider);
+    }
+
+    /// Installs the store's stale-timestamp oracle (`AS OF`'s `NOW()`).
+    pub fn set_stale_timestamp_provider(&mut self, provider: std::sync::Arc<StaleTimestampProvider>) {
+        self.stale_timestamp_provider = Some(provider);
     }
 
     pub fn set_snapshot_schema_provider(
