@@ -45,6 +45,13 @@ func TestFTSRequiresStarterMode(t *testing.T) {
 	tk.MustExec("create table fts_t(id int primary key, title text)")
 	tk.MustContainErrMsg("alter table fts_t add fulltext index ft_title(title)", "FULLTEXT index is only supported in starter deployment mode")
 	tk.MustContainErrMsg("explain select * from fts_t where fts_match_word('hello', title)", "FTS_MATCH_WORD() is only supported in starter deployment mode")
+	if kerneltype.IsClassic() {
+		// The classic kernel builds the index in TiKV once the hidden switch
+		// is on; only the columnar search function stays starter-only.
+		tk.MustExec("set @@tidb_enable_tikv_fulltext_index = on")
+		tk.MustExec("alter table fts_t add fulltext index ft_title(title)")
+		tk.MustContainErrMsg("explain select * from fts_t where fts_match_word('hello', title)", "FTS_MATCH_WORD() is only supported in starter deployment mode")
+	}
 }
 
 func TestTiFlashFTSMatchWordPushDown(t *testing.T) {

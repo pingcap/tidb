@@ -182,6 +182,37 @@ func getForeignKeyCheckInSharedLockSession(s *SessionVars) (string, error) {
 	return BoolToOnOff(vardef.DefTiDBForeignKeyCheckInSharedLock), nil
 }
 
+// validateInnodbFtTokenSizes rejects a new value of innodb_ft_max_token_size
+// (settingMax) or of innodb_ft_min_token_size that would leave the minimum
+// above the maximum. otherName is the variable the new value is checked
+// against.
+func validateInnodbFtTokenSizes(vars *SessionVars, otherName, normalizedValue string, settingMax bool) (string, error) {
+	if vars.GlobalVarsAccessor == nil {
+		return normalizedValue, nil
+	}
+	otherValue, err := vars.GlobalVarsAccessor.GetGlobalSysVar(otherName)
+	if err != nil {
+		return normalizedValue, err
+	}
+	newSize, err := strconv.ParseUint(normalizedValue, 10, 64)
+	if err != nil {
+		return normalizedValue, err
+	}
+	otherSize, err := strconv.ParseUint(otherValue, 10, 64)
+	if err != nil {
+		return normalizedValue, err
+	}
+	if settingMax && newSize < otherSize {
+		return normalizedValue, fmt.Errorf("%s (%d) cannot be less than %s (%d)",
+			vardef.InnodbFtMaxTokenSize, newSize, vardef.InnodbFtMinTokenSize, otherSize)
+	}
+	if !settingMax && newSize > otherSize {
+		return normalizedValue, fmt.Errorf("%s (%d) cannot be greater than %s (%d)",
+			vardef.InnodbFtMinTokenSize, newSize, vardef.InnodbFtMaxTokenSize, otherSize)
+	}
+	return normalizedValue, nil
+}
+
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
 //
 //	[NONE, SESSION, INSTANCE, GLOBAL, GLOBAL & SESSION]
@@ -2220,6 +2251,20 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.WaitTimeout, Value: strconv.FormatInt(vardef.DefWaitTimeout, 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: secondsPerYear},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.InteractiveTimeout, Value: "28800", Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: secondsPerYear},
+	// The fulltext analyzer sysvars below drive local MATCH ... AGAINST tokenization
+	// (see pkg/expression/fulltext). Bounds match MySQL's InnoDB/ngram parsers so a
+	// token stream analyzed here matches what MySQL would produce for the same text.
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.InnodbFtEnableStopword, Value: BoolToOnOff(vardef.DefInnodbFtEnableStopword), Type: vardef.TypeBool, AutoConvertNegativeBool: true},
+	// The ranges of the two token sizes overlap, and a minimum above the maximum
+	// would make the STANDARD analyzer drop every token, so each is validated
+	// against the other.
+	{Scope: vardef.ScopeGlobal, Name: vardef.InnodbFtMaxTokenSize, Value: strconv.Itoa(vardef.DefInnodbFtMaxTokenSize), Type: vardef.TypeUnsigned, MinValue: 10, MaxValue: 84, Validation: func(vars *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
+		return validateInnodbFtTokenSizes(vars, vardef.InnodbFtMinTokenSize, normalizedValue, true)
+	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.InnodbFtMinTokenSize, Value: strconv.Itoa(vardef.DefInnodbFtMinTokenSize), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: 16, Validation: func(vars *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
+		return validateInnodbFtTokenSizes(vars, vardef.InnodbFtMaxTokenSize, normalizedValue, false)
+	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.NgramTokenSize, Value: strconv.Itoa(vardef.DefNgramTokenSize), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: 10},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.InnodbLockWaitTimeout, Value: strconv.FormatInt(vardef.DefInnodbLockWaitTimeout, 10), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: 1073741824, SetSession: func(s *SessionVars, val string) error {
 		lockWaitSec := TidbOptInt64(val, vardef.DefInnodbLockWaitTimeout)
 		s.LockWaitTimeout = lockWaitSec * 1000
@@ -2836,6 +2881,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableAlternativeLogicalPlans, Value: BoolToOnOff(vardef.DefOptEnableAlternativeLogicalPlans), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableAlternativeLogicalPlans = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableTiKVFullTextIndex, Value: BoolToOnOff(vardef.DefTiDBEnableTiKVFullTextIndex), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableTiKVFullTextIndex = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableStrictDoubleTypeCheck, Value: BoolToOnOff(vardef.DefEnableStrictDoubleTypeCheck), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
