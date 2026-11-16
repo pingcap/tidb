@@ -66,11 +66,6 @@ func NewStatsCacheImpl(statsHandle types.StatsHandle) (types.StatsCache, error) 
 	return result, nil
 }
 
-// NewStatsCacheImplForTest creates a new StatsCache for test.
-func NewStatsCacheImplForTest() (types.StatsCache, error) {
-	return NewStatsCacheImpl(nil)
-}
-
 // cacheOfBatchUpdate is a cache for batch update the stats cache.
 // We should not insert a item based on a item which we get from the cache long time ago.
 // It may cause the cache to be inconsistent.
