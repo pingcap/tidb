@@ -581,7 +581,7 @@ impl FKCheckExec {
         if ctx.pessimistic_transaction() {
             if let Some(selected) = ctx.selected_lock_keys() {
                 for key in &self.to_be_locked_keys {
-                    selected.insert(key.as_bytes().to_vec());
+                    selected.add_unchanged_key_for_lock(key.as_bytes().to_vec(), true);
                 }
             }
             return Ok(());

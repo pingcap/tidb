@@ -464,6 +464,13 @@ impl Session {
         *self.assert_lock_errors.get_or_insert_with(Default::default).entry(name.into()).or_default() += 1;
     }
 
+    /// Go `SessionVars.ForeignKeyCheckInSharedLock`.
+    pub(crate) fn foreign_key_check_in_shared_lock(&self) -> bool {
+        self.vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_FOREIGN_KEY_CHECK_IN_SHARED_LOCK)
+            .is_ok_and(|value| value == "ON")
+    }
+
     /// Go `staleread.IsStmtStaleness`.
     pub fn is_stmt_staleness(&self) -> bool { self.statement_is_staleness }
 

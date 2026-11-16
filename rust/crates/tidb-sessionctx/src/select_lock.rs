@@ -15,7 +15,7 @@
 //! The lock hand-off a statement attempt shares between its locking
 //! operators and its owner (Go `SelectLockExec`'s `doLockKeys` inputs).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use tidb_txnkv::transaction::LockWaitTime;
@@ -65,7 +65,9 @@ pub struct SelectedLockKeys {
 
 #[derive(Debug, Default)]
 struct SelectedLocks {
-    dml: BTreeSet<Vec<u8>>,
+    /// Go `TransactionContext.unchangedKeys`: each key and whether it is
+    /// locked in share mode.
+    dml: BTreeMap<Vec<u8>, bool>,
     reads: Vec<(LockWaitTime, Vec<Vec<u8>>)>,
 }
 
@@ -75,10 +77,13 @@ pub struct TakenLocks {
     /// Locking reads' keys with their wait policy, in EOF order. Empty when
     /// the operators locked inside execution.
     pub reads: Vec<(LockWaitTime, Vec<Vec<u8>>)>,
-    /// Go `TxnCtx.UnchangedKeysForLock`: matched rows an UPDATE left as they
-    /// were, which Go's `handlePessimisticDML` locks together with the keys
-    /// the statement wrote.
+    /// Go `TxnCtx.CollectUnchangedKeysForXLock`: matched rows an UPDATE left
+    /// as they were, which Go's `handlePessimisticDML` locks together with
+    /// the keys the statement wrote.
     pub unchanged: Vec<Vec<u8>>,
+    /// Go `TxnCtx.CollectUnchangedKeysForSLock`: a foreign-key check's keys,
+    /// locked in share mode under `tidb_foreign_key_check_in_shared_lock`.
+    pub unchanged_shared: Vec<Vec<u8>>,
 }
 
 impl Default for SelectedLockKeys {
@@ -150,11 +155,15 @@ impl SelectedLockKeys {
 
     /// Adds a matched DML row that needs a lock even without a mutation.
     pub fn insert(&self, key: Vec<u8>) {
-        self.state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .dml
-            .insert(key);
+        self.add_unchanged_key_for_lock(key, false);
+    }
+
+    /// Go `TransactionContext.AddUnchangedKeyForLock(key, shared)`: a key
+    /// stays shared only while every add of it is shared.
+    pub fn add_unchanged_key_for_lock(&self, key: Vec<u8>, shared: bool) {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let entry = state.dml.entry(key).or_insert(shared);
+        *entry = shared && *entry;
     }
 
     /// Takes the attempt's unique keys in encoded-key order.
@@ -171,8 +180,11 @@ impl SelectedLockKeys {
     /// Matched DML rows follow locking reads, as in Go's statement lock step.
     pub fn take_requests(&self) -> Vec<(LockWaitTime, Vec<Vec<u8>>)> {
         let mut taken = self.take_all();
-        if !taken.unchanged.is_empty() {
-            taken.reads.push((self.default_wait, taken.unchanged));
+        let mut unchanged = taken.unchanged;
+        unchanged.extend(taken.unchanged_shared);
+        if !unchanged.is_empty() {
+            unchanged.sort();
+            taken.reads.push((self.default_wait, unchanged));
         }
         taken.reads
     }
@@ -182,9 +194,11 @@ impl SelectedLockKeys {
     /// with the keys the statement wrote, in one `LockKeys`.
     pub fn take_all(&self) -> TakenLocks {
         let state = std::mem::take(&mut *self.state.lock().unwrap_or_else(|p| p.into_inner()));
+        let (shared, exclusive): (Vec<_>, Vec<_>) = state.dml.into_iter().partition(|(_, shared)| *shared);
         TakenLocks {
             reads: state.reads,
-            unchanged: state.dml.into_iter().collect(),
+            unchanged: exclusive.into_iter().map(|(key, _)| key).collect(),
+            unchanged_shared: shared.into_iter().map(|(key, _)| key).collect(),
         }
     }
 

@@ -297,6 +297,9 @@ pub type PessimisticLockResourceGroupTagger =
 pub struct StatementKvContext {
     /// Go statement caller context, including `interceptor.WithRPCInterceptor`.
     pub caller_context: Option<tikv_client::trace::TraceContext>,
+    /// Go `util.SetSessionID(ctx, ConnectionID)` (`ExecStmt.Exec`,
+    /// `session.doCommit`): the client's committer takes it when created.
+    pub session_id: Option<u64>,
     /// Go `newLockCtx`: the session SQLKiller.Signal shared with the lock and TTL manager.
     pub killed: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>,
     /// Go `newLockCtx`: transaction lifetime expiration shared with the session.

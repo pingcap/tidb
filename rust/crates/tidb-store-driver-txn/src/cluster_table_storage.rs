@@ -198,13 +198,16 @@ fn acquire_statement_locks<S: StoreClient>(
     duplicate_hints: &BTreeMap<Vec<u8>, DuplicateKeyHint>,
     return_values: bool,
     lock_only_if_exists: bool,
+    in_share_mode: bool,
     wait: LockWaitTime,
     call: &UnaryCallContext,
 ) -> LockKeysOutcome {
     // KVTxn owns held-key filtering, existence checks, rollback of partial
     // lock attempts, and fair-lock retry state. TiDB only classifies the SQL
     // result and asks its statement provider for a newer read timestamp.
-    let result = if lock_only_if_exists {
+    let result = if in_share_mode {
+        transaction.acquire_shared_locks(keys, wait, call)
+    } else if lock_only_if_exists {
         transaction.acquire_locks_returning_values_if_exist(keys, wait, call)
     } else if return_values {
         transaction.acquire_locks_returning_values(keys, presume_not_exists, wait, call)
@@ -1065,6 +1068,7 @@ impl<S: StoreClient> SessionTransaction<S> {
                 &BTreeMap::new(),
                 true,
                 true,
+                false,
                 wait,
                 &call,
             ),
@@ -1109,6 +1113,27 @@ impl<S: StoreClient> SessionTransaction<S> {
         return_values: bool,
         wait: LockWaitTime,
     ) -> Result<LockKeysOutcome, StorageError> {
+        self.lock_keys_in_mode(keys, presume_not_exists, duplicate_hints, return_values, false, wait)
+    }
+
+    /// Go `tryLockKeys(e, keys, shared=true)`: shared pessimistic locks.
+    pub fn lock_keys_in_share_mode(
+        &self,
+        keys: Vec<Vec<u8>>,
+        wait: LockWaitTime,
+    ) -> Result<LockKeysOutcome, StorageError> {
+        self.lock_keys_in_mode(keys, BTreeSet::new(), BTreeMap::new(), false, true, wait)
+    }
+
+    fn lock_keys_in_mode(
+        &self,
+        keys: Vec<Vec<u8>>,
+        presume_not_exists: BTreeSet<Vec<u8>>,
+        duplicate_hints: BTreeMap<Vec<u8>, DuplicateKeyHint>,
+        return_values: bool,
+        in_share_mode: bool,
+        wait: LockWaitTime,
+    ) -> Result<LockKeysOutcome, StorageError> {
         let mut state = self
             .state
             .lock()
@@ -1129,6 +1154,7 @@ impl<S: StoreClient> SessionTransaction<S> {
                 &duplicate_hints,
                 return_values,
                 false,
+                in_share_mode,
                 wait,
                 &call,
             ),
@@ -2239,6 +2265,7 @@ impl<S: StoreClient> SessionSnapshot<S> {
             &hints,
             return_values,
             only_if_exists,
+            false,
             wait,
             &call,
         );

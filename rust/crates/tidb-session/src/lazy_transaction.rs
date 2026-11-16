@@ -410,6 +410,14 @@ impl OpenClusterTransaction for LazyClusterTransaction {
         })
     }
 
+    fn lock_staged_keys_in_share_mode(
+        &self,
+        keys: Vec<Vec<u8>>,
+        wait: LockWaitTime,
+    ) -> Result<LockKeysOutcome, String> {
+        self.shared.with_open(|transaction| transaction.lock_staged_keys_in_share_mode(keys, wait))
+    }
+
     fn lock_staged_keys_with_values(
         &self,
         keys: Vec<Vec<u8>>,

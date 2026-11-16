@@ -557,6 +557,16 @@ pub trait OpenClusterTransaction: Send {
         Err("only a pessimistic transaction locks statement keys".to_owned())
     }
 
+    /// Go `tryLockKeys(e, keys, shared=true)`: shared pessimistic locks on
+    /// a foreign-key check's keys.
+    fn lock_staged_keys_in_share_mode(
+        &self,
+        _keys: Vec<Vec<u8>>,
+        _wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<LockKeysOutcome, String> {
+        Err("a shared pessimistic lock requires a TiKV transaction".to_owned())
+    }
+
     /// [`Self::lock_staged_keys`] with the lazy INSERT assertions Go carries
     /// from `MemBuffer` into `KVTxn.LockKeys`.
     fn lock_staged_keys_with_assertions(
@@ -1787,6 +1797,14 @@ where
             wait,
         )
         .map_err(|error| error.to_string())
+    }
+
+    fn lock_staged_keys_in_share_mode(
+        &self,
+        keys: Vec<Vec<u8>>,
+        wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<LockKeysOutcome, String> {
+        SessionTransaction::lock_keys_in_share_mode(self, keys, wait).map_err(|error| error.to_string())
     }
 
     fn lock_staged_keys_with_values(

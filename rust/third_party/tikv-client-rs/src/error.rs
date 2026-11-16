@@ -450,13 +450,8 @@ pub fn extract_key_error(key_error: &mut kvrpcpb::KeyError) -> BoxError {
     if let Some(assertion_failed) = key_error.assertion_failed.clone() {
         return Box::new(AssertionFailedError { assertion_failed });
     }
-    if !key_error.abort.is_empty() {
-        let error = MessageError(format!("tikv aborts txn: {}", key_error.abort));
-        log::warn!(error:% = error; "2PC failed");
-        return Box::new(error);
-    }
-    if let Some(too_large) = &key_error.commit_ts_too_large {
-        let error = MessageError(format!("commit TS {} is too large", too_large.commit_ts));
+    if !key_error.abort.is_empty() || key_error.commit_ts_too_large.is_some() {
+        let error = MessageError(key_error_message(key_error));
         log::warn!(error:% = error; "2PC failed");
         return Box::new(error);
     }
@@ -466,10 +461,19 @@ pub fn extract_key_error(key_error: &mut kvrpcpb::KeyError) -> BoxError {
             not_found.start_ts
         )));
     }
-    Box::new(MessageError(format!(
-        "unexpected KeyError: {}",
-        protobuf_text(key_error)
-    )))
+    Box::new(MessageError(key_error_message(key_error)))
+}
+
+/// client-go `ExtractKeyErr`'s message for a key error none of its typed
+/// errors claims: an abort, a too-large commit TS, or the rest.
+pub(crate) fn key_error_message(key_error: &kvrpcpb::KeyError) -> String {
+    if !key_error.abort.is_empty() {
+        return format!("tikv aborts txn: {}", key_error.abort);
+    }
+    if let Some(too_large) = &key_error.commit_ts_too_large {
+        return format!("commit TS {} is too large", too_large.commit_ts);
+    }
+    format!("unexpected KeyError: {}", protobuf_text(key_error))
 }
 
 pub fn is_not_found(error: &(dyn StdError + 'static)) -> bool {
@@ -1401,12 +1405,21 @@ mod tests {
                 "txn 101 not found",
             ),
         ] {
+            // A key error the client keeps as `Error::KeyError` reads as
+            // client-go's `ExtractKeyErr` too, not as the protobuf's debug.
+            if key_error.txn_not_found.is_none() {
+                assert_eq!(crate::Error::from(key_error.clone()).to_string(), expected);
+            }
             assert_eq!(extract_key_error(&mut key_error).to_string(), expected);
         }
 
         let mut unexpected = kvrpcpb::KeyError::default();
         assert_eq!(
             extract_key_error(&mut unexpected).to_string(),
+            "unexpected KeyError: "
+        );
+        assert_eq!(
+            crate::Error::from(kvrpcpb::KeyError::default()).to_string(),
             "unexpected KeyError: "
         );
 

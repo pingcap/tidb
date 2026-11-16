@@ -1323,15 +1323,14 @@ impl Session {
         &mut self,
         stmt: &Stmt,
     ) -> Result<Option<PendingExecution>, DriverError> {
+        /// Each table's `AS OF`, in the order Go's preprocessor visits them.
         struct StripAsOf {
-            taken: Vec<tidb_ast::Expr>,
+            taken: Vec<Option<tidb_ast::Expr>>,
         }
         impl tidb_ast::Visitor for StripAsOf {
             fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
                 if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
-                    if let Some(expr) = table_ref.as_of.take() {
-                        self.taken.push(*expr);
-                    }
+                    self.taken.push(table_ref.as_of.take().map(|expr| *expr));
                 }
                 false
             }
@@ -1342,14 +1341,37 @@ impl Session {
         let mut stripped = stmt.clone();
         let mut visitor = StripAsOf { taken: Vec::new() };
         tidb_ast::Visitable::accept(&mut stripped, &mut visitor);
-        if visitor.taken.is_empty() {
+        if visitor.taken.iter().all(Option::is_none) {
             return Ok(None);
         }
+        // Go `staleReadProcessor.OnSelectTable`, table by table: a table
+        // without `AS OF` is timestamp 0. The first table that evaluates the
+        // processor (its `AS OF`, or with none `@@tx_read_ts` or
+        // `@@tidb_read_staleness`) fixes the statement's timestamp; every
+        // later table must name the same one.
+        let staleness_evaluates = self.vars.txn_read_ts() != 0
+            || self
+                .vars
+                .get_system("tidb_read_staleness")
+                .unwrap_or_default()
+                .parse::<i64>()
+                .is_ok_and(|seconds| seconds != 0);
+        let mut evaluated: Option<u64> = None;
         let mut resolved: Option<u64> = None;
         for expr in &visitor.taken {
-            let ts = self.calculate_as_of_ts_expr(expr)?;
-            match resolved {
-                None => resolved = Some(ts),
+            let ts = match expr {
+                Some(expr) => self.calculate_as_of_ts_expr(expr)?,
+                None => 0,
+            };
+            if ts > 0 && resolved.is_none() {
+                resolved = Some(ts);
+            }
+            match evaluated {
+                // Go refuses `AS OF` under `@@tx_read_ts` at this table,
+                // before any later table is compared (below).
+                None if ts > 0 && self.vars.txn_read_ts() != 0 => break,
+                None if ts > 0 || staleness_evaluates => evaluated = Some(ts),
+                None => {}
                 Some(previous) if previous == ts => {}
                 Some(_) => {
                     // Go refuses a statement naming two different instants.

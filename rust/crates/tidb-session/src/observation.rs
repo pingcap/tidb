@@ -594,6 +594,7 @@ impl Session {
         self.statement_kv_context
             .publish(tidb_txnkv::StatementKvContext {
                 caller_context: Some(tikv_client::trace::current_trace_context()),
+                session_id: self.vars.connection_id,
                 killed: Some(Arc::clone(&self.sql_killer().signal)),
                 lock_expired: self.txn_lock_expire(),
                 lock_wait_start: None,

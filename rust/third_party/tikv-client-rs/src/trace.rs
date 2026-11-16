@@ -998,6 +998,13 @@ where
     ACTIVE_TRACE_CONTEXT.scope(context, future).await
 }
 
+/// [`with_trace_context`] for synchronous code: `run` and everything it
+/// starts on this thread see `context` as the active one, with no executor
+/// of its own (so `run` may block on futures itself).
+pub fn with_trace_context_sync<R>(context: TraceContext, run: impl FnOnce() -> R) -> R {
+    ACTIVE_TRACE_CONTEXT.sync_scope(context, run)
+}
+
 /// Scope a future spawned for one shard of a request to the spawning task's
 /// trace context, as client-go's batch goroutines share the request's `ctx`.
 /// The shard future moves to the heap here, so the scope adds no copy of it

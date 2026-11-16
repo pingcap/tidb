@@ -280,8 +280,9 @@ impl Tk {
     pub(crate) fn exec_with_interceptor(
         &mut self, interceptor: tikv_client::RpcInterceptorHandle, sql: &str,
     ) -> Result<Vec<Vec<String>>, String> {
+        // Go `tk.ExecWithContext(interceptor.WithRPCInterceptor(ctx, ...))`.
         let context = tikv_client::with_rpc_interceptor(&tikv_client::trace::TraceContext::new(), interceptor);
-        tidb_txnkv::rpc::trace::build_in_ctx(None, Some(context), || self.exec(sql))
+        tikv_client::trace::with_trace_context_sync(context, || self.exec(sql))
     }
 
     /// The statement's rows, or its error's code and Go `err.Error()` text

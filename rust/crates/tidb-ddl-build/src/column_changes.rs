@@ -66,8 +66,10 @@ fn check_column_qualifier_part(
 pub fn modify_column_error(error: tidb_table::tables::KvTableError) -> MysqlError {
     use tidb_table::tables::KvTableError;
     match error {
-        // Go `updateColumnWorker.reformatErrors`' text and code.
-        KvTableError::Mysql(error) => error,
+        // Go `updateColumnWorker.reformatErrors`' text and code; a storage
+        // error (the backfill's `ErrEntryTooLarge`, a region error) keeps
+        // its own, as Go's job error does.
+        error @ (KvTableError::Mysql(_) | KvTableError::Storage(_)) => error.into_mysql_error(),
         other => tidb_terror::MysqlError::from_terror(&tidb_util::misc::syntax_error(
             format!("column modification failed: {other:?}"),
         )),

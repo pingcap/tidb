@@ -1257,6 +1257,8 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     is_heartbeat_started: Arc<atomic::AtomicBool>,
     heartbeat_generation: Arc<atomic::AtomicU64>,
     committer_initialized: bool,
+    /// client-go `ctx.Value(util.SessionID)` of the current call.
+    context_session_id: u64,
     pessimistic_lock_count: usize,
     /// The first shared-lock upgrade error aborts further locking and commit
     /// attempts, while rollback remains available to release other locks.
@@ -1387,6 +1389,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             is_heartbeat_started: Arc::new(atomic::AtomicBool::new(false)),
             heartbeat_generation: Arc::new(atomic::AtomicU64::new(0)),
             committer_initialized: pipelined,
+            context_session_id: 0,
             pessimistic_lock_count: 0,
             shared_lock_abort: None,
             prewritten: false,
@@ -3784,7 +3787,11 @@ impl<PdC: PdClient> Transaction<PdC> {
         // lock attempt reaches this point. In particular, it remains
         // initialized when a first shared lock is rejected for lacking an
         // exclusive primary, which controls whether a later SetSessionID call
-        // takes effect.
+        // takes effect. `newTwoPhaseCommitter(txn, sessionID)` takes the
+        // ctx's `util.SessionID`.
+        if !self.committer_initialized {
+            self.commit_settings.session_id = self.context_session_id;
+        }
         self.committer_initialized = true;
 
         if context.in_share_mode && self.buffer.get_primary_key().is_none() {
@@ -4185,6 +4192,11 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// The body of client-go `KVTxn.Commit` inside its `tikvTxn.Commit`
     /// span (Go's `trace.StartRegion(ctx, "CommitTxn")` region).
     async fn commit_txn(&mut self) -> Result<Option<Timestamp>> {
+        // client-go `KVTxn.Commit`: a transaction without a committer yet
+        // creates one with the ctx's `util.SessionID`.
+        if !self.committer_initialized {
+            self.commit_settings.session_id = self.context_session_id;
+        }
         if self.get_status() == TransactionStatus::Active {
             if let Some(error) = self.shared_lock_abort_error() {
                 return Err(error);
@@ -4736,6 +4748,12 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     pub fn set_transaction_source(&mut self, source: u64) {
         self.commit_settings.transaction_source = source;
+    }
+
+    /// client-go `ctx.Value(util.SessionID)` of the calls that follow, 0
+    /// when the ctx has none; the committer takes it when it is created.
+    pub fn set_context_session_id(&mut self, session_id: u64) {
+        self.context_session_id = session_id;
     }
 
     pub fn set_session_id(&mut self, session_id: u64) {

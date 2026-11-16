@@ -170,8 +170,9 @@ pub enum Error {
     /// Whether the transaction is committed or not is undetermined
     #[error("Whether the transaction is committed or not is undetermined")]
     UndeterminedError(Box<Error>),
-    /// Wraps a per-key error returned by TiKV.
-    #[error("{0:?}")]
+    /// Wraps a per-key error returned by TiKV, shown as client-go's
+    /// `ExtractKeyErr` returns it.
+    #[error("{}", crate::error::key_error_message(.0))]
     KeyError(Box<ProtoKeyError>),
     /// A malformed memcomparable region key returned by PD or TiKV.
     ///

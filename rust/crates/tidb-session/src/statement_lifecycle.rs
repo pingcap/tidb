@@ -779,22 +779,43 @@ impl StatementLifecycle<'_> {
         let taken = self.session.take_selected_locks();
         let mut requests = taken.reads;
         let mut keys = self.txn.buffer().pessimistic_keys_since(*savepoint);
-        if !taken.unchanged.is_empty() {
-            keys.extend(taken.unchanged);
-            keys.sort();
-            keys.dedup();
+        keys.extend(taken.unchanged);
+        // With `tidb_foreign_key_check_in_shared_lock` off, Go locks the
+        // foreign-key checks' keys exclusively with the others; on, it takes
+        // them in share mode after the exclusive locks, except a key this
+        // transaction wrote (`moveWrittenSharedLockKeysToExclusive`).
+        let mut shared_keys = Vec::new();
+        if self.session.foreign_key_check_in_shared_lock() {
+            let exclusive: std::collections::BTreeSet<Vec<u8>> = keys.iter().cloned().collect();
+            for key in taken.unchanged_shared {
+                if exclusive.contains(&key) {
+                    continue;
+                }
+                // A key written by this transaction must not be protected
+                // only by a shared lock: prewrite would put over it.
+                if self.txn.buffer().get(&tidb_txnkv::Key::from(key.clone())).is_some() {
+                    keys.push(key);
+                } else {
+                    shared_keys.push(key);
+                }
+            }
+        } else {
+            keys.extend(taken.unchanged_shared);
         }
+        keys.sort();
+        keys.dedup();
+        let wait = tidb_txnkv::transaction::LockWaitTime::Timeout(self.session.lock_wait_timeout());
         if !keys.is_empty() {
-            requests.push((
-                tidb_txnkv::transaction::LockWaitTime::Timeout(self.session.lock_wait_timeout()),
-                keys,
-            ));
+            requests.push((wait, keys));
         }
         for (wait, keys) in requests {
-            match self.lock_pessimistic_keys(savepoint, keys, wait)? {
+            match self.lock_pessimistic_keys(savepoint, keys, wait, false)? {
                 PessimisticStep::Done => {}
                 retry => return Ok(retry),
             }
+        }
+        if !shared_keys.is_empty() {
+            return self.lock_pessimistic_keys(savepoint, shared_keys, wait, true);
         }
         Ok(PessimisticStep::Done)
     }
@@ -822,6 +843,7 @@ impl StatementLifecycle<'_> {
         savepoint: &BufferCheckpoint,
         keys: Vec<Vec<u8>>,
         wait: tidb_txnkv::transaction::LockWaitTime,
+        shared: bool,
     ) -> Result<PessimisticStep, SqlQueryError> {
         // Go `tryLockKeys`' `filterTemporaryTableKeys`: a temporary table's
         // rows are never locked in the store.
@@ -855,12 +877,11 @@ impl StatementLifecycle<'_> {
         // Every error exit rolls the STATEMENT back -- Go's `StmtRollback`
         // runs on any statement error, transport failures included.
         self.session.publish_transaction_lock_waiting(true);
-        let lock_result = transaction.lock_staged_keys_with_assertions(
-            keys,
-            presume_not_exists,
-            duplicate_hints,
-            wait,
-        );
+        let lock_result = if shared {
+            transaction.lock_staged_keys_in_share_mode(keys, wait)
+        } else {
+            transaction.lock_staged_keys_with_assertions(keys, presume_not_exists, duplicate_hints, wait)
+        };
         self.session.publish_transaction_lock_waiting(false);
         let outcome = match lock_result {
             Ok(outcome) => outcome,

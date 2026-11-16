@@ -235,6 +235,10 @@ impl<S: PdClient> TikvTxn<S> {
             return;
         };
         let context = cell.get();
+        // Go `util.SetSessionID(ctx, ConnectionID)`.
+        if let Some(session_id) = context.session_id {
+            self.engine.transaction_mut().inner_mut().set_context_session_id(session_id);
+        }
         if let Some(ru_details) = &context.ru_details {
             let applied = self
                 .applied_kv_context
@@ -1079,7 +1083,7 @@ impl<S: PdClient> TikvTxn<S> {
         wait: tidb_txnkv::transaction::LockWaitTime,
         call: &UnaryCallContext,
     ) -> Result<tidb_txnkv::transaction::AcquiredLocks, tidb_txnkv::transaction::PessimisticLockFailure> {
-        self.acquire(keys, presume_not_exists, wait, call, false, false)
+        self.acquire(keys, presume_not_exists, wait, call, false, false, false)
     }
     /// Locks keys and returns values from the statement lock context.
     pub fn acquire_locks_returning_values(
@@ -1089,7 +1093,7 @@ impl<S: PdClient> TikvTxn<S> {
         wait: tidb_txnkv::transaction::LockWaitTime,
         call: &UnaryCallContext,
     ) -> Result<tidb_txnkv::transaction::AcquiredLocks, tidb_txnkv::transaction::PessimisticLockFailure> {
-        self.acquire(keys, presume_not_exists, wait, call, true, false)
+        self.acquire(keys, presume_not_exists, wait, call, true, false, false)
     }
     /// Go `LockCtx.LockOnlyIfExists` with `InitReturnValues`: locks only the
     /// keys that exist, returning every key's value (read committed's
@@ -1107,7 +1111,18 @@ impl<S: PdClient> TikvTxn<S> {
             call,
             true,
             true,
+            false,
         )
+    }
+    /// Go `newLockCtx(..., inSharedMode=true)`: shared pessimistic locks,
+    /// which `handlePessimisticDML` takes on a foreign-key check's keys.
+    pub fn acquire_shared_locks(
+        &mut self,
+        keys: &[Vec<u8>],
+        wait: tidb_txnkv::transaction::LockWaitTime,
+        call: &UnaryCallContext,
+    ) -> Result<tidb_txnkv::transaction::AcquiredLocks, tidb_txnkv::transaction::PessimisticLockFailure> {
+        self.acquire(keys, &std::collections::BTreeSet::new(), wait, call, false, false, true)
     }
     fn acquire(
         &mut self,
@@ -1117,6 +1132,7 @@ impl<S: PdClient> TikvTxn<S> {
         call: &UnaryCallContext,
         return_values: bool,
         lock_only_if_exists: bool,
+        in_share_mode: bool,
     ) -> Result<tidb_txnkv::transaction::AcquiredLocks, tidb_txnkv::transaction::PessimisticLockFailure> {
         self.calls.set(call);
         self.apply_statement_kv_context();
@@ -1170,6 +1186,7 @@ impl<S: PdClient> TikvTxn<S> {
             context.init_return_values(keys.len());
         }
         context.lock_only_if_exists = lock_only_if_exists;
+        context.in_share_mode = in_share_mode;
         if self.for_update_ts > 0 && self.check_existence {
             context.init_check_existence(keys.len());
         }
