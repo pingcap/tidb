@@ -1,0 +1,38 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "old",
+    srcs = [
+        "enforcer_rules.go",
+        "implementation_rules.go",
+        "optimize.go",
+        "stringer.go",
+        "transformation_rules.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/old",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/expression/aggregation",
+        "//pkg/kv",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/planner/cascades/pattern",
+        "//pkg/planner/core",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/core/operator/physicalop",
+        "//pkg/planner/core/rule/util",
+        "//pkg/planner/implementation",
+        "//pkg/planner/memo",
+        "//pkg/planner/planctx",
+        "//pkg/planner/property",
+        "//pkg/planner/util",
+        "//pkg/planner/util/coreusage",
+        "//pkg/types",
+        "//pkg/util/dbterror/plannererrors",
+        "//pkg/util/intset",
+        "//pkg/util/ranger",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
