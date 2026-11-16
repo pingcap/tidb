@@ -13,6 +13,7 @@ go_library(
         "//pkg/errno",
         "//pkg/meta/model",
         "//pkg/parser/types",
+        "//pkg/sessionctx/vardef",
         "//pkg/types",
         "//pkg/util/context",
         "//pkg/util/dbterror",
@@ -32,7 +33,11 @@ go_test(
     ],
     embed = [":sessionstates"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 18,
+=======
+    shard_count = 20,
+>>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
     deps = [
         "//pkg/config",
         "//pkg/config/deploymode",
