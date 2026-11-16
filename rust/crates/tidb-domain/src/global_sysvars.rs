@@ -1209,6 +1209,7 @@ impl GlobalSysvars {
                 | TIDB_MAX_DELTA_SCHEMA_COUNT
                 | TIDB_STORE_LIMIT
                 | TIDB_TXN_COMMIT_BATCH_SIZE
+                | TIDB_TXN_ENTRY_SIZE_LIMIT
                 | TIDB_ENABLE_CHECK_CONSTRAINT
                 | TIDB_DDL_ENABLE_FAST_REORG
                 | TIDB_ENABLE_MDL
