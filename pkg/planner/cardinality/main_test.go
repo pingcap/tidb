@@ -85,20 +85,24 @@ func TestConstantOnlyPredicateDoesNotAffectIndexCoverage(t *testing.T) {
 	}
 
 	constantEQ := newEQ(one, one)
+	zero := &expression.Constant{Value: types.NewIntDatum(0), RetType: intType}
+	uncoveredConstantEQ := newEQ(zero, zero)
 	siteEQ := newEQ(&expression.Column{UniqueID: 1, RetType: intType}, one)
 	deleteEQ := newEQ(&expression.Column{UniqueID: 2, RetType: intType}, one)
 	userEQ := newEQ(&expression.Column{UniqueID: 3, RetType: intType}, one)
-	exprs := []expression.Expression{constantEQ, siteEQ, deleteEQ, userEQ}
+	exprs := []expression.Expression{constantEQ, uncoveredConstantEQ, siteEQ, deleteEQ, userEQ}
 
 	shortPath := &planutil.AccessPath{AccessConds: []expression.Expression{constantEQ, siteEQ, deleteEQ}}
-	shortMask, _, _, _, err := getMaskAndRanges(sctx.GetPlanCtx(), exprs, ranger.IndexRangeType, nil, shortPath)
+	shortMask, shortConstExprMask, _, _, _, err := getMaskAndRanges(sctx.GetPlanCtx(), exprs, ranger.IndexRangeType, nil, shortPath)
 	require.NoError(t, err)
 	longPath := &planutil.AccessPath{AccessConds: []expression.Expression{userEQ, siteEQ, deleteEQ}}
-	longMask, _, _, _, err := getMaskAndRanges(sctx.GetPlanCtx(), exprs, ranger.IndexRangeType, nil, longPath)
+	longMask, longConstExprMask, _, _, _, err := getMaskAndRanges(sctx.GetPlanCtx(), exprs, ranger.IndexRangeType, nil, longPath)
 	require.NoError(t, err)
 
-	require.Equal(t, int64(0b0110), shortMask)
-	require.Equal(t, int64(0b1110), longMask)
+	require.Equal(t, int64(0b01100), shortMask)
+	require.Equal(t, int64(0b00001), shortConstExprMask)
+	require.Equal(t, int64(0b11100), longMask)
+	require.Zero(t, longConstExprMask)
 	nodes := []*StatsNode{
 		{ID: 1, Tp: IndexType, mask: shortMask, numCols: 4, Selectivity: 1},
 		{ID: 2, Tp: IndexType, mask: longMask, numCols: 6, Selectivity: 0.001},
@@ -106,4 +110,13 @@ func TestConstantOnlyPredicateDoesNotAffectIndexCoverage(t *testing.T) {
 	usedSets := GetUsableSetsByGreedy(nodes)
 	require.Len(t, usedSets, 1)
 	require.Equal(t, int64(2), usedSets[0].ID)
+
+	residualMask := (int64(1) << uint(len(exprs))) - 1
+	residualMask &^= shortConstExprMask | longConstExprMask
+	for _, set := range usedSets {
+		residualMask &^= set.mask
+	}
+	// The covered constant predicate is excluded from residual estimation, while the constant predicate
+	// that is not present in any access conditions remains for the existing residual logic to handle.
+	require.Equal(t, int64(0b00010), residualMask)
 }
