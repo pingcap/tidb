@@ -28,6 +28,9 @@ SET tidb_opt_force_inline_cte=OFF;
 WITH c AS (SELECT ID FROM wp_posts ORDER BY ID LIMIT 2)
 SELECT SQL_CALC_FOUND_ROWS ID FROM c ORDER BY ID LIMIT 1;
 SELECT FOUND_ROWS();
+WITH c AS (SELECT ID,post_status FROM wp_posts)
+SELECT SQL_CALC_FOUND_ROWS a.ID,a.post_status FROM c a JOIN c b ON a.ID=b.ID ORDER BY a.ID LIMIT 1;
+SELECT FOUND_ROWS();
 SET tidb_opt_force_inline_cte=DEFAULT;
 --echo # Invalid placement uses MySQL error 1234; unsupported top-level UNION uses 1235.
 --error 1234

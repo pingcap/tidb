@@ -22,7 +22,10 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -387,6 +390,147 @@ func TestSQLCalcFoundRowsCTE(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("count-column-pruning", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_opt_force_inline_cte=OFF")
+		tk.MustExec("create table cte_width(id int primary key,payload varchar(1000))")
+		tk.MustExec("insert into cte_width values(1,'a'),(2,'a'),(3,'b')")
+		sql := "with c as (select id,payload from cte_width) select SQL_CALC_FOUND_ROWS a.id,a.payload from c a join c b on a.id=b.id order by a.id limit 1"
+		tk.MustQuery(sql).Check(testkit.Rows("1 a"))
+		plan := tk.Session().GetSessionVars().StmtCtx.GetPlan().(*physicalop.PhysicalCalcFoundRows)
+		readsPayload := func(t *testing.T, plan base.PhysicalPlan) bool {
+			t.Helper()
+			found := false
+			seen := make(map[base.PhysicalPlan]bool)
+			var visit func(base.PhysicalPlan)
+			visit = func(p base.PhysicalPlan) {
+				if p == nil || seen[p] {
+					return
+				}
+				seen[p] = true
+				switch x := p.(type) {
+				case *physicalop.PhysicalProjection:
+					for i, expr := range x.Exprs {
+						if c, ok := expr.(*expression.Constant); ok && c.Value.IsNull() {
+							require.False(t, mysql.HasNotNullFlag(c.RetType.GetFlag()), "NULL expression must be nullable")
+							require.False(t, mysql.HasNotNullFlag(x.Schema().Columns[i].RetType.GetFlag()), "NULL output schema must be nullable")
+						}
+					}
+				case *physicalop.PhysicalCTE:
+					require.Nil(t, x.CTE.ColumnUsage, "CTE demands must not survive physical planning")
+					for i, col := range x.Schema().Columns {
+						if !mysql.HasNotNullFlag(x.SeedPlan.Schema().Columns[i].RetType.GetFlag()) {
+							require.False(t, mysql.HasNotNullFlag(col.RetType.GetFlag()), "CTE consumer must accept nullable seed output")
+						}
+					}
+
+					visit(x.SeedPlan)
+					visit(x.RecurPlan)
+				case *physicalop.PhysicalTableReader:
+					for _, inner := range x.TablePlans {
+						visit(inner)
+					}
+				case *physicalop.PhysicalTableScan:
+					for _, col := range x.Columns {
+						found = found || col.Name.L == "payload"
+					}
+				case *physicalop.PointGetPlan:
+					for _, col := range x.Columns {
+						found = found || col.Name.L == "payload"
+					}
+				case *physicalop.BatchPointGetPlan:
+					for _, col := range x.Columns {
+						found = found || col.Name.L == "payload"
+					}
+				}
+				for _, child := range p.Children() {
+					visit(child)
+				}
+			}
+			visit(plan)
+			return found
+		}
+		require.True(t, readsPayload(t, plan.Children()[0]), "page still needs the payload")
+		require.False(t, readsPayload(t, plan.Children()[1]), "count must not scan unused payload")
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
+
+		cases := []struct {
+			name, sql, total string
+			rows             []string
+			payloadNeeded    bool
+		}{
+			{"empty", "with c as (select id,payload from cte_width where id>99) select SQL_CALC_FOUND_ROWS a.id,a.payload from c a join c b on a.id=b.id limit 1", "0", nil, false},
+			{"zero-limit", "with c as (select id,payload from cte_width) select SQL_CALC_FOUND_ROWS a.id,a.payload from c a join c b on a.id=b.id limit 0", "3", nil, false},
+			{"empty-page", "with c as (select id,payload from cte_width) select SQL_CALC_FOUND_ROWS a.id,a.payload from c a join c b on a.id=b.id limit 20,1", "3", nil, false},
+			{"predicate", "with c as (select id,payload from cte_width) select SQL_CALC_FOUND_ROWS a.id,a.payload from c a join c b on a.id=b.id where a.payload>'a' order by a.id limit 1", "1", []string{"3 b"}, true},
+			{"other-reference", "with c as (select id,payload from cte_width) select SQL_CALC_FOUND_ROWS a.id from c a join c b on a.id=b.id where b.payload>'a' order by a.id limit 1", "1", []string{"3"}, true},
+			{"distinct-output", "with c as (select id,payload from cte_width) select distinct SQL_CALC_FOUND_ROWS a.payload from c a join c b on a.id<=b.id order by a.payload limit 1", "2", []string{"a"}, true},
+			{"distinct-seed", "with c as (select distinct id%2 as k,payload from cte_width) select SQL_CALC_FOUND_ROWS a.k from c a join c b on a.k=b.k order by a.k limit 1", "5", []string{"0"}, true},
+			{"union-distinct-seed", "with c as (select 0 as k,payload from cte_width where id=1 union select 0,payload from cte_width where id=3) select SQL_CALC_FOUND_ROWS a.k from c a join c b on a.k=b.k limit 1", "4", []string{"0"}, true},
+			{"union-all-seed", "with c as (select id,payload from cte_width union all select id,payload from cte_width) select SQL_CALC_FOUND_ROWS a.id from c a join c b on a.id=b.id order by a.id limit 1", "12", []string{"1"}, false},
+			{"group-having-alias", "with c as (select id,payload from cte_width) select SQL_CALC_FOUND_ROWS a.id,max(a.payload) as p from c a join c b on a.id=b.id group by a.id having p>'a' order by a.id limit 1", "1", []string{"3 b"}, true},
+			{"inner-limit-order", "with c as (select id,payload from cte_width order by payload desc,id limit 2) select SQL_CALC_FOUND_ROWS a.id from c a join c b on a.id=b.id order by a.id limit 1", "2", []string{"1"}, true},
+			{"nested", "with c as (select id,payload from cte_width),d as (select a.id,a.payload from c a join c b on a.id=b.id) select SQL_CALC_FOUND_ROWS a.id,a.payload from d a join d b on a.id=b.id order by a.id limit 1", "3", []string{"1 a"}, false},
+			{"not-null-expression", "with c as (select id,coalesce(payload,'fallback') as p from cte_width) select SQL_CALC_FOUND_ROWS a.id,a.p from c a join c b on a.id=b.id order by a.id limit 1", "3", []string{"1 a"}, false},
+			{"null-output", "with c as (select id,case when id=2 then null else payload end as p from cte_width) select SQL_CALC_FOUND_ROWS a.id,a.p from c a join c b on a.id=b.id where a.id=2 limit 1", "1", []string{"2 <nil>"}, false},
+			{"no-output-columns", "with c as (select id,payload from cte_width) select SQL_CALC_FOUND_ROWS 1 from c a join c b on 1=1 limit 1", "9", []string{"1"}, false},
+			{"correlated-filter", "with c as (select id,payload from cte_width) select SQL_CALC_FOUND_ROWS a.id from c a join c b on a.id=b.id where exists(select 1 from cte_width x where x.payload=a.payload) order by a.id limit 1", "3", []string{"1"}, true},
+			{"recursive-unchanged", "with recursive c(id,payload) as (select id,payload from cte_width union all select id+10,payload from c where id<4) select SQL_CALC_FOUND_ROWS a.id from c a join c b on a.id=b.id order by a.id limit 1", "6", []string{"1"}, true},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				kit := testkit.NewTestKit(t, store)
+				kit.MustExec("use test")
+				kit.MustExec("set tidb_opt_force_inline_cte=OFF")
+				kit.MustQuery(strings.Replace(tc.sql, "SQL_CALC_FOUND_ROWS ", "", 1)).Check(testkit.Rows(tc.rows...))
+				kit.MustQuery(tc.sql).Check(testkit.Rows(tc.rows...))
+				p := kit.Session().GetSessionVars().StmtCtx.GetPlan().(*physicalop.PhysicalCalcFoundRows)
+				kit.MustQuery("select found_rows()").Check(testkit.Rows(tc.total))
+				require.Equal(t, tc.payloadNeeded, readsPayload(t, p.Children()[1]))
+			})
+		}
+		tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
+		tk.MustExec("set tidb_enable_plan_cache_for_subquery=ON")
+		tk.MustExec("set tidb_enable_plan_cache_for_param_limit=ON")
+		tk.MustExec("prepare slim_count from 'with c as (select id,payload from cte_width where id>=?) select SQL_CALC_FOUND_ROWS a.id,a.payload from c a join c b on a.id=b.id order by a.id limit ?'")
+		for i, cut := range []int{1, 1, 3, 3} {
+			tk.MustExec(fmt.Sprintf("set @cut=%d,@page=1", cut))
+			row, total := "1 a", "3"
+			if cut == 3 {
+				row, total = "3 b", "1"
+			}
+			tk.MustQuery("execute slim_count using @cut,@page").Check(testkit.Rows(row))
+			hit := "1"
+			if i == 0 {
+				hit = "0"
+			}
+			tk.MustQuery("select found_rows(),@@last_plan_from_cache").Check(testkit.Rows(total + " " + hit))
+		}
+		tk.MustExec("prepare bound_payload from 'with c as (select id,concat(payload,?) as payload from cte_width where id>=?) select SQL_CALC_FOUND_ROWS a.id,a.payload from c a join c b on a.id=b.id order by a.id limit ?'")
+		for i, cut := range []int{1, 1, 3, 3} {
+			tail, row, total := "x", "1 ax", "3"
+			if cut == 3 {
+				tail, row, total = "y", "3 by", "1"
+			}
+			tk.MustExec(fmt.Sprintf("set @tail='%s',@cut=%d,@page=1", tail, cut))
+			tk.MustQuery("execute bound_payload using @tail,@cut,@page").Check(testkit.Rows(row))
+			hit := "1"
+			if i == 0 {
+				hit = "0"
+			}
+			tk.MustQuery("select found_rows(),@@last_plan_from_cache").Check(testkit.Rows(total + " " + hit))
+		}
+
+		tk.MustExec("insert into cte_width values(4,'c')")
+		tk.MustQuery("execute bound_payload using @tail,@cut,@page").Check(testkit.Rows("3 by"))
+		tk.MustQuery("select found_rows(),@@last_plan_from_cache").Check(testkit.Rows("2 1"))
+		tk.MustExec("alter table cte_width modify column payload varchar(2000)")
+		tk.MustQuery("execute bound_payload using @tail,@cut,@page").Check(testkit.Rows("3 by"))
+		tk.MustQuery("select found_rows(),@@last_plan_from_cache").Check(testkit.Rows("2 0"))
+
+	})
 
 	t.Run("release-storage-before-count", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)

@@ -89,9 +89,19 @@ Prepared, non-prepared and instance-cache eligibility is preserved; the feature 
 
 An independent prerequisite fix in [plan_cache_rebuild.go](../../pkg/planner/core/plan_cache_rebuild.go) rebuilds ranges in PhysicalCTE/PhysicalCTEStorage seed and recursive definition plans. These are not ordinary consumer children. Its regression uses an ordinary SELECT, proving that stale cached parameter ranges are a preexisting CTE issue rather than a counting-only issue.
 
+## Shared CTE column pruning
+
+Ordinary SELECT, explicit COUNT and the native count branch use the same column-pruning rule. PlanBuilder only constructs the count plan; it does not enable or initialize CTE pruning. `ColumnPruner` collects the union of requirements from CTE consumers and processes producers before their dependencies, including references inside other producers. This allows ordinary SQL to avoid reading unused wide outputs as well.
+
+Unused producer outputs become typed nullable NULL constants, preserving storage positions and column IDs. Normal producer pruning then removes unnecessary source reads. Consumer schemas accept the nullable slots before statistics derivation. Required outputs, filter inputs, DISTINCT/grouping/HAVING inputs and inner-order/limit inputs are retained; existing projection pruning preserves assignment and SLEEP side effects.
+
+The transient `ColumnUsage` union survives nested optimization until the shared producer obtains its physical plan. Clearing it at the end of an outer pruning pass would allow optimization of an intermediate CTE to forget requirements from outer consumers. It is cleared after producer optimization, before plan caching; there is no count-specific or persistent pruning flag.
+
+Recursive, duplicate-eliminating (`CTEClass.IsDistinct`), correlated/Apply (including producers containing Apply), storage-only and already optimized producers are not rewritten with NULL slots. Their output requirements still propagate to dependent CTEs. Repeated column-pruning passes also retain the inputs referenced by predicates already pushed into the CTE. These boundaries preserve the existing query semantics and cache eligibility.
+
 ## Test coverage and evidence
 
-The following are maintained regression tests, not claims that every combination of the listed features has been exhaustively tested.
+Maintained regression coverage:
 
 | Area | Test entry points and coverage |
 | --- | --- |
@@ -103,13 +113,16 @@ The following are maintained regression tests, not claims that every combination
 | Cache behavior | `TestSQLCalcFoundRowsPlanCache`, `TestSQLCalcFoundRowsNonPreparedCache`, `TestSQLCalcFoundRowsProtocolPrepare`, `TestSQLCalcFoundRowsCTEPlanCache`; parameters/data/schema changes and eligibility comparisons |
 | Cache isolation and prerequisite fix | [TestSQLCalcFoundRowsConcurrentInstanceCache](../../pkg/planner/core/casetest/plancache/plan_cache_suite_test.go): ordinary and inline-CTE shared plans, two sessions with changing parameters; [TestPreparedPlanCacheWithCTE/materialized-parameter-rebuild](../../pkg/planner/core/casetest/plancache/plan_cacheable_checker_test.go) |
 | Generic statement state | [TestInfoBuiltin](../../pkg/expression/integration_test/integration_test.go): SHOW/EXPLAIN/description and prepared forms; [TestResetStmtCtx](../../pkg/sessionctx/stmtctx/stmtctx_test.go): final total, retry and reuse; [session-state tests](../../pkg/sessionctx/sessionstates/session_states_test.go): roundtrip state |
-| SQL integration | [executor/calc_found_rows.test](../../tests/integrationtest/t/executor/calc_found_rows.test): **71 SQL cases**, including WordPress-style queries, cache rebinding, placement errors and EXPLAIN counts; [expression/noop_functions.test](../../tests/integrationtest/t/expression/noop_functions.test): **64 cases**, including native totals under all three modes and unchanged other noop behavior |
+| SQL integration | [executor/calc_found_rows.test](../../tests/integrationtest/t/executor/calc_found_rows.test): **38 SQL cases**, including WordPress-style queries, cache rebinding, placement errors and EXPLAIN counts; [expression/noop_functions.test](../../tests/integrationtest/t/expression/noop_functions.test): **64 cases**, including native totals under all three modes and unchanged other noop behavior |
 | Plan infrastructure | [TestPlanClone](../../pkg/planner/core/generator/plan_cache/plan_clone_test.go) and [TestPlanIDChanged/TestReverse](../../pkg/util/plancodec/id_test.go): generated cloning and stable codec IDs, including 65/66/67 |
 | Real TiKV | [TestSQLCalcFoundRowsPushdown/TestSQLCalcFoundRowsCTEPushdown](../../tests/realtikvtest/pushdowntest/calc_found_rows_test.go): index lookup, grouped results, storage-backed materialized CTE/inner-limit results and prepared rebinding/cache hits |
+| Shared CTE pruning | [TestCTEColumnPruning](../../pkg/planner/core/tests/cte/cte_test.go): ordinary SELECT/COUNT, multiple/nested/shared consumers, pushed predicates, GROUP BY/DISTINCT/inner LIMIT, recursive fallback, side effects and prepared rebinding.  `TestSQLCalcFoundRowsCTE/count-column-pruning`: source scan width, nullable placeholders, preserved page payloads, prepared parameters, semantic fallbacks and removal of temporary demand state before caching |
 
-Local Ubuntu Ready validation passed the scoped feature, planner, reset/retry and SQL integration checks, server build and `make lint`. Earlier applicable codec/clone, cache, session-state and real-storage evidence is retained; those checks were not all rerun for the wrapper/EXPLAIN correction. Documentation-only changes reuse this evidence. Local success does not assert a GitHub CI result.
+Ubuntu Ready validation passed the native feature/InfoBuiltin, ordinary CTE pruning, CTE execution/spill, plan-cache, shared-CTE MPP planning and plan-clone tests, server build and `make lint`. Five SQL integration suites passed **523 cases**: native feature 38, noop settings 64, CTE 236, CTE EXPLAIN 52 and CTE execution 133. Golden changes retain grouping keys and required predicates while replacing unused output slots with NULL.
 
-Separate manual TiKV/TiFlash checks compared page/count results and prepared cache rebinding. The permanent real-storage suite above targets TiKV; manual TiFlash evidence must not be described as automated TiFlash CI coverage. The MySQL oracle, manual backend checks and performance measurements are supplementary local evidence, not additional permanent regression tests.
+Local acceptance on real TiKV and TiFlash passed **54 result/cache assertions** (27 per engine), covering ordinary SELECT/COUNT, nested shared payloads, native semantics and prepared rebinding. A TiFlash comparison on 100,000 rows with an 800-byte payload, four warmup rounds and 20 randomized rounds measured page-plus-total median times of **259.50 ms native**, **256.32 ms explicit COUNT with the wide CTE SQL** and **259.36 ms explicit COUNT with a manually narrowed CTE**. Both explicit COUNT forms now use general CTE pruning.
+
+A fresh WordPress 7.1.4/PHP 8.3.36 installation on TiKV passed **48 core assertions and 20 browser checks**, including publication, frontend content, homepage/search pagination and admin pagination, without an active compatibility plugin. This local application/storage acceptance supplements the maintained tests above.
 
 ### Targeted reproduction
 
@@ -120,11 +133,15 @@ export GOMAXPROCS=1
 export GOFLAGS=-p=1
 ./tools/check/failpoint-go-test.sh pkg/expression/integration_test -run '^(TestSQLCalcFoundRows|TestInfoBuiltin)' -count=1
 ./tools/check/failpoint-go-test.sh pkg/planner/core -run '^TestValidator$' -count=1
+./tools/check/failpoint-go-test.sh pkg/planner/core/tests/cte -run '^TestCTE' -count=1
 ./tools/check/failpoint-go-test.sh pkg/sessionctx/stmtctx -run '^TestResetStmtCtx$' -count=1
 make server
 # Use the integration runner's unistore backend; mysql_tester must be installed.
 (cd tests/integrationtest && TIDB_TEST_STORE_NAME=unistore TIKV_PATH= NEXT_GEN= ./run-tests.sh -b n -s ../../bin/tidb-server -t executor/calc_found_rows)
 (cd tests/integrationtest && TIDB_TEST_STORE_NAME=unistore TIKV_PATH= NEXT_GEN= ./run-tests.sh -b n -s ../../bin/tidb-server -t expression/noop_functions)
+(cd tests/integrationtest && TIDB_TEST_STORE_NAME=unistore TIKV_PATH= NEXT_GEN= ./run-tests.sh -b n -s ../../bin/tidb-server -t cte)
+(cd tests/integrationtest && TIDB_TEST_STORE_NAME=unistore TIKV_PATH= NEXT_GEN= ./run-tests.sh -b n -s ../../bin/tidb-server -t explain_cte)
+(cd tests/integrationtest && TIDB_TEST_STORE_NAME=unistore TIKV_PATH= NEXT_GEN= ./run-tests.sh -b n -s ../../bin/tidb-server -t executor/cte)
 make lint
 ```
 
@@ -133,7 +150,7 @@ Use the runner's `-r <case>` only when intentionally recording changed fixtures;
 ## Remaining limits and cost
 
 - Data and count may scan twice and repeat planning/execution work. Data-first execution helps first-row latency, but receiving the final total still waits for count. Materialized results are not shared across the two branches.
-
+- Shared CTE column pruning can avoid unused wide reads in eligible plans; it does not make execution single-pass. Local TiFlash width-control measurements are directional evidence, not universal latency parity. Compare equivalent page/count work on one host and distinguish cumulative allocation from peak memory.
 - Non-repeatable-expression checks are deliberately explicit. Arbitrary functions, plugins and all SQL combinations are not certified.
 - Recursive CTE results, recursion errors and cancellation are covered; **forced recursive-CTE spill is not**.
 - Generic EXPLAIN ANALYZE counting without SQL_CALC_FOUND_ROWS, EXPLAIN FOR CONNECTION count state, and Plan Replayer file/string-list forms are not aligned or certified by this correction.

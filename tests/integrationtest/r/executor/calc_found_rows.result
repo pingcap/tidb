@@ -54,6 +54,13 @@ ID
 SELECT FOUND_ROWS();
 FOUND_ROWS()
 2
+WITH c AS (SELECT ID,post_status FROM wp_posts)
+SELECT SQL_CALC_FOUND_ROWS a.ID,a.post_status FROM c a JOIN c b ON a.ID=b.ID ORDER BY a.ID LIMIT 1;
+ID	post_status
+1	publish
+SELECT FOUND_ROWS();
+FOUND_ROWS()
+4
 SET tidb_opt_force_inline_cte=DEFAULT;
 # Invalid placement uses MySQL error 1234; unsupported top-level UNION uses 1235.
 SELECT * FROM (SELECT SQL_CALC_FOUND_ROWS 1 AS id) c;

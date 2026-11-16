@@ -34,6 +34,10 @@ func (*ColumnPruner) Optimize(_ context.Context, lp base.LogicalPlan) (base.Logi
 	if err != nil {
 		return nil, planChanged, err
 	}
+	planChanged, err = pruneCTEColumns(lp)
+	if err != nil {
+		return nil, planChanged, err
+	}
 	intest.AssertFunc(func() bool {
 		return noUnexpectedZeroColumnSchema(lp)
 	}, "After column pruning, some operator got an unexpected zero-column output schema. Please fix it.")
@@ -69,4 +73,57 @@ func noUnexpectedZeroColumnSchema(p base.LogicalPlan) bool {
 // Name implements base.LogicalOptRule.<1st> interface.
 func (*ColumnPruner) Name() string {
 	return "column_prune"
+}
+
+// pruneCTEColumns crosses the shared-producer boundary after ordinary pruning
+// has collected consumer requirements. Producers are processed before their
+// dependencies, so nested CTE consumers contribute to the same union of demands.
+func pruneCTEColumns(root base.LogicalPlan) (bool, error) {
+	consumers := make(map[*logicalop.CTEClass][]*logicalop.LogicalCTE)
+	blocked := make(map[*logicalop.CTEClass]bool)
+	seenPlans := make(map[base.LogicalPlan]bool)
+	var producers []*logicalop.LogicalCTE
+	var collect func(base.LogicalPlan)
+	collect = func(p base.LogicalPlan) {
+		if p == nil || seenPlans[p] {
+			return
+		}
+		seenPlans[p] = true
+		if cte, ok := p.(*logicalop.LogicalCTE); ok && cte.Cte != nil {
+			_, seen := consumers[cte.Cte]
+			consumers[cte.Cte] = append(consumers[cte.Cte], cte)
+			if cte.OnlyUsedAsStorage {
+				blocked[cte.Cte] = true
+			}
+			if !seen {
+				if cte.Cte.SeedPartPhysicalPlan == nil {
+					collect(cte.Cte.SeedPartLogicalPlan)
+					collect(cte.Cte.RecursivePartLogicalPlan)
+				}
+				producers = append(producers, cte)
+			}
+		}
+		for _, child := range p.Children() {
+			collect(child)
+		}
+	}
+	collect(root)
+	changed := false
+	for i := len(producers) - 1; i >= 0; i-- {
+		cte := producers[i]
+		if blocked[cte.Cte] {
+			cte.Cte.ColumnUsage = nil
+		}
+		pruned, err := cte.PruneProducerColumns()
+		if err != nil {
+			return changed, err
+		}
+		changed = changed || pruned
+	}
+	for _, refs := range consumers {
+		for _, cte := range refs {
+			cte.SyncColumnTypes()
+		}
+	}
+	return changed, nil
 }
