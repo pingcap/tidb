@@ -220,6 +220,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
                 .with_stats_handle(self.stats_handle())
                 .with_user_identity(self.session_vars().current_user.clone().unwrap_or_default())
                 .with_pessimistic_transaction(pessimistic_transaction)
+                .with_shared_lock_promotion(self.session_vars().shared_lock_promotion())
                 .with_foreign_key_checks(self.foreign_key_checks())
                 .with_session_state(
                     self.session_vars()

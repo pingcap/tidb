@@ -480,6 +480,8 @@ pub struct SessionVars {
     /// Empty until the first one, as Go's is.
     /// (Go `SessionVars.LastTxnInfo`.)
     pub last_txn_info: String,
+    /// Go `SessionVars.LastCommitTS`: retained across read-only transactions.
+    pub last_commit_ts: u64,
     /// Go `SessionVars.LastQueryInfo`, exposed by the read-only
     /// `tidb_last_query_info` getter.
     pub last_query_info: tidb_sessionstates::QueryInfo,
@@ -575,6 +577,7 @@ impl Default for SessionVars {
         Self {
             stmt_warnings: Vec::new(),
             last_txn_info: String::new(),
+            last_commit_ts: 0,
             last_plan_replayer_token: String::new(),
             in_plan_replayer: false,
             plan_replayer_finished_task_key: std::collections::HashSet::new(),

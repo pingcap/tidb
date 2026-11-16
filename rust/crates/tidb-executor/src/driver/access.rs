@@ -495,6 +495,8 @@ pub struct PreparedPlanCacheEnvironment {
     sql_select_limit: String,
     in_transaction: bool,
     pessimistic_transaction: bool,
+    /// Go `NewPlanCacheKey` includes SharedLockPromotion.
+    shared_lock_promotion: bool,
     autocommit: bool,
     invalidate_on_fresh_stats: bool,
     binding_sql: String,
@@ -584,6 +586,7 @@ impl PreparedPlanCacheEnvironment {
             sql_select_limit: String::new(),
             in_transaction: false,
             pessimistic_transaction: false,
+            shared_lock_promotion: false,
             autocommit: true,
             invalidate_on_fresh_stats: true,
             binding_sql: String::new(),
@@ -609,6 +612,13 @@ impl PreparedPlanCacheEnvironment {
     #[must_use]
     pub const fn with_pessimistic_transaction(mut self, enabled: bool) -> Self {
         self.pessimistic_transaction = enabled;
+        self
+    }
+
+    /// Go `NewPlanCacheKey`: promoted FOR SHARE plans cannot reuse no-op locks.
+    #[must_use]
+    pub const fn with_shared_lock_promotion(mut self, enabled: bool) -> Self {
+        self.shared_lock_promotion = enabled;
         self
     }
 

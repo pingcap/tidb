@@ -182,6 +182,14 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
                 &tidb_txnkv::tikv_errors::ERR_LOCK_WAIT_TIMEOUT.gen_with_stack_by_args(&[]),
             ))
         }
+        PessimisticLockFailure::Interrupted(error) => {
+            match crate::driver_error::to_tidb_driver_error(error) {
+                crate::driver_error::ConvertedDriverError::Terror(error) => {
+                    LockSqlError::from(tidb_terror::MysqlError::from_terror(&error))
+                }
+                error => LockSqlError::from(tidb_terror::MysqlError::unknown(error.to_string())),
+            }
+        }
         // Go retries or aborts the statement; only a commit's conflict is
         // rewritten with table names, so the arguments stop here.
         PessimisticLockFailure::WriteConflict { detail } => write_conflict_error(detail),

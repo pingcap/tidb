@@ -109,7 +109,7 @@ pub struct ConnectionAliveRegistration(u64);
 #[derive(Default)]
 pub struct SqlKiller {
     /// Go `Signal`, shared directly with storage request cancellation.
-    pub signal: AtomicU32,
+    pub signal: Arc<AtomicU32>,
     /// The connection ID.
     pub conn_id: AtomicU64,
     /// Whether the query is currently writing its result set.

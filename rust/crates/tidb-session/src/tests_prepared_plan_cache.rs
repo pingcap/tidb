@@ -2992,3 +2992,32 @@ fn test_table_mode_resolve_context() {
     assert_eq!(error.code, 8258);
     assert_eq!(error.message, "Table t is in mode Restore");
 }
+
+/// Go `pessimistictest.TestForShareWithPromotionPlanCache`: the transaction
+/// boundary and SharedLockPromotion each select a different cached plan.
+#[test]
+fn test_for_share_with_promotion_plan_cache() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t(a int key, b int)",
+        "insert into t values(1, 10)",
+        "set @pk=1",
+        "set @@tidb_enable_noop_functions = 1",
+        "prepare st from 'select * from t where a=? for share'",
+        "execute st using @pk",
+        "begin",
+        "execute st using @pk",
+    ] { session.run(sql).unwrap(); }
+    assert_eq!(session.run("select @@last_plan_from_cache").unwrap(), crate::StmtResult::Rows(vec![vec![Datum::Int(0)]]));
+    session.run("rollback").unwrap();
+    session.run("execute st using @pk").unwrap();
+    session.run("set @@tidb_enable_shared_lock_promotion = 1").unwrap();
+    session.run("execute st using @pk").unwrap();
+    assert_eq!(session.run("select @@last_plan_from_cache").unwrap(), crate::StmtResult::Rows(vec![vec![Datum::Int(0)]]));
+    session.run("execute st using @pk").unwrap();
+    assert_eq!(session.run("select @@last_plan_from_cache").unwrap(), crate::StmtResult::Rows(vec![vec![Datum::Int(1)]]));
+    session.run("begin").unwrap();
+    session.run("execute st using @pk").unwrap();
+    assert_eq!(session.run("select @@last_plan_from_cache").unwrap(), crate::StmtResult::Rows(vec![vec![Datum::Int(0)]]));
+    session.run("rollback").unwrap();
+}

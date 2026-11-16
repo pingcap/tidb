@@ -3016,6 +3016,10 @@ impl LockResolver {
             current_ts
         };
 
+        // Go `LockResolver.getTxnStatusFromLock`.
+        if crate::failpoint::eval("tikvclient/getTxnStatusDelay").is_some() {
+            sleep(Duration::from_millis(100)).await;
+        }
         let mut rollback_if_not_exist = false;
         loop {
             match self
@@ -3039,6 +3043,14 @@ impl LockResolver {
                     let txn_not_found = txn_not_found_error(&error)
                         .expect("TxnNotFound guard checked above")
                         .clone();
+                    if crate::failpoint::eval("tikvclient/txnNotFoundRetTTL").is_some() {
+                        return Ok(Arc::new(TransactionStatus {
+                            kind: TransactionStatusKind::Locked(lock.lock_ttl, lock.clone()),
+                            action: kvrpcpb::Action::NoAction,
+                            primary_lock: None,
+                            is_expired: false,
+                        }));
+                    }
                     let current = self.ctx.store_oracle.get_timestamp(&pd_client).await?;
                     self.last_status_timestamp = Some(current.clone());
                     if lock_until_expired_ms(lock.lock_version, lock.lock_ttl, current) <= 0 {
@@ -3048,6 +3060,9 @@ impl LockResolver {
                             status = "ttl:0 commit_ts:0 action: NoAction";
                             "lock txn not found, lock has expired"
                         );
+                        if is_pessimistic_lock(lock) && crate::failpoint::eval("tikvclient/txnExpireRetTTL").is_some() {
+                            return Err(Error::StringError("error txn not found and lock expired".to_owned()));
+                        }
                         rollback_if_not_exist = true;
                         continue;
                     } else if is_pessimistic_lock(lock) {

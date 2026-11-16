@@ -48,6 +48,11 @@ impl Value {
         self.0.as_deref().and_then(|value| value.parse().ok())
     }
 
+    /// Go `v, ok := val.(string)`.
+    pub fn as_string(&self) -> Option<&str> {
+        self.0.as_deref()?.strip_prefix('"')?.strip_suffix('"')
+    }
+
     /// Go `val.(string)`.
     pub fn string(&self) -> String {
         self.0

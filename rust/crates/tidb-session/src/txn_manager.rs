@@ -114,6 +114,17 @@ pub struct TxnManager {
 }
 
 impl TxnManager {
+    /// Go `LazyTxn.GoString`.
+    pub fn go_string(&self) -> String {
+        match &self.explicit {
+            None => "Txn{state=invalid}".into(),
+            Some(txn) => match txn.start_ts_if_active() {
+                Some(ts) => format!("Txn{{state=valid, txnStartTS={ts}}}"),
+                None => "Txn{state=pending}".into(),
+            },
+        }
+    }
+
     /// A manager for one connection's session over the store seam.
     #[must_use]
     pub fn new(
@@ -573,6 +584,8 @@ impl TxnManager {
         let temporary = session
             .stage_temporary_data_commit(&self.buffer)
             .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))?;
+        // Go `LazyTxn.Commit`, after publishing TxnCommitting.
+        tidb_failpoint::eval("github.com/pingcap/tidb/pkg/session/mockSlowCommit");
         let commit_result = transaction.commit(&self.buffer);
         drop(renew);
         Session::finish_temporary_data_commit(temporary, commit_result.is_ok());
@@ -638,6 +651,8 @@ impl TxnManager {
                 if let Some(start_ts) = start_ts {
                     session.record_started_txn_info(start_ts);
                 }
+                // Go `LazyTxn.Rollback`, after publishing TxnRollingBack.
+                tidb_failpoint::eval("github.com/pingcap/tidb/pkg/session/mockSlowRollback");
                 let result = transaction.rollback();
                 if let Some(observer) = session.transaction_observer() {
                     observer.finished();

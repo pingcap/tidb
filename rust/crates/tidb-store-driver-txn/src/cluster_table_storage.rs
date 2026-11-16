@@ -731,6 +731,15 @@ impl<S: StoreClient> fmt::Debug for SessionTransaction<S> {
 }
 
 impl<S: StoreClient> SessionTransaction<S> {
+    /// Go `TransactionContext.GetKeyInPessimisticLockCache`.
+    pub fn get_key_in_pessimistic_lock_cache(&self, key: &[u8]) -> Option<Vec<u8>> {
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        match &*state {
+            SessionTransactionState::Pessimistic { lock_values, .. } => lock_values.get(key).cloned().flatten(),
+            _ => None,
+        }
+    }
+
     /// Bind executor staging to the client's own transaction buffer.
     pub fn bind_mutation_buffer(&self, buffer: &MutationBuffer) {
         *self

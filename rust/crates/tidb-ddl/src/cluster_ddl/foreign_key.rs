@@ -263,6 +263,8 @@ pub(super) fn on_create_foreign_key(
                     Some(None) => {}
                 }
             }
+            // Go `onCreateForeignKey`, after the write-only constraint check.
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterCheckForeignKeyConstrain", &mut ());
             if let Some(last) = last(&info) {
                 info.foreign_keys.get(last).expect("in range").write().state =
                     SchemaState::WRITE_REORGANIZATION;

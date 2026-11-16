@@ -206,6 +206,10 @@ impl fmt::Debug for LazyClusterTransaction {
 }
 
 impl OpenClusterTransaction for LazyClusterTransaction {
+    fn get_key_in_pessimistic_lock_cache(&self, key: &[u8]) -> Option<Vec<u8>> {
+        self.shared.state().open.as_ref().and_then(|txn| txn.get_key_in_pessimistic_lock_cache(key))
+    }
+
     fn bind_mutation_buffer(&self, buffer: &MutationBuffer) {
         let mut state = self.shared.state();
         match state.open.as_ref() {

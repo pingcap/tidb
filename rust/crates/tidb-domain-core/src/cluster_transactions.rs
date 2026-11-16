@@ -405,6 +405,9 @@ pub trait PendingClusterTransaction: Send {
 /// same timestamp -- which is what makes a racing writer a write conflict
 /// instead of a silent overwrite.
 pub trait OpenClusterTransaction: Send {
+    /// Go `TransactionContext.GetKeyInPessimisticLockCache`; no entry for an optimistic transaction.
+    fn get_key_in_pessimistic_lock_cache(&self, _key: &[u8]) -> Option<Vec<u8>> { None }
+
     /// Production stores expose the client MemDB to executor staging.
     fn bind_mutation_buffer(&self, _buffer: &MutationBuffer) {}
 
@@ -1655,6 +1658,10 @@ impl<S> OpenClusterTransaction for SessionTransaction<S>
 where
     S: StoreClient,
 {
+    fn get_key_in_pessimistic_lock_cache(&self, key: &[u8]) -> Option<Vec<u8>> {
+        SessionTransaction::get_key_in_pessimistic_lock_cache(self, key)
+    }
+
     fn bind_mutation_buffer(&self, buffer: &MutationBuffer) {
         SessionTransaction::bind_mutation_buffer(self, buffer);
     }

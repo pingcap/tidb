@@ -295,6 +295,16 @@ pub type PessimisticLockResourceGroupTagger =
 /// `lockCtx.ResourceGroupTagger`).
 #[derive(Clone, Default)]
 pub struct StatementKvContext {
+    /// Go statement caller context, including `interceptor.WithRPCInterceptor`.
+    pub caller_context: Option<tikv_client::trace::TraceContext>,
+    /// Go `newLockCtx`: the session SQLKiller.Signal shared with the lock and TTL manager.
+    pub killed: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>,
+    /// Go `newLockCtx`: transaction lifetime expiration shared with the session.
+    pub lock_expired: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>,
+    /// Go `StmtCtx.GetLockWaitStartTime`, retained through statement retries.
+    pub lock_wait_start: Option<std::time::SystemTime>,
+    /// Go `newLockCtx.MaxExecutionDeadline`, for SELECT statements only.
+    pub max_execution_deadline: Option<std::time::SystemTime>,
     /// Go `ctx.Value(util.RUDetailsCtxKey)`.
     pub ru_details: Option<std::sync::Arc<tikv_client::RuDetails>>,
     /// Go `ctx.Value(util.ExecDetailsKey)`: the statement's KV/PD waits,
@@ -354,10 +364,10 @@ impl StatementKvContext {
     /// `retry.TxnStartKey`. `None` when the statement carries none of them.
     #[must_use]
     pub fn trace_context(&self) -> Option<tikv_client::trace::TraceContext> {
-        if self.ru_details.is_none() && self.exec_details.is_none() && self.txn_start_ts.is_none() {
+        if self.caller_context.is_none() && self.ru_details.is_none() && self.exec_details.is_none() && self.txn_start_ts.is_none() {
             return None;
         }
-        let mut context = tikv_client::trace::TraceContext::new();
+        let mut context = self.caller_context.clone().unwrap_or_default();
         if let Some(ru_details) = &self.ru_details {
             context = tikv_client::util::context_with_ru_details(
                 &context,

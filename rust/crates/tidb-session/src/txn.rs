@@ -66,6 +66,8 @@ pub type SnapshotSchemaProvider =
 /// transaction writes are staged in the store session's `MutationBuffer`, and
 /// its reads go through the statement's snapshot.
 pub(crate) struct TxnCtx {
+    /// Go `TransactionContext.LockExpire`, shared with the client TTL manager.
+    lock_expire: std::sync::Arc<std::sync::atomic::AtomicU32>,
     /// The mode the transaction opened in, resolved from the `BEGIN` keyword
     /// and `@@tidb_txn_mode` exactly as Go resolves it (`TxnCtx.IsPessimistic`).
     mode: SessionTxnMode,
@@ -400,7 +402,7 @@ impl Session {
     /// `autocommit = 0` pessimistic transaction, or the autocommit
     /// statement's implicit transaction when `decideTxnMode` chose
     /// pessimistic (see [`Self::set_autocommit_pessimistic_statement`]).
-    pub(crate) fn statement_is_pessimistic(&self) -> bool {
+    pub fn statement_is_pessimistic(&self) -> bool {
         ((!self.is_autocommit() || self.in_transaction())
             && self.statement_txn_mode().is_pessimistic())
             || self.autocommit_pessimistic_statement
@@ -432,6 +434,7 @@ impl Session {
         // Go's own membuffer is empty the moment a transaction activates.
         self.staged_writes = std::sync::Arc::default();
         self.txn_ctx = Some(TxnCtx {
+            lock_expire: Default::default(),
             mode,
             read_committed,
             stale: None,
@@ -439,6 +442,53 @@ impl Session {
             begin_stmt,
             is_staleness: false,
         });
+    }
+
+    /// Go `Session.SetValue(sessiontxn.AssertLockErr, nil)`.
+    pub fn clear_assert_lock_errors(&mut self) { self.assert_lock_errors = None; }
+
+    /// Go `Session.Value(sessiontxn.AssertLockErr)`.
+    pub fn assert_lock_errors(&self) -> Option<&std::collections::BTreeMap<String, usize>> {
+        self.assert_lock_errors.as_ref()
+    }
+
+    /// Go `ExecStmt.handlePessimisticLockError` / `AddAssertEntranceForLockError`.
+    pub(crate) fn record_pessimistic_lock_error(&mut self, code: u16) {
+        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/assertPessimisticLockErr").is_none() { return; }
+        // Go compares `kv.ErrWriteConflict` and `kv.ErrKeyExists`.
+        let name = match code {
+            tidb_errno::errcode::ErrWriteConflict => "errWriteConflict",
+            tidb_errno::errcode::ErrDupEntry => "errDuplicateKey",
+            _ => return,
+        };
+        *self.assert_lock_errors.get_or_insert_with(Default::default).entry(name.into()).or_default() += 1;
+    }
+
+    /// Go `staleread.IsStmtStaleness`.
+    pub fn is_stmt_staleness(&self) -> bool { self.statement_is_staleness }
+
+    /// Go `SessionVars.TxnCtx.LockExpire`.
+    pub fn txn_lock_expire(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicU32>> {
+        self.txn_ctx.as_ref().map(|ctx| std::sync::Arc::clone(&ctx.lock_expire))
+    }
+
+    /// Go `session.checkTxnAborted`: only transaction-ending statements may proceed.
+    pub(crate) fn check_txn_aborted(&self, stmt: &Stmt) -> Result<(), DriverError> {
+        if self.txn_ctx.as_ref().is_none_or(|ctx| ctx.lock_expire.load(std::sync::atomic::Ordering::Acquire) == 0) {
+            return Ok(());
+        }
+        // Go `isEndTxnStmt` recursively resolves SQL EXECUTE before classifying it.
+        if let Stmt::Session(control) = stmt {
+            if let SessionStmt::Execute { name, .. } = control.as_ref() {
+                let prepared = self.prepared_statements.get(name).ok_or_else(|| DriverError::from(
+                    tidb_plannererrors::ERR_STMT_NOT_FOUND.gen_with_stack_by_args(&[])))?;
+                return self.check_txn_aborted(&prepared.statement);
+            }
+        }
+        if matches!(stmt, Stmt::Session(control) if matches!(&**control, SessionStmt::Commit(_) | SessionStmt::Rollback { .. })) {
+            return Ok(());
+        }
+        Err(tidb_kv::kv_errors::ERR_LOCK_EXPIRE.clone().into())
     }
 
     /// Go `SetOptionsOnTxnActive`'s `kv.GuaranteeLinearizability`: off under
@@ -605,6 +655,7 @@ impl Session {
         // A historical read also has an empty transaction membuffer.
         self.staged_writes = std::sync::Arc::default();
         self.txn_ctx = Some(TxnCtx {
+            lock_expire: Default::default(),
             mode: SessionTxnMode::Optimistic,
             read_committed: false,
             stale: Some((ts, read)),
@@ -1012,6 +1063,30 @@ impl Session {
     /// Whether the open transaction is a stale read (Go `TxnCtx.IsStaleness`).
     pub(crate) fn txn_is_stale_read(&self) -> bool {
         self.txn_ctx.as_ref().is_some_and(TxnCtx::is_stale_read)
+    }
+
+    /// Go `session.GetInfoSchema`: snapshot schema, transaction schema, then latest.
+    pub fn info_schema_version(&self) -> Result<i64, DriverError> {
+        if let Some((_, schema)) = &self.snapshot_schema {
+            return Ok(schema.schema_meta_version());
+        }
+        self.txn_info_schema_version()
+    }
+
+    /// Go `TxnManager.GetTxnInfoSchema`: the active transaction's schema.
+    pub fn txn_info_schema_version(&self) -> Result<i64, DriverError> {
+        if let Some((_, schema)) = &self.snapshot_schema {
+            return Ok(schema.schema_meta_version());
+        }
+        if let Some((_, read)) = self.txn_ctx.as_ref().and_then(|ctx| ctx.stale.as_ref()) {
+            return Ok(read.catalog.schema_meta_version());
+        }
+        Ok(self.lock_catalog()?.schema_meta_version())
+    }
+
+    /// Go `SessionVars.SnapshotInfoschema`: whether a SET-time snapshot is retained.
+    pub fn has_snapshot_info_schema(&self) -> bool {
+        self.snapshot_schema.is_some()
     }
 
     /// Borrows the shared catalog for one statement. The lock is held for the

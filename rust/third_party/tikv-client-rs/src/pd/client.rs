@@ -1964,7 +1964,7 @@ impl PdRpcClient<TikvConnect, Cluster> {
         Self::connect_with_codec_config(pd_endpoints, config, PdCodecConfig::V1(mode)).await
     }
 
-    pub(crate) async fn connect_with_keyspace(
+    pub async fn connect_with_keyspace(
         pd_endpoints: &[String],
         config: Config,
         mode: KeyMode,

@@ -72,6 +72,10 @@ pub struct TikvStore<PdC: PdClient = PdRpcClient> {
     pd_http_client: Option<pd_http::Client>,
 }
 
+/// Go `store/driver.mc`: one storage authority per cluster and keyspace.
+static STORE_CACHE: std::sync::LazyLock<std::sync::Mutex<std::collections::BTreeMap<String, TikvStore>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+
 static NEXT_AUTHORITY_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 fn next_authority_id() -> u64 {
@@ -133,14 +137,23 @@ impl TikvStore {
     /// `prometheus` major version than client-rust's, so the client records
     /// no PD API metrics.
     pub fn connect(pd_endpoints: Vec<String>, config: tikv_client::Config) -> Result<Self, String> {
+        // Go `TiKVDriver.OpenWithOptions` serializes cache lookup and store creation.
+        let mut cache = STORE_CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let runtime = store_runtime()?;
-        // Go `d.security.ToTLSConfig()`: no CA means plain HTTP.
-        let tls_config = config
-            .security
-            .to_tls_config()
-            .map_err(|error| error.to_string())?;
-        let store = runtime
-            .block_on(KvStore::new_with_config(pd_endpoints, config))
+        let tls_config = config.security.to_tls_config().map_err(|error| error.to_string())?;
+        let pd = runtime.block_on(async {
+            match config.keyspace.as_ref() {
+                Some(name) => PdRpcClient::connect_with_keyspace(&pd_endpoints, config.clone(), tikv_client::request::KeyMode::Txn, name.clone()).await,
+                None => PdRpcClient::connect(&pd_endpoints, config.clone(), true).await,
+            }
+        }).map_err(|error| error.to_string())?;
+        let uuid = format!("tikv-{}/{}", runtime.block_on(pd.cluster_id()), config.keyspace.as_deref().unwrap_or(""));
+        if let Some(cached) = cache.get(&uuid).filter(|cached| !cached.store.is_closed()) {
+            runtime.block_on(pd.close());
+            return Ok(cached.clone());
+        }
+        cache.remove(&uuid);
+        let store = runtime.block_on(KvStore::new_with_connected_pd(Arc::new(pd), pd_endpoints, config))
             .map_err(|error| error.to_string())?;
         let mut opts = Vec::new();
         if let Some(tls_config) = tls_config {
@@ -154,6 +167,7 @@ impl TikvStore {
         .map_err(|error| error.to_string())?;
         let mut store = Self::new(runtime, store);
         store.pd_http_client = Some(pd_http_client);
+        cache.insert(uuid, store.clone());
         Ok(store)
     }
 
@@ -205,6 +219,13 @@ impl<PdC: PdClient> TikvStore<PdC> {
             authority_id: next_authority_id(),
             pd_http_client: None,
         }
+    }
+
+    /// Go `tikvStore.Close`: retire the cached authority before closing its clients.
+    pub fn close(&self) -> Result<(), String> {
+        let mut cache = STORE_CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        cache.retain(|_, store| store.authority_id != self.authority_id);
+        self.block_on(self.store.clone().close()).map_err(|error| error.to_string())
     }
 
     /// The PD cluster the store serves, as PD names it.

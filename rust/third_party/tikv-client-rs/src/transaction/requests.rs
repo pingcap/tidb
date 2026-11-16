@@ -641,7 +641,9 @@ impl Shardable for kvrpcpb::PrewriteRequest {
             .is_some_and(|context| context.is_retry_request);
         let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
-        let batch_size = TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed);
+        // Go `batched.appendBatchMutationsBySize`.
+        let batch_size = if crate::failpoint::eval("tikvclient/twoPCRequestBatchSizeLimit").is_some() { 1 }
+            else { TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed) };
 
         region_stream_for_keys(mutations.into_iter(), pd_client.clone())
             .flat_map(move |result| match result {
@@ -858,7 +860,9 @@ impl Shardable for kvrpcpb::CommitRequest {
     ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
         let mut keys = self.keys.clone();
         keys.sort();
-        let batch_size = TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed);
+        // Go `batched.appendBatchMutationsBySize`.
+        let batch_size = if crate::failpoint::eval("tikvclient/twoPCRequestBatchSizeLimit").is_some() { 1 }
+            else { TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed) };
 
         region_stream_for_keys(keys.into_iter(), pd_client.clone())
             .flat_map(move |result| match result {
@@ -970,7 +974,9 @@ impl Shardable for kvrpcpb::BatchRollbackRequest {
     ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
         let mut keys = self.keys.clone();
         keys.sort();
-        let batch_size = TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed);
+        // Go `batched.appendBatchMutationsBySize`.
+        let batch_size = if crate::failpoint::eval("tikvclient/twoPCRequestBatchSizeLimit").is_some() { 1 }
+            else { TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed) };
         region_stream_for_keys(keys.into_iter(), pd_client.clone())
             .flat_map(move |result| match result {
                 Ok((keys, region)) => {
@@ -1064,7 +1070,9 @@ impl Shardable for kvrpcpb::PessimisticRollbackRequest {
     ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
         let mut keys = self.keys.clone();
         keys.sort();
-        let batch_size = TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed);
+        // Go `batched.appendBatchMutationsBySize`.
+        let batch_size = if crate::failpoint::eval("tikvclient/twoPCRequestBatchSizeLimit").is_some() { 1 }
+            else { TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed) };
         region_stream_for_keys(keys.into_iter(), pd_client.clone())
             .flat_map(move |result| match result {
                 Ok((keys, region)) => stream::iter(kvrpcpb::PessimisticRollbackRequest::batches(
@@ -1173,7 +1181,9 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
         let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
         let wake_up_mode = self.wake_up_mode;
-        let batch_size = TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed);
+        // Go `batched.appendBatchMutationsBySize`.
+        let batch_size = if crate::failpoint::eval("tikvclient/twoPCRequestBatchSizeLimit").is_some() { 1 }
+            else { TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed) };
         region_stream_for_keys(mutations.into_iter(), pd_client.clone())
             .flat_map(move |result| match result {
                 Ok((mutations, region)) => stream::iter(
@@ -2185,7 +2195,9 @@ impl Shardable for kvrpcpb::FlushRequest {
     ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
         let mut mutations = self.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
-        let batch_size = TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed);
+        // Go `batched.appendBatchMutationsBySize`.
+        let batch_size = if crate::failpoint::eval("tikvclient/twoPCRequestBatchSizeLimit").is_some() { 1 }
+            else { TXN_COMMIT_BATCH_SIZE.load(Ordering::Relaxed) };
         region_stream_for_keys(mutations.into_iter(), pd_client.clone())
             .flat_map(move |result| match result {
                 Ok((mutations, region)) => {

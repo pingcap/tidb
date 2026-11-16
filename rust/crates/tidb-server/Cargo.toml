@@ -193,6 +193,7 @@ tidb-syssession = { path = "../tidb-syssession" }
 serde = { workspace = true }
 
 [dev-dependencies]
+tikv-client = { workspace = true, features = ["failpoints"] }
 flate2 = "1"
 tidb-sem-v2 = { path = "../tidb-sem-v2" }
 tidb-ddl = { path = "../tidb-ddl", features = ["failpoints"] }
@@ -238,6 +239,7 @@ nextgen = ["tidb-config/nextgen"]
 # for builds that must stay on the platform allocator.
 default = ["jemalloc"]
 failpoints = [
+    "tikv-client/failpoints",
     "tidb-failpoint/failpoints",
     "tidb-ddl/failpoints",
     "tidb-ddl-serverstate/failpoints",

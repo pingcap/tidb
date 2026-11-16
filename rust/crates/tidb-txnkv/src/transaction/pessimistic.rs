@@ -64,6 +64,8 @@ pub enum PessimisticLockFailure {
         /// Exact encoded key that is locked.
         key: Vec<u8>,
     },
+    /// Go `ToTiDBErr`: a SQL killer signal fails this statement.
+    Interrupted(crate::StorageDriverError),
     /// Anything that ends the transaction rather than the statement.
     Transaction(TransactionCause),
 }
@@ -83,6 +85,7 @@ impl fmt::Display for PessimisticLockFailure {
                 formatter.write_str("lock acquisition failed and NOWAIT is set")
             }
             Self::LockWaitTimeout { .. } => formatter.write_str("lock wait timeout exceeded"),
+            Self::Interrupted(error) => error.fmt(formatter),
             Self::Transaction(cause) => cause.fmt(formatter),
         }
     }

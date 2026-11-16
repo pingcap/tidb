@@ -128,6 +128,7 @@
 pub mod async_util;
 pub mod backoff;
 pub mod error;
+mod failpoint;
 pub mod interceptor;
 #[doc(hidden)]
 pub mod intest;

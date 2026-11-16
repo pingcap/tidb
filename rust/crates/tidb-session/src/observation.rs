@@ -593,6 +593,11 @@ impl Session {
         let lock_sql_digest = sql_digest.clone();
         self.statement_kv_context
             .publish(tidb_txnkv::StatementKvContext {
+                caller_context: Some(tikv_client::trace::current_trace_context()),
+                killed: Some(Arc::clone(&self.sql_killer().signal)),
+                lock_expired: self.txn_lock_expire(),
+                lock_wait_start: None,
+                max_execution_deadline: None,
                 ru_details: Some(Arc::clone(ru_details)),
                 exec_details: Some(Arc::clone(exec_details)),
                 txn_start_ts: None,

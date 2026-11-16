@@ -480,6 +480,10 @@ pub struct Session {
     /// cursor (Go `execStmtResult.TryDetach`): only its `finishStmt` runs,
     /// never the abandoned record set's `FinishExecuteStmt`.
     pub(crate) statement_detached: bool,
+    /// Go `StmtCtx.IsStaleness`, cleared by FinishExecuteStmt.
+    statement_is_staleness: bool,
+    /// Go `sessiontxn.AssertLockErr` failpoint assertion data.
+    assert_lock_errors: Option<std::collections::BTreeMap<String, usize>>,
     pending_observation_parse: Option<(String, Duration)>,
     pending_statement_exec_details: Option<observation::PendingStatementExecDetails>,
     routed_statement_observation_depth: u32,
@@ -1020,6 +1024,8 @@ impl Session {
             statement_normalized_sql: None,
             statement_observation: None,
             statement_detached: false,
+            statement_is_staleness: false,
+            assert_lock_errors: None,
             pending_observation_parse: None,
             pending_statement_exec_details: None,
             routed_statement_observation_depth: 0,
@@ -1629,6 +1635,8 @@ impl Session {
     /// transaction's own start and commit timestamps and the protocol that
     /// committed it, recorded once the commit is done.
     pub fn record_committed_txn_info(&mut self, start_ts: u64, commit_ts: u64, commit_mode: &str) {
+        // Go `CommitTxn` retains LazyTxn.lastCommitTS when committing a read-only transaction.
+        if commit_ts != 0 { self.vars.last_commit_ts = commit_ts; }
         self.vars.last_txn_info = format!(
             "{{\"txn_scope\":\"global\",\"start_ts\":{start_ts},\"commit_ts\":{commit_ts},\"txn_commit_mode\":\"{commit_mode}\",\"async_commit_fallback\":false,\"one_pc_fallback\":false,\"pipelined\":false,\"flush_wait_ms\":0}}"
         );
@@ -2999,6 +3007,14 @@ impl Session {
         self.check_sandbox_mode(sql)?;
         self.begin_statement_observation(sql);
         self.publish_statement_start(sql);
+        // Go `session.ExecuteStmt`, after `LazyTxn.onStmtStart`.
+        tidb_failpoint::inject("github.com/pingcap/tidb/pkg/session/mockStmtSlow", |value| {
+            if sql.contains("/* sleep */") {
+                std::thread::sleep(std::time::Duration::from_millis(
+                    value.as_int().unwrap_or_default().max(0) as u64,
+                ));
+            }
+        });
         // Go's `ResetContextOfStmt` promotes the PRECEDING statement's
         // publication into the `Prev*` fields the next statement reads, so
         // the promotion happens at the boundary, once, for every statement.
@@ -3126,6 +3142,14 @@ impl Session {
         };
     }
 
+    /// Go `SessionVars.MemDBFootprint`: the transaction buffer's memory tracker.
+    pub fn mem_db_footprint(&self) -> Option<Arc<tidb_memory::Tracker>> {
+        self.mem_db_footprint
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     /// Go `baseTxnContextProvider.ActivateTxn`'s `MemDBFootprint.Detach()`:
     /// a new transaction no longer counts the last one's buffer.
     pub(crate) fn detach_mem_db_footprint(&self) {
@@ -3164,6 +3188,7 @@ impl Session {
         &mut self,
         result: Result<StmtOutput, DriverError>,
     ) -> Result<StmtOutput, DriverError> {
+        self.statement_is_staleness = false;
         let completion = result
             .as_ref()
             .map(StatementCompletion::from)

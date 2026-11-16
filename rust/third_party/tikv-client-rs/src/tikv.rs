@@ -1242,6 +1242,21 @@ impl KvStore {
         Ok(Self { inner, runtime })
     }
 
+    /// Go `tikv.NewKVStore`: reuse the PD client opened by `TiKVDriver.OpenWithOptions`.
+    pub async fn new_with_connected_pd(
+        pd: Arc<PdRpcClient>,
+        pd_endpoints: Vec<String>,
+        config: Config,
+    ) -> Result<Self> {
+        let inner = TransactionClient::new_with_pd_client(pd.clone(), config.clone()).await?;
+        let (inner, runtime) = finish_store_construction(
+            inner,
+            StoreRuntime::new(pd.clone(), pd_endpoints, &config, String::new(), pd.keyspace_meta().cloned()).await,
+        ).await?;
+        inner.attach_safe_point_cache(runtime.safe_point_cache());
+        Ok(Self { inner, runtime })
+    }
+
     /// Returns the authoritative live region cache used by this store's
     /// request plans, matching client-go's `KVStore.GetRegionCache` surface.
     pub fn region_cache(

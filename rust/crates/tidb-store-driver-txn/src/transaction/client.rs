@@ -1135,12 +1135,21 @@ impl<S: PdClient> TikvTxn<S> {
                 i64::try_from(timeout.as_millis()).unwrap_or(i64::MAX)
             }
         };
-        let mut context = tikv_client::kv::LockContext::new(
-            self.for_update_ts,
-            wait_ms,
-            std::time::SystemTime::now(),
-        );
+        // Go `StmtCtx.GetLockWaitStartTime`: one origin for every retry of this statement.
+        let wait_start = self.applied_kv_context.lock_wait_start.unwrap_or_else(std::time::SystemTime::now);
+        if let Some(cell) = &self.kv_context {
+            let mut current = cell.get();
+            current.lock_wait_start = Some(wait_start);
+            cell.publish(current);
+        }
+        let mut context = tikv_client::kv::LockContext::new(self.for_update_ts, wait_ms, wait_start);
+        context.max_execution_deadline = self.applied_kv_context.max_execution_deadline;
+        if let Some(lock_expired) = &self.applied_kv_context.lock_expired {
+            self.lock_expired = lock_expired.clone();
+        }
         context.lock_expired = Some(self.lock_expired.clone());
+        // Go `executor.newLockCtx`: keep the session signal alive for keepAlive.
+        context.killed = self.applied_kv_context.killed.clone();
         // Go `newLockCtx`'s `lockCtx.ResourceGroupTagger`: the first
         // mutation's key; no mutation answers no tag.
         if let Some(tagger) = &self
@@ -1198,6 +1207,10 @@ impl<S: PdClient> TikvTxn<S> {
                 }
                 failure
             })?;
+        if context.max_locked_with_conflict_ts != 0 {
+            // Go `tikvTxn.generateWriteConflictForLockedWithConflict`.
+            tidb_failpoint::eval("github.com/pingcap/tidb/pkg/store/driver/txn/lockedWithConflictOccurs");
+        }
         self.max_conflict_ts = self
             .max_conflict_ts
             .max(context.max_locked_with_conflict_ts);
@@ -1250,6 +1263,21 @@ fn lock_error(error: crate::TikvTransactionError) -> tidb_txnkv::transaction::Pe
                     unwrapped(&errors[0])
                 }
                 _ => error,
+            }
+        }
+        // Go `ToTiDBErr`: retain the killer signal and the statement boundary.
+        if let tikv_client::Error::QueryInterruptedWithSignal(interrupted) = unwrapped(error) {
+            use tidb_txnkv::StorageDriverError;
+            let mapped = match interrupted.signal {
+                1 => Some(StorageDriverError::QueryInterrupted),
+                2 => Some(StorageDriverError::MaxExecutionTimeExceeded),
+                3 => Some(StorageDriverError::QueryMemoryExceeded),
+                4 => Some(StorageDriverError::ServerMemoryExceeded),
+                5 => Some(StorageDriverError::RunawayQueryExceeded),
+                _ => None,
+            };
+            if let Some(mapped) = mapped {
+                return tidb_txnkv::transaction::PessimisticLockFailure::Interrupted(mapped);
             }
         }
         if let tikv_client::Error::Deadlock(deadlock) = unwrapped(error) {

@@ -467,6 +467,14 @@ impl NodeConn {
 }
 
 impl<'s> ClusterServerSession<'s> {
+    /// Go `Session.Txn(false)` formatted by `LazyTxn.GoString`.
+    pub fn txn_go_string(&self) -> String { self.node.txn.go_string() }
+
+    /// Go `TransactionContext.GetKeyInPessimisticLockCache`.
+    pub fn get_key_in_pessimistic_lock_cache(&self, key: &[u8]) -> Option<Vec<u8>> {
+        self.node.txn.explicit.as_ref().and_then(|txn| txn.get_key_in_pessimistic_lock_cache(key))
+    }
+
     /// The same session and store half for a shorter borrow, as a step that
     /// lends the connection to a result it returns needs.
     pub(crate) fn reborrow(&mut self) -> ClusterServerSession<'_> {

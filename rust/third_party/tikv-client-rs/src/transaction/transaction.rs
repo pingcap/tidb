@@ -295,6 +295,10 @@ impl PessimisticLockDispatchTiming {
 
     fn prepare(&self, request: &mut kvrpcpb::PessimisticLockRequest) -> Result<()> {
         request.lock_ttl = self.start_instant.elapsed().as_millis() as u64 + managed_lock_ttl();
+        // Go `actionPessimisticLock.handleSingleBatch`.
+        if crate::failpoint::eval("tikvclient/shortPessimisticLockTTL").is_some() {
+            request.lock_ttl = 1;
+        }
         if let Some(wait_time) = self.wait_time {
             request.wait_timeout = calculate_pessimistic_lock_wait_time(
                 self.killed.as_ref(),
@@ -4570,6 +4574,15 @@ impl<PdC: PdClient> Transaction<PdC> {
             }
         }
 
+        // Go `KVTxn.Rollback`: this test hook leaves only pessimistic locks behind.
+        if matches!(self.options.kind, TransactionKind::Pessimistic(_)) && !prewritten {
+            if let Some(value) = crate::failpoint::eval("tikvclient/onRollback") {
+                if value.as_string() == Some("skipRollbackPessimisticLock") {
+                    self.set_status(TransactionStatus::Rolledback);
+                    return Ok(());
+                }
+            }
+        }
         if self.is_pipelined() {
             self.configure_pipelined_memdb();
             self.pipelined_cancellation.cancel();
@@ -5755,6 +5768,24 @@ impl<PdC: PdClient> Transaction<PdC> {
             return Ok(vec![]);
         }
 
+        // Go `twoPhaseCommitter.pessimisticLockMutations`.
+        if self.commit_settings.session_id > 0 {
+            if let Some(value) = tokio::task::spawn_blocking(||
+                crate::failpoint::eval("tikvclient/beforePessimisticLock"))
+                .await.expect("beforePessimisticLock failpoint task")
+            {
+                if let Some(actions) = value.as_string() {
+                    for action in actions.split(',') {
+                        match action {
+                            "delay" => tokio::time::sleep(Duration::from_nanos(rand::random::<u64>() % 5_000_000_000)).await,
+                            "fail" => return Err(Error::StringError("injected failure at pessimistic lock".into())),
+                            _ => {},
+                        }
+                    }
+                }
+            }
+        }
+
         // client-go's pessimistic-lock lowering derives Assertion_NotExist
         // from the authoritative MemDB, including when the caller supplied a
         // plain key. This is what makes SetPresumeKeyNotExists reject an
@@ -5806,6 +5837,11 @@ impl<PdC: PdClient> Transaction<PdC> {
                 max_execution_deadline: None,
             },
         };
+        // Go `actionPessimisticLock.handleSingleBatch`: injected conflict before sending.
+        if crate::failpoint::eval("tikvclient/PessimisticLockErrWriteConflict").is_some() {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            return Err(crate::error::new_write_conflict(kvrpcpb::WriteConflict::default()).into());
+        }
         let lock_ttl = self.start_instant.elapsed().as_millis() as u64 + managed_lock_ttl();
         let mut request = new_pessimistic_lock_request(
             locks.clone().into_iter(),
@@ -6209,6 +6245,16 @@ impl<PdC: PdClient> Transaction<PdC> {
             return Ok(());
         }
 
+        // Go `KVTxn.asyncPessimisticRollback`.
+        if cfg!(feature = "failpoints") {
+            if let Some(value) = crate::failpoint::eval("tikvclient/beforeAsyncPessimisticRollback") {
+                match value.as_string() {
+                    Some("skip") => return Ok(()),
+                    Some("delay") => tokio::time::sleep(Duration::from_millis(rand::random::<u64>() % 2000)).await,
+                    _ => {},
+                }
+            }
+        }
         let mut req = new_pessimistic_rollback_request(
             keys.clone().into_iter(),
             start_version.clone(),
@@ -6308,6 +6354,10 @@ impl<PdC: PdClient> Transaction<PdC> {
         &self,
         lock_context: Option<&LockContext>,
     ) -> Option<AutoHeartbeatStarter> {
+        // Go `ttlManager.run`.
+        if crate::failpoint::eval("tikvclient/doNotKeepAlive").is_some() {
+            return None;
+        }
         if self.is_pipelined() || !self.options.heartbeat_option.is_auto_heartbeat() {
             return None;
         }
@@ -7543,6 +7593,11 @@ impl<PdC: PdClient> Committer<PdC> {
         }
         if self.options.async_commit || self.options.try_one_pc {
             self.calculate_max_commit_ts()?;
+        }
+        // Go `twoPhaseCommitter.execute`: after calculateMaxCommitTS, before prewrite starts.
+        if self.settings.session_id > 0 {
+            tokio::task::spawn_blocking(|| crate::failpoint::eval("tikvclient/beforePrewrite"))
+                .await.expect("beforePrewrite failpoint task");
         }
         self.pre_split_large_transaction_regions().await;
         let binlog = self.settings.binlog.clone();
@@ -9405,6 +9460,10 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 
     fn check_schema_valid(&self, check_timestamp: u64) -> Result<()> {
+        // Go `twoPhaseCommitter.checkSchemaValid`.
+        if crate::failpoint::eval("tikvclient/failCheckSchemaValid").is_some() {
+            return Err(Error::StringError("mock check schema valid failure".to_owned()));
+        }
         let (Some(checker), Some(schema_version)) = (
             &self.settings.schema_lease_checker,
             &self.settings.schema_version,
@@ -9523,6 +9582,10 @@ impl<PdC: PdClient> Committer<PdC> {
                 ))
                 .saturating_add(1) as u64;
             lock_ttl = lock_ttl.max(safe_ttl);
+        }
+        // Go `actionPrewrite.handleSingleBatch` applies this after the async-commit TTL bound.
+        if self.settings.session_id > 0 && crate::failpoint::eval("tikvclient/twoPCShortLockTTL").is_some() {
+            lock_ttl = 1;
         }
         let pessimistic_for_update_ts = match &self.options.kind {
             TransactionKind::Pessimistic(for_update_ts)
@@ -9850,6 +9913,22 @@ impl<PdC: PdClient> Committer<PdC> {
         // more than one check would reject the same timestamp.
         self.check_schema_valid(commit_version.version())?;
         self.validate_commit_timestamp(&commit_version)?;
+        // Go `twoPhaseCommitter.execute`'s beforeCommit test actions.
+        if self.settings.session_id > 0 {
+            if let Some(value) = crate::failpoint::eval("tikvclient/beforeCommit") {
+                if let Some(actions) = value.as_string() {
+                    for action in actions.split(',') {
+                        if action == "fail" && !self.options.async_commit {
+                            return Err(Error::StringError("injected failure before commit".to_owned()));
+                        } else if action == "delay" {
+                            tokio::time::sleep(Duration::from_millis(rand::random::<u64>() % 5000)).await;
+                        } else if let Some(millis) = action.strip_prefix("delay(").and_then(|value| value.strip_suffix(')')) {
+                            tokio::time::sleep(Duration::from_millis(millis.parse().expect("Go beforeCommit delay duration"))).await;
+                        }
+                    }
+                }
+            }
+        }
         Ok(commit_version)
     }
 
@@ -10014,7 +10093,8 @@ impl<PdC: PdClient> Committer<PdC> {
             .filter(|key| region.contains(key))
             .collect();
         keys.sort();
-        let limit = crate::kv::TXN_COMMIT_BATCH_SIZE.load(atomic::Ordering::Relaxed);
+        let limit = if crate::failpoint::eval("tikvclient/twoPCRequestBatchSizeLimit").is_some() { 1 }
+            else { crate::kv::TXN_COMMIT_BATCH_SIZE.load(atomic::Ordering::Relaxed) };
         let mut batch = Vec::new();
         let mut size = 0_u64;
         let mut holds_primary = false;
@@ -10235,6 +10315,17 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 
     async fn commit_secondary_in_background(mut self, commit_version: Timestamp) -> Result<()> {
+        // Go `doActionOnMutations`: only ordinary 2PC secondaries use this hook.
+        if self.settings.session_id > 0 && !self.options.async_commit {
+            if let Some(value) = crate::failpoint::eval("tikvclient/beforeCommitSecondaries") {
+                match value.as_string() {
+                    Some("skip") => return Ok(()),
+                    None => tokio::time::sleep(Duration::from_secs(2)).await,
+                    _ => {},
+                }
+            }
+        }
+
         let start_version = self.start_version.clone();
         let mutations_len = self.mutations.len();
         let primary_batch = std::mem::take(&mut self.primary_commit_batch);

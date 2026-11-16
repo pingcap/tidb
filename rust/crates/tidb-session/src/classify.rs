@@ -234,6 +234,15 @@ impl Session {
                 };
             }
         }
+        // Go `ExecStmt.isSelectForUpdate`: FOR SHARE takes the locking
+        // statement path when SharedLockPromotion enables real locks.
+        if self.vars.shared_lock_promotion()
+            && matches!(stmt, Stmt::Query(query)
+                if matches!(query.as_ref(), tidb_ast::QueryStmt::Select(select)
+                    if select.lock.as_ref().is_some_and(|lock| lock.kind == tidb_ast::LockKind::Share)))
+        {
+            return StatementReadShape::LockingRead;
+        }
         let disable_point_get =
             crate::variables::effective_fix_52592(stmt, self.vars.optimizer_fix_control());
         let catalog = self

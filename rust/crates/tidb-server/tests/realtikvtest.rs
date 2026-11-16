@@ -29,6 +29,7 @@ use tidb_session::Session;
 /// `None` when no cluster is configured.
 pub(crate) struct RealTiKV {
     stack: tidb_server::ClusterStack,
+    authority: tidb_store_driver::real_tikv_read::ProductionReadProcessAuthority,
     /// Go `store`, the domain's TiKV storage.
     tikv_store: tidb_txnkv::driver::tikv_store::TikvStore,
     pd: String,
@@ -38,6 +39,8 @@ pub(crate) struct RealTiKV {
 impl RealTiKV {
     pub(crate) fn setup() -> Option<Self> {
         let pd = std::env::var("TIDB_REALTIKV_PD").ok()?;
+        // Go `realtikvtest.TestMain`: enable client-go failpoints.
+        tikv_client::tikv::enable_failpoints();
         // set it to 5 seconds for testing lock resolve.
         tikv_client::MANAGED_LOCK_TTL.store(5000, std::sync::atomic::Ordering::SeqCst);
         tikv_client::PREWRITE_MAX_BACKOFF.store(500, std::sync::atomic::Ordering::SeqCst);
@@ -63,9 +66,7 @@ impl RealTiKV {
         .expect("the realtikv node config");
         let (stack, authority) = tidb_server::realtikv_test_stack(&config).expect("the realtikv domain");
         let tikv_store = authority.tikv_store().clone();
-        // The process ends with the test; Go's store stays open to the end too.
-        std::mem::forget(authority);
-        let store = Self { stack, tikv_store, pd, next_connection: std::sync::atomic::AtomicU64::new(7000) };
+        let store = Self { stack, authority, tikv_store, pd, next_connection: std::sync::atomic::AtomicU64::new(7000) };
         let mut tk = store.new_tk();
         // set it to default value.
         tk.must_exec("set global innodb_lock_wait_timeout = 50");
@@ -121,9 +122,36 @@ impl RealTiKV {
         &self.tikv_store
     }
 
+    /// Go `dom.InfoSyncer().GetSessionManager()` for concurrent transaction observation.
+    pub(crate) fn processes(&self) -> tidb_sessmgr::ProcessRegistry {
+        self.stack.factory.processes()
+    }
+
     /// The DDL's system sessions (Go tests reach them through the domain).
     pub(crate) fn ddl_session_pool(&self) -> &std::sync::Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool> {
         &self.stack.ddl_session_pool
+    }
+
+    /// Go `gcworker.RunResolveLocks` using this domain's shared storage authority.
+    pub(crate) fn run_resolve_locks(&self, safe_point: u64) {
+        let deps = tidb_gcworker::node::gc_worker_deps(&self.stack.factory, &self.tikv_store,
+            std::sync::Arc::new(self.authority.transaction_opener()));
+        tidb_gcworker::gc_worker::run_resolve_locks(deps, safe_point, "gc-worker-test-batch-resolve-locks", 1).unwrap();
+    }
+
+    /// Go `startTiDBServer` / `openDB`: a real TCP connection over this domain.
+    pub(crate) fn new_tcp(&self, multi_statements: bool) -> (TcpTk, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let factory = self.stack.factory.clone();
+        let users = self.stack.users.clone();
+        let worker = std::thread::spawn(move || {
+            let (stream, peer) = listener.accept().unwrap();
+            let _ = tidb_server::serve_mysql_connection(stream, peer, Default::default(),
+                factory.as_ref(), users.as_ref(), &tidb_server::ConnectionTracker::default(),
+                tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET);
+        });
+        (TcpTk::connect(address, multi_statements), worker)
     }
 
     /// Go `testkit.NewTestKit(t, store)`: a root connection.
@@ -154,14 +182,100 @@ impl RealTiKV {
     }
 }
 
+impl Drop for RealTiKV {
+    /// Go `CreateMockStoreAndDomainAndSetup` cleanup: close the domain,
+    /// release the owner/server leases, then close the store.
+    fn drop(&mut self) {
+        for worker in self.stack.workers.drain(..) {
+            drop(worker);
+        }
+        self.stack.stop_resource_groups();
+        for lease in self.stack.leases.drain(..) {
+            drop(lease);
+        }
+        if let Err(error) = self.authority.shutdown() {
+            // Do not panic a second time while a failing test unwinds.
+            eprintln!("realtikv store shutdown failed: {error:?}");
+        }
+        tikv_client::PREWRITE_MAX_BACKOFF.store(20000, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// Go `testkit.TestKit` on one realtikv connection.
 pub(crate) struct Tk {
     session: Session,
 }
 
 impl Tk {
+    /// Go `testkit.TestKit.Session`.
+    pub(crate) fn session(&mut self) -> &mut Session {
+        &mut self.session
+    }
+
+    /// Go `session.PrepareStmt` (the binary protocol's prepared handle).
+    pub(crate) fn prepare(&mut self, sql: &str) -> tidb_session::domain::session_api::PreparedGeneral {
+        self.session.node_conn().prepare_general(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"))
+    }
+
+    /// Go `session.ExecutePreparedStmt` and `testkit.ResultSetToResult`.
+    pub(crate) fn execute_prepared(
+        &mut self,
+        statement: &tidb_session::domain::session_api::PreparedGeneral,
+        values: &[tidb_param::PreparedValue],
+    ) -> Result<Vec<Vec<String>>, String> {
+        use tidb_session::domain::session_api::GeneralExecuteOutcome;
+        let outcome = self.session.node_conn().execute_general(statement, values)
+            .map_err(|error| error.error_string())?;
+        let GeneralExecuteOutcome::Rows(mut result) = outcome else { return Ok(Vec::new()); };
+        let source = result.source();
+        let mut rows = Vec::new();
+        loop {
+            let batch = source.next_batch(64).map_err(|error| error.error_string())?;
+            if batch.is_empty() { break; }
+            rows.extend(batch.into_iter().map(|row| row.iter().map(|datum|
+                datum.sql_string().unwrap_or_else(|_| "<nil>".to_owned())).collect()));
+        }
+        source.finish().map_err(|error| error.error_string())?;
+        Ok(rows)
+    }
+
+    /// Go `testkit.TestKit.MustQuery` and `testkit.Result.Check(testkit.Rows(...))`.
+    pub(crate) fn check(&mut self, sql: &str, expected: &[&str]) {
+        // Go Result.Check compares fmt.Sprintf("%s", row), whose cells are joined by spaces.
+        let actual: Vec<String> = self.must_query(sql).iter().map(|row| row.join(" ")).collect();
+        assert_eq!(actual, expected, "{sql}");
+    }
+
+    /// Go `testkit.Result.Sort().Check(testkit.Rows(...))`.
+    pub(crate) fn check_sorted(&mut self, sql: &str, expected: &[&str]) {
+        let mut actual = self.must_query(sql);
+        actual.sort();
+        let actual: Vec<String> = actual.iter().map(|row| row.join(" ")).collect();
+        assert_eq!(actual, expected, "{sql}");
+    }
+
+    /// Go `testkit.TestKit.MustContainErrMsg`.
+    pub(crate) fn must_contain_err_msg(&mut self, sql: &str, message: &str) {
+        let error = self.exec_to_err(sql);
+        assert!(error.contains(message), "{sql}: expected {message:?}, got {error:?}");
+    }
+
+    /// Go `testkit.TestKit.MustHavePlan`.
+    pub(crate) fn must_have_plan(&mut self, sql: &str, plan: &str) {
+        let rows = self.must_query(&format!("explain {sql}"));
+        assert!(rows.iter().any(|row| row[0].contains(plan)), "{sql}: expected {plan}, got {rows:?}");
+    }
+
     pub(crate) fn exec(&mut self, sql: &str) -> Result<Vec<Vec<String>>, String> {
         self.exec_coded(sql).map_err(|(_, message)| message)
+    }
+
+    /// Go `testkit.TestKit.ExecWithContext` with `interceptor.WithRPCInterceptor`.
+    pub(crate) fn exec_with_interceptor(
+        &mut self, interceptor: tikv_client::RpcInterceptorHandle, sql: &str,
+    ) -> Result<Vec<Vec<String>>, String> {
+        let context = tikv_client::with_rpc_interceptor(&tikv_client::trace::TraceContext::new(), interceptor);
+        tidb_txnkv::rpc::trace::build_in_ctx(None, Some(context), || self.exec(sql))
     }
 
     /// The statement's rows, or its error's code and Go `err.Error()` text
@@ -238,4 +352,101 @@ macro_rules! realtikv {
             }
         }
     };
+}
+
+/// Go `openDB`: the test's MySQL connection, retaining its raw TCP stream.
+pub(crate) struct TcpTk {
+    pub stream: std::net::TcpStream,
+    reader: tidb_protocol::PacketReader<std::net::TcpStream>,
+    pub connection_id: u64,
+}
+
+impl TcpTk {
+    /// Go `mysql.RegisterDialContext` / `openDB`: authenticate root without a password.
+    fn connect(address: std::net::SocketAddr, multi_statements: bool) -> Self {
+        let stream = std::net::TcpStream::connect(address).unwrap();
+        stream.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+        let mut reader = tidb_protocol::PacketReader::new(stream.try_clone().unwrap());
+        let handshake = reader.read_packet().unwrap();
+        let version_end = handshake[1..].iter().position(|b| *b == 0).unwrap() + 1;
+        let connection_id = u32::from_le_bytes(handshake[version_end+1..version_end+5].try_into().unwrap()) as u64;
+        let mut tk = Self { stream, reader, connection_id };
+        let capabilities: u32 = (1 << 9) | (1 << 15) | (1 << 19) | (1 << 17) | if multi_statements { 1 << 16 } else { 0 };
+        let mut auth = capabilities.to_le_bytes().to_vec();
+        auth.extend_from_slice(&(tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET as u32).to_le_bytes());
+        auth.push(46);
+        auth.extend_from_slice(&[0; 23]);
+        auth.extend_from_slice(b"root\0");
+        auth.push(0);
+        auth.extend_from_slice(b"mysql_native_password\0");
+        tk.write_packet(1, &auth);
+        tk.reader.set_sequence(2);
+        let reply = tk.reader.read_packet().unwrap();
+        assert_eq!(reply[0], 0, "authentication: {reply:?}");
+        tk.must_exec("use test");
+        tk
+    }
+
+    /// Go mysql driver's packet writer.
+    fn write_packet(&mut self, sequence: u8, payload: &[u8]) {
+        let mut writer = tidb_protocol::PacketWriter::with_sequence(&mut self.stream, sequence);
+        writer.write_packet(payload).unwrap();
+        writer.flush().unwrap();
+    }
+
+    /// Go `mustExec` for setup statements that return an OK packet.
+    pub fn must_exec(&mut self, sql: &str) {
+        self.send_query(sql);
+        let response = self.reader.read_packet().unwrap();
+        assert_eq!(response[0], 0, "{sql}: {response:?}");
+    }
+
+    /// Go mysql driver's COM_QUERY.
+    pub fn send_query(&mut self, sql: &str) {
+        let mut command = vec![tidb_server::command::COM_QUERY];
+        command.extend_from_slice(sql.as_bytes());
+        self.write_packet(0, &command);
+        self.reader.set_sequence(1);
+    }
+
+    /// Go `sql.Conn.PrepareContext`: read all parameter and column metadata.
+    pub fn prepare(&mut self, sql: &str) -> u32 {
+        let mut command = vec![tidb_server::command::COM_STMT_PREPARE];
+        command.extend_from_slice(sql.as_bytes());
+        self.write_packet(0, &command);
+        self.reader.set_sequence(1);
+        let response = self.reader.read_packet().unwrap();
+        assert_eq!(response[0], 0, "prepare {sql}: {response:?}");
+        let id = u32::from_le_bytes(response[1..5].try_into().unwrap());
+        let columns = u16::from_le_bytes(response[5..7].try_into().unwrap());
+        let parameters = u16::from_le_bytes(response[7..9].try_into().unwrap());
+        for count in [parameters, columns] {
+            for _ in 0..count { self.reader.read_packet().unwrap(); }
+            if count > 0 { assert_eq!(self.reader.read_packet().unwrap()[0], 0xfe); }
+        }
+        id
+    }
+
+    /// Go `Stmt.ExecContext` / `Stmt.QueryContext` for a statement with no parameters.
+    pub fn send_prepared(&mut self, id: u32) {
+        let mut command = vec![tidb_server::command::COM_STMT_EXECUTE];
+        command.extend_from_slice(&id.to_le_bytes());
+        command.push(0);
+        command.extend_from_slice(&1_u32.to_le_bytes());
+        self.write_packet(0, &command);
+        self.reader.set_sequence(1);
+    }
+
+    /// Go `executeBlockingSQL`: the blocked request must fail when the raw socket closes.
+    pub fn await_disconnect_error(&mut self) {
+        match self.reader.read_packet() {
+            Err(_) => {},
+            Ok(reply) => assert_eq!(reply.first(), Some(&0xff), "blocked request unexpectedly succeeded: {reply:?}"),
+        }
+    }
+}
+
+impl Drop for TcpTk {
+    /// Go `rawConn.Close`.
+    fn drop(&mut self) { let _ = self.stream.shutdown(std::net::Shutdown::Both); }
 }

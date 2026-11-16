@@ -76,7 +76,9 @@ pub(crate) fn tidb_bounded_staleness(vals: &[Datum], cols: &dyn Columns) -> Resu
     if left.compare(*right).is_gt() {
         return Ok(Datum::Null);
     }
-    let Some(min_safe_time) = session_tz::get_time_from_ts(cols.get_stmt_min_safe_ts(), cols)? else {
+    let min_safe_ts = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/expression/injectSafeTS")
+        .map_or_else(|| cols.get_stmt_min_safe_ts(), |value| value.int() as u64);
+    let Some(min_safe_time) = session_tz::get_time_from_ts(min_safe_ts, cols)? else {
         return Ok(Datum::Null);
     };
     let mut result = cal_appropriate_time(*left, *right, min_safe_time);
@@ -142,12 +144,24 @@ pub(crate) fn date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalErro
     Ok(Datum::Time(value))
 }
 
+/// Go `getStmtTimestamp`: failpoint override precedes EvalContext.CurrentTime.
+fn get_stmt_timestamp(cols: &dyn Columns) -> Result<(i64, u32, i32), EvalError> {
+    if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/expression/injectNow") {
+        let seconds = value.int();
+        use chrono::{TimeZone as _, Offset as _};
+        let offset = cols.time_zone().timestamp_opt(seconds, 0).single()
+            .ok_or(no_clock_err())?.offset().fix().local_minus_utc();
+        return Ok((seconds, 0, offset));
+    }
+    cols.now().ok_or(no_clock_err())
+}
+
 /// `builtinNowWithArgSig` / `builtinNowWithoutArgSig`: local
 /// (`time_zone`-adjusted) statement time, always truncating fractional
 /// seconds. `CURRENT_TIMESTAMP` is the same function class.
 pub(crate) fn now(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     let fsp = parse_fsp_with_null_as_zero(vals, "now")?.unwrap_or(0);
-    let (utc_secs, nanos, tz_offset) = cols.now().ok_or(no_clock_err())?;
+    let (utc_secs, nanos, tz_offset) = get_stmt_timestamp(cols)?;
     Ok(Datum::new_string_datum(format_datetime(
         utc_secs + i64::from(tz_offset),
         nanos,
@@ -160,7 +174,7 @@ pub(crate) fn now(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError
 /// raw UTC statement time, always rounding fractional seconds half-up.
 pub(crate) fn utc_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     let fsp = parse_fsp_with_null_as_zero(vals, "utc_timestamp")?.unwrap_or(0);
-    let (utc_secs, nanos, _) = cols.now().ok_or(no_clock_err())?;
+    let (utc_secs, nanos, _) = get_stmt_timestamp(cols)?;
     Ok(Datum::new_string_datum(format_datetime(
         utc_secs, nanos, fsp, true,
     )))
@@ -172,7 +186,7 @@ pub(crate) fn current_date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, 
     if !vals.is_empty() {
         return Err(EvalError::Unsupported("bad function arity"));
     }
-    let (utc_secs, _, tz_offset) = cols.now().ok_or(no_clock_err())?;
+    let (utc_secs, _, tz_offset) = get_stmt_timestamp(cols)?;
     Ok(Datum::new_string_datum(format_date(
         utc_secs + i64::from(tz_offset),
     )))
@@ -183,7 +197,7 @@ pub(crate) fn utc_date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, Eval
     if !vals.is_empty() {
         return Err(EvalError::Unsupported("bad function arity"));
     }
-    let (utc_secs, _, _) = cols.now().ok_or(no_clock_err())?;
+    let (utc_secs, _, _) = get_stmt_timestamp(cols)?;
     Ok(Datum::new_string_datum(format_date(utc_secs)))
 }
 
@@ -196,7 +210,7 @@ pub(crate) fn current_time(
     cols: &dyn Columns,
 ) -> Result<Datum, EvalError> {
     let fsp = parse_fsp_with_null_as_zero(vals, function)?;
-    let (utc_secs, nanos, tz_offset) = cols.now().ok_or(no_clock_err())?;
+    let (utc_secs, nanos, tz_offset) = get_stmt_timestamp(cols)?;
     // builtinCurrentTime1ArgSig first renders TimeFSPFormat (six digits,
     // truncating sub-microsecond nanoseconds) and only then ParseDuration
     // rounds to the requested FSP. Preserve that two-stage source algorithm;
@@ -218,7 +232,7 @@ pub(crate) fn utc_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, Eval
         return Ok(Datum::Null);
     }
     let fsp = parse_fsp_for(vals, "utc_time")?;
-    let (utc_secs, nanos, _) = cols.now().ok_or(no_clock_err())?;
+    let (utc_secs, nanos, _) = get_stmt_timestamp(cols)?;
     // builtinUTCTimeWithArgSig has the identical TimeFSPFormat-then-parse
     // conversion as CURRENT_TIME's explicit signature.
     let nanos = fsp.map_or(nanos, |_| nanos / 1_000 * 1_000);

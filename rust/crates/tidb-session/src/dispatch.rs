@@ -314,6 +314,26 @@ impl Session {
     /// `GrantExec`, `RevokeExec` and `SimpleExec.autoNewTxn` make. (The staleness refusal precedes
     /// `Compile`, and the DDL preprocess runs inside it.)
     pub(crate) fn statement_preamble(&mut self, stmt: &Stmt) -> Result<(), DriverError> {
+        self.check_txn_aborted(stmt)?;
+        self.statement_is_staleness = matches!(stmt, Stmt::Query(_)) && self.is_staleness_txn();
+        // Go `ExecStmt.Exec` verifies the statement provider's read timestamp.
+        if self.statement_is_staleness {
+            if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/assertStaleTSO") {
+                let ts = self.historical_read_ts().expect("staleness statement read timestamp");
+                assert_eq!((ts >> 18) / 1000, value.int() as u64, "different tso");
+            }
+        }
+        // Go `executor.newLockCtx`: process start time plus GetMaxExecutionTime.
+        let max_ms = if matches!(stmt, Stmt::Query(_)) {
+            if self.stmt_hints.has_max_execution_time { self.stmt_hints.max_execution_time }
+            else { self.vars.max_execution_time() }
+        } else { 0 };
+        let mut kv_context = self.statement_kv_context.get();
+        kv_context.max_execution_deadline = (max_ms > 0).then(|| {
+            let elapsed = self.statement_observation.as_ref().map_or(std::time::Duration::ZERO, |obs| obs.started.elapsed());
+            std::time::SystemTime::now() - elapsed + std::time::Duration::from_millis(max_ms)
+        });
+        self.statement_kv_context.publish(kv_context);
         self.validate_snapshot_write(stmt)?;
         if matches!(stmt, Stmt::Ddl(_)) && !self.ddl_preserves_transaction(stmt) {
             // Go commits the open transaction before ordinary DDL

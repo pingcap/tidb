@@ -668,6 +668,7 @@ impl StatementLifecycle<'_> {
                     match failure {
                         None => break Err(error),
                         Some(StatementLockFailure::Retry { for_update_ts }) => {
+                            self.session.record_pessimistic_lock_error(tidb_errno::errcode::ErrWriteConflict);
                             if let Err(error) = retries.retry() {
                                 break Err(transactions::sql_error(error));
                             }
@@ -687,6 +688,7 @@ impl StatementLifecycle<'_> {
                             StatementLockFailure::Statement(error)
                             | StatementLockFailure::Transaction(error),
                         ) => {
+                            self.session.record_pessimistic_lock_error(error.code);
                             let error = transactions::sql_error(error);
                             self.session
                                 .rerecord_last_query_error(&error.error_string());
@@ -840,7 +842,8 @@ impl StatementLifecycle<'_> {
         if keys.is_empty() {
             return Ok(PessimisticStep::Done);
         }
-        let duplicate_hints = presume_not_exists
+        // Go `ExtractKeyExistsErrFromHandle` also decodes keys staged by earlier statements.
+        let duplicate_hints = keys
             .iter()
             .filter_map(|key| {
                 self.txn
@@ -869,15 +872,18 @@ impl StatementLifecycle<'_> {
         match outcome {
             LockKeysOutcome::Locked { .. } => Ok(PessimisticStep::Done),
             LockKeysOutcome::RetryStatement { for_update_ts, .. } => {
+                self.session.record_pessimistic_lock_error(tidb_errno::errcode::ErrWriteConflict);
                 Ok(PessimisticStep::Retry { for_update_ts })
             }
             LockKeysOutcome::StatementError(error) => {
+                self.session.record_pessimistic_lock_error(error.code);
                 // Statement-scoped, Go's 1205/1213 family: this statement's
                 // writes go, the transaction stays open.
                 self.txn.buffer().restore(savepoint.clone());
                 Err(transactions::sql_error(error))
             }
             LockKeysOutcome::TransactionError(error) => {
+                self.session.record_pessimistic_lock_error(error.code);
                 // The transaction is no longer usable; later statements and
                 // `ROLLBACK` report that state on their own.
                 self.txn.buffer().restore(savepoint.clone());
