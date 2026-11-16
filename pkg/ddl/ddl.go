@@ -966,16 +966,11 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	return nil
 }
 
-<<<<<<< HEAD
-// this detection is only used for Classic kernel. for NextGen(TiDB-X), the job
-// version is always started with V2, no need to detect kernel version.
-=======
 // detectAndUpdateClassicCompatibility checks server versions in Classic clusters
 // to select DDL job and global index formats and retire legacy ECDSA session tokens.
 // The minimum versions, ignoring pre-release labels, are 8.4.0 for job V2, 8.5.6
 // for global index V1, and 8.5.9 for modern-only ECDSA verification. Keep polling
 // during an upgrade until all three transitions are complete.
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 //
 // NextGen uses fixed job/index formats and disables legacy ECDSA tokens by default,
 // so it does not run this detector. Without etcd, tests and unistore use job V2

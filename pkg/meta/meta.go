@@ -2061,8 +2061,6 @@ func (m *Mutator) FinishBootstrap(version int64) error {
 	return errors.Trace(err)
 }
 
-<<<<<<< HEAD
-=======
 // GetLegacyECDSASessionTokenDisabled reports whether legacy ECDSA session tokens
 // have been permanently disabled. A missing key preserves upgrade compatibility.
 func (m *Mutator) GetLegacyECDSASessionTokenDisabled() (bool, error) {
@@ -2076,19 +2074,6 @@ func (m *Mutator) SetLegacyECDSASessionTokenDisabled() error {
 	return errors.Trace(m.txn.Set(mLegacyECDSASessionTokenDisabled, []byte("1")))
 }
 
-// GetStarterBootstrapVersion returns the completed starter bootstrap version.
-func (m *Mutator) GetStarterBootstrapVersion() (int64, error) {
-	value, err := m.txn.GetInt64(mStarterBootstrapKey)
-	return value, errors.Trace(err)
-}
-
-// FinishStarterBootstrap records the completed starter bootstrap version.
-func (m *Mutator) FinishStarterBootstrap(version int64) error {
-	err := m.txn.Set(mStarterBootstrapKey, []byte(strconv.FormatInt(version, 10)))
-	return errors.Trace(err)
-}
-
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 // ElementKeyType is a key type of the element.
 type ElementKeyType []byte
 
