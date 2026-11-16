@@ -15,29 +15,28 @@
 package session
 
 import (
+	"context"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
-<<<<<<< HEAD
-=======
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
-	"go.uber.org/zap/zaptest/observer"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 )
 
 func TestInitLegacyECDSASessionToken(t *testing.T) {
 	original := vardef.IsLegacyECDSASessionTokenDisabled()
 	t.Cleanup(func() { vardef.SetLegacyECDSASessionTokenDisabled(original) })
 	t.Run("fresh bootstrap", func(t *testing.T) {
-		if kerneltype.IsClassic() {
-			vardef.SetLegacyECDSASessionTokenDisabled(false)
-		}
-		store, dom := CreateStoreAndBootstrap(t)
+		vardef.SetLegacyECDSASessionTokenDisabled(false)
+		store, err := mockstore.NewMockStore()
+		require.NoError(t, err)
+		dom, err := BootstrapSession(store)
+		require.NoError(t, err)
 		defer func() { require.NoError(t, store.Close()) }()
 		defer dom.Close()
 		require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
@@ -45,15 +44,8 @@ func TestInitLegacyECDSASessionToken(t *testing.T) {
 		require.NoError(t, err)
 		disabled, err := meta.NewReader(store.GetSnapshot(version)).GetLegacyECDSASessionTokenDisabled()
 		require.NoError(t, err)
-		require.Equal(t, kerneltype.IsClassic(), disabled)
+		require.True(t, disabled)
 	})
-	if kerneltype.IsNextGen() {
-		require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
-		// A nil embedded store proves NextGen bypasses metadata entirely.
-		require.NoError(t, initLegacyECDSASessionToken(&legacySessionTokenStorage{}, false))
-		require.NoError(t, initLegacyECDSASessionToken(&legacySessionTokenStorage{}, true))
-		return
-	}
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })

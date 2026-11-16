@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -90,15 +91,9 @@ const (
 )
 
 var (
-<<<<<<< HEAD
-	jobV2FirstVer        = *semver.New("8.4.0")
-	detectJobVerInterval = 10 * time.Second
-=======
 	jobV2FirstVer                      = *semver.New("8.4.0")
-	globalIdxV1FirstVer                = *semver.New("8.5.6")
 	modernECDSASessionTokenVer         = *semver.New("8.5.9")
 	detectClassicCompatibilityInterval = 10 * time.Second
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 )
 
 // StartMode is an enum type for the start mode of the DDL.
@@ -868,14 +863,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
-<<<<<<< HEAD
-	d.detectAndUpdateJobVersion()
-=======
-	failpoint.InjectCall("beforeDDLStart", startMode)
-	if kerneltype.IsClassic() {
-		d.detectAndUpdateClassicCompatibility()
-	}
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
+	d.detectAndUpdateClassicCompatibility()
 	campaignOwner := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()
 	if startMode == Upgrade {
 		if !campaignOwner {
@@ -952,25 +940,13 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	return nil
 }
 
-<<<<<<< HEAD
-// detect versions of all TiDB instances and choose a job version to use, rules:
-//   - if it's in test or run in uni-store, use V2 directly if ForceDDLJobVersionToV1InTest
-//     is not set, else use V1, we use this rule to run unit-tests using V1.
-//   - if all TiDB instances have version >= 8.4.0, use V2
-//   - otherwise, we must during upgrade from lower version, then start a background
-//     routine to detect the version of all TiDB instances repeatedly, when upgrade
-//     is done, we will use V2, and exit the routine.
-=======
 // detectAndUpdateClassicCompatibility checks server versions in Classic clusters
-// to select DDL job and global index formats and retire legacy ECDSA session tokens.
-// The minimum versions, ignoring pre-release labels, are 8.4.0 for job V2, 8.5.6
-// for global index V1, and 8.5.9 for modern-only ECDSA verification. Keep polling
-// during an upgrade until all three transitions are complete.
+// to select the DDL job format and retire legacy ECDSA session tokens.
+// The minimum versions, ignoring pre-release labels, are 8.4.0 for job V2 and
+// 8.5.9 for modern-only ECDSA verification. Keep polling during an upgrade until
+// both transitions are complete.
 //
-// NextGen uses fixed job/index formats and disables legacy ECDSA tokens by default,
-// so it does not run this detector. Without etcd, tests and unistore use job V2
-// unless ForceV1 is set, and enable global index V1 without polling.
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
+// Without etcd, tests and unistore use job V2 unless ForceV1 is set, without polling.
 //
 // Downgrades are unsupported: once newer formats are in use or legacy verification
 // is permanently disabled, starting an older TiDB cannot restore compatibility.
@@ -978,9 +954,9 @@ func (d *ddl) detectAndUpdateClassicCompatibility() {
 	if d.etcdCli == nil {
 		if testargsv1.ForceV1 {
 			model.SetJobVerInUse(model.JobVersion1)
-			return
+		} else {
+			model.SetJobVerInUse(model.JobVersion2)
 		}
-		model.SetJobVerInUse(model.JobVersion2)
 		return
 	}
 
@@ -989,23 +965,13 @@ func (d *ddl) detectAndUpdateClassicCompatibility() {
 		logutil.DDLLogger().Warn("detect Classic cluster compatibility failed", zap.String("err", err.Error()))
 	}
 
-<<<<<<< HEAD
-	if model.GetJobVerInUse() == model.JobVersion2 {
-		return
-	}
-
-	logutil.DDLLogger().Info("job version in use is not v2, maybe in upgrade, start detecting",
-		zap.Stringer("current", model.GetJobVerInUse()))
-=======
-	if model.GetJobVerInUse() == model.JobVersion2 && model.GetGlobalIndexV1Supported() && vardef.IsLegacyECDSASessionTokenDisabled() {
+	if model.GetJobVerInUse() == model.JobVersion2 && vardef.IsLegacyECDSASessionTokenDisabled() {
 		return
 	}
 
 	logutil.DDLLogger().Info("cluster compatibility checks remain pending, start detecting",
 		zap.Stringer("current", model.GetJobVerInUse()),
-		zap.Bool("globalIndexV1Supported", model.GetGlobalIndexV1Supported()),
 		zap.Bool("legacyECDSASessionTokenDisabled", vardef.IsLegacyECDSASessionTokenDisabled()))
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 	d.wg.RunWithLog(func() {
 		ticker := time.NewTicker(detectClassicCompatibilityInterval)
 		defer ticker.Stop()
@@ -1019,15 +985,9 @@ func (d *ddl) detectAndUpdateClassicCompatibility() {
 			if err != nil {
 				logutil.SampleLogger().Warn("detect Classic cluster compatibility failed", zap.String("err", err.Error()))
 			}
-<<<<<<< HEAD
-			failpoint.InjectCall("afterDetectAndUpdateJobVersionOnce")
-			if model.GetJobVerInUse() == model.JobVersion2 {
-				logutil.DDLLogger().Info("job version in use is v2 now, stop detecting")
-=======
 			failpoint.InjectCall("afterDetectAndUpdateClassicCompatibilityOnce")
-			if model.GetJobVerInUse() == model.JobVersion2 && model.GetGlobalIndexV1Supported() && vardef.IsLegacyECDSASessionTokenDisabled() {
+			if model.GetJobVerInUse() == model.JobVersion2 && vardef.IsLegacyECDSASessionTokenDisabled() {
 				logutil.DDLLogger().Info("cluster compatibility checks completed, stop detecting")
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 				return
 			}
 		}
@@ -1036,10 +996,6 @@ func (d *ddl) detectAndUpdateClassicCompatibility() {
 
 // when all TiDB instances have version >= 8.4.0, we can use job version 2, otherwise
 // we should use job version 1 to keep compatibility.
-<<<<<<< HEAD
-func (d *ddl) detectAndUpdateJobVersionOnce() error {
-=======
-// Also checks whether all instances support global index V1 key format (>= 8.5.6).
 // Legacy ECDSA session tokens are permanently disabled once all instances are >= 8.5.9.
 func (d *ddl) detectAndUpdateClassicCompatibilityOnce() error {
 	if !vardef.IsLegacyECDSASessionTokenDisabled() {
@@ -1053,17 +1009,12 @@ func (d *ddl) detectAndUpdateClassicCompatibilityOnce() error {
 			vardef.SetLegacyECDSASessionTokenDisabled(true)
 		}
 	}
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 	infos, err := infosync.GetAllServerInfo(d.ctx)
 	if err != nil {
 		return err
 	}
 	allSupportV2 := true
-<<<<<<< HEAD
-=======
-	allSupportGlobalIdxV1 := true
 	allSupportModernECDSA := len(infos) > 0
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 	for _, info := range infos {
 		// we don't store TiDB version directly, but concatenated with a MySQL version,
 		// separated by mysql.VersionSeparator.
@@ -1071,11 +1022,7 @@ func (d *ddl) detectAndUpdateClassicCompatibilityOnce() error {
 		idx := strings.Index(tidbVer, mysql.VersionSeparator)
 		if idx < 0 {
 			allSupportV2 = false
-<<<<<<< HEAD
-=======
-			allSupportGlobalIdxV1 = false
 			allSupportModernECDSA = false
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 			// see https://github.com/pingcap/tidb/issues/31823
 			logutil.SampleLogger().Warn("unknown server version, might be changed directly in config",
 				zap.String("version", tidbVer))
@@ -1086,11 +1033,7 @@ func (d *ddl) detectAndUpdateClassicCompatibilityOnce() error {
 		ver, err2 := semver.NewVersion(tidbVer)
 		if err2 != nil {
 			allSupportV2 = false
-<<<<<<< HEAD
-=======
-			allSupportGlobalIdxV1 = false
 			allSupportModernECDSA = false
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 			logutil.SampleLogger().Warn("parse server version failed", zap.String("version", info.Version),
 				zap.String("err", err2.Error()))
 			break
@@ -1115,14 +1058,6 @@ func (d *ddl) detectAndUpdateClassicCompatibilityOnce() error {
 			zap.Stringer("new", targetVer))
 		model.SetJobVerInUse(targetVer)
 	}
-<<<<<<< HEAD
-=======
-	if model.GetGlobalIndexV1Supported() != allSupportGlobalIdxV1 {
-		logutil.DDLLogger().Info("change global index V1 support",
-			zap.Bool("old", model.GetGlobalIndexV1Supported()),
-			zap.Bool("new", allSupportGlobalIdxV1))
-		model.SetGlobalIndexV1Supported(allSupportGlobalIdxV1)
-	}
 	if allSupportModernECDSA && !vardef.IsLegacyECDSASessionTokenDisabled() {
 		ctx := kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL)
 		if err := kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
@@ -1135,7 +1070,6 @@ func (d *ddl) detectAndUpdateClassicCompatibilityOnce() error {
 		vardef.SetLegacyECDSASessionTokenDisabled(true)
 		logutil.DDLLogger().Info("disabled legacy ECDSA session tokens after cluster upgrade")
 	}
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 	return nil
 }
 

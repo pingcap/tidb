@@ -1,4 +1,4 @@
-// Copyright 2025 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,40 +14,12 @@
 
 package vardef
 
-import (
-	"strings"
-	"sync/atomic"
-	"time"
-
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-)
-
-var (
-	// schemaLease is lease of info schema, we use this to check whether info schema
-	// is valid in SchemaChecker. we also use half of it as info schema reload interval.
-	// Default info schema lease 45s which is init at main, we set it to 1 second
-	// here for tests. you can change it with a proper time, but you must know that
-	// too little may cause badly performance degradation.
-	schemaLease = int64(1 * time.Second)
-	// statsLease is the time for reload stats table.
-	statsLease = int64(3 * time.Second)
-	// planReplayerGCLease is the time for plan replayer gc.
-	planReplayerGCLease = int64(10 * time.Minute)
-	// planReplayerFileRetentionTime is the retention time for non-capture plan replayer files.
-	planReplayerFileRetentionTime = int64(DefTiDBPlanReplayerFileRetentionTime)
-)
+import "sync/atomic"
 
 // disableLegacyECDSASessionToken rejects legacy raw-input ECDSA signatures, which
 // leave token timestamps unauthenticated because ECDSA truncates the JSON input.
-// Classic keeps this false until the cluster upgrade gate is durably completed;
-// NextGen disables legacy ECDSA tokens immediately because it uses RSA tokens.
+// Keep this false until the cluster upgrade gate is durably completed.
 var disableLegacyECDSASessionToken atomic.Bool
-
-func init() {
-	if kerneltype.IsNextGen() {
-		SetLegacyECDSASessionTokenDisabled(true)
-	}
-}
 
 // IsLegacyECDSASessionTokenDisabled reports whether legacy raw-input ECDSA
 // session-token signatures are rejected.
@@ -59,57 +31,4 @@ func IsLegacyECDSASessionTokenDisabled() bool {
 // session-token signatures are rejected.
 func SetLegacyECDSASessionTokenDisabled(disabled bool) {
 	disableLegacyECDSASessionToken.Store(disabled)
-}
-
-// SetSchemaLease changes the default schema lease time for DDL.
-// This function is very dangerous, don't use it if you really know what you do.
-// SetSchemaLease only affects not local storage after bootstrapped.
-func SetSchemaLease(lease time.Duration) {
-	atomic.StoreInt64(&schemaLease, int64(lease))
-}
-
-// GetSchemaLease returns the schema lease time.
-func GetSchemaLease() time.Duration {
-	return time.Duration(atomic.LoadInt64(&schemaLease))
-}
-
-// SetStatsLease changes the default stats lease time for loading stats info.
-func SetStatsLease(lease time.Duration) {
-	atomic.StoreInt64(&statsLease, int64(lease))
-}
-
-// GetStatsLease returns the stats lease time.
-func GetStatsLease() time.Duration {
-	return time.Duration(atomic.LoadInt64(&statsLease))
-}
-
-// SetPlanReplayerGCLease changes the default plan repalyer gc lease time.
-func SetPlanReplayerGCLease(lease time.Duration) {
-	atomic.StoreInt64(&planReplayerGCLease, int64(lease))
-}
-
-// GetPlanReplayerGCLease returns the plan replayer gc lease time.
-func GetPlanReplayerGCLease() time.Duration {
-	return time.Duration(atomic.LoadInt64(&planReplayerGCLease))
-}
-
-// SetPlanReplayerFileRetentionTime changes the retention time for non-capture plan replayer files.
-func SetPlanReplayerFileRetentionTime(duration time.Duration) {
-	atomic.StoreInt64(&planReplayerFileRetentionTime, int64(duration))
-}
-
-// GetPlanReplayerFileRetentionTime returns the retention time for non-capture plan replayer files.
-func GetPlanReplayerFileRetentionTime() time.Duration {
-	return time.Duration(atomic.LoadInt64(&planReplayerFileRetentionTime))
-}
-
-// IsReadOnlyVarInNextGen checks if the variable is read-only in the nextgen.
-func IsReadOnlyVarInNextGen(name string) bool {
-	name = strings.ToLower(name)
-	switch name {
-	case TiDBEnableMDL, TiDBMaxDistTaskNodes, TiDBDDLReorgMaxWriteSpeed, TiDBDDLDiskQuota,
-		TiDBEnableDistTask, TiDBDDLEnableFastReorg:
-		return true
-	}
-	return false
 }

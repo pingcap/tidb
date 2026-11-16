@@ -35,11 +35,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -500,10 +496,6 @@ func TestMergeContinuousKeyRanges(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
-func TestDetectAndUpdateJobVersion(t *testing.T) {
-	d := &ddl{ddlCtx: &ddlCtx{ctx: context.Background()}}
-=======
 func TestDetectAndUpdateClassicCompatibility(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -511,16 +503,11 @@ func TestDetectAndUpdateClassicCompatibility(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	d := &ddl{ddlCtx: &ddlCtx{ctx: ctx, store: store}}
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 
 	originalDisabled := vardef.IsLegacyECDSASessionTokenDisabled()
 	reset := func() {
 		model.SetJobVerInUse(model.JobVersion1)
-<<<<<<< HEAD
-=======
-		model.SetGlobalIndexV1Supported(false)
-		vardef.SetLegacyECDSASessionTokenDisabled(kerneltype.IsNextGen())
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
+		vardef.SetLegacyECDSASessionTokenDisabled(false)
 	}
 	t.Cleanup(func() {
 		reset()
@@ -557,31 +544,13 @@ func TestDetectAndUpdateClassicCompatibility(t *testing.T) {
 
 	t.Run("all support v2, even with pre-release label", func(t *testing.T) {
 		reset()
-<<<<<<< HEAD
 		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0-alpha-228-g650888fea7-dirty",
 			"8.0.11-TiDB-v8.4.1", "8.0.11-TiDB-8.5.0-beta")
-		d.detectAndUpdateJobVersion()
-=======
-		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.6-alpha-228-g650888fea7-dirty",
-			"8.0.11-TiDB-v9.0.0", "8.0.11-TiDB-8.5.6-beta")
 		d.detectAndUpdateClassicCompatibilityOnce()
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 	})
 
-<<<<<<< HEAD
-	t.Run("v1 first, later all support v2", func(t *testing.T) {
-=======
-	t.Run("all support v2 but not global index v1", func(t *testing.T) {
-		reset()
-		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.5.5")
-		d.detectAndUpdateClassicCompatibilityOnce()
-		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
-		require.False(t, model.GetGlobalIndexV1Supported())
-	})
-
-	t.Run("v1 first, later all support v2 and global index v1", func(t *testing.T) {
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
+	t.Run("v1 first, later all support v2 and modern ECDSA", func(t *testing.T) {
 		reset()
 		intervalBak := detectClassicCompatibilityInterval
 		t.Cleanup(func() {
@@ -613,43 +582,21 @@ func TestDetectAndUpdateClassicCompatibility(t *testing.T) {
 				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
 				// upgrade done
 				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.4.0")
-<<<<<<< HEAD
-			} else {
-				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
-=======
 			} else if iterateCnt == 6 {
 				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
-				require.False(t, model.GetGlobalIndexV1Supported())
-				// upgrade to version supporting global index v1
-				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.6", "8.0.11-TiDB-v8.5.6", "8.0.11-TiDB-v8.5.6")
-			} else if iterateCnt == 7 && kerneltype.IsClassic() {
-				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
-				require.True(t, model.GetGlobalIndexV1Supported())
 				require.False(t, vardef.IsLegacyECDSASessionTokenDisabled())
 				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.9", "8.0.11-TiDB-v8.5.9")
 			} else {
 				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
-				require.True(t, model.GetGlobalIndexV1Supported())
 				require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 			}
 		})
 		d.detectAndUpdateClassicCompatibility()
 		d.wg.Wait()
-<<<<<<< HEAD
-		require.EqualValues(t, 6, iterateCnt)
-=======
-		if kerneltype.IsClassic() {
-			require.EqualValues(t, 8, iterateCnt)
-		} else {
-			require.EqualValues(t, 7, iterateCnt)
-		}
+		require.EqualValues(t, 7, iterateCnt)
 	})
 
 	t.Run("legacy ECDSA upgrade gate", func(t *testing.T) {
-		if kerneltype.IsNextGen() {
-			t.Skip("NextGen always disables legacy ECDSA")
-		}
 		cases := []struct {
 			name     string
 			versions []string
@@ -684,9 +631,6 @@ func TestDetectAndUpdateClassicCompatibility(t *testing.T) {
 	})
 
 	t.Run("persist before disabling and never re-enable", func(t *testing.T) {
-		if kerneltype.IsNextGen() {
-			t.Skip("NextGen always disables legacy ECDSA")
-		}
 		reset()
 		store, err := mockstore.NewMockStore()
 		require.NoError(t, err)
@@ -710,10 +654,9 @@ func TestDetectAndUpdateClassicCompatibility(t *testing.T) {
 		require.NoError(t, d.detectAndUpdateClassicCompatibilityOnce())
 		require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
 		vardef.SetLegacyECDSASessionTokenDisabled(false)
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", `return("invalid JSON")`)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", `return("invalid JSON")`)
 		require.Error(t, d.detectAndUpdateClassicCompatibilityOnce())
 		require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 	})
 }
 

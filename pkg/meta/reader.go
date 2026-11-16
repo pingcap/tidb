@@ -60,11 +60,7 @@ type Reader interface {
 	GetSystemDBID() (int64, error)
 	GetSchemaCacheSize() (size uint64, isNull bool, err error)
 	GetBootstrapVersion() (int64, error)
-<<<<<<< HEAD
-=======
 	GetLegacyECDSASessionTokenDisabled() (bool, error)
-	GetStarterBootstrapVersion() (int64, error)
->>>>>>> 573231acda6 (privilege: harden session-token validation with staged legacy support (#72996))
 }
 
 // NewReader creates a meta Reader in snapshot.
