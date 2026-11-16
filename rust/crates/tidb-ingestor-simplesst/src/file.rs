@@ -38,7 +38,7 @@ impl<'a> KeyValueStore<'a> {
     }
 
     /// Go `NewKeyValueStore` continuing a file already `offset` bytes long.
-    pub(crate) fn resume(
+    pub fn resume(
         ctx: &Context,
         data_writer: &'a mut dyn ObjWriter,
         rc: Option<&'a mut RangePropertiesCollector>,

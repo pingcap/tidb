@@ -7447,6 +7447,7 @@ version = "0.0.0"
 dependencies = [
  "serde",
  "serde_json",
+ "tidb-gocontext",
 ]
 
 [[package]]
@@ -7454,6 +7455,32 @@ name = "tidb-ingestor-errdef"
 version = "0.0.0"
 dependencies = [
  "tidb-terror",
+]
+
+[[package]]
+name = "tidb-ingestor-globalsort"
+version = "0.0.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tidb-config-configtypes",
+ "tidb-dxf-execute",
+ "tidb-failpoint",
+ "tidb-go-strconv",
+ "tidb-gocontext",
+ "tidb-goruntime",
+ "tidb-ingestor-engineapi",
+ "tidb-ingestor-errdef",
+ "tidb-ingestor-simplesst",
+ "tidb-lightning-log",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-mathutil",
+ "tidb-metrics",
+ "tidb-objstore",
+ "uuid",
 ]
 
 [[package]]
@@ -7469,11 +7496,15 @@ dependencies = [
  "tidb-extsort",
  "tidb-failpoint",
  "tidb-gocontext",
+ "tidb-ingestor-engineapi",
  "tidb-ingestor-errdef",
+ "tidb-ingestor-globalsort",
+ "tidb-ingestor-simplesst",
  "tidb-lightning-backend",
  "tidb-lightning-verification",
  "tidb-log",
  "tidb-meta",
+ "tidb-objstore",
  "tidb-pd-client",
  "tidb-proto",
  "tidb-terror",

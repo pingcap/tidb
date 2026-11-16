@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 serde.workspace = true
+tidb-gocontext = { path = "../tidb-gocontext" }
 
 [dev-dependencies]
 serde_json.workspace = true

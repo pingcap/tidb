@@ -81,6 +81,24 @@ pub static WRITE_TO_CLOUD_STORAGE_RATE: LazyLock<HistogramVec> = LazyLock::new(|
     ))
 });
 
+/// Go `GlobalSortReadFromCloudStorageDuration` (`pkg/metrics`).
+pub static READ_FROM_CLOUD_STORAGE_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new("tidb_global_sort_read_from_cloud_storage_duration", "read from cloud storage duration")
+            .buckets(prometheus::exponential_buckets(0.001, 2.0, 20).expect("valid buckets")),
+        &["type"],
+    ))
+});
+
+/// Go `GlobalSortReadFromCloudStorageRate` (`pkg/metrics`).
+pub static READ_FROM_CLOUD_STORAGE_RATE: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new("tidb_global_sort_read_from_cloud_storage_rate", "read from cloud storage rate")
+            .buckets(prometheus::exponential_buckets(0.05, 2.0, 20).expect("valid buckets")),
+        &["type"],
+    ))
+});
+
 /// Go `GlobalSortUploadWorkerCount` (`pkg/metrics`).
 pub static UPLOAD_WORKER_COUNT: LazyLock<Gauge> = LazyLock::new(|| {
     register(Gauge::with_opts(Opts::new(

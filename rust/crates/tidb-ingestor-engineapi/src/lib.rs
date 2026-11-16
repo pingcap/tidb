@@ -90,6 +90,92 @@ impl<'de> Deserialize<'de> for OnDuplicateKey {
     }
 }
 
+/// The errors of an engine or its ingest data, keeping the Go error a
+/// caller tests for (such as `ErrFoundDuplicateKeys`).
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
+
+/// A key and its value.
+pub type Pair = (Vec<u8>, Vec<u8>);
+
+/// Go `ForwardIter` over [`IngestData`]: the pairs in key order.
+pub trait ForwardIter {
+    /// Go `Next` (after `First`) with `Valid`, `Key` and `Value`: the next
+    /// pair, or `None` at the end.
+    ///
+    /// # Errors
+    /// The data could not be read.
+    fn next_pair(&mut self) -> Result<Option<Pair>, Error>;
+}
+
+/// Go `IngestData`: the KV pairs a region job writes and ingests. The keys
+/// are not encoded by the TiKV codec.
+pub trait IngestData: Send + Sync {
+    /// Go `GetFirstAndLastKey` in `[lower, upper)`; an empty bound is
+    /// unbounded. `None` when there is no pair in the range.
+    ///
+    /// # Errors
+    /// The data could not be read.
+    fn get_first_and_last_key(&self, lower: &[u8], upper: &[u8]) -> Result<Option<Pair>, Error>;
+    /// Go `NewIter` over `[lower, upper)`.
+    ///
+    /// # Errors
+    /// The data could not be read.
+    fn new_iter<'a>(&'a self, lower: &[u8], upper: &[u8]) -> Result<Box<dyn ForwardIter + 'a>, Error>;
+    /// Go `GetTS`: the commit TS of the pairs.
+    fn get_ts(&self) -> u64;
+    /// Go `Finish`: counts pairs written and ingested.
+    fn finish(&self, total_bytes: i64, total_count: i64);
+}
+
+/// Go `DataAndRanges`: data, and the sorted ranges of it to ingest as
+/// separate jobs.
+pub struct DataAndRanges {
+    /// Go `Data`.
+    pub data: std::sync::Arc<dyn IngestData>,
+    /// Go `SortedRanges`.
+    pub sorted_ranges: Vec<Range>,
+}
+
+/// Go `Engine`: the data the ingest backend writes into TiKV.
+pub trait Engine: Send {
+    /// Go `ID`.
+    fn id(&self) -> String;
+    /// Go `LoadIngestData`: hands every batch of loaded data to `out`. Go
+    /// sends them to a channel the region job generator reads; here `out`
+    /// is called on the loading thread, so a batch is ingested before the
+    /// next one is loaded.
+    ///
+    /// # Errors
+    /// Loading failed, or `out` did.
+    fn load_ingest_data(
+        &mut self,
+        ctx: &tidb_gocontext::Context,
+        out: &mut dyn FnMut(DataAndRanges) -> Result<(), Error>,
+    ) -> Result<(), Error>;
+    /// Go `KVStatistics`: total size and count.
+    fn kv_statistics(&self) -> (i64, i64);
+    /// Go `ImportedStatistics`: size and count written and ingested.
+    fn imported_statistics(&self) -> (i64, i64);
+    /// Go `ConflictInfo`.
+    fn conflict_info(&self) -> ConflictInfo;
+    /// Go `GetKeyRange`: `[start, end)`.
+    ///
+    /// # Errors
+    /// The range could not be read.
+    fn get_key_range(&self) -> Result<(Vec<u8>, Vec<u8>), Error>;
+    /// Go `GetRegionSplitKeys`: the keys to split regions at, including the
+    /// start and end keys.
+    ///
+    /// # Errors
+    /// The keys could not be read.
+    fn get_region_split_keys(&self) -> Result<Vec<Vec<u8>>, Error>;
+    /// Go `Close`.
+    ///
+    /// # Errors
+    /// Releasing the engine failed.
+    fn close(&mut self) -> Result<(), Error>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

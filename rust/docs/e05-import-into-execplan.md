@@ -351,8 +351,17 @@ Remaining, in order:
    partition prefixes. Pinned by a 24-case Go capture (`zzprobe/e05sst`):
    every file's bytes, the writer summaries, and what the readers return,
    for both writers, the 4 duplicate actions, and 0, 1 and 60 rows.
-7. `pkg/ingestor/globalsort`, the rest of `engineapi`, and the external-engine
-   ingest.
+7. Done (the PR after the simplesst PR): `pkg/ingestor/globalsort` as
+   `tidb-ingestor-globalsort` (`SortedKVMeta`, `DivideMergeSortDataFiles`,
+   `CalRangeSize`, `RangeSplitter`, `MergeOverlappingFiles`, `readAllData`,
+   the external `Engine` and `MemoryIngestData`, `CleanUpFiles`),
+   `engineapi`'s `Engine`/`IngestData`, and `ingestctrl`'s
+   `IngestExternalEngine` with `verifyImportedStatistics`. Pinned by a Go
+   capture (`zzprobe/e05gs`) of the pure functions and of 3 overlapping
+   writers' files through every split, merge and engine load, for each
+   duplicate action. Go sorts a loaded batch with an unstable parallel sort,
+   so which duplicate an error names and the order of a key's recorded
+   duplicates vary between Go runs; the test compares those loosely.
 8. The DXF global-sort steps (encode and sort, merge sort, write and
    ingest), `clean_up.go`, and next-gen async prepare.
 9. Conflict collection and resolution, the global-sort live acceptance;

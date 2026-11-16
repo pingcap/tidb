@@ -284,6 +284,73 @@ pub fn new_write_request(
         chunk: Some(sst::write_request::Chunk::Meta(meta)),
     }
 }
+/// The data a region job reads: a local engine or Go `IngestData`.
+pub(crate) trait JobData {
+    /// The pairs in `[start, end)`; an empty bound is unbounded.
+    fn iter<'a>(&'a self, start: &[u8], end: &[u8]) -> Result<Box<dyn PairIter + 'a>>;
+    /// Go `GetTS`.
+    fn ts(&self) -> u64;
+    /// Go `IngestData.Finish`, after a job's pairs are ingested.
+    fn finished(&self, bytes: i64, count: i64);
+}
+
+/// The pairs of a [`JobData`] range.
+pub(crate) trait PairIter {
+    fn next_pair(&mut self) -> Result<Option<(Vec<u8>, Vec<u8>)>>;
+}
+
+impl PairIter for crate::engine::EngineIterator {
+    fn next_pair(&mut self) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+        crate::engine::EngineIterator::next_pair(self)
+    }
+}
+
+impl JobData for Engine {
+    fn iter<'a>(&'a self, start: &[u8], end: &[u8]) -> Result<Box<dyn PairIter + 'a>> {
+        Ok(Box::new(self.new_iter(start, end)?))
+    }
+    fn ts(&self) -> u64 {
+        self.get_ts()
+    }
+    fn finished(&self, _bytes: i64, count: i64) {
+        self.add_imported_kvs(count);
+    }
+}
+
+/// An engine error as a backend error, keeping a Go `*errors.Error`.
+pub(crate) fn engine_error(e: tidb_ingestor_engineapi::Error) -> Error {
+    if let Some(t) = e.downcast_ref::<tidb_terror::TerrorError>() {
+        return Error::Ingest(t.clone());
+    }
+    if let Some(tidb_ingestor_simplesst::Error::Terror(t)) = e.downcast_ref::<tidb_ingestor_simplesst::Error>() {
+        return Error::Ingest(t.clone());
+    }
+    Error::Other(e.to_string())
+}
+
+/// [`tidb_ingestor_engineapi::IngestData`] as [`JobData`].
+pub(crate) struct IngestDataJob<'a>(pub(crate) &'a dyn tidb_ingestor_engineapi::IngestData);
+
+struct IngestDataIter<'a>(Box<dyn tidb_ingestor_engineapi::ForwardIter + 'a>);
+
+impl PairIter for IngestDataIter<'_> {
+    fn next_pair(&mut self) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+        self.0.next_pair().map_err(engine_error)
+    }
+}
+
+impl JobData for IngestDataJob<'_> {
+    fn iter<'a>(&'a self, start: &[u8], end: &[u8]) -> Result<Box<dyn PairIter + 'a>> {
+        Ok(Box::new(IngestDataIter(self.0.new_iter(start, end).map_err(engine_error)?)))
+    }
+    fn ts(&self) -> u64 {
+        self.0.get_ts()
+    }
+    fn finished(&self, bytes: i64, count: i64) {
+        self.0.finish(bytes, count);
+    }
+}
+
 /// Go `Backend.doImport`, bounded by the region's range and split thresholds.
 pub fn do_import(
     ctx: &Context,
@@ -293,17 +360,40 @@ pub fn do_import(
     split_size: u64,
     split_keys: usize,
 ) -> Result<()> {
-    let limiter = IngestLimiter::new(
+    let limiter = new_ingest_limiter(ctx);
+    import_range(ctx, engine, client, cfg, &limiter, &[], &[], split_size, split_keys)
+}
+
+/// Go `newIngestLimiter` with the configured limits.
+pub(crate) fn new_ingest_limiter(ctx: &Context) -> IngestLimiter {
+    IngestLimiter::new(
         ctx.clone(),
         rate_limiter_param::get_max_ingest_concurrency() as usize,
         rate_limiter_param::get_max_ingest_per_sec(),
-    );
-    let mut start = Vec::new();
+    )
+}
+
+/// The region jobs of `[range_start, range_end)` of `data`: Go
+/// `generateJobForRange` and the job workers, one region at a time, each
+/// region's pairs cut every `split_size` bytes or `split_keys` keys.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn import_range(
+    ctx: &Context,
+    data: &dyn JobData,
+    client: &dyn ImportClient,
+    cfg: &BackendConfig,
+    limiter: &IngestLimiter,
+    range_start: &[u8],
+    range_end: &[u8],
+    split_size: u64,
+    split_keys: usize,
+) -> Result<()> {
+    let mut start = range_start.to_vec();
     loop {
         if let Some(e) = ctx.err() {
             return Err(Error::Other(e.to_string()));
         }
-        let mut probe = engine.new_iter(&start, &[])?;
+        let mut probe = data.iter(&start, range_end)?;
         let Some((first, _)) = probe.next_pair()? else {
             return Ok(());
         };
@@ -312,7 +402,14 @@ pub fn do_import(
         let mut completed = None;
         for _ in 0..20 {
             let region = client.get_region(&first)?;
-            let mut it = engine.new_iter(&first, &region.region.end_key)?;
+            let region_end = &region.region.end_key;
+            // The job ends at the region's end or the range's, whichever is first.
+            let upper: &[u8] = match (region_end.is_empty(), range_end.is_empty()) {
+                (true, _) => range_end,
+                (false, true) => region_end,
+                (false, false) => std::cmp::min(region_end.as_slice(), range_end),
+            };
+            let mut it = data.iter(&first, upper)?;
             let mut pairs = Vec::new();
             let mut bytes = 0u64;
             let mut next = Vec::new();
@@ -328,15 +425,16 @@ pub fn do_import(
                     ..Default::default()
                 });
             }
+            drop(it);
             if pairs.is_empty() {
                 return Err(Error::Other("region does not contain ingest key".into()));
             }
             if next.is_empty() {
-                next = region.region.end_key.clone();
+                next = upper.to_vec();
             }
-            match write_and_ingest(ctx, client, cfg, &limiter, &region, &pairs, engine.get_ts()) {
+            match write_and_ingest(ctx, client, cfg, limiter, &region, &pairs, data.ts()) {
                 Ok(()) => {
-                    engine.add_imported_kvs(pairs.len() as i64);
+                    data.finished(bytes as i64, pairs.len() as i64);
                     completed = Some(next);
                     break;
                 }
@@ -354,6 +452,7 @@ pub fn do_import(
         }
         match completed {
             Some(next) if next.is_empty() => return Ok(()),
+            Some(next) if !range_end.is_empty() && next.as_slice() >= range_end => return Ok(()),
             Some(next) => start = next,
             None => return Err(last_error.unwrap()),
         }

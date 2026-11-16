@@ -19,6 +19,9 @@ tidb-proto = { path = "../tidb-proto" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-failpoint = { path = "../tidb-failpoint" }
 tidb-ingestor-errdef = { path = "../tidb-ingestor-errdef" }
+tidb-ingestor-engineapi = { path = "../tidb-ingestor-engineapi" }
+tidb-ingestor-globalsort = { path = "../tidb-ingestor-globalsort" }
+tidb-ingestor-simplesst = { path = "../tidb-ingestor-simplesst" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-log = { path = "../tidb-log" }
 hex = "0.4"
@@ -37,4 +40,5 @@ tidb-lightning-verification = { path = "../tidb-lightning-verification" }
 
 [dev-dependencies]
 tempfile.workspace = true
+tidb-objstore = { path = "../tidb-objstore" }
 tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }

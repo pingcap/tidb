@@ -25,7 +25,7 @@ pub use byte_reader::{
 };
 pub use codec::RangeProperty;
 pub use file::{KeyValueStore, LENGTH_BYTES};
-pub use iter::{MergeKVIter, MergePropIter};
+pub use iter::{KVPair, MergeKVIter, MergePropIter};
 pub use kv_reader::{KVReader, StatsReader, DEFAULT_READ_BUFFER_SIZE};
 pub use onefile_writer::{
     OneFileWriter, DEFAULT_ONE_WRITER_BLOCK_SIZE, DEFAULT_ONE_WRITER_MEM_SIZE_LIMIT,

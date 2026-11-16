@@ -344,11 +344,15 @@ impl WriterBuilder {
 
 /// Go encoding/json of a `[]byte` (`kv.Key`): standard base64, `null` for
 /// an empty key.
-pub(crate) mod go_bytes {
+pub mod go_bytes {
     use base64::Engine;
     use serde::{Deserialize, Deserializer, Serializer};
 
-    pub(crate) fn serialize<S: Serializer>(value: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+    /// Serializes `value`.
+    ///
+    /// # Errors
+    /// The serializer failed.
+    pub fn serialize<S: Serializer>(value: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
         if value.is_empty() {
             serializer.serialize_none()
         } else {
@@ -356,7 +360,11 @@ pub(crate) mod go_bytes {
         }
     }
 
-    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+    /// Deserializes a `[]byte`.
+    ///
+    /// # Errors
+    /// The value is not base64 or null.
+    pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Vec<u8>, D::Error> {
         Option::<String>::deserialize(deserializer)?.map_or(Ok(Vec::new()), |text| {
@@ -512,7 +520,7 @@ fn value_of(block: &[u8]) -> &[u8] {
 }
 
 /// Go `ErrFoundDuplicateKeys.FastGenByArgs(key, value)`.
-pub(crate) fn found_duplicate_keys(key: &[u8], value: &[u8]) -> Error {
+pub fn found_duplicate_keys(key: &[u8], value: &[u8]) -> Error {
     Error::Terror(
         tidb_lightning_common::errors::ERR_FOUND_DUPLICATE_KEYS.generate(format!(
             "found duplicate key '{}', value '{}'",
