@@ -778,7 +778,11 @@ impl Session {
         }
         // Go `StalenessTxnContextProvider.activateStaleTxn`:
         // `SetSystemVar(TiDBSnapshot, "")`, so `SnapshotTS` and
-        // `SnapshotInfoschema` end with the stale transaction's start.
+        // `SnapshotInfoschema` end with the stale transaction's start. A
+        // `tidb_snapshot` read is no staleness transaction and keeps them.
+        if !is_staleness {
+            return Ok(());
+        }
         let old_ts = self.vars.snapshot_ts();
         self.vars
             .set_system_var_without_validation("tidb_snapshot", String::new())
