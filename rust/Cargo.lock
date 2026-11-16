@@ -7467,9 +7467,15 @@ version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
  "encoding_rs",
+ "flate2",
+ "serde",
  "serde_json",
+ "tempfile",
  "tidb-charset",
  "tidb-datatype",
+ "tidb-failpoint",
+ "tidb-gocontext",
+ "tidb-objstore",
 ]
 
 [[package]]

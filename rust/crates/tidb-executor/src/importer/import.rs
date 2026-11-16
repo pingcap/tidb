@@ -450,7 +450,7 @@ pub fn handle_skip_n_rows(
             .as_any_mut()
             .downcast_mut::<tidb_lightning_mydump::CsvParser>()
         {
-            csv.read_until_terminator()
+            csv.read_until_terminator().map(|_| ())
         } else {
             parser.read_row()
         };

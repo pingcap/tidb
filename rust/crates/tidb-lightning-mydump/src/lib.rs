@@ -12,22 +12,58 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/lightning/mydump`'s CSV reader as `LOAD DATA` drives it:
-//! `CSVParser` (`csv_parser.go`), the `blockParser` it embeds and the
-//! unescape helpers (`parser.go`), `byteSet` (`bytes.go`) and
-//! `CharsetConvertor` (`charset_convertor.go`).
+//! Go `pkg/lightning/mydump`: the CSV parser (`csv_parser.go`), the SQL
+//! dump parser and the `blockParser` they embed (`parser.go`), `byteSet`
+//! (`bytes.go`), `CharsetConvertor` (`charset_convertor.go`), source
+//! routing (`router.go`), file metadata and sizes (`loader.go`), readers
+//! (`reader.go`) and table regions (`region.go`).
 //!
-//! The source is the whole (decompressed) client file. It is still fed to
-//! the lexer in Go's `LoadDataReadBlockSize * BufferSizeScale` blocks, because
-//! the block boundary is observable: the BOM is stripped from the block read
-//! at position 0, and the txn-entry-size limit is checked only when a token
-//! spans blocks.
+//! Parsers read their file in Go's `ReadBlockSize * BufferSizeScale`
+//! blocks; the block boundary is observable: the BOM is stripped from the
+//! block read at position 0, and the txn-entry-size limit is checked only
+//! when a token spans blocks.
 
 mod parser;
 mod router;
 mod loader;
 pub use router::{Compression, SourceType, parse_compression_on_file_extension};
-pub use loader::{RawFile, SourceFileMeta};
+pub use loader::{
+    estimate_real_size_for_file, parallel_process, sample_file_compress_ratio, ExtendColumnData, FileInfo,
+    FilterTable, MDTableMeta, RawFile, SourceFileMeta,
+};
+mod reader;
+pub use reader::{new_reader_opener, open_reader, ParserReader};
+pub mod region;
+pub use region::{make_table_regions, DataDivideConfig, TableRegion};
+#[cfg(test)]
+mod region_tests;
+
+/// Go `parquetfile.FileMeta`: what a Parquet chunk's reader is reopened with.
+/// Its fields are unexported in Go, so it marshals as `{}`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ParquetFileMeta {}
+
+/// Go `parquetfile.ReadRowCount`. The Parquet reader is a later port; until
+/// then a Parquet source fails here.
+pub fn parquet_row_count(
+    _ctx: &tidb_gocontext::Context,
+    _store: &dyn tidb_objstore::storeapi::Storage,
+    path: &str,
+) -> Result<i64, String> {
+    Err(format!("failed to read parquet file {path}: parquet files are not supported yet"))
+}
+
+/// Go `ToStorageCompressType`.
+pub fn to_storage_compress_type(compression: Compression) -> Result<tidb_objstore::compressedio::CompressType, String> {
+    use tidb_objstore::compressedio::CompressType;
+    match compression {
+        Compression::GZ => Ok(CompressType::Gzip),
+        Compression::Snappy => Ok(CompressType::Snappy),
+        Compression::ZStd => Ok(CompressType::Zstd),
+        Compression::None => Ok(CompressType::NoCompression),
+        other => Err(format!("compression {} doesn't have related storage compressType", other as i32)),
+    }
+}
 pub use parser::{read_chunks, read_until, Chunk, ChunkParser, Parser, Row};
 
 use tidb_datatype::Datum;
@@ -57,10 +93,18 @@ pub struct CsvConfig {
     pub quoted_null_is_text: bool,
     /// `UnescapedQuote`.
     pub unescaped_quote: bool,
+    /// `Header`.
+    pub header: bool,
+    /// `HeaderSchemaMatch`.
+    pub header_schema_match: bool,
 }
 
 /// Go `config.ReadBlockSize` (64 KiB) times `config.BufferSizeScale` (5).
-const BLOCK_BUF_SIZE: usize = 64 * 1024 * 5;
+/// Go `config.ReadBlockSize`.
+pub const READ_BLOCK_SIZE: usize = 64 * 1024;
+
+/// Go `config.BufferSizeScale`.
+pub const BUFFER_SIZE_SCALE: usize = 5;
 
 /// Go `config.MaxTxnEntrySizeLimit`, `mydump.LargestEntryLimit`'s value.
 const LARGEST_ENTRY_LIMIT: i64 = 120 * 1024 * 1024;
@@ -305,13 +349,67 @@ struct Field {
     quoted: bool,
 }
 
-/// Go `CSVParser` over an in-memory source.
+/// Go `io.ReadSeekCloser`: what a parser reads its file from.
+pub trait ReadSeek: std::io::Read + std::io::Seek + Send {}
+
+impl<T: std::io::Read + std::io::Seek + Send> ReadSeek for T {}
+
+/// Go `blockParser`'s reader and `blockBuf`: reads the file a block at a
+/// time (`io.ReadFull`).
+pub(crate) struct BlockReader {
+    reader: Box<dyn ReadSeek>,
+    block_buf_size: usize,
+}
+
+impl BlockReader {
+    pub(crate) fn new(reader: Box<dyn ReadSeek>, block_buf_size: usize) -> Self {
+        Self { reader, block_buf_size }
+    }
+
+    /// Go `PooledReader.ReadFull(blockBuf)`: the block, and whether it was
+    /// the last (a short read).
+    pub(crate) fn read_block(&mut self) -> Result<(Vec<u8>, bool), CsvError> {
+        let mut block = vec![0; self.block_buf_size];
+        let mut n = 0;
+        while n < block.len() {
+            match self.reader.read(&mut block[n..]) {
+                Ok(0) => break,
+                Ok(m) => n += m,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(CsvError::Other(e.to_string())),
+            }
+        }
+        block.truncate(n);
+        Ok((block, n < self.block_buf_size))
+    }
+
+    /// Go `blockParser.SetPos`'s seek.
+    pub(crate) fn seek(&mut self, pos: i64) -> Result<(), CsvError> {
+        let p = self
+            .reader
+            .seek(std::io::SeekFrom::Start(u64::try_from(pos).map_err(|_| CsvError::Other("negative seek position".to_owned()))?))
+            .map_err(|e| CsvError::Other(e.to_string()))?;
+        if p != pos as u64 {
+            return Err(CsvError::Other(format!("set pos failed, required position: {pos}, got: {p}")));
+        }
+        Ok(())
+    }
+
+    /// Go `blockParser.ScannedPos`.
+    pub(crate) fn scanned_pos(&mut self) -> Result<i64, CsvError> {
+        self.reader
+            .seek(std::io::SeekFrom::Current(0))
+            .map(|p| p as i64)
+            .map_err(|e| CsvError::Other(e.to_string()))
+    }
+}
+
+/// Go `CSVParser`.
 pub struct CsvParser {
     last_row: Row,
     columns: Vec<String>,
     // blockParser
-    source: Vec<u8>,
-    source_offset: usize,
+    reader: BlockReader,
     buf: Vec<u8>,
     start: usize,
     pos: i64,
@@ -337,13 +435,19 @@ pub struct CsvParser {
     allow_empty_line: bool,
     quoted_null_is_text: bool,
     unescaped_quote: bool,
+    should_parse_header: bool,
+    header_schema_match: bool,
 }
 
 impl CsvParser {
-    /// Go `NewCSVParser` (no header parsing, as LOAD DATA builds it).
+    /// Go `NewCSVParser`: reads `reader` in blocks of `block_buf_size *
+    /// config.BufferSizeScale`; with `should_parse_header` and
+    /// `config.header`, the first `ReadRow` reads the header first.
     pub fn new(
         config: &CsvConfig,
-        source: Vec<u8>,
+        reader: Box<dyn ReadSeek>,
+        block_buf_size: usize,
+        should_parse_header: bool,
         charset_convertor: Option<CharsetConvertor>,
     ) -> Result<Self, CsvError> {
         let (field_terminator, delimiter, line_terminator) = match &charset_convertor {
@@ -393,10 +497,9 @@ impl CsvParser {
             }
         }
         Ok(Self {
-            source,
+            reader: BlockReader::new(reader, block_buf_size * BUFFER_SIZE_SCALE),
             last_row: Row::default(),
             columns: Vec::new(),
-            source_offset: 0,
             buf: Vec::new(),
             start: 0,
             pos: 0,
@@ -421,7 +524,65 @@ impl CsvParser {
             allow_empty_line: config.allow_empty_line,
             quoted_null_is_text: config.quoted_null_is_text,
             unescaped_quote: config.unescaped_quote,
+            should_parse_header: should_parse_header && config.header,
+            header_schema_match: config.header_schema_match,
         })
+    }
+
+    /// Go `NewCSVParser` over a whole in-memory file, as LOAD DATA reads
+    /// its client file, with Go's default read block size and no header.
+    pub fn from_bytes(
+        config: &CsvConfig,
+        source: Vec<u8>,
+        charset_convertor: Option<CharsetConvertor>,
+    ) -> Result<Self, CsvError> {
+        Self::new(config, Box::new(std::io::Cursor::new(source)), READ_BLOCK_SIZE, false, charset_convertor)
+    }
+
+    /// Go `blockParser.SetPos`.
+    pub fn set_pos(&mut self, pos: i64, row_id: i64) -> Result<(), CsvError> {
+        self.reader.seek(pos)?;
+        self.set_buf(Vec::new());
+        self.pos = pos;
+        self.last_row.row_id = row_id;
+        Ok(())
+    }
+
+    /// Go `blockParser.ScannedPos`.
+    pub fn scanned_pos(&mut self) -> Result<i64, CsvError> {
+        self.reader.scanned_pos()
+    }
+
+    /// Go `blockParser.Pos`.
+    #[must_use]
+    pub fn pos(&self) -> (i64, i64) {
+        (self.pos, self.last_row.row_id)
+    }
+
+    /// Go `blockParser.Columns`.
+    #[must_use]
+    pub fn columns(&self) -> &[String] {
+        &self.columns
+    }
+
+    /// Go `CSVParser.ReadColumns`: the header record; its lowercased names
+    /// become the columns when the header must match the schema.
+    pub fn read_columns(&mut self) -> Result<(), CsvError> {
+        self.begin_row_len_check();
+        let columns = self.read_record();
+        self.end_row_len_check();
+        let columns = columns?;
+        if !self.header_schema_match {
+            return Ok(());
+        }
+        self.columns = columns
+            .iter()
+            .map(|c| {
+                let name = self.unescape_string(c).unwrap_or_default();
+                String::from_utf8_lossy(&name).to_lowercase()
+            })
+            .collect();
+        Ok(())
     }
 
     fn rest(&self) -> &[u8] {
@@ -436,9 +597,9 @@ impl CsvParser {
     /// Go `blockParser.readBlock`: appends the next block (`io.ReadFull`)
     /// to the unparsed bytes; the block read at position 0 loses its BOM.
     fn read_block(&mut self) {
-        let end = (self.source_offset + BLOCK_BUF_SIZE).min(self.source.len());
-        let mut block = &self.source[self.source_offset..end];
-        self.source_offset = end;
+        // A read error ends the input here; Go returns it from `readBlock`.
+        let (block, _) = self.reader.read_block().unwrap_or_default();
+        let mut block = &block[..];
         if self.pos == 0 {
             // Go `bom.Clean`.
             if block.starts_with(&[0xEF, 0xBB, 0xBF]) {
@@ -819,6 +980,10 @@ impl CsvParser {
     pub fn read_row(&mut self) -> Result<Vec<Datum>, CsvError> {
         self.last_row.length = 0;
         self.last_row.row_id += 1;
+        if self.should_parse_header {
+            self.read_columns()?;
+            self.should_parse_header = false;
+        }
         self.begin_row_len_check();
         let fields = self.read_record();
         self.end_row_len_check();
@@ -841,12 +1006,13 @@ impl CsvParser {
         Ok(row)
     }
 
-    /// Go `ReadUntilTerminator`: skips past the next line terminator.
-    pub fn read_until_terminator(&mut self) -> Result<(), CsvError> {
+    /// Go `ReadUntilTerminator`: skips past the next line terminator,
+    /// returning the position after it.
+    pub fn read_until_terminator(&mut self) -> Result<i64, CsvError> {
         self.begin_row_len_check();
         let (_, error) = self.read_until_terminator_inner();
         self.end_row_len_check();
-        error.map_or(Ok(()), Err)
+        error.map_or(Ok(self.pos), Err)
     }
 
     fn read_until_terminator_inner(&mut self) -> (Vec<u8>, Option<CsvError>) {
@@ -905,7 +1071,7 @@ mod tests {
     }
 
     fn rows(config: &CsvConfig, data: &[u8]) -> Vec<Vec<Option<String>>> {
-        let mut parser = CsvParser::new(config, data.to_vec(), None).unwrap();
+        let mut parser = CsvParser::from_bytes(config, data.to_vec(), None).unwrap();
         let mut out = Vec::new();
         loop {
             match parser.read_row() {
@@ -983,7 +1149,7 @@ mod tests {
         );
         config.lines_starting_by = b"a|".to_vec();
         assert_eq!(
-            CsvParser::new(&config, Vec::new(), None)
+            CsvParser::from_bytes(&config, Vec::new(), None)
                 .err()
                 .unwrap()
                 .to_string(),
@@ -994,7 +1160,7 @@ mod tests {
     #[test]
     fn an_unterminated_quote_fails_like_go() {
         let config = load_data_config(",", "\"");
-        let mut parser = CsvParser::new(&config, b"1,\"abc\n".to_vec(), None).unwrap();
+        let mut parser = CsvParser::from_bytes(&config, b"1,\"abc\n".to_vec(), None).unwrap();
         assert_eq!(
             parser.read_row().unwrap_err().to_string(),
             "syntax error: unterminated quoted field"

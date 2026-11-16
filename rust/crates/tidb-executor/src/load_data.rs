@@ -286,6 +286,7 @@ pub fn build_load_data(
         allow_empty_line: true,
         quoted_null_is_text: !null_value_opt_enclosed,
         unescaped_quote: true,
+        ..CsvConfig::default()
     };
     Ok(PreparedLoadData {
         database,
@@ -456,12 +457,12 @@ pub fn run_load_data(
         }
         None => None,
     };
-    let mut parser = CsvParser::new(&prepared.csv, source, convertor)
+    let mut parser = CsvParser::from_bytes(&prepared.csv, source, convertor)
         .map_err(|error| wrong_format_config(error.to_string()))?;
     // Go `HandleSkipNRows`.
     for _ in 0..prepared.ignore_lines {
         match parser.read_until_terminator() {
-            Ok(()) => {}
+            Ok(_) => {}
             Err(CsvError::Eof) => break,
             Err(error) => return Err(plain_error(error.to_string())),
         }

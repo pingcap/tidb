@@ -264,7 +264,7 @@ fn test_import_csv_interpretation() {
             Ok(ctrl) => {
                 let convertor =
                     CharsetConvertor::new(ctrl.plan.charset.as_deref().unwrap(), "�").unwrap();
-                let mut parser = CsvParser::new(
+                let mut parser = CsvParser::from_bytes(
                     &ctrl.generate_csv_config(),
                     capture["source"].as_str().unwrap().as_bytes().to_vec(),
                     Some(convertor),
@@ -322,7 +322,7 @@ fn test_import_parser_contract() {
                 )
                 .unwrap();
                 Box::new(
-                    CsvParser::new(
+                    CsvParser::from_bytes(
                         &plan.generate_csv_config(),
                         b"1,\"ab\"\n2,\\N\n3,z\n".to_vec(),
                         None,
