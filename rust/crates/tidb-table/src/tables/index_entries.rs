@@ -498,7 +498,14 @@ impl TableCommon {
         physical_id: i64,
         zone: &SessionTimeZone,
     ) -> Result<(Vec<u8>, bool), KvTableError> {
-        let Some(index) = self.indexes.iter().find(|index| index.read().id == index_id) else {
+        // Go `tables.NewIndex` takes any `IndexInfo` of `tblInfo.Indices`,
+        // a DDL's non-public index included.
+        let Some(index) = self
+            .indexes
+            .iter()
+            .find(|index| index.read().id == index_id)
+            .or_else(|| self.nonpublic_indexes.iter().map(|nonpublic| &nonpublic.index).find(|index| index.read().id == index_id))
+        else {
             return Err(KvTableError::Decode("no such index".to_owned()));
         };
         match handle {
