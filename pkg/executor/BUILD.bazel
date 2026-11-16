@@ -20,6 +20,7 @@ go_library(
         "brie.go",
         "brie_utils.go",
         "builder.go",
+        "calc_found_rows.go",
         "check_table_index.go",
         "checksum.go",
         "compact_table.go",

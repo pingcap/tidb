@@ -223,6 +223,18 @@ func (op *PhysicalLimit) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, 
 }
 
 // CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalCalcFoundRows) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalCalcFoundRows)
+	*cloned = *op
+	basePlan, baseOK := op.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.BasePhysicalPlan = *basePlan
+	return cloned, true
+}
+
+// CloneForPlanCache implements the base.Plan interface.
 func (op *PhysicalStreamAgg) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalStreamAgg)
 	*cloned = *op
