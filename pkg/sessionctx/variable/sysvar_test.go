@@ -2688,12 +2688,12 @@ func TestRemovedFeatureVarsWarn(t *testing.T) {
 	require.Len(t, warns, 1)
 	require.Contains(t, warns[0].Err.Error(), "the historical statistics feature has been removed")
 
-	// Only OFF warns, because ON selects the async merge that TiDB now always uses.
+	// The value is always ON, because TiDB now always merges asynchronously. Only OFF warns.
 	sv = GetSysVar(vardef.TiDBEnableAsyncMergeGlobalStats)
 	vars = NewSessionVars(nil)
 	val, err = sv.Validate(vars, "OFF", vardef.ScopeSession)
 	require.NoError(t, err)
-	require.Equal(t, "OFF", val)
+	require.Equal(t, "ON", val)
 	warns = vars.StmtCtx.GetWarnings()
 	require.Len(t, warns, 1)
 	require.Contains(t, warns[0].Err.Error(), "global statistics are always merged asynchronously")
@@ -2702,4 +2702,17 @@ func TestRemovedFeatureVarsWarn(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "ON", val)
 	require.Len(t, vars.StmtCtx.GetWarnings(), 0)
+
+	// upgradeToVer177 persisted OFF on upgraded clusters, without Validation.
+	vars = NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	require.NoError(t, mock.SetGlobalSysVarOnly(context.Background(), vardef.TiDBEnableAsyncMergeGlobalStats, vardef.Off, false))
+	val, err = vars.GetGlobalSystemVar(context.Background(), vardef.TiDBEnableAsyncMergeGlobalStats)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBEnableAsyncMergeGlobalStats)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
 }

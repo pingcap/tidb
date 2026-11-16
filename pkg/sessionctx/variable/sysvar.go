@@ -3493,11 +3493,15 @@ var defaultSysVars = []*SysVar{
 		Name:  vardef.TiDBEnableAsyncMergeGlobalStats,
 		Value: vardef.On,
 		Type:  vardef.TypeBool,
+		// Reads return ON too: upgradeToVer177 persisted OFF on upgraded clusters,
+		// and persisted values are read without Validation.
+		GetSession: func(_ *SessionVars) (string, error) { return vardef.On, nil },
+		GetGlobal:  func(_ context.Context, _ *SessionVars) (string, error) { return vardef.On, nil },
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 			if !TiDBOptOn(normalizedValue) {
 				vars.StmtCtx.AppendWarning(errors.NewNoStackError("global statistics are always merged asynchronously, so this will have no effect"))
 			}
-			return normalizedValue, nil
+			return vardef.On, nil
 		},
 	},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptPrefixIndexSingleScan, Value: BoolToOnOff(vardef.DefTiDBOptPrefixIndexSingleScan), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
