@@ -13,7 +13,9 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-failpoint = { path = "../tidb-failpoint" }
 tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-util = { path = "../tidb-util" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 
 [[test]]

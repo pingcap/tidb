@@ -35,9 +35,7 @@ pub use history::{
 pub use nodes::{get_dxf_cpu_count, get_node_resource, set_node_resource};
 pub use subtask_table::SubtaskError;
 pub use task_state::{is_cancelled_err, TASK_CANCEL_MESSAGE};
-pub use task_table::{ActiveTaskSummary, TaskExecInfo, TEST_CHANNEL};
-#[cfg(feature = "failpoints")]
-pub use task_table::BEFORE_SUBMIT_TASK;
+pub use task_table::{ActiveTaskSummary, TaskExecInfo, TEST_CHANNEL, TEST_LAST_TASK_ID};
 
 use std::sync::Arc;
 

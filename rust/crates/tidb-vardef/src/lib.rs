@@ -55,6 +55,32 @@ pub fn set_ddl_flashback_concurrency(cnt: i32) {
     DDL_FLASHBACK_CONCURRENCY.store(cnt, Ordering::SeqCst);
 }
 
+static DDL_REORG_WORKER_COUNTER: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(defaults::DEF_TIDB_DDL_REORG_WORKER_COUNT as i32);
+
+/// Go `GetDDLReorgWorkerCounter`.
+pub fn get_ddl_reorg_worker_counter() -> i32 {
+    DDL_REORG_WORKER_COUNTER.load(Ordering::SeqCst)
+}
+
+/// Go `SetDDLReorgWorkerCounter`; validation belongs to the sysvar registry.
+pub fn set_ddl_reorg_worker_counter(cnt: i32) {
+    DDL_REORG_WORKER_COUNTER.store(cnt, Ordering::SeqCst);
+}
+
+static DDL_REORG_BATCH_SIZE: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(defaults::DEF_TIDB_DDL_REORG_BATCH_SIZE as i32);
+
+/// Go `GetDDLReorgBatchSize`.
+pub fn get_ddl_reorg_batch_size() -> i32 {
+    DDL_REORG_BATCH_SIZE.load(Ordering::SeqCst)
+}
+
+/// Go `SetDDLReorgBatchSize`; validation belongs to the sysvar registry.
+pub fn set_ddl_reorg_batch_size(cnt: i32) {
+    DDL_REORG_BATCH_SIZE.store(cnt, Ordering::SeqCst);
+}
+
 static DDL_ERROR_COUNT_LIMIT: AtomicI64 = AtomicI64::new(defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT);
 
 /// Go `GetDDLErrorCountLimit`, retained when a worker cannot refresh globals.

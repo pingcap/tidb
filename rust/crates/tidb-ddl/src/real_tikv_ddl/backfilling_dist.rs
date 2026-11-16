@@ -692,6 +692,14 @@ struct ReadIndexStepExecutor<S: StoreClient> {
     curr_pipe: Mutex<Option<Arc<super::ingest::IngestPipelineWorkers>>>,
     summary: Arc<SubtaskSummary>,
 }
+impl<S: StoreClient> ReadIndexStepExecutor<S> {
+    /// Go `readIndexStepExecutor.onFinished` on the local-store path, where
+    /// it only injects: a global-sort subtask's meta rewrite is not ported.
+    fn on_finished(&self) {
+        let mut backend = self.backend.lock().unwrap().clone();
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", &mut backend);
+    }
+}
 impl<S: StoreClient> StepExecFrameworkInfo for ReadIndexStepExecutor<S> {
     fn framework_info_slot(&self) -> &FrameworkInfoSlot {
         &self.info
@@ -808,12 +816,15 @@ impl<S: StoreClient> StepExecutor for ReadIndexStepExecutor<S> {
                 meta.estimate_row_size,
             );
             match result {
-                Ok(()) => bc
-                    .finish_and_unregister_engines(
+                Ok(()) => {
+                    bc.finish_and_unregister_engines(
                         ctx,
                         UnregisterOpt(UnregisterOpt::CLEAN_DATA.0 | UnregisterOpt::CHECK_DUP.0),
                     )
-                    .map_err(|e| Box::new(e) as tidb_dxf_execute::Error),
+                    .map_err(|e| Box::new(e) as tidb_dxf_execute::Error)?;
+                    self.on_finished();
+                    Ok(())
+                }
                 Err(error) => {
                     let _ = bc.finish_and_unregister_engines(ctx, UnregisterOpt::CLEAN_DATA);
                     Err(pipeline_error(error))
@@ -878,10 +889,7 @@ fn modify_read_index_task_meta(
     if let (Some(old), Some(new)) = (meta.job.reorg_meta.as_ref(), new.job.reorg_meta.as_ref()) {
         let old = old.read();
         let new = new.read();
-        let defaults = tidb_model::DDLReorgProcessDefaults::new(
-            || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_WORKER_COUNT,
-            || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_BATCH_SIZE,
-        );
+        let defaults = crate::index::reorg_defaults();
         let batch_size = new.get_batch_size(defaults);
         if old.get_batch_size(defaults) != batch_size {
             old.set_batch_size(batch_size);

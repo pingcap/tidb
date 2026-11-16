@@ -47,10 +47,6 @@ pub(crate) fn max_subtask_check_interval() -> Duration {
     read(&MAX_SUBTASK_CHECK_INTERVAL)
 }
 
-/// Go's `beforeCallStartTaskExecutor` call hook.
-#[cfg(any(test, feature = "failpoints"))]
-pub static BEFORE_CALL_START_TASK_EXECUTOR: RwLock<Option<Arc<dyn Fn(&TaskBase) + Send + Sync>>> = RwLock::new(None);
-
 /// Go `Manager`: watches the task table and manages the node's task
 /// executors.
 pub struct Manager {
@@ -272,10 +268,10 @@ impl Manager {
                 );
                 continue;
             }
-            #[cfg(any(test, feature = "failpoints"))]
-            if let Some(hook) = BEFORE_CALL_START_TASK_EXECUTOR.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone() {
-                hook(&task.task_base);
-            }
+            tidb_failpoint::inject_call(
+                "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/beforeCallStartTaskExecutor",
+                &mut task.task_base.clone(),
+            );
             if !self.start_task_executor(&task.task_base) {
                 // we break to make sure the order of running.
                 // it's possible some other low ranking tasks alloc more slots at

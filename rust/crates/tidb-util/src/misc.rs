@@ -423,3 +423,77 @@ mod column_to_proto_tests {
         assert_eq!(columns_to_proto(&[GoShared::new(column), GoShared::new(column2)], false, false, false)[0], expect);
     }
 }
+
+/// Go `RetryInterval`: the retry interval in milliseconds.
+pub const RETRY_INTERVAL: u64 = 500;
+
+/// Go `RunWithRetry`: runs `f` up to `retry_cnt` times while it fails with
+/// an error it marks retryable, sleeping `backoff * i` milliseconds after the
+/// `i`-th failure.
+///
+/// # Errors
+/// `f`'s last error.
+pub fn run_with_retry<E: std::fmt::Display>(
+    retry_cnt: usize,
+    backoff: u64,
+    mut f: impl FnMut() -> (bool, Result<(), E>),
+) -> Result<(), E> {
+    let mut result = Ok(());
+    for i in 1..=retry_cnt {
+        let (retry_able, attempt) = f();
+        let err = match attempt {
+            Ok(()) => return Ok(()),
+            Err(err) if !retry_able => return Err(err),
+            Err(err) => err,
+        };
+        tidb_metrics::ddl::RETRYABLE_ERROR_COUNT.with_label_values(&[&err.to_string()]).inc();
+        result = Err(err);
+        std::thread::sleep(std::time::Duration::from_millis(backoff * i as u64));
+    }
+    result
+}
+
+#[cfg(test)]
+mod run_with_retry_tests {
+    use super::run_with_retry;
+
+    /// Go `TestRunWithRetry`.
+    #[test]
+    fn test_run_with_retry() {
+        // success
+        let mut cnt = 0;
+        let err = run_with_retry(3, 1, || {
+            cnt += 1;
+            if cnt < 2 {
+                return (true, Err("err"));
+            }
+            (true, Ok(()))
+        });
+        assert_eq!(err, Ok(()));
+        assert_eq!(cnt, 2);
+
+        // retry exceeds
+        let mut cnt = 0;
+        let err = run_with_retry(3, 1, || {
+            cnt += 1;
+            if cnt < 4 {
+                return (true, Err("err"));
+            }
+            (true, Ok(()))
+        });
+        assert!(err.is_err());
+        assert_eq!(cnt, 3);
+
+        // failed result
+        let mut cnt = 0;
+        let err = run_with_retry(3, 1, || {
+            cnt += 1;
+            if cnt < 2 {
+                return (false, Err("err"));
+            }
+            (true, Ok(()))
+        });
+        assert!(err.is_err());
+        assert_eq!(cnt, 1);
+    }
+}

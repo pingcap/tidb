@@ -10,7 +10,12 @@ description = "Go pkg/dxf/framework/handle: submitting, waiting for and controll
 [lints]
 workspace = true
 
+[features]
+# Go's failpoint build.
+failpoints = ["tidb-failpoint/failpoints"]
+
 [dependencies]
+tidb-failpoint = { path = "../tidb-failpoint" }
 tidb-meta = { path = "../tidb-meta" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }

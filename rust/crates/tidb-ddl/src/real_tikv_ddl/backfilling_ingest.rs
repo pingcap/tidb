@@ -317,7 +317,11 @@ pub(super) fn execute_and_close_pipeline<S: StoreClient>(
                     reorg.job_id,
                     &reorg.query.to_utf8_lossy_go(),
                 );
+                // Go `tableScanWorker.HandleTask`.
                 let result = catch_reorg_panic(|| {
+                    tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/injectPanicForTableScan", |_| {
+                        panic!("mock panic");
+                    });
                     scan_records(
                         opener,
                         timeout,
@@ -395,6 +399,19 @@ pub(super) fn execute_and_close_pipeline<S: StoreClient>(
                     reorg.job_id,
                     &reorg.query.to_utf8_lossy_go(),
                 );
+                // Go `indexIngestWorker.HandleTask`.
+                let fault = catch_reorg_panic(|| {
+                    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/mockIndexIngestWorkerFault", &mut ());
+                    Ok(())
+                });
+                if let Err(e) = fault {
+                    let mut first = error.lock().unwrap();
+                    if first.is_none() {
+                        *first = Some(e.into());
+                    }
+                    stop.store(true, Ordering::SeqCst);
+                    continue;
+                }
                 for batch in record.batches {
                     let result = catch_reorg_panic(|| {
                         if tidb_failpoint::eval(
@@ -646,10 +663,7 @@ fn scan_records_at<S: StoreClient>(
                         end: &task.end,
                         batch_size: reorg_meta.map_or(reorg.batch_size, |meta| {
                             meta.read()
-                                .get_batch_size(tidb_model::DDLReorgProcessDefaults::new(
-                                    || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_WORKER_COUNT,
-                                    || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_BATCH_SIZE,
-                                ))
+                                .get_batch_size(crate::index::reorg_defaults())
                                 .max(1) as usize
                         }),
                     };

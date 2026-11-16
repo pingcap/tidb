@@ -195,6 +195,8 @@ serde = { workspace = true }
 flate2 = "1"
 tidb-sem-v2 = { path = "../tidb-sem-v2" }
 tidb-ddl = { path = "../tidb-ddl", features = ["failpoints"] }
+tidb-dxf-storage = { path = "../tidb-dxf-storage", features = ["failpoints"] }
+tidb-dxf-taskexecutor = { path = "../tidb-dxf-taskexecutor", features = ["failpoints"] }
 tidb-build-tags = { path = "../tidb-build-tags", features = ["failpoints"] }
 tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
 prost.workspace = true
@@ -236,6 +238,7 @@ failpoints = [
     "tidb-failpoint/failpoints",
     "tidb-ddl/failpoints",
     "tidb-ddl-serverstate/failpoints",
+    "tidb-dxf-storage/failpoints",
     "tidb-resourcemanager/failpoints",
     "tidb-resourcemanager-pool-workerpool/failpoints",
     "tidb-stats-handle-cache/failpoints",

@@ -1215,6 +1215,8 @@ impl GlobalSysvars {
                 | TIDB_SCHEMA_CACHE_SIZE
                 | TIDB_DDL_ERROR_COUNT_LIMIT
                 | TIDB_DDL_FLASHBACK_CONCURRENCY
+                | TIDB_DDL_REORG_WORKER_COUNT
+                | TIDB_DDL_REORG_BATCH_SIZE
                 | TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO
                 | TIDB_COMMITTER_CONCURRENCY
                 | TIDB_REDACT_LOG
@@ -1417,6 +1419,22 @@ impl GlobalSysvars {
                     .ok()
                     .filter(|cnt| *cnt > 0)
                     .unwrap_or(tidb_vardef::defaults::DEF_TIDB_DDL_FLASHBACK_CONCURRENCY as i32),
+            ),
+            // Go `tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)`.
+            TIDB_DDL_REORG_WORKER_COUNT => tidb_vardef::set_ddl_reorg_worker_counter(
+                value
+                    .parse::<i32>()
+                    .ok()
+                    .filter(|cnt| *cnt > 0)
+                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_DDL_REORG_WORKER_COUNT as i32),
+            ),
+            // Go `tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)`.
+            TIDB_DDL_REORG_BATCH_SIZE => tidb_vardef::set_ddl_reorg_batch_size(
+                value
+                    .parse::<i32>()
+                    .ok()
+                    .filter(|cnt| *cnt > 0)
+                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_DDL_REORG_BATCH_SIZE as i32),
             ),
             TIDB_DDL_ERROR_COUNT_LIMIT => tidb_vardef::set_ddl_error_count_limit(
                 value

@@ -113,10 +113,8 @@ impl Balancer {
         // balance subtasks only to nodes with enough slots, from the view of all
         // managed nodes, subtasks of task might not be balanced.
         let curr_used_slots = self.curr_used_slots.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
-        #[allow(unused_mut)]
         let mut adjusted_nodes =
             filter_nodes_with_enough_slots(&curr_used_slots, self.param.slot_mgr.get_capacity(), &eligible_nodes, task.base.required_slots);
-        #[cfg(any(test, feature = "failpoints"))]
         tidb_failpoint::inject("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockNoEnoughSlots", |_| adjusted_nodes = Vec::new());
         let adjusted_nodes = filter_nodes_by_max_node_cnt(adjusted_nodes, &subtasks, task.base.max_node_count);
         if adjusted_nodes.is_empty() {

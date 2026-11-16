@@ -155,15 +155,15 @@ fn test_framework_cancel_task() {
     let counter = Arc::new(AtomicI32::new(0));
     {
         let task_mgr = Arc::clone(&c.task_mgr);
-        *tidb_dxf_taskexecutor::AFTER_RUN_SUBTASK.write().unwrap() = Some(Arc::new(move |e, _, _| {
+        tidb_failpoint::enable_call_ref::<tidb_dxf_taskexecutor::AfterRunSubtask>("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask", Arc::new(move |e, _, _| {
             if counter.fetch_add(1, Ordering::SeqCst) + 1 == 1 {
                 task_mgr.cancel_task(&tidb_gocontext::Context::background(), tidb_dxf_taskexecutor::TaskExecutor::get_task_base(e).id).unwrap();
             }
-        }));
+        })).unwrap();
     }
     let scope = tidb_dxf_handle::get_target_scope();
     let task = testutil::submit_and_wait_task(&c.ctx, "key1", &scope, 1);
-    *tidb_dxf_taskexecutor::AFTER_RUN_SUBTASK.write().unwrap() = None;
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask");
     assert_eq!(task.state, TASK_STATE_REVERTED);
 }
 
@@ -196,12 +196,12 @@ fn test_framework_run_subtask_cancel_or_failed() {
     // meet cancel on run subtask
     {
         let counter = AtomicI32::new(0);
-        *tidb_dxf_taskexecutor::AFTER_RUN_SUBTASK.write().unwrap() = Some(Arc::new(move |e, err_p, _| {
+        tidb_failpoint::enable_call_ref::<tidb_dxf_taskexecutor::AfterRunSubtask>("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask", Arc::new(move |e, err_p, _| {
             if counter.fetch_add(1, Ordering::SeqCst) + 1 == 1 {
                 tidb_dxf_taskexecutor::TaskExecutor::cancel_running_subtask(e);
                 *err_p = Some(Arc::new(tidb_dxf_taskexecutor::TaskExecutorError::CancelSubtask));
             }
-        }));
+        })).unwrap();
         let task = testutil::submit_and_wait_task(&c.ctx, "key1", &scope, 1);
         assert_eq!(task.state, TASK_STATE_REVERTED);
     }
@@ -209,15 +209,15 @@ fn test_framework_run_subtask_cancel_or_failed() {
     // meet some error on run subtask
     {
         let counter = AtomicI32::new(0);
-        *tidb_dxf_taskexecutor::AFTER_RUN_SUBTASK.write().unwrap() = Some(Arc::new(move |_, err_p, _| {
+        tidb_failpoint::enable_call_ref::<tidb_dxf_taskexecutor::AfterRunSubtask>("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask", Arc::new(move |_, err_p, _| {
             if counter.fetch_add(1, Ordering::SeqCst) + 1 == 1 {
                 *err_p = Some(Arc::new(std::io::Error::other("MockExecutorRunErr")));
             }
-        }));
+        })).unwrap();
         let task = testutil::submit_and_wait_task(&c.ctx, "key2", &scope, 1);
         assert_eq!(task.state, TASK_STATE_REVERTED);
     }
-    *tidb_dxf_taskexecutor::AFTER_RUN_SUBTASK.write().unwrap() = None;
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask");
 }
 
 /// Go `TestTaskCancelledBeforeUpdateTask`.
@@ -231,15 +231,16 @@ fn test_task_cancelled_before_update_task() {
     let counter = AtomicI32::new(0);
     {
         let task_mgr = Arc::clone(&c.task_mgr);
-        *tidb_dxf_scheduler::CANCEL_BEFORE_UPDATE_TASK.write().unwrap() = Some(Arc::new(move |task_id| {
+        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/cancelBeforeUpdateTask", move |task_id| {
+            let task_id = *task_id.downcast_mut::<i64>().unwrap();
             if counter.fetch_add(1, Ordering::SeqCst) + 1 == 1 {
                 task_mgr.cancel_task(&tidb_gocontext::Context::background(), task_id).unwrap();
             }
-        }));
+        }).unwrap();
     }
     let scope = tidb_dxf_handle::get_target_scope();
     let task = testutil::submit_and_wait_task(&c.ctx, "key1", &scope, 1);
-    *tidb_dxf_scheduler::CANCEL_BEFORE_UPDATE_TASK.write().unwrap() = None;
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/cancelBeforeUpdateTask");
     assert_eq!(task.state, TASK_STATE_REVERTED);
 }
 
@@ -253,15 +254,15 @@ fn test_owner_change_when_schedule() {
     let counter = AtomicI32::new(0);
     {
         let c = Arc::clone(&c);
-        *tidb_dxf_scheduler::MOCK_OWNER_CHANGE.write().unwrap() = Some(Arc::new(move || {
+        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockOwnerChange", move |_| {
             if counter.fetch_add(1, Ordering::SeqCst) + 1 == 1 {
                 c.async_change_owner();
                 std::thread::sleep(Duration::from_secs(1));
             }
-        }));
+        }).unwrap();
     }
     submit_task_and_check_success_for_basic(&c.ctx, "😊", &c.test_context);
-    *tidb_dxf_scheduler::MOCK_OWNER_CHANGE.write().unwrap() = None;
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockOwnerChange");
 }
 
 /// Go `submitTaskAndCheckSuccessForHA`.
@@ -276,12 +277,12 @@ fn shut_down_nodes(
     target_nodes: impl Fn(&TaskBase) -> Option<std::collections::HashSet<String>> + Send + Sync + 'static,
 ) {
     let c = Arc::clone(c);
-    *tidb_dxf_taskexecutor::MOCK_TIDB_SHUTDOWN.write().unwrap() = Some(Arc::new(move |e, exec_id, task| {
+    tidb_failpoint::enable_call_ref::<tidb_dxf_taskexecutor::MockTiDBShutdown>("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/mockTiDBShutdown", Arc::new(move |e, exec_id, task| {
         if target_nodes(task).is_some_and(|nodes| nodes.contains(exec_id)) {
             c.async_shutdown(exec_id);
             tidb_dxf_taskexecutor::TaskExecutor::cancel(e);
         }
-    }));
+    })).unwrap();
 }
 
 /// Go `TestHANodeRandomShutdown`.
@@ -297,7 +298,7 @@ fn test_ha_node_random_shutdown() {
     let node_need_down = c.get_rand_node_ids(c.node_count() - keep_count);
     shut_down_nodes(&c, move |_| Some(node_need_down.clone()));
     submit_task_and_check_success_for_ha(&c.ctx, "😊", &c.test_context);
-    *tidb_dxf_taskexecutor::MOCK_TIDB_SHUTDOWN.write().unwrap() = None;
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/mockTiDBShutdown");
 }
 
 /// Go `TestHARandomShutdownInDifferentStep`.
@@ -321,7 +322,7 @@ fn test_ha_random_shutdown_in_different_step() {
         }
     });
     submit_task_and_check_success_for_ha(&c.ctx, "😊", &c.test_context);
-    *tidb_dxf_taskexecutor::MOCK_TIDB_SHUTDOWN.write().unwrap() = None;
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/mockTiDBShutdown");
 }
 
 /// Go `TestHAMultipleOwner`.
@@ -359,16 +360,17 @@ fn test_framework_rollback() {
     let counter = AtomicI32::new(0);
     {
         let task_mgr = Arc::clone(&c.task_mgr);
-        *tidb_dxf_scheduler::AFTER_REFRESH_TASK.write().unwrap() = Some(Arc::new(move |task| {
+        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/afterRefreshTask", move |task| {
+            let task: &Task = task.downcast_mut::<Arc<Task>>().unwrap();
             if counter.fetch_add(1, Ordering::SeqCst) + 1 <= 2 && task.base.state == TASK_STATE_RUNNING {
                 task_mgr.cancel_task(&tidb_gocontext::Context::background(), task.base.id).unwrap();
             }
-        }));
+        }).unwrap();
     }
 
     let scope = tidb_dxf_handle::get_target_scope();
     let task = testutil::submit_and_wait_task(&c.ctx, "key1", &scope, 1);
-    *tidb_dxf_scheduler::AFTER_REFRESH_TASK.write().unwrap() = None;
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/afterRefreshTask");
     assert_eq!(task.state, TASK_STATE_REVERTED);
 }
 
@@ -506,17 +508,18 @@ fn test_framework_pause_and_resume() {
     let pause_in = |state: TaskState| {
         let (counter, task_mgr) = (Arc::clone(&counter), Arc::clone(&c.task_mgr));
         counter.store(0, Ordering::SeqCst);
-        *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = Some(Arc::new(move |task: &Task| {
+        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeRefreshTask", move |task| {
+            let task: &Task = task.downcast_mut::<Arc<Task>>().unwrap();
             if counter.fetch_add(1, Ordering::SeqCst) + 1 <= 2 && task.base.state == state {
                 task_mgr.pause_task(&tidb_gocontext::Context::background(), &task.base.key).unwrap();
             }
-        }));
+        }).unwrap();
     };
     pause_in(TASK_STATE_RUNNING);
     let scope = tidb_dxf_handle::get_target_scope();
     let task1 = testutil::submit_and_wait_task(&c.ctx, "key1", &scope, 1);
     assert_eq!(task1.state, TASK_STATE_PAUSED);
-    *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = None;
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeRefreshTask");
     // 4 subtask scheduled.
     tidb_dxf_handle::resume_task(&tidb_gocontext::Context::background(), "key1").unwrap();
     let task1_base = testutil::wait_task_done(&c.ctx, &task1.key);
@@ -530,7 +533,7 @@ fn test_framework_pause_and_resume() {
     pause_in(TASK_STATE_PENDING);
     let task2 = testutil::submit_and_wait_task(&c.ctx, "key2", &scope, 1);
     assert_eq!(task2.state, TASK_STATE_PAUSED);
-    *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = None;
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeRefreshTask");
     // 4 subtask scheduled.
     tidb_dxf_handle::resume_task(&tidb_gocontext::Context::background(), "key2").unwrap();
     let task2_base = testutil::wait_task_done(&c.ctx, &task2.key);
@@ -603,16 +606,16 @@ fn run_target_scope_case(c: &testutil::TestDxfContext, tk: &mut Session, test_ca
     }
     let (ch_tx, ch_rx) = crossbeam_channel::bounded::<()>(0);
     let counter = AtomicI32::new(0);
-    *tidb_dxf_scheduler::SYNC_REFRESH.write().unwrap() = Some(Arc::new(move || {
+    tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/syncRefresh", move |_| {
         if counter.fetch_add(1, Ordering::SeqCst) + 1 <= 3 {
             let _ = ch_tx.send(());
         }
-    }));
+    }).unwrap();
     for _ in 0..3 {
         ch_rx.recv().unwrap();
     }
     let task_id = submit_task_and_check_success_for_scope(&c.ctx, &format!("task{idx}"), node_cnt, &test_case.scope, &c.test_context);
-    *tidb_dxf_scheduler::SYNC_REFRESH.write().unwrap() = None;
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/syncRefresh");
     let expected = test_case
         .node_scopes
         .iter()
@@ -822,7 +825,7 @@ fn test_modify_task_concurrency_and_meta() {
         {
             let (once, task_mgr, scope, the_task) =
                 (std::sync::Once::new(), Arc::clone(&c.task_mgr), scope.clone(), Arc::clone(&the_task));
-            *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = Some(Arc::new(move || {
+            tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeGetSchedulableTasks", move |_| {
                 once.call_once(|| {
                     let task = tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "k1", &TASK_TYPE_EXAMPLE, &testutil::get_task_ks(), 3, &scope, 0, b"init").unwrap();
                     assert_eq!(task.base.required_slots, 3);
@@ -833,7 +836,7 @@ fn test_modify_task_concurrency_and_meta() {
                     *the_task.lock().unwrap() = Some(task);
                     let _ = modify_sync_rx.recv();
                 });
-            }));
+            }).unwrap();
         }
         modify_sync_ch.send(()).unwrap();
         // finish subtasks
@@ -842,7 +845,7 @@ fn test_modify_task_concurrency_and_meta() {
         let task2_base = testutil::wait_task_done(&c.ctx, &key);
         assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
         assert_eq!(subtask_infos(), all([7, 7, 7, 7, 7]));
-        *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = None;
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeGetSchedulableTasks");
         runtime_info.reset();
     }
 
@@ -851,7 +854,8 @@ fn test_modify_task_concurrency_and_meta() {
         let (modify_sync_ch, modify_sync_rx) = crossbeam_channel::bounded::<()>(0);
         {
             let (once, task_mgr, runtime_info) = (std::sync::Once::new(), Arc::clone(&c.task_mgr), Arc::clone(runtime_info));
-            *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = Some(Arc::new(move |task: &Task| {
+            tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeRefreshTask", move |task| {
+                let task: &Task = task.downcast_mut::<Arc<Task>>().unwrap();
                 if task.base.state != TASK_STATE_RUNNING && task.base.step != STEP_TWO {
                     return;
                 }
@@ -860,7 +864,7 @@ fn test_modify_task_concurrency_and_meta() {
                     task_mgr.modify_task_by_id(&tidb_gocontext::Context::background(), task.base.id, &modify_required_slots(TASK_STATE_RUNNING, 7)).unwrap();
                     let _ = modify_sync_rx.recv();
                 });
-            }));
+            }).unwrap();
         }
         let task = tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "k2", &TASK_TYPE_EXAMPLE, &testutil::get_task_ks(), 3, &scope, 0, &[]).unwrap();
         assert_eq!(task.base.required_slots, 3);
@@ -877,7 +881,7 @@ fn test_modify_task_concurrency_and_meta() {
         let task2_base = testutil::wait_task_done(&c.ctx, &task.base.key);
         assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
         assert_eq!(subtask_infos(), all([3, 3, 7, 7, 7]));
-        *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = None;
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeRefreshTask");
         runtime_info.reset();
     }
 
@@ -885,7 +889,8 @@ fn test_modify_task_concurrency_and_meta() {
     {
         {
             let (task_mgr, runtime_info) = (Arc::clone(&c.task_mgr), Arc::clone(runtime_info));
-            *tidb_dxf_taskexecutor::BEFORE_GET_TASK_BY_ID_IN_RUN.write().unwrap() = Some(Arc::new(move |task_id| {
+            tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/beforeGetTaskByIDInRun", move |task_id| {
+                let task_id = *task_id.downcast_mut::<i64>().unwrap();
                 if runtime_info.subtask_infos.lock().unwrap().len() == 3 {
                     task_mgr.modify_task_by_id(&tidb_gocontext::Context::background(), task_id, &modify_required_slots(TASK_STATE_RUNNING, 7)).unwrap();
                     // wait task move back to 'running' state
@@ -893,7 +898,7 @@ fn test_modify_task_concurrency_and_meta() {
                         task_mgr.get_task_by_id(&tidb_gocontext::Context::background(), task_id).unwrap().base.state == TASK_STATE_RUNNING
                     });
                 }
-            }));
+            }).unwrap();
         }
         let task = tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "k2-2", &TASK_TYPE_EXAMPLE, &testutil::get_task_ks(), 3, &scope, 0, &[]).unwrap();
         assert_eq!(task.base.required_slots, 3);
@@ -901,7 +906,7 @@ fn test_modify_task_concurrency_and_meta() {
         let task2_base = testutil::wait_task_done(&c.ctx, &task.base.key);
         assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
         assert_eq!(subtask_infos(), all([3, 3, 3, 7, 7]));
-        *tidb_dxf_taskexecutor::BEFORE_GET_TASK_BY_ID_IN_RUN.write().unwrap() = None;
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/beforeGetTaskByIDInRun");
         runtime_info.reset();
     }
 
@@ -912,7 +917,7 @@ fn test_modify_task_concurrency_and_meta() {
         {
             let (once, task_mgr, scope, the_task) =
                 (std::sync::Once::new(), Arc::clone(&c.task_mgr), scope.clone(), Arc::clone(&the_task));
-            *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = Some(Arc::new(move || {
+            tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeGetSchedulableTasks", move |_| {
                 once.call_once(|| {
                     let task = tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "k3", &TASK_TYPE_EXAMPLE, &testutil::get_task_ks(), 3, &scope, 0, &[]).unwrap();
                     assert_eq!(task.base.required_slots, 3);
@@ -920,7 +925,7 @@ fn test_modify_task_concurrency_and_meta() {
                     *the_task.lock().unwrap() = Some(task);
                     let _ = sync_rx.recv();
                 });
-            }));
+            }).unwrap();
         }
         sync_ch.send(()).unwrap();
         let the_task = the_task.lock().unwrap().clone().unwrap();
@@ -935,7 +940,7 @@ fn test_modify_task_concurrency_and_meta() {
         let task2_base = testutil::wait_task_done(&c.ctx, &the_task.base.key);
         assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
         assert_eq!(subtask_infos(), all([7, 7, 7, 7, 7]));
-        *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = None;
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeGetSchedulableTasks");
         runtime_info.reset();
     }
 
@@ -946,7 +951,7 @@ fn test_modify_task_concurrency_and_meta() {
         {
             let (once, task_mgr, scope, the_task) =
                 (std::sync::Once::new(), Arc::clone(&c.task_mgr), scope.clone(), Arc::clone(&the_task));
-            *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = Some(Arc::new(move || {
+            tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeGetSchedulableTasks", move |_| {
                 once.call_once(|| {
                     let task = tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "k4", &TASK_TYPE_EXAMPLE, &testutil::get_task_ks(), 3, &scope, 0, &[]).unwrap();
                     assert_eq!(task.base.required_slots, 3);
@@ -956,11 +961,12 @@ fn test_modify_task_concurrency_and_meta() {
                     assert_eq!(got_task.required_slots, 3);
                     *the_task.lock().unwrap() = Some(task);
                 });
-            }));
+            }).unwrap();
         }
         {
             let (once, task_mgr) = (std::sync::Once::new(), Arc::clone(&c.task_mgr));
-            *tidb_dxf_scheduler::AFTER_REFRESH_TASK.write().unwrap() = Some(Arc::new(move |task: &Task| {
+            tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/afterRefreshTask", move |task| {
+                let task: &Task = task.downcast_mut::<Arc<Task>>().unwrap();
                 once.call_once(|| {
                     assert_eq!(task.base.state, TASK_STATE_MODIFYING);
                     let mut task_clone = task.clone();
@@ -970,7 +976,7 @@ fn test_modify_task_concurrency_and_meta() {
                     assert_eq!(got_task.state, TASK_STATE_PENDING);
                     let _ = modify_sync_rx.recv();
                 });
-            }));
+            }).unwrap();
         }
         modify_sync_ch.send(()).unwrap();
         // finish subtasks
@@ -979,8 +985,8 @@ fn test_modify_task_concurrency_and_meta() {
         let task2_base = testutil::wait_task_done(&c.ctx, &key);
         assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
         assert_eq!(subtask_infos(), all([7, 7, 7, 7, 7]));
-        *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = None;
-        *tidb_dxf_scheduler::AFTER_REFRESH_TASK.write().unwrap() = None;
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeGetSchedulableTasks");
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/afterRefreshTask");
         runtime_info.reset();
     }
 
@@ -991,7 +997,7 @@ fn test_modify_task_concurrency_and_meta() {
         {
             let (once, task_mgr, scope, the_task) =
                 (std::sync::Once::new(), Arc::clone(&c.task_mgr), scope.clone(), Arc::clone(&the_task));
-            *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = Some(Arc::new(move || {
+            tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeGetSchedulableTasks", move |_| {
                 once.call_once(|| {
                     let task = tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "k5", &TASK_TYPE_EXAMPLE, &testutil::get_task_ks(), 3, &scope, 0, b"init").unwrap();
                     assert_eq!(task.base.required_slots, 3);
@@ -1007,7 +1013,7 @@ fn test_modify_task_concurrency_and_meta() {
                     *the_task.lock().unwrap() = Some(task);
                     let _ = modify_sync_rx.recv();
                 });
-            }));
+            }).unwrap();
         }
         modify_sync_ch.send(()).unwrap();
         // finish subtasks
@@ -1016,7 +1022,7 @@ fn test_modify_task_concurrency_and_meta() {
         let task2_base = testutil::wait_task_done(&c.ctx, &key);
         assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
         assert_eq!(runtime_info.meta(), b"modify_max_write_speed=123");
-        *tidb_dxf_scheduler::BEFORE_GET_SCHEDULABLE_TASKS.write().unwrap() = None;
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeGetSchedulableTasks");
         runtime_info.reset();
     }
 
@@ -1055,7 +1061,8 @@ fn test_modify_task_concurrency_and_meta() {
         let (modify_sync_ch, modify_sync_rx) = crossbeam_channel::bounded::<()>(0);
         {
             let (once, task_mgr, runtime_info) = (std::sync::Once::new(), Arc::clone(&c.task_mgr), Arc::clone(runtime_info));
-            *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = Some(Arc::new(move |task: &Task| {
+            tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeRefreshTask", move |task| {
+                let task: &Task = task.downcast_mut::<Arc<Task>>().unwrap();
                 if task.base.state != TASK_STATE_RUNNING && task.base.step != STEP_ONE {
                     return;
                 }
@@ -1068,7 +1075,7 @@ fn test_modify_task_concurrency_and_meta() {
                     task_mgr.modify_task_by_id(&tidb_gocontext::Context::background(), task.base.id, &param).unwrap();
                     let _ = modify_sync_rx.recv();
                 });
-            }));
+            }).unwrap();
         }
         let task = tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "k8", &TASK_TYPE_EXAMPLE, &testutil::get_task_ks(), 3, &scope, 1, &[]).unwrap();
         assert_eq!(task.base.required_slots, 3);
@@ -1086,7 +1093,7 @@ fn test_modify_task_concurrency_and_meta() {
         finish_subtasks(subtask_ch, 3);
         let task2_base = testutil::wait_task_done(&c.ctx, &task.base.key);
         assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
-        *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = None;
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeRefreshTask");
         runtime_info.reset();
     }
 }
@@ -1103,7 +1110,8 @@ fn test_modify_task_max_node_count_for_subtask_balance() {
     let (modify_sync_ch, modify_sync_rx) = crossbeam_channel::bounded::<()>(0);
     {
         let (once, task_mgr) = (std::sync::Once::new(), Arc::clone(&c.task_mgr));
-        *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = Some(Arc::new(move |task: &Task| {
+        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeRefreshTask", move |task| {
+            let task: &Task = task.downcast_mut::<Arc<Task>>().unwrap();
             if task.base.state != TASK_STATE_RUNNING && task.base.step != STEP_ONE {
                 return;
             }
@@ -1116,7 +1124,7 @@ fn test_modify_task_max_node_count_for_subtask_balance() {
                 task_mgr.modify_task_by_id(&tidb_gocontext::Context::background(), task.base.id, &param).unwrap();
                 let _ = modify_sync_rx.recv();
             });
-        }));
+        }).unwrap();
     }
     let task = tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "k8", &TASK_TYPE_EXAMPLE, &testutil::get_task_ks(), 3, &scope, 1, &[]).unwrap();
     assert_eq!(task.base.required_slots, 3);
@@ -1152,7 +1160,7 @@ fn test_modify_task_max_node_count_for_subtask_balance() {
     finish_subtasks(subtask_ch, 3);
     let task2_base = testutil::wait_task_done(&c.ctx, &task.base.key);
     assert_eq!(task2_base.state, TASK_STATE_SUCCEED);
-    *tidb_dxf_scheduler::BEFORE_REFRESH_TASK.write().unwrap() = None;
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeRefreshTask");
 }
 
 /// Go `TestScopeBasic`. Go's test store publishes `:4000` (its mock
@@ -1196,11 +1204,11 @@ fn test_scope_basic() {
     let wait_sync_refresh = || {
         let (ch_tx, ch_rx) = crossbeam_channel::bounded::<()>(0);
         let counter = AtomicI32::new(0);
-        *tidb_dxf_scheduler::SYNC_REFRESH.write().unwrap() = Some(Arc::new(move || {
+        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/syncRefresh", move |_| {
             if counter.fetch_add(1, Ordering::SeqCst) + 1 == 1 {
                 let _ = ch_tx.send(());
             }
-        }));
+        }).unwrap();
         ch_rx.recv().unwrap();
     };
     wait_sync_refresh();
@@ -1221,7 +1229,7 @@ fn test_scope_basic() {
     assert_eq!(role(&mut tk, ":4001"), [["background"]]);
     assert_eq!(role(&mut tk, ":4002"), [[""]]);
 
-    *tidb_dxf_scheduler::SYNC_REFRESH.write().unwrap() = None;
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/syncRefresh");
     rows(&mut tk, "set global tidb_service_scope=''");
 }
 
@@ -1253,11 +1261,15 @@ fn test_framework_with_query() {
 #[test]
 fn test_gc() {
     let (ch_tx, ch_rx) = crossbeam_channel::bounded::<()>(0);
-    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/dxf/framework/storage/subtaskHistoryKeepSeconds", "return(1)").unwrap();
-    *tidb_dxf_scheduler::HISTORY_SUBTASK_TABLE_GC_INTERVAL.write().unwrap() = Some(Arc::new(move |interval: &mut Duration| {
+    tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/storage/subtaskHistoryKeepSeconds", |interval| {
+        *interval.downcast_mut::<i64>().unwrap() = 1;
+    })
+    .unwrap();
+    tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/historySubtaskTableGcInterval", move |interval| {
+        let interval = interval.downcast_mut::<Duration>().unwrap();
         *interval = Duration::from_secs(1);
         let _ = ch_rx.recv();
-    }));
+    }).unwrap();
     let (_stack, task_mgr) = store_and_task_manager();
     let c = testutil::new_test_dxf_context(task_mgr, 3, 16, true);
 
@@ -1276,7 +1288,7 @@ fn test_gc() {
     eventually(Duration::from_secs(10), Duration::from_millis(500), || {
         testutil::get_subtasks_from_history(&tidb_gocontext::Context::background(), &mgr).is_ok_and(|cnt| cnt == 0)
     });
-    *tidb_dxf_scheduler::HISTORY_SUBTASK_TABLE_GC_INTERVAL.write().unwrap() = None;
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/historySubtaskTableGcInterval");
     tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/storage/subtaskHistoryKeepSeconds");
 }
 
@@ -1289,9 +1301,9 @@ fn test_framework_cleaner() {
     let _registered =
         register_example_task(&c.mock_ctrl, testutil::get_mock_basic_scheduler_ext(&c.mock_ctrl), &c.test_context, None);
     let (ch_tx, ch) = crossbeam_channel::bounded::<()>(1);
-    *tidb_dxf_scheduler::WAIT_CLEAN_UP_FINISHED.write().unwrap() = Some(Arc::new(move || {
+    tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/WaitCleanUpFinished", move |_| {
         let _ = ch_tx.send(());
-    }));
+    }).unwrap();
 
     // normal
     submit_task_and_check_success_for_basic(&c.ctx, "key1", &c.test_context);
@@ -1309,7 +1321,7 @@ fn test_framework_cleaner() {
     assert!(testutil::get_subtasks_from_history(&tidb_gocontext::Context::background(), &mgr).unwrap() > 0);
 
     tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockTransferErr");
-    *tidb_dxf_scheduler::WAIT_CLEAN_UP_FINISHED.write().unwrap() = None;
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/WaitCleanUpFinished");
     *tidb_dxf_scheduler::DEFAULT_CLEAN_UP_INTERVAL.write().unwrap() = bak;
 }
 
@@ -1327,26 +1339,28 @@ fn test_max_runtime_slots() {
         let call_count = Arc::new(AtomicI32::new(0));
         {
             let call_count = Arc::clone(&call_count);
-            *tidb_dxf_taskexecutor::BEFORE_SET_FRAMEWORK_INFO.write().unwrap() = Some(Arc::new(move |rc: &StepResource| {
+            tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/beforeSetFrameworkInfo", move |rc| {
+                let rc: &StepResource = rc.downcast_mut::<Arc<StepResource>>().unwrap();
                 let val = call_count.fetch_add(1, Ordering::SeqCst) + 1;
                 if val == 1 {
                     assert_eq!(rc.cpu.capacity(), 12);
                 } else {
                     assert_eq!(rc.cpu.capacity(), 16);
                 }
-            }));
+            }).unwrap();
         }
-        *tidb_dxf_storage::BEFORE_SUBMIT_TASK.write().unwrap() = Some(Arc::new(|_, params: &mut ExtraParams| {
+        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask", |args| {
+            let (_, params) = args.downcast_mut::<(isize, ExtraParams)>().unwrap();
             params.max_runtime_slots = 12;
             params.target_steps = vec![STEP_ONE];
-        }));
+        }).unwrap();
         let scope = tidb_dxf_handle::get_target_scope();
         assert_eq!(c.task_mgr.get_cpu_count_of_node(&tidb_gocontext::Context::background()).unwrap(), 16);
         let task = testutil::submit_and_wait_task(&c.ctx, "key1", &scope, 16);
         assert_eq!(task.state, TASK_STATE_SUCCEED);
         assert_eq!(call_count.load(Ordering::SeqCst), 2);
-        *tidb_dxf_taskexecutor::BEFORE_SET_FRAMEWORK_INFO.write().unwrap() = None;
-        *tidb_dxf_storage::BEFORE_SUBMIT_TASK.write().unwrap() = None;
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/beforeSetFrameworkInfo");
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask");
     }
 
     // prepare-mode-required-propagates-onprepare-updates
@@ -1417,9 +1431,10 @@ fn test_max_runtime_slots() {
         });
         let _registered = testutil::register_example_task(scheduler_ext, executor_ext, testutil::get_common_cleaner(&c.mock_ctrl));
 
-        *tidb_dxf_storage::BEFORE_SUBMIT_TASK.write().unwrap() = Some(Arc::new(|_, params: &mut ExtraParams| {
+        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask", |args| {
+            let (_, params) = args.downcast_mut::<(isize, ExtraParams)>().unwrap();
             params.prepare_mode = PREPARE_MODE_REQUIRED;
-        }));
+        }).unwrap();
         let scope = tidb_dxf_handle::get_target_scope();
         let task =
             tidb_dxf_handle::submit_task(&tidb_gocontext::Context::background(), "prepare-mode-required", &TASK_TYPE_EXAMPLE, &testutil::get_task_ks(), 1, &scope, 0, INITIAL_TASK_META).unwrap();
@@ -1427,7 +1442,7 @@ fn test_max_runtime_slots() {
         assert_eq!(done_task.state, TASK_STATE_SUCCEED);
         assert_eq!(on_prepare_called.load(Ordering::SeqCst), 1);
         assert_eq!(step_one_task_seen.load(Ordering::SeqCst), 1);
-        *tidb_dxf_storage::BEFORE_SUBMIT_TASK.write().unwrap() = None;
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask");
     }
 
     // prepare-mode-disabled-keeps-backward-compatible-path

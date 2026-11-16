@@ -772,10 +772,7 @@ use tidb_ddl_build::session_pool::ReorgSessionVars;
 
 
 pub(crate) fn job_batch_size(job: &Job) -> usize {
-    let defaults = tidb_model::DDLReorgProcessDefaults::new(
-        || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_WORKER_COUNT,
-        || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_BATCH_SIZE,
-    );
+    let defaults = crate::index::reorg_defaults();
     job.reorg_meta
         .as_ref()
         .map_or(
@@ -787,10 +784,7 @@ pub(crate) fn job_batch_size(job: &Job) -> usize {
 
 /// Go `ReorgMeta.GetConcurrency`.
 pub(crate) fn job_concurrency(job: &Job) -> usize {
-    let defaults = tidb_model::DDLReorgProcessDefaults::new(
-        || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_WORKER_COUNT,
-        || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_BATCH_SIZE,
-    );
+    let defaults = crate::index::reorg_defaults();
     job.reorg_meta
         .as_ref()
         .map_or(

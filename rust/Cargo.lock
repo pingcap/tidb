@@ -6075,6 +6075,7 @@ dependencies = [
  "tidb-domain-serverinfo",
  "tidb-dxf",
  "tidb-dxf-storage",
+ "tidb-failpoint",
  "tidb-gocontext",
  "tidb-log",
  "tidb-logutil",
@@ -7734,8 +7735,10 @@ dependencies = [
 name = "tidb-owner"
 version = "0.0.0"
 dependencies = [
+ "tidb-failpoint",
  "tidb-gocontext",
  "tidb-pd-client",
+ "tidb-util",
 ]
 
 [[package]]
@@ -8776,6 +8779,7 @@ dependencies = [
  "tidb-dxf-handle",
  "tidb-dxf-importinto-jobhistory",
  "tidb-dxf-storage",
+ "tidb-dxf-taskexecutor",
  "tidb-errmsg",
  "tidb-errno",
  "tidb-executor",

@@ -33,18 +33,11 @@ pub use interface::{
     register_scheduler_clean_up_factory, register_scheduler_factory, BatchCleanUpRoutine, BatchCleaner, CleanUpRoutine, Cleaner, CleanerFactoryFn, Error, Extension, Param, SchedulerFactoryFn, TaskManager,
 };
 pub use nodes::NodeManager;
-#[cfg(any(test, feature = "failpoints"))]
-pub use nodes::SYNC_REFRESH;
 pub use scheduler_manager::{Manager, CHECK_TASK_RUNNING_INTERVAL, DEFAULT_CLEAN_UP_INTERVAL};
 pub use scheduler::{
     get_live_exec_ids, is_cancelled_err, BaseScheduler, Scheduler, ServerInfoSource, CHECK_TASK_FINISHED_INTERVAL, RETRY_SQL_INTERVAL, RETRY_SQL_MAX_INTERVAL,
     RETRY_SQL_TIMES, retry_sql_times, new_retry_backoffer,
 };
-#[cfg(any(test, feature = "failpoints"))]
-pub use scheduler::{
-    set_mock_server_info, CallHook, AFTER_REFRESH_TASK, BEFORE_REFRESH_TASK, CANCEL_BEFORE_UPDATE_TASK, MOCK_OWNER_CHANGE, MOCK_SERVER_INFO,
-};
-#[cfg(any(test, feature = "failpoints"))]
-pub use scheduler_manager::{BEFORE_GET_SCHEDULABLE_TASKS, HISTORY_SUBTASK_TABLE_GC_INTERVAL, PROCESS_CLEANUP_TASK_BATCH, WAIT_CLEAN_UP_FINISHED};
+pub use scheduler::{set_mock_server_info, MOCK_SERVER_INFO};
 pub use slots::SlotManager;
 pub use state_transform::verify_task_state_transform;

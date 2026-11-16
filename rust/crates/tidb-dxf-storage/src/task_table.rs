@@ -34,12 +34,9 @@ use crate::{
     SUBTASK_COLUMNS, TASK_COLUMNS,
 };
 
-/// Go's `beforeSubmitTask` call-failpoint, which may change the required
-/// slots and the extra params.
-#[cfg(feature = "failpoints")]
-pub static BEFORE_SUBMIT_TASK: std::sync::RwLock<
-    Option<std::sync::Arc<dyn Fn(&mut isize, &mut ExtraParams) + Send + Sync>>,
-> = std::sync::RwLock::new(None);
+/// Go `TestLastTaskID`: the last created task's ID, set for tests by the
+/// `testSetLastTaskID` failpoint.
+pub static TEST_LAST_TASK_ID: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 
 /// Go `TaskExecInfo`: a task's execution information on one node.
 #[derive(Debug, Clone)]
@@ -147,12 +144,10 @@ impl TaskManager {
         }
         #[cfg(feature = "failpoints")]
         let (required_slots, extra_params) = {
-            let (mut required_slots, mut extra_params) = (required_slots, extra_params.clone());
-            let hook = BEFORE_SUBMIT_TASK.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
-            if let Some(hook) = hook {
-                hook(&mut required_slots, &mut extra_params);
-            }
-            (required_slots, extra_params)
+            // Go passes `&requiredSlots, &extraParams`.
+            let mut args = (required_slots, extra_params.clone());
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask", &mut args);
+            args
         };
         #[cfg(feature = "failpoints")]
         let extra_params = &extra_params;
@@ -181,11 +176,16 @@ impl TaskManager {
             &sql_args(&args),
         )?;
         let rows = exec_sql(ctx, se, "select @@last_insert_id", &[])?;
-        Ok(match rows.first().and_then(|row| row.first()) {
+        let task_id = match rows.first().and_then(|row| row.first()) {
             Some(Datum::UInt(id)) => *id as i64,
             Some(Datum::Int(id)) => *id,
             _ => 0,
-        })
+        };
+        #[cfg(feature = "failpoints")]
+        tidb_failpoint::inject("github.com/pingcap/tidb/pkg/dxf/framework/storage/testSetLastTaskID", |_| {
+            TEST_LAST_TASK_ID.store(task_id, std::sync::atomic::Ordering::SeqCst);
+        });
+        Ok(task_id)
     }
 
     /// Go `GetTopUnfinishedTasks`.

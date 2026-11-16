@@ -33,7 +33,7 @@ use crate::mock::{
     new_session_pool_for_store, MockExtension, MockRuntime, MockRuntimeHandle, MockScheduler, MockServer, MockServerInfo,
     MockSession, MockTaskManager,
 };
-use crate::scheduler::{plain, BEFORE_REFRESH_TASK};
+use crate::scheduler::plain;
 use crate::{clear_scheduler_factory, register_scheduler_factory, BaseScheduler, Extension, Scheduler, TaskManager};
 
 fn new_manager(ctx: &Context, task_mgr: Arc<MockTaskManager>) -> Arc<Manager> {
@@ -596,11 +596,11 @@ fn test_fast_respond_no_need_resource_task_when_schedulers_reach_limit() {
     let _schedulers = register_test_scheduler_factory();
     for state in [TASK_STATE_CANCELLING, TASK_STATE_REVERTING, TASK_STATE_MODIFYING, TASK_STATE_PAUSING] {
         let (ch_tx, ch_rx) = crossbeam_channel::bounded::<()>(0);
-        *BEFORE_REFRESH_TASK.write().unwrap() = Some(Arc::new(move |task: &Task| {
-            if task.base.id == 1 {
+        let before_refresh = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeRefreshTask", move |task| {
+            if task.downcast_mut::<Arc<Task>>().unwrap().base.id == 1 {
                 let _ = ch_rx.recv();
             }
-        }));
+        });
         *task_mgr.used_slots_any_times.lock().unwrap() = true;
         let task1 = task_base(1, TASK_STATE_PENDING.clone());
         let task1_success = TaskBase { state: TASK_STATE_SUCCEED.clone(), ..task1.clone() };
@@ -632,7 +632,7 @@ fn test_fast_respond_no_need_resource_task_when_schedulers_reach_limit() {
         drop(ch_tx);
         wait_schedulers(&mgr);
         task_mgr.assert_satisfied();
-        *BEFORE_REFRESH_TASK.write().unwrap() = None;
+        drop(before_refresh);
     }
     restore();
 }

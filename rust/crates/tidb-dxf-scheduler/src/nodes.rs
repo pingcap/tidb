@@ -28,10 +28,6 @@ pub(crate) fn nodes_check_interval() -> std::time::Duration {
     2 * crate::scheduler::check_task_finished_interval()
 }
 
-/// Go's `syncRefresh` call-failpoint, after the managed nodes are refreshed.
-#[cfg(any(test, feature = "failpoints"))]
-pub static SYNC_REFRESH: crate::scheduler::CallHook<dyn Fn() + Send + Sync> = std::sync::RwLock::new(None);
-
 /// Go `NodeManager`: the live TiDB nodes of the cluster, and the nodes the
 /// framework manages.
 pub struct NodeManager {
@@ -133,8 +129,7 @@ impl NodeManager {
         slot_mgr.update_capacity(cpu_count);
         self.store_nodes(new_nodes);
 
-        #[cfg(any(test, feature = "failpoints"))]
-        crate::scheduler::call_hook(&SYNC_REFRESH, |hook| hook());
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/syncRefresh", &mut ());
     }
 
     pub(crate) fn store_nodes(&self, nodes: Vec<ManagedNode>) {

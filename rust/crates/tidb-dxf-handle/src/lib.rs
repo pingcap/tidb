@@ -176,6 +176,8 @@ pub fn submit_task_with_extra_params(ctx: &tidb_gocontext::Context,
 
     let task = task_manager.get_task_by_id(ctx, task_id)?;
 
+    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/dxf/framework/handle/afterDXFTaskSubmitted", &mut ());
+
     notify_task_change();
     Ok(task)
 }

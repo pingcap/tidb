@@ -986,10 +986,23 @@ pub fn acquire_distributed_lock(
     key: &str,
     ttl_seconds: i64,
 ) -> Result<Box<dyn FnOnce() + Send>, String> {
+    // Go `concurrency.NewSession`.
     let lease = store.lease_grant(ttl_seconds)?;
     let lock_key = campaign_key(key, lease);
-    store.create_with_lease(lock_key.as_bytes(), b"", lease)?;
-    if let Err(error) = wait_until_first(context, store.as_ref(), key, &lock_key) {
+    let max_retry_cnt = 10;
+    let mut err = tidb_util::misc::run_with_retry(max_retry_cnt, tidb_util::misc::RETRY_INTERVAL, || {
+        // Go `mu.Lock`: a lock whose wait fails releases its key.
+        let locked = store.create_with_lease(lock_key.as_bytes(), b"", lease).and_then(|_| {
+            wait_until_first(context, store.as_ref(), key, &lock_key).inspect_err(|_| {
+                let _ = store.delete(lock_key.as_bytes());
+            })
+        });
+        (locked.is_err(), locked)
+    })
+    .err();
+    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/owner/mockAcquireDistLockFailed", &mut err);
+    if let Some(error) = err {
+        // Go `se.Close()`.
         let _ = store.lease_revoke(lease);
         return Err(error);
     }

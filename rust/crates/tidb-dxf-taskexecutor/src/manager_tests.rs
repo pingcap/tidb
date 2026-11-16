@@ -26,7 +26,6 @@ use tidb_dxf::{
 use tidb_dxf_storage::{StorageError, TaskExecInfo};
 use tidb_gocontext::{Context, CtxError};
 
-use crate::manager::BEFORE_CALL_START_TASK_EXECUTOR;
 use crate::mock::{
     key, storage_err, Controller, MockRuntime, MockRuntimeHandle, MockServer, MockSession, MockTaskExecutor, MockTaskTable,
     Times, ONCE,
@@ -648,18 +647,22 @@ fn test_slot_manager_in_manager() {
     ctrl.ret(executor(3).key("Init"), Ok::<(), Error>(()));
     expect_run(3);
     ctrl.ret(key::get_task_by_id(task1.id), task_of(&task1));
-    {
+    let before_call_start = {
         let (m, task1_id, task3) = (Arc::clone(&m), task1.id, task3.clone());
-        *BEFORE_CALL_START_TASK_EXECUTOR.write().unwrap() = Some(Arc::new(move |task: &TaskBase| {
-            if task.id == task1_id {
-                let new_task3 = TaskBase { required_slots: 8, ..task3.clone() };
-                assert!(m.slot_manager().exchange(&new_task3));
-                assert_eq!(m.slot_manager().available_slots(), 2);
-            }
-        }));
-    }
+        tidb_failpoint::enable_call_for_test(
+            "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/beforeCallStartTaskExecutor",
+            move |task| {
+                let task = task.downcast_mut::<TaskBase>().unwrap();
+                if task.id == task1_id {
+                    let new_task3 = TaskBase { required_slots: 8, ..task3.clone() };
+                    assert!(m.slot_manager().exchange(&new_task3));
+                    assert_eq!(m.slot_manager().available_slots(), 2);
+                }
+            },
+        )
+    };
     m.handle_executable_tasks(&[exec_info(&task3), exec_info(&task1), exec_info(&task2)]);
-    *BEFORE_CALL_START_TASK_EXECUTOR.write().unwrap() = None;
+    drop(before_call_start);
     eventually(Duration::from_secs(2), Duration::from_millis(300), || ctrl.satisfied());
     assert_eq!(m.slot_manager().available_slots(), 2);
     assert_eq!(m.slot_manager().executor_tasks().len(), 1);

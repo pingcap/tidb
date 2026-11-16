@@ -59,11 +59,12 @@ use tidb_log::{Field, Value};
 pub static UPDATE_DDL_JOB_REORG_CFG_INTERVAL_MS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(2000);
 
-/// Go `ReorgMeta.GetConcurrency` / `GetBatchSize` over the job's reorg meta.
+/// Go `ReorgMeta.GetConcurrency` / `GetBatchSize` over the job's reorg meta:
+/// an unset value falls back to the global `vardef` counters.
 pub(crate) fn reorg_defaults() -> tidb_model::DDLReorgProcessDefaults {
     tidb_model::DDLReorgProcessDefaults::new(
-        || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_WORKER_COUNT,
-        || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_BATCH_SIZE,
+        || i64::from(tidb_vardef::get_ddl_reorg_worker_counter()),
+        || i64::from(tidb_vardef::get_ddl_reorg_batch_size()),
     )
 }
 

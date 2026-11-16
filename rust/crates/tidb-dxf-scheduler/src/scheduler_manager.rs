@@ -39,20 +39,6 @@ pub static CHECK_TASK_RUNNING_INTERVAL: RwLock<Duration> = RwLock::new(Duration:
 const DEFAULT_HISTORY_SUBTASK_TABLE_GC_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 /// Go `DefaultCleanUpInterval`: the interval of task cleanup.
 pub static DEFAULT_CLEAN_UP_INTERVAL: RwLock<Duration> = RwLock::new(Duration::from_secs(10 * 60));
-/// Go's `historySubtaskTableGcInterval` call-failpoint, which may change the
-/// interval.
-#[cfg(any(test, feature = "failpoints"))]
-pub static HISTORY_SUBTASK_TABLE_GC_INTERVAL: crate::scheduler::CallHook<dyn Fn(&mut Duration) + Send + Sync> =
-    RwLock::new(None);
-/// Go's `beforeGetSchedulableTasks` call-failpoint.
-#[cfg(any(test, feature = "failpoints"))]
-pub static BEFORE_GET_SCHEDULABLE_TASKS: crate::scheduler::CallHook<dyn Fn() + Send + Sync> = RwLock::new(None);
-/// Go's `processCleanupTaskBatch` call-failpoint.
-#[cfg(any(test, feature = "failpoints"))]
-pub static PROCESS_CLEANUP_TASK_BATCH: crate::scheduler::CallHook<dyn Fn() + Send + Sync> = RwLock::new(None);
-/// Go's `WaitCleanUpFinished` call-failpoint.
-#[cfg(any(test, feature = "failpoints"))]
-pub static WAIT_CLEAN_UP_FINISHED: crate::scheduler::CallHook<dyn Fn() + Send + Sync> = RwLock::new(None);
 /// Go `defaultCollectMetricsInterval`: metric scraping mostly happens every
 /// 15s, so collecting more often is meaningless.
 const DEFAULT_COLLECT_METRICS_INTERVAL: Duration = Duration::from_secs(15);
@@ -283,8 +269,7 @@ impl Manager {
                 recv(task_changed) -> _ => {}
             }
 
-            #[cfg(any(test, feature = "failpoints"))]
-            crate::scheduler::call_hook(&BEFORE_GET_SCHEDULABLE_TASKS, |hook| hook());
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/beforeGetSchedulableTasks", &mut ());
             let Ok(schedulable_tasks) = self.get_schedulable_tasks() else {
                 continue;
             };
@@ -390,10 +375,8 @@ impl Manager {
     /// Go `gcSubtaskHistoryTableLoop`.
     fn gc_subtask_history_table_loop(self: &Arc<Self>) {
         self.logger.info("subtask table gc loop start", &[]);
-        #[allow(unused_mut)]
         let mut history_subtask_table_gc_interval = DEFAULT_HISTORY_SUBTASK_TABLE_GC_INTERVAL;
-        #[cfg(any(test, feature = "failpoints"))]
-        crate::scheduler::call_hook(&HISTORY_SUBTASK_TABLE_GC_INTERVAL, |hook| hook(&mut history_subtask_table_gc_interval));
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/historySubtaskTableGcInterval", &mut history_subtask_table_gc_interval);
         let ticker = crossbeam_channel::tick(history_subtask_table_gc_interval);
         let done = self.ctx.done();
         loop {
@@ -533,8 +516,7 @@ impl Manager {
             return false;
         }
         // Keep the failpoint name stable for existing integration tests.
-        #[cfg(any(test, feature = "failpoints"))]
-        crate::scheduler::call_hook(&PROCESS_CLEANUP_TASK_BATCH, |hook| hook());
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/processCleanupTaskBatch", &mut ());
         self.logger.info("task cleanup starts", &[]);
         let total = tasks.len();
         let transferred_task_count = match self.clean_finished_tasks(tasks) {
@@ -544,8 +526,7 @@ impl Manager {
                 return false;
             }
         };
-        #[cfg(any(test, feature = "failpoints"))]
-        crate::scheduler::call_hook(&WAIT_CLEAN_UP_FINISHED, |hook| hook());
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/WaitCleanUpFinished", &mut ());
         let batch_fully_handled = transferred_task_count == total;
         self.logger.info(
             "task cleanup finished",
@@ -616,8 +597,6 @@ impl Manager {
                 .inc();
             self.logger.warn("task cleanup failed", &[str_field("error", err.to_string())]);
         }
-
-        #[cfg(any(test, feature = "failpoints"))]
         if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockTransferErr").is_some() {
             return Err(tidb_dxf_storage::StorageError::Other("transfer err".to_owned()));
         }

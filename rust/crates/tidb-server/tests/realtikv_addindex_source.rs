@@ -162,6 +162,98 @@ macro_rules! realtikv {
     };
 }
 
+/// Go `addindextest1.checkTmpDDLDir`: no stale file under a `tmp_ddl-` dir.
+fn check_tmp_ddl_dir() {
+    fn walk(dir: &std::path::Path, root: &std::path::Path) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries {
+            let path = entry.unwrap().path();
+            let rel = path.strip_prefix(root).unwrap().to_string_lossy().into_owned();
+            if path.is_dir() {
+                walk(&path, root);
+            } else {
+                // we only checks whether there is a stale file, empty dir is allowed.
+                assert!(!rel.contains("/tmp_ddl-"), "stale file found: {rel}");
+            }
+        }
+    }
+    let tmp_dir = std::path::PathBuf::from(&tidb_config::config_tree::config::get_global_config().temp_dir);
+    println!("{}", tmp_dir.display());
+    walk(&tmp_dir, &tmp_dir);
+}
+
+/// Go `addindextest1.TestAddIndexDistBasic`.
+#[test]
+fn test_add_index_dist_basic() {
+    // mock that we only have 1 cpu, add-index task can be scheduled as usual
+    let _num_cpu = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(1)");
+    let _last_task =
+        tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/dxf/framework/storage/testSetLastTaskID", "return(true)");
+    let store = realtikv!();
+
+    let mut tk = store.new_tk();
+    tk.must_exec("drop database if exists test;");
+    tk.must_exec("create database test;");
+    tk.must_exec("use test;");
+    tk.must_exec("set global tidb_enable_dist_task=1;");
+
+    let bak = tidb_vardef::get_ddl_reorg_worker_counter();
+    tk.must_exec("set global tidb_ddl_reorg_worker_cnt = 111");
+    tk.must_exec("set @@tidb_ddl_reorg_worker_cnt = 111");
+    assert_eq!(tidb_vardef::get_ddl_reorg_worker_counter(), 111);
+    tk.must_exec("create table t(a bigint auto_random primary key) partition by hash(a) partitions 20;");
+    for _ in 0..5 {
+        tk.must_exec("insert into t values (), (), (), (), (), ()");
+    }
+    tk.must_exec("split table t between (3) and (8646911284551352360) regions 50;");
+    tk.must_exec("alter table t add index idx(a);");
+    tk.must_exec("admin check index t idx;");
+    let task_mgr = tidb_dxf_storage::get_task_manager().unwrap();
+    let ctx = tidb_gocontext::Context::background();
+    let task = task_mgr
+        .get_task_by_id_with_history(&ctx, tidb_dxf_storage::TEST_LAST_TASK_ID.load(std::sync::atomic::Ordering::SeqCst))
+        .unwrap();
+    assert_eq!(task.base.required_slots, 1);
+
+    tk.must_exec(&format!("set global tidb_ddl_reorg_worker_cnt = {bak}"));
+    tk.must_exec(&format!("set @@tidb_ddl_reorg_worker_cnt = {bak}"));
+    assert_eq!(tidb_vardef::get_ddl_reorg_worker_counter(), bak);
+
+    tk.must_exec("create table t1(a bigint auto_random primary key);");
+    for _ in 0..4 {
+        tk.must_exec("insert into t1 values (), (), (), (), (), ()");
+    }
+    tk.must_exec("split table t1 between (3) and (8646911284551352360) regions 50;");
+    tk.must_exec("alter table t1 add index idx(a);");
+    tk.must_exec("admin check index t1 idx;");
+
+    let counter = std::sync::atomic::AtomicI32::new(0);
+    let after_run = tidb_failpoint::enable_call_ref_for_test::<tidb_dxf_taskexecutor::AfterRunSubtask>(
+        "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask",
+        std::sync::Arc::new(move |_, err_p, _| {
+            if counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1 == 1 {
+                *err_p = Some(std::sync::Arc::new(tidb_gocontext::CtxError::Canceled));
+            }
+        }),
+    );
+    tk.must_exec("alter table t1 add index idx1(a);");
+    tk.must_exec("admin check index t1 idx1;");
+    drop(after_run);
+
+    {
+        let _panic = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/ddl/injectPanicForTableScan", "return()");
+        tk.exec_to_err("alter table t1 add index idx2(a);");
+    }
+
+    let _fault = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/mockIndexIngestWorkerFault", |_| {
+        panic!("mock panic");
+    });
+    tk.exec_to_err("alter table t1 add index idx2(a);");
+
+    tk.must_exec("set global tidb_enable_dist_task=0;");
+    check_tmp_ddl_dir();
+}
+
 /// Go `addindextest1.TestAddIndexForCurrentTimestampColumn`.
 #[test]
 fn test_add_index_for_current_timestamp_column() {
@@ -250,4 +342,150 @@ fn test_add_index_dist_cancel_is_timely() {
         // cancel should be timely
         assert!(now.elapsed().as_secs_f64() < 20.0, "{:?}", now.elapsed());
     });
+}
+
+/// Go `addindextest1.TestAddIndexDistLockAcquireFailed`.
+#[test]
+fn test_add_index_dist_lock_acquire_failed() {
+    let store = realtikv!();
+    let mut tk = store.new_tk();
+    tk.must_exec("use test");
+    tk.must_exec("set global tidb_enable_dist_task = on;");
+    let retryable_errs = ["requested lease not found", "mvcc: required revision has been compacted"];
+    for err_str in retryable_errs {
+        tk.must_exec("drop table if exists t;");
+        tk.must_exec("create table t (a int, b int);");
+        tk.must_exec("insert into t values (1, 1);");
+        let once = std::sync::Once::new();
+        let _fp = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/owner/mockAcquireDistLockFailed", move |err_p| {
+            once.call_once(|| {
+                *err_p.downcast_mut::<Option<String>>().unwrap() = Some(err_str.to_owned());
+            });
+        });
+        tk.must_exec("alter table t add index idx(b);");
+    }
+    tk.must_exec("set global tidb_enable_dist_task = off;");
+}
+
+/// Go `addindextest1.TestAddIndexScheduleAway`.
+#[test]
+fn test_add_index_schedule_away() {
+    let store = realtikv!();
+    let mut tk = store.new_tk();
+    tk.must_exec("use test");
+    tk.must_exec("set global tidb_enable_dist_task = on;");
+    tk.must_exec("drop table if exists t;");
+    tk.must_exec("create table t (a int, b int);");
+    tk.must_exec("insert into t values (1, 1);");
+
+    let job_id = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
+    // Acquire the job ID.
+    let _run_step = {
+        let job_id = std::sync::Arc::clone(&job_id);
+        tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", move |job| {
+            let job = job.downcast_ref::<tidb_model::Job>().unwrap();
+            if job.type_ == tidb_model::ActionType::ACTION_ADD_INDEX {
+                job_id.store(job.id, std::sync::atomic::Ordering::SeqCst);
+            }
+        })
+    };
+    // Do not balance subtasks automatically.
+    let _no_slots = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockNoEnoughSlots", "return");
+    let (after_cancel_tx, after_cancel) = std::sync::mpsc::sync_channel::<()>(1);
+    // Capture the cancel operation from checkBalanceLoop.
+    let _after_cancel = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterCancelSubtaskExec",
+        move |_| {
+            let _ = after_cancel_tx.try_send(());
+        },
+    );
+    let once = std::sync::Once::new();
+    let after_cancel = std::sync::Mutex::new(after_cancel);
+    // The connection opens here: the store is not shared across threads.
+    let tk1 = std::sync::Mutex::new(store.new_tk());
+    let _finish = {
+        let job_id = std::sync::Arc::clone(&job_id);
+        tidb_failpoint::enable_call_for_test(
+            "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish",
+            move |_| {
+                once.call_once(|| {
+                    let mut tk1 = tk1.lock().unwrap();
+                    tk1.must_exec("use test");
+                    let job_id = job_id.load(std::sync::atomic::Ordering::SeqCst);
+                    // Go restores ':4000', the test server's exec ID: this node's.
+                    let exec_id = tk1.must_query(&format!(
+                        "select exec_id from mysql.tidb_background_subtask where task_key in
+                            (select id from mysql.tidb_global_task where task_key like '%{job_id}')"
+                    ))[0][0]
+                        .clone();
+                    tk1.must_exec(&format!(
+                        "update mysql.tidb_background_subtask set exec_id = 'other' where task_key in
+                            (select id from mysql.tidb_global_task where task_key like '%{job_id}')"
+                    ));
+                    after_cancel.lock().unwrap().recv().unwrap();
+                    tk1.must_exec(&format!(
+                        "update mysql.tidb_background_subtask set exec_id = '{exec_id}' where task_key in
+                            (select id from mysql.tidb_global_task where task_key like '%{job_id}')"
+                    ));
+                });
+            },
+        )
+    };
+    // Go's `require` runs in the executor's goroutine; here the executor's
+    // observations are asserted on the test's thread.
+    let canceled = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let _after_run = {
+        let canceled = std::sync::Arc::clone(&canceled);
+        tidb_failpoint::enable_call_ref_for_test::<tidb_dxf_taskexecutor::AfterRunSubtask>(
+            "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask",
+            std::sync::Arc::new(move |_, _, ctx| {
+                let cause = ctx.cause();
+                canceled.lock().unwrap().push((
+                    ctx.err().is_some(),
+                    cause.is_some_and(|cause| {
+                        cause.downcast_ref::<tidb_gocontext::CtxError>() == Some(&tidb_gocontext::CtxError::Canceled)
+                    }),
+                ));
+            }),
+        )
+    };
+    tk.must_exec("alter table t add index idx(b);");
+    assert_ne!(job_id.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let canceled = canceled.lock().unwrap();
+    assert!(!canceled.is_empty());
+    assert!(canceled.iter().all(|&(err, cause_canceled)| err && cause_canceled), "{canceled:?}");
+    tk.must_exec("set global tidb_enable_dist_task = off;");
+}
+
+/// Go `addindextest1.TestAddIndexDistCleanUpBlock`.
+#[test]
+fn test_add_index_dist_clean_up_block() {
+    let restore = tidb_dxf::set_max_concurrent_task_for_test(1);
+    let _num_cpu = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(1)");
+    let (ch_tx, ch) = crossbeam_channel::bounded::<()>(0);
+    let _clean_up = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/doCleanupTask",
+        move |_| {
+            let _ = ch.recv();
+        },
+    );
+    let store = realtikv!();
+    let mut tk = store.new_tk();
+    tk.must_exec("drop database if exists test;");
+    tk.must_exec("create database test;");
+    tk.must_exec("use test;");
+    tk.must_exec("set global tidb_enable_dist_task=1;");
+    let tks: Vec<Tk> = (0..4).map(|_| store.new_tk()).collect();
+    std::thread::scope(|wg| {
+        for (i, mut tk) in tks.into_iter().enumerate() {
+            wg.spawn(move || {
+                tk.must_exec(&format!("create table test.t{i} (a int, b int);"));
+                tk.must_exec(&format!("insert into test.t{i} values (1, 1);"));
+                tk.must_exec(&format!("alter table test.t{i} add index idx(b);"));
+            });
+        }
+    });
+    drop(ch_tx);
+    tk.must_exec("set global tidb_enable_dist_task=0;");
+    restore();
 }

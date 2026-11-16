@@ -33,37 +33,13 @@ use crate::interface::is_err;
 use crate::manager::{max_subtask_check_interval, subtask_check_interval, MAX_CHECKS_WHEN_NO_SUBTASK};
 use crate::{Error, Extension, SlotManager, TaskExecutor, TaskExecutorError, TaskTable};
 
-/// A Go call-failpoint (`failpoint.InjectCall`): the test's function, if set.
-#[cfg(any(test, feature = "failpoints"))]
-pub type CallHook<F> = RwLock<Option<Arc<F>>>;
-
-#[cfg(any(test, feature = "failpoints"))]
-fn call_hook<F: ?Sized>(hook: &CallHook<F>, call: impl FnOnce(&F)) {
-    let hook = hook.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
-    if let Some(hook) = hook {
-        call(&hook);
-    }
-}
-
 /// Go's `afterRunSubtask` call-failpoint: the executor, the subtask's error
 /// (which it may change) and the subtask's context.
-#[cfg(any(test, feature = "failpoints"))]
-pub static AFTER_RUN_SUBTASK: CallHook<dyn Fn(&BaseTaskExecutor, &mut Option<Error>, &Context) + Send + Sync> =
-    RwLock::new(None);
-
-/// Go's `beforeGetTaskByIDInRun` call-failpoint, which receives the task ID.
-#[cfg(any(test, feature = "failpoints"))]
-pub static BEFORE_GET_TASK_BY_ID_IN_RUN: CallHook<dyn Fn(i64) + Send + Sync> = RwLock::new(None);
+pub type AfterRunSubtask = dyn Fn(&BaseTaskExecutor, &mut Option<Error>, &Context) + Send + Sync;
 
 /// Go's `mockTiDBShutdown` call-failpoint: the executor, its node's exec ID
 /// and the task, after each subtask runs.
-#[cfg(any(test, feature = "failpoints"))]
-pub static MOCK_TIDB_SHUTDOWN: CallHook<dyn Fn(&BaseTaskExecutor, &str, &TaskBase) + Send + Sync> = RwLock::new(None);
-
-/// Go's `beforeSetFrameworkInfo` call-failpoint, which receives the step's
-/// resource.
-#[cfg(any(test, feature = "failpoints"))]
-pub static BEFORE_SET_FRAMEWORK_INFO: CallHook<dyn Fn(&tidb_dxf::StepResource) + Send + Sync> = RwLock::new(None);
+pub type MockTiDBShutdown = dyn Fn(&BaseTaskExecutor, &str, &TaskBase) + Send + Sync;
 
 /// Go `checkBalanceSubtaskInterval`: how often the executor checks whether
 /// subtasks were balanced to or away from the node.
@@ -348,6 +324,7 @@ impl BaseTaskExecutor {
                 if let Some(cancel) = subtask_ctx_cancel {
                     cancel.cancel();
                 }
+                tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterCancelSubtaskExec", &mut ());
                 return;
             }
 
@@ -456,8 +433,7 @@ impl BaseTaskExecutor {
             }
             skip_backoff = false;
             let old_task = self.get_task();
-            #[cfg(any(test, feature = "failpoints"))]
-            call_hook(&BEFORE_GET_TASK_BY_ID_IN_RUN, |hook| hook(old_task.base.id));
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/beforeGetTaskByIDInRun", &mut old_task.base.id.clone());
             let new_task = match self.param.task_table.get_task_by_id(&self.ctx, old_task.base.id) {
                 Ok(task) => task,
                 Err(err) if err.is(&StorageError::TaskNotFound) => return,
@@ -532,7 +508,6 @@ impl BaseTaskExecutor {
                     continue;
                 }
                 Ok(None) => {
-                    #[cfg(any(test, feature = "failpoints"))]
                     if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/avoidTaskExecutorExitWhenNoSubtask").is_some() {
                         no_subtask_check_cnt = 0;
                     }
@@ -607,8 +582,7 @@ impl BaseTaskExecutor {
             }
         };
         let resource = Arc::new(self.param.node_rc.get_step_resource(&self.get_task_base()));
-        #[cfg(any(test, feature = "failpoints"))]
-        call_hook(&BEFORE_SET_FRAMEWORK_INFO, |hook| hook(&resource));
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/beforeSetFrameworkInfo", &mut Arc::clone(&resource));
         let (update_table, get_table) = (Arc::clone(&self.param.task_table), Arc::clone(&self.param.task_table));
         tidb_dxf_execute::set_framework_info(
             step_executor.as_ref(),
@@ -717,7 +691,6 @@ impl BaseTaskExecutor {
         let _subtask_cancel = CancelOnDrop(&subtask_cancel);
         self.curr_subtask_id.store(subtask.base.id, Ordering::SeqCst);
         let (check_ctx, check_cancel) = Context::with_cancel(&subtask_ctx);
-        #[allow(unused_mut)]
         let mut subtask_err: Option<Error> = std::thread::scope(|scope| {
             // Go's `defer checkCancel(); wg.Wait()`: the helpers end with the run,
             // also when it panics.
@@ -730,11 +703,13 @@ impl BaseTaskExecutor {
             scope.spawn(|| run_with_log(|| self.detect_and_handle_param_modify_loop(&check_ctx)));
             step_exec.run_subtask(&subtask_ctx, &mut subtask).err().map(Error::from)
         });
-        #[cfg(any(test, feature = "failpoints"))]
-        call_hook(&AFTER_RUN_SUBTASK, |hook| hook(self, &mut subtask_err, &subtask_ctx));
+        tidb_failpoint::inject_call_ref::<AfterRunSubtask>("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask", |f| {
+            f(self, &mut subtask_err, &subtask_ctx);
+        });
         log_task.end2(Level::Info, subtask_err.as_deref().map(as_dyn), &[]);
-        #[cfg(any(test, feature = "failpoints"))]
-        call_hook(&MOCK_TIDB_SHUTDOWN, |hook| hook(self, &self.param.exec_id, &self.get_task_base()));
+        tidb_failpoint::inject_call_ref::<MockTiDBShutdown>("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/mockTiDBShutdown", |f| {
+            f(self, &self.param.exec_id, &self.get_task_base());
+        });
 
         if let Some(subtask_err) = subtask_err {
             if let Err(err) = self.mark_sub_task_canceled_or_failed(&subtask_ctx, &subtask, &subtask_err) {
@@ -743,7 +718,9 @@ impl BaseTaskExecutor {
             return Err(subtask_err);
         }
 
-        self.finish_subtask(&step_ctx, &subtask)
+        let result = self.finish_subtask(&step_ctx, &subtask);
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/syncAfterSubtaskFinish", &mut ());
+        result
     }
 
     /// Go `hasRealtimeSummary`.
@@ -811,6 +788,7 @@ impl BaseTaskExecutor {
             }
             self.meta_modify_applied(latest_task.meta.clone());
         }
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterDetectAndHandleParamModify", &mut { self.get_task().base.step });
         Ok(())
     }
 

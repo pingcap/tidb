@@ -214,8 +214,8 @@ fn show_comments_from_job(job: &Job) -> String {
             DEF_TIDB_DDL_REORG_WORKER_COUNT,
         };
         let defaults = tidb_model::DDLReorgProcessDefaults::new(
-            || DEF_TIDB_DDL_REORG_WORKER_COUNT,
-            || DEF_TIDB_DDL_REORG_BATCH_SIZE,
+            || i64::from(tidb_vardef::get_ddl_reorg_worker_counter()),
+            || i64::from(tidb_vardef::get_ddl_reorg_batch_size()),
         );
         let concurrency = meta.get_concurrency(defaults);
         let batch_size = meta.get_batch_size(defaults);

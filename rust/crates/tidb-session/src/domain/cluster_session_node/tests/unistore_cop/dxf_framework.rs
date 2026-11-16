@@ -923,7 +923,10 @@ fn test_subtask_history_table() {
     assert_eq!(sm.get_subtasks_with_history(&tidb_gocontext::Context::background(), TASK_ID, STEP_INIT).unwrap().len(), 3);
 
     // test GC history table.
-    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/dxf/framework/storage/subtaskHistoryKeepSeconds", "return(1)").unwrap();
+    tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/storage/subtaskHistoryKeepSeconds", |interval| {
+        *interval.downcast_mut::<i64>().unwrap() = 1;
+    })
+    .unwrap();
     std::thread::sleep(Duration::from_secs(2));
 
     let sub_task4 = testutil::create_sub_task(&sm, TASK_ID2, STEP_INIT, TIDB1, Some(META), &TASK_TYPE_EXAMPLE, 11);

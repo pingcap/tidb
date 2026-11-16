@@ -12,7 +12,7 @@ workspace = true
 
 [features]
 # Test-only fault injection: Go's `failpoint.Inject`s.
-failpoints = ["dep:tidb-failpoint", "tidb-failpoint/failpoints"]
+failpoints = ["tidb-failpoint/failpoints"]
 
 [dependencies]
 tidb-model = { path = "../tidb-model" }
@@ -33,7 +33,7 @@ tidb-ingestor-errdef = { path = "../tidb-ingestor-errdef" }
 tidb-metrics = { path = "../tidb-metrics" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 crossbeam-channel = "0.5"
-tidb-failpoint = { path = "../tidb-failpoint", optional = true }
+tidb-failpoint = { path = "../tidb-failpoint" }
 prometheus = { version = "0.14", default-features = false }
 tidb-intest = { path = "../tidb-intest" }
 tidb-log = { path = "../tidb-log" }

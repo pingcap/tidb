@@ -139,6 +139,45 @@ pub fn enable_call_for_test(name: &str, f: impl Fn(&mut dyn std::any::Any) + Sen
     Guard(name.to_owned())
 }
 
+/// Go `failpoint.InjectCall(name, args...)` whose arguments borrow from the
+/// site (Go passes `e`, `&err` and other pointers that `&mut dyn Any` cannot
+/// carry): while the failpoint is enabled, `call` runs with the function
+/// `enable_call_ref_for_test` registered, which has type `F`.
+pub fn inject_call_ref<F: ?Sized + 'static>(name: &str, call: impl FnOnce(&F)) {
+    let mut registered: Option<std::sync::Arc<F>> = None;
+    inject_call(name, &mut registered);
+    if let Some(f) = registered {
+        call(&f);
+    }
+}
+
+/// Go `failpoint.EnableCall(name, fn)` for an `inject_call_ref` site: `F` is
+/// the site's function type.
+///
+/// # Errors
+/// The failpoint cannot be configured.
+pub fn enable_call_ref<F: ?Sized + Send + Sync + 'static>(name: &str, f: std::sync::Arc<F>) -> Result<(), String> {
+    let site = name.to_owned();
+    enable_call(name, move |slot| {
+        let slot = slot
+            .downcast_mut::<Option<std::sync::Arc<F>>>()
+            .unwrap_or_else(|| panic!("failpoint {site} is injected with another function type"));
+        *slot = Some(std::sync::Arc::clone(&f));
+    })
+}
+
+/// Go `testfailpoint.EnableCall(t, name, fn)` for an `inject_call_ref` site:
+/// the failpoint is disabled when the guard drops.
+#[must_use]
+pub fn enable_call_ref_for_test<F: ?Sized + Send + Sync + 'static>(name: &str, f: std::sync::Arc<F>) -> Guard {
+    assert!(
+        cfg!(feature = "failpoints"),
+        "failpoint {name} is enabled in a build without tidb-failpoint/failpoints"
+    );
+    enable_call_ref(name, f).unwrap_or_else(|error| panic!("enable failpoint {name}: {error}"));
+    Guard(name.to_owned())
+}
+
 /// Go `failpoint.List()` with each failpoint's terms (Go `Status`).
 #[must_use]
 pub fn list() -> Vec<(String, String)> {
@@ -186,5 +225,26 @@ mod tests {
         assert_eq!(eval(name).unwrap().int(), -3);
         disable(name);
         assert_eq!(eval(name), None);
+    }
+
+    type Borrowing = dyn Fn(&str, &mut Option<String>) + Send + Sync;
+
+    #[test]
+    fn call_ref_borrows_the_sites_arguments() {
+        let name = "github.com/pingcap/tidb/pkg/failpoint/callRef";
+        let site = |exec_id: &str| {
+            let mut err = None;
+            inject_call_ref::<Borrowing>(name, |f| f(exec_id, &mut err));
+            err
+        };
+        assert_eq!(site("a"), None);
+        {
+            let _guard = enable_call_ref_for_test::<Borrowing>(
+                name,
+                std::sync::Arc::new(|exec_id, err| *err = Some(exec_id.to_owned())),
+            );
+            assert_eq!(site("a"), Some("a".to_owned()));
+        }
+        assert_eq!(site("a"), None);
     }
 }
