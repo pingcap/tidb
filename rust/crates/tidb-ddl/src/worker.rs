@@ -69,6 +69,11 @@ use tidb_table::table_from_meta::{cluster_table, AutoIdSource};
 /// exercised without a cluster. The production implementation is
 /// [`RealClusterDdl`].
 pub trait ClusterDdl: Send + Sync {
+    /// Go `DDL.Stop`: the owner campaign is cancelled (its etcd lease
+    /// revoked) and the DDL's workers stop. Idempotent; a DDL with no owner
+    /// or workers has nothing to stop.
+    fn stop(&self) {}
+
     /// Go `executor.UpdateTableReplicaInfo`.
     fn update_table_replica_info(
         &self,
@@ -1402,13 +1407,13 @@ where
     server_state_context: SleepContext,
     min_job_id_refresher: Arc<MinJobIdRefresher>,
     min_job_id_stop: Sender<()>,
-    min_job_id_worker: Option<JoinHandle<()>>,
+    min_job_id_worker: Mutex<Option<JoinHandle<()>>>,
     /// Go `ddl.Start`'s `CleanUpTempDirLoop`, while the ingest environment
     /// is initialized.
-    clean_up_temp_dir_loop: Option<(Sender<()>, JoinHandle<()>)>,
+    clean_up_temp_dir_loop: Mutex<Option<(Sender<()>, JoinHandle<()>)>>,
     /// Go `detectAndUpdateJobVersion`'s background re-detection, while some
     /// peer is still older than job version 2 / global index V1.
-    job_version_detector: Option<(Sender<()>, JoinHandle<()>)>,
+    job_version_detector: Mutex<Option<(Sender<()>, JoinHandle<()>)>>,
     /// Go `JobSubmitter`: every job this node's sessions submit.
     submitter: crate::job_submitter::JobSubmitter,
 }
@@ -1641,9 +1646,9 @@ where
             server_state_context,
             min_job_id_refresher,
             min_job_id_stop,
-            min_job_id_worker: Some(min_job_id_worker),
-            clean_up_temp_dir_loop,
-            job_version_detector,
+            min_job_id_worker: Mutex::new(Some(min_job_id_worker)),
+            clean_up_temp_dir_loop: Mutex::new(clean_up_temp_dir_loop),
+            job_version_detector: Mutex::new(job_version_detector),
         })
     }
 
@@ -3505,10 +3510,37 @@ where
     }
 }
 
+/// A stoppable worker's handle, taken once by whoever stops it first.
+fn take_slot<T>(slot: &Mutex<Option<T>>) -> Option<T> {
+    slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take()
+}
+
 impl<S> ClusterDdl for RealClusterDdl<S>
 where
     S: StoreClient,
 {
+    /// Go `ddl.close`: the server-state watch, the min-job-id refresher, the
+    /// job-version detector and the temp-dir loop stop, the owner campaign
+    /// is cancelled and the job scheduler stops. A second call finds every
+    /// worker already taken.
+    fn stop(&self) {
+        self.server_state_context.cancel();
+        let _ = self.min_job_id_stop.send(());
+        if let Some(worker) = take_slot(&self.min_job_id_worker) {
+            let _ = worker.join();
+        }
+        if let Some((stop, worker)) = take_slot(&self.job_version_detector) {
+            let _ = stop.send(());
+            let _ = worker.join();
+        }
+        if let Some((stop, worker)) = take_slot(&self.clean_up_temp_dir_loop) {
+            let _ = stop.send(());
+            let _ = worker.join();
+        }
+        self.owner.close();
+        self.scheduler.stop();
+    }
+
     fn update_table_replica_info(
         &self,
         table_id: i64,
@@ -3976,21 +4008,7 @@ where
     S: StoreClient,
 {
     fn drop(&mut self) {
-        self.server_state_context.cancel();
-        let _ = self.min_job_id_stop.send(());
-        if let Some(worker) = self.min_job_id_worker.take() {
-            let _ = worker.join();
-        }
-        if let Some((stop, worker)) = self.job_version_detector.take() {
-            let _ = stop.send(());
-            let _ = worker.join();
-        }
-        if let Some((stop, worker)) = self.clean_up_temp_dir_loop.take() {
-            let _ = stop.send(());
-            let _ = worker.join();
-        }
-        self.owner.close();
-        self.scheduler.stop();
+        ClusterDdl::stop(self);
     }
 }
 

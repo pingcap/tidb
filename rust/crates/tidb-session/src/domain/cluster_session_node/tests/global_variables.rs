@@ -451,3 +451,22 @@ fn an_interactive_client_waits_for_interactive_timeout() {
     session.node_conn().execute_internal("SELECT 1").unwrap();
     assert_eq!(session.vars().system_value("wait_timeout").unwrap(), "28800");
 }
+
+/// Go `Domain.Close`: the DDL stops first, once, whoever still holds the
+/// domain; the domain's later drop does not stop it again.
+#[test]
+fn closing_the_domain_stops_its_ddl_once() {
+    let node = MockNode::start();
+    let domain = factory_with_globals(&node, GlobalSysvars::default());
+    let stops = || node.ddl.stops.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(stops(), 0);
+    domain.close();
+    assert_eq!(stops(), 1);
+    domain.close();
+    assert_eq!(stops(), 1, "closing again is a no-op");
+    drop(domain);
+    assert_eq!(stops(), 1, "the drop of a closed domain does not stop it again");
+    let unclosed = factory_with_globals(&node, GlobalSysvars::default());
+    drop(unclosed);
+    assert_eq!(stops(), 2, "a domain no one closed is closed by its drop");
+}

@@ -74,15 +74,21 @@ impl DeprecatedTables for tidb_model::GoShared<tidb_model::db::DBInfo> {
 /// schema loader are the real ones.
 pub(super) struct MockDdl {
     pub(super) catalog: Arc<InfoCache>,
+    /// How many times Go's `DDL.Stop` reached this executor.
+    pub(super) stops: std::sync::atomic::AtomicUsize,
 }
 
 impl MockDdl {
     pub(super) fn new(catalog: Arc<InfoCache>) -> Self {
-        Self { catalog }
+        Self { catalog, stops: std::sync::atomic::AtomicUsize::new(0) }
     }
 }
 
 impl ClusterDdl for MockDdl {
+    fn stop(&self) {
+        self.stops.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
     fn create_schema_with_info(
         &self,
         _: tidb_model::DBInfo,

@@ -800,6 +800,8 @@ pub struct Domain {
     /// Go `do.exit` as the expensive-query handle waits on it: dropped when
     /// the domain closes.
     expensive_query_exit: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    /// Whether [`Domain::close`] has run.
+    closed: std::sync::atomic::AtomicBool,
     /// Go's process-global approximate table-count cache.
     pub approximate_table_counts: Arc<ClusterApproximateTableCountProvider>,
     /// Go StatsHandle's one auto-analyze priority queue. The refresher creates
@@ -1166,6 +1168,7 @@ impl Domain {
                 expensive_query_exited,
             )),
             expensive_query_exit: Mutex::new(Some(expensive_query_exit)),
+            closed: std::sync::atomic::AtomicBool::new(false),
             approximate_table_counts,
             auto_analyze_priority_queue: Arc::new(std::sync::OnceLock::new()),
             auto_analyze_refresher: std::sync::OnceLock::new(),
@@ -2382,17 +2385,25 @@ impl Drop for StatsUsageWorkers {
     }
 }
 
-impl Drop for Domain {
-    fn drop(&mut self) {
-        drop(self.cross_ks_runtimes.take());
-        // Go `Domain.Close`: `close(do.exit)` stops the expensive-query handle.
+impl Domain {
+    /// Go `Domain.Close`: the DDL stops first (`ddl.Stop`, whose owner
+    /// campaign is cancelled and its etcd lease revoked, so the next node
+    /// owns DDL at once), then `close(do.exit)` stops the expensive-query
+    /// handle, the statistics owner and auto-analyze stop and
+    /// `variable.UnregisterStatistics` runs. Idempotent. `Drop` closes a
+    /// domain no one closed, then releases what only the last owner can:
+    /// the cross-keyspace runtimes and the stats-usage workers' final flush.
+    pub fn close(&self) {
+        if self.closed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        self.ddl.stop();
         drop(
             self.expensive_query_exit
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .take(),
         );
-        // Go `ddl.close` and `Domain.Close`: `variable.UnregisterStatistics`.
         for statistics in self
             .statistics
             .lock()
@@ -2414,6 +2425,13 @@ impl Drop for Domain {
         } else if let Some(queue) = self.auto_analyze_priority_queue.get() {
             queue.close();
         }
+    }
+}
+
+impl Drop for Domain {
+    fn drop(&mut self) {
+        self.close();
+        drop(self.cross_ks_runtimes.take());
         let flush_stats = self
             .stats_usage_workers
             .take()

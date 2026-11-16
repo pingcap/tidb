@@ -2,8 +2,8 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 10,
-    "open": 6,
+    "unresolved": 9,
+    "open": 5,
     "partial": 4
   },
   "findings": [
@@ -78,17 +78,9 @@
       "finding": "Only the distributed (DXF) reorganization runs as Go's `runReorgJob` does (`DistReorgSlot`: `reorgFn` on its own thread, each step waiting on `doneCh` until the progress tick); the local backfill still runs inside the step against a cooperative deadline (`BackfillExecutor::deadline`). Go runs every `reorgFn` asynchronously under the job's `reorgCtx`",
       "go_owner": "`pkg/ddl/reorg.go` (`runReorgJob`, `reorgCtx`)",
       "rust_evidence": "`rust/crates/tidb-ddl/src/real_tikv_ddl/add_index_reorg.rs`, `rust/crates/tidb-ddl/src/real_tikv_ddl/backfilling.rs`"
-    },
-    {
-      "id": "S06",
-      "status": "open",
-      "group": "Structure: Go's shape before more ports",
-      "finding": "No Go `Domain.Close`: a node's DDL (its etcd owner manager, schema syncer and workers) stops only in `Drop` when the last `Arc` of the domain goes, and no shutdown path closes it explicitly. A process that still holds a reference never revokes its DDL owner lease, so the next node waits out the owner TTL (60s) before it can own DDL: each realtikv test waited about 45s for the previous test's owner until the harness closed the owner manager itself, as Go's harness does (`ddl.CloseOwnerManager`). The server's shutdown relies on the same `Drop`. Go's `Domain.Close` calls `ddl.Stop` (owner `Cancel`, etcd session close), and the DDL owner manager is the store's global one (`ddl/owner_mgr.go`).",
-      "go_owner": "`pkg/domain/domain.go` (`Close`), `pkg/ddl/ddl.go` (`Stop`), `pkg/ddl/owner_mgr.go`",
-      "rust_evidence": "`tidb-ddl` `worker.rs` (`Drop` calls `owner.close()`), `tidb-server` `process_shutdown.rs`, `tidb-server/tests/realtikvtest.rs` (`Drop for RealTiKV`)"
     }
   ],
-  "unresolved": 10,
-  "open": 6,
+  "unresolved": 9,
+  "open": 5,
   "partial": 4
 }

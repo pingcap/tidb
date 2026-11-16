@@ -193,6 +193,9 @@ pub(crate) fn run_cluster_session_node_with_spill(
         for worker in stack.workers.drain(..) {
             drop(worker);
         }
+        // Go `closeDomainAndStorage`'s `dom.Close()`: the DDL stops and its
+        // owner lease is revoked now, whoever still holds the domain.
+        stack.factory.close();
         // The status callback retains the factory. Its final drop joins
         // internal workers and flushes statistics while timestamp and
         // identity leases still protect those storage transactions.
