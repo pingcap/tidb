@@ -406,7 +406,10 @@ Remaining, in order:
     `TestRunExpiredFileClean` and `TestGetCloudStorageURI` tests. No
     next-gen cluster was available: the tests also run with the `nextgen`
     kernel feature, but no next-gen import ran live.
-11. Delete the E05 row.
+11. Done (the last E05 PR): the E05 row is deleted from the structural
+    findings register (Markdown and JSON). Materialized views, which Go's
+    next-gen IMPORT INTO ... FROM SELECT (`ImportStepQuery`) needs, are a
+    new open row, E27; they were out of scope for E05.
 
 ### Live acceptance of on_duplicate_key='capture' (2026-11-16)
 
