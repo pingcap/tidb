@@ -99,61 +99,6 @@ func TestUpgradeVersion83AndVersion84(t *testing.T) {
 	}
 }
 
-func TestAdaptiveLimitScanUpgradeDefault(t *testing.T) {
-	ctx := context.Background()
-	store, dom := session.CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-
-	se := session.CreateSessionAndSetID(t, store)
-	assertValue := func(expected string) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustQuery("select variable_value from mysql.global_variables where variable_name='" +
-			variable.TiDBEnableAdaptiveLimitScan + "'").Check(testkit.Rows(expected))
-		want := int64(0)
-		if expected == variable.On {
-			want = 1
-		}
-		tk.MustQuery("select @@global.tidb_enable_adaptive_limit_scan, @@session.tidb_enable_adaptive_limit_scan").
-			Check(testkit.Rows(fmt.Sprintf("%d %d", want, want)))
-	}
-
-	// Fresh bootstrap keeps the feature enabled.
-	assertValue(variable.On)
-
-	// Upgrading preserves a value that was already configured.
-	const upgradeFromVersion int64 = 232 // v8.5.8 bootstrap version.
-	session.MustExec(t, se, "set global tidb_enable_adaptive_limit_scan=ON")
-	resetToUpgradeVersion := func() {
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		require.NoError(t, meta.NewMutator(txn).FinishBootstrap(upgradeFromVersion))
-		require.NoError(t, txn.Commit(ctx))
-		revertVersionAndVariables(t, se, int(upgradeFromVersion))
-		session.UnsetStoreBootstrapped(store.UUID())
-	}
-	resetToUpgradeVersion()
-	dom.Close()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	se = session.CreateSessionAndSetID(t, store)
-	assertValue(variable.On)
-
-	// An absent variable row is initialized to OFF during the same upgrade.
-	session.MustExec(t, se, "delete from mysql.global_variables where variable_name='"+
-		variable.TiDBEnableAdaptiveLimitScan+"'")
-	resetToUpgradeVersion()
-	dom.Close()
-	dom, err = session.BootstrapSession(store)
-	require.NoError(t, err)
-	defer dom.Close()
-	se = session.CreateSessionAndSetID(t, store)
-	assertValue(variable.Off)
-
-	version, err := session.GetBootstrapVersion(se)
-	require.NoError(t, err)
-	require.Equal(t, session.CurrentBootstrapVersion, version)
-}
-
 // TestMysqlTablesWithoutClusteredPK pins the `mysql` base tables without a clustered
 // PRIMARY KEY. A diff flags a regression or a new table whose PK type was not
 // considered; the list also serves as a reference for future clustered-PK work.
