@@ -5061,29 +5061,49 @@ dependencies = [
 name = "tidb-br"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "chrono",
+ "crossbeam-channel",
  "getrandom 0.3.4",
  "hex",
  "prost 0.14.4",
+ "regex",
+ "reqwest 0.13.4",
+ "serde",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
  "tidb-ast",
  "tidb-codec",
  "tidb-config",
+ "tidb-config-configtypes",
  "tidb-encrypt",
+ "tidb-errno",
  "tidb-failpoint",
+ "tidb-go-semver",
+ "tidb-go-strconv",
+ "tidb-go-url",
  "tidb-gocontext",
  "tidb-goruntime",
  "tidb-log",
  "tidb-model",
+ "tidb-mysql",
  "tidb-objstore",
  "tidb-objstore-s3like",
+ "tidb-pd-client",
  "tidb-proto",
  "tidb-redact",
+ "tidb-sqlescape",
  "tidb-stats-util",
  "tidb-table-filter",
  "tidb-tablecodec",
+ "tidb-terror",
+ "tidb-txnkv",
+ "tidb-versioninfo",
+ "tikv-client",
+ "tokio",
+ "tonic",
+ "uuid",
 ]
 
 [[package]]
@@ -7354,6 +7374,14 @@ version = "0.0.0"
 dependencies = [
  "regex",
  "regex-syntax",
+]
+
+[[package]]
+name = "tidb-go-semver"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "tidb-go-strconv",
 ]
 
 [[package]]

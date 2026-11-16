@@ -228,6 +228,23 @@ pub trait PdClient: Send + Sync + 'static {
         Err(crate::Error::Unimplemented)
     }
 
+    /// pd-client `GetGCStatesClient(keyspaceID).SetGCBarrier` for the
+    /// client's keyspace: the barrier PD set.
+    async fn set_gc_barrier(
+        self: Arc<Self>,
+        _barrier_id: &str,
+        _barrier_ts: u64,
+        _ttl_seconds: i64,
+    ) -> Result<pdpb::GcBarrierInfo> {
+        Err(crate::Error::Unimplemented)
+    }
+
+    /// pd-client `GetGCStatesClient(keyspaceID).DeleteGCBarrier` for the
+    /// client's keyspace.
+    async fn delete_gc_barrier(self: Arc<Self>, _barrier_id: &str) -> Result<()> {
+        Err(crate::Error::Unimplemented)
+    }
+
     async fn scatter_regions(
         self: Arc<Self>,
         _region_ids: Vec<u64>,
@@ -1745,6 +1762,30 @@ where
             .clone()
             .advance_gc_safe_point(self.gc_keyspace_id()?, target)
             .await
+    }
+
+    async fn set_gc_barrier(
+        self: Arc<Self>,
+        barrier_id: &str,
+        barrier_ts: u64,
+        ttl_seconds: i64,
+    ) -> Result<pdpb::GcBarrierInfo> {
+        self.pd
+            .clone()
+            .set_gc_barrier(self.gc_keyspace_id()?, barrier_id.to_owned(), barrier_ts, ttl_seconds)
+            .await?
+            .new_barrier_info
+            .ok_or_else(|| {
+                crate::Error::StringError("PD SetGCBarrier response has no barrier".to_owned())
+            })
+    }
+
+    async fn delete_gc_barrier(self: Arc<Self>, barrier_id: &str) -> Result<()> {
+        self.pd
+            .clone()
+            .delete_gc_barrier(self.gc_keyspace_id()?, barrier_id.to_owned())
+            .await
+            .map(|_| ())
     }
 
     async fn scatter_regions(

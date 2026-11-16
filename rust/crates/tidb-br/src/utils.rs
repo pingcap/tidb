@@ -16,7 +16,13 @@
 //! advancer (`br/pkg/streamhelper`) raises and lowers as tasks come and go,
 //! and telemetry reads.
 
+pub mod backoff;
+pub mod error_handling;
 pub mod register;
+pub mod retry;
+pub mod store_manager;
+#[cfg(test)]
+mod tests;
 
 use std::sync::atomic::{AtomicI32, Ordering};
 

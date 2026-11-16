@@ -1,0 +1,240 @@
+diff --git a/src/pd/client.rs b/src/pd/client.rs
+index fa29443520..0842d22433 100644
+--- a/src/pd/client.rs
++++ b/src/pd/client.rs
+@@ -228,6 +228,23 @@ pub trait PdClient: Send + Sync + 'static {
+         Err(crate::Error::Unimplemented)
+     }
+ 
++    /// pd-client `GetGCStatesClient(keyspaceID).SetGCBarrier` for the
++    /// client's keyspace: the barrier PD set.
++    async fn set_gc_barrier(
++        self: Arc<Self>,
++        _barrier_id: &str,
++        _barrier_ts: u64,
++        _ttl_seconds: i64,
++    ) -> Result<pdpb::GcBarrierInfo> {
++        Err(crate::Error::Unimplemented)
++    }
++
++    /// pd-client `GetGCStatesClient(keyspaceID).DeleteGCBarrier` for the
++    /// client's keyspace.
++    async fn delete_gc_barrier(self: Arc<Self>, _barrier_id: &str) -> Result<()> {
++        Err(crate::Error::Unimplemented)
++    }
++
+     async fn scatter_regions(
+         self: Arc<Self>,
+         _region_ids: Vec<u64>,
+@@ -1747,6 +1764,30 @@ where
+             .await
+     }
+ 
++    async fn set_gc_barrier(
++        self: Arc<Self>,
++        barrier_id: &str,
++        barrier_ts: u64,
++        ttl_seconds: i64,
++    ) -> Result<pdpb::GcBarrierInfo> {
++        self.pd
++            .clone()
++            .set_gc_barrier(self.gc_keyspace_id()?, barrier_id.to_owned(), barrier_ts, ttl_seconds)
++            .await?
++            .new_barrier_info
++            .ok_or_else(|| {
++                crate::Error::StringError("PD SetGCBarrier response has no barrier".to_owned())
++            })
++    }
++
++    async fn delete_gc_barrier(self: Arc<Self>, barrier_id: &str) -> Result<()> {
++        self.pd
++            .clone()
++            .delete_gc_barrier(self.gc_keyspace_id()?, barrier_id.to_owned())
++            .await
++            .map(|_| ())
++    }
++
+     async fn scatter_regions(
+         self: Arc<Self>,
+         region_ids: Vec<u64>,
+diff --git a/src/pd/cluster.rs b/src/pd/cluster.rs
+index e5c5a4db85..f77e282399 100644
+--- a/src/pd/cluster.rs
++++ b/src/pd/cluster.rs
+@@ -799,6 +799,46 @@ impl Cluster {
+         }
+     }
+ 
++    /// pd-client `GCStatesClient.SetGCBarrier`.
++    pub fn set_gc_barrier(
++        &self,
++        keyspace_id: u32,
++        barrier_id: String,
++        barrier_ts: u64,
++        ttl_seconds: i64,
++        timeout: Duration,
++    ) -> impl Future<Output = Result<pdpb::SetGcBarrierResponse>> + Send + 'static {
++        let cluster_id = self.id;
++        let client = self.rpc_client();
++        async move {
++            let mut client = client.await?;
++            let mut req = pd_request!(cluster_id, pdpb::SetGcBarrierRequest);
++            req.keyspace_scope = Some(keyspace_scope(keyspace_id));
++            req.barrier_id = barrier_id;
++            req.barrier_ts = barrier_ts;
++            req.ttl_seconds = ttl_seconds;
++            req.send(&mut client, timeout).await
++        }
++    }
++
++    /// pd-client `GCStatesClient.DeleteGCBarrier`.
++    pub fn delete_gc_barrier(
++        &self,
++        keyspace_id: u32,
++        barrier_id: String,
++        timeout: Duration,
++    ) -> impl Future<Output = Result<pdpb::DeleteGcBarrierResponse>> + Send + 'static {
++        let cluster_id = self.id;
++        let client = self.rpc_client();
++        async move {
++            let mut client = client.await?;
++            let mut req = pd_request!(cluster_id, pdpb::DeleteGcBarrierRequest);
++            req.keyspace_scope = Some(keyspace_scope(keyspace_id));
++            req.barrier_id = barrier_id;
++            req.send(&mut client, timeout).await
++        }
++    }
++
+     pub fn scatter_regions(
+         &self,
+         region_ids: Vec<u64>,
+@@ -2417,6 +2457,26 @@ impl PdMessage for pdpb::AdvanceTxnSafePointRequest {
+     }
+ }
+ 
++#[async_trait]
++impl PdMessage for pdpb::SetGcBarrierRequest {
++    type Client = RoutedPdClient;
++    type Response = pdpb::SetGcBarrierResponse;
++
++    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
++        Ok(client.set_gc_barrier(req).await?.into_inner())
++    }
++}
++
++#[async_trait]
++impl PdMessage for pdpb::DeleteGcBarrierRequest {
++    type Client = RoutedPdClient;
++    type Response = pdpb::DeleteGcBarrierResponse;
++
++    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
++        Ok(client.delete_gc_barrier(req).await?.into_inner())
++    }
++}
++
+ #[async_trait]
+ impl PdMessage for pdpb::AdvanceGcSafePointRequest {
+     type Client = RoutedPdClient;
+@@ -2600,6 +2660,18 @@ impl PdResponse for pdpb::AdvanceTxnSafePointResponse {
+     }
+ }
+ 
++impl PdResponse for pdpb::SetGcBarrierResponse {
++    fn header(&self) -> Option<&pdpb::ResponseHeader> {
++        self.header.as_ref()
++    }
++}
++
++impl PdResponse for pdpb::DeleteGcBarrierResponse {
++    fn header(&self) -> Option<&pdpb::ResponseHeader> {
++        self.header.as_ref()
++    }
++}
++
+ impl PdResponse for pdpb::AdvanceGcSafePointResponse {
+     fn header(&self) -> Option<&pdpb::ResponseHeader> {
+         self.header.as_ref()
+diff --git a/src/pd/retry.rs b/src/pd/retry.rs
+index e1e935288f..1457efe276 100644
+--- a/src/pd/retry.rs
++++ b/src/pd/retry.rs
+@@ -331,6 +331,26 @@ pub trait RetryClientTrait {
+         Err(Error::Unimplemented)
+     }
+ 
++    /// pd-client `GCStatesClient.SetGCBarrier`.
++    async fn set_gc_barrier(
++        self: Arc<Self>,
++        _keyspace_id: u32,
++        _barrier_id: String,
++        _barrier_ts: u64,
++        _ttl_seconds: i64,
++    ) -> Result<pdpb::SetGcBarrierResponse> {
++        Err(Error::Unimplemented)
++    }
++
++    /// pd-client `GCStatesClient.DeleteGCBarrier`.
++    async fn delete_gc_barrier(
++        self: Arc<Self>,
++        _keyspace_id: u32,
++        _barrier_id: String,
++    ) -> Result<pdpb::DeleteGcBarrierResponse> {
++        Err(Error::Unimplemented)
++    }
++
+     async fn scatter_regions(
+         self: Arc<Self>,
+         _region_ids: Vec<u64>,
+@@ -1837,6 +1857,28 @@ impl RetryClientTrait for RetryClient<Cluster> {
+         })
+     }
+ 
++    async fn set_gc_barrier(
++        self: Arc<Self>,
++        keyspace_id: u32,
++        barrier_id: String,
++        barrier_ts: u64,
++        ttl_seconds: i64,
++    ) -> Result<pdpb::SetGcBarrierResponse> {
++        retry!(self, "set_gc_barrier", |cluster| {
++            cluster.set_gc_barrier(keyspace_id, barrier_id.clone(), barrier_ts, ttl_seconds, self.timeout)
++        })
++    }
++
++    async fn delete_gc_barrier(
++        self: Arc<Self>,
++        keyspace_id: u32,
++        barrier_id: String,
++    ) -> Result<pdpb::DeleteGcBarrierResponse> {
++        retry!(self, "delete_gc_barrier", |cluster| {
++            cluster.delete_gc_barrier(keyspace_id, barrier_id.clone(), self.timeout)
++        })
++    }
++
+     async fn scatter_regions(
+         self: Arc<Self>,
+         region_ids: Vec<u64>,
+diff --git a/src/util/pd_interceptor.rs b/src/util/pd_interceptor.rs
+index 45c8383c0a..a20cc1189e 100644
+--- a/src/util/pd_interceptor.rs
++++ b/src/util/pd_interceptor.rs
+@@ -173,6 +173,19 @@ where
+         self.inner.clone().advance_gc_safe_point(target).await
+     }
+ 
++    async fn set_gc_barrier(
++        self: Arc<Self>,
++        barrier_id: &str,
++        barrier_ts: u64,
++        ttl_seconds: i64,
++    ) -> Result<crate::proto::pdpb::GcBarrierInfo> {
++        self.inner.clone().set_gc_barrier(barrier_id, barrier_ts, ttl_seconds).await
++    }
++
++    async fn delete_gc_barrier(self: Arc<Self>, barrier_id: &str) -> Result<()> {
++        self.inner.clone().delete_gc_barrier(barrier_id).await
++    }
++
+     async fn scatter_regions(
+         self: Arc<Self>,
+         region_ids: Vec<u64>,

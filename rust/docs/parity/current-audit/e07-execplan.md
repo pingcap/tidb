@@ -228,3 +228,48 @@ Go master's own `ParseRawURL` no longer echoes the URL, so the earlier
 deliberate redaction difference for BRIE is gone. The job's shown storage is
 still `RedactURL(cfg.Storage)` rather than Go's raw `cfg.Storage` (AGENTS.md
 rule 7: Go shows an Azure query's credentials in SHOW BACKUPS).
+
+
+## Physical BACKUP/RESTORE (2026-11-16)
+
+
+Scope agreed with the user: everything SQL can reach. `BRIEExec.Next`
+runs `task.RunBackup(ctx, glue, "Backup", cfg)` and
+`task.RunRestore(ctx, glue, "Restore", cfg)` only, so the port covers
+snapshot full/database/table backup and restore with every option the SQL
+builder sets: LAST_BACKUP (incremental), BACKUP_TS / SNAPSHOT, compression,
+encryption, rate limit, concurrency, checksum, checkpoints, ONLINE,
+WAIT_TIFLASH_READY, WITH_SYS_TABLE and LOAD_STATS. Not reachable from SQL,
+recorded as a new gap row when E07 closes: log backup and PiTR
+(`br/pkg/stream`, `restore/log_client`), EBS snapshots, raw/txn KV mode,
+the repo layout, and the `br` CLI. Go's refusal on a non-TiKV store stays.
+Live roundtrips run on the TiUP playgrounds over `local://` and S3 (MinIO);
+GCS and Azure are covered by Go's tables only.
+
+Crate layout. `tidb-br` sits below `tidb-domain-core`, so it keeps the BR
+packages that need no session or domain: `errors`, `version`, `conn/util`,
+`gc`, `pdutil`, `utils`, `checkpoint`'s storage parts. The runners that need
+a session reach it through Go's `glue.Glue` / `glue.Session` interfaces,
+defined in `tidb-br::glue` and implemented by the executor (Go `tidbGlue` in
+`pkg/executor/brie.go`).
+
+PRs, each stacked on the previous one (the first on #56):
+
+1. Done: BR connection: `errors`, `version`, `conn` / `conn/util`, `gc`,
+   `pdutil`, `config` (`kv.go`), `glue`, `utils` (retry/backoff, error
+   handling, `StoreManager`), over a synchronous `pd.Client` trait
+   (`pdclient`); `coreos/go-semver` as `tidb-go-semver`, Go
+   `strconv.Unquote` in `tidb-go-strconv`, and the PD client's keyspace
+   GC barriers (vendored-client patch 120). Pinned by a Go capture
+   (`zzprobe/e07conn`, `tidb-br/testdata/conn_go.jsonl`) and Go's tests.
+2. Backup client: `backup` (ranges and schemas, the per-store push-down),
+   `checksum`, the backup checkpoint, statistics files, DDL jobs for
+   incremental backup.
+3. `task.RunBackup` and BRIE backup execution. Live: Rust backup restored
+   by Go and by Rust.
+4. Restore split and import: `restore/split`, `restore/utils`,
+   `snap_client` import and `tikv_sender`.
+5. `snap_client` and `task.RunRestore` (`restore`, checkpoints, system
+   tables, statistics, TiFlash replicas, placement). Live: backup, drop and
+   restore with row and checksum comparison; Go backups restored by Rust.
+6. Delete the E07 row; record the unreachable parts as a gap row.

@@ -22,6 +22,25 @@ tidb-log = { path = "../tidb-log" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-model = { path = "../tidb-model" }
 tidb-proto = { path = "../tidb-proto" }
+tidb-terror = { path = "../tidb-terror" }
+tidb-go-semver = { path = "../tidb-go-semver" }
+tonic.workspace = true
+tokio.workspace = true
+crossbeam-channel = "0.5"
+regex.workspace = true
+serde.workspace = true
+uuid = { version = "1", features = ["v4"] }
+reqwest = { workspace = true, features = ["blocking"] }
+tikv-client.workspace = true
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-versioninfo = { path = "../tidb-versioninfo" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-errno = { path = "../tidb-errno" }
+tidb-go-url = { path = "../tidb-go-url" }
+tidb-go-strconv = { path = "../tidb-go-strconv" }
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 
 tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-encrypt = { path = "../tidb-encrypt" }
@@ -35,5 +54,6 @@ tidb-failpoint = { path = "../tidb-failpoint" }
 tidb-stats-util = { path = "../tidb-stats-util" }
 
 [dev-dependencies]
+async-trait.workspace = true
 tempfile.workspace = true
 tidb-ast = { path = "../tidb-ast" }
