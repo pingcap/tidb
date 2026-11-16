@@ -1208,6 +1208,16 @@ type SessionVars struct {
 	// same-order index join candidate.
 	EnableAlternativeLogicalPlans bool
 
+	// EnableLocalMatchAgainst enables local no-score MATCH ... AGAINST filters.
+	EnableLocalMatchAgainst bool
+
+	// TiKVFullTextAnalyzerForRebuild, when set, is the analyzer settings a
+	// FULLTEXT index this session creates is built with, in place of the
+	// system variables. BR sets it to rebuild an index of a restored table
+	// with the settings the index recorded, which the rows written through
+	// it since were analyzed with; it has no system variable.
+	TiKVFullTextAnalyzerForRebuild *model.TiKVFullTextIndexInfo
+
 	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
 	EnableSemiJoinRewrite bool
 
@@ -2391,6 +2401,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableOuterJoinReorder:           vardef.DefTiDBEnableOuterJoinReorder,
 		EnableNoDecorrelateInSelect:      vardef.DefOptEnableNoDecorrelateInSelect,
 		EnableAlternativeLogicalPlans:    vardef.DefOptEnableAlternativeLogicalPlans,
+		EnableLocalMatchAgainst:          vardef.DefTiDBEnableLocalMatchAgainst,
 		EnableSemiJoinRewrite:            vardef.DefOptEnableSemiJoinRewrite,
 		RetryLimit:                       vardef.DefTiDBRetryLimit,
 		DisableTxnAutoRetry:              vardef.DefTiDBDisableTxnAutoRetry,

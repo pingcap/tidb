@@ -102,6 +102,12 @@ func rebuildRange(p base.Plan) error {
 			return err
 		}
 	case *physicalop.PhysicalIndexScan:
+		// A FULLTEXT scan's ranges are the key-column point and the handle
+		// ranges its posting scans are confined to, not ranges of the index
+		// columns; a plan is cached only when no parameter shapes them.
+		if x.FullText != nil {
+			return nil
+		}
 		err = buildRangeForIndexScan(sctx, x)
 		if err != nil {
 			return err

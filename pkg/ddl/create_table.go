@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -1144,6 +1145,13 @@ func setTemporaryType(tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
 		}
 	case ast.TemporaryLocal:
 		tbInfo.TempTableType = model.TempTableLocal
+		// The rows of a local temporary table never reach TiKV, and the
+		// FULLTEXT read path scans postings from a TiKV snapshot.
+		for _, idx := range tbInfo.Indices {
+			if idx.TiKVFullText != nil {
+				return errors.Trace(dbterror.ErrNoFullTextOnTemporaryTable)
+			}
+		}
 	default:
 		tbInfo.TempTableType = model.TempTableNone
 	}
@@ -1577,6 +1585,14 @@ func BuildTableInfo(
 				columnarIndexType = model.ColumnarIndexTypeFulltext
 			default:
 				return nil, dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(constr.Option.Tp)
+			}
+		case ast.ConstraintFulltext:
+			// On the classic kernel a FULLTEXT index is an ordinary KV index
+			// whose entries are analyzed terms. The preprocessor marks the
+			// option; callers that build metadata without it, such as
+			// Lightning, reach here with the bare constraint.
+			if kerneltype.IsClassic() {
+				constr.Option = NormalizeTiKVFullTextIndexOption(constr.Option)
 			}
 		}
 

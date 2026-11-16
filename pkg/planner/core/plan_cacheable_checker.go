@@ -637,7 +637,8 @@ func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNu
 		// Currently, there's no need to check the table plan of the IndexLookUpReader.
 		subPlans = append(subPlans, x.IndexPlan)
 	case *physicalop.PhysicalIndexScan:
-		if underIndexMerge && x.IsFullScan() {
+		// A FULLTEXT scan reads only the postings of its search's terms.
+		if underIndexMerge && x.FullText == nil && x.IsFullScan() {
 			return false, "IndexMerge plan with full-scan is un-cacheable"
 		}
 	case *physicalop.PhysicalTableScan:

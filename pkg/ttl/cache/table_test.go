@@ -380,6 +380,9 @@ func TestFindTTLIndex(t *testing.T) {
 		{"invalid-column-offset", func(tbl *model.TableInfo, idx *model.IndexInfo) {
 			idx.Columns[1].Offset = len(tbl.Columns)
 		}},
+		{"tikv-fulltext", func(_ *model.TableInfo, idx *model.IndexInfo) {
+			idx.TiKVFullText = &model.TiKVFullTextIndexInfo{}
+		}},
 		{"hidden-column", func(tbl *model.TableInfo, idx *model.IndexInfo) {
 			tbl.Columns[idx.Columns[1].Offset].Hidden = true
 		}},
