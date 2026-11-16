@@ -26,69 +26,125 @@
         "End": 900,
         "Count": 763,
         "MinEst": 759,
+<<<<<<< HEAD
         "MaxEst": 763
+=======
+        "MaxEst": 2258
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
       },
       {
         "Start": 900,
         "End": 950,
+<<<<<<< HEAD
         "Count": 67,
         "MinEst": 13,
         "MaxEst": 247
+=======
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
       },
       {
         "Start": 950,
         "End": 1000,
+<<<<<<< HEAD
         "Count": 62,
         "MinEst": 13,
         "MaxEst": 226
+=======
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
       },
       {
         "Start": 1000,
         "End": 1050,
+<<<<<<< HEAD
         "Count": 57,
         "MinEst": 13,
         "MaxEst": 205
+=======
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
       },
       {
         "Start": 1050,
         "End": 1100,
+<<<<<<< HEAD
         "Count": 52,
         "MinEst": 13,
         "MaxEst": 184
+=======
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
       },
       {
         "Start": 1150,
         "End": 1200,
+<<<<<<< HEAD
         "Count": 41,
         "MinEst": 13,
         "MaxEst": 143
+=======
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
       },
       {
         "Start": 1200,
         "End": 1300,
+<<<<<<< HEAD
         "Count": 59,
         "MinEst": 13,
         "MaxEst": 215
+=======
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
       },
       {
         "Start": 1300,
         "End": 1400,
+<<<<<<< HEAD
         "Count": 38,
         "MinEst": 13,
         "MaxEst": 131
+=======
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
       },
       {
         "Start": 1400,
         "End": 1500,
+<<<<<<< HEAD
         "Count": 18,
         "MinEst": 13,
         "MaxEst": 48
+=======
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
       },
       {
         "Start": 1500,
         "End": 1600,
         "Count": 13,
+<<<<<<< HEAD
         "MinEst": 13,
+=======
+        "MinEst": 9,
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
         "MaxEst": 1508
       },
       {
@@ -101,16 +157,28 @@
       {
         "Start": 800,
         "End": 1000,
+<<<<<<< HEAD
         "Count": 873,
         "MinEst": 763,
         "MaxEst": 1221
+=======
+        "Count": 763,
+        "MinEst": 759,
+        "MaxEst": 2258
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
       },
       {
         "Start": 900,
         "End": 1500,
+<<<<<<< HEAD
         "Count": 381,
         "MinEst": 13,
         "MaxEst": 1502
+=======
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
       },
       {
         "Start": 300,
@@ -122,23 +190,41 @@
       {
         "Start": 200,
         "End": 300,
+<<<<<<< HEAD
         "Count": 122,
         "MinEst": 13,
         "MaxEst": 467
+=======
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
       },
       {
         "Start": 100,
         "End": 200,
+<<<<<<< HEAD
         "Count": 101,
         "MinEst": 13,
         "MaxEst": 383
+=======
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
       },
       {
         "Start": 200,
         "End": 400,
+<<<<<<< HEAD
         "Count": 872,
         "MinEst": 763,
         "MaxEst": 1217
+=======
+        "Count": 763,
+        "MinEst": 759,
+        "MaxEst": 2258
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
       },
       {
         "Start": 200,
@@ -150,23 +236,41 @@
       {
         "Start": 0,
         "End": 100,
+<<<<<<< HEAD
         "Count": 80,
         "MinEst": 13,
         "MaxEst": 299
+=======
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
       },
       {
         "Start": -100,
         "End": 100,
+<<<<<<< HEAD
         "Count": 132,
         "MinEst": 13,
         "MaxEst": 507
+=======
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
       },
       {
         "Start": -100,
         "End": 0,
+<<<<<<< HEAD
         "Count": 60,
         "MinEst": 13,
         "MaxEst": 216
+=======
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
       }
     ]
   },
