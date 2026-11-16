@@ -71,6 +71,27 @@ func TestNestedMViewRefreshSourceInfoLifecycle(t *testing.T) {
 	tk.MustQuery("select count(*) from mysql.tidb_mview_fast_refresh_source_info").Check(testkit.Rows("0"))
 }
 
+func TestNestedMViewRefreshSourceInfoRejectsMissingRecords(t *testing.T) {
+	_, tk, _, _ := newMViewRefreshSourceFixture(t)
+	tk.MustExec("create materialized view log on mv_source_init (a, s, cnt)")
+	tk.MustExec("create materialized view mv_source_child (a, cnt) refresh fast as select a, count(*) from mv_source_init group by a")
+	const childID = "(select TIDB_TABLE_ID from information_schema.tables where table_schema='test' and table_name='mv_source_child')"
+	sourceSQL := "select * from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = " + childID
+	tk.MustExec("delete from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = " + childID)
+	beforeSources := tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info order by MVIEW_ID, MLOG_ID").Rows()
+	beforeRefresh := tk.MustQuery("select * from mysql.tidb_mview_refresh_info order by MVIEW_ID").Rows()
+	beforeData := tk.MustQuery("select * from mv_source_child order by a").Rows()
+	for _, method := range []string{"fast", "complete delta apply", "complete in place", "complete out of place"} {
+		t.Run(method, func(t *testing.T) {
+			require.ErrorContains(t, tk.ExecToErr("refresh materialized view mv_source_child "+method), "input log records are missing")
+			tk.MustQuery(sourceSQL).Check(testkit.Rows())
+			require.Equal(t, beforeSources, tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info order by MVIEW_ID, MLOG_ID").Rows())
+			require.Equal(t, beforeRefresh, tk.MustQuery("select * from mysql.tidb_mview_refresh_info order by MVIEW_ID").Rows())
+			require.Equal(t, beforeData, tk.MustQuery("select * from mv_source_child order by a").Rows())
+		})
+	}
+}
+
 func TestNestedMViewRefreshSourceInfoRecoveryAtomicity(t *testing.T) {
 	_, tk, mviewID, _ := newMViewRefreshSourceFixture(t)
 	tk.MustExec("create materialized view log on mv_source_init (a, s, cnt)")
