@@ -120,43 +120,60 @@ func PublishIndexUsage(ctx context.Context, write func(io.Writer, time.Time) err
 // Finish a torn line in the old file so the next event starts on its own line.
 type deadlockFileWriter struct {
 	*lumberjack.Logger
-	tailChecked bool
+	tailChecked      bool
+	prependSeparator bool
 }
 
 func (w *deadlockFileWriter) Write(data []byte) (int, error) {
 	if !w.tailChecked {
-		if err := w.repairTail(len(data)); err != nil {
+		prepend, err := w.repairTail()
+		if err != nil {
 			return 0, err
 		}
+		w.prependSeparator = prepend
 		w.tailChecked = true
 	}
-	return w.Logger.Write(data)
+	if !w.prependSeparator {
+		return w.Logger.Write(data)
+	}
+	// The old file had no room for the separator. Keep it pending if rotation
+	// fails before any bytes reach the new file.
+	n, err := w.Logger.Write(append([]byte{'\n'}, data...))
+	if n > 0 {
+		w.prependSeparator = false
+		n-- // The separator is outside the caller's payload.
+	}
+	return n, err
 }
 
-func (w *deadlockFileWriter) repairTail(nextBytes int) error {
+// repairTail terminates the old line before Lumberjack may rename the file.
+// It requests a separator on the next write if the old file is already full.
+func (w *deadlockFileWriter) repairTail() (bool, error) {
 	f, err := os.OpenFile(w.Filename, os.O_RDWR|os.O_APPEND, 0)
 	if os.IsNotExist(err) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
-		return err
+		return false, err
 	}
-	if info.Size() == 0 || info.Size()+int64(nextBytes) >= int64(w.MaxSize)<<20 {
-		// Lumberjack will open a fresh file when this batch reaches its limit.
-		return nil
+	if info.Size() == 0 {
+		return false, nil
 	}
 	var tail [1]byte
 	if _, err := f.ReadAt(tail[:], info.Size()-1); err != nil {
-		return err
+		return false, err
 	}
 	if tail[0] == '\n' {
-		return nil
+		return false, nil
+	}
+	if info.Size() >= int64(w.MaxSize)<<20 {
+		return true, nil
 	}
 	_, err = f.Write([]byte{'\n'})
-	return err
+	return false, err
 }

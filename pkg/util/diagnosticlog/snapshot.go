@@ -33,12 +33,15 @@ var snapshotName = regexp.MustCompile(`^index-usage-[0-9]{8}T[0-9]{6}\.[0-9]{6}Z
 
 // Publisher owns one node's directory of immutable, complete snapshot files.
 type Publisher struct {
+	link      func(string, string) error
 	directory string
 	mu        sync.Mutex
 }
 
 // NewPublisher binds a node's publication directory; it creates no file yet.
-func NewPublisher(directory string) *Publisher { return &Publisher{directory: directory} }
+func NewPublisher(directory string) *Publisher {
+	return &Publisher{link: os.Link, directory: directory}
+}
 
 // Publish writes and closes a temporary file before exposing a unique formal
 // name. A failed attempt preserves previous successes; cleanup follows publication.
@@ -155,7 +158,13 @@ func (p *Publisher) publish(ctx context.Context, start time.Time, write func(io.
 	}
 	// A hard link exposes the fully closed inode atomically and, unlike rename,
 	// cannot replace an existing formal file even on a random-name collision.
-	if err := os.Link(tmp, name); err != nil {
+	if err := p.link(tmp, name); err != nil {
+		return "", err
+	}
+	// Link cannot be interrupted by ctx. Commit only after it succeeds and
+	// cancellation is checked. Until then, keep every previous formal file.
+	if err := ctx.Err(); err != nil {
+		p.remove(filepath.Base(name))
 		return "", err
 	}
 	return name, nil

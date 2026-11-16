@@ -28,8 +28,10 @@ when they are excluded from `INFORMATION_SCHEMA.DEADLOCKS`.
 With file logging enabled, the callback reserves queue space, then encodes each
 waiting relationship once. A full queue drops the new event before encoding.
 One background worker batches and rotates `tidb-deadlock.log` using lumberjack.
-Before appending after restart, it terminates any partial final line so the next
-event starts on its own line.
+After restart, it terminates a partial final line before appending or rotating.
+If the old file is already at the size limit, the first write to the new file
+carries the separator. The next event starts on its own line in the followed
+stream even if the first rotation attempt failed.
 
 Initial limits, subject to workload evaluation:
 
@@ -71,9 +73,14 @@ flushes, syncs and closes a temporary file before atomically linking it to a uni
 are never replaced. Temporary and formal paths must be on the same filesystem and
 that filesystem must support hard links.
 
-Each attempt removes temporary files left by interrupted attempts. Successful
-publication retains one formal snapshot on a best-effort basis. Failure keeps the
-previous successful file with its original timestamp. The next round is scheduled
-one hour after each attempt finishes. At shutdown, the Domain cancels the export
-and waits up to five seconds for the worker. If a disk operation outlasts that wait,
-the worker retains ownership and checks cancellation before exposing a formal file.
+Each attempt removes temporary files left by interrupted attempts. Publication
+commits when the link succeeds and the following cancellation check passes.
+Failure or cancellation before this point preserves the previous successful file
+with its original timestamp. If the link succeeded before cancellation was
+observed, the publisher attempts to remove the new link. A reader may briefly see
+that complete file before it is removed. After commit, the publisher retains the
+new snapshot and removes older formal files on a best-effort basis.
+
+The next round is scheduled one hour after each attempt finishes. At shutdown,
+the Domain cancels the export and waits up to five seconds for the worker. If a
+disk operation outlasts that wait, the worker retains ownership of cleanup.

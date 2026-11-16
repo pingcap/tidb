@@ -36,6 +36,7 @@ import (
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"golang.org/x/time/rate"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 type testWriteCloser struct {
@@ -186,6 +187,71 @@ func TestDiagnosticDeadlockRecoversTornFile(t *testing.T) {
 	require.True(t, json.Valid([]byte(lines[1])))
 }
 
+func TestDiagnosticDeadlockRecoversTornFileAtRotation(t *testing.T) {
+	const maxSize = 1 << 20
+	fragment := []byte(`{"record_type":`)
+	line := []byte("{\"record_type\":\"deadlock\"}\n")
+	large := bytes.Repeat(line, 30)
+	for _, tc := range []struct {
+		name      string
+		filename  string
+		rotateErr bool
+		remaining int64
+	}{
+		{"rotation succeeds", "tidb-deadlock.log", false, 512},
+		{"rotation fails", strings.Repeat("a", 250) + ".log", true, 512},
+		{"already at size limit", "tidb-deadlock.log", false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, tc.filename)
+			old, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			require.NoError(t, err)
+			_, err = old.Seek(maxSize-tc.remaining-int64(len(fragment)), io.SeekStart)
+			require.NoError(t, err)
+			_, err = old.Write(fragment)
+			require.NoError(t, err)
+			require.NoError(t, old.Close())
+
+			writer := &deadlockFileWriter{Logger: &lumberjack.Logger{Filename: path, MaxSize: 1}}
+			t.Cleanup(func() { require.NoError(t, writer.Close()) })
+			n, err := writer.Write(large)
+			if tc.rotateErr {
+				// A timestamped backup of this basename overflows NAME_MAX.
+				require.ErrorContains(t, err, "can't rename log file")
+				require.Zero(t, n)
+				n, err = writer.Write(line)
+				require.NoError(t, err)
+				require.Equal(t, len(line), n)
+				active, err := os.ReadFile(path)
+				require.NoError(t, err)
+				require.True(t, bytes.HasSuffix(active, bytes.Join([][]byte{fragment, line}, []byte{'\n'})))
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, len(large), n)
+			backups, err := filepath.Glob(filepath.Join(dir, "tidb-deadlock-*.log"))
+			require.NoError(t, err)
+			require.Len(t, backups, 1)
+			backup, err := os.ReadFile(backups[0])
+			require.NoError(t, err)
+			require.LessOrEqual(t, len(backup), maxSize)
+			active, err := os.ReadFile(path)
+			require.NoError(t, err)
+			if tc.remaining > 0 {
+				require.Equal(t, large, active)
+			}
+			// A file follower reads the old tail and the new file in one stream.
+			stream := append(backup[maxSize-int(tc.remaining)-len(fragment):], active...)
+			oldTail, events, separated := bytes.Cut(stream, []byte{'\n'})
+			require.True(t, separated)
+			require.Equal(t, fragment, oldTail)
+			require.Equal(t, large, events)
+		})
+	}
+}
+
 func TestDiagnosticPublisherAtomicRetentionAndFailure(t *testing.T) {
 	directory := t.TempDir()
 	publisher := NewPublisher(directory)
@@ -290,4 +356,41 @@ func TestDiagnosticPublisherCancellationPreservesPreviousSnapshot(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, filepath.Base(first), entries[0].Name())
+}
+
+func TestDiagnosticPublisherLinkCommit(t *testing.T) {
+	linkFailure := errors.New("cannot link snapshot")
+	for _, tc := range []struct {
+		name string
+		want error
+	}{
+		{"link fails", linkFailure},
+		{"cancel during link", context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewPublisher(t.TempDir())
+			at := time.Now()
+			write := func(w io.Writer, at time.Time) error {
+				return json.NewEncoder(w).Encode(map[string]any{"record_type": "footer", "snapshot_time": at, "row_count": 0})
+			}
+			first, err := p.Publish(at, write)
+			require.NoError(t, err)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			p.link = func(source, target string) error {
+				if tc.want == linkFailure {
+					return linkFailure
+				}
+				cancel()
+				return os.Link(source, target)
+			}
+			name, err := p.publishWithContext(ctx, at.Add(time.Hour), write)
+			require.ErrorIs(t, err, tc.want)
+			require.Empty(t, name)
+			entries, err := os.ReadDir(p.directory)
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			require.Equal(t, filepath.Base(first), entries[0].Name())
+		})
+	}
 }

@@ -36,6 +36,7 @@ go_test(
         "@com_github_prometheus_client_golang//prometheus/testutil",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//error",
+        "@in_gopkg_natefinch_lumberjack_v2//:lumberjack_v2",
         "@org_golang_x_time//rate",
     ],
 )
