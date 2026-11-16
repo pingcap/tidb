@@ -121,6 +121,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 
 	// step 3: add metadata lock and check each table's schema version
 	schemaNotMatch := false
+	metadataLockFailed := false
 	// Clear the statement-owned map before rebuilding it to handle table ID swaps
 	// and avoid allocating a new map for every execution.
 	relateVersion := stmt.RelateVersion
@@ -137,6 +138,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 			// Invalid the cache key related fields to avoid using plan cache.
 			relateVersion[tbl.Meta().ID] = math.MaxUint64
 			schemaNotMatch = true
+			metadataLockFailed = true
 			continue
 		}
 		// A table name may resolve to a different ID after RENAME TABLE even if the revision is the same.
@@ -171,6 +173,15 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmt.SchemaVersion = is.SchemaMetaVersion()
 	}
 
+	stmt.snapshotVersion = nil
+	cacheEnabled := vars.EnablePreparedPlanCache
+	if isNonPrepared {
+		cacheEnabled = vars.EnableNonPreparedPlanCache
+	}
+	if stmt.StmtCacheable && cacheEnabled && !metadataLockFailed && vars.IsIsolation(ast.RepeatableRead) && !stmt.ForUpdateRead && IsReadOnly(stmtAst.Stmt, vars) {
+		stmt.snapshotVersion = planCacheSnapshotVersions(ctx, is, stmt)
+	}
+
 	// step 5: handle expiration
 	// If the lastUpdateTime less than expiredTimeStamp4PC,
 	// it means other sessions have executed 'admin flush instance plan_cache'.
@@ -194,6 +205,37 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	}
 
 	return nil
+}
+
+// planCacheSnapshotVersions records the table revisions in the transaction's
+// original schema, before the session's MDL table overrides are applied.
+func planCacheSnapshotVersions(ctx context.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt) map[int64]uint64 {
+	for {
+		extended, ok := is.(*infoschema.SessionExtendedInfoSchema)
+		if !ok {
+			break
+		}
+		is = extended.InfoSchema
+	}
+	if is == nil || len(stmt.tbls) == 0 || len(stmt.tbls) != len(stmt.RelateVersion) {
+		return nil
+	}
+
+	versions := make(map[int64]uint64, len(stmt.tbls))
+	for i, tbl := range stmt.tbls {
+		if tbl.Meta().IsView() || !tbl.Type().IsNormalTable() {
+			return nil
+		}
+		snapshotTable, err := is.TableByName(ctx, stmt.dbName[i], tbl.Meta().Name)
+		if err != nil || snapshotTable.Meta().ID != tbl.Meta().ID {
+			return nil
+		}
+		if _, ok := stmt.RelateVersion[tbl.Meta().ID]; !ok {
+			return nil
+		}
+		versions[snapshotTable.Meta().ID] = snapshotTable.Meta().Revision
+	}
+	return versions
 }
 
 // GetPlanFromPlanCache is the entry point of Plan Cache.
