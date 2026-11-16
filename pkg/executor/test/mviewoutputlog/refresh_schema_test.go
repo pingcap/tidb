@@ -47,22 +47,6 @@ func TestMaterializedViewRefreshCompleteInPlaceRejectsMLog(t *testing.T) {
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 10 1", "2 20 1"))
 }
 
-func TestMaterializedViewRefreshCompleteOutOfPlaceRejectsMLog(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := newMViewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int not null, b int not null)")
-	tk.MustExec("insert into t values (1, 10), (2, 20)")
-	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
-	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast as select a, sum(b), count(1) from t group by a")
-	tk.MustExec("create materialized view log on mv (a, s, cnt)")
-
-	err := tk.ExecToErr("refresh materialized view mv complete out of place")
-	require.ErrorContains(t, err, "complete OUT OF PLACE is not supported")
-	require.ErrorContains(t, err, "with a materialized view log")
-	tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Check(testkit.Rows())
-}
-
 func TestMaterializedViewRefreshSchemaVersion(t *testing.T) {
 	for _, scenario := range []string{"current", "empty_versions", "mlog", "reload_failure"} {
 		t.Run(scenario, func(t *testing.T) {

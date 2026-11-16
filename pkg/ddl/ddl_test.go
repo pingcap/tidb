@@ -996,45 +996,6 @@ func TestMaterializedViewLogBaseInitialBuildState(t *testing.T) {
 	}
 }
 
-func TestValidateMaterializedViewCompleteOutOfPlaceTarget(t *testing.T) {
-	testCases := []struct {
-		name       string
-		baseInfo   *model.MaterializedViewBaseInfo
-		shouldFail bool
-	}{
-		{
-			name: "no dependency metadata",
-		},
-		{
-			name: "materialized view log",
-			baseInfo: &model.MaterializedViewBaseInfo{
-				MLogID: 101,
-			},
-			shouldFail: true,
-		},
-		{
-			name: "dependent materialized view",
-			baseInfo: &model.MaterializedViewBaseInfo{
-				MViewIDs: []int64{102},
-			},
-			shouldFail: true,
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			tblInfo := &model.TableInfo{Name: ast.NewCIStr("mv"), MaterializedViewBase: testCase.baseInfo}
-			err := validateMaterializedViewCompleteOutOfPlaceTarget("test", tblInfo)
-			if testCase.shouldFail {
-				require.ErrorContains(t, err, "complete OUT OF PLACE is not supported")
-				require.ErrorContains(t, err, "materialized view log or dependent materialized view")
-			} else {
-				require.NoError(t, err)
-			}
-		})
-	}
-}
-
 func TestValidateMaterializedViewSourceState(t *testing.T) {
 	base := &model.TableInfo{
 		ID:    1,

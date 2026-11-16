@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -60,7 +61,61 @@ const (
 	mviewAttrAlertOverdue                                 = "mview_alert_overdue"
 	mviewAttrAlertRefreshFailed                           = "mview_alert_refresh_failed"
 	alterMaterializedScheduleInfoUpdateLockWaitTimeoutSec = int64(10)
+	mviewCutoverPurgeLockWaitTimeoutSec                   = int64(5)
+	mviewCutoverPurgeLockTimeout                          = time.Minute
 )
+
+var errMViewCutoverPurgeLockTimeout = errors.NewNoStackError("refresh materialized view complete OUT OF PLACE cutover: timed out waiting for materialized view log purge; retry refresh")
+
+func (w *worker) acquireMLogPurgeAdvisoryLockForCutover(jobCtx *jobContext, mlogID int64) (err error) {
+	timeout := mviewCutoverPurgeLockTimeout
+	failpoint.Inject("mockMViewOutOfPlacePurgeAdvisoryLockTimeout", func(val failpoint.Value) {
+		timeoutMillis := val.(int)
+		timeout = time.Duration(timeoutMillis) * time.Millisecond
+	})
+	ctx, cancel := context.WithTimeoutCause(kv.WithInternalSourceType(jobCtx.stepCtx, kv.InternalTxnDDL), timeout, errMViewCutoverPurgeLockTimeout)
+	defer func() {
+		// Advisory lock acquisition has its own context. Recheck the budget on
+		// return, including when acquisition succeeds or SQL reports cancellation.
+		if ctx.Err() != nil {
+			err = errors.Trace(context.Cause(ctx))
+		}
+		cancel()
+	}()
+	requestSctx, err := w.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.Put(requestSctx)
+	requestSess := sess.NewSession(requestSctx)
+	lockName := mviewutil.PurgeAdvisoryLockName(mlogID)
+	for {
+		if ctx.Err() != nil {
+			return errors.Trace(context.Cause(ctx))
+		}
+		// Cancellation must commit independently so the purge monitor can see it
+		// while the optimistic cutover transaction is waiting for the lock.
+		_, err := requestSess.Execute(ctx, `UPDATE mysql.tidb_mlog_purge_hist
+SET CANCEL_REQUEST_TIME = NOW(6),
+	CANCEL_REQUESTED_BY = 'materialized view cutover'
+WHERE MLOG_ID = %?
+	AND PURGE_STATUS = 'running'
+	AND CANCEL_REQUEST_TIME IS NULL`, "mview-cutover-cancel-purge", mlogID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := w.sess.GetAdvisoryLock(lockName, mviewCutoverPurgeLockWaitTimeoutSec); err == nil {
+			// The scheduler releases job-scoped advisory locks after schema sync,
+			// including on cancellation or failure. Retain this lock across retries.
+			return nil
+		} else if !storeerr.ErrLockWaitTimeout.Equal(err) {
+			return errors.Trace(err)
+		}
+		// A purge can acquire its lock before publishing running history, or a
+		// new purge can start between cancellation and acquisition. Cancel again.
+		failpoint.InjectCall("mViewOutOfPlacePurgeAdvisoryLockRetry", mlogID)
+	}
+}
 
 // FieldTypeForMaterializedViewLogColumn returns the field type used to copy a
 // base table column into a materialized view log table.
@@ -2028,7 +2083,8 @@ func (e *executor) RefreshMaterializedViewCompleteOutOfPlaceCutover(
 	nextRefreshUnixSeconds *int64,
 	shouldUpdateNextRefreshUnixSeconds bool,
 ) error {
-	involvingSchemas, err := buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(context.Background(), e.infoCache.GetLatest(), schemaName, oldMViewID, shadowTableID)
+	is := e.infoCache.GetLatest()
+	involvingSchemas, err := buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(context.Background(), is, schemaName, oldMViewID, shadowTableID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2039,7 +2095,13 @@ func (e *executor) RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		BinlogInfo: &model.HistoryInfo{}, InvolvingSchemaInfo: involvingSchemas,
 		CDCWriteSource: sessionVars.CDCWriteSource, SQLMode: sessionVars.SQLMode,
 	}
+	oldMView, _ := is.TableByID(context.Background(), oldMViewID)
+	var oldMLogID int64
+	if base := oldMView.Meta().MaterializedViewBase; base != nil {
+		oldMLogID = base.MLogID
+	}
 	args := &model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
+		OldMLogID:  oldMLogID,
 		OldMViewID: oldMViewID, ShadowTableID: shadowTableID, BuildReadTSO: buildReadTSO, BuildSources: buildSources,
 		ExpectedOldMViewRevision: expectedOldMViewRevision, ExpectedLastSuccessReadTSO: expectedLastSuccessReadTSO,
 		ExpectedLastSuccessReadTSONull: expectedLastSuccessReadTSONull, NextRefreshUnixSeconds: nextRefreshUnixSeconds,
@@ -2055,43 +2117,77 @@ func buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
 	oldMViewID int64,
 	shadowTableID int64,
 ) ([]model.InvolvingSchemaInfo, error) {
-	oldMView, ok := is.TableByID(ctx, oldMViewID)
-	if !ok || oldMView.Meta().MaterializedView == nil {
-		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: old materialized view not found")
+	var involving []model.InvolvingSchemaInfo
+	seen := make(map[int64]struct{})
+	addTable := func(id int64) (*model.TableInfo, error) {
+		tbl, ok := is.TableByID(ctx, id)
+		if !ok {
+			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+				fmt.Sprintf("refresh materialized view complete OUT OF PLACE cutover: table %d not found", id),
+			)
+		}
+		info := tbl.Meta()
+		if _, ok := seen[id]; !ok {
+			db, ok := infoschema.SchemaByTable(is, info)
+			if !ok {
+				return nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName.O)
+			}
+			seen[id] = struct{}{}
+			involving = append(involving, model.InvolvingSchemaInfo{
+				Database: db.Name.L, Table: info.Name.L, Mode: model.ExclusiveInvolving,
+			})
+		}
+		return info, nil
 	}
-	oldMeta := oldMView.Meta()
-	if len(oldMeta.MaterializedView.BaseTableIDs) != 1 {
-		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: materialized view must reference exactly one base table in Stage-1")
+	oldMView, err := addTable(oldMViewID)
+	if err != nil {
+		return nil, err
 	}
-	baseTable, ok := is.TableByID(ctx, oldMeta.MaterializedView.BaseTableIDs[0])
-	if !ok {
-		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: base table not found")
+	if oldMView.MaterializedView == nil {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+			"refresh materialized view complete OUT OF PLACE cutover: old materialized view metadata missing",
+		)
 	}
-	mlogID := int64(0)
-	if baseTable.Meta().MaterializedViewBase != nil {
-		mlogID = baseTable.Meta().MaterializedViewBase.MLogID
+	var inputMLogIDs []int64
+	for _, id := range oldMView.MaterializedView.BaseTableIDs {
+		base, err := addTable(id)
+		if err != nil {
+			return nil, err
+		}
+		if base.MaterializedViewBase != nil && base.MaterializedViewBase.MLogID != 0 {
+			inputMLogIDs = append(inputMLogIDs, base.MaterializedViewBase.MLogID)
+		}
 	}
-	mlogTable, ok := is.TableByID(ctx, mlogID)
-	if mlogID != 0 && !ok {
-		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: materialized view log not found")
+	if _, err := addTable(shadowTableID); err != nil {
+		return nil, err
 	}
-	if mlogTable != nil && (mlogTable.Meta().MaterializedViewLog == nil || mlogTable.Meta().MaterializedViewLog.BaseTableID != baseTable.Meta().ID) {
-		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: materialized view log metadata is invalid")
+	for _, id := range inputMLogIDs {
+		tbl, ok := is.TableByID(ctx, id)
+		if !ok {
+			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+				fmt.Sprintf("refresh materialized view complete OUT OF PLACE cutover: table %d not found", id),
+			)
+		}
+		// Cutover only rewrites source logs that list the old MV as a dependent.
+		mlog := tbl.Meta().MaterializedViewLog
+		if mlog == nil || !hasMaterializedViewID(mlog.DependentMViewIDs, oldMViewID) {
+			continue
+		}
+		if _, err := addTable(id); err != nil {
+			return nil, err
+		}
 	}
-	if mlogTable != nil && !hasMaterializedViewID(mlogTable.Meta().MaterializedViewLog.DependentMViewIDs, oldMViewID) {
-		mlogTable = nil
-	}
-	shadowTable, ok := is.TableByID(ctx, shadowTableID)
-	if !ok {
-		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: shadow table not found")
-	}
-	involving := []model.InvolvingSchemaInfo{
-		{Database: schemaName.L, Table: oldMeta.Name.L, Mode: model.ExclusiveInvolving},
-		{Database: schemaName.L, Table: baseTable.Meta().Name.L, Mode: model.ExclusiveInvolving},
-		{Database: schemaName.L, Table: shadowTable.Meta().Name.L, Mode: model.ExclusiveInvolving},
-	}
-	if mlogTable != nil {
-		involving = append(involving, model.InvolvingSchemaInfo{Database: schemaName.L, Table: mlogTable.Meta().Name.L, Mode: model.ExclusiveInvolving})
+	if base := oldMView.MaterializedViewBase; base != nil {
+		if base.MLogID != 0 {
+			if _, err := addTable(base.MLogID); err != nil {
+				return nil, err
+			}
+		}
+		for _, id := range base.MViewIDs {
+			if _, err := addTable(id); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return involving, nil
 }

@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -290,6 +291,19 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	failpoint.InjectCall("mvMaintainMemQuotaAppliedOnPurgeSession", purgeSessVars.MemQuotaQuery, vars.MViewMaintainMemQuota)
 	failpoint.InjectCall("mvMaintainIsolationReadEnginesAppliedOnPurgeSession", variable.GetIsolationReadEnginesString(purgeSessVars), vars.MViewMaintainIsolationReadEngines)
 	purgeSQLExec := purgeSctx.GetSQLExecutor()
+
+	advisoryLockName := mviewutil.PurgeAdvisoryLockName(mlogID)
+	if err := purgeSctx.GetAdvisoryLock(advisoryLockName, 1); err != nil {
+		if storeerr.ErrLockWaitTimeout.Equal(err) {
+			return errors.Annotatef(errMLogPurgeLockConflict,
+				"another purge or materialized view cutover is running for materialized view log on %s.%s, please retry later",
+				schemaName.O, baseTable.Name.O)
+		}
+		return errors.Trace(err)
+	}
+	// Do not retry acquisition: this statement may hold MDL needed by cutover.
+	// The later transaction cleanup runs before this advisory lock is released.
+	defer purgeSctx.ReleaseAdvisoryLock(advisoryLockName)
 
 	deleteSctx, err := e.GetSysSession()
 	if err != nil {
