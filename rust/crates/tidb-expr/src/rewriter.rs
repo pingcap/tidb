@@ -2177,12 +2177,10 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             crate::builtin_registry::verify_args_by_count(&lowered, arity_count)?;
             // Go `tidbDecodeSQLDigestsFunctionClass.getFunction` checks the
             // PROCESS privilege while building, before any row is read.
-            if lowered == "tidb_decode_sql_digests"
-                && resolver
-                    .comparison_context()
-                    .is_some_and(|ctx| !ctx.has_process_privilege())
-            {
-                return Err(crate::builtin_ext::misc::err_specific_access_denied());
+            if lowered == "tidb_decode_sql_digests" {
+                if let Some(ctx) = resolver.comparison_context() {
+                    crate::builtin_ext::misc::check_process_privilege(ctx)?;
+                }
             }
             let child_resolver = FoldModeResolver::for_function(resolver, &lowered);
             if lowered == "name_const" {

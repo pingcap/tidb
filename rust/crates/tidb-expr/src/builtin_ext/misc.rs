@@ -37,6 +37,23 @@ pub(crate) fn err_specific_access_denied() -> EvalError {
     err_specific_access_denied_for("PROCESS")
 }
 
+/// Go `expropt`'s reader errors (`getPropProvider`'s missing or mistyped
+/// property), returned as they are.
+pub(crate) fn opt_prop_error(error: tidb_expropt::ExprOptError) -> EvalError {
+    EvalError::Raw(error.message().to_owned())
+}
+
+/// Go `TIDB_DECODE_SQL_DIGESTS`' check, at build and at evaluation:
+/// `GetPrivilegeChecker(ctx)`, then `RequestVerification("", "", "",
+/// mysql.ProcessPriv)`.
+pub(crate) fn check_process_privilege(ctx: &dyn crate::Columns) -> Result<(), EvalError> {
+    let priv_checker = tidb_expropt::PrivilegeCheckerPropReader.get_privilege_checker(ctx).map_err(opt_prop_error)?;
+    if !priv_checker.request_verification("", "", "", tidb_mysql::ProcessPriv) {
+        return Err(err_specific_access_denied());
+    }
+    Ok(())
+}
+
 /// Go `plannererrors.ErrSpecificAccessDenied.FastGenByArgs(privilege)`.
 fn err_specific_access_denied_for(privilege: &str) -> EvalError {
     EvalError::Conversion(
@@ -76,8 +93,7 @@ pub(crate) fn tidb_encode_key(values: &[Datum], index: bool, ctx: &dyn crate::Co
 /// hex-encoded key, and, for an index key, its temporary index key's when
 /// that holds anything, as a JSON array of `{"key", "mvcc"}`.
 pub(crate) fn tidb_mvcc_info(key: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
-    let opt_error = |error: tidb_expropt::ExprOptError| EvalError::Raw(error.message().to_owned());
-    let priv_checker = tidb_expropt::PrivilegeCheckerPropReader.get_privilege_checker(ctx).map_err(opt_error)?;
+    let priv_checker = tidb_expropt::PrivilegeCheckerPropReader.get_privilege_checker(ctx).map_err(opt_prop_error)?;
     if !priv_checker.request_verification("", "", "", tidb_mysql::SuperPriv) {
         return Err(err_specific_access_denied_for("SUPER"));
     }
@@ -86,7 +102,7 @@ pub(crate) fn tidb_mvcc_info(key: &Datum, ctx: &dyn crate::Columns) -> Result<Da
     };
     let s = String::from_utf8_lossy(&s).into_owned();
     let mut encoded_key = tidb_goruntime::go_hex::decode_string(&s).map_err(EvalError::Raw)?;
-    let store = tidb_expropt::KvStorePropReader.get_kv_store(ctx).map_err(opt_error)?;
+    let store = tidb_expropt::KvStorePropReader.get_kv_store(ctx).map_err(opt_prop_error)?;
     let Some(h_store) = store.as_helper_storage() else {
         return Err(EvalError::Raw("storage is not a helper.Storage".to_owned()));
     };
@@ -130,9 +146,7 @@ pub(crate) fn tidb_decode_sql_digests(
     truncate_length: Option<&Datum>,
     ctx: &dyn crate::Columns,
 ) -> Result<Datum, EvalError> {
-    if !ctx.has_process_privilege() {
-        return Err(err_specific_access_denied());
-    }
+    check_process_privilege(ctx)?;
     let Some(digests_str) = crate::arg_eval_type::eval_string(digests)? else {
         return Ok(Datum::Null);
     };
@@ -1323,11 +1337,12 @@ use tidb_charset::Collation;
         }
     }
 
+    /// A privilege checker that grants every privilege or none.
     struct SuperChecker(bool);
 
     impl tidb_expropt::PrivilegeChecker for SuperChecker {
-        fn request_verification(&self, _: &str, _: &str, _: &str, privilege: tidb_mysql::PrivilegeType) -> bool {
-            privilege == tidb_mysql::SuperPriv && self.0
+        fn request_verification(&self, _: &str, _: &str, _: &str, _: tidb_mysql::PrivilegeType) -> bool {
+            self.0
         }
 
         fn request_dynamic_verification(&self, _: &str, _: bool) -> bool {
@@ -1360,6 +1375,21 @@ use tidb_charset::Collation;
         ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
             self.0.get(key)
         }
+    }
+
+    /// Go `builtinTiDBDecodeSQLDigestsSig.evalString`: PROCESS is asked
+    /// through `GetPrivilegeChecker`, and a context without the property
+    /// is `getPropProvider`'s error.
+    #[test]
+    fn tidb_decode_sql_digests_asks_process_through_the_privilege_checker() {
+        let digests = Datum::new_string_datum("[]".to_owned());
+        let error = super::tidb_decode_sql_digests(&digests, None, &MvccContext::new(false, None)).unwrap_err();
+        assert!(format!("{error:?}").contains("PROCESS"), "{error:?}");
+        let error = super::tidb_decode_sql_digests(&digests, None, &crate::NoColumns).unwrap_err();
+        assert!(
+            matches!(error, crate::EvalError::Raw(ref message) if message == "optional property: 'OptPropPrivilegeChecker' not exists in EvalContext"),
+            "{error:?}"
+        );
     }
 
     fn hex(bytes: &[u8]) -> String {

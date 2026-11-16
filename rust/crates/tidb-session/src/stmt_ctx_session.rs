@@ -550,10 +550,6 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::mdl_related_table_recorder(self)
     }
 
-    fn has_process_privilege(&self) -> bool {
-        Session::has_process_privilege(self)
-    }
-
     fn locked_tables(&self) -> Option<tidb_sessionctx::LockedTables> {
         Session::statement_locked_tables(self)
     }

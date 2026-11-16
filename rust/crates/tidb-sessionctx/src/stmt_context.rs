@@ -591,9 +591,6 @@ pub struct StmtContextSessionState {
     /// statement locks nothing (no metadata-lock gate, or Go's autocommit
     /// read-only exemption).
     pub mdl_related_table: Option<MdlRelatedTableRecorder>,
-    /// Go `RequestVerification("", "", "", mysql.ProcessPriv)` as
-    /// `TIDB_DECODE_SQL_DIGESTS` asks it: whether the session holds PROCESS.
-    pub process_privilege: bool,
     /// The session's `SQLDigestTextRetriever`, which `TIDB_DECODE_SQL_DIGESTS`
     /// runs through Go's SQL-executor property; `None` is a context with no
     /// session to run it.
@@ -649,7 +646,6 @@ impl Default for StmtContextSessionState {
             view_definer_privilege: None,
             session_privilege: None,
             mdl_related_table: None,
-            process_privilege: true,
             sql_digest_text_retriever: None,
             min_safe_ts_provider: None,
             locked_tables: None,
@@ -1054,8 +1050,6 @@ pub struct StmtContextData {
     plan_privilege_check: Option<Arc<dyn std::any::Any + Send + Sync>>,
     /// See [`StmtContextSessionState::mdl_related_table`].
     mdl_related_table: Option<MdlRelatedTableRecorder>,
-    /// See [`StmtContextSessionState::process_privilege`].
-    process_privilege: bool,
     /// See [`StmtContextSessionState::sql_digest_text_retriever`].
     sql_digest_text_retriever: Option<SqlDigestTextRetrieval>,
     /// See [`StmtContextSessionState::min_safe_ts_provider`].
@@ -3336,7 +3330,6 @@ impl StmtContext {
             session_privilege: session.session_privilege,
             plan_privilege_check: None,
             mdl_related_table: session.mdl_related_table,
-            process_privilege: session.process_privilege,
             sql_digest_text_retriever: session.sql_digest_text_retriever,
             min_safe_ts_provider: session.min_safe_ts_provider,
             stmt_safe_ts: std::sync::OnceLock::new(),
@@ -7474,25 +7467,11 @@ impl Columns for StmtContext {
         self.last_found_rows
     }
 
-    fn has_process_privilege(&self) -> bool {
-        self.process_privilege
-    }
-
     fn get_optional_prop_provider(
         &self,
         key: tidb_exprctx::OptionalEvalPropKey,
     ) -> Option<Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
         self.optional_props.get(key)
-    }
-
-    fn has_privilege_checker(&self) -> bool {
-        true
-    }
-
-    fn request_dynamic_verification(&self, priv_name: &str, grantable: bool) -> bool {
-        self.dynamic_privilege
-            .as_ref()
-            .is_none_or(|check| check(priv_name, grantable))
     }
 
     fn active_role_identities(&self) -> Option<Vec<(String, String)>> {

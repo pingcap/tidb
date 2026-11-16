@@ -194,15 +194,15 @@ fn missing_property(key: OptionalEvalPropKey) -> EvalError {
 
 /// Go `checkPrivileges`, after `GetPrivilegeChecker` found the property.
 fn check_privileges(ctx: &dyn Columns, def: &FunctionDef) -> Result<(), EvalError> {
-    if !ctx.has_privilege_checker() {
-        return Err(missing_property(OptionalEvalPropKey::PrivilegeChecker));
-    }
+    let priv_checker = tidb_expropt::PrivilegeCheckerPropReader
+        .get_privilege_checker(ctx)
+        .map_err(crate::builtin_ext::misc::opt_prop_error)?;
     let Some(require) = &def.require_dynamic_privileges else {
         return Ok(());
     };
     let sem_enabled = tidb_sem_compat::is_enabled();
     for privilege in require(sem_enabled) {
-        if !ctx.request_dynamic_verification(&privilege, false) {
+        if !priv_checker.request_dynamic_verification(&privilege, false) {
             let message = if sem_enabled {
                 privilege
             } else {

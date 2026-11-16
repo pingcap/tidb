@@ -1687,7 +1687,6 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             view_definer_privilege: self.view_definer_privilege_check(),
             session_privilege: self.session_privilege_check(),
             mdl_related_table: self.mdl_related_table_recorder(),
-            process_privilege: self.has_process_privilege(),
             sql_digest_text_retriever: Some(self.sql_digest_text_retrieval()),
             min_safe_ts_provider: self.min_safe_ts_provider(),
             locked_tables: self.locked_tables(),
@@ -2844,8 +2843,6 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// view's body included -- joins the transaction's map at the node's
     /// schema version then. `None` when this statement locks nothing.
     fn mdl_related_table_recorder(&self) -> Option<crate::MdlRelatedTableRecorder>;
-    /// Whether this session may inspect process-wide diagnostic state.
-    fn has_process_privilege(&self) -> bool;
     /// Go `TableLockReadContext`: the table locks this session holds
     /// (`StmtContext::locked_tables`); `None` with table locks disabled.
     fn locked_tables(&self) -> Option<crate::LockedTables>;

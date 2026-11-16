@@ -694,14 +694,6 @@ pub trait Columns {
         false
     }
 
-    /// Go `PrivilegeChecker.RequestVerification("", "", "",
-    /// mysql.ProcessPriv)`, which `TIDB_DECODE_SQL_DIGESTS` asks when it is
-    /// built and again when it evaluates. A resolver without a session is
-    /// unrestricted, as Go's internal sessions are.
-    fn has_process_privilege(&self) -> bool {
-        true
-    }
-
     /// Go `EvalContext.GetOptionalPropProvider`: the statement's provider
     /// of an optional property, `None` when the context has none.
     fn get_optional_prop_provider(
@@ -709,19 +701,6 @@ pub trait Columns {
         _key: crate::OptionalEvalPropKey,
     ) -> Option<std::sync::Arc<dyn crate::DynOptionalEvalPropProvider>> {
         None
-    }
-
-    /// Whether the context has Go's `OptPropPrivilegeChecker` property,
-    /// without which `PrivilegeCheckerPropReader.GetPrivilegeChecker` errors.
-    fn has_privilege_checker(&self) -> bool {
-        false
-    }
-
-    /// Go `PrivilegeChecker.RequestDynamicVerification(privName,
-    /// grantable)`, as an extension function asks it. A context without
-    /// the property ([`Self::has_privilege_checker`]) is never asked.
-    fn request_dynamic_verification(&self, _priv_name: &str, _grantable: bool) -> bool {
-        true
     }
 
     /// Go `SessionVars.ActiveRoles` as `(user, host)` pairs, read through
