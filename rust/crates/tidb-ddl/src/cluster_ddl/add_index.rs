@@ -201,6 +201,8 @@ pub enum ReorgResult {
         message: String,
         /// The job's row count when it failed.
         rows: i64,
+        /// The error's Go identity, which the job error keeps (`[kv:8025]`).
+        identity: Option<tidb_terror::TerrorIdentity>,
     },
     /// It stopped between batches because the job is no longer runnable
     /// (Go `isReorgRunnable`: cancelling or pausing); the handle holds where
@@ -1853,10 +1855,11 @@ pub(super) fn do_reorg_work_for_create_index(
             code,
             message,
             rows,
+            identity,
         }) => {
             // Go `runReorgJob` records the count first.
             active.job.row_count = *rows;
-            return run_reorg_job_error(active, crate::cluster_ddl::checked_refusal(*code, message.clone()));
+            return run_reorg_job_error(active, crate::cluster_ddl::reorg_failure(*code, message, *identity));
         }
         Some(ReorgResult::Error(error)) => return run_reorg_job_error(active, error.clone()),
     };

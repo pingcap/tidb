@@ -1144,13 +1144,13 @@ fn do_partition_reorg_work(
                 code,
                 message,
                 rows,
+                identity,
             },
             _,
         )) => {
             active.job.row_count = *rows;
-            Ok(PartitionReorgWork::Failed(checked_refusal(
-                *code,
-                message.clone(),
+            Ok(PartitionReorgWork::Failed(crate::cluster_ddl::reorg_failure(
+                *code, message, *identity,
             )))
         }
         Some((ReorgResult::Checked(_) | ReorgResult::AutoPaused { .. }, _)) => Err(DdlPlanError::Encode(

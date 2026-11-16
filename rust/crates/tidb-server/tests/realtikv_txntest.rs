@@ -1166,7 +1166,11 @@ fn test_validate_read_only_in_staleness_transaction() {
     tk.must_exec("use test");
     tk.must_exec("create table t (id int)");
     tk.must_exec("create table t1 (id int)");
-    std::thread::sleep(std::time::Duration::from_secs(1));
+    // Go sleeps 1s, so its `NOW(3) - INTERVAL 5 SECOND` snapshot sees the
+    // preceding test's `t` -- in Go's file order a `t (id int)` too. Under
+    // nextest's order the preceding `t` differs, so wait out the window and
+    // read this test's own table.
+    std::thread::sleep(std::time::Duration::from_secs(6));
     tk.must_exec("PREPARE stmt1 FROM 'insert into t(id) values (5);'");
     tk.must_exec("PREPARE stmt2 FROM 'select * from t'");
     tk.must_exec("set @@tidb_enable_noop_functions=1");

@@ -1156,7 +1156,7 @@ fn wait_dist_task<S: StoreClient>(
                             }
                             if let Some(error) = cause.downcast_ref::<tidb_terror::TerrorError>() {
                                 let error = tidb_terror::MysqlError::from_terror(error);
-                                return Ok(ReorgResult::Failed { code: error.code, message: error.message, rows });
+                                return Ok(ReorgResult::Failed { code: error.code, message: error.message, rows, identity: error.identity });
                             }
                             return Err(ClusterDdlError::Backfill(error.to_string()));
                         }
@@ -1174,6 +1174,7 @@ fn wait_dist_task<S: StoreClient>(
                             code: error.code,
                             message: error.message,
                             rows,
+                            identity: error.identity,
                         });
                     }
                     if let Some(error) = cause.downcast_ref::<tidb_terror::MysqlError>() {
@@ -1181,6 +1182,7 @@ fn wait_dist_task<S: StoreClient>(
                             code: error.code,
                             message: error.message.clone(),
                             rows,
+                            identity: error.identity,
                         });
                     }
                     return Err(ClusterDdlError::Backfill(error.to_string()));

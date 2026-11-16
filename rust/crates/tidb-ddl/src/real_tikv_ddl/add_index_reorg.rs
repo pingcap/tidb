@@ -309,6 +309,7 @@ fn sql_failure(error: &LockSqlError, rows: i64) -> ReorgResult {
         code: error.code,
         message: error.message.clone(),
         rows,
+        identity: error.identity,
     }
 }
 
@@ -771,7 +772,7 @@ where
                 update_reorg_meta(sess_pool,reorg,&handle);
                 match ingest::add_index_with_local_ingest(opener,timeout,backfiller,pool,reorg,job,&handle,check_owner,step_cancelled,warnings)? {
                     ReorgResult::Done(rows)=>{total+=rows;continue;},
-                    ReorgResult::Failed{code,message,rows}=>return Ok(ReorgResult::Failed{code,message,rows:total+rows}),
+                    ReorgResult::Failed{code,message,rows,identity}=>return Ok(ReorgResult::Failed{code,message,rows:total+rows,identity}),
                     other=>return Ok(other),
                 }
             }

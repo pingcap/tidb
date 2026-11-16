@@ -3309,9 +3309,10 @@ fn do_reorg_work_for_modify_column(
             code,
             message,
             rows,
+            identity,
         }) => {
             active.job.row_count = *rows;
-            ColumnReorgVisit::Failed(checked_refusal(*code, message.clone()))
+            ColumnReorgVisit::Failed(crate::cluster_ddl::reorg_failure(*code, message, *identity))
         }
         Some(ReorgResult::Checked(_) | ReorgResult::AutoPaused { .. }) => {
             return Err(DdlPlanError::Encode(

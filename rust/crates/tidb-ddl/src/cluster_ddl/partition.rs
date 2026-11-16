@@ -567,8 +567,8 @@ fn clean_global_index_entries_from_dropped_partitions(
             Ok(None)
         }
         // The job retries with the error counted.
-        Some(ReorgResult::Failed { code, message, .. }) => {
-            Err(checked_refusal(*code, message.clone()))
+        Some(ReorgResult::Failed { code, message, identity, .. }) => {
+            Err(crate::cluster_ddl::reorg_failure(*code, message, *identity))
         }
         Some(ReorgResult::Checked(_) | ReorgResult::AutoPaused { .. }) => Err(DdlPlanError::Encode(
             "a global-index cleanup got a check's outcome".to_owned(),

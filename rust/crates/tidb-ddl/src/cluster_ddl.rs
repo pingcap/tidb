@@ -1709,6 +1709,23 @@ fn move_column_info(info: &mut TableInfo, from: usize, to: usize) {
 /// the reorg boundary as the wire triple (`LockSqlError`) and so has lost the
 /// Go identity it was raised with. The checks raise a closed set of Go errors;
 /// this names them, and any other number stays a plain refusal.
+/// A reorganization's failure as the job's error: its own Go identity when
+/// it carried one, else [`checked_refusal`]'s code table.
+pub(crate) fn reorg_failure(
+    code: u16,
+    message: &str,
+    identity: Option<tidb_terror::TerrorIdentity>,
+) -> DdlPlanError {
+    match identity {
+        Some(identity) => DdlPlanError::from(tidb_terror::TerrorError::synthesize(
+            identity.class(),
+            identity.code(),
+            message.to_owned(),
+        )),
+        None => checked_refusal(code, message.to_owned()),
+    }
+}
+
 pub(crate) fn checked_refusal(code: u16, message: impl Into<String>) -> DdlPlanError {
     use tidb_table::table_errors as table;
     use tidb_kv::kv_errors as kv;

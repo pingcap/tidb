@@ -611,7 +611,26 @@ impl Session {
         if matches!(value, Datum::Null) {
             return Err(as_of_error("as of timestamp cannot be NULL"));
         }
-        let text = value.sql_string().unwrap_or_default();
+        let mut text = value.sql_string().unwrap_or_default();
+        if matches!(value, Datum::Duration(_)) {
+            // Go `Duration.ConvertToTime`: the wall clock's date in the
+            // session zone (`time.Now().In(loc)`), not the stale clock,
+            // plus the duration.
+            let stale = self.stale_tso_now.take();
+            let today = self.eval_value(&tidb_ast::Expr::Func {
+                name: "CURDATE".to_owned(),
+                args: Vec::new(),
+                origin_position: 0,
+            });
+            self.stale_tso_now = stale;
+            let today = today?.sql_string().unwrap_or_default();
+            let timestamp = self.eval_value(&tidb_ast::Expr::Func {
+                name: "TIMESTAMP".to_owned(),
+                args: vec![tidb_ast::Expr::String(today), tidb_ast::Expr::String(text)],
+                origin_position: 0,
+            })?;
+            text = timestamp.sql_string().unwrap_or_default();
+        }
         let unix_call = |text: &str| tidb_ast::Expr::Func {
             name: "UNIX_TIMESTAMP".to_owned(),
             args: vec![tidb_ast::Expr::String(text.to_owned())],
