@@ -582,7 +582,7 @@ pub(crate) fn create_index_with_info<S: MetaSnapshot>(
     }
     warn_missing_region_split_policy(&stored, &name, &context.0);
 
-    let reorg_meta = new_ddl_reorg_meta(&context.0, schema, store_count);
+    let reorg_meta = new_ddl_reorg_meta(&context.0, schema, store_count)?;
     // Go `createIndex`: a partial index needs a fast reorganization.
     if !added.condition_expr_string.is_empty() && !reorg_meta.is_fast_reorg {
         return Err(unsupported_partial_index());
@@ -712,7 +712,7 @@ pub(super) fn new_ddl_reorg_meta(
     context: &dyn DdlSessionContext,
     schema: &str,
     store_count: usize,
-) -> tidb_model::DDLReorgMeta {
+) -> Result<tidb_model::DDLReorgMeta, DdlPlanError> {
     init_job_reorg_meta_from_variables(context, schema, store_count, true, true)
 }
 
@@ -725,7 +725,7 @@ pub(super) fn init_job_reorg_meta_from_variables(
     store_count: usize,
     set_reorg_param: bool,
     set_dist_task_param: bool,
-) -> tidb_model::DDLReorgMeta {
+) -> Result<tidb_model::DDLReorgMeta, DdlPlanError> {
     let vars = context.ddl_reorg_vars();
     let mut meta = tidb_model::DDLReorgMeta::new(
         context.ddl_sql_mode() as u64,
@@ -751,8 +751,15 @@ pub(super) fn init_job_reorg_meta_from_variables(
             meta.is_dist_reorg = false;
             meta.is_fast_reorg = false;
         }
+        if meta.is_dist_reorg && !meta.is_fast_reorg {
+            return Err(DdlPlanError::Admission(
+                tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
+                    &tidb_dbterror::ERR_UNSUPPORTED_DIST_TASK.gen_with_stack_by_args(&[]),
+                ),
+            ));
+        }
     }
-    meta
+    Ok(meta)
 }
 
 /// The multi-schema sub-job a reorganization request comes from: its proxy

@@ -46,6 +46,9 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
 pub fn realtikv_test_stack(
     config: &tidb_domain_core::node_config::NodeConfig,
 ) -> Result<(ClusterStack, tidb_store_driver::real_tikv_read::ProductionReadProcessAuthority), RunConfiguredNodeError> {
+    // Go `config.UpdateGlobal` (`Store = tikv`), as `run_configured_node`
+    // installs the node's config before anything reads it.
+    crate::install_process_globals(config);
     let spill_storage = crate::open_spill_storage(config)?;
     let global_vars = tidb_domain::global_sysvars::GlobalSysvars::before_domain();
     crate::set_global_vars::set_global_vars(config, &global_vars);

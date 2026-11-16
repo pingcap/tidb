@@ -153,7 +153,7 @@ pub(crate) fn modify_column_with_info<S: MetaSnapshot>(
         job_context,
         schema,
         store_count,
-    )));
+    )?));
     Ok(Some(AddIndexSubmission::Job(
         Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,
@@ -219,7 +219,7 @@ pub(crate) fn rename_column<S: MetaSnapshot>(
         job_context,
         schema,
         store_count,
-    )));
+    )?));
     Ok(Some(AddIndexSubmission::Job(
         Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,

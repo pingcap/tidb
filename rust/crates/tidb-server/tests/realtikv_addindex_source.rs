@@ -94,16 +94,24 @@ struct Tk {
 
 impl Tk {
     fn exec(&mut self, sql: &str) -> Result<Vec<Vec<String>>, String> {
+        self.exec_coded(sql).map_err(|(_, message)| message)
+    }
+
+    /// The statement's rows, or its error's code and message.
+    fn exec_coded(&mut self, sql: &str) -> Result<Vec<Vec<String>>, (u16, String)> {
         // The wire's path: Go `ParseSQL`, then `ExecuteStmt`.
-        let stmt = self.session.parse_at_statement_boundary(sql).map_err(|error| error.to_string())?;
+        let stmt = self
+            .session
+            .parse_at_statement_boundary(sql)
+            .map_err(|error| (1064, error.to_string()))?;
         let conn: ClusterServerSession<'_> = self.session.node_conn();
-        let Some(mut result) = conn.execute_stmt(sql, &stmt).map_err(|error| error.message)? else {
+        let Some(mut result) = conn.execute_stmt(sql, &stmt).map_err(|error| (error.code, error.message))? else {
             return Ok(Vec::new());
         };
         let source = result.source();
         let mut rows = Vec::new();
         loop {
-            let batch = source.next_batch(64).map_err(|error| error.message)?;
+            let batch = source.next_batch(64).map_err(|error| (error.code, error.message))?;
             if batch.is_empty() {
                 break;
             }
@@ -113,13 +121,24 @@ impl Tk {
                     .collect()
             }));
         }
-        source.finish().map_err(|error| error.message)?;
+        source.finish().map_err(|error| (error.code, error.message))?;
         Ok(rows)
     }
 
     fn must_exec(&mut self, sql: &str) {
         if let Err(error) = self.exec(sql) {
             panic!("{sql}: {error}");
+        }
+    }
+
+    fn must_query(&mut self, sql: &str) -> Vec<Vec<String>> {
+        self.exec(sql).unwrap_or_else(|error| panic!("{sql}: {error}"))
+    }
+
+    fn must_get_err_code(&mut self, sql: &str, code: u16) {
+        match self.exec_coded(sql) {
+            Ok(_) => panic!("{sql}: expected error {code}"),
+            Err((got, message)) => assert_eq!(got, code, "{sql}: {message}"),
         }
     }
 
@@ -174,4 +193,61 @@ fn test_add_uk_error_message() {
     tk.must_exec("split table t between (1) and (100001) regions 10;");
     let error = tk.exec_to_err("alter table t add unique index uk(b);");
     assert!(error.contains("Duplicate entry '1' for key 't.uk'"), "{error}");
+}
+
+/// Go `addindextest1.TestAddIndexInvalidDistTaskVariableSetting`.
+#[test]
+fn test_add_index_invalid_dist_task_variable_setting() {
+    let store = realtikv!();
+    let mut tk = store.new_tk();
+    tk.must_exec("drop database if exists addindexlit;");
+    tk.must_exec("create database addindexlit;");
+    tk.must_exec("use addindexlit;");
+    tk.must_exec("set global tidb_ddl_enable_fast_reorg=off;");
+    tk.must_exec("set global tidb_enable_dist_task = on;");
+    tk.must_exec("create table t (a int);");
+    // errno.ErrUnsupportedDDLOperation
+    tk.must_get_err_code("alter table t add index idx(a);", 8200);
+    tk.must_get_err_code("alter table t add column b int, add index idx(a);", 8200);
+    tk.must_exec("alter table t add column b int, add column c int;");
+    tk.must_exec("set global tidb_ddl_enable_fast_reorg=on;");
+    tk.must_exec("set global tidb_enable_dist_task = off;");
+}
+
+/// Go `addindextest1.TestAddIndexDistCancel`, its cancel-is-timely half: an
+/// ADMIN CANCEL reaches a DXF add index blocked in a region job.
+#[test]
+fn test_add_index_dist_cancel_is_timely() {
+    let store = realtikv!();
+    let mut tk = store.new_tk();
+    tk.must_exec("drop database if exists addindexlit;");
+    tk.must_exec("create database addindexlit;");
+    tk.must_exec("use addindexlit;");
+    tk.must_exec("create table t (a int, b int);");
+    tk.must_exec("insert into t values (1, 1), (2, 2), (3, 3);");
+    let mut tk2 = store.new_tk();
+    tk2.must_exec("use addindexlit;");
+    tk2.must_exec("set global tidb_ddl_enable_fast_reorg=on;");
+    tk.must_exec("set @@global.tidb_enable_dist_task = 1;");
+    let (enter_tx, enter) = std::sync::mpsc::sync_channel::<()>(1);
+    let _hook = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeExecuteRegionJob",
+        move |arg| {
+            let ctx = arg.downcast_mut::<tidb_gocontext::Context>().unwrap();
+            let _ = enter_tx.try_send(());
+            // Wait up to 30 seconds or until the job's context is cancelled.
+            let _ = ctx.sleep(std::time::Duration::from_secs(30));
+        },
+    );
+    std::thread::scope(|scope| {
+        let ddl = scope.spawn(|| tk2.exec("alter table t add index idx_ba(b, a);"));
+        enter.recv().expect("a region job started");
+        let job_id = tk.must_query("admin show ddl jobs 1;")[0][0].clone();
+        let now = std::time::Instant::now();
+        tk.must_exec(&format!("admin cancel ddl jobs {job_id}"));
+        let error = ddl.join().unwrap().expect_err("the cancelled ADD INDEX fails");
+        assert!(error.contains("Cancelled DDL job"), "{error}");
+        // cancel should be timely
+        assert!(now.elapsed().as_secs_f64() < 20.0, "{:?}", now.elapsed());
+    });
 }

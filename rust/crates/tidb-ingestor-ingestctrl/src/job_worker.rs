@@ -41,6 +41,11 @@ impl<'data> RegionJobBaseWorker<'_, 'data> {
                 .region
                 .as_ref()
                 .map_or_else(Vec::new, |r| r.region.peers.clone());
+            // Go `regionJobBaseWorker.process`.
+            tidb_failpoint::inject_call(
+                "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeExecuteRegionJob",
+                &mut self.ctx.clone(),
+            );
             let result = self.run_job(&mut job);
             if let Some(after) = self.after_run_job_fn {
                 after(&peers);

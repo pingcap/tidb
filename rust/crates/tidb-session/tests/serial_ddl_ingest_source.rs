@@ -950,3 +950,20 @@ fn test_add_index_set_internal_sessions() {
         assert!(actual_internal_ts.contains(ts), "{ts} not in {actual_internal_ts:?}");
     }
 }
+
+/// Go `initJobReorgMetaFromVariables`: DXF without fast reorganization is
+/// refused (`ErrUnsupportedDistTask`), as realtikv
+/// `TestAddIndexInvalidDistTaskVariableSetting` checks on TiKV.
+#[test]
+fn test_dist_task_without_fast_reorg_is_refused() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    tk.must_exec("set global tidb_ddl_enable_fast_reorg = off;");
+    tk.must_exec("set global tidb_enable_dist_task = on;");
+    tk.must_exec("create table t (a int);");
+    tk.must_get_err_code("alter table t add index idx(a);", 8200);
+    tk.must_get_err_code("alter table t add column b int, add index idx(a);", 8200);
+    tk.must_exec("alter table t add column b int, add column c int;");
+    tk.must_exec("set global tidb_ddl_enable_fast_reorg = on;");
+    tk.must_exec("set global tidb_enable_dist_task = off;");
+}

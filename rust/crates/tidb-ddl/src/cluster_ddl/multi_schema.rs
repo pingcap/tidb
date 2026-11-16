@@ -131,7 +131,7 @@ pub(super) fn build_multi_schema_job(
             store_count,
             set_reorg_param,
             set_dist_task_param,
-        ),
+        )?,
     ));
     let vars = job_context.ddl_reorg_vars();
     job.session_vars = Some(GoShared::new(std::collections::BTreeMap::from([

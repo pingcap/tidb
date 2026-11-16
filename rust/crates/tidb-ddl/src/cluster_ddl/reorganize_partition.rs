@@ -308,7 +308,7 @@ pub(crate) fn reorganize_partitions_job<S: MetaSnapshot>(
             store_count,
             true,
             false,
-        ),
+        )?,
     ));
     let args = tidb_model::TablePartitionArgs {
         part_names: GoField::new(GoSharedSlice::from_vec(
