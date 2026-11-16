@@ -246,7 +246,7 @@ pub fn make_source_file_region(_ctx: &Context, cfg: &DataDivideConfig, fi: &File
 fn make_parquet_file_region(ctx: &Context, cfg: &DataDivideConfig, data_file: &FileInfo) -> Result<Regions, String> {
     let mut number_rows = data_file.file_meta.rows;
     if !cfg.skip_parquet_row_count {
-        number_rows = crate::parquet_row_count(ctx, cfg.store.as_ref(), &data_file.file_meta.path)?;
+        number_rows = crate::parquet_row_count(ctx, &cfg.store, &data_file.file_meta.path)?;
     } else {
         if number_rows <= 0 {
             number_rows = data_file.file_meta.file_size;

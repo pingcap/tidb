@@ -267,3 +267,41 @@ with master's `TestProcessNextGenS3Path` Starter cases (`checkStarterS3Path`
 reads no mode, so its cases run in every build). Master still quotes
 `url.Parse`'s error in ErrLoadDataInvalidURI; that URL goes through master's
 `RedactURL`, which turns an unparseable URL into `(invalid URL)`.
+
+## Closing E05: the stacked PR plan (2026-11-16)
+
+The user asked for full Go parity before the row is deleted, with the final
+acceptance on a TiUP playground (PD + TiKV) plus MinIO for S3. MinIO's own
+images and binaries are archived (HTTP 410); `bitnamilegacy/minio` runs in
+Colima as container `tidb-e05-minio` on `127.0.0.1:19000`
+(`minioadmin`/`minioadmin`, bucket `e05`).
+
+Opened so far (each stacked on the previous, from `dbsid/tidb`):
+
+- #39 kvproto refresh, #35 storage URLs/redaction, #40 Lightning KV encoder
+  (`tidb-lightning-backend-kv`), #41 `pkg/objstore` storage layer, #44
+  streaming mydump parsers and `region.go`.
+
+Remaining, in order:
+
+1. Done: `pkg/dumpformat/parquetfile` as `tidb-dumpformat-parquetfile` over the
+   `parquet` crate, pinned by an 18-record Go capture (`zzprobe/e05pq`);
+   mydump's Parquet row count reads it.
+2. `pkg/lightning/backend` (`backend.go` engine manager, `MakeUUID`) and the
+   `ingestctrl` pieces IMPORT INTO needs beyond ADD INDEX's: local writer
+   with flush status, `CloseEngine`, `checksum.go` (remote checksum),
+   `tikv_mode.go`, and the import-mode / PD scheduler pause hooks. Region
+   split/scatter stays under D02 unless Go-visible.
+3. `pkg/executor/importer`: the rest of `import.go` (plan capture, options,
+   `InitDataStore`, `InitDataFiles`, `GetParser`, `CheckRequirements`),
+   `kv_encode.go`, `chunk_process.go`, `engine_process.go`,
+   `table_import.go`, `job.go` (`mysql.tidb_import_jobs`), `precheck.go`,
+   `sampler.go`, `query_source.go`.
+4. `pkg/dxf/importinto`: `proto.go`, `job.go`, `planner.go`,
+   `scheduler.go`, `task_executor.go`, `encode_and_sort_operator.go`,
+   `subtask_executor.go`, `clean_up.go`, conflict collection/resolution.
+5. `pkg/ingestor/globalsort` + `simplesst` (CLOUD_STORAGE_URI global sort).
+6. `pkg/executor/import_into.go` (`ImportIntoExec`, IMPORT FROM SELECT,
+   `ImportIntoActionExec` for CANCEL), SHOW IMPORT JOB(S)/GROUPS, session
+   dispatch; live TiUP + MinIO acceptance against a Go master tidb-server;
+   delete the E05 row.

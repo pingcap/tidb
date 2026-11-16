@@ -285,3 +285,31 @@ fn parsers_stream_across_blocks() {
     }
     assert_eq!(rows, 300);
 }
+
+/// Go `TestParquetFileRegionUsesRealSizeForEngineAllocation`'s row count: a
+/// Parquet region's `RowIDMax` is the file's row count, read from its footer.
+#[test]
+fn test_parquet_file_region_row_count() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = concat!(env!("CARGO_MANIFEST_DIR"), "/../tidb-dumpformat-parquetfile/testdata/parquet_go.jsonl");
+    let line = std::fs::read_to_string(src).unwrap().lines().find(|l| l.contains("\"row_groups\"")).unwrap().to_owned();
+    let rec: serde_json::Value = serde_json::from_str(&line).unwrap();
+    use base64::Engine as _;
+    let data = base64::engine::general_purpose::STANDARD.decode(rec["file"].as_str().unwrap()).unwrap();
+    std::fs::write(dir.path().join("a.parquet"), &data).unwrap();
+    let store: Arc<dyn Storage> = Arc::new(tidb_objstore::LocalStorage::new(dir.path().to_str().unwrap()).unwrap());
+    let mut cfg = divide_config(store, 2, CsvConfig::default(), crate::region::MAX_REGION_SIZE);
+    cfg.table_meta.data_files.push(FileInfo {
+        file_meta: SourceFileMeta {
+            path: "a.parquet".into(),
+            r#type: SourceType::Parquet,
+            file_size: data.len() as i64,
+            real_size: 1000,
+            ..SourceFileMeta::default()
+        },
+        ..FileInfo::default()
+    });
+    let regions = crate::make_table_regions(&Context::background(), &cfg).unwrap();
+    assert_eq!(regions[0].chunk.row_id_max, 5);
+    assert_eq!(regions[0].chunk.end_offset, i64::MAX);
+}

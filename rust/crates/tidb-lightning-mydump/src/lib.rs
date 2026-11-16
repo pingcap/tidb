@@ -43,14 +43,13 @@ mod region_tests;
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ParquetFileMeta {}
 
-/// Go `parquetfile.ReadRowCount`. The Parquet reader is a later port; until
-/// then a Parquet source fails here.
+/// Go `parquetfile.ReadRowCount`.
 pub fn parquet_row_count(
-    _ctx: &tidb_gocontext::Context,
-    _store: &dyn tidb_objstore::storeapi::Storage,
+    ctx: &tidb_gocontext::Context,
+    store: &std::sync::Arc<dyn tidb_objstore::storeapi::Storage>,
     path: &str,
 ) -> Result<i64, String> {
-    Err(format!("failed to read parquet file {path}: parquet files are not supported yet"))
+    tidb_dumpformat_parquetfile::read_row_count(ctx, store.clone(), path)
 }
 
 /// Go `ToStorageCompressType`.
