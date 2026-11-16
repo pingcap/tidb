@@ -96,8 +96,10 @@ func currentOldCertValidTime() time.Duration {
 
 // SessionToken represents the token used to authenticate with the new server.
 type SessionToken struct {
-	Username   string    `json:"username"`
-	Hostname   string    `json:"hostname"`
+	Username string `json:"username"`
+	// Omit an empty hostname so re-marshalling tokens from older servers
+	// preserves the original signed payload, which has no hostname field.
+	Hostname   string    `json:"hostname,omitempty"`
 	SignTime   time.Time `json:"sign-time"`
 	ExpireTime time.Time `json:"expire-time"`
 	Signature  []byte    `json:"signature,omitempty"`
@@ -152,7 +154,9 @@ func ValidateSessionToken(tokenBytes []byte, username, hostname string) (err err
 	if username != token.Username {
 		return ErrCannotMigrateSession.GenWithStackByArgs("username does not match", username, token.Username)
 	}
-	if token.Hostname == "" || hostname != token.Hostname {
+	// Older servers issue tokens without a hostname. Allow those tokens during
+	// rolling upgrades, and enforce host binding when the token includes it.
+	if token.Hostname != "" && hostname != token.Hostname {
 		return ErrCannotMigrateSession.GenWithStackByArgs("hostname does not match", hostname, token.Hostname)
 	}
 	return nil

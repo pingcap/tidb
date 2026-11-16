@@ -172,6 +172,11 @@ func TestVerifyToken(t *testing.T) {
 	require.NoError(t, err)
 	err = ValidateSessionToken(tokenBytes2, "test_user", "localhost")
 	require.ErrorContains(t, err, "verification error")
+	// Removing a signed host must not turn a bound token into a legacy token.
+	token.Hostname = ""
+	tokenBytes2, err = json.Marshal(token)
+	require.NoError(t, err)
+	require.ErrorContains(t, ValidateSessionToken(tokenBytes2, "test_user", "%"), "verification error")
 	token.Hostname = "%"
 	// forge the user name
 	token.Username = "another_user"
@@ -187,7 +192,7 @@ func TestVerifyToken(t *testing.T) {
 	err = ValidateSessionToken(tokenBytes2, "test_user", "%")
 	require.ErrorContains(t, err, "verification error")
 
-	// Reject correctly signed legacy tokens without a host binding.
+	// Older servers sign this format without a hostname field.
 	legacyToken := struct {
 		Username   string    `json:"username"`
 		SignTime   time.Time `json:"sign-time"`
@@ -200,14 +205,22 @@ func TestVerifyToken(t *testing.T) {
 	require.NoError(t, err)
 	legacyBytes, err = json.Marshal(legacyToken)
 	require.NoError(t, err)
-	require.Error(t, ValidateSessionToken(legacyBytes, "test_user", "%"))
+	t.Run("legacy token", func(t *testing.T) {
+		for _, hostname := range []string{"", "%", "localhost"} {
+			require.NoError(t, ValidateSessionToken(legacyBytes, "test_user", hostname))
+		}
+		require.ErrorContains(t, ValidateSessionToken(legacyBytes, "another_user", "%"), "username does not match")
+		require.ErrorContains(t, ValidateSessionToken(legacyBytes, "TEST_USER", "%"), "username does not match")
+	})
 
-	// Even a newly signed token with an empty host cannot authorize an account.
-	hostlessToken, err := CreateSessionToken("test_user", "")
-	require.NoError(t, err)
-	hostlessBytes, err := json.Marshal(hostlessToken)
-	require.NoError(t, err)
-	require.ErrorContains(t, ValidateSessionToken(hostlessBytes, "test_user", ""), "hostname does not match")
+	t.Run("empty hostname", func(t *testing.T) {
+		hostlessToken, err := CreateSessionToken("test_user", "")
+		require.NoError(t, err)
+		hostlessBytes, err := json.Marshal(hostlessToken)
+		require.NoError(t, err)
+		require.NotContains(t, string(hostlessBytes), `"hostname"`)
+		require.NoError(t, ValidateSessionToken(hostlessBytes, "test_user", "%"))
+	})
 }
 
 func TestStarterSessionTokenLifetime(t *testing.T) {
