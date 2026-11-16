@@ -6238,6 +6238,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tidb-ast",
+ "tidb-br",
  "tidb-config",
  "tidb-config-configtypes",
  "tidb-config-kerneltype",
@@ -7452,6 +7453,7 @@ name = "tidb-ingestor-ingestctrl"
 version = "0.0.0"
 dependencies = [
  "crossbeam-channel",
+ "hex",
  "serde",
  "serde_json",
  "tempfile",
@@ -7462,6 +7464,7 @@ dependencies = [
  "tidb-ingestor-errdef",
  "tidb-lightning-backend",
  "tidb-lightning-verification",
+ "tidb-log",
  "tidb-meta",
  "tidb-pd-client",
  "tidb-proto",
@@ -9452,6 +9455,7 @@ dependencies = [
  "tikv-client",
  "tokio",
  "toml",
+ "uuid",
  "x509-parser",
 ]
 

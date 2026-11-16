@@ -54,6 +54,8 @@ impl From<serde_json::Error> for Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 pub mod local;
+pub mod pdutil;
 pub mod region_job;
+pub mod tikv_mode;
 
 pub mod duplicate;

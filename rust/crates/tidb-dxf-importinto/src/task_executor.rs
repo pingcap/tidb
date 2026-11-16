@@ -406,3 +406,36 @@ impl StepExecutor for PostProcessStepExecutor {
         Ok(())
     }
 }
+
+/// Go `importer.PostProcess` for an import outside DXF (IMPORT INTO ...
+/// FROM SELECT): rebases the allocators, then verifies the checksum over a
+/// new session of the task manager (Go's `newSCtx`).
+///
+/// # Errors
+/// The rebase failed, the checksum could not be read or did not match.
+pub fn post_process_with_new_session(
+    ctx: &Context,
+    plan: &tidb_executor::importer::Plan,
+    max_ids: &std::collections::BTreeMap<tidb_lightning_backend_kv::AllocatorType, i64>,
+    local_checksum: &tidb_lightning_verification::KvGroupChecksum,
+) -> Result<(), Error> {
+    let store = crate::import_store()?;
+    table_import::rebase_allocator_bases(&StoreRebaser(store), max_ids, plan).map_err(crate::driver)?;
+    let manager = tidb_dxf_storage::get_task_manager().map_err(|e| Arc::new(e) as Error)?;
+    let local = local_checksum.merged_checksum();
+    let mut failure: Option<Error> = None;
+    let result = manager.with_new_session(&mut |se| {
+        let session = SessionChecksum { ctx, se };
+        table_import::verify_checksum(plan, &local, || table_import::remote_checksum_table_by_sql(&session, plan))
+            .map_err(|e| {
+                let e = crate::verify_checksum_error(e);
+                let text = e.to_string();
+                failure = Some(e);
+                tidb_dxf_storage::StorageError::Other(text)
+            })
+    });
+    match result {
+        Ok(()) => Ok(()),
+        Err(e) => Err(failure.unwrap_or_else(|| Arc::new(e))),
+    }
+}

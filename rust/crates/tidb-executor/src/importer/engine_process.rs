@@ -8,10 +8,33 @@ use tidb_lightning_verification::KvGroupChecksum;
 use super::chunk_process::{Chunk, ChunkError, ChunkProcessor, ParserEncodeReader};
 use super::table_import::TableImporter;
 
+/// The rows a chunk processor reads: Go `TableImporter.DataSourceType`.
+pub enum ChunkSource<'a> {
+    /// Go `DataSourceTypeFile`: the chunk's file range.
+    File,
+    /// Go `DataSourceTypeQuery`: `TableImporter.chunkCh`.
+    Query(&'a crossbeam_channel::Receiver<super::chunk_process::QueryChunk>),
+}
+
 /// Go `ProcessChunk`: opens the engines' writers and processes the chunk.
 pub fn process_chunk(
     ctx: &Context,
     chunk: &Chunk,
+    ti: &TableImporter,
+    data_engine: &OpenedEngine<'_>,
+    index_engine: &OpenedEngine<'_>,
+    group_checksum: &mut KvGroupChecksum,
+    collector: Option<&dyn tidb_dxf_execute::Collector>,
+) -> Result<(), ChunkError> {
+    process_chunk_from(ctx, chunk, &ChunkSource::File, ti, data_engine, index_engine, group_checksum, collector)
+}
+
+/// Go `ProcessChunk` over either data source.
+#[allow(clippy::too_many_arguments)]
+pub fn process_chunk_from(
+    ctx: &Context,
+    chunk: &Chunk,
+    source: &ChunkSource<'_>,
     ti: &TableImporter,
     data_engine: &OpenedEngine<'_>,
     index_engine: &OpenedEngine<'_>,
@@ -26,7 +49,21 @@ pub fn process_chunk(
     let data_cfg = LocalWriterConfig { is_kv_sorted: has_auto_increment_auto_id, ..LocalWriterConfig::default() };
     let mut data_writer = data_engine.local_writer(ctx, &data_cfg).map_err(|e| e.to_string())?;
     let mut index_writer = index_engine.local_writer(ctx, &LocalWriterConfig::default()).map_err(|e| e.to_string())?;
-    let result = process_chunk_with_writer(ctx, chunk, ti, data_writer.as_mut(), index_writer.as_mut(), group_checksum, collector);
+    let result = match source {
+        ChunkSource::File => {
+            process_chunk_with_writer(ctx, chunk, ti, data_writer.as_mut(), index_writer.as_mut(), group_checksum, collector)
+        }
+        ChunkSource::Query(chunk_ch) => process_query_chunk_with_writer(
+            ctx,
+            chunk,
+            (*chunk_ch).clone(),
+            ti,
+            data_writer.as_mut(),
+            index_writer.as_mut(),
+            group_checksum,
+            collector,
+        ),
+    };
     let _ = data_writer.close(ctx);
     let _ = index_writer.close(ctx);
     result
@@ -49,6 +86,32 @@ pub fn process_chunk_with_writer(
         chunk.get_key(),
         Box::new(reader),
         chunk.offset,
+        &mut encoder,
+        ti.key_space(),
+        data_writer,
+        index_writer,
+        collector,
+    )
+    .process(ctx, group_checksum)
+}
+
+/// Go `ProcessChunkWithWriter` for a query source (`newQueryChunkProcessor`).
+#[allow(clippy::too_many_arguments)]
+pub fn process_query_chunk_with_writer(
+    ctx: &Context,
+    chunk: &Chunk,
+    chunk_ch: crossbeam_channel::Receiver<super::chunk_process::QueryChunk>,
+    ti: &TableImporter,
+    data_writer: &mut dyn EngineWriter,
+    index_writer: &mut dyn EngineWriter,
+    group_checksum: &mut KvGroupChecksum,
+    collector: Option<&dyn tidb_dxf_execute::Collector>,
+) -> Result<(), ChunkError> {
+    let mut encoder = ti.get_kv_encoder(chunk)?;
+    ChunkProcessor::new(
+        "import-from-select".to_owned(),
+        Box::new(super::chunk_process::QueryChunkEncodeReader::new(chunk_ch)),
+        -1,
         &mut encoder,
         ti.key_space(),
         data_writer,

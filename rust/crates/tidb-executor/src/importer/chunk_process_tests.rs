@@ -106,3 +106,125 @@ fn file_chunk_process_matches_go_capture() {
         assert_eq!([ds, is, dk, ik, checksum.merged_checksum().sum()], sums[..5], "{name}: checksums");
     }
 }
+
+/// An import client that takes every write, records the written pairs and
+/// the PD label rules, and accepts every ingest.
+#[derive(Default)]
+struct RecordingImportClient {
+    pairs: std::sync::Mutex<Vec<[String; 2]>>,
+    label_calls: std::sync::Mutex<Vec<&'static str>>,
+}
+
+impl tidb_ingestor_ingestctrl::region_job::ImportClient for RecordingImportClient {
+    fn get_region(&self, _: &[u8]) -> tidb_ingestor_ingestctrl::Result<tidb_ingestor_ingestctrl::region_job::RegionInfo> {
+        let peer = tidb_proto::metapb::Peer { id: 1, store_id: 1, ..Default::default() };
+        Ok(tidb_ingestor_ingestctrl::region_job::RegionInfo {
+            leader: Some(peer),
+            region: tidb_proto::metapb::Region { id: 1, peers: vec![peer], ..Default::default() },
+        })
+    }
+    fn invalidate_region(&self, _: &tidb_ingestor_ingestctrl::region_job::RegionInfo) {}
+    fn write(
+        &self,
+        _: u64,
+        requests: Vec<tidb_proto::import_sstpb::WriteRequest>,
+    ) -> tidb_ingestor_ingestctrl::Result<tidb_proto::import_sstpb::WriteResponse> {
+        use tidb_proto::import_sstpb::write_request::Chunk;
+        let mut metas = Vec::new();
+        for request in requests {
+            match request.chunk {
+                Some(Chunk::Meta(meta)) => metas.push(meta),
+                Some(Chunk::Batch(batch)) => self
+                    .pairs
+                    .lock()
+                    .unwrap()
+                    .extend(batch.pairs.iter().map(|p| [hex::encode(&p.key), hex::encode(&p.value)])),
+                None => {}
+            }
+        }
+        Ok(tidb_proto::import_sstpb::WriteResponse { metas, ..Default::default() })
+    }
+    fn multi_ingest(
+        &self,
+        _: u64,
+        _: tidb_proto::import_sstpb::MultiIngestRequest,
+    ) -> tidb_ingestor_ingestctrl::Result<tidb_proto::import_sstpb::IngestResponse> {
+        Ok(tidb_proto::import_sstpb::IngestResponse::default())
+    }
+    fn ingest(
+        &self,
+        _: u64,
+        _: tidb_proto::import_sstpb::IngestRequest,
+    ) -> tidb_ingestor_ingestctrl::Result<tidb_proto::import_sstpb::IngestResponse> {
+        Ok(tidb_proto::import_sstpb::IngestResponse::default())
+    }
+    fn duplicate_detect(
+        &self,
+        _: u64,
+        _: tidb_proto::import_sstpb::DuplicateDetectRequest,
+        _: &mut (dyn FnMut(tidb_proto::import_sstpb::DuplicateDetectResponse) -> tidb_ingestor_ingestctrl::Result<()> + Send),
+    ) -> tidb_ingestor_ingestctrl::Result<()> {
+        Ok(())
+    }
+    fn api_version(&self) -> i32 {
+        0
+    }
+    fn encode_key(&self, key: &[u8]) -> Vec<u8> {
+        key.to_vec()
+    }
+    fn get_ts(&self) -> tidb_ingestor_ingestctrl::Result<u64> {
+        Ok(42)
+    }
+    fn set_region_label_rule(&self, _: &tikv_client::pd_http::LabelRule) -> tidb_ingestor_ingestctrl::Result<()> {
+        self.label_calls.lock().unwrap().push("set");
+        Ok(())
+    }
+    fn patch_region_label_rules(&self, _: &tikv_client::pd_http::LabelRulePatch) -> tidb_ingestor_ingestctrl::Result<()> {
+        self.label_calls.lock().unwrap().push("delete");
+        Ok(())
+    }
+}
+
+/// Go `TableImporter.ImportSelectedRows` (IMPORT INTO ... FROM SELECT): rows
+/// from the query channel, spread over two workers, reach TiKV as the same
+/// KV pairs Go's file chunk processor writes for those rows (the Go
+/// capture's `all_columns` case), with PD's schedulers paused on the
+/// table's range around each engine's ingest.
+#[test]
+fn import_selected_rows_writes_the_rows_kvs() {
+    use tidb_datatype::Datum;
+    let line = include_str!("../../testdata/import_into_chunk_go.jsonl").lines().next().unwrap();
+    let rec: Value = serde_json::from_str(line).unwrap();
+    assert_eq!(rec["case"], "all_columns");
+    let meta = tidb_meta::value::parse_table_info(rec["table_info"].to_string().as_bytes(), 0).unwrap();
+    let table = tidb_table::table_from_meta::table_from_meta(&meta, &tidb_table::table_from_meta::AutoIdSource::Unavailable).unwrap();
+    let stmt = import("import into t from select * from s");
+    let mut plan = Plan::new_import_plan(&stmt, 2, "").unwrap();
+    plan.sql_mode = tidb_mysql::get_sql_mode(rec["sql_mode"].as_str().unwrap()).unwrap().0;
+    plan.table_info = Some(meta.clone());
+    let args = ASTArgs { columns_and_user_vars: Vec::new(), column_assignments: Vec::new() };
+    let ctrl = LoadDataController::new(plan, table, args).unwrap();
+    let client = std::sync::Arc::new(RecordingImportClient::default());
+    let ti = super::table_import::TableImporter::new(ctrl, "select-test", client.clone(), Vec::new()).unwrap();
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let rows = |r: &[[i64; 3]]| r.iter().map(|row| row.iter().map(|v| Datum::Int(*v)).collect()).collect();
+    tx.send(super::chunk_process::QueryChunk { rows: rows(&[[1, 2, 3], [4, 5, 6]]), row_id_offset: 0 }).unwrap();
+    tx.send(super::chunk_process::QueryChunk { rows: rows(&[[7, 8, 9]]), row_id_offset: 2 }).unwrap();
+    drop(tx);
+    let imported = ti.import_selected_rows(&Context::background(), &rx).unwrap();
+    ti.close();
+    assert_eq!(imported.data_kv_count, 3);
+    let want = |key: &str| -> Vec<[String; 2]> {
+        let kvs: Vec<[String; 3]> = serde_json::from_value(rec[key].clone()).unwrap_or_default();
+        kvs.into_iter().map(|[k, v, _]| [k, v]).collect()
+    };
+    let mut expected = want("data_kvs");
+    expected.extend(want("index_kvs"));
+    expected.sort();
+    let mut got = client.pairs.lock().unwrap().clone();
+    got.sort();
+    assert_eq!(got, expected);
+    let sums: Vec<u64> = serde_json::from_value(rec["sums"].clone()).unwrap();
+    assert_eq!(imported.checksum.merged_checksum().sum(), sums[4]);
+    assert_eq!(*client.label_calls.lock().unwrap(), ["set", "delete", "set", "delete"]);
+}

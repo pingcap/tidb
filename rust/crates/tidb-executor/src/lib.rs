@@ -237,7 +237,7 @@ pub use driver::{
     run_query_meta_stmt_with_physical, run_select, run_select_meta_in, run_select_meta_on,
     run_select_meta_stmt, run_select_meta_stmt_with_physical, run_select_on, run_set_opr_stmt,
     run_update_in, run_update_on, run_update_stmt, run_update_stmt_with_physical,
-    PreparedDmlExecution, PreparedDmlPlan, SelectMeta,
+    ImportSelectSource, PreparedDmlExecution, PreparedDmlPlan, SelectMeta,
 };
 use tidb_infoschema::{SessionExtendedInfoSchema, TableEntry, ViewDef, DEFAULT_DATABASE};
 use tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter;

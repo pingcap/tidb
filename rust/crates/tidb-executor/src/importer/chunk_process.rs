@@ -161,10 +161,11 @@ pub struct QueryChunk {
     pub row_id_offset: i64,
 }
 
-/// Go `queryChunkEncodeReader`.
+/// Go `queryChunkEncodeReader`. Every worker of an import reads the same
+/// channel.
 pub struct QueryChunkEncodeReader {
     /// Go `chunkCh`.
-    pub chunk_ch: mpsc::Receiver<QueryChunk>,
+    pub chunk_ch: crossbeam_channel::Receiver<QueryChunk>,
     curr: Option<QueryChunk>,
     cursor: usize,
 }
@@ -172,7 +173,7 @@ pub struct QueryChunkEncodeReader {
 impl QueryChunkEncodeReader {
     /// Go `queryRowEncodeReader`.
     #[must_use]
-    pub fn new(chunk_ch: mpsc::Receiver<QueryChunk>) -> Self {
+    pub fn new(chunk_ch: crossbeam_channel::Receiver<QueryChunk>) -> Self {
         Self { chunk_ch, curr: None, cursor: 0 }
     }
 }
@@ -190,8 +191,8 @@ impl EncodeReader for QueryChunkEncodeReader {
                         self.cursor = 0;
                         break;
                     }
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(None),
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return Ok(None),
                 }
             }
         }

@@ -1587,6 +1587,7 @@ impl Session {
                     .gen_with_stack(format!("FUNCTION {function} does not exist")),
             )));
         }
+        self.validate_statement_in_txn(&stmt, self.in_transaction())?;
         self.validate_statement_read_only_in_staleness(&stmt)?;
         if self.vars.snapshot_ts() != 0
             && self.in_transaction()
@@ -2296,6 +2297,33 @@ impl Session {
 }
 
 impl Session {
+    /// Go `validateStatementInTxn`, which `ExecuteStmt` runs before
+    /// `validateStatementReadOnlyInStaleness`: IMPORT INTO (also as the
+    /// statement an EXECUTE names) cannot run in an explicit transaction.
+    /// Go's materialized-view statements are not ported.
+    pub fn validate_statement_in_txn(&self, stmt: &Stmt, in_txn: bool) -> Result<(), DriverError> {
+        if !in_txn {
+            return Ok(());
+        }
+        let is_import = |stmt: &Stmt| matches!(stmt, Stmt::Dml(dml) if matches!(dml.as_ref(), tidb_ast::DmlStmt::ImportInto(_)));
+        let import = match stmt {
+            Stmt::Session(session) => match session.as_ref() {
+                tidb_ast::SessionStmt::Execute { name, .. } => self
+                    .prepared_statement_sql(name)
+                    .and_then(|sql| self.parse(sql).ok())
+                    .is_some_and(|inner| is_import(&inner)),
+                _ => false,
+            },
+            stmt => is_import(stmt),
+        };
+        if import {
+            return Err(DriverError::from(tidb_terror::MysqlError::unknown(
+                "cannot run IMPORT INTO in explicit transaction",
+            )));
+        }
+        Ok(())
+    }
+
     /// Go `validateStatementReadOnlyInStaleness` (`session.go:2822`), which
     /// `ExecuteStmt` runs before `Compile`. It switches on the statement node
     /// itself: a top-level SELECT's lock, the read-only question for the

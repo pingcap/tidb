@@ -10,6 +10,7 @@ use tidb_dxf_importinto::runtime_info::RuntimeInfo;
 use tidb_executor::importer::job::{self as importer_job, JobInfo};
 use tidb_executor::importer::precheck::PrecheckSession;
 use tidb_executor::importer::{ASTArgs, ImportSessionInfo, LoadDataController, Plan as ImportPlan};
+use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_gocontext::Context;
 
 use crate::*;
@@ -239,9 +240,7 @@ impl Session {
         stmt: &tidb_ast::ImportIntoStmt,
     ) -> Result<StmtOutput, DriverError> {
         let ctx = tidb_dxf_storage::with_internal_source_type(&Context::background(), tidb_txnkv::INTERNAL_IMPORT_INTO);
-        if plan.select_plan.is_some() {
-            return Err(DriverError::unsupported("IMPORT INTO ... FROM SELECT is not supported yet"));
-        }
+        let from_select = plan.select_plan.is_some();
         let table_info = plan
             .table
             .table_info
@@ -258,7 +257,7 @@ impl Session {
             })
             .ok_or_else(|| other("import preparation requires target database metadata"))?;
         let enable_dist_task = self.enable_dist_task();
-        let cpu = get_target_node_cpu_cnt(&ctx, false, &plan.path, enable_dist_task)?;
+        let cpu = get_target_node_cpu_cnt(&ctx, from_select, &plan.path, enable_dist_task)?;
         let cluster_id = tidb_dxf_importinto::import_store().ok().and_then(|s| s.cluster_id());
         let cloud_uri = tidb_dxf_importinto::job::get_cloud_storage_uri(cluster_id);
         let import_plan = ImportPlan::new_import_plan_from_input(
@@ -270,7 +269,7 @@ impl Session {
             cpu,
             &cloud_uri,
         )?;
-        if import_plan.is_global_sort() {
+        if !from_select && import_plan.is_global_sort() {
             return Err(DriverError::unsupported("IMPORT INTO with global sort is not supported yet"));
         }
         let new_collate = import_plan.get_use_new_collate_or_default(tidb_datatype::new_collation_enabled());
@@ -281,6 +280,18 @@ impl Session {
         .map_err(other)?
         .with_new_collation_mode(new_collate);
         let mut controller = LoadDataController::new(import_plan, table, ASTArgs::from_import_plan(plan))?;
+        if from_select {
+            // Go `runsQueryOnWorker`: a next-gen kernel runs the SELECT on a
+            // DXF worker, which `prepareQuery` only allows during
+            // materialized-view maintenance; this port has no materialized
+            // views, so it always refuses.
+            if tidb_config_kerneltype::is_next_gen() {
+                return Err(DriverError::from(tidb_plannererrors::ERR_NOT_SUPPORTED_YET.gen_with_stack_by_args(&[
+                    "IMPORT INTO FROM SELECT outside materialized view maintenance".into(),
+                ])));
+            }
+            return self.import_from_select(&ctx, plan, controller);
+        }
         let result = self.import_into_with_controller(&ctx, plan, &mut controller, enable_dist_task);
         controller.close();
         let row = result?;
@@ -318,6 +329,103 @@ impl Session {
             importer_job::get_job(ctx, se.sql_executor().as_ref(), job_id, &user, false)
         })?;
         Ok(Some(fill_one_import_job_info(&info, None, &self.vars.session_time_zone())))
+    }
+
+    /// Go `ImportIntoExec.importFromSelect`: the SELECT's rows are encoded
+    /// and ingested on this node through a local backend, without DXF; the
+    /// statement answers the imported rows as affected rows.
+    fn import_from_select(
+        &mut self,
+        ctx: &Context,
+        plan: &tidb_planner::common_plans::ImportInto,
+        mut controller: LoadDataController,
+    ) -> Result<StmtOutput, DriverError> {
+        let store = tidb_dxf_importinto::import_store().map_err(|e| import_error(&e))?;
+        // Go `CreateSession(userSctx)`: the prechecks and `InitTiKVConfigs`
+        // run on an internal session.
+        let etcd = store.etcd();
+        with_task_manager_session(|se| {
+            let conn = se.sql_executor();
+            let pre = PrecheckSession { ctx, conn: conn.as_ref(), etcd: etcd.as_deref() };
+            controller.check_requirements(ctx, &pre)?;
+            controller.plan.is_raft_kv2 =
+                tidb_dxf_importinto::job::is_raft_kv2(ctx, se).map_err(|e| import_error(&e))?;
+            Ok(())
+        })?;
+        let import_id = uuid::Uuid::new_v4().to_string();
+        let table_id = controller.plan.table_info.as_ref().map_or(0, |t| t.id);
+        let import_plan = controller.plan.clone();
+        let client = store.import_client().map_err(other)?;
+        let ti = tidb_executor::importer::table_import::TableImporter::new(controller, &import_id, client, store.keyspace())
+            .map_err(other)?;
+        let Some(tidb_planner::common_plans::Plan::Physical(physical)) = plan.select_plan.as_deref() else {
+            ti.close();
+            return Err(other("IMPORT INTO ... FROM SELECT has no physical SELECT plan"));
+        };
+        let mut physical = physical.clone();
+        let (chunk_tx, chunk_rx) = crossbeam_channel::bounded::<tidb_executor::importer::chunk_process::QueryChunk>(1);
+        let (import_ctx, cancel) = Context::with_cancel(ctx);
+        let stmt_ctx = self.statement_context(false);
+        // Go's errgroup: one goroutine imports, one sends the SELECT's
+        // chunks (`sendQueryChunks`); the first error cancels the other.
+        let (imported, sent) = std::thread::scope(|scope| {
+            let importer = scope.spawn(|| {
+                let result = ti.import_selected_rows(&import_ctx, &chunk_rx);
+                if result.is_err() {
+                    cancel.cancel();
+                }
+                result
+            });
+            let sent = self.with_planning_catalog(|catalog| {
+                let mut source = tidb_executor::ImportSelectSource::open(&mut physical, catalog, &stmt_ctx)?;
+                let mut row_id = 0i64;
+                while let Some(rows) = source.next_chunk()? {
+                    let count = rows.len() as i64;
+                    let mut chunk = tidb_executor::importer::chunk_process::QueryChunk { rows, row_id_offset: row_id };
+                    loop {
+                        if let Some(e) = import_ctx.err() {
+                            return Err(other(e));
+                        }
+                        match chunk_tx.send_timeout(chunk, std::time::Duration::from_millis(50)) {
+                            Ok(()) => break,
+                            Err(crossbeam_channel::SendTimeoutError::Timeout(back)) => chunk = back,
+                            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => return Err(other("context canceled")),
+                        }
+                    }
+                    row_id += count;
+                }
+                Ok(())
+            });
+            if sent.is_err() {
+                cancel.cancel();
+            }
+            drop(chunk_tx);
+            (importer.join().unwrap_or_else(|_| Err("import worker panicked".to_owned().into())), sent)
+        });
+        self.drain_eval_warnings(&stmt_ctx);
+        let result = match (imported, sent) {
+            (Err(e), _) => Err(import_error(&e.0)),
+            (Ok(_), Err(e)) => Err(e),
+            (Ok(imported), Ok(())) => tidb_dxf_importinto::task_executor::post_process_with_new_session(
+                ctx,
+                &import_plan,
+                &imported.max_ids,
+                &imported.checksum,
+            )
+            .map(|()| imported.data_kv_count)
+            .map_err(|e| import_error(&e)),
+        };
+        ti.close();
+        let imported_rows = result?;
+        // Go `FlushTableStats`: the rows reach `mysql.stats_meta` through
+        // the stats collector.
+        if let Some(collector) = &self.stats_collector {
+            if table_id > 0 {
+                collector.update(table_id, imported_rows, imported_rows);
+            }
+        }
+        self.statement_message = format!("Records: {imported_rows}, ID: {import_id}");
+        Ok(StmtOutput::Affected(u64::try_from(imported_rows).unwrap_or_default()))
     }
 
     /// Go `ImportIntoExec.submitTask`.

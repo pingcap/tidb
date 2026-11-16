@@ -39,6 +39,23 @@ pub struct TableImporter {
     pub disk_quota: i64,
 }
 
+/// What [`TableImporter::import_selected_rows`] leaves for `PostProcess`.
+pub struct SelectedRowsImported {
+    /// The data engine's imported KV count: the imported rows.
+    pub data_kv_count: i64,
+    /// The local checksum of every imported KV.
+    pub checksum: tidb_lightning_verification::KvGroupChecksum,
+    /// The allocators' bases, for `RebaseAllocatorBases`.
+    pub max_ids: std::collections::BTreeMap<tidb_lightning_backend_kv::AllocatorType, i64>,
+}
+
+/// Go `closeAndCleanupEngine`: failures are only logged in Go.
+fn close_and_cleanup_engine(ctx: &Context, engine: OpenedEngine<'_>) {
+    if let Ok(closed) = engine.close(ctx) {
+        let _ = closed.cleanup(ctx);
+    }
+}
+
 /// Go `config.SplitRegionSize`.
 pub const SPLIT_REGION_SIZE: i64 = 96 << 20;
 /// Go `config.SplitRegionKeys`.
@@ -108,6 +125,13 @@ impl LoadDataController {
             dupe_detect_enabled: false,
             kv_write_batch_size: 16 << 10,
             should_check_write_stall: true,
+            pause_pd_scheduler_scope: tidb_ingestor_ingestctrl::local::PAUSE_PD_SCHEDULER_SCOPE_TABLE.into(),
+            // Go `config.DefaultSwitchTiKVModeInterval` under Raft-KV2.
+            raft_kv2_switch_mode_duration: if self.plan.is_raft_kv2 {
+                tidb_ingestor_ingestctrl::tikv_mode::DEFAULT_SWITCH_TIKV_MODE_INTERVAL
+            } else {
+                std::time::Duration::ZERO
+            },
         }
     }
 }
@@ -593,6 +617,82 @@ impl TableImporter {
             (Some(a), None) | (None, Some(a)) => Err(a.to_string()),
             (Some(a), Some(b)) => Err(format!("{a}; {b}")),
         }
+    }
+
+    /// Go `ImportSelectedRows` up to its `PostProcess`: `thread_cnt`
+    /// workers encode the rows from `chunk_ch` into one data and one index
+    /// engine, which are then imported. Returns the data engine's imported
+    /// KV count, the local checksum and the allocators' bases for
+    /// [`post_process`], which the caller runs with its session.
+    ///
+    /// # Errors
+    /// A row failed to encode, or an engine failed to import.
+    pub fn import_selected_rows(
+        &self,
+        ctx: &Context,
+        chunk_ch: &crossbeam_channel::Receiver<super::chunk_process::QueryChunk>,
+    ) -> Result<SelectedRowsImported, super::chunk_process::ChunkError> {
+        let data_engine = self.open_data_engine(ctx, 1)?;
+        let index_engine = match self.open_index_engine(ctx, INDEX_ENGINE_ID) {
+            Ok(engine) => engine,
+            Err(e) => {
+                close_and_cleanup_engine(ctx, data_engine);
+                return Err(e.into());
+            }
+        };
+        let checksum = std::sync::Mutex::new(tidb_lightning_verification::KvGroupChecksum::with_keyspace(&self.keyspace));
+        let (worker_ctx, cancel) = Context::with_cancel(ctx);
+        let failure: std::sync::Mutex<Option<super::chunk_process::ChunkError>> = std::sync::Mutex::new(None);
+        let source = super::engine_process::ChunkSource::Query(chunk_ch);
+        std::thread::scope(|scope| {
+            for _ in 0..self.controller.plan.thread_cnt.max(1) {
+                scope.spawn(|| {
+                    let chunk = Chunk::default();
+                    let mut chunk_checksum = tidb_lightning_verification::KvGroupChecksum::with_keyspace(&self.keyspace);
+                    let result = super::engine_process::process_chunk_from(
+                        &worker_ctx,
+                        &chunk,
+                        &source,
+                        self,
+                        &data_engine,
+                        &index_engine,
+                        &mut chunk_checksum,
+                        None,
+                    );
+                    checksum.lock().unwrap_or_else(std::sync::PoisonError::into_inner).add(&chunk_checksum);
+                    if let Err(e) = result {
+                        failure.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert(e);
+                        cancel.cancel();
+                    }
+                });
+            }
+        });
+        if let Some(e) = failure.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner) {
+            close_and_cleanup_engine(ctx, data_engine);
+            close_and_cleanup_engine(ctx, index_engine);
+            return Err(e);
+        }
+        let closed_data = match data_engine.close(ctx) {
+            Ok(closed) => closed,
+            Err(e) => {
+                close_and_cleanup_engine(ctx, index_engine);
+                return Err(e.to_string().into());
+            }
+        };
+        let data_kv_count = match self.import_and_cleanup(ctx, &closed_data) {
+            Ok(count) => count,
+            Err(e) => {
+                close_and_cleanup_engine(ctx, index_engine);
+                return Err(e.into());
+            }
+        };
+        let closed_index = index_engine.close(ctx).map_err(|e| e.to_string())?;
+        self.import_and_cleanup(ctx, &closed_index)?;
+        Ok(SelectedRowsImported {
+            data_kv_count,
+            checksum: checksum.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner),
+            max_ids: self.max_ids(),
+        })
     }
 
     /// Go `Close`.

@@ -24,6 +24,7 @@ tidb-dxf-importinto-taskkey = { path = "../tidb-dxf-importinto-taskkey" }
 tidb-dxf-planner = { path = "../tidb-dxf-planner" }
 tidb-dxf-scheduler = { path = "../tidb-dxf-scheduler" }
 tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+tidb-br = { path = "../tidb-br" }
 tidb-dxf-taskexecutor = { path = "../tidb-dxf-taskexecutor" }
 tidb-executor = { path = "../tidb-executor" }
 tidb-gocontext = { path = "../tidb-gocontext" }

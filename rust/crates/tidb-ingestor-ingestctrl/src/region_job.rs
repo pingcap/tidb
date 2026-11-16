@@ -51,6 +51,27 @@ pub trait ImportClient: Send + Sync {
     fn get_ts(&self) -> Result<u64> {
         Err(Error::Other("this import client cannot allocate a timestamp".into()))
     }
+    /// Go `pdHTTPCli.GetStores`: each store's address and Go `StoreState`
+    /// value (Up 0, Offline 1, Tombstone 2).
+    fn get_stores(&self) -> Result<Vec<(String, i64)>> {
+        Err(Error::Other("this import client has no PD HTTP client".into()))
+    }
+    /// Go `tikv.SwitchMode`: `ImportSST.SwitchMode` on the store at
+    /// `address` over a new connection.
+    fn switch_mode(&self, address: &str, request: sst::SwitchModeRequest) -> Result<()> {
+        let _ = (address, request);
+        Err(Error::Other("this import client cannot switch TiKV mode".into()))
+    }
+    /// Go `pdHTTPCli.SetRegionLabelRule`.
+    fn set_region_label_rule(&self, rule: &tikv_client::pd_http::LabelRule) -> Result<()> {
+        let _ = rule;
+        Err(Error::Other("this import client has no PD HTTP client".into()))
+    }
+    /// Go `pdHTTPCli.PatchRegionLabelRules`.
+    fn patch_region_label_rules(&self, patch: &tikv_client::pd_http::LabelRulePatch) -> Result<()> {
+        let _ = patch;
+        Err(Error::Other("this import client has no PD HTTP client".into()))
+    }
 }
 /// Go `importClientFactory`, over the connected store's PD client and runtime.
 pub struct RemoteImportClient<S: tikv_client::PdClient> {
@@ -88,16 +109,7 @@ impl<S: tikv_client::PdClient> RemoteImportClient<S> {
             .find(|s| s.id == store_id)
             .ok_or_else(|| Error::Other(format!("store {store_id} not found")))?
             .address;
-        let endpoint = tidb_pd_client::secure_endpoint(&address, &self.security)
-            .map_err(|e| Error::Other(e.to_string()))?
-            .connect_timeout(Duration::from_secs(30))
-            .timeout(Duration::from_secs(600));
-        let channel = self
-            .store
-            .block_on(endpoint.connect())
-            .map_err(|e| Error::Other(e.to_string()))?;
-        let client = sst::import_sst_client::ImportSstClient::new(channel)
-            .max_decoding_message_size(usize::MAX);
+        let client = self.connect(&address)?;
         self.clients
             .lock()
             .unwrap()
@@ -105,7 +117,58 @@ impl<S: tikv_client::PdClient> RemoteImportClient<S> {
         Ok(client)
     }
 }
+impl<S: tikv_client::PdClient> RemoteImportClient<S> {
+    /// An ImportSST client of the store at `address`.
+    fn connect(&self, address: &str) -> Result<sst::import_sst_client::ImportSstClient<tonic::transport::Channel>> {
+        let endpoint = tidb_pd_client::secure_endpoint(address, &self.security)
+            .map_err(|e| Error::Other(e.to_string()))?
+            .connect_timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(600));
+        let channel = self
+            .store
+            .block_on(endpoint.connect())
+            .map_err(|e| Error::Other(e.to_string()))?;
+        Ok(sst::import_sst_client::ImportSstClient::new(channel).max_decoding_message_size(usize::MAX))
+    }
+
+    fn pd_http(&self) -> Result<tikv_client::pd_http::Client> {
+        self.store
+            .pd_http_client()
+            .ok_or_else(|| Error::Other("the store has no PD HTTP client".into()))
+    }
+}
 impl<S: tikv_client::PdClient> ImportClient for RemoteImportClient<S> {
+    fn get_stores(&self) -> Result<Vec<(String, i64)>> {
+        let pd = self.pd_http()?;
+        let stores = self
+            .store
+            .block_on(async move { pd.get_stores().await })
+            .map_err(|e| Error::Other(e.to_string()))?;
+        Ok(stores.stores.into_iter().map(|s| (s.store.address, s.store.state)).collect())
+    }
+    fn switch_mode(&self, address: &str, request: sst::SwitchModeRequest) -> Result<()> {
+        let mut client = self.connect(address)?;
+        match self.store.block_on(async move { client.switch_mode(request).await }) {
+            Ok(_) => Ok(()),
+            // Go `ignoreUnimplementedError`: a TiFlash store.
+            Err(status) if status.code() == tonic::Code::Unimplemented => Ok(()),
+            Err(status) => Err(Error::Other(status.to_string())),
+        }
+    }
+    fn set_region_label_rule(&self, rule: &tikv_client::pd_http::LabelRule) -> Result<()> {
+        let pd = self.pd_http()?;
+        let rule = rule.clone();
+        self.store
+            .block_on(async move { pd.set_region_label_rule(&rule).await })
+            .map_err(|e| Error::Other(e.to_string()))
+    }
+    fn patch_region_label_rules(&self, patch: &tikv_client::pd_http::LabelRulePatch) -> Result<()> {
+        let pd = self.pd_http()?;
+        let patch = patch.clone();
+        self.store
+            .block_on(async move { pd.patch_region_label_rules(&patch).await })
+            .map_err(|e| Error::Other(e.to_string()))
+    }
     fn get_region(&self, key: &[u8]) -> Result<RegionInfo> {
         let pd = self.store.store().pd_client();
         let key = tikv_client::Key::from(self.encode_key(key));
@@ -772,6 +835,8 @@ mod tests {
             dupe_detect_enabled: false,
             kv_write_batch_size: 16 * 1024,
             should_check_write_stall: false,
+            pause_pd_scheduler_scope: String::new(),
+            raft_kv2_switch_mode_duration: Duration::ZERO,
         };
         do_import(&Context::background(), &engine, &client, &cfg, 1, 960000).unwrap();
         assert_eq!(*client.writes.lock().unwrap(), [1, 2, 3, 1, 2, 3]);

@@ -2668,6 +2668,11 @@ impl<'s> ClusterServerSession<'s> {
     /// (`session.go:2485`), and starts with `checkSEMStmt`, as Go's
     /// `PlanBuilder.Build` does for every statement.
     fn compile(&mut self, sql: &str, stmt: &Stmt) -> Result<CompiledStatement, SqlQueryError> {
+        let in_txn = self.node.txn.explicit.is_some() || self.session.in_transaction();
+        self
+            .session
+            .validate_statement_in_txn(stmt, in_txn)
+            .map_err(map_error)?;
         self
             .session
             .validate_statement_read_only_in_staleness(stmt)

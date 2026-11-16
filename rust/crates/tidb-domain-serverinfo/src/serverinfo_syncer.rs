@@ -130,6 +130,12 @@ pub trait EtcdOps: Send + Sync {
     }
     /// `KV.Range` over `[prefix, prefix+1)` -- `clientv3.WithPrefix()`.
     fn get_prefix(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, String>;
+    /// `KV.Get` of one key: `Some(lease)` when the key exists (zero when it
+    /// has no lease), `None` when it does not.
+    fn get_key_lease(&self, key: &str) -> Result<Option<i64>, String> {
+        let _ = key;
+        Err("this etcd client cannot read a key's lease".to_owned())
+    }
     /// `KV.DeleteRange` of one key.
     fn delete(&self, key: &str) -> Result<(), String>;
     /// `KV.Put` with NO lease -- the topology `/info` key's spelling.

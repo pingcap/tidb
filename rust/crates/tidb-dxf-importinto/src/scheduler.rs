@@ -2,7 +2,13 @@
 //! Go `pkg/dxf/importinto/scheduler.go`: the import task's scheduler,
 //! which plans each step's subtasks and keeps the job row in step.
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use tidb_br::utils::register::{RegisterEtcd, RegisterTaskType, TaskRegister};
+use tidb_ingestor_ingestctrl::tikv_mode::{new_tikv_mode_switcher, TikvModeSwitcher, DEFAULT_SWITCH_TIKV_MODE_INTERVAL};
 
 use tidb_dxf::*;
 use tidb_dxf_scheduler::{BaseScheduler, Scheduler};
@@ -14,11 +20,101 @@ use crate::planner::{get_step_of_encode, LogicalPlan};
 use crate::proto::{CollectConflictsStepMeta, TaskMeta};
 use crate::{plain, Error};
 
+/// Go `registerTaskTTL`.
+const REGISTER_TASK_TTL: Duration = Duration::from_secs(10 * 60);
+/// Go `refreshTaskTTLInterval`.
+const REFRESH_TASK_TTL_INTERVAL: Duration = Duration::from_secs(3 * 60);
+
+/// Go `taskInfo`: the task's registration in PD's etcd.
+struct TaskInfo {
+    task_id: i64,
+    last_register_time: Option<Instant>,
+    /// Initialized lazily in `register`.
+    task_register: Option<TaskRegister>,
+}
+
+/// The server's etcd client as Go `clientv3` calls of a task register.
+struct RegisterEtcdOps(Arc<dyn tidb_domain_serverinfo::serverinfo_syncer::EtcdOps>);
+
+impl RegisterEtcd for RegisterEtcdOps {
+    fn get_key_lease(&self, key: &str) -> Result<Option<i64>, String> {
+        self.0.get_key_lease(key)
+    }
+    fn lease_grant(&self, ttl_seconds: i64) -> Result<i64, String> {
+        self.0.lease_grant(ttl_seconds)
+    }
+    fn put_with_lease(&self, key: &str, value: &[u8], lease: i64) -> Result<(), String> {
+        self.0.put_with_lease(key, value, lease)
+    }
+    fn lease_keep_alive_once(&self, lease: i64) -> Result<(), String> {
+        self.0.lease_keep_alive_once(lease)
+    }
+    fn lease_revoke(&self, lease: i64) -> Result<(), String> {
+        self.0.lease_revoke(lease)
+    }
+}
+
+fn str_field(key: &'static str, value: impl Into<String>) -> tidb_log::Field {
+    tidb_log::Field::new(key, tidb_log::Value::Str(value.into()))
+}
+
+impl TaskInfo {
+    /// Go `taskInfo.register`: refreshes the registration every
+    /// `refreshTaskTTLInterval`; a failure is only logged.
+    fn register(&mut self, logger: &tidb_logutil::Logger) {
+        if self.last_register_time.is_some_and(|t| t.elapsed() < REFRESH_TASK_TTL_INTERVAL) {
+            return;
+        }
+        if self.task_register.is_none() {
+            let etcd = crate::import_store().ok().and_then(|s| s.etcd());
+            let Some(etcd) = etcd else {
+                logger.warn("get etcd client failed", &[]);
+                return;
+            };
+            self.task_register = Some(TaskRegister::new_with_ttl(
+                Arc::new(RegisterEtcdOps(etcd)),
+                REGISTER_TASK_TTL,
+                RegisterTaskType::ImportInto,
+                &self.task_id.to_string(),
+            ));
+        }
+        let register = self.task_register.as_mut().expect("the register is set above");
+        match register.register_task_once() {
+            Ok(()) => logger.info("register task to pd or refresh lease success", &[]),
+            Err(e) => logger.warn("register task failed", &[str_field("error", e)]),
+        }
+        // Go sets it even when the register failed: the TTL is 10min and the
+        // refresh interval 3min, so there are 2 more tries before it expires.
+        self.last_register_time = Some(Instant::now());
+    }
+
+    /// Go `taskInfo.close`.
+    fn close(&mut self, logger: &tidb_logutil::Logger) {
+        if let Some(mut register) = self.task_register.take() {
+            match register.close() {
+                Ok(()) => logger.info("unregister task success", &[]),
+                Err(e) => logger.warn("unregister task failed", &[str_field("error", e)]),
+            }
+        }
+    }
+}
+
 /// Go `importScheduler`.
 pub struct ImportScheduler {
     base: BaseScheduler,
     /// Go `GlobalSort` and `sourceStep`.
     state: Mutex<(bool, Step)>,
+    /// Go `mu`, held while switching TiKV's mode.
+    mu: Mutex<()>,
+    /// Go `lastSwitchTime`: TiKV's import mode is global, so one time
+    /// serves every task.
+    last_switch_time: Mutex<Option<Instant>>,
+    /// Go `taskInfoMap`.
+    task_infos: Mutex<HashMap<i64, TaskInfo>>,
+    /// Go `currTaskID`.
+    curr_task_id: AtomicI64,
+    /// Go `disableTiKVImportMode`.
+    disable_tikv_import_mode: AtomicBool,
 }
 
 /// Go `importinto`'s `init`: the scheduler factory.
@@ -29,6 +125,11 @@ pub(crate) fn register() {
             let scheduler = Arc::new(ImportScheduler {
                 base: BaseScheduler::new(ctx, task, param),
                 state: Mutex::new((false, IMPORT_STEP_IMPORT)),
+                mu: Mutex::new(()),
+                last_switch_time: Mutex::new(None),
+                task_infos: Mutex::new(HashMap::new()),
+                curr_task_id: AtomicI64::new(0),
+                disable_tikv_import_mode: AtomicBool::new(false),
             });
             let extension: Arc<dyn tidb_dxf_scheduler::Extension> = scheduler.clone();
             scheduler.base.set_extension(Arc::downgrade(&extension));
@@ -72,7 +173,89 @@ fn with_retry(
     result.map_err(|e| last.take().unwrap_or_else(|| Arc::new(std::io::Error::other(e.to_string()))))
 }
 
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 impl ImportScheduler {
+    /// Go `isImporting2TiKV`.
+    fn is_importing_2_tikv(task: &Task) -> bool {
+        task.base.step == IMPORT_STEP_IMPORT || task.base.step == IMPORT_STEP_WRITE_AND_INGEST
+    }
+
+    /// Go `updateCurrentTask`: under Raft-KV2 the local backend switches the
+    /// mode itself.
+    fn update_current_task(&self, task: &Task) {
+        if self.curr_task_id.swap(task.base.id, Ordering::SeqCst) != task.base.id {
+            if let Ok(meta) = TaskMeta::from_json(&task.meta) {
+                self.disable_tikv_import_mode
+                    .store(meta.plan.disable_tikv_import_mode || meta.plan.is_raft_kv2, Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// The mode switcher over the store's import client.
+    fn tikv_mode_switcher(&self) -> Option<impl TikvModeSwitcher> {
+        let client = crate::import_store().ok().and_then(|s| s.import_client().ok());
+        if client.is_none() {
+            self.base.get_logger().warn("get tikv mode switcher failed", &[]);
+        }
+        client.map(new_tikv_mode_switcher)
+    }
+
+    /// Go `switchTiKVMode`: only the steps that write to TiKV run in import
+    /// mode (in import mode the post-process checksum's coprocessor requests
+    /// time out), refreshed every `DefaultSwitchTiKVModeInterval`.
+    fn switch_tikv_mode(&self, ctx: &Context, task: &Task) {
+        self.update_current_task(task);
+        if self.disable_tikv_import_mode.load(Ordering::SeqCst) || !Self::is_importing_2_tikv(task) {
+            return;
+        }
+        let due = || lock(&self.last_switch_time).is_none_or(|t| t.elapsed() >= DEFAULT_SWITCH_TIKV_MODE_INTERVAL);
+        if !due() {
+            return;
+        }
+        let _guard = lock(&self.mu);
+        if !due() {
+            return;
+        }
+        let Some(switcher) = self.tikv_mode_switcher() else { return };
+        switcher.to_import_mode(ctx, &[]);
+        *lock(&self.last_switch_time) = Some(Instant::now());
+    }
+
+    /// Go `switchTiKV2NormalMode`.
+    fn switch_tikv_2_normal_mode(&self, ctx: &Context, task: &Task) {
+        self.update_current_task(task);
+        if self.disable_tikv_import_mode.load(Ordering::SeqCst) {
+            return;
+        }
+        let _guard = lock(&self.mu);
+        let Some(switcher) = self.tikv_mode_switcher() else { return };
+        switcher.to_normal_mode(ctx, &[]);
+        // Clear it, so the next task can switch TiKV mode again.
+        *lock(&self.last_switch_time) = None;
+    }
+
+    /// Go `registerTask`.
+    fn register_task(&self, task: &Task) {
+        let mut infos = lock(&self.task_infos);
+        let info = infos.entry(task.base.id).or_insert_with(|| TaskInfo {
+            task_id: task.base.id,
+            last_register_time: None,
+            task_register: None,
+        });
+        info.register(self.base.get_logger());
+    }
+
+    /// Go `unregisterTask`.
+    fn unregister_task(&self, task: &Task) {
+        let info = lock(&self.task_infos).remove(&task.base.id);
+        if let Some(mut info) = info {
+            info.close(self.base.get_logger());
+        }
+    }
+
     fn global_sort(&self) -> bool {
         self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).0
     }
@@ -109,7 +292,8 @@ impl ImportScheduler {
 
     /// Go `finishJob`: the table's stats meta gets the imported rows, and
     /// the job finishes, in one transaction.
-    fn finish_job(&self, ctx: &Context, meta: &TaskMeta) -> Result<(), Error> {
+    fn finish_job(&self, ctx: &Context, task: &Task, meta: &TaskMeta) -> Result<(), Error> {
+        self.unregister_task(task);
         let table_id = meta.plan.table_info.as_ref().map_or(0, |t| t.id);
         let rows = meta.summary.imported_rows;
         with_retry(self, ctx, true, &mut |se| {
@@ -122,7 +306,9 @@ impl ImportScheduler {
     }
 
     /// Go `failJob`.
-    fn fail_job(&self, ctx: &Context, meta: &TaskMeta, error_msg: &str) -> Result<(), Error> {
+    fn fail_job(&self, ctx: &Context, task: &Task, meta: &TaskMeta, error_msg: &str) -> Result<(), Error> {
+        self.switch_tikv_2_normal_mode(ctx, task);
+        self.unregister_task(task);
         with_retry(self, ctx, false, &mut |se| {
             importer_job::fail_job(ctx, se.sql_executor().as_ref(), meta.job_id, error_msg, Some(&meta.summary))
                 .map_err(crate::driver)
@@ -130,7 +316,9 @@ impl ImportScheduler {
     }
 
     /// Go `cancelJob`.
-    fn cancel_job(&self, ctx: &Context, meta: &TaskMeta) -> Result<(), Error> {
+    fn cancel_job(&self, ctx: &Context, task: &Task, meta: &TaskMeta) -> Result<(), Error> {
+        self.switch_tikv_2_normal_mode(ctx, task);
+        self.unregister_task(task);
         with_retry(self, ctx, false, &mut |se| {
             importer_job::cancel_job(ctx, se.sql_executor().as_ref(), meta.job_id).map_err(crate::driver)
         })
@@ -195,7 +383,10 @@ impl Scheduler for ImportScheduler {
     fn schedule_task(&self) {
         self.base.schedule_task();
     }
+    /// Go `Close`: a new owner may have adopted the registration lease, so
+    /// only the local state is released; the terminal job paths revoke it.
     fn close(&self) {
+        lock(&self.task_infos).clear();
         self.base.close();
     }
     fn get_task(&self) -> Arc<Task> {
@@ -258,9 +449,15 @@ fn exec_id_of(info: &serde_json::Value) -> String {
     }
 }
 impl tidb_dxf_scheduler::Extension for ImportScheduler {
-    /// Go `OnTick`: Go also switches TiKV to import mode and registers the
-    /// task in PD for the PiTR and changefeed checks; see the module note.
-    fn on_tick(&self, _: &Context, _: &Task) {}
+    /// Go `OnTick`: only a running task switches TiKV's mode and registers
+    /// itself.
+    fn on_tick(&self, ctx: &Context, task: &Task) {
+        if task.base.state != TASK_STATE_RUNNING {
+            return;
+        }
+        self.switch_tikv_mode(ctx, task);
+        self.register_task(task);
+    }
 
     /// Go `OnNextSubtasksBatch`.
     fn on_next_subtasks_batch(
@@ -285,6 +482,7 @@ impl tidb_dxf_scheduler::Extension for ImportScheduler {
                 self.start_job(ctx, &meta, step)?;
             }
             IMPORT_STEP_POST_PROCESS => {
+                self.switch_tikv_2_normal_mode(ctx, task);
                 self.job_2_step(ctx, &meta, importer_job::JOB_STEP_VALIDATING)?;
                 let metas = h.get_previous_subtask_metas(task.base.id, source_step).map_err(|e| Arc::new(e) as Error)?;
                 let conflicts = h
@@ -322,13 +520,13 @@ impl tidb_dxf_scheduler::Extension for ImportScheduler {
         if task.base.state == TASK_STATE_REVERTING {
             if let Some(error) = &task.error {
                 if tidb_dxf_storage::is_cancelled_err(Some(error.as_ref())) {
-                    return self.cancel_job(ctx, &meta);
+                    return self.cancel_job(ctx, task, &meta);
                 }
-                return self.fail_job(ctx, &meta, &error.to_string());
+                return self.fail_job(ctx, task, &meta, &error.to_string());
             }
-            return self.fail_job(ctx, &meta, "");
+            return self.fail_job(ctx, task, &meta, "");
         }
-        self.finish_job(ctx, &meta)
+        self.finish_job(ctx, task, &meta)
     }
 
     /// Go `GetEligibleInstances`.

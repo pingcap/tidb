@@ -332,9 +332,44 @@ Remaining, in order:
    step: `encode_and_sort_operator.go`, `subtask_executor.go`'s global sort
    half, `clean_up.go`, conflict collection/resolution, IMPORT FROM SELECT,
    TiKV import mode and the PD scheduler pause.
-5. `pkg/ingestor/globalsort` + `simplesst` (CLOUD_STORAGE_URI global sort).
-6. IMPORT FROM SELECT, conflict resolution, the rest of the live
-   acceptance; delete the E05 row.
+5. Done (the PR after #48): IMPORT INTO ... FROM SELECT on the classic
+   kernel (`importFromSelect`, `sendQueryChunks`, `ImportSelectedRows`,
+   `FlushTableStats`), `validateStatementInTxn`, TiKV import mode
+   (`tikv_mode.go`, the scheduler's `OnTick` / `switchTiKV2NormalMode`, the
+   Raft-KV2 `switchModeBySplitKeys`), PD's scheduler pause on the engine's
+   range (`pdutil.PauseSchedulersByKeyRange`, also for ADD INDEX's ingest),
+   and the task's etcd registration (`br/pkg/utils/register.go`). A
+   next-gen FROM SELECT returns Go's "outside materialized view
+   maintenance" error: Go only runs it (`ImportStepQuery`) during
+   materialized-view maintenance, and materialized views are not ported.
+6. `pkg/ingestor/simplesst`.
+7. `pkg/ingestor/globalsort`, `engineapi`, and the external-engine ingest.
+8. The DXF global-sort steps (encode and sort, merge sort, write and
+   ingest), `clean_up.go`, and next-gen async prepare.
+9. Conflict collection and resolution, the global-sort live acceptance;
+   delete the E05 row.
+
+### Live acceptance of FROM SELECT and the TiKV hooks (2026-11-16)
+
+Same playgrounds as below. `/tmp/e05-data/select.sh` (not committed)
+imports from a 3000-row indexed table: all columns, a column list, an
+expression with `thread=2`, an aggregate, an empty SELECT, a non-empty
+target (8173), duplicate keys (checksum mismatch, and the same 8223 index
+inconsistency Go leaves), DETACHED (8166), and an explicit transaction
+("cannot run IMPORT INTO in explicit transaction", also through EXECUTE),
+then checks the data, `ADMIN CHECK TABLE` and the AUTO_INCREMENT rebase.
+Go and Rust match except which duplicate row survives in the duplicate-key
+case: its source is `SELECT ... UNION ALL SELECT ...`, and this port's
+UNION ALL returns its children in either order (Go's returned them in
+order in 6 of 6 runs), so the first row differs. With an ordered source
+both keep the first row.
+
+`/tmp/e05-data/modes.sh` (not committed) imports 400000 rows from S3 as a
+DXF task and watches the cluster: the etcd key
+`/tidb/brie/import/import-into/<task>` exists with a lease while the task
+runs and is gone after; PD's audit log shows 2 `SetRegionLabelRule` and 2
+`PatchRegionLabelRules` (one pause per engine); TiKV logs `switch mode`
+Import then Normal. Go and Rust give the same output.
 
 ### Live acceptance of the file path (2026-11-16)
 

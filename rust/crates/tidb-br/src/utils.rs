@@ -16,6 +16,8 @@
 //! advancer (`br/pkg/streamhelper`) raises and lowers as tasks come and go,
 //! and telemetry reads.
 
+pub mod register;
+
 use std::sync::atomic::{AtomicI32, Ordering};
 
 use tidb_log::{Field, Value};

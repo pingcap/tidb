@@ -186,6 +186,7 @@ tokio.workspace = true
 rand = "0.10"
 base64.workspace = true
 crossbeam-channel = "0.5"
+uuid = { version = "1", features = ["v4"] }
 openssl = "0.10.81"
 rcgen.workspace = true
 rustix = { workspace = true, features = ["net"] }

@@ -1596,10 +1596,12 @@ fn import_into_refusal_preserves_select_targets_and_transaction() {
         let result = session.run(sql);
         assert!(row_text(session.run("SELECT * FROM t")).is_empty(), "{sql}");
         assert_eq!(row_text(session.run("SHOW CREATE TABLE t")), schema);
+        // Go `importFromSelect` ingests through a local backend into TiKV;
+        // without one the import stops before reading the SELECT.
         assert!(result
             .expect_err("private INSERT SELECT rewrite must be withdrawn")
             .to_string()
-            .contains("IMPORT INTO ... FROM SELECT is not supported yet"));
+            .contains("IMPORT INTO needs a TiKV store, and this instance has none"));
         assert_eq!(
             row_text(session.run("SELECT * FROM source ORDER BY id")),
             [["1", "alpha"], ["2", "beta"]]
@@ -1609,7 +1611,12 @@ fn import_into_refusal_preserves_select_targets_and_transaction() {
         session
             .run("INSERT INTO source VALUES (3, 'pending')")
             .unwrap();
-        assert!(session.run(sql).is_err());
+        // Go `validateStatementInTxn`.
+        assert_eq!(
+            session.run(sql).expect_err("IMPORT INTO in a transaction").to_string(),
+            "cannot run IMPORT INTO in explicit transaction",
+            "{sql}"
+        );
         session.run("ROLLBACK").unwrap();
         assert_eq!(
             row_text(session.run("SELECT * FROM source ORDER BY id")),

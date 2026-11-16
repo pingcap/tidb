@@ -28,7 +28,16 @@ pub struct BackendConfig {
     pub kv_write_batch_size: usize,
     /// Go `ShouldCheckWriteStall`.
     pub should_check_write_stall: bool,
+    /// Go `PausePDSchedulerScope`: `"table"` pauses PD's schedulers on the
+    /// engine's key range while it is ingested.
+    pub pause_pd_scheduler_scope: String,
+    /// Go `RaftKV2SwitchModeDuration`: when non-zero, the engine's key range
+    /// is switched to import mode this often while it is ingested.
+    pub raft_kv2_switch_mode_duration: std::time::Duration,
 }
+
+/// Go `config.PausePDSchedulerScopeTable`.
+pub const PAUSE_PD_SCHEDULER_SCOPE_TABLE: &str = "table";
 /// Go `Backend`, owning local engines and their import client.
 pub struct Backend {
     /// Go backend configuration.
@@ -74,15 +83,75 @@ impl Backend {
     ) -> Result<()> {
         let engine = self.engine(id)?;
         engine.set_importing(true);
+        let result = self.ingest_engine(ctx, &engine, region_split_size, region_split_keys);
+        engine.set_importing(false);
+        result
+    }
+
+    /// Go `ingestEngine`: pauses PD's schedulers on the engine's key range
+    /// and, under Raft-KV2, keeps the range in import mode, while the engine
+    /// is written and ingested. Region split and scatter are not ported.
+    fn ingest_engine(
+        &self,
+        ctx: &Context,
+        engine: &Engine,
+        region_split_size: u64,
+        region_split_keys: usize,
+    ) -> Result<()> {
+        // Go `GetKeyRange`: the first key and the key after the last one.
+        let Some((start_key, last_key)) = engine.get_first_and_last_key(&[], &[])? else {
+            // Go: the engine contains no kv, skip import.
+            return Ok(());
+        };
+        let mut end_key = last_key;
+        end_key.push(0);
+        let encode = |key: &[u8]| {
+            if key.is_empty() {
+                Vec::new()
+            } else {
+                let mut out = Vec::new();
+                tidb_codec::encode_bytes(&mut out, &self.importer.encode_key(key));
+                out
+            }
+        };
+        let (sub_ctx, cancel) = Context::with_cancel(ctx);
+        let mut background = Vec::new();
+        if self.cfg.pause_pd_scheduler_scope == PAUSE_PD_SCHEDULER_SCOPE_TABLE {
+            let paused = crate::pdutil::pause_schedulers_by_key_range(
+                &sub_ctx,
+                Arc::clone(&self.importer),
+                encode(&start_key),
+                encode(&end_key),
+            );
+            match paused {
+                Ok(done) => background.extend(done),
+                Err(e) => {
+                    cancel.cancel();
+                    return Err(e);
+                }
+            }
+        }
+        if !self.cfg.raft_kv2_switch_mode_duration.is_zero() {
+            let range = tidb_proto::import_sstpb::Range { start: encode(&start_key), end: encode(&end_key) };
+            background.push(crate::tikv_mode::switch_mode_periodically(
+                &sub_ctx,
+                Arc::clone(&self.importer),
+                range,
+                self.cfg.raft_kv2_switch_mode_duration,
+            ));
+        }
         let result = crate::region_job::do_import(
             ctx,
-            &engine,
+            engine,
             self.importer.as_ref(),
             &self.cfg,
             region_split_size,
             region_split_keys,
         );
-        engine.set_importing(false);
+        cancel.cancel();
+        for done in background {
+            let _ = done.join();
+        }
         result
     }
     /// Go `DupeController.CollectRemoteDuplicateRows` for an index key range.

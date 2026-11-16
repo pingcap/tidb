@@ -119,3 +119,18 @@ fn test_get_backoff_weight() {
     plan.important_sys_vars.insert("tidb_backoff_weight".to_owned(), "100".to_owned());
     assert_eq!(get_backoff_weight(&plan), 100);
 }
+
+/// Go `TestGetLocalBackendCfg`: IMPORT INTO pauses PD's schedulers on the
+/// table's range, and switches TiKV mode in the backend only under
+/// Raft-KV2.
+#[test]
+fn test_get_local_backend_cfg() {
+    let mut c = controller(0, 0, "", 1);
+    let cfg = c.get_local_backend_cfg("/tmp".into());
+    assert_eq!(cfg.local_store_dir, std::path::Path::new("/tmp"));
+    assert_eq!(cfg.pause_pd_scheduler_scope, "table");
+    assert!(cfg.raft_kv2_switch_mode_duration.is_zero());
+    c.plan.is_raft_kv2 = true;
+    let cfg = c.get_local_backend_cfg("/tmp".into());
+    assert_eq!(cfg.raft_kv2_switch_mode_duration, std::time::Duration::from_secs(5 * 60));
+}
