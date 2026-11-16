@@ -1523,7 +1523,6 @@ var (
 		upgradeToVer231,
 		upgradeToVer232,
 		upgradeToVer233,
-		upgradeToVer234,
 	}
 )
 
