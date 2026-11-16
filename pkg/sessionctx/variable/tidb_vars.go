@@ -346,6 +346,12 @@ const (
 	// produce an equivalent same-order index join candidate.
 	TiDBOptEnableAlternativeLogicalPlans = "tidb_opt_enable_alternative_logical_plans"
 
+	// TiDBEnableLocalMatchAgainst enables row-wise no-score MATCH ... AGAINST
+	// evaluation in TiDB and permits the equivalent scalar expression to run in TiFlash.
+	TiDBEnableLocalMatchAgainst = "tidb_enable_local_match_against"
+	// TiDBEnableFTSLikeFallback enables the ILIKE alternative for MATCH predicates.
+	TiDBEnableFTSLikeFallback = "tidb_enable_fts_like_fallback"
+
 	// TiDBOptLimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
 	TiDBOptLimitPushDownThreshold = "tidb_opt_limit_push_down_threshold"
 
@@ -1364,6 +1370,7 @@ const (
 	DefOptEnableCorrelationAdjustment       = true
 	DefOptEnableNoDecorrelateInSelect       = false
 	DefOptEnableAlternativeLogicalPlans     = false
+	DefTiDBEnableLocalMatchAgainst          = false
 	DefOptEnableSemiJoinRewrite             = false
 	DefOptLimitPushDownThreshold            = 100
 	DefOptCorrelationThreshold              = 0.9

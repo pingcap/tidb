@@ -29,6 +29,7 @@ var testDataMap = make(testdata.BookKeeper)
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	flag.Parse()
+	testDataMap.LoadTestSuiteData("testdata", "order_aware_join_reorder_suite")
 	testDataMap.LoadTestSuiteData("testdata", "outer2inner")
 	testDataMap.LoadTestSuiteData("testdata", "derive_topn_from_window")
 	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
@@ -80,4 +81,8 @@ func GetCorrelateSuiteData() testdata.TestData {
 
 func GetCDCJoinReorderSuiteData() testdata.TestData {
 	return testDataMap["cdc_join_reorder_suite"]
+}
+
+func GetOrderAwareJoinReorderSuiteData() testdata.TestData {
+	return testDataMap["order_aware_join_reorder_suite"]
 }

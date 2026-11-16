@@ -108,6 +108,8 @@ func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
 		// For example, the join type is cross join or straight join, or exists the join algorithm hint, etc.
 		// We need to return the hint information to warn
 		joinOrderHintInfo = append(joinOrderHintInfo, join.HintInfo)
+	} else if isJoin && join.InternalPreferJoinOrder {
+		joinOrderHintInfo = append(joinOrderHintInfo, join.InternalHintInfo)
 	}
 	// If the variable `tidb_opt_advanced_join_hint` is false and the join node has the join method hint, we will not split the current join node to join reorder process.
 	if !isJoin || (join.PreferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
@@ -121,6 +123,7 @@ func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
 		if joinOrderHintInfo != nil {
 			// The leading hint can not work for some reasons. So clear it in the join node.
 			join.HintInfo = nil
+			join.InternalHintInfo = nil
 		}
 		return &joinGroupResult{
 			group:              []base.LogicalPlan{p},

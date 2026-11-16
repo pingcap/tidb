@@ -22,11 +22,14 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -2008,6 +2011,146 @@ func TestMetadata(t *testing.T) {
 	err = proto.Unmarshal(expr.Val, metadata)
 	require.NoError(t, err)
 	require.Equal(t, true, metadata.InUnion)
+}
+
+func TestLocalMatchAgainstBooleanQueryUsesVersionedPayload(t *testing.T) {
+	ctx := mock.NewContext()
+	client := new(mock.Client)
+	searchType := types.NewFieldType(mysql.TypeVarchar)
+	searchType.SetCollate(mysql.DefaultCollationName)
+	search := &Constant{Value: types.NewStringDatum("+tidb -mysql"), RetType: searchType}
+	matchColumn := genColumn(mysql.TypeVarchar, 1)
+	matchColumn.RetType.SetCollate(mysql.DefaultCollationName)
+	fn, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), search, matchColumn)
+	require.NoError(t, err)
+	sf := fn.(*ScalarFunction)
+	require.NoError(t, SetMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
+	query, err := fulltext.BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("+tidb -mysql", fulltext.AnalyzerConfig{
+		ParserType:             model.FullTextParserTypeStandardV1,
+		InnodbFtMinTokenSize:   3,
+		InnodbFtMaxTokenSize:   84,
+		InnodbFtEnableStopword: true,
+		StopwordCollation:      mysql.DefaultCollationName,
+	})
+	require.NoError(t, err)
+	require.NoError(t, SetLocalMatchAgainstTiFlashEvalInfo(sf, &LocalMatchAgainstTiFlashEvalInfo{BooleanQuery: query}))
+	// Planner-generated expressions retain a TiDB evaluator as a fallback,
+	// while still being eligible for TiFlash scalar pushdown.
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, localEvalInfoForTest()))
+	require.True(t, canFuncBePushed(ctx, sf, kv.TiFlash))
+	require.False(t, canFuncBePushed(ctx, sf, kv.TiKV), "the Boolean scalar signature is TiFlash-only")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher", `return("all")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher"))
+	}()
+
+	pbExpr := (PbConverter{client: client, ctx: ctx}).ExprToPB(sf)
+	require.NotNil(t, pbExpr)
+	require.Equal(t, tipb.ScalarFuncSig_LocalMatchAgainstBoolean, pbExpr.GetSig())
+	require.Len(t, pbExpr.GetChildren(), 2, "query metadata must not be encoded as a synthetic string child")
+	require.NotEmpty(t, pbExpr.GetVal(), "Local MATCH metadata must use the scalar-function metadata slot")
+	decodedQuery := &tipb.LocalMatchAgainstBooleanQuery{}
+	require.NoError(t, proto.Unmarshal(pbExpr.GetVal(), decodedQuery))
+	require.Equal(t, fulltext.LocalMatchAgainstProtocolVersion, decodedQuery.GetVersion())
+	require.Equal(t, query, decodedQuery)
+	decoded, err := PBToExpr(ctx, pbExpr, []*types.FieldType{nil, matchColumn.RetType})
+	require.NoError(t, err)
+	decodedSF := decoded.(*ScalarFunction)
+	modifier, ok := GetMatchAgainstModifier(decodedSF)
+	require.True(t, ok)
+	require.True(t, modifier.IsBooleanMode())
+	decodedInfo, ok := GetLocalMatchAgainstTiFlashEvalInfo(decodedSF)
+	require.True(t, ok)
+	require.Equal(t, query, decodedInfo.BooleanQuery)
+	localInfo, ok := GetLocalMatchAgainstEvalInfo(decodedSF)
+	require.True(t, ok, "decoded scalar must be executable by Go coprocessors, not just serializable")
+	require.Equal(t, 3, localInfo.AnalyzerConfig.InnodbFtMinTokenSize)
+	require.Equal(t, 84, localInfo.AnalyzerConfig.InnodbFtMaxTokenSize)
+	require.True(t, localInfo.AnalyzerConfig.InnodbFtEnableStopword)
+	require.Equal(t, mysql.DefaultCollationName, localInfo.AnalyzerConfig.StopwordCollation)
+	for _, tc := range []struct {
+		document string
+		want     float64
+	}{{"tidb storage", 1}, {"tidb mysql", 0}, {"postgresql", 0}} {
+		row := chunk.MutRowFromValues("", tc.document).ToRow()
+		value, isNull, err := decodedSF.EvalReal(ctx, row)
+		require.NoError(t, err)
+		require.False(t, isNull)
+		require.Equal(t, tc.want, value, tc.document)
+	}
+
+	unsupportedQuery := proto.Clone(query).(*tipb.LocalMatchAgainstBooleanQuery)
+	unsupportedQuery.Version++
+	unsupportedPayload, err := proto.Marshal(unsupportedQuery)
+	require.NoError(t, err)
+	unsupportedExpr := proto.Clone(pbExpr).(*tipb.Expr)
+	unsupportedExpr.Val = unsupportedPayload
+	_, err = PBToExpr(ctx, unsupportedExpr, []*types.FieldType{nil, matchColumn.RetType})
+	require.ErrorContains(t, err, "invalid Local MATCH protocol version")
+}
+
+func TestLocalMatchAgainstDecodedAnalyzerEvaluation(t *testing.T) {
+	ctx := mock.NewContext()
+	column := genColumn(mysql.TypeVarchar, 0)
+	column.RetType.SetCollate(mysql.DefaultCollationName)
+	for _, tc := range []struct {
+		name, search, document string
+		config                 fulltext.AnalyzerConfig
+		want                   float64
+	}{
+		{"standard_stopwords_on", "+the", "the", fulltext.AnalyzerConfig{ParserType: model.FullTextParserTypeStandardV1, InnodbFtMinTokenSize: 3, InnodbFtMaxTokenSize: 84, InnodbFtEnableStopword: true}, 0},
+		{"standard_stopwords_off", "+the", "the", fulltext.AnalyzerConfig{ParserType: model.FullTextParserTypeStandardV1, InnodbFtMinTokenSize: 3, InnodbFtMaxTokenSize: 84}, 1},
+		{"standard_min_zero", "+a", "a", fulltext.AnalyzerConfig{ParserType: model.FullTextParserTypeStandardV1, InnodbFtMinTokenSize: 0, InnodbFtMaxTokenSize: 16}, 1},
+		{"standard_max_two", "+tidb", "tidb", fulltext.AnalyzerConfig{ParserType: model.FullTextParserTypeStandardV1, InnodbFtMinTokenSize: 0, InnodbFtMaxTokenSize: 2}, 0},
+		{"ngram_two", "+数据库", "数据库", fulltext.AnalyzerConfig{ParserType: model.FullTextParserTypeNgramV1, NgramTokenSize: 2}, 1},
+		{"ngram_three", "+数据库", "数据库", fulltext.AnalyzerConfig{ParserType: model.FullTextParserTypeNgramV1, NgramTokenSize: 3}, 1},
+		{"ngram_three_short", "+数据", "数据库", fulltext.AnalyzerConfig{ParserType: model.FullTextParserTypeNgramV1, NgramTokenSize: 3}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.config.StopwordCollation = mysql.DefaultCollationName
+			query, err := fulltext.BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(tc.search, tc.config)
+			require.NoError(t, err)
+			payload, err := proto.Marshal(query)
+			require.NoError(t, err)
+			search := NewStrConst(tc.search)
+			converter := PbConverter{client: new(mock.Client), ctx: ctx}
+			decoded, err := PBToExpr(ctx, &tipb.Expr{
+				Tp: tipb.ExprType_ScalarFunc, Sig: tipb.ScalarFuncSig_LocalMatchAgainstBoolean,
+				FieldType: ToPBFieldType(types.NewFieldType(mysql.TypeDouble)), Val: payload,
+				Children: []*tipb.Expr{converter.ExprToPB(search), converter.ExprToPB(column)},
+			}, []*types.FieldType{column.RetType})
+			require.NoError(t, err)
+			value, isNull, err := decoded.EvalReal(ctx, chunk.MutRowFromValues(tc.document).ToRow())
+			require.NoError(t, err)
+			require.False(t, isNull)
+			require.Equal(t, tc.want, value)
+		})
+	}
+}
+
+func TestLocalMatchAgainstIsNotSerializedForStorage(t *testing.T) {
+	ctx := mock.NewContext()
+	client := new(mock.Client)
+	searchType := types.NewFieldType(mysql.TypeVarchar)
+	searchType.SetCollate(mysql.DefaultCollationName)
+	search := &Constant{Value: types.NewStringDatum("+tidb"), RetType: searchType}
+	matchColumn := genColumn(mysql.TypeVarchar, 1)
+	matchColumn.RetType.SetCollate(mysql.DefaultCollationName)
+	fn, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), search, matchColumn)
+	require.NoError(t, err)
+	sf := fn.(*ScalarFunction)
+	require.NoError(t, SetMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
+	require.NoError(t, SetLocalMatchAgainstEvalInfo(sf, localEvalInfoForTest()))
+
+	// Force expression conversion past the ordinary capability check to verify
+	// the local-evaluation marker itself prevents accidental pushdown.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher", `return("all")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher"))
+	}()
+
+	require.Nil(t, (PbConverter{client: client, ctx: ctx}).ExprToPB(sf))
 }
 
 func TestPushDownSwitcher(t *testing.T) {

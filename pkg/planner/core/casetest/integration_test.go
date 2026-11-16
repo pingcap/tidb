@@ -513,8 +513,8 @@ func TestIndexMergeJSONMemberOf2FlakyPart(t *testing.T) {
 	))
 	tk.MustQuery("explain select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));").Check(testkit.Rows(
 		"IndexMerge_7 1.00 root  type: union",
-		"├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array)) range:[1 2,1 2], keep order:false, stats:partial[d:unInitialized]",
-		"└─TableRowIDScan_6(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[d:unInitialized]",
+		"├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array)) range:[1 2,1 2], keep order:false",
+		"└─TableRowIDScan_6(Probe) 1.00 cop[tikv] table:t keep order:false",
 	))
 }
 
@@ -532,7 +532,7 @@ func TestIssue56915(t *testing.T) {
 	tk.MustExec(`analyze table t all columns;`)
 	tk.MustQuery("explain format = brief select * from t where a = 1 and 6 member of (j);").Check(testkit.Rows(
 		"IndexMerge 1.00 root  type: union",
-		"├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:mvi(cast(`j` as signed array), a, b) range:[6 1,6 1], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+		"├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:mvi(cast(`j` as signed array), a, b) range:[6 1,6 1], keep order:false",
+		"└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false",
 	))
 }

@@ -1202,7 +1202,7 @@ func isTiKVIndexByName(idxName pmodel.CIStr, indexInfo *model.IndexInfo, tblInfo
 	if idxName.L == "primary" && tblInfo.PKIsHandle {
 		return true
 	}
-	return indexInfo != nil && !indexInfo.IsTiFlashLocalIndex()
+	return indexInfo != nil && !indexInfo.IsNonKVIndex()
 }
 
 func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo, suppressWarning bool) bool {
@@ -1307,6 +1307,10 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
+			if index.FullTextInfo != nil {
+				// Local FULLTEXT indexes are schema metadata, not TiKV access paths.
+				continue
+			}
 			// Filter out invisible index, because they are not visible for optimizer
 			if !optimizerUseInvisibleIndexes && index.Invisible {
 				continue
@@ -2238,7 +2242,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 				// for an index in state WriteReorg, we can only analyze it under variable EnableDDLAnalyze is on.
 				indexStateAnalyzable := idx.State == model.StatePublic ||
 					(idx.State == model.StateWriteReorganization && b.ctx.GetSessionVars().EnableDDLAnalyzeExecOpt)
-				if idx.MVIndex || idx.VectorInfo != nil || !indexStateAnalyzable {
+				if idx.MVIndex || idx.IsNonKVIndex() || !indexStateAnalyzable {
 					continue
 				}
 				for _, idxCol := range idx.Columns {
@@ -2534,6 +2538,10 @@ func getModifiedIndexesInfoForAnalyze(
 		}
 		if originIdx.VectorInfo != nil {
 			sCtx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", originIdx.Name.L))
+			continue
+		}
+		if originIdx.FullTextInfo != nil {
+			sCtx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing fulltext index is not supported, skip %s", originIdx.Name.L))
 			continue
 		}
 		if allColumns {
@@ -3068,6 +3076,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", idx.Name.L))
 				continue
 			}
+			if idx.FullTextInfo != nil {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing fulltext index is not supported, skip %s", idx.Name.L))
+				continue
+			}
 			p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tnW.TableInfo, partitionNames, physicalIDs, version)...)
 		}
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tnW.TableInfo, true, nil)
@@ -3149,6 +3161,10 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", idx.Name.L))
 			continue
 		}
+		if idx.FullTextInfo != nil {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing fulltext index is not supported, skip %s", idx.Name.L))
+			continue
+		}
 		p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tblInfo, names, physicalIDs, version)...)
 	}
 	return p, nil
@@ -3182,6 +3198,10 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 			}
 			if idx.VectorInfo != nil {
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", idx.Name.L))
+				continue
+			}
+			if idx.FullTextInfo != nil {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing fulltext index is not supported, skip %s", idx.Name.L))
 				continue
 			}
 

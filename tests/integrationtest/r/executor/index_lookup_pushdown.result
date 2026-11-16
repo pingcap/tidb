@@ -589,7 +589,7 @@ Sort	10000.00	root		executor__index_lookup_pushdown.t8.a, executor__index_lookup
         ├─HashAgg(Build)	10000.00	cop[tikv]		funcs:sum(executor__index_lookup_pushdown.t9.b)->Column#10
         │ └─LocalIndexLookUp	80000000.00	cop[tikv]		index handle offsets:[1]
         │   ├─Selection(Build)	80000000.00	cop[tikv]		gt(executor__index_lookup_pushdown.t9.a, executor__index_lookup_pushdown.t8.b)
-        │   │ └─IndexFullScan	100000000.00	cop[tikv]	table:t9, index:idx_a(a)	keep order:false, stats:pseudo
+        │   │ └─IndexRangeScan	100000000.00	cop[tikv]	table:t9, index:idx_a(a)	range: decided by [gt(executor__index_lookup_pushdown.t9.a, executor__index_lookup_pushdown.t8.b)], keep order:false, stats:pseudo
         │   └─TableRowIDScan(Probe)	80000000.00	cop[tikv]	table:t9	keep order:false, stats:pseudo
         └─HashAgg(Probe)	0.00	cop[tikv]		funcs:sum(executor__index_lookup_pushdown.t9.b)->Column#10
           └─TableRowIDScan	0.00	cop[tikv]	table:t9	keep order:false, stats:pseudo

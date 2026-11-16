@@ -199,7 +199,18 @@ func TestLongBinaryPlan(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
+	origin := tk.MustQuery("SELECT @@global.tidb_enable_stmt_summary")
+	originStr := origin.Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec("set @@global.tidb_enable_stmt_summary = '" + originStr + "'")
+	}()
+	// Clear summaries from earlier tests so this assertion is independent of
+	// the package test order and the global statement-summary capacity.
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+	tk.MustExec("set tidb_slow_log_threshold = 0")
 
 	tk.MustExec("use test")
 

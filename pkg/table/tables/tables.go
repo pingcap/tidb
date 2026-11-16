@@ -324,7 +324,7 @@ func GetWritableIndexByName(idxName string, t table.Table) table.Index {
 		if !IsIndexWritable(idx) {
 			continue
 		}
-		if idx.Meta().IsTiFlashLocalIndex() {
+		if idx.Meta().IsNonKVIndex() {
 			continue
 		}
 		if idxName == idx.Meta().Name.L {
@@ -572,7 +572,7 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
 			continue
 		}
-		if idx.Meta().IsTiFlashLocalIndex() {
+		if idx.Meta().IsNonKVIndex() {
 			continue
 		}
 
@@ -616,7 +616,7 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 		if !IsIndexWritable(idx) {
 			continue
 		}
-		if idx.Meta().IsTiFlashLocalIndex() {
+		if idx.Meta().IsNonKVIndex() {
 			continue
 		}
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
@@ -1001,7 +1001,7 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 		if !IsIndexWritable(v) {
 			continue
 		}
-		if v.Meta().IsTiFlashLocalIndex() {
+		if v.Meta().IsNonKVIndex() {
 			continue
 		}
 		if t.meta.IsCommonHandle && v.Meta().Primary {
@@ -1272,7 +1272,7 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
 			continue
 		}
-		if v.Meta().IsTiFlashLocalIndex() {
+		if v.Meta().IsNonKVIndex() {
 			continue
 		}
 		intest.AssertFunc(func() bool {

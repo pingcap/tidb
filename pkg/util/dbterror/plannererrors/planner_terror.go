@@ -24,6 +24,7 @@ var (
 	ErrUnsupportedType                       = dbterror.ClassOptimizer.NewStd(mysql.ErrUnsupportedType)
 	ErrAnalyzeMissIndex                      = dbterror.ClassOptimizer.NewStd(mysql.ErrAnalyzeMissIndex)
 	ErrAnalyzeMissColumn                     = dbterror.ClassOptimizer.NewStd(mysql.ErrAnalyzeMissColumn)
+	ErrFtMatchingKeyNotFound                 = dbterror.ClassOptimizer.NewStd(mysql.ErrFtMatchingKeyNotFound)
 	ErrWrongParamCount                       = dbterror.ClassOptimizer.NewStd(mysql.ErrWrongParamCount)
 	ErrSchemaChanged                         = dbterror.ClassOptimizer.NewStd(mysql.ErrSchemaChanged)
 	ErrTablenameNotAllowedHere               = dbterror.ClassOptimizer.NewStd(mysql.ErrTablenameNotAllowedHere)

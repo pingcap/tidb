@@ -1411,6 +1411,10 @@ func (a *ModifyIndexArgs) getArgsV1(job *Job) []any {
 		arg := a.IndexArgs[0]
 		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption, arg.FuncExpr}
 	}
+	if job.Type == ActionAddFullTextIndex {
+		arg := a.IndexArgs[0]
+		return []any{arg.IndexName, arg.IndexPartSpecifications, arg.IndexOption}
+	}
 
 	// Add primary key
 	if job.Type == ActionAddPrimaryKey {
@@ -1459,6 +1463,8 @@ func (a *ModifyIndexArgs) decodeV1(job *Job) error {
 		err = a.decodeAddIndexV1(job)
 	case ActionAddVectorIndex:
 		err = a.decodeAddVectorIndexV1(job)
+	case ActionAddFullTextIndex:
+		err = a.decodeAddFullTextIndexV1(job)
 	case ActionAddPrimaryKey:
 		err = a.decodeAddPrimaryKeyV1(job)
 	default:
@@ -1560,6 +1566,21 @@ func (a *ModifyIndexArgs) decodeAddVectorIndexV1(job *Job) error {
 		IndexOption:             indexOption,
 		FuncExpr:                funcExpr,
 		IsVector:                true,
+	}}
+	return nil
+}
+
+func (a *ModifyIndexArgs) decodeAddFullTextIndexV1(job *Job) error {
+	var indexName pmodel.CIStr
+	var indexPartSpecifications []*ast.IndexPartSpecification
+	var indexOption *ast.IndexOption
+	if err := job.decodeArgs(&indexName, &indexPartSpecifications, &indexOption); err != nil {
+		return errors.Trace(err)
+	}
+	a.IndexArgs = []*IndexArg{{
+		IndexName:               indexName,
+		IndexPartSpecifications: indexPartSpecifications,
+		IndexOption:             indexOption,
 	}}
 	return nil
 }

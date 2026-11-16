@@ -79,5 +79,9 @@ func TestIsIndexPrefixCoveredForForeignKey(t *testing.T) {
 	badCondition.ConditionExprString = "`c_0` is"
 	require.False(t, metamodel.IsIndexPrefixCoveredForForeignKey(tbl, badCondition, pmodel.NewCIStr("c_0")))
 
-	require.Same(t, safePartial, metamodel.FindIndexByColumnsForForeignKey(tbl, []*metamodel.IndexInfo{unsafePartialOnNonFKCol, safePartial}, pmodel.NewCIStr("c_0"), pmodel.NewCIStr("c_1")))
+	fullTextIndex := newIndexForForeignKeyTest(8, c0, c1)
+	fullTextIndex.FullTextInfo = &metamodel.FullTextIndexInfo{ParserType: metamodel.FullTextParserTypeStandardV1}
+	require.False(t, metamodel.IsIndexPrefixCoveredForForeignKey(tbl, fullTextIndex, pmodel.NewCIStr("c_0"), pmodel.NewCIStr("c_1")))
+
+	require.Same(t, safePartial, metamodel.FindIndexByColumnsForForeignKey(tbl, []*metamodel.IndexInfo{fullTextIndex, unsafePartialOnNonFKCol, safePartial}, pmodel.NewCIStr("c_0"), pmodel.NewCIStr("c_1")))
 }

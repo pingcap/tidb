@@ -1407,14 +1407,9 @@ func BuildTableInfo(
 			}
 		}
 
-		if constr.Tp == ast.ConstraintFulltext {
-			ctx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
-			continue
-		}
-
 		var (
-			indexName               = constr.Name
-			primary, unique, vector bool
+			indexName                         = constr.Name
+			primary, unique, vector, fullText bool
 		)
 
 		// Check if the index is primary, unique or vector.
@@ -1430,6 +1425,8 @@ func BuildTableInfo(
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
 			}
 			vector = true
+		case ast.ConstraintFulltext:
+			fullText = true
 		}
 
 		// check constraint
@@ -1496,17 +1493,28 @@ func BuildTableInfo(
 		}
 
 		// build index info.
-		idxInfo, err := BuildIndexInfo(
-			ctx,
-			tbInfo,
-			pmodel.NewCIStr(indexName),
-			primary,
-			unique,
-			vector,
-			constr.Keys,
-			constr.Option,
-			model.StatePublic,
-		)
+		var idxInfo *model.IndexInfo
+		if fullText {
+			idxInfo, err = buildFullTextIndexInfo(
+				tbInfo,
+				pmodel.NewCIStr(indexName),
+				constr.Keys,
+				constr.Option,
+				model.StatePublic,
+			)
+		} else {
+			idxInfo, err = BuildIndexInfo(
+				ctx,
+				tbInfo,
+				pmodel.NewCIStr(indexName),
+				primary,
+				unique,
+				vector,
+				constr.Keys,
+				constr.Option,
+				model.StatePublic,
+			)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

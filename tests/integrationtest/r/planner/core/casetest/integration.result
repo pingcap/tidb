@@ -169,8 +169,8 @@ drop table if exists t;
 create table t(a int, b int);
 desc format = 'brief' select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1);
 id	estRows	task	access object	operator info
-Projection	9990.00	root		planner__core__casetest__integration.t.b
-└─Apply	9990.00	root		semi join, equal:[eq(planner__core__casetest__integration.t.b, planner__core__casetest__integration.t.a)]
+Projection	7992.00	root		planner__core__casetest__integration.t.b
+└─Apply	7992.00	root		semi join, equal:[eq(planner__core__casetest__integration.t.b, planner__core__casetest__integration.t.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__integration.t.b))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -546,7 +546,7 @@ HashAgg	1.00	root		funcs:count(1)->Column#7
 explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1,2);
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:count(1)->Column#7
-└─Apply	10000.00	root		CARTESIAN semi join
+└─Apply	8000.00	root		CARTESIAN semi join
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─Limit(Probe)	20000.00	root		offset:1, count:2
@@ -556,7 +556,7 @@ HashAgg	1.00	root		funcs:count(1)->Column#7
           └─TableFullScan	30000000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where 9 in (select c from t s where s.c < t.c limit 3);
 id	estRows	task	access object	operator info
-Apply	10000.00	root		CARTESIAN semi join
+Apply	8000.00	root		CARTESIAN semi join
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 └─Selection(Probe)	24000.00	root		eq(9, planner__core__casetest__integration.t.c)
@@ -1098,6 +1098,7 @@ Sort_5	3333.33	2146348.14	root		planner__core__casetest__integration.t.f
 └─TableReader_9	3333.33	160128.74	root		data:TableRangeScan_8
   └─TableRangeScan_8	3333.33	923531.15	cop[tikv]	table:t	range:(1,+inf], keep order:false, stats:pseudo
 Level	Code	Message
+Note	1105	[t,f,f_g] remain after pruning paths for t given Prop{SortItems: [{planner__core__casetest__integration.t.f asc}], TaskTp: rootTask}
 Note	1105	[t] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where f > 1;
 id	estRows	estCost	task	access object	operator info

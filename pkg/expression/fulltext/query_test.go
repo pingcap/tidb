@@ -1,0 +1,499 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package fulltext
+
+import (
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/stretchr/testify/require"
+)
+
+func TestGetAnalyzerWithExplicitConfig(t *testing.T) {
+	standard, err := GetAnalyzer(AnalyzerConfig{
+		ParserType:             model.FullTextParserTypeStandardV1,
+		InnodbFtMinTokenSize:   1,
+		InnodbFtMaxTokenSize:   84,
+		InnodbFtEnableStopword: true,
+		Stopwords:              []string{"the"},
+		NgramTokenSize:         2,
+	})
+	require.NoError(t, err)
+	tokens, err := standard.Analyze("The A ABC")
+	require.NoError(t, err)
+	require.Equal(t, []Token{
+		{Text: "a", Position: 1},
+		{Text: "abc", Position: 2},
+	}, tokens)
+
+	ngram, err := GetAnalyzer(AnalyzerConfig{
+		ParserType:           model.FullTextParserTypeNgramV1,
+		InnodbFtMinTokenSize: 1,
+		InnodbFtMaxTokenSize: 84,
+		NgramTokenSize:       3,
+	})
+	require.NoError(t, err)
+	tokens, err = ngram.Analyze("abcd")
+	require.NoError(t, err)
+	require.Equal(t, []Token{
+		{Text: "abc", Position: 0},
+		{Text: "bcd", Position: 1},
+	}, tokens)
+
+	_, err = GetAnalyzer(AnalyzerConfig{ParserType: model.FullTextParserTypeMultilingualV1})
+	require.ErrorContains(t, err, "unsupported fulltext parser type")
+}
+
+func TestBuildDocument(t *testing.T) {
+	analyzer, err := GetAnalyzer(standardConfigForTest())
+	require.NoError(t, err)
+	doc, err := BuildDocument([]ColumnInput{
+		{Text: "foo bar"},
+		{IsNull: true},
+		{Text: "foo-baz"},
+	}, analyzer)
+	require.NoError(t, err)
+
+	require.Len(t, doc.Columns, 3)
+	require.Equal(t, []Token{{Text: "foo", Position: 0}, {Text: "bar", Position: 1}}, doc.Columns[0].Tokens)
+	require.Empty(t, doc.Columns[1].Tokens)
+	require.Equal(t, []int{0}, doc.Columns[2].Positions["foo"])
+	require.Equal(t, []int{0}, doc.Columns[0].Positions["foo"])
+	require.True(t, doc.hasToken("baz", nil))
+}
+
+func TestCompileBooleanQueryStandard(t *testing.T) {
+	cases := []struct {
+		name   string
+		query  string
+		cols   []ColumnInput
+		expect bool
+	}{
+		{
+			name:   "optional terms are OR filters",
+			query:  "tidb mysql",
+			cols:   []ColumnInput{{Text: "TiDB distributed SQL"}},
+			expect: true,
+		},
+		{
+			name:   "required and prohibited terms",
+			query:  "+tidb -mysql",
+			cols:   []ColumnInput{{Text: "TiDB storage"}},
+			expect: true,
+		},
+		{
+			name:   "prohibited term rejects document",
+			query:  "+tidb -mysql",
+			cols:   []ColumnInput{{Text: "TiDB MySQL"}},
+			expect: false,
+		},
+		{
+			name:   "only prohibited terms match nothing",
+			query:  "-mysql",
+			cols:   []ColumnInput{{Text: "TiDB storage"}},
+			expect: false,
+		},
+		{
+			name:   "optional term filtered by analyzer is ignored",
+			query:  "a",
+			cols:   []ColumnInput{{Text: "a"}},
+			expect: false,
+		},
+		{
+			name:   "required term filtered by analyzer is unsatisfiable",
+			query:  "+a",
+			cols:   []ColumnInput{{Text: "a"}},
+			expect: false,
+		},
+		{
+			// `-` is the prohibited operator, so this is "hello, not world"
+			// rather than one term the analyzer splits. For the latter see
+			// TestCompileBooleanQueryMultiTokenTerm, which uses `foo.bar`.
+			name:   "prohibited term excludes a document that contains it",
+			query:  "hello-world",
+			cols:   []ColumnInput{{Text: "hello world"}},
+			expect: false,
+		},
+		{
+			name:   "prohibited term admits a document without it",
+			query:  "hello-world",
+			cols:   []ColumnInput{{Text: "hello"}},
+			expect: true,
+		},
+		{
+			name:   "phrase matches within one column",
+			query:  `"hello world"`,
+			cols:   []ColumnInput{{Text: "hello world"}},
+			expect: true,
+		},
+		{
+			name:   "phrase does not cross column boundary",
+			query:  `"hello world"`,
+			cols:   []ColumnInput{{Text: "hello"}, {Text: "world"}},
+			expect: false,
+		},
+		{
+			name:   "phrase respects analyzer position gaps",
+			query:  `"foo a bar"`,
+			cols:   []ColumnInput{{Text: "foo bar"}},
+			expect: false,
+		},
+		{
+			name:   "filtered phrase word must match the original word",
+			query:  `"foo a bar"`,
+			cols:   []ColumnInput{{Text: "foo xx bar"}},
+			expect: false,
+		},
+		{
+			name:   "filtered phrase word matches the same original word",
+			query:  `"foo a bar"`,
+			cols:   []ColumnInput{{Text: "foo a bar"}},
+			expect: true,
+		},
+		{
+			name:   "leading filtered phrase word is omitted by InnoDB",
+			query:  `"a foo bar"`,
+			cols:   []ColumnInput{{Text: "foo bar"}},
+			expect: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.expect, matchQueryForTest(t, standardConfigForTest(), tc.query, tc.cols))
+		})
+	}
+}
+
+func TestBooleanFilteredRequiredMySQLInnoDB(t *testing.T) {
+	config := standardConfigForTest()
+	config.InnodbFtMinTokenSize = 4
+	config.InnodbFtEnableStopword = true
+	for _, search := range []string{"+tidb +the", "+tidb +x", "+the tidb"} {
+		require.False(t, matchQueryForTest(t, config, search, []ColumnInput{{Text: "tidb the theory"}}), search)
+	}
+	require.True(t, matchQueryForTest(t, config, "+tidb +the*", []ColumnInput{{Text: "tidb theory"}}))
+	require.False(t, matchQueryForTest(t, config, "+tidb +the*", []ColumnInput{{Text: "tidb storage"}}))
+}
+
+func TestNgramPhraseVerification(t *testing.T) {
+	config := standardConfigForTest()
+	config.ParserType = model.FullTextParserTypeNgramV1
+	config.NgramTokenSize = 2
+	for _, stopwords := range []bool{false, true} {
+		config.InnodbFtEnableStopword = stopwords
+		for _, document := range []string{"foobar", "foo，bar", "foo🙃bar", "foo𞤀bar"} {
+			require.False(t, matchQueryForTest(t, config, `+"foo bar"`, []ColumnInput{{Text: document}}), document)
+		}
+		require.True(t, matchQueryForTest(t, config, `+"foo bar"`, []ColumnInput{{Text: "foo,bar"}}))
+		require.False(t, matchQueryForTest(t, config, `"quick x fox"`, []ColumnInput{{Text: "quick x fox"}}))
+	}
+	config.NgramTokenSize = 3
+	config.InnodbFtEnableStopword = true
+	for _, search := range []string{`"quick the fox"`, `"quick a fox"`} {
+		require.True(t, matchQueryForTest(t, config, search, []ColumnInput{{Text: "fox quick"}}), search)
+	}
+	require.False(t, matchQueryForTest(t, config, `"quick x fox"`, []ColumnInput{{Text: "quick x fox"}}))
+	require.False(t, matchQueryForTest(t, config, `"foo a zoo"`, []ColumnInput{{Text: "foo a zoo"}}))
+	for _, document := range []string{"foo zoo", "foo a zoo", "foo x zoo", "foo xx zoo"} {
+		require.True(t, matchQueryForTest(t, config, `"foo zoo"`, []ColumnInput{{Text: document}}), document)
+	}
+}
+
+func TestCompileBooleanQueryStandardPrefix(t *testing.T) {
+	config := standardConfigForTest()
+	require.True(t, matchQueryForTest(t, config, "ti*", []ColumnInput{{Text: "TiDB storage"}}))
+	require.False(t, matchQueryForTest(t, config, "tidb-mysql*", []ColumnInput{{Text: "tidb mysql"}}))
+	require.False(t, matchQueryForTest(t, config, "+tidb-mysql*", []ColumnInput{{Text: "tidb mysql"}}))
+
+	// A wildcard applies only to the last word of a split term. Without '+',
+	// the words are alternatives; with '+', all words are required.
+	require.True(t, matchQueryForTest(t, config, "foo.bar*", []ColumnInput{{Text: "foo only"}}))
+	require.True(t, matchQueryForTest(t, config, "foo.bar*", []ColumnInput{{Text: "barista only"}}))
+	require.False(t, matchQueryForTest(t, config, "foo.bar*", []ColumnInput{{Text: "food only"}}))
+	require.True(t, matchQueryForTest(t, config, "+foo.bar*", []ColumnInput{{Text: "foo barista"}}))
+	require.False(t, matchQueryForTest(t, config, "+foo.bar*", []ColumnInput{{Text: "foo only"}}))
+	require.False(t, matchQueryForTest(t, config, "+foo.bar*", []ColumnInput{{Text: "barista only"}}))
+
+	// The wildcard preserves a final word that would otherwise be too short.
+	require.True(t, matchQueryForTest(t, config, "+foo.a*", []ColumnInput{{Text: "foo alpha"}}))
+
+	// A prohibited split term excludes when either its exact word or final
+	// prefix matches.
+	require.False(t, matchQueryForTest(t, config, "baz -foo.bar*", []ColumnInput{{Text: "baz foo"}}))
+	require.False(t, matchQueryForTest(t, config, "baz -foo.bar*", []ColumnInput{{Text: "baz barista"}}))
+	require.True(t, matchQueryForTest(t, config, "baz -foo.bar*", []ColumnInput{{Text: "baz qux"}}))
+}
+
+func TestCompileBooleanQueryUsesColumnCollation(t *testing.T) {
+	previous := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(previous)
+
+	config := standardConfigForTest()
+	config.Collation = "utf8mb4_bin"
+	require.False(t, matchQueryForTest(t, config, "+quick", []ColumnInput{{Text: "QUICK runner"}}))
+	require.True(t, matchQueryForTest(t, config, "+quick", []ColumnInput{{Text: "quick runner"}}))
+	require.False(t, matchQueryForTest(t, config, "+cafe", []ColumnInput{{Text: "café"}}))
+
+	config.Collation = "utf8mb4_general_ci"
+	require.True(t, matchQueryForTest(t, config, "+quick", []ColumnInput{{Text: "QUICK runner"}}))
+	require.True(t, matchQueryForTest(t, config, "+cafe", []ColumnInput{{Text: "café"}}))
+	require.True(t, matchQueryForTest(t, config, `"QUICK runner"`, []ColumnInput{{Text: "quick runner"}}))
+	require.True(t, matchQueryForTest(t, config, "qui*", []ColumnInput{{Text: "QUICK runner"}}))
+
+	config.Collation = "utf8mb4_0900_ai_ci"
+	require.True(t, matchQueryForTest(t, config, "+cafe", []ColumnInput{{Text: "CAFÉ"}}))
+}
+
+func TestCompileBooleanQueryRepeatedTokenPhraseMiss(t *testing.T) {
+	const repetitions = 2048
+	document := strings.TrimSpace(strings.Repeat("foo ", repetitions*2))
+	phrase := `"` + strings.Repeat("foo ", repetitions) + `never"`
+	require.False(t, matchQueryForTest(t, standardConfigForTest(), phrase, []ColumnInput{{Text: document}}))
+}
+
+type preparationCountingCollator struct {
+	collate.Collator
+	compares int
+	compiles int
+}
+
+func (c *preparationCountingCollator) Compare(a, b string) int {
+	c.compares++
+	return c.Collator.Compare(a, b)
+}
+
+func (c *preparationCountingCollator) Pattern() collate.WildcardPattern {
+	return &preparationCountingPattern{WildcardPattern: c.Collator.Pattern(), owner: c}
+}
+
+type preparationCountingPattern struct {
+	collate.WildcardPattern
+	owner *preparationCountingCollator
+}
+
+func (p *preparationCountingPattern) Compile(pattern string, escape byte) {
+	p.owner.compiles++
+	p.WildcardPattern.Compile(pattern, escape)
+}
+
+func TestLocalMatchPreparesPatternsAndPhraseFailureOnce(t *testing.T) {
+	previous := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(previous)
+	for _, name := range []string{"utf8mb4_bin", "utf8mb4_0900_bin", "utf8mb4_general_ci", "utf8mb4_unicode_ci", "utf8mb4_0900_ai_ci"} {
+		c := &preparationCountingCollator{Collator: collate.GetCollator(name)}
+		prefix := newPrefixNode("a_%\\", c)
+		require.Equal(t, 1, c.compiles)
+		doc := &Document{TokenSet: map[string]struct{}{"a_%\\tail": {}, "another": {}}}
+		for range 10 {
+			require.True(t, prefix.match(doc, c))
+		}
+		require.Equal(t, 1, c.compiles, "prefix Compile must not run per token/row")
+		phrase := buildPhraseNode([]Token{{Text: "cafe", Position: 0}, {Text: "CAFÉ", Position: 1}, {Text: "cafe", Position: 2}, {Text: "never", Position: 3}}, c).(phraseNode)
+		require.Equal(t, buildPhraseFailureWithCollator(phrase.tokens, c), phrase.failure, name)
+		column := ColumnDocument{Tokens: []Token{{Text: "zzz", Position: 0}, {Text: "zzz", Position: 1}, {Text: "zzz", Position: 2}, {Text: "zzz", Position: 3}}}
+		c.compares = 0
+		for range 10 {
+			require.False(t, phrase.matchDense(column, c))
+		}
+		require.Equal(t, 10*len(column.Tokens), c.compares, "only document comparisons; no repeated failure-table preparation")
+	}
+}
+
+func TestLocalMatchCompiledQueryConcurrentRead(t *testing.T) {
+	previous := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(previous)
+	for _, name := range []string{"utf8mb4_bin", "utf8mb4_0900_bin", "utf8mb4_general_ci", "utf8mb4_unicode_ci", "utf8mb4_0900_ai_ci"} {
+		config := standardConfigForTest()
+		config.Collation, config.StopwordCollation = name, name
+		config.InnodbFtEnableStopword = true
+		analyzer, err := GetAnalyzer(config)
+		require.NoError(t, err)
+		for _, search := range []string{`+pre* -absent`, `+"cafe CAFÉ cafe never"`, `+"quick the fox"`, `+a_*`} {
+			query, err := CompileBooleanQuery(search, config)
+			require.NoError(t, err)
+			inputs := []string{"prefix cafe CAFÉ cafe never quick the fox a_tail", "unrelated cafe cafe cafe absent", "", "quick fox"}
+			want := make([]bool, len(inputs))
+			for i, input := range inputs {
+				doc, err := BuildDocument([]ColumnInput{{Text: input}, {IsNull: true}}, analyzer)
+				require.NoError(t, err)
+				want[i] = query.Match(doc)
+			}
+			var workers sync.WaitGroup
+			for range 8 {
+				workers.Go(func() {
+					for range 20 {
+						for i, input := range inputs {
+							doc, err := BuildDocument([]ColumnInput{{Text: input}, {IsNull: true}}, analyzer)
+							if err != nil || query.Match(doc) != want[i] {
+								t.Errorf("shared query/analyzer changed result: %s %s %q: %v", name, search, input, err)
+								return
+							}
+						}
+					}
+				})
+			}
+			workers.Wait()
+		}
+	}
+}
+
+func TestCompileBooleanQueryNgram(t *testing.T) {
+	config := ngramConfigForTest()
+	require.True(t, matchQueryForTest(t, config, "abc", []ColumnInput{{Text: "abc"}}))
+	require.False(t, matchQueryForTest(t, config, "abc", []ColumnInput{{Text: "acb"}}))
+	require.True(t, matchQueryForTest(t, config, `"abc"`, []ColumnInput{{Text: "abc"}}))
+	require.True(t, matchQueryForTest(t, config, "a*", []ColumnInput{{Text: "abc"}}))
+	require.True(t, matchQueryForTest(t, config, "ab*", []ColumnInput{{Text: "abc"}}))
+	require.True(t, matchQueryForTest(t, config, "abc*", []ColumnInput{{Text: "abc"}}))
+	require.False(t, matchQueryForTest(t, config, "abc*", []ColumnInput{{Text: "abx"}}))
+}
+
+func TestCompileBooleanQueryNgramStopwords(t *testing.T) {
+	config := ngramConfigForTest()
+	config.InnodbFtEnableStopword = true
+
+	// Stopwords longer than ngram_token_size are ignored by the NGRAM parser.
+	require.True(t, matchQueryForTest(t, config, "+the", []ColumnInput{{Text: "the"}}))
+	// At size 2, both grams of "caf" contain the built-in stopword "a".
+	require.False(t, matchQueryForTest(t, config, "+caf*", []ColumnInput{{Text: "cafe"}}))
+
+	// At size 3, the query gram "the" is filtered. A required term that
+	// disappears during analysis cannot match any document.
+	config.NgramTokenSize = 3
+	query, err := CompileBooleanQuery("+the", config)
+	require.NoError(t, err)
+	require.True(t, query.MatchesNothing())
+	require.False(t, matchQueryForTest(t, config, "+the", []ColumnInput{{Text: "the"}}))
+
+	// The same query and document become matchable when stopword filtering is
+	// explicitly disabled.
+	config.InnodbFtEnableStopword = false
+	query, err = CompileBooleanQuery("+the", config)
+	require.NoError(t, err)
+	require.False(t, query.MatchesNothing())
+	require.True(t, matchQueryForTest(t, config, "+the", []ColumnInput{{Text: "the"}}))
+}
+
+func TestCompileBooleanQueryNgramUnicodeNumber(t *testing.T) {
+	config := ngramConfigForTest()
+	config.NgramTokenSize = 1
+	require.True(t, matchQueryForTest(t, config, "²", []ColumnInput{{Text: "²"}}))
+}
+
+func TestCompiledQueryMatchesNothing(t *testing.T) {
+	for _, tc := range []struct {
+		search string
+		want   bool
+	}{
+		{"+tidb", false},
+		{"+go", true},
+		{`"tidb database"`, false},
+		{`"tidb a database"`, false},
+		{"", true},
+		{"-tidb", true},
+	} {
+		t.Run(tc.search, func(t *testing.T) {
+			query, err := CompileBooleanQuery(tc.search, standardConfigForTest())
+			require.NoError(t, err)
+			require.Equal(t, tc.want, query.MatchesNothing())
+		})
+	}
+	var nilQuery *Query
+	require.True(t, nilQuery.MatchesNothing())
+}
+
+func matchQueryForTest(t *testing.T, config AnalyzerConfig, query string, columns []ColumnInput) bool {
+	compiled, err := CompileBooleanQuery(query, config)
+	require.NoError(t, err)
+	analyzer, err := GetAnalyzer(config)
+	require.NoError(t, err)
+	doc, err := BuildDocument(columns, analyzer)
+	require.NoError(t, err)
+	return compiled.Match(doc)
+}
+
+func standardConfigForTest() AnalyzerConfig {
+	return AnalyzerConfig{
+		ParserType:           model.FullTextParserTypeStandardV1,
+		InnodbFtMinTokenSize: 3,
+		InnodbFtMaxTokenSize: 84,
+		NgramTokenSize:       2,
+	}
+}
+
+func ngramConfigForTest() AnalyzerConfig {
+	return AnalyzerConfig{
+		ParserType:           model.FullTextParserTypeNgramV1,
+		InnodbFtMinTokenSize: 3,
+		InnodbFtMaxTokenSize: 84,
+		NgramTokenSize:       2,
+	}
+}
+
+// TestCompileBooleanQueryMultiTokenTerm covers a boolean term the analyzer
+// splits into several words, such as `foo.bar`. MySQL combines those words
+// according to the term modifier: '+' intersects them, while an unmodified or
+// prohibited term uses their union.
+func TestCompileBooleanQueryMultiTokenTerm(t *testing.T) {
+	config := AnalyzerConfig{
+		ParserType:           model.FullTextParserTypeStandardV1,
+		InnodbFtMinTokenSize: 1,
+		InnodbFtMaxTokenSize: 84,
+	}
+	analyzer, err := GetAnalyzer(config)
+	require.NoError(t, err)
+	matches := func(search, text string) bool {
+		query, err := CompileBooleanQuery(search, config)
+		require.NoError(t, err)
+		require.False(t, query.MatchesNothing(), "%q must not collapse to match-nothing", search)
+		doc, err := BuildDocument([]ColumnInput{{Text: text}}, analyzer)
+		require.NoError(t, err)
+		return query.Match(doc)
+	}
+
+	require.True(t, matches("+foo.bar", "foo bar baz"))
+	require.False(t, matches("+foo.bar", "foo only"), "every analyzed word is required")
+	require.False(t, matches("+foo.bar", "bar only"))
+
+	// A split term combines with other clauses as one required unit.
+	require.True(t, matches("+foo.bar +baz", "foo bar baz"))
+	require.False(t, matches("+foo.bar +baz", "foo bar"))
+
+	// An unmodified split term is a union of its analyzed words.
+	require.True(t, matches("foo.bar qux", "qux alone"))
+	require.True(t, matches("foo.bar qux", "foo bar"))
+	require.True(t, matches("foo.bar", "foo only"))
+	require.True(t, matches("foo.bar", "bar only"))
+
+	// The '-' modifier applies to that union, so either analyzed word excludes
+	// the document.
+	require.False(t, matches("baz -foo.bar", "baz foo"))
+	require.False(t, matches("baz -foo.bar", "baz bar"))
+	require.True(t, matches("baz -foo.bar", "baz qux"))
+
+	// A required term removed by the analyzer cannot match, as in InnoDB.
+	stopConfig := config
+	stopConfig.InnodbFtMinTokenSize = 5
+	query, err := CompileBooleanQuery("+abc", stopConfig)
+	require.NoError(t, err)
+	require.True(t, query.MatchesNothing(), "a required term that analyzes away can match nothing")
+}
