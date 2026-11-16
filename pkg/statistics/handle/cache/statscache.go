@@ -46,14 +46,14 @@ const LeaseOffset = 5
 
 // StatsCacheImpl implements util.StatsCache.
 type StatsCacheImpl struct {
-	atomic.Pointer[StatsCache]
+	atomic.Pointer[statsCache]
 
 	statsHandle types.StatsHandle
 }
 
 // NewStatsCacheImpl creates a new StatsCache.
 func NewStatsCacheImpl(statsHandle types.StatsHandle) (types.StatsCache, error) {
-	newCache, err := NewStatsCache()
+	newCache, err := newStatsCache()
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +285,7 @@ func (s *StatsCacheImpl) Replace(cache types.StatsCache) {
 }
 
 // replace replaces the cache with the new cache.
-func (s *StatsCacheImpl) replace(newCache *StatsCache) {
+func (s *StatsCacheImpl) replace(newCache *statsCache) {
 	old := s.Swap(newCache)
 	if old != nil {
 		old.Close()
@@ -312,7 +312,7 @@ func (s *StatsCacheImpl) Close() {
 // Clear clears this cache.
 // Create a empty cache and replace the old one.
 func (s *StatsCacheImpl) Clear() {
-	cache, err := NewStatsCache()
+	cache, err := newStatsCache()
 	if err != nil {
 		statslogutil.StatsLogger().Warn("create stats cache failed", zap.Error(err))
 		return

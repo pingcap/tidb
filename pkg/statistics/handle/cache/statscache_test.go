@@ -89,7 +89,7 @@ func TestUpdateStatsHealthyMetrics(t *testing.T) {
 	tableHasnotAnalyzedAndSmall := newMockTable(t, 7, false, 800, 500, 0)      // never analyzed and small table -> unneeded analyze
 
 	cacheImpl := &StatsCacheImpl{}
-	cacheImpl.Store(&StatsCache{
+	cacheImpl.Store(&statsCache{
 		c: newMockStatsCacheInner(tableHasnotAnalyzed, tableLowHealthy, tableMidHealthy, tableHighHealthy, tablePerfect, tablePseudo, tableSmallTable, tableHasnotAnalyzedAndSmall),
 	})
 
