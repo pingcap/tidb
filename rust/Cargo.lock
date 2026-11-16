@@ -5956,6 +5956,7 @@ dependencies = [
  "serde_json",
  "tidb-config",
  "tidb-mysql",
+ "tidb-owner",
  "tracing",
 ]
 
@@ -9204,6 +9205,7 @@ dependencies = [
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
+ "tidb-plannererrors",
  "tidb-ppcpuusage",
  "tidb-printer",
  "tidb-proto",

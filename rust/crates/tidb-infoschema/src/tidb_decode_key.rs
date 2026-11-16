@@ -13,6 +13,8 @@
 // limitations under the License.
 
 use std::collections::HashMap;
+
+use tidb_hack::GoToLower as _;
 use std::fmt::Write as _;
 
 use serde_json::{Map, Number, Value};
@@ -48,15 +50,33 @@ struct DecodeTable {
     use_new_collation: bool,
 }
 
-/// Immutable table metadata used by `TIDB_DECODE_KEY` during one catalog version.
+/// Immutable table metadata used by `TIDB_DECODE_KEY` and
+/// `TIDB_ENCODE_RECORD_KEY` / `TIDB_ENCODE_INDEX_KEY` during one catalog
+/// version, taken when the statement starts so evaluation never locks the
+/// domain's catalog (planning may hold it while it folds constants).
 #[derive(Clone, Debug, Default)]
 pub struct TidbDecodeKeySnapshot {
     tables: HashMap<i64, DecodeTable>,
+    by_name: HashMap<(String, String), std::sync::Arc<crate::TableEntry>>,
     lazy: Option<crate::infoschema_v2::InfoSchemaV2>,
 }
 
 impl TidbDecodeKeySnapshot {
     pub(crate) fn set_lazy_reader(&mut self, reader: Option<crate::infoschema_v2::InfoSchemaV2>) { self.lazy = reader; }
+
+    pub(crate) fn insert_name(&mut self, database: &str, table: &str, entry: std::sync::Arc<crate::TableEntry>) {
+        self.by_name.insert((database.go_to_lower(), table.go_to_lower()), entry);
+    }
+
+    /// Go `is.TableByName(db, table)` over this version: the table entry.
+    #[must_use]
+    pub fn table_by_name(&self, database: &str, table: &str) -> Option<std::sync::Arc<crate::TableEntry>> {
+        if let Some(entry) = self.by_name.get(&(database.go_to_lower(), table.go_to_lower())) {
+            return Some(std::sync::Arc::clone(entry));
+        }
+        let reader = self.lazy.as_ref()?;
+        reader.table_by_name(database, table, Some(false)).ok().map(|cached| std::sync::Arc::clone(&cached.table))
+    }
 
     pub fn insert_table(&mut self, table: &TableCommon) {
         let metadata = DecodeTable {

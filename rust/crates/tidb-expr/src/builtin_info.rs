@@ -259,7 +259,13 @@ impl FunctionClass for TidbEncodeKeyClass {
     ) -> Result<BaseBuiltinFunc, EvalError> {
         let mut eval_tps = vec![EvalType::String; self.leading];
         eval_tps.extend(args[self.leading..].iter().map(|arg| type_of(arg).eval_type()));
+        let kernel = if self.func_name == "tidb_encode_index_key" {
+            crate::scalar_function::class_kernels::tidb_encode_index_key
+        } else {
+            crate::scalar_function::class_kernels::tidb_encode_record_key
+        };
         new_base_builtin_func_with_tp(ctx, self.func_name, args, EvalType::String, &eval_tps)
+            .map(|bf| bf.evaluated_by(crate::scalar_function::Kernel::Values(kernel)))
     }
 }
 

@@ -17,12 +17,10 @@
 //! finished, what gets written into `mysql.plan_replayer_status`, and the
 //! periodic GC of dump files on external storage.
 //!
-//! The dumping itself is `plan_replayer_dump.go` (`DumpPlanReplayerInfo`,
-//! 1,004 lines) and is not ported whole; it is reached here through one
-//! named boundary method. A seed slice of that file landed anyway: its
-//! archive file-name constants, its sql-meta TOML keys, and the
-//! `dumpSQLMeta` record builder ([`build_sql_meta_records`]) — see the
-//! seed modules at the end of this file.
+//! The dumping itself is `plan_replayer_dump.go`: its archive file-name
+//! constants, its sql-meta TOML keys, the `dumpSQLMeta` record builder
+//! ([`build_sql_meta_records`]) and `DumpPlanReplayerInfo`
+//! ([`dump_plan_replayer_info`]) are at the end of this file.
 //!
 //! ## Symbols ported
 //!
@@ -2245,9 +2243,8 @@ mod tests {
     }
 }
 
-/* `plan_replayer_dump.go` seed slice: the archive file names, the sql-meta
- * TOML keys, and the `dumpSQLMeta` record builder. The dump routine itself
- * (zip assembly, session gathering, presign) is not ported yet. */
+/* `plan_replayer_dump.go`: the archive file names, the sql-meta TOML keys,
+ * the `dumpSQLMeta` record builder and `DumpPlanReplayerInfo`. */
 
 /// Go `plan_replayer_dump.go`'s archive file names.
 pub mod dump_file {

@@ -26,7 +26,6 @@ fn test_add_index_ingest_recover_partition() {}
 
 /// Go `TestMultiSchemaChangeTwoIndexes`.
 #[test]
-#[ignore = "TIDB_ENCODE_INDEX_KEY is not ported (register row E26)"]
 fn test_multi_schema_change_two_indexes() {
     let store = realtikv!();
     let mut tk = store.new_tk();

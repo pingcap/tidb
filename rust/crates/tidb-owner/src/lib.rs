@@ -837,7 +837,9 @@ pub fn watch_owner_for_test(
     }
 }
 
-fn split_owner_values(value: &[u8]) -> (&[u8], OpType) {
+/// Go `splitOwnerValues`: the owner ID and the op an owner key's value
+/// carries.
+pub fn split_owner_values(value: &[u8]) -> (&[u8], OpType) {
     // Go indexes `vals[1][0]` whenever the value splits into exactly two
     // parts, so a value like "one_" (empty op part) panics there; etcd never
     // stores such a value in production. This port deliberately returns

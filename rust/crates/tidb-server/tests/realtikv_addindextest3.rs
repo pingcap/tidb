@@ -1328,7 +1328,6 @@ fn test_merge_temp_index_stuck() {
 
 /// Go `TestTiDBEncodeKeyTempIndexKey`.
 #[test]
-#[ignore = "TIDB_ENCODE_INDEX_KEY is not ported (register row E26)"]
 fn test_tidb_encode_key_temp_index_key() {
     let store = realtikv!();
     let mut tk = store.new_tk();

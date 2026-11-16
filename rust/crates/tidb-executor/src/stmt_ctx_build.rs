@@ -609,6 +609,17 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         Arc::new(move |input, zone| snapshot.decode(input, zone))
     }
 
+    /// Go `expression.EncodeRecordKeyFromRow` / `EncodeIndexKeyFromRow`
+    /// over the statement's catalog version (the snapshot `TIDB_DECODE_KEY`
+    /// reads: evaluation never locks the domain's catalog, which planning
+    /// holds while it folds constants).
+    fn encode_key_from_row(&self) -> tidb_exprctx::EncodeKeyFromRow {
+        let snapshot = self.tidb_decode_key_snapshot();
+        Arc::new(move |args, privileged, ctx| {
+            crate::expression_codec_fn::encode_key_from_row(&snapshot, args, privileged, ctx)
+        })
+    }
+
     fn tidb_decode_key_snapshot(&self) -> Arc<crate::TidbDecodeKeySnapshot> {
         let domain = self.domain_info_schema();
         let Ok(catalog) = domain.lock() else {
@@ -1677,7 +1688,6 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             session_privilege: self.session_privilege_check(),
             mdl_related_table: self.mdl_related_table_recorder(),
             process_privilege: self.has_process_privilege(),
-            super_privilege: self.has_super_privilege(),
             sql_digest_text_retriever: Some(self.sql_digest_text_retrieval()),
             min_safe_ts_provider: self.min_safe_ts_provider(),
             locked_tables: self.locked_tables(),
@@ -1810,6 +1820,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_allow_derive_topn(allow_derive_topn)
                     .with_block_encryption_mode(block_encryption_mode)
                     .with_decode_key_from_string(self.decode_key_from_string())
+                    .with_encode_key_from_row(self.encode_key_from_row())
                     .with_parser_config(self.session_vars().build_parser_switches())
                     .with_ddl_job_context(
                         snapshot.ddl_cdc_write_source,
@@ -2026,6 +2037,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_parallel_apply(enable_parallel_apply)
                 .with_block_encryption_mode(block_encryption_mode)
                 .with_decode_key_from_string(self.decode_key_from_string())
+                    .with_encode_key_from_row(self.encode_key_from_row())
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_replica_read(replica_read)
                 .with_coprocessor_read_policy(snapshot.coprocessor_read_policy.clone())
@@ -2834,8 +2846,6 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn mdl_related_table_recorder(&self) -> Option<crate::MdlRelatedTableRecorder>;
     /// Whether this session may inspect process-wide diagnostic state.
     fn has_process_privilege(&self) -> bool;
-    /// Go `RequestVerification("", "", "", mysql.SuperPriv)`.
-    fn has_super_privilege(&self) -> bool;
     /// Go `TableLockReadContext`: the table locks this session holds
     /// (`StmtContext::locked_tables`); `None` with table locks disabled.
     fn locked_tables(&self) -> Option<crate::LockedTables>;

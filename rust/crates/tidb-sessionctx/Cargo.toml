@@ -29,6 +29,7 @@ tidb-fixcontrol = { path = "../tidb-fixcontrol" }
 tidb-variable = { path = "../tidb-variable" }
 tidb-stmtctx = { path = "../tidb-stmtctx" }
 tidb-kv = { path = "../tidb-kv" }
+tidb-plannererrors = { path = "../tidb-plannererrors" }
 chrono = { workspace = true }
 tikv-client = { workspace = true }
 tidb-hack = { path = "../tidb-hack" }

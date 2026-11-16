@@ -1834,7 +1834,14 @@ pub(super) fn do_reorg_work_for_create_index(
             ))
         }
         Some(ReorgResult::Skipped) => {
-            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterCheckTableReorgCanSkip", &mut ());
+            // Go `doReorgWorkForCreateIndex`: the merging state skips an
+            // empty temporary index, the running state an empty table; the
+            // txn backfill's skip has no failpoint.
+            if merging {
+                tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterCheckTempIndexReorgCanSkip", &mut ());
+            } else if reorg_type.need_merge_process() {
+                tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterCheckTableReorgCanSkip", &mut ());
+            }
             active.job.row_count
         }
         Some(ReorgResult::Done(rows)) => {

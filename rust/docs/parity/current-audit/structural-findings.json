@@ -2,8 +2,8 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 5,
-    "open": 1,
+    "unresolved": 10,
+    "open": 6,
     "partial": 4
   },
   "findings": [
@@ -19,7 +19,7 @@
       "id": "D02",
       "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "The ingest (fast-reorg) backfill runs: `ddl.Start` initializes Go's ingest environment (`InitGlobalLightningEnv` on TiKV, `CleanUpTempDirLoop`), ADD INDEX picks `ReorgType::INGEST` and, under `tidb_enable_dist_task`, Go's DXF backfill task (`tidb-ddl` `real_tikv_ddl/backfilling_dist.rs`, `backfilling_dist_{executor,scheduler}.rs`), whose local backend (`tidb-ddl-ingest`, `tidb-ingestor-ingestctrl`) sorts on disk and imports through TiKV's ImportSST, then merges the temporary index as its own DXF step and checks a unique index's remote duplicates; `autoPauseAddIndexJobOnKVDiskFull` (`tidb-ddl` `index.rs`), the status port's `/ingest/*` routes (`tidb-server` `ingest_handler.rs`) and the backfill executor's Top SQL attach are Go's; the testkit's mock store runs `InitDistTaskLoop` as Go's `BootstrapSession` does. A live TiKV ADD INDEX / UNIQUE INDEX / duplicate case answers as Go's (job comment `ingest, DXF, max_node_count=3`, Go's 1062 text). The local backend (`tidb-ingestor-ingestctrl`) follows Go's `ingestctrl` for split/scatter in batches with retries, region job generation, the store balancer, the retryer, write/ingest with MultiIngest detection and its single-SST fallback, the store write limiter, engine management and the duplicate iterator, SQL/TiKV checksum with GC TTL ownership, gzip and the TiKV mode switcher, pinned by 69 of Go's 79 `ingestctrl` tests; extsort replaces Pebble, so Go's Pebble-internal SST block-size test does not apply. `ADMIN ALTER DDL JOBS` (planner `buildAdminAlterDDLJob`, `AlterDDLJobExec`) rewrites the job row, `modifyTaskParamLoop` carries it to the DXF task, and `readIndexStepExecutor.ResourceModified` / `TaskMetaModified` retune the running pipeline's reader/writer pools, batch size and write limit. Go's `pkg/ddl/ingest` tests are all ported. `estimateTableRowSize` fills the task's `EstimateRowSize`; `Backend.ImportEngine` follows Go's order: TiKV's region-split config, the empty-engine skip, `forceTableSplitRange` at 100+ regions and the table-scope scheduler pause (`br/pkg/pdutil.PauseSchedulersByKeyRange`, `tidb-br` `pdutil`). Left: global sort (`pkg/ingestor/globalsort`, `engineapi`, `ingestcli`) with `ingestctrl`'s external-engine and cloud-worker tests; duplicate conflict conversion and lazy duplicate-controller init (Lightning backend/kv/errormanager); and Go's realtikv add-index inventory: a session-level harness boots the node's domain in-process against the PD `TIDB_REALTIKV_PD` names (`tidb-server` `realtikv_test_stack`, Go `realtikvtest.CreateMockStoreAndSetup`; the tests skip without it and, like Go's package, run one at a time), with 90 of the 111 `tests/realtikvtest/addindextest*` tests ported: all of `addindextest` and `addindextest4`, `addindextest1` but for its nextgen-only cross-keyspace tests and its global-sort test, and `addindextest3` but for its operator tests (Go's `pkg/disttask/operator` pipeline API) and the Pebble-only `TestAddIndexTempDirDataRemoved` (Go's skipped tests are ported as ignored); of `addindextest2` only `alter_job_test.go` (its `global_sort_test.go` needs global sort). Go's `index_presplit.go` (`PRE_SPLIT_REGIONS` on an index), `pickBackfillType`'s ingest disk precheck, the local ingest's `adjustWorkerCntAndMaxWriteSpeed` and `runReorgJob`'s asynchronous distributed reorganization (the DXF task runs on its own thread while each job step returns `ErrWaitReorgTimeout` at the progress tick) are ported",
+      "finding": "The ingest (fast-reorg) backfill runs: `ddl.Start` initializes Go's ingest environment (`InitGlobalLightningEnv` on TiKV, `CleanUpTempDirLoop`), ADD INDEX picks `ReorgType::INGEST` and, under `tidb_enable_dist_task`, Go's DXF backfill task (`tidb-ddl` `real_tikv_ddl/backfilling_dist.rs`, `backfilling_dist_{executor,scheduler}.rs`), whose local backend (`tidb-ddl-ingest`, `tidb-ingestor-ingestctrl`) sorts on disk and imports through TiKV's ImportSST, then merges the temporary index as its own DXF step and checks a unique index's remote duplicates; `autoPauseAddIndexJobOnKVDiskFull` (`tidb-ddl` `index.rs`), the status port's `/ingest/*` routes (`tidb-server` `ingest_handler.rs`) and the backfill executor's Top SQL attach are Go's; the testkit's mock store runs `InitDistTaskLoop` as Go's `BootstrapSession` does. A live TiKV ADD INDEX / UNIQUE INDEX / duplicate case answers as Go's (job comment `ingest, DXF, max_node_count=3`, Go's 1062 text). The local backend (`tidb-ingestor-ingestctrl`) follows Go's `ingestctrl` for split/scatter in batches with retries, region job generation, the store balancer, the retryer, write/ingest with MultiIngest detection and its single-SST fallback, the store write limiter, engine management and the duplicate iterator, SQL/TiKV checksum with GC TTL ownership, gzip and the TiKV mode switcher, pinned by 69 of Go's 79 `ingestctrl` tests; extsort replaces Pebble, so Go's Pebble-internal SST block-size test does not apply. `ADMIN ALTER DDL JOBS` (planner `buildAdminAlterDDLJob`, `AlterDDLJobExec`) rewrites the job row, `modifyTaskParamLoop` carries it to the DXF task, and `readIndexStepExecutor.ResourceModified` / `TaskMetaModified` retune the running pipeline's reader/writer pools, batch size and write limit. Go's `pkg/ddl/ingest` tests are all ported. `estimateTableRowSize` fills the task's `EstimateRowSize`; `Backend.ImportEngine` follows Go's order: TiKV's region-split config, the empty-engine skip, `forceTableSplitRange` at 100+ regions and the table-scope scheduler pause (`br/pkg/pdutil.PauseSchedulersByKeyRange`, `tidb-br` `pdutil`). Left: global sort (`pkg/ingestor/globalsort`, `engineapi`, `ingestcli`) with `ingestctrl`'s external-engine and cloud-worker tests, which another agent owns; duplicate conflict conversion and lazy duplicate-controller init (Lightning backend/kv/errormanager); and Go's realtikv add-index inventory: a session-level harness boots the node's domain in-process against the PD `TIDB_REALTIKV_PD` names (`tidb-server` `realtikv_test_stack`, Go `realtikvtest.CreateMockStoreAndSetup`; the tests skip without it and, like Go's package, run one at a time), with 90 of the 111 `tests/realtikvtest/addindextest*` tests ported: all of `addindextest` and `addindextest4`, `addindextest1` but for its nextgen-only cross-keyspace tests and its global-sort test, and `addindextest3` but for its operator tests (Go's `pkg/disttask/operator` pipeline API) and the Pebble-only `TestAddIndexTempDirDataRemoved` (Go's skipped tests are ported as ignored); of `addindextest2` only `alter_job_test.go` (its `global_sort_test.go` needs global sort). Go's `index_presplit.go` (`PRE_SPLIT_REGIONS` on an index), `pickBackfillType`'s ingest disk precheck, the local ingest's `adjustWorkerCntAndMaxWriteSpeed` and `runReorgJob`'s asynchronous distributed reorganization (the DXF task runs on its own thread while each job step returns `ErrWaitReorgTimeout` at the progress tick) are ported",
       "rust_evidence": "`rust/crates/tidb-ddl/src/real_tikv_ddl/backfilling_dist.rs`, `rust/crates/tidb-ingestor-ingestctrl`",
       "go_owner": "`pkg/ddl/backfilling*.go`, `pkg/ddl/ingest`, `pkg/ingestor/ingestctrl`"
     },
@@ -40,15 +40,55 @@
       "rust_evidence": "`rust/crates/tidb-executor/src/brie.rs`, `rust/crates/tidb-br/src/task`, `rust/crates/tidb-br/src/metautil.rs`, `rust/crates/tidb-br/src/metautil`, `rust/docs/parity/current-audit/e07-execplan.md`"
     },
     {
-      "id": "E26",
+      "id": "E27",
       "status": "open",
       "group": "Expanded subsystem ownership review",
-      "finding": "`TIDB_ENCODE_RECORD_KEY` and `TIDB_ENCODE_INDEX_KEY` evaluate to \"this scalar function is not yet ported\": Go's `planner/core` `tidbCodecFuncHelper.encodeHandleFromRow` / `encodeIndexKeyFromRow` (table and partition lookup by name, the table-privilege check, the int or common handle, index values converted and truncated, `GenIndexKey`) have no Rust port, and Go's `TestTiDBEncodeKey` is not ported (it also needs the unistore mock store to answer `GetMvccByEncodedKey`, which only the TiKV region store does). Two realtikv tests that call them are ignored until then",
-      "go_owner": "`pkg/planner/core/expression_codec_fn.go`, `pkg/expression/builtin_info.go`",
-      "rust_evidence": "`rust/crates/tidb-expr/src/builtin_info.rs` (`TidbEncodeKeyClass`)"
+      "finding": "`AggFuncDesc` lacks Go's `MemoryUsage` (`descriptor.go`, `base_func.go`: plan-cache memory accounting of aggregate operators), `StringWithCtx` with the redact modes and the `ExplainInfo(ctx)` half of `ExplainAggFunc` (a redacted EXPLAIN of an aggregate's arguments), and `Hash64` (Go's cascades memo); `tidb-expression-aggregation`'s module doc names each, and `Expression` itself lacks the `MemoryUsage` / `StringWithCtx` it would build on",
+      "go_owner": "`pkg/expression/aggregation/descriptor.go`, `pkg/expression/aggregation/base_func.go`",
+      "rust_evidence": "`rust/crates/tidb-expression-aggregation/src/lib.rs` (module doc)"
+    },
+    {
+      "id": "S01",
+      "status": "open",
+      "group": "Structure: Go's shape before more ports",
+      "finding": "Builtins reach session state through hand-built hooks (a method on `tidb_exprctx::Columns`, a field on `StmtContext`, a method on the executor's builder trait, a session implementation) instead of Go's optional eval-property providers: Go's `session.go` builds `sessionexpr.NewExprContext`, which installs the KV-store, infoschema, privilege-checker, session-vars, SQL-executor, sequence, advisory-lock and DDL-owner providers that builtins read (`builtinTiDBMVCCInfoSig` embeds `KVStorePropReader` / `PrivilegeCheckerPropReader`). `tidb-sessionexpr` and `tidb-expropt` port them, but the live session never builds that context. A consequence: `StmtContext` computes the PROCESS privilege for every statement, where Go asks the privilege checker only when `TIDB_DECODE_SQL_DIGESTS` is built or evaluated",
+      "go_owner": "`pkg/expression/sessionexpr`, `pkg/expression/expropt`, `pkg/session/session.go`",
+      "rust_evidence": "`rust/crates/tidb-exprctx/src/context.rs`, `rust/crates/tidb-sessionctx/src/stmt_context.rs`, `rust/crates/tidb-sessionexpr`"
+    },
+    {
+      "id": "S02",
+      "status": "open",
+      "group": "Structure: Go's shape before more ports",
+      "finding": "`TableCommon` keeps the public columns and the non-public (adding or changing) columns as two lists, and an index's `column_offsets` index whichever list it was loaded against (public for a public index, public then non-public for a non-public one). Go's `TableCommon.Columns` is every `tblInfo.Columns` entry in metadata order, `Cols()` / `VisibleCols()` / `WritableCols()` / `DeletableCols()` are slices derived from it, and `IndexColumn.Offset` always indexes `tblInfo.Columns`; the two bases caused the MODIFY COLUMN mutation-checker panic",
+      "go_owner": "`pkg/table/tables/tables.go` (`TableCommon`, `initTableCommon`)",
+      "rust_evidence": "`rust/crates/tidb-table/src/tables.rs`, `rust/crates/tidb-table/src/tables/nonpublic_columns.rs`, `rust/crates/tidb-table/src/table_from_meta.rs`"
+    },
+    {
+      "id": "S03",
+      "status": "open",
+      "group": "Structure: Go's shape before more ports",
+      "finding": "DDL and reorg errors lose their Go identity on the way to the job: `ClusterDdlError::Backfill(String)` drops the code, and `DdlPlanError::Encode` stands for Go's plain `errors.New`, so `is_retryable_job_error` tells a plain error from a `*terror.Error` only through that variant. Go keeps one `err` whose cause `isRetryableError` type-checks (`*terror.Error` with a retryable code, else any plain error retries)",
+      "go_owner": "`pkg/ddl/job_worker.go` (`isRetryableJobError`), `pkg/ddl/index.go` (`runReorgJobAndHandleErr`)",
+      "rust_evidence": "`rust/crates/tidb-ddl/src/real_tikv_ddl.rs`, `rust/crates/tidb-ddl-build/src/plan_error.rs`"
+    },
+    {
+      "id": "S04",
+      "status": "open",
+      "group": "Structure: Go's shape before more ports",
+      "finding": "Only the distributed (DXF) reorganization runs as Go's `runReorgJob` does (`DistReorgSlot`: `reorgFn` on its own thread, each step waiting on `doneCh` until the progress tick); the local backfill still runs inside the step against a cooperative deadline (`BackfillExecutor::deadline`). Go runs every `reorgFn` asynchronously under the job's `reorgCtx`",
+      "go_owner": "`pkg/ddl/reorg.go` (`runReorgJob`, `reorgCtx`)",
+      "rust_evidence": "`rust/crates/tidb-ddl/src/real_tikv_ddl/add_index_reorg.rs`, `rust/crates/tidb-ddl/src/real_tikv_ddl/backfilling.rs`"
+    },
+    {
+      "id": "S05",
+      "status": "open",
+      "group": "Structure: Go's shape before more ports",
+      "finding": "Go's `pkg/ddl/util` constants have no crate: `DDLOwnerKey` (`/tidb/ddl/fg/owner`) is defined in `tidb-ddl` `worker.rs`, `tidb-session` `sync_upgrade.rs`, `tidb-domain-serverinfo` `serverinfo_syncer.rs` and a test",
+      "go_owner": "`pkg/ddl/util/util.go`",
+      "rust_evidence": "`rust/crates/tidb-ddl/src/worker.rs`, `rust/crates/tidb-session/src/sync_upgrade.rs`, `rust/crates/tidb-domain-serverinfo/src/serverinfo_syncer.rs`"
     }
   ],
-  "unresolved": 5,
-  "open": 1,
+  "unresolved": 10,
+  "open": 6,
   "partial": 4
 }

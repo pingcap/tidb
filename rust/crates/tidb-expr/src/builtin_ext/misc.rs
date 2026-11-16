@@ -45,6 +45,33 @@ fn err_specific_access_denied_for(privilege: &str) -> EvalError {
     )
 }
 
+/// Go `builtinTiDBEncodeRecordKeySig.evalString` (`index` false) and
+/// `builtinTiDBEncodeIndexKeySig.evalString`: the lower-case hex of the
+/// record or index key the names and values give, NULL for a NULL name.
+pub(crate) fn tidb_encode_key(values: &[Datum], index: bool, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    let names = if index { 3 } else { 2 };
+    let mut evaluated = Vec::with_capacity(names);
+    for value in &values[..names] {
+        let Some(name) = crate::arg_eval_type::eval_string(value)? else {
+            return Ok(Datum::Null);
+        };
+        evaluated.push(String::from_utf8_lossy(&name).into_owned());
+    }
+    let args = tidb_exprctx::EncodeKeyArgs {
+        db: &evaluated[0],
+        table: &evaluated[1],
+        index: index.then(|| evaluated[2].as_str()),
+        values: &values[names..],
+    };
+    let Some(key) = ctx.tidb_encode_key(&args) else {
+        return Err(EvalError::Raw(
+            if index { "EncodeIndexKeyFromRow is not initialized" } else { "EncodeRecordKeyFromRow is not initialized" }.to_owned(),
+        ));
+    };
+    let key = key?;
+    Ok(Datum::new_string_datum(key.iter().map(|byte| format!("{byte:02x}")).collect::<String>()))
+}
+
 /// Go `builtinTiDBMVCCInfoSig.evalString`: TiKV's MVCC record of the
 /// hex-encoded key, and, for an index key, its temporary index key's when
 /// that holds anything, as a JSON array of `{"key", "mvcc"}`.

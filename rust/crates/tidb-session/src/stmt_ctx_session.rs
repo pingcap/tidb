@@ -554,10 +554,6 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::has_process_privilege(self)
     }
 
-    fn has_super_privilege(&self) -> bool {
-        self.has_scoped_privilege("", "", tidb_mysql::SuperPriv)
-    }
-
     fn locked_tables(&self) -> Option<tidb_sessionctx::LockedTables> {
         Session::statement_locked_tables(self)
     }

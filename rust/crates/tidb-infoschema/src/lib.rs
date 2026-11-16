@@ -1948,11 +1948,12 @@ impl SessionExtendedInfoSchema {
     pub fn tidb_decode_key_snapshot(&self) -> crate::TidbDecodeKeySnapshot {
         let mut snapshot = crate::TidbDecodeKeySnapshot::default();
         snapshot.set_lazy_reader(self.v2().cloned());
-        for database in self.schema.databases.values() {
-            for entry in database.tables.values() {
+        for (database_name, database) in self.schema.databases.iter() {
+            for (table_name, entry) in &database.tables {
                 if let TableEntry::Kv(table) = &**entry {
                     snapshot.insert_table(table);
                 }
+                snapshot.insert_name(database_name, table_name, Arc::clone(entry));
             }
         }
         snapshot

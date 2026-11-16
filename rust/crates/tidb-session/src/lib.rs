@@ -3803,6 +3803,8 @@ mod tests_temporary_tables;
 #[cfg(test)]
 mod tests_tidb_decode_key;
 #[cfg(test)]
+mod tests_tidb_encode_key;
+#[cfg(test)]
 mod tests_timestamp_range;
 #[cfg(test)]
 mod tests_timezone_storage;

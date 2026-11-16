@@ -594,9 +594,6 @@ pub struct StmtContextSessionState {
     /// Go `RequestVerification("", "", "", mysql.ProcessPriv)` as
     /// `TIDB_DECODE_SQL_DIGESTS` asks it: whether the session holds PROCESS.
     pub process_privilege: bool,
-    /// Go `RequestVerification("", "", "", mysql.SuperPriv)` as
-    /// `TIDB_MVCC_INFO` asks it: whether the session holds SUPER.
-    pub super_privilege: bool,
     /// The session's `SQLDigestTextRetriever`, which `TIDB_DECODE_SQL_DIGESTS`
     /// runs through Go's SQL-executor property; `None` is a context with no
     /// session to run it.
@@ -653,7 +650,6 @@ impl Default for StmtContextSessionState {
             session_privilege: None,
             mdl_related_table: None,
             process_privilege: true,
-            super_privilege: true,
             sql_digest_text_retriever: None,
             min_safe_ts_provider: None,
             locked_tables: None,
@@ -928,6 +924,8 @@ pub struct StmtContextData {
     /// Go `expression.DecodeKeyFromString` over this statement's catalog
     /// version, which `TIDB_DECODE_KEY` runs.
     decode_key_from_string: Option<tidb_exprctx::DecodeKeyFromString>,
+    /// Go `expression.EncodeRecordKeyFromRow` / `EncodeIndexKeyFromRow`.
+    encode_key_from_row: Option<tidb_exprctx::EncodeKeyFromRow>,
     /// Go session advisory-lock map and its shared physical lock authority.
     advisory_locks: crate::advisory_lock_state::AdvisoryLockSession,
     selected_lock_keys: Option<crate::select_lock::SelectedLockKeys>,
@@ -1009,8 +1007,6 @@ pub struct StmtContextData {
     mdl_related_table: Option<MdlRelatedTableRecorder>,
     /// See [`StmtContextSessionState::process_privilege`].
     process_privilege: bool,
-    /// See [`StmtContextSessionState::super_privilege`].
-    super_privilege: bool,
     /// See [`StmtContextSessionState::sql_digest_text_retriever`].
     sql_digest_text_retriever: Option<SqlDigestTextRetrieval>,
     /// See [`StmtContextSessionState::min_safe_ts_provider`].
@@ -2906,6 +2902,12 @@ context_configuration! {
     /// Attaches `TIDB_DECODE_KEY`'s decoder over the catalog visible to this
     /// statement.
     #[must_use]
+    pub fn with_encode_key_from_row(mut self, encode: tidb_exprctx::EncodeKeyFromRow) -> Self {
+        self.encode_key_from_row = Some(encode);
+        self
+    }
+
+    /// See [`Self::with_encode_key_from_row`]'s decode counterpart.
     pub fn with_decode_key_from_string(mut self, decode: tidb_exprctx::DecodeKeyFromString) -> Self {
         self.decode_key_from_string = Some(decode);
         self
@@ -3250,6 +3252,7 @@ impl StmtContext {
             global_sysvars: None,
             connection_id: None,
             decode_key_from_string: None,
+            encode_key_from_row: None,
             advisory_locks: session.advisory_locks,
             selected_lock_keys: None,
             statement_clock: None,
@@ -3284,7 +3287,6 @@ impl StmtContext {
             plan_privilege_check: None,
             mdl_related_table: session.mdl_related_table,
             process_privilege: session.process_privilege,
-            super_privilege: session.super_privilege,
             sql_digest_text_retriever: session.sql_digest_text_retriever,
             min_safe_ts_provider: session.min_safe_ts_provider,
             stmt_safe_ts: std::sync::OnceLock::new(),
@@ -7350,6 +7352,30 @@ impl Columns for StmtContext {
         self.optimizer_use_invisible_indexes
     }
 
+    fn tidb_encode_key(&self, args: &tidb_exprctx::EncodeKeyArgs<'_>) -> Option<Result<Vec<u8>, tidb_exprctx::EvalError>> {
+        let encode = self.encode_key_from_row.as_ref()?;
+        let privileged = |db: &str, table: &str| {
+            self.session_privilege
+                .as_ref()
+                .is_none_or(|check| check(db, table, "", tidb_mysql::AllPrivMask))
+        };
+        Some(encode(args, &privileged, self).map_err(|error| match error {
+            tidb_exprctx::EncodeKeyError::Eval(error) => error,
+            // Go `ErrTableaccessDenied.FastGenByArgs("SELECT",
+            // sv.User.AuthUsername, sv.User.AuthHostname, tblName)`.
+            tidb_exprctx::EncodeKeyError::SpecificAccessDenied => {
+                let login = self.login_user_name().unwrap_or_default();
+                let (user, host) = login.rsplit_once('@').unwrap_or((login, ""));
+                tidb_exprctx::EvalError::Conversion(tidb_plannererrors::ERR_TABLEACCESS_DENIED.gen_with_stack_by_args(&[
+                    "SELECT".into(),
+                    user.to_owned().into(),
+                    host.to_owned().into(),
+                    args.table.to_owned().into(),
+                ]))
+            }
+        }))
+    }
+
     fn tidb_decode_key(&self, input: &[u8]) -> Vec<u8> {
         let Some(decode) = &self.decode_key_from_string else {
             return input.to_vec();
@@ -7402,8 +7428,12 @@ impl Columns for StmtContext {
         self.process_privilege
     }
 
+    /// Go `RequestVerification("", "", "", mysql.SuperPriv)`, asked only
+    /// when `TIDB_MVCC_INFO` evaluates.
     fn has_super_privilege(&self) -> bool {
-        self.super_privilege
+        self.session_privilege
+            .as_ref()
+            .is_none_or(|check| check("", "", "", tidb_mysql::SuperPriv))
     }
 
     fn get_mvcc_by_encoded_key(&self, key: &[u8]) -> Option<Result<(String, bool), String>> {

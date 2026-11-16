@@ -324,12 +324,7 @@ fn mock_server_info_at(id: &str, ip: &str, port: usize) -> ServerInfo {
 /// Go `pkg/domain/serverinfo/syncer_test.go:196-205`: the stale DDL owner
 /// key `DDLOwnerKey + "/12345"` carrying the dead instance's UUID must be
 /// deleted by the new syncer's session setup.
-// go-parity-gap: the owner-key half of cleanupStaleServerAndOwnerInfo
-// (owner.DeleteOwnerKeyByID) is not transcreated; the port's cleanup covers
-// the server-info half only (see serverinfo_syncer.rs module doc).
 #[test]
-#[ignore = "go-parity-gap: owner.DeleteOwnerKeyByID (owner election) is not \
-           transcreated; stale DDL owner keys survive startup cleanup"]
 fn stale_ddl_owner_key_is_deleted_too() {
     let fake = Arc::new(FakeEtcd::default());
 

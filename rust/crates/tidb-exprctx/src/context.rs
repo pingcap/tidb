@@ -474,6 +474,38 @@ impl BlockEncryptionMode {
 /// Go `expression.DecodeKeyFromString` bound to the statement's infoschema
 /// (`GetLatestInfoSchema`): `TIDB_DECODE_KEY`'s hexadecimal argument decoded
 /// in the session's time zone, or the warning it raises instead.
+/// The evaluated arguments of `TIDB_ENCODE_RECORD_KEY` (no `index`) and
+/// `TIDB_ENCODE_INDEX_KEY`: the names, then the index values and the handle.
+pub struct EncodeKeyArgs<'a> {
+    /// The database name.
+    pub db: &'a str,
+    /// The table name, `table(partition)` for one partition.
+    pub table: &'a str,
+    /// The index name, for `TIDB_ENCODE_INDEX_KEY`.
+    pub index: Option<&'a str>,
+    /// The index values, then the handle's (the `_tidb_rowid` or the
+    /// clustered primary key's values).
+    pub values: &'a [tidb_datatype::Datum],
+}
+
+/// Why Go's `EncodeRecordKeyFromRow` / `EncodeIndexKeyFromRow` failed.
+pub enum EncodeKeyError {
+    /// Go `plannererrors.ErrSpecificAccessDenied`, whose arguments the
+    /// builtin fills.
+    SpecificAccessDenied,
+    /// Any other error.
+    Eval(EvalError),
+}
+
+/// Go `expression.EncodeRecordKeyFromRow` / `EncodeIndexKeyFromRow` over the
+/// latest infoschema, given Go's `checker.RequestVerification(db, table, "",
+/// mysql.AllPrivMask)`: the encoded key.
+pub type EncodeKeyFromRow = std::sync::Arc<
+    dyn Fn(&EncodeKeyArgs<'_>, &dyn Fn(&str, &str) -> bool, &dyn Columns) -> Result<Vec<u8>, EncodeKeyError>
+        + Send
+        + Sync,
+>;
+
 pub type DecodeKeyFromString =
     std::sync::Arc<dyn Fn(&[u8], &SessionTimeZone) -> Result<Vec<u8>, String> + Send + Sync>;
 
@@ -723,6 +755,14 @@ pub trait Columns {
     /// a session has no hook and returns the input unchanged.
     fn tidb_decode_key(&self, input: &[u8]) -> Vec<u8> {
         input.to_vec()
+    }
+
+    /// `TIDB_ENCODE_RECORD_KEY` / `TIDB_ENCODE_INDEX_KEY`'s statement hook
+    /// (Go `EncodeRecordKeyFromRow` / `EncodeIndexKeyFromRow`), with Go's
+    /// access-denied error filled in. `None` is a context without it, Go's
+    /// uninitialized function.
+    fn tidb_encode_key(&self, _args: &EncodeKeyArgs<'_>) -> Option<Result<Vec<u8>, EvalError>> {
+        None
     }
 
     /// Acquires a session advisory lock. `Ok(false)` is lock-wait timeout.

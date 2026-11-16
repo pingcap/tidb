@@ -37,9 +37,6 @@
 //!
 //! * `NewCrossKSSyncer` -- keyspaces, which arrive with their own track.
 //!   `Keyspace`/`AssumedKeyspace` stay empty for the same reason.
-//! * the DDL-owner half of `cleanupStaleServerAndOwnerInfo`
-//!   (`owner.DeleteOwnerKeyByID`), which needs owner election. The
-//!   server-info half -- the stale same-IP+Port record -- is here.
 //! * `Done`/`TopologyDone`, which are channels over a `concurrency.Session`
 //!   object this port has no counterpart for; see the mapping under
 //!   [`SyncerRunner`].
@@ -79,6 +76,30 @@ use crate::serverinfo::{
 use crate::status_endpoint_claim::{
     StatusEndpointClaim, StatusEndpointClaimCreate, StatusEndpointClaimResult,
 };
+
+/// Go `pkg/ddl/util.DDLOwnerKey`: the DDL owner election path in etcd.
+pub const DDL_OWNER_KEY: &str = "/tidb/ddl/fg/owner";
+
+/// Go `owner.DeleteOwnerKeyByID`: deletes the campaign key under
+/// `owner_path` whose owner ID is `id`.
+fn delete_owner_key_by_id(etcd: &dyn EtcdOps, owner_path: &str, id: &str) {
+    let entries = match etcd.get_prefix(&format!("{owner_path}/")) {
+        Ok(entries) => entries,
+        Err(error) => {
+            tracing::warn!(owner_path, %error, "failed to get owner keys for stale cleanup");
+            return;
+        }
+    };
+    if let Some((key, _)) = entries
+        .iter()
+        .find(|(_, value)| tidb_owner::split_owner_values(value).0 == id.as_bytes())
+    {
+        tracing::info!(key = %key, stale_id = id, "deleting stale owner key");
+        if let Err(error) = etcd.delete(key) {
+            tracing::warn!(key = %key, %error, "failed to delete stale owner key");
+        }
+    }
+}
 
 /// Go `pkg/ddl/util.SessionTTL`: the server-info session's TTL, seconds.
 pub const SESSION_TTL_SECONDS: i64 = 90;
@@ -584,14 +605,12 @@ impl Syncer {
         self.new_topology_session_and_store_server_info()
     }
 
-    /// Go `cleanupStaleServerAndOwnerInfo`, the server-info half: an entry
-    /// from a PREVIOUS instance at this same IP+Port -- one that died
-    /// without cleanup -- is deleted so it stops appearing as a live peer.
-    /// Best-effort throughout: any failure leaves startup running, since
-    /// the stale entry's own lease expires on its own.
-    ///
-    /// The DDL-owner-key half (`owner.DeleteOwnerKeyByID`) waits on the
-    /// owner-election port.
+    /// Go `cleanupStaleServerAndOwnerInfo`: an entry from a PREVIOUS
+    /// instance at this same IP+Port -- one that died without cleanup -- is
+    /// deleted so it stops appearing as a live peer, and so is the DDL owner
+    /// election key that instance held. Best-effort throughout: any failure
+    /// leaves startup running, since the stale entries' leases expire on
+    /// their own.
     fn cleanup_stale_server_info(&self) {
         let Some(etcd) = self.etcd.as_ref() else {
             return;
@@ -612,6 +631,10 @@ impl Syncer {
             {
                 continue;
             }
+            tracing::info!(stale_id = %id, ip = %stale.static_info.ip, port = stale.static_info.port, "found stale server info with same IP+Port, cleaning up");
+            // Delete the stale DDL owner election key whose value matches the stale UUID.
+            delete_owner_key_by_id(etcd.as_ref(), DDL_OWNER_KEY, &id);
+            // Delete the stale server info.
             let _ = etcd.delete(&server_info_key_path(&id));
         }
     }

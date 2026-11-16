@@ -148,6 +148,16 @@ pub(crate) fn tidb_decode_sql_digests(values: &[Datum], ctx: &dyn Columns) -> Re
     crate::builtin_ext::misc::tidb_decode_sql_digests(&values[0], values.get(1), ctx)
 }
 
+/// Go `builtinTiDBEncodeRecordKeySig`.
+pub(crate) fn tidb_encode_record_key(values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::builtin_ext::misc::tidb_encode_key(values, false, ctx)
+}
+
+/// Go `builtinTiDBEncodeIndexKeySig`.
+pub(crate) fn tidb_encode_index_key(values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::builtin_ext::misc::tidb_encode_key(values, true, ctx)
+}
+
 /// Go `builtinTiDBMVCCInfoSig`.
 pub(crate) fn tidb_mvcc_info(values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     crate::builtin_ext::misc::tidb_mvcc_info(&values[0], ctx)
