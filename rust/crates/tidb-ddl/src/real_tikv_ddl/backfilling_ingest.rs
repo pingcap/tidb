@@ -117,6 +117,31 @@ pub(super) fn add_index_with_local_ingest<S: StoreClient>(
     } else {
         None
     };
+    // Go `estimateTableRowSize`.
+    let avg_row_size = crate::index::estimate_table_row_size(opener.store(), sess_pool.as_ref(), reorg.table.id).max(0) as usize;
+    // Go `reorgInfo.UpdateConfigFromSysTbl`: the job's reorg meta takes the
+    // running job's alterable config.
+    let update_pool = Arc::clone(&sess_pool);
+    let update_config = move || match super::add_index_reorg::latest_job(update_pool.as_ref(), job.id) {
+        Ok(Some(latest)) if latest.state == tidb_model::JobState::RUNNING && latest.is_alterable() => {
+            if let (Some(meta), Some(latest_meta)) = (job.reorg_meta.as_ref(), latest.reorg_meta.as_ref()) {
+                let defaults = crate::index::reorg_defaults();
+                let latest_meta = latest_meta.read();
+                let meta = meta.read();
+                meta.set_concurrency(latest_meta.get_concurrency(defaults));
+                meta.set_batch_size(latest_meta.get_batch_size(defaults));
+                meta.set_max_write_speed(latest_meta.get_max_write_speed());
+            }
+        }
+        Ok(_) => {}
+        Err(error) => tidb_ddl_logutil::ddl_logger().warn(
+            "failed to get latest job from system table",
+            &[
+                tidb_log::Field::new("jobID", tidb_log::Value::I64(job.id)),
+                tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+            ],
+        ),
+    };
     let bc = BackendCtxBuilder::new(ctx.clone(), opener.store().clone(), job.clone())
         .with_checkpoint_manager_param(sess_pool, handle.physical_id)
         .build(backend.clone())
@@ -139,7 +164,8 @@ pub(super) fn add_index_with_local_ingest<S: StoreClient>(
             step_cancelled,
             warnings,
             None,
-            0,
+            avg_row_size,
+            Some((job, &update_config)),
         );
         match result {
             Ok(()) => bc
@@ -174,11 +200,16 @@ pub(super) fn add_index_with_local_ingest<S: StoreClient>(
 }
 /// Go `Operator.TuneWorkerPoolSize` for workers borrowing the running subtask.
 /// The supervisor owns scoped threads so tuning cannot outlive scan transactions.
-struct ScopedPoolTuner {
+pub struct ScopedPoolTuner {
     requests: crossbeam_channel::Sender<(usize, crossbeam_channel::Sender<()>)>,
     count: Arc<std::sync::atomic::AtomicUsize>,
 }
 impl ScopedPoolTuner {
+    /// Go `Operator.GetWorkerPoolSize`.
+    pub fn get_worker_pool_size(&self) -> i32 {
+        self.count.load(Ordering::SeqCst) as i32
+    }
+
     /// Go `WorkerPool.Tune`, waiting until retired workers finish their current task.
     fn tune(&self, count: usize) -> Result<(), String> {
         let (tx, rx) = crossbeam_channel::bounded(0);
@@ -189,11 +220,16 @@ impl ScopedPoolTuner {
     }
 }
 /// Go `Operator.GetWorkerPoolSize` and `Operator.TuneWorkerPoolSize`.
-pub(super) struct IngestPipelineWorkers {
+pub struct IngestPipelineWorkers {
     reader: ScopedPoolTuner,
     writer: ScopedPoolTuner,
 }
 impl IngestPipelineWorkers {
+    /// Go `AsyncPipeline.GetReaderAndWriter`.
+    pub fn get_reader_and_writer(&self) -> (&ScopedPoolTuner, &ScopedPoolTuner) {
+        (&self.reader, &self.writer)
+    }
+
     /// Go `readIndexStepExecutor.ResourceModified` on the current pipeline.
     pub(super) fn tune(
         &self,
@@ -286,9 +322,12 @@ pub(super) fn execute_and_close_pipeline<S: StoreClient>(
     warnings: &mut Vec<(u16, String, i64)>,
     current_pipe: Option<&Mutex<Option<Arc<IngestPipelineWorkers>>>>,
     avg_row_size: usize,
+    reorg_info: Option<(&tidb_model::Job, &(dyn Fn() + Sync))>,
 ) -> Result<(), PipelineError> {
     let (reader_cnt, writer_cnt) =
         expected_ingest_worker_cnt(reorg.concurrency, avg_row_size, false);
+    // Go `NewAddIndexIngestPipeline`, before the scan operators start.
+    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/beforeAddIndexScan", &mut ());
     let stop = AtomicBool::new(false);
     let error = Mutex::new(None);
     let collected_warnings = Mutex::new(Vec::new());
@@ -481,10 +520,22 @@ pub(super) fn execute_and_close_pipeline<S: StoreClient>(
         if let Some(current) = current_pipe {
             *current.lock().unwrap() = Some(pipe.clone());
         }
+        // Go `executeAndClosePipeline`: the local ingest adjusts its worker
+        // pools and write speed while the pipeline runs.
+        let (pipe_done_tx, pipe_done_rx) = crossbeam_channel::bounded::<()>(0);
+        if let Some((job, update_config)) = reorg_info {
+            let adjust_pipe = Arc::clone(&pipe);
+            scope.spawn(move || {
+                adjust_worker_cnt_and_max_write_speed(&pipe_done_rx, &adjust_pipe, bc, avg_row_size, job, update_config)
+            });
+        }
         // Keep tuning channels alive until all scoped workers have finished.
+        let closed_pipe = Arc::clone(&pipe);
         let _pipe = pipe;
         let sink_ctx = &ctx;
         scope.spawn(tidb_cpuprofile::labels::inherit(move || {
+            // Go `pipe.Close()`, then `cancel()` of the adjust context.
+            let pipe_done = pipe_done_tx;
             for result in result_rx {
                 if stop.load(Ordering::SeqCst) {
                     continue;
@@ -506,6 +557,9 @@ pub(super) fn execute_and_close_pipeline<S: StoreClient>(
                     result.warnings,
                 );
             }
+            // Every operator is done: Go's `pipe.Close()` returned.
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterPipeLineClose", &mut Arc::clone(&closed_pipe));
+            drop(pipe_done);
         }));
         // Go `TableScanTaskSource.generateTasks`: region ranges, monotonic IDs.
         let region_store = backfiller.region_store();
@@ -638,11 +692,9 @@ fn scan_records_at<S: StoreClient>(
                     )));
                 }
                 if let Some(meta) = reorg_meta {
-                    let mut meta = meta.read().clone();
-                    tidb_failpoint::inject_call(
-                        "github.com/pingcap/tidb/pkg/ddl/scanRecordExec",
-                        &mut meta,
-                    );
+                    // Go passes the worker's `*model.DDLReorgMeta`, which
+                    // `TaskMetaModified` updates in place.
+                    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/scanRecordExec", &mut meta.clone());
                 }
                 bc.add_chunk(task.id, task.end.clone());
                 let mut start = task.start.clone();
@@ -667,8 +719,17 @@ fn scan_records_at<S: StoreClient>(
                                 .max(1) as usize
                         }),
                     };
+                    let fetched = backfiller.reorg_add_index(reorg, work, snapshot.clone(), buffer);
+                    if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockScanRecordPartialError") {
+                        if value.bool() {
+                            // Go `errors.New`: a plain error, not a SQL one.
+                            return Err(PipelineError::Ingest(tidb_ddl_ingest::Error::Other(
+                                "mock partial scan error".into(),
+                            )));
+                        }
+                    }
                     let chunk =
-                        match backfiller.reorg_add_index(reorg, work, snapshot.clone(), buffer) {
+                        match fetched {
                             Ok(AddIndexReorgAnswer::Ingest(chunk)) => chunk,
                             Err(e) => return Err(PipelineError::Sql(e)),
                             _ => {
@@ -691,6 +752,65 @@ fn scan_records_at<S: StoreClient>(
         },
     )
     .map_err(PipelineError::Storage)?
+}
+
+/// Go `adjustWorkerCntAndMaxWriteSpeed`: every `UpdateDDLJobReorgCfgInterval`
+/// until the pipeline closes, the job's latest reorg config retunes the
+/// write speed and the reader and writer pools.
+fn adjust_worker_cnt_and_max_write_speed(
+    done: &crossbeam_channel::Receiver<()>,
+    pipe: &IngestPipelineWorkers,
+    bc: &Arc<dyn BackendCtx>,
+    avg_row_size: usize,
+    job: &tidb_model::Job,
+    update_config: &(dyn Fn() + Sync),
+) {
+    loop {
+        let interval = Duration::from_millis(
+            crate::index::UPDATE_DDL_JOB_REORG_CFG_INTERVAL_MS.load(Ordering::SeqCst),
+        );
+        match done.recv_timeout(interval) {
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+            _ => return,
+        }
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/onUpdateJobParam", &mut ());
+        update_config();
+        let Some(meta) = job.reorg_meta.as_ref() else {
+            continue;
+        };
+        let (max_write_speed, use_cloud_storage) = {
+            let meta = meta.read();
+            (meta.get_max_write_speed(), meta.use_cloud_storage)
+        };
+        if let Some(backend) = bc.get_local_backend() {
+            if max_write_speed != backend.get_write_speed_limit() {
+                backend.update_write_speed_limit(max_write_speed);
+                tidb_ddl_logutil::ddl_ingest_logger().info(
+                    "adjust ddl job config success",
+                    &[
+                        tidb_log::Field::new("jobID", tidb_log::Value::I64(job.id)),
+                        tidb_log::Field::new("max write speed", tidb_log::Value::I64(backend.get_write_speed_limit())),
+                    ],
+                );
+            }
+        }
+        let concurrency = crate::cluster_ddl::add_index::job_concurrency(job);
+        let (target_reader_cnt, target_writer_cnt) = expected_ingest_worker_cnt(concurrency, avg_row_size, use_cloud_storage);
+        if pipe.reader.count.load(Ordering::SeqCst) != target_reader_cnt
+            || pipe.writer.count.load(Ordering::SeqCst) != target_writer_cnt
+        {
+            let _ = pipe.tune(concurrency, avg_row_size, use_cloud_storage);
+            tidb_ddl_logutil::ddl_ingest_logger().info(
+                "adjust ddl job config success",
+                &[
+                    tidb_log::Field::new("jobID", tidb_log::Value::I64(job.id)),
+                    tidb_log::Field::new("table scan operator count", tidb_log::Value::I64(pipe.reader.count.load(Ordering::SeqCst) as i64)),
+                    tidb_log::Field::new("index ingest operator count", tidb_log::Value::I64(pipe.writer.count.load(Ordering::SeqCst) as i64)),
+                ],
+            );
+        }
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/checkReorgConcurrency", &mut job.clone());
+    }
 }
 
 /// Go `AsyncOperator` panic recovery, reporting `ErrReorgPanic` to the sink.

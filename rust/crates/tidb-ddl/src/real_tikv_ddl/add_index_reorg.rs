@@ -32,7 +32,7 @@ use crate::cluster_ddl::add_index::{
 use super::backfilling::{write_physical_table_record, BackfillExecutor, BatchStep, TableRecordOutcome};
 
 #[path = "backfilling_ingest.rs"]
-mod ingest;
+pub(crate) mod ingest;
 #[path = "backfilling_dist.rs"]
 pub(crate) mod dist;
 
@@ -46,6 +46,7 @@ pub(super) fn run_add_index_reorg<S>(
     backfiller: &dyn IndexBackfiller,
     reorg: &AddIndexReorg,
     check_owner: &(dyn Fn() -> Result<(), String> + Sync),
+    dist_reorg: &DistReorgSlot,
 ) -> Result<ReorgOutcome, ClusterDdlError>
 where
     S: StoreClient,
@@ -63,7 +64,9 @@ where
             reorg,
         )?,
         ReorgStageRequest::Run(handle) => {
-            let step_cancelled = AtomicBool::new(false);
+            // Go `jobCtx.initStepCtx`: a step a reorg timeout ended leaves
+            // its context to the next.
+            let step_cancelled = dist_reorg.step_ctx();
             std::thread::scope(|scope| {
                 let (stop_checking_job_cancelled, stopped) = std::sync::mpsc::channel::<()>();
                 let step_cancelled = &step_cancelled;
@@ -81,15 +84,23 @@ where
                     opener,
                     timeout,
                     backfiller,
-                    sess_pool.as_ref(),
+                    &sess_pool,
                     reorg,
                     handle,
                     check_owner,
                     step_cancelled,
+                    dist_reorg,
                     &mut warnings,
                 );
                 drop(stop_checking_job_cancelled);
-                result
+                // Go `runReorgJobAndHandleErr`: an index reorganization's
+                // error is the job's to handle, not a retry of this owner's.
+                match result {
+                    Err(error) if is_index_reorg(reorg) && check_owner().is_ok() => {
+                        Ok(ReorgResult::Error(reorg_fn_error(error)))
+                    }
+                    result => result,
+                }
             })?
         }
         ReorgStageRequest::Check(check) => {
@@ -305,6 +316,14 @@ fn sql_failure(error: &LockSqlError, rows: i64) -> ReorgResult {
 /// before recording its progress in the job.
 const REORG_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Go `runReorgJob`'s `updateProgressInverval`: how long a step waits on the
+/// reorganization before it returns the reorg timeout.
+fn update_progress_interval() -> Duration {
+    tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/updateProgressIntervalInMs")
+        .and_then(|value| value.as_int())
+        .map_or(REORG_WAIT_TIMEOUT, |ms| Duration::from_millis(ms as u64))
+}
+
 fn table_range(
     backfiller: &dyn IndexBackfiller,
     reorg: &AddIndexReorg,
@@ -353,19 +372,22 @@ where
     let mut initialized = None;
     let result = reorg_transaction(opener, timeout, &crate::job_ctx::backfill_request_source(reorg.job_id), |meta, snapshot, buffer, start_ts| {
         let handle = if reorg.merging {
-            let mut empty = true;
-            for physical_id in &reorg.physical_ids {
-                for index_id in &reorg.index_ids {
-                    let (start, end) = temp_index_range(*physical_id, *index_id);
-                    if !meta
-                        .scan_page(&start, &end, 1)
-                        .map_err(DdlPlanError::from)?
-                        .is_empty()
-                    {
-                        empty = false;
+            // Go `checkIfTempIndexReorgWorkCanSkip`.
+            let empty = match tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/skipReorgWorkForTempIndex") {
+                Some(value) => value.bool(),
+                None => {
+                    let mut empty = true;
+                    for physical_id in &reorg.physical_ids {
+                        for index_id in &reorg.index_ids {
+                            let (start, end) = temp_index_range(*physical_id, *index_id);
+                            if !meta.scan_page(&start, &end, 1).map_err(DdlPlanError::from)?.is_empty() {
+                                empty = false;
+                            }
+                        }
                     }
+                    empty
                 }
-            }
+            };
             if empty {
                 return Ok((ReorgResult::Skipped, Vec::new()));
             }
@@ -422,6 +444,22 @@ where
     Ok(result)
 }
 
+/// An ADD INDEX reorganization (Go `addTableIndex`), not a column change,
+/// a partition reorganization or a global index cleanup.
+fn is_index_reorg(reorg: &AddIndexReorg) -> bool {
+    reorg.column.is_none() && !reorg.clean_up_global_index && reorg.partition_phase.is_none()
+}
+
+/// The error `addTableIndex` returns, as the job records it.
+fn reorg_fn_error(error: ClusterDdlError) -> DdlPlanError {
+    match error {
+        ClusterDdlError::Plan(error) => error,
+        // A plain error, which Go's `isRetryableError` retries as unknown.
+        ClusterDdlError::Backfill(message) => DdlPlanError::Encode(message),
+        error => DdlPlanError::Encode(error.to_string()),
+    }
+}
+
 /// Go `isReorgRunnable`: the step's context must not be cancelled and this
 /// node must be the owner.
 fn reorg_runnable(
@@ -433,6 +471,105 @@ fn reorg_runnable(
     }
     check_owner().map_err(ClusterDdlError::SchemaSync)?;
     Ok(true)
+}
+
+/// Go `reorgCtx` of a distributed reorganization: `reorgFn`
+/// (`executeDistTask`) runs on its own thread, and each job step waits on
+/// its `doneCh` until the progress tick (`ErrWaitReorgTimeout`).
+struct DistReorgCtx {
+    /// Go `jobContext.stepCtx`, which outlives the steps a reorg timeout
+    /// ends.
+    step_cancelled: Arc<AtomicBool>,
+    /// Go `reorgCtx.doneCh`.
+    done: crossbeam_channel::Receiver<Result<ReorgResult, ClusterDdlError>>,
+}
+
+/// The distributed reorganization of one owner run of a job (Go
+/// `reorgContexts`, keyed by the job). When the run ends, its step context
+/// is cancelled, as Go's worker context is: the reorganization then pauses
+/// or cancels its task as the job's state says, or just stops.
+#[derive(Default)]
+pub(crate) struct DistReorgSlot(std::sync::Mutex<Option<DistReorgCtx>>);
+
+impl DistReorgSlot {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Option<DistReorgCtx>> {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Go `jobContext.initStepCtx`: the running reorganization's step
+    /// context, or a new one.
+    fn step_ctx(&self) -> Arc<AtomicBool> {
+        self.lock().as_ref().map_or_else(|| Arc::new(AtomicBool::new(false)), |ctx| Arc::clone(&ctx.step_cancelled))
+    }
+
+    /// Go `jobContext.cleanStepCtx(dbterror.ErrCancelledDDLJob)` of a job
+    /// that turned to its rollback while a reorganization ran: the
+    /// reorganization's step context is cancelled, and the job's next steps
+    /// start their own.
+    pub(crate) fn cancel_step(&self) {
+        if let Some(ctx) = self.lock().take() {
+            ctx.step_cancelled.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Go `runReorgJob` over `executeDistTask`: the reorganization starts on
+    /// its own thread unless it already runs, and this step waits for it at
+    /// most one progress interval.
+    fn run<S: StoreClient>(
+        &self,
+        opener: &Arc<RealOptimisticTransactionOpener<S>>,
+        timeout: Duration,
+        sess_pool: &Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
+        reorg: &AddIndexReorg,
+        job: &tidb_model::Job,
+        step_cancelled: &Arc<AtomicBool>,
+    ) -> Result<ReorgResult, ClusterDdlError> {
+        let done = {
+            let mut slot = self.lock();
+            let ctx = slot.get_or_insert_with(|| {
+                let (done_tx, done) = crossbeam_channel::bounded(1);
+                let ctx = DistReorgCtx { step_cancelled: Arc::clone(step_cancelled), done };
+                let (opener, sess_pool, reorg, job, step_cancelled) =
+                    (Arc::clone(opener), Arc::clone(sess_pool), reorg.clone(), job.clone(), Arc::clone(step_cancelled));
+                std::thread::spawn(tidb_cpuprofile::labels::inherit(move || {
+                    // Go `isReorgRunnable(stepCtx, true)`: a distributed
+                    // reorganization does not check the ownership.
+                    let result = dist::execute_dist_task(
+                        &opener,
+                        timeout,
+                        sess_pool.as_ref(),
+                        &reorg,
+                        &job,
+                        &|| Ok(()),
+                        &step_cancelled,
+                    );
+                    let _ = done_tx.send(result);
+                }));
+                ctx
+            });
+            ctx.done.clone()
+        };
+        match done.recv_timeout(update_progress_interval()) {
+            Ok(result) => {
+                self.lock().take();
+                result
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/onRunReorgJobTimeout", &mut ());
+                Ok(ReorgResult::Progress(reorg.row_count))
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                self.lock().take();
+                Err(ClusterDdlError::Backfill("the distributed reorganization ended without a result".to_owned()))
+            }
+        }
+    }
+}
+
+impl Drop for DistReorgSlot {
+    fn drop(&mut self) {
+        self.cancel_step();
+    }
 }
 
 /// The interval of Go `runOneJobStep`'s job-cancelled ticker.
@@ -452,6 +589,10 @@ fn check_job_cancelled(
     while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = stopped.recv_timeout(interval) {
         match get_job_by_id() {
             Ok(Some(job)) => {
+                // Go injects the step's job before it reads the latest; this
+                // checker holds only the job's id, so it passes the job it
+                // read.
+                tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/checkJobCancelled", &mut job.clone());
                 if matches!(
                     job.state,
                     JobState::CANCELLING | JobState::CANCELLED | JobState::PAUSING | JobState::PAUSED
@@ -496,16 +637,19 @@ fn run_reorg<S>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
     backfiller: &dyn IndexBackfiller,
-    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    sess_pool_arc: &Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
     reorg: &AddIndexReorg,
     handle: &ReorgHandle,
     check_owner: &(dyn Fn() -> Result<(), String> + Sync),
-    step_cancelled: &AtomicBool,
+    step_cancelled_arc: &Arc<AtomicBool>,
+    dist_reorg: &DistReorgSlot,
     warnings: &mut Vec<(u16, String, i64)>,
 ) -> Result<ReorgResult, ClusterDdlError>
 where
     S: StoreClient,
 {
+    let sess_pool = sess_pool_arc.as_ref();
+    let step_cancelled = step_cancelled_arc.as_ref();
     // Go `addTableIndex`: an ingest job with a distributed reorg runs both
     // its read step and its temp-index merge as a DXF task; a local ingest
     // reads through the backend and merges as the transactional path does.
@@ -526,7 +670,7 @@ where
         None
     };
     if let Some(job) = ingest_job.as_ref().filter(|job| job.reorg_meta.as_ref().is_some_and(|m| m.read().is_dist_reorg)) {
-        return dist::execute_dist_task(opener, timeout, sess_pool, reorg, job, check_owner, step_cancelled);
+        return dist_reorg.run(opener, timeout, sess_pool_arc, reorg, job, step_cancelled_arc);
     }
     let ingest_job = ingest_job.filter(|_| !reorg.merging);
     let element_type = reorg_element(reorg).map_or(INDEX_ELEMENT_KEY, |(_, kind)| kind);
@@ -646,6 +790,10 @@ where
             let reload_config = || {
                 latest_job(sess_pool, reorg.job_id)
                 .map(|job| {
+                    // Go `writePhysicalTableRecord`'s config tick.
+                    if let Some(job) = &job {
+                        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/checkReorgWorkerCnt", &mut job.clone());
+                    }
                     job.filter(|job| job.state == JobState::RUNNING && job.is_alterable())
                         .map(|job| {
                             (
@@ -708,7 +856,7 @@ where
                 backfill_data: &backfill_data,
                 range_end_key: &range_end_key,
                 update_reorg_meta: &update_reorg_meta,
-                deadline: started + REORG_WAIT_TIMEOUT,
+                deadline: started + update_progress_interval(),
             };
             let (outcome, next_key) = write_physical_table_record(
                 &exec,
@@ -720,7 +868,10 @@ where
             current.start_key = next_key;
             match outcome {
                 TableRecordOutcome::Done => {}
-                TableRecordOutcome::Progress => return Ok(ReorgResult::Progress(total)),
+                TableRecordOutcome::Progress => {
+                    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/onRunReorgJobTimeout", &mut ());
+                    return Ok(ReorgResult::Progress(total));
+                }
                 TableRecordOutcome::Interrupted => return Ok(ReorgResult::Interrupted),
                 TableRecordOutcome::Failed(error) => return Ok(sql_failure(&error, total)),
             }
@@ -768,7 +919,7 @@ fn run_batch<S>(
 where
     S: StoreClient,
 {
-    reorg_transaction(opener, timeout, &crate::job_ctx::backfill_request_source(reorg.job_id), |_, snapshot, buffer, _| {
+    let step = reorg_transaction(opener, timeout, &crate::job_ctx::backfill_request_source(reorg.job_id), |_, snapshot, buffer, _| {
         if !reorg_runnable(step_cancelled, check_owner)? {
             return Ok((BatchStep::Interrupted, Vec::new()));
         }
@@ -822,7 +973,16 @@ where
             },
             mutations,
         ))
-    })
+    });
+    // Go's workers' `BackfillData`, after the batch's transaction.
+    if merge_index.is_none() && reorg.partition_phase.is_none() && !reorg.clean_up_global_index {
+        if reorg.column.is_some() {
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/mockUpdateColumnWorkerStuck", &mut ());
+        } else {
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/mockAddIndexTxnWorkerStuck", &mut ());
+        }
+    }
+    step
 }
 
 /// Go `reorgInfo.UpdateReorgMeta`: the handle's own pooled transaction;

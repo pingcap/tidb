@@ -187,7 +187,7 @@ impl TableCommon {
             let mut index_data = Vec::with_capacity(decoded_index_values.len());
             for (position, encoded) in decoded_index_values.iter().enumerate() {
                 let offset = index.column_offsets[position];
-                let field_type = self.columns()[offset].read().field_type.array_type();
+                let field_type = self.write_column(offset).expect("a key part's column is in the write row").read().field_type.array_type();
                 index_data.push(
                     decode_column_value(encoded, &field_type, Some(zone))
                         .map_err(|error| KvTableError::Decode(format!("{error:?}")))?,
@@ -217,7 +217,7 @@ impl TableCommon {
         let info = index.read();
         for (position, decoded) in index_data.iter().enumerate() {
             let offset = index.column_offsets[position];
-            let column = self.columns()[offset].read();
+            let column = self.write_column(offset).expect("a key part's column is in the write row").read();
             let length = info.columns.get(position).map_or(tidb_datatype::UNSPECIFIED_LENGTH, |column| column.read().length);
             let mut decoded_mutation_datum = decoded.clone();
             let Some(mut expected_datum) = input.get(offset).cloned() else {
@@ -248,21 +248,26 @@ impl TableCommon {
         Ok(())
     }
 
-    /// Go `BuildRowcodecColInfoForIndexColumns`.
+    /// Go `BuildRowcodecColInfoForIndexColumns`: each key part's column of
+    /// the write row (Go `tblInfo.Columns[idxCol.Offset]`, which reaches a
+    /// column a DDL is adding or changing) at Go's `GetIdxChangingFieldType`.
     fn build_rowcodec_col_info_for_index_columns(&self, index: &Index) -> Vec<tidb_rowcodec::ColumnInfo> {
-        let meta = self.meta();
-        let pk_is_handle = meta.read().pk_is_handle;
+        let pk_is_handle = self.meta().read().pk_is_handle;
+        let index_id = index.read().id;
         index
             .column_offsets
             .iter()
-            .map(|offset| {
-                let column = self.columns()[*offset].read();
+            .enumerate()
+            .map(|(position, offset)| {
+                let col = self.write_column(*offset).expect("a key part's column is in the write row").read();
+                let ft = self
+                    .get_idx_changing_field_type(index_id, position, *offset)
+                    .unwrap_or_else(|| col.field_type.clone());
                 tidb_rowcodec::ColumnInfo {
-                    id: column.id,
-                    is_pk_handle: pk_is_handle
-                        && tidb_mysql::has_pri_key_flag(column.field_type.flags() as usize),
+                    id: col.id,
+                    is_pk_handle: pk_is_handle && tidb_mysql::has_pri_key_flag(ft.flags() as usize),
                     virtual_generated: false,
-                    field_type: column.field_type.clone(),
+                    field_type: ft,
                 }
             })
             .collect()

@@ -733,6 +733,11 @@ impl<S: StoreClient> StepExecutor for ReadIndexStepExecutor<S> {
     }
     fn run_subtask(&self, ctx: &Context, subtask: &mut Subtask) -> tidb_dxf_execute::Result<()> {
         self.summary.reset();
+        let mut err: Option<String> = None;
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/beforeReadIndexStepExecRunSubtask", &mut err);
+        if let Some(err) = err {
+            return Err(err.into());
+        }
         let meta = self.meta.read().unwrap().clone();
         let sm = decode_backfill_sub_task_meta(&subtask.meta, None)?;
         let mut reorg = reorg_for_task(&meta, self.table.clone_like_go());
@@ -814,6 +819,7 @@ impl<S: StoreClient> StepExecutor for ReadIndexStepExecutor<S> {
                 &mut warnings,
                 Some(&self.curr_pipe),
                 meta.estimate_row_size,
+                None,
             );
             match result {
                 Ok(()) => {
@@ -1102,7 +1108,10 @@ fn wait_dist_task<S: StoreClient>(
                     if tidb_dxf_handle::pause_task(&ctx, &key).is_ok() {
                         tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/syncDDLTaskPause", &mut ());
                     }
-                } else if job.state == JobState::CANCELLING {
+                } else if matches!(job.state, JobState::CANCELLING | JobState::CANCELLED | JobState::ROLLINGBACK) {
+                    // Go `checkRunnableOrHandlePauseOrCanceled` on
+                    // `ErrCancelledDDLJob`, from the cancel checker or from a
+                    // step of the job's rollback.
                     let _ = tidb_dxf_handle::cancel_task(&ctx, &key);
                 }
             }

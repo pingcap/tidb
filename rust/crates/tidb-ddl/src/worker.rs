@@ -1048,6 +1048,14 @@ where
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
             };
             job_workers.retain(|worker| !worker.is_finished());
+            tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/ownerResignAfterDispatchLoopCheck", |_| {
+                if tidb_ddl_ingest::backend_mgr::RESIGN_OWNER_FOR_TEST.load(Ordering::SeqCst) {
+                    if let Err(error) = owner.resign_owner(&tidb_owner::Context::background()) {
+                        tidb_ddl_logutil::ddl_logger().info("resign meet error", &[zap_error(error)]);
+                    }
+                    tidb_ddl_ingest::backend_mgr::RESIGN_OWNER_FOR_TEST.store(false, Ordering::SeqCst);
+                }
+            });
             // Go `jobScheduler.schedule`, immediately before loadAndDeliverJobs.
             tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", &mut ());
             // Go `loadAndDeliverJobs`: nothing is loaded while both pools

@@ -148,6 +148,11 @@ pub(crate) fn tidb_decode_sql_digests(values: &[Datum], ctx: &dyn Columns) -> Re
     crate::builtin_ext::misc::tidb_decode_sql_digests(&values[0], values.get(1), ctx)
 }
 
+/// Go `builtinTiDBMVCCInfoSig`.
+pub(crate) fn tidb_mvcc_info(values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::builtin_ext::misc::tidb_mvcc_info(&values[0], ctx)
+}
+
 /// Go `builtinUUIDToBinSig`.
 pub(crate) fn uuid_to_bin(values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
     crate::builtin_ext::misc::uuid_to_bin(&values[0], values.get(1))

@@ -239,6 +239,7 @@ fn analyze_table_inner(
             };
             // Go `statsutil.UpdateSCtxVarsForStats`: the system session
             // loads the statistics variables from the global ones itself.
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/beforeAnalyzeTable", &mut ());
             let result = pool.get().and_then(|sess_ctx| {
                 sess_ctx
                     .get_restricted_sql_executor()
@@ -257,7 +258,9 @@ fn analyze_table_inner(
                     .map(drop)
                     .map_err(tidb_store_driver_error::sql_query_error::mysql_error_of)
             });
-            if let Err(error) = result {
+            let mut err = result.err();
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterAnalyzeTable", &mut err);
+            if let Some(error) = err {
                 tidb_ddl_logutil::ddl_logger().warn(
                     "analyze table failed",
                     &[

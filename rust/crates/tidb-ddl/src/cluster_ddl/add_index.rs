@@ -209,6 +209,9 @@ pub enum ReorgResult {
     /// A column check ran: `None` when every row fits, else the error Go's
     /// `checkModifyColumnData` answers (`checked == true`).
     Checked(Option<(u16, String)>),
+    /// An index reorganization (Go `addTableIndex`) returned this error,
+    /// which the next step handles as Go's `runReorgJobAndHandleErr`.
+    Error(DdlPlanError),
 }
 
 /// The ADD INDEX submission's answer.
@@ -475,6 +478,50 @@ fn create_columnar_index(
     ))
 }
 
+/// Go `buildIndexPresplitOpt`: the index option's `PRE_SPLIT_REGIONS`, its
+/// expressions kept as their restored SQL.
+fn build_index_presplit_opt(
+    opt: Option<&tidb_ast::IndexPreSplitRegions>,
+) -> Result<Option<tidb_model::IndexArgSplitOpt>, DdlPlanError> {
+    let restore = |exprs: &[tidb_ast::Expr]| -> Vec<String> {
+        exprs.iter().map(|expr| expr.restore_with_flags(tidb_parser_format::RestoreFlags::DEFAULT)).collect()
+    };
+    // Go `ast.SplitOption`: `PRE_SPLIT_REGIONS = n` is `{Num: n}`.
+    let (lower, upper, num, value_lists) = match opt {
+        None => return Ok(None),
+        Some(tidb_ast::IndexPreSplitRegions::Count(num)) => (Vec::new(), Vec::new(), *num, Vec::new()),
+        Some(tidb_ast::IndexPreSplitRegions::Boundaries(tidb_ast::SplitOption::By(lists))) => {
+            (Vec::new(), Vec::new(), 0, lists.iter().map(|list| restore(list)).collect::<Vec<_>>())
+        }
+        Some(tidb_ast::IndexPreSplitRegions::Boundaries(tidb_ast::SplitOption::Between { lower, upper, regions })) => {
+            (restore(lower), restore(upper), *regions, Vec::new())
+        }
+    };
+    if !value_lists.is_empty() {
+        return Ok(Some(tidb_model::IndexArgSplitOpt {
+            num,
+            value_lists: value_lists.into_iter().map(Into::into).collect::<Vec<_>>().into(),
+            ..tidb_model::IndexArgSplitOpt::default()
+        }));
+    }
+    let max_split_region_num = tidb_config::config_tree::config::get_global_config().split_region_max_num as i64;
+    if num > max_split_region_num {
+        return Err(DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown(format!(
+            "Split index region num exceeded the limit {max_split_region_num}"
+        ))));
+    } else if num < 1 {
+        return Err(DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown(
+            "Split index region num should be greater than 0",
+        )));
+    }
+    Ok(Some(tidb_model::IndexArgSplitOpt {
+        lower: lower.into(),
+        upper: upper.into(),
+        num,
+        ..tidb_model::IndexArgSplitOpt::default()
+    }))
+}
+
 /// Go `checkTableTypeForColumnarIndex`.
 fn check_table_type_for_columnar_index(stored: &TableInfo) -> Result<(), DdlPlanError> {
     tidb_ddl_build::table_info_build::check_table_type_for_columnar_index(stored)
@@ -494,6 +541,7 @@ pub(crate) fn create_index_with_info<S: MetaSnapshot>(
     condition: &Option<tidb_ast::Expr>,
     context: &DdlStatementContext,
     columnar: &Option<Box<ColumnarIndexSpec>>,
+    pre_split_regions: Option<&tidb_ast::IndexPreSplitRegions>,
     store_count: usize,
     job_context: &dyn DdlSessionContext,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
@@ -634,9 +682,11 @@ pub(crate) fn create_index_with_info<S: MetaSnapshot>(
         global: index.global,
         ..tidb_ast::IndexOption::default()
     };
+    let split_opt = build_index_presplit_opt(pre_split_regions)?;
     let arg = tidb_model::IndexArg {
         unique: index.unique,
         index_name: CiString::new(name.clone()),
+        split_opt: split_opt.map(GoShared::new),
         index_part_specifications: parts.into(),
         index_option: Some(GoShared::new(option)),
         hidden_cols: hidden_cols.into(),
@@ -836,22 +886,57 @@ fn merge_physical_ids(table: &TableInfo, indexes: &[GoShared<IndexInfo>]) -> Vec
 }
 
 /// Go `pickBackfillType`.
-pub(super) fn pick_backfill_type(job: &Job) -> tidb_model::ReorgType {
+pub(super) fn pick_backfill_type(job: &Job) -> Result<tidb_model::ReorgType, DdlPlanError> {
     let Some(meta) = job.reorg_meta.as_ref() else {
-        return tidb_model::ReorgType::TXN;
+        return Ok(tidb_model::ReorgType::TXN);
     };
     let mut meta = meta.write();
     if meta.reorg_type != tidb_model::ReorgType::NONE {
-        return meta.reorg_type;
+        // The backfill task has been started.
+        // Don't change the backfill type.
+        return Ok(meta.reorg_type);
     }
-    meta.reorg_type = if !meta.is_fast_reorg {
-        tidb_model::ReorgType::TXN
-    } else if tidb_ddl_ingest::env::LIT_INITIALIZED.load(std::sync::atomic::Ordering::SeqCst) {
-        tidb_model::ReorgType::INGEST
-    } else {
-        tidb_model::ReorgType::TXN_MERGE
-    };
-    meta.reorg_type
+    if !meta.is_fast_reorg {
+        meta.reorg_type = tidb_model::ReorgType::TXN;
+        return Ok(meta.reorg_type);
+    }
+    if tidb_ddl_ingest::env::LIT_INITIALIZED.load(std::sync::atomic::Ordering::SeqCst) {
+        if !meta.use_cloud_storage {
+            let checked = tidb_ddl_ingest::env::lightning_env()
+                .map_or(Ok(()), |env| env.disk_root.pre_check_usage());
+            if let Err(error) = checked {
+                tidb_ddl_logutil::ddl_ingest_logger().info(
+                    "ingest backfill is not available",
+                    &[tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))],
+                );
+                return Err(ingest_error(error));
+            }
+        }
+        meta.reorg_type = tidb_model::ReorgType::INGEST;
+        return Ok(meta.reorg_type);
+    }
+    // The lightning environment is unavailable, but we can still use the txn-merge backfill.
+    tidb_ddl_logutil::ddl_logger().info(
+        "fallback to txn-merge backfill process",
+        &[tidb_log::Field::new("lightning env initialized", tidb_log::Value::Bool(false))],
+    );
+    meta.reorg_type = tidb_model::ReorgType::TXN_MERGE;
+    Ok(meta.reorg_type)
+}
+
+/// An ingest error as the job's error: its MySQL code and text.
+fn ingest_error(error: tidb_ddl_ingest::Error) -> DdlPlanError {
+    match error {
+        tidb_ddl_ingest::Error::Database(error) => {
+            DdlPlanError::from_mysql_error(tidb_terror::MysqlError::from_terror(&error))
+        }
+        error => DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown(error.to_string())),
+    }
+}
+
+/// Go `job.ReorgMeta.ReorgTp`, as the backfill picked it.
+pub(super) fn job_reorg_type(job: &Job) -> tidb_model::ReorgType {
+    job.reorg_meta.as_ref().map_or(tidb_model::ReorgType::NONE, |meta| meta.read().reorg_type)
 }
 
 /// Go `updateVersionAndTableInfo`: when the state moved, the version bump
@@ -1185,7 +1270,10 @@ pub(super) fn plan_persisted_add_index_job_step(
     match original_state {
         SchemaState::NONE => {
             // Go `initForReorgIndexes`.
-            let reorg_type = pick_backfill_type(&active.job);
+            let reorg_type = match pick_backfill_type(&active.job) {
+                Ok(reorg_type) => reorg_type,
+                Err(error) => return Err(cancel_ddl_job(active, error)),
+            };
             for index in &indexes {
                 if matches!(
                     reorg_type,
@@ -1194,6 +1282,23 @@ pub(super) fn plan_persisted_add_index_job_step(
                 {
                     return Err(cancel_ddl_job(active, unsupported_partial_index()));
                 }
+            }
+            if let Err(error) = crate::index_presplit::pre_split_index_regions(
+                txn.region_store().as_deref(),
+                &info,
+                &indexes,
+                reorg_type,
+                &args.read(),
+                &tidb_ddl_build::session_pool::ReorgSessionVars::of_job(&active.job),
+            ) {
+                if !crate::real_tikv_ddl::is_retryable_job_error(
+                    &error,
+                    active.job.error_count,
+                    tidb_vardef::ddl_error_count_limit(),
+                ) {
+                    return Err(cancel_ddl_job(active, error));
+                }
+                return Err(error);
             }
             for index in &indexes {
                 let mut index = index.write();
@@ -1651,7 +1756,7 @@ pub(super) fn do_reorg_work_for_create_index(
     start_ts: u64,
 ) -> Result<CreateIndexReorg, DdlPlanError> {
     let database_id = active.job.schema_id;
-    let reorg_type = pick_backfill_type(&active.job);
+    let reorg_type = pick_backfill_type(&active.job)?;
     let backfill_state = indexes[0].read().backfill_state;
     let merging =
         reorg_type.need_merge_process() && backfill_state == tidb_model::BackfillState::MERGING;
@@ -1728,8 +1833,15 @@ pub(super) fn do_reorg_work_for_create_index(
                 "an index reorganization got a column check's outcome".to_owned(),
             ))
         }
-        Some(ReorgResult::Skipped) => active.job.row_count,
-        Some(ReorgResult::Done(rows)) => *rows,
+        Some(ReorgResult::Skipped) => {
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterCheckTableReorgCanSkip", &mut ());
+            active.job.row_count
+        }
+        Some(ReorgResult::Done(rows)) => {
+            // Go `runReorgJobAndHandleErr`, done.
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterRunReorgJobAndHandleErr", &mut ());
+            *rows
+        }
         Some(ReorgResult::Failed {
             code,
             message,
@@ -1737,10 +1849,9 @@ pub(super) fn do_reorg_work_for_create_index(
         }) => {
             // Go `runReorgJob` records the count first.
             active.job.row_count = *rows;
-            return Ok(CreateIndexReorg::Failed(
-                crate::cluster_ddl::checked_refusal(*code, message.clone()),
-            ));
+            return run_reorg_job_error(active, crate::cluster_ddl::checked_refusal(*code, message.clone()));
         }
+        Some(ReorgResult::Error(error)) => return run_reorg_job_error(active, error.clone()),
     };
     active.job.row_count = finished;
     if active.job.reorg_meta.as_ref().is_some_and(|m|m.read().is_dist_reorg) { active.job.clear_resume_reason(); }
@@ -1760,6 +1871,26 @@ pub(super) fn do_reorg_work_for_create_index(
         }
     }
     Ok(CreateIndexReorg::Done)
+}
+
+/// Go `runReorgJobAndHandleErr` on the reorganization's error: one that is
+/// not retryable (or past `tidb_ddl_error_count_limit`) rolls the job back;
+/// any other is the step's error, which the job counts and retries.
+fn run_reorg_job_error(
+    active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    error: DdlPlanError,
+) -> Result<CreateIndexReorg, DdlPlanError> {
+    if !crate::real_tikv_ddl::is_retryable_job_error(&error, active.job.error_count, tidb_vardef::ddl_error_count_limit()) {
+        tidb_ddl_logutil::ddl_logger().warn(
+            "run add index job failed, convert job to rollback",
+            &[
+                tidb_log::Field::new("job", tidb_log::Value::Str(active.job.to_string())),
+                tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+            ],
+        );
+        return Ok(CreateIndexReorg::Failed(error));
+    }
+    Err(error)
 }
 
 /// Go `runIngestReorgJob` (the local ingest, not DXF) ends a run without

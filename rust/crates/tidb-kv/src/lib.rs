@@ -22,6 +22,7 @@ pub mod tiflash_system_table;
 pub mod kv_errors;
 pub mod key;
 pub mod region_map;
+pub mod mvcc_json;
 pub mod storage;
 pub mod store_type;
 pub mod mpp_query;

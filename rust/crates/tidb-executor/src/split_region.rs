@@ -433,7 +433,7 @@ fn index_split_keys(
                         .into()]),
                 )));
             }
-            values_list(&lower_key, &upper_key, *num, keys);
+            tidb_util::split::get_values_list(&lower_key, &upper_key, *num, keys);
         }
     }
     Ok(())
@@ -492,7 +492,7 @@ fn table_split_keys(
             }
             let low = encode_record_key(&record_prefix, &lower_handle);
             let up = encode_record_key(&record_prefix, &upper_handle);
-            values_list(&low, &up, *num, keys);
+            tidb_util::split::get_values_list(&low, &up, *num, keys);
         }
     }
     Ok(())
@@ -582,34 +582,6 @@ fn int64_bits(value: &Datum) -> u64 {
         Datum::UInt(value) => *value,
         _ => 0,
     }
-}
-
-/// Go `util.GetValuesList`: `num - 1` keys evenly spaced between `lower` and
-/// `upper` over the eight bytes after their common prefix.
-fn values_list(lower: &[u8], upper: &[u8], num: usize, keys: &mut Vec<Vec<u8>>) {
-    let common = lower
-        .iter()
-        .zip(upper)
-        .take_while(|(left, right)| left == right)
-        .count();
-    let start = uint64_from_bytes(&lower[common..], 0);
-    let step = uint64_from_bytes(&upper[common..], 0xff).wrapping_sub(start) / num as u64;
-    let mut value = start;
-    for _ in 1..num {
-        value = value.wrapping_add(step);
-        let mut key = Vec::with_capacity(common + 8);
-        key.extend_from_slice(&lower[..common]);
-        key.extend_from_slice(&value.to_be_bytes());
-        keys.push(key);
-    }
-}
-
-/// Go `getUint64FromBytes`: the first eight bytes, padded with `pad`.
-fn uint64_from_bytes(bytes: &[u8], pad: u8) -> u64 {
-    let mut buffer = [pad; 8];
-    let length = bytes.len().min(8);
-    buffer[..length].copy_from_slice(&bytes[..length]);
-    u64::from_be_bytes(buffer)
 }
 
 /// Go `regionsplit.datumSliceToString`.
@@ -723,7 +695,7 @@ mod tests {
     #[test]
     fn values_list_spaces_keys_over_the_bytes_after_the_common_prefix() {
         let mut keys = Vec::new();
-        values_list(b"t\x00a", b"t\x00b", 2, &mut keys);
+        tidb_util::split::get_values_list(b"t\x00a", b"t\x00b", 2, &mut keys);
         // lower suffix "a" pads to 0x61000000_00000000, upper "b" to
         // 0x62ffffff_ffffffff; half the gap past the lower.
         let expected_value =

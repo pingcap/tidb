@@ -16,6 +16,7 @@ workspace = true
 tikv-client.workspace = true
 tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-kv = { path = "../tidb-kv" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-infoschema-context = { path = "../tidb-infoschema-context" }
 tidb-variable = { path = "../tidb-variable" }

@@ -1661,7 +1661,7 @@ fn rollback_modify_column_job_with_reorg(
     let mut changing_index_ids = Vec::new();
     if let Some(changing) = &args.changing_column {
         let changing_id = changing.read().id;
-        let merge = add_index::pick_backfill_type(&active.job).need_merge_process();
+        let merge = add_index::job_reorg_type(&active.job).need_merge_process();
         for index in target.info.indices.iter_deref() {
             if index
                 .read()
@@ -1736,7 +1736,7 @@ fn rollback_modify_column_job_with_index_reorg(
 /// Go `getIngestTempIndexIDs`: the temporary indexes a merge
 /// reorganization wrote.
 fn ingest_temp_index_ids(job: &Job, indexes: &[GoShared<IndexInfo>]) -> Vec<i64> {
-    if !add_index::pick_backfill_type(job).need_merge_process() {
+    if !add_index::job_reorg_type(job).need_merge_process() {
         return Vec::new();
     }
     indexes
@@ -2407,7 +2407,7 @@ fn init_for_reorg_indexes(job: &Job, indexes: &[GoShared<IndexInfo>]) -> Result<
     if indexes.is_empty() {
         return Ok(());
     }
-    let reorg_type = add_index::pick_backfill_type(job);
+    let reorg_type = add_index::pick_backfill_type(job)?;
     if matches!(
         reorg_type,
         tidb_model::ReorgType::TXN | tidb_model::ReorgType::TXN_MERGE
@@ -3279,6 +3279,8 @@ fn do_reorg_work_for_modify_column(
             schema_id: active.job.schema_id,
         };
     Ok(match outcome.map(|outcome| &outcome.result) {
+        // Only an index reorganization answers an error.
+        Some(ReorgResult::Error(error)) => return Err(error.clone()),
         None if active.job.snapshot_version == 0 => ColumnReorgVisit::Step(reorg_request(
             &active.job,
             request(active, ReorgStageRequest::Init),

@@ -1085,6 +1085,8 @@ fn do_partition_reorg_work(
     let outcome = outcome
         .filter(|outcome| outcome.job_id == active.job.id && outcome.partition_phase.is_some());
     match outcome.map(|outcome| (&outcome.result, outcome.partition_phase)) {
+        // Only an index reorganization answers an error.
+        Some((ReorgResult::Error(error), _)) => Err(error.clone()),
         // Go `getReorgInfoFromPartitions`: the first visit persists the
         // snapshot and the handle.
         None if active.job.snapshot_version == 0 => Ok(

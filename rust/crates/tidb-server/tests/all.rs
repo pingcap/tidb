@@ -51,3 +51,6 @@ mod realtikvtest;
 mod realtikv_addindex_source;
 mod realtikv_testutils;
 mod realtikv_addindextest;
+mod realtikv_addindextest2;
+mod realtikv_addindextest3;
+mod realtikv_addindextest4;

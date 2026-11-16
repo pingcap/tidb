@@ -34,10 +34,48 @@ pub(crate) fn tidb_decode_key(value: &Datum, ctx: &dyn crate::Columns) -> Result
 /// Go `ErrSpecificAccessDenied` (1227) for the PROCESS privilege
 /// `TIDB_DECODE_SQL_DIGESTS` requires, at build time and at evaluation.
 pub(crate) fn err_specific_access_denied() -> EvalError {
+    err_specific_access_denied_for("PROCESS")
+}
+
+/// Go `plannererrors.ErrSpecificAccessDenied.FastGenByArgs(privilege)`.
+fn err_specific_access_denied_for(privilege: &str) -> EvalError {
     EvalError::Conversion(
         tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-            .gen_with_stack_by_args(&[tidb_mysql::errors::FormatArg::from("PROCESS")]),
+            .gen_with_stack_by_args(&[tidb_mysql::errors::FormatArg::from(privilege)]),
     )
+}
+
+/// Go `builtinTiDBMVCCInfoSig.evalString`: TiKV's MVCC record of the
+/// hex-encoded key, and, for an index key, its temporary index key's when
+/// that holds anything, as a JSON array of `{"key", "mvcc"}`.
+pub(crate) fn tidb_mvcc_info(key: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    if !ctx.has_super_privilege() {
+        return Err(err_specific_access_denied_for("SUPER"));
+    }
+    let Some(s) = crate::arg_eval_type::eval_string(key)? else {
+        return Ok(Datum::Null);
+    };
+    let s = String::from_utf8_lossy(&s).into_owned();
+    let mut encoded_key = tidb_goruntime::go_hex::decode_string(&s).map_err(EvalError::Raw)?;
+    let get_mvcc = |key: &[u8]| {
+        ctx.get_mvcc_by_encoded_key(key)
+            .unwrap_or_else(|| Err("storage is not a helper.Storage".to_owned()))
+            .map_err(EvalError::Raw)
+    };
+    let (resp, _) = get_mvcc(&encoded_key)?;
+    // Go `json.Marshal` of `[]*mvccInfoResult{{Key, Resp}}`.
+    let entry = |key: &str, resp: &str| format!("{{\"key\":{},\"mvcc\":{resp}}}", serde_json::Value::from(key));
+    let mut mvcc_info = vec![entry(&s, &resp)];
+    if tidb_tablecodec::table_key::is_index_key(&encoded_key) && !tidb_tablecodec::table_key::is_temp_index_key(&encoded_key) {
+        tidb_tablecodec::index_key_to_temp_index_key(&mut encoded_key)
+            .map_err(|error| EvalError::Raw(format!("{error:?}")))?;
+        let hex_str: String = encoded_key.iter().map(|byte| format!("{byte:02x}")).collect();
+        let (res, has_info) = get_mvcc(&encoded_key)?;
+        if has_info {
+            mvcc_info.push(entry(&hex_str, &res));
+        }
+    }
+    Ok(Datum::new_string_datum(format!("[{}]", mvcc_info.join(","))))
 }
 
 /// Go `builtinTiDBDecodeSQLDigestsSig.evalString`: the JSON array of
@@ -1206,5 +1244,75 @@ use tidb_charset::Collation;
             Datum::Null,
         );
         assert!(eval_builtin_func("VITESS_HASH", &[]).is_none());
+    }
+
+    /// A store helper over canned MVCC records, keyed by encoded key.
+    struct MvccContext {
+        super_privilege: bool,
+        records: std::collections::HashMap<Vec<u8>, (String, bool)>,
+    }
+
+    impl crate::Columns for MvccContext {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn has_super_privilege(&self) -> bool {
+            self.super_privilege
+        }
+
+        fn get_mvcc_by_encoded_key(&self, key: &[u8]) -> Option<Result<(String, bool), String>> {
+            Some(Ok(self.records.get(key).cloned().unwrap_or_else(|| ("{}".to_owned(), false))))
+        }
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    /// Go `builtinTiDBMVCCInfoSig.evalString`: the key's record, and an
+    /// index key's temporary index record only when it holds anything;
+    /// SUPER is required, and the key is Go's `hex.DecodeString`.
+    #[test]
+    fn tidb_mvcc_info_answers_the_key_and_its_temp_index_key() {
+        let eval = |ctx: &MvccContext, key: &str| super::tidb_mvcc_info(&Datum::new_string_datum(key.to_owned()), ctx);
+        let text = |datum: Datum| match datum {
+            Datum::String(s) => String::from_utf8(s.bytes().to_vec()).unwrap(),
+            other => panic!("a string, not {other:?}"),
+        };
+        let record_key = tidb_tablecodec::table_key::encode_row_key_with_handle(1, &tidb_tablecodec::table_key::RecordHandle::Int(1));
+        let mut index_key = tidb_tablecodec::table_key::encode_table_index_prefix(1, 2);
+        index_key.extend_from_slice(b"\x03\x80\x00\x00\x00\x00\x00\x00\x01");
+        let mut temp_key = index_key.clone();
+        tidb_tablecodec::index_key_to_temp_index_key(&mut temp_key).unwrap();
+        let write = r#"{"info":{"writes":[{"start_ts":1,"commit_ts":2}]}}"#.to_owned();
+        let mut ctx = MvccContext {
+            super_privilege: true,
+            records: [(record_key.clone(), (write.clone(), true)), (index_key.clone(), (write.clone(), true))].into(),
+        };
+        assert_eq!(
+            text(eval(&ctx, &hex(&record_key)).unwrap()),
+            format!(r#"[{{"key":"{}","mvcc":{write}}}]"#, hex(&record_key))
+        );
+        // The temporary index key holds nothing: only the key's record.
+        assert_eq!(
+            text(eval(&ctx, &hex(&index_key)).unwrap()),
+            format!(r#"[{{"key":"{}","mvcc":{write}}}]"#, hex(&index_key))
+        );
+        ctx.records.insert(temp_key.clone(), (write.clone(), true));
+        assert_eq!(
+            text(eval(&ctx, &hex(&index_key)).unwrap()),
+            format!(r#"[{{"key":"{}","mvcc":{write}}},{{"key":"{}","mvcc":{write}}}]"#, hex(&index_key), hex(&temp_key))
+        );
+        assert!(matches!(
+            eval(&ctx, "7g").unwrap_err(),
+            crate::EvalError::Raw(message) if message == "encoding/hex: invalid byte: U+0067 'g'"
+        ));
+        assert!(eval(&ctx, "").is_ok());
+        ctx.super_privilege = false;
+        assert!(format!("{:?}", eval(&ctx, &hex(&record_key)).unwrap_err()).contains("SUPER"));
+        // A context whose store is not a store helper.
+        let error = super::tidb_mvcc_info(&Datum::new_string_datum(hex(&record_key)), &crate::NoColumns).unwrap_err();
+        assert!(matches!(error, crate::EvalError::Raw(message) if message == "storage is not a helper.Storage"));
     }
 }

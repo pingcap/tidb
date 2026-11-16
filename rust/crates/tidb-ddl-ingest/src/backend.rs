@@ -19,6 +19,9 @@ use tidb_ingestor_ingestctrl::{
     local::Backend,
 };
 
+/// Go `ForceSyncFlagForTest`: every chunk flushes and imports.
+pub static FORCE_SYNC_FLAG_FOR_TEST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Go `UnregisterOpt`.
 #[derive(Clone, Copy)]
 pub struct UnregisterOpt(pub u8);
@@ -160,9 +163,11 @@ impl LitBackendCtx {
             tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/ingest/mockSyncIntervalMs")
                 .map(|v| Duration::from_millis(v.int() as u64))
                 .unwrap_or(Duration::from_secs(600));
-        let force =
-            tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/ingest/forceSyncFlagForTest")
-                .is_some();
+        tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/ingest/forceSyncFlagForTest", |_| {
+            // used in a manual test
+            FORCE_SYNC_FLAG_FOR_TEST.store(true, Ordering::SeqCst);
+        });
+        let force = FORCE_SYNC_FLAG_FOR_TEST.load(Ordering::SeqCst);
         if !force && !should_import && self.time_of_last_flush.lock().unwrap().elapsed() < interval
         {
             return Ok(());

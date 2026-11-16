@@ -50,6 +50,8 @@ use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_infoschema_issyncer::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 
 pub(crate) mod add_index_reorg;
+/// Go `operator.AsyncPipeline` of the ingest backfill, as Go's test hooks see it.
+pub use add_index_reorg::ingest::{IngestPipelineWorkers, ScopedPoolTuner};
 mod backfilling;
 pub mod delete_range;
 
@@ -956,10 +958,11 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
         tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen()), job_w.clone(), worker,
     );
     schema_state.info_cache = schema_sync.info_cache();
+    let dist_reorg = add_index_reorg::DistReorgSlot::default();
     loop {
         let result = transit_one_job_step_and_wait_sync(
             &opener, &mut job_w, &mut schema_state, timeout, job_done, notifier,
-            backfiller, check_constraint_validator, schema_sync, check_owner, wait_retry,
+            backfiller, check_constraint_validator, schema_sync, check_owner, wait_retry, &dist_reorg,
         );
         match result {
             Ok(()) if job_w.job.as_ref().unwrap().read().in_final_state() => {
@@ -999,10 +1002,17 @@ fn transit_one_job_step_and_wait_sync<S: StoreClient>(
     schema_sync: &dyn DdlSchemaSync,
     check_owner: &(dyn Fn() -> Result<(), String> + Sync),
     wait_retry: &dyn Fn(Duration) -> Result<(), String>,
+    dist_reorg: &add_index_reorg::DistReorgSlot,
 ) -> Result<(), ClusterDdlError> {
     let ddl_job_id = job_w.job.as_ref().unwrap().read().id;
     let mut step_committed = false;
     loop {
+        // Go `runOneJobStep`: a job that turned to its rollback while a
+        // reorganization ran cancels the step context the reorganization
+        // still holds.
+        if job_w.job.as_ref().unwrap().read().is_rollingback() {
+            dist_reorg.cancel_step();
+        }
         schema_state.mdl_enabled =
             tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen());
         schema_state.delivered_job = job_w.clone();
@@ -1034,6 +1044,7 @@ fn transit_one_job_step_and_wait_sync<S: StoreClient>(
                     backfiller,
                     &reorg,
                     check_owner,
+                    dist_reorg,
                 )?;
                 schema_state.reorg.push(outcome);
             }

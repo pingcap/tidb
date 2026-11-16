@@ -84,6 +84,12 @@ pub fn save_analyze_result_to_storage<C: StatsSessionContext + ?Sized>(
     let need_dump_fms = results.is_partition;
     let table_id = stats.table_id;
     let version = get_start_ts(sctx)?;
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/statistics/handle/storage/saveAnalyzeResultToStorageErr")
+        .is_some_and(|value| value.bool())
+    {
+        return Err(SqlExecError::from("mock save analyze result error"));
+    }
+    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/statistics/handle/storage/saveAnalyzeResultToStorage", &mut ());
     let result_count = stats.row_count as i64;
     // 1. Save mysql.stats_meta.
     // Lock this row to prevent writing of concurrent analyze; the fake

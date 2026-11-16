@@ -2178,6 +2178,7 @@ pub(crate) fn create_index_job<S: MetaSnapshot>(
             &condition,
             &DdlStatementContext(context.clone()),
             &columnar,
+            create.options.pre_split_regions.as_ref(),
             store_count,
             context.as_ref(),
         )?;

@@ -538,6 +538,8 @@ fn clean_global_index_entries_from_dropped_partitions(
             schema_id: active.job.schema_id,
         };
     match outcome.map(|outcome| &outcome.result) {
+        // Only an index reorganization answers an error.
+        Some(ReorgResult::Error(error)) => Err(error.clone()),
         // Go `getReorgInfoFromPartitions`: the first visit persists the
         // snapshot.
         None if active.job.snapshot_version == 0 => {

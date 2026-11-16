@@ -8,6 +8,7 @@ repository.workspace = true
 description = "The metadata-building half of Go pkg/ddl for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-failpoint = { path = "../tidb-failpoint" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tikv-client.workspace = true

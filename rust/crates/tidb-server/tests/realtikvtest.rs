@@ -29,6 +29,9 @@ use tidb_session::Session;
 /// `None` when no cluster is configured.
 pub(crate) struct RealTiKV {
     stack: tidb_server::ClusterStack,
+    /// Go `store`, the domain's TiKV storage.
+    tikv_store: tidb_txnkv::driver::tikv_store::TikvStore,
+    pd: String,
     next_connection: std::sync::atomic::AtomicU64,
 }
 
@@ -45,7 +48,7 @@ impl RealTiKV {
             "--store".to_owned(),
             "tikv".to_owned(),
             "--path".to_owned(),
-            pd,
+            pd.clone(),
             "-P".to_owned(),
             "0".to_owned(),
             "--socket".to_owned(),
@@ -59,9 +62,10 @@ impl RealTiKV {
         ])
         .expect("the realtikv node config");
         let (stack, authority) = tidb_server::realtikv_test_stack(&config).expect("the realtikv domain");
+        let tikv_store = authority.tikv_store().clone();
         // The process ends with the test; Go's store stays open to the end too.
         std::mem::forget(authority);
-        let store = Self { stack, next_connection: std::sync::atomic::AtomicU64::new(7000) };
+        let store = Self { stack, tikv_store, pd, next_connection: std::sync::atomic::AtomicU64::new(7000) };
         let mut tk = store.new_tk();
         // set it to default value.
         tk.must_exec("set global innodb_lock_wait_timeout = 50");
@@ -86,6 +90,40 @@ impl RealTiKV {
             tk.must_exec(&format!("drop view `{}`", row[0]));
         }
         Some(store)
+    }
+
+    /// Go `tables/testutil.CheckIndexKVCount`'s count: the index's entries
+    /// in table `test.table_name`, read from a snapshot of the store.
+    pub(crate) fn index_kv_count(&self, tk: &mut Tk, table_name: &str, index_name: &str) -> usize {
+        let table_id: i64 = tk.must_query(&format!(
+            "select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = '{table_name}'"
+        ))[0][0]
+            .parse()
+            .unwrap();
+        let index_id: i64 = tk.must_query(&format!(
+            "select index_id from information_schema.tidb_indexes where table_schema = 'test' and table_name = '{table_name}' and key_name = '{index_name}'"
+        ))[0][0]
+            .parse()
+            .unwrap();
+        let prefix = tidb_tablecodec::table_key::encode_table_index_prefix(table_id, index_id);
+        let end = tidb_tablecodec::table_key::encode_table_index_prefix(table_id, index_id + 1);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let client = tikv_client::TransactionClient::new(vec![self.pd.clone()]).await.unwrap();
+            let ts = client.current_timestamp().await.unwrap();
+            let mut snapshot = client.snapshot(ts, tikv_client::TransactionOptions::new_optimistic().read_only());
+            snapshot.scan(prefix..end, u32::MAX).await.unwrap().count()
+        })
+    }
+
+    /// Go `store`: the domain's TiKV storage.
+    pub(crate) fn tikv_store(&self) -> &tidb_txnkv::driver::tikv_store::TikvStore {
+        &self.tikv_store
+    }
+
+    /// The DDL's system sessions (Go tests reach them through the domain).
+    pub(crate) fn ddl_session_pool(&self) -> &std::sync::Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool> {
+        &self.stack.ddl_session_pool
     }
 
     /// Go `testkit.NewTestKit(t, store)`: a root connection.

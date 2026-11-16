@@ -600,6 +600,7 @@ impl KvTableBackfill for TableCommon {
                 store.set(origin, record.value)?;
             }
             store.delete(Key::from_bytes(record.temp_key))?;
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMergingInTxn", &mut ());
             batch.added += 1;
         }
         Ok(batch)
@@ -843,6 +844,11 @@ pub fn write_chunk(
     for (_,handle,row) in &rows {
         let row_id=match handle{TableHandle::Int(value)=>{let mut bytes=Vec::new();tidb_codec::encode_int(&mut bytes,*value);bytes},TableHandle::Common(bytes)=>bytes.clone()};
         for index in &indexes {
+            // Go `writeChunk`: a partial index takes the rows its condition
+            // holds for; every row still counts.
+            if !table.index_condition_holds(index,row,zone)? {
+                continue;
+            }
             for entry in table.index_entry_keys(index,row,handle,physical_id,zone)? {
                 let value=table.gen_index_value(index,&entry.values,row,handle,entry.distinct,physical_id,zone)?;
                 entries.push(IndexKV{index_id:index.read().id,key:entry.key,value,row_id:row_id.clone()});

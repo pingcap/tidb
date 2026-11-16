@@ -34,6 +34,10 @@ pub struct BackendConfig {
     /// `PausePDSchedulerScopeGlobal`).
     pub pause_pd_scheduler_scope: &'static str,
 }
+/// Go `MaxWriteAndIngestRetryTimes`: the max retry times for write and
+/// ingest.
+pub static MAX_WRITE_AND_INGEST_RETRY_TIMES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(30);
+
 
 /// Go `config.PausePDSchedulerScopeTable`.
 pub const PAUSE_PD_SCHEDULER_SCOPE_TABLE: &str = "table";
@@ -310,9 +314,18 @@ impl Backend {
             min_commit_ts,
         )
     }
-    /// Go `Backend.SetTSBeforeImportEngine`.
-    pub fn set_ts_before_import_engine(&self, id: [u8; 16], ts: u64) -> Result<()> {
-        self.engine(id)?.set_ts(ts)
+    /// Go `Backend.SetTSBeforeImportEngine`: a zero `ts` allocates one from
+    /// PD.
+    pub fn set_ts_before_import_engine(&self, id: [u8; 16], mut ts: u64) -> Result<()> {
+        let engine = self.engine(id)?;
+        if ts == 0 {
+            let allocated = self.importer.get_ts()?;
+            if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/afterSetTSBeforeImportEngine").is_some() {
+                return Err(Error::Other("mock err".into()));
+            }
+            ts = allocated;
+        }
+        engine.set_ts(ts)
     }
     /// Go `Backend.ResetEngineSkipAllocTS`.
     pub fn reset_engine_skip_alloc_ts(&self, id: [u8; 16], generation: Option<u64>) -> Result<()> {

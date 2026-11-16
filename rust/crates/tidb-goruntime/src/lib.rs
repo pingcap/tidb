@@ -19,6 +19,7 @@
 
 pub mod go_bytes;
 pub mod go_heap;
+pub mod go_hex;
 pub mod go_pdqsort;
 pub mod worker_pool;
 pub mod go_runtime;

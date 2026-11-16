@@ -14,6 +14,10 @@ use tidb_gocontext::Context;
 use tidb_ingestor_ingestctrl::{local::Backend, region_job::RemoteImportClient};
 use tidb_model::Job;
 
+/// Go `ResignOwnerForTest`: the DDL scheduler resigns its ownership once
+/// (`ownerResignAfterDispatchLoopCheck`).
+pub static RESIGN_OWNER_FOR_TEST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Go `BackendCtxBuilder`.
 pub struct BackendCtxBuilder<S: tikv_client::PdClient> {
     ctx: Context,
@@ -86,6 +90,9 @@ impl<S: tikv_client::PdClient> BackendCtxBuilder<S> {
         if let Some(error) = self.ctx.err() {
             return Err(Error::Other(error.to_string()));
         }
+        tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/ingest/beforeCreateLocalBackend", |_| {
+            RESIGN_OWNER_FOR_TEST.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
         let path = gen_job_sort_path(self.job.id, self.check_dup)?;
         let mock_store: Arc<dyn std::any::Any + Send + Sync> = Arc::new(self.store.clone());
         let store = self.store;

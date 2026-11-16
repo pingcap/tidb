@@ -55,6 +55,10 @@ pub trait ImportClient: Send + Sync + crate::localhelper::SplitClient {
     fn check_multi_ingest_support(&self, _: &Context) -> Result<bool> {
         Ok(true)
     }
+    /// Go `local.pdCli.GetTS` composed into a timestamp.
+    fn get_ts(&self) -> Result<u64> {
+        Err(Error::Other("the import client has no PD".into()))
+    }
     /// Go `Backend.supportMultiIngest` after the capability probe.
     fn supports_multi_ingest(&self) -> bool {
         true
@@ -273,6 +277,12 @@ impl<S: tikv_client::PdClient> ImportClient for RemoteImportClient<S> {
     /// Go `Backend.pdHTTPCli`.
     fn pd_http_client(&self) -> Option<tikv_client::pd_http::Client> {
         self.store.pd_http_client()
+    }
+    fn get_ts(&self) -> Result<u64> {
+        self.store
+            .get_timestamp_async()
+            .wait()
+            .map_err(|e| Error::Other(e.to_string()))
     }
     /// Go `split.SplitClient.GetRegion`.
     fn get_region(&self, key: &[u8]) -> Result<RegionInfo> {
@@ -816,6 +826,13 @@ fn do_write(
     }
     let mut metas = Vec::new();
     for peer in &region.region.peers {
+        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/mockWritePeerErr").is_some() {
+            let epoch = region.region.region_epoch.unwrap_or_default();
+            return Err(Error::Other(format!(
+                "peer {}, store {}, region {}, epoch conf_ver:{} version:{} , when open write stream: mock write peer error",
+                peer.id, peer.store_id, region.region.id, epoch.conf_ver, epoch.version
+            )));
+        }
         let response = client.write_limited(ctx, peer.store_id, requests.clone(), write_limiter)?;
         if let Some(error) = response.error {
             return Err(Error::Other(format!("resp error: {}", error.message)));
@@ -2148,7 +2165,7 @@ impl Dispatcher<'_, '_> {
             match job.stage {
                 JobStage::RegionScanned | JobStage::Wrote => {
                     job.retry_count += 1;
-                    if job.retry_count > 30 {
+                    if job.retry_count > crate::local::MAX_WRITE_AND_INGEST_RETRY_TIMES.load(std::sync::atomic::Ordering::SeqCst) {
                         return Err(job
                             .last_retryable_error
                             .take()

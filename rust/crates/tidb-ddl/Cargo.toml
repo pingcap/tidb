@@ -73,6 +73,9 @@ serde.workspace = true
 base64.workspace = true
 tidb-ast = { path = "../tidb-ast" }
 tidb-config = { path = "../tidb-config" }
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-parser-format = { path = "../tidb-parser-format" }
+tidb-util = { path = "../tidb-util" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-ddl-logutil = { path = "../tidb-ddl-logutil" }
 tidb-ddl-serverstate = { path = "../tidb-ddl-serverstate" }

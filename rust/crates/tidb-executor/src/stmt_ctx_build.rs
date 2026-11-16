@@ -1677,6 +1677,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             session_privilege: self.session_privilege_check(),
             mdl_related_table: self.mdl_related_table_recorder(),
             process_privilege: self.has_process_privilege(),
+            super_privilege: self.has_super_privilege(),
             sql_digest_text_retriever: Some(self.sql_digest_text_retrieval()),
             min_safe_ts_provider: self.min_safe_ts_provider(),
             locked_tables: self.locked_tables(),
@@ -2833,6 +2834,8 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn mdl_related_table_recorder(&self) -> Option<crate::MdlRelatedTableRecorder>;
     /// Whether this session may inspect process-wide diagnostic state.
     fn has_process_privilege(&self) -> bool;
+    /// Go `RequestVerification("", "", "", mysql.SuperPriv)`.
+    fn has_super_privilege(&self) -> bool;
     /// Go `TableLockReadContext`: the table locks this session holds
     /// (`StmtContext::locked_tables`); `None` with table locks disabled.
     fn locked_tables(&self) -> Option<crate::LockedTables>;

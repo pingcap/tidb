@@ -62,8 +62,11 @@ pub mod etcd_ops;
 pub mod schema_sync;
 pub mod worker;
 pub mod pre_split;
+mod index_presplit;
 
 pub use worker::{ClusterDdl, RealClusterDdl};
+/// Go `ddl.DefaultAnalyzeCheckInterval`.
+pub use cluster_ddl::analyze::DEFAULT_ANALYZE_CHECK_INTERVAL_MILLIS;
 /// Go `executor`'s statement methods, over any [`ExecutorStore`].
 pub use worker::{executor, ExecutorStore};
 

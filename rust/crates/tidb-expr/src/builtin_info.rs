@@ -211,7 +211,7 @@ function_class!(
 
 function_class!(
     /// Go `tidbMVCCInfoFunctionClass`.
-    TidbMvccInfoFunctionClass, String, [String], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::not_yet_ported)
+    TidbMvccInfoFunctionClass, String, [String], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::tidb_mvcc_info)
 );
 
 function_class!(

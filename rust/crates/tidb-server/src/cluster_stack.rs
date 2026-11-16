@@ -71,6 +71,8 @@ pub struct ClusterStack {
     pub skipped: String,
     /// The statistics the node booted with.
     pub stats_receipt: tidb_stats_handle_syncload::stats_watch::StatsReceipt,
+    /// Go `ddl.sessPool`: the DDL's system sessions.
+    pub ddl_session_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
     /// The domain loops, retired in this order after the listeners drain:
     /// each reload thread holds its own PD handle, so each is joined before
     /// the authority's shutdown drain, and a watch is dropped before the
@@ -869,6 +871,7 @@ pub fn cluster_session_stack(
         schema_version,
         skipped,
         stats_receipt,
+        ddl_session_pool: Arc::clone(&ddl_session_pool) as _,
         workers: vec![
             Box::new(ttl_job_manager),
             Box::new(replica_read_checker),

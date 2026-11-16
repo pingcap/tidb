@@ -594,6 +594,9 @@ pub struct StmtContextSessionState {
     /// Go `RequestVerification("", "", "", mysql.ProcessPriv)` as
     /// `TIDB_DECODE_SQL_DIGESTS` asks it: whether the session holds PROCESS.
     pub process_privilege: bool,
+    /// Go `RequestVerification("", "", "", mysql.SuperPriv)` as
+    /// `TIDB_MVCC_INFO` asks it: whether the session holds SUPER.
+    pub super_privilege: bool,
     /// The session's `SQLDigestTextRetriever`, which `TIDB_DECODE_SQL_DIGESTS`
     /// runs through Go's SQL-executor property; `None` is a context with no
     /// session to run it.
@@ -650,6 +653,7 @@ impl Default for StmtContextSessionState {
             session_privilege: None,
             mdl_related_table: None,
             process_privilege: true,
+            super_privilege: true,
             sql_digest_text_retriever: None,
             min_safe_ts_provider: None,
             locked_tables: None,
@@ -1005,6 +1009,8 @@ pub struct StmtContextData {
     mdl_related_table: Option<MdlRelatedTableRecorder>,
     /// See [`StmtContextSessionState::process_privilege`].
     process_privilege: bool,
+    /// See [`StmtContextSessionState::super_privilege`].
+    super_privilege: bool,
     /// See [`StmtContextSessionState::sql_digest_text_retriever`].
     sql_digest_text_retriever: Option<SqlDigestTextRetrieval>,
     /// See [`StmtContextSessionState::min_safe_ts_provider`].
@@ -3278,6 +3284,7 @@ impl StmtContext {
             plan_privilege_check: None,
             mdl_related_table: session.mdl_related_table,
             process_privilege: session.process_privilege,
+            super_privilege: session.super_privilege,
             sql_digest_text_retriever: session.sql_digest_text_retriever,
             min_safe_ts_provider: session.min_safe_ts_provider,
             stmt_safe_ts: std::sync::OnceLock::new(),
@@ -7393,6 +7400,20 @@ impl Columns for StmtContext {
 
     fn has_process_privilege(&self) -> bool {
         self.process_privilege
+    }
+
+    fn has_super_privilege(&self) -> bool {
+        self.super_privilege
+    }
+
+    fn get_mvcc_by_encoded_key(&self, key: &[u8]) -> Option<Result<(String, bool), String>> {
+        Some(self.region_store().mvcc_get_by_key(key).map(|response| {
+            let has_info = response
+                .info
+                .as_ref()
+                .is_some_and(|info| !info.writes.is_empty() || !info.values.is_empty() || info.lock.is_some());
+            (tidb_kv::mvcc_json::marshal(&response), has_info)
+        }))
     }
 
     fn has_privilege_checker(&self) -> bool {

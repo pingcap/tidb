@@ -670,6 +670,23 @@ pub trait Columns {
         true
     }
 
+    /// Go `PrivilegeChecker.RequestVerification("", "", "",
+    /// mysql.SuperPriv)`, which `TIDB_MVCC_INFO` asks when it evaluates. A
+    /// resolver without a session is unrestricted, as Go's internal
+    /// sessions are.
+    fn has_super_privilege(&self) -> bool {
+        true
+    }
+
+    /// Go `helper.NewHelper(store).GetMvccByEncodedKey(key)` over the
+    /// `OptPropKVStore` property, which `TIDB_MVCC_INFO` asks: the
+    /// `kvrpcpb.MvccGetByKeyResponse` as Go's `encoding/json` renders it, and
+    /// whether its MVCC info holds a write, a value or a lock. `None` is a
+    /// context whose store is not a `helper.Storage`.
+    fn get_mvcc_by_encoded_key(&self, _key: &[u8]) -> Option<Result<(String, bool), String>> {
+        None
+    }
+
     /// Whether the context has Go's `OptPropPrivilegeChecker` property,
     /// without which `PrivilegeCheckerPropReader.GetPrivilegeChecker` errors.
     fn has_privilege_checker(&self) -> bool {
