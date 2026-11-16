@@ -107,7 +107,6 @@ go_library(
         "//br/pkg/utils",
         "//pkg/bindinfo",
         "//pkg/config",
-        "//pkg/config/deploymode",
         "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
@@ -440,7 +439,6 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/config",
-        "//pkg/config/deploymode",
         "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
