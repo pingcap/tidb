@@ -30,12 +30,12 @@ mod state_transform;
 pub use autoscaler::{calc_dist_sql_concurrency, get_exec_cpu_node, ResourceCalc};
 pub use interface::{
     clear_cleaner_factory, clear_scheduler_clean_up_factory, clear_scheduler_factory, register_cleaner_factory,
-    register_scheduler_clean_up_factory, register_scheduler_factory, BatchCleanUpRoutine, BatchCleaner, CleanUpRoutine, Cleaner, CleanerFactoryFn, Error, Extension, Param, SchedulerFactoryFn, TaskManager,
+    register_scheduler_clean_up_factory, register_scheduler_factory, BatchCleanUpRoutine, BatchCleaner, CleanUpRoutine, Cleaner, CleanerFactoryFn, Error, ExpiredFileCleaner, Extension, Param, SchedulerFactoryFn, TaskManager,
 };
 pub use nodes::NodeManager;
 #[cfg(any(test, feature = "failpoints"))]
 pub use nodes::SYNC_REFRESH;
-pub use scheduler_manager::{Manager, CHECK_TASK_RUNNING_INTERVAL, DEFAULT_CLEAN_UP_INTERVAL};
+pub use scheduler_manager::{Manager, CHECK_TASK_RUNNING_INTERVAL, DEFAULT_CLEAN_UP_INTERVAL, DEFAULT_EXPIRED_FILE_CLEAN_INTERVAL};
 pub use scheduler::{
     get_live_exec_ids, is_cancelled_err, BaseScheduler, Scheduler, ServerInfoSource, CHECK_TASK_FINISHED_INTERVAL, RETRY_SQL_INTERVAL, RETRY_SQL_MAX_INTERVAL,
     RETRY_SQL_TIMES, retry_sql_times, new_retry_backoffer,

@@ -385,9 +385,28 @@ Remaining, in order:
    on the narrowed `kv_storage::Transaction`. `on_duplicate_key='capture'`
    with global sort now imports. Pinned by ports of Go's conflictedkv tests
    over Go-created table schemas and by a live run against Go (below).
-   Not ported: `conflictrows` (the conflict-row file retention), which only
-   Go's next-gen expired-file cleanup loop runs.
-10. Delete the E05 row.
+   `conflictrows` came with step 10.
+10. Done (the PR after the conflicts PR): the next-gen parts.
+    - Async prepare: `ShouldUseAsyncPrepare`, prepare mode on submit,
+      `OnPrepare` (job not cancelled, `preparing` step, files, size check,
+      resource parameters, the job's prepared info, chunks) writing
+      `PreparedMeta` to the sort store, and `generateImportSpecs` reading it
+      back. The session skips the file listing and runs
+      `CheckRequirementsBeforeInitDataFiles` for it.
+    - `CalResourceParams` and `sampler.go` (the index KV size ratio), also
+      run on the session path of a next-gen import.
+    - A next-gen user keyspace submits the task to the DXF service after the
+      job, as Go does.
+    - `conflictrows` (`tidb-dxf-importinto-conflictrows`), the scheduler's
+      `ExpiredFileCleaner` and `expiredFileCleanLoop` (next-gen only),
+      `GetTaskCleanupInfoByIDs`, and `handle.GetCloudStorageURI` moved into
+      `tidb-dxf-handle` with its SEM rule.
+    Pinned by a Go capture of the sampler's sizes and `PreparedMeta`'s
+    encodings (`zzprobe/e05ng`), and by ports of Go's conflictrows,
+    `TestRunExpiredFileClean` and `TestGetCloudStorageURI` tests. No
+    next-gen cluster was available: the tests also run with the `nextgen`
+    kernel feature, but no next-gen import ran live.
+11. Delete the E05 row.
 
 ### Live acceptance of on_duplicate_key='capture' (2026-11-16)
 

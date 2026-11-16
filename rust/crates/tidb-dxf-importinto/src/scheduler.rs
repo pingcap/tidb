@@ -173,6 +173,24 @@ fn with_retry(
     result.map_err(|e| last.take().unwrap_or_else(|| Arc::new(std::io::Error::other(e.to_string()))))
 }
 
+/// Go `writePreparedChunkMap`: the chunk map to the sort store, so the task
+/// meta stays small.
+fn write_prepared_chunk_map(
+    ctx: &Context,
+    task_id: i64,
+    plan: &tidb_executor::importer::Plan,
+    chunk_map: std::collections::BTreeMap<i32, Vec<tidb_executor::importer::chunk_process::Chunk>>,
+) -> Result<String, Error> {
+    let store = crate::planner::sort_store(ctx, plan)?;
+    let meta = crate::proto::PreparedMeta {
+        external_path: tidb_ingestor_globalsort::prepared_meta_path(task_id),
+        chunk_map: Some(chunk_map),
+    };
+    let result = meta.write_external(ctx, store.as_ref());
+    store.close();
+    result.map(|()| meta.external_path)
+}
+
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
@@ -268,6 +286,57 @@ impl ImportScheduler {
     fn start_job(&self, ctx: &Context, meta: &TaskMeta, step: &str) -> Result<(), Error> {
         with_retry(self, ctx, false, &mut |se| {
             importer_job::start_job(ctx, se.sql_executor().as_ref(), meta.job_id, step).map_err(crate::driver)
+        })
+    }
+
+    /// Go `checkImportJobNotCancelled`: a next-gen job may have been taken
+    /// as dangling and cancelled, since its task is submitted in another
+    /// transaction. Classic creates both in one transaction.
+    fn check_import_job_not_cancelled(&self, ctx: &Context, meta: &TaskMeta) -> Result<(), Error> {
+        if !tidb_config_kerneltype::is_next_gen() {
+            return Ok(());
+        }
+        let mut backoffer = tidb_dxf_scheduler::new_retry_backoffer();
+        let mut last: Option<Error> = None;
+        let result = tidb_dxf_handle::run_with_retry(
+            ctx,
+            tidb_dxf_scheduler::retry_sql_times(),
+            &mut backoffer,
+            self.base.get_logger(),
+            |ctx| {
+                let mut retryable = true;
+                let result = self.base.with_new_session(&mut |se| {
+                    let job = match importer_job::get_job(ctx, se.sql_executor().as_ref(), meta.job_id, "", true) {
+                        Ok(job) => job,
+                        Err(e) => {
+                            // Only if another client deleted it.
+                            let e = crate::driver(e);
+                            if tidb_exeerrors::ERR_LOAD_DATA_JOB_NOT_FOUND.equal(Some(e.as_ref() as &(dyn std::error::Error + 'static))) {
+                                retryable = false;
+                            }
+                            last = Some(e.clone());
+                            return Err(storage_err(e));
+                        }
+                    };
+                    if job.is_cancelled() {
+                        retryable = false;
+                        let e = plain(format!("import job {} cancelled by user", job.id));
+                        last = Some(e.clone());
+                        return Err(storage_err(e));
+                    }
+                    Ok(())
+                });
+                (retryable, result)
+            },
+        );
+        result.map_err(|e| last.take().unwrap_or_else(|| Arc::new(std::io::Error::other(e.to_string()))))
+    }
+
+    /// Go `updatePreparedJobInfo`.
+    fn update_prepared_job_info(&self, ctx: &Context, job_id: i64, plan: &tidb_executor::importer::Plan) -> Result<(), Error> {
+        with_retry(self, ctx, false, &mut |se| {
+            importer_job::update_job_prepared_info(ctx, se.sql_executor().as_ref(), job_id, plan.total_file_size, &plan.format)
+                .map_err(crate::driver)
         })
     }
 
@@ -577,9 +646,37 @@ impl tidb_dxf_scheduler::Extension for ImportScheduler {
         }
     }
 
-    /// Go `OnPrepare`: only a next-gen global-sort import prepares
-    /// asynchronously; this port does not submit one.
-    fn on_prepare(&self, _: &Context, _: &dyn TaskHandle, _: &mut Task) -> Result<(), Error> {
+    /// Go `OnPrepare`: a next-gen global-sort import lists its files, sizes
+    /// its resources and splits its chunks here, after submission.
+    fn on_prepare(&self, ctx: &Context, _: &dyn TaskHandle, task: &mut Task) -> Result<(), Error> {
+        let mut meta = TaskMeta::from_json(&task.meta).map_err(|e| plain(format!("unmarshal task meta failed: {e}")))?;
+        self.check_import_job_not_cancelled(ctx, &meta)?;
+        self.start_job(ctx, &meta, importer_job::JOB_STEP_PREPARING)?;
+        let mut controller = crate::planner::build_controller_for_plan(&meta.plan, &meta.stmt)?;
+        let result = (|| -> Result<String, Error> {
+            let is_auto_detecting_format = controller.plan.format == "auto";
+            controller.init_data_files(ctx).map_err(crate::driver)?;
+            controller.check_import_data_size().map_err(crate::driver)?;
+            let keyspace = crate::import_store()?.keyspace();
+            controller.cal_resource_params(ctx, &keyspace).map_err(crate::driver)?;
+            self.update_prepared_job_info(ctx, meta.job_id, &controller.plan)?;
+            // Go keeps the old behavior here: the CSV-only options are not
+            // used for another detected format anyway.
+            if is_auto_detecting_format && controller.plan.format != "csv" {
+                controller.plan.check_non_csv_format_options().map_err(crate::driver)?;
+            }
+            controller.set_execute_node_cnt(controller.plan.max_node_cnt);
+            let chunk_map = controller.populate_chunks(ctx).map_err(plain)?;
+            write_prepared_chunk_map(ctx, task.base.id, &controller.plan, chunk_map)
+        })();
+        controller.close();
+        let chunk_map_path = result?;
+        meta.plan = controller.plan.clone();
+        meta.prepared_meta_external_path = chunk_map_path;
+        task.meta = meta.to_json();
+        task.base.required_slots = controller.plan.thread_cnt as isize;
+        task.base.max_node_count = controller.plan.max_node_cnt as isize;
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/dxf/importinto/afterPrepare", task);
         Ok(())
     }
 

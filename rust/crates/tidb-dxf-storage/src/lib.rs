@@ -29,7 +29,7 @@ mod task_table;
 
 pub use converter::{row2_sub_task, row2_task, task_id_to_key};
 pub use history::{
-    classify_task_error, validate_history_task_page_size, HistoryTaskPage, HistoryTaskSummary, TaskCleanupInfo,
+    classify_task_error, validate_history_task_page_size, HistoryTaskPage, HistoryTaskSummary, TaskCleanupInfo, TaskCleanupInfoGetter,
     DEFAULT_HISTORY_TASK_PAGE_SIZE, MAX_HISTORY_TASK_PAGE_SIZE, MIN_HISTORY_TASK_PAGE_SIZE,
 };
 pub use nodes::{get_dxf_cpu_count, get_node_resource, set_node_resource};

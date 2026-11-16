@@ -1257,6 +1257,66 @@ impl LoadDataController {
         Ok(())
     }
 
+    /// Go `CalResourceParams`: the thread count, max node count and DistSQL
+    /// scan concurrency from the data size, the CPUs of a target node, the
+    /// sampled index KV ratio and the schedule tune factors. A failed sample
+    /// is only logged, leaving the ratio 0.
+    ///
+    /// # Errors
+    /// The node CPUs or the tune factors could not be read.
+    pub fn cal_resource_params(&mut self, ctx: &tidb_gocontext::Context, ks_codec: &[u8]) -> Result<(), DriverError> {
+        use tidb_log::{Field, Value};
+        let start = std::time::Instant::now();
+        let dxf_err = |e: tidb_dxf_handle::HandleError| match e {
+            tidb_dxf_handle::HandleError::Storage(tidb_dxf_storage::StorageError::Terror(t)) => DriverError::from(t),
+            e => DriverError::from(tidb_terror::MysqlError::unknown(e.to_string())),
+        };
+        let target_node_cpu_cnt = tidb_dxf_handle::get_cpu_count_of_node(ctx).map_err(dxf_err)?;
+        let factors = tidb_dxf_handle::get_schedule_tune_factors(ctx, &self.plan.keyspace).map_err(dxf_err)?;
+        let total_size = self.total_real_size;
+        let table_info = self.table.meta().read().clone();
+        let num_of_index_gen_kv = super::kv_encode::get_num_of_index_gen_kv(&table_info);
+        let mut index_size_ratio = 0.0;
+        if num_of_index_gen_kv > 0 {
+            match self.sample_index_size_ratio(ctx, ks_codec) {
+                Ok(ratio) => index_size_ratio = ratio,
+                Err(e) => tidb_logutil::bg_logger().warn(
+                    "meet error when sampling index size ratio",
+                    &[Field::new("error", Value::Str(e.to_mysql_error().to_string()))],
+                ),
+            }
+        }
+        let cal = tidb_dxf_scheduler::ResourceCalc::new(total_size, target_node_cpu_cnt, index_size_ratio, &factors);
+        self.plan.thread_cnt = usize::try_from(cal.calc_required_slots()).unwrap_or(0);
+        self.plan.max_node_cnt = usize::try_from(cal.calc_max_node_count_for_import_into()).unwrap_or(0);
+        self.plan.distsql_scan_concurrency = usize::try_from(tidb_dxf_scheduler::calc_dist_sql_concurrency(
+            self.plan.thread_cnt as isize,
+            self.plan.max_node_cnt as isize,
+            target_node_cpu_cnt,
+        ))
+        .unwrap_or(0);
+        tidb_logutil::bg_logger().info(
+            "auto calculate resource related params",
+            &[
+                Field::new("db", Value::Str(self.plan.db_name.clone())),
+                Field::new("table", Value::Str(table_info.name.original().to_owned())),
+                Field::new("tableID", Value::I64(table_info.id)),
+                Field::new("thread", Value::I64(self.plan.thread_cnt as i64)),
+                Field::new("maxNode", Value::I64(self.plan.max_node_cnt as i64)),
+                Field::new("distsqlScanConcurrency", Value::I64(self.plan.distsql_scan_concurrency as i64)),
+                Field::new("targetNodeCPU", Value::I64(target_node_cpu_cnt as i64)),
+                Field::new("totalFileSize", Value::Str(tidb_config_configtypes::bytes_size(self.plan.total_file_size as f64))),
+                Field::new("totalRealSize", Value::Str(tidb_config_configtypes::bytes_size(total_size as f64))),
+                Field::new("fileCount", Value::I64(self.data_files.len() as i64)),
+                Field::new("numOfIndexGenKV", Value::I64(num_of_index_gen_kv as i64)),
+                Field::new("indexSizeRatio", Value::F64(index_size_ratio)),
+                Field::new("amplifyFactor", Value::F64(factors.amplify_factor)),
+                Field::new("costTime", Value::Duration(start.elapsed().as_nanos() as i64)),
+            ],
+        );
+        Ok(())
+    }
+
     /// Go `detectAndUpdateFormat`.
     fn detect_and_update_format(&mut self, path: &str) {
         if self.plan.format == "auto" {

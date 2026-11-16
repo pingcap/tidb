@@ -80,6 +80,10 @@ tidb-ingestor-ingestctrl = { path = "../tidb-ingestor-ingestctrl" }
 tidb-ingestor-simplesst = { path = "../tidb-ingestor-simplesst" }
 tidb-dumpformat-parquetfile = { path = "../tidb-dumpformat-parquetfile" }
 tidb-dxf-execute = { path = "../tidb-dxf-execute" }
+tidb-dxf-handle = { path = "../tidb-dxf-handle" }
+tidb-dxf-scheduler = { path = "../tidb-dxf-scheduler" }
+tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+tidb-go-rand = { path = "../tidb-go-rand" }
 tidb-cdcutil = { path = "../tidb-cdcutil" }
 tidb-go-url = { path = "../tidb-go-url" }
 tidb-config-deploymode = { path = "../tidb-config-deploymode" }

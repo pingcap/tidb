@@ -370,6 +370,51 @@ pub fn run_with_retry<E: std::fmt::Display>(
     last_err.map_or(Ok(()), |err| Err(RetryError::Func(err)))
 }
 
+/// The PD cluster ID of this instance's store, Go's
+/// `store.(kv.StorageWithPD).GetPDClient().GetClusterID(ctx)`. The server
+/// sets it at boot; 0 means unknown.
+static CLUSTER_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Records the store's PD cluster ID for [`get_cloud_storage_uri`].
+pub fn set_cluster_id(id: u64) {
+    CLUSTER_ID.store(id, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// The store's PD cluster ID, when the server has set it.
+#[must_use]
+pub fn cluster_id() -> Option<u64> {
+    Some(CLUSTER_ID.load(std::sync::atomic::Ordering::SeqCst)).filter(|id| *id != 0)
+}
+
+/// Go `GetCloudStorageURI`: `tidb_cloud_storage_uri` with the `dxf/<cluster
+/// ID>` prefix appended. Without a prefix in the URI, under SEM, or without
+/// a cluster ID, the prefix is `dxf`.
+#[must_use]
+pub fn get_cloud_storage_uri(cluster_id: Option<u64>) -> String {
+    let cloud_uri = tidb_vardef::CLOUD_STORAGE_URI.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    if cloud_uri.is_empty() {
+        return cloud_uri;
+    }
+    let Ok(mut u) = tidb_objstore::parse_raw_url(&cloud_uri) else { return cloud_uri };
+    let prefix = tidb_objstore::storeapi::Prefix::new(&String::from_utf8_lossy(&u.path));
+    // Under SEM the URI has no cluster ID.
+    let wants_cluster = !tidb_sem_compat::is_enabled() && !prefix.as_str().is_empty();
+    let cluster = if wants_cluster { cluster_id.map(|id| id.to_string()).unwrap_or_default() } else { String::new() };
+    if wants_cluster && cluster.is_empty() {
+        tidb_logutil::bg_logger().warn(
+            "Can't get cluster id from store, use default cloud storage uri",
+            &[
+                Field::new("schema", Value::Str(String::from_utf8_lossy(&u.scheme).into_owned())),
+                Field::new("bucket", Value::Str(String::from_utf8_lossy(&u.host).into_owned())),
+                Field::new("prefix", Value::Str(prefix.as_str().to_owned())),
+            ],
+        );
+    }
+    let joined = if cluster.is_empty() { "dxf".to_owned() } else { format!("dxf/{cluster}") };
+    u.path = prefix.join_str(&joined).to_path().into_bytes();
+    u.string()
+}
+
 /// Go `GetDefaultRegionSplitConfig`: the default region split size and keys.
 #[must_use]
 pub fn get_default_region_split_config() -> (i64, i64) {
@@ -517,5 +562,34 @@ mod tests {
         }
         assert_eq!(size, 96 << 20);
         assert_eq!(keys, 960_000);
+    }
+
+    /// Go `TestGetCloudStorageURI`, with Go's table: the `dxf/<cluster ID>`
+    /// prefix only for a URI with a path and SEM off.
+    #[test]
+    fn cloud_storage_uri_matches_go() {
+        let cases = [
+            ("", "", ""),
+            ("s3://bucket", "s3://bucket/dxf/", "s3://bucket/dxf/"),
+            ("s3://bucket/", "s3://bucket/dxf/", "s3://bucket/dxf/"),
+            ("s3://bucket/path", "s3://bucket/path/dxf/", "s3://bucket/path/dxf/1/"),
+            ("s3://bucket/path/", "s3://bucket/path/dxf/", "s3://bucket/path/dxf/1/"),
+            ("s3://bucket/path/sub", "s3://bucket/path/sub/dxf/", "s3://bucket/path/sub/dxf/1/"),
+            ("s3://bucket/path/sub/", "s3://bucket/path/sub/dxf/", "s3://bucket/path/sub/dxf/1/"),
+        ];
+        for sem in [true, false] {
+            for (input, sem_out, no_sem_out) in cases {
+                *tidb_vardef::CLOUD_STORAGE_URI.write().unwrap() = input.to_owned();
+                if sem {
+                    tidb_sem::enable();
+                } else {
+                    tidb_sem::disable();
+                }
+                let want = if sem { sem_out } else { no_sem_out };
+                assert_eq!(super::get_cloud_storage_uri(Some(1)), want, "sem={sem} uri={input}");
+            }
+        }
+        tidb_sem::disable();
+        tidb_vardef::CLOUD_STORAGE_URI.write().unwrap().clear();
     }
 }

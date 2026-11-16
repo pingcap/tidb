@@ -98,7 +98,7 @@ impl std::fmt::Display for ChunkError {
 }
 
 /// Go `common.ErrEncodeKV.Wrap(err).GenWithStackByArgs(file, offset)`.
-fn encode_kv_error(
+pub(crate) fn encode_kv_error(
     cause: std::sync::Arc<dyn std::error::Error + Send + Sync>,
     file: &str,
     offset: i64,
@@ -214,7 +214,7 @@ pub struct EncodedKvGroupBatch {
 }
 
 impl EncodedKvGroupBatch {
-    fn new(keyspace: &[u8], count: usize) -> Self {
+    pub(crate) fn new(keyspace: &[u8], count: usize) -> Self {
         Self {
             data_kvs: Vec::with_capacity(count),
             index_kvs: std::collections::BTreeMap::new(),
@@ -223,7 +223,7 @@ impl EncodedKvGroupBatch {
     }
 
     /// Go `add`.
-    fn add(&mut self, kvs: tidb_lightning_backend_kv::Pairs) -> Result<i64, String> {
+    pub(crate) fn add(&mut self, kvs: tidb_lightning_backend_kv::Pairs) -> Result<i64, String> {
         let mut kv_bytes = 0;
         for pair in kvs.pairs {
             kv_bytes += (pair.key.len() + pair.val.len()) as i64;

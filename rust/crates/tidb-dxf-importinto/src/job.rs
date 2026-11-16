@@ -38,6 +38,21 @@ pub fn submit_task(ctx: &Context, plan: &Plan, stmt: &str) -> Result<(i64, TaskB
     do_submit_task(ctx, plan, stmt, None, None)
 }
 
+/// Go `ShouldUseAsyncPrepare`: whether the task prepares in DXF's prepare
+/// mode. Only a next-gen global-sort import from files does; a starter
+/// deployment's imports are small, and preparing them before submission
+/// gives faster validation feedback.
+#[must_use]
+pub fn should_use_async_prepare(plan: &Plan) -> bool {
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/dxf/importinto/mockDisableAsyncPrepare").is_some() {
+        return false;
+    }
+    plan.query_source.is_none()
+        && tidb_config_kerneltype::is_next_gen()
+        && !tidb_config_deploymode::is_starter()
+        && plan.is_global_sort()
+}
+
 /// Go `TaskKey`.
 #[must_use]
 pub fn task_key(job_id: i64) -> String {
@@ -62,11 +77,37 @@ fn do_submit_task(
         chunk_map,
         ..LogicalPlan::default()
     };
+    let async_prepare = should_use_async_prepare(plan);
+    // Go sets the plan's thread and node counts to 1 after the logical plan
+    // copied it; the prepare stage computes them.
+    let (mut thread_cnt, mut max_node_cnt) = (plan.thread_cnt, plan.max_node_cnt);
+    if async_prepare {
+        logical.prepare_mode = tidb_dxf::PREPARE_MODE_REQUIRED;
+        (thread_cnt, max_node_cnt) = (1, 1);
+    }
     let table = plan.table_info.as_ref().ok_or_else(|| plain("import plan has no table info"))?;
     let parameters = plan.parameters.clone().unwrap_or_default();
     let mut job_id = 0;
     let mut task_id = 0;
     let mut failure: Option<Error> = None;
+    // Go `kv.IsUserKS(se.GetStore())`.
+    let keyspace = tidb_keyspace::get_keyspace_name_by_settings();
+    let running_on_user_ks = tidb_txnkv::is_user_keyspace(kernel_type(), &keyspace);
+    let in_job_txn = !tidb_config_kerneltype::is_next_gen() || tidb_txnkv::is_system_keyspace(kernel_type(), &keyspace);
+    let submit = |se: &dyn tidb_dxf_storage::SessionContext, job_id: i64, logical: &mut LogicalPlan, manager: &tidb_dxf_storage::TaskManager| {
+        logical.job_id = job_id;
+        let plan_ctx = tidb_dxf_planner::PlanCtx {
+            ctx: ctx.clone(),
+            session_ctx: Some(se),
+            task_key: task_key(job_id),
+            task_type: tidb_dxf::IMPORT_INTO,
+            thread_cnt: thread_cnt as isize,
+            max_node_cnt: max_node_cnt as isize,
+            keyspace: plan.keyspace.clone(),
+            ..Default::default()
+        };
+        tidb_dxf_planner::Planner::new().run(&plan_ctx, &*logical, manager).map_err(crate::planner::unbox)
+    };
     let result = task_manager.with_new_txn(&ctx, &mut |se| {
         let attempt = (|| -> Result<(), Error> {
             let conn = se.sql_executor();
@@ -91,20 +132,11 @@ fn do_submit_task(
                 };
                 se.sql_server().get_runtime().alter_table_mode(&ctx, &target).map_err(plain)?;
             }
-            logical.job_id = job_id;
-            let plan_ctx = tidb_dxf_planner::PlanCtx {
-                ctx: ctx.clone(),
-                session_ctx: Some(se),
-                task_key: task_key(job_id),
-                task_type: tidb_dxf::IMPORT_INTO,
-                thread_cnt: plan.thread_cnt as isize,
-                max_node_cnt: plan.max_node_cnt as isize,
-                keyspace: plan.keyspace.clone(),
-                ..Default::default()
-            };
-            task_id = tidb_dxf_planner::Planner::new()
-                .run(&plan_ctx, &logical, &task_manager)
-                .map_err(crate::planner::unbox)?;
+            // In a classic kernel or the SYSTEM keyspace, the task is
+            // submitted in the job's transaction.
+            if in_job_txn {
+                task_id = submit(se, job_id, &mut logical, &task_manager)?;
+            }
             Ok(())
         })();
         attempt.map_err(|e| {
@@ -116,17 +148,56 @@ fn do_submit_task(
     if let Err(e) = result {
         return Err(failure.unwrap_or_else(|| Arc::new(e)));
     }
+    // In a next-gen user keyspace, the task goes to the DXF service in the
+    // SYSTEM keyspace after the job is created. Go does not clean up the
+    // job if this fails either.
+    let mut dxf_task_mgr = task_manager.clone();
+    if running_on_user_ks {
+        tidb_failpoint::inject_call(
+            "github.com/pingcap/tidb/pkg/dxf/importinto/afterUserImportJobCreatedBeforeDXFTask",
+            &mut job_id.clone(),
+        );
+        dxf_task_mgr = tidb_dxf_storage::get_dxf_svc_task_mgr().map_err(|e| Arc::new(e) as Error)?;
+        let result = dxf_task_mgr.with_new_txn(&ctx, &mut |se| {
+            submit(se, job_id, &mut logical, &dxf_task_mgr).map(|id| task_id = id).map_err(|e| {
+                let text = e.to_string();
+                failure = Some(e);
+                tidb_dxf_storage::StorageError::Other(text)
+            })
+        });
+        if let Err(e) = result {
+            return Err(failure.unwrap_or_else(|| Arc::new(e)));
+        }
+    }
     tidb_dxf_handle::notify_task_change();
-    let task = task_manager.get_task_base_by_id(&ctx, task_id).map_err(|e| Arc::new(e) as Error)?;
-    tidb_logutil::bg_logger().info(
-        "job submitted to task queue",
-        &[
-            tidb_log::Field::new("job-id", tidb_log::Value::I64(job_id)),
-            tidb_log::Field::new("task-id", tidb_log::Value::I64(task.id)),
-            tidb_log::Field::new("task-key", tidb_log::Value::Str(task.key.clone())),
-        ],
-    );
+    let task = dxf_task_mgr.get_task_base_by_id(&ctx, task_id).map_err(|e| Arc::new(e) as Error)?;
+    let mut fields = vec![
+        tidb_log::Field::new("job-id", tidb_log::Value::I64(job_id)),
+        tidb_log::Field::new("task-key", tidb_log::Value::Str(task.key.clone())),
+        tidb_log::Field::new("task-id", tidb_log::Value::I64(task.id)),
+        tidb_log::Field::new("global-sort", tidb_log::Value::Bool(plan.is_global_sort())),
+        tidb_log::Field::new("async-prepare", tidb_log::Value::Bool(async_prepare)),
+    ];
+    if !async_prepare {
+        fields.extend([
+            tidb_log::Field::new(
+                "data-size",
+                tidb_log::Value::Str(tidb_config_configtypes::bytes_size(plan.total_file_size as f64)),
+            ),
+            tidb_log::Field::new("thread-cnt", tidb_log::Value::I64(plan.thread_cnt as i64)),
+            tidb_log::Field::new("max-node-cnt", tidb_log::Value::I64(plan.max_node_cnt as i64)),
+        ]);
+    }
+    tidb_logutil::bg_logger().info("job submitted to task queue", &fields);
     Ok((job_id, task))
+}
+
+fn kernel_type() -> tidb_txnkv::KernelType {
+    if tidb_config_kerneltype::is_next_gen() {
+        tidb_txnkv::KernelType::NextGen
+    } else {
+        tidb_txnkv::KernelType::Classic
+    }
 }
 
 /// Go `executor.cancelAndWaitImportJob`: the job's task is cancelled and
@@ -190,18 +261,31 @@ pub fn is_raft_kv2(ctx: &Context, se: &dyn tidb_dxf_storage::SessionContext) -> 
     Ok(engine.as_deref() == Some("raft-kv2"))
 }
 
-/// Go `handle.GetCloudStorageURI`: `tidb_cloud_storage_uri` with the
-/// `dxf/<cluster ID>` prefix appended.
+/// Go `handle.GetCloudStorageURI`.
 #[must_use]
 pub fn get_cloud_storage_uri(cluster_id: Option<u64>) -> String {
-    let cloud_uri = tidb_vardef::CLOUD_STORAGE_URI.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
-    if cloud_uri.is_empty() {
-        return cloud_uri;
+    tidb_dxf_handle::get_cloud_storage_uri(cluster_id)
+}
+
+#[cfg(test)]
+mod tests {
+    /// Go `ShouldUseAsyncPrepare`: only a next-gen, non-starter global-sort
+    /// import from files.
+    #[test]
+    fn async_prepare_only_for_next_gen_global_sort_files() {
+        let mut plan = tidb_executor::importer::Plan { cloud_storage_uri: "s3://b/p".into(), ..Default::default() };
+        let next_gen = tidb_config_kerneltype::is_next_gen();
+        assert_eq!(super::should_use_async_prepare(&plan), next_gen);
+        plan.query_source = Some(serde_json::json!({}));
+        assert!(!super::should_use_async_prepare(&plan));
+        plan.query_source = None;
+        plan.cloud_storage_uri.clear();
+        assert!(!super::should_use_async_prepare(&plan));
+        if next_gen {
+            plan.cloud_storage_uri = "s3://b/p".into();
+            tidb_config_deploymode::set(tidb_config_deploymode::Mode::Starter).unwrap();
+            assert!(!super::should_use_async_prepare(&plan));
+            tidb_config_deploymode::set(tidb_config_deploymode::Mode::Premium).unwrap();
+        }
     }
-    let Ok(mut u) = tidb_objstore::parse_raw_url(&cloud_uri) else { return cloud_uri };
-    let prefix = tidb_objstore::storeapi::Prefix::new(&String::from_utf8_lossy(&u.path));
-    let cluster = if prefix.as_str().is_empty() { String::new() } else { cluster_id.map(|id| id.to_string()).unwrap_or_default() };
-    let joined = if cluster.is_empty() { "dxf".to_owned() } else { format!("dxf/{cluster}") };
-    u.path = prefix.join_str(&joined).to_path().into_bytes();
-    u.string()
 }

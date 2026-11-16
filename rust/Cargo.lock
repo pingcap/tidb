@@ -6222,7 +6222,10 @@ dependencies = [
  "tidb-meta",
  "tidb-meta-tidbvar",
  "tidb-metrics",
+ "tidb-objstore",
  "tidb-owner",
+ "tidb-sem",
+ "tidb-sem-compat",
  "tidb-sqlescape",
  "tidb-sqlexec",
  "tidb-stringutil",
@@ -6245,6 +6248,7 @@ dependencies = [
  "tidb-br",
  "tidb-config",
  "tidb-config-configtypes",
+ "tidb-config-deploymode",
  "tidb-config-kerneltype",
  "tidb-datatype",
  "tidb-domain-serverinfo",
@@ -6254,6 +6258,7 @@ dependencies = [
  "tidb-dxf-handle",
  "tidb-dxf-importinto-conflictedkv",
  "tidb-dxf-importinto-conflictpath",
+ "tidb-dxf-importinto-conflictrows",
  "tidb-dxf-importinto-taskkey",
  "tidb-dxf-planner",
  "tidb-dxf-scheduler",
@@ -6268,6 +6273,7 @@ dependencies = [
  "tidb-ingestor-globalsort",
  "tidb-ingestor-ingestctrl",
  "tidb-ingestor-simplesst",
+ "tidb-keyspace",
  "tidb-lightning-backend",
  "tidb-lightning-backend-kv",
  "tidb-lightning-common",
@@ -6327,6 +6333,24 @@ name = "tidb-dxf-importinto-conflictpath"
 version = "0.0.0"
 dependencies = [
  "uuid",
+]
+
+[[package]]
+name = "tidb-dxf-importinto-conflictrows"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tidb-dxf",
+ "tidb-dxf-importinto-conflictpath",
+ "tidb-dxf-storage",
+ "tidb-executor",
+ "tidb-gocontext",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-objstore",
 ]
 
 [[package]]
@@ -6645,6 +6669,9 @@ dependencies = [
  "tidb-driver-error",
  "tidb-dumpformat-parquetfile",
  "tidb-dxf-execute",
+ "tidb-dxf-handle",
+ "tidb-dxf-scheduler",
+ "tidb-dxf-storage",
  "tidb-errno",
  "tidb-execdetails",
  "tidb-executor-aggfuncs",
@@ -6666,6 +6693,7 @@ dependencies = [
  "tidb-fixcontrol",
  "tidb-format",
  "tidb-globalconn",
+ "tidb-go-rand",
  "tidb-go-strconv",
  "tidb-go-url",
  "tidb-gocontext",

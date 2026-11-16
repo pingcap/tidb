@@ -14,6 +14,8 @@ serde.workspace = true
 serde_json.workspace = true
 tidb-config = { path = "../tidb-config" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-config-deploymode = { path = "../tidb-config-deploymode" }
+tidb-keyspace = { path = "../tidb-keyspace" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
 tidb-driver-error = { path = "../tidb-driver-error" }
@@ -22,6 +24,7 @@ tidb-dxf-execute = { path = "../tidb-dxf-execute" }
 tidb-dxf-handle = { path = "../tidb-dxf-handle" }
 tidb-dxf-importinto-conflictedkv = { path = "../tidb-dxf-importinto-conflictedkv" }
 tidb-dxf-importinto-conflictpath = { path = "../tidb-dxf-importinto-conflictpath" }
+tidb-dxf-importinto-conflictrows = { path = "../tidb-dxf-importinto-conflictrows" }
 tidb-dxf-importinto-taskkey = { path = "../tidb-dxf-importinto-taskkey" }
 tidb-dxf-planner = { path = "../tidb-dxf-planner" }
 tidb-dxf-scheduler = { path = "../tidb-dxf-scheduler" }

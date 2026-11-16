@@ -33,6 +33,23 @@ impl Cleaner for ImportCleaner {
     fn as_batch_cleaner(&self) -> Option<&dyn BatchCleaner> {
         Some(self)
     }
+
+    fn as_expired_file_cleaner(&self) -> Option<&dyn tidb_dxf_scheduler::ExpiredFileCleaner> {
+        Some(self)
+    }
+}
+
+impl tidb_dxf_scheduler::ExpiredFileCleaner for ImportCleaner {
+    /// Go `CleanExpiredFiles`: the conflict row files past their retention.
+    fn clean_expired_files(
+        &self,
+        ctx: &Context,
+        task_info_getter: &dyn tidb_dxf_storage::TaskCleanupInfoGetter,
+        cloud_storage_uri: &str,
+    ) -> Result<(), Error> {
+        tidb_dxf_importinto_conflictrows::clean_conflict_row_files(ctx, task_info_getter, cloud_storage_uri)
+            .map_err(|e| plain(e.to_string()))
+    }
 }
 
 /// Go `cleanFileGroup`: the tasks sharing one global sort store.

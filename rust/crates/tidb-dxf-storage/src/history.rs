@@ -21,7 +21,7 @@ use chrono::{DateTime, FixedOffset};
 use tidb_dxf::{Task, TaskBase, TaskState, TaskType, TASK_STATE_FAILED, TASK_STATE_REVERTED};
 use tidb_sqlescape::SqlArg;
 
-use crate::converter::{get_int64, get_local_time, is_null, row2_task_basic, row2_task_error, zero_time};
+use crate::converter::{get_int64, get_local_time, get_string, is_null, row2_task_basic, row2_task_error, zero_time};
 use crate::task_table::{sql_args, Arg};
 use crate::{
     exec_sql, is_cancelled_err, task_id_to_key, Result, SessionContext, StorageError, TaskManager, BASIC_TASK_COLUMNS,
@@ -93,6 +93,30 @@ pub struct TaskCleanupInfo {
     pub state: TaskState,
     /// Go `EndTime`.
     pub end_time: Option<DateTime<FixedOffset>>,
+}
+
+/// Go `TaskCleanupInfoGetter`: the task metadata the cleanup of external
+/// files needs.
+pub trait TaskCleanupInfoGetter: Send + Sync {
+    /// Go `GetTaskCleanupInfoByIDs`.
+    ///
+    /// # Errors
+    /// The metadata could not be read.
+    fn get_task_cleanup_info_by_ids(
+        &self,
+        ctx: &tidb_gocontext::Context,
+        task_ids: &[i64],
+    ) -> Result<std::collections::BTreeMap<i64, TaskCleanupInfo>>;
+}
+
+impl TaskCleanupInfoGetter for TaskManager {
+    fn get_task_cleanup_info_by_ids(
+        &self,
+        ctx: &tidb_gocontext::Context,
+        task_ids: &[i64],
+    ) -> Result<std::collections::BTreeMap<i64, TaskCleanupInfo>> {
+        TaskManager::get_task_cleanup_info_by_ids(self, ctx, task_ids)
+    }
 }
 
 /// Go `ValidateHistoryTaskPageSize`.
@@ -223,6 +247,51 @@ impl TaskManager {
             page.next_page_token = page.items.last().map_or(0, |item| item.task_base.id);
         }
         Ok(page)
+    }
+
+    /// Go `GetTaskCleanupInfoByIDs`: the cleanup metadata of the tasks, from
+    /// the active and the history tables.
+    ///
+    /// # Errors
+    /// The session or the statement failed.
+    pub fn get_task_cleanup_info_by_ids(
+        &self,
+        ctx: &tidb_gocontext::Context,
+        task_ids: &[i64],
+    ) -> Result<std::collections::BTreeMap<i64, TaskCleanupInfo>> {
+        let mut result = std::collections::BTreeMap::new();
+        if task_ids.is_empty() {
+            return Ok(result);
+        }
+        let placeholders = vec!["%?"; task_ids.len()].join(",");
+        let args: Vec<SqlArg<'_>> = task_ids.iter().chain(task_ids).map(|id| SqlArg::Signed(*id)).collect();
+        let rows = self.execute_sql_with_new_session(
+            ctx,
+            &format!(
+                "
+		select id, type, state, unix_timestamp(end_time)
+		from mysql.tidb_global_task
+		where id in ({placeholders})
+		union all
+		select id, type, state, unix_timestamp(end_time)
+		from mysql.tidb_global_task_history
+		where id in ({placeholders})"
+            ),
+            &args,
+        )?;
+        for row in &rows {
+            let mut info = TaskCleanupInfo {
+                id: get_int64(row, 0),
+                tp: TaskType::new(get_string(row, 1)),
+                state: TaskState::new(get_string(row, 2)),
+                end_time: None,
+            };
+            if !is_null(row, 3) && get_int64(row, 3) > 0 {
+                info.end_time = DateTime::from_timestamp(get_int64(row, 3), 0).map(|t| t.fixed_offset());
+            }
+            result.insert(info.id, info);
+        }
+        Ok(result)
     }
 
     /// Go `GCSubtasks`: deletes the history subtasks older than the keep

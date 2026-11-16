@@ -33,6 +33,11 @@ pub struct LogicalPlan {
     pub eligible_instances: Option<Vec<serde_json::Value>>,
     /// Go `ChunkMap`.
     pub chunk_map: Option<BTreeMap<i32, Vec<Chunk>>>,
+    /// Go `PrepareMode`.
+    pub prepare_mode: tidb_dxf::PrepareMode,
+    /// Go `PreparedChunkMapExternalPath`: the chunk map the prepare stage
+    /// wrote to the sort store.
+    pub prepared_chunk_map_external_path: String,
     /// Go `summary`: the next step's summary, set while its specs are
     /// generated.
     pub summary: std::cell::Cell<StepSummary>,
@@ -76,13 +81,14 @@ impl LogicalPlan {
             stmt: self.stmt.clone(),
             eligible_instances: self.eligible_instances.clone(),
             chunk_map: self.chunk_map.clone(),
+            prepared_meta_external_path: self.prepared_chunk_map_external_path.clone(),
             ..TaskMeta::default()
         }
     }
 }
 impl tidb_dxf_planner::LogicalPlan for LogicalPlan {
     fn get_task_extra_params(&self) -> ExtraParams {
-        ExtraParams { manual_recovery: self.plan.manual_recovery, ..ExtraParams::default() }
+        ExtraParams { manual_recovery: self.plan.manual_recovery, prepare_mode: self.prepare_mode, ..ExtraParams::default() }
     }
 
     fn to_task_meta(&self) -> Result<Vec<u8>, PlanError> {
@@ -96,6 +102,7 @@ impl tidb_dxf_planner::LogicalPlan for LogicalPlan {
         self.stmt = m.stmt;
         self.eligible_instances = m.eligible_instances;
         self.chunk_map = m.chunk_map;
+        self.prepared_chunk_map_external_path = m.prepared_meta_external_path;
         Ok(())
     }
 
@@ -308,6 +315,9 @@ pub fn build_controller_for_plan(plan: &Plan, stmt: &str) -> Result<LoadDataCont
 /// map the submitter made, or split now.
 fn generate_import_specs(ctx: &PlanCtx<'_>, p: &LogicalPlan) -> Result<Vec<StepSpec>, Error> {
     let chunk_map = match &p.chunk_map {
+        _ if !p.prepared_chunk_map_external_path.is_empty() => {
+            read_prepared_chunk_map(&ctx.ctx, &p.plan, &p.prepared_chunk_map_external_path)?
+        }
         Some(m) if !m.is_empty() => m.clone(),
         _ => {
             let mut controller = build_controller_for_plan(&p.plan, &p.stmt)?;
@@ -333,6 +343,20 @@ fn generate_import_specs(ctx: &PlanCtx<'_>, p: &LogicalPlan) -> Result<Vec<StepS
     }
     p.summary.set(summary);
     Ok(specs)
+}
+
+/// Go `readPreparedChunkMap`.
+fn read_prepared_chunk_map(
+    ctx: &tidb_gocontext::Context,
+    plan: &tidb_executor::importer::Plan,
+    external_path: &str,
+) -> Result<BTreeMap<i32, Vec<Chunk>>, Error> {
+    let store = sort_store(ctx, plan)?;
+    let mut meta = crate::proto::PreparedMeta { external_path: external_path.to_owned(), ..Default::default() };
+    let result = meta.read_external(ctx, store.as_ref());
+    store.close();
+    result?;
+    Ok(meta.chunk_map.unwrap_or_default())
 }
 
 /// Go `config.DefaultBatchSize`: 100 GiB.

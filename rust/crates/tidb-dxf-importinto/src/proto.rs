@@ -620,6 +620,56 @@ impl CollectConflictsStepMeta {
     }
 }
 
+/// Go `PreparedMeta`: the chunk map the prepare stage of a next-gen
+/// global-sort import writes to the sort store.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PreparedMeta {
+    /// Go `BaseExternalMeta.ExternalPath`.
+    pub external_path: String,
+    /// Go `ChunkMap` (external).
+    pub chunk_map: Option<BTreeMap<i32, Vec<Chunk>>>,
+}
+
+impl PreparedMeta {
+    fn fields(&self) -> GoFields {
+        let chunk_map = self.chunk_map.as_ref().map(|m| m.iter().map(|(k, v)| (i64::from(*k), v.clone())).collect());
+        GoFields::new().add("ExternalPath", &self.external_path, false).add_if(
+            self.chunk_map.as_ref().is_some_and(|m| !m.is_empty()),
+            "chunk_map",
+            &GoIntMap(&chunk_map),
+            true,
+        )
+    }
+
+    /// Go `Marshal`.
+    #[must_use]
+    pub fn marshal(&self) -> Vec<u8> {
+        self.fields().marshal(&self.external_path)
+    }
+
+    /// Go `WriteJSONToExternalStorage`.
+    ///
+    /// # Errors
+    /// The file could not be written.
+    pub fn write_external(&self, ctx: &tidb_gocontext::Context, store: &dyn tidb_objstore::storeapi::Storage) -> Result<(), Error> {
+        write_external(ctx, store, &self.external_path, &self.fields().external())
+    }
+
+    /// Go `ReadJSONFromExternalStorage`.
+    ///
+    /// # Errors
+    /// The file could not be read.
+    pub fn read_external(&mut self, ctx: &tidb_gocontext::Context, store: &dyn tidb_objstore::storeapi::Storage) -> Result<(), Error> {
+        if self.external_path.is_empty() {
+            return Ok(());
+        }
+        let data = store.read_file(ctx, &self.external_path).map_err(|e| plain(e.to_string()))?;
+        let v: Value = serde_json::from_slice(&data).map_err(|e| plain(e.to_string()))?;
+        self.chunk_map = parse_chunk_map(v.get("chunk_map"))?;
+        Ok(())
+    }
+}
+
 /// Go `ConflictResolutionStepMeta`.
 #[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
 pub struct ConflictResolutionStepMeta {
@@ -835,5 +885,49 @@ mod tests {
         assert_eq!(back.data_files, None);
         back.read_external(&ctx, &store).unwrap();
         assert_eq!(back, m);
+    }
+
+    /// Go `PreparedMeta`'s `Marshal` (full and with `ExternalPath`) and
+    /// external file, against a Go master capture (`zzprobe/e05ng`
+    /// `TestPreparedMetaCapture`): engine IDs as strings in string order,
+    /// the empty index engine kept, and a nil map omitted. Reading the file
+    /// back restores the map.
+    #[test]
+    fn prepared_meta_matches_go() {
+        use tidb_executor::importer::chunk_process::Chunk;
+        let chunk = |path: &str, file_size, offset, prev, max| Chunk {
+            path: path.into(),
+            file_size,
+            offset,
+            end_offset: file_size,
+            prev_row_id_max: prev,
+            row_id_max: max,
+            timestamp: 100,
+            ..Chunk::default()
+        };
+        let map = BTreeMap::from([
+            (1, vec![chunk("a.csv", 10, 0, 0, 3)]),
+            (2, vec![chunk("b.csv", 20, 5, 3, 9)]),
+            (10, vec![chunk("c.csv", 7, 0, 0, 1)]),
+            (-1, vec![]),
+        ]);
+        let ctx = tidb_gocontext::Context::background();
+        for line in include_str!("../testdata/prepared_meta_go.jsonl").lines() {
+            let rec: Value = serde_json::from_str(line).unwrap();
+            let name = rec["case"].as_str().unwrap();
+            let mut m = PreparedMeta { chunk_map: (name == "chunks").then(|| map.clone()), ..PreparedMeta::default() };
+            assert_eq!(String::from_utf8(m.marshal()).unwrap(), rec["full"].as_str().unwrap(), "{name} full");
+            m.external_path = tidb_ingestor_globalsort::prepared_meta_path(42);
+            assert_eq!(m.external_path, rec["path"].as_str().unwrap());
+            assert_eq!(String::from_utf8(m.marshal()).unwrap(), rec["internal"].as_str().unwrap(), "{name} internal");
+            let dir = tempfile::tempdir().unwrap();
+            let store = tidb_objstore::LocalStorage::new(dir.path().to_str().unwrap()).unwrap();
+            m.write_external(&ctx, &store).unwrap();
+            let file = std::fs::read_to_string(dir.path().join(&m.external_path)).unwrap();
+            assert_eq!(file, rec["external"].as_str().unwrap(), "{name} external");
+            let mut back = PreparedMeta { external_path: m.external_path.clone(), ..PreparedMeta::default() };
+            back.read_external(&ctx, &store).unwrap();
+            assert_eq!(back.chunk_map.unwrap_or_default(), m.chunk_map.clone().unwrap_or_default(), "{name}");
+        }
     }
 }

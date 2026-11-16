@@ -302,7 +302,16 @@ impl Session {
         controller: &mut LoadDataController,
         enable_dist_task: bool,
     ) -> Result<Option<Vec<Datum>>, DriverError> {
-        controller.init_data_files(ctx)?;
+        // Go `ShouldUseAsyncPrepare`: a next-gen global-sort import lists
+        // its files in the task's prepare stage instead.
+        let use_async_prepare = tidb_dxf_importinto::job::should_use_async_prepare(&controller.plan);
+        if !use_async_prepare {
+            controller.init_data_files(ctx)?;
+            if tidb_config_kerneltype::is_next_gen() {
+                let keyspace = tidb_dxf_importinto::import_store().map_err(|e| import_error(&e))?.keyspace();
+                controller.cal_resource_params(ctx, &keyspace)?;
+            }
+        }
         let store = tidb_dxf_importinto::import_store().map_err(|e| import_error(&e))?;
         // Go `CreateSession(userSctx)`: the prechecks read the system tables
         // with an internal session.
@@ -310,7 +319,11 @@ impl Session {
         with_task_manager_session(|se| {
             let conn = se.sql_executor();
             let pre = PrecheckSession { ctx, conn: conn.as_ref(), etcd: etcd.as_deref() };
-            controller.check_requirements(ctx, &pre)?;
+            if use_async_prepare {
+                controller.check_requirements_before_init_data_files(ctx, &pre)?;
+            } else {
+                controller.check_requirements(ctx, &pre)?;
+            }
             // Go `InitTiKVConfigs`.
             controller.plan.is_raft_kv2 =
                 tidb_dxf_importinto::job::is_raft_kv2(ctx, se).map_err(|e| import_error(&e))?;
