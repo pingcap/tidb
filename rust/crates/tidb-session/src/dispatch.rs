@@ -2628,7 +2628,7 @@ impl Session {
             args: vec![tidb_ast::Expr::Int("6".into())],
             origin_position: 0,
         })?;
-        let now_ts = self.calculate_as_of_ts_expr(&tidb_ast::Expr::String(
+        let now_ts = self.as_of_value_to_ts(&tidb_ast::Expr::String(
             now.sql_string().unwrap_or_default(),
         ))?;
         // Go `CalculateTsWithReadStaleness`: `now + readStaleness`, clamped

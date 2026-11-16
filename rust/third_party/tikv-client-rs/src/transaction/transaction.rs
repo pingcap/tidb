@@ -2061,32 +2061,38 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.caller_context = Some(context);
     }
 
-    /// The statement ctx for one operation: the caller's trace context with
-    /// [`Self::set_exec_details`]' value as client-go's `ExecDetailsKey`.
-    /// `None` once the operation already runs under it.
+    /// The statement ctx for one operation: the active trace context with
+    /// the caller ctx's RPC interceptor and [`Self::set_exec_details`]' value
+    /// as client-go's `ExecDetailsKey`. `None` once the operation already
+    /// runs under both.
     fn statement_trace_context(&self) -> Option<crate::trace::TraceContext> {
-        let details = self.exec_details.as_ref()?;
         let active = crate::trace::current_trace_context();
-        if crate::util::exec_details_from_context(&active)
-            .is_some_and(|active| Arc::ptr_eq(active, details))
-        {
-            return None;
-        }
+        let details = self.exec_details.as_ref().filter(|details| {
+            !crate::util::exec_details_from_context(&active)
+                .is_some_and(|active| Arc::ptr_eq(active, details))
+        });
         // The active ctx keeps what the caller scoped around this call (its
         // commit and lock-keys detail slots); the statement's caller ctx adds
         // its RPC interceptor, which client-go's `ctx` carries throughout.
-        let base = match self
+        let interceptor = self
             .caller_context
             .as_ref()
             .and_then(crate::interceptor::get_rpc_interceptor_from_ctx)
-        {
-            Some(chain) => crate::interceptor::with_rpc_interceptor(&active, Arc::new(chain)),
-            None => active,
-        };
-        Some(crate::util::context_with_exec_details(
-            &base,
-            Arc::clone(details),
-        ))
+            .filter(|chain| {
+                !crate::interceptor::get_rpc_interceptor_from_ctx(&active)
+                    .is_some_and(|active| active.contains_all(chain))
+            });
+        if details.is_none() && interceptor.is_none() {
+            return None;
+        }
+        let mut context = active;
+        if let Some(chain) = interceptor {
+            context = crate::interceptor::with_rpc_interceptor(&context, Arc::new(chain));
+        }
+        if let Some(details) = details {
+            context = crate::util::context_with_exec_details(&context, Arc::clone(details));
+        }
+        Some(context)
     }
 
     /// client-go `KVSnapshot.Get`/`BatchGet`/`newScanner`'s ctx: the
@@ -17764,6 +17770,51 @@ mod tests {
         assert_eq!(manager.exec_log(), ["INTERCEPTOR-2"]);
         txn.rollback().await.unwrap();
         manager.reset();
+    }
+
+    /// client-go's `ctx` carries the caller's interceptor into every read,
+    /// whether or not the statement charges `ExecDetails`; one already in the
+    /// active ctx is not linked twice.
+    #[tokio::test]
+    async fn a_caller_context_interceptor_wraps_reads_without_exec_details() {
+        let manager = crate::MockInterceptorManager::new();
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |req: &dyn Any| {
+                assert!(req.is::<kvrpcpb::GetRequest>(), "only gets are sent");
+                Ok(Box::new(kvrpcpb::GetResponse {
+                    value: b"value".to_vec(),
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let caller = crate::interceptor::with_rpc_interceptor(
+            &crate::trace::TraceContext::default(),
+            manager.create_mock_interceptor("CALLER"),
+        );
+        let mut txn = Transaction::new(
+            Timestamp::from_version(3),
+            pd_client.clone(),
+            TransactionOptions::new_optimistic().drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        txn.set_caller_context(caller.clone());
+        assert_eq!(txn.get("a".to_owned()).await.unwrap(), Some(b"value".to_vec()));
+        assert_eq!(manager.exec_log(), ["CALLER"]);
+        manager.reset();
+
+        let mut txn = Transaction::new(
+            Timestamp::from_version(3),
+            pd_client,
+            TransactionOptions::new_optimistic().drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        txn.set_caller_context(caller.clone());
+        txn.set_exec_details(Arc::new(crate::util::ExecDetails::default()));
+        let value = crate::trace::with_trace_context(caller, async { txn.get("b".to_owned()).await })
+            .await
+            .unwrap();
+        assert_eq!(value, Some(b"value".to_vec()));
+        assert_eq!(manager.exec_log(), ["CALLER"]);
     }
 
     #[tokio::test]

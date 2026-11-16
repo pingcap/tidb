@@ -581,8 +581,6 @@ impl Session {
     /// integer or a string of digits. A raw TSO whose physical half is
     /// before 2013-01-01 refuses with Go's own message.
     pub(crate) fn calculate_as_of_ts_expr(&mut self, expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
-        // 2013-01-01 00:00:00 UTC in milliseconds, Go's `minTSO` bound.
-        const MIN_PHYSICAL_MS: u64 = 1_356_998_400_000;
         // Go `SetStaleTSOProviderIfNotExist`: the statement's `NOW()` reads
         // the store's stale timestamp (`mockStaleReadTSO` in tests).
         if self.stale_tso_now.is_none() {
@@ -601,6 +599,15 @@ impl Session {
                 Err(error) => tidb_log::error("get stale tso failed", &[tidb_logutil::zap_error(&error)]),
             }
         }
+        self.as_of_value_to_ts(expr)
+    }
+
+    /// The rest of Go `CalculateAsOfTsExpr`: the expression's value as a
+    /// datetime, else as a raw TSO. `CalculateTsWithReadStaleness` reaches
+    /// only this part (it installs no stale-TSO provider).
+    pub(crate) fn as_of_value_to_ts(&mut self, expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
+        // 2013-01-01 00:00:00 UTC in milliseconds, Go's `minTSO` bound.
+        const MIN_PHYSICAL_MS: u64 = 1_356_998_400_000;
         let value = self.eval_value(expr)?;
         let as_of_error = |cause: &str| {
             DriverError::from(

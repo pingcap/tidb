@@ -193,6 +193,16 @@ impl RpcInterceptorChain {
         self
     }
 
+    /// Whether every interceptor of `other` is already linked here (the same
+    /// handle), so linking `other` would change nothing.
+    pub(crate) fn contains_all(&self, other: &Self) -> bool {
+        other.interceptors.iter().all(|wanted| {
+            self.interceptors
+                .iter()
+                .any(|existing| Arc::ptr_eq(existing, wanted))
+        })
+    }
+
     fn dispatch_from<'a>(
         interceptors: &'a [RpcInterceptorHandle],
         target: &'a str,
