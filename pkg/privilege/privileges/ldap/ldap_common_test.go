@@ -75,9 +75,7 @@ func TestGetConnectionClosesFailedRootBind(t *testing.T) {
 				conn.SetTimeout(ldapTimeout)
 				clients = append(clients, conn)
 				peers = append(peers, peer)
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				wg.Go(func() {
 					if password != "" {
 						request, err := ber.ReadPacket(peer)
 						if err != nil {
@@ -100,7 +98,7 @@ func TestGetConnectionClosesFailedRootBind(t *testing.T) {
 					var buf [1]byte
 					_, err := peer.Read(buf[:])
 					peerErrors <- err
-				}()
+				})
 				return conn, nil
 			}, 1, 1, 0)
 
