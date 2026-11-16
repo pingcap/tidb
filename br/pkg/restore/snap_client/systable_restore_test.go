@@ -657,3 +657,46 @@ func TestNotifyUpdateAllUsersPrivilege(t *testing.T) {
 	}, notifier)
 	require.Error(t, err)
 }
+
+func TestPreserveMaskingPolicyStagingTable(t *testing.T) {
+	cluster := getStartedMockedCluster(t)
+	defer cluster.Stop()
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	require.NoError(t, client.InitConnections(gluetidb.New(), cluster.Storage))
+	tk := testkit.NewTestKit(t, cluster.Storage)
+	ctx := context.Background()
+	tk.MustExec("create database __TiDB_BR_Temporary_mysql")
+	tk.MustExec("create table __TiDB_BR_Temporary_mysql.tidb_masking_policy like mysql.tidb_masking_policy")
+	tk.MustExec("insert into __TiDB_BR_Temporary_mysql.tidb_masking_policy (policy_id,policy_name,db_name,table_name,table_id,column_name,column_id,expression,status,masking_type,created_at,updated_at,created_by) values (123,'p','test','t',42,'c',1,'''X''','ENABLED','CUSTOM',now(),now(),'root')")
+	staged, err := cluster.Domain.InfoSchema().TableByName(ctx, utils.TemporaryDBName(mysql.SystemDB), pmodel.NewCIStr("tidb_masking_policy"))
+	require.NoError(t, err)
+	require.NoError(t, snapclient.PreserveMaskingPolicyStagingTable(ctx, cluster.Domain, gluetidb.WrapSession(tk.Session()), staged.Meta()))
+	tk.MustExec("drop database __TiDB_BR_Temporary_mysql")
+	qualified := utils.EncloseDBAndTable(snapclient.MaskingPolicyStagingDB, snapclient.MaskingPolicyStagingTableName(staged.Meta().ID))
+	tk.MustQuery("select policy_id,table_id,column_id from " + qualified).Check(testkit.Rows("123 42 1"))
+	retained, err := cluster.Domain.InfoSchema().TableByName(ctx, pmodel.NewCIStr(snapclient.MaskingPolicyStagingDB), pmodel.NewCIStr(snapclient.MaskingPolicyStagingTableName(staged.Meta().ID)))
+	require.NoError(t, err)
+	require.Equal(t, staged.Meta().ID, retained.Meta().ID)
+	require.Equal(t, snapclient.MaskingPolicyStagingTableName(staged.Meta().ID), retained.Meta().Name.O)
+}
+
+func TestPreserveMaskingPolicyStagingHiddenHandle(t *testing.T) {
+	cluster := getStartedMockedCluster(t)
+	defer cluster.Stop()
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	require.NoError(t, client.InitConnections(gluetidb.New(), cluster.Storage))
+	tk := testkit.NewTestKit(t, cluster.Storage)
+	ctx := context.Background()
+	tk.MustExec("create database __TiDB_BR_Temporary_mysql")
+	tk.MustExec("create table __TiDB_BR_Temporary_mysql.tidb_masking_policy (policy_id bigint primary key nonclustered, table_id bigint, column_id bigint)")
+	tk.MustExec("set tidb_opt_write_row_id=1")
+	tk.MustExec("insert into __TiDB_BR_Temporary_mysql.tidb_masking_policy (_tidb_rowid,policy_id,table_id,column_id) values (456,123,42,1)")
+	staged, err := cluster.Domain.InfoSchema().TableByName(ctx, utils.TemporaryDBName(mysql.SystemDB), pmodel.NewCIStr("tidb_masking_policy"))
+	require.NoError(t, err)
+	require.NoError(t, snapclient.PreserveMaskingPolicyStagingTable(ctx, cluster.Domain, gluetidb.WrapSession(tk.Session()), staged.Meta()))
+	qualified := utils.EncloseDBAndTable(snapclient.MaskingPolicyStagingDB, snapclient.MaskingPolicyStagingTableName(staged.Meta().ID))
+	tk.MustQuery("select _tidb_rowid,policy_id,table_id,column_id from " + qualified).Check(testkit.Rows("456 123 42 1"))
+	// A log checkpoint retry keeps the same physical table and hidden handles.
+	require.NoError(t, snapclient.PreserveMaskingPolicyStagingTable(ctx, cluster.Domain, gluetidb.WrapSession(tk.Session()), staged.Meta()))
+	tk.MustQuery("select _tidb_rowid,policy_id,table_id,column_id from " + qualified).Check(testkit.Rows("456 123 42 1"))
+}

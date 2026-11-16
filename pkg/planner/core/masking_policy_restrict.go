@@ -119,6 +119,10 @@ func (b *PlanBuilder) extractMaskingPolicyCandidateNamesFromOutputColumn(
 			return
 		}
 		visited[visitKey] = struct{}{}
+		if source, ok := b.maskingSourcePlans[plan.ID()]; ok {
+			walkByIndex(source, colIdx)
+			return
+		}
 
 		names := plan.OutputNames()
 		if colIdx < len(names) {

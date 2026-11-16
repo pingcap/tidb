@@ -44,6 +44,7 @@ func LoadMaskingPolicies(
 // If tableIDs is empty, all policies are loaded.
 func loadMaskingPoliciesWithTableIDs(ctx context.Context, factory func() (pools.Resource, error), tableIDs []int64, snapshotTS uint64, snapshotSchema InfoSchema) ([]*model.MaskingPolicyInfo, error) {
 	const maxBatchSize = 1024
+	failpoint.InjectCall("beforeLoadMaskingPolicies", ctx)
 	failpoint.Inject("mockLoadMaskingPoliciesError", func() {
 		failpoint.Return(nil, errors.New("mock masking policy load error"))
 	})

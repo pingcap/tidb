@@ -422,7 +422,9 @@ func TestResourceGroupRunaway(t *testing.T) {
 	tk.MustGetErrCode("select /*+ resource_group(rg3) */ * from t", mysql.ErrResourceGroupQueryRunawayQuarantine)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprRequest"))
 
-	tk.MustExec("create resource group rg4 BURSTABLE RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT)")
+	tk.MustExec("create resource group rg4 BURSTABLE RU_PER_SEC=2000 QUERY_LIMIT=()")
+	tk.MustQuery("select /*+ resource_group(rg4) */ * from t").Check(testkit.Rows("1"))
+	tk.MustExec("alter resource group rg4 RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT)")
 	// Keep real execution below the deadline, then check controlled times on
 	// either side of it without depending on CI scheduling or coprocessor delays.
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/resourcegroup/runaway/mockRunawayDeadline", func(group string, deadline *time.Time) {

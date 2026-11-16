@@ -74,12 +74,21 @@ Using per-table scope avoids global name collision and maps naturally to DDL own
 
 #### Evaluation semantics
 
-Masking is implemented as **AT RESULT** rewriting. In other words, table data and predicate semantics stay unchanged, and masking is applied when producing query results.
+Masking is implemented as **AT RESULT** rewriting. Table data stays unchanged, ordinary relational processing uses raw base-column values, and masking is applied when producing query results.
 
 From an execution perspective:
 
 - planner/executor still use raw values for `JOIN`, `WHERE`, `GROUP BY`, `HAVING`, `ORDER BY`, set operators
 - returned projection values are rewritten by policy expression based on runtime identity (`current_user()` / `current_role()`)
+
+Subquery outputs consumed by an outer predicate are an exception: scalar, `IN`,
+and quantified-comparison subqueries can mask their output before the outer
+comparison. Relational operations inside the subquery still use raw values.
+For example, comparing against a protected column's subquery output can match
+its masked value, while comparing against `MIN`/`MAX` of that column uses the
+raw aggregate result. Predicate outputs whose policy cannot be preserved
+(including unsupported aggregates or correlated result shapes) retain their
+raw values; each column of a row-valued result is handled separately.
 
 This choice minimizes optimizer/storage regressions and keeps compatibility risk lower than predicate-time rewriting.
 The tradeoff is that raw values can still participate in write/read transformations unless restricted by `RESTRICT ON`.
@@ -128,6 +137,16 @@ Primary code ownership map (for implementation navigation):
 #### BR restore compatibility design
 
 Masking policy metadata uses `mysql.tidb_masking_policy` as the Single Source of Truth (SSOT), but restore cannot replay source table rows blindly.
+
+PiTR retains the source policy table under
+`mysql.tidb_pitr_masking_policy_<table_id>`, preserving its physical table ID and
+original MVCC timestamps. It replays policy-table logs into that table and
+rebuilds policies using the final restored table and column bindings. The staging
+table ID is persisted in the PiTR ID map; retain this table for checkpoint retries
+and subsequent log-only restores. Missing
+staging state makes those restores fail rather than silently omit policies.
+Unselected target tables keep their existing policies, and `--with-sys-table=false`
+continues to exclude policy restoration.
 
 Reason:
 

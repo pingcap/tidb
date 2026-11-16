@@ -353,7 +353,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
 			isV2, _ := infoschema.IsV2(is)
 			if !isSnapshot {
-				do.preloadMaskingPolicies(is)
+				do.preloadMaskingPolicies(is, beginTime)
 			}
 			do.infoCache.Insert(is, schemaTs)
 			logutil.BgLogger().Info("diff load InfoSchema success",
@@ -415,7 +415,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	}
 	is := builder.Build(startTS)
 	if !isSnapshot {
-		do.preloadMaskingPolicies(is)
+		do.preloadMaskingPolicies(is, beginTime)
 	}
 	isV2, _ := infoschema.IsV2(is)
 	logutil.BgLogger().Info("full load InfoSchema success",
@@ -841,7 +841,11 @@ func (do *Domain) Reload() error {
 		metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
 		return err
 	}
-	do.preloadMaskingPolicies(is)
+	// A newly loaded schema has already attempted preloading before publication.
+	// Retry only on a cache hit, never twice in the same reload.
+	if hitCache {
+		do.preloadMaskingPolicies(is, startTime)
+	}
 	metrics.LoadSchemaCounter.WithLabelValues("succ").Inc()
 
 	// only update if it is not from cache
@@ -879,7 +883,7 @@ func (do *Domain) Reload() error {
 
 // preloadMaskingPolicies warms the cache before publishing a new schema, so the
 // first user query does not need to execute an internal coprocessor request.
-func (do *Domain) preloadMaskingPolicies(is infoschema.InfoSchema) {
+func (do *Domain) preloadMaskingPolicies(is infoschema.InfoSchema, startTime time.Time) {
 	failpoint.Inject("skipLoadMaskingPolicies", func() {
 		failpoint.Return()
 	})
@@ -887,7 +891,13 @@ func (do *Domain) preloadMaskingPolicies(is infoschema.InfoSchema) {
 	if !is.TableExists(ast.NewCIStr(mysql.SystemDB), ast.NewCIStr("tidb_masking_policy")) {
 		return
 	}
-	if err := infoschema.PreloadMaskingPolicies(do.ctx, is); err != nil {
+	// Warming the cache is optional. Include time already spent loading schema
+	// and waiting for another policy loader in this budget, leaving the lease
+	// renewal path independent of the policy SQL's 30-second timeout.
+	budget := min(time.Second, do.schemaLease/4)
+	ctx, cancel := context.WithDeadline(do.ctx, startTime.Add(budget))
+	defer cancel()
+	if err := infoschema.PreloadMaskingPolicies(ctx, is); err != nil {
 		// Keep schema validation/version synchronization running. Policy access
 		// retries the load and returns an error until loading succeeds.
 		logutil.BgLogger().Warn("failed to preload masking policies", zap.Error(err))

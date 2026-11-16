@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -26,7 +27,9 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -92,7 +95,7 @@ func TestIndexPresplitCountOnly(t *testing.T) {
 				require.Equal(t, types.KindMaxValue, args.betweenUpper[i].Kind())
 			}
 
-			keys, err := getSplitIdxKeys(sctx, tbl, idx, args)
+			keys, err := getSplitIdxKeys(sctx, tbl, idx, args, time.UTC)
 			require.NoError(t, err)
 			// The first index adds its end boundary and regions-1 interior keys.
 			require.Len(t, keys, int(regions))
@@ -110,6 +113,98 @@ func TestIndexPresplitCountOnly(t *testing.T) {
 			}
 			require.Len(t, unique, int(regions))
 			require.Equal(t, int(regions)-1, interior)
+		})
+	}
+}
+
+func TestIndexPresplitTimeZone(t *testing.T) {
+	tsType := types.NewFieldType(mysql.TypeTimestamp)
+	tsType.SetDecimal(types.DefaultFsp)
+	idx := &model.IndexInfo{
+		ID:      1,
+		Name:    pmodel.NewCIStr("idx_ts"),
+		State:   model.StatePublic,
+		Tp:      pmodel.IndexTypeBtree,
+		Columns: []*model.IndexColumn{{Name: pmodel.NewCIStr("ts"), Offset: 0}},
+	}
+	tbl := &model.TableInfo{
+		ID:      43,
+		Name:    pmodel.NewCIStr("t_ts"),
+		State:   model.StatePublic,
+		Indices: []*model.IndexInfo{idx},
+		Columns: []*model.ColumnInfo{{
+			ID: 1, Name: pmodel.NewCIStr("ts"), Offset: 0, State: model.StatePublic,
+			FieldType: *tsType,
+		}},
+	}
+	for _, tc := range []struct {
+		name         string
+		jobOffset    int
+		workerOffset int
+	}{
+		{"job+08_workerUTC", 8 * 3600, 0},
+		{"jobUTC_worker+08", 0, 8 * 3600},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			jobTZ := &model.TimeZoneLocation{Name: "UTC", Offset: tc.jobOffset}
+			if tc.jobOffset != 0 {
+				jobTZ.Name = "UTC+08:00"
+			}
+			jobLoc, err := jobTZ.GetLocation()
+			require.NoError(t, err)
+			workerLoc := time.UTC
+			if tc.workerOffset != 0 {
+				workerLoc = time.FixedZone("worker+08:00", tc.workerOffset)
+			}
+			reorgMeta := &model.DDLReorgMeta{Location: jobTZ, ReorgTp: model.ReorgTypeTxn}
+			exprCtx, err := newReorgExprCtxWithReorgMeta(reorgMeta, contextutil.NewStaticWarnHandler(0))
+			require.NoError(t, err)
+			for _, style := range []string{"BY", "BETWEEN"} {
+				t.Run(style, func(t *testing.T) {
+					worker := mock.NewContext()
+					worker.GetSessionVars().StmtCtx.SetTimeZone(workerLoc)
+					reference := mock.NewContext()
+					reference.GetSessionVars().StmtCtx.SetTimeZone(jobLoc)
+					opt := &model.IndexArgSplitOpt{ValueLists: [][]string{{"'2026-01-02 12:00:00'"}}}
+					if style == "BETWEEN" {
+						opt = &model.IndexArgSplitOpt{
+							Lower: []string{"'2026-01-02 12:00:00'"},
+							Upper: []string{"'2026-01-03 12:00:00'"}, Num: 4,
+						}
+					}
+					indexArg := &model.IndexArg{SplitOpt: opt}
+					args, err := evalSplitDatumFromArgs(exprCtx, tbl, idx, indexArg)
+					require.NoError(t, err)
+					if style == "BY" {
+						require.Equal(t, mysql.TypeTimestamp, args.byRows[0][0].GetMysqlTime().Type())
+					} else {
+						require.Equal(t, mysql.TypeTimestamp, args.betweenLower[0].GetMysqlTime().Type())
+					}
+					expected, err := getSplitIdxKeys(reference, tbl, idx, args, jobLoc)
+					require.NoError(t, err)
+					wrongZoneKeys, err := getSplitIdxKeys(worker, tbl, idx, args, workerLoc)
+					require.NoError(t, err)
+					require.NotEqual(t, expected, wrongZoneKeys, "the timestamp fixture must distinguish the two zones")
+
+					var actual [][]byte
+					calls := 0
+					testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforePresplitIndex", func(keys [][]byte) {
+						calls++
+						require.Same(t, workerLoc, worker.GetSessionVars().StmtCtx.TimeZone())
+						for _, key := range keys {
+							actual = append(actual, bytes.Clone(key))
+						}
+					})
+					// Capture real producer keys before the optional storage RPC. The
+					// same job must encode them independently of the worker's zone.
+					err = preSplitIndexRegions(context.Background(), worker, nil, tbl, []*model.IndexInfo{idx}, reorgMeta,
+						&model.ModifyIndexArgs{IndexArgs: []*model.IndexArg{indexArg}})
+					require.NoError(t, err)
+					require.Equal(t, 1, calls)
+					require.Equal(t, expected, actual)
+					require.Same(t, workerLoc, worker.GetSessionVars().StmtCtx.TimeZone())
+				})
+			}
 		})
 	}
 }

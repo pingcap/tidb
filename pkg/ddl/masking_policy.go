@@ -165,6 +165,33 @@ func (w *worker) onAlterMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver i
 		newPolicy.MaskingType = args.Policy.MaskingType
 		newPolicy.RestrictOps = args.Policy.RestrictOps
 	}
+	if args.AlterAction != ast.AlterTableEnableMaskingPolicy &&
+		args.AlterAction != ast.AlterTableDisableMaskingPolicy &&
+		args.AlterAction != ast.AlterTableModifyMaskingPolicyRestrictOn {
+		// A rename can finish after the submitter validated this expression.
+		// Bind its column reference to the current name before validating again.
+		if args.Policy.ColumnName.L != newPolicy.ColumnName.L {
+			newPolicy.Expression, err = rewriteMaskingPolicyExprColumnName(newPolicy.Expression, args.Policy.ColumnName, newPolicy.ColumnName)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
+		tbl, ok := jobCtx.infoCache.GetLatest().TableByID(jobCtx.stepCtx, newPolicy.TableID)
+		if !ok {
+			job.State = model.JobStateCancelled
+			return ver, infoschema.ErrTableNotExists.GenWithStackByArgs(newPolicy.DBName, newPolicy.TableName)
+		}
+		col := findColumnInfoByID(tbl.Meta().Columns, newPolicy.ColumnID)
+		if col == nil {
+			job.State = model.JobStateCancelled
+			return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(newPolicy.ColumnName, newPolicy.TableName)
+		}
+		if err := validateMaskingPolicyExpression(w.sess.Context, tbl.Meta(), col, newPolicy.Expression); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
 	newPolicy.UpdatedAt = args.Policy.UpdatedAt
 	if err = w.updateMaskingPolicyInSysTable(jobCtx, newPolicy); err != nil {
 		job.State = model.JobStateCancelled
@@ -600,8 +627,8 @@ func (w *worker) dropMaskingPoliciesByDBName(jobCtx *jobContext, dbName string) 
 }
 
 // updateMaskingPolicyTableID updates the table_id in
-// mysql.tidb_masking_policy when TRUNCATE or repartitioning replaces the table.
-// Column IDs remain the same across truncate, so column bindings are preserved.
+// mysql.tidb_masking_policy when TRUNCATE, repartitioning or EXCHANGE PARTITION
+// replaces the table ID. Column IDs remain the same, preserving column bindings.
 func (w *worker) updateMaskingPolicyTableID(jobCtx *jobContext, oldTableID, newTableID int64) error {
 	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, oldTableID)
 	if err != nil {

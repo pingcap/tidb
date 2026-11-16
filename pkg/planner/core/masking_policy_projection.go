@@ -138,6 +138,10 @@ func (b *PlanBuilder) buildMaskingProjection(ctx context.Context, p base.Logical
 	proj.SetSchema(schema)
 	proj.SetOutputNames(names)
 	proj.SetChildren(p)
+	if b.maskingSourcePlans == nil {
+		b.maskingSourcePlans = make(map[int]base.LogicalPlan)
+	}
+	b.maskingSourcePlans[proj.ID()] = p
 	return proj, nil
 }
 

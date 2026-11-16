@@ -159,7 +159,8 @@ type SnapClient struct {
 	fullClusterRestore bool
 
 	// see RestoreCommonConfig.WithSysTable
-	withSysTable bool
+	withSysTable              bool
+	deferMaskingPolicyRestore bool
 
 	// the rewrite mode of the downloaded SST files in TiKV.
 	rewriteMode RewriteMode
@@ -331,6 +332,11 @@ func (rc *SnapClient) GetBatchDdlSize() uint {
 
 func (rc *SnapClient) SetWithSysTable(withSysTable bool) {
 	rc.withSysTable = withSysTable
+}
+
+// SetDeferMaskingPolicyRestore retains source policy rows for PiTR log replay.
+func (rc *SnapClient) SetDeferMaskingPolicyRestore(deferRestore bool) {
+	rc.deferMaskingPolicyRestore = deferRestore
 }
 
 // TODO: remove this check and return RewriteModeKeyspace

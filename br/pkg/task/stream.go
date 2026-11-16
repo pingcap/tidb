@@ -1720,6 +1720,9 @@ func restoreStream(
 	}
 	stream.LogDBReplaceMap("built db replace map, start to build rewrite rules", schemasReplace.DbReplaceMap)
 	rewriteRules := buildRewriteRules(schemasReplace)
+	if cfg.WithSysTable {
+		addMaskingPolicyRewriteRules(schemasReplace, rewriteRules)
+	}
 
 	ingestRecorder := schemasReplace.GetIngestRecorder()
 	if err := rangeFilterFromIngestRecorder(ingestRecorder, rewriteRules); err != nil {
@@ -1792,6 +1795,12 @@ func restoreStream(
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to restore kv files")
+	}
+
+	if cfg.WithSysTable {
+		if err := restoreMaskingPoliciesAfterLogReplay(ctx, client.GetDomain(), client.UnsafeSession(), schemasReplace); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	if cfg.isPartialRestore() {
@@ -2358,6 +2367,16 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	if cfg.PiTRTableTracker != nil {
 		cfg.tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
 	}
+	// Policy rows have a separate staging/rebuild lifecycle. Generic target
+	// validation, metadata refresh and table-mode changes must not treat their
+	// source name as the live mysql.tidb_masking_policy table.
+	for _, db := range cfg.tableMappingManager.DBReplaceMap {
+		for _, tbl := range db.TableMap {
+			if isSourceMaskingPolicyTable(db, tbl) {
+				tbl.FilteredOut = true
+			}
+		}
+	}
 	// The dependency classification is persisted with the ID map, so a direct
 	// phase-2 run makes the same pre-DDL decision as the initial scan.
 	nameRouter, err := cfg.getNameRouter()
@@ -2391,7 +2410,10 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 		return errors.Trace(err)
 	}
 	if saved {
-		return client.ValidateTableRouteTargetDatabases(ctx, cfg.tableMappingManager)
+		if err := client.ValidateTableRouteTargetDatabases(ctx, cfg.tableMappingManager); err != nil {
+			return err
+		}
+		return prepareMaskingPolicyStaging(ctx, client.GetDomain(), client.UnsafeSession(), cfg, false, true)
 	}
 	// reuse existing database ids if it exists in the current cluster
 	cfg.tableMappingManager.ReuseExistingDatabaseIDs(client.GetDomain().InfoSchema())
@@ -2400,12 +2422,17 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if err := prepareMaskingPolicyStaging(ctx, client.GetDomain(), client.UnsafeSession(), cfg, hasFullBackupStorage, false); err != nil {
+		return err
+	}
 	if err = client.SaveIdMapWithFailPoints(
 		ctx, cfg.tableMappingManager, cfg.logCheckpointMetaManager, routeFingerprint,
 	); err != nil {
 		return errors.Trace(err)
 	}
-	return nil
+	// Renaming is safe only after checkpoint progress prevents another snapshot
+	// replay from recreating the original temporary table under a different ID.
+	return prepareMaskingPolicyStaging(ctx, client.GetDomain(), client.UnsafeSession(), cfg, false, true)
 }
 
 func getCurrentTSFromCheckpointOrPD(ctx context.Context, mgr *conn.Mgr, cfg *LogRestoreConfig) (uint64, error) {

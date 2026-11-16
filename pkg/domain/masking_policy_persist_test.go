@@ -19,6 +19,7 @@ import (
 	"math"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -236,4 +237,43 @@ func TestMaskingPolicyLatestSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, model.MaskingPolicyStatusEnable, policy.Status)
+}
+
+func TestMaskingPolicyPreloadTimeoutDoesNotExpireSchema(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/skipLoadMaskingPolicies", "return(true)")
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.t_preload_timeout(c varchar(20))")
+	tk.MustExec("create table test.t_unrelated(id int)")
+	tk.MustExec("create masking policy p on test.t_preload_timeout(c) as mask_full(c)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into test.t_unrelated values (1)")
+	var calls atomic.Int32
+	release := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/infoschema/beforeLoadMaskingPolicies", func(ctx context.Context) {
+		calls.Add(1)
+		select {
+		case <-ctx.Done():
+		case <-release:
+		}
+	})
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/domain/skipLoadMaskingPolicies")
+	// Force a new full schema, which used to preload twice before renewal.
+	dom.InfoCache().Reset(16)
+	done := make(chan error, 1)
+	go func() { done <- dom.Reload() }()
+	select {
+	case err := <-done:
+		close(release)
+		require.NoError(t, err)
+	case <-time.After(2 * dom.GetSchemaLease()):
+		close(release)
+		<-done
+		t.Fatal("policy preloading blocked schema renewal for more than two leases")
+	}
+	require.GreaterOrEqual(t, calls.Load(), int32(1), "the timeout path must be exercised")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/infoschema/beforeLoadMaskingPolicies")
+	require.False(t, dom.IsLeaseExpired())
+	tk.MustExec("commit")
+	tk.MustQuery("select count(*) from test.t_unrelated").Check(testkit.Rows("1"))
 }

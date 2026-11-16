@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -32,7 +33,15 @@ import (
 const (
 	sysUserTableName          = "user"
 	sysMaskingPolicyTableName = "tidb_masking_policy"
+	// MaskingPolicyStagingDB retains source IDs across PiTR retries and subsequent
+	// log-only restores. Its table IDs are persisted in the existing PiTR ID map.
+	MaskingPolicyStagingDB = mysql.SystemDB
 )
+
+// MaskingPolicyStagingTableName gives each restored policy table a private name.
+func MaskingPolicyStagingTableName(tableID int64) string {
+	return "tidb_pitr_masking_policy_" + strconv.FormatInt(tableID, 10)
+}
 
 var planPeplayerTables = map[string]map[string]struct{}{
 	"mysql": {
@@ -242,6 +251,10 @@ func notifyUpdateAllUsersPrivilege(renamedTables map[string]map[string]struct{},
 }
 
 func isUnrecoverableTable(schemaName string, tableName string) bool {
+	if schemaName == mysql.SystemDB && strings.HasPrefix(tableName, "tidb_pitr_masking_policy_") {
+		// This is target-local PiTR state, not a source cluster policy table.
+		return true
+	}
 	tableMap, ok := unRecoverableTable[schemaName]
 	if !ok {
 		return false
@@ -345,7 +358,8 @@ func removeUserResourceGroup(ctx context.Context, dbName string, execSQL func(co
 	return nil
 }
 
-func buildCreateMaskingPolicySQL(
+// BuildCreateMaskingPolicySQL reconstructs a policy using target object names.
+func BuildCreateMaskingPolicySQL(
 	policyName, dbName, tableName, columnName, expression, status, restrictOn string,
 ) string {
 	sql := fmt.Sprintf(
@@ -419,7 +433,7 @@ ORDER BY p.table_id, p.column_id, p.policy_id`,
 		if !targetSupportsMasking {
 			return errors.Annotate(berrors.ErrRestoreIncompatibleSys, "target lacks mysql.tidb_masking_policy for selected masking policies")
 		}
-		ddl := buildCreateMaskingPolicySQL(
+		ddl := BuildCreateMaskingPolicySQL(
 			row.GetString(0),
 			dbName,
 			tableName,
@@ -468,9 +482,10 @@ func (rc *SnapClient) RestoreSystemSchemas(ctx context.Context, f filter.Filter,
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
 func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, sysDB string, loadSysTablePhysical bool) (rerr error) {
 	temporaryDB := utils.TemporaryDBName(sysDB)
+	retainPolicyStage := false
 	defer func() {
 		// Don't clean the temporary database for next restore with checkpoint.
-		if rerr == nil {
+		if rerr == nil && !retainPolicyStage {
 			rc.cleanTemporaryDatabase(ctx, sysDB)
 		}
 	}()
@@ -516,6 +531,10 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 	tablesRestored := make([]string, 0, len(originDatabase.Tables))
 	for _, table := range originDatabase.Tables {
 		tableName := table.Info.Name
+		if rc.deferMaskingPolicyRestore && tableName.L == sysMaskingPolicyTableName && sysDB == mysql.SystemDB {
+			retainPolicyStage = true
+			continue
+		}
 		if !f.MatchTable(sysDB, tableName.O) && !shouldForceMaskingPolicyRestore(sysDB, tableName.L) {
 			continue
 		}
@@ -535,6 +554,26 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 		return errors.Annotate(err, "error during extra works after system tables replaced")
 	}
 	return nil
+}
+
+// PreserveMaskingPolicyStagingTable moves the snapshot table without rewriting
+// its rows or MVCC timestamps. It runs after persisting the PiTR ID map so a
+// retry skips the completed snapshot phase and reuses this same physical table.
+func PreserveMaskingPolicyStagingTable(ctx context.Context, dom *domain.Domain, se glue.Session, staged *model.TableInfo) error {
+	name := MaskingPolicyStagingTableName(staged.ID)
+	target := utils.EncloseDBAndTable(MaskingPolicyStagingDB, name)
+	if existing, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr(MaskingPolicyStagingDB), pmodel.NewCIStr(name)); err == nil {
+		if existing.Meta().ID != staged.ID {
+			return errors.Errorf("masking policy staging table %s has unexpected ID", target)
+		}
+		return nil
+	}
+	sourceDB, ok := dom.InfoSchema().SchemaByID(staged.DBID)
+	if !ok || sourceDB.Name.L != utils.TemporaryDBName(mysql.SystemDB).L || staged.Name.L != sysMaskingPolicyTableName {
+		return errors.New("masking policy snapshot staging table is missing")
+	}
+	source := utils.EncloseDBAndTable(sourceDB.Name.O, staged.Name.O)
+	return errors.Trace(se.Execute(ctx, "RENAME TABLE "+source+" TO "+target))
 }
 
 // database is a record of a database.

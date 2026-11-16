@@ -307,6 +307,9 @@ type PlanBuilder struct {
 	// expressions apply masking to their own results.
 	maskScalarSubqueryValue int
 	maskingOuterPlans       []base.LogicalPlan
+	// Retain raw result dependencies for RESTRICT ON checks after masking has
+	// replaced an output expression with a constant.
+	maskingSourcePlans map[int]base.LogicalPlan
 	// Check whether the current building query is a CTE
 	isCTE bool
 	// CTE table name in lower case, it can be nil

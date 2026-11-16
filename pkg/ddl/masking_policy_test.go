@@ -930,3 +930,54 @@ func TestMaskingPolicyConcurrentAlterAttributes(t *testing.T) {
 		})
 	}
 }
+
+func TestMaskingPolicyExchangePartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table pt_mask(id int, c varchar(20)) partition by range(id) (partition p0 values less than (10))")
+	tk.MustExec("create table nt_mask(id int, c varchar(20))")
+	tk.MustExec("insert into pt_mask values (1, 'partition')")
+	tk.MustExec("insert into nt_mask values (2, 'standalone')")
+	tk.MustExec("create masking policy p on nt_mask(c) as 'X'")
+	tk.MustExec("create masking policy p on pt_mask(c) as 'Y'")
+	// Warm the policy map before exchanging the physical IDs.
+	tk.MustQuery("select c from nt_mask").Check(testkit.Rows("X"))
+	tk.MustQuery("select c from pt_mask").Check(testkit.Rows("Y"))
+	for range 2 {
+		tk.MustExec("alter table pt_mask exchange partition p0 with table nt_mask")
+		tk.MustQuery("select c from nt_mask").Check(testkit.Rows("X"))
+		tk.MustQuery("select c from pt_mask").Check(testkit.Rows("Y"))
+		tk.MustQuery("select count(*) from mysql.tidb_masking_policy p join information_schema.tables t on p.table_id=t.tidb_table_id where p.db_name='test' and p.table_name='nt_mask' and t.table_name='nt_mask'").Check(testkit.Rows("1"))
+	}
+	tk.MustExec("insert into nt_mask values (3, 'new secret')")
+	tk.MustQuery("select c from nt_mask order by id").Check(testkit.Rows("X", "X"))
+}
+
+func TestMaskingPolicyAlterExpressionAfterConcurrentRename(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_rename_expr(c varchar(20))")
+	tk.MustExec("insert into t_rename_expr values ('secret')")
+	tk.MustExec("create masking policy p on t_rename_expr(c) as mask_full(c)")
+	other := testkit.NewTestKit(t, store)
+	other.MustExec("use test")
+	prepared, release := make(chan struct{}), make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeSubmitMaskingPolicyAlter", func(action ast.AlterTableType) {
+		if action == ast.AlterTableModifyMaskingPolicyExpression {
+			close(prepared)
+			<-release
+		}
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- other.ExecToErr("alter table t_rename_expr modify masking policy p set expression=mask_null(c)")
+	}()
+	<-prepared
+	tk.MustExec("alter table t_rename_expr rename column c to d")
+	close(release)
+	require.NoError(t, <-done)
+	tk.MustQuery("select d from t_rename_expr").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select column_name,expression from mysql.tidb_masking_policy where table_name='t_rename_expr'").Check(testkit.Rows("d MASK_NULL(`d`)"))
+}

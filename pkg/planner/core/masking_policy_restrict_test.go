@@ -66,6 +66,28 @@ func TestMaskingPolicyRestrictOnSubquerySources(t *testing.T) {
 	tkRoot.MustExec("delete from dst where c = (select c from src_restrict limit 1)")
 }
 
+func TestMaskingPolicyRestrictOnConstantDerivedOutput(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table src_constant(c varchar(20))")
+	tk.MustExec("create table dst_constant(c varchar(20))")
+	tk.MustExec("insert into src_constant values ('secret')")
+	tk.MustExec("create masking policy p on src_constant(c) as 'X' restrict on (insert_into_select)")
+	for _, source := range []string{
+		"select c from src_constant",
+		"select concat(c, '!') as v from src_constant",
+		"select v from (select concat(c, '!') as v from src_constant) d",
+		"with x as (select concat(c, '!') as v from src_constant) select v from x",
+	} {
+		tk.MustGetErrCode("insert into dst_constant "+source, errno.ErrAccessDeniedToMaskedColumn)
+	}
+	tk.MustExec("insert into dst_constant select 'public' from src_constant")
+	tk.MustExec("alter table src_constant modify masking policy p set restrict on none")
+	tk.MustExec("insert into dst_constant select concat(c, '!') from src_constant")
+	tk.MustQuery("select c from dst_constant order by c").Check(testkit.Rows("X!", "public"))
+}
+
 func TestMaskingPolicyRestrictOnNoneToggle(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tkRoot := testkit.NewTestKit(t, store)

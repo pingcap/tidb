@@ -644,6 +644,7 @@ func maskingPolicyTableAction(tp model.ActionType) bool {
 		model.ActionDropMaskingPolicy,
 		model.ActionDropTable,
 		model.ActionTruncateTable,
+		model.ActionExchangeTablePartition,
 		model.ActionDropColumn,
 		model.ActionModifyColumn,
 		model.ActionRenameTable,
