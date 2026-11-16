@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
@@ -502,4 +503,59 @@ func TestRangeFallbackForAnalyzeLookUpFilters(t *testing.T) {
 	ijHelper := testAnalyzeLookUpFilters(t, ijCtx, ijCase)
 	checkRangeFallbackAndReset(t, ctx, false)
 	require.Greater(t, ijHelper.chosenRanges.Range().MemUsage(), ijCase.rangeMaxSize)
+}
+
+// TestNormalPreferTaskKeepsIndexMergeBesideRootCondCopTasks covers the
+// preference for a Limit or TopN pushed down to the coprocessor. A copTask
+// shuts out the rootTasks, except the IndexMerge, which runs only as a
+// rootTask, while every copTask leaves conditions for the root and so takes no
+// Limit or TopN either.
+func TestNormalPreferTaskKeepsIndexMergeBesideRootCondCopTasks(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	pctx := ctx.GetPlanCtx()
+	stats := &property.StatsInfo{RowCount: 1}
+	rootCond := &expression.Constant{Value: types.NewIntDatum(1), RetType: types.NewFieldType(mysql.TypeLonglong)}
+	pushableCop := &physicalop.CopTask{}
+	rootCondCop := &physicalop.CopTask{RootTaskConds: []expression.Expression{rootCond}}
+	root := &physicalop.RootTask{}
+	root.SetPlan(&physicalop.PhysicalTableReader{})
+	// The IndexMerge under the selection of a condition left for the root.
+	indexMerge := &physicalop.RootTask{}
+	sel := physicalop.PhysicalSelection{Conditions: []expression.Expression{rootCond}}.Init(pctx, stats, 0)
+	sel.SetChildren(&physicalop.PhysicalIndexMergeReader{})
+	indexMerge.SetPlan(sel)
+
+	topN := logicalop.LogicalTopN{Count: 10}.Init(pctx, 0)
+	physTopN := physicalop.PhysicalTopN{Count: 10}.Init(pctx, stats, 0)
+	limit := logicalop.LogicalLimit{Count: 10}.Init(pctx, 0)
+	physLimit := physicalop.PhysicalLimit{Count: 10}.Init(pctx, stats, 0)
+
+	for _, c := range []struct {
+		name string
+		lp   base.LogicalPlan
+		pp   base.PhysicalPlan
+	}{{"topn", topN, physTopN}, {"limit", limit, physLimit}} {
+		// A copTask that takes the pushdown shuts out every rootTask, the
+		// IndexMerge too, and the copTasks compete.
+		state := &enumerateState{}
+		require.True(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{pushableCop}), c.name)
+		require.True(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{rootCondCop}), c.name)
+		require.False(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{root}), c.name)
+		require.False(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{indexMerge}), c.name)
+
+		// A copTask with root conditions still shuts out the other rootTasks,
+		// but not the IndexMerge.
+		state = &enumerateState{}
+		require.True(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{rootCondCop}), c.name)
+		require.False(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{root}), c.name)
+		require.True(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{indexMerge}), c.name)
+
+		// Before any copTask, every rootTask is preferred.
+		state = &enumerateState{}
+		require.True(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{root}), c.name)
+		require.True(t, hasNormalPreferTask(c.lp, state, c.pp, []base.Task{indexMerge}), c.name)
+	}
 }
