@@ -7,6 +7,12 @@ use tidb_proto::backup::S3;
 
 /// Go `OSSProvider`.
 pub const OSS_PROVIDER: &str = "oss-sdk";
+
+/// Go `HardcodedChunkSize`: the part size of a compressed upload.
+pub const HARDCODED_CHUNK_SIZE: usize = 5 * 1024 * 1024;
+
+/// Go `WriteBufferSize`: the default part size of an upload.
+pub const WRITE_BUFFER_SIZE: usize = 5 * 1024 * 1024;
 /// Go `KS3SDKProvider`.
 pub const KS3_SDK_PROVIDER: &str = "ks3-sdk";
 

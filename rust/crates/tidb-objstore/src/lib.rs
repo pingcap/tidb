@@ -1,10 +1,35 @@
-//! Go `pkg/objstore/parse.go`: storage URLs parsed into `backuppb`
-//! storage backends, and the URL helpers BR and IMPORT INTO read.
+//! Go `pkg/objstore`: storage URLs parsed into `backuppb` storage backends
+//! (`parse.go`), the storage interface (`storeapi`, `objectio`), the
+//! local, memory, no-op, HDFS and cloud storages, compression
+//! (`compressedio`, `compress.go`) and `New` (`storage.go`).
 //!
 //! Errors are Go's `error.Error()` text; as in Go, none of them quotes a
 //! credential-bearing URL unredacted.
 
 mod options;
+
+mod cloud;
+pub mod compress;
+pub mod compressedio;
+pub mod error;
+pub mod gopath;
+mod hdfs;
+mod local;
+mod memstore;
+mod noop;
+pub mod objectio;
+mod storage;
+pub mod storeapi;
+#[cfg(test)]
+mod storage_tests;
+
+pub use cloud::{new_azure_blob_storage, new_gcs_storage, new_s3_storage, CloudStorage};
+pub use error::{berrors, Error, ErrorKind};
+pub use hdfs::HdfsStorage;
+pub use local::{LocalStorage, LOCAL_URI_PREFIX, TOMBSTONE_SIZE};
+pub use memstore::MemStorage;
+pub use noop::{NoopStorage, NoopWriter};
+pub use storage::{create, new, new_from_url, new_with_default_opt, read_data_in_range};
 
 pub use options::{AzblobBackendOptions, GCSBackendOptions, QueryParameters};
 

@@ -7741,13 +7741,24 @@ name = "tidb-objstore"
 version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
+ "flate2",
+ "opendal",
  "prost 0.14.4",
+ "rustix 1.1.4",
  "sha2 0.10.9",
+ "snap",
  "tempfile",
  "tidb-ast",
+ "tidb-aws-sdk",
+ "tidb-failpoint",
  "tidb-go-url",
+ "tidb-gocontext",
+ "tidb-objstore-recording",
  "tidb-objstore-s3like",
  "tidb-proto",
+ "tokio",
+ "uuid",
+ "zstd",
 ]
 
 [[package]]

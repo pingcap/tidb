@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Go pkg/objstore: storage URL parsing into the BR storage backend and backend options (Rust rewrite)."
+description = "Go pkg/objstore: storage URL parsing, the storage interface, and the local, memory and cloud storages (Rust rewrite)."
 
 [dependencies]
 tidb-ast = { path = "../tidb-ast" }
@@ -14,6 +14,17 @@ sha2 = { workspace = true }
 tidb-go-url = { path = "../tidb-go-url" }
 tidb-objstore-s3like = { path = "../tidb-objstore-s3like" }
 tidb-proto = { path = "../tidb-proto" }
+tidb-aws-sdk = { path = "../tidb-aws-sdk" }
+tidb-failpoint = { path = "../tidb-failpoint" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-objstore-recording = { path = "../tidb-objstore-recording" }
+flate2 = { workspace = true }
+opendal = { version = "=0.55.0", features = ["services-s3", "services-azblob", "services-gcs"] }
+rustix = { workspace = true, features = ["fs", "process"] }
+snap = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "time", "macros"] }
+uuid = { version = "1", features = ["v4"] }
+zstd = { workspace = true }
 
 [dev-dependencies]
 prost = { workspace = true }
