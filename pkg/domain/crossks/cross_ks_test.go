@@ -570,7 +570,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		require.NoError(t, err)
 		defer pool.Destroy(resource)
 		output := make(chan importer.QueryChunk, 4)
-		err = importer.RunImportQuery(ctx, resource.(sessionctx.Context), captured, sql, 1<<20, output)
+		err = executor.RunImportQuery(ctx, resource.(sessionctx.Context), captured, sql, 1<<20, output)
 		require.NoError(t, err)
 		close(output)
 		result := make(map[int64]int64)

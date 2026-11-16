@@ -36,9 +36,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
-func init() { importer.RunImportQuery = runImportQuery }
-
-func runImportQuery(
+// RunImportQuery runs the SELECT of the IMPORT INTO statement importSQL at q.ReadTS.
+// sctx takes the session states of the submitter, so the caller must destroy it.
+// It sends the result chunks to output, which the caller closes, and the
+// receiver owns the chunks it gets.
+func RunImportQuery(
 	ctx context.Context, sctx sessionctx.Context,
 	q *importer.QuerySource, importSQL string, memQuota int64,
 	output chan<- importer.QueryChunk,

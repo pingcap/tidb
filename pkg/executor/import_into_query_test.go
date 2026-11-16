@@ -66,7 +66,7 @@ func runImportQuery(t *testing.T, se sessionctx.Context, q *importer.QuerySource
 	output := make(chan importer.QueryChunk)
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- importer.RunImportQuery(context.Background(), se, q, sql, importQueryMemQuota, output)
+		errCh <- executor.RunImportQuery(context.Background(), se, q, sql, importQueryMemQuota, output)
 		close(output)
 	}()
 	var rows []string

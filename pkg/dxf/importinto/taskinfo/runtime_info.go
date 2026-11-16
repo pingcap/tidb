@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package importinto
+package taskinfo
 
 import (
 	"context"
@@ -24,181 +24,18 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/domain/serverinfo"
-	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
-	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
-	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
-	"go.uber.org/zap"
 )
-
-// SubmitStandaloneTask submits a task to the distribute framework that only runs on the current node.
-// when import from server-disk, pass engine chunks too, as scheduler might run on another
-// node where we can't access the data files.
-func SubmitStandaloneTask(ctx context.Context, plan *importer.Plan, stmt string, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
-	serverInfo, err := infosync.GetServerInfo()
-	if err != nil {
-		return 0, nil, err
-	}
-	return doSubmitTask(ctx, plan, stmt, serverInfo, chunkMap)
-}
-
-// SubmitTask submits a task to the distribute framework that runs on all managed nodes.
-func SubmitTask(ctx context.Context, plan *importer.Plan, stmt string) (int64, *proto.TaskBase, error) {
-	return doSubmitTask(ctx, plan, stmt, nil, nil)
-}
-
-// ShouldUseAsyncPrepare returns whether IMPORT INTO should use
-// DXF prepare-mode asynchronous prepare. Starter imports are usually small, and
-// their maximum size is controlled by starter-params.max-import-data-size, so
-// synchronous prepare is fast and provides more responsive validation feedback.
-// Nextgen only supports global sort for IMPORT INTO in production, but local
-// sort can still be exercised in tests, so keep the IsGlobalSort check.
-// Query imports have no source files to discover during asynchronous prepare.
-func ShouldUseAsyncPrepare(plan *importer.Plan) bool {
-	failpoint.Inject("mockDisableAsyncPrepare", func() {
-		failpoint.Return(false)
-	})
-	return plan != nil && plan.QuerySource == nil && kerneltype.IsNextGen() && !deploymode.IsStarter() && plan.IsGlobalSort()
-}
-
-func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
-	var instances []*serverinfo.ServerInfo
-	if instance != nil {
-		instances = append(instances, instance)
-	}
-	// we use taskManager to submit task, user might not have the privilege to system tables.
-	taskManager, err := storage.GetTaskManager()
-	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
-	if err != nil {
-		return 0, nil, err
-	}
-
-	logicalPlan := &LogicalPlan{
-		Plan:              *plan,
-		Stmt:              stmt,
-		EligibleInstances: instances,
-		ChunkMap:          chunkMap,
-	}
-	asyncPrepare := ShouldUseAsyncPrepare(plan)
-	if asyncPrepare {
-		logicalPlan.PrepareMode = proto.PrepareModeRequired
-		// below params will be filled later in async prepare, init to 1 temporarily.
-		plan.ThreadCnt = 1
-		plan.MaxNodeCnt = 1
-	}
-	planCtx := planner.PlanCtx{
-		Ctx:        ctx,
-		TaskType:   proto.ImportInto,
-		ThreadCnt:  plan.ThreadCnt,
-		MaxNodeCnt: plan.MaxNodeCnt,
-	}
-	var (
-		jobID, taskID int64
-	)
-	var runningOnUserKS bool
-	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		runningOnUserKS = kv.IsUserKS(se.GetStore())
-		var err2 error
-		exec := se.GetSQLExecutor()
-		jobID, err2 = importer.CreateJob(ctx, exec, plan.DBName, plan.TableInfo.Name.L, plan.TableInfo.ID,
-			plan.User, plan.GroupKey, plan.Parameters, plan.TotalFileSize)
-		if err2 != nil {
-			return err2
-		}
-		if kerneltype.IsClassic() {
-			err2 = ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID)
-			if err2 != nil {
-				return err2
-			}
-		}
-		// in classical kernel or if we are inside SYSTEM keyspace itself, we
-		// submit the task to DXF in the same transaction as creating the job.
-		if kerneltype.IsClassic() || kv.IsSystemKS(se.GetStore()) {
-			logicalPlan.JobID = jobID
-			planCtx.SessionCtx = se
-			planCtx.TaskKey = TaskKey(jobID)
-			planCtx.Keyspace = plan.Keyspace
-			if taskID, err2 = submitTask2DXF(logicalPlan, planCtx, taskManager); err2 != nil {
-				return err2
-			}
-		}
-		return nil
-	}); err != nil {
-		return 0, nil, err
-	}
-	// in next-gen kernel and we are not running in SYSTEM KS, we submit the task
-	// to DXF service after creating the job, as DXF service runs in SYSTEM keyspace.
-	// TODO: we need to cleanup the job, if we failed to submit the task to DXF service.
-	dxfTaskMgr := taskManager
-	if runningOnUserKS {
-		failpoint.InjectCall("afterUserImportJobCreatedBeforeDXFTask", jobID)
-		var err2 error
-		dxfTaskMgr, err2 = storage.GetDXFSvcTaskMgr()
-		if err2 != nil {
-			return 0, nil, err2
-		}
-		if err2 = dxfTaskMgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
-			logicalPlan.JobID = jobID
-			planCtx.SessionCtx = se
-			planCtx.TaskKey = TaskKey(jobID)
-			planCtx.Keyspace = plan.Keyspace
-			var err2 error
-			if taskID, err2 = submitTask2DXF(logicalPlan, planCtx, dxfTaskMgr); err2 != nil {
-				return err2
-			}
-			return nil
-		}); err2 != nil {
-			return 0, nil, err2
-		}
-	}
-	handle.NotifyTaskChange()
-	task, err := dxfTaskMgr.GetTaskBaseByID(ctx, taskID)
-	if err != nil {
-		return 0, nil, err
-	}
-	logFields := []zap.Field{
-		zap.Int64("job-id", jobID),
-		zap.String("task-key", task.Key),
-		zap.Int64("task-id", task.ID),
-		zap.Bool("global-sort", plan.IsGlobalSort()),
-		zap.Bool("async-prepare", asyncPrepare),
-	}
-	if !asyncPrepare {
-		logFields = append(logFields,
-			zap.String("data-size", units.BytesSize(float64(plan.TotalFileSize))),
-			zap.Int("thread-cnt", plan.ThreadCnt),
-			zap.Int("max-node-cnt", plan.MaxNodeCnt),
-		)
-	}
-	logutil.BgLogger().Info("job submitted to task queue", logFields...)
-
-	return jobID, task, nil
-}
-
-func submitTask2DXF(logicalPlan *LogicalPlan, planCtx planner.PlanCtx, taskMgr *storage.TaskManager) (int64, error) {
-	// TODO: use planner.Run to run the logical plan
-	// now creating import job and submitting distributed task should be in the same transaction.
-	p := planner.NewPlanner()
-	return p.Run(planCtx, logicalPlan, taskMgr)
-}
 
 // RuntimeInfo is the runtime information of the task for corresponding job.
 type RuntimeInfo struct {
@@ -305,8 +142,8 @@ func convertToMySQLTime(t time.Time, loc *time.Location) (types.Time, error) {
 	return result, err
 }
 
-// GetRuntimeInfoForJob get the corresponding DXF task runtime info for the job.
-func GetRuntimeInfoForJob(
+// GetJobRuntimeInfo get the corresponding DXF task runtime info for the job.
+func GetJobRuntimeInfo(
 	ctx context.Context,
 	location *time.Location,
 	jobID int64,
@@ -318,7 +155,7 @@ func GetRuntimeInfoForJob(
 		return nil, err
 	}
 
-	task, err := dxfTaskMgr.GetTaskByKeyWithHistory(ctx, TaskKey(jobID))
+	task, err := dxfTaskMgr.GetTaskByKeyWithHistory(ctx, taskkey.ForJob(jobID))
 	if err != nil {
 		return nil, err
 	}
@@ -403,7 +240,7 @@ func GetJobLastUpdateTime(ctx context.Context, jobID int64) (types.Time, error) 
 	if err != nil {
 		return types.ZeroTime, err
 	}
-	taskKey := TaskKey(jobID)
+	taskKey := taskkey.ForJob(jobID)
 	task, err := taskManager.GetTaskBaseByKeyWithHistory(ctx, taskKey)
 	if err != nil {
 		return types.ZeroTime, err
@@ -427,9 +264,4 @@ func GetJobLastUpdateTime(ctx context.Context, jobID int64) (types.Time, error) 
 	}
 
 	return rs[0].GetTime(0), nil
-}
-
-// TaskKey returns the task key for a job.
-func TaskKey(jobID int64) string {
-	return taskkey.ForJob(jobID)
 }

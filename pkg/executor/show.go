@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	fstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -2570,7 +2570,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 }
 
 // FillOneImportJobInfo is exported for testing.
-func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *importinto.RuntimeInfo) {
+func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *taskinfo.RuntimeInfo) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
 	result.AppendInt64(0, info.ID)
 	if info.GroupKey == "" {
@@ -2660,13 +2660,13 @@ func handleImportJobInfo(
 	info *importer.JobInfo, result *chunk.Chunk,
 ) error {
 	var (
-		runInfo *importinto.RuntimeInfo
+		runInfo *taskinfo.RuntimeInfo
 		err     error
 	)
 
 	if info.Status == importer.JobStatusRunning {
 		// need to get more info from distributed framework for running jobs
-		runInfo, err = importinto.GetRuntimeInfoForJob(ctx, location, info.ID)
+		runInfo, err = taskinfo.GetJobRuntimeInfo(ctx, location, info.ID)
 		if err != nil {
 			return err
 		}
@@ -2835,7 +2835,7 @@ func (e *ShowExec) fetchShowImportGroups(ctx context.Context) error {
 		updateTime := types.ZeroTime
 		// See FillOneImportJobInfo, we make the update time calculation same with SHOW IMPORT JOBS.
 		if info.Status == importer.JobStatusRunning {
-			runInfo, err := importinto.GetRuntimeInfoForJob(ctx, sctx.GetSessionVars().Location(), info.ID)
+			runInfo, err := taskinfo.GetJobRuntimeInfo(ctx, sctx.GetSessionVars().Location(), info.ID)
 			if err != nil {
 				return err
 			}
