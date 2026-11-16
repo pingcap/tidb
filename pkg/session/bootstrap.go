@@ -1325,9 +1325,6 @@ const (
 	// targets would collide).
 	version233 = 233
 
-	// version234 materializes adaptive LIMIT scan as OFF for upgraded clusters.
-	version234 = 234
-
 	// ...
 	// [version231, version238] is the version range reserved for patches of 8.5.x
 	// ...
@@ -1337,7 +1334,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version234
+var currentBootstrapVersion int64 = version233
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -3574,6 +3571,8 @@ func upgradeToVer233(s sessiontypes.Session, ver int64) {
 		ADD UNIQUE INDEX unique_registration_params_v2 (
 			filter_hash, route_hash, start_ts, restored_ts, upstream_cluster_id, with_sys_table, cmd(256))`, dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry DROP INDEX unique_registration_params", dbterror.ErrCantDropFieldOrKey)
+
+	initGlobalVariableIfNotExists(s, variable.TiDBEnableAdaptiveLimitScan, variable.Off)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
@@ -3899,11 +3898,4 @@ func rebuildAllPartitionValueMapAndSorted(ctx context.Context, s *session) {
 			}
 		}
 	}
-}
-
-func upgradeToVer234(s sessiontypes.Session, ver int64) {
-	if ver >= version234 {
-		return
-	}
-	initGlobalVariableIfNotExists(s, variable.TiDBEnableAdaptiveLimitScan, variable.Off)
 }
