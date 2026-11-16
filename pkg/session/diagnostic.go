@@ -38,7 +38,7 @@ func bootstrapSessionImplDiagnostic(ctx context.Context, store kv.Storage) (_ *d
 	if err = InitTiDBSchemaCacheSize(store); err != nil {
 		return nil, err
 	}
-	if err = InitMDLVariable(store); err != nil {
+	if _, err = initMDLVariable(store, mdlInitEnableOnNull); err != nil {
 		return nil, err
 	}
 

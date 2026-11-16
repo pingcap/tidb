@@ -874,6 +874,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
+	failpoint.InjectCall("beforeDDLStart", startMode)
 	if kerneltype.IsNextGen() {
 		version, err := d.store.CurrentVersion(kv.GlobalTxnScope)
 		if err != nil {

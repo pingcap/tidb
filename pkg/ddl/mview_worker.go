@@ -29,7 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
 )
@@ -78,6 +80,25 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 	if baseTblInfo.MaterializedViewBase != nil && baseTblInfo.MaterializedViewBase.MLogID != 0 {
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: ast.NewCIStr(job.SchemaName), Name: mlogTableInfo.Name})
+	}
+
+	if baseTblInfo.MaterializedView != nil {
+		// TODO: Remove this DDL-side advisory lock once internal refresh sessions
+		// participate in MDL for MV writes through transaction completion. MDL will
+		// then prevent CREATE MLog from completing while a refresh can still write
+		// using metadata without the new MLog.
+		lockName := mviewutil.RefreshAdvisoryLockName(job.SchemaID, baseTableID)
+		if err := w.sess.GetAdvisoryLock(lockName, 1); err != nil {
+			if storeerr.ErrLockWaitTimeout.Equal(err) {
+				// Do not retry this job while retaining its DDL scheduling claim:
+				// an OOP refresh holds the lock while waiting for its cutover DDL.
+				job.State = model.JobStateCancelled
+				return ver, errors.Errorf("cannot create materialized view log on %s.%s: materialized view refresh is running, please retry later", job.SchemaName, baseTblInfo.Name.O)
+			}
+			return ver, errors.Trace(err)
+		}
+		// The scheduler releases this job's advisory locks after commit, schema
+		// synchronization, and any rollback/retry, before returning the worker.
 	}
 
 	mlogTableInfo.State = model.StateNone
@@ -159,14 +180,13 @@ func onCreateMaterializedViewBaseCheck(metaMut *meta.Mutator, schemaID, baseTabl
 	if err != nil {
 		return nil, err
 	}
-	if baseTblInfo.IsView() || baseTblInfo.IsSequence() || baseTblInfo.TempTableType != model.TempTableNone {
-		return nil, dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, baseTblInfo.Name, "BASE TABLE")
+	if err := validateMaterializedViewSourceState(schemaName, baseTblInfo); err != nil {
+		return nil, err
 	}
-	if baseTblInfo.GetPartitionInfo() != nil {
-		return nil, errUnsupportedMaterializedViewOnPartitionTable("CREATE MATERIALIZED VIEW")
-	}
-	if baseTblInfo.State != model.StatePublic {
-		return nil, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", baseTblInfo.State)
+	if err := validateMaterializedViewNestingDepth(baseTblInfo, func(tableID int64) (*model.TableInfo, error) {
+		return getTableInfo(metaMut, tableID, schemaID)
+	}); err != nil {
+		return nil, err
 	}
 	if baseTblInfo.MaterializedViewBase == nil || baseTblInfo.MaterializedViewBase.MLogID == 0 {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: base table has no materialized view log")
@@ -175,11 +195,8 @@ func onCreateMaterializedViewBaseCheck(metaMut *meta.Mutator, schemaID, baseTabl
 	if err != nil {
 		return nil, err
 	}
-	if mlogTableInfo.MaterializedViewLog == nil || mlogTableInfo.MaterializedViewLog.BaseTableID != baseTblInfo.ID {
-		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid materialized view log metadata")
-	}
-	if mlogTableInfo.State != model.StatePublic {
-		return nil, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", mlogTableInfo.State)
+	if err := validateMaterializedViewSourceMLog(schemaName, baseTblInfo, mlogTableInfo); err != nil {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStack("create materialized view: invalid materialized view log metadata: %s", err.Error())
 	}
 	return baseTblInfo, nil
 }
@@ -297,7 +314,23 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			job.State = model.JobStateRollingback
 			return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid build read tso")
 		}
+		// The source/MLog DDL dependencies keep these bindings stable throughout build.
+		finished := make([]*model.TableInfo, 0, len(baseTableIDs)+1)
+		mlogIDs := make([]int64, 0, len(baseTableIDs))
+		for _, id := range baseTableIDs {
+			base, getErr := onCreateMaterializedViewBaseCheck(jobCtx.metaMut, job.SchemaID, id, job.SchemaName)
+			if getErr != nil {
+				job.State = model.JobStateRollingback
+				return ver, errors.Trace(getErr)
+			}
+			finished = append(finished, base)
+			mlogIDs = append(mlogIDs, base.MaterializedViewBase.MLogID)
+		}
 		if err = w.upsertCreateMaterializedViewRefreshInfo(jobCtx, job.SchemaName, mviewTableInfo, job.SnapshotVer); err != nil {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(err)
+		}
+		if err := w.insertMViewRefreshSourceInfo(jobCtx, mviewTableInfo.ID, mlogIDs); err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
@@ -316,14 +349,6 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		if err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
-		}
-		finished := make([]*model.TableInfo, 0, len(baseTableIDs)+1)
-		for _, id := range baseTableIDs {
-			base, getErr := getTableInfo(jobCtx.metaMut, id, job.SchemaID)
-			if getErr != nil {
-				return ver, errors.Trace(getErr)
-			}
-			finished = append(finished, base)
 		}
 		finished = append(finished, mviewTableInfo)
 		job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, finished)
@@ -907,6 +932,9 @@ func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 func (w *worker) deleteCreateMaterializedViewRefreshInfos(jobCtx *jobContext, mviewIDs []int64) error {
 	if len(mviewIDs) == 0 {
 		return nil
+	}
+	if err := w.deleteMViewRefreshSourceInfos(jobCtx, mviewIDs); err != nil {
+		return errors.Trace(err)
 	}
 	ctx := jobCtx.stepCtx
 	if ctx == nil {

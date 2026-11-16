@@ -93,7 +93,7 @@ func TestIsSpecialGlobalIndex(t *testing.T) {
 }
 
 func TestCallSCtxFailed(t *testing.T) {
-	_, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	var sctxWithFailure sessionctx.Context
 	err := util.CallWithSCtx(dom.StatsHandle().SPool(), func(sctx sessionctx.Context) error {
@@ -104,6 +104,23 @@ func TestCallSCtxFailed(t *testing.T) {
 	require.Equal(t, "simulated error", err.Error())
 	notReleased := infosync.ContainsInternalSession(sctxWithFailure)
 	require.False(t, notReleased)
+
+	// A panic in the function is recovered and returned as an error.
+	err = util.CallWithSCtx(dom.StatsHandle().SPool(), func(sessionctx.Context) error {
+		panic("simulated panic")
+	})
+	require.ErrorContains(t, err, "panic in CallWithSCtx")
+
+	// A panic in the function of WrapTxn rolls back the writes made before the panic.
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.t (a int)")
+	err = util.CallWithSCtx(dom.StatsHandle().SPool(), func(sctx sessionctx.Context) error {
+		_, _, err := util.ExecRows(sctx, "insert into test.t values (1)")
+		require.NoError(t, err)
+		panic("simulated panic")
+	}, util.FlagWrapTxn)
+	require.ErrorContains(t, err, "panic in CallWithSCtx")
+	tk.MustQuery("select count(*) from test.t").Check(testkit.Rows("0"))
 }
 
 func newStatsSessionContextForRestoreTest(t *testing.T) *mock.Context {
@@ -117,7 +134,6 @@ func newStatsSessionContextForRestoreTest(t *testing.T) *mock.Context {
 		{vardef.TiDBAnalyzePartitionConcurrency, "3", "1"},
 		{vardef.TiDBAnalyzeVersion, "2", "2"},
 		{vardef.TiDBAnalyzeStoreBatchSize, "6", "7"},
-		{vardef.TiDBEnableHistoricalStats, "ON", "OFF"},
 		{vardef.TiDBPartitionPruneMode, "dynamic", "static"},
 		{vardef.TiDBEnableAnalyzeSnapshot, "ON", "OFF"},
 		{vardef.TiDBAnalyzeSkipColumnTypes, "blob", "json"},
@@ -131,7 +147,6 @@ func newStatsSessionContextForRestoreTest(t *testing.T) *mock.Context {
 		}
 	}
 	vars.EnableAsyncMergeGlobalStats = false
-	vars.EnableHistoricalStats = false
 	vars.AnalyzeVersion = 1
 	vars.StmtCtx.SetTimeZone(time.UTC)
 	return sctx
@@ -144,7 +159,6 @@ func checkRestoredStatsSessionVars(t *testing.T, sctx sessionctx.Context) {
 	require.Equal(t, 1, vars.AnalyzePartitionConcurrency)
 	require.Equal(t, 1, vars.AnalyzeVersion)
 	require.Equal(t, 7, vars.AnalyzeStoreBatchSize)
-	require.False(t, vars.EnableHistoricalStats)
 	require.Equal(t, "static", vars.PartitionPruneMode.Load())
 	require.False(t, vars.EnableAnalyzeSnapshot)
 	require.Equal(t, map[string]struct{}{"json": {}}, vars.AnalyzeSkipColumnTypes)
@@ -336,7 +350,6 @@ func TestUpdateSCtxVarsForStatsRestore(t *testing.T) {
 		vardef.TiDBAnalyzePartitionConcurrency,
 		vardef.TiDBAnalyzeVersion,
 		vardef.TiDBAnalyzeStoreBatchSize,
-		vardef.TiDBEnableHistoricalStats,
 		vardef.TiDBPartitionPruneMode,
 		vardef.TiDBEnableAnalyzeSnapshot,
 		vardef.TiDBAnalyzeSkipColumnTypes,
@@ -368,7 +381,6 @@ func TestUpdateSCtxVarsForStatsRestore(t *testing.T) {
 				require.Equal(t, 3, vars.AnalyzePartitionConcurrency)
 				require.Equal(t, 2, vars.AnalyzeVersion)
 				require.Equal(t, 6, vars.AnalyzeStoreBatchSize)
-				require.True(t, vars.EnableHistoricalStats)
 				require.Equal(t, "dynamic", vars.PartitionPruneMode.Load())
 				require.True(t, vars.EnableAnalyzeSnapshot)
 				require.Equal(t, map[string]struct{}{"blob": {}}, vars.AnalyzeSkipColumnTypes)
