@@ -291,6 +291,28 @@ id	title
 3	Optimizing MySQL
 4	MySQL vs. PostgreSQL
 5	MySQL Security
+select id, title from articles where exists (select 1 from articles a2) and match(title) against('+MySQL -tutorial' in boolean mode);
+id	title
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
+select id, title from articles where match(title) against('+MySQL -tutorial' in boolean mode) and exists (select 1 from articles a2);
+id	title
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
+select id, title from articles where exists (select 1 from articles a2 where a2.id = 0) or match(title) against('+MySQL -tutorial' in boolean mode);
+id	title
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
+select (select 1 having true), match(title) against('+MySQL' in boolean mode) from articles;
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST with this modifier on the native FTS path (modifier is not carried through pushdown to TiFlash)'
+select match(title) against('+MySQL' in boolean mode), (select 1 having true) from articles;
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST with this modifier on the native FTS path (modifier is not carried through pushdown to TiFlash)'
 set @@tidb_opt_enable_alternative_logical_plans=ON;
 set @@tidb_enable_local_match_against=OFF;
 select id, title from articles where match(title) against('+MySQL -tutorial' in boolean mode);
