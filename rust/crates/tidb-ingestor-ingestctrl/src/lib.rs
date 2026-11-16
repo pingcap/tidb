@@ -5,6 +5,7 @@ pub mod rate_limiter;
 pub mod rate_limiter_param;
 
 pub mod engine;
+mod local_backend;
 
 /// Go backend errors, preserving typed disk-full and duplicate-key causes.
 #[derive(Debug)]

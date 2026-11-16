@@ -47,6 +47,10 @@ pub trait ImportClient: Send + Sync {
     fn api_version(&self) -> i32;
     /// Go `tikvCodec.EncodeKey`, before the import protocol's memcomparable encoding.
     fn encode_key(&self, key: &[u8]) -> Vec<u8>;
+    /// Go `Backend.GetTS` (`pdCli.GetTS`), composed into one TSO.
+    fn get_ts(&self) -> Result<u64> {
+        Err(Error::Other("this import client cannot allocate a timestamp".into()))
+    }
 }
 /// Go `importClientFactory`, over the connected store's PD client and runtime.
 pub struct RemoteImportClient<S: tikv_client::PdClient> {
@@ -191,6 +195,12 @@ impl<S: tikv_client::PdClient> ImportClient for RemoteImportClient<S> {
             .encode_keyspace(self.store.store().keyspace(), KeyMode::Txn)
             .into()
     }
+    fn get_ts(&self) -> Result<u64> {
+        self.store
+            .get_timestamp_async()
+            .wait()
+            .map_err(Error::Other)
+    }
 }
 /// Go `newWriteRequest`.
 pub fn new_write_request(
@@ -263,6 +273,7 @@ pub fn do_import(
             }
             match write_and_ingest(ctx, client, cfg, &limiter, &region, &pairs, engine.get_ts()) {
                 Ok(()) => {
+                    engine.add_imported_kvs(pairs.len() as i64);
                     completed = Some(next);
                     break;
                 }

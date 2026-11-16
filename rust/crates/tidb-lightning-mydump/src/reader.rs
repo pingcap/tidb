@@ -53,3 +53,60 @@ impl std::io::Seek for ParserReader {
         self.0.seek(pos)
     }
 }
+
+/// Go's `*parquetfile.Parser` as a `mydump.Parser`.
+pub struct ParquetParser {
+    inner: tidb_dumpformat_parquetfile::Parser,
+    last_row: crate::Row,
+}
+
+impl ParquetParser {
+    /// Go `parquetfile.NewParser`.
+    pub fn new(
+        ctx: &Context,
+        store: std::sync::Arc<dyn Storage>,
+        path: &str,
+        file_size: i64,
+        meta: tidb_dumpformat_parquetfile::FileMeta,
+    ) -> Result<Self, String> {
+        let inner = tidb_dumpformat_parquetfile::Parser::new(ctx, store, path, file_size, meta)?;
+        Ok(Self { inner, last_row: crate::Row::default() })
+    }
+}
+
+impl crate::Parser for ParquetParser {
+    fn read_row(&mut self) -> Result<(), crate::CsvError> {
+        match self.inner.read_row() {
+            Ok(true) => {
+                let row = self.inner.last_row();
+                self.last_row = crate::Row { row_id: row.row_id, row: row.row.clone(), length: row.length };
+                Ok(())
+            }
+            Ok(false) => Err(crate::CsvError::Eof),
+            Err(e) if e == tidb_dumpformat_parquetfile::ERR_ROW_TOO_LARGE => Err(crate::CsvError::RowTooLarge),
+            Err(e) => Err(crate::CsvError::Other(e)),
+        }
+    }
+    fn last_row(&self) -> &crate::Row {
+        &self.last_row
+    }
+    fn pos(&self) -> (i64, i64) {
+        self.inner.pos()
+    }
+    fn set_pos(&mut self, pos: i64, row_id: i64) -> Result<(), crate::CsvError> {
+        self.inner.set_pos(pos, row_id).map_err(crate::CsvError::Other)
+    }
+    fn set_row_id(&mut self, row_id: i64) {
+        self.inner.set_row_id(row_id);
+    }
+    fn columns(&self) -> &[String] {
+        self.inner.columns()
+    }
+    fn set_columns(&mut self, _columns: Vec<String>) {}
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+    fn scanned_pos(&mut self) -> Result<i64, crate::CsvError> {
+        Ok(self.inner.scanned_pos())
+    }
+}

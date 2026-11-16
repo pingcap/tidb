@@ -171,6 +171,29 @@ impl BaseKVEncoder {
         &self.session
     }
 
+    /// Go `Columns`: the public columns, in offset order.
+    #[must_use]
+    pub fn columns(&self) -> &[Column] {
+        &self.columns
+    }
+
+    /// Go `GenCols` is non-empty.
+    #[must_use]
+    pub fn has_generated_columns(&self) -> bool {
+        self.has_generated
+    }
+
+    /// Go `AutoIDFn`.
+    pub fn auto_id(&mut self, id: i64) -> i64 {
+        self.auto_id_fn.apply(id)
+    }
+
+    /// Go `TableMeta()`.
+    #[must_use]
+    pub fn table_meta(&self) -> tidb_model::TableInfo {
+        self.table.meta().read().clone()
+    }
+
     /// Go `Record2KV`: `AddRecord` with `DupKeyCheckSkip`, then every pair
     /// tagged with the row id.
     pub fn record_to_kv(&mut self, record: &[Datum], record_id: Option<i64>, row_id: i64) -> Result<Vec<KvPair>, EncodeError> {
@@ -281,7 +304,7 @@ impl BaseKVEncoder {
     }
 
     /// Go `table.CastColumnValue(exprCtx, value, col, false, false)`.
-    pub(crate) fn cast(&self, value: Datum, info: &ColumnInfo) -> Result<Datum, EncodeError> {
+    pub fn cast(&self, value: Datum, info: &ColumnInfo) -> Result<Datum, EncodeError> {
         tidb_table::column::cast_value(value, &info.field_type, info.name.original(), &self.session.ctx, false)
             .map_err(|error| mysql_error(error.to_mysql_error()))
     }

@@ -21,6 +21,9 @@ pub trait Parser {
     fn set_columns(&mut self, columns: Vec<String>);
     /// Go's concrete parser type assertion in `HandleSkipNRows`.
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+    /// Go `Parser.ScannedPos`: the position in the underlying (compressed)
+    /// file.
+    fn scanned_pos(&mut self) -> Result<i64, CsvError>;
 }
 
 /// Go `parsedef.Row`.
@@ -519,6 +522,9 @@ impl Parser for ChunkParser {
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
+    fn scanned_pos(&mut self) -> Result<i64, CsvError> {
+        Self::scanned_pos(self)
+    }
 }
 
 impl Parser for crate::CsvParser {
@@ -545,6 +551,9 @@ impl Parser for crate::CsvParser {
     }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+    fn scanned_pos(&mut self) -> Result<i64, CsvError> {
+        Self::scanned_pos(self)
     }
 }
 

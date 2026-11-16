@@ -128,7 +128,22 @@ impl Backend {
         }
         Ok(())
     }
-    fn engine(&self, id: [u8; 16]) -> Result<Arc<Engine>> {
+    /// The import client the backend writes and allocates TSOs through.
+    pub(crate) fn importer(&self) -> &dyn ImportClient {
+        self.importer.as_ref()
+    }
+
+    /// Go `Backend.GetImportedKVCount`.
+    pub fn get_imported_kv_count(&self, id: [u8; 16]) -> i64 {
+        self.engine(id).map_or(0, |e| e.imported_kvs())
+    }
+
+    /// Every open engine.
+    pub(crate) fn all_engines(&self) -> Vec<Arc<Engine>> {
+        self.engines.lock().unwrap().values().cloned().collect()
+    }
+
+    pub(crate) fn engine(&self, id: [u8; 16]) -> Result<Arc<Engine>> {
         self.engines
             .lock()
             .unwrap()

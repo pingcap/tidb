@@ -1,0 +1,16 @@
+[package]
+name = "tidb-lightning-backend"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/lightning/backend: the engine manager, engines and writers the importer drives a backend through (Rust rewrite)."
+
+[dependencies]
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-lightning-verification = { path = "../tidb-lightning-verification" }
+uuid = { version = "1", features = ["v5"] }
+
+[lints]
+workspace = true

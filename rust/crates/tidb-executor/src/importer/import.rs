@@ -18,6 +18,30 @@ pub enum PostOpLevel {
 /// snapshot portion of `NewImportPlan` is ported separately from these options.
 #[derive(Clone, Debug, Default)]
 pub struct Plan {
+    /// Go `DBName`.
+    pub db_name: String,
+    /// Go `DBID`.
+    pub db_id: i64,
+    /// Go `SQLMode`.
+    pub sql_mode: i64,
+    /// Go `ImportantSysVars`.
+    pub important_sys_vars: std::collections::BTreeMap<String, String>,
+    /// Go `LocationID`.
+    pub location_id: String,
+    /// Go `DistSQLScanConcurrency`.
+    pub distsql_scan_concurrency: usize,
+    /// Go `User`.
+    pub user: String,
+    /// Go `Keyspace`.
+    pub keyspace: String,
+    /// Go `TotalFileSize`.
+    pub total_file_size: i64,
+    /// Go `IsRaftKV2`.
+    pub is_raft_kv2: bool,
+    /// Go `MaxNodeCnt`.
+    pub max_node_cnt: usize,
+    /// Go `Restrictive`.
+    pub restrictive: bool,
     pub path: String,
     pub format: String,
     pub data_source_type: String,
@@ -272,8 +296,30 @@ pub struct FieldMapping {
     pub user_var: Option<String>,
 }
 
+impl std::fmt::Debug for LoadDataController {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoadDataController")
+            .field("plan", &self.plan)
+            .field("field_mappings", &self.field_mappings)
+            .field("insert_columns", &self.insert_columns)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Go `tableVisCols2FieldMappings`: every visible column, read in order.
+#[must_use]
+pub fn table_vis_cols_2_field_mappings(table: &tidb_table::tables::TableCommon) -> (Vec<FieldMapping>, Vec<String>) {
+    let mut mappings = Vec::new();
+    let mut names = Vec::new();
+    for (_, column) in table.visible_columns() {
+        names.push(column.read().name.original().to_owned());
+        mappings.push(FieldMapping { column: Some(column.info.clone()), user_var: None });
+    }
+    (mappings, names)
+}
+
 /// Go `LoadDataController`'s table and input-column interpretation.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct LoadDataController {
     pub plan: Plan,
     pub ast_args: ASTArgs,
@@ -281,6 +327,12 @@ pub struct LoadDataController {
     pub field_mappings: Vec<FieldMapping>,
     pub insert_columns: Vec<tidb_model::GoShared<tidb_model::ColumnInfo>>,
     pub execute_nodes_cnt: usize,
+    /// Go `dataStore`.
+    pub data_store: Option<std::sync::Arc<dyn tidb_objstore::storeapi::Storage>>,
+    /// Go `dataFiles`.
+    pub data_files: Vec<tidb_lightning_mydump::SourceFileMeta>,
+    /// Go `TotalRealSize`.
+    pub total_real_size: i64,
 }
 
 impl LoadDataController {
@@ -297,6 +349,9 @@ impl LoadDataController {
             field_mappings: Vec::new(),
             insert_columns: Vec::new(),
             execute_nodes_cnt: 1,
+            data_store: None,
+            data_files: Vec::new(),
+            total_real_size: 0,
         };
         controller.check_field_params()?;
         let names = controller.init_field_mappings();
@@ -461,4 +516,60 @@ pub fn handle_skip_n_rows(
         }
     }
     Ok(())
+}
+
+/// Go `newLoadDataParser`: the format's parser over the chunk's file.
+pub fn new_load_data_parser(
+    ctx: &tidb_gocontext::Context,
+    plan: &Plan,
+    csv_config: &CsvConfig,
+    data_store: &std::sync::Arc<dyn tidb_objstore::storeapi::Storage>,
+    file_meta: &tidb_lightning_mydump::SourceFileMeta,
+) -> Result<Box<dyn tidb_lightning_mydump::Parser + Send>, String> {
+    let wrong_format = |e: String| {
+        tidb_terror::MysqlError::from_terror(&tidb_exeerrors::ERR_LOAD_DATA_WRONG_FORMAT_CONFIG.gen_with_stack(e))
+            .error_string()
+    };
+    let decompress = tidb_objstore::compressedio::DecompressConfig { zstd_decode_concurrency: 1 };
+    let open = || tidb_lightning_mydump::open_reader(ctx, file_meta, data_store, decompress);
+    match plan.format.as_str() {
+        "delimited data" | "csv" => {
+            let reader = open()?;
+            let convertor = match &plan.charset {
+                Some(charset) => Some(tidb_lightning_mydump::CharsetConvertor::new(charset, "\u{FFFD}")?),
+                None => None,
+            };
+            tidb_lightning_mydump::CsvParser::new(
+                csv_config,
+                Box::new(tidb_lightning_mydump::ParserReader(reader)),
+                tidb_lightning_mydump::READ_BLOCK_SIZE,
+                false,
+                convertor,
+            )
+            .map(|p| Box::new(p) as Box<dyn tidb_lightning_mydump::Parser + Send>)
+            .map_err(|e| wrong_format(e.to_string()))
+        }
+        "sql" => {
+            let reader = open()?;
+            let no_backslash = tidb_mysql::SqlMode(plan.sql_mode).has_no_backslash_escapes_mode();
+            Ok(Box::new(tidb_lightning_mydump::ChunkParser::from_reader(
+                Box::new(tidb_lightning_mydump::ParserReader(reader)),
+                no_backslash,
+                tidb_lightning_mydump::READ_BLOCK_SIZE,
+            )))
+        }
+        "parquet" => tidb_lightning_mydump::ParquetParser::new(
+            ctx,
+            data_store.clone(),
+            &file_meta.path,
+            file_meta.file_size,
+            tidb_dumpformat_parquetfile::FileMeta { loc: None },
+        )
+        .map(|p| Box::new(p) as Box<dyn tidb_lightning_mydump::Parser + Send>)
+        .map_err(wrong_format),
+        other => Err(tidb_terror::MysqlError::from_terror(
+            &tidb_exeerrors::ERR_LOAD_DATA_UNSUPPORTED_FORMAT.gen_with_stack_by_args(&[other.into()]),
+        )
+        .error_string()),
+    }
 }

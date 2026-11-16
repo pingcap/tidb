@@ -50,6 +50,7 @@ pub struct Engine {
     state: Mutex<State>,
     ts: AtomicU64,
     importing: AtomicBool,
+    imported_kvs: std::sync::atomic::AtomicI64,
 }
 impl Engine {
     /// Go `engineManager.OpenEngine`: reopen durable runs and retain their TS.
@@ -105,6 +106,7 @@ impl Engine {
             }),
             ts: AtomicU64::new(ts),
             importing: AtomicBool::new(false),
+            imported_kvs: std::sync::atomic::AtomicI64::new(0),
         })
     }
     /// Go `localWriter.AppendRows`, retaining RowID for duplicate detection.
@@ -150,6 +152,25 @@ impl Engine {
         }
         Ok(())
     }
+    /// Go `localWriter.Close`: the writer's buffered rows reach the engine's
+    /// current run; [`Self::flush`] seals the run.
+    pub fn close_writer(&self, writer_id: usize) -> Result<()> {
+        let mut s = self.state.lock().unwrap();
+        if let Some(mut writer) = s.writers.remove(&writer_id) {
+            writer.close()?;
+        }
+        Ok(())
+    }
+
+    /// Whether the engine holds no flushed or buffered rows (Go
+    /// `KVStatistics` reporting zero size).
+    pub fn is_empty(&self) -> Result<bool> {
+        if self.state.lock().unwrap().buffered_bytes > 0 {
+            return Ok(false);
+        }
+        Ok(self.new_iter(&[], &[])?.next_pair()?.is_none())
+    }
+
     /// Go `Engine.Flush`: all acknowledged rows become durable sorted data.
     pub fn flush(&self) -> Result<()> {
         let mut s = self.state.lock().unwrap();
@@ -210,6 +231,15 @@ impl Engine {
         }
         Ok(Some((first, last)))
     }
+    /// Go `Engine.importedKVCount`: the KV pairs ingested so far.
+    pub fn imported_kvs(&self) -> i64 {
+        self.imported_kvs.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn add_imported_kvs(&self, n: i64) {
+        self.imported_kvs.fetch_add(n, Ordering::SeqCst);
+    }
+
     /// Go `Engine.GetTS`.
     pub fn get_ts(&self) -> u64 {
         self.ts.load(Ordering::SeqCst)

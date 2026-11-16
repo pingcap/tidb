@@ -287,7 +287,17 @@ Remaining, in order:
 1. Done: `pkg/dumpformat/parquetfile` as `tidb-dumpformat-parquetfile` over the
    `parquet` crate, pinned by an 18-record Go capture (`zzprobe/e05pq`);
    mydump's Parquet row count reads it.
-2. `pkg/lightning/backend` (`backend.go` engine manager, `MakeUUID`) and the
+2. Partly done (the PR after #45): `pkg/lightning/backend` as
+   `tidb-lightning-backend` (`Backend`/`EngineWriter`, `EngineManager`,
+   opened/closed engines with Go's 3 import retries, `MakeUUID`), and
+   `ingestctrl`'s `be::Backend` impl with a local writer, `GetTS`, and the
+   imported KV count. With it, `importer`'s `kv_encode.go`,
+   `chunk_process.go`, `engine_process.go` and the engine half of
+   `table_import.go`, pinned by an 8-case Go capture of
+   `NewFileChunkProcessor(...).Process` (`zzprobe/e05imp`): KV pairs per
+   writer, group checksums, and the encode error text. Still open from this
+   step: `checksum.go`, `tikv_mode.go`, and the scheduler pause hooks.
+   The original scope of this step: `pkg/lightning/backend` (`backend.go` engine manager, `MakeUUID`) and the
    `ingestctrl` pieces IMPORT INTO needs beyond ADD INDEX's: local writer
    with flush status, `CloseEngine`, `checksum.go` (remote checksum),
    `tikv_mode.go`, and the import-mode / PD scheduler pause hooks. Region

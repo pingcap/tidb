@@ -6501,6 +6501,7 @@ dependencies = [
  "flate2",
  "futures",
  "hashbrown 0.15.5",
+ "hex",
  "hyper-util",
  "prost 0.14.4",
  "reqwest 0.13.4",
@@ -6541,6 +6542,8 @@ dependencies = [
  "tidb-domain-infosync",
  "tidb-domain-serverinfo",
  "tidb-driver-error",
+ "tidb-dumpformat-parquetfile",
+ "tidb-dxf-execute",
  "tidb-errno",
  "tidb-execdetails",
  "tidb-executor-aggfuncs",
@@ -6570,13 +6573,19 @@ dependencies = [
  "tidb-infoschema",
  "tidb-infoschema-issyncer",
  "tidb-infoschema-perfschema",
+ "tidb-ingestor-ingestctrl",
  "tidb-intest",
  "tidb-keydecoder",
  "tidb-keyspace",
  "tidb-kv",
  "tidb-kvcache",
  "tidb-lexer",
+ "tidb-lightning-backend",
+ "tidb-lightning-backend-encode",
+ "tidb-lightning-backend-kv",
+ "tidb-lightning-common",
  "tidb-lightning-mydump",
+ "tidb-lightning-verification",
  "tidb-lock",
  "tidb-log",
  "tidb-logutil",
@@ -7404,6 +7413,8 @@ dependencies = [
  "tidb-failpoint",
  "tidb-gocontext",
  "tidb-ingestor-errdef",
+ "tidb-lightning-backend",
+ "tidb-lightning-verification",
  "tidb-meta",
  "tidb-pd-client",
  "tidb-proto",
@@ -7492,6 +7503,15 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser-tidb",
  "tidb-parser-util",
+]
+
+[[package]]
+name = "tidb-lightning-backend"
+version = "0.0.0"
+dependencies = [
+ "tidb-gocontext",
+ "tidb-lightning-verification",
+ "uuid",
 ]
 
 [[package]]

@@ -32,7 +32,7 @@ pub use loader::{
     FilterTable, MDTableMeta, RawFile, SourceFileMeta,
 };
 mod reader;
-pub use reader::{new_reader_opener, open_reader, ParserReader};
+pub use reader::{new_reader_opener, open_reader, ParquetParser, ParserReader};
 pub mod region;
 pub use region::{make_table_regions, DataDivideConfig, TableRegion};
 #[cfg(test)]
