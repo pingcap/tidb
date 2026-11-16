@@ -39,11 +39,15 @@ type capturedLockWrite struct {
 
 type lockCaptureStorage struct {
 	storage.ExternalStorage
-	mu     sync.Mutex
-	writes []capturedLockWrite
+	failWritePath string
+	mu            sync.Mutex
+	writes        []capturedLockWrite
 }
 
 func (s *lockCaptureStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	if name == s.failWritePath {
+		return fmt.Errorf("injected metadata write failure: %s", name)
+	}
 	s.captureLockWrite(name, data)
 	return s.ExternalStorage.WriteFile(ctx, name, data)
 }
@@ -81,15 +85,21 @@ type pitrCollectorT struct {
 }
 
 func (p pitrCollectorT) RestoreAFile(fs restore.BatchBackupFileSet) func() error {
+	complete, err := p.StartRestoreBatch(fs)
+	require.NoError(p.t, err)
+	return complete
+}
+
+func (p pitrCollectorT) StartRestoreBatch(fs restore.BatchBackupFileSet) (func() error, error) {
 	for _, b := range fs {
 		for _, file := range b.SSTFiles {
-			require.NoError(p.t, p.coll.restoreStorage.WriteFile(p.cx, file.Name, []byte("something")))
+			if err := p.coll.restoreStorage.WriteFile(p.cx, file.Name, []byte("something")); err != nil {
+				return nil, err
+			}
 		}
 	}
 
-	res, err := p.coll.onBatch(p.cx, fs)
-	require.NoError(p.t, err)
-	return res
+	return p.coll.onBatch(p.cx, fs)
 }
 
 func (p pitrCollectorT) Done() {
@@ -191,6 +201,53 @@ func newPiTRCollForTest(t *testing.T) pitrCollectorT {
 }
 
 func TestPiTRCollectorPrepareMigWritesOperationMetadata(t *testing.T) {
+	t.Run("failed metadata publication", func(t *testing.T) {
+		coll := newPiTRCollForTest(t)
+		defer coll.coll.writerRoutine.close()
+		coll.coll.taskStorage = &lockCaptureStorage{
+			ExternalStorage: coll.coll.taskStorage, failWritePath: coll.coll.metaPath(),
+		}
+		err := coll.coll.prepareMig(coll.cx)
+		require.ErrorContains(t, err, "injected metadata write failure")
+		ext := stream.MigrationExtension(coll.coll.taskStorage)
+		migrations, err := ext.Load(coll.cx)
+		require.NoError(t, err)
+		for _, migration := range migrations.ListAll() {
+			require.Empty(t, migration.IngestedSstPaths)
+		}
+		coll.Reopen()
+		defer coll.Done()
+		require.NoError(t, coll.coll.prepareMig(coll.cx))
+		require.Len(t, coll.ExtFullBkups(), 1)
+	})
+	t.Run("retry failed preparation on the next batch", func(t *testing.T) {
+		coll := newPiTRCollForTest(t)
+		defer coll.Done()
+		storage := &lockCaptureStorage{
+			ExternalStorage: coll.coll.taskStorage, failWritePath: coll.coll.metaPath(),
+		}
+		coll.coll.taskStorage = storage
+		batch := restore.BatchBackupFileSet{backupFileSet(withRewriteRule(remap(1, 10)))}
+		complete, err := coll.StartRestoreBatch(batch)
+		require.ErrorContains(t, err, "injected metadata write failure")
+		require.Nil(t, complete)
+		require.Empty(t, coll.ExtFullBkups())
+
+		storage.failWritePath = ""
+		complete = coll.RestoreAFile(batch)
+		require.NoError(t, complete())
+		ext := coll.ExtFullBkups()
+		require.Len(t, ext, 1)
+		coll.RequireRewrite(ext[0], remap(1, 10))
+
+		complete = coll.RestoreAFile(restore.BatchBackupFileSet{
+			backupFileSet(withRewriteRule(remap(2, 20))),
+		})
+		require.NoError(t, complete())
+		ext = coll.ExtFullBkups()
+		require.Len(t, ext, 1)
+		coll.RequireRewrite(ext[0], remap(1, 10), remap(2, 20))
+	})
 	coll := newPiTRCollForTest(t)
 	defer coll.Done()
 	capturingStorage := &lockCaptureStorage{ExternalStorage: coll.coll.taskStorage}
