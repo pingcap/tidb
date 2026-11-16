@@ -63,9 +63,9 @@ func (sc *StatsCache) Len() int {
 }
 
 // Get returns the statistics of the specified Table ID.
-// The returned value should be read-only, if you update it, don't forget to use Put to put it back again, otherwise the memory trace can be inaccurate.
+// The returned value should be read-only, if you update it, don't forget to use put to put it back again, otherwise the memory trace can be inaccurate.
 //
-//	e.g. v := sc.Get(id); /* update the value */ v.Version = 123; sc.Put(id, v);
+//	e.g. v := sc.Get(id); /* update the value */ v.Version = 123; sc.put(id, v);
 func (sc *StatsCache) Get(id int64) (*statistics.Table, bool) {
 	result, ok := sc.c.Get(id)
 	if ok {
@@ -74,11 +74,6 @@ func (sc *StatsCache) Get(id int64) (*statistics.Table, bool) {
 		metrics.MissCounter.Add(1)
 	}
 	return result, ok
-}
-
-// Put puts the table statistics to the cache from query.
-func (sc *StatsCache) Put(id int64, t *statistics.Table) {
-	sc.put(id, t)
 }
 
 func (sc *StatsCache) putCache(id int64, t *statistics.Table) bool {
