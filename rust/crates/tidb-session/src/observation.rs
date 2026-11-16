@@ -724,6 +724,9 @@ impl Session {
             observation.digest = digest;
             observation.label.clear();
             observation.prepared = true;
+            if let Some(guard) = &self.process {
+                guard.registry().retarget_statement_digest(guard.id(), observation.digest.as_str());
+            }
         }
         self.publish_statement_kv_context();
         self.attach_and_register_top_sql_info();

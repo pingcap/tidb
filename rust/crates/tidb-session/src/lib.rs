@@ -3188,7 +3188,6 @@ impl Session {
         &mut self,
         result: Result<StmtOutput, DriverError>,
     ) -> Result<StmtOutput, DriverError> {
-        self.statement_is_staleness = false;
         let completion = result
             .as_ref()
             .map(StatementCompletion::from)
@@ -3293,6 +3292,9 @@ impl Session {
     }
 
     fn finish_statement_state(&mut self, result: &Result<StatementCompletion, DriverError>) {
+        // Go `FinishExecuteStmt`: "Clean the stale read flag when statement
+        // execution finish", record sets included.
+        self.statement_is_staleness = false;
         self.append_restricted_sql_warnings();
         self.move_parse_warnings_behind_execution(result.is_ok());
         // Go `FinishExecuteStmt`: a statement that read a cached table's

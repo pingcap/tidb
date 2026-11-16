@@ -2072,9 +2072,19 @@ impl<PdC: PdClient> Transaction<PdC> {
         {
             return None;
         }
-        let base = self.caller_context.as_ref().unwrap_or(&active);
+        // The active ctx keeps what the caller scoped around this call (its
+        // commit and lock-keys detail slots); the statement's caller ctx adds
+        // its RPC interceptor, which client-go's `ctx` carries throughout.
+        let base = match self
+            .caller_context
+            .as_ref()
+            .and_then(crate::interceptor::get_rpc_interceptor_from_ctx)
+        {
+            Some(chain) => crate::interceptor::with_rpc_interceptor(&active, Arc::new(chain)),
+            None => active,
+        };
         Some(crate::util::context_with_exec_details(
-            base,
+            &base,
             Arc::clone(details),
         ))
     }

@@ -281,6 +281,24 @@ impl ProcessEntry {
         }
     }
 
+    /// Go `ResetContextOfStmt`'s `InitSQLDigest` for EXECUTE: the running
+    /// statement is the prepared one, whose digest the process list and the
+    /// transaction's `onStmtStart` carry instead of the EXECUTE text's.
+    fn retarget_statement_digest(&mut self, digest: &str) {
+        if self.digest == digest {
+            return;
+        }
+        let old = std::mem::replace(&mut self.digest, digest.to_owned());
+        if let Some(transaction) = &mut self.transaction {
+            if transaction.current_sql_digest.as_deref() == Some(old.as_str()) {
+                transaction.current_sql_digest = Some(digest.to_owned());
+            }
+            if let Some(last) = transaction.all_sql_digests.last_mut().filter(|last| **last == old) {
+                *last = digest.to_owned();
+            }
+        }
+    }
+
     fn redact_statement_info(&mut self, text: &str) {
         if self.info.is_some() {
             self.info = Some(text.to_owned());
@@ -600,6 +618,12 @@ impl ProcessRegistry {
     /// recording another execution.
     pub fn statement_started(&self, id: u64, sql: &str, state: &str) {
         self.with_entry(id, |entry| entry.statement_started(sql, state));
+    }
+
+    /// See `ProcessEntry::retarget_statement_digest`: an EXECUTE runs as its
+    /// prepared statement's digest.
+    pub fn retarget_statement_digest(&self, id: u64, digest: &str) {
+        self.with_entry(id, |entry| entry.retarget_statement_digest(digest));
     }
 
     /// [`Self::statement_started`] with the statement's digest already

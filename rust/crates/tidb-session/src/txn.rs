@@ -731,7 +731,14 @@ impl Session {
         if let Some(process) = &self.process {
             process.registry().transaction_started(process.id(), ts);
         }
-        Ok(())
+        // Go `StalenessTxnContextProvider.activateStaleTxn`:
+        // `SetSystemVar(TiDBSnapshot, "")`, so `SnapshotTS` and
+        // `SnapshotInfoschema` end with the stale transaction's start.
+        let old_ts = self.vars.snapshot_ts();
+        self.vars
+            .set_system_var_without_validation("tidb_snapshot", String::new())
+            .map_err(crate::variables::var_error)?;
+        self.load_snapshot_schema_after_set(old_ts, false)
     }
 
     pub(crate) fn cleanup_txn_read_ts(&mut self) {
