@@ -74,6 +74,15 @@ func TestVerifyCommonNameAndRotate(t *testing.T) {
 		util.WithVerifyCommonName([]string{"client1"}),
 	)
 	require.NoError(t, err)
+	verifyErrors := make(chan error, 1)
+	verifyPeerCertificate := serverTLS.VerifyPeerCertificate
+	serverTLS.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+		err := verifyPeerCertificate(rawCerts, verifiedChains)
+		if err != nil {
+			verifyErrors <- err
+		}
+		return err
+	}
 	server, port := runServer(serverTLS, t)
 	defer func() {
 		server.Close()
@@ -122,7 +131,14 @@ func TestVerifyCommonNameAndRotate(t *testing.T) {
 	require.NoError(t, err)
 	client2 := util.ClientWithTLS(clientTLS2)
 	resp, err = client2.Get(url)
-	require.ErrorContains(t, err, "tls: bad certificate")
+	// The client may see a write error instead of the TLS alert when the server closes the connection.
+	require.Error(t, err)
+	select {
+	case verifyErr := <-verifyErrors:
+		require.EqualError(t, verifyErr, "client certificate authentication failed. The Common Name from the client certificate [client2 ] was not found in the configuration cluster-verify-cn with value: [client1]")
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not reject client2's common name")
+	}
 	if resp != nil {
 		require.NoError(t, resp.Body.Close())
 	}
