@@ -82,6 +82,8 @@ const (
 	TpMViewDeltaMergeAggRuntimeStats
 	// TpMViewCompleteDeltaApplyRuntimeStats is the type for MV complete delta apply.
 	TpMViewCompleteDeltaApplyRuntimeStats
+	// TpFullTextScanRuntimeStats is the tp for the posting reads of a FULLTEXT index built in TiKV.
+	TpFullTextScanRuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.

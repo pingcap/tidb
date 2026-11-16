@@ -148,9 +148,17 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	if err != nil {
 		return nil, false, err
 	}
+	// The postings of a MATCH are counted once the other paths are known, so
+	// that none is counted when one of them already reads only a few rows.
+	if estimateFullTextMatchSelectivities(ds) {
+		ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, ds.AllPossibleAccessPaths))
+	}
 	// index merge path is generated from all conditions from ds based on ds.PossibleAccessPath.
 	// we should renew ds.PossibleAccessPath to AllPossibleAccessPath once a new DS is generated.
 	if err := generateIndexMergePath(ds); err != nil {
+		return nil, false, err
+	}
+	if err := generateFullTextIndexPaths(ds); err != nil {
 		return nil, false, err
 	}
 	if err := cleanAccessPathForFTS(ds); err != nil {

@@ -377,6 +377,8 @@ var (
 	ErrOptOnTemporaryTable = ClassDDL.NewStd(mysql.ErrOptOnTemporaryTable)
 	// ErrOptOnCacheTable returns when exec unsupported opt at cache mode
 	ErrOptOnCacheTable = ClassDDL.NewStd(mysql.ErrOptOnCacheTable)
+	// ErrNoFullTextOnTemporaryTable returns when a FULLTEXT index is created on a local temporary table.
+	ErrNoFullTextOnTemporaryTable = ClassDDL.NewStd(mysql.ErrInnodbNoFtTempTable)
 	// ErrUnsupportedOnCommitPreserve returns when exec unsupported opt on commit preserve
 	ErrUnsupportedOnCommitPreserve = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support ON COMMIT PRESERVE ROWS for now", nil))
 	// ErrUnsupportedClusteredSecondaryKey returns when exec unsupported clustered secondary key

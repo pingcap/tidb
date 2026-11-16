@@ -897,7 +897,7 @@ func BuildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 	}
 	var currentTopPlan base.PhysicalPlan = ts
 	if len(tableFilters) > 0 {
-		pushedFilters, remainingFilters := extractFiltersForIndexMerge(util.GetPushDownCtx(ds.SCtx()), tableFilters)
+		pushedFilters, remainingFilters := extractFiltersForIndexMerge(util.GetPushDownCtx(ds.SCtx()), tableFilters, ds.PushedDownConds)
 		pushedFilters1, remainingFilters1 := SplitSelCondsWithVirtualColumn(pushedFilters)
 		pushedFilters = pushedFilters1
 		remainingFilters = append(remainingFilters, remainingFilters1...)
@@ -989,19 +989,26 @@ func BuildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 
 // extractFiltersForIndexMerge returns:
 // `pushed`: exprs that can be pushed to TiKV.
-// `remaining`: exprs that can NOT be pushed to TiKV but can be pushed to other storage engines.
+// `remaining`: exprs that can NOT be pushed to TiKV but can be pushed to other storage engines,
+// or that the data source took on although no storage engine can evaluate them.
 // Why do we need this func?
 // IndexMerge only works on TiKV, so we need to find all exprs that cannot be pushed to TiKV, and add a new Selection above IndexMergeReader.
 //
 //	But the new Selection should exclude the exprs that can NOT be pushed to ALL the storage engines.
 //	Because these exprs have already been put in another Selection(check rule_predicate_push_down).
-func extractFiltersForIndexMerge(ctx expression.PushDownContext, filters []expression.Expression) (pushed []expression.Expression, remaining []expression.Expression) {
+//	The exception is an expr in dsConds, the conditions the data source took on: a MATCH a FULLTEXT
+//	index built in TiKV can serve is taken on although only TiDB evaluates it, and no other Selection
+//	holds it.
+func extractFiltersForIndexMerge(ctx expression.PushDownContext, filters, dsConds []expression.Expression) (pushed []expression.Expression, remaining []expression.Expression) {
 	for _, expr := range filters {
 		if expression.CanExprsPushDown(ctx, []expression.Expression{expr}, kv.TiKV) {
 			pushed = append(pushed, expr)
 			continue
 		}
-		if expression.CanExprsPushDown(ctx, []expression.Expression{expr}, kv.UnSpecified) {
+		if expression.CanExprsPushDown(ctx, []expression.Expression{expr}, kv.UnSpecified) ||
+			slices.ContainsFunc(dsConds, func(cond expression.Expression) bool {
+				return cond.Equal(ctx.EvalCtx(), expr)
+			}) {
 			remaining = append(remaining, expr)
 		}
 	}
