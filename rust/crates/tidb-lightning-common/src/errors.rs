@@ -20,3 +20,11 @@ pub static ERR_CAST_VALUE: LazyLock<TerrorError> = LazyLock::new(|| {
         "Import:ErrCastValue",
     )
 });
+
+/// Go `ErrChecksumMismatch`. Go's RFC code is spelled `Lighting`.
+pub static ERR_CHECKSUM_MISMATCH: LazyLock<TerrorError> = LazyLock::new(|| {
+    normalize(
+        "checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)",
+        "Lighting:Restore:ErrChecksumMismatch",
+    )
+});

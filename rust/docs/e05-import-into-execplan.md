@@ -302,7 +302,20 @@ Remaining, in order:
    with flush status, `CloseEngine`, `checksum.go` (remote checksum),
    `tikv_mode.go`, and the import-mode / PD scheduler pause hooks. Region
    split/scatter stays under D02 unless Go-visible.
-3. `pkg/executor/importer`: the rest of `import.go` (plan capture, options,
+3. Partly done (the PR after the chunk-processing PR): the rest of
+   `import.go` (`NewImportPlanFromInput` over the statement's validated
+   options with the session snapshot, `initParameters`, the plan's Go JSON
+   for task metadata, `InitDataStore`, `InitDataFiles` over `objstore` with
+   compression and Parquet size estimates, `CheckDataSourceAccess`,
+   `GetSortStore`), `PopulateChunks` and subtask sizing, `job.go`
+   (`mysql.tidb_import_jobs`), `precheck.go`, and `table_import.go`'s
+   `NewTableImporter`, `prepareSortDir`, `adjustDiskQuota`, `VerifyChecksum`,
+   `RemoteChecksumTableBySQL` and `RebaseAllocatorBases` behind session and
+   allocator traits. Pinned by a 15-statement Go capture (`zzprobe/e05plan`)
+   and the ported `job_test.go` / `precheck_test.go`. Still open from this
+   step: `sampler.go` and `CalResourceParams` (next-gen only),
+   `query_source.go`, `ImportSelectedRows`, and the disk quota loop.
+   The original scope: `pkg/executor/importer`: the rest of `import.go` (plan capture, options,
    `InitDataStore`, `InitDataFiles`, `GetParser`, `CheckRequirements`),
    `kv_encode.go`, `chunk_process.go`, `engine_process.go`,
    `table_import.go`, `job.go` (`mysql.tidb_import_jobs`), `precheck.go`,

@@ -39,9 +39,27 @@ pub use region::{make_table_regions, DataDivideConfig, TableRegion};
 mod region_tests;
 
 /// Go `parquetfile.FileMeta`: what a Parquet chunk's reader is reopened with.
-/// Its fields are unexported in Go, so it marshals as `{}`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// Its one field, `Loc *time.Location`, has only unexported fields, so Go
+/// marshals it as `{"Loc":{}}` and a reader reopened from JSON gets the zero
+/// `Location` (UTC).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ParquetFileMeta {}
+
+impl serde::Serialize for ParquetFileMeta {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(1))?;
+        map.serialize_entry("Loc", &serde_json::Map::new())?;
+        map.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ParquetFileMeta {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        serde::de::IgnoredAny::deserialize(deserializer)?;
+        Ok(Self {})
+    }
+}
 
 /// Go `parquetfile.ReadRowCount`.
 pub fn parquet_row_count(

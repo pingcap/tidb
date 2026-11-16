@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
 /// Go `autoid.AllocatorType`, for the three allocators Lightning keeps.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AllocatorType {
     /// Go `RowIDAllocType`.
     RowId,

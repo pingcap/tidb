@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 tidb-codec = { path = "../tidb-codec" }
 tidb-model = { path = "../tidb-model" }
+tidb-datatype = { path = "../tidb-datatype" }
 tonic.workspace = true
 tidb-terror = { path = "../tidb-terror" }
 tidb-errno = { path = "../tidb-errno" }
