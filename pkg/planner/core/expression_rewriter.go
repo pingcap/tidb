@@ -520,7 +520,11 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRe
 	oldHintFlags := b.subQueryHintFlags
 	b.subQueryHintFlags = 0
 	outerWindowSpecs := b.windowSpecs
+	// Building the subquery sets curClause for its own clauses; the rest of
+	// the enclosing expression is still in the outer clause.
+	outerClause := b.curClause
 	defer func() {
+		b.curClause = outerClause
 		b.windowSpecs = outerWindowSpecs
 		b.subQueryCtx = oldSubQCtx
 		b.subQueryHintFlags = oldHintFlags
