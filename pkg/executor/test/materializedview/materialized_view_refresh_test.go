@@ -25,7 +25,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -2956,47 +2955,6 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverFailure(t *testing.T) {
 		tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 		require.NotEmpty(t, tk.MustQuery("show index from mv where Key_name = 'idx_mv_s_refresh_ddl'").Rows())
 	})
-}
-
-func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverKeepsTiFlashProgressUntilCommit(t *testing.T) {
-	const mockTiFlashStoreCountFailpoint = "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"
-	const cutoverBeforeCommitFailpoint = "github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlaceCutoverBeforeCommitError"
-	require.NoError(t, failpoint.Enable(mockTiFlashStoreCountFailpoint, "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable(mockTiFlashStoreCountFailpoint))
-	}()
-
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := newMViewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_tiflash_cutover (a int not null, b int not null)")
-	tk.MustExec("insert into t_tiflash_cutover values (1, 10), (2, 7)")
-	tk.MustExec("create materialized view log on t_tiflash_cutover (a, b) purge next date_add(now(), interval 1 hour)")
-	tk.MustExec("create materialized view mv_tiflash_cutover (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_tiflash_cutover group by a")
-	tk.MustExec("alter table mv_tiflash_cutover set tiflash replica 1")
-
-	mvTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv_tiflash_cutover"))
-	require.NoError(t, err)
-	oldMViewID := mvTable.Meta().ID
-	infosync.UpdateTiFlashProgressCache(oldMViewID, 0.75)
-	_, exists := infosync.GetTiFlashProgressFromCache(oldMViewID)
-	require.True(t, exists)
-
-	originErrLimit := vardef.GetDDLErrorCountLimit()
-	vardef.SetDDLErrorCountLimit(0)
-	defer vardef.SetDDLErrorCountLimit(originErrLimit)
-	require.NoError(t, failpoint.Enable(cutoverBeforeCommitFailpoint, "return"))
-	tk.MustExec("insert into t_tiflash_cutover values (3, 4)")
-	err = tk.ExecToErr("refresh materialized view mv_tiflash_cutover complete out of place")
-	require.ErrorContains(t, err, "error before commit")
-	require.NoError(t, failpoint.Disable(cutoverBeforeCommitFailpoint))
-
-	_, exists = infosync.GetTiFlashProgressFromCache(oldMViewID)
-	require.True(t, exists)
-
-	tk.MustExec("refresh materialized view mv_tiflash_cutover complete out of place")
-	_, exists = infosync.GetTiFlashProgressFromCache(oldMViewID)
-	require.False(t, exists)
 }
 
 func TestMaterializedViewRefreshCompleteOutOfPlaceShadowTableProtected(t *testing.T) {

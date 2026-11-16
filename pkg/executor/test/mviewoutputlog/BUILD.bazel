@@ -9,7 +9,7 @@ go_test(
         "refresh_schema_test.go",
     ],
     flaky = True,
-    shard_count = 11,
+    shard_count = 10,
     deps = [
         "//pkg/config",
         "//pkg/kv",

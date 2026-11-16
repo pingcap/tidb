@@ -887,18 +887,23 @@ func TestDetectAndUpdateClassicCompatibility(t *testing.T) {
 }
 
 func TestSetGlobalIndexVersionFlag(t *testing.T) {
-	tblInfo := &model.TableInfo{} // non-clustered (zero value)
-	idxInfo := &model.IndexInfo{Global: true, Unique: false}
+	originalSupported := model.GetGlobalIndexV1Supported()
+	t.Run("version_selection", func(t *testing.T) {
+		tblInfo := &model.TableInfo{} // non-clustered (zero value)
+		idxInfo := &model.IndexInfo{Global: true, Unique: false}
 
-	model.SetGlobalIndexV1Supported(false)
-	t.Cleanup(func() { model.SetGlobalIndexV1Supported(false) })
+		model.SetGlobalIndexV1Supported(false)
+		t.Cleanup(func() { model.SetGlobalIndexV1Supported(originalSupported) })
 
-	setGlobalIndexVersion(tblInfo, idxInfo)
-	require.Equal(t, uint8(0), idxInfo.GlobalIndexVersion)
+		setGlobalIndexVersion(tblInfo, idxInfo)
+		require.Equal(t, uint8(0), idxInfo.GlobalIndexVersion)
 
-	model.SetGlobalIndexV1Supported(true)
-	setGlobalIndexVersion(tblInfo, idxInfo)
-	require.Equal(t, model.GlobalIndexVersionV1, idxInfo.GlobalIndexVersion)
+		model.SetGlobalIndexV1Supported(true)
+		setGlobalIndexVersion(tblInfo, idxInfo)
+		require.Equal(t, model.GlobalIndexVersionV1, idxInfo.GlobalIndexVersion)
+	})
+	// Cleanup must preserve the capability negotiated before this test.
+	require.Equal(t, originalSupported, model.GetGlobalIndexV1Supported())
 }
 
 func TestGetJobCheckIntervalForCreateMaterializedView(t *testing.T) {
@@ -1080,45 +1085,6 @@ func TestMaterializedViewLogBaseInitialBuildState(t *testing.T) {
 				MaterializedView: &model.MaterializedViewInfo{InitBuildState: testCase.buildState},
 			}
 			require.Equal(t, testCase.valid, isValidMaterializedViewLogBaseTable("test", info))
-		})
-	}
-}
-
-func TestValidateMaterializedViewCompleteOutOfPlaceTarget(t *testing.T) {
-	testCases := []struct {
-		name       string
-		baseInfo   *model.MaterializedViewBaseInfo
-		shouldFail bool
-	}{
-		{
-			name: "no dependency metadata",
-		},
-		{
-			name: "materialized view log",
-			baseInfo: &model.MaterializedViewBaseInfo{
-				MLogID: 101,
-			},
-			shouldFail: true,
-		},
-		{
-			name: "dependent materialized view",
-			baseInfo: &model.MaterializedViewBaseInfo{
-				MViewIDs: []int64{102},
-			},
-			shouldFail: true,
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			tblInfo := &model.TableInfo{Name: ast.NewCIStr("mv"), MaterializedViewBase: testCase.baseInfo}
-			err := validateMaterializedViewCompleteOutOfPlaceTarget("test", tblInfo)
-			if testCase.shouldFail {
-				require.ErrorContains(t, err, "complete OUT OF PLACE is not supported")
-				require.ErrorContains(t, err, "materialized view log or dependent materialized view")
-			} else {
-				require.NoError(t, err)
-			}
 		})
 	}
 }

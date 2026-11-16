@@ -1097,18 +1097,6 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	if err := kctx.Err(); err != nil {
 		return 0, err
 	}
-	currentTbl, ok := domain.GetDomain(e.Ctx()).InfoSchema().TableByID(context.Background(), tblInfo.ID)
-	if !ok {
-		return 0, infoschema.ErrTableNotExists.GenWithStackByArgs(schemaName, tblInfo.Name)
-	}
-	if baseInfo := currentTbl.Meta().MaterializedViewBase; baseInfo != nil &&
-		(baseInfo.MLogID != 0 || len(baseInfo.MViewIDs) != 0) {
-		return 0, errors.Errorf(
-			"refresh materialized view complete OUT OF PLACE is not supported for materialized view %s.%s with a materialized view log or dependent materialized view",
-			schemaName.O,
-			tblInfo.Name.O,
-		)
-	}
 	buildSctx, err := e.GetSysSession()
 	if err != nil {
 		return 0, err

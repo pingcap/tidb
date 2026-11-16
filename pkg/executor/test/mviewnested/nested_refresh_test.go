@@ -164,26 +164,3 @@ func TestMaterializedViewRefreshDryRunUsesInternalTxnInfoSchema(t *testing.T) {
 	tk.MustExec("refresh materialized view mv_dry_run complete delta apply")
 	tk.MustQuery("select * from mv_dry_run order by a").Check(testkit.Rows("1 15 2", "2 20 1"))
 }
-
-func TestMaterializedViewRefreshCompleteOutOfPlaceRejectsDependentMaterializedView(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := newMViewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_oop_child_guard (a int not null, b int not null)")
-	tk.MustExec("insert into t_oop_child_guard values (1, 10), (2, 20)")
-	tk.MustExec("create materialized view log on t_oop_child_guard (a, b)")
-	tk.MustExec("create materialized view mv_oop_child_guard (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_oop_child_guard group by a")
-	tk.MustExec("create materialized view log on mv_oop_child_guard (a, s, cnt)")
-	tk.MustExec("create materialized view mv_oop_child_guard_dependent (a, s, cnt, cnt_s) refresh fast as select a, sum(s), count(1), count(s) from mv_oop_child_guard group by a")
-
-	err := tk.ExecToErr("refresh materialized view mv_oop_child_guard complete out of place")
-	require.ErrorContains(t, err, "complete OUT OF PLACE is not supported")
-	require.ErrorContains(t, err, "dependent materialized view")
-	tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Check(testkit.Rows())
-
-	tk.MustExec("drop materialized view mv_oop_child_guard_dependent")
-	tk.MustExec("drop materialized view log on mv_oop_child_guard")
-	tk.MustExec("drop materialized view mv_oop_child_guard")
-	tk.MustExec("drop materialized view log on t_oop_child_guard")
-	tk.MustExec("drop table t_oop_child_guard")
-}
