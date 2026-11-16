@@ -125,6 +125,9 @@ func (s *ngramScanState) nextToken() ngramToken {
 			}
 
 			// Prefix operators are only active when prevChar == ' ' and not in quote.
+			// '>', '<' and '~' only change relevance, which is not computed, but
+			// like MySQL's scanner they are consumed as operators here, leaving
+			// prevChar and a '+' or '-' before them in force.
 			if s.prevChar == ' ' {
 				switch ch {
 				case '+':
@@ -133,6 +136,9 @@ func (s *ngramScanState) nextToken() ngramToken {
 					continue
 				case '-':
 					yesno = -1
+					s.i++
+					continue
+				case '>', '<', '~':
 					s.i++
 					continue
 				}

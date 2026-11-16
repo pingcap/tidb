@@ -2257,7 +2257,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.InnodbFtEnableStopword, Value: BoolToOnOff(vardef.DefInnodbFtEnableStopword), Type: vardef.TypeBool, AutoConvertNegativeBool: true},
 	// The ranges of the two token sizes overlap, and a minimum above the maximum
 	// would make the STANDARD analyzer drop every token, so each is validated
-	// against the other.
+	// against the other. Concurrent updates can still store such a pair; the
+	// fulltext analyzer refuses it when it reads them, and either variable can
+	// then be set to repair it.
 	{Scope: vardef.ScopeGlobal, Name: vardef.InnodbFtMaxTokenSize, Value: strconv.Itoa(vardef.DefInnodbFtMaxTokenSize), Type: vardef.TypeUnsigned, MinValue: 10, MaxValue: 84, Validation: func(vars *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
 		return validateInnodbFtTokenSizes(vars, vardef.InnodbFtMinTokenSize, normalizedValue, true)
 	}},
