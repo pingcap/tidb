@@ -1304,3 +1304,40 @@ fn readers_share_the_schema_image_and_a_mutation_copies_it() {
     assert_eq!(reader.schema_ts(), 42);
     assert!(reader.table_info_by_name("testDB", "test").is_some());
 }
+
+/// Go `SessionExtendedInfoSchema.UpdateTableInfo` (`MdlTables`): the
+/// transaction's image reads the table it is given from then on, while its
+/// schema version -- the one the transaction pinned -- stays.
+#[test]
+fn update_table_info_swaps_one_table_and_keeps_the_pinned_version() {
+    let revised = |revision: u64| {
+        let cached = table(10, "t");
+        let mut info = cached.info.read().clone_like_go();
+        info.revision = revision;
+        let ids = tidb_table::table_from_meta::LocalTableAutoIds::default();
+        let built = tidb_table::table_from_meta::cluster_table(
+            &info,
+            &tidb_table::table_from_meta::AutoIdSource::In { db_id: 1, ids: &ids },
+        )
+        .unwrap();
+        Arc::new(TableEntry::Kv(Arc::new(built)))
+    };
+    let mut schema = crate::SessionExtendedInfoSchema::init_with_db_infos(
+        vec![GoShared::new(database(1, "testDB"))],
+        vec![],
+        vec![],
+        5,
+    );
+    assert!(schema.update_table_info("testdb", "T", revised(1)));
+    let (version, metadata) = (schema.schema_meta_version(), schema.schema_version());
+    let revision = |schema: &crate::SessionExtendedInfoSchema| match schema.get_in("testDB", "t") {
+        Some(TableEntry::Kv(table)) => table.meta().read().revision,
+        _ => panic!("the table is in the image"),
+    };
+    assert_eq!(revision(&schema), 1);
+    assert!(schema.update_table_info("testDB", "t", revised(2)));
+    assert_eq!(revision(&schema), 2, "the swapped table is what the image reads");
+    assert_eq!(schema.schema_meta_version(), version, "the pinned schema version stays");
+    assert_eq!(schema.schema_version(), metadata, "the plan cache's image identity stays");
+    assert!(!schema.update_table_info("missing", "t", revised(3)), "no such database");
+}

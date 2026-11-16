@@ -34,6 +34,11 @@ pub(super) struct PhysicalPlanCacheKey {
     /// Go `NewPlanCacheKey`'s dirty tables: the statement's tables this
     /// transaction has written, which plan with a `UnionScan` over them.
     pub dirty_tables: Vec<i64>,
+    /// Go `PlanCacheStmt.RelateVersion`: each of the statement's tables and
+    /// its `TableInfo.Revision` in the schema this execution reads (after
+    /// `GetPlanFromPlanCache` step 3 swapped in a table changed since the
+    /// transaction began), so a plan built over an older definition misses.
+    pub relate_version: Vec<(i64, u64)>,
 }
 
 impl PlanCacheKey for PhysicalPlanCacheKey {
@@ -41,7 +46,8 @@ impl PlanCacheKey for PhysicalPlanCacheKey {
         (std::mem::size_of::<Self>() + self.statement.capacity() + self.environment.memory_usage()
             - std::mem::size_of::<PreparedPlanCacheEnvironment>()
             + self.limit_values.capacity() * std::mem::size_of::<u64>()
-            + self.dirty_tables.capacity() * std::mem::size_of::<i64>()) as i64
+            + self.dirty_tables.capacity() * std::mem::size_of::<i64>()
+            + self.relate_version.capacity() * std::mem::size_of::<(i64, u64)>()) as i64
     }
 }
 
@@ -497,6 +503,28 @@ pub(super) fn dirty_statement_tables(
     ids.sort_unstable();
     ids.dedup();
     ids
+}
+
+/// Go `PlanCacheStmt.RelateVersion` of the statement's tables in `catalog`:
+/// table id to `TableInfo.Revision`, sorted by id.
+pub(super) fn relate_versions(
+    catalog: &super::SessionExtendedInfoSchema,
+    keys: &[tidb_infoschema::CatalogTableKey],
+) -> Vec<(i64, u64)> {
+    let mut versions = keys
+        .iter()
+        .filter_map(|key| match catalog.get_by_key(key) {
+            Some(super::TableEntry::Kv(table)) => {
+                let info = table.meta();
+                let info = info.read();
+                Some((info.id, info.revision))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    versions.sort_unstable();
+    versions.dedup();
+    versions
 }
 
 pub(super) fn tables_cacheable(

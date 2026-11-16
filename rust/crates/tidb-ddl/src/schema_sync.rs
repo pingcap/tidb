@@ -104,6 +104,15 @@ impl SchemaPinRegistry {
         }
     }
 
+    /// Go `GetRelatedTableForMDL().Load(tableID)`: the version this
+    /// connection's live statement or transaction first bound the table at.
+    #[must_use]
+    pub fn table_use(&self, connection_id: u64, table_id: i64) -> Option<i64> {
+        let pins = self.pins.lock().expect("schema pin registry poisoned");
+        pins.get(&connection_id)
+            .and_then(|entry| entry.tables.get(&table_id).copied())
+    }
+
     /// Go `preprocess.go:2270`'s store: the table was bound at `version`;
     /// first use wins, exactly as Go only stores on a `Load` miss.
     pub fn record_table_use(&self, connection_id: u64, table_id: i64, version: i64) {

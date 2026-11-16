@@ -308,6 +308,105 @@ fn cached_dml_plan<'a>(
     }
     Ok(Some(plan))
 }
+/// Go `tryLockMDLAndUpdateSchemaIfNecessary` for a table the transaction has
+/// not bound yet: the table is read from the latest schema; a public index
+/// the pinned image lacks is demoted to write-reorganization and a public
+/// column whose ID changed refuses the statement, unless the transaction is
+/// pessimistic read-committed; the transaction's image then reads that table
+/// (`UpdateTableInfo`). Returns the table and the latest schema version to
+/// bind it at.
+fn update_schema_if_necessary(
+    catalog: &mut tidb_infoschema::SessionExtendedInfoSchema,
+    latest: &dyn crate::LatestInfoSchema,
+    db: &str,
+    table: &str,
+    pessimistic_read_consistency: bool,
+) -> Result<(i64, i64, bool), DriverError> {
+    let latest_is = latest.latest();
+    let domain_schema_ver = latest_is.schema_meta_version();
+    let key = tidb_infoschema::CatalogTableKey::new(db, table);
+    let Some(entry) = latest_is.table_handle_by_key(&key) else {
+        return Err(DriverError::Mysql(tidb_terror::MysqlError::from_terror(
+            &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                .fast_gen_by_args(&[tidb_hack::GoToLower::go_to_lower(&db).into(), table.into()]),
+        )));
+    };
+    let (tidb_infoschema::TableEntry::Kv(new_table), Some(tidb_infoschema::TableEntry::Kv(old_table))) =
+        (entry.as_ref(), catalog.get_in(db, table))
+    else {
+        return Ok((
+            catalog.related_table_id_for_mdl(db, table).flatten().unwrap_or_default(),
+            domain_schema_ver,
+            false,
+        ));
+    };
+    let new_info = new_table.meta();
+    let old_info = old_table.meta();
+    let (new_id, new_revision) = { let info = new_info.read(); (info.id, info.revision) };
+    let (old_id, old_revision) = { let info = old_info.read(); (info.id, info.revision) };
+    if new_id == old_id && new_revision == old_revision {
+        // The same table: Go's overlay would hold what the image holds.
+        return Ok((new_id, domain_schema_ver, false));
+    }
+    let mut entry = entry;
+    if new_revision != old_revision && !pessimistic_read_consistency {
+        let old = old_info.read();
+        let mut copy: Option<tidb_model::TableInfo> = None;
+        {
+            let new = new_info.read();
+            for (i, index) in new.indices.iter_deref().enumerate() {
+                let index = index.read();
+                if index.state != tidb_model::SchemaState::PUBLIC {
+                    continue;
+                }
+                let found = old
+                    .indices
+                    .iter_deref()
+                    .find(|old_index| old_index.read().name.lowercase() == index.name.lowercase())
+                    .map(|old_index| old_index.read().id);
+                if found != Some(index.id) {
+                    let copy = copy.get_or_insert_with(|| new.clone_like_go());
+                    if let Some(demoted) = copy.indices.iter_deref().nth(i) {
+                        demoted.write().state = tidb_model::SchemaState::WRITE_REORGANIZATION;
+                    }
+                }
+            }
+            for column in new.columns.iter_deref() {
+                let column = column.read();
+                if column.state != tidb_model::SchemaState::PUBLIC {
+                    continue;
+                }
+                let old_column = old
+                    .columns
+                    .iter_deref()
+                    .find(|old_column| old_column.read().name.lowercase() == column.name.lowercase());
+                if old_column.is_some_and(|old_column| old_column.read().id != column.id) {
+                    tidb_log::info(
+                        "public column changed",
+                        &[
+                            tidb_log::Field::new("column", tidb_log::Value::Str(column.name.lowercase().to_owned())),
+                            tidb_log::Field::new("new id", tidb_log::Value::I64(column.id)),
+                        ],
+                    );
+                    return Err(DriverError::from(
+                        tidb_domain::domain_errors::ERR_INFO_SCHEMA_CHANGED
+                            .gen_with_stack(format!("public column {} has changed", column.name.original())),
+                    ));
+                }
+            }
+        }
+        if let Some(copy) = copy {
+            let db_id = latest_is.database_id(db).unwrap_or_default();
+            let rebuilt = latest
+                .table_from_meta(&copy, db_id)
+                .map_err(DriverError::unsupported)?;
+            entry = std::sync::Arc::new(tidb_infoschema::TableEntry::Kv(std::sync::Arc::new(rebuilt)));
+        }
+    }
+    catalog.update_table_info(db, table, entry);
+    Ok((new_id, domain_schema_ver, true))
+}
+
 /// Go preprocessor's `stmtTp == TypeSelect` when it reaches the statement's
 /// tables, which is when `staleReadProcessor.OnSelectTable` runs: a SELECT,
 /// or an EXPLAIN of one (`ExplainStmt` sets no statement type of its own).
@@ -826,9 +925,13 @@ impl Session {
             self.vars.statement_insert_id = 0;
             self.statement_kind = StatementKind::Select;
 
+            // Go `GetPlanFromPlanCache` step 3: a table changed since the
+            // transaction began makes the cached plan stale, which replans.
             if self.in_transaction() {
                 let names = [(plan.names().0.to_owned(), plan.names().1.to_owned())];
-                self.record_mdl_related_table_names(&names);
+                if self.record_mdl_related_table_names(&names)? {
+                    return Ok(None);
+                }
             }
             let ctx = self.prepared_point_get_context();
             let stmt_ctx = self.statement_context_for_stmt(statement, false);
@@ -1024,8 +1127,10 @@ impl Session {
             self.check_table_privilege_requests(prepared.privilege_requests())?;
             self.vars.statement_insert_id = 0;
             self.statement_kind = StatementKind::Select;
-            if self.in_transaction() {
-                self.record_mdl_related_table_names(&table_names);
+            // Go `GetPlanFromPlanCache` step 3: a table changed since the
+            // transaction began makes the cached plan stale, which replans.
+            if self.in_transaction() && self.record_mdl_related_table_names(&table_names)? {
+                return Ok(None);
             }
             let current_db = self.vars.current_db.clone();
             let stmt_ctx = self
@@ -1257,15 +1362,16 @@ impl Session {
     /// autocommit records nothing (`IsAutoCommitTxn && IsReadOnly` returns
     /// before the store), so the hot point-read path pays nothing here
     /// either.
-    fn record_mdl_related_tables(&mut self, stmt: &Stmt, names: &[(String, String)]) {
+    fn record_mdl_related_tables(&mut self, stmt: &Stmt, names: &[(String, String)]) -> Result<(), DriverError> {
         // Go's `IsAutoCommitTxn && StmtCtx.IsReadOnly` exemption does not
         // apply to locking reads. `SELECT ... FOR UPDATE/FOR SHARE` enters
         // the transaction's related-table map even when autocommit is on.
         let read_only = matches!(stmt, Stmt::Query(_)) && !query_has_lock(stmt);
         self.mdl_statement_locks = !(read_only && !self.in_transaction() && self.is_autocommit());
         if self.mdl_statement_locks {
-            self.record_mdl_named_tables(names);
+            self.record_mdl_named_tables(names)?;
         }
+        Ok(())
     }
 
     /// [`Self::record_mdl_related_tables`] for a statement whose single table
@@ -1273,31 +1379,63 @@ impl Session {
     /// SELECT: under autocommit it records nothing (the read-only rule
     /// above), and inside an explicit transaction it records exactly that
     /// one table.
-    fn record_mdl_related_table_names(&mut self, names: &[(String, String)]) {
+    /// Go `GetPlanFromPlanCache` step 3 for a prepared statement run inside a
+    /// transaction: each of its tables passes
+    /// `tryLockMDLAndUpdateSchemaIfNecessary` before the cached plan is looked
+    /// up, so a table changed since the transaction began is the one the
+    /// lookup's `RelateVersion` reads.
+    pub fn update_prepared_tables_for_plan_cache(&mut self, template: &Stmt) -> Result<(), DriverError> {
+        if !self.in_transaction() {
+            return Ok(());
+        }
+        // The statement's first table record: the previous statement's
+        // tables are not this one's (the funnel clears them again later).
+        if let Ok(mut locked) = self.mdl_statement_tables.lock() {
+            locked.clear();
+        }
+        let mut stmt = template.clone();
+        let scan = tidb_bindinfo::binding::scan_statement_tables(&mut stmt);
+        self.record_mdl_related_tables(&stmt, &scan.names)
+    }
+
+    /// Returns whether a table changed since the transaction began was
+    /// swapped in: Go's `GetPlanFromPlanCache` step 3 then finds the cached
+    /// plan's `RelateVersion` stale (`schemaNotMatch`) and replans.
+    fn record_mdl_related_table_names(&mut self, names: &[(String, String)]) -> Result<bool, DriverError> {
         if let Ok(mut locked) = self.mdl_statement_tables.lock() {
             locked.clear();
         }
         self.mdl_statement_locks = self.in_transaction();
         if self.mdl_statement_locks {
-            self.record_mdl_named_tables(names);
+            return self.record_mdl_named_tables(names);
         }
+        Ok(false)
     }
 
     /// The preprocessor's half: each name the statement writes, as its own
     /// stored object.
-    fn record_mdl_named_tables(&mut self, names: &[(String, String)]) {
+    fn record_mdl_named_tables(&mut self, names: &[(String, String)]) -> Result<bool, DriverError> {
         let Some(sink) = self.mdl_related_tables.clone() else {
-            return;
+            return Ok(false);
         };
         let version = self.cluster_schema_version_now();
         let current_db = self.current_database().to_owned();
-        let catalog = match self.lock_catalog() {
+        // Go `tryLockMDLAndUpdateSchemaIfNecessary`'s early returns: no MDL,
+        // a `tidb_snapshot` schema, a staleness transaction.
+        let latest_info_schema = self
+            .latest_info_schema
+            .clone()
+            .filter(|_| tidb_vardef::is_mdl_enabled(false))
+            .filter(|_| self.snapshot_schema.is_none() && !self.is_staleness_txn());
+        let pessimistic_read_consistency = self.statement_is_pessimistic() && self.is_read_committed();
+        let mut catalog = match self.lock_catalog() {
             Ok(catalog) => catalog,
             Err(_) => {
                 sink.record_unresolved();
-                return;
+                return Ok(false);
             }
         };
+        let mut updated = false;
         for (db, table) in names {
             let db = if db.is_empty() { &current_db } else { db };
             match catalog.related_table_id_for_mdl(db, table) {
@@ -1309,6 +1447,20 @@ impl Session {
                     {
                         continue;
                     }
+                    let (table_id, version) = match &latest_info_schema {
+                        Some(latest) if sink.related_table(table_id).is_none() => {
+                            let (id, version, changed) = update_schema_if_necessary(
+                                &mut catalog,
+                                latest.as_ref(),
+                                db,
+                                table,
+                                pessimistic_read_consistency,
+                            )?;
+                            updated |= changed;
+                            (id, version)
+                        }
+                        _ => (table_id, version),
+                    };
                     sink.record_table(table_id, version);
                     if let Some(process) = &self.process {
                         process
@@ -1320,6 +1472,7 @@ impl Session {
                 None => sink.record_unresolved(),
             }
         }
+        Ok(updated)
     }
 
     /// Runs a statement whose table refs carry `AS OF TIMESTAMP`, against
@@ -1648,7 +1801,7 @@ impl Session {
             // not the active transaction or its write buffer.
             return self.run_snapshot_statement_in_transaction(self.vars.snapshot_ts(), stmt);
         }
-        self.record_mdl_related_tables(&stmt, &scan.names);
+        self.record_mdl_related_tables(&stmt, &scan.names)?;
         // A statement whose table references carry `AS OF TIMESTAMP` runs
         // against the store's history -- Go's stale statement
         // (`StalenessTxnContextProvider` for one statement). Intercepted at

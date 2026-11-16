@@ -3485,6 +3485,7 @@ impl PreparedDmlPlan {
                 .expect("prepared limits poisoned")
                 .clone(),
             dirty_tables: Vec::new(),
+            relate_version: super::plan_cache::relate_versions(catalog, &self.table_keys),
         });
     }
 
@@ -3621,6 +3622,7 @@ impl PreparedDmlPlan {
             environment: environment.clone(),
             limit_values,
             dirty_tables: super::plan_cache::dirty_statement_tables(catalog, &self.table_keys, dirty_ids),
+            relate_version: super::plan_cache::relate_versions(catalog, &self.table_keys),
         };
         let refusal = environment.refusal(self.stmt_info);
         let admitted = refusal.is_none();

@@ -51,6 +51,10 @@ impl MdlRelatedTableSink for ConnectionMdlSink {
             .record_table_use(self.connection_id, table_id, version);
     }
 
+    fn related_table(&self, table_id: i64) -> Option<i64> {
+        self.registry.table_use(self.connection_id, table_id)
+    }
+
     fn record_unresolved(&self) {
         // Go's related-table map contains only concrete table IDs. View
         // dependencies are expanded by the session before this callback;
@@ -69,6 +73,11 @@ impl MdlRelatedTableSink for ConnectionMdlSink {
 pub trait MdlRelatedTableSink: Send + Sync {
     /// One stored table, bound at `version`; first use wins.
     fn record_table(&self, table_id: i64, version: i64);
+    /// Go `GetRelatedTableForMDL().Load(tableID)`: the version the table was
+    /// first bound at, if it is already in the map.
+    fn related_table(&self, _table_id: i64) -> Option<i64> {
+        None
+    }
     /// A referenced name resolved to no concrete storage table (for example an
     /// unknown name or a virtual object); the gate may conservatively retain
     /// the unresolved marker.

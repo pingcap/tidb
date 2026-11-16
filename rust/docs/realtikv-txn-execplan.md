@@ -72,7 +72,7 @@ The checked-in register has five unrelated rows and no transaction-test row. Bot
 ## Outcomes & Retrospective
 
 
-Work in progress. The initial ten live pessimistic cases passed. The four-case transaction-state run passed `TestEntriesCountAndSize` and failed `TestRunning`, `TestCommitting`, and `TestRollbackTxnState` before their missing Go session failpoints were installed. With those three hooks, all three failed cases passed on the same healthy cluster (103.619 seconds, `/tmp/txn-live-state-hooks.log`). No transaction-state behavioral change was required: the suspected rollback ordering issue was not reproduced. A serial run of the current 86 nonignored ports is in progress (`/tmp/txn-live-batch90.log`); additional ports are being written while it runs. Full package parity is not yet established.
+State on 2026-11-17, on Go CI's topology (3 TiKV stores, `tests/realtikvtest/configs/classic/tikv.toml`, which `fresh-playground.sh` now starts): txntest 71/71 and pessimistictest 70/70, each on a fresh cluster. The last failure, `TestPlanCacheSchemaChange`, closed register row E28: a transaction now reads a table changed since BEGIN from the latest schema on first access (Go `tryLockMDLAndUpdateSchemaIfNecessary`, `SessionExtendedInfoSchema.UpdateTableInfo`), the plan cache key carries Go's `RelateVersion`, prepared EXECUTE runs `GetPlanFromPlanCache` step 3 before its lookups, and a binary EXECUTE records its affected rows (Go `session.AffectedRows`).
 
 ## Artifacts and Notes
 
@@ -106,4 +106,4 @@ New cargo check: `/tmp/txn-check-next.log` (in progress). No crate suites have y
 
 Targeted live run of ten previous failures/new state assertions completed: nine passed, timeout mapping failed (498.334 seconds, `/tmp/txn-live-fixes.log`). Passed: concurrent insert; promoted share with/without prepared cache; kill/TTL manager; kill lock wait; partition locking; expired pessimistic locks; issue62775 commit timestamps; transaction GoString. Timeout correctly interrupts at one second but was flattened to a generic transaction error. Porting `ToTiDBErr` signal mapping and preserving statement-scoped cancellation. Both lazy uniqueness failures lose an earlier statement's duplicate hint because the SQL lock bridge filtered hints to this statement's new absence checks; copying hints for all requested lock keys fixes the ownership error. Live reruns pending.
 
-Current inventory: 69/71 transaction tests and 73/76 pessimistic tests have Rust functions; not yet all validated. Fourteen crates including native client now have code changes; their suites are pending.
+Inventory: 71/71 transaction tests and 70/70 nonignored pessimistic tests are ported and run live (see Outcomes).

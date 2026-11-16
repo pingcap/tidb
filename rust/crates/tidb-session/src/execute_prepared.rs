@@ -132,6 +132,10 @@ impl Session {
         // prepared plan-cache: get a TableDual plan`).
         // Reported once the uncached statement's boundary has reset the
         // warnings (`prepare_bound_execution`).
+        // Go `GetPlanFromPlanCache` step 3, before the cache lookups below:
+        // a table changed since the transaction began is swapped in, so the
+        // lookup's `RelateVersion` reads it.
+        self.update_prepared_tables_for_plan_cache(&effective_statement)?;
         self.pending_plan_cache_refusal = prepared
             .cacheable
             .is_ok()

@@ -140,6 +140,36 @@ pub fn cluster_session_catalog_for_cross_ks(
     build_cluster_session_catalog(loaded, None, auto_ids, previous, None, true)
 }
 
+/// Go `infoschema`'s `tableFromMeta` for one stored table of database
+/// `db_id`: the table over the node's allocators, a cached table initialized
+/// with an internal session from the factory (a failure fails the table).
+///
+/// # Errors
+/// The table cannot be built on this node, or its cached-table session
+/// cannot be opened.
+pub fn table_from_meta(
+    table: &tidb_model::TableInfo,
+    db_id: i64,
+    auto_ids: &dyn TableAutoIds,
+    cached_table_session: Option<&CachedTableSessionFactory>,
+) -> Result<tidb_table::tables::TableCommon, String> {
+    let auto = AutoIdSource::In { db_id, ids: auto_ids };
+    // A cached template clone carries neutral storage and valid
+    // process-wide allocator handles; only the store needs rebinding.
+    cluster_table(table, &auto).and_then(|mut kv_table| {
+        if let Some(cached) = kv_table.cached_table() {
+            match cached_table_session {
+                Some(factory) => {
+                    let exec = factory().map_err(|error| format!("cached table session: {error}"))?;
+                    cached.init(Box::new(tidb_table::tables::state_remote::StateRemoteHandle::new(exec)));
+                }
+                None => kv_table.clear_cached_table(),
+            }
+        }
+        Ok(kv_table)
+    })
+}
+
 fn build_cluster_session_catalog(
     loaded: &SessionExtendedInfoSchema,
     statistics: Option<Arc<tidb_stats_handle::StatisticsView>>,
@@ -233,30 +263,7 @@ fn build_cluster_session_catalog(
                 }
                 continue;
             }
-            let auto = AutoIdSource::In {
-                db_id: database.read().id,
-                ids: auto_ids,
-            };
-            // A cached template clone carries neutral storage and valid
-            // process-wide allocator handles; only the store needs rebinding.
-            let built = cluster_table(&table, &auto).and_then(|mut kv_table| {
-                // Go `tableFromMeta`: a cached table is initialized with an
-                // internal session from the factory; a failure fails the
-                // table.
-                if let Some(cached) = kv_table.cached_table() {
-                    match cached_table_session {
-                        Some(factory) => {
-                            let exec = factory()
-                                .map_err(|error| format!("cached table session: {error}"))?;
-                            cached.init(Box::new(
-                                tidb_table::tables::state_remote::StateRemoteHandle::new(exec),
-                            ));
-                        }
-                        None => kv_table.clear_cached_table(),
-                    }
-                }
-                Ok(kv_table)
-            });
+            let built = table_from_meta(&table, database.read().id, auto_ids, cached_table_session);
             match built {
                 Ok(kv_table) => {
                     // Go: a table is metadata; the session's statements read

@@ -672,6 +672,10 @@ pub struct Session {
     /// reports. Absent on the in-process tier, whose catalog is not a
     /// cluster's.
     cluster_schema_version: Option<std::sync::Arc<dyn Fn() -> i64 + Send + Sync>>,
+    /// Go `GetLatestISWithoutSessExt` and `table.TableFromMeta`, which
+    /// `tryLockMDLAndUpdateSchemaIfNecessary` reads a changed table from.
+    /// Absent on a tier whose catalog is not a cluster's.
+    latest_info_schema: Option<std::sync::Arc<dyn LatestInfoSchema>>,
     /// Go `executor.TakeSnapshot`, which the workload repository installs.
     take_snapshot: Option<tidb_executor::admin::TakeSnapshot>,
     /// Go Domain's node-global index-usage collector, read by
@@ -1097,6 +1101,7 @@ impl Session {
             // `set_server_info_syncer`.
             server_id_getter: Arc::new(|| tidb_globalconn::SERVER_ID_FOR_STANDALONE),
             cluster_schema_version: None,
+            latest_info_schema: None,
             take_snapshot: None,
             index_usage_collector: Arc::new(tidb_stats_handle_usage_indexusage::Collector::new()),
             session_index_usage_collector: None,
@@ -1402,6 +1407,23 @@ use tidb_variable::vars;
 mod tests_variable_session;
 use tidb_domain::global_sysvars::GlobalSysvars;
 pub use vars::{SessionVars, VarError};
+
+/// The node's latest published schema as Go's
+/// `tryLockMDLAndUpdateSchemaIfNecessary` reads it: `GetLatestISWithoutSessExt`
+/// and `table.TableFromMeta` over the node's allocators.
+pub trait LatestInfoSchema: Send + Sync {
+    /// Go `GetLatestISWithoutSessExt`.
+    fn latest(&self) -> Arc<SessionExtendedInfoSchema>;
+    /// Go `table.TableFromMeta(autoid.NewAllocatorsFromTblInfo(.., dbID, info), info)`.
+    ///
+    /// # Errors
+    /// The table cannot be built on this node.
+    fn table_from_meta(
+        &self,
+        info: &tidb_model::TableInfo,
+        db_id: i64,
+    ) -> Result<tidb_table::tables::TableCommon, String>;
+}
 
 /// Go `SQLKiller` as client-go's `KillSignalHandler`: `HandleSignal` (which
 /// also probes the connection) and its kill error, carried as the signal the
@@ -1751,6 +1773,12 @@ impl Session {
     /// tier with no cluster DDL owner to gate.
     pub fn set_mdl_related_table_sink(&mut self, sink: std::sync::Arc<dyn MdlRelatedTableSink>) {
         self.mdl_related_tables = Some(sink);
+    }
+
+    /// Binds the node's latest published schema, which a transaction reads a
+    /// table changed since it began from (see [`LatestInfoSchema`]).
+    pub fn set_latest_info_schema(&mut self, source: std::sync::Arc<dyn LatestInfoSchema>) {
+        self.latest_info_schema = Some(source);
     }
 
     /// Binds the node's cluster schema version, which `ADMIN SHOW DDL`

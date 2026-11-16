@@ -2026,6 +2026,9 @@ impl<'s> ClusterServerSession<'s> {
         statement: &PreparedGeneral,
         values: &[tidb_param::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'s>, SqlQueryError> {
+        // Go builds a fresh statement context per statement, so the previous
+        // statement's counts (`session.AffectedRows`) end here.
+        self.node.ok_packet = WriteOutcome::default();
         self.session.restore_statement_variables();
         self.session.reset_plan_cache_tracker();
         // Go `PrepareTxnCtx`'s `decideTxnMode`, before the statement plans.
@@ -2084,6 +2087,7 @@ impl<'s> ClusterServerSession<'s> {
             let result = self.execute_write_parsed(statement.sql(), &parsed);
             self.session.set_binary_prepared_execution(false);
             if let Some(outcome) = result? {
+                self.node.ok_packet = outcome;
                 return Ok(GeneralExecuteOutcome::Write(outcome));
             }
         }
@@ -2148,6 +2152,10 @@ impl<'s> ClusterServerSession<'s> {
             self.session.set_binary_prepared_execution(true);
             self.session.reset_context_of_prepared_stmt(&sql, template);
             self.session.set_binary_prepared_execution(false);
+            // Go `GetPlanFromPlanCache` step 3, before the lookups below.
+            self.session
+                .update_prepared_tables_for_plan_cache(template)
+                .map_err(map_error)?;
         }
         let cache_allowed = effective.is_some_and(|template| {
             self.session
@@ -2457,10 +2465,14 @@ impl<'s> ClusterServerSession<'s> {
                     None => result,
                 })
             }
-            StmtOutput::Affected(count) => GeneralExecuteOutcome::Write(WriteOutcome {
-                affected_rows: count,
-                last_insert_id: self.session.statement_insert_id(),
-            }),
+            StmtOutput::Affected(count) => {
+                let outcome = WriteOutcome {
+                    affected_rows: count,
+                    last_insert_id: self.session.statement_insert_id(),
+                };
+                self.node.ok_packet = outcome;
+                GeneralExecuteOutcome::Write(outcome)
+            }
             StmtOutput::Done(_) => GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: 0,
                 last_insert_id: 0,

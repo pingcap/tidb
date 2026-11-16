@@ -492,6 +492,11 @@ impl DomainSessions for Domain {
         session.set_cluster_schema_version_source(Arc::new(move || {
             catalog_versions.get_latest().schema_meta_version()
         }));
+        session.set_latest_info_schema(Arc::new(NodeLatestInfoSchema {
+            catalog: Arc::clone(&self.catalog),
+            auto_ids: Arc::clone(&self.auto_ids),
+            cached_table_session: Arc::from(self.cached_table_session_factory()),
+        }));
         // Go `preprocess.go:2270` writes each bound table into the
         // transaction's `GetRelatedTableForMDL` map; here the driver session
         // reports it into the node's pin registry, which is what the
@@ -1540,6 +1545,33 @@ fn load_snapshot_catalog(
     );
     drop(metadata);
     Ok(built.catalog)
+}
+
+/// The node's [`crate::LatestInfoSchema`]: its published catalog and the
+/// allocators and cached-table sessions its tables are built over.
+struct NodeLatestInfoSchema {
+    catalog: Arc<tidb_infoschema_issyncer::catalog_watch::InfoCache>,
+    auto_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
+    cached_table_session: Arc<tidb_domain_core::cluster_session::CachedTableSessionFactory>,
+}
+
+impl crate::LatestInfoSchema for NodeLatestInfoSchema {
+    fn latest(&self) -> Arc<tidb_infoschema::SessionExtendedInfoSchema> {
+        self.catalog.get_latest()
+    }
+
+    fn table_from_meta(
+        &self,
+        info: &tidb_model::TableInfo,
+        db_id: i64,
+    ) -> Result<tidb_table::tables::TableCommon, String> {
+        tidb_domain_core::cluster_session::table_from_meta(
+            info,
+            db_id,
+            self.auto_ids.as_ref(),
+            Some(self.cached_table_session.as_ref()),
+        )
+    }
 }
 
 /// Go `Domain.GetSnapshotInfoSchema(snapshotTS)`: the schema as of `ts`.

@@ -2125,6 +2125,24 @@ impl SessionExtendedInfoSchema {
         table.set_storage_statistics((updated, average, data, index));
     }
 
+    /// Go `SessionExtendedInfoSchema.UpdateTableInfo` (`MdlTables`): from now
+    /// on this image -- a transaction's -- reads `entry`, the latest schema's
+    /// table, for `database`.`name`. The image keeps the schema version the
+    /// transaction pinned, as Go's overlay does; only the views derived from
+    /// its tables are dropped.
+    pub fn update_table_info(&mut self, database: &str, name: &str, entry: Arc<TableEntry>) -> bool {
+        let key = CatalogTableKey::new(database, name);
+        let Some(db) = self.database_mut(&key.database) else {
+            return false;
+        };
+        db.tables.insert(key.table, entry);
+        self.schema_mut().latest_index_schema.take();
+        self.planner_view.take();
+        self.statistics_schemas = Arc::default();
+        self.invalidate_table_id_names();
+        true
+    }
+
     pub fn register_kv_in(
         &mut self,
         database: &str,
