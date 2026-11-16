@@ -796,6 +796,13 @@ func getInfoFromPlanReplayerZip(
 }
 
 func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
+	// Other test processes can remove the shared replayer directory during cleanup.
+	// Isolate it before creating the domain so its dump file GC uses the same path.
+	originalPath := replayer.GetPlanReplayerDirName()
+	replayer.PlanReplayerPath = t.TempDir()
+	t.Cleanup(func() {
+		replayer.PlanReplayerPath = originalPath
+	})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats"))
