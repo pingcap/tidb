@@ -35,6 +35,14 @@ func TestSM3(t *testing.T) {
 		expect, _ = hex.DecodeString(testCase[1])
 		result := Sm3Hash([]byte(text))
 		require.Equal(t, expect, result)
+		for _, chunkSize := range []int{1, 3, 31, 63, 64, 65} {
+			h := NewSM3()
+			for offset := 0; offset < len(text); offset += chunkSize {
+				_, err := h.Write([]byte(text[offset:min(offset+chunkSize, len(text))]))
+				require.NoError(t, err)
+			}
+			require.Equal(t, expect, h.Sum(nil))
+		}
 	}
 }
 
