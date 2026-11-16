@@ -66,6 +66,7 @@ type HashJoinCtxV1 struct {
 	BuildTypes         []*types.FieldType
 	OuterFilter        expression.CNFExprs
 	stats              *hashJoinRuntimeStats
+	hashStateStats     *execdetails.HashStateRuntimeStats
 }
 
 // ProbeSideTupleFetcherV1 reads tuples from ProbeSideExec and send them to ProbeWorkers.
@@ -171,6 +172,9 @@ func (e *HashJoinV1Exec) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
+	if e.hashStateStats != nil {
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.hashStateStats)
+	}
 
 	IsChildCloseCalledForTest.Store(true)
 	return e.BaseExecutor.Close()
@@ -178,6 +182,7 @@ func (e *HashJoinV1Exec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *HashJoinV1Exec) Open(ctx context.Context) error {
+	e.hashStateStats = nil
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		e.closeCh = nil
 		e.Prepared = false
@@ -212,6 +217,7 @@ func (e *HashJoinV1Exec) OpenSelf() error {
 		e.stats = &hashJoinRuntimeStats{
 			concurrent: int(e.Concurrency),
 		}
+		e.hashStateStats = execdetails.NewHashStateRuntimeStats()
 	}
 	return nil
 }
@@ -1045,6 +1051,10 @@ func (e *HashJoinV1Exec) handleFetchAndBuildHashTablePanic(r any) {
 }
 
 func (e *HashJoinV1Exec) fetchAndBuildHashTable(ctx context.Context) {
+	if e.hashStateStats != nil {
+		// A parent may cancel the fetcher after some lookup entries were built.
+		defer func() { e.hashStateStats.AddRows(e.RowContainer.hashStateRows()) }()
+	}
 	if e.stats != nil {
 		start := time.Now()
 		defer func() {

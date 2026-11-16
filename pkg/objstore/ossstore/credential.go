@@ -93,8 +93,56 @@ func (r *credentialRefresher) startRefresh() error {
 	return nil
 }
 
+// fetchCredentials fetches credentials from provider, retrying transient
+// failures, e.g. a timeout reaching the Aliyun ECS metadata service, which would
+// otherwise fail store creation. It returns the last error after maxAttempts
+// attempts (about 1 minute) or ctx.Err() when ctx is done, and logs a warning
+// every logInterval attempts while the failure persists.
+//
+// On a non-ECS host a metadata dial timeout also delays surfacing a genuine
+// "no credentials configured" misconfiguration. That is acceptable: this path is
+// essentially only used on NextGen Cloud, which runs on Aliyun ECS.
+func fetchCredentials(
+	ctx context.Context,
+	provider providers.CredentialsProvider,
+	logger *zap.Logger,
+) (*providers.Credentials, error) {
+	const (
+		// maxAttempts is the max number of attempts to fetch credentials. With
+		// retryInterval below, it retries for about 1 minute.
+		maxAttempts = 30
+		// retryInterval is the wait between two attempts.
+		retryInterval = 2 * time.Second
+		// logInterval is the number of attempts between two warnings; with
+		// retryInterval above it logs about once per 10 seconds.
+		logInterval = 5
+	)
+
+	var err error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		var cred *providers.Credentials
+		cred, err = provider.GetCredentials()
+		if err == nil || !IsTransientNoCredentialsError(err) {
+			return cred, err
+		}
+		if attempt == maxAttempts {
+			break
+		}
+		if attempt%logInterval == 0 {
+			logger.Warn("failed to get credentials from the default provider chain, will retry",
+				zap.Error(err), zap.Int("attempt", attempt), zap.Int("max-attempts", maxAttempts))
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(retryInterval):
+		}
+	}
+	return nil, err
+}
+
 func (r *credentialRefresher) refreshOnce() error {
-	cred, err := r.credProvider.GetCredentials()
+	cred, err := fetchCredentials(r.ctx, r.credProvider, r.logger)
 	if err != nil {
 		return errors.Trace(err)
 	}

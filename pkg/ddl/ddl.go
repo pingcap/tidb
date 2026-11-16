@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -816,7 +817,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			return newLitBackfillScheduler(ctx, d, task, param)
 		})
-	scheduler.RegisterSchedulerCleanUpFactory(proto.Backfill, newBackfillCleanUpS3)
+	scheduler.RegisterCleanerFactory(proto.Backfill, newBackfillCleaner)
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL
@@ -1255,6 +1256,15 @@ func (d *ddl) cleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 
 // SwitchMDL enables MDL or disable MDL.
 func (d *ddl) SwitchMDL(enable bool) error {
+	if diagnosticmode.Enabled() {
+		// Diagnostic mode must not participate in cluster-wide DDL tasks. However,
+		// metadata lock is a cluster-wide setting, and a normal TiDB node may still
+		// change it to OFF. Therefore, diagnostic mode can only prevent this node
+		// from changing the metadata lock setting; it cannot prevent the cluster
+		// setting from becoming OFF. If the cluster setting is OFF, this node may
+		// still participate in DDL tasks, which cannot be avoided here.
+		return diagnosticmode.ErrDDLNotAllowed
+	}
 	isEnableBefore := vardef.IsMDLEnabled()
 	if isEnableBefore == enable {
 		return nil

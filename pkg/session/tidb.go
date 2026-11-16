@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -62,11 +63,15 @@ type domainMap struct {
 	domains map[string]*domain.Domain
 }
 
+type domainCreateOptions struct {
+	serverInfoSyncerOptions []serverinfo.SyncerOption
+}
+
 // Get or create the domain for store.
 // TODO decouple domain create from it, it's more clear to create domain explicitly
 // before any usage of it.
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
-	return dm.getWithEtcdClient(store, nil, nil)
+	return dm.getWithEtcdClient(store, nil, nil, domainCreateOptions{})
 }
 
 // GetOrCreateWithEtcdClient gets or creates the domain for store with etcd client.
@@ -74,10 +79,21 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 // Caveat: If there is already a domain opened with your `store`, the filter passed in will be ignored and
 // the actual schema filter of the returned `Domain` is the one when the domain were created.
 func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter issyncer.Filter) (d *domain.Domain, err error) {
-	return dm.getWithEtcdClient(store, nil, filter)
+	return dm.getWithEtcdClient(store, nil, filter, domainCreateOptions{})
 }
 
-func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client, schemaFilter issyncer.Filter) (d *domain.Domain, err error) {
+func (dm *domainMap) getDomainForGlobalVarInit(store kv.Storage) (d *domain.Domain, err error) {
+	return dm.getWithEtcdClient(store, nil, systemDBFilter{}, domainCreateOptions{
+		serverInfoSyncerOptions: []serverinfo.SyncerOption{serverinfo.WithoutStatusEndpointClaim()},
+	})
+}
+
+func (dm *domainMap) getWithEtcdClient(
+	store kv.Storage,
+	etcdClient *clientv3.Client,
+	schemaFilter issyncer.Filter,
+	opts domainCreateOptions,
+) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -112,6 +128,7 @@ func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Cl
 			},
 			etcdClient,
 			schemaFilter,
+			opts.serverInfoSyncerOptions...,
 		)
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
@@ -197,18 +214,32 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars, isInternal bool) {
 			session_metrics.TransactionDurationOptimisticAbortGeneral.Observe(duration)
 		}
 	}
-	if sessVars.RUV2Metrics != nil {
-		sessVars.RUV2Metrics.AddTxnCnt(1)
-	}
 }
 
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
-	failpoint.Inject("finishStmtError", func() {
-		failpoint.Return(errors.New("occur an error after finishStmt"))
-	})
 	sessVars := se.sessionVars
-	if !sql.IsReadOnly(sessVars) {
-		// All the history should be added here.
+	failpoint.Inject("finishStmtError", func(val failpoint.Value) {
+		failCurrentSession := true
+		switch v := val.(type) {
+		case int:
+			failCurrentSession = uint64(v) == sessVars.ConnectionID
+		case int64:
+			failCurrentSession = uint64(v) == sessVars.ConnectionID
+		case uint64:
+			failCurrentSession = v == sessVars.ConnectionID
+		case float64:
+			failCurrentSession = uint64(v) == sessVars.ConnectionID
+		}
+		if failCurrentSession {
+			failpoint.Return(errors.New("occur an error after finishStmt"))
+		}
+	})
+	readOnly := sql.IsReadOnly(sessVars)
+	if !readOnly && meetsErr == nil && shouldCheckConnectionAliveBeforeCommit(sessVars, sql) {
+		sessVars.SQLKiller.CheckConnectionAlive()
+		meetsErr = sessVars.SQLKiller.HandleSignal()
+	}
+	if !readOnly {
 		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {
 			GetHistory(se).Add(sql, sessVars.StmtCtx)
 		}
@@ -238,6 +269,30 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		return err
 	}
 	return checkStmtLimit(ctx, se, true)
+}
+
+// Avoid probing the socket on fast OLTP DML. This matches SQLKiller's normal
+// connection-alive throttle, while still covering long statements that reach
+// the disconnect-before-commit race without hitting another checkpoint.
+const minConnectionAliveCheckBeforeCommitDuration = time.Second
+
+func shouldCheckConnectionAliveBeforeCommit(sessVars *variable.SessionVars, sql sqlexec.Statement) bool {
+	if !sessVars.IsAutocommit() || sessVars.InTxn() {
+		return false
+	}
+	if !sessVars.StartTime.IsZero() && time.Since(sessVars.StartTime) < minConnectionAliveCheckBeforeCommitDuration {
+		return false
+	}
+	stmt, err := resolvePreparedStmt(sql.GetStmtNode(), sessVars)
+	if err != nil || stmt == nil {
+		return false
+	}
+	switch stmt.(type) {
+	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+		return true
+	default:
+		return false
+	}
 }
 
 func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {

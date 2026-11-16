@@ -72,16 +72,27 @@ var (
 )
 
 type paramMarkerExtractor struct {
-	markers []ast.ParamMarkerExpr
+	markers         []ast.ParamMarkerExpr
+	coalesceMarkers []ast.ParamMarkerExpr
+	coalesceDepth   int
 }
 
-func (*paramMarkerExtractor) Enter(in ast.Node) (ast.Node, bool) {
+func (e *paramMarkerExtractor) Enter(in ast.Node) (ast.Node, bool) {
+	if fn, ok := in.(*ast.FuncCallExpr); ok && fn.FnName.L == ast.Coalesce {
+		e.coalesceDepth++
+	}
 	return in, false
 }
 
 func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 	if x, ok := in.(*driver.ParamMarkerExpr); ok {
 		e.markers = append(e.markers, x)
+		if e.coalesceDepth > 0 {
+			e.coalesceMarkers = append(e.coalesceMarkers, x)
+		}
+	}
+	if fn, ok := in.(*ast.FuncCallExpr); ok && fn.FnName.L == ast.Coalesce {
+		e.coalesceDepth--
 	}
 	return in, true
 }
@@ -227,6 +238,18 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
 		RelateVersion:       relateVersion,
 		Params:              extractor.markers,
+	}
+
+	// The non-prepared caller has passed NonPreparedPlanCacheableWithCtx,
+	// which only admits COALESCE in supported UPDATE assignments. Record the
+	// affected markers after sorting: their indexes must match Params/ParamTypes.
+	// Parameters outside COALESCE retain the existing compatibility rules.
+	if !isPrepStmt {
+		for i, marker := range extractor.markers {
+			if slices.Contains(extractor.coalesceMarkers, marker) {
+				preparedObj.exactDecimalParamOffsets = append(preparedObj.exactDecimalParamOffsets, i)
+			}
+		}
 	}
 
 	stmtProcessor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: preparedObj}
@@ -531,6 +554,10 @@ type PlanCacheValue struct {
 	ParamTypes       []*types.FieldType // all parameters' types, different parameters may share same plan
 	StmtHints        *hint.StmtHints    // related hints of this plan, like 'max_execution_time'.
 
+	// Parameter indexes requiring exact DECIMAL precision and scale.
+	// Only COALESCE arguments are included; immutable once the plan is cached.
+	exactDecimalParamOffsets []int
+
 	// Runtime Info, all are READ-WRITE, use UpdateRuntimeInfo() and RuntimeInfo() to access them.
 	executions         int64 // the execution times.
 	processedKeys      int64 // the total number of processed keys in TiKV.
@@ -588,6 +615,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutputColumns))*size.SizeOfPointer +
 		size.SizeOfMap + size.SizeOfInt64*2
+	sum += size.SizeOfSlice + int64(cap(v.exactDecimalParamOffsets))*size.SizeOfInt
 	if v.ParamTypes != nil {
 		sum += int64(cap(v.ParamTypes)) * size.SizeOfPointer
 		for _, ft := range v.ParamTypes {
@@ -665,11 +693,12 @@ func NewPlanCacheValue(
 		PlanDigest:       stmt.PlanDigest.String(),
 		BinaryPlan:       binaryPlan,
 
-		LoadTime:      time.Now(),
-		Plan:          plan,
-		OutputColumns: names,
-		ParamTypes:    userParamTypes,
-		StmtHints:     stmtHints.Clone(),
+		LoadTime:                 time.Now(),
+		Plan:                     plan,
+		OutputColumns:            names,
+		ParamTypes:               userParamTypes,
+		StmtHints:                stmtHints.Clone(),
+		exactDecimalParamOffsets: slices.Clone(stmt.exactDecimalParamOffsets),
 	}
 	pcv.MemoryUsage() // initialize the memory usage field
 	return pcv
@@ -726,6 +755,11 @@ type PlanCacheStmt struct {
 	VisitInfos  []visitInfo
 	Params      []ast.ParamMarkerExpr
 
+	// exactDecimalParamOffsets indexes Params for arguments of COALESCE in
+	// eligible non-prepared UPDATE assignments. Other parameters keep the
+	// existing type compatibility rules, including relaxed DECIMAL precision.
+	exactDecimalParamOffsets []int
+
 	PointGet PointGetExecutorCache
 
 	// below fields are for PointGet short path
@@ -777,6 +811,26 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 		return prepStmt.(*PlanCacheStmt), nil
 	}
 	return nil, plannererrors.ErrStmtNotFound
+}
+
+// matchesParamTypes applies the cached plan's type requirements to both lookup
+// and insertion. Precision-sensitive plans can coexist under the same cache key.
+func (v *PlanCacheValue) matchesParamTypes(actual any) bool {
+	if !checkTypesCompatibility4PC(v.ParamTypes, actual) {
+		return false
+	}
+	if len(v.exactDecimalParamOffsets) == 0 || actual == nil {
+		return true
+	}
+	for _, i := range v.exactDecimalParamOffsets {
+		tp := actual.([]*types.FieldType)[i]
+		expected := v.ParamTypes[i]
+		if expected.GetType() == mysql.TypeNewDecimal &&
+			(expected.GetFlen() != tp.GetFlen() || expected.GetDecimal() != tp.GetDecimal()) {
+			return false
+		}
+	}
+	return true
 }
 
 // CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType

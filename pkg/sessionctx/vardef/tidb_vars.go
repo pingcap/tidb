@@ -538,7 +538,8 @@ const (
 	// TiDBMaxPagingSize is used to control the max paging size in the coprocessor paging protocol.
 	TiDBMaxPagingSize = "tidb_max_paging_size"
 
-	// TiDBPagingSizeBytes is the byte budget per coprocessor page.
+	// TiDBPagingSizeBytes is the global byte budget per coprocessor page.
+	// Updates apply when a statement initializes its DistSQL context, including in existing sessions.
 	// A non-zero value takes effect only when Resource Control is enabled and the active Resource Group
 	// is non-burstable (has limited burst).
 	// 0 means disabled (no byte-budget paging).
@@ -780,6 +781,10 @@ const (
 
 	// TiDBRestrictedReadOnly is meant for the cloud admin to toggle the cluster read only
 	TiDBRestrictedReadOnly = "tidb_restricted_read_only"
+
+	// TiDBColumnarStorageEnabled is the cluster-level gate for adding TiFlash replicas
+	// when cse.columnar-store-type = "columnar" / "both".
+	TiDBColumnarStorageEnabled = "tidb_columnar_storage_enabled"
 
 	// TiDBSuperReadOnly is tidb's variant of mysql's super_read_only, which has some differences from mysql's super_read_only.
 	TiDBSuperReadOnly = "tidb_super_read_only"
@@ -1029,6 +1034,9 @@ const (
 
 	// TiDBEnablePlanReplayerContinuousCapture indicates whether to enable continuous capture
 	TiDBEnablePlanReplayerContinuousCapture = "tidb_enable_plan_replayer_continuous_capture"
+
+	// TiDBPlanReplayerFileRetentionTime indicates how long to retain non-capture plan replayer files.
+	TiDBPlanReplayerFileRetentionTime = "tidb_plan_replayer_file_retention_time"
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 
@@ -1490,13 +1498,15 @@ const (
 	DefInitChunkSize                    = 32
 	DefMinPagingSize                    = int(paging.MinPagingSize)
 	DefMaxPagingSize                    = int(paging.MinAllowedMaxPagingSize)
-	// DefPagingSizeBytes defaults byte-budget paging to 4 MiB. It takes effect only when Resource Control
-	// is enabled and the active Resource Group is non-burstable (has limited burst).
+	// DefPagingSizeBytes defaults to 0 (byte-budget paging disabled).
+	// A non-zero value takes effect only when Resource Control is enabled and the active Resource Group
+	// is non-burstable (has limited burst).
 	// Regression tests across cap-bound and under-cap TPC-C, FullScan, and Join workloads found no
-	// material performance regression. Among the tested 1, 2, 4, 8, and 16 MiB candidates, 4 MiB
-	// provided the best overall balance of throughput, tail latency, RU stability, RPC overhead, CPU,
-	// and RU efficiency.
-	DefPagingSizeBytes                      = 4 * 1024 * 1024
+	// material performance regression with byte-budget paging. Among the tested 1, 2, 4, 8, and 16 MiB
+	// candidates, 4 MiB provided the best overall balance of throughput, tail latency, RU stability,
+	// RPC overhead, CPU, and RU efficiency. Consider setting this to 4 MiB (4194304) when enabling
+	// byte-budget paging for resource groups with limited burst.
+	DefPagingSizeBytes                      = 0
 	DefMaxChunkSize                         = 1024
 	DefDMLBatchSize                         = 0
 	DefMaxPreparedStmtCount                 = -1
@@ -1588,6 +1598,7 @@ const (
 	DefTiDBRedactLog                        = Off
 	DefTiDBRestrictedReadOnly               = false
 	DefTiDBSuperReadOnly                    = false
+	DefTiDBColumnarStorageEnabled           = true // missing rows keep historical SET TIFLASH REPLICA behavior
 	DefTiDBShardAllocateStep                = math.MaxInt64
 	DefTiDBPointGetCache                    = false
 	DefTiDBEnableTelemetry                  = true
@@ -1728,6 +1739,7 @@ const (
 	DefTiDBEnableReusechunk                           = true
 	DefTiDBUseAlloc                                   = false
 	DefTiDBEnablePlanReplayerCapture                  = true
+	DefTiDBPlanReplayerFileRetentionTime              = 7 * 24 * time.Hour
 	DefTiDBIndexMergeIntersectionConcurrency          = ConcurrencyUnset
 	DefTiDBTTLJobEnable                               = true
 	DefTiDBTTLScanBatchSize                           = 500
@@ -1933,6 +1945,7 @@ var (
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
 	EnableResourceControl           = atomic.NewBool(false)
 	EnableResourceControlStrictMode = atomic.NewBool(true)
+	PagingSizeBytes                 = atomic.NewInt64(DefPagingSizeBytes)
 	EnableCheckConstraint           = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats       = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 	TiFlashEnablePipelineMode       = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)

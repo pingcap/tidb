@@ -31,6 +31,8 @@ var (
 	statsLease = int64(3 * time.Second)
 	// planReplayerGCLease is the time for plan replayer gc.
 	planReplayerGCLease = int64(10 * time.Minute)
+	// planReplayerFileRetentionTime is the retention time for non-capture plan replayer files.
+	planReplayerFileRetentionTime = int64(DefTiDBPlanReplayerFileRetentionTime)
 )
 
 // SetSchemaLease changes the default schema lease time for DDL.
@@ -63,6 +65,16 @@ func SetPlanReplayerGCLease(lease time.Duration) {
 // GetPlanReplayerGCLease returns the plan replayer gc lease time.
 func GetPlanReplayerGCLease() time.Duration {
 	return time.Duration(atomic.LoadInt64(&planReplayerGCLease))
+}
+
+// SetPlanReplayerFileRetentionTime changes the retention time for non-capture plan replayer files.
+func SetPlanReplayerFileRetentionTime(duration time.Duration) {
+	atomic.StoreInt64(&planReplayerFileRetentionTime, int64(duration))
+}
+
+// GetPlanReplayerFileRetentionTime returns the retention time for non-capture plan replayer files.
+func GetPlanReplayerFileRetentionTime() time.Duration {
+	return time.Duration(atomic.LoadInt64(&planReplayerFileRetentionTime))
 }
 
 // IsReadOnlyVarInNextGen checks if the variable is read-only in the nextgen.

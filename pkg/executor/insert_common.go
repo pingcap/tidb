@@ -55,12 +55,12 @@ import (
 type InsertValues struct {
 	exec.BaseExecutor
 
-	rowCount                    uint64
-	curBatchCnt                 uint64
-	maxRowsInBatch              uint64
-	lastInsertID                uint64
-	recordRUV2RowsColMultiply   bool
-	ruv2RecordedRowsColMultiply int64
+	writeStats *execdetails.WriteRuntimeStats
+
+	rowCount       uint64
+	curBatchCnt    uint64
+	maxRowsInBatch uint64
+	lastInsertID   uint64
 
 	SelectExec exec.Executor
 
@@ -99,32 +99,6 @@ type InsertValues struct {
 	fkCascades []*FKCascadeExec
 
 	ignoreErr bool
-}
-
-func (e *InsertValues) rowsColMultiply() int64 {
-	colCount := len(e.insertColumns)
-	if e.rowCount == 0 || colCount == 0 {
-		return 0
-	}
-
-	const maxInt64 = uint64(1<<63 - 1)
-	if e.rowCount > maxInt64/uint64(colCount) {
-		return int64(maxInt64)
-	}
-	return int64(e.rowCount * uint64(colCount))
-}
-
-func (e *InsertValues) recordRowsColMultiply2RUV2Metrics() {
-	if !e.recordRUV2RowsColMultiply {
-		return
-	}
-	current := e.rowsColMultiply()
-	delta := current - e.ruv2RecordedRowsColMultiply
-	if delta <= 0 {
-		return
-	}
-	recordInsertRowsColMultiply2Metrics(e.Ctx().GetSessionVars(), delta)
-	e.ruv2RecordedRowsColMultiply = current
 }
 
 type defaultVal struct {
@@ -262,7 +236,6 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 			if err = base.exec(ctx, rows); err != nil {
 				return err
 			}
-			e.recordRowsColMultiply2RUV2Metrics()
 			rows = rows[:0]
 			memTracker.Consume(-memUsageOfRows)
 			memUsageOfRows = 0
@@ -284,7 +257,6 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	if err != nil {
 		return err
 	}
-	e.recordRowsColMultiply2RUV2Metrics()
 	memTracker.Consume(-memUsageOfRows)
 	return nil
 }
@@ -340,6 +312,10 @@ func completeLoadErr(col *model.ColumnInfo, rowIdx int, err error) error {
 func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
 	if err == nil {
 		return nil
+	}
+	// The allocator did not produce an ID, so INSERT IGNORE cannot safely continue.
+	if autoid.IsRPCRetryLimitError(err) {
+		return err
 	}
 
 	// Convert the error with full messages.
@@ -535,7 +511,6 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 				if err = base.exec(ctx, rows); err != nil {
 					return err
 				}
-				e.recordRowsColMultiply2RUV2Metrics()
 				rows = rows[:0]
 				extraColsInSel = extraColsInSel[:0]
 				totalMemDelta += -memUsageOfRows - memUsageOfExtraCols
@@ -557,7 +532,6 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		if err != nil {
 			return err
 		}
-		e.recordRowsColMultiply2RUV2Metrics()
 		rows = rows[:0]
 		extraColsInSel = extraColsInSel[:0]
 		memTracker.Consume(-memUsageOfRows - memUsageOfExtraCols - chkMemUsage)
@@ -1615,4 +1589,20 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 // Tp implements the RuntimeStats interface.
 func (*InsertRuntimeStat) Tp() int {
 	return execdetails.TpInsertRuntimeStat
+}
+
+// recordWriteCPUWork counts each processed target row even when no KV value changes.
+// Clustered primary keys are part of the row key; columnar indexes do not add KV index work.
+func recordWriteCPUWork(stats *execdetails.WriteRuntimeStats, tbl table.Table, rows int) {
+	if stats == nil || rows == 0 {
+		return
+	}
+	factor := 1
+	for _, idx := range tbl.Indices() {
+		if idx.Meta().IsColumnarIndex() || (tbl.Meta().IsCommonHandle && idx.Meta().Primary) {
+			continue
+		}
+		factor++
+	}
+	stats.CPUWork += float64(rows) * float64(factor)
 }

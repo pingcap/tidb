@@ -16,12 +16,15 @@ package core
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/atomic"
 )
@@ -173,7 +176,11 @@ func init() {
 	expression.EncodeRecordKeyFromRow = helper.encodeHandleFromRow
 	expression.EncodeIndexKeyFromRow = helper.encodeIndexKeyFromRow
 	plannerutil.EvalAstExprWithPlanCtx = evalAstExprWithPlanCtx
-	plannerutil.RewriteAstExprWithPlanCtx = rewriteAstExprWithPlanCtx
+	plannerutil.RewriteAstExprWithPlanCtx = func(ctx planctx.PlanContext, expr ast.ExprNode,
+		schema *expression.Schema, names types.NameSlice, allowCastArray bool) (expression.Expression, error) {
+		newExpr, _, err := rewriteAstExprWithPlanCtx(ctx, expr, schema, names, allowCastArray)
+		return newExpr, err
+	}
 	DefaultDisabledLogicalRulesList = new(atomic.Value)
 	DefaultDisabledLogicalRulesList.Store(set.NewStringSet())
 

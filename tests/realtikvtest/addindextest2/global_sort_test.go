@@ -52,6 +52,8 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
@@ -236,6 +238,54 @@ func TestGlobalSortBasic(t *testing.T) {
 	<-ch
 	<-ch
 	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
+}
+
+// TestAddIndexRequiresGlobalSortWithSEM checks that add index / modify column
+// must use global sort when SEM is enabled on a NextGen cluster, mirroring the
+// IMPORT INTO behavior.
+func TestAddIndexRequiresGlobalSortWithSEM(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only the NextGen kernel requires global sort when SEM is enabled")
+	}
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_cloud_storage_uri = ''")
+	})
+
+	for _, semVer := range []string{sem.V1, sem.V2} {
+		t.Run(semVer, func(t *testing.T) {
+			defer sem.SwitchToSEMForTest(t, semVer)()
+
+			tk.MustExec("drop database if exists sem_add_index;")
+			tk.MustExec("create database sem_add_index;")
+			tk.MustExec("use sem_add_index;")
+			tk.MustExec("create table t (a int, b int, index idx_b(b));")
+			tk.MustExec("insert into t values (1, 1), (2, 2);")
+
+			// NextGen is designed around global sort; local sort is only kept
+			// for SEM-disabled testing convenience, so it must be rejected here.
+			tk.MustExec("set global tidb_cloud_storage_uri = ''")
+			err := tk.ExecToErr("alter table t add index idx_a(a);")
+			require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
+			require.ErrorContains(t, err, "add index or modify column with local sort")
+
+			err = tk.ExecToErr("alter table t modify column b varchar(50);")
+			require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
+			require.ErrorContains(t, err, "add index or modify column with local sort")
+
+			// Global sort is still allowed: with a cloud storage URI configured,
+			// the DDL goes through the distributed global sort path.
+			server, cloudStorageURI := genServerWithStorage(t)
+			server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+			tk.MustExec(fmt.Sprintf("set global tidb_cloud_storage_uri = '%s'", cloudStorageURI))
+			tk.MustExec("create table t2 (a int, b int);")
+			tk.MustExec("insert into t2 values (1, 1), (2, 2);")
+			tk.MustExec("alter table t2 add index idx_a(a);")
+			tk.MustExec("admin check table t2;")
+		})
+	}
 }
 
 func TestGlobalSortMultiSchemaChange(t *testing.T) {

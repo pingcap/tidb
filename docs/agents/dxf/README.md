@@ -98,7 +98,7 @@ Use it to quickly find:
 - Register all required factories:
   - owner side: `scheduler.RegisterSchedulerFactory(...)`
   - node side: `taskexecutor.RegisterTaskType(...)`
-  - optional cleanup: `scheduler.RegisterSchedulerCleanUpFactory(...)`
+  - optional cleanup: `scheduler.RegisterCleanerFactory(...)`
 - Keep `GetNextStep` deterministic from task base state (avoid relying on mutable
   task meta there), and keep subtask generation stable when using batch switch APIs.
 
@@ -151,7 +151,7 @@ Use it to quickly find:
 ## Navigation Queries
 
 - Find DXF registration points:
-  `rg --line-number --glob '*.go' 'RegisterSchedulerFactory|RegisterSchedulerCleanUpFactory|RegisterTaskType' pkg/session pkg/ddl pkg/dxf`
+  `rg --line-number --glob '*.go' 'RegisterSchedulerFactory|RegisterCleanerFactory|RegisterTaskType' pkg/session pkg/ddl pkg/dxf`
 - Find framework control APIs and main call sites:
   `rg --line-number --glob '*.go' 'SubmitTask|WaitTask|CancelTask|PauseTask|ResumeTask|ModifyTaskByID' pkg/dxf pkg/executor pkg/ddl`
 - Find IMPORT INTO integration points:

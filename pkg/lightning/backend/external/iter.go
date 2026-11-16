@@ -681,7 +681,9 @@ func newMergePropBaseIter(
 				rd, err := newStatsReader(ctx, exStorage, path, 250*1024)
 				select {
 				case <-closeCh:
-					_ = rd.Close()
+					if rd != nil {
+						_ = rd.Close()
+					}
 					return
 				case asyncTask <- readerAndError{r: &statReaderProxy{p: path, r: rd}, err: err}:
 				}

@@ -541,6 +541,7 @@ func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(indexInfos []*model
 	for _, indexInfo := range indexInfos {
 		base := baseAnalyzeExec{
 			ctx:         e.ctx,
+			planID:      e.planID,
 			tableID:     e.TableID,
 			concurrency: concurrency,
 			analyzePB: &tipb.AnalyzeReq{

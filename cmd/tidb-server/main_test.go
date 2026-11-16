@@ -52,6 +52,31 @@ func TestRunMain(t *testing.T) {
 	}
 }
 
+func TestDiagnosticModeFlag(t *testing.T) {
+	originalArgs := os.Args
+	originalDiagnosticMode := diagnosticMode
+	os.Args = []string{"tidb-server"}
+	t.Cleanup(func() {
+		os.Args = originalArgs
+		diagnosticMode = originalDiagnosticMode
+	})
+
+	for _, testCase := range []struct {
+		name     string
+		argument string
+		expected bool
+	}{
+		{name: "enable", argument: "--diagnostic-mode", expected: true},
+		{name: "disable", argument: "--diagnostic-mode=false", expected: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			fset := initFlagSet()
+			require.NoError(t, fset.Parse([]string{testCase.argument}))
+			require.Equal(t, testCase.expected, *diagnosticMode)
+		})
+	}
+}
+
 func TestSetGlobalVars(t *testing.T) {
 	defer view.Stop()
 	require.Equal(t, "tikv,tiflash,tidb", variable.GetSysVar(vardef.TiDBIsolationReadEngines).Value)

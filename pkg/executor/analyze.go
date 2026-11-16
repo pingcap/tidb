@@ -643,6 +643,7 @@ type analyzeTask struct {
 
 type baseAnalyzeExec struct {
 	ctx         sessionctx.Context
+	planID      int
 	tableID     statistics.AnalyzeTableID
 	concurrency int
 	analyzePB   *tipb.AnalyzeReq

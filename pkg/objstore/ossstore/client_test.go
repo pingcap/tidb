@@ -15,11 +15,18 @@
 package ossstore
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"net/http"
+	"net/url"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
+	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
 	"github.com/aws/smithy-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -29,6 +36,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+type presignAPI struct {
+	API
+	presign func(context.Context, any, ...func(*oss.PresignOptions)) (*oss.PresignResult, error)
+}
+
+func (a *presignAPI) Presign(ctx context.Context, request any, optFns ...func(*oss.PresignOptions)) (*oss.PresignResult, error) {
+	return a.presign(ctx, request, optFns...)
+}
 
 type Suite struct {
 	Controller *gomock.Controller
@@ -153,6 +169,136 @@ func TestClientGetObject(t *testing.T) {
 	_, err = cli.GetObject(ctx, "object", 0, 10)
 	require.ErrorContains(t, err, "mock get error")
 	require.True(t, s.Controller.Satisfied())
+}
+
+func TestClientPresignObject(t *testing.T) {
+	ctx := context.Background()
+	const presignedURL = "https://bucket.example.com/prefix/object?signature=test"
+
+	t.Run("public endpoint when data client uses internal endpoint", func(t *testing.T) {
+		config := oss.NewConfig().
+			WithRegion("cn-hangzhou").
+			WithCredentialsProvider(credentials.NewStaticCredentialsProvider("access-key-id", "access-key-secret", "")).
+			WithUseInternalEndpoint(true)
+		cli := &client{
+			presignSvc:   newPresignClient(config),
+			BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+		}
+
+		presignedURL, err := cli.PresignObject(ctx, "object", time.Hour)
+		require.NoError(t, err)
+		parsedURL, err := url.Parse(presignedURL)
+		require.NoError(t, err)
+		require.Equal(t, "bucket.oss-cn-hangzhou.aliyuncs.com", parsedURL.Host)
+	})
+
+	t.Run("success", func(t *testing.T) {
+		cli := &client{
+			presignSvc: &presignAPI{
+				presign: func(_ context.Context, request any, optFns ...func(*oss.PresignOptions)) (*oss.PresignResult, error) {
+					getRequest, ok := request.(*oss.GetObjectRequest)
+					require.True(t, ok)
+					require.Equal(t, "bucket", oss.ToString(getRequest.Bucket))
+					require.Equal(t, "prefix/object", oss.ToString(getRequest.Key))
+
+					options := &oss.PresignOptions{}
+					for _, optFn := range optFns {
+						optFn(options)
+					}
+					require.Equal(t, time.Hour, options.Expires)
+					return &oss.PresignResult{URL: presignedURL}, nil
+				},
+			},
+			BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+		}
+		storage := s3like.NewStorage(cli, cli.BucketPrefix, &backuppb.S3{}, nil)
+
+		url, err := storage.PresignFile(ctx, "object", time.Hour)
+		require.NoError(t, err)
+		require.Equal(t, presignedURL, url)
+	})
+
+	t.Run("error", func(t *testing.T) {
+		presignErr := errors.New("mock presign error")
+		cli := &client{
+			presignSvc: &presignAPI{
+				presign: func(context.Context, any, ...func(*oss.PresignOptions)) (*oss.PresignResult, error) {
+					return nil, presignErr
+				},
+			},
+			BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+		}
+		storage := s3like.NewStorage(cli, cli.BucketPrefix, &backuppb.S3{}, nil)
+
+		url, err := storage.PresignFile(ctx, "object", time.Hour)
+		require.Empty(t, url)
+		require.ErrorIs(t, err, presignErr)
+	})
+
+	t.Run("negative expiration", func(t *testing.T) {
+		cli := &client{
+			presignSvc: &presignAPI{
+				presign: func(context.Context, any, ...func(*oss.PresignOptions)) (*oss.PresignResult, error) {
+					require.FailNow(t, "Presign called for non-positive expiration")
+					return nil, nil
+				},
+			},
+			BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+		}
+		storage := s3like.NewStorage(cli, cli.BucketPrefix, &backuppb.S3{}, nil)
+
+		url, err := storage.PresignFile(ctx, "object", -time.Second)
+		require.Empty(t, url)
+		require.ErrorContains(t, err, "expiration must be positive")
+	})
+
+	t.Run("zero expiration", func(t *testing.T) {
+		cli := &client{
+			presignSvc: &presignAPI{
+				presign: func(context.Context, any, ...func(*oss.PresignOptions)) (*oss.PresignResult, error) {
+					require.FailNow(t, "Presign called for non-positive expiration")
+					return nil, nil
+				},
+			},
+			BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+		}
+		storage := s3like.NewStorage(cli, cli.BucketPrefix, &backuppb.S3{}, nil)
+
+		url, err := storage.PresignFile(ctx, "object", 0)
+		require.Empty(t, url)
+		require.ErrorContains(t, err, "expiration must be positive")
+	})
+}
+
+func TestClientPresignObjectDoesNotLogCredentials(t *testing.T) {
+	const securityToken = "recognizable-security-token"
+	var logOutput bytes.Buffer
+	config := oss.NewConfig().
+		WithRegion("cn-hangzhou").
+		WithEndpoint("https://oss-cn-hangzhou.aliyuncs.com").
+		WithCredentialsProvider(credentials.NewStaticCredentialsProvider("access-key-id", "access-key-secret", securityToken)).
+		WithSignatureVersion(oss.SignatureVersionV4).
+		WithLogLevel(oss.LogDebug).
+		WithLogPrinter(oss.LogPrinterFunc(func(values ...any) {
+			_, _ = fmt.Fprint(&logOutput, values...)
+		}))
+	cli := &client{
+		svc:          oss.NewClient(config),
+		presignSvc:   newPresignClient(config),
+		BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+	}
+	require.Equal(t, oss.LogDebug, oss.ToInt(config.LogLevel))
+
+	presignedURL, err := cli.PresignObject(context.Background(), "object", time.Hour)
+	require.NoError(t, err)
+	parsedURL, err := url.Parse(presignedURL)
+	require.NoError(t, err)
+	query := parsedURL.Query()
+	signature := query.Get("x-oss-signature")
+	require.NotEmpty(t, signature)
+	require.Equal(t, securityToken, query.Get("x-oss-security-token"))
+	require.NotContains(t, logOutput.String(), signature)
+	require.NotContains(t, logOutput.String(), securityToken)
 }
 
 func TestClientDeleteObjects(t *testing.T) {
@@ -281,4 +427,136 @@ func TestClientCopyObject(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "mock copy error")
 	require.True(t, s.Controller.Satisfied())
+}
+
+func TestMultipartWriterPreservesRequestIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		bucket *string
+		key    *string
+	}{
+		{name: "matching", bucket: oss.Ptr("bucket"), key: oss.Ptr("prefix/object")},
+		{name: "canonical_bucket", bucket: oss.Ptr("canonical-bucket"), key: oss.Ptr("prefix/object")},
+		{name: "canonical_key", bucket: oss.Ptr("bucket"), key: oss.Ptr("canonical/key")},
+		{name: "canonical_bucket_and_key", bucket: oss.Ptr("canonical-bucket"), key: oss.Ptr("canonical/key")},
+		{name: "omitted_identity"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := CreateSuite(t)
+			cli := &client{
+				svc:          s.MockCli,
+				BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+				options:      &backuppb.S3{Sse: "KMS", SseKmsKeyId: "test-kms-key", StorageClass: "IA"},
+			}
+			part := 0
+			gomock.InOrder(
+				s.MockCli.EXPECT().InitiateMultipartUpload(gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, in *oss.InitiateMultipartUploadRequest, _ ...func(*oss.Options)) (*oss.InitiateMultipartUploadResult, error) {
+						require.Equal(t, "bucket", oss.ToString(in.Bucket))
+						require.Equal(t, "prefix/object", oss.ToString(in.Key))
+						require.Equal(t, "KMS", oss.ToString(in.ServerSideEncryption))
+						require.Equal(t, "test-kms-key", oss.ToString(in.ServerSideEncryptionKeyId))
+						require.Equal(t, oss.StorageClassType("IA"), in.StorageClass)
+						return &oss.InitiateMultipartUploadResult{Bucket: tc.bucket, Key: tc.key, UploadId: oss.Ptr("upload-id")}, nil
+					}),
+				s.MockCli.EXPECT().UploadPart(gomock.Any(), gomock.Any()).Times(2).
+					DoAndReturn(func(_ context.Context, in *oss.UploadPartRequest, _ ...func(*oss.Options)) (*oss.UploadPartResult, error) {
+						part++
+						require.Equal(t, "bucket", oss.ToString(in.Bucket))
+						require.Equal(t, "prefix/object", oss.ToString(in.Key))
+						require.Equal(t, "upload-id", oss.ToString(in.UploadId))
+						require.EqualValues(t, part, in.PartNumber)
+						payload, err := io.ReadAll(in.Body)
+						require.NoError(t, err)
+						require.Equal(t, "payload", string(payload))
+						require.EqualValues(t, len(payload), oss.ToInt64(in.ContentLength))
+						return &oss.UploadPartResult{ETag: oss.Ptr("etag")}, nil
+					}),
+				s.MockCli.EXPECT().CompleteMultipartUpload(gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, in *oss.CompleteMultipartUploadRequest, _ ...func(*oss.Options)) (*oss.CompleteMultipartUploadResult, error) {
+						require.Equal(t, "bucket", oss.ToString(in.Bucket))
+						require.Equal(t, "prefix/object", oss.ToString(in.Key))
+						require.Equal(t, "upload-id", oss.ToString(in.UploadId))
+						require.Len(t, in.CompleteMultipartUpload.Parts, 2)
+						for i, p := range in.CompleteMultipartUpload.Parts {
+							require.EqualValues(t, i+1, p.PartNumber)
+							require.Equal(t, "etag", oss.ToString(p.ETag))
+						}
+						return &oss.CompleteMultipartUploadResult{}, nil
+					}),
+			)
+			ctx := context.Background()
+			w, err := cli.MultipartWriter(ctx, "object")
+			require.NoError(t, err)
+			for range 2 {
+				n, err := w.Write(ctx, []byte("payload"))
+				require.NoError(t, err)
+				require.Equal(t, len("payload"), n)
+			}
+			require.NoError(t, w.Close(ctx))
+		})
+	}
+}
+
+type multipartRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f multipartRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+// Exercise native OSS SDK endpoint resolution in both virtual-host and CNAME modes.
+func TestMultipartWriterAliasRouting(t *testing.T) {
+	for _, useCName := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cname_%t", useCName), func(t *testing.T) {
+			host := "configured-alias.storage.example.test"
+			endpoint := "https://storage.example.test"
+			if useCName {
+				endpoint = "https://" + host
+			}
+			parts := make(map[string]string)
+			var initiated, completed bool
+			cfg := oss.NewConfig().WithRegion("cn-beijing").WithEndpoint(endpoint).
+				WithUseCName(useCName).WithRetryMaxAttempts(1).
+				WithCredentialsProvider(credentials.NewStaticCredentialsProvider("test-key", "test-secret")).
+				WithHttpClient(&http.Client{Transport: multipartRoundTripper(func(r *http.Request) (*http.Response, error) {
+					require.Equal(t, "https", r.URL.Scheme)
+					require.Equal(t, host, r.URL.Host)
+					require.Equal(t, "/prefix/object", r.URL.Path)
+					body := ""
+					q := r.URL.Query()
+					switch {
+					case r.Method == http.MethodPost && q.Has("uploads"):
+						initiated = true
+						body = "<InitiateMultipartUploadResult><Bucket>canonical-bucket</Bucket><Key>prefix/object</Key><UploadId>upload-id</UploadId></InitiateMultipartUploadResult>"
+					case r.Method == http.MethodPut && q.Get("uploadId") == "upload-id":
+						payload, err := io.ReadAll(r.Body)
+						require.NoError(t, err)
+						parts[q.Get("partNumber")] = string(payload)
+					case r.Method == http.MethodPost && q.Get("uploadId") == "upload-id":
+						payload, err := io.ReadAll(r.Body)
+						require.NoError(t, err)
+						require.Contains(t, string(payload), "<PartNumber>1</PartNumber>")
+						require.Contains(t, string(payload), "<PartNumber>2</PartNumber>")
+						completed = true
+						body = "<CompleteMultipartUploadResult><Bucket>canonical-bucket</Bucket><Key>prefix/object</Key><ETag>etag</ETag></CompleteMultipartUploadResult>"
+					default:
+						t.Fatalf("unexpected multipart request: %s %s", r.Method, r.URL)
+					}
+					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Etag": []string{`"etag"`}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+				})})
+			cli := &client{svc: oss.NewClient(cfg), BucketPrefix: storeapi.NewBucketPrefix("configured-alias", "prefix/"), options: &backuppb.S3{}}
+			ctx := context.Background()
+			w, err := cli.MultipartWriter(ctx, "object")
+			require.NoError(t, err)
+			for _, payload := range []string{"first part", "second part"} {
+				n, err := w.Write(ctx, []byte(payload))
+				require.NoError(t, err)
+				require.Equal(t, len(payload), n)
+			}
+			require.NoError(t, w.Close(ctx))
+			require.True(t, initiated)
+			require.True(t, completed)
+			require.Equal(t, map[string]string{"1": "first part", "2": "second part"}, parts)
+		})
+	}
 }

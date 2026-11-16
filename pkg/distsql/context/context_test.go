@@ -53,7 +53,6 @@ func TestContextDetach(t *testing.T) {
 		OriginalSQL:            "a",
 		KVVars:                 kvVars,
 		KvExecCounter:          &stmtstats.KvExecCounter{},
-		RUV2Metrics:            execdetails.NewRUV2Metrics(),
 		SessionMemTracker:      &memory.Tracker{},
 
 		Location:         time.Local,
@@ -125,7 +124,6 @@ func TestContextDetach(t *testing.T) {
 			"$.RunawayChecker",
 			"$.RUConsumptionReporter",
 			"$.ExecDetails",
-			"$.RUV2Metrics",
 			"$.KVVars.Killed",
 			"$.KvExecCounter",
 			"$.SessionMemTracker",
