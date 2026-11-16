@@ -87,35 +87,19 @@ func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 	if d.mu.AutoIDAllocClient != nil {
 		return d.mu.AutoIDAllocClient, atomic.LoadUint64(&d.version), nil
 	}
-<<<<<<< HEAD
 
 	var bo backoffer
 retry:
 	resp, err := d.etcdCli.Get(ctx, autoIDLeaderPath, clientv3.WithFirstCreate()...)
-=======
-	// write a for loop to retry in case of etcd connection error.
-	var resp *clientv3.GetResponse
-	var err error
-	var bo backoffer
-retry:
-	resp, err = d.etcdCli.Get(ctx, GetAutoIDServiceLeaderEtcdPath(keyspaceID), clientv3.WithFirstCreate()...)
->>>>>>> ae50e33986d (meta/autoid:  reduce get autoID's backoff (#61988))
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
 	if len(resp.Kvs) == 0 {
 		// If the key is not found, it means the autoid service leader is not elected yet.
 		// We can retry to get the leader.
-<<<<<<< HEAD
 		if err := bo.Backoff(ctx); err != nil {
 			return nil, 0, errors.Trace(err)
 		}
-=======
-		if err := ctx.Err(); err != nil {
-			return nil, 0, errors.Trace(err)
-		}
-		bo.Backoff()
->>>>>>> ae50e33986d (meta/autoid:  reduce get autoID's backoff (#61988))
 		goto retry
 	}
 	bo.Reset()
@@ -187,16 +171,9 @@ retry:
 				return 0, 0, errors.Trace(ctx.Err())
 			}
 			sp.resetConn(ver, err)
-<<<<<<< HEAD
 			if err := bo.Backoff(ctx); err != nil {
 				return 0, 0, errors.Trace(err)
 			}
-=======
-			if err := ctx.Err(); err != nil {
-				return 0, 0, errors.Trace(err)
-			}
-			bo.Backoff()
->>>>>>> ae50e33986d (meta/autoid:  reduce get autoID's backoff (#61988))
 			goto retry
 		}
 		return 0, 0, errors.Trace(err)
