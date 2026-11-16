@@ -352,6 +352,109 @@ func TestAffinityTruncateTableCancelKeepsOriginalGroups(t *testing.T) {
 	}
 }
 
+func TestAffinityTruncateTablePartitionGrowth(t *testing.T) {
+	jobVersion := model.GetJobVerInUse()
+	t.Cleanup(func() { model.SetJobVerInUse(jobVersion) })
+	for _, version := range []model.JobVersion{model.JobVersion1, model.JobVersion2} {
+		for _, rollbackReservation := range []bool{false, true} {
+			t.Run(fmt.Sprintf("version=%d/rollback_reservation=%v", version, rollbackReservation), func(t *testing.T) {
+				model.SetJobVerInUse(version)
+				s := newAffinityDDLTest(t)
+				s.tk.MustExec("create table p(a int) partition by range(a) (partition p0 values less than (10))")
+				s.tk.MustExec("insert into p values (1)")
+				original := s.tableInfo(t, "p")
+				readTable, resume := make(chan struct{}), make(chan struct{})
+				var resumeOnce sync.Once
+				release := func() { resumeOnce.Do(func() { close(resume) }) }
+				defer release()
+				var held, armed, reservationFailed atomic.Bool
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterCheckTruncateTableMaterializedViewConstraints", func(id int64) {
+					if id == original.ID && held.CompareAndSwap(false, true) {
+						close(readTable)
+						<-resume
+					}
+				})
+				var initialIDs atomic.Int64
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+					if job.Type == model.ActionTruncateTable && job.TableID == original.ID && armed.CompareAndSwap(false, true) {
+						args, err := model.GetTruncateTableArgs(job)
+						require.NoError(t, err)
+						initialIDs.Store(int64(len(args.NewPartitionIDs)))
+						s.cli.failAfterCreate.Store(!rollbackReservation)
+					}
+				})
+				rolledBack, retry := make(chan struct{}), make(chan struct{})
+				var retryOnce, pauseOnce sync.Once
+				resumeRetry := func() { retryOnce.Do(func() { close(retry) }) }
+				defer resumeRetry()
+				if rollbackReservation {
+					testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable", func(job *model.Job, err *error) {
+						if job.Type == model.ActionTruncateTable && job.TableID == original.ID && job.IsRunning() && reservationFailed.CompareAndSwap(false, true) {
+							*err = context.DeadlineExceeded
+						}
+					})
+					testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRefreshJob", func(job *model.Job) {
+						if job.Type == model.ActionTruncateTable && job.TableID == original.ID && reservationFailed.Load() {
+							pauseOnce.Do(func() { close(rolledBack); <-retry })
+						}
+					})
+				}
+				tk := testkit.NewTestKit(t, s.store)
+				tk.MustExec("use test")
+				done := make(chan error, 1)
+				go func() { done <- tk.ExecToErr("truncate table p") }()
+				select {
+				case <-readTable:
+				case <-time.After(30 * time.Second):
+					t.Fatal("TRUNCATE did not read the table")
+				}
+				s.tk.MustExec("alter table p add partition (partition p1 values less than (20))")
+				s.tk.MustExec("alter table p affinity='partition'")
+				originalGroups := s.groupsOf(t, s.tableInfo(t, "p"))
+				release()
+				var unrelatedID int64
+				if rollbackReservation {
+					select {
+					case <-rolledBack:
+					case <-time.After(30 * time.Second):
+						t.Fatal("ID reservation did not roll back")
+					}
+					s.tk.MustExec("create table q(a int)")
+					unrelatedID = s.tableInfo(t, "q").ID
+					resumeRetry()
+				}
+				select {
+				case err := <-done:
+					if rollbackReservation {
+						require.NoError(t, err)
+					} else {
+						require.ErrorContains(t, err, "injected response loss after affinity creation")
+					}
+				case <-time.After(30 * time.Second):
+					t.Fatal("TRUNCATE did not finish")
+				}
+				require.EqualValues(t, 1, initialIDs.Load())
+				created := s.cli.lastCreatedGroups.Load().(map[string][]pdhttp.AffinityGroupKeyRange)
+				require.Len(t, created, 2)
+				after := s.tableInfo(t, "p")
+				require.Len(t, after.Partition.Definitions, 2)
+				if rollbackReservation {
+					require.NotEqual(t, original.ID, after.ID)
+					for _, partition := range after.Partition.Definitions {
+						require.NotEqual(t, unrelatedID, partition.ID, "retry must not reuse IDs from the rolled-back reservation")
+					}
+					s.tk.MustQuery("select * from p").Check(testkit.Rows())
+				} else {
+					require.Equal(t, original.ID, after.ID)
+					s.tk.MustQuery("select * from p").Check(testkit.Rows("1"))
+				}
+				requireAffinityGroupsWithLabelRules(t, s.cli, originalGroups, !rollbackReservation, "old groups follow the metadata commit")
+				requireAffinityGroupsWithLabelRules(t, s.cli, created, rollbackReservation, "all replacement groups follow the DDL outcome")
+			})
+		}
+	}
+}
+
 func TestAffinityTruncatePartitionFailure(t *testing.T) {
 	s := newAffinityDDLTest(t)
 	store, dom, cli, tk := s.store, s.dom, s.cli, s.tk

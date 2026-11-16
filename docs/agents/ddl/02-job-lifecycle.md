@@ -54,6 +54,11 @@ on error before persisting either a retry or a cancelled job. This also protects
 TRUNCATE TABLE when masking-policy SQL has already flushed the old table deletion;
 `sess.Reset()` alone only discards the current statement buffer.
 
+If a partition-affinity table has gained partitions since job submission,
+TRUNCATE TABLE first reserves the missing replacement IDs and persists them
+with the job in one transaction, before any external group creation. Retries
+and cancellation reload these IDs from the committed job arguments.
+
 Rolling back the DDL transaction does not undo changes a step has made in PD.
 For TRUNCATE TABLE, affinity groups follow two rules:
 

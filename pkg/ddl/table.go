@@ -584,6 +584,19 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if err != nil {
 		return ver, err
 	}
+	if pi := tblInfo.GetPartitionInfo(); tblInfo.Affinity != nil &&
+		tblInfo.Affinity.Level == ast.TableAffinityLevelPartition && pi != nil &&
+		len(args.NewPartitionIDs) < len(pi.Definitions) {
+		// Reserve additional IDs and persist them with the job before creating
+		// external groups. A failed truncate must not retain rolled-back IDs.
+		moreIDs, err := metaMut.GenGlobalIDs(len(pi.Definitions) - len(args.NewPartitionIDs))
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		args.NewPartitionIDs = append(args.NewPartitionIDs, moreIDs...)
+		job.FillArgs(args)
+		return 0, nil
+	}
 	if jobCtx.oldDDLCtx != nil {
 		if err := w.truncateTTLTableInExternalWorkload(jobCtx.ctx, job, oldTblInfo, args.NewTableID); err != nil {
 			return ver, err
