@@ -263,16 +263,11 @@ func (s *LFU) metrics() *ristretto.Metrics {
 func (s *LFU) Close() {
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
-		s.Clear()
+		s.cache.Clear()
+		s.resultKeySet.Clear()
 		s.cache.Close()
 		s.cache.Wait()
 	})
-}
-
-// Clear implements statsCacheInner
-func (s *LFU) Clear() {
-	s.cache.Clear()
-	s.resultKeySet.Clear()
 }
 
 func (s *LFU) addCost(v int64) {
