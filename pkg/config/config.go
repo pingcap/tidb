@@ -264,6 +264,8 @@ type Config struct {
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
+	// DisableGC is a startup-only override of tidb_gc_enable that prevents GC safepoint advancement.
+	DisableGC bool `toml:"disable-gc" json:"disable-gc"`
 	// EnableStorageClass permits storage-class DDL and exposes transition status queries.
 	// It defaults to false. Existing data and transition policies are unaffected when disabled.
 	EnableStorageClass bool `toml:"enable-storage-class" json:"enable-storage-class"`
@@ -1142,6 +1144,7 @@ var defaultConf = Config{
 	Store:                        StoreTypeUniStore,
 	Path:                         "/tmp/tidb",
 	RunDDL:                       true,
+	DisableGC:                    false,
 	SplitTable:                   true,
 	Lease:                        DefSchemaLease.String(),
 	TokenLimit:                   1000,
