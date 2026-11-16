@@ -442,6 +442,9 @@ impl KvTableBackfill for TableCommon {
             origin_key: Vec<u8>,
             value: Vec<u8>,
             handle: TableHandle,
+            /// Go `temporaryIndexRecord.handle`, a global index's partition
+            /// included.
+            raw_handle: tidb_txnkv::Handle,
             delete: bool,
             distinct: bool,
             skip: bool,
@@ -494,9 +497,8 @@ impl KvTableBackfill for TableCommon {
                     {
                         continue;
                     }
-                    let handle = convert_handle(
-                        element.handle.as_ref().expect("decoded before FilterOverwritten"),
-                    );
+                    let raw_handle = element.handle.clone().expect("decoded before FilterOverwritten");
+                    let handle = convert_handle(&raw_handle);
                     let distinct =
                         !element.delete && tidb_tablecodec::index_kv_is_unique(&element.value);
                     records.push(TempRecord {
@@ -508,6 +510,7 @@ impl KvTableBackfill for TableCommon {
                             element.value.clone()
                         },
                         handle,
+                        raw_handle,
                         delete: element.delete,
                         distinct,
                         skip: false,
@@ -558,15 +561,22 @@ impl KvTableBackfill for TableCommon {
                             record.skip = true;
                         } else if tidb_tablecodec::index_kv_is_unique(&original) {
                             let in_value = tidb_tablecodec::decode_handle_in_index_value(&original)
-                                .map_err(|error| KvTableError::Decode(format!("{error:?}")))?
-                                .map(|handle| convert_handle(&handle));
-                            if in_value.as_ref() == Some(&record.handle) {
+                                .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+                            // Go `tmpRec.handle.Equal(hdInVal)`: a global
+                            // index's handles match only in one partition.
+                            if in_value.as_ref().is_some_and(|in_value| record.raw_handle.equal(in_value)) {
                                 // The delete matches: drop it from the check.
                                 seen.insert(record.origin_key.clone(), None);
                             } else if let Some(owner) = in_value {
                                 // Several changes hit the key: delete only when
-                                // the row the index names is gone.
-                                let row_key = self.record_key_of(physical_id, &owner);
+                                // the row the index names is gone. Go
+                                // `EncodeRecordKey` reads a partition handle's
+                                // row in its own partition.
+                                let owner_physical_id = match &owner {
+                                    tidb_txnkv::Handle::Partition(partition) => partition.partition_id(),
+                                    _ => physical_id,
+                                };
+                                let row_key = self.record_key_of(owner_physical_id, &convert_handle(&owner));
                                 let exists = match store.get(&Key::from_bytes(row_key)) {
                                     Ok(value) => !value.is_empty(),
                                     Err(tidb_kv::storage::StorageError::NotFound) => false,
