@@ -31,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -105,6 +107,7 @@ func TestMaterializedViewRefreshStatementResult(t *testing.T) {
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			tk := setupMaterializedViewRefreshStatementResultTest(t)
+			require.NotNil(t, tk.Session().Value(sessionctx.LastExecuteDDL))
 			if tc.mode == "fast as of timestamp" {
 				tk.MustExec("set time_zone = '+00:00'")
 			}
@@ -124,6 +127,7 @@ func TestMaterializedViewRefreshStatementResult(t *testing.T) {
 			}
 
 			tk.MustExec(refreshSQL)
+			require.Nil(t, tk.Session().Value(sessionctx.LastExecuteDDL))
 			requireRefreshMVStatementResult(t, tk, tc.insertRows, tc.updateRows, tc.deleteRows)
 			if tc.mode == "fast" {
 				require.Equal(t, 3.0, readAffectedRowsMetricValue(t, "RefreshMV")-beforeRefreshMV)
@@ -175,6 +179,15 @@ func TestMaterializedViewRefreshFastAsOfTimestampNoOpStatementResult(t *testing.
 		"select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d",
 		mvID,
 	)).Check(testkit.Rows("0"))
+	// An empty interval does not read input logs or advance the watermark.
+	tk.MustExec(fmt.Sprintf("insert into mysql.tidb_mview_fast_refresh_source_info values (%d, 0)", mvID))
+	tk.MustExec(fmt.Sprintf(
+		"refresh materialized view mv_refresh_result_noop fast as of timestamp '%s'",
+		targetTime.Format("2006-01-02 15:04:05.000"),
+	))
+	requireRefreshMVStatementResult(t, tk, 0, 0, 0)
+	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mvID)).
+		Check(testkit.Rows(fmt.Sprint(targetTSO)))
 }
 
 func TestMaterializedViewRefreshCompleteOutOfPlacePreservesPreviousCommitTSOSnapshot(t *testing.T) {
@@ -218,38 +231,75 @@ func TestMaterializedViewRefreshCompleteOutOfPlacePreservesPreviousCommitTSOSnap
 }
 
 func TestProfileMaterializedViewRefreshStepRuntime(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
-	tk := newMViewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_mv_explain_analyze (a int not null, b int not null)")
-	tk.MustExec("insert into t_mv_explain_analyze values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t_mv_explain_analyze (a, b) purge next date_add(now(), interval 1 hour)")
-	tk.MustExec("create materialized view mv_mv_explain_analyze (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_explain_analyze group by a")
+	t.Run("step_runtime", func(t *testing.T) {
+		store, _ := testkit.CreateMockStoreAndDomain(t)
+		tk := newMViewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t_mv_explain_analyze (a int not null, b int not null)")
+		tk.MustExec("insert into t_mv_explain_analyze values (1, 10), (1, 5), (2, 7)")
+		tk.MustExec("create materialized view log on t_mv_explain_analyze (a, b) purge next date_add(now(), interval 1 hour)")
+		tk.MustExec("create materialized view mv_mv_explain_analyze (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_explain_analyze group by a")
 
-	tk.MustExec("insert into t_mv_explain_analyze values (2, 3), (3, 4)")
-	fastRows := tk.MustQuery("refresh materialized view mv_mv_explain_analyze fast with profile").Rows()
-	requireRowsContainPrefix(t, fastRows, "[S01 TXN_BEGIN]")
-	requireRowsContainPrefix(t, fastRows, "[S04 DATA_CHANGE_FAST_MERGE]")
-	requireRowsContainPrefix(t, fastRows, "  MViewDeltaMerge")
-	requireRowsContainPrefix(t, fastRows, "[S07 FINALIZE_HIST]")
+		tk.MustExec("insert into t_mv_explain_analyze values (2, 3), (3, 4)")
+		fastRows := tk.MustQuery("refresh materialized view mv_mv_explain_analyze fast with profile").Rows()
+		requireRowsContainPrefix(t, fastRows, "[S01 TXN_BEGIN]")
+		requireRowsContainPrefix(t, fastRows, "[S04 DATA_CHANGE_FAST_MERGE]")
+		requireRowsContainPrefix(t, fastRows, "  MViewDeltaMerge")
+		requireRowsContainPrefix(t, fastRows, "[S07 FINALIZE_HIST]")
 
-	tk.MustExec("insert into t_mv_explain_analyze values (4, 8)")
-	inPlaceRows := tk.MustQuery("refresh materialized view mv_mv_explain_analyze complete in place with profile").Rows()
-	requireRowsContainPrefix(t, inPlaceRows, "[S04 DATA_CHANGE_COMPLETE_DELETE]")
-	requireRowsContainPrefix(t, inPlaceRows, "[S05 DATA_CHANGE_COMPLETE_INSERT]")
-	requireRowsContainPrefix(t, inPlaceRows, "[S08 FINALIZE_HIST]")
+		tk.MustExec("insert into t_mv_explain_analyze values (4, 8)")
+		inPlaceRows := tk.MustQuery("refresh materialized view mv_mv_explain_analyze complete in place with profile").Rows()
+		requireRowsContainPrefix(t, inPlaceRows, "[S04 DATA_CHANGE_COMPLETE_DELETE]")
+		requireRowsContainPrefix(t, inPlaceRows, "[S05 DATA_CHANGE_COMPLETE_INSERT]")
+		requireRowsContainPrefix(t, inPlaceRows, "[S08 FINALIZE_HIST]")
 
-	tk.MustExec("update t_mv_explain_analyze set b = 11 where a = 1 and b = 10")
-	deltaApplyDryRunRows := tk.MustQuery("refresh materialized view mv_mv_explain_analyze complete delta apply dry run").Rows()
-	requireRowsContainPrefix(t, deltaApplyDryRunRows, "[S04 DATA_CHANGE_COMPLETE_DELTA_APPLY]")
-	requireRowsContainPrefix(t, deltaApplyDryRunRows, "  MViewCompleteDeltaApply")
+		tk.MustExec("update t_mv_explain_analyze set b = 11 where a = 1 and b = 10")
+		deltaApplyDryRunRows := tk.MustQuery("refresh materialized view mv_mv_explain_analyze complete delta apply dry run").Rows()
+		requireRowsContainPrefix(t, deltaApplyDryRunRows, "[S04 DATA_CHANGE_COMPLETE_DELTA_APPLY]")
+		requireRowsContainPrefix(t, deltaApplyDryRunRows, "  MViewCompleteDeltaApply")
 
-	deltaApplyProfileRows := tk.MustQuery("refresh materialized view mv_mv_explain_analyze complete delta apply with profile").Rows()
-	requireRowsContainPrefix(t, deltaApplyProfileRows, "[S04 DATA_CHANGE_COMPLETE_DELTA_APPLY]")
-	requireRowsContainPrefix(t, deltaApplyProfileRows, "  MViewCompleteDeltaApply")
-	require.Contains(t, joinRowsAsText(deltaApplyProfileRows), "mview_complete_delta_apply:{writer:{")
-	require.Contains(t, joinRowsAsText(deltaApplyProfileRows), "rows:{insert:")
-	requireRowsContainPrefix(t, deltaApplyProfileRows, "[S07 FINALIZE_HIST]")
+		deltaApplyProfileRows := tk.MustQuery("refresh materialized view mv_mv_explain_analyze complete delta apply with profile").Rows()
+		requireRowsContainPrefix(t, deltaApplyProfileRows, "[S04 DATA_CHANGE_COMPLETE_DELTA_APPLY]")
+		requireRowsContainPrefix(t, deltaApplyProfileRows, "  MViewCompleteDeltaApply")
+		require.Contains(t, joinRowsAsText(deltaApplyProfileRows), "mview_complete_delta_apply:{writer:{")
+		require.Contains(t, joinRowsAsText(deltaApplyProfileRows), "rows:{insert:")
+		requireRowsContainPrefix(t, deltaApplyProfileRows, "[S07 FINALIZE_HIST]")
+	})
+
+	t.Run("redaction", func(t *testing.T) {
+		store, _ := testkit.CreateMockStoreAndDomain(t)
+		tk := newMViewTestKit(t, store)
+		originalMode := tk.MustQuery("select @@global.tidb_redact_log").Rows()[0][0]
+		t.Cleanup(func() { tk.MustExec(fmt.Sprintf("set global tidb_redact_log = '%s'", originalMode)) })
+		tk.MustExec("use test")
+		tk.MustExec("create table t_profile_redact (a int not null, b int not null)")
+		tk.MustExec("insert into t_profile_redact values (1, 123456790), (2, 1)")
+		tk.MustExec("create materialized view log on t_profile_redact (a, b) purge next date_add(now(), interval 1 hour)")
+		tk.MustExec("create materialized view mv_profile_redact (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_profile_redact where b > 123456789 group by a")
+
+		for _, tc := range []struct {
+			mode, predicateSuffix string
+		}{
+			{vardef.Off, ", 123456789)"},
+			{vardef.On, ", ?)"},
+			{vardef.Marker, ", ‹123456789›)"},
+		} {
+			t.Run(tc.mode, func(t *testing.T) {
+				tk.MustExec("set global tidb_redact_log = " + tc.mode)
+				for _, refreshMode := range []string{"complete in place", "complete out of place"} {
+					t.Run(refreshMode, func(t *testing.T) {
+						rows := tk.MustQuery("refresh materialized view mv_profile_redact " + refreshMode + " with profile").Rows()
+						plan := joinRowsAsText(rows)
+						require.Contains(t, plan, tc.predicateSuffix)
+						if tc.mode != vardef.Off {
+							require.NotContains(t, plan, ", 123456789)")
+						}
+						tk.MustQuery("select a, s, cnt from mv_profile_redact").Check(testkit.Rows("1 123456790 1"))
+					})
+				}
+			})
+		}
+	})
 }
 
 func TestMaterializedViewRefreshFastDryRun(t *testing.T) {
@@ -1581,6 +1631,8 @@ func TestMaterializedViewRefreshFastAsOfTimestampMinMaxTargetSnapshot(t *testing
 }
 
 func TestMaterializedViewRefreshFastMinMax(t *testing.T) {
+	t.Run("bit", testMaterializedViewRefreshFastMinMaxBit)
+
 	t.Run("basic", func(t *testing.T) {
 		store, _ := testkit.CreateMockStoreAndDomain(t)
 		tk := newMViewTestKit(t, store)
@@ -1769,15 +1821,84 @@ func TestMaterializedViewRefreshFastMinMax(t *testing.T) {
 	})
 }
 
+func testMaterializedViewRefreshFastMinMaxBit(t *testing.T) {
+	for _, width := range []int{8, 16, 64} {
+		for _, nullable := range []bool{false, true} {
+			t.Run(fmt.Sprintf("bit%d/nullable=%v", width, nullable), func(t *testing.T) {
+				store, _ := testkit.CreateMockStoreAndDomain(t)
+				tk := newMViewTestKit(t, store)
+				tk.MustExec("use test")
+				notNull := "not null"
+				if nullable {
+					notNull = ""
+				}
+				tk.MustExec(fmt.Sprintf("create table t_mv_bit (id int primary key, g int not null, b bit(%d) %s, key(g, b))", width, notNull))
+				tk.MustExec("create materialized view log on t_mv_bit (g, b)")
+				high := uint64(1) << (width - 1)
+				low, maxValue := high-1, high|(high-1)
+				tk.MustExec(fmt.Sprintf("insert into t_mv_bit values (1, 1, %d), (2, 1, %d), (3, 2, %d)", low, high, low))
+				tk.MustExec("create materialized view mv_bit (g, cnt, bcnt, mn, mx) refresh fast as select g, count(1), count(b), min(b), max(b) from t_mv_bit group by g")
+				check := func() {
+					t.Helper()
+					require.Equal(t,
+						tk.MustQuery("select g, count(1), count(b), cast(min(b) as unsigned), cast(max(b) as unsigned) from t_mv_bit group by g order by g").Rows(),
+						tk.MustQuery("select g, cnt, bcnt, cast(mn as unsigned), cast(mx as unsigned) from mv_bit order by g").Rows())
+				}
+				check()
+				tk.MustQuery("select cast(mn as unsigned), cast(mx as unsigned) from mv_bit where g = 1").Check(testkit.Rows(fmt.Sprintf("%d %d", low, high)))
+				// Update an existing group and insert new groups, including an all-NULL group.
+				tk.MustExec(fmt.Sprintf("insert into t_mv_bit values (4, 1, %d), (5, 3, %d)", maxValue, high))
+				if nullable {
+					tk.MustExec("insert into t_mv_bit values (6, 4, null), (7, 1, null)")
+				} else {
+					tk.MustExec(fmt.Sprintf("insert into t_mv_bit values (6, 4, 0), (7, 1, %d)", low))
+				}
+				tk.MustExec("refresh materialized view mv_bit fast")
+				check()
+
+				// Removing extrema forces recomputation alongside a group with a fast-path update.
+				tk.MustExec(fmt.Sprintf("update t_mv_bit set b = %d where id = 4", low))
+				tk.MustExec(fmt.Sprintf("update t_mv_bit set b = %d where id = 3", maxValue))
+				tk.MustExec(fmt.Sprintf("insert into t_mv_bit values (8, 3, %d)", maxValue))
+				tk.MustExec("refresh materialized view mv_bit fast")
+				check()
+
+				tk.MustExec("delete from t_mv_bit where id in (1, 2, 3, 5)")
+				tk.MustExec("refresh materialized view mv_bit fast")
+				check()
+				if nullable {
+					tk.MustExec("update t_mv_bit set b = null where g = 1")
+				} else {
+					tk.MustExec("update t_mv_bit set b = 0 where g = 1")
+				}
+				tk.MustExec(fmt.Sprintf("update t_mv_bit set b = %d where id = 6", high))
+				tk.MustExec("refresh materialized view mv_bit fast")
+				check()
+
+				tk.MustExec("delete from t_mv_bit")
+				tk.MustExec("refresh materialized view mv_bit fast")
+				check()
+				tk.MustExec(fmt.Sprintf("insert into t_mv_bit values (9, 1, %d), (10, 1, %d), (11, 2, %d), (12, 2, 0)", low, maxValue, high))
+				tk.MustExec("refresh materialized view mv_bit fast")
+				check()
+				tk.MustExec("refresh materialized view mv_bit fast")
+				check()
+			})
+		}
+	}
+}
+
 func TestMaterializedViewRefreshCompleteUsesDefinitionSessionSemantics(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.sql_mode = 'NO_UNSIGNED_SUBTRACTION'")
 	tk.MustExec("set @@session.time_zone = '+00:00'")
+	tk.MustExec("set @@session.div_precision_increment = 9")
 	tk.MustExec("create table t (a int not null, b int not null, ts timestamp not null)")
-	tk.MustExec("insert into t values (1, 10, '2020-01-01 00:30:00'), (2, 20, '2019-12-31 23:30:00')")
+	tk.MustExec("insert into t values (1, 10, '2019-12-31 23:59:45'), (2, 20, '2019-12-31 23:59:15')")
 	tk.MustExec("create materialized view log on t (a, b, ts) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("set @@session.time_zone = '+00:00:30'")
 	tk.MustExec(`create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
 select a, sum(b), count(1) from t
 where ts >= '2020-01-01 00:00:00'
@@ -1791,16 +1912,39 @@ group by a`)
 	expectedLoc, err := mvTable.Meta().MaterializedView.DefinitionTimeZone.GetLocation()
 	require.NoError(t, err)
 	expectedTimeZone := expectedLoc.String()
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterInitSession", func(mode mysql.SQLMode, tz string) {
+	worker := testkit.NewTestKit(t, store)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterInitSession", func(mode mysql.SQLMode, tz string, sctx sessionctx.Context) {
 		require.Equal(t, expectedSQLMode, mode)
 		require.Equal(t, expectedTimeZone, tz)
+		require.Equal(t, "test", sctx.GetSessionVars().CurrentDB)
+		require.Equal(t, "mv_refresh", sctx.GetSessionVars().ResourceGroupName)
+		require.Equal(t, "mv_refresh", sctx.GetSessionVars().StmtCtx.ResourceGroupName)
+		var captured sessionstates.SessionStates
+		require.NoError(t, sctx.EncodeStates(context.Background(), &captured))
+		require.Equal(t, "mv_refresh", captured.ResourceGroupName)
+		states := &sessionstates.SessionStates{
+			SystemVars: make(map[string]string, 3),
+			Status:     uint32(worker.Session().GetSessionVars().Status()),
+		}
+		for _, name := range []string{vardef.SQLModeVar, vardef.TimeZone, vardef.DivPrecisionIncrement} {
+			require.Contains(t, captured.SystemVars, name)
+			states.SystemVars[name] = captured.SystemVars[name]
+		}
+		require.NoError(t, worker.Session().DecodeStates(context.Background(), states))
+		worker.MustQuery("select @@div_precision_increment, 1 / 7, cast(0 as unsigned) - 1").Check(testkit.Rows("9 0.142857142 -1"))
+		worker.MustQuery("select unix_timestamp('2020-01-01 00:00:00')").Check(testkit.Rows("1577836770"))
 	})
 
 	// Keep creator/session semantics and refresh caller semantics different.
 	tk.MustExec("set @@session.sql_mode = ''")
 	tk.MustExec("set @@session.time_zone = '-01:00'")
-	tk.MustExec("refresh materialized view mv complete delta apply")
-	tk.MustQuery("select a, s, cnt from mv").Check(testkit.Rows("1 10 1"))
+	tk.MustExec("set @@session.div_precision_increment = 2")
+	tk.MustExec("create resource group mv_refresh ru_per_sec = 1000000")
+	tk.MustExec("set resource group mv_refresh")
+	for _, mode := range []string{"complete delta apply", "complete out of place"} {
+		tk.MustExec("refresh materialized view mv " + mode)
+		tk.MustQuery("select a, s, cnt from mv").Check(testkit.Rows("1 10 1"))
+	}
 }
 
 func TestMaterializedViewRefreshHistory(t *testing.T) {
@@ -2430,6 +2574,7 @@ func TestMaterializedViewRefreshCompleteDeltaApply(t *testing.T) {
 		tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
 		tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 		tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
+		tk.MustExec("create materialized view log on mv (a, s, cnt)")
 		tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 
 		is := dom.InfoSchema()
@@ -2456,6 +2601,7 @@ func TestMaterializedViewRefreshCompleteDeltaApply(t *testing.T) {
 		require.ErrorContains(t, err, "mock refresh data change failure")
 
 		tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+		tk.MustQuery("select * from `$mlog$mv`").Check(testkit.Rows())
 		tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO = %d from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", oldTS, mviewID)).
 			Check(testkit.Rows("1"))
 		tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_END_TIME is not null, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
@@ -2541,6 +2687,7 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverBasic(t *testing.T) {
 	))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where MVIEW_ID = %d", oldMViewID)).
 		Check(testkit.Rows("1"))
+	nextRefresh := tk.MustQuery(fmt.Sprintf("select NEXT_REFRESH_UNIX_SECONDS from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", oldMViewID)).Rows()
 
 	tk.MustExec("insert into t values (2, 3), (3, 4)")
 	tk.MustExec("refresh materialized view mv complete out of place")
@@ -2557,6 +2704,9 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverBasic(t *testing.T) {
 	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
 	require.Contains(t, baseTable.Meta().MaterializedViewBase.MViewIDs, newMViewID)
 	require.NotContains(t, baseTable.Meta().MaterializedViewBase.MViewIDs, oldMViewID)
+	tk.MustQuery("select MVIEW_ID, MLOG_ID from mysql.tidb_mview_fast_refresh_source_info").Check(testkit.Rows(
+		fmt.Sprintf("%d %d", newMViewID, baseTable.Meta().MaterializedViewBase.MLogID),
+	))
 
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", oldMViewID)).
 		Check(testkit.Rows("0"))
@@ -2564,6 +2714,7 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverBasic(t *testing.T) {
 		Check(testkit.Rows("0"))
 	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO > 0 from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", newMViewID)).
 		Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("select NEXT_REFRESH_UNIX_SECONDS from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", newMViewID)).Check(nextRefresh)
 	tk.MustQuery(fmt.Sprintf(
 		"select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
 		oldMViewID,
@@ -2748,6 +2899,7 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverFailure(t *testing.T) {
 
 		tk.MustExec("insert into t values (2, 3), (3, 4)")
 
+		oldMViewRevision := mvTable.Meta().Revision
 		const pauseCreateShadowFailpoint = "github.com/pingcap/tidb/pkg/executor/pauseRefreshMaterializedViewOutOfPlaceAfterCreateShadow"
 		require.NoError(t, failpoint.Enable(pauseCreateShadowFailpoint, "pause"))
 		enabled := true
@@ -2775,14 +2927,15 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverFailure(t *testing.T) {
 		require.NoError(t, failpoint.Disable(pauseCreateShadowFailpoint))
 		enabled = false
 
-		err = <-refreshDone
-		require.Error(t, err)
-		require.ErrorContains(t, err, "stale old materialized view revision detected before cutover")
+		refreshErr := <-refreshDone
+		require.ErrorContains(t, refreshErr, "stale old materialized view revision detected before cutover")
+		require.NotContains(t, refreshErr.Error(), "%!(EXTRA")
 
 		is = dom.InfoSchema()
 		mvTable, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv"))
 		require.NoError(t, err)
 		require.Equal(t, mviewID, mvTable.Meta().ID)
+		require.ErrorContains(t, refreshErr, fmt.Sprintf("expected %d but got %d", oldMViewRevision, mvTable.Meta().Revision))
 
 		tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
 			Check(testkit.Rows("1"))
@@ -2916,9 +3069,9 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverWithUnsignedBuildReadTS
 	require.NoError(t, err)
 	oldMViewID := mvTable.Meta().ID
 
-	// Keep buildReadTSO above MaxInt64 to guard against any signed-int conversion in cutover path.
+	// Exercise unsigned SQL persistence without using the synthetic TSO as a storage snapshot.
 	buildReadTSO := (uint64(1) << 63) + 12345
-	const overrideBuildTSFailpoint = "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewOutOfPlaceBuildReadTSO"
+	const overrideBuildTSFailpoint = "github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlacePersistReadTSO"
 	require.NoError(t, failpoint.Enable(overrideBuildTSFailpoint, fmt.Sprintf(`return("%d")`, buildReadTSO)))
 	defer func() {
 		require.NoError(t, failpoint.Disable(overrideBuildTSFailpoint))

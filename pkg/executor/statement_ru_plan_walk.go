@@ -947,7 +947,7 @@ func calculateStatementRUPlanChildFirst(
 		*physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin,
 		*physicalop.PhysicalIndexMergeJoin:
 		state := collectStatementRUJoinUnits(
-			operator, children, outputRows, runtimeStatsColl, calculator,
+			operator, children, runtimeStatsColl, calculator,
 		)
 		if state != statementRUOperatorComplete {
 			return statementRUOperatorResult{state: state}
@@ -1054,21 +1054,20 @@ func calculateStatementRUPlanChildFirst(
 // collectStatementRUJoinUnits charges one supported root Join or MPP HashJoin using
 // these formulas:
 //
-//	CPUWork = (left child rows + right child rows) * input expression count + joined rows * other condition count (root)
-//	JoinOutputRows = candidate pairs processed before other conditions (root)
+//	CPUWork = (left child rows + right child rows) * input expression count + joined rows * other condition count
+//	JoinOutputRows = candidate pairs processed before other conditions
 //	HashStateRows = constructed HashJoin lookup-state rows
 //
 // statementRUJoinContractForPlan defines the expression count for each Join
-// subtype. MPP uses both children's merged rows, including ExchangeReceiver rows,
-// for all expression slots, and the Join's own reported output for JoinOutputRows
-// until TiFlash supplies candidate-pair evidence. Root joins use worker counters,
-// excluding null-extension rows and pairs skipped by semi-join short circuit. MPP hash state comes from
-// TiFlash hash-table stats, not the build child's output or the join result size.
+// subtype. Root joins use worker counters; MPP joins use TiFlash's joined_rows,
+// summed across received summaries. Both exclude null-extension rows and pairs
+// skipped by semi-join short circuit. Missing evidence contributes zero without
+// discarding other reported work. MPP input rows include ExchangeReceiver rows;
+// hash state comes from TiFlash hash-table stats, independently of joined_rows.
 // TiKV Cop and FullOuter joins remain unsupported.
 func collectStatementRUJoinUnits(
 	operator *plannercore.FlatOperator,
 	children []statementRUOperatorResult,
-	outputRows int64,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	calculator *statementRUCalculator,
 ) statementRUOperatorState {
@@ -1085,22 +1084,23 @@ func collectStatementRUJoinUnits(
 	if !ok {
 		return statementRUOperatorUnsupported
 	}
-	joinedRows := outputRows
-	if operator.IsRoot {
-		joinedRows = 0
-		if runtimeStatsColl != nil {
-			joinedRows, _ = runtimeStatsColl.GetRootJoinedRows(operator.Origin.ID())
+	var joinedRows float64
+	if runtimeStatsColl != nil {
+		if operator.IsRoot {
+			rows, _ := runtimeStatsColl.GetRootJoinedRows(operator.Origin.ID())
+			joinedRows = float64(rows)
+		} else {
+			units, _ := runtimeStatsColl.GetTiFlashExecutionUnits(operator.Origin.ID())
+			if units.Invalid {
+				return statementRUOperatorInvalid
+			}
+			joinedRows = float64(units.JoinedRows)
 		}
 	}
 	inputRows := float64(children[0].outputRows) + float64(children[1].outputRows)
-	// MPP retains input-based residual work until it reports candidate pairs.
-	otherConditionRows := inputRows
-	if operator.IsRoot {
-		otherConditionRows = float64(joinedRows)
-	}
-	cpuWork := inputRows*float64(contract.inputExpressionCount) + otherConditionRows*float64(contract.otherConditionCount)
+	cpuWork := inputRows*float64(contract.inputExpressionCount) + joinedRows*float64(contract.otherConditionCount)
 	if !addStatementRUCPUWork(&delta, cpuWork) ||
-		!addStatementRUJoinOutputRows(&delta, float64(joinedRows)) {
+		!addStatementRUJoinOutputRows(&delta, joinedRows) {
 		return statementRUOperatorInvalid
 	}
 	if contract.hashState {

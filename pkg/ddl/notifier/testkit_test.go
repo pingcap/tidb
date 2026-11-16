@@ -46,11 +46,11 @@ func TestPublishToTableStore(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	t.Cleanup(func() {
-		tk.MustExec("delete from mysql." + metadef.NotifierTableName)
+		tk.MustExec("delete from mysql." + metadef.TiDBDDLNotifierTableName)
 	})
 
 	ctx := context.Background()
-	s := notifier.OpenTableStore("mysql", metadef.NotifierTableName)
+	s := notifier.OpenTableStore("mysql", metadef.TiDBDDLNotifierTableName)
 	se := sess.NewSession(tk.Session())
 	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
@@ -72,10 +72,10 @@ func TestBasicPubSub(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
-	tk.MustExec("DROP TABLE IF EXISTS " + metadef.NotifierTableName)
+	tk.MustExec("DROP TABLE IF EXISTS " + metadef.TiDBDDLNotifierTableName)
 	tk.MustExec(localNotifierTableSQL)
 
-	s := notifier.OpenTableStore("test", metadef.NotifierTableName)
+	s := notifier.OpenTableStore("test", metadef.TiDBDDLNotifierTableName)
 	sessionPool := util.NewSessionPool(
 		2,
 		func() (pools.Resource, error) {
@@ -146,10 +146,10 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
-	tk.MustExec("DROP TABLE IF EXISTS " + metadef.NotifierTableName)
+	tk.MustExec("DROP TABLE IF EXISTS " + metadef.TiDBDDLNotifierTableName)
 	tk.MustExec(localNotifierTableSQL)
 
-	s := notifier.OpenTableStore("test", metadef.NotifierTableName)
+	s := notifier.OpenTableStore("test", metadef.TiDBDDLNotifierTableName)
 	sessionPool := util.NewSessionPool(
 		1,
 		func() (pools.Resource, error) {
@@ -322,11 +322,11 @@ func Test2OwnerForAShortTime(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
-	tk.MustExec("DROP TABLE IF EXISTS " + metadef.NotifierTableName)
+	tk.MustExec("DROP TABLE IF EXISTS " + metadef.TiDBDDLNotifierTableName)
 	tk.MustExec(localNotifierTableSQL)
 	tk.MustExec("CREATE TABLE result (id INT PRIMARY KEY)")
 
-	s := notifier.OpenTableStore("test", metadef.NotifierTableName)
+	s := notifier.OpenTableStore("test", metadef.TiDBDDLNotifierTableName)
 	sessionPool := util.NewSessionPool(
 		4,
 		func() (pools.Resource, error) {
@@ -364,7 +364,7 @@ func Test2OwnerForAShortTime(t *testing.T) {
 
 	<-waitCh
 	// mimic another owner to handle the event, which is delete the record
-	tk2.MustExec("DELETE FROM test." + metadef.NotifierTableName)
+	tk2.MustExec("DELETE FROM test." + metadef.TiDBDDLNotifierTableName)
 	close(waitCh2)
 
 	require.Eventually(t, func() bool {
@@ -460,10 +460,10 @@ func TestBeginTwice(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
-	tk.MustExec("DROP TABLE IF EXISTS " + metadef.NotifierTableName)
+	tk.MustExec("DROP TABLE IF EXISTS " + metadef.TiDBDDLNotifierTableName)
 	tk.MustExec(localNotifierTableSQL)
 
-	s := notifier.OpenTableStore("test", metadef.NotifierTableName)
+	s := notifier.OpenTableStore("test", metadef.TiDBDDLNotifierTableName)
 	sessionPool := util.NewSessionPool(
 		5,
 		func() (pools.Resource, error) {
@@ -513,10 +513,10 @@ func TestHandlersSeePessimisticTxnError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
-	tk.MustExec("DROP TABLE IF EXISTS " + metadef.NotifierTableName)
+	tk.MustExec("DROP TABLE IF EXISTS " + metadef.TiDBDDLNotifierTableName)
 	tk.MustExec(localNotifierTableSQL)
 	ctx := context.Background()
-	s := notifier.OpenTableStore("test", metadef.NotifierTableName)
+	s := notifier.OpenTableStore("test", metadef.TiDBDDLNotifierTableName)
 	sessionPool := util.NewSessionPool(
 		4,
 		func() (pools.Resource, error) {
@@ -532,7 +532,7 @@ func TestHandlersSeePessimisticTxnError(t *testing.T) {
 	// Always fails
 	failHandler := func(_ context.Context, sctx sessionctx.Context, _ *notifier.SchemaChangeEvent) error {
 		// Mock a duplicate key error
-		_, err := sctx.GetSQLExecutor().Execute(ctx, "INSERT INTO test."+metadef.NotifierTableName+" VALUES(1, -1, 'some', 0)")
+		_, err := sctx.GetSQLExecutor().Execute(ctx, "INSERT INTO test."+metadef.TiDBDDLNotifierTableName+" VALUES(1, -1, 'some', 0)")
 		return err
 	}
 	// Always succeeds
@@ -569,13 +569,13 @@ func TestCommitFailed(t *testing.T) {
 	t.Cleanup(func() {
 		tk.MustExec("set global tidb_enable_metadata_lock=1")
 	})
-	tk.MustExec("DROP TABLE IF EXISTS " + metadef.NotifierTableName)
+	tk.MustExec("DROP TABLE IF EXISTS " + metadef.TiDBDDLNotifierTableName)
 	tk.MustExec(localNotifierTableSQL)
 	tk.MustExec("CREATE TABLE subscribe_table (id INT PRIMARY KEY, c INT)")
 	tk.MustExec("INSERT INTO subscribe_table VALUES (1, 1)")
 
 	ctx := context.Background()
-	s := notifier.OpenTableStore("test", metadef.NotifierTableName)
+	s := notifier.OpenTableStore("test", metadef.TiDBDDLNotifierTableName)
 	sessionPool := util.NewSessionPool(
 		4,
 		func() (pools.Resource, error) {

@@ -159,6 +159,10 @@ func TestZoneName(t *testing.T) {
 			loc:      time.FixedZone("", 0),
 			expected: "+00:00",
 		},
+		{name: "positive seconds", loc: time.FixedZone("", 30), expected: "+00:00:30"},
+		{name: "negative seconds", loc: time.FixedZone("", -30), expected: "-00:00:30"},
+		{name: "positive mixed offset", loc: time.FixedZone("", 8*3600+30*60+45), expected: "+08:30:45"},
+		{name: "negative mixed offset", loc: time.FixedZone("", -(6*3600 + 15*60 + 45)), expected: "-06:15:45"},
 		{
 			name:     "named fixed zone",
 			loc:      time.FixedZone("UTC+8", int((8 * time.Hour).Seconds())),
@@ -169,6 +173,13 @@ func TestZoneName(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			require.Equal(t, c.expected, ZoneName(c.loc))
+			if c.loc.String() == "" {
+				parsed, err := ParseTimeZone(ZoneName(c.loc))
+				require.NoError(t, err)
+				_, expectedOffset := time.Now().In(c.loc).Zone()
+				_, actualOffset := time.Now().In(parsed).Zone()
+				require.Equal(t, expectedOffset, actualOffset)
+			}
 		})
 	}
 }

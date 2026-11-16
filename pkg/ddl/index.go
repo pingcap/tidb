@@ -93,6 +93,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
+	pderr "github.com/tikv/pd/client/errs"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -1634,10 +1635,11 @@ func (w *worker) analyzeTableInner(job *model.Job, tblInfo *model.TableInfo, dbN
 				return errors.Errorf("not restricted SQL executor: %T", sessCtx)
 			}
 			// internal sql may not init the analysis related variable correctly.
-			err = statsutil.UpdateSCtxVarsForStats(sessCtx)
+			restoreStatsVars, err := statsutil.UpdateSCtxVarsForStats(sessCtx)
 			if err != nil {
 				return err
 			}
+			defer restoreStatsVars()
 			failpoint.InjectCall("beforeAnalyzeTable")
 			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
 			failpoint.InjectCall("afterAnalyzeTable", &err)
@@ -2055,6 +2057,9 @@ func isRetryableError(err error, retryUnknown bool) bool {
 		}
 	}
 	originErr := errors.Cause(err)
+	if pderr.ErrClientCreateTSOStream.Equal(originErr) || pderr.ErrClientTSOStreamClosed.Equal(originErr) {
+		return true
+	}
 	if tErr, ok := originErr.(*terror.Error); ok {
 		sqlErr := terror.ToSQLError(tErr)
 		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
@@ -4046,16 +4051,25 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 		loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 		n := len(w.indexes)
 		globalIndexKeys := make([]kv.Key, 0, len(idxRecords))
-		allKeys := make([]kv.Key, 0, len(idxRecords))
+		// Keep the fetched records intact: i%n identifies the index even when an
+		// array expands to zero or multiple entries, and progress is per record.
+		recordValues := make([][][]types.Datum, len(idxRecords))
+		recordKeys := make([][]kv.Key, len(idxRecords))
 		for i, idxRecord := range idxRecords {
-			key, distinct, err := w.indexes[i%n].GenIndexKey(ec, loc, idxRecord.vals, idxRecord.handle, nil)
-			if err != nil {
-				return errors.Trace(err)
+			index := w.indexes[i%n]
+			iter := index.GenIndexKVIter(ec, loc, idxRecord.vals, idxRecord.handle, idxRecord.rsData)
+			for iter.Valid() {
+				values := iter.PeekIndexedValues()
+				key, _, distinct, err := iter.Next(nil, nil)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				recordValues[i] = append(recordValues[i], values)
+				if distinct {
+					globalIndexKeys = append(globalIndexKeys, key)
+				}
+				recordKeys[i] = append(recordKeys[i], key)
 			}
-			if distinct {
-				globalIndexKeys = append(globalIndexKeys, key)
-			}
-			allKeys = append(allKeys, key)
 		}
 
 		var found map[string][]byte
@@ -4066,31 +4080,38 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 
 		for i, idxRecord := range idxRecords {
 			taskCtx.scanCount++
-			if val, ok := found[string(allKeys[i])]; ok {
-				// Only delete if it is from the partition it was read from.
-				handle, errPart := tablecodec.DecodeHandleInIndexValue(val)
-				if errPart != nil {
-					return errors.Trace(errPart)
-				}
-				if partHandle, ok := handle.(kv.PartitionHandle); ok {
-					if partHandle.PartitionID != handleRange.physicalTable.GetPhysicalID() {
-						continue
+			// Count records with empty arrays as processed even though they have no index keys to delete.
+			cleaned := len(recordKeys[i]) == 0
+			for j, key := range recordKeys[i] {
+				if val, ok := found[string(key)]; ok {
+					// Only delete if it is from the partition it was read from.
+					handle, errPart := tablecodec.DecodeHandleInIndexValue(val)
+					if errPart != nil {
+						return errors.Trace(errPart)
+					}
+					if partHandle, ok := handle.(kv.PartitionHandle); ok {
+						if partHandle.PartitionID != handleRange.physicalTable.GetPhysicalID() {
+							continue
+						}
+					}
+					// Mark the entry for transactional conflict checking. A concurrent
+					// takeover causes the optimistic transaction to conflict and retry.
+					err = txn.LockKeys(ctx, lockCtx, key)
+					if err != nil {
+						return errors.Trace(err)
 					}
 				}
-				// Lock the global index entry, to prevent deleting something that is concurrently added.
-				err = txn.LockKeys(ctx, lockCtx, allKeys[i])
+				// Delete only the checked element, not the original array: another
+				// element of the same row may now belong to a surviving partition.
+				err = w.indexes[i%n].Delete(w.tblCtx, txn, recordValues[i][j], idxRecord.handle)
 				if err != nil {
 					return errors.Trace(err)
 				}
+				cleaned = true
 			}
-			// we fetch records row by row, so records will belong to
-			// index[0], index[1] ... index[n-1], index[0], index[1] ...
-			// respectively. So indexes[i%n] is the index of idxRecords[i].
-			err = w.indexes[i%n].Delete(w.tblCtx, txn, idxRecord.vals, idxRecord.handle)
-			if err != nil {
-				return errors.Trace(err)
+			if cleaned {
+				taskCtx.addedCount++
 			}
-			taskCtx.addedCount++
 		}
 		taskCtx.writtenBytes = txn.Size()
 		return nil

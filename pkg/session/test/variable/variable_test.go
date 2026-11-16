@@ -230,6 +230,32 @@ func TestCorrectScopeError(t *testing.T) {
 	variable.UnregisterSysVar("sv_global")
 	variable.UnregisterSysVar("sv_session")
 	variable.UnregisterSysVar("sv_both")
+
+	t.Run("mview maintain mem quota", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustQuery("select @@tidb_mview_maintain_mem_quota").Check(testkit.Rows("2147483648"))
+
+		tk.MustExec("set @@session.tidb_mview_maintain_mem_quota = 536870912")
+		tk.MustQuery("select @@tidb_mview_maintain_mem_quota").Check(testkit.Rows("536870912"))
+		tk.MustQuery("select @@tidb_mem_quota_query").Check(testkit.Rows("1073741824"))
+
+		originalGlobalQuota := tk.MustQuery("select @@global.tidb_mview_maintain_mem_quota").Rows()[0][0]
+		t.Cleanup(func() {
+			tk.MustExec(fmt.Sprintf("set @@global.tidb_mview_maintain_mem_quota = %v", originalGlobalQuota))
+		})
+		tk.MustExec("set @@global.tidb_mview_maintain_mem_quota = 3221225472")
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustQuery("select @@tidb_mview_maintain_mem_quota").Check(testkit.Rows("3221225472"))
+	})
+
+	t.Run("mview maintain import disk quota", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustQuery("select @@tidb_mview_maintain_import_disk_quota").Check(testkit.Rows(""))
+
+		tk.MustExec("set @@session.tidb_mview_maintain_import_disk_quota = '100gib'")
+		tk.MustQuery("select @@tidb_mview_maintain_import_disk_quota").Check(testkit.Rows("100gib"))
+		tk.MustGetErrMsg("set @@session.tidb_mview_maintain_import_disk_quota = 'bad'", "[variable:1231]Variable 'tidb_mview_maintain_import_disk_quota' can't be set to the value of 'bad'")
+	})
 }
 
 func TestReadDMLBatchSize(t *testing.T) {
@@ -548,6 +574,19 @@ func TestIsolationRead(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	require.Len(t, tk.Session().GetSessionVars().GetIsolationReadEngines(), 3)
+	tk.MustQuery("select @@tidb_mview_maintain_isolation_read_engines").Check(testkit.Rows(variable.GetSysVar(vardef.TiDBMViewMaintainIsolationReadEngines).Value))
+	tk.MustExec("set @@session.tidb_mview_maintain_isolation_read_engines = 'tikv'")
+	tk.MustQuery("select @@tidb_mview_maintain_isolation_read_engines").Check(testkit.Rows("tikv"))
+	tk.MustQuery("select @@tidb_isolation_read_engines").Check(testkit.Rows(variable.GetSysVar(vardef.TiDBIsolationReadEngines).Value))
+
+	originalGlobalEngines := tk.MustQuery("select @@global.tidb_mview_maintain_isolation_read_engines").Rows()[0][0]
+	t.Cleanup(func() {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_mview_maintain_isolation_read_engines = '%v'", originalGlobalEngines))
+	})
+	tk.MustExec("set @@global.tidb_mview_maintain_isolation_read_engines = 'tidb'")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustQuery("select @@tidb_mview_maintain_isolation_read_engines").Check(testkit.Rows("tidb"))
+
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash';")
 	engines := tk.Session().GetSessionVars().GetIsolationReadEngines()
 	require.Len(t, engines, 1)

@@ -195,6 +195,8 @@ const (
 	StorageClassTransitionNextGenBootTableVersion NextGenBootTableVersion = 3
 	// MaterializedViewNextGenBootTableVersion adds materialized view maintenance metadata tables.
 	MaterializedViewNextGenBootTableVersion NextGenBootTableVersion = 4
+	// MaterializedViewRefreshSourceNextGenBootTableVersion adds mysql.tidb_mview_fast_refresh_source_info.
+	MaterializedViewRefreshSourceNextGenBootTableVersion NextGenBootTableVersion = 5
 )
 
 // DDLTableVersion is to display ddl related table versions
@@ -1757,6 +1759,41 @@ func (m *Mutator) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) 
 	return tableInfo, errors.Trace(err)
 }
 
+// GetTables gets table metadata in input order, returning nil for missing table IDs.
+func (m *Mutator) GetTables(ctx context.Context, dbID int64, tableIDs []int64) ([]*model.TableInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(tableIDs) == 0 {
+		return nil, nil
+	}
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+	fields := make([][]byte, len(tableIDs))
+	for i, id := range tableIDs {
+		fields[i] = m.tableKey(id)
+	}
+	values, err := m.txn.HGetBatch(ctx, dbKey, fields)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tables := make([]*model.TableInfo, len(values))
+	for i, value := range values {
+		if value == nil {
+			continue
+		}
+		tbl := &model.TableInfo{}
+		if err := json.Unmarshal(value, tbl); err != nil {
+			return nil, errors.Trace(err)
+		}
+		tbl.DBID = dbID
+		tables[i] = tbl
+	}
+	return tables, nil
+}
+
 // CheckTableExists checks if the table is existed with dbID and tableID.
 func (m *Mutator) CheckTableExists(dbID int64, tableID int64) (bool, error) {
 	// Check if db exists.
@@ -2016,7 +2053,7 @@ func IsJobMatch(job []byte, schemaNames, tableNames set.StringSet) (match bool, 
 		return
 	}
 	if (schemaNames.Count() == 0 || schemaNames.Exist(schemaName)) &&
-		tableNames.Count() == 0 || tableNames.Exist(tableName) {
+		(tableNames.Count() == 0 || tableNames.Exist(tableName)) {
 		match = true
 	}
 	return

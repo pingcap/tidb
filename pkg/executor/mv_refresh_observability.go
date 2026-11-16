@@ -769,6 +769,19 @@ func enableInternalSQLScanUserTableForPlan(sctx sessionctx.Context) func() {
 	}
 }
 
+func setMVRefreshObserveRedaction(sctx sessionctx.Context, mode string) func() {
+	// Plans use the borrowed session's context, so follow the caller's redaction mode.
+	sessVars := sctx.GetSessionVars()
+	planVars := sctx.GetPlanCtx().GetSessionVars()
+	origRedactLog, origPlanRedactLog := sessVars.EnableRedactLog, planVars.EnableRedactLog
+	sessVars.EnableRedactLog = mode
+	planVars.EnableRedactLog = mode
+	return func() {
+		planVars.EnableRedactLog = origPlanRedactLog
+		sessVars.EnableRedactLog = origRedactLog
+	}
+}
+
 func (e *RefreshMaterializedViewDryRunExec) prepareMVRefreshObserveInternalSession(sctx sessionctx.Context) (func(), error) {
 	sessVars := sctx.GetSessionVars()
 	restoreExecutionVars, err := applyRefreshExecutionSessionVars(
@@ -785,7 +798,9 @@ func (e *RefreshMaterializedViewDryRunExec) prepareMVRefreshObserveInternalSessi
 		return nil, errors.Annotate(err, "dry run refresh materialized view: failed to enable materialized view support")
 	}
 	restoreObserve := enableMVRefreshObserveMaintenanceFlags(sctx)
+	restoreRedaction := setMVRefreshObserveRedaction(sctx, e.Ctx().GetSessionVars().EnableRedactLog)
 	return func() {
+		restoreRedaction()
 		restoreObserve()
 		if err := sessVars.SetSystemVar(vardef.TiDBMViewEnable, variable.BoolToOnOff(origEnableMView)); err != nil {
 			logutil.BgLogger().Warn("dry run refresh materialized view: failed to restore materialized view enablement", zap.Error(err))

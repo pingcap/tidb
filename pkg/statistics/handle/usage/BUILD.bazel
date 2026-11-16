@@ -51,6 +51,7 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/statistics/handle/usage/indexusage",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/util/diagnosticlog",
         "@com_github_stretchr_testify//require",
     ],

@@ -1296,15 +1296,15 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 		selectExec exec.Executor
 		children   []exec.Executor
 	)
-	if v.SelectPlan != nil {
-		if b.sctx.GetSessionVars().InMViewMaintenance {
-			// MV builds persist the read timestamp as the refresh watermark, even
-			// when the SELECT becomes a TableDual and never opens a data reader.
-			if _, err := sessiontxn.GetTxnManager(b.sctx).GetStmtReadTS(); err != nil {
-				b.err = err
-				return nil
-			}
+	if v.SelectPlan != nil && b.sctx.GetSessionVars().InMViewMaintenance {
+		// MV builds persist the read timestamp as the refresh watermark, even
+		// when the SELECT becomes a TableDual and never opens a data reader.
+		if _, err := sessiontxn.GetTxnManager(b.sctx).GetStmtReadTS(); err != nil {
+			b.err = err
+			return nil
 		}
+	}
+	if v.SelectPlan != nil && !runsQueryOnWorker(v) {
 		selectExec = b.build(v.SelectPlan)
 		if b.err != nil {
 			return nil
@@ -1413,10 +1413,9 @@ func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) exec.Ex
 	e := &PlanReplayerExec{
 		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 		DumpInfo: &PlanReplayerDumpInfo{
-			Analyze:           v.Analyze,
-			Path:              v.File,
-			ctx:               b.sctx,
-			HistoricalStatsTS: v.HistoricalStatsTS,
+			Analyze: v.Analyze,
+			Path:    v.File,
+			ctx:     b.sctx,
 		},
 	}
 	if len(v.StmtList) > 0 {
