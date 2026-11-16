@@ -213,7 +213,7 @@ func (e *IndexMergeReaderExecutor) rebuildRangeForCorCol() (err error) {
 					return err
 				}
 				if len(x.GroupByColIdxs) > 0 {
-					x.GroupedRanges, err = plannercore.GroupRangesByCols(e.ranges[i], x.GroupByColIdxs)
+					x.GroupedRanges, err = plannercore.GroupRangesByCols(e.ranges[i], x.GroupByColIdxs, nil)
 					if err != nil {
 						return err
 					}
@@ -224,7 +224,7 @@ func (e *IndexMergeReaderExecutor) rebuildRangeForCorCol() (err error) {
 					return err
 				}
 				if len(x.GroupByColIdxs) > 0 {
-					x.GroupedRanges, err = plannercore.GroupRangesByCols(e.ranges[i], x.GroupByColIdxs)
+					x.GroupedRanges, err = plannercore.GroupRangesByCols(e.ranges[i], x.GroupByColIdxs, nil)
 					if err != nil {
 						return err
 					}

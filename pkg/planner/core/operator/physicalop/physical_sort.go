@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
@@ -220,7 +222,13 @@ func getNominalSort(ls *logicalop.LogicalSort, reqProp *property.PhysicalPropert
 func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (_ *property.PhysicalProperty, _, _ bool) {
 	propItems := make([]property.SortItem, 0, len(items))
 	onlyColumn := true
-	for _, item := range items {
+	for i := 0; i < len(items); i++ {
+		item := items[i]
+		if col, nullsHigh, ok := matchIsNullPair(items, i); ok {
+			propItems = append(propItems, property.SortItem{Col: col, Desc: items[i+1].Desc, NullsHigh: nullsHigh})
+			i++
+			continue
+		}
 		switch expr := item.Expr.(type) {
 		case *expression.Column:
 			propItems = append(propItems, property.SortItem{Col: expr, Desc: item.Desc})
@@ -229,12 +237,17 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (_ *property.
 			if col == nil {
 				return nil, false, false
 			}
-			// Reversing value order does not reverse NULL order: -NULL is still
-			// NULL. An opposite index scan cannot satisfy this sort for nullable columns.
-			if desc != item.Desc && !mysql.HasNotNullFlag(col.RetType.GetFlag()) {
+			// The order of col decides ties of expr only when expr never maps
+			// distinct values of col to the same value. Otherwise the later items
+			// must break those ties, which the order of col does not do.
+			if i+1 < len(items) && mayTieDistinctValues(expr) {
 				return nil, false, false
 			}
-			propItems = append(propItems, property.SortItem{Col: col, Desc: desc})
+			// Reversing value order does not reverse NULL order: -NULL is still
+			// NULL. So `-c DESC` on a nullable column is `c ASC NULLS LAST`, which
+			// is the NULLs-high order of c rather than its plain opposite order.
+			nullsHigh := desc != item.Desc && !mysql.HasNotNullFlag(col.RetType.GetFlag())
+			propItems = append(propItems, property.SortItem{Col: col, Desc: desc, NullsHigh: nullsHigh})
 			onlyColumn = false
 		default:
 			return nil, false, false
@@ -273,7 +286,13 @@ func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
 // consider the case that all expression are columns.
 func GetPropByOrderByItems(items []*util.ByItems) (*property.PhysicalProperty, bool) {
 	propItems := make([]property.SortItem, 0, len(items))
-	for _, item := range items {
+	for i := 0; i < len(items); i++ {
+		item := items[i]
+		if col, nullsHigh, ok := matchIsNullPair(items, i); ok {
+			propItems = append(propItems, property.SortItem{Col: col, Desc: items[i+1].Desc, NullsHigh: nullsHigh})
+			i++
+			continue
+		}
 		col, ok := item.Expr.(*expression.Column)
 		if !ok {
 			return nil, false
@@ -281,6 +300,45 @@ func GetPropByOrderByItems(items []*util.ByItems) (*property.PhysicalProperty, b
 		propItems = append(propItems, property.SortItem{Col: col, Desc: item.Desc})
 	}
 	return &property.PhysicalProperty{SortItems: propItems}, true
+}
+
+// mayTieDistinctValues reports whether sf, which GetSingleColumn maps to a
+// single column, can map distinct values of that column to the same result.
+// Floating-point addition or subtraction of a constant can round distinct
+// values together (1+1e20 = 2+1e20). Negation, and integer or decimal
+// arithmetic, which is exact or fails with an overflow error, cannot.
+func mayTieDistinctValues(sf *expression.ScalarFunction) bool {
+	switch sf.FuncName.L {
+	case ast.Plus, ast.Minus:
+		if sf.RetType.EvalType() == types.ETReal {
+			return true
+		}
+	}
+	for _, arg := range sf.GetArgs() {
+		if f, ok := arg.(*expression.ScalarFunction); ok && mayTieDistinctValues(f) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchIsNullPair checks whether items[i] and items[i+1] are `ISNULL(col), col`,
+// which is how NULLS FIRST/LAST is planned (and how it is commonly written for
+// MySQL). The pair orders exactly like col alone, except that NULLs sort high
+// when ISNULL(col) has the same direction as col.
+func matchIsNullPair(items []*util.ByItems, i int) (col *expression.Column, nullsHigh, ok bool) {
+	if i+1 >= len(items) {
+		return nil, false, false
+	}
+	sf, isFunc := items[i].Expr.(*expression.ScalarFunction)
+	if !isFunc || sf.FuncName.L != ast.IsNull {
+		return nil, false, false
+	}
+	col, isCol := sf.GetArgs()[0].(*expression.Column)
+	if !isCol || !col.EqualColumn(items[i+1].Expr) {
+		return nil, false, false
+	}
+	return col, items[i].Desc == items[i+1].Desc, true
 }
 
 // resolveIndicesForSort is a helper function to resolve indices for sort operators.
