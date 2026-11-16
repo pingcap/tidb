@@ -8,7 +8,11 @@ go_test(
         "prepare_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 24,
+=======
+    shard_count = 26,
+>>>>>>> 40c5806c3f6 (planner: reuse plan cache after unrelated schema changes under RR isolation (#72856))
     deps = [
         "//pkg/errno",
         "//pkg/executor",
