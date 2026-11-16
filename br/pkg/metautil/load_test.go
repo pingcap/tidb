@@ -39,13 +39,13 @@ func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) 
 }
 
 func TestReadSchemasFilesCancelDuringOutput(t *testing.T) {
-	store, err := objstore.NewLocalStorage(t.TempDir())
+	store, err := storage.NewLocalStorage(t.TempDir())
 	require.NoError(t, err)
-	db, err := json.Marshal(model.DBInfo{ID: 1, Name: ast.NewCIStr("test")})
+	db, err := json.Marshal(model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")})
 	require.NoError(t, err)
 	schemas := make([]*backuppb.Schema, 0, 2)
 	for id := int64(1); id <= 2; id++ {
-		table, err := json.Marshal(model.TableInfo{ID: id, Name: ast.NewCIStr(fmt.Sprintf("t%d", id))})
+		table, err := json.Marshal(model.TableInfo{ID: id, Name: pmodel.NewCIStr(fmt.Sprintf("t%d", id))})
 		require.NoError(t, err)
 		schemas = append(schemas, &backuppb.Schema{Db: db, Table: table})
 	}
@@ -82,13 +82,13 @@ func TestReadSchemasFilesCancelDuringOutput(t *testing.T) {
 }
 
 func TestLoadBackupMetaReadErrors(t *testing.T) {
-	store, err := objstore.NewLocalStorage(t.TempDir())
+	store, err := storage.NewLocalStorage(t.TempDir())
 	require.NoError(t, err)
 	cipher := &backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
 	missing := &backuppb.MetaFile{MetaFiles: []*backuppb.File{{Name: "missing.meta"}}}
 	files := make([]*backuppb.File, MaxBatchSize+1)
 	schemas := make([]*backuppb.Schema, MaxBatchSize+1)
-	db, err := json.Marshal(model.DBInfo{ID: 1, Name: ast.NewCIStr("test")})
+	db, err := json.Marshal(model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")})
 	require.NoError(t, err)
 	for i := range files {
 		files[i] = &backuppb.File{StartKey: tablecodec.EncodeRowKey(123, []byte("a"))}
