@@ -174,7 +174,11 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	}
 
 	stmt.snapshotVersion = nil
-	if !metadataLockFailed && vars.IsIsolation(ast.RepeatableRead) && !stmt.ForUpdateRead && IsReadOnly(stmtAst.Stmt, vars) {
+	cacheEnabled := vars.EnablePreparedPlanCache
+	if isNonPrepared {
+		cacheEnabled = vars.EnableNonPreparedPlanCache
+	}
+	if stmt.StmtCacheable && cacheEnabled && !metadataLockFailed && vars.IsIsolation(ast.RepeatableRead) && !stmt.ForUpdateRead && IsReadOnly(stmtAst.Stmt, vars) {
 		stmt.snapshotVersion = planCacheSnapshotVersions(ctx, is, stmt)
 	}
 
