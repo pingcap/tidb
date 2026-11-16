@@ -40,7 +40,7 @@
 
 Adaptive LIMIT Scan adds a lightweight controller to one statement execution. The controller translates the remaining LIMIT demand into admission windows for supported execution stages. Workers must reserve capacity before admitting more work, report the actual input and output after that work is consumed, and stop admitting work when the LIMIT is satisfied.
 
-The initial implementation targets the ordered `IndexLookUpJoin` plan involved in [issue #66658](https://github.com/pingcap/tidb/issues/66658) and the related direct ordered `IndexLookUp` plan. The feature can be enabled or disabled through `tidb_enable_adaptive_limit_scan`.
+Adaptive LIMIT supports the ordered `IndexLookUpJoin` plan involved in [issue #66658](https://github.com/pingcap/tidb/issues/66658), ordered joins with an eligible outer `IndexReader` or `TableReader`, and direct ordered `IndexLookUp`. The feature can be enabled or disabled through `tidb_enable_adaptive_limit_scan`.
 
 ## Motivation or Background
 
@@ -200,7 +200,7 @@ When Join finishes consuming outer rows, it reports both completed outer rows an
 
 ### Lookup Handle Admission
 
-Before the IndexLookUp index worker creates a table lookup task, it calls `ReserveLookup`. Let `B` be the logical lookup window and `Q` be the execution batch size. The controller derives:
+Before the IndexLookUp index worker creates a table lookup task, it calls `ReserveLookup`. Let `B` be the logical lookup window and `Q` be the effective execution batch size. The controller derives:
 
 ```text
 physicalLookupWindow =
@@ -283,7 +283,7 @@ The logical lookup window does not shrink below its statement-derived initial va
 
 If a stage produces no output, a ratio cannot estimate the next target. When the lookup stage itself produces no rows, it waits until the stage drains and the consumed handles without output reach the current lookup window. It then doubles the logical window and execution batch up to their separate configured maxima.
 
-If the outer lookup continues to produce rows but the join goes a full outer window without output, consumed outer rows can trigger growth with tasks still in flight. Further windows of misses also raise the execution batch for the outer lookup. This follows the join's progress anywhere in the input. Productive join feedback or a lookup task that returns no rows clears the temporary batch increase.
+If the join consumes a full outer window without output and its outer lookup is still producing rows, the outer window can grow while work is in flight. If the lookup is in a zero-output phase or has yet to return a row, outer growth still waits for outstanding outer work to drain. After the first growth decision in a join zero-output phase, each additional full window of misses can also increase the effective lookup batch while the lookup is producing rows. This works anywhere in the input. Productive join feedback or a completed lookup task that returns zero rows clears the temporary batch increase.
 
 For an IndexLookUpJoin with a single-read outer input, the controller retries the initial window at the same size if it drains without a match. With sustained misses, the controller grows the window as the join consumes each window's worth of input, even with tasks still in flight. During this phase, an in-flight task can free space for a full batch. If no task is in flight, a partial batch can still be admitted. Productive join feedback restores ordinary admission.
 
@@ -317,7 +317,7 @@ maxLookupBatchSize = tidb_index_lookup_size
 
 For a direct IndexLookUp with paging enabled by the existing plan, `initialLookupBatchSize` is `initialLookupWindow`. This preserves the existing paging behavior for a small LIMIT instead of raising a `LIMIT 1` lookup task to `tidb_max_chunk_size`. Direct non-paging execution and the IndexLookUp under IndexLookUpJoin retain the formula above so productive scans do not start with unnecessarily small table lookup tasks.
 
-Productive input/output feedback adjusts the logical lookup window but does not shrink the execution batch. A fully drained zero-output phase can grow the execution batch by at most 2x. Both the per-task batch and the aggregate physical window remain bounded by existing session settings.
+Productive lookup feedback adjusts the logical lookup window and leaves the base execution batch at its current size. A drained lookup zero-output window can double the base batch, up to its configured maximum. For an outer lookup under an ordered IndexLookUpJoin, sustained join misses can also temporarily double the effective batch at each growth step, up to the same maximum. The controller uses the larger of the base and temporary batches for task sizing and physical window rounding. Clearing the temporary increase restores the current base batch. Both the per-task batch and the aggregate physical window remain bounded by existing session settings.
 
 The initial implementation does not change DistSQL scan concurrency. `tidb_distsql_scan_concurrency` and the existing RequestBuilder heuristics keep their original behavior. Lookup yield estimates how many handles should enter future table lookup tasks, but it is not a reliable signal for choosing RPC parallelism. Keeping these controls separate avoids serializing a productive multi-Region scan merely because its lookup window has not grown.
 
@@ -607,7 +607,9 @@ Risks include:
 - recent samples may be biased if task completion order does not match the intended ordered consumption contract;
 - unchanged DistSQL concurrency can still read ahead inside requests before TiDB-side admission stops.
 
-The GLOBAL/SESSION gate provides an immediate opt-out if a regression is observed. Fresh clusters start with the feature ON, so performance evaluation must compare latency, throughput, and RU in addition to scan counters. Upgraded clusters remain OFF until operators opt in after validation.
+Long unmatched intervals can still trade lower RU for higher latency. In the three-store double-read comparison in [PR #72863](https://github.com/pingcap/tidb/pull/72863), the updated controller reduced latency relative to the previous ON behavior for an unmatched prefix, an unmatched interval mid-scan, and repeated sparse matches. Compared with OFF, p50 remained 31–42% higher and median RU was 17–19% lower in those three workloads.
+
+Fresh clusters start with the feature ON. During upgrade from a version before this feature, TiDB sets the variable to OFF if no value exists and preserves any existing value. Operators can turn it OFF globally for new sessions or in the current session for subsequent statements.
 
 ## Investigation and Alternatives
 
