@@ -21,7 +21,6 @@ import (
 
 	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/metrics"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -229,11 +228,6 @@ func (s *LFU) onExit(val any) {
 // Len returns the number of tables, including evicted tables.
 func (s *LFU) Len() int {
 	return s.resultKeySet.Len()
-}
-
-// Copy implements statsCacheInner
-func (s *LFU) Copy() internal.StatsCacheInner {
-	return s
 }
 
 // SetCapacity sets the memory quota. A value of 0 means 20% of the total memory.

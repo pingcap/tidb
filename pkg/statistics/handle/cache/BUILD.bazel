@@ -14,7 +14,6 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/statistics",
-        "//pkg/statistics/handle/cache/internal",
         "//pkg/statistics/handle/cache/internal/lfu",
         "//pkg/statistics/handle/cache/metrics",
         "//pkg/statistics/handle/logutil",
@@ -40,7 +39,6 @@ go_test(
     shard_count = 2,
     deps = [
         "//pkg/statistics",
-        "//pkg/statistics/handle/cache/internal",
         "//pkg/statistics/handle/metrics",
         "@com_github_prometheus_client_golang//prometheus/testutil",
         "@com_github_stretchr_testify//require",

@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/lfu"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/metrics"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -42,7 +41,7 @@ func newStatsCache() (*statsCache, error) {
 
 // statsCache caches the tables in memory for Handle.
 type statsCache struct {
-	c internal.StatsCacheInner
+	c *lfu.LFU
 	// the max table stats version the cache has in its lifecycle.
 	maxTblStatsVer atomic.Uint64
 }
@@ -113,7 +112,7 @@ func (sc *statsCache) Cost() int64 {
 
 // SetCapacity sets the memory capacity of the cache.
 func (sc *statsCache) SetCapacity(c int64) {
-	// metrics will be updated in the SetCapacity function of the StatsCacheInner.
+	// LFU.SetCapacity updates the capacity and cost metrics.
 	sc.c.SetCapacity(c)
 }
 
