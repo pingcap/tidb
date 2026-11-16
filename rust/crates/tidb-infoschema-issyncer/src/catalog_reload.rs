@@ -195,7 +195,7 @@ impl ReloadedCatalog {
 /// a version whose diff does not exist yet. Adopting that version would let a
 /// later read of the same version see more, which is the inconsistency the
 /// step-back avoids.
-pub(crate) fn get_schema_version_with_non_empty_diff<S: MetaSnapshot>(
+pub fn get_schema_version_with_non_empty_diff<S: MetaSnapshot>(
     snapshot: &mut S,
 ) -> Result<i64, ClusterCatalogError> {
     with_meta_reader(snapshot, |meta| meta.get_schema_version_with_non_empty_diff())

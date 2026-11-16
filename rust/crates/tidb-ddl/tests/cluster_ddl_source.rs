@@ -888,6 +888,61 @@ fn a_worker_step_runs_under_the_jobs_sql_digest() {
     );
 }
 
+/// Go `transitOneJobStepAndWaitSync`'s barrier reads no schema at the step's
+/// snapshot, so the node's syncer still reaches a version a step published
+/// through that version's diffs, recording the changed table for the schema
+/// validator. Had the barrier put the version in the shared `InfoCache`
+/// first, the syncer's reload would hit the cache and record no table, and a
+/// transaction planned before the step would pass its commit-time check.
+#[test]
+fn the_step_barrier_leaves_the_next_schema_version_to_the_syncer() {
+    use tidb_model::{CreateTableArgs, GoField, TableInfo};
+    let mut store = bootstrapped();
+    let cache = std::sync::Arc::new(tidb_infoschema_issyncer::catalog_watch::InfoCache::new(
+        load_info_schema(&mut store).unwrap(),
+    ));
+    let queue = DdlJobTable::locate(&cache.get_latest()).unwrap();
+    let mut job = Job::default();
+    job.id = 970;
+    job.schema_id = 112;
+    job.table_id = 971;
+    job.version = JobVersion::V2;
+    job.state = JobState::QUEUEING;
+    job.binlog_info = Some(GoShared::new(tidb_model::HistoryInfo::default()));
+    job.type_ = ActionType::ACTION_CREATE_TABLE;
+    job.fill_args(Some(GoShared::new(CreateTableArgs {
+        table_info: GoField::new(Some(GoShared::new(TableInfo {
+            id: 971,
+            name: tidb_ast::CiString::new("barrier"),
+            ..Default::default()
+        }))),
+        ..Default::default()
+    })));
+    let mut mutations = Vec::new();
+    queue.append_insert(&mut job, false, "112", "971", false, &mut mutations).unwrap();
+    apply_mutations(&mut store, &mutations);
+    let row_ids = std::sync::Arc::clone(&store.row_ids);
+    let mut state = tidb_session::ddl_session_pool::recorded::RecordedDdlSession::new(&mut store, row_ids)
+        .unwrap()
+        .schema_state(job.id, true)
+        .unwrap();
+    let delivered = state.delivered_job.job.as_ref().unwrap().read().clone();
+    let step = plan_worker_step(&mut store, job.id, 10_000).unwrap();
+    apply(&mut store, &step.write);
+    state.info_cache = Some(std::sync::Arc::clone(&cache));
+    tidb_ddl::cluster_ddl::schema_sync_before_step(&mut store, &state, &delivered).unwrap();
+    match cache.reload_with_ts(&mut store, &cache.get_latest()).unwrap() {
+        tidb_infoschema_issyncer::catalog_reload::ReloadedCatalog::Diffs { changes, .. } => {
+            assert!(changes.phy_tbl_ids.contains(&971), "{:?}", changes.phy_tbl_ids);
+        }
+        other => panic!("the syncer must load the step's version itself: {}", match other {
+            tidb_infoschema_issyncer::catalog_reload::ReloadedCatalog::Cached { .. } => "cached",
+            tidb_infoschema_issyncer::catalog_reload::ReloadedCatalog::Unchanged { .. } => "unchanged",
+            _ => "full",
+        }),
+    }
+}
+
 #[test]
 fn persisted_cancellation_precedes_forward_action() {
     let mut store = bootstrapped();

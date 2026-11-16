@@ -2977,9 +2977,16 @@ pub fn schema_sync_before_step<S: MetaSnapshot>(
     schema_state: &DdlJobSchemaState,
     job: &tidb_model::Job,
 ) -> Result<Option<PersistedDdlJobPlan>, DdlPlanError> {
-    // Go: `jobCtx.infoCache` at the step's version, the lazy image itself.
+    // Go's barrier reads no schema at the step's snapshot: the MDL branch
+    // only needs `mysql.tidb_mdl_info` from the published image
+    // (`jobCtx.infoCache.GetLatest()`), and `waitVersionSyncedWithoutMDL`
+    // reads the meta's version itself. Loading the snapshot's version here
+    // would put it in the node's `InfoCache` ahead of the node's syncer,
+    // whose reload then hits the cache and records no changed tables for the
+    // schema validator (`Update(ts, 0, ver, nil)`): a transaction planned
+    // before the step would pass its commit-time schema check.
     let catalog = match &schema_state.info_cache {
-        Some(cache) => cache.load_with_ts(snapshot, cache.capacity())?,
+        Some(cache) => cache.get_latest(),
         None => std::sync::Arc::new(load_info_schema(snapshot)?),
     };
     let active = tidb_ddl_systable::ddl_job_table::ActiveDdlJob::from_job(job.clone());
@@ -3038,21 +3045,10 @@ fn recover_schema_before_step<S: MetaSnapshot>(
                 })));
             }
             if schema_state.synced_version.is_none() && active.job.last_schema_version > 0 {
-                let mut version = catalog.schema_meta_version();
-                // Same projection as meta.GetSchemaVersionWithNonEmptyDiff:
-                // a separately reserved newest version may not have a diff yet.
-                if version > 0 {
-                    let bytes = snapshot.get(&key::schema_diff_kv_key(version))?;
-                    let diff = bytes
-                        .as_deref()
-                        .map(value::get_schema_diff)
-                        .transpose()
-                        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-                        .flatten();
-                    if diff.is_none() {
-                        version -= 1;
-                    }
-                }
+                // Go `waitVersionSyncedWithoutMDL`: the fresh snapshot's
+                // `GetSchemaVersionWithNonEmptyDiff`.
+                let version =
+                    tidb_infoschema_issyncer::catalog_reload::get_schema_version_with_non_empty_diff(snapshot)?;
                 if version > 0 {
                     return Ok((None, Some(PersistedDdlJobPlan::SchemaSync {
                         version,
