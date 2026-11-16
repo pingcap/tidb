@@ -1135,23 +1135,23 @@ SELECT col_4
 FROM product_detail
 ) a;
 id	estRows	task	access object	operator info
-Union_213	199600.20	root		
-├─Projection_214	99800.10	root		cte1.table_c.col_4->Column#418
-│ └─CTEFullScan_215	99800.10	root	CTE:product_detail	data:CTE_4
-└─Projection_216	99800.10	root		cte1.table_c.col_4->Column#418
-  └─CTEFullScan_217	99800.10	root	CTE:product_detail	data:CTE_4
+Union_214	199600.20	root		
+├─Projection_215	99800.10	root		cte1.table_c.col_4->Column#418
+│ └─CTEFullScan_216	99800.10	root	CTE:product_detail	data:CTE_4
+└─Projection_217	99800.10	root		cte1.table_c.col_4->Column#418
+  └─CTEFullScan_218	99800.10	root	CTE:product_detail	data:CTE_4
 CTE_4	99800.10	root		Non-Recursive CTE
-└─Projection_175(Seed Part)	99800.10	root		cte1.table_c.col_4, 3集合->Column#413
-  └─HashJoin_176	99800.10	root		left outer join, equal:[eq(cte1.table_c.col_4, cte1.table_c.col_4) eq(Column#390, cte1.table_c.col_1)]
-    ├─TableReader_207(Build)	9980.01	root		data:Selection_206
-    │ └─Selection_206	9980.01	cop[tikv]		not(isnull(cte1.table_c.col_1)), not(isnull(cte1.table_c.col_4))
-    │   └─TableFullScan_205	10000.00	cop[tikv]	table:a	keep order:false, stats:pseudo
-    └─HashJoin_193(Probe)	80000.00	root		CARTESIAN left outer join
-      ├─CTEFullScan_203(Build)	10.00	root	CTE:date_table AS dt	data:CTE_0
-      └─HashAgg_199(Probe)	8000.00	root		group by:cte1.table_c.col_3, cte1.table_c.col_4, funcs:firstrow(cte1.table_c.col_4)->cte1.table_c.col_4
-        └─TableReader_200	8000.00	root		data:HashAgg_195
-          └─HashAgg_195	8000.00	cop[tikv]		group by:cte1.table_c.col_3, cte1.table_c.col_4, 
-            └─TableFullScan_198	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─Projection_176(Seed Part)	99800.10	root		cte1.table_c.col_4, 3集合->Column#413
+  └─HashJoin_177	99800.10	root		left outer join, equal:[eq(cte1.table_c.col_4, cte1.table_c.col_4) eq(Column#390, cte1.table_c.col_1)]
+    ├─TableReader_208(Build)	9980.01	root		data:Selection_207
+    │ └─Selection_207	9980.01	cop[tikv]		not(isnull(cte1.table_c.col_1)), not(isnull(cte1.table_c.col_4))
+    │   └─TableFullScan_206	10000.00	cop[tikv]	table:a	keep order:false, stats:pseudo
+    └─HashJoin_194(Probe)	80000.00	root		CARTESIAN left outer join
+      ├─CTEFullScan_204(Build)	10.00	root	CTE:date_table AS dt	data:CTE_0
+      └─HashAgg_200(Probe)	8000.00	root		group by:cte1.table_c.col_3, cte1.table_c.col_4, funcs:firstrow(cte1.table_c.col_4)->cte1.table_c.col_4
+        └─TableReader_201	8000.00	root		data:HashAgg_196
+          └─HashAgg_196	8000.00	cop[tikv]		group by:cte1.table_c.col_3, cte1.table_c.col_4, 
+            └─TableFullScan_199	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 CTE_0	10.00	root		Non-Recursive CTE
 └─Apply_96(Seed Part)	10.00	root		CARTESIAN left outer join
   ├─Apply_98(Build)	10.00	root		CARTESIAN left outer join

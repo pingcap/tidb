@@ -286,13 +286,13 @@ select/*+ hash_join(t1) */ * from IDT_MC21780 t1 join IDT_MC21780 t2 on t1.col1 
 where t1. col1 < "1976-09-09 20:21:11"
 and t2. col1 in ("2021-07-14 09:28:16", "1982-01-09 03:36:39", "1970-12-18 10:53:28");
 id	estRows	task	access object	operator info
-HashJoin_9	12.50	root		inner join, equal:[eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, planner__core__casetest__predicate_simplification.idt_mc21780.col1)]
-├─TableReader_16(Build)	10.00	root		data:Selection_15
-│ └─Selection_15	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1970-12-18 10:53:28.000000), lt(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1976-09-09 20:21:11.000000), not(isnull(planner__core__casetest__predicate_simplification.idt_mc21780.col1))
-│   └─TableFullScan_14	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader_13(Probe)	10.00	root		data:Selection_12
-  └─Selection_12	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1970-12-18 10:53:28.000000), lt(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1976-09-09 20:21:11.000000), not(isnull(planner__core__casetest__predicate_simplification.idt_mc21780.col1))
-    └─TableFullScan_11	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+HashJoin_10	12.50	root		inner join, equal:[eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, planner__core__casetest__predicate_simplification.idt_mc21780.col1)]
+├─TableReader_17(Build)	10.00	root		data:Selection_16
+│ └─Selection_16	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1970-12-18 10:53:28.000000), lt(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1976-09-09 20:21:11.000000), not(isnull(planner__core__casetest__predicate_simplification.idt_mc21780.col1))
+│   └─TableFullScan_15	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_14(Probe)	10.00	root		data:Selection_13
+  └─Selection_13	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1970-12-18 10:53:28.000000), lt(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1976-09-09 20:21:11.000000), not(isnull(planner__core__casetest__predicate_simplification.idt_mc21780.col1))
+    └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 CREATE TABLE `t910beff5` (
 `col_40` tinyint unsigned DEFAULT '95',
 `col_41` tinytext COLLATE gbk_bin NOT NULL

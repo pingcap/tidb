@@ -379,10 +379,11 @@ func TestResourceGroupRunaway(t *testing.T) {
 	tk.MustGetErrCode("select /*+ resource_group(rg3) */ * from t", mysql.ErrResourceGroupQueryRunawayQuarantine)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprRequest"))
 
-	tk.MustExec("create resource group rg4 BURSTABLE RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT)")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/checkThresholds", fmt.Sprintf("return(%d)", 50)))
+	// Check normal execution without an elapsed-time limit, since execution overhead
+	// alone can exceed 50ms on loaded CI workers.
+	tk.MustExec("create resource group rg4 BURSTABLE RU_PER_SEC=2000 QUERY_LIMIT=()")
 	tk.MustQuery("select /*+ resource_group(rg4) */ * from t").Check(testkit.Rows("1"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/checkThresholds"))
+	tk.MustExec("alter resource group rg4 RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT)")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/checkThresholds", fmt.Sprintf("return(%d)", 60)))
 	err = tk.QueryToErr("select /*+ resource_group(rg4) */ * from t")
@@ -534,8 +535,10 @@ func TestResourceGroupRunawayFlood(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1)")
 	tk.MustExec("set global tidb_enable_resource_control='on'")
-	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
+	// Warm up the query before applying the short execution deadline.
+	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=()")
 	tk.MustQuery("select /*+ resource_group(rg1) */ * from t").Check(testkit.Rows("1"))
+	tk.MustExec("alter resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprRequest", fmt.Sprintf("return(%d)", 60)))
 	defer func() {

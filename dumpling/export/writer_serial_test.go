@@ -66,6 +66,85 @@ func TestWriteInsert(t *testing.T) {
 	require.Equal(t, expected, bf.String())
 	require.Equal(t, ReadGauge(m.finishedRowsGauge), float64(len(data)))
 	require.Equal(t, ReadGauge(m.finishedSizeGauge), float64(len(expected)))
+
+	t.Run("parquet tracks finished size gauge", func(t *testing.T) {
+		parquetData := [][]driver.Value{
+			{"1"},
+			{"2"},
+			{"3"},
+		}
+		colInfos := []*ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}}
+		parquetTableIR := newMockTableIRWithColumnInfo("test", "employee", parquetData, nil, colInfos)
+		parquetWriter := storage.NewBufferWriter()
+		parquetMetrics := newMetrics(cfg.PromFactory, cfg.Labels)
+
+		n, err := WriteInsertInParquet(tcontext.Background(), cfg, parquetTableIR, parquetTableIR, parquetWriter, parquetMetrics)
+		require.NoError(t, err)
+		require.Equal(t, uint64(len(parquetData)), n)
+		require.Equal(t, float64(len(parquetData)), ReadGauge(parquetMetrics.finishedRowsGauge))
+		require.Greater(t, ReadGauge(parquetMetrics.finishedSizeGauge), float64(0))
+	})
+
+	t.Run("parquet rejects populated rows without selected fields", func(t *testing.T) {
+		colInfos := []*ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}}
+		parquetTableIR := newMockTableIRWithColumnInfo("test", "employee", [][]driver.Value{{"1"}, {"2"}}, nil, colInfos)
+		parquetTableIR.selectedField = ""
+		parquetTableIR.selectedLen = 0
+		parquetWriter := storage.NewBufferWriter()
+		parquetMetrics := newMetrics(cfg.PromFactory, cfg.Labels)
+
+		n, err := WriteInsertInParquet(tcontext.Background(), cfg, parquetTableIR, parquetTableIR, parquetWriter, parquetMetrics)
+		require.ErrorContains(t, err, "cannot export populated table to parquet without selected fields")
+		require.Zero(t, n)
+		require.Zero(t, ReadGauge(parquetMetrics.finishedRowsGauge))
+		require.Zero(t, ReadGauge(parquetMetrics.finishedSizeGauge))
+		require.Empty(t, parquetWriter.String())
+	})
+
+	t.Run("parquet permits empty rows without selected fields", func(t *testing.T) {
+		colInfos := []*ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}}
+		parquetTableIR := newMockTableIRWithColumnInfo("test", "employee", nil, nil, colInfos)
+		parquetTableIR.selectedField = ""
+		parquetTableIR.selectedLen = 0
+		parquetWriter := storage.NewBufferWriter()
+		parquetMetrics := newMetrics(cfg.PromFactory, cfg.Labels)
+
+		n, err := WriteInsertInParquet(tcontext.Background(), cfg, parquetTableIR, parquetTableIR, parquetWriter, parquetMetrics)
+		require.NoError(t, err)
+		require.Zero(t, n)
+		require.Zero(t, ReadGauge(parquetMetrics.finishedRowsGauge))
+		require.Zero(t, ReadGauge(parquetMetrics.finishedSizeGauge))
+		require.Empty(t, parquetWriter.String())
+	})
+
+	t.Run("sql preserves rows without selected fields", func(t *testing.T) {
+		tableIR := newMockTableIR("test", "employee", [][]driver.Value{{"1"}, {"2"}}, nil, []string{"INT"})
+		tableIR.selectedField = ""
+		tableIR.selectedLen = 0
+		writer := storage.NewBufferWriter()
+		conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
+		metrics := newMetrics(conf.PromFactory, conf.Labels)
+		n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, writer, metrics)
+		require.NoError(t, err)
+		require.Equal(t, uint64(2), n)
+		require.Equal(t, "INSERT INTO `employee` VALUES\n(),\n();\n", writer.String())
+		require.Equal(t, float64(2), ReadGauge(metrics.finishedRowsGauge))
+	})
+
+	t.Run("csv preserves rows without selected fields", func(t *testing.T) {
+		tableIR := newMockTableIR("test", "employee", [][]driver.Value{{"1"}, {"2"}}, nil, []string{"INT"})
+		tableIR.selectedField = ""
+		tableIR.selectedLen = 0
+		writer := storage.NewBufferWriter()
+		opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\n")}
+		conf := configForWriteCSV(cfg, true, opt)
+		metrics := newMetrics(conf.PromFactory, conf.Labels)
+		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, writer, metrics)
+		require.NoError(t, err)
+		require.Equal(t, uint64(2), n)
+		require.Equal(t, "\n\n", writer.String())
+		require.Equal(t, float64(2), ReadGauge(metrics.finishedRowsGauge))
+	})
 }
 
 func TestWriteInsertReturnsError(t *testing.T) {
@@ -104,6 +183,26 @@ func TestWriteInsertReturnsError(t *testing.T) {
 	// error occurred, should revert pointer to zero
 	require.Equal(t, ReadGauge(m.finishedRowsGauge), float64(0))
 	require.Equal(t, ReadGauge(m.finishedSizeGauge), float64(0))
+
+	t.Run("parquet reverts finished metrics on error", func(t *testing.T) {
+		parquetData := [][]driver.Value{
+			{"1"},
+			{"2"},
+			{"3"},
+		}
+		colInfos := []*ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}}
+		parquetRowErr := errors.New("mock parquet row error")
+		parquetTableIR := newMockTableIRWithColumnInfo("test", "employee", parquetData, nil, colInfos)
+		parquetTableIR.rowErr = parquetRowErr
+		parquetWriter := storage.NewBufferWriter()
+		parquetMetrics := newMetrics(cfg.PromFactory, cfg.Labels)
+
+		n, err := WriteInsertInParquet(tcontext.Background(), cfg, parquetTableIR, parquetTableIR, parquetWriter, parquetMetrics)
+		require.ErrorIs(t, err, parquetRowErr)
+		require.Equal(t, uint64(len(parquetData)-1), n)
+		require.Equal(t, float64(0), ReadGauge(parquetMetrics.finishedRowsGauge))
+		require.Equal(t, float64(0), ReadGauge(parquetMetrics.finishedSizeGauge))
+	})
 }
 
 func TestWriteInsertInCsv(t *testing.T) {

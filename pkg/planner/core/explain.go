@@ -290,7 +290,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		if normalized {
 			buffer.WriteString("?")
 		} else {
-			buffer.WriteString(fmt.Sprint(p.AnnIndexExtra.PushDownQueryInfo.TopK))
+			fmt.Fprint(&buffer, p.AnnIndexExtra.PushDownQueryInfo.TopK)
 		}
 		buffer.WriteString(")")
 	}

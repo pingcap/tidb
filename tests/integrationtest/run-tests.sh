@@ -219,12 +219,13 @@ function start_tidb_server()
     if [[ $enabled_new_collation = 0 ]]; then
         config_file="disable_new_collation.toml"
     fi
+    # Golden results inspect literal values in errors and EXPLAIN output.
     echo "start tidb-server, log file: $mysql_tester_log"
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-        $tidb_server -P "$port" -status "$status" -config $config_file -store tikv -path "${TIKV_PATH}" > $mysql_tester_log 2>&1 &
+        $tidb_server -P "$port" -status "$status" -config $config_file -initialize-sql-file init.sql -store tikv -path "${TIKV_PATH}" > $mysql_tester_log 2>&1 &
         SERVER_PID=$!
     else
-        $tidb_server -P "$port" -status "$status" -config $config_file -store unistore -path "" > $mysql_tester_log 2>&1 &
+        $tidb_server -P "$port" -status "$status" -config $config_file -initialize-sql-file init.sql -store unistore -path "" > $mysql_tester_log 2>&1 &
         SERVER_PID=$!
     fi
     echo "tidb-server(PID: $SERVER_PID) started"

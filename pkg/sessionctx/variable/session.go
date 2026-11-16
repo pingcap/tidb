@@ -1221,6 +1221,14 @@ type SessionVars struct {
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
 
+	// MaxKeysRead is the maximum number of storage engine keys that a SELECT statement
+	// may examine. 0 means unlimited. Only applies to SELECT statements.
+	MaxKeysRead uint64
+
+	// KeysExamined is the cumulative number of storage engine keys examined across all
+	// statements (SELECT, UPDATE, DELETE, etc.) in this session. Reset by FLUSH STATUS.
+	KeysExamined uint64
+
 	// LoadBindingTimeout is the timeout for loading the bind info.
 	LoadBindingTimeout uint64
 
@@ -1689,6 +1697,11 @@ type SessionVars struct {
 	// Value 0 will estimate row(s) found immediately.
 	// 0 > value <= 1 applies that percentage as the estimate when rows are found. For example 0.1 = 10%.
 	OptOrderingIdxSelRatio float64
+
+	// AlwaysKeepJoinKey indicates the optimizer to always keep join keys during optimization.
+	// Join keys are crucial for join optimization like Join Order and Join Algorithm selection, removing
+	// join keys might lead to suboptimal plans in some cases.
+	AlwaysKeepJoinKey bool
 
 	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
 	EnableMPPSharedCTEExecution bool
@@ -2324,6 +2337,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableRedactLog:               DefTiDBRedactLog,
 		EnableWindowFunction:          DefEnableWindowFunction,
 		OptOrderingIdxSelRatio:        DefTiDBOptOrderingIdxSelRatio,
+		AlwaysKeepJoinKey:             DefOptAlwaysKeepJoinKey,
 		CostModelVersion:              DefTiDBCostModelVer,
 		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
 		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
@@ -3559,6 +3573,15 @@ func (s *SessionVars) GetMaxExecutionTime() uint64 {
 // GetTiKVClientReadTimeout returns readonly kv request timeout, prefer query hint over session variable
 func (s *SessionVars) GetTiKVClientReadTimeout() uint64 {
 	return s.TiKVClientReadTimeout
+}
+
+// GetMaxKeysRead returns the max keys read limit for SELECT statements.
+// Returns 0 (unlimited) when not in a SELECT statement.
+func (s *SessionVars) GetMaxKeysRead() uint64 {
+	if !s.StmtCtx.InSelectStmt {
+		return 0
+	}
+	return s.MaxKeysRead
 }
 
 // SetDiskFullOpt sets the session variable DiskFullOpt

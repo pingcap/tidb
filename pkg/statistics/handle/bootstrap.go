@@ -170,7 +170,7 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 	}
 }
 
-func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, isCacheFull bool) {
+func (*Handle) initStatsHistograms4Chunk(snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, isCacheFull bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("panic when initStatsHistograms4Chunk", zap.Any("r", r),
@@ -197,7 +197,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			}
 			table = table.Copy()
 			// Fetch table info only once per table instead of once per row
-			tblInfo, ok = h.TableInfoByIDForInitStats(is, tblID)
+			tblInfo, ok = snapshotTableInfoGetter.TableInfoByID(tblID)
 			if !ok {
 				// Table not found - likely dropped but stats metadata not yet garbage collected. Skip loading stats for this table.
 				statslogutil.StatsSampleLogger().Warn("table info not found during stats initialization, skipping", zap.Int64("physicalID", table.PhysicalID))
@@ -341,7 +341,7 @@ func (h *Handle) initStatsHistogramsLite(ctx context.Context, cache statstypes.S
 	return nil
 }
 
-func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
+func (h *Handle) initStatsHistograms(snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache statstypes.StatsCache) error {
 	sql := genInitStatsHistogramsSQL(false)
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
@@ -359,7 +359,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsHistograms4Chunk(is, cache, iter, false)
+		h.initStatsHistograms4Chunk(snapshotTableInfoGetter, cache, iter, false)
 		// The same table may continue in the next chunk. Drain LFU async admission/rejection
 		// before the next chunk reads or mutates it again.
 		cache.WaitForAsyncUpdates()
@@ -367,7 +367,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.
 	return nil
 }
 
-func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
+func (h *Handle) initStatsHistogramsByPaging(snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
 	se, err := h.Pool.SPool().Get()
 	if err != nil {
 		return err
@@ -399,7 +399,7 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsHistograms4Chunk(is, cache, iter, IsFullCacheFunc(cache, totalMemory))
+		h.initStatsHistograms4Chunk(snapshotTableInfoGetter, cache, iter, IsFullCacheFunc(cache, totalMemory))
 		// The same table may continue in the next chunk. Drain LFU async admission/rejection
 		// before the next chunk reads or mutates it again.
 		cache.WaitForAsyncUpdates()
@@ -407,11 +407,11 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 	return nil
 }
 
-func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache statstypes.StatsCache, totalMemory uint64) error {
+func (h *Handle) initStatsHistogramsConcurrency(snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache statstypes.StatsCache, totalMemory uint64) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
 	ls := initstats.NewRangeWorker("histogram", func(task initstats.Task) error {
-		return h.initStatsHistogramsByPaging(is, cache, task, totalMemory)
+		return h.initStatsHistogramsByPaging(snapshotTableInfoGetter, cache, task, totalMemory)
 	}, uint64(maxTid), uint64(initStatsStep), initStatsPercentageInterval)
 	ls.LoadStats()
 	for tid <= maxTid {
@@ -843,6 +843,7 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	}
 	failpoint.Inject("beforeInitStats", func() {})
 	start := time.Now()
+	snapshotTableInfoGetter := util.NewSnapshotTableInfoGetter(is)
 	cache, err := h.initStatsMeta(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -854,9 +855,9 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval)
 	start = time.Now()
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err = h.initStatsHistogramsConcurrency(is, cache, totalMemory)
+		err = h.initStatsHistogramsConcurrency(snapshotTableInfoGetter, cache, totalMemory)
 	} else {
-		err = h.initStatsHistograms(is, cache)
+		err = h.initStatsHistograms(snapshotTableInfoGetter, cache)
 	}
 	statslogutil.StatsLogger().Info("Complete loading the histogram", zap.Duration("duration", time.Since(start)))
 	if err != nil {

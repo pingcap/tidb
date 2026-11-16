@@ -101,6 +101,51 @@ func TestMaxExecutionTime(t *testing.T) {
 	require.Equal(t, uint64(99999), vars.MaxExecutionTime)
 }
 
+func TestTiDBMaxKeysRead(t *testing.T) {
+	sv := GetSysVar(TiDBMaxKeysRead)
+	require.NotNil(t, sv)
+	vars := NewSessionVars(nil)
+
+	// Negative values should be clipped to 0.
+	val, err := sv.Validate(vars, "-1", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	// Zero is valid (unlimited).
+	val, err = sv.Validate(vars, "0", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	// Positive values are accepted.
+	val, err = sv.Validate(vars, "1000", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "1000", val)
+
+	// SetSession sets MaxKeysRead.
+	require.Nil(t, sv.SetSessionFromHook(vars, "500"))
+	require.Equal(t, uint64(500), vars.MaxKeysRead)
+
+	// IsHintUpdatableVerified must be true.
+	require.True(t, sv.IsHintUpdatableVerified)
+}
+
+func TestGetMaxKeysRead(t *testing.T) {
+	vars := NewSessionVars(nil)
+	vars.MaxKeysRead = 100
+
+	// Outside SELECT statement: returns 0.
+	vars.StmtCtx.InSelectStmt = false
+	require.Equal(t, uint64(0), vars.GetMaxKeysRead())
+
+	// Inside SELECT statement: returns configured value.
+	vars.StmtCtx.InSelectStmt = true
+	require.Equal(t, uint64(100), vars.GetMaxKeysRead())
+
+	// Zero means unlimited regardless of context.
+	vars.MaxKeysRead = 0
+	require.Equal(t, uint64(0), vars.GetMaxKeysRead())
+}
+
 func TestTiFlashMaxBytes(t *testing.T) {
 	varNames := []string{TiDBMaxBytesBeforeTiFlashExternalJoin, TiDBMaxBytesBeforeTiFlashExternalGroupBy, TiDBMaxBytesBeforeTiFlashExternalSort}
 	for index, varName := range varNames {
@@ -1486,13 +1531,13 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// Set to noop
+	// Set to noop. Unknown schemes drop the query on read; the stored value keeps it.
 	noopURI := "noop://blackhole?access-key=hello&secret-access-key=world"
 	err := mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, noopURI)
 	require.NoError(t, err)
 	val, err1 := mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, TiDBCloudStorageURI)
 	require.NoError(t, err1)
-	require.Equal(t, noopURI, val)
+	require.Equal(t, "noop://blackhole", val)
 	require.Equal(t, noopURI, CloudStorageURI.Load())
 
 	// Set to s3, should fail
@@ -1566,6 +1611,11 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 		{
 			TiDBEnableAutoAnalyze,
 			BoolToOnOff(DefTiDBEnableAutoAnalyze),
+			Off,
+		},
+		{
+			TiDBRedactLog,
+			On,
 			Off,
 		},
 		{

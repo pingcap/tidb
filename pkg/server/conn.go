@@ -2647,13 +2647,16 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	cc.user = newUser
 	cc.dbname = newDBName
 	err := cc.openSession()
+	cc.moveResourceGroupCounter(oldResourceGroup)
 	restoreOldSession := func() {
+		newResourceGroup := cc.currentResourceGroupName()
 		if newCtx := cc.getCtx(); newCtx != nil && newCtx != oldCtx {
 			if err := newCtx.Close(); err != nil {
 				logutil.Logger(ctx).Debug("close new context failed", zap.Error(err))
 			}
 		}
 		cc.SetCtx(oldCtx)
+		cc.moveResourceGroupCounter(newResourceGroup)
 		cc.user = oldUser
 		cc.dbname = oldDBName
 		cc.authPlugin = oldAuthPlugin
@@ -2667,19 +2670,30 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		AuthPlugin: pluginName,
 		Capability: cc.capability,
 	}
-	if fakeResp.AuthPlugin != "" {
-		failpoint.Inject("ChangeUserAuthSwitch", func(val failpoint.Value) {
-			restoreOldSession()
-			failpoint.Return(errors.Errorf("%v", val))
-		})
-		newpass, err := cc.checkAuthPlugin(ctx, fakeResp)
-		if err != nil {
-			restoreOldSession()
-			return err
-		}
-		if len(newpass) > 0 {
-			fakeResp.Auth = newpass
-		}
+	failpoint.Inject("ChangeUserAuthSwitch", func(val failpoint.Value) {
+		restoreOldSession()
+		failpoint.Return(errors.Errorf("%v", val))
+	})
+	// Check the account's plugin even if the client omits it, so auth_socket
+	// always validates the transport and uses the Unix peer's OS credentials.
+	newpass, err := cc.checkAuthPlugin(ctx, fakeResp)
+	if err != nil {
+		restoreOldSession()
+		return err
+	}
+	if newpass != nil {
+		fakeResp.Auth = newpass
+	}
+	// SHA-2 and SM3 need full authentication even when no plugin switch occurs.
+	switch fakeResp.AuthPlugin {
+	case mysql.AuthCachingSha2Password:
+		fakeResp.Auth, err = cc.authSha(ctx, *fakeResp)
+	case mysql.AuthTiDBSM3Password:
+		fakeResp.Auth, err = cc.authSM3(ctx, *fakeResp)
+	}
+	if err != nil {
+		restoreOldSession()
+		return err
 	}
 	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin, fakeResp.ZstdLevel); err != nil {
 		restoreOldSession()
@@ -2690,7 +2704,6 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 			logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
 		}
 	}
-	cc.moveResourceGroupCounter(oldResourceGroup)
 	return cc.handleCommonConnectionReset(ctx)
 }
 

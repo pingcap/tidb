@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -1453,6 +1454,11 @@ func (e *executor) RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.
 	if ok := is.TableExists(schema.Name, tbInfo.Name); ok {
 		return infoschema.ErrTableExists.GenWithStackByArgs(tbInfo.Name)
 	}
+	snapshotMeta := meta.NewReader(e.store.GetSnapshot(kv.NewVersion(recoverTableInfo.SnapshotTS)))
+	if err := checkRecoverTableForeignKeys(is, schema.Name.L, recoverTableInfo, snapshotMeta); err != nil {
+		return err
+	}
+	failpoint.InjectCall("afterCheckRecoverTableForeignKeys", recoverTableInfo)
 
 	// for "flashback table xxx to yyy"
 	// Note: this case only allow change table name, schema remains the same.
@@ -4197,6 +4203,9 @@ func (e *executor) dropTableObject(
 				return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tn.Name, referredFK.ChildFKName, referredFK.ChildTable))
 			}
 		}
+		if fkCheck {
+			objects = orderDropTableObjectsByForeignKey(is, objects)
+		}
 	case viewObject:
 		dropExistErr = infoschema.ErrTableDropExists
 		jobType = model.ActionDropView
@@ -4277,7 +4286,9 @@ func (e *executor) dropTableObject(
 			SQLMode:        ctx.GetSessionVars().SQLMode,
 		}
 		args := &model.DropTableArgs{
-			Identifiers: objectIdents,
+			// The owner may ignore a self-reference, but it must not assume that
+			// later objects in this statement have already been dropped.
+			Identifiers: []ast.Ident{fullti},
 			FKCheck:     fkCheck,
 		}
 
@@ -4288,6 +4299,7 @@ func (e *executor) dropTableObject(
 		} else if err != nil {
 			return errors.Trace(err)
 		}
+		failpoint.InjectCall("afterDropTableObject", tableInfo.Meta().Name.L)
 
 		// unlock table after drop
 		if tableObjectType != tableObject {
@@ -4310,6 +4322,74 @@ func (e *executor) dropTableObject(
 		}
 	}
 	return nil
+}
+
+// orderDropTableObjectsByForeignKey orders children before their referenced
+// parents. Each table is dropped by an independent DDL job, so this prevents a
+// referring child from being renamed between an earlier parent job and its own
+// later job. Cycles retain their input order and are rejected by the owner-side
+// foreign-key check unless foreign_key_checks is disabled.
+func orderDropTableObjectsByForeignKey(is infoschema.InfoSchema, objects []*ast.TableName) []*ast.TableName {
+	objectIndex := make(map[schemaAndTable]int, len(objects))
+	for i, object := range objects {
+		objectIndex[schemaAndTable{schema: object.Schema.L, table: object.Name.L}] = i
+	}
+
+	children := make([][]int, len(objects))
+	indegree := make([]int, len(objects))
+	edges := make(map[[2]int]struct{})
+	for childIdx, child := range objects {
+		childTable, err := is.TableByName(context.Background(), child.Schema, child.Name)
+		if err != nil {
+			continue
+		}
+		for _, fk := range childTable.Meta().ForeignKeys {
+			if fk.Version < model.FKVersion1 {
+				continue
+			}
+			parentSchema := fk.RefSchema.L
+			if parentSchema == "" {
+				parentSchema = child.Schema.L
+			}
+			parentIdx, ok := objectIndex[schemaAndTable{schema: parentSchema, table: fk.RefTable.L}]
+			if !ok || childIdx == parentIdx {
+				continue
+			}
+			edge := [2]int{childIdx, parentIdx}
+			if _, ok := edges[edge]; ok {
+				continue
+			}
+			edges[edge] = struct{}{}
+			children[childIdx] = append(children[childIdx], parentIdx)
+			indegree[parentIdx]++
+		}
+	}
+
+	ordered := make([]*ast.TableName, 0, len(objects))
+	processed := make([]bool, len(objects))
+	for len(ordered) < len(objects) {
+		selected := -1
+		for i := range objects {
+			if !processed[i] && indegree[i] == 0 {
+				selected = i
+				break
+			}
+		}
+		if selected < 0 {
+			for i, object := range objects {
+				if !processed[i] {
+					ordered = append(ordered, object)
+				}
+			}
+			break
+		}
+		processed[selected] = true
+		ordered = append(ordered, objects[selected])
+		for _, parentIdx := range children[selected] {
+			indegree[parentIdx]--
+		}
+	}
+	return ordered
 }
 
 // adminCheckTableBeforeDrop runs `admin check table` for the table to be dropped.
@@ -4722,6 +4802,10 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		}
 	}
 
+	splitOpt, err := buildIndexPresplitOpt(indexOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	sqlMode := ctx.GetSessionVars().SQLMode
 	// global is set to  'false' is just there to be backwards compatible,
 	// to avoid unmarshal issues, it is now part of indexOption.
@@ -4748,6 +4832,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 			SQLMode:                 sqlMode,
 			Global:                  false,
 			IsPK:                    true,
+			SplitOpt:                splitOpt,
 		}},
 		OpType: model.OpAddIndex,
 	}
@@ -5000,6 +5085,11 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
+	splitOpt, err := buildIndexPresplitOpt(indexOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// global is set to  'false' is just there to be backwards compatible,
 	// to avoid unmarshal issues, it is now part of indexOption.
 	global := false
@@ -5035,6 +5125,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			HiddenCols:              hiddenCols,
 			Global:                  global,
 			ConditionString:         conditionString,
+			SplitOpt:                splitOpt,
 		}},
 		OpType: model.OpAddIndex,
 	}
@@ -5167,6 +5258,68 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		zap.Int("maxNodeCount", m.MaxNodeCount),
 	)
 	return nil
+}
+
+func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, error) {
+	if indexOpt == nil {
+		return nil, nil
+	}
+	opt := indexOpt.SplitOpt
+	if opt == nil {
+		return nil, nil
+	}
+	if len(opt.ValueLists) > 0 {
+		valLists := make([][]string, 0, len(opt.ValueLists))
+		for _, lst := range opt.ValueLists {
+			values := make([]string, 0, len(lst))
+			for _, exp := range lst {
+				var sb strings.Builder
+				rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+				err := exp.Restore(rCtx)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				values = append(values, sb.String())
+			}
+			valLists = append(valLists, values)
+		}
+		return &model.IndexArgSplitOpt{
+			Num:        opt.Num,
+			ValueLists: valLists,
+		}, nil
+	}
+
+	lowers := make([]string, 0, len(opt.Lower))
+	for _, expL := range opt.Lower {
+		var sb strings.Builder
+		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+		err := expL.Restore(rCtx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		lowers = append(lowers, sb.String())
+	}
+	uppers := make([]string, 0, len(opt.Upper))
+	for _, expU := range opt.Upper {
+		var sb strings.Builder
+		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+		err := expU.Restore(rCtx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		uppers = append(uppers, sb.String())
+	}
+	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
+	if opt.Num > maxSplitRegionNum {
+		return nil, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
+	} else if opt.Num < 1 {
+		return nil, errors.Errorf("Split index region num should be greater than 0")
+	}
+	return &model.IndexArgSplitOpt{
+		Lower: lowers,
+		Upper: uppers,
+		Num:   opt.Num,
+	}, nil
 }
 
 // LastReorgMetaFastReorgDisabled is used for test.
@@ -6864,7 +7017,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	failpoint.InjectCall("waitJobSubmitted")
 
 	sessVars := ctx.GetSessionVars()
-	sessVars.StmtCtx.IsDDLJobInQueue = true
+	sessVars.StmtCtx.IsDDLJobInQueue.Store(true)
 
 	ddlAction := job.Type
 	if result.merged {

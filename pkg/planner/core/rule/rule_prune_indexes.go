@@ -241,7 +241,7 @@ func buildOrderingKey(columnIDs []int64) string {
 		if i > 0 {
 			builder.WriteString(",")
 		}
-		builder.WriteString(fmt.Sprintf("%d", id))
+		fmt.Fprintf(&builder, "%d", id)
 	}
 	return builder.String()
 }

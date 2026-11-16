@@ -316,14 +316,23 @@ func TestDumpStatsDeltaMergeKeepsEarliestInitTime(t *testing.T) {
 	// 2) Lock t_lock's stats_meta row with FOR UPDATE to block the first DumpStatsDeltaToKV.
 	// 3) While blocked, write to t again and run a second dump to produce a later InitTime.
 	// 4) Release the lock, wait past dumpStatsMaxDuration, then dump and verify the earlier InitTime triggers flushing.
+	// 5) Before the first dump commits, load a t_other version newer than its start_ts + 5 * lease,
+	//    then verify the stats cache still loads the t_lock row of the first dump.
+	// 6) Verify the statement summary records the lock wait of the first dump's select ... for update.
+	tk.MustExec("set global tidb_stmt_summary_internal_query = 1")
+	t.Cleanup(func() { tk.MustExec("set global tidb_stmt_summary_internal_query = 0") })
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t_lock")
+	tk.MustExec("drop table if exists t_other")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("create table t_lock (a int)")
+	tk.MustExec("create table t_other (a int)")
 	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)")
 	tk.MustExec("insert into t_lock values (1)")
+	tk.MustExec("insert into t_other values (1)")
 	tk.MustExec("analyze table t")
 	tk.MustExec("analyze table t_lock")
+	tk.MustExec("analyze table t_other")
 
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
@@ -340,11 +349,15 @@ func TestDumpStatsDeltaMergeKeepsEarliestInitTime(t *testing.T) {
 
 	origMaxDuration := usage.GetDumpStatsMaxDurationForTest()
 	origRatio := usage.DumpStatsDeltaRatio
+	origLease := dom.StatsHandle().Lease()
 	usage.SetDumpStatsMaxDurationForTest(100 * time.Millisecond)
 	usage.DumpStatsDeltaRatio = 0.5
+	// The stats cache looks back 5 * lease = 100ms.
+	dom.StatsHandle().SetLease(20 * time.Millisecond)
 	t.Cleanup(func() {
 		usage.SetDumpStatsMaxDurationForTest(origMaxDuration)
 		usage.DumpStatsDeltaRatio = origRatio
+		dom.StatsHandle().SetLease(origLease)
 	})
 
 	baseRows := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
@@ -373,6 +386,13 @@ func TestDumpStatsDeltaMergeKeepsEarliestInitTime(t *testing.T) {
 	default:
 	}
 
+	// Wait past 5 * lease after the first dump's start_ts. The first dump holds all
+	// earlier deltas, so this dump flushes only t_other.
+	time.Sleep(150 * time.Millisecond)
+	tk.MustExec("insert into t_other values (2)")
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
+
 	time.Sleep(50 * time.Millisecond)
 	tk.MustExec("insert into t values (12)")
 
@@ -400,4 +420,14 @@ func TestDumpStatsDeltaMergeKeepsEarliestInitTime(t *testing.T) {
 	finalCount, err := strconv.Atoi(finalRows[0][0].(string))
 	require.NoError(t, err)
 	require.Equal(t, baseCount+2, finalCount)
+
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
+	lockRows := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", lockTableID).Rows()
+	require.Len(t, lockRows, 1)
+	lockCount, err := strconv.ParseInt(lockRows[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	require.Equal(t, lockCount, dom.StatsHandle().GetPhysicalTableStats(lockTableID, lockTbl.Meta()).ModifyCount)
+
+	tk.MustQuery("select count(*) > 0 from information_schema.statements_summary " +
+		"where digest_text like '%stats_meta%for update%' and max_latency >= 100000000").Check(testkit.Rows("1"))
 }
