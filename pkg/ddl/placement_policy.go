@@ -194,7 +194,7 @@ func onDropPlacementPolicy(jobCtx *jobContext, job *model.Job) (ver int64, _ err
 		return ver, errors.Trace(err)
 	}
 
-	err = checkPlacementPolicyNotInUse(jobCtx.infoCache, metaMut, policyInfo)
+	err = checkPlacementPolicyNotInUse(jobCtx.infoCache, policyInfo)
 	if err != nil {
 		if dbterror.ErrPlacementPolicyInUse.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -352,17 +352,11 @@ func updateExistPlacementPolicy(t *meta.Mutator, policy *model.PolicyInfo) error
 	return nil
 }
 
-func checkPlacementPolicyNotInUse(infoCache *infoschema.InfoCache, t *meta.Mutator, policy *model.PolicyInfo) error {
-	currVer, err := t.GetSchemaVersion()
-	if err != nil {
-		return err
-	}
+// checking using cached info schema should be enough, for the same reason as
+// checkTableNotExists.
+func checkPlacementPolicyNotInUse(infoCache *infoschema.InfoCache, policy *model.PolicyInfo) error {
 	is := infoCache.GetLatest()
-	if is != nil && is.SchemaMetaVersion() == currVer {
-		err = CheckPlacementPolicyNotInUseFromInfoSchema(is, policy)
-	} else {
-		err = CheckPlacementPolicyNotInUseFromMeta(t, policy)
-	}
+	err := CheckPlacementPolicyNotInUseFromInfoSchema(is, policy)
 	if err != nil {
 		return err
 	}

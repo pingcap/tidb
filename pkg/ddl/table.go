@@ -1574,12 +1574,7 @@ func checkConstraintNamesNotExists(t *meta.Mutator, schemaID int64, constraints 
 	if len(constraints) == 0 {
 		return nil
 	}
-	tbInfos, err := t.ListTables(context.Background(), schemaID)
-	if err != nil {
-		return err
-	}
-
-	for _, tb := range tbInfos {
+	return t.IterTables(schemaID, func(tb *model.TableInfo) error {
 		for _, constraint := range constraints {
 			if constraint.State != model.StateWriteOnly {
 				if constraintInfo := tb.FindConstraintInfoByName(constraint.Name.L); constraintInfo != nil {
@@ -1587,9 +1582,8 @@ func checkConstraintNamesNotExists(t *meta.Mutator, schemaID int64, constraints 
 				}
 			}
 		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 func checkTableIDNotExists(t *meta.Mutator, schemaID, tableID int64) error {
