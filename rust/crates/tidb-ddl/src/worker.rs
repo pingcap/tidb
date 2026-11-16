@@ -1798,6 +1798,33 @@ where
                     job.state
                 )));
             }
+            // Go `historyJob == nil`: a job the system paused because a
+            // storage node's disk is full answers its error.
+            match crate::real_tikv_ddl::add_index_reorg::latest_job(self.scheduler.session_pool.as_ref(), ddl_job_id) {
+                Ok(Some(current)) if current.is_paused_by_system_for_kv_disk_full() => {
+                    tidb_ddl_logutil::ddl_logger().info(
+                        "DDL job is auto-paused because a storage node disk is full",
+                        &[tidb_log::Field::new("jobID", tidb_log::Value::I64(ddl_job_id))],
+                    );
+                    if let Some(error) = current.error.as_ref() {
+                        return Err(persisted_job_error(&error.read()));
+                    }
+                    let message = current
+                        .pause_reason
+                        .as_ref()
+                        .map(|reason| reason.read().message.to_string())
+                        .unwrap_or_default();
+                    return Err(persisted_job_error(
+                        &tidb_dbterror::ERR_DDL_AUTO_PAUSED_BY_KV_DISK_FULL
+                            .gen_with_stack_by_args(&[ddl_job_id.into(), message.into()]),
+                    ));
+                }
+                Ok(_) => {}
+                Err(error) => tidb_ddl_logutil::ddl_logger().warn(
+                    "get current DDL job failed, check again",
+                    &[tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))],
+                ),
+            }
         }
     }
 }

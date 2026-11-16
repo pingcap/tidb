@@ -110,6 +110,26 @@ pub fn close() {
     tidb_topsql_stmtstats::bind_ru_version_provider(None);
 }
 
+/// Go `MockHighCPULoad`: for a statement starting with one of `sql_prefixs`
+/// (not a `mysql` system-table statement other than `global_variables`), burns
+/// CPU for `12ms * load`; whether it did.
+pub fn mock_high_cpu_load(sql: &str, sql_prefixs: &[&str], load: u32) -> bool {
+    let lower_sql = sql.to_lowercase();
+    if lower_sql.contains("mysql") && !lower_sql.contains("global_variables") {
+        return false;
+    }
+    if !sql_prefixs.iter().any(|prefix| lower_sql.starts_with(prefix)) {
+        return false;
+    }
+    let start = std::time::Instant::now();
+    while start.elapsed() <= std::time::Duration::from_millis(12) * load {
+        for i in 0..1_000_000 {
+            std::hint::black_box(i);
+        }
+    }
+    true
+}
+
 /// Go `RegisterSQL` uses to register SQL information into Top Profiling.
 pub fn register_sql(normalized_sql: &str, sql_digest: Option<&Digest>, is_internal: bool) {
     if let Some(sql_digest) = sql_digest {

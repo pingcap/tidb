@@ -473,7 +473,7 @@ fn check_job_cancelled(
 }
 
 /// Go `sysTblMgr.GetJobByID` on a session of the DDL pool.
-fn latest_job(
+pub(crate) fn latest_job(
     sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     job_id: i64,
 ) -> Result<Option<tidb_model::Job>, ClusterDdlError> {
@@ -606,6 +606,16 @@ where
             };
             if current.start_key >= current.end_key {
                 continue;
+            }
+            // Go `writePhysicalTableRecord`, before it picks local ingest or
+            // the txn backfill.
+            if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/MockCaseWhenParseFailure") {
+                if value.bool() {
+                    let error_count = latest_job(sess_pool, reorg.job_id)?.map_or(0, |job| job.error_count);
+                    return Err(ClusterDdlError::Backfill(format!(
+                        "job.ErrCount:{error_count}, mock unknown type: ast.whenClause."
+                    )));
+                }
             }
             let handle = current.clone();
             if let Some(job)=&ingest_job {

@@ -101,7 +101,57 @@ fn txn_handle(handle: &TableHandle) -> Result<tidb_txnkv::Handle, KvTableError> 
     })
 }
 
+impl NonPublicIndex {
+    /// Go `getKeysNeedCheckOneRow`'s key for a distinct entry: an index a DDL
+    /// is backfilling (not public, backfill state not inapplicable) checks
+    /// its temporary key.
+    pub(crate) fn check_key(&self, key: Vec<u8>) -> Result<Vec<u8>, KvTableError> {
+        if self.state == tidb_model::SchemaState::PUBLIC
+            || self.backfill_state == tidb_model::BackfillState::INAPPLICABLE
+        {
+            return Ok(key);
+        }
+        let (_, temp_key, _) = gen_temp_idx_key_by_state(self, key)?;
+        Ok(temp_key.expect("a backfilling index has a temporary key"))
+    }
+}
+
 impl TableCommon {
+    /// The indexes Go's batch checker walks (`t.Indices()` that are
+    /// `IsIndexWritable`): the public ones, then each writable one a DDL is
+    /// still adding or dropping, as the write path orders them.
+    pub(crate) fn writable_unique_check_indexes(&self) -> Vec<(super::Index, Option<NonPublicIndex>)> {
+        self.indexes
+            .iter()
+            .map(|index| (index.clone(), None))
+            .chain(
+                self.nonpublic_indexes
+                    .iter()
+                    .filter(|nonpublic| nonpublic.is_index_writable())
+                    .map(|nonpublic| (nonpublic.index.clone(), Some(nonpublic.clone()))),
+            )
+            .collect()
+    }
+
+    /// Go `FetchDuplicatedHandle` for a distinct key: the handle `key`
+    /// already maps to in the transaction, through the temporary index's
+    /// history for a temporary key.
+    pub(crate) fn fetch_duplicated_handle(
+        &mut self,
+        store: &mut dyn TableStorage,
+        key: &[u8],
+    ) -> Result<Option<TableHandle>, KvTableError> {
+        if tidb_tablecodec::table_key::is_temp_index_key(key) {
+            return Ok(self.fetch_duplicated_handle_for_temp_index_key(store, key)?.0);
+        }
+        let Some(value) = self.get_key_in_txn(store, key)? else {
+            return Ok(None);
+        };
+        let handle = decode_handle_in_index_value(&value).map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+        let handle = handle.ok_or_else(|| KvTableError::Decode("index value contains no handle".to_owned()))?;
+        Ok(Some(convert_handle(&handle)))
+    }
+
     /// Go `getKeyInTxn`: the value the transaction sees, `None` for absent
     /// (or deleted).
     fn get_key_in_txn(&mut self, store: &mut dyn TableStorage, key: &[u8]) -> Result<Option<Vec<u8>>, KvTableError> {

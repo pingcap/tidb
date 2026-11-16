@@ -399,7 +399,7 @@ pub(super) fn write_physical_table_record(
         let (stop, generated, batch_cnt, live) = (&stop, &generated, &batch_cnt, &live);
         // Go `backfillWorker.run`; a worker `adjustWorkerSize` closes leaves
         // after its task.
-        let spawn_worker = |result_tx: crossbeam_channel::Sender<BackfillResult>| {
+        let spawn_worker = |id: usize, result_tx: crossbeam_channel::Sender<BackfillResult>| {
             let task_rx = task_rx.clone();
             let closed = Arc::new(AtomicBool::new(false));
             let worker_closed = Arc::clone(&closed);
@@ -417,6 +417,28 @@ pub(super) fn write_physical_table_record(
                         return;
                     };
                     crate::job_ctx::attach_top_profiling_info(exec.job_id, exec.job_query);
+                    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockBackfillRunErr").is_some() && id == 0 {
+                        let result = BackfillResult {
+                            task_id: task.id,
+                            added_count: 0,
+                            next_key: Vec::new(),
+                            warnings: Vec::new(),
+                            done: false,
+                            err: Some(TableRecordOutcome::Failed(LockSqlError::from(
+                                tidb_terror::MysqlError::unknown("mock backfill error"),
+                            ))),
+                        };
+                        if result_tx.send(result).is_err() {
+                            stop.store(true, Ordering::SeqCst);
+                        }
+                        continue;
+                    }
+                    tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/mockHighLoadForAddIndex", |_| {
+                        tidb_topsql::mock_high_cpu_load(exec.job_query, &["alter"], 5);
+                    });
+                    tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow", |_| {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    });
                     // A stopped step drains the tasks it will not run:
                     // `handle_backfill_task` returns them unstarted.
                     let result = handle_backfill_task(exec, task, batch_cnt.load(Ordering::SeqCst), stop);
@@ -429,7 +451,7 @@ pub(super) fn write_physical_table_record(
             closed
         };
         let mut workers: Vec<Arc<AtomicBool>> = (0..expected_worker_size(exec.concurrency))
-            .map(|_| spawn_worker(result_tx.clone()))
+            .map(|id| spawn_worker(id, result_tx.clone()))
             .collect();
         // The sender new workers get, held until the workers have run every
         // task (Go's `doneCh`, closed after `exec.close(false)` waits for
@@ -517,7 +539,7 @@ pub(super) fn write_physical_table_record(
                     let target = expected_worker_size(concurrency);
                     while workers.len() < target {
                         let result_tx = spawn_tx.clone().expect("held while tasks are generated");
-                        workers.push(spawn_worker(result_tx));
+                        workers.push(spawn_worker(workers.len(), result_tx));
                     }
                     while workers.len() > target {
                         workers.pop().expect("more workers than the target").store(true, Ordering::SeqCst);

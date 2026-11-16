@@ -1663,6 +1663,7 @@ pub(super) fn do_reorg_work_for_create_index(
     if reorg_type.need_merge_process()
         && backfill_state == tidb_model::BackfillState::READY_TO_MERGE
     {
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/beforeBackfillMerge", &mut ());
         // Go: ReadyToMerge -> Merging, with a fresh txn for the merge.
         for index in indexes {
             index.write().backfill_state = tidb_model::BackfillState::MERGING;
@@ -1749,8 +1750,9 @@ pub(super) fn do_reorg_work_for_create_index(
             for index in indexes {
                 index.write().backfill_state = tidb_model::BackfillState::READY_TO_MERGE;
             }
-            let write = update_version_and_table_info(txn, active, database_id, info, true, start_ts)?;
-            return Ok(CreateIndexReorg::Step(action_step(write)));
+            let write = update_version_and_table_info(txn, active, database_id, info, true, start_ts);
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone", &mut active.job);
+            return Ok(CreateIndexReorg::Step(action_step(write?)));
         }
         // The merge finished: no more double writes.
         for index in indexes {

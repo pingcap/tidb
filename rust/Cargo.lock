@@ -8780,6 +8780,7 @@ dependencies = [
  "tidb-dxf-importinto-jobhistory",
  "tidb-dxf-storage",
  "tidb-dxf-taskexecutor",
+ "tidb-dxf-testutil",
  "tidb-errmsg",
  "tidb-errno",
  "tidb-executor",

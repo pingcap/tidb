@@ -3240,12 +3240,20 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         // The statements the failed handler ran on `w.sess` go too.
         schema_state.worker.step_buffer.reset();
     }
-    update_ddl_job_2_table(
+    let mut update_err = update_ddl_job_2_table(
         &session,
         start_ts,
         &mut active,
         step.update_raw_args,
-    )?;
+    )
+    .err();
+    tidb_failpoint::inject_call_ref::<AfterUpdateJobToTable>(
+        "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable",
+        |f| f(&active.job, &mut update_err),
+    );
+    if let Some(error) = update_err {
+        return Err(error);
+    }
     // Only a new diff publishes a schema version; cancellation is not a
     // publication of whatever catalog version happened to be read.
     step.write.schema_version = step.write.diff.version;
@@ -3265,6 +3273,10 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
 }
 
 pub(crate) use tidb_ddl_jobsubmit::wrap_key_2_string;
+
+/// Go's `afterUpdateJobToTable` call-failpoint: the job and the error of its
+/// row update, which the test may replace (Go `job, &err`).
+pub type AfterUpdateJobToTable = dyn Fn(&Job, &mut Option<DdlPlanError>) + Send + Sync;
 
 /// Go `updateDDLJob2Table`: `update mysql.tidb_ddl_job set job_meta = ...`
 /// through the step's session.

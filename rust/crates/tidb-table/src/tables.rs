@@ -3041,7 +3041,9 @@ impl TableCommon {
                 });
             }
         }
-        for index in self.indexes.as_ref().clone() {
+        // Go walks `t.Indices()` keeping the writable ones: an index a DDL is
+        // still adding counts too.
+        for (index, nonpublic) in self.writable_unique_check_indexes() {
             if !index.read().unique
                 || index.clustered_primary
                 || !self.index_condition_holds(&index, row, &zone)?
@@ -3058,17 +3060,13 @@ impl TableCommon {
                 if !entry.distinct {
                     continue;
                 }
-                let value = match store.get(&Key::from_bytes(entry.key.clone())) {
-                    Ok(value) if !value.is_empty() => value,
-                    Ok(_) | Err(StorageError::NotFound) => continue,
-                    Err(error) => return Err(error.into()),
+                let key = match &nonpublic {
+                    Some(nonpublic) => nonpublic.check_key(entry.key)?,
+                    None => entry.key,
                 };
-                let handle = tidb_tablecodec::decode_handle_in_index_value(&value)
-                    .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-                let handle = handle.ok_or_else(|| {
-                    KvTableError::Decode("index value contains no handle".to_owned())
-                })?;
-                let handle = index_entries::convert_handle(&handle);
+                let Some(handle) = self.fetch_duplicated_handle(store, &key)? else {
+                    continue;
+                };
                 if !found.iter().any(|conflict| conflict.handle == handle) {
                     found.push(RowConflict {
                         handle,
@@ -3090,7 +3088,7 @@ impl TableCommon {
                             ]),
                         )),
                         on_record_key: false,
-                        key: entry.key,
+                        key,
                     });
                 }
             }
@@ -3122,7 +3120,7 @@ impl TableCommon {
             ))
         });
         let mut unique_keys = Vec::new();
-        for index in self.indexes.as_ref().clone() {
+        for (index, nonpublic) in self.writable_unique_check_indexes() {
             if !index.read().unique
                 || index.clustered_primary
                 || !self.index_condition_holds(&index, row, &zone)?
@@ -3133,7 +3131,10 @@ impl TableCommon {
                 self.index_entry_keys(&index, row, &TableHandle::Int(0), physical_id, &zone)?
             {
                 if entry.distinct {
-                    unique_keys.push(Key::from_bytes(entry.key));
+                    unique_keys.push(Key::from_bytes(match &nonpublic {
+                        Some(nonpublic) => nonpublic.check_key(entry.key)?,
+                        None => entry.key,
+                    }));
                 }
             }
         }
@@ -3189,6 +3190,13 @@ impl TableCommon {
                 let Some(value) = values.get(&key) else {
                     continue;
                 };
+                // If it is a temp index, the value cannot be decoded by
+                // DecodeHandleInIndexValue. Since this function is an
+                // optimization, we can skip prefetching the rows referenced by
+                // temp indexes.
+                if tidb_tablecodec::table_key::is_temp_index_key(key.as_ref()) {
+                    continue;
+                }
                 let handle = tidb_tablecodec::decode_handle_in_index_value(value)
                     .map_err(|e| KvTableError::Decode(format!("{e:?}")))?
                     .ok_or_else(|| {

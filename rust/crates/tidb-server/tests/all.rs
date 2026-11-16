@@ -46,4 +46,8 @@ mod secure_transport_source;
 mod server_internal_packetio_source;
 mod session_token_login_source;
 mod sql_node_lifecycle_source;
+#[macro_use]
+mod realtikvtest;
 mod realtikv_addindex_source;
+mod realtikv_testutils;
+mod realtikv_addindextest;

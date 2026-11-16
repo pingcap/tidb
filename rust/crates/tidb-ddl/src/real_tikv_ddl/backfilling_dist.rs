@@ -1099,7 +1099,9 @@ fn wait_dist_task<S: StoreClient>(
         if !reorg_runnable(step_cancelled, check_owner)? {
             if let Some(job) = latest_job(sess_pool, reorg.job_id)? {
                 if job.state == JobState::PAUSING || job.state == JobState::PAUSED {
-                    let _ = tidb_dxf_handle::pause_task(&ctx, &key);
+                    if tidb_dxf_handle::pause_task(&ctx, &key).is_ok() {
+                        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/syncDDLTaskPause", &mut ());
+                    }
                 } else if job.state == JobState::CANCELLING {
                     let _ = tidb_dxf_handle::cancel_task(&ctx, &key);
                 }
@@ -1124,6 +1126,15 @@ fn wait_dist_task<S: StoreClient>(
             let found = tidb_dxf_handle::wait_task_done_or_paused_with_result(&ctx, task.base.id);
             match found {
                 Ok(_) => {
+                    // Go's wait goroutine: a pause that arrives once the task
+                    // finished still pauses the job (`ErrPausedDDLJob`).
+                    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/pauseAfterDistTaskFinished", &mut ());
+                    if step_cancelled.load(Ordering::SeqCst)
+                        && latest_job(sess_pool, reorg.job_id)?
+                            .is_some_and(|job| job.state == JobState::PAUSING || job.state == JobState::PAUSED)
+                    {
+                        return Ok(ReorgResult::Interrupted);
+                    }
                     // Go `addTableIndex`: after the read step (not under
                     // global sort, not the temp-index merge) a unique index's
                     // remote duplicates fail the job.

@@ -187,13 +187,15 @@ impl LitBackendCtx {
         if !force && !should_import {
             return self.advance_watermark(false);
         }
-        self.import_and_checkpoint(ctx)
+        self.import_and_checkpoint(ctx, || ())
     }
     /// Go `litBackendCtx.Ingest`.
     pub fn ingest(&self, ctx: &Context) -> Result<()> {
         let _import = self.import.lock().unwrap();
         self.flush_engines()?;
-        self.import_and_checkpoint(ctx)
+        self.import_and_checkpoint(ctx, || {
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/ingest/beforeBackendIngest", &mut ());
+        })
     }
     fn flush_engines(&self) -> Result<()> {
         for e in self.engines.lock().unwrap().values() {
@@ -201,7 +203,9 @@ impl LitBackendCtx {
         }
         Ok(())
     }
-    fn import_and_checkpoint(&self, ctx: &Context) -> Result<()> {
+    /// Imports every engine under the distributed lock; `locked` runs once
+    /// the lock is held.
+    fn import_and_checkpoint(&self, ctx: &Context, locked: impl FnOnce()) -> Result<()> {
         struct Release(Option<Box<dyn FnOnce() + Send>>);
         impl Drop for Release {
             fn drop(&mut self) {
@@ -216,6 +220,7 @@ impl LitBackendCtx {
                 .map(|acquire| acquire(self.job_id))
                 .transpose()?,
         );
+        locked();
         for e in self.engines.lock().unwrap().values() {
             let generation = e.flushed_generation();
             self.backend

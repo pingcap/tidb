@@ -197,6 +197,7 @@ tidb-sem-v2 = { path = "../tidb-sem-v2" }
 tidb-ddl = { path = "../tidb-ddl", features = ["failpoints"] }
 tidb-dxf-storage = { path = "../tidb-dxf-storage", features = ["failpoints"] }
 tidb-dxf-taskexecutor = { path = "../tidb-dxf-taskexecutor", features = ["failpoints"] }
+tidb-dxf-testutil = { path = "../tidb-dxf-testutil" }
 tidb-build-tags = { path = "../tidb-build-tags", features = ["failpoints"] }
 tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
 prost.workspace = true

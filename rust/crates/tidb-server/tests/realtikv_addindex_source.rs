@@ -12,155 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `tests/realtikvtest/addindextest*` over a running cluster: the node's
-//! domain boots in-process against the PD that `TIDB_REALTIKV_PD` names (Go
-//! `realtikvtest.CreateMockStoreAndSetup` with `-with-real-tikv`), so the
-//! tests can drive failpoints. Without the variable the tests skip, as Go's
-//! realtikv packages run only in their own CI job. Like Go's package, they
-//! run one at a time (`cargo nextest run -j 1 ... -E 'test(realtikv_)'`): they
-//! share the cluster and its databases.
+//! Go `tests/realtikvtest/addindextest1`, over [`crate::realtikvtest`].
 
-use tidb_server::ClusterServerSession;
-use tidb_session::domain::cluster_session_node::DomainSessions as _;
-use tidb_session::domain::resultset_source::ResultSetSource as _;
-use tidb_session::domain::session_api::SessionContext;
-use tidb_session::Session;
-
-/// Go `realtikvtest.CreateMockStoreAndSetup`: the domain over the cluster,
-/// `None` when no cluster is configured.
-struct RealTiKV {
-    stack: tidb_server::ClusterStack,
-    next_connection: std::sync::atomic::AtomicU64,
-}
-
-impl RealTiKV {
-    fn setup() -> Option<Self> {
-        let pd = std::env::var("TIDB_REALTIKV_PD").ok()?;
-        let temp_dir = std::env::temp_dir().join(format!("tidb-realtikv-{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
-        let config = tidb_server::parse_node_config([
-            "tidb-server".to_owned(),
-            "--store".to_owned(),
-            "tikv".to_owned(),
-            "--path".to_owned(),
-            pd,
-            "-P".to_owned(),
-            "0".to_owned(),
-            "--socket".to_owned(),
-            String::new(),
-            "--load-privileges".to_owned(),
-            "--temp-dir".to_owned(),
-            temp_dir.display().to_string(),
-        ])
-        .expect("the realtikv node config");
-        let (stack, authority) = tidb_server::realtikv_test_stack(&config).expect("the realtikv domain");
-        // The process ends with the test; Go's store stays open to the end too.
-        std::mem::forget(authority);
-        Some(Self { stack, next_connection: std::sync::atomic::AtomicU64::new(7000) })
-    }
-
-    /// Go `testkit.NewTestKit(t, store)`: a root connection.
-    fn new_tk(&self) -> Tk {
-        let identity = self
-            .stack
-            .users
-            .authenticate_native("root", "127.0.0.1", &[0; 20], &[])
-            .expect("root with no password");
-        let connection_id = self.next_connection.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let peer: std::net::SocketAddr = "127.0.0.1:4000".parse().unwrap();
-        let session = self
-            .stack
-            .factory
-            .open_session(SessionContext {
-                connection_id,
-                peer_addr: peer.into(),
-                identity,
-                client_capability: 0,
-                tls_state: None,
-                compression_algorithm: tidb_mysql::consts::CompressionNone,
-                compression_level: 0,
-                cancellation: Default::default(),
-                close: Default::default(),
-            })
-            .expect("a session");
-        Tk { session }
-    }
-}
-
-/// Go `testkit.TestKit` on one realtikv connection.
-struct Tk {
-    session: Session,
-}
-
-impl Tk {
-    fn exec(&mut self, sql: &str) -> Result<Vec<Vec<String>>, String> {
-        self.exec_coded(sql).map_err(|(_, message)| message)
-    }
-
-    /// The statement's rows, or its error's code and message.
-    fn exec_coded(&mut self, sql: &str) -> Result<Vec<Vec<String>>, (u16, String)> {
-        // The wire's path: Go `ParseSQL`, then `ExecuteStmt`.
-        let stmt = self
-            .session
-            .parse_at_statement_boundary(sql)
-            .map_err(|error| (1064, error.to_string()))?;
-        let conn: ClusterServerSession<'_> = self.session.node_conn();
-        let Some(mut result) = conn.execute_stmt(sql, &stmt).map_err(|error| (error.code, error.message))? else {
-            return Ok(Vec::new());
-        };
-        let source = result.source();
-        let mut rows = Vec::new();
-        loop {
-            let batch = source.next_batch(64).map_err(|error| (error.code, error.message))?;
-            if batch.is_empty() {
-                break;
-            }
-            rows.extend(batch.into_iter().map(|row| {
-                row.iter()
-                    .map(|datum| datum.sql_string().unwrap_or_else(|_| "<nil>".to_owned()))
-                    .collect()
-            }));
-        }
-        source.finish().map_err(|error| (error.code, error.message))?;
-        Ok(rows)
-    }
-
-    fn must_exec(&mut self, sql: &str) {
-        if let Err(error) = self.exec(sql) {
-            panic!("{sql}: {error}");
-        }
-    }
-
-    fn must_query(&mut self, sql: &str) -> Vec<Vec<String>> {
-        self.exec(sql).unwrap_or_else(|error| panic!("{sql}: {error}"))
-    }
-
-    fn must_get_err_code(&mut self, sql: &str, code: u16) {
-        match self.exec_coded(sql) {
-            Ok(_) => panic!("{sql}: expected error {code}"),
-            Err((got, message)) => assert_eq!(got, code, "{sql}: {message}"),
-        }
-    }
-
-    fn exec_to_err(&mut self, sql: &str) -> String {
-        match self.exec(sql) {
-            Ok(_) => panic!("{sql}: expected an error"),
-            Err(error) => error,
-        }
-    }
-}
-
-macro_rules! realtikv {
-    () => {
-        match RealTiKV::setup() {
-            Some(store) => store,
-            None => {
-                eprintln!("TIDB_REALTIKV_PD is unset: realtikv test skipped");
-                return;
-            }
-        }
-    };
-}
+use crate::realtikvtest::Tk;
 
 /// Go `addindextest1.checkTmpDDLDir`: no stale file under a `tmp_ddl-` dir.
 fn check_tmp_ddl_dir() {
@@ -306,10 +160,11 @@ fn test_add_index_invalid_dist_task_variable_setting() {
     tk.must_exec("set global tidb_enable_dist_task = off;");
 }
 
-/// Go `addindextest1.TestAddIndexDistCancel`, its cancel-is-timely half: an
-/// ADMIN CANCEL reaches a DXF add index blocked in a region job.
+/// Go `addindextest1.TestAddIndexDistCancel`.
 #[test]
-fn test_add_index_dist_cancel_is_timely() {
+fn test_add_index_dist_cancel() {
+    // Go restores them in `t.Cleanup`; the test runs in its own process.
+    let _restore = tidb_dxf_testutil::reduce_check_interval_for_test();
     let store = realtikv!();
     let mut tk = store.new_tk();
     tk.must_exec("drop database if exists addindexlit;");
@@ -317,17 +172,59 @@ fn test_add_index_dist_cancel_is_timely() {
     tk.must_exec("use addindexlit;");
     tk.must_exec("create table t (a int, b int);");
     tk.must_exec("insert into t values (1, 1), (2, 2), (3, 3);");
+
     let mut tk2 = store.new_tk();
     tk2.must_exec("use addindexlit;");
     tk2.must_exec("set global tidb_ddl_enable_fast_reorg=on;");
     tk.must_exec("set @@global.tidb_enable_dist_task = 1;");
+    tk2.must_exec("create table t2 (a int, b int);");
+    tk2.must_exec("insert into t2 values (1, 1), (2, 2), (3, 3);");
+
+    let counter = std::sync::Arc::new(std::sync::atomic::AtomicI32::new(0));
+    let enable_trigger = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let target_job_id = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
+    let running_done = {
+        let (enable_trigger, target_job_id) = (std::sync::Arc::clone(&enable_trigger), std::sync::Arc::clone(&target_job_id));
+        tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone", move |job| {
+            let job = job.downcast_ref::<tidb_model::Job>().unwrap();
+            // fail for one index when finish backfill, and check row count right
+            if counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1 == 1 {
+                target_job_id.store(job.id, std::sync::atomic::Ordering::SeqCst);
+                enable_trigger.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        })
+    };
+    let update_job = tidb_failpoint::enable_call_ref_for_test::<tidb_ddl::cluster_ddl::AfterUpdateJobToTable>(
+        "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable",
+        std::sync::Arc::new(move |job, err_p| {
+            if enable_trigger.load(std::sync::atomic::Ordering::SeqCst)
+                && job.id == target_job_id.load(std::sync::atomic::Ordering::SeqCst)
+            {
+                *err_p = Some(tidb_ddl_build::plan_error::DdlPlanError::Unsupported("mock error".to_owned()));
+                enable_trigger.store(false, std::sync::atomic::Ordering::SeqCst);
+            }
+        }),
+    );
+    std::thread::scope(|wg| {
+        wg.spawn(|| tk.must_exec("alter table t add index idx(a);"));
+        wg.spawn(|| tk2.must_exec("alter table t2 add index idx_b(b);"));
+    });
+    let rows = tk.must_query("admin show ddl jobs 2;");
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert!(rows[0][12].contains("ingest"), "{:?}", rows[0]);
+    assert!(rows[1][12].contains("ingest"), "{:?}", rows[1]);
+    assert_eq!(rows[0][7], "3");
+    assert_eq!(rows[1][7], "3");
+    drop(running_done);
+    drop(update_job);
+
+    // test cancel is timely
     let (enter_tx, enter) = std::sync::mpsc::sync_channel::<()>(1);
     let _hook = tidb_failpoint::enable_call_for_test(
         "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeExecuteRegionJob",
         move |arg| {
             let ctx = arg.downcast_mut::<tidb_gocontext::Context>().unwrap();
             let _ = enter_tx.try_send(());
-            // Wait up to 30 seconds or until the job's context is cancelled.
             let _ = ctx.sleep(std::time::Duration::from_secs(30));
         },
     );
@@ -342,6 +239,209 @@ fn test_add_index_dist_cancel_is_timely() {
         // cancel should be timely
         assert!(now.elapsed().as_secs_f64() < 20.0, "{:?}", now.elapsed());
     });
+}
+
+/// Go `addindextest1.TestAddIndexDistCancelWithPartition`.
+#[test]
+fn test_add_index_dist_cancel_with_partition() {
+    // Go restores them in `t.Cleanup`; the test runs in its own process.
+    let _restore = tidb_dxf_testutil::reduce_check_interval_for_test();
+    let store = realtikv!();
+    let mut tk = store.new_tk();
+    let tk1 = std::sync::Mutex::new(store.new_tk());
+    tk.must_exec("drop database if exists test;");
+    tk.must_exec("create database test;");
+    tk.must_exec("use test;");
+    tk.must_exec("set global tidb_enable_dist_task=1;");
+
+    tk.must_exec("create table t(a bigint auto_random primary key) partition by hash(a) partitions 8;");
+    for _ in 0..4 {
+        tk.must_exec("insert into t values (), (), (), (), (), ()");
+    }
+    tk.must_exec("split table t between (3) and (8646911284551352360) regions 50;");
+
+    let once = std::sync::Once::new();
+    let _finish = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish",
+        move |_| {
+            once.call_once(|| {
+                let mut tk1 = tk1.lock().unwrap();
+                let row = tk1.must_query("select job_id from mysql.tidb_ddl_job");
+                assert_eq!(row.len(), 1);
+                tk1.must_exec(&format!("admin cancel ddl jobs {}", row[0][0]));
+            });
+        },
+    );
+
+    tk.exec_to_err("alter table t add index idx(a);");
+    tk.must_exec("admin check table t;");
+    tk.must_exec("alter table t add index idx2(a);");
+    tk.must_exec("admin check table t;");
+    tk.must_exec("set global tidb_enable_dist_task=0;");
+}
+
+/// Go `TestAddIndexDistAutoPauseOnKVDiskFull`'s `runAutoPauseCase`.
+fn run_auto_pause_case(tk: &mut Tk, alter_sql: &str, check_sql: &str, verify_job: impl Fn(&tidb_model::Job)) {
+    let failpoint_name = "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/WriteToTiKVNotEnoughDiskSpace";
+    let fp = tidb_failpoint::enable_for_test(failpoint_name, "return()");
+    match tk.exec_coded(alter_sql) {
+        Ok(_) => panic!("{alter_sql}: expected an error"),
+        Err((code, message)) => {
+            assert_eq!(code, tidb_errno::errcode::ErrDDLAutoPausedByKVDiskFull, "unexpected error: {message}");
+        }
+    }
+    drop(fp);
+
+    let rows = tk.must_query("select job_id, job_meta from mysql.tidb_ddl_job");
+    assert_eq!(rows.len(), 1);
+    let job_id = rows[0][0].clone();
+    let mut job = tidb_model::Job::default();
+    job.decode(rows[0][1].as_bytes()).unwrap();
+    assert!(job.is_paused_by_system_for_kv_disk_full(), "job: {job:?}");
+    let reason = job.pause_reason.as_ref().expect("a pause reason").read().message.to_string();
+    assert!(reason.contains("TiKV disk full"), "{reason}");
+    assert_eq!(job.error_count, 0);
+    verify_job(&job);
+
+    tk.must_exec(&format!("admin resume ddl jobs {job_id}"));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while tk.exec(check_sql).is_err() {
+        assert!(std::time::Instant::now() < deadline, "{check_sql} never succeeded");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+/// Go `addindextest1.TestAddIndexDistAutoPauseOnKVDiskFull`.
+#[test]
+fn test_add_index_dist_auto_pause_on_kv_disk_full() {
+    let store = realtikv!();
+    let mut tk = store.new_tk();
+    tk.must_exec("drop database if exists test;");
+    tk.must_exec("create database test;");
+    tk.must_exec("use test;");
+    tk.must_exec("set global tidb_enable_dist_task=1;");
+    let _run_step = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", |job| {
+        let job = job.downcast_ref::<tidb_model::Job>().unwrap();
+        if job.state == tidb_model::JobState::PAUSING && job.has_pause_reason(tidb_model::job::JOB_PAUSE_REASON_KV_DISK_FULL) {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
+    });
+
+    // single add index
+    tk.must_exec("drop table if exists t;");
+    tk.must_exec("create table t(a int, b int);");
+    tk.must_exec("insert into t values (1, 1), (2, 2), (3, 3);");
+    run_auto_pause_case(&mut tk, "alter table t add index idx_b(b);", "admin check index t idx_b;", |job| {
+        assert_eq!(job.type_, tidb_model::ActionType::ACTION_ADD_INDEX);
+    });
+
+    // multi-schema add index
+    tk.must_exec("drop table if exists t_multi;");
+    tk.must_exec("create table t_multi(a int, b int, c int);");
+    tk.must_exec("insert into t_multi values (1, 1, 1), (2, 2, 2), (3, 3, 3);");
+    run_auto_pause_case(
+        &mut tk,
+        "alter table t_multi add column d int default 0, add index idx_b(b);",
+        "admin check index t_multi idx_b;",
+        |job| {
+            assert_eq!(job.type_, tidb_model::ActionType::ACTION_MULTI_SCHEMA_CHANGE);
+            let info = job.multi_schema_info.as_ref().expect("multi-schema info").read();
+            assert_eq!(info.sub_jobs.len(), 2);
+            assert_eq!(info.sub_jobs.get(0).unwrap().read().type_, tidb_model::ActionType::ACTION_ADD_COLUMN);
+            assert_eq!(info.sub_jobs.get(1).unwrap().read().type_, tidb_model::ActionType::ACTION_ADD_INDEX);
+        },
+    );
+    assert_eq!(tk.must_query("select d from t_multi order by a;"), vec![vec!["0".to_owned()]; 3]);
+    tk.must_exec("set global tidb_enable_dist_task=0;");
+}
+
+/// Go `addindextest1.TestAddIndexDistPauseAndResume`, which Go skips.
+#[test]
+#[ignore = "unstable (Go t.Skip, TODO(tangenta))"]
+fn test_add_index_dist_pause_and_resume() {
+    let store = realtikv!();
+    let mut tk = store.new_tk();
+    let tk1 = std::sync::Arc::new(std::sync::Mutex::new(store.new_tk()));
+    tk.must_exec("drop database if exists test;");
+    tk.must_exec("create database test;");
+    tk.must_exec("use test;");
+
+    tk.must_exec("create table t(a bigint auto_random primary key) partition by hash(a) partitions 8;");
+    for _ in 0..4 {
+        tk.must_exec("insert into t values (), (), (), (), (), ()");
+    }
+    tk.must_exec("split table t between (3) and (8646911284551352360) regions 50;");
+
+    let only_job_id = |tk1: &mut Tk| {
+        let row = tk1.must_query("select job_id from mysql.tidb_ddl_job");
+        assert_eq!(row.len(), 1);
+        row[0][0].clone()
+    };
+    let (sync_tx, sync_rx) = crossbeam_channel::bounded::<()>(0);
+    let counter = std::sync::atomic::AtomicI32::new(0);
+    let finish = {
+        let tk1 = std::sync::Arc::clone(&tk1);
+        tidb_failpoint::enable_call_for_test(
+            "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish",
+            move |_| {
+                if counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1 <= 3 {
+                    let mut tk1 = tk1.lock().unwrap();
+                    let job_id = only_job_id(&mut tk1);
+                    tk1.must_exec(&format!("admin pause ddl jobs {job_id}"));
+                    drop(tk1);
+                    let _ = sync_rx.recv();
+                }
+            },
+        )
+    };
+    let paused_state = {
+        let tk1 = std::sync::Arc::clone(&tk1);
+        tidb_failpoint::enable_call_for_test(
+            "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockDMLExecutionOnPausedState",
+            move |_| {
+                let mut tk1 = tk1.lock().unwrap();
+                let job_id = only_job_id(&mut tk1);
+                tk1.must_exec(&format!("admin resume ddl jobs {job_id}"));
+            },
+        )
+    };
+    let sync_pause = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/syncDDLTaskPause", move |_| {
+        // make sure the task is paused.
+        let _ = sync_tx.send(());
+    });
+    tk.must_exec("set global tidb_enable_dist_task=1;");
+    tk.must_exec("alter table t add index idx1(a);");
+    tk.must_exec("admin check table t;");
+    drop(finish);
+    drop(paused_state);
+
+    // dist task succeed, job paused and resumed.
+    let _schema_synced = {
+        let tk1 = std::sync::Arc::clone(&tk1);
+        tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", move |job| {
+            if job.downcast_ref::<tidb_model::Job>().unwrap().is_paused() {
+                let mut tk1 = tk1.lock().unwrap();
+                let job_id = only_job_id(&mut tk1);
+                tk1.must_exec(&format!("admin resume ddl jobs {job_id}"));
+            }
+        })
+    };
+    let once = std::sync::Once::new();
+    let pause_after = {
+        let tk1 = std::sync::Arc::clone(&tk1);
+        tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/pauseAfterDistTaskFinished", move |_| {
+            once.call_once(|| {
+                let mut tk1 = tk1.lock().unwrap();
+                let job_id = only_job_id(&mut tk1);
+                tk1.must_exec(&format!("admin pause ddl jobs {job_id}"));
+            });
+        })
+    };
+    tk.must_exec("alter table t add index idx3(a);");
+    tk.must_exec("admin check table t;");
+    drop(pause_after);
+    drop(sync_pause);
+    tk.must_exec("set global tidb_enable_dist_task=0;");
 }
 
 /// Go `addindextest1.TestAddIndexDistLockAcquireFailed`.

@@ -2238,49 +2238,60 @@ fn run_insert_rows(
                     // Go's `TestInsertLockUnchangedKeys` drives it with
                     // `replace into t values (1)` over the same row.
                     let mut unchanged = false;
-                    for conflict in &conflicts {
-                        let handle = &conflict.handle;
-                        let table = target(catalog, &database, &table_name);
-                        let existing = table
-                            .get_row_by_handle(&mut *crate::statement_store(ctx), handle, &ctx.session_zone())
-                            .map_err(|e| kv_read_error("row read failed", e))?;
-                        if existing.as_deref() == Some(row) {
-                            // Go `removeRow`: the identical row stays, its keys
-                            // locked as an unchanged row's.
-                            let mut key_set = update_record::LOCK_ROW_KEY;
-                            if ctx.lock_unchanged_keys() {
-                                key_set |= update_record::LOCK_UNIQUE_KEYS;
+                    let mut conflicts = conflicts;
+                    // Go `replaceRow` keeps on removing duplicated rows: a
+                    // removal can expose another (a temporary index's
+                    // history names the next handle).
+                    'removing: while !conflicts.is_empty() {
+                        for conflict in &conflicts {
+                            let handle = &conflict.handle;
+                            let table = target(catalog, &database, &table_name);
+                            let existing = table
+                                .get_row_by_handle(&mut *crate::statement_store(ctx), handle, &ctx.session_zone())
+                                .map_err(|e| kv_read_error("row read failed", e))?;
+                            if existing.as_deref() == Some(row) {
+                                // Go `removeRow`: the identical row stays, its keys
+                                // locked as an unchanged row's.
+                                let mut key_set = update_record::LOCK_ROW_KEY;
+                                if ctx.lock_unchanged_keys() {
+                                    key_set |= update_record::LOCK_UNIQUE_KEYS;
+                                }
+                                update_record::add_unchanged_keys_for_lock_by_row(
+                                    table, handle, row, key_set, ctx,
+                                )?;
+                                // Go `batchCheckAndInsert`: an identical row behind the
+                                // record key counts as copied, one behind a unique key
+                                // (`removeRow(inReplace=true)`) as affected.
+                                if load_restrictive.is_some() && conflict.on_record_key {
+                                    copied += 1;
+                                } else {
+                                    ctx.add_affected_rows(1);
+                                }
+                                unchanged = true;
+                                break 'removing;
                             }
-                            update_record::add_unchanged_keys_for_lock_by_row(
-                                table, handle, row, key_set, ctx,
+                            removals.write(
+                                catalog,
+                                &database,
+                                &table_name,
+                                &handle,
+                                existing.as_deref().expect("conflicting row exists"),
+                                insert.ignore,
+                                ctx,
                             )?;
-                            // Go `batchCheckAndInsert`: an identical row behind the
-                            // record key counts as copied, one behind a unique key
-                            // (`removeRow(inReplace=true)`) as affected.
+                            // Go's LOAD DATA removes a record-key duplicate with
+                            // `removeRow(inReplace=false)`, a deleted row.
                             if load_restrictive.is_some() && conflict.on_record_key {
-                                copied += 1;
+                                load_deleted += 1;
                             } else {
                                 ctx.add_affected_rows(1);
                             }
-                            unchanged = true;
-                            break;
                         }
-                        removals.write(
-                            catalog,
-                            &database,
-                            &table_name,
-                            &handle,
-                            existing.as_deref().expect("conflicting row exists"),
-                            insert.ignore,
-                            ctx,
-                        )?;
-                        // Go's LOAD DATA removes a record-key duplicate with
-                        // `removeRow(inReplace=false)`, a deleted row.
-                        if load_restrictive.is_some() && conflict.on_record_key {
-                            load_deleted += 1;
-                        } else {
-                            ctx.add_affected_rows(1);
-                        }
+                        conflicts = target(catalog, &database, &table_name)
+                            .with_statement_store(ctx, |table, store| {
+                                table.row_conflicts_with_row_id(store, row, written_row_id, ctx)
+                            })
+                            .map_err(kv_write_error)?;
                     }
                     if unchanged {
                         continue;
