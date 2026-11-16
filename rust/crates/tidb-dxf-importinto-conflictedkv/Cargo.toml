@@ -1,0 +1,41 @@
+[package]
+name = "tidb-dxf-importinto-conflictedkv"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-backoff = { path = "../tidb-backoff" }
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-dxf-execute = { path = "../tidb-dxf-execute" }
+tidb-dxf-handle = { path = "../tidb-dxf-handle" }
+tidb-executor = { path = "../tidb-executor" }
+tidb-failpoint = { path = "../tidb-failpoint" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-ingestor-globalsort = { path = "../tidb-ingestor-globalsort" }
+tidb-ingestor-simplesst = { path = "../tidb-ingestor-simplesst" }
+tidb-lightning-backend-kv = { path = "../tidb-lightning-backend-kv" }
+tidb-lightning-common = { path = "../tidb-lightning-common" }
+tidb-lightning-verification = { path = "../tidb-lightning-verification" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-objstore = { path = "../tidb-objstore" }
+tidb-redact = { path = "../tidb-redact" }
+tidb-table = { path = "../tidb-table" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+
+[dev-dependencies]
+tempfile.workspace = true
+tidb-lightning-backend-encode = { path = "../tidb-lightning-backend-encode" }
+tidb-meta = { path = "../tidb-meta" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-model = { path = "../tidb-model" }
+tikv-client.workspace = true

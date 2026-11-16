@@ -20,6 +20,8 @@ tidb-driver-error = { path = "../tidb-driver-error" }
 tidb-dxf = { path = "../tidb-dxf" }
 tidb-dxf-execute = { path = "../tidb-dxf-execute" }
 tidb-dxf-handle = { path = "../tidb-dxf-handle" }
+tidb-dxf-importinto-conflictedkv = { path = "../tidb-dxf-importinto-conflictedkv" }
+tidb-dxf-importinto-conflictpath = { path = "../tidb-dxf-importinto-conflictpath" }
 tidb-dxf-importinto-taskkey = { path = "../tidb-dxf-importinto-taskkey" }
 tidb-dxf-planner = { path = "../tidb-dxf-planner" }
 tidb-dxf-scheduler = { path = "../tidb-dxf-scheduler" }
@@ -53,6 +55,8 @@ tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-table = { path = "../tidb-table" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+crc32fast.workspace = true
 tidb-exeerrors = { path = "../tidb-exeerrors" }
 tidb-vardef = { path = "../tidb-vardef" }
 tidb-objstore = { path = "../tidb-objstore" }

@@ -10,6 +10,8 @@ members = [
     "crates/tidb-oss-sdk",
     "crates/tidb-aws-sdk",
     "crates/tidb-azure-sdk",
+    "crates/tidb-dxf-importinto-conflictedkv",
+    "crates/tidb-dxf-importinto-conflictpath",
     "crates/tidb-dxf-importinto-jobhistory",
     "crates/tidb-dxf-importinto-taskkey",
     "crates/tidb-dxf-importinto",

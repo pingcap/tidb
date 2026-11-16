@@ -44,6 +44,7 @@ pub mod mutation_checker;
 pub(crate) mod index_states;
 pub mod nonpublic_columns;
 pub mod partition_reorg;
+mod raw_row;
 pub use partition_reorg::{PartitionDoubleWrite, PartitionIndexMode};
 use tidb_hack::GoCaseCompare;
 pub mod row_decoder;

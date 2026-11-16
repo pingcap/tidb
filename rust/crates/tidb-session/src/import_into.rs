@@ -269,11 +269,6 @@ impl Session {
             cpu,
             &cloud_uri,
         )?;
-        // The conflict collection and resolution steps that `capture` needs
-        // are not ported yet.
-        if !from_select && import_plan.is_global_sort() && import_plan.get_on_dup_key_mode() == "capture" {
-            return Err(DriverError::unsupported("IMPORT INTO with on_duplicate_key='capture' is not supported yet"));
-        }
         let new_collate = import_plan.get_use_new_collate_or_default(tidb_datatype::new_collation_enabled());
         let table = tidb_table::table_from_meta::table_from_meta(
             &table_info,

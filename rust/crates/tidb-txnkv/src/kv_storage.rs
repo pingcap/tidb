@@ -58,6 +58,22 @@ pub trait Transaction: Send {
         call: &UnaryCallContext,
     ) -> Result<Option<Vec<u8>>, OptimisticCoordinatorError>;
 
+    /// Go `BatchGet` at the transaction's start timestamp: the keys that
+    /// exist, with their values.
+    fn batch_get(
+        &mut self,
+        keys: &[Vec<u8>],
+        call: &UnaryCallContext,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, OptimisticCoordinatorError> {
+        let mut pairs = Vec::new();
+        for key in keys {
+            if let Some(value) = self.get(key, call)? {
+                pairs.push((key.clone(), value));
+            }
+        }
+        Ok(pairs)
+    }
+
     /// Go `Iter(start, end)` drained, stopping after `limit` pairs when set.
     fn scan(
         &mut self,

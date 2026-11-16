@@ -6,6 +6,8 @@
 //! (rebase the allocators and verify the checksum).
 
 mod clean_up;
+mod collect_conflicts;
+mod conflict_resolution;
 pub mod job;
 pub mod planner;
 pub mod proto;
@@ -94,6 +96,11 @@ pub trait ImportStore: Send + Sync {
     /// No store answered.
     fn region_split_size_keys(&self) -> Result<(i64, i64), String> {
         Err("get region split size and keys failed".to_owned())
+    }
+    /// Go `kv.Storage`'s `Begin` and `GetSnapshot`, which the conflict
+    /// steps read and delete rows through. `None` for a store without TiKV.
+    fn kv_storage(&self) -> Option<Arc<dyn tidb_txnkv::kv_storage::Storage>> {
+        None
     }
 }
 

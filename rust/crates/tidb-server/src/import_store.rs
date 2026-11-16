@@ -125,6 +125,10 @@ impl tidb_dxf_importinto::ImportStore for TikvImportStore {
         Err("get region split size and keys failed".to_owned())
     }
 
+    fn kv_storage(&self) -> Option<Arc<dyn tidb_txnkv::kv_storage::Storage>> {
+        Some(self.domain.transactions.kv_storage())
+    }
+
     fn max_node_count_by_stores(&self) -> usize {
         let pd = self.store.store().pd_client();
         match self.store.block_on(async move { pd.get_all_stores().await }) {

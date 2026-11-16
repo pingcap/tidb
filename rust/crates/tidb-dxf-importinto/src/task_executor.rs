@@ -23,7 +23,7 @@ use crate::{plain, Error};
 
 type StepResult<T> = tidb_dxf_execute::Result<T>;
 
-fn step_err(e: Error) -> tidb_dxf_execute::Error {
+pub(crate) fn step_err(e: Error) -> tidb_dxf_execute::Error {
     // Go returns the error value itself: a `*errors.Error` or
     // `errors.Annotate` stays one, so DXF's `serializeErr` reads its
     // `GetErrStackMsg` instead of the coded text.
@@ -118,6 +118,20 @@ impl tidb_dxf_taskexecutor::Extension for ImportExecutor {
                 summary: Arc::new(SubtaskSummary::default()),
             })),
             IMPORT_STEP_WRITE_AND_INGEST => Ok(Arc::new(WriteAndIngestStepExecutor {
+                info: FrameworkInfoSlot::default(),
+                task_id: task.base.id,
+                meta,
+                table_importer: Mutex::new(None),
+                summary: Arc::new(SubtaskSummary::default()),
+            })),
+            IMPORT_STEP_COLLECT_CONFLICTS => Ok(Arc::new(crate::collect_conflicts::CollectConflictsStepExecutor {
+                info: FrameworkInfoSlot::default(),
+                task_id: task.base.id,
+                meta,
+                table_importer: Mutex::new(None),
+                summary: Arc::new(SubtaskSummary::default()),
+            })),
+            IMPORT_STEP_CONFLICT_RESOLUTION => Ok(Arc::new(crate::conflict_resolution::ConflictResolutionStepExecutor {
                 info: FrameworkInfoSlot::default(),
                 task_id: task.base.id,
                 meta,
@@ -789,7 +803,7 @@ impl StepExecutor for WriteAndIngestStepExecutor {
 }
 
 /// Go `getTableImporter`.
-fn new_table_importer(ctx: &Context, task_id: i64, meta: &TaskMeta) -> Result<TableImporter, Error> {
+pub(crate) fn new_table_importer(ctx: &Context, task_id: i64, meta: &TaskMeta) -> Result<TableImporter, Error> {
     let store = crate::import_store()?;
     let mut controller = build_controller_for_plan(&meta.plan, &meta.stmt)?;
     controller.init_data_store(ctx).map_err(crate::driver)?;

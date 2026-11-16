@@ -6236,6 +6236,7 @@ version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "crc32fast",
  "hex",
  "serde",
  "serde_json",
@@ -6251,6 +6252,8 @@ dependencies = [
  "tidb-dxf",
  "tidb-dxf-execute",
  "tidb-dxf-handle",
+ "tidb-dxf-importinto-conflictedkv",
+ "tidb-dxf-importinto-conflictpath",
  "tidb-dxf-importinto-taskkey",
  "tidb-dxf-planner",
  "tidb-dxf-scheduler",
@@ -6279,9 +6282,50 @@ dependencies = [
  "tidb-sqlexec",
  "tidb-stringutil",
  "tidb-table",
+ "tidb-tablecodec",
  "tidb-terror",
  "tidb-txnkv",
  "tidb-vardef",
+ "uuid",
+]
+
+[[package]]
+name = "tidb-dxf-importinto-conflictedkv"
+version = "0.0.0"
+dependencies = [
+ "tempfile",
+ "tidb-ast",
+ "tidb-backoff",
+ "tidb-config-configtypes",
+ "tidb-datatype",
+ "tidb-dxf-execute",
+ "tidb-dxf-handle",
+ "tidb-executor",
+ "tidb-failpoint",
+ "tidb-gocontext",
+ "tidb-ingestor-globalsort",
+ "tidb-ingestor-simplesst",
+ "tidb-lightning-backend-encode",
+ "tidb-lightning-backend-kv",
+ "tidb-lightning-common",
+ "tidb-lightning-verification",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-meta",
+ "tidb-model",
+ "tidb-objstore",
+ "tidb-parser",
+ "tidb-redact",
+ "tidb-table",
+ "tidb-tablecodec",
+ "tidb-txnkv",
+ "tikv-client",
+]
+
+[[package]]
+name = "tidb-dxf-importinto-conflictpath"
+version = "0.0.0"
+dependencies = [
  "uuid",
 ]
 

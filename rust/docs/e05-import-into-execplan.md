@@ -374,10 +374,37 @@ Remaining, in order:
    `GetRegionSplitSizeKeys` over TiKV's `/config`. IMPORT INTO with a
    `cloud_storage_uri` now runs. Pinned by a Go capture of every step meta's
    encodings (`zzprobe/e05dxf`) and by a live MinIO run against Go (below).
-   `on_duplicate_key='capture'` is refused until the conflict steps land.
+   `on_duplicate_key='capture'` was refused until step 9.
    Next-gen async prepare (`PreparedMeta`) is not ported.
-9. Conflict collection and resolution, the global-sort live acceptance;
-   delete the E05 row.
+9. Done (the PR after the DXF global-sort PR): conflict collection and
+   resolution. `conflictedkv` (`tidb-dxf-importinto-conflictedkv`: the
+   data and index KV handlers, `LazyRefreshedSnapshot`, `KeyFilter` and
+   `BoundedKeySet`, `Collector` and `Deleter`), `conflictpath`, and the
+   collect-conflicts and conflict-resolution step executors with the MV
+   index dispatch. `tables.DecodeRawRowData` in `tidb-table`, and `BatchGet`
+   on the narrowed `kv_storage::Transaction`. `on_duplicate_key='capture'`
+   with global sort now imports. Pinned by ports of Go's conflictedkv tests
+   over Go-created table schemas and by a live run against Go (below).
+   Not ported: `conflictrows` (the conflict-row file retention), which only
+   Go's next-gen expired-file cleanup loop runs.
+10. Delete the E05 row.
+
+### Live acceptance of on_duplicate_key='capture' (2026-11-16)
+
+Same playgrounds and MinIO. `/tmp/e05-data/capture.sh` (not committed)
+imports with `cloud_storage_uri` and `on_duplicate_key='capture'` into
+tables with a primary key, a unique and a plain index: a duplicate primary
+key, a duplicate unique key, both in one file, a 20000-row file with 2000
+duplicate primary keys and 2857 duplicate unique keys (also into a table
+clustered on `(name, id)` with a unique `id`, and with `__force_merge_step`
+and `__max_engine_size='100KB'`, which records conflicts in the merge
+step), and a duplicate with `on_duplicate_key='error'`. It compares the
+result message ("8571 conflicted rows."), the imported rows, the per-step
+subtask counts, the data and `ADMIN CHECK TABLE`, the number of conflict
+row files and their sorted content. Go and Rust give the same output. The
+collected checksums have the same size and KV count in every case and the
+same sum where the table IDs are the same; the post-process checksum
+passed after subtracting them.
 
 ### Live acceptance of global sort (2026-11-16)
 
