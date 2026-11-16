@@ -408,6 +408,53 @@ impl Session {
             || self.autocommit_pessimistic_statement
     }
 
+    /// Go `decideTxnMode` at `PrepareTxnCtx`: an autocommit statement's
+    /// implicit transaction is pessimistic under `pessimistic-auto-commit`
+    /// for an INSERT / UPDATE / DELETE, seen through EXECUTE and EXPLAIN
+    /// (`isDMLStatement`). The answer stands until the next statement, as
+    /// Go's `TxnCtx` does.
+    pub(crate) fn decide_autocommit_statement_txn_mode(&mut self, stmt: &Stmt) {
+        let pessimistic = !self.in_transaction()
+            && self.is_autocommit()
+            && !self.vars.restricted_sql
+            && crate::txn_mode::decide_txn_mode(crate::txn_mode::StatementTxnModeInputs {
+                txn_mode_var: &self.vars.get_system("tidb_txn_mode").unwrap_or_default(),
+                retrying: false,
+                autocommit: true,
+                pessimistic_auto_commit: tidb_config::config_tree::config::get_global_config()
+                    .pessimistic_txn
+                    .pessimistic_auto_commit
+                    .load(),
+                is_dml: !self.vars.bulk_dml_enabled() && self.is_pessimistic_auto_commit_dml(stmt),
+            })
+            .is_pessimistic();
+        self.autocommit_pessimistic_statement = pessimistic;
+    }
+
+    /// Go `session.isDMLStatement`.
+    fn is_pessimistic_auto_commit_dml(&self, stmt: &Stmt) -> bool {
+        match stmt {
+            Stmt::Dml(dml) => matches!(
+                dml.as_ref(),
+                tidb_ast::DmlStmt::Insert(_) | tidb_ast::DmlStmt::Update(_) | tidb_ast::DmlStmt::Delete(_)
+            ),
+            Stmt::Admin(admin) => match admin.as_ref() {
+                tidb_ast::AdminStmt::Explain(explain) => {
+                    explain.statement().is_some_and(|inner| self.is_pessimistic_auto_commit_dml(inner))
+                }
+                _ => false,
+            },
+            Stmt::Session(control) => match control.as_ref() {
+                SessionStmt::Execute { name, .. } => self
+                    .prepared_statements
+                    .get(name)
+                    .is_some_and(|prepared| self.is_pessimistic_auto_commit_dml(&prepared.statement)),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     /// Records that the storage owner runs this autocommit statement in a
     /// pessimistic implicit transaction (Go `decideTxnMode`), so its point
     /// plans carry `Lock` as Go's `tryUpdatePointPlan` sets it.

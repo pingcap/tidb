@@ -560,7 +560,9 @@ impl StatementLifecycle<'_> {
                     .publish(transaction.for_update_ts());
             }
             if autocommit_write {
-                self.begin_autocommit_statement_locks(false);
+                // The attempt's locking reads end here; the statement's
+                // `TxnCtx.IsPessimistic` stands until the next statement.
+                self.session.set_selected_lock_keys(None);
             }
             let finished = self.finish_snapshot();
             match outcome {
@@ -591,6 +593,7 @@ impl StatementLifecycle<'_> {
                                 &*self.session,
                                 "lockErrorAndThenOnStmtRetryCalled",
                             );
+                            pessimistic_retry_failpoint(is_dml);
                             continue;
                         }
                         Err(error) => {
@@ -682,6 +685,7 @@ impl StatementLifecycle<'_> {
                                 &*self.session,
                                 "lockErrorAndThenOnStmtRetryCalled",
                             );
+                            pessimistic_retry_failpoint(is_dml);
                             continue;
                         }
                         Some(
@@ -1339,4 +1343,15 @@ pub fn finish_snapshot(slot: &SnapshotSlot) -> Result<(), SqlQueryError> {
         .unbind();
     drop(bound);
     Ok(())
+}
+
+/// Go `handlePessimisticDML`'s `pessimisticDMLRetry` before each retry, and
+/// `runPessimisticSelectForUpdate`'s `pessimisticSelectForUpdateRetry` at
+/// its loop end.
+fn pessimistic_retry_failpoint(is_dml: bool) {
+    tidb_failpoint::eval(if is_dml {
+        "github.com/pingcap/tidb/pkg/executor/pessimisticDMLRetry"
+    } else {
+        "github.com/pingcap/tidb/pkg/executor/pessimisticSelectForUpdateRetry"
+    });
 }

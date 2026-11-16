@@ -1035,6 +1035,22 @@ impl<'s> ClusterServerSession<'s> {
         sql: &str,
         stmt: &Stmt,
     ) -> Result<Option<bool>, SqlQueryError> {
+        // Go `EXECUTE` of a prepared BEGIN / COMMIT / ROLLBACK runs the
+        // prepared statement's `SimpleExec` (`isEndTxnStmt` resolves it the
+        // same way).
+        if let Stmt::Session(statement) = stmt {
+            if let tidb_ast::SessionStmt::Execute { name, .. } = statement.as_ref() {
+                let prepared = self
+                    .session
+                    .prepared_statements
+                    .get(name)
+                    .map(|prepared| prepared.statement.clone())
+                    .filter(|prepared| classify_transaction_control_stmt(prepared).is_some());
+                if let Some(prepared) = prepared {
+                    return self.control_transaction_parsed_inner(sql, &prepared);
+                }
+            }
+        }
         let control = match stmt {
             Stmt::Session(statement) => match statement.as_ref() {
                 tidb_ast::SessionStmt::Begin(begin) if begin.as_of.is_some() => {
@@ -1794,6 +1810,8 @@ impl<'s> ClusterServerSession<'s> {
         // Go builds a fresh statement context per statement: the previous
         // statement's counts and any file exchange it left unfinished end here.
         self.node.ok_packet = WriteOutcome::default();
+        // Go `PrepareTxnCtx`'s `decideTxnMode`, before the statement plans.
+        self.session.decide_autocommit_statement_txn_mode(stmt);
         self.node.parked_local_infile = None;
         self.session.clear_local_infile();
         // Go `LoadDataExec` / `LoadStatsExec`: the statement runs far enough
@@ -2005,6 +2023,14 @@ impl<'s> ClusterServerSession<'s> {
     ) -> Result<GeneralExecuteOutcome<'s>, SqlQueryError> {
         self.session.restore_statement_variables();
         self.session.reset_plan_cache_tracker();
+        // Go `PrepareTxnCtx`'s `decideTxnMode`, before the statement plans.
+        match statement.prepared_ast() {
+            Some(prepared) => {
+                let stmt = prepared.statement().clone();
+                self.session.decide_autocommit_statement_txn_mode(&stmt);
+            }
+            None => self.session.set_autocommit_pessimistic_statement(false),
+        }
         // Go `ExecutePreparedStmt` runs `ExecuteStmt`: `Compile`'s fresh
         // `TelemetryInfo` and `runStmt`'s `updateTelemetryMetric`.
         self.session.reset_telemetry_info();
