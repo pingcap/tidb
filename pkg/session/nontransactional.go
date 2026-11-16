@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -600,9 +601,13 @@ func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, resolveCtx *resolve.Conte
 	}
 	// assure NULL values are placed first
 	tnW := resolveCtx.GetTableName(tableName)
-	selectSQL := fmt.Sprintf("SELECT `%s` FROM `%s`.`%s` WHERE %s ORDER BY IF(ISNULL(`%s`),0,1),`%s`",
-		stmt.ShardColumn.Name.O, tnW.DBInfo.Name.O, tableName.Name.O, sb.String(), stmt.ShardColumn.Name.O, stmt.ShardColumn.Name.O)
-	return tableName, selectSQL, shardColumnInfo, tableSources, nil
+	var selectSQLBuilder strings.Builder
+	sqlescape.MustFormatSQL(&selectSQLBuilder, "SELECT %n FROM %n.%n WHERE ",
+		stmt.ShardColumn.Name.O, tnW.DBInfo.Name.O, tableName.Name.O)
+	selectSQLBuilder.WriteString(sb.String())
+	sqlescape.MustFormatSQL(&selectSQLBuilder, " ORDER BY IF(ISNULL(%n),0,1),%n",
+		stmt.ShardColumn.Name.O, stmt.ShardColumn.Name.O)
+	return tableName, selectSQLBuilder.String(), shardColumnInfo, tableSources, nil
 }
 
 func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se sessionapi.Session, tableSources []*ast.TableSource,

@@ -62,6 +62,17 @@ func TestNonTransactionalDMLSharding(t *testing.T) {
 	testSharding(tables, tk, "varchar(30)")
 }
 
+func TestNonTransactionalDMLDryRunQueryEscapesIdentifiers(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table `t``x` (`a``x` int, key (`a``x`))")
+
+	tk.MustQuery("batch on `a``x` limit 1 dry run query delete from `t``x`").Check(
+		testkit.Rows("SELECT `a``x` FROM `test`.`t``x` WHERE TRUE ORDER BY IF(ISNULL(`a``x`),0,1),`a``x`"),
+	)
+}
+
 func testSharding(tables []string, tk *testkit.TestKit, tp string) {
 	compositions := []struct{ tableSize, batchSize int }{
 		{0, 10},
