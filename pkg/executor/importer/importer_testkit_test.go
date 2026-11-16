@@ -257,10 +257,11 @@ func TestLocalBackendSortedWriterWithTestKitTable(t *testing.T) {
 	}
 	flushStatus, err := writer.Close(ctx)
 	require.NoError(t, err)
-	require.Eventually(t, flushStatus.Flushed, time.Second, time.Millisecond)
 
+	// Closing the engine waits for asynchronous SST ingestion to finish.
 	_, err = openedEngine.Close(ctx)
 	require.NoError(t, err)
+	require.True(t, flushStatus.Flushed())
 	localBackend.Close()
 	backendClosed = true
 
