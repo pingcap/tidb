@@ -16,9 +16,11 @@ package ddl_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -30,6 +32,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/stretchr/testify/require"
 	tikv "github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -382,4 +387,184 @@ func TestAffinityDropDatabase(t *testing.T) {
 	groups, err := affinity.GetGroups(ctx, groupIDs)
 	require.NoError(t, err)
 	require.Empty(t, groups, "all affinity groups should be deleted after dropping database")
+}
+
+func TestAffinityRecoverRecreatesGroups(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	require.NoError(t, gcutil.EnableGC(tk.Session()))
+
+	tk.MustExec("create database rec")
+	tk.MustExec("use rec")
+	tk.MustExec("create table t1(a int) affinity = 'table'")
+	tk.MustExec("create table tp(a int) affinity = 'partition' partition by hash(a) partitions 2")
+	tk.MustExec("create table t_plain(a int)")
+
+	// RECOVER TABLE.
+	tk.MustExec("drop table t1")
+	tk.MustExec("recover table t1")
+	checkAffinityGroupsInPD(t, dom, "rec", "t1", true)
+
+	// FLASHBACK TABLE ... TO a new name after TRUNCATE.
+	tk.MustExec("truncate table tp")
+	tk.MustExec("flashback table tp to tp_old")
+	checkAffinityGroupsInPD(t, dom, "rec", "tp", true)
+	checkAffinityGroupsInPD(t, dom, "rec", "tp_old", true)
+
+	// FLASHBACK DATABASE.
+	tk.MustExec("drop database rec")
+	tk.MustExec("flashback database rec")
+	for _, tbl := range []string{"t1", "tp", "tp_old"} {
+		checkAffinityGroupsInPD(t, dom, "rec", tbl, true)
+	}
+	checkAffinityGroupsInPD(t, dom, "rec", "t_plain", false)
+}
+
+func TestAffinityRecoverWhenGroupCreationFails(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	require.NoError(t, gcutil.EnableGC(tk.Session()))
+
+	tk.MustExec("create database rec")
+	tk.MustExec("use rec")
+	tk.MustExec("create table a(x int) affinity = 'table'")
+	tk.MustExec("create table b(x int) affinity = 'table'")
+	tk.MustExec("insert into a values (1), (2)")
+	tk.MustExec("insert into b values (3)")
+	tk.MustExec("drop database rec")
+
+	const fp = "github.com/pingcap/tidb/pkg/ddl/beforeCreateRecoveredTableAffinityGroups"
+	testfailpoint.EnableCall(t, fp, func(tblInfo *model.TableInfo, err *error) {
+		if tblInfo.Name.L == "b" {
+			*err = errors.New("mock create affinity groups error")
+		}
+	})
+	// The recovery is not cancelled; it warns about the table without groups.
+	tk.MustExec("flashback database rec")
+	tk.MustQuery("show warnings").CheckContain("failed to create affinity groups for recovered tables b")
+	tk.MustQuery("select * from rec.a order by x").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select * from rec.b").Check(testkit.Rows("3"))
+	checkAffinityGroupsInPD(t, dom, "rec", "a", true)
+	checkAffinityGroupsInPD(t, dom, "rec", "b", false)
+
+	// The groups can be created again.
+	testfailpoint.Disable(t, fp)
+	tk.MustExec("alter table rec.b affinity = 'table'")
+	checkAffinityGroupsInPD(t, dom, "rec", "b", true)
+}
+
+func TestAffinityRecoverRetriesGroupCreation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	require.NoError(t, gcutil.EnableGC(tk.Session()))
+	testfailpoint.Enable(t, "tikvclient/mockCommitError", `return(true)`)
+
+	tk.MustExec("create database rec")
+	tk.MustExec("use rec")
+	tk.MustExec("create table a(x int) affinity = 'table'")
+	tk.MustExec("insert into a values (1), (2)")
+	tblInfo, err := dom.InfoSchema().TableInfoByName(ast.NewCIStr("rec"), ast.NewCIStr("a"))
+	require.NoError(t, err)
+	groupOfA := ddl.GetTableAffinityGroupID(dom.Store().GetCodec(), tblInfo.ID)
+
+	// In each case, the first attempt of the recovery step fails to commit, so
+	// the job runs the step again.
+	var (
+		attempts int
+		fpErr    error
+	)
+	failFirstAttempt := func(failCreation bool, onFirst func()) {
+		attempts, fpErr = 0, nil
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeCreateRecoveredTableAffinityGroups",
+			func(_ *model.TableInfo, err *error) {
+				attempts++
+				if attempts == 1 {
+					onFirst()
+					if failCreation {
+						*err = errors.New("mock create affinity groups error")
+					}
+					// The commit error fires once on the next commit, which is
+					// the commit of this step.
+					fpErr = failpoint.Enable("tikvclient/mockCommitErrorOpt", `return(true)`)
+				}
+			})
+	}
+
+	// The first attempt fails to create the groups; the second attempt creates
+	// them and drops the warning of the first.
+	tk.MustExec("drop database rec")
+	failFirstAttempt(true, func() {})
+	tk.MustExec("flashback database rec")
+	require.NoError(t, fpErr)
+	require.Equal(t, 2, attempts)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from rec.a order by x").Check(testkit.Rows("1", "2"))
+	checkAffinityGroupsInPD(t, dom, "rec", "a", true)
+
+	// The first attempt creates the groups and the second attempt is cancelled.
+	// The groups are kept, because another job may recover the same table ID,
+	// and a later recovery takes them over. Moving the GC safe point past the
+	// drop makes the safe point check of the second attempt cancel the job.
+	cancelSecondAttempt := func() {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
+	}
+	for _, c := range []struct{ drop, recover string }{
+		{"drop table rec.a", "recover table rec.a"},
+		{"drop database rec", "flashback database rec"},
+	} {
+		tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+		tk.MustExec(c.drop)
+		failFirstAttempt(false, cancelSecondAttempt)
+		require.Error(t, tk.ExecToErr(c.recover))
+		require.NoError(t, fpErr)
+		require.Equal(t, 1, attempts)
+		require.False(t, dom.InfoSchema().TableExists(ast.NewCIStr("rec"), ast.NewCIStr("a")), c.recover)
+		groups, err := affinity.GetGroups(context.Background(), []string{groupOfA})
+		require.NoError(t, err)
+		require.Contains(t, groups, groupOfA, c.recover)
+
+		tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+		tk.MustExec(c.recover)
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		checkAffinityGroupsInPD(t, dom, "rec", "a", true)
+	}
+}
+
+func TestAffinityRecoverCancelledByParallelRecoveryKeepsGroups(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	require.NoError(t, gcutil.EnableGC(tk.Session()))
+
+	// Both jobs are queued before the first one runs. The second one is
+	// cancelled because the first one has recovered the table, and must not
+	// delete the groups of the recovered table.
+	tk.MustExec("create database test_db_state")
+	tk.MustExec("create table test_db_state.t (a int) affinity = 'table'")
+	tk.MustExec("drop table test_db_state.t")
+	sql := "flashback table t to t1"
+	tk1, tk2, ch := prepareTestControlParallelExecSQL(t, store)
+	var err1, err2 error
+	var wg util.WaitGroupWrapper
+	wg.Run(func() { err1 = tk1.ExecToErr(sql) })
+	wg.Run(func() {
+		<-ch
+		err2 = tk2.ExecToErr(sql)
+	})
+	wg.Wait()
+	require.NoError(t, err1)
+	require.ErrorContains(t, err2, "Table 't1' already exists")
+	checkAffinityGroupsInPD(t, dom, "test_db_state", "t1", true)
 }

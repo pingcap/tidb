@@ -16,14 +16,18 @@ package ddl
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	tikv "github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
@@ -205,4 +209,60 @@ func BuildAffinityGroupDefinitionsForTest(
 	partitionDefs []model.PartitionDefinition,
 ) (map[string][]pdhttp.AffinityGroupKeyRange, error) {
 	return buildAffinityGroupDefinitions(codec, tblInfo, partitionDefs)
+}
+
+// createRecoveredTablesAffinityGroups creates the affinity groups of the tables
+// being recovered: dropping or truncating a table deleted its groups. Recovery
+// rescues data that GC deletes soon, so a failure here does not cancel it. The
+// tables are recovered without some of their groups, and the job returns a
+// warning that names them, so the groups can be created again with ALTER TABLE
+// ... AFFINITY. It runs after the checks that can cancel the recovery step, and
+// creating groups is idempotent, so retrying the step is safe. If a retry is
+// cancelled after an earlier attempt created groups, the groups are kept: the
+// same table ID may be recovered by another job, whose groups they then are.
+// A later recovery or ALTER TABLE ... AFFINITY of the table takes them over.
+func createRecoveredTablesAffinityGroups(jobCtx *jobContext, job *model.Job, recoverInfos []*model.RecoverTableInfo) {
+	var (
+		failedTables []string
+		firstErr     error
+	)
+	for _, recoverInfo := range recoverInfos {
+		if recoverInfo.TableInfo.Affinity == nil {
+			continue
+		}
+		var err error
+		failpoint.InjectCall("beforeCreateRecoveredTableAffinityGroups", recoverInfo.TableInfo, &err)
+		if err == nil {
+			err = createTableAffinityGroupsInPD(jobCtx, recoverInfo.TableInfo)
+		}
+		if err == nil {
+			// If the job is cancelled later, the groups are kept; the log tells
+			// which job requested them.
+			logutil.DDLLogger().Info("create affinity groups request of a recovered table succeeded",
+				zap.Int64("jobID", job.ID), zap.Int64("tableID", recoverInfo.TableInfo.ID))
+			continue
+		}
+		logutil.DDLLogger().Error("failed to create affinity groups of a recovered table",
+			zap.Int64("jobID", job.ID), zap.Int64("tableID", recoverInfo.TableInfo.ID), zap.Error(err))
+		failedTables = append(failedTables, recoverInfo.TableInfo.Name.O)
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	if len(failedTables) == 0 {
+		// Drop the warning of an earlier attempt of this step.
+		if job.ReorgMeta != nil {
+			id := dbterror.ClassDDL.Synthesize(terror.CodeUnknown, "").ID()
+			delete(job.ReorgMeta.Warnings, id)
+			delete(job.ReorgMeta.WarningsCount, id)
+		}
+		return
+	}
+	warn := dbterror.ClassDDL.Synthesize(terror.CodeUnknown, fmt.Sprintf(
+		"failed to create affinity groups for recovered tables %s in job %d, run ALTER TABLE ... AFFINITY to create them again: %v",
+		strings.Join(failedTables, ", "), job.ID, firstErr))
+	if job.ReorgMeta == nil {
+		job.ReorgMeta = &model.DDLReorgMeta{}
+	}
+	job.SetWarnings(map[errors.ErrorID]*terror.Error{warn.ID(): warn}, map[errors.ErrorID]int64{warn.ID(): 1})
 }

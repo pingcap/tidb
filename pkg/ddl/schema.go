@@ -424,6 +424,7 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 				return ver, errors.Trace(err)
 			}
 		}
+		createRecoveredTablesAffinityGroups(jobCtx, job, recoverTbls)
 		schemaInfo.State = model.StatePublic
 		// use to update InfoSchema
 		job.SchemaID = schemaInfo.ID
