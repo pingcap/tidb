@@ -158,7 +158,8 @@ func TestParseNgramBooleanMode(t *testing.T) {
 			input: "+*foo",
 			want:  "M[] S[foo] N[]",
 		},
-		// '>', '<' and '~' only change relevance: they are delimiters here.
+		// '>', '<' and '~' only change relevance: the word stays optional unless
+		// a '+' or '-' before them requires or excludes it.
 		{
 			name:  "ranking operator '>' leaves the word optional",
 			input: ">foo",
@@ -270,9 +271,34 @@ func TestParseNgramBooleanMode(t *testing.T) {
 			want:  `M[] S[1] N[]`,
 		},
 		{
-			name:  "a ranking operator after '+' ends the prefix",
+			name:  "ranking operators after '+' keep the word required",
 			input: "+>~foo",
-			want:  "M[] S[foo] N[]",
+			want:  "M[+foo] S[] N[]",
+		},
+		{
+			name:  "ranking operator after '+' keeps the word required",
+			input: "+>apple banana",
+			want:  "M[+apple] S[banana] N[]",
+		},
+		{
+			name:  "ranking operator after '-' keeps the word excluded",
+			input: "banana ->apple",
+			want:  "M[] S[banana] N[-apple]",
+		},
+		{
+			name:  "'+' after a ranking operator still requires the word",
+			input: "<+apple",
+			want:  "M[+apple] S[] N[]",
+		},
+		{
+			name:  "a ranking operator inside a word is a delimiter",
+			input: "+apple>banana",
+			want:  "M[+apple] S[banana] N[]",
+		},
+		{
+			name:  "ranking operator before a phrase keeps it required",
+			input: `+>"foo bar"`,
+			want:  `M[+"foo bar"] S[] N[]`,
 		},
 	}
 

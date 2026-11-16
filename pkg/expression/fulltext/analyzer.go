@@ -115,6 +115,14 @@ func AnalyzerConfigFromSessionVars(sessVars *variable.SessionVars, parserType mo
 	if err != nil {
 		return AnalyzerConfig{}, err
 	}
+	// Setting either variable checks it against the other, but two concurrent
+	// updates, or updates between the two reads above, can still give a
+	// minimum above the maximum. The STANDARD analyzer would then drop every
+	// token and a search would silently match nothing, so the pair is refused.
+	if minTokenSize > maxTokenSize {
+		return AnalyzerConfig{}, fmt.Errorf("fulltext analyzer: %s (%d) is greater than %s (%d)",
+			vardef.InnodbFtMinTokenSize, minTokenSize, vardef.InnodbFtMaxTokenSize, maxTokenSize)
+	}
 	ngramTokenSize, err := getFulltextIntSysVar(sessVars, vardef.NgramTokenSize)
 	if err != nil {
 		return AnalyzerConfig{}, err

@@ -43,8 +43,10 @@ type ngramPhraseBuilder struct {
 //   - Quoted phrase is normalized into a space-joined string.
 //   - Empty quoted phrases are ignored.
 //   - Only '+' and '-' are accepted as unary operators.
-//   - '<', '>' and '~' only change relevance, so they act as delimiters and
-//     the word after them stays optional.
+//   - '<', '>' and '~' only change relevance. As in MySQL's scanner they are
+//     operators only where '+' and '-' are, and leave a '+' or '-' before
+//     them in force: '>foo' is optional, '+>foo' required, '->foo' excluded.
+//     Elsewhere they are delimiters.
 //   - '@' is no operator to MySQL's ngram scanner, which skips it like any
 //     other delimiter, so a word after it is an ordinary word.
 //   - Operators '(' and ')' are currently unsupported.

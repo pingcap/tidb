@@ -107,6 +107,27 @@ func TestAnalyzeStandardV1ReadsTokenSizesFromSessionContext(t *testing.T) {
 	}, tokens)
 }
 
+// TestAnalyzerConfigRefusesInvertedTokenSizes covers a minimum token size above
+// the maximum, which concurrent updates of the two variables can store or a
+// reader can observe though each update was validated. The configuration is
+// refused instead of an analyzer that drops every token.
+func TestAnalyzerConfigRefusesInvertedTokenSizes(t *testing.T) {
+	sctx := newFulltextTestContext(t)
+	setGlobalSysVar(t, sctx, vardef.InnodbFtMinTokenSize, "16")
+	setGlobalSysVar(t, sctx, vardef.InnodbFtMaxTokenSize, "10")
+
+	_, err := AnalyzerConfigFromSessionVars(sctx.GetSessionVars(), model.FullTextParserTypeStandardV1)
+	require.ErrorContains(t, err, "innodb_ft_min_token_size (16) is greater than innodb_ft_max_token_size (10)")
+	_, err = AnalyzeStandardV1(sctx, "distributed database")
+	require.Error(t, err)
+
+	setGlobalSysVar(t, sctx, vardef.InnodbFtMinTokenSize, "10")
+	config, err := AnalyzerConfigFromSessionVars(sctx.GetSessionVars(), model.FullTextParserTypeStandardV1)
+	require.NoError(t, err)
+	require.Equal(t, 10, config.InnodbFtMinTokenSize)
+	require.Equal(t, 10, config.InnodbFtMaxTokenSize)
+}
+
 func TestAnalyzeNgramV1(t *testing.T) {
 	sctx := newFulltextTestContext(t)
 
