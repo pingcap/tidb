@@ -7442,6 +7442,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-ingestor-engineapi"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "tidb-ingestor-errdef"
 version = "0.0.0"
 dependencies = [
@@ -7475,6 +7483,32 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "uuid",
+]
+
+[[package]]
+name = "tidb-ingestor-simplesst"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "hex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tidb-config-configtypes",
+ "tidb-go-rand",
+ "tidb-gocontext",
+ "tidb-goruntime",
+ "tidb-ingestor-engineapi",
+ "tidb-lightning-backend",
+ "tidb-lightning-common",
+ "tidb-lightning-log",
+ "tidb-lightning-membuf",
+ "tidb-lightning-verification",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-metrics",
+ "tidb-objstore",
+ "tidb-terror",
 ]
 
 [[package]]

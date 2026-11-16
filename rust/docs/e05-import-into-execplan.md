@@ -342,8 +342,17 @@ Remaining, in order:
    next-gen FROM SELECT returns Go's "outside materialized view
    maintenance" error: Go only runs it (`ImportStepQuery`) during
    materialized-view maintenance, and materialized views are not ported.
-6. `pkg/ingestor/simplesst`.
-7. `pkg/ingestor/globalsort`, `engineapi`, and the external-engine ingest.
+6. Done (the PR after #49): `pkg/ingestor/simplesst` as
+   `tidb-ingestor-simplesst` (sorted KV and stat file codecs, `Writer`,
+   `OneFileWriter`, `KVReader`/`StatsReader` with the concurrent hotspot
+   reader, `MergeKVIter`, `MergePropIter`, `GetReadRangeFromProps`,
+   `GetAllFileNames`), `engineapi`'s `Range`/`ConflictInfo`/`OnDuplicateKey`
+   as `tidb-ingestor-engineapi`, and Go `math/rand`'s `Intn` for the
+   partition prefixes. Pinned by a 24-case Go capture (`zzprobe/e05sst`):
+   every file's bytes, the writer summaries, and what the readers return,
+   for both writers, the 4 duplicate actions, and 0, 1 and 60 rows.
+7. `pkg/ingestor/globalsort`, the rest of `engineapi`, and the external-engine
+   ingest.
 8. The DXF global-sort steps (encode and sort, merge sort, write and
    ingest), `clean_up.go`, and next-gen async prepare.
 9. Conflict collection and resolution, the global-sort live acceptance;

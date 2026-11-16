@@ -28,3 +28,9 @@ pub static ERR_CHECKSUM_MISMATCH: LazyLock<TerrorError> = LazyLock::new(|| {
         "Lighting:Restore:ErrChecksumMismatch",
     )
 });
+
+/// Go `ErrFoundDuplicateKeys`. The arguments are byte strings formatted
+/// with `%x`, so callers pass the hex text to `generate`.
+pub static ERR_FOUND_DUPLICATE_KEYS: LazyLock<TerrorError> = LazyLock::new(|| {
+    normalize("found duplicate key '%x', value '%x'", "Lightning:Restore:ErrFoundDuplicateKey")
+});

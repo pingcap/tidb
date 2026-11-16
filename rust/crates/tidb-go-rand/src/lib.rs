@@ -87,6 +87,57 @@ impl Rand {
     pub fn uint32(&mut self) -> u32 {
         (self.int63() >> 31) as u32
     }
+
+    /// Go `Rand.Int31`.
+    pub fn int31(&mut self) -> i32 {
+        (self.int63() >> 32) as i32
+    }
+
+    /// Go `Rand.Int63n`.
+    ///
+    /// # Panics
+    /// `n` is not positive, as Go panics.
+    pub fn int63n(&mut self, n: i64) -> i64 {
+        assert!(n > 0, "invalid argument to Int63n");
+        if n & (n - 1) == 0 {
+            return self.int63() & (n - 1);
+        }
+        let max = ((1u64 << 63) - 1 - (1u64 << 63) % n as u64) as i64;
+        let mut v = self.int63();
+        while v > max {
+            v = self.int63();
+        }
+        v % n
+    }
+
+    /// Go `Rand.Int31n`.
+    ///
+    /// # Panics
+    /// `n` is not positive, as Go panics.
+    pub fn int31n(&mut self, n: i32) -> i32 {
+        assert!(n > 0, "invalid argument to Int31n");
+        if n & (n - 1) == 0 {
+            return self.int31() & (n - 1);
+        }
+        let max = ((1u32 << 31) - 1 - (1u32 << 31) % n as u32) as i32;
+        let mut v = self.int31();
+        while v > max {
+            v = self.int31();
+        }
+        v % n
+    }
+
+    /// Go `Rand.Intn`.
+    ///
+    /// # Panics
+    /// `n` is not positive, as Go panics.
+    pub fn intn(&mut self, n: i64) -> i64 {
+        assert!(n > 0, "invalid argument to Intn");
+        if n <= i64::from(i32::MAX) {
+            return i64::from(self.int31n(n as i32));
+        }
+        self.int63n(n)
+    }
 }
 
 #[cfg(test)]
@@ -103,6 +154,19 @@ mod tests {
                 assert_eq!(r.int63(), *v, "seed {seed}");
             }
             assert_eq!(r.uint32(), *uint32, "seed {seed}");
+        }
+    }
+
+    /// Go 1.27.3 `rand.New(rand.NewSource(seed)).Intn(n)`, printed by
+    /// `zzprobe/e05sst`.
+    #[test]
+    fn intn_matches_go() {
+        let want: &[(i64, i64, [i64; 4])] = include!("../testdata/go_rand_intn.txt");
+        for (seed, n, values) in want {
+            let mut r = Rand::new(*seed);
+            for v in values {
+                assert_eq!(r.intn(*n), *v, "seed {seed} n {n}");
+            }
         }
     }
 }

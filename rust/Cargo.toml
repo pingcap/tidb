@@ -331,6 +331,8 @@ members = [
     "crates/tidb-ddl",
     "crates/tidb-ddl-ingest",
     "crates/tidb-ingestor-ingestctrl",
+    "crates/tidb-ingestor-engineapi",
+    "crates/tidb-ingestor-simplesst",
     "crates/tidb-ddl-jobsubmit",
     "crates/tidb-ddl-systable",
     "crates/tidb-stmtsummary",
