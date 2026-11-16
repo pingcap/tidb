@@ -16,6 +16,7 @@ package diagnosticlog
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -42,37 +44,73 @@ func NewPublisher(directory string) *Publisher { return &Publisher{directory: di
 // name. A failed attempt preserves previous successes; cleanup follows publication.
 // write must emit details followed by the footer with the supplied timestamp.
 func (p *Publisher) Publish(start time.Time, write func(io.Writer, time.Time) error) (string, error) {
+	return p.publishWithContext(context.Background(), start, write)
+}
+
+func (p *Publisher) publishWithContext(ctx context.Context, start time.Time, write func(io.Writer, time.Time) error) (string, error) {
 	if !p.mu.TryLock() {
 		observe("index_usage", "busy")
 		return "", fmt.Errorf("index usage export already running")
 	}
 	defer p.mu.Unlock()
-	name, err := p.publish(start, write)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(p.directory, 0o750); err != nil {
+		observe("index_usage", "export_failed")
+		return "", err
+	}
+	// Only this publisher writes in the node directory. Any temporary files
+	// from previous attempts are now orphaned, including aliases of formal files.
+	entries, err := os.ReadDir(p.directory)
+	if err != nil {
+		observe("index_usage", "cleanup_failed")
+	}
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		if formal, ok := strings.CutSuffix(entry.Name(), ".tmp"); ok && !entry.IsDir() && snapshotName.MatchString(formal) {
+			p.remove(entry.Name())
+		}
+	}
+	name, err := p.publish(ctx, start, write)
 	if err != nil {
 		observe("index_usage", "export_failed")
 		return "", err
 	}
 	observe("index_usage", "published")
-	entries, err := os.ReadDir(p.directory)
-	if err != nil {
-		observe("index_usage", "cleanup_failed")
-		return name, nil
-	}
 	for _, entry := range entries {
-		if entry.Name() != filepath.Base(name) && snapshotName.MatchString(entry.Name()) && !entry.IsDir() {
-			if err := os.Remove(filepath.Join(p.directory, entry.Name())); err != nil {
-				observe("index_usage", "cleanup_failed")
-			}
+		if snapshotName.MatchString(entry.Name()) && !entry.IsDir() {
+			p.remove(entry.Name())
 		}
 	}
 	return name, nil
 }
 
-func (p *Publisher) publish(start time.Time, write func(io.Writer, time.Time) error) (string, error) {
-	start = start.UTC().Truncate(time.Microsecond)
-	if err := os.MkdirAll(p.directory, 0o750); err != nil {
+func (p *Publisher) remove(name string) {
+	if err := os.Remove(filepath.Join(p.directory, name)); err != nil && !os.IsNotExist(err) {
+		observe("index_usage", "cleanup_failed")
+	}
+}
+
+type snapshotWriter struct {
+	ctx context.Context
+	io.Writer
+}
+
+func (w snapshotWriter) Write(data []byte) (int, error) {
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return w.Writer.Write(data)
+}
+
+func (p *Publisher) publish(ctx context.Context, start time.Time, write func(io.Writer, time.Time) error) (string, error) {
+	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	start = start.UTC().Truncate(time.Microsecond)
 	var id [16]byte
 	if _, err := rand.Read(id[:]); err != nil {
 		return "", err
@@ -92,9 +130,15 @@ func (p *Publisher) publish(start time.Time, write func(io.Writer, time.Time) er
 	// checked below before publication.
 	defer func() { _ = f.Close() }()
 	buffer := bufio.NewWriter(f)
-	writeErr := write(buffer, start)
+	writeErr := write(snapshotWriter{ctx: ctx, Writer: buffer}, start)
+	if writeErr == nil {
+		writeErr = ctx.Err()
+	}
 	if writeErr == nil {
 		writeErr = buffer.Flush()
+	}
+	if writeErr == nil {
+		writeErr = ctx.Err()
 	}
 	if writeErr == nil {
 		writeErr = f.Sync()
@@ -105,6 +149,9 @@ func (p *Publisher) publish(start time.Time, write func(io.Writer, time.Time) er
 	}
 	if closeErr != nil {
 		return "", closeErr
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	// A hard link exposes the fully closed inode atomically and, unlike rename,
 	// cannot replace an existing formal file even on a random-name collision.

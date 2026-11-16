@@ -374,8 +374,12 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int, inShar
 		}
 		return nil
 	}
-	lockCtx.OnDeadlock = func(deadlock *tikverr.ErrDeadlock) {
-		recordDeadlock(seVars.TxnCtx.StartTS, deadlock)
+	lockCtx.OnDeadlock = recordDeadlockHistory
+	if diagnosticlog.DeadlockEnabled() {
+		txnID := seVars.TxnCtx.StartTS
+		lockCtx.OnDeadlock = func(deadlock *tikverr.ErrDeadlock) {
+			recordDeadlock(txnID, deadlock)
+		}
 	}
 	if lockCtx.ForUpdateTS > 0 && seVars.AssertionLevel != variable.AssertionLevelOff {
 		lockCtx.InitCheckExistence(numKeys)
@@ -383,12 +387,16 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int, inShar
 	return lockCtx, nil
 }
 
-func recordDeadlock(txnID uint64, deadlock *tikverr.ErrDeadlock) {
+func recordDeadlockHistory(deadlock *tikverr.ErrDeadlock) {
 	cfg := config.GetGlobalConfig()
 	if !deadlock.IsRetryable || cfg.PessimisticTxn.DeadlockHistoryCollectRetryable {
 		rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
 		deadlockhistory.GlobalDeadlockHistory.Push(rec)
 	}
+}
+
+func recordDeadlock(txnID uint64, deadlock *tikverr.ErrDeadlock) {
+	recordDeadlockHistory(deadlock)
 	// The independent file selection applies after the original history policy.
 	diagnosticlog.RecordDeadlock(txnID, deadlock)
 }

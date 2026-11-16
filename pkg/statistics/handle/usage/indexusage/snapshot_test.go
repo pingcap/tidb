@@ -35,7 +35,7 @@ func TestDiagnosticSnapshotCumulativeAndEmpty(t *testing.T) {
 	c.merge(indexUsage{GlobalIndexID{101, 1}: Sample{QueryTotal: math.MaxUint64, KvReqTotal: 9007199254740993, RowAccessTotal: 42, PercentageAccess: [7]uint64{1, 2, 3, 4, 5, 6, 7}}, GlobalIndexID{101, 2}: Sample{LastUsedAt: time.Date(2026, 10, 23, 1, 59, 58, 123000000, time.UTC), QueryTotal: 120}})
 	at := time.Date(2026, 10, 23, 2, 0, 3, 123456789, time.UTC)
 	var out bytes.Buffer
-	require.NoError(t, c.writeSnapshot(&out, at, 1))
+	require.NoError(t, c.writeSnapshot(&out, at, 1, 2))
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	require.Len(t, lines, 3)
 	require.Contains(t, lines[0], `"query_total":18446744073709551615`)
@@ -81,7 +81,7 @@ func TestDiagnosticSnapshotFailureAndConcurrentChanges(t *testing.T) {
 		}
 		return out.Write(b)
 	})
-	require.NoError(t, c.writeSnapshot(writer, time.Now(), 1))
+	require.NoError(t, c.writeSnapshot(writer, time.Now(), 1, maxSnapshotIndexes))
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	require.Len(t, lines, 2)
 	var footer struct {
@@ -94,4 +94,14 @@ func TestDiagnosticSnapshotFailureAndConcurrentChanges(t *testing.T) {
 	require.ErrorContains(t, err, "disk full")
 	require.Equal(t, 1, written)
 	var _ io.Writer = writer
+}
+
+func TestDiagnosticSnapshotIndexBudget(t *testing.T) {
+	c := NewCollector()
+	c.merge(indexUsage{GlobalIndexID{1, 1}: Sample{QueryTotal: 1}, GlobalIndexID{1, 2}: Sample{QueryTotal: 2}})
+	var out bytes.Buffer
+	require.ErrorContains(t, c.writeSnapshot(&out, time.Now(), 1, 1), "snapshot has 2 indexes, limit is 1")
+	require.Empty(t, out.Bytes())
+	require.NoError(t, c.writeSnapshot(&out, time.Now(), 1, 2))
+	require.Contains(t, out.String(), `"row_count":2`)
 }

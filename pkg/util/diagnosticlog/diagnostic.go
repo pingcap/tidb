@@ -16,6 +16,7 @@
 package diagnosticlog
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -61,7 +62,9 @@ func Initialize(types []string, directory string) error {
 	}
 	if deadlock {
 		// Conservative initial rotation limits for the opt-in diagnostic stream.
-		writer := &lumberjack.Logger{Filename: filepath.Join(directory, "tidb-deadlock.log"), MaxSize: 100, MaxBackups: 3, MaxAge: 7}
+		writer := &deadlockFileWriter{Logger: &lumberjack.Logger{
+			Filename: filepath.Join(directory, "tidb-deadlock.log"), MaxSize: 100, MaxBackups: 3, MaxAge: 7,
+		}}
 		next.deadlock = newDeadlockLogger(writer)
 	}
 	if indexUsage {
@@ -83,6 +86,12 @@ func Close() error {
 	return nil
 }
 
+// DeadlockEnabled lets callers use the existing history callback when logging is off.
+func DeadlockEnabled() bool {
+	current := global.Load()
+	return current != nil && current.deadlock != nil
+}
+
 // RecordDeadlock is independent of the in-memory deadlock history's filters.
 func RecordDeadlock(txnID uint64, event *tikverr.ErrDeadlock) {
 	current := global.Load()
@@ -98,11 +107,56 @@ func IndexUsageEnabled() bool {
 }
 
 // PublishIndexUsage captures collection-start time and publishes only a complete file.
-func PublishIndexUsage(write func(io.Writer, time.Time) error) error {
+func PublishIndexUsage(ctx context.Context, write func(io.Writer, time.Time) error) error {
 	current := global.Load()
 	if current == nil || current.indexUsage == nil {
 		return nil
 	}
-	_, err := current.indexUsage.Publish(time.Now(), write)
+	_, err := current.indexUsage.publishWithContext(ctx, time.Now(), write)
+	return err
+}
+
+// deadlockFileWriter checks the inherited file on the worker's first write.
+// Finish a torn line in the old file so the next event starts on its own line.
+type deadlockFileWriter struct {
+	*lumberjack.Logger
+	tailChecked bool
+}
+
+func (w *deadlockFileWriter) Write(data []byte) (int, error) {
+	if !w.tailChecked {
+		if err := w.repairTail(len(data)); err != nil {
+			return 0, err
+		}
+		w.tailChecked = true
+	}
+	return w.Logger.Write(data)
+}
+
+func (w *deadlockFileWriter) repairTail(nextBytes int) error {
+	f, err := os.OpenFile(w.Filename, os.O_RDWR|os.O_APPEND, 0)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Size() == 0 || info.Size()+int64(nextBytes) >= int64(w.MaxSize)<<20 {
+		// Lumberjack will open a fresh file when this batch reaches its limit.
+		return nil
+	}
+	var tail [1]byte
+	if _, err := f.ReadAt(tail[:], info.Size()-1); err != nil {
+		return err
+	}
+	if tail[0] == '\n' {
+		return nil
+	}
+	_, err = f.Write([]byte{'\n'})
 	return err
 }

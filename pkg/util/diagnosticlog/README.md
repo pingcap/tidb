@@ -25,10 +25,11 @@ The pessimistic-lock callback first applies the existing in-memory history polic
 then independently records an event. Retryable events can therefore be logged even
 when they are excluded from `INFORMATION_SCHEMA.DEADLOCKS`.
 
-The callback constructs a bounded JSON record and attempts queue admission. One
-background worker batches writes to `tidb-deadlock.log` using the existing
-lumberjack rotation implementation. No file I/O or fsync runs on the callback.
-Admission never waits for queue capacity; a full queue drops the new event.
+With file logging enabled, the callback reserves queue space, then encodes each
+waiting relationship once. A full queue drops the new event before encoding.
+One background worker batches and rotates `tidb-deadlock.log` using lumberjack.
+Before appending after restart, it terminates any partial final line so the next
+event starts on its own line.
 
 Initial limits, subject to workload evaluation:
 
@@ -36,7 +37,7 @@ Initial limits, subject to workload evaluation:
 | --- | --- |
 | Rate and burst, independently for each retryability class | 100 events/s, burst 100 |
 | Event size / waiting relationships | 64 KiB / 64 |
-| Outstanding records / encoded bytes, including in-flight writes | 1,024 / 8 MiB |
+| Outstanding records / bytes, including encoding reservations and in-flight writes | 1,024 / 8 MiB |
 | Batch size / flush interval | 64 KiB / 100 ms |
 | Shutdown drain wait | 5 seconds |
 | Rotation size / backups / age | 100 MiB / 3 / 7 days |
@@ -56,10 +57,12 @@ includes rotation time.
 
 ## Index Usage
 
-The Domain worker exports node-local cumulative counters approximately hourly,
-without resetting them. It first copies index identities, then copies values in
-batches of 2,048 under the collector lock and encodes outside the lock. The result
-is a diagnostic sample, not a single-instant consistent view.
+A dedicated Domain worker exports node-local cumulative counters approximately
+hourly. The GC worker can run while the publisher waits for disk. The exporter
+checks for at most 1,000,000 index identities before copying them, then copies
+values in batches of 2,048 under the collector lock and encodes outside the lock.
+If the identity count exceeds the limit, the round fails before allocating the
+identity list.
 
 Files contain one detail per index and a final footer with collection-start UTC
 time and row count. A valid empty snapshot consists only of the footer. Publication
@@ -68,8 +71,9 @@ flushes, syncs and closes a temporary file before atomically linking it to a uni
 are never replaced. Temporary and formal paths must be on the same filesystem and
 that filesystem must support hard links.
 
-Only successful publication removes older formal snapshots. Failure keeps the
-previous successful file; it is not relabeled as a new-hour snapshot. Retaining one
-formal snapshot is best effort and does not guarantee a collector has uploaded it.
-The next attempt is scheduled one hour after the previous attempt completes;
-there is no overlapping export or catch-up loop.
+Each attempt removes temporary files left by interrupted attempts. Successful
+publication retains one formal snapshot on a best-effort basis. Failure keeps the
+previous successful file with its original timestamp. The next round is scheduled
+one hour after each attempt finishes. At shutdown, the Domain cancels the export
+and waits up to five seconds for the worker. If a disk operation outlasts that wait,
+the worker retains ownership and checks cancellation before exposing a formal file.

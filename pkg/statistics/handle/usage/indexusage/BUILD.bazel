@@ -23,7 +23,7 @@ go_test(
     ],
     embed = [":indexusage"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         "//pkg/util/diagnosticlog",
         "@com_github_stretchr_testify//require",

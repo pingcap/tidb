@@ -54,8 +54,14 @@ func TestDiagnosticDeadlockQueueBoundsAndShutdown(t *testing.T) {
 				t.Fatal("writer not entered")
 			}
 			before := testutil.ToFloat64(metrics.DiagnosticLogCounter.WithLabelValues("deadlock", "queue_full"))
+			truncated := metrics.DiagnosticLogCounter.WithLabelValues("deadlock", "truncated")
+			beforeTruncated := testutil.ToFloat64(truncated)
+			for len(event.WaitChain) <= maxDeadlockEdges {
+				event.WaitChain = append(event.WaitChain, event.WaitChain[0])
+			}
 			l.record(2, event)
 			require.Equal(t, before+1, testutil.ToFloat64(metrics.DiagnosticLogCounter.WithLabelValues("deadlock", "queue_full")))
+			require.Equal(t, beforeTruncated, testutil.ToFloat64(truncated), "a full queue must reject the event before encoding")
 			require.ErrorContains(t, l.close(), "timed out")
 			before = testutil.ToFloat64(metrics.DiagnosticLogCounter.WithLabelValues("deadlock", "closed"))
 			l.record(3, event)
@@ -74,7 +80,7 @@ func TestDiagnosticDeadlockOwnsQueuedDataAndDrains(t *testing.T) {
 	event.WaitChain[0].Key[0] = 0
 	event.WaitChain[0].Txn = 0
 	require.NoError(t, l.close())
-	var record deadlockRecord
+	var record decodedDeadlockRecord
 	require.NoError(t, json.Unmarshal(bytes.TrimSpace([]byte(w.String())), &record))
 	require.Equal(t, "ABCD", *record.WaitChain[0].Key)
 	require.Equal(t, "18446744073709551615", record.WaitChain[0].TxnID)
@@ -117,7 +123,7 @@ func TestDiagnosticDeadlockShortWriteAndConcurrentClose(t *testing.T) {
 		l.record(2, deadlockFixture(t))
 		require.NoError(t, l.close())
 		lines := bytes.Split(bytes.TrimSpace(w.Bytes()), []byte{'\n'})
-		var record deadlockRecord
+		var record decodedDeadlockRecord
 		require.NoError(t, json.Unmarshal(lines[len(lines)-1], &record))
 		require.Equal(t, "2", record.TxnID)
 	})

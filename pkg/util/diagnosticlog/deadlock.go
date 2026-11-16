@@ -45,18 +45,14 @@ type deadlockEdge struct {
 	ResourceType string  `json:"resource_type"`
 }
 
-type deadlockRecord struct {
-	RecordType              string         `json:"record_type"`
-	ObservedAt              time.Time      `json:"observed_at"`
-	TxnID                   string         `json:"txn_id"`
-	Retryable               bool           `json:"retryable"`
-	WaitChain               []deadlockEdge `json:"wait_chain"`
-	OriginalWaitChainLength int            `json:"original_wait_chain_length"`
-	OutputWaitChainLength   int            `json:"output_wait_chain_length"`
-	Truncated               bool           `json:"truncated"`
+type deadlockHeader struct {
+	RecordType string    `json:"record_type"`
+	ObservedAt time.Time `json:"observed_at"`
+	TxnID      string    `json:"txn_id"`
+	Retryable  bool      `json:"retryable"`
 }
 
-// The budgets include queued records and the batch currently being written.
+// The budgets include in-flight encoders, queued records and the batch being written.
 // They are deliberately finite even if the file writer stalls indefinitely.
 type deadlockLoggerOptions struct {
 	maxRecords    int
@@ -112,21 +108,37 @@ func (l *deadlockLogger) record(txnID uint64, event *tikverr.ErrDeadlock) {
 		observe("deadlock", "rate_limited")
 		return
 	}
-	line, truncated := encodeDeadlock(txnID, event, time.Now(), maxDeadlockEdges, maxDeadlockBytes)
-	if len(line) == 0 {
-		observe("deadlock", "oversized")
-		return
-	}
-	if truncated {
-		observe("deadlock", "truncated")
-	}
+	// Reserve room before inspecting the wait chain. Charge the actual line
+	// size once encoding completes and release the reservation on every exit.
+	reserveBytes := min(maxDeadlockBytes, l.options.maxBytes)
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	if l.closed {
+		l.mu.Unlock()
 		observe("deadlock", "closed")
 		return
 	}
-	if l.pendingRecords >= l.options.maxRecords || len(line) > l.options.maxBytes-l.pendingBytes {
+	if l.pendingRecords >= l.options.maxRecords || reserveBytes > l.options.maxBytes-l.pendingBytes {
+		l.mu.Unlock()
+		observe("deadlock", "queue_full")
+		return
+	}
+	l.pendingRecords++
+	l.pendingBytes += reserveBytes
+	l.mu.Unlock()
+
+	line, truncated := encodeDeadlock(txnID, event, time.Now(), maxDeadlockEdges, maxDeadlockBytes)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.pendingRecords--
+	l.pendingBytes -= reserveBytes
+	switch {
+	case l.closed:
+		observe("deadlock", "closed")
+		return
+	case len(line) == 0:
+		observe("deadlock", "oversized")
+		return
+	case len(line) > l.options.maxBytes-l.pendingBytes:
 		observe("deadlock", "queue_full")
 		return
 	}
@@ -134,6 +146,9 @@ func (l *deadlockLogger) record(txnID uint64, event *tikverr.ErrDeadlock) {
 	case l.queue <- line:
 		l.pendingRecords++
 		l.pendingBytes += len(line)
+		if truncated {
+			observe("deadlock", "truncated")
+		}
 	default:
 		observe("deadlock", "queue_full")
 	}
@@ -220,13 +235,27 @@ func (l *deadlockLogger) close() error {
 }
 
 func encodeDeadlock(txnID uint64, event *tikverr.ErrDeadlock, observed time.Time, edgeLimit, byteLimit int) ([]byte, bool) {
-	record := deadlockRecord{RecordType: "deadlock", ObservedAt: observed.UTC(), TxnID: strconv.FormatUint(txnID, 10), Retryable: event.IsRetryable,
-		WaitChain: make([]deadlockEdge, 0, min(len(event.WaitChain), edgeLimit)), OriginalWaitChainLength: len(event.WaitChain), Truncated: len(event.WaitChain) > edgeLimit}
-	for _, raw := range event.WaitChain[:min(len(event.WaitChain), edgeLimit)] {
+	const (
+		originalPrefix  = `],"original_wait_chain_length":`
+		outputPrefix    = `,"output_wait_chain_length":`
+		truncatedPrefix = `,"truncated":`
+	)
+	originalCount := len(event.WaitChain)
+	header, err := json.Marshal(deadlockHeader{
+		RecordType: "deadlock", ObservedAt: observed.UTC(), TxnID: strconv.FormatUint(txnID, 10), Retryable: event.IsRetryable,
+	})
+	if err != nil {
+		return nil, originalCount != 0
+	}
+	line := append(header[:len(header)-1], `,"wait_chain":[`...)
+	var digits [20]byte
+	originalLength := strconv.AppendInt(digits[:0], int64(originalCount), 10)
+	footerBytes := len(originalPrefix) + len(originalLength) + len(outputPrefix) + len(truncatedPrefix) + len("}\n")
+	count := 0
+	for _, raw := range event.WaitChain[:min(originalCount, edgeLimit)] {
 		// Guard allocation before hexadecimal expansion or protobuf decoding.
 		// A resource tag beyond the line budget cannot supply a bounded digest.
 		if raw == nil || len(raw.Key) > byteLimit/2 {
-			record.Truncated = true
 			break
 		}
 		edge := deadlockEdge{TxnID: strconv.FormatUint(raw.Txn, 10), WaitingFor: strconv.FormatUint(raw.WaitForTxn, 10), ResourceType: "unknown"}
@@ -237,7 +266,14 @@ func encodeDeadlock(txnID uint64, event *tikverr.ErrDeadlock, observed time.Time
 			}
 		}
 		if len(raw.Key) > 0 {
-			key := strings.ToUpper(hex.EncodeToString(raw.Key))
+			const upperHex = "0123456789ABCDEF"
+			var keyBuilder strings.Builder
+			keyBuilder.Grow(2 * len(raw.Key))
+			for _, value := range raw.Key {
+				keyBuilder.WriteByte(upperHex[value>>4])
+				keyBuilder.WriteByte(upperHex[value&0x0f])
+			}
+			key := keyBuilder.String()
 			edge.Key = &key
 		}
 		if tablecodec.IsRecordKey(raw.Key) {
@@ -245,26 +281,37 @@ func encodeDeadlock(txnID uint64, event *tikverr.ErrDeadlock, observed time.Time
 		} else if tablecodec.IsIndexKey(raw.Key) {
 			edge.ResourceType = "index"
 		}
-		record.WaitChain = append(record.WaitChain, edge)
-		record.OutputWaitChainLength = len(record.WaitChain)
-		record.Truncated = len(record.WaitChain) < record.OriginalWaitChainLength
-		encoded, err := json.Marshal(record)
+		encoded, err := json.Marshal(edge)
 		if err != nil {
-			return nil, record.Truncated
+			return nil, count < originalCount
 		}
-		if len(encoded)+1 > byteLimit {
-			record.WaitChain = record.WaitChain[:len(record.WaitChain)-1]
-			record.Truncated = true
+		var outputDigits [20]byte
+		needed := len(line) + len(encoded) + footerBytes + len(strconv.AppendInt(outputDigits[:0], int64(count+1), 10)) + len("false")
+		if count > 0 {
+			needed++ // Comma between entries.
+		}
+		if count+1 < originalCount {
+			needed-- // true is one byte shorter than false.
+		}
+		if needed > byteLimit {
 			break
 		}
+		if count > 0 {
+			line = append(line, ',')
+		}
+		line = append(line, encoded...)
+		count++
 	}
-	record.OutputWaitChainLength = len(record.WaitChain)
-	encoded, err := json.Marshal(record)
-	if err != nil {
-		return nil, record.Truncated
+	truncated := count < originalCount
+	line = append(line, originalPrefix...)
+	line = append(line, originalLength...)
+	line = append(line, outputPrefix...)
+	line = strconv.AppendInt(line, int64(count), 10)
+	line = append(line, truncatedPrefix...)
+	line = strconv.AppendBool(line, truncated)
+	line = append(line, '}', '\n')
+	if len(line) > byteLimit {
+		return nil, truncated
 	}
-	if len(encoded)+1 > byteLimit {
-		return nil, record.Truncated
-	}
-	return append(encoded, '\n'), record.Truncated
+	return line, truncated
 }

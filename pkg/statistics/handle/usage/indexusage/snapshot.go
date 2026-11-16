@@ -16,6 +16,7 @@ package indexusage
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"slices"
 	"time"
@@ -23,6 +24,10 @@ import (
 
 // snapshotBatchSize is an implementation candidate pending workload validation.
 const snapshotBatchSize = 2048
+
+// The full index ID inventory costs 16 bytes per entry. Reject oversized
+// exports before allocating it or holding the collector lock for the scan.
+const maxSnapshotIndexes = 1_000_000
 
 type snapshotEntry struct {
 	LastUsedAt       *time.Time `json:"last_used_at"`
@@ -39,12 +44,17 @@ type snapshotEntry struct {
 // Additions after key enumeration can wait until the next snapshot; deleted keys
 // are skipped. The result deliberately does not claim a single-instant view.
 func (c *Collector) WriteSnapshot(w io.Writer, snapshotTime time.Time) error {
-	return c.writeSnapshot(w, snapshotTime, snapshotBatchSize)
+	return c.writeSnapshot(w, snapshotTime, snapshotBatchSize, maxSnapshotIndexes)
 }
 
-func (c *Collector) writeSnapshot(w io.Writer, snapshotTime time.Time, batchSize int) error {
+func (c *Collector) writeSnapshot(w io.Writer, snapshotTime time.Time, batchSize, indexLimit int) error {
 	c.RLock()
-	keys := make([]GlobalIndexID, 0, len(c.indexUsage))
+	count := len(c.indexUsage)
+	if count > indexLimit {
+		c.RUnlock()
+		return fmt.Errorf("index usage snapshot has %d indexes, limit is %d", count, indexLimit)
+	}
+	keys := make([]GlobalIndexID, 0, count)
 	for id := range c.indexUsage {
 		keys = append(keys, id)
 	}
