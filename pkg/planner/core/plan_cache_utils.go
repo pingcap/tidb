@@ -321,8 +321,17 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, hack.Slice(hostName)...)
 	hash = append(hash, hack.Slice(stmtDB)...)
 	hash = append(hash, hack.Slice(stmt.StmtText)...)
-	hash = codec.EncodeInt(hash, stmt.SchemaVersion)
+	if stmt.snapshotVersion != nil {
+		// Zero distinguishes this key from keys that use a global schema version.
+		hash = codec.EncodeInt(hash, 0)
+	} else {
+		hash = codec.EncodeInt(hash, stmt.SchemaVersion)
+	}
 	hash = hashInt64Uint64Map(hash, stmt.RelateVersion)
+	if stmt.snapshotVersion != nil {
+		hash = codec.EncodeInt(hash, int64(len(stmt.snapshotVersion)))
+		hash = hashInt64Uint64Map(hash, stmt.snapshotVersion)
+	}
 	hash = append(hash, pruneMode...)
 	// Only be set in rc or for update read and leave it default otherwise.
 	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
@@ -569,6 +578,9 @@ type PlanCacheStmt struct {
 
 	// RelateVersion stores the true cache plan table schema version, since each table schema can be updated separately in transaction.
 	RelateVersion map[int64]uint64
+	// snapshotVersion contains table revisions before MDL overrides, or nil when
+	// the cache key must retain the global schema version.
+	snapshotVersion map[int64]uint64
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
