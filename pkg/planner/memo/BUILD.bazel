@@ -26,11 +26,10 @@ go_test(
         "group_expr_test.go",
         "group_test.go",
         "main_test.go",
-        "pattern_test.go",
     ],
     embed = [":memo"],
     flaky = True,
-    shard_count = 22,
+    shard_count = 18,
     deps = [
         "//pkg/domain",
         "//pkg/expression",
