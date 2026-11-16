@@ -194,7 +194,7 @@ func onDropPlacementPolicy(jobCtx *jobContext, job *model.Job) (ver int64, _ err
 		return ver, errors.Trace(err)
 	}
 
-	err = checkPlacementPolicyNotInUse(jobCtx.infoCache, policyInfo)
+	err = checkPlacementPolicyNotInUse(jobCtx.infoCache, metaMut, policyInfo)
 	if err != nil {
 		if dbterror.ErrPlacementPolicyInUse.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -352,11 +352,17 @@ func updateExistPlacementPolicy(t *meta.Mutator, policy *model.PolicyInfo) error
 	return nil
 }
 
-// checking using cached info schema should be enough, for the same reason as
-// checkTableNotExists.
-func checkPlacementPolicyNotInUse(infoCache *infoschema.InfoCache, policy *model.PolicyInfo) error {
+func checkPlacementPolicyNotInUse(infoCache *infoschema.InfoCache, t *meta.Mutator, policy *model.PolicyInfo) error {
+	currVer, err := t.GetSchemaVersion()
+	if err != nil {
+		return err
+	}
 	is := infoCache.GetLatest()
-	err := CheckPlacementPolicyNotInUseFromInfoSchema(is, policy)
+	if is != nil && is.SchemaMetaVersion() == currVer {
+		err = CheckPlacementPolicyNotInUseFromInfoSchema(is, policy)
+	} else {
+		err = CheckPlacementPolicyNotInUseFromMeta(t, policy)
+	}
 	if err != nil {
 		return err
 	}
@@ -452,15 +458,11 @@ func CheckPlacementPolicyNotInUseFromMeta(t *meta.Mutator, policy *model.PolicyI
 			return dbterror.ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
 		}
 
-		tables, err := t.ListTables(context.Background(), dbInfo.ID)
+		err := t.IterTables(dbInfo.ID, func(tblInfo *model.TableInfo) error {
+			return checkPlacementPolicyNotUsedByTable(tblInfo, policy)
+		})
 		if err != nil {
 			return err
-		}
-
-		for _, tblInfo := range tables {
-			if err := checkPlacementPolicyNotUsedByTable(tblInfo, policy); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
