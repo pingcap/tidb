@@ -139,9 +139,10 @@ func assertDiagnosticGoroutineAllowlist(t *testing.T, dump []byte) {
 		require.Equal(t, "@", marker)
 		require.Positive(t, count)
 		checked += count
-		if !hasFrames {
-			// debug=1 suppresses runtime.goexit even when it is the only frame.
-			// Resolve the raw PCs so no other frameless stack escapes the allowlist.
+		if !hasFrames || isRuntimeGoexitGroup(groupHeader) {
+			// A goroutine can be sampled after its user function has returned,
+			// in runtime.goexit or runtime.goexit1. debug=1 hides runtime.goexit.
+			// Resolve every raw PC so only runtime exit stacks bypass the allowlist.
 			require.True(t, isRuntimeGoexitGroup(groupHeader), "goroutine group has no frames: %s", group)
 			continue
 		}
@@ -177,7 +178,7 @@ func isRuntimeGoexitGroup(header []byte) bool {
 		// expanding a stack containing known frames.
 		frames := runtime.CallersFrames([]uintptr{uintptr(pc)})
 		frame, more := frames.Next()
-		if frame.Function != "runtime.goexit" || more {
+		if (frame.Function != "runtime.goexit" && frame.Function != "runtime.goexit1") || more {
 			return false
 		}
 	}

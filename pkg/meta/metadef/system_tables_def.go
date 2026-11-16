@@ -829,6 +829,13 @@ const (
 		NEXT_REFRESH_UNIX_SECONDS bigint DEFAULT NULL,
 		PRIMARY KEY(MVIEW_ID))`
 
+	// CreateTiDBMViewFastRefreshSourceInfoTable stores the input log identities registered by each materialized view.
+	CreateTiDBMViewFastRefreshSourceInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_fast_refresh_source_info (
+		MVIEW_ID bigint NOT NULL,
+		MLOG_ID bigint NOT NULL,
+		PRIMARY KEY(MVIEW_ID, MLOG_ID) CLUSTERED,
+		KEY idx_mlog (MLOG_ID, MVIEW_ID))`
+
 	// CreateTiDBMLogPurgeInfoTable is a table to store current purge scheduling info for each materialized view log.
 	CreateTiDBMLogPurgeInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_info (
 		MLOG_ID bigint NOT NULL,
@@ -1129,6 +1136,8 @@ const (
 	TiDBMaskingPolicyTableName = "tidb_masking_policy"
 	// TiDBMViewRefreshInfoTableName is the name of mysql.tidb_mview_refresh_info.
 	TiDBMViewRefreshInfoTableName = "tidb_mview_refresh_info"
+	// TiDBMViewFastRefreshSourceInfoTableName is the name of mysql.tidb_mview_fast_refresh_source_info.
+	TiDBMViewFastRefreshSourceInfoTableName = "tidb_mview_fast_refresh_source_info"
 	// TiDBMLogPurgeInfoTableName is the name of mysql.tidb_mlog_purge_info.
 	TiDBMLogPurgeInfoTableName = "tidb_mlog_purge_info"
 	// TiDBMViewRefreshHistTableName is the name of mysql.tidb_mview_refresh_hist.
@@ -1211,6 +1220,7 @@ var builtinMySQLTableNames = map[string]struct{}{
 	TiDBWorkloadValuesTableName:                {},
 	TiDBMaskingPolicyTableName:                 {},
 	TiDBMViewRefreshInfoTableName:              {},
+	TiDBMViewFastRefreshSourceInfoTableName:    {},
 	TiDBMLogPurgeInfoTableName:                 {},
 	TiDBMViewRefreshHistTableName:              {},
 	TiDBMViewRefreshAlertTableName:             {},

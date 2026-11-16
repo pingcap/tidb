@@ -212,11 +212,10 @@ type Domain struct {
 		expiredTimeStamp types.Time
 	}
 
-	brOwnerMgr            owner.Manager
-	logBackupAdvancer     *daemon.OwnerDaemon
-	historicalStatsWorker *HistoricalStatsWorker
-	ttlJobManager         atomic.Pointer[ttlworker.JobManager]
-	runawayManager        *runaway.Manager
+	brOwnerMgr        owner.Manager
+	logBackupAdvancer *daemon.OwnerDaemon
+	ttlJobManager     atomic.Pointer[ttlworker.JobManager]
+	runawayManager    *runaway.Manager
 	// resourceGroupsController can be changed via `SetResourceGroupsController`
 	// in unit test.
 	resourceGroupsController atomic.Pointer[rmclient.ResourceGroupsController]
@@ -1853,14 +1852,6 @@ func (do *Domain) GetRUVersion() rmclient.RUVersion {
 	return rmclient.DefaultRUVersion
 }
 
-// SetupHistoricalStatsWorker setups worker
-func (do *Domain) SetupHistoricalStatsWorker(ctx sessionctx.Context) {
-	do.historicalStatsWorker = &HistoricalStatsWorker{
-		tblCH: make(chan int64, 16),
-		sctx:  ctx,
-	}
-}
-
 // SetupDumpFileGCChecker setup sctx
 func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
 	do.dumpFileGcChecker.setupSctx(ctx)
@@ -1876,17 +1867,11 @@ var planReplayerHandleLease atomic.Uint64
 
 func init() {
 	planReplayerHandleLease.Store(uint64(10 * time.Second))
-	enableDumpHistoricalStats.Store(true)
 }
 
 // DisablePlanReplayerBackgroundJob4Test disable plan replayer handle for test
 func DisablePlanReplayerBackgroundJob4Test() {
 	planReplayerHandleLease.Store(0)
-}
-
-// DisableDumpHistoricalStats4Test disable historical dump worker for test
-func DisableDumpHistoricalStats4Test() {
-	enableDumpHistoricalStats.Store(false)
 }
 
 // StartPlanReplayerHandle start plan replayer handle job
@@ -1967,44 +1952,6 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 			}
 		}
 	}, "dumpFileGcChecker")
-}
-
-// GetHistoricalStatsWorker gets historical workers
-func (do *Domain) GetHistoricalStatsWorker() *HistoricalStatsWorker {
-	return do.historicalStatsWorker
-}
-
-// EnableDumpHistoricalStats used to control whether enable dump stats for unit test
-var enableDumpHistoricalStats atomic.Bool
-
-// StartHistoricalStatsWorker start historical workers running
-func (do *Domain) StartHistoricalStatsWorker() {
-	if !enableDumpHistoricalStats.Load() {
-		return
-	}
-	do.wg.Run(func() {
-		logutil.BgLogger().Info("HistoricalStatsWorker started")
-		defer func() {
-			logutil.BgLogger().Info("HistoricalStatsWorker exited.")
-		}()
-		defer util.Recover(metrics.LabelDomain, "HistoricalStatsWorkerLoop", nil, false)
-
-		for {
-			select {
-			case <-do.exit:
-				close(do.historicalStatsWorker.tblCH)
-				return
-			case tblID, ok := <-do.historicalStatsWorker.tblCH:
-				if !ok {
-					return
-				}
-				err := do.historicalStatsWorker.DumpHistoricalStats(tblID, do.StatsHandle())
-				if err != nil {
-					logutil.BgLogger().Warn("dump historical stats failed", zap.Error(err), zap.Int64("tableID", tblID))
-				}
-			}
-		}
-	}, "HistoricalStatsWorker")
 }
 
 // StatsHandle returns the statistic handle.
@@ -2349,21 +2296,34 @@ func (do *Domain) gcStatsWorker() {
 			do.gcStatsWorkerExitPreprocessing()
 			return
 		case <-gcStatsTicker.C:
-			if !do.statsOwner.IsOwner() {
-				continue
-			}
-			err := statsHandle.GCStats(do.InfoSchema(), do.GetSchemaLease())
-			if err != nil {
-				logutil.BgLogger().Warn("GC stats failed", zap.Error(err))
-			}
-			do.CheckAutoAnalyzeWindows()
+			callWithRecover("gcStatsWorker", func() {
+				if !do.statsOwner.IsOwner() {
+					return
+				}
+				err := statsHandle.GCStats(do.InfoSchema(), do.GetSchemaLease())
+				if err != nil {
+					logutil.BgLogger().Warn("GC stats failed", zap.Error(err))
+				}
+				do.CheckAutoAnalyzeWindows()
+			})
 		case <-readMemTicker.C:
-			memory.ForceReadMemStats()
-			do.StatsHandle().StatsCache.TriggerEvict()
+			callWithRecover("gcStatsWorker", func() {
+				memory.ForceReadMemStats()
+				do.StatsHandle().StatsCache.TriggerEvict()
+			})
 		case <-updateStatsHealthyTicker.C:
-			statsHandle.UpdateStatsHealthyMetrics()
+			callWithRecover("gcStatsWorker", func() {
+				statsHandle.UpdateStatsHealthyMetrics()
+			})
 		}
 	}
+}
+
+// callWithRecover calls fn and recovers a panic in it. gcStatsWorker uses it for each
+// tick, because the worker does not restart after it exits.
+func callWithRecover(funcInfo string, fn func()) {
+	defer util.Recover(metrics.LabelDomain, funcInfo, nil, false)
+	fn()
 }
 
 func (do *Domain) dumpColStatsUsageWorker() {
