@@ -3504,4 +3504,22 @@ y1	y2
 0000	0000
 1990	1990
 2000	2000
+insert into yy values (2001,2001);
+select * from yy where y1 = y2 and y2 = 1.0;
+y1	y2
+select * from yy where y1 = y2 and y2 <=> 1.0;
+y1	y2
+select * from yy where y1 = y2 and y2 != 1.0;
+y1	y2
+0000	0000
+1990	1990
+2000	2000
+2001	2001
+2005	2005
+select * from yy where y1 = y2 and y2 in (1.0, 2000.0);
+y1	y2
+2000	2000
+select * from yy where y1 = y2 and y2 = 1;
+y1	y2
+2001	2001
 drop table if exists yy;

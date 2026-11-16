@@ -2361,4 +2361,15 @@ select * from yy where y1 = y2 and y2 <= 1.5;
 select * from yy where y1 = y2 and y2 > 1.5;
 --sorted_result
 select * from yy where y1 = y2 and y2 < 1;
+insert into yy values (2001,2001);
+--sorted_result
+select * from yy where y1 = y2 and y2 = 1.0;
+--sorted_result
+select * from yy where y1 = y2 and y2 <=> 1.0;
+--sorted_result
+select * from yy where y1 = y2 and y2 != 1.0;
+--sorted_result
+select * from yy where y1 = y2 and y2 in (1.0, 2000.0);
+--sorted_result
+select * from yy where y1 = y2 and y2 = 1;
 drop table if exists yy;

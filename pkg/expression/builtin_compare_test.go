@@ -486,6 +486,24 @@ func TestRefineArgsYearColumnIdempotent(t *testing.T) {
 		require.Equal(t, c.expected, refined.Value.GetInt64(), "%s %s", c.op, c.val)
 	}
 
+	// For =, <=> and !=, a decimal is not turned into an integer in 1..99, so refining
+	// the result again gives the same args.
+	for _, op := range []string{ast.EQ, ast.NullEQ, ast.NE} {
+		for _, val := range []string{"0.0", "1.0", "1.5", "99.0", "2001.0"} {
+			dec := types.NewDecFromStringForTest(val)
+			con := &Constant{Value: types.NewDecimalDatum(dec), RetType: types.NewFieldType(mysql.TypeNewDecimal)}
+			f := funcs[op].(*compareFunctionClass)
+			args, err := f.refineArgs(ctx, []Expression{yearCol, con})
+			require.NoError(t, err)
+			if refined, ok := args[1].(*Constant); ok && refined.Value.Kind() != types.KindMysqlDecimal {
+				require.False(t, refined.Value.GetInt64() >= 1 && refined.Value.GetInt64() <= 99, "%s %s", op, val)
+			}
+			args2, err := f.refineArgs(ctx, args)
+			require.NoError(t, err)
+			require.Equal(t, args[1].StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable), args2[1].StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable), "%s %s", op, val)
+		}
+	}
+
 	// An integer constant compared with a YEAR column is still adjusted as a 2-digit year,
 	// but the original constant must not be modified in place.
 	intCon := &Constant{Value: types.NewIntDatum(1), RetType: types.NewFieldType(mysql.TypeLonglong)}
