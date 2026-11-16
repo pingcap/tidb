@@ -969,12 +969,13 @@ a
 explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a;
 id	estRows	task	access object	operator info
 Projection	12487.50	root		planner__core__casetest__physicalplantest__physical_plan.t.a
-└─Projection	12487.50	root		planner__core__casetest__physicalplantest__physical_plan.t.a, unaryminus(planner__core__casetest__physicalplantest__physical_plan.t.a)->Column#7
-  └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__physicalplantest__physical_plan.t.a, right key:planner__core__casetest__physicalplantest__physical_plan.t.b
-    ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
-    │ └─IndexFullScan	9990.00	cop[tikv]	table:t2, index:idx_b(b)	keep order:true, desc, stats:pseudo
-    └─IndexReader(Probe)	9990.00	root		index:IndexFullScan
-      └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx_a(a)	keep order:true, desc, stats:pseudo
+└─Sort	12487.50	root		Column#7
+  └─Projection	12487.50	root		planner__core__casetest__physicalplantest__physical_plan.t.a, unaryminus(planner__core__casetest__physicalplantest__physical_plan.t.a)->Column#7
+    └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__physicalplantest__physical_plan.t.a, right key:planner__core__casetest__physicalplantest__physical_plan.t.b
+      ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
+      │ └─IndexFullScan	9990.00	cop[tikv]	table:t2, index:idx_b(b)	keep order:true, stats:pseudo
+      └─IndexReader(Probe)	9990.00	root		index:IndexFullScan
+        └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx_a(a)	keep order:true, stats:pseudo
 select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a;
 a
 2
@@ -983,12 +984,13 @@ a
 explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a+3;
 id	estRows	task	access object	operator info
 Projection	12487.50	root		planner__core__casetest__physicalplantest__physical_plan.t.a
-└─Projection	12487.50	root		planner__core__casetest__physicalplantest__physical_plan.t.a, plus(unaryminus(planner__core__casetest__physicalplantest__physical_plan.t.a), 3)->Column#7
-  └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__physicalplantest__physical_plan.t.a, right key:planner__core__casetest__physicalplantest__physical_plan.t.b
-    ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
-    │ └─IndexFullScan	9990.00	cop[tikv]	table:t2, index:idx_b(b)	keep order:true, desc, stats:pseudo
-    └─IndexReader(Probe)	9990.00	root		index:IndexFullScan
-      └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx_a(a)	keep order:true, desc, stats:pseudo
+└─Sort	12487.50	root		Column#7
+  └─Projection	12487.50	root		planner__core__casetest__physicalplantest__physical_plan.t.a, plus(unaryminus(planner__core__casetest__physicalplantest__physical_plan.t.a), 3)->Column#7
+    └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__physicalplantest__physical_plan.t.a, right key:planner__core__casetest__physicalplantest__physical_plan.t.b
+      ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
+      │ └─IndexFullScan	9990.00	cop[tikv]	table:t2, index:idx_b(b)	keep order:true, stats:pseudo
+      └─IndexReader(Probe)	9990.00	root		index:IndexFullScan
+        └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx_a(a)	keep order:true, stats:pseudo
 select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a+3;
 a
 2
@@ -1011,12 +1013,13 @@ a
 explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a;
 id	estRows	task	access object	operator info
 Projection	12487.50	root		planner__core__casetest__physicalplantest__physical_plan.t.a
-└─Projection	12487.50	root		planner__core__casetest__physicalplantest__physical_plan.t.a, minus(1, planner__core__casetest__physicalplantest__physical_plan.t.a)->Column#7
-  └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__physicalplantest__physical_plan.t.a, right key:planner__core__casetest__physicalplantest__physical_plan.t.b
-    ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
-    │ └─IndexFullScan	9990.00	cop[tikv]	table:t2, index:idx_b(b)	keep order:true, desc, stats:pseudo
-    └─IndexReader(Probe)	9990.00	root		index:IndexFullScan
-      └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx_a(a)	keep order:true, desc, stats:pseudo
+└─Sort	12487.50	root		Column#7
+  └─Projection	12487.50	root		planner__core__casetest__physicalplantest__physical_plan.t.a, minus(1, planner__core__casetest__physicalplantest__physical_plan.t.a)->Column#7
+    └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__physicalplantest__physical_plan.t.a, right key:planner__core__casetest__physicalplantest__physical_plan.t.b
+      ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
+      │ └─IndexFullScan	9990.00	cop[tikv]	table:t2, index:idx_b(b)	keep order:true, stats:pseudo
+      └─IndexReader(Probe)	9990.00	root		index:IndexFullScan
+        └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx_a(a)	keep order:true, stats:pseudo
 select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a;
 a
 2
@@ -1025,12 +1028,13 @@ a
 explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a+3;
 id	estRows	task	access object	operator info
 Projection	12487.50	root		planner__core__casetest__physicalplantest__physical_plan.t.a
-└─Projection	12487.50	root		planner__core__casetest__physicalplantest__physical_plan.t.a, plus(minus(1, planner__core__casetest__physicalplantest__physical_plan.t.a), 3)->Column#7
-  └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__physicalplantest__physical_plan.t.a, right key:planner__core__casetest__physicalplantest__physical_plan.t.b
-    ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
-    │ └─IndexFullScan	9990.00	cop[tikv]	table:t2, index:idx_b(b)	keep order:true, desc, stats:pseudo
-    └─IndexReader(Probe)	9990.00	root		index:IndexFullScan
-      └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx_a(a)	keep order:true, desc, stats:pseudo
+└─Sort	12487.50	root		Column#7
+  └─Projection	12487.50	root		planner__core__casetest__physicalplantest__physical_plan.t.a, plus(minus(1, planner__core__casetest__physicalplantest__physical_plan.t.a), 3)->Column#7
+    └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__physicalplantest__physical_plan.t.a, right key:planner__core__casetest__physicalplantest__physical_plan.t.b
+      ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
+      │ └─IndexFullScan	9990.00	cop[tikv]	table:t2, index:idx_b(b)	keep order:true, stats:pseudo
+      └─IndexReader(Probe)	9990.00	root		index:IndexFullScan
+        └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx_a(a)	keep order:true, stats:pseudo
 select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a+3;
 a
 2

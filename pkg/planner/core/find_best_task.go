@@ -88,6 +88,11 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (*property.Ph
 			if col == nil {
 				return nil, false, false
 			}
+			// Reversing value order does not reverse NULL order: -NULL is still
+			// NULL. An opposite index scan cannot satisfy this sort for nullable columns.
+			if desc != item.Desc && !mysql.HasNotNullFlag(col.RetType.GetFlag()) {
+				return nil, false, false
+			}
 			propItems = append(propItems, property.SortItem{Col: col, Desc: desc})
 			onlyColumn = false
 		default:
