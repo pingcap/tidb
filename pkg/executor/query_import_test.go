@@ -160,15 +160,52 @@ func TestPrepareQueryImport(t *testing.T) {
 		require.Equal(t, 1, rows)
 	})
 
+	t.Run("empty results retain their schema", func(t *testing.T) {
+		for _, projection := range []string{"a", "a, b"} {
+			output := make(chan importer.QueryChunk, 1)
+			workerTK := testkit.NewTestKit(t, store)
+			sql := "import into test.dst from (select " + projection + " from test.src where 1=0)"
+			require.NoError(t, executor.RunImportQuery(ctx, workerTK.Session(), direct.QuerySource, sql, 1<<30, output))
+			close(output)
+			result, ok := <-output
+			require.True(t, ok, "an empty SELECT must still send its result schema")
+			require.Zero(t, result.Chk.NumRows())
+			width := 1
+			if projection == "a, b" {
+				width = 2
+			}
+			require.Len(t, result.Fields, width)
+			_, ok = <-output
+			require.False(t, ok)
+		}
+	})
+
 	t.Run("keeps the resource group of the session", func(t *testing.T) {
 		// Without a planned statement, the statement context holds no group.
 		se := newQueryImportSession(t, store).Session()
 		se.GetSessionVars().ResourceGroupName = "rg1"
-		version, err := store.CurrentVersion(kv.GlobalTxnScope)
+		plan, err := importer.PrepareQueryImport(ctx, se, request)
 		require.NoError(t, err)
-		query, err := importer.NewQuerySourceAtSnapshot(se, version.Ver, dstTbl.Meta().DBID, []int64{srcTbl.Meta().ID})
+		require.Equal(t, "rg1", plan.QuerySource.SessionStates.ResourceGroupName)
+	})
+
+	t.Run("preserves source table order and missing entries", func(t *testing.T) {
+		tk.MustExec("create table src_other(a int, b int)")
+		latest := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
+		other, err := latest.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("src_other"))
 		require.NoError(t, err)
-		require.Equal(t, "rg1", query.SessionStates.ResourceGroupName)
+		req := *request
+		req.SQL = "import into test.dst from (select a, b from test.src_other union all select a, b from test.src) with disable_precheck"
+		req.SourceTableIDs = []int64{other.Meta().ID, srcTbl.Meta().ID, other.Meta().ID}
+		plan, err := importer.PrepareQueryImport(ctx, newQueryImportSession(t, store).Session(), &req)
+		require.NoError(t, err)
+		require.Len(t, plan.QuerySource.Tables, len(req.SourceTableIDs))
+		for i, id := range req.SourceTableIDs {
+			require.Equal(t, id, plan.QuerySource.Tables[i].ID)
+		}
+		req.SourceTableIDs[1] = 1 << 40
+		_, err = importer.PrepareQueryImport(ctx, newQueryImportSession(t, store).Session(), &req)
+		require.ErrorContains(t, err, "source table 1099511627776 not found")
 	})
 
 	t.Run("runs the import prechecks", func(t *testing.T) {
@@ -186,15 +223,19 @@ func TestPrepareQueryImport(t *testing.T) {
 		tk.MustExec("create sequence src_seq")
 		is := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
 		dbID := dstTbl.Meta().DBID
-		version, err := store.CurrentVersion(kv.GlobalTxnScope)
-		require.NoError(t, err)
+		prepareSource := func(tableID int64) error {
+			req := *request
+			req.SourceTableIDs = []int64{tableID}
+			_, err := importer.PrepareQueryImport(ctx, newQueryImportSession(t, store).Session(), &req)
+			return err
+		}
 		for name, message := range map[string]string{"src_view": "views", "src_seq": "sequences"} {
 			tbl, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr(name))
 			require.NoError(t, err)
-			_, err = importer.NewQuerySourceAtSnapshot(tk.Session(), version.Ver, dbID, []int64{tbl.Meta().ID})
+			err = prepareSource(tbl.Meta().ID)
 			require.ErrorContains(t, err, message)
 		}
-		_, err = importer.NewQuerySourceAtSnapshot(tk.Session(), version.Ver, dbID, []int64{1 << 40})
+		err = prepareSource(1 << 40)
 		require.ErrorContains(t, err, "not found")
 		_, err = importer.PrepareQueryImport(ctx, newQueryImportSession(t, store).Session(), &importer.QueryImportRequest{
 			SQL:    "import into test.dst from (select nextval(src_seq), 1)",

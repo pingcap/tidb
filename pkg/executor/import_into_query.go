@@ -76,16 +76,21 @@ func sendQueryChunks(ctx context.Context, e exec.Executor, output chan<- importe
 		if err := exec.Next(ctx, e, chk); err != nil {
 			return err
 		}
-		if chk.NumRows() == 0 {
+		numRows := chk.NumRows()
+		if numRows == 0 && rowID > 0 {
 			return nil
 		}
+		// Even an empty SELECT must expose its schema for target-width validation.
 		select {
 		case output <- importer.QueryChunk{Fields: fields, Chk: chk, RowIDOffset: rowID}:
-			rowID += int64(chk.NumRows())
-			chk = chunk.Renew(chk, e.MaxChunkSize())
 		case <-ctx.Done():
 			return context.Cause(ctx)
 		}
+		if numRows == 0 {
+			return nil
+		}
+		rowID += int64(numRows)
+		chk = chunk.Renew(chk, e.MaxChunkSize())
 	}
 }
 

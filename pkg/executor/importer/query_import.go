@@ -87,7 +87,7 @@ func PrepareQueryImport(ctx context.Context, sctx sessionctx.Context, req *Query
 		return nil, errors.Trace(err)
 	}
 	// Capture the session before the checks below run statements in it.
-	query, err := NewQuerySourceAtSnapshot(sctx, version.Ver, req.DBID, req.SourceTableIDs)
+	query, err := newQuerySourceAtSnapshot(ctx, sctx, version.Ver, req.DBID, req.SourceTableIDs)
 	if err != nil {
 		return nil, err
 	}

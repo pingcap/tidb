@@ -224,23 +224,27 @@ func CaptureQuerySource(sctx sessionctx.Context, sql string) (*QuerySource, erro
 	return q, nil
 }
 
-// NewQuerySourceAtSnapshot captures a query source without planning it. The
+// newQuerySourceAtSnapshot captures a query source without planning it. The
 // caller supplies the source tables, which must be all the tables the SELECT
 // reads, and their definitions are read at readTS. Reading them from the same
 // snapshot as the data means a lagging info schema cannot make a worker reject
 // the source as changed.
-func NewQuerySourceAtSnapshot(sctx sessionctx.Context, readTS uint64, dbID int64, tableIDs []int64) (*QuerySource, error) {
-	m := meta.NewReader(sctx.GetStore().GetSnapshot(tidbkv.NewVersion(readTS)))
+func newQuerySourceAtSnapshot(
+	ctx context.Context, sctx sessionctx.Context, readTS uint64, dbID int64, tableIDs []int64,
+) (*QuerySource, error) {
+	snapshot := sctx.GetStore().GetSnapshot(tidbkv.NewVersion(readTS))
+	m := meta.NewReader(&querySourceSnapshot{Snapshot: snapshot, ctx: ctx})
 	schemaVersion, err := m.GetSchemaVersion()
 	if err != nil {
 		return nil, err
 	}
+	tableInfos, err := m.GetTables(ctx, dbID, tableIDs)
+	if err != nil {
+		return nil, err
+	}
 	tables := make([]SourceTable, 0, len(tableIDs))
-	for _, id := range tableIDs {
-		tblInfo, err := m.GetTable(dbID, id)
-		if err != nil {
-			return nil, err
-		}
+	for i, tblInfo := range tableInfos {
+		id := tableIDs[i]
 		if tblInfo == nil {
 			return nil, errors.Errorf("source table %d not found at the import query snapshot", id)
 		}
@@ -254,6 +258,29 @@ func NewQuerySourceAtSnapshot(sctx sessionctx.Context, readTS uint64, dbID int64
 		tables = append(tables, SourceTable{DBID: dbID, ID: id, Revision: tblInfo.Revision})
 	}
 	return newQuerySource(sctx, readTS, schemaVersion, tables)
+}
+
+// querySourceSnapshot binds legacy metadata point reads, which use
+// context.TODO(), to the preparation context. Batch reads share that lifetime.
+type querySourceSnapshot struct {
+	tidbkv.Snapshot
+	ctx context.Context
+}
+
+func (s *querySourceSnapshot) Get(_ context.Context, key tidbkv.Key, options ...tidbkv.GetOption) (tidbkv.ValueEntry, error) {
+	if err := s.ctx.Err(); err != nil {
+		return tidbkv.ValueEntry{}, err
+	}
+	return s.Snapshot.Get(s.ctx, key, options...)
+}
+
+func (s *querySourceSnapshot) BatchGet(
+	_ context.Context, keys []tidbkv.Key, options ...tidbkv.BatchGetOption,
+) (map[string]tidbkv.ValueEntry, error) {
+	if err := s.ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.Snapshot.BatchGet(s.ctx, keys, options...)
 }
 
 func newQuerySource(sctx sessionctx.Context, readTS uint64, schemaVersion int64, tables []SourceTable) (*QuerySource, error) {

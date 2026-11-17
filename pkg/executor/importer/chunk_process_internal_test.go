@@ -47,3 +47,20 @@ func TestQueryChunkReaderChecksColumnCount(t *testing.T) {
 		require.ErrorContains(t, err, "import query returns 2 columns")
 	}
 }
+
+func TestQueryChunkReaderEmptyResults(t *testing.T) {
+	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	for _, targetWidth := range []int{1, 2} {
+		ch := make(chan QueryChunk, 1)
+		ch <- QueryChunk{Fields: fields, Chk: chunk.NewChunkWithCapacity(fields, 1)}
+		close(ch)
+		row, closed, err := queryRowEncodeReader(ch, targetWidth)(context.Background(), nil)
+		if targetWidth == 2 {
+			require.ErrorContains(t, err, "import query returns 1 columns, but the target expects 2")
+		} else {
+			require.NoError(t, err)
+			require.True(t, closed)
+			require.Empty(t, row.row)
+		}
+	}
+}
