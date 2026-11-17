@@ -15,13 +15,13 @@
 //! Go `pkg/expression/aggregation/explain.go`: how an aggregate renders in
 //! `EXPLAIN` output.
 //!
-//! Only the `normalized == true` half is ported; the `ExplainInfo(ctx)` half
-//! needs `Expression.StringWithCtx`, the boundary [`tidb_expr::expr_util`]
-//! already names. See [`super`].
 
 use super::names;
 use super::AggFuncDesc;
+use tidb_expr::explain::{physical_expression_text_with_columns, ExpressionTextStyle};
 use tidb_expr::expr_util::explain_normalized_info;
+use tidb_expr::expression::Expression;
+use tidb_exprctx::context::Columns;
 use std::fmt::Write as _;
 
 /// Go `ExplainAggFunc`'s `showMode`: whether the `show-agg-mode` failpoint is
@@ -31,9 +31,18 @@ pub fn show_agg_mode() -> bool {
     tidb_failpoint::eval("github.com/pingcap/tidb/pkg/expression/aggregation/show-agg-mode").is_some_and(|val| val.bool())
 }
 
-/// Go `ExplainAggFunc(ctx, agg, normalized = true)` (`explain.go:26`).
+/// Go `ExplainAggFunc(ctx, agg, normalized)` (`explain.go:27`): the
+/// arguments and the GROUP_CONCAT order-by items through `ExplainInfo(ctx)`,
+/// or `ExplainNormalizedInfo` when `normalized`.
 #[must_use]
-pub fn explain_agg_func_normalized(agg: &AggFuncDesc) -> String {
+pub fn explain_agg_func(ctx: &dyn Columns, agg: &AggFuncDesc, normalized: bool) -> String {
+    let explain = |expr: &Expression| {
+        if normalized {
+            explain_normalized_info(expr)
+        } else {
+            physical_expression_text_with_columns(ctx, expr, &[], ExpressionTextStyle::Explain).unwrap_or_default()
+        }
+    };
     let mut buffer = String::new();
     if show_agg_mode() {
         let _ = write!(buffer, "{}({},", agg.name(), agg.mode.as_str());
@@ -53,7 +62,7 @@ pub fn explain_agg_func_normalized(agg: &AggFuncDesc) -> String {
                 buffer.push_str(" order by ");
                 let last = agg.order_by_items.len() - 1;
                 for (j, item) in agg.order_by_items.iter().enumerate() {
-                    buffer.push_str(&explain_normalized_info(&item.expr));
+                    buffer.push_str(&explain(&item.expr));
                     if item.desc {
                         buffer.push_str(" desc");
                     }
@@ -66,7 +75,7 @@ pub fn explain_agg_func_normalized(agg: &AggFuncDesc) -> String {
         } else if i != 0 {
             buffer.push_str(", ");
         }
-        buffer.push_str(&explain_normalized_info(arg));
+        buffer.push_str(&explain(arg));
     }
     buffer.push(')');
     buffer

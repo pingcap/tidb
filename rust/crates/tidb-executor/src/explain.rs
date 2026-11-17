@@ -481,52 +481,8 @@ fn aggregate_info(
                 )
             })
             .unwrap_or_else(|| format!("Column#{index}"));
-        text.push_str(&format!("funcs:{}->{output}", agg_func_text(eval_ctx, function)));
+        text.push_str(&format!("funcs:{}->{output}", tidb_expression_aggregation::explain_agg_func(eval_ctx, function, false)));
     }
-    text
-}
-
-/// Go `aggregation.ExplainAggFunc(ctx, agg, false)` (`explain.go:26`): a
-/// GROUP_CONCAT's last argument is its separator, printed after the
-/// aggregate's own ORDER BY.
-fn agg_func_text(
-    eval_ctx: &dyn tidb_exprctx::Columns,
-    function: &tidb_expression_aggregation::AggFuncDesc,
-) -> String {
-    let mut text = format!("{}(", function.base.name);
-    if tidb_expression_aggregation::show_agg_mode() {
-        text.push_str(function.mode.as_str());
-        text.push(',');
-    }
-    if function.has_distinct {
-        text.push_str("distinct ");
-    }
-    let count = function.base.args.len();
-    for (index, argument) in function.base.args.iter().enumerate() {
-        if function.base.name == tidb_expression_aggregation::names::GROUP_CONCAT && index + 1 == count {
-            if !function.order_by_items.is_empty() {
-                text.push_str(" order by ");
-                let items = function
-                    .order_by_items
-                    .iter()
-                    .map(|item| {
-                        let rendered = expression_text(eval_ctx, &item.expr);
-                        if item.desc {
-                            format!("{rendered} desc")
-                        } else {
-                            rendered
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                text.push_str(&items.join(", "));
-            }
-            text.push_str(" separator ");
-        } else if index != 0 {
-            text.push_str(", ");
-        }
-        text.push_str(&expression_text(eval_ctx, argument));
-    }
-    text.push(')');
     text
 }
 
@@ -3092,7 +3048,7 @@ fn aggregate_normalized_info(
             .and_then(|schema| schema.columns.get(index))
             .map_or_else(String::new, normalized_column_text);
         text.push_str("funcs:");
-        text.push_str(&tidb_expression_aggregation::explain_agg_func_normalized(function));
+        text.push_str(&tidb_expression_aggregation::explain_agg_func(&tidb_exprctx::NoColumns, function, true));
         text.push_str("->");
         text.push_str(&output);
         if index + 1 < functions.len() {

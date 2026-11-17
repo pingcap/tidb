@@ -1206,7 +1206,7 @@ fn explain_renders_distinct_order_by_and_the_separator() {
         ByItems::new(col(0, FieldTypeCode::VarString), true),
         ByItems::new(col(1, FieldTypeCode::VarString), false),
     ];
-    let rendered = explain_agg_func_normalized(&d);
+    let rendered = explain_agg_func(&tidb_exprctx::NoColumns, &d, true);
     assert!(rendered.starts_with("group_concat(distinct "), "{rendered}");
     assert!(rendered.contains(" order by "), "{rendered}");
     assert!(rendered.contains(" desc"), "{rendered}");
@@ -1214,7 +1214,7 @@ fn explain_renders_distinct_order_by_and_the_separator() {
     assert!(rendered.ends_with(')'), "{rendered}");
 
     let count = desc(names::COUNT, vec![col(0, FieldTypeCode::Long)]);
-    assert!(explain_agg_func_normalized(&count).starts_with("count("));
+    assert!(explain_agg_func(&tidb_exprctx::NoColumns, &count, true).starts_with("count("));
 }
 
 /// Go `ExplainAggFunc` under the `show-agg-mode` failpoint.
@@ -1222,7 +1222,7 @@ fn explain_renders_distinct_order_by_and_the_separator() {
 fn explain_agg_func_shows_the_mode_under_show_agg_mode() {
     let count = desc(names::COUNT, vec![col(0, FieldTypeCode::Long)]);
     tidb_failpoint::enable("github.com/pingcap/tidb/pkg/expression/aggregation/show-agg-mode", "return(true)").unwrap();
-    assert!(explain_agg_func_normalized(&count).starts_with("count(complete,"));
+    assert!(explain_agg_func(&tidb_exprctx::NoColumns, &count, true).starts_with("count(complete,"));
     tidb_failpoint::disable("github.com/pingcap/tidb/pkg/expression/aggregation/show-agg-mode");
 }
 

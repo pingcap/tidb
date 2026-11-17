@@ -72,7 +72,7 @@
 //! | `aggregation.go` | `CheckAggPushDown` | 223 | [`check_agg_push_down`] |
 //! | `aggregation.go` | `checkVectorAggPushDown` | 254 | `check_vector_agg_push_down` |
 //! | `aggregation.go` | `CheckAggPushFlash` | 268 | [`check_agg_push_flash`] |
-//! | `explain.go` | `ExplainAggFunc` | 26 | [`explain_agg_func_normalized`] (half, see below) |
+//! | `explain.go` | `ExplainAggFunc` | 27 | [`explain_agg_func`] |
 //! | `window_func.go` | `WindowFuncDesc` | 27 | [`WindowFuncDesc`] |
 //! | `window_func.go` | `NewWindowFuncDesc` | 32 | [`WindowFuncDesc::new`] |
 //! | `window_func.go` | `noFrameWindowFuncs` | 85 | `NO_FRAME_WINDOW_FUNCS` |
@@ -160,15 +160,10 @@
 //!   which this crate does not have (only `HashCode`). The identity that
 //!   `TestAggFuncDesc` pins is reproduced through [`AggFuncDesc::equals`]
 //!   instead, which discriminates on exactly the same six fields.
-//! - **`StringWithCtx` has no redact modes** (`descriptor.go:98`,
-//!   `base_func.go:110`): [`AggFuncDesc::string_with_ctx`] renders the
-//!   arguments as `errors.RedactLogDisable` does; the other modes need
-//!   `Expression.StringWithCtx`'s redaction -- the same boundary
-//!   [`tidb_expr::expr_util`] already names for `ExprsToStringsForDisplay`.
-//! - **`ExplainAggFunc`'s context-dependent half is not ported.** Only the
-//!   `normalized == true` branch has a Rust counterpart
-//!   ([`tidb_expr::expr_util::explain_normalized_info`]); the `ExplainInfo(ctx)`
-//!   branch shares the `StringWithCtx` boundary above.
+//! - **`StringWithCtx` takes no redact argument** (`descriptor.go:98`,
+//!   `base_func.go:110`): every Go caller (`AggFuncToPBExpr`'s errors, the
+//!   plan stringer, `FormatWindowFuncDescs`) passes `errors.RedactLogDisable`,
+//!   which [`AggFuncDesc::string_with_ctx`] renders.
 //! - **`AggFuncDesc.Equal(ctx, other)` compares arguments context-free.**
 //!   Go's `Expression.Equal(ctx, e)` evaluates constants through a collator;
 //!   [`Expression::equal`](tidb_expr::expression::Expression::equal) is the
@@ -222,7 +217,7 @@ pub use agg_to_pb::{agg_func_to_pb_expr, agg_function_mode_to_pb, pb_agg_func_mo
 pub use base_func::{approx_percentile_percent, AggDescError, BaseFuncDesc};
 pub use descriptor::{AggFuncDesc, ByItems};
 pub use dist::{DistAggregate, DistAggregateError, DistAggregateState, DistAggregator};
-pub use explain::{explain_agg_func_normalized, show_agg_mode};
+pub use explain::{explain_agg_func, show_agg_mode};
 pub use window_func::{need_frame, use_default_frame, WindowFrameDefault, WindowFuncDesc};
 
 /// Go `AggFunctionMode` (`aggregation.go:116`): the aggregate's execution
