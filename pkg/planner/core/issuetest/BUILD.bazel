@@ -9,7 +9,11 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     shard_count = 14,
+=======
+    shard_count = 7,
+>>>>>>> dbbbaf900ca (planner: bind duplicate expression indexes to one hidden generated column (#70715))
     deps = [
         "//pkg/errno",
         "//pkg/parser",

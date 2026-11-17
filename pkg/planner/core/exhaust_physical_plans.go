@@ -1117,6 +1117,7 @@ func buildIndexJoinInner2IndexScan(
 	if indexJoinResult == nil {
 		return nil
 	}
+<<<<<<< HEAD
 	joins = make([]base.PhysicalPlan, 0, 3)
 	rangeInfo := indexJoinPathRangeInfo(p.SCtx(), outerJoinKeys, indexJoinResult)
 	maxOneRow := false
@@ -1127,6 +1128,97 @@ func buildIndexJoinInner2IndexScan(
 		} else {
 			sf, ok := indexJoinResult.chosenAccess[l-1].(*expression.ScalarFunction)
 			maxOneRow = ok && (sf.FuncName.L == ast.EQ)
+=======
+	rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
+	accessRowsFloor := indexJoinProbeAccessRowsFloor(ds, prop.IndexJoinProp, indexJoinResult)
+	var innerTask base.Task
+	var matchResult property.PhysicalPropMatchResult
+	if !prop.IsSortItemEmpty() {
+		matchResult, _ = matchProperty(ds, indexJoinResult.chosenPath, prop)
+	}
+	if matchResult == property.PropMatched {
+		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
+	} else {
+		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
+	}
+	// since there is a possibility that inner task can't be built and the returned value is nil, we just return base.InvalidTask.
+	if innerTask == nil {
+		return base.InvalidTask
+	}
+	// prepare the index path chosen information and wrap them as IndexJoinInfo and fill back to CopTask.
+	// here we don't need to construct physical index join here anymore, because we will encapsulate it bottom-up.
+	// chosenPath and lastColManager of indexJoinResult should be returned to the caller (seen by index join to keep
+	// index join aware of indexColLens and compareFilters).
+	completeIndexJoinFeedBackInfo(innerTask.(*physicalop.CopTask), indexJoinResult, indexJoinResult.chosenRanges, keyOff2IdxOff)
+	return innerTask
+}
+
+// buildDataSource2TableScanByIndexJoinProp builds a TableScan as the inner child for an
+// IndexJoin if possible.
+// If the inner side of an index join is a TableScan, only one tuple will be
+// fetched from the inner side for every tuple from the outer side. This will be
+// promised to be no worse than building IndexScan as the inner child.
+func buildDataSource2TableScanByIndexJoinProp(
+	ds *logicalop.DataSource,
+	prop *property.PhysicalProperty) base.Task {
+	var tblPath *util.AccessPath
+	for _, path := range ds.PossibleAccessPaths {
+		if path.IsTablePath() && path.StoreType == kv.TiKV {
+			tblPath = path
+			break
+		}
+	}
+	if tblPath == nil {
+		return base.InvalidTask
+	}
+	var keyOff2IdxOff []int
+	var ranges ranger.MutableRanges = ranger.Ranges{}
+	var innerTask base.Task
+	var indexJoinResult *indexJoinPathResult
+	if ds.TableInfo.IsCommonHandle {
+		// For common handle tables, choose the matching path and ranges first.
+		indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResultByProp(ds, prop.IndexJoinProp, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
+		// if there is no chosen info, it means the leaf datasource couldn't even leverage this indexJoinProp, return InvalidTask.
+		if indexJoinResult == nil {
+			return base.InvalidTask
+		}
+		// prepare the range info with outer join keys, it shows like: [xxx] decided by:
+		rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
+		accessRowsFloor := indexJoinProbeAccessRowsFloor(ds, prop.IndexJoinProp, indexJoinResult)
+		// construct the inner task with chosen path and ranges, note: it only for this leaf datasource.
+		// like the normal way, we need to check whether the chosen path is matched with the prop, if so, we will set the `keepOrder` to true.
+		if matchResult, _ := matchProperty(ds, indexJoinResult.chosenPath, prop); matchResult == property.PropMatched {
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
+		} else {
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
+		}
+		ranges = indexJoinResult.chosenRanges
+	} else {
+		var (
+			ok               bool
+			chosenPath       *util.AccessPath
+			newOuterJoinKeys []*expression.Column
+			// note: pk col doesn't have mutableRanges, the global var(ranges) which will be handled as empty range in constructIndexJoin.
+			localRanges ranger.Ranges
+		)
+		keyOff2IdxOff, newOuterJoinKeys, localRanges, chosenPath, ok = getIndexJoinIntPKPathInfo(ds, prop.IndexJoinProp.InnerJoinKeys, prop.IndexJoinProp.OuterJoinKeys, func(path *util.AccessPath) bool { return path.IsIntHandlePath })
+		if !ok {
+			return base.InvalidTask
+		}
+		// For IntHandle (integer primary key), it's always a unique match.
+		maxOneRow := true
+		rangeInfo := indexJoinIntPKRangeInfo(ds.SCtx().GetExprCtx().GetEvalCtx(), newOuterJoinKeys)
+		var matchResult property.PhysicalPropMatchResult
+		if !prop.IsSortItemEmpty() {
+			matchResult, _ = matchProperty(ds, chosenPath, prop)
+		}
+		if matchResult == property.PropMatched {
+			// The int handle is a single-column unique key, so the join key fully decides the range
+			// and no rows-after-access floor applies.
+			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, 0, maxOneRow)
+		} else {
+			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, 0, maxOneRow)
+>>>>>>> dbbbaf900ca (planner: bind duplicate expression indexes to one hidden generated column (#70715))
 		}
 	}
 	innerTask := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
