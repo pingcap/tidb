@@ -319,6 +319,9 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 
 	mlogName := model.MaterializedViewLogTableName(baseTable.Name)
 	if _, err := d.TableByName(context.Background(), schemaName, mlogName); err == nil {
+		if s.IfNotExists {
+			return nil
+		}
 		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: mlogName})
 	} else if !infoschema.ErrTableNotExists.Equal(err) {
 		return err
