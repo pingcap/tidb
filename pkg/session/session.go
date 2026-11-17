@@ -2518,7 +2518,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		// before in this session with the same parsing context, reuse the
 		// already-built PlanCacheStmt and skip the expensive Build step.
 		charset, collation := s.sessionVars.GetCharsetInfo()
-		clientCharset, charsetErr := s.sessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.CharacterSetClient)
+		clientCharset, charsetErr := s.sessionVars.GetSessionOrGlobalSystemVar(ctx, variable.CharacterSetClient)
 		if charsetErr != nil {
 			// Match the fallback used by GetParseParams.
 			clientCharset = ""
