@@ -117,11 +117,16 @@ fn index_part_text(
 /// charset differs prints `CHARACTER SET <cs> COLLATE <coll>`, one that only
 /// differs in collation prints `COLLATE <coll>`, and a binary-charset column
 /// (`varbinary`, `blob`) prints neither because its type name already says so.
+///
+/// `with_allocators` is Go's `allocators` being the table's: `false` is Go's
+/// empty `autoid.Allocators{}` (BR's restored DDL query), which prints
+/// neither `AUTO_INCREMENT` nor `AUTO_RANDOM_BASE`.
 pub fn construct_result_of_show_create_table(
     database: &str,
     name: &str,
     table: &crate::TableCommon,
     ctx: &crate::StmtContext,
+    with_allocators: bool,
 ) -> Result<String, DriverError> {
     let ansi_quotes = ctx.sql_mode().ansi_quotes;
     // Go `ConstructResultOfShowCreateTable` (`executor/show.go:1073`): the
@@ -544,9 +549,11 @@ for foreign_key in table.meta().read().foreign_keys.iter_deref() {
     // ungated `AUTO_INCREMENT=%d`, printed when the table has an auto-increment
     // column and the allocator's next value exceeds 1 (fresh tables with no
     // inserts print nothing).
-    if let Some(next) = table
-        .next_auto_increment_for_show(Some(ctx as &dyn tidb_tblctx::MutateContext))
+    if let Some(next) = with_allocators
+        .then(|| table.next_auto_increment_for_show(Some(ctx as &dyn tidb_tblctx::MutateContext)))
+        .transpose()
         .map_err(|e| DriverError::from(tidb_terror::MysqlError::unknown(e.0)))?
+        .flatten()
         .filter(|next| *next > 1)
     {
         out.push_str(&format!(" AUTO_INCREMENT={next}"));
@@ -558,9 +565,11 @@ for foreign_key in table.meta().read().foreign_keys.iter_deref() {
             table.auto_id_cache()
         ));
     }
-    if let Some(base) = table
-        .next_auto_random_for_show()
+    if let Some(base) = with_allocators
+        .then(|| table.next_auto_random_for_show())
+        .transpose()
         .map_err(|e| DriverError::from(tidb_terror::MysqlError::unknown(e.0)))?
+        .flatten()
         .filter(|base| *base > 1)
     {
         out.push_str(&format!(" /*T![auto_rand_base] AUTO_RANDOM_BASE={base} */"));

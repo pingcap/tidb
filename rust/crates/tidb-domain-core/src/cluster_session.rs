@@ -323,43 +323,7 @@ fn cluster_view(table: &TableInfo) -> Result<ViewDef, String> {
             table.state.0
         ));
     }
-    view_definition(table)
-}
-
-/// Go `TableFromMeta` for a view: built in any state (a DROP VIEW passes
-/// through WRITE_ONLY and DELETE_ONLY); only planning requires PUBLIC.
-fn view_definition(table: &TableInfo) -> Result<ViewDef, String> {
-    let view = table
-        .view
-        .as_ref()
-        .ok_or_else(|| "its view metadata is missing".to_owned())?
-        .read();
-    let columns = table
-        .present_cols()
-        .into_iter()
-        .map(|column| {
-            let column = column.read();
-            (column.name.original().to_owned(), column.field_type.clone())
-        })
-        .collect();
-    let (definer_user, definer_host) = view.definer.as_deref().map_or_else(
-        || (String::new(), String::new()),
-        |definer| (definer.username.clone(), definer.hostname.clone()),
-    );
-    Ok(ViewDef {
-        name: table.name.original().to_owned(),
-        columns,
-        select_sql: view.select_stmt.clone(),
-        definer_user,
-        definer_host,
-        character_set_client: table.charset.clone(),
-        collation_connection: table.collate.clone(),
-        algorithm: view.algorithm.sql().to_owned(),
-        security: view.security.sql().to_owned(),
-        check_option: view.check_option.sql().to_owned(),
-        update_ts: table.update_ts,
-        id: table.id,
-    })
+    ViewDef::from_table_info(table)
 }
 
 #[cfg(test)]
@@ -1185,7 +1149,7 @@ impl tidb_infoschema::infoschema_v2::TableLoader for InfoSchemaV2TableLoader {
         normalize_diff_loaded_table_info(&mut info);
         let entry = if info.is_view() {
             tidb_infoschema::TableEntry::View(
-                view_definition(&info).map_err(ClusterCatalogError::Decode)?,
+                ViewDef::from_table_info(&info).map_err(ClusterCatalogError::Decode)?,
             )
         } else if info.is_sequence() {
             let sequence = self

@@ -946,16 +946,10 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                     tidb_ast::BrieKind::CancelJob => Ok(Some(crate::brie::cancel_job_next(
                         &crate::brie::GLOBAL_BRIE_QUEUE, stmt.job_id as u64, self,
                     ))),
-                    tidb_ast::BrieKind::Backup => {
+                    tidb_ast::BrieKind::Backup | tidb_ast::BrieKind::Restore => {
                         let exec = crate::brie::build_brie(stmt, &self.session_time_zone())?;
                         let conn_id = self.session_vars().connection_id.unwrap_or(0);
                         crate::brie::brie_next(&tidb_gocontext::Context::background(), exec, conn_id, self.brie_sql_killer()).map(Some)
-                    }
-                    tidb_ast::BrieKind::Restore => {
-                        // Go's builder errors are available before the physical
-                        // restore runner. Do not report a successful task.
-                        let _ = crate::brie::build_brie(stmt, &self.session_time_zone())?;
-                        Ok(None)
                     }
                     _ => Ok(None),
                 }

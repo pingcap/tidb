@@ -53,7 +53,7 @@ fn ctx_error(ctx: &Context) -> errors::Error {
 }
 
 /// Go `PipelineContext`.
-pub struct PipelineContext {
+pub struct PipelineContext<'a> {
     /// Go `Checksum`.
     pub checksum: bool,
     /// Go `LoadStats`.
@@ -77,7 +77,7 @@ pub struct PipelineContext {
     /// Go `ExtStorage`.
     pub ext_storage: metautil::Storage,
     /// Go `Glue`.
-    pub glue: Arc<dyn Glue>,
+    pub glue: &'a dyn Glue,
 }
 
 type ProcessFn<'a> = Box<dyn Fn(&Context, &Created) -> Result<()> + Send + Sync + 'a>;
@@ -465,7 +465,7 @@ impl SnapClient {
     pub fn restore_pipeline(
         &self,
         ctx: &Context,
-        pl_ctx: &PipelineContext,
+        pl_ctx: &PipelineContext<'_>,
         created_tables: &[Created],
     ) -> Result<()> {
         let start = Instant::now();
@@ -477,7 +477,7 @@ impl SnapClient {
     fn restore_pipeline_inner(
         &self,
         ctx: &Context,
-        pl_ctx: &PipelineContext,
+        pl_ctx: &PipelineContext<'_>,
         created_tables: &[Created],
     ) -> Result<()> {
         let pipeline_num = usize::from(pl_ctx.checksum)

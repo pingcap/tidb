@@ -306,9 +306,17 @@ PRs, each stacked on the previous one (the first on #56):
    pipeline and system table tests over an in-memory glue cluster. The
    `br` CLI's physical stats and system table loads, the external-storage
    checkpoint and `txn-total-size-limit` are not ported.
-6. `task.RunRestore`, the restore registry, task registration and the
-   log-backup / changefeed checks; BRIE restore execution and the server's
-   restore glue (DDL, restricted SQL, statistics, label rules, TiFlash).
-   Live: backup, drop and restore with row and checksum comparison; Go
-   backups restored by Rust.
+6. Done: `task.RunRestore` for snapshot restore (`runSnapshotRestore`, its
+   requirement checks, `Hash` pinned to Go's fingerprints), the restore
+   registry (`br/pkg/registry`, legacy columns), `utils.RegisterTask` with
+   its keepalive, and the log-backup / changefeed checks; BRIE `RESTORE`
+   execution; `pkg/executor/brie_utils.go`; and the server's restore glue
+   (one owned session for SQL and DDL, the meta transaction, info schema,
+   statistics through `LOAD STATS`, stats meta, privilege reload, label
+   rules, PD's unprefixed etcd). Live on the Rust cluster: Rust backups
+   restored by database and by table over `local://` and MinIO S3, a Go
+   backup restored by Rust, a refused restore over existing tables, and a
+   failed restore resumed from its checkpoint, with KV counts, bytes and
+   ordered rows equal to the source. TiFlash progress, log restore and
+   name routing are not ported.
 7. Delete the E07 row; record the unreachable parts as a gap row.

@@ -69,6 +69,14 @@ pub struct Config {
     pub keyspace_name: String,
     /// Go `MetadataDownloadBatchSize`.
     pub metadata_download_batch_size: u32,
+    /// Go `SwitchModeInterval`.
+    pub switch_mode_interval: std::time::Duration,
+    /// Go `Schemas`: the `restore db` command's database.
+    pub schemas: std::collections::BTreeSet<String>,
+    /// Go `Tables`: the `restore table` command's table.
+    pub tables: std::collections::BTreeSet<String>,
+    /// Go `ExplicitFilter`: `-f` given.
+    pub explicit_filter: bool,
 }
 
 /// Go `defaultGRPCKeepaliveTime`.
@@ -98,6 +106,12 @@ impl Config {
         }
     }
 
+    /// Go `UserFiltered`.
+    #[must_use]
+    pub fn user_filtered(&self) -> bool {
+        !self.schemas.is_empty() || !self.tables.is_empty() || !self.filter_str.is_empty()
+    }
+
     /// Go `TLSConfig.IsEnabled`.
     #[must_use]
     pub fn tls_enabled(&self) -> bool {
@@ -108,7 +122,25 @@ impl Config {
 /// Go `GetKeepalive`.
 #[must_use]
 pub fn get_keepalive(cfg: &Config) -> crate::utils::store_manager::Keepalive {
-    crate::utils::store_manager::Keepalive { time: cfg.grpc_keepalive_time, timeout: cfg.grpc_keepalive_timeout }
+    crate::utils::store_manager::Keepalive {
+        time: cfg.grpc_keepalive_time,
+        timeout: cfg.grpc_keepalive_timeout,
+    }
+}
+
+/// Go `cfg.TLS.ToTLSConfig()`: the cluster security of the task's TLS.
+#[must_use]
+pub fn cluster_security(cfg: &Config) -> tidb_pd_client::ClusterSecurity {
+    if cfg.tls_enabled() {
+        tidb_pd_client::ClusterSecurity::new(
+            cfg.tls.ca.clone(),
+            cfg.tls.cert.clone(),
+            cfg.tls.key.clone(),
+            Vec::new(),
+        )
+    } else {
+        tidb_pd_client::ClusterSecurity::plaintext()
+    }
 }
 
 /// Go `NewMgr`: the BR connection over the glue's store, skipping TiFlash.
@@ -128,11 +160,7 @@ pub fn new_mgr(
             "pd address can not be empty",
         ));
     }
-    let security = if cfg.tls_enabled() {
-        tidb_pd_client::ClusterSecurity::new(cfg.tls.ca.clone(), cfg.tls.cert.clone(), cfg.tls.key.clone(), Vec::new())
-    } else {
-        tidb_pd_client::ClusterSecurity::plaintext()
-    };
+    let security = cluster_security(cfg);
     crate::conn::Mgr::new(
         ctx,
         g,
@@ -181,6 +209,11 @@ pub fn default_config() -> Config {
         grpc_keepalive_timeout: DEFAULT_GRPC_KEEPALIVE_TIMEOUT,
         keyspace_name: String::new(),
         metadata_download_batch_size: DEFAULT_METADATA_DOWNLOAD_BATCH_SIZE,
+        // Go `defaultSwitchInterval`.
+        switch_mode_interval: std::time::Duration::from_secs(5 * 60),
+        schemas: std::collections::BTreeSet::new(),
+        tables: std::collections::BTreeSet::new(),
+        explicit_filter: false,
     }
 }
 

@@ -37,7 +37,7 @@ fn created(id: i64, old: metautil::Table) -> Created {
     }
 }
 
-fn pl_ctx(c: &MockCluster, dir: &std::path::Path) -> PipelineContext {
+fn pl_ctx<'a>(c: &'a MockCluster, dir: &std::path::Path) -> PipelineContext<'a> {
     PipelineContext {
         checksum: false,
         load_stats: false,
@@ -50,7 +50,7 @@ fn pl_ctx(c: &MockCluster, dir: &std::path::Path) -> PipelineContext {
         restore_ts: 0,
         kv_client: Arc::new(NoKvClient),
         ext_storage: Arc::new(tidb_objstore::LocalStorage::new(dir.to_str().unwrap()).unwrap()),
-        glue: Arc::new(c.clone()),
+        glue: c,
     }
 }
 

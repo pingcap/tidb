@@ -832,7 +832,7 @@ pub fn brie_next(
     let bq = &*GLOBAL_BRIE_QUEUE;
     bq.clear_task();
     let now = || chrono::Local::now().timestamp();
-    let BRIEExec { mut backup_cfg, restore_cfg: _, mut info } = exec;
+    let BRIEExec { mut backup_cfg, mut restore_cfg, mut info } = exec;
     let kind = info.kind;
     info.conn_id = conn_id;
     info.queue_time = Some(now());
@@ -888,6 +888,10 @@ pub fn brie_next(
                 BrieKind::Backup => {
                     let cfg = backup_cfg.as_mut().expect("a BACKUP has its configuration");
                     tidb_br::task::backup::run_backup(&task_ctx, &glue, "Backup", cfg).map_err(|e| e.to_string())
+                }
+                BrieKind::Restore => {
+                    let cfg = restore_cfg.as_mut().expect("a RESTORE has its configuration");
+                    tidb_br::task::restore::run_restore(&task_ctx, &glue, "Restore", cfg).map_err(|e| e.to_string())
                 }
                 _ => Err(format!("unsupported BRIE statement kind: {}", kind_name(kind))),
             }

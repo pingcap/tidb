@@ -18,6 +18,7 @@
 
 pub mod backoff;
 pub mod error_handling;
+pub mod filter;
 pub mod misc;
 pub mod register;
 pub mod retry;

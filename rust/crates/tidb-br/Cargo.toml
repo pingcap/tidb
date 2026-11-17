@@ -40,6 +40,9 @@ tidb-ranger = { path = "../tidb-ranger" }
 tidb-meta = { path = "../tidb-meta" }
 tidb-structure = { path = "../tidb-structure" }
 tidb-ddl-label = { path = "../tidb-ddl-label" }
+tidb-cdcutil = { path = "../tidb-cdcutil" }
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-go-time-layout = { path = "../tidb-go-time-layout" }

@@ -233,6 +233,10 @@ pub trait Domain: Send + Sync {
             "NotifyUpdateAllUsersPrivilege is not supported by this domain",
         ))
     }
+    /// Go `GetEtcdClient()`: PD's etcd, `None` without one.
+    fn etcd_client(&self) -> Option<Arc<dyn tidb_domain_serverinfo::serverinfo_syncer::EtcdOps>> {
+        None
+    }
     /// Go `Store().GetCodec()`, as the region label rules encode ranges.
     fn label_codec(&self) -> Box<dyn tidb_ddl_label::LabelCodec> {
         Box::new(tidb_ddl_label::CodecV1)

@@ -15,7 +15,7 @@
 //! What a BRIE task uses of this node (Go `tidbGlue`'s store, domain and
 //! sessions): the TiKV store with snapshot reads and the coprocessor
 //! client, the statistics and PD label rules of the domain, and internal
-//! sessions from the domain's pool.
+//! sessions from the domain's pool, which also run a restore's DDL.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -62,7 +62,7 @@ impl tidb_executor::brie::BrieNode for TikvBrieNode {
     }
 
     fn create_session(&self) -> std::result::Result<Box<dyn tidb_br::glue::Session>, String> {
-        Ok(Box::new(BrSession(Arc::clone(&self.domain))))
+        Ok(Box::new(BrSession::new(&self.domain)?))
     }
 }
 
@@ -225,32 +225,289 @@ impl tidb_br::glue::Domain for BrDomain {
             })
             .collect())
     }
+
+    /// Go `kv.RunInNewTxn` with `meta.NewMutator` under `InternalTxnBR`.
+    fn run_in_new_meta_txn(
+        &self,
+        f: &mut dyn FnMut(&dyn tidb_br::glue::GlobalIdAllocator) -> Result<()>,
+    ) -> Result<()> {
+        let store = self
+            .0
+            .meta_store
+            .get()
+            .ok_or_else(|| errorf("store is not initialized"))?;
+        let mut failed = None;
+        store
+            .run_in_new_txn(
+                &tidb_gocontext::Context::background(),
+                tidb_txnkv::INTERNAL_TXN_BR,
+                true,
+                &mut |txn| {
+                    let m = MetaIds(tidb_meta::transaction::Mutator::new(txn));
+                    f(&m).map_err(|e| {
+                        let text = e.to_string();
+                        failed = Some(e);
+                        tidb_meta::MetaError::Storage(text)
+                    })
+                },
+            )
+            .map_err(|e| failed.take().unwrap_or_else(|| errorf(e)))
+    }
+
+    /// Go `Domain.InfoSchema()`: the latest loaded schema.
+    fn info_schema(&self) -> Result<Arc<dyn tidb_br::glue::InfoSchema>> {
+        Ok(Arc::new(BrInfoSchema(self.0.catalog.get_latest())))
+    }
+
+    /// Go `LoadStatsFromJSONNoUpdate`, through the node's `LOAD STATS`
+    /// writer (which also refreshes this node's statistics cache).
+    fn load_stats_from_json_no_update(
+        &self,
+        _ctx: &tidb_gocontext::Context,
+        json_table: &tidb_stats_util::JsonTable,
+    ) -> Result<()> {
+        self.load_stats(json_table)
+    }
+
+    /// Go `LoadStatsFromJSONConcurrently`: the partition tasks as one dump
+    /// of `table`, each named by its partition (the table's own ID being
+    /// its global statistics).
+    fn load_partition_stats_from_json(
+        &self,
+        _ctx: &tidb_gocontext::Context,
+        table: &tidb_model::TableInfo,
+        tasks: Vec<(i64, tidb_stats_util::JsonTable)>,
+    ) -> Result<()> {
+        let is = self.0.catalog.get_latest();
+        let db_name = is
+            .stored_schemas()
+            .iter()
+            .map(|db| db.read())
+            .find(|db| db.id == table.db_id)
+            .map(|db| db.name.original().to_owned())
+            .ok_or_else(|| errorf(format!("the database of table {} is not found", table.name)))?;
+        let definitions = table
+            .get_partition_info()
+            .map(|p| p.read().definitions.snapshot())
+            .unwrap_or_default();
+        if definitions.is_empty() {
+            for (_, mut json) in tasks {
+                json.database_name.clone_from(&db_name);
+                json.table_name = table.name.original().to_owned();
+                self.load_stats(&json)?;
+            }
+            return Ok(());
+        }
+        let mut partitions = std::collections::BTreeMap::new();
+        for (id, json) in tasks {
+            let name = if id == table.id {
+                tidb_stats_util::TIDB_GLOBAL_STATS.to_owned()
+            } else {
+                definitions
+                    .iter()
+                    .find(|d| d.id == id)
+                    .map(|d| d.name.lowercase().to_owned())
+                    .ok_or_else(|| {
+                        errorf(format!(
+                            "partition {id} of table {} is not found",
+                            table.name
+                        ))
+                    })?
+            };
+            partitions.insert(name, Some(json));
+        }
+        self.load_stats(&tidb_stats_util::JsonTable {
+            database_name: db_name,
+            table_name: table.name.original().to_owned(),
+            partitions: Some(partitions),
+            ..Default::default()
+        })
+    }
+
+    /// Go `StatsHandle().SaveMetaToStorage(false, updates...)`.
+    fn save_meta_to_storage(&self, updates: &[tidb_br::glue::MetaUpdate]) -> Result<()> {
+        let updates: Vec<_> = updates
+            .iter()
+            .map(|u| tidb_stats_handle_storage::save::MetaUpdate {
+                physical_id: u.physical_id,
+                count: u.count,
+                modify_count: u.modify_count,
+            })
+            .collect();
+        let pool = self.0.advanced_sys_session_pool();
+        tidb_stats_handle_storage::stats_read_writer::save_meta_to_storage(
+            &tidb_domain_core::sys_session::StatsPool {
+                session_pool: Some(&pool),
+            },
+            false,
+            &updates,
+        )
+        .map(|_| ())
+        .map_err(sql_error)
+    }
+
+    /// Go `NotifyUpdateAllUsersPrivilege`.
+    fn notify_update_all_users_privilege(&self) -> Result<()> {
+        self.0
+            .accounts
+            .notify_all_privileges_changed()
+            .map_err(errorf)
+    }
+
+    /// Go `GetEtcdClient()`; BR's keys are not keyspace-prefixed.
+    fn etcd_client(&self) -> Option<Arc<dyn tidb_domain_serverinfo::serverinfo_syncer::EtcdOps>> {
+        self.0
+            .unprefixed_etcd_client()
+            .or_else(|| self.0.etcd_client())
+            .map(|client| {
+                Arc::new(tidb_ddl::etcd_ops::EtcdClientOps::new(client))
+                    as Arc<dyn tidb_domain_serverinfo::serverinfo_syncer::EtcdOps>
+            })
+    }
+
+    /// Go `infosync.UpdateLabelRules`.
+    fn update_label_rules(&self, patch: &tidb_ddl_label::LabelRulePatch) -> Result<()> {
+        tidb_domain_infosync::label_manager::label_rule_manager()
+            .update_label_rules(patch)
+            .map_err(errorf)
+    }
 }
 
-/// Go `tidbGlueSession`: each statement on a session of the domain's
-/// internal pool, under `kv.InternalTxnBR`.
-struct BrSession(Arc<Domain>);
+impl BrDomain {
+    fn load_stats(&self, json: &tidb_stats_util::JsonTable) -> Result<()> {
+        let historical = self
+            .0
+            .global_vars
+            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
+            .is_ok_and(|v| v.eq_ignore_ascii_case("ON") || v == "1");
+        let pool = self.0.advanced_sys_session_pool();
+        tidb_session::domain::cluster_session_node::node_services(&self.0)
+            .analyze()
+            .load_stats(
+                json,
+                historical,
+                &tidb_domain_core::sys_session::StatsPool {
+                    session_pool: Some(&pool),
+                },
+            )
+            .map(|_| ())
+            .map_err(sql_error)
+    }
+}
+
+/// A server error as BR sees it: its code kept (Go's `terror` identity, so
+/// the restore can tell `ErrInvalidDDLJob`).
+fn sql_error(e: tidb_store_driver_error::sql_query_error::SqlQueryError) -> tidb_br::errors::Error {
+    Arc::new(tidb_terror::TerrorError::compatible(
+        tidb_terror::TerrorCode::new(e.code as isize),
+        e.message,
+    ))
+}
+
+/// Go `meta.Mutator`'s global ID counter.
+struct MetaIds<'a>(
+    tidb_meta::transaction::Mutator<&'a mut dyn tidb_meta::transaction::MetaTransaction>,
+);
+
+impl tidb_br::glue::GlobalIdAllocator for MetaIds<'_> {
+    fn get_global_id(&self) -> Result<i64> {
+        self.0.global_id().map_err(|e| errorf(e.to_string()))
+    }
+
+    fn advance_global_ids(&self, n: i32) -> Result<i64> {
+        self.0
+            .advance_global_ids(n)
+            .map_err(|e| errorf(e.to_string()))
+    }
+}
+
+/// Go `infoschema.InfoSchema` over this node's latest schema.
+struct BrInfoSchema(Arc<tidb_infoschema::SessionExtendedInfoSchema>);
+
+impl tidb_br::glue::InfoSchema for BrInfoSchema {
+    fn schema_by_name(&self, db: &str) -> Option<tidb_model::DBInfo> {
+        self.0.schema_by_name(db).map(|d| d.read().clone())
+    }
+
+    fn table_by_name(&self, db: &str, table: &str) -> Option<tidb_model::TableInfo> {
+        self.0
+            .table_info_by_name(db, table)
+            .map(|(_, t)| t.read().clone())
+    }
+
+    fn schema_table_infos(&self, db: &str) -> Vec<tidb_model::TableInfo> {
+        self.0
+            .schema_table_infos(db)
+            .unwrap_or_default()
+            .iter()
+            .map(|t| t.read().clone())
+            .collect()
+    }
+
+    fn all_schemas(&self) -> Vec<tidb_model::DBInfo> {
+        self.0
+            .stored_schemas()
+            .iter()
+            .map(|d| d.read().clone())
+            .collect()
+    }
+}
+
+/// Go `tidbGlueSession`: one internal session of the domain's pool (Go
+/// `CreateSession`), every statement on it under `kv.InternalTxnBR`, so a
+/// transaction and `USE` carry across statements. It is closed, not
+/// returned, when dropped (Go `Close`).
+struct BrSession {
+    domain: Arc<Domain>,
+    pool: Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,
+    session: tidb_syssession::Session<dyn tidb_domain_core::sys_session::DomainSysSession>,
+}
 
 impl BrSession {
+    fn new(domain: &Arc<Domain>) -> std::result::Result<Self, String> {
+        let pool = domain.advanced_sys_session_pool();
+        let session = pool.get().map_err(|e| e.to_string())?;
+        Ok(Self {
+            domain: Arc::clone(domain),
+            pool,
+            session,
+        })
+    }
+
     fn exec(
         &self,
         sql: &str,
         args: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>> {
-        self.0
-            .advanced_sys_session_pool()
-            .with_session(|lease| {
-                lease.with_session_context(|context| {
-                    tidb_domain_core::sys_session::exec_sql(
-                        context,
-                        tidb_txnkv::INTERNAL_TXN_BR,
-                        sql,
-                        args,
-                    )
-                    .map_err(tidb_syssession::SysSessionError::new)
-                })
+        self.session
+            .with_session_context(|context| {
+                tidb_domain_core::sys_session::exec_sql(
+                    context,
+                    tidb_txnkv::INTERNAL_TXN_BR,
+                    sql,
+                    args,
+                )
+                .map_err(tidb_syssession::SysSessionError::new)
             })
-            .map_err(|e| errorf(e.to_string()))
+            .map_err(|e: tidb_syssession::SysSessionError| errorf(e.to_string()))
+    }
+
+    /// The session's variables as a DDL statement captures them.
+    fn ddl_vars(&self) -> Result<tidb_sessionctx::StmtContext> {
+        self.session
+            .with_session_context(|context| {
+                context
+                    .ddl_statement_context()
+                    .map_err(tidb_syssession::SysSessionError::new)
+            })
+            .map_err(|e: tidb_syssession::SysSessionError| errorf(e.to_string()))
+    }
+}
+
+impl Drop for BrSession {
+    fn drop(&mut self) {
+        self.session.avoid_reuse();
+        self.pool.put(&self.session);
     }
 }
 
@@ -260,12 +517,6 @@ fn datum_text(d: &tidb_datatype::Datum) -> String {
         tidb_datatype::Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
         other => format!("{other:?}"),
     }
-}
-
-/// DDL restore runs through the session's DDL executor, which the restore
-/// task brings.
-fn restore_ddl_unsupported() -> tidb_br::errors::Error {
-    errorf("restoring schemas is not supported by this node yet")
 }
 
 impl tidb_br::glue::Session for BrSession {
@@ -285,36 +536,65 @@ impl tidb_br::glue::Session for BrSession {
     fn create_database_on_exist_error(
         &self,
         _: &tidb_gocontext::Context,
-        _: &tidb_model::DBInfo,
+        schema: &tidb_model::DBInfo,
     ) -> Result<()> {
-        Err(restore_ddl_unsupported())
+        tidb_executor::brie_utils::brie_create_database(
+            self.domain.ddl.as_ref(),
+            self.ddl_vars()?,
+            schema,
+            "",
+        )
+        .map_err(sql_error)
     }
 
     fn create_table(
         &self,
         _: &tidb_gocontext::Context,
-        _: &str,
-        _: &tidb_model::TableInfo,
-        _: tidb_br::glue::CreateTableConfig,
+        db_name: &str,
+        table: &tidb_model::TableInfo,
+        cfg: tidb_br::glue::CreateTableConfig,
     ) -> Result<()> {
-        Err(restore_ddl_unsupported())
+        // `BRIECreateTable` always ignores an existing table.
+        tidb_executor::brie_utils::brie_create_table(
+            self.domain.ddl.as_ref(),
+            self.ddl_vars()?,
+            db_name,
+            table.clone(),
+            "",
+            cfg.id_allocated,
+        )
+        .map_err(sql_error)
     }
 
     fn create_tables(
         &self,
         _: &tidb_gocontext::Context,
-        _: &[(String, Vec<tidb_model::TableInfo>)],
-        _: tidb_br::glue::CreateTableConfig,
+        tables: &[(String, Vec<tidb_model::TableInfo>)],
+        cfg: tidb_br::glue::CreateTableConfig,
     ) -> Option<Result<()>> {
-        Some(Err(restore_ddl_unsupported()))
+        Some(self.ddl_vars().and_then(|vars| {
+            tidb_executor::brie_utils::brie_create_tables(
+                self.domain.ddl.as_ref(),
+                vars,
+                tables,
+                "",
+                cfg.id_allocated,
+            )
+            .map_err(sql_error)
+        }))
     }
 
     fn create_placement_policy(
         &self,
         _: &tidb_gocontext::Context,
-        _: &tidb_model::PolicyInfo,
+        policy: &tidb_model::PolicyInfo,
     ) -> Result<()> {
-        Err(restore_ddl_unsupported())
+        tidb_executor::brie_utils::brie_create_placement_policy(
+            self.domain.ddl.as_ref(),
+            self.ddl_vars()?,
+            policy,
+        )
+        .map_err(sql_error)
     }
 
     /// Go `GlobalVarsAccessor.GetTiDBTableValue`: the `mysql.tidb` row,
@@ -334,7 +614,7 @@ impl tidb_br::glue::Session for BrSession {
     }
 
     fn get_global_sys_var(&self, name: &str) -> Result<String> {
-        self.0
+        self.domain
             .global_vars
             .get(name)
             .map_err(|e| errorf(format!("{e:?}")))
@@ -359,10 +639,28 @@ impl tidb_br::glue::Session for BrSession {
     fn alter_table_mode(
         &self,
         _: &tidb_gocontext::Context,
-        _: i64,
-        _: i64,
-        _: tidb_model::TableMode,
+        schema_id: i64,
+        table_id: i64,
+        mode: tidb_model::TableMode,
     ) -> Result<()> {
-        Err(restore_ddl_unsupported())
+        tidb_executor::brie_utils::brie_alter_table_mode(
+            self.domain.ddl.as_ref(),
+            self.ddl_vars()?,
+            schema_id,
+            table_id,
+            mode,
+        )
+        .map_err(sql_error)
+    }
+
+    /// Go `ExecRestrictedSQL` with `ExecOptionUseCurSession`: on this
+    /// session, as the registry's transactions need.
+    fn exec_restricted_sql(
+        &self,
+        _: &tidb_gocontext::Context,
+        sql: &str,
+        args: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>> {
+        self.exec(sql, args)
     }
 }

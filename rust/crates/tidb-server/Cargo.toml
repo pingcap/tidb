@@ -51,6 +51,9 @@ tidb-owner = { path = "../tidb-owner" }
 tidb-util = { path = "../tidb-util" }
 tidb-stats-handle-lockstats = { path = "../tidb-stats-handle-lockstats" }
 tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
+tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }
+tidb-stats-util = { path = "../tidb-stats-util" }
+tidb-ddl-label = { path = "../tidb-ddl-label" }
 tidb-table = { path = "../tidb-table" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
 tidb-server-err = { path = "../tidb-server-err" }
