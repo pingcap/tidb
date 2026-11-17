@@ -180,7 +180,15 @@ func (e *AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 		datums := make([]types.Datum, len(totFts))
 		for columnIndex := range datums {
 			if isVirtualColumn[columnIndex] {
-				datums[columnIndex] = evaluationDatums[columnIndex]
+				datum := evaluationDatums[columnIndex]
+				if datum.Kind() == types.KindMysqlTime && totFts[columnIndex].GetType() == mysql.TypeTimestamp {
+					timestamp := datum.GetMysqlTime()
+					if err := timestamp.ConvertTimeZone(sessionLocation, time.UTC); err != nil {
+						return err
+					}
+					datum = types.NewTimeDatum(timestamp)
+				}
+				datums[columnIndex] = datum
 			} else {
 				datums[columnIndex] = utcDatums[columnIndex]
 			}
