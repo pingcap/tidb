@@ -246,7 +246,8 @@ func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Express
 				sctx.GetExprCtx(),
 				ithPredicate,
 				jthPredicate)
-			if iCol.Equals(jCol) {
+			// The constants are compared without the column type, which is wrong for ENUM and SET.
+			if iCol.Equals(jCol) && iCol != nil && !isEnumOrSetColumn(sctx.GetExprCtx().GetEvalCtx(), iCol) {
 				if iType == notEqualPredicate && jType == inListPredicate {
 					predicates[j], specialCase = updateInPredicate(sctx, jthPredicate, ithPredicate)
 					if maybeOverOptimized4PlanCache {
@@ -274,6 +275,13 @@ func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Express
 		}
 	}
 	return newValues
+}
+
+// isEnumOrSetColumn returns whether col is an ENUM or SET column. Such a column compares by name against
+// a string but by index against a number, so two constants cannot be compared without the column type.
+func isEnumOrSetColumn(evalCtx expression.EvalContext, col *expression.Column) bool {
+	tp := col.GetType(evalCtx).GetType()
+	return tp == mysql.TypeEnum || tp == mysql.TypeSet
 }
 
 // Check for constant false condition.
@@ -313,6 +321,11 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	otherValueConst, ok2 := otherValue.GetArgs()[1].(*expression.Constant)
 	if ok1 && ok2 {
 		evalCtx := ctx.GetExprCtx().GetEvalCtx()
+		// ENUM and SET columns compare by name against strings but by ordinal against numbers.
+		// The constants are compared below without the column type, so we cannot simplify them.
+		if isEnumOrSetColumn(evalCtx, col1) {
+			return false
+		}
 		// We have checked the equivalence between col1 and col2, so we can safely use col1's collation.
 		colCollate := col1.GetType(evalCtx).GetCollate()
 		// Different connection collations can affect the results here, leading to different simplified results and ultimately impacting the execution outcomes.
