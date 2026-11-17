@@ -1911,6 +1911,15 @@ func tidbSetPDClientForGC(d *Dumper) error {
 		return nil
 	}
 
+	// In-memory parity tests expose keyspace metadata but have no PD server.
+	var injectedClient pd.Client
+	failpoint.InjectCall("mockPDClientForGC", &injectedClient)
+	if injectedClient != nil {
+		d.tidbPDClientForGC = injectedClient
+		d.tidbUseKeyspaceGC = d.tidbKeyspaceName != ""
+		return nil
+	}
+
 	// Premium cluster: PD endpoints are passed from cloud control.
 	if d.tidbKeyspaceName != "" {
 		pdAddrs := strings.Split(conf.PDAddr, ",")

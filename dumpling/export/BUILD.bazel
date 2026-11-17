@@ -121,6 +121,7 @@ go_test(
         "//dumpling/internal/dumpservicetest",
         "//dumpling/log",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/dumpformat/parquetfile",
         "//pkg/errno",
         "//pkg/kv",

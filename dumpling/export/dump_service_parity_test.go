@@ -31,11 +31,14 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	"github.com/pingcap/tidb/dumpling/internal/dumpservicetest"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	srv "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/tests/servertestkit"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tf "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
 )
 
 const parityTablePrefix = "parity.t."
@@ -47,6 +50,11 @@ func TestDumpServiceMatchesSQLDump(t *testing.T) {
 	srv.RunInGoTest = true
 	t.Cleanup(func() { srv.RunInGoTest = originalRunInGoTest })
 
+	if kerneltype.IsNextGen() {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/dumpling/export/mockPDClientForGC", func(client *pd.Client) {
+			*client = newMockPDClientForGC()
+		})
+	}
 	server := servertestkit.CreateTidbTestSuite(t)
 	t.Run("types", func(t *testing.T) { testDumpServiceColumnTypes(t, server) })
 	t.Run("generated", func(t *testing.T) { testDumpServiceGeneratedColumns(t, server) })
@@ -302,12 +310,20 @@ func dumpParityOutputs(
 		conf.FileType = format.fileType
 		conf.CsvOutputDialect = format.csvDialect
 		conf.DumpService = service
+		if service == "" && kerneltype.IsNextGen() {
+			// The client is injected above; this fixture has no network PD service.
+			conf.PDAddr = "mock-pd:2379"
+		}
 		if editConfig != nil {
 			editConfig(conf)
 		}
 		dumper, err := NewDumper(context.Background(), conf)
 		require.NoError(t, err)
 		defer func() { require.NoError(t, dumper.Close()) }()
+		if service == "" && kerneltype.IsNextGen() {
+			require.True(t, dumper.tidbUseKeyspaceGC)
+			require.Equal(t, server.Store.GetKeyspace(), dumper.tidbKeyspaceName)
+		}
 		require.NoError(t, dumper.Dump())
 		return format.read(t, conf.OutputDirPath)
 	}
