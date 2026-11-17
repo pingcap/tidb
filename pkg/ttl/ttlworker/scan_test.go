@@ -22,6 +22,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -29,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -108,7 +111,8 @@ func (w *mockScanWorker) pollDelTask() *ttlDeleteTask {
 		require.NotNil(w.t, del)
 		require.NotNil(w.t, del.statistics)
 		require.Same(w.t, w.curTask.tbl, del.tbl)
-		require.Equal(w.t, w.curTask.ExpireTime, del.expire)
+		require.True(w.t, w.curTask.ExpireTime.Equal(del.expire))
+		require.Equal(w.t, time.UTC, del.expire.Location())
 		require.NotEqual(w.t, 0, len(del.rows))
 		return del
 	case <-time.After(10 * time.Second):
@@ -305,7 +309,11 @@ func (t *mockScanTask) selectSQL(i int) string {
 	if i == 0 {
 		op = ">="
 	}
-	return fmt.Sprintf("SELECT LOW_PRIORITY SQL_NO_CACHE `_tidb_rowid` FROM `test`.`t1` WHERE `_tidb_rowid` %s %d AND `time` < FROM_UNIXTIME(0) ORDER BY `_tidb_rowid` ASC LIMIT 3", op, i*100)
+	return fmt.Sprintf(
+		"SELECT LOW_PRIORITY SQL_NO_CACHE `_tidb_rowid` FROM `test`.`t1` USE INDEX () "+
+			"WHERE `_tidb_rowid` %s %d AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `_tidb_rowid` ASC LIMIT 3",
+		op, i*100,
+	)
 }
 
 func (t *mockScanTask) runDoScanForTest(delTaskCnt int, errString string) *ttlScanTaskExecResult {
@@ -326,7 +334,6 @@ func (t *mockScanTask) runDoScanForTest(delTaskCnt int, errString string) *ttlSc
 	r := t.doScan(context.TODO(), t.delCh, t.sessPool)
 	require.NotNil(t.t, t.sessPool.lastSession)
 	require.True(t.t, t.sessPool.lastSession.inPool)
-	require.Greater(t.t, t.sessPool.lastSession.resetTimeZoneCalls, 0)
 	require.NotNil(t.t, r)
 	require.Same(t.t, t.ttlScanTask, r.task)
 	if errString == "" {
@@ -370,7 +377,8 @@ loop:
 		require.NotNil(t.t, del.statistics)
 		require.Same(t.t, t.statistics, del.statistics)
 		require.Same(t.t, t.tbl, del.tbl)
-		require.Equal(t.t, t.ExpireTime, del.expire)
+		require.True(t.t, t.ExpireTime.Equal(del.expire))
+		require.Equal(t.t, time.UTC, del.expire.Location())
 		if i < len(t.sqlRetry)-1 {
 			require.Equal(t.t, 3, len(del.rows))
 			require.Equal(t.t, 1, len(del.rows[2]))
@@ -467,6 +475,60 @@ func TestScanTaskDoScan(t *testing.T) {
 	task.schemaChangeIdx = 1
 	task.schemaChangeInRetry = 2
 	task.runDoScanForTest(1, "table 'test.t1' meta changed, should abort current job: [schema:1146]Table 'test.t1' doesn't exist")
+
+	t.Run("index scan decodes persisted time range", func(t *testing.T) {
+		tbl := newMockTTLTbl(t, "index_range")
+		tbl.TimeColumn.FieldType = *types.NewFieldType(mysql.TypeTimestamp)
+		indexID := int64(10)
+		tbl.Indices = []*model.IndexInfo{
+			{
+				ID:      indexID,
+				Name:    ast.NewCIStr("idx_time"),
+				Columns: []*model.IndexColumn{{Name: tbl.TimeColumn.Name, Offset: tbl.TimeColumn.Offset, Length: types.UnspecifiedLength}},
+				State:   model.StatePublic,
+			},
+		}
+
+		globalLoc := time.FixedZone("UTC+8", 8*60*60)
+		boundary := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+		encodedRange, err := codec.EncodeKey(time.UTC, nil,
+			types.NewTimeDatum(types.NewTime(types.FromGoTime(boundary), mysql.TypeTimestamp, 0)))
+		require.NoError(t, err)
+		scanRange, err := codec.Decode(encodedRange, len(encodedRange))
+		require.NoError(t, err)
+		require.Equal(t, types.KindUint64, scanRange[0].Kind())
+
+		expire := boundary.Add(time.Hour)
+		scanTask := &ttlScanTask{
+			ctx: cache.SetMockExpireTime(context.Background(), expire),
+			TTLTask: &cache.TTLTask{
+				ExpireTime:     expire,
+				ScanRangeStart: scanRange,
+				ScanIndexID:    &indexID,
+			},
+			tbl:        tbl,
+			statistics: &ttlStatistics{},
+		}
+		pool := newMockSessionPool(t, tbl)
+		defer pool.AssertNoSessionInUse()
+		pool.se.sessionVars.TimeZone = time.UTC
+		pool.se.globalTimeZone = globalLoc
+		executeCalls := 0
+		pool.se.executeSQL = func(_ context.Context, sql string, _ ...any) ([]chunk.Row, error) {
+			executeCalls++
+			require.Equal(t, fmt.Sprintf("SELECT LOW_PRIORITY SQL_NO_CACHE `time`, `_tidb_rowid` FROM `test`.`index_range` FORCE INDEX(`idx_time`) WHERE `time` >= '%s' AND `time` < FROM_UNIXTIME(%d) ORDER BY `time`, `_tidb_rowid` ASC LIMIT 3", boundary.Format(time.DateTime), expire.Unix()), sql)
+			return newMockRows(t, &tbl.TimeColumn.FieldType, tbl.KeyColumnTypes[0]).Append(boundary, 1).Rows(), nil
+		}
+
+		origLimit := vardef.TTLScanBatchSize.Load()
+		vardef.TTLScanBatchSize.Store(3)
+		defer vardef.TTLScanBatchSize.Store(origLimit)
+		delCh := make(chan *ttlDeleteTask, 1)
+		result := scanTask.doScan(context.Background(), delCh, pool)
+		require.NoError(t, result.err)
+		require.Equal(t, 1, executeCalls)
+		require.Equal(t, [][]types.Datum{{types.NewIntDatum(1)}}, (<-delCh).rows)
+	})
 }
 
 func TestScanTaskCheck(t *testing.T) {

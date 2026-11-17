@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -63,12 +62,6 @@ func TestLockAndUnlockTableStats(t *testing.T) {
 
 	// Insert a new row to the table.
 	tk.MustExec("insert into t(a, b) values(3,'c')")
-	// Enable the failpoint to test the historical stats meta is not recorded.
-	err = failpoint.Enable(
-		"github.com/pingcap/tidb/pkg/statistics/handle/usage/panic-when-record-historical-stats-meta",
-		"1*return(true)",
-	)
-	require.NoError(t, err)
 	// Flush stats delta.
 	tk.MustExec("flush stats_delta *.*")
 

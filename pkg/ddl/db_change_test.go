@@ -218,6 +218,7 @@ func TestTwoStates(t *testing.T) {
 		c4 timestamp on update current_timestamp,
 		key(c1, c2))`)
 	tk.MustExec("insert into t values(1, 'a', 'N', '2017-07-01')")
+	targetTableID := external.GetTableByName(t, tk, "test_db_state", "t").Meta().ID
 
 	prevState := model.StateNone
 	require.NoError(t, testInfo.parseSQLs(parser.New()))
@@ -232,6 +233,11 @@ func TestTwoStates(t *testing.T) {
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	tk.MustExec("drop table t_states_failpoint_probe")
 	runStateChecks := func(state model.SchemaState) {
+		switch state {
+		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
+		default:
+			return
+		}
 		if state == prevState || checkErr != nil || times >= 3 {
 			return
 		}
@@ -284,6 +290,9 @@ func TestTwoStates(t *testing.T) {
 	}
 	runWithFailpointHook := func() {
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+			if job.Type != model.ActionAddColumn || job.TableID != targetTableID {
+				return
+			}
 			runStateChecks(job.SchemaState)
 		})
 		tk.MustExec(alterTableSQL)

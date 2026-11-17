@@ -904,6 +904,24 @@ func TestDropTables(t *testing.T) {
 
 	failedSQL = "show create table t1;"
 	tk.MustGetErrCode(failedSQL, errno.ErrNoSuchTable)
+
+	t.Run("ignore legacy foreign keys", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		original := tk.MustQuery("select @@global.tidb_enable_foreign_key").Rows()[0][0]
+		t.Cleanup(func() { tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_foreign_key=%v", original)) })
+		tk.MustExec("set @@global.tidb_enable_foreign_key=0")
+		tk.MustExec("create table legacy_parent (id int primary key, child_id int, foreign key (child_id) references legacy_child(id))")
+		parent := external.GetTableByName(t, tk, "test", "legacy_parent")
+		require.Len(t, parent.Meta().ForeignKeys, 1)
+		require.Less(t, parent.Meta().ForeignKeys[0].Version, model.FKVersion1)
+		tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+		tk.MustExec("create table legacy_child (id int primary key, parent_id int, foreign key (parent_id) references legacy_parent(id))")
+		// The syntax-only parent-to-child reference must not create a cycle
+		// with the enforced child-to-parent reference in the drop order.
+		tk.MustExec("drop table legacy_parent, legacy_child")
+		tk.MustQuery("show tables like 'legacy_%'").Check(testkit.Rows())
+	})
 }
 
 func TestCreateConstraintForTable(t *testing.T) {
@@ -960,6 +978,10 @@ func TestCreateTableWithBR(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/handleAutoIncID", func() {
 		count++
 	})
+	preSplitCount := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/preSplitAndScatter", func(string) {
+		preSplitCount++
+	})
 
 	tblInfo := &model.TableInfo{
 		ID:   42043,
@@ -973,8 +995,10 @@ func TestCreateTableWithBR(t *testing.T) {
 				FieldType: *types.NewFieldType(mysql.TypeLonglong),
 			},
 		},
-		State:     model.StatePublic,
-		AutoIncID: 1000,
+		State:           model.StatePublic,
+		AutoIncID:       1000,
+		ShardRowIDBits:  2,
+		PreSplitRegions: 2,
 	}
 
 	involvingRef := []model.InvolvingSchemaInfo{{
@@ -993,6 +1017,20 @@ func TestCreateTableWithBR(t *testing.T) {
 
 	// For BR execution, rebase should be called twice. And this won't affect the rebase result.
 	require.Equal(t, 2, count)
+	require.Zero(t, preSplitCount)
 	rs := tk.MustQuery("show table test.t1 next_row_id").Rows()
 	require.Equal(t, "1000", rs[0][3])
+
+	preSplitCount = 0
+	batchTableInfos := make([]*model.TableInfo, 2)
+	for i := range batchTableInfos {
+		batchTableInfos[i] = tblInfo.Clone()
+		batchTableInfos[i].ID = int64(42044 + i)
+		batchTableInfos[i].Name = ast.NewCIStr(fmt.Sprintf("batch_t%d", i))
+	}
+	se.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, dom.DDLExecutor().BatchCreateTableWithInfo(
+		se, ast.NewCIStr("test"), batchTableInfos,
+		ddl.WithOnExist(ddl.OnExistError), ddl.WithIDAllocated(true)))
+	require.Zero(t, preSplitCount)
 }

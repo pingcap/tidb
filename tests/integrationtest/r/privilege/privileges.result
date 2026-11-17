@@ -39,8 +39,8 @@ GRANT ALTER ROUTINE on privilege__privileges.* to u1;
 GRANT ALTER ROUTINE on *.* to u1;
 SHOW GRANTS FOR u1;
 Grants for u1@%
-GRANT CREATE ROUTINE,ALTER ROUTINE ON *.* TO 'u1'@'%'
-GRANT CREATE ROUTINE,ALTER ROUTINE ON `privilege__privileges`.* TO 'u1'@'%'
+GRANT CREATE ROUTINE,ALTER ROUTINE ON *.* TO `u1`@`%`
+GRANT CREATE ROUTINE,ALTER ROUTINE ON `privilege__privileges`.* TO `u1`@`%`
 DROP USER u1;
 drop placement policy if exists x;
 CREATE USER super_user, placement_user, empty_user;
@@ -66,13 +66,13 @@ INSERT INTO test_rc.t VALUES (1);
 GRANT RESOURCE_GROUP_ADMIN ON *.* TO resource_group_admin;
 SHOW GRANTS FOR resource_group_admin;
 Grants for resource_group_admin@%
-GRANT USAGE ON *.* TO 'resource_group_admin'@'%'
-GRANT RESOURCE_GROUP_ADMIN ON *.* TO 'resource_group_admin'@'%'
+GRANT USAGE ON *.* TO `resource_group_admin`@`%`
+GRANT RESOURCE_GROUP_ADMIN ON *.* TO `resource_group_admin`@`%`
 GRANT RESOURCE_GROUP_USER ON *.* TO resource_group_user;
 SHOW GRANTS FOR resource_group_user;
 Grants for resource_group_user@%
-GRANT USAGE ON *.* TO 'resource_group_user'@'%'
-GRANT RESOURCE_GROUP_USER ON *.* TO 'resource_group_user'@'%'
+GRANT USAGE ON *.* TO `resource_group_user`@`%`
+GRANT RESOURCE_GROUP_USER ON *.* TO `resource_group_user`@`%`
 GRANT SELECT on test_rc.* TO resource_group_admin;
 GRANT SELECT on test_rc.* TO resource_group_user;
 CREATE RESOURCE GROUP test RU_PER_SEC = 666;
@@ -134,9 +134,9 @@ GRANT REFERENCES ON privilege__privileges.* TO referencesUser;
 GRANT REFERENCES ON privilege__privileges.reftest TO referencesUser;
 SHOW GRANTS FOR referencesUser;
 Grants for referencesUser@%
-GRANT REFERENCES ON *.* TO 'referencesUser'@'%'
-GRANT REFERENCES ON `privilege__privileges`.* TO 'referencesUser'@'%'
-GRANT REFERENCES ON `privilege__privileges`.`reftest` TO 'referencesUser'@'%'
+GRANT REFERENCES ON *.* TO `referencesUser`@`%`
+GRANT REFERENCES ON `privilege__privileges`.* TO `referencesUser`@`%`
+GRANT REFERENCES ON `privilege__privileges`.`reftest` TO `referencesUser`@`%`
 DROP USER referencesUser;
 create database if not exists privilege__privileges;
 create database if not exists privilege__privileges_test1;
@@ -202,8 +202,8 @@ GRANT LOCK TABLES ON *.* TO lock_tables_user;
 GRANT LOCK TABLES ON privilege__privileges.* TO lock_tables_user;
 SHOW GRANTS FOR lock_tables_user;
 Grants for lock_tables_user@%
-GRANT LOCK TABLES ON *.* TO 'lock_tables_user'@'%'
-GRANT LOCK TABLES ON `privilege__privileges`.* TO 'lock_tables_user'@'%'
+GRANT LOCK TABLES ON *.* TO `lock_tables_user`@`%`
+GRANT LOCK TABLES ON `privilege__privileges`.* TO `lock_tables_user`@`%`
 DROP USER lock_tables_user;
 CREATE USER 'nofile'@'localhost';
 select 1 into outfile '/tmp/doesntmatter-no-permissions';
@@ -226,7 +226,7 @@ create user ss1;
 revoke all privileges, grant option from ss1;
 show grants for ss1;
 Grants for ss1@%
-GRANT USAGE ON *.* TO 'ss1'@'%'
+GRANT USAGE ON *.* TO `ss1`@`%`
 # TestCheckExchangePartitionDBPrivilege
 CREATE USER 'tester'@'localhost';
 GRANT SELECT ON privilege__privileges.* TO  'tester'@'localhost';
@@ -382,8 +382,8 @@ CREATE TABLE column_table (a int, b int, c int);
 GRANT Select(a),Update(a,b),Insert(c) ON privilege__privileges.column_table TO  'column'@'%';
 SHOW GRANTS;
 Grants for User
-GRANT USAGE ON *.* TO 'column'@'%'
-GRANT SELECT(a), INSERT(c), UPDATE(a, b) ON `privilege__privileges`.`column_table` TO 'column'@'%'
+GRANT USAGE ON *.* TO `column`@`%`
+GRANT SELECT(a), INSERT(c), UPDATE(a, b) ON `privilege__privileges`.`column_table` TO `column`@`%`
 CREATE USER 'tableaccess'@'localhost';
 CREATE TABLE fieldlistt1 (a int);
 desc privilege__privileges.fieldlistt1;
@@ -411,8 +411,8 @@ CREATE USER placement_user;
 GRANT PLACEMENT_ADMIN ON *.* TO placement_user;
 SHOW GRANTS FOR placement_user;
 Grants for placement_user@%
-GRANT USAGE ON *.* TO 'placement_user'@'%'
-GRANT PLACEMENT_ADMIN ON *.* TO 'placement_user'@'%'
+GRANT USAGE ON *.* TO `placement_user`@`%`
+GRANT PLACEMENT_ADMIN ON *.* TO `placement_user`@`%`
 DROP USER placement_user;
 DROP DATABASE placement_db;
 CREATE USER superuser2, nobodyuser2, nobodyuser3, nobodyuser4, nobodyuser5, semuser1, semuser2, semuser3, semuser4;
@@ -491,7 +491,7 @@ GRANT CONFIG ON *.* TO ccconfig;
 GRANT Process ON *.* TO ccprocess;
 SHOW GRANTS;
 Grants for User
-GRANT USAGE ON *.* TO 'ccnobody'@'%'
+GRANT USAGE ON *.* TO `ccnobody`@`%`
 SELECT * FROM information_schema.cluster_config;
 Error 1227 (42000): Access denied; you need (at least one of) the CONFIG privilege(s) for this operation
 SELECT * FROM information_schema.cluster_hardware;
@@ -506,7 +506,7 @@ SELECT * FROM information_schema.cluster_log WHERE time BETWEEN '2021-07-13 00:0
 Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
 SHOW GRANTS;
 Grants for User
-GRANT CONFIG ON *.* TO 'ccconfig'@'%'
+GRANT CONFIG ON *.* TO `ccconfig`@`%`
 SELECT * FROM information_schema.cluster_config limit 0;
 TYPE	INSTANCE	KEY	VALUE
 SELECT * FROM information_schema.cluster_HARDWARE limit 0;
@@ -521,7 +521,7 @@ SELECT * FROM information_schema.cluster_LOG WHERE time BETWEEN '2021-07-13 00:0
 Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
 SHOW GRANTS;
 Grants for User
-GRANT PROCESS ON *.* TO 'ccprocess'@'%'
+GRANT PROCESS ON *.* TO `ccprocess`@`%`
 SELECT * FROM information_schema.CLUSTER_info limit 0;
 TYPE	INSTANCE	STATUS_ADDRESS	VERSION	GIT_HASH	START_TIME	UPTIME	SERVER_ID
 SELECT * FROM information_schema.CLUSTER_load limit 0;
@@ -554,59 +554,59 @@ GRANT tsg_r1 TO tsg_u1, tsg_u2;
 SET DEFAULT ROLE tsg_r1 TO tsg_u1;
 SHOW GRANTS;
 Grants for User
-GRANT PROCESS,CONFIG ON *.* TO 'tsg_u1'@'%'
-GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'
-GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u1'@'%'
-GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION
+GRANT PROCESS,CONFIG ON *.* TO `tsg_u1`@`%`
+GRANT `tsg_r1`@`%` TO `tsg_u1`@`%`
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO `tsg_u1`@`%`
+GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO `tsg_u1`@`%` WITH GRANT OPTION
 SHOW GRANTS FOR CURRENT_USER();
 Grants for tsg_u1@%
-GRANT PROCESS,CONFIG ON *.* TO 'tsg_u1'@'%'
-GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'
-GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u1'@'%'
-GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION
+GRANT PROCESS,CONFIG ON *.* TO `tsg_u1`@`%`
+GRANT `tsg_r1`@`%` TO `tsg_u1`@`%`
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO `tsg_u1`@`%`
+GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO `tsg_u1`@`%` WITH GRANT OPTION
 SHOW GRANTS FOR 'tsg_u1';
 Grants for tsg_u1@%
-GRANT USAGE ON *.* TO 'tsg_u1'@'%'
-GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'
-GRANT ROLE_ADMIN ON *.* TO 'tsg_u1'@'%'
-GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION
+GRANT USAGE ON *.* TO `tsg_u1`@`%`
+GRANT `tsg_r1`@`%` TO `tsg_u1`@`%`
+GRANT ROLE_ADMIN ON *.* TO `tsg_u1`@`%`
+GRANT CONNECTION_ADMIN ON *.* TO `tsg_u1`@`%` WITH GRANT OPTION
 SHOW GRANTS;
 Grants for User
-GRANT USAGE ON *.* TO 'tsg_u2'@'%'
-GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'
-GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'
-GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION
+GRANT USAGE ON *.* TO `tsg_u2`@`%`
+GRANT `tsg_r1`@`%` TO `tsg_u2`@`%`
+GRANT ROLE_ADMIN ON *.* TO `tsg_u2`@`%`
+GRANT CONNECTION_ADMIN ON *.* TO `tsg_u2`@`%` WITH GRANT OPTION
 SHOW GRANTS FOR CURRENT_USER();
 Grants for tsg_u2@%
-GRANT USAGE ON *.* TO 'tsg_u2'@'%'
-GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'
-GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'
-GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION
+GRANT USAGE ON *.* TO `tsg_u2`@`%`
+GRANT `tsg_r1`@`%` TO `tsg_u2`@`%`
+GRANT ROLE_ADMIN ON *.* TO `tsg_u2`@`%`
+GRANT CONNECTION_ADMIN ON *.* TO `tsg_u2`@`%` WITH GRANT OPTION
 SHOW GRANTS FOR 'tsg_u2';
 Grants for tsg_u2@%
-GRANT USAGE ON *.* TO 'tsg_u2'@'%'
-GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'
-GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'
-GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION
+GRANT USAGE ON *.* TO `tsg_u2`@`%`
+GRANT `tsg_r1`@`%` TO `tsg_u2`@`%`
+GRANT ROLE_ADMIN ON *.* TO `tsg_u2`@`%`
+GRANT CONNECTION_ADMIN ON *.* TO `tsg_u2`@`%` WITH GRANT OPTION
 SET ROLE tsg_r1;
 SHOW GRANTS;
 Grants for User
-GRANT PROCESS,CONFIG ON *.* TO 'tsg_u2'@'%'
-GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'
-GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u2'@'%'
-GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION
+GRANT PROCESS,CONFIG ON *.* TO `tsg_u2`@`%`
+GRANT `tsg_r1`@`%` TO `tsg_u2`@`%`
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO `tsg_u2`@`%`
+GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO `tsg_u2`@`%` WITH GRANT OPTION
 SHOW GRANTS FOR CURRENT_USER();
 Grants for tsg_u2@%
-GRANT PROCESS,CONFIG ON *.* TO 'tsg_u2'@'%'
-GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'
-GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u2'@'%'
-GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION
+GRANT PROCESS,CONFIG ON *.* TO `tsg_u2`@`%`
+GRANT `tsg_r1`@`%` TO `tsg_u2`@`%`
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO `tsg_u2`@`%`
+GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO `tsg_u2`@`%` WITH GRANT OPTION
 SHOW GRANTS FOR 'tsg_u2';
 Grants for tsg_u2@%
-GRANT USAGE ON *.* TO 'tsg_u2'@'%'
-GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'
-GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'
-GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION
+GRANT USAGE ON *.* TO `tsg_u2`@`%`
+GRANT `tsg_r1`@`%` TO `tsg_u2`@`%`
+GRANT ROLE_ADMIN ON *.* TO `tsg_u2`@`%`
+GRANT CONNECTION_ADMIN ON *.* TO `tsg_u2`@`%` WITH GRANT OPTION
 CREATE USER 'test_encode_u'@'localhost' identified by 'root';
 select authentication_string from mysql.user where user='test_encode_u';
 authentication_string
@@ -633,18 +633,18 @@ SHOW GRANTS FOR CURRENT_USER() USING notgranted;
 Error 3530 (HY000): `notgranted`@`%` is not granted to joe@%
 SHOW GRANTS FOR current_user() USING otherrole;
 Grants for joe@%
-GRANT USAGE ON *.* TO 'joe'@'%'
-GRANT SELECT ON `test`.* TO 'joe'@'%'
-GRANT UPDATE ON `role`.* TO 'joe'@'%'
-GRANT SELECT,DELETE ON `mysql`.`user` TO 'joe'@'%'
-GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'
+GRANT USAGE ON *.* TO `joe`@`%`
+GRANT SELECT ON `test`.* TO `joe`@`%`
+GRANT UPDATE ON `role`.* TO `joe`@`%`
+GRANT SELECT,DELETE ON `mysql`.`user` TO `joe`@`%`
+GRANT `admins`@`%`, `engineering`@`%`, `otherrole`@`%` TO `joe`@`%`
 SHOW GRANTS FOR joe USING otherrole;
 Grants for joe@%
-GRANT USAGE ON *.* TO 'joe'@'%'
-GRANT SELECT ON `test`.* TO 'joe'@'%'
-GRANT UPDATE ON `role`.* TO 'joe'@'%'
-GRANT SELECT,DELETE ON `mysql`.`user` TO 'joe'@'%'
-GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'
+GRANT USAGE ON *.* TO `joe`@`%`
+GRANT SELECT ON `test`.* TO `joe`@`%`
+GRANT UPDATE ON `role`.* TO `joe`@`%`
+GRANT SELECT,DELETE ON `mysql`.`user` TO `joe`@`%`
+GRANT `admins`@`%`, `engineering`@`%`, `otherrole`@`%` TO `joe`@`%`
 set global tidb_enable_resource_control = default;
 CREATE USER traffic_test;
 traffic capture to '/tmp' duration='1s';
@@ -709,8 +709,8 @@ create role 'aa@bb';
 grant 'aa@bb' to u1;
 show grants for u1;
 Grants for u1@%
-GRANT USAGE ON *.* TO 'u1'@'%'
-GRANT 'aa@bb'@'%' TO 'u1'@'%'
+GRANT USAGE ON *.* TO `u1`@`%`
+GRANT `aa@bb`@`%` TO `u1`@`%`
 drop user u1;
 drop role 'aa@bb';
 create user u59677 identified by '123456';

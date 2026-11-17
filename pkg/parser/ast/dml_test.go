@@ -67,10 +67,10 @@ func TestDMLVisitorCover(t *testing.T) {
 
 	for _, v := range stmts {
 		ce.reset()
-		v.node.Accept(checkVisitor{})
+		Walk(v.node, checkVisitor{})
 		require.Equal(t, v.expectedEnterCnt, ce.enterCnt)
 		require.Equal(t, v.expectedLeaveCnt, ce.leaveCnt)
-		v.node.Accept(visitor1{})
+		Walk(v.node, visitor1{})
 	}
 }
 
@@ -646,7 +646,7 @@ func TestImportIntoSecureText(t *testing.T) {
 		},
 		{
 			input:   "import into t from 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'",
-			secured: "\\QIMPORT INTO `t` FROM 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'\\E",
+			secured: "^\\QIMPORT INTO `t` FROM 'gcs://bucket/prefix'\\E$",
 		},
 		{
 			input:   "import into t from 's3://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb' with CLOUD_STORAGE_uri='s3://bucket/prefix?access-key=cccccc&secret-access-key=dddddd'",

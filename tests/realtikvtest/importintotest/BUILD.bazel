@@ -15,6 +15,7 @@ go_test(
         "util_test.go",
     ],
     embedsrcs = [
+        "logical-time-nanos.parquet",
         "test.parquet",
         "part0.parquet",
         "part1.parquet",
@@ -37,6 +38,7 @@ go_test(
         "//pkg/dxf/framework/taskexecutor",
         "//pkg/dxf/framework/testutil",
         "//pkg/dxf/importinto",
+        "//pkg/dxf/importinto/taskkey",
         "//pkg/executor/importer",
         "//pkg/importsdk",
         "//pkg/infoschema",

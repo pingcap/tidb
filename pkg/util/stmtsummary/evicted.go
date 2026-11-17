@@ -17,6 +17,7 @@ package stmtsummary
 import (
 	"container/list"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -230,11 +231,12 @@ func (ssMap *stmtSummaryByDigestMap) ToEvictedCountDatum() [][]types.Datum {
 }
 
 func (ssbde *stmtSummaryByDigestEvicted) collectHistorySummaries(historySize int) []*stmtSummaryByDigestEvictedElement {
-	lst := make([]*stmtSummaryByDigestEvictedElement, 0, ssbde.history.Len())
-	for element := ssbde.history.Front(); element != nil && len(lst) < historySize; element = element.Next() {
+	lst := make([]*stmtSummaryByDigestEvictedElement, 0, min(ssbde.history.Len(), historySize))
+	for element := ssbde.history.Back(); element != nil && len(lst) < historySize; element = element.Prev() {
 		seElement := element.Value.(*stmtSummaryByDigestEvictedElement)
 		lst = append(lst, seElement)
 	}
+	slices.Reverse(lst)
 	return lst
 }
 

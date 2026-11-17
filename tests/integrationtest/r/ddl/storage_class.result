@@ -30,16 +30,16 @@ Error 8271 (HY000): Invalid storage class: only transition from 'STANDARD' to 'I
 create table t (a int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA","after_days":30}]}}';
 select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
 table_name	TIDB_STORAGE_CLASS
-t	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
 alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":60}]}}';
 select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
 table_name	TIDB_STORAGE_CLASS
-t	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":60}]}
+t	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":60,"after_seconds":0}]}
 alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"STANDARD", "after_days":90}, {"tier":"IA", "after_days":60}]}}';
 Error 8271 (HY000): Invalid storage class: only transition from 'STANDARD' to 'IA' is allowed
 select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
 table_name	TIDB_STORAGE_CLASS
-t	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":60}]}
+t	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":60,"after_seconds":0}]}
 alter table t ENGINE_ATTRIBUTE = '{"storage_class": "STANDARD"}';
 select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
 table_name	TIDB_STORAGE_CLASS
@@ -72,7 +72,7 @@ t	CREATE TABLE `t` (
 ) ENGINE=InnoDB ENGINE_ATTRIBUTE='{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":30}]}}' DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
 table_name	TIDB_STORAGE_CLASS
-t	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
 alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":60}]}}';
 show create table t;
 Table	Create Table
@@ -81,7 +81,7 @@ t	CREATE TABLE `t` (
 ) ENGINE=InnoDB ENGINE_ATTRIBUTE='{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":60}]}}' DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
 table_name	TIDB_STORAGE_CLASS
-t	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":60}]}
+t	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":60,"after_seconds":0}]}
 alter table t STORAGE_CLASS='IA';
 show create table t;
 Table	Create Table
@@ -131,7 +131,7 @@ select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.part
 table_name	partition_name	TIDB_STORAGE_CLASS
 t	p0	STANDARD
 t	p1	STANDARD
-t	p2	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":60}]}
+t	p2	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":60,"after_seconds":0}]}
 t	pmax	STANDARD
 alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "names_in":["p2"]}}';
 select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
@@ -181,35 +181,35 @@ create table t (id int, created_at date not null) ENGINE_ATTRIBUTE = '{"storage_
 alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":30}]}}';
 select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
 table_name	partition_name	TIDB_STORAGE_CLASS
-t	P_LT_2025-01-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
-t	P_LT_2025-02-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
-t	P_LT_2025-03-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
-t	P_LT_2025-04-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
-t	P_LT_2025-05-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
-t	P_LT_2025-06-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
-t	P_LT_2025-07-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
-t	P_LT_2025-08-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
-t	P_LT_2025-09-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
-t	P_LT_2025-10-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
-t	P_LT_2025-11-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
-t	P_LT_2025-12-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
-t	P_LT_2026-01-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	P_LT_2025-01-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
+t	P_LT_2025-02-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
+t	P_LT_2025-03-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
+t	P_LT_2025-04-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
+t	P_LT_2025-05-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
+t	P_LT_2025-06-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
+t	P_LT_2025-07-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
+t	P_LT_2025-08-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
+t	P_LT_2025-09-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
+t	P_LT_2025-10-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
+t	P_LT_2025-11-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
+t	P_LT_2025-12-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
+t	P_LT_2026-01-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
 drop table if exists t;
 create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": "IA"}' partition by list (id) (partition p0 values in (1,2,3), partition p1 values in (4,5,6));
 alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "names_in":["p0"], "transitions":[{"tier":"IA", "after_days":30}]}}';
 select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
 table_name	partition_name	TIDB_STORAGE_CLASS
-t	p0	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	p0	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
 t	p1	STANDARD
 drop table if exists t;
 create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": "IA"}' partition by hash(id) partitions 4;
 alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":30}]}}';
 select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
 table_name	partition_name	TIDB_STORAGE_CLASS
-t	p0	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
-t	p1	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
-t	p2	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
-t	p3	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	p0	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
+t	p1	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
+t	p2	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
+t	p3	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
 alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "names_in":["p0"]}}';
 Error 8271 (HY000): Invalid storage class: partition-scoped storage_class does not support HASH or KEY partitions
 drop table if exists t;
@@ -226,9 +226,9 @@ create table t (id int, name varchar(30)) ENGINE_ATTRIBUTE = '{"storage_class": 
 alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":30}]}}';
 select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
 table_name	partition_name	TIDB_STORAGE_CLASS
-t	p0	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
-t	p1	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
-t	p2	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
-t	p3	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	p0	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
+t	p1	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
+t	p2	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
+t	p3	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}
 alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "names_in":["p0"]}}';
 Error 8271 (HY000): Invalid storage class: partition-scoped storage_class does not support HASH or KEY partitions

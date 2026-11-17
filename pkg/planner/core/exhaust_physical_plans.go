@@ -609,11 +609,21 @@ func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *propert
 // 2) columns from DataSource that are used as inner join keys.
 // It works for plain GROUP BY columns, but it is conservative for GROUP BY expressions or
 // columns introduced/re-mapped by intermediate operators (for example, GROUP BY c1+c2).
-// In those cases, semantically equivalent keys may carry different UniqueIDs, so we may
+// In those cases, semantically equivalent keys may carry different UniqueIDs, and columns
+// nested inside expressions are deliberately not treated as grouping keys, so we may
 // reject some valid index join plans (false negatives) to keep correctness.
 // TODO: use FunctionDependency/equivalence reasoning to replace pure UniqueID subset matching.
 func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, indexJoinProp *property.IndexJoinRuntimeProp) bool {
-	groupByCols := expression.ExtractColumnsMapFromExpressions(nil, la.GroupByItems...)
+	// Only direct GROUP BY columns count as grouping keys. A column that merely
+	// appears inside a GROUP BY expression (for example GROUP BY c2 % 2) does not
+	// partition the groups by that column, so probing per join-key value would
+	// still split a group across probes.
+	groupByCols := make(map[int64]struct{}, len(la.GroupByItems))
+	for _, item := range la.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			groupByCols[col.UniqueID] = struct{}{}
+		}
+	}
 
 	var dataSourceSchema *expression.Schema
 	var iterChild base.LogicalPlan = la
@@ -893,18 +903,19 @@ func constructDS2TableScanTask(
 		return nil
 	}
 	ts := physicalop.PhysicalTableScan{
-		Table:           ds.TableInfo,
-		Columns:         ds.Columns,
-		TableAsName:     ds.TableAsName,
-		DBName:          ds.DBName,
-		FilterCondition: filterConds,
-		Ranges:          ranges,
-		RangeInfo:       rangeInfo,
-		KeepOrder:       keepOrder,
-		Desc:            desc,
-		PhysicalTableID: ds.PhysicalTableID,
-		TblCols:         ds.TblCols,
-		TblColHists:     ds.TblColHists,
+		Table:                                    ds.TableInfo,
+		Columns:                                  ds.Columns,
+		TableAsName:                              ds.TableAsName,
+		DBName:                                   ds.DBName,
+		FilterCondition:                          filterConds,
+		Ranges:                                   ranges,
+		RangeInfo:                                rangeInfo,
+		KeepOrder:                                keepOrder,
+		Desc:                                     desc,
+		PhysicalTableID:                          ds.PhysicalTableID,
+		TblCols:                                  ds.TblCols,
+		TblColHists:                              ds.TblColHists,
+		ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetIsPartition(ds.PartitionDefIdx != nil)
 	ts.SetSchema(ds.Schema().Clone())
@@ -1124,13 +1135,14 @@ func constructDS2IndexScanTask(
 	if !path.IsSingleScan {
 		// On this way, it's double read case.
 		ts := physicalop.PhysicalTableScan{
-			Columns:         ds.Columns,
-			Table:           is.Table,
-			TableAsName:     ds.TableAsName,
-			DBName:          ds.DBName,
-			PhysicalTableID: ds.PhysicalTableID,
-			TblCols:         ds.TblCols,
-			TblColHists:     ds.TblColHists,
+			Columns:                                  ds.Columns,
+			Table:                                    is.Table,
+			TableAsName:                              ds.TableAsName,
+			DBName:                                   ds.DBName,
+			PhysicalTableID:                          ds.PhysicalTableID,
+			TblCols:                                  ds.TblCols,
+			TblColHists:                              ds.TblColHists,
+			ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
 		ts.SetSchema(is.DataSourceSchema.Clone())
 		ts.SetIsPartition(ds.PartitionDefIdx != nil)
@@ -1929,9 +1941,6 @@ func preferMppBCJ(super base.LogicalPlan) bool {
 func canExprsInJoinPushdown(p *logicalop.LogicalJoin, storeType kv.StoreType) bool {
 	equalExprs := make([]expression.Expression, 0, len(p.EqualConditions))
 	for _, eqCondition := range p.EqualConditions {
-		if eqCondition.FuncName.L == ast.NullEQ {
-			return false
-		}
 		equalExprs = append(equalExprs, eqCondition)
 	}
 	pushDownCtx := util.GetPushDownCtx(p.SCtx())
@@ -1998,7 +2007,7 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 	if !canExprsInJoinPushdown(p, kv.TiFlash) {
 		return nil
 	}
-	lkeys, rkeys, _, _ := p.GetJoinKeys()
+	lkeys, rkeys, isNullEQ, _ := p.GetJoinKeys()
 	lNAkeys, rNAKeys := p.GetNAJoinKeys()
 	// check match property
 	baseJoin := physicalop.BasePhysicalJoin{
@@ -2009,6 +2018,7 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 		DefaultValues:   p.DefaultValues,
 		LeftJoinKeys:    lkeys,
 		RightJoinKeys:   rkeys,
+		IsNullEQ:        isNullEQ,
 		LeftNAJoinKeys:  lNAkeys,
 		RightNAJoinKeys: rNAKeys,
 	}

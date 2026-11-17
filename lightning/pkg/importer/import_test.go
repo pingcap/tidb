@@ -17,12 +17,15 @@ package importer
 import (
 	"context"
 	"fmt"
+	"net"
 	"path/filepath"
 	"sort"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/meta_storagepb"
+	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/lightning/pkg/errormanager"
@@ -40,6 +43,7 @@ import (
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"github.com/stretchr/testify/require"
 	tikvconfig "github.com/tikv/client-go/v2/config"
+	"google.golang.org/grpc"
 )
 
 func TestNewTableRestore(t *testing.T) {
@@ -185,6 +189,36 @@ func TestVerifyCheckpoint(t *testing.T) {
 		err := cpdb.Initialize(context.Background(), cfg, map[string]*importdef.DBInfo{})
 		require.NoError(t, err)
 	}
+}
+
+func TestVerifyCheckpointRedactsSourceDir(t *testing.T) {
+	cfg := config.NewConfig()
+	cfg.App.CheckRequirements = true
+	cfg.TikvImporter.Backend = config.BackendTiDB
+	cfg.Mydumper.SourceDir = "s3://bucket/data?access-key=AKID&secret-access-key=SKEY&region=us-east-1"
+	taskCp := &checkpoints.TaskCheckpoint{
+		Backend:      config.BackendTiDB,
+		LightningVer: build.ReleaseVersion,
+		SourceDir:    "s3://bucket/old?access-key=AKID&secret-access-key=SKEY&region=us-east-1",
+	}
+
+	err := verifyCheckpoint(cfg, taskCp)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "AKID")
+	require.NotContains(t, err.Error(), "SKEY")
+	require.Contains(t, err.Error(), "region=us-east-1")
+
+	cfg.Mydumper.SourceDir = "s3://bucket/old?access-key=NEWKEY&secret-access-key=NEWSECRET&region=us-east-1"
+	err = verifyCheckpoint(cfg, taskCp)
+	require.ErrorContains(t, err, "only the redacted parameters differ")
+	require.NotContains(t, err.Error(), "AKID")
+	require.NotContains(t, err.Error(), "NEWKEY")
+
+	cfg.Mydumper.SourceDir = "s3://bucket:port/data?access-key=AKID&secret-access-key=SKEY"
+	err = verifyCheckpoint(cfg, taskCp)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "AKID")
+	require.NotContains(t, err.Error(), "SKEY")
 }
 
 // failMetaMgrBuilder mocks meta manager init failure
@@ -439,4 +473,54 @@ func TestInitGlobalConfig(t *testing.T) {
 	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCA)
 	require.NotEmpty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCert)
 	require.NotEmpty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLKey)
+}
+
+type localBackendPDServer struct {
+	pdpb.UnimplementedPDServer
+	meta_storagepb.UnimplementedMetaStorageServer
+	addr string
+}
+
+func (s *localBackendPDServer) GetMembers(context.Context, *pdpb.GetMembersRequest) (*pdpb.GetMembersResponse, error) {
+	leader := &pdpb.Member{MemberId: 1, ClientUrls: []string{s.addr}}
+	return &pdpb.GetMembersResponse{Header: &pdpb.ResponseHeader{ClusterId: 1}, Members: []*pdpb.Member{leader}, Leader: leader}, nil
+}
+
+func (*localBackendPDServer) GetAllStores(context.Context, *pdpb.GetAllStoresRequest) (*pdpb.GetAllStoresResponse, error) {
+	return &pdpb.GetAllStoresResponse{Header: &pdpb.ResponseHeader{ClusterId: 1}}, nil
+}
+
+func (*localBackendPDServer) Get(context.Context, *meta_storagepb.GetRequest) (*meta_storagepb.GetResponse, error) {
+	return &meta_storagepb.GetResponse{Header: &meta_storagepb.ResponseHeader{ClusterId: 1}}, nil
+}
+
+func TestNewImportControllerLocalBackendStartFailure(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	server := grpc.NewServer()
+	pdServer := &localBackendPDServer{addr: "http://" + listener.Addr().String()}
+	pdpb.RegisterPDServer(server, pdServer)
+	meta_storagepb.RegisterMetaStorageServer(server, pdServer)
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	mock.ExpectQuery("select current_resource_group").
+		WillReturnRows(sqlmock.NewRows([]string{"current_resource_group()"}).AddRow("default"))
+	mock.ExpectQuery("SHOW VARIABLES LIKE 'tidb_request_source_type'").
+		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).AddRow("tidb_request_source_type", ""))
+	mock.ExpectQuery("show config where type = 'tikv' and name = 'storage.engine'").
+		WillReturnRows(sqlmock.NewRows([]string{"Type", "Instance", "Name", "Value"}))
+
+	cfg := config.NewConfig()
+	cfg.TiDB.PdAddr = listener.Addr().String()
+	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.TikvImporter.SortedKVDir = t.TempDir()
+	cfg.App.TableConcurrency = 1
+	cfg.Checkpoint.Enable = false
+
+	_, err = NewImportControllerWithPauser(context.Background(), cfg, &ControllerParam{DB: db})
+	require.ErrorContains(t, err, "invalid sorted-kv-dir")
+	require.NoError(t, mock.ExpectationsWereMet())
 }

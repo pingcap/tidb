@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -1006,6 +1005,15 @@ func (h *tableByNameHelper) onItem(item *tableItem) bool {
 	return true
 }
 
+func (is *infoschemaV2) searchTableItemByName(schema, name ast.CIStr) (*tableItem, bool) {
+	h := tableByNameHelper{
+		end:           tableItem{dbName: schema, tableName: name, schemaVersion: math.MaxInt64},
+		schemaVersion: is.schemaMetaVersion,
+	}
+	is.byName.Load().DescendLessOrEqual(&h.end, h.onItem)
+	return h.res, h.found
+}
+
 // TableByName implements the InfoSchema interface.
 // When schema cache miss, it will fetch the TableInfo from TikV and refill cache.
 func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl ast.CIStr) (t table.Table, err error) {
@@ -1021,15 +1029,10 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl ast.CIStr) 
 
 	is.keepAlive()
 	start := time.Now()
-	var h tableByNameHelper
-	h.end = tableItem{dbName: schema, tableName: tbl, schemaVersion: math.MaxInt64}
-	h.schemaVersion = is.infoSchema.schemaMetaVersion
-	is.byName.Load().DescendLessOrEqual(&h.end, h.onItem)
-
-	if !h.found {
+	itm, ok := is.searchTableItemByName(schema, tbl)
+	if !ok {
 		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
-	itm := h.res
 
 	// Get from the cache with old key
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
@@ -1055,6 +1058,60 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl ast.CIStr) 
 
 	metrics.TableByNameMissDuration.Observe(float64(time.Since(start)))
 	return ret, nil
+}
+
+// tableInfosByNames reuses cached definitions and batches only the missing ones.
+func (is *infoschemaV2) tableInfosByNames(ctx context.Context, schema ast.CIStr, names []ast.CIStr) ([]*model.TableInfo, error) {
+	is.keepAlive()
+	db, ok := is.SchemaByName(schema)
+	if !ok {
+		return nil, nil
+	}
+	cached := make([]*model.TableInfo, 0, len(names))
+	missing := make([]int64, 0, len(names))
+	for _, name := range names {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		item, ok := is.searchTableItemByName(schema, name)
+		if !ok {
+			continue
+		}
+		if tbl, found := is.tableCache.Get(tableCacheKey{item.tableID, item.schemaVersion}); found && tbl != nil {
+			cached = append(cached, tbl.Meta())
+		} else {
+			missing = append(missing, item.tableID)
+		}
+	}
+	if len(missing) == 0 {
+		return cached, nil
+	}
+	// Keep the existing metadata-load region for SQL trace consumers.
+	defer tracing.StartRegion(ctx, "infoschema.loadTableInfo").End()
+	return retryOnFlashbackInProgress(ctx, func() ([]*model.TableInfo, error) {
+		// Keep partial results local to an attempt so flashback retries cannot
+		// return duplicates. Bound each response for large table-name lists.
+		const batchSize = 128
+		tables := slices.Clone(cached)
+		snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
+		snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000))
+		m := meta.NewReader(snapshot)
+		for start := 0; start < len(missing); start += batchSize {
+			batch, err := m.GetTables(ctx, db.ID, missing[start:min(start+batchSize, len(missing))])
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			for _, tbl := range batch {
+				if tbl == nil {
+					continue
+				}
+				ConvertCharsetCollateToLowerCaseIfNeed(tbl)
+				ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbl)
+				tables = append(tables, tbl)
+			}
+		}
+		return tables, nil
+	})
 }
 
 // TableInfoByName implements InfoSchema.TableInfoByName
@@ -1085,51 +1142,85 @@ func (is *infoschemaV2) keepAlive() {
 	}
 }
 
+// retryOnFlashbackInProgress retries fn while table metadata cannot be read during flashback.
+// fn must return a fresh result for each attempt so a partial attempt is never reused.
+func retryOnFlashbackInProgress[T any](ctx context.Context, fn func() (T, error)) (T, error) {
+	const flashbackRetryInterval = 200 * time.Millisecond
+	for {
+		result, err := fn()
+		if err == nil || !strings.Contains(err.Error(), "in flashback progress") {
+			return result, err
+		}
+
+		select {
+		case <-time.After(flashbackRetryInterval):
+		case <-ctx.Done():
+			var zero T
+			return zero, ctx.Err()
+		}
+	}
+}
+
 // SchemaTableInfos implements MetaOnlyInfoSchema.
 func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema ast.CIStr) ([]*model.TableInfo, error) {
+	return retryOnFlashbackInProgress(ctx, func() ([]*model.TableInfo, error) {
+		var tableInfos []*model.TableInfo
+		if err := is.iterSchemaTableInfos(ctx, schema, func(tableInfo *model.TableInfo) error {
+			tableInfos = append(tableInfos, tableInfo)
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+		return tableInfos, nil
+	})
+}
+
+// iterSchemaTableInfos makes one streaming pass over all table infos in the schema.
+func (is *infoschemaV2) iterSchemaTableInfos(
+	ctx context.Context,
+	schema ast.CIStr,
+	visit func(*model.TableInfo) error,
+) error {
 	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if ok {
 			schTbls := raw.(*schemaTables)
-			tables := make([]table.Table, 0, len(schTbls.tables))
 			for _, tbl := range schTbls.tables {
-				tables = append(tables, tbl)
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				if err := visit(tbl.Meta()); err != nil {
+					return err
+				}
 			}
-			return getTableInfoList(tables), nil
+			return nil
 		}
-		return nil, nil // something wrong?
+		return nil // something wrong?
 	}
 
 	is.keepAlive()
-retry:
 	dbInfo, ok := is.SchemaByName(schema)
 	if !ok {
-		return nil, nil
+		return nil
 	}
 	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
 	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
 	// the meta region leader is slow.
 	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
 	m := meta.NewReader(snapshot)
-	tblInfos, err := m.ListTables(ctx, dbInfo.ID)
+	err := m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return visit(tableInfo)
+	})
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
-			return nil, nil
+			return nil
 		}
-		// Flashback statement could cause such kind of error.
-		// In theory that error should be handled in the lower layer, like client-go.
-		// But it's not done, so we retry here.
-		if strings.Contains(err.Error(), "in flashback progress") {
-			select {
-			case <-time.After(200 * time.Millisecond):
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
-			goto retry
-		}
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	return tblInfos, nil
+	return nil
 }
 
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
@@ -1399,23 +1490,16 @@ func (is *infoschemaV2) loadTableInfo(ctx context.Context, tblID, dbID int64, ts
 	})
 	// Try to avoid repeated concurrency loading.
 	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (any, error) {
-	retry:
-		snapshot := is.r.Store().GetSnapshot(kv.NewVersion(ts))
-		// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
-		// the meta region leader is slow.
-		snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
-		m := meta.NewReader(snapshot)
-
-		tblInfo, err := m.GetTable(dbID, tblID)
+		// Keep retry independent of an individual singleflight caller's cancellation.
+		tblInfo, err := retryOnFlashbackInProgress(context.Background(), func() (*model.TableInfo, error) {
+			snapshot := is.r.Store().GetSnapshot(kv.NewVersion(ts))
+			// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
+			// the meta region leader is slow.
+			snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
+			m := meta.NewReader(snapshot)
+			return m.GetTable(dbID, tblID)
+		})
 		if err != nil {
-			// Flashback statement could cause such kind of error.
-			// In theory that error should be handled in the lower layer, like client-go.
-			// But it's not done, so we retry here.
-			if strings.Contains(err.Error(), "in flashback progress") {
-				time.Sleep(200 * time.Millisecond)
-				goto retry
-			}
-
 			return nil, errors.Trace(err)
 		}
 
@@ -1468,11 +1552,11 @@ func applyCreateSchema(b *Builder, m meta.Reader, diff *model.SchemaDiff) error 
 	return b.applyCreateSchema(m, diff)
 }
 
-func applyDropSchema(b *Builder, diff *model.SchemaDiff) []int64 {
+func applyDropSchema(b *Builder, diff *model.SchemaDiff) ([]int64, error) {
 	if b.enableV2 {
 		return b.applyDropSchemaV2(diff)
 	}
-	return b.applyDropSchema(diff)
+	return b.applyDropSchema(diff), nil
 }
 
 func applyRecoverSchema(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
@@ -1606,17 +1690,19 @@ func (b *Builder) applyTableUpdateV2(m meta.Reader, diff *model.SchemaDiff) ([]i
 	return tblIDs, nil
 }
 
-func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
+func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) ([]int64, error) {
 	di, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 
-	tableIDs := make([]int64, 0, len(di.Deprecated.Tables))
-	tables, err := b.infoschemaV2.SchemaTableInfos(context.Background(), di.Name)
-	terror.Log(err)
-	for _, tbl := range tables {
-		tableIDs = appendAffectedIDs(tableIDs, tbl)
+	tableIDs, err := retryOnFlashbackInProgress(context.Background(), func() ([]int64, error) {
+		return collectPhysicalTableIDs(func(visit func(*model.TableInfo) error) error {
+			return b.infoschemaV2.iterSchemaTableInfos(context.Background(), di.Name, visit)
+		})
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	for _, id := range tableIDs {
@@ -1624,7 +1710,19 @@ func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
 		b.applyDropTableV2(diff, di, id, nil)
 	}
 	b.infoData.deleteDB(di, diff.Version)
-	return tableIDs
+	return tableIDs, nil
+}
+
+func collectPhysicalTableIDs(iter func(func(*model.TableInfo) error) error) ([]int64, error) {
+	var tableIDs []int64
+	err := iter(func(tableInfo *model.TableInfo) error {
+		tableIDs = appendAffectedIDs(tableIDs, tableInfo)
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return tableIDs, nil
 }
 
 func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
@@ -1635,9 +1733,13 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 
 	table, ok := b.infoschemaV2.TableByID(context.Background(), tableID)
 	if !ok {
-		return nil
+		return affected
 	}
 	tblInfo := table.Meta()
+	item, ok := b.infoschemaV2.searchTableItemByID(tableID)
+	if !ok {
+		return affected
+	}
 
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
@@ -1650,10 +1752,10 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	}
 
 	b.infoData.remove(tableItem{
-		dbName:        dbInfo.Name,
-		dbID:          dbInfo.ID,
-		tableName:     tblInfo.Name,
-		tableID:       tblInfo.ID,
+		dbName:        item.dbName,
+		dbID:          item.dbID,
+		tableName:     item.tableName,
+		tableID:       item.tableID,
 		schemaVersion: diff.Version,
 	})
 	affected = appendAffectedIDs(affected, tblInfo)

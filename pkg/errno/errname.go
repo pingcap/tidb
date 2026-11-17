@@ -1184,8 +1184,12 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrTiFlashServerTimeout: mysql.Message("TiFlash server timeout", nil),
 	ErrTiFlashServerBusy:    mysql.Message("TiFlash server is busy", nil),
 	ErrTiFlashBackfillIndex: mysql.Message("TiFlash backfill index failed: %s", nil),
-	ErrResolveLockTimeout:   mysql.Message("Resolve lock timeout", nil),
-	ErrRegionUnavailable:    mysql.Message("Region is unavailable", nil),
+	ErrSharedLockLost: mysql.Message(
+		"Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS=%d, key=%s",
+		[]int{1},
+	),
+	ErrResolveLockTimeout: mysql.Message("Resolve lock timeout", nil),
+	ErrRegionUnavailable:  mysql.Message("Region is unavailable", nil),
 	// In most cases, the error `ErrTxnAbortedByGC` is caused by the transaction runs too long, instead of improper GC
 	// life time configuration. This means the description of this error is not accurate.
 	// However, as this error message is already widely acknowledged and might have become part of our diagnosing
@@ -1210,4 +1214,6 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrTimeStampInDSTTransition:           mysql.Message("Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'", nil),
 	ErrInvalidAffinityOption:              mysql.Message("Invalid AFFINITY %s", nil),
 	ErrUserPrefixMismatch:                 mysql.Message("User name prefix does not match the assigned keyspace.", nil),
+	ErrMVAdvisoryLockConflict:             mysql.Message("materialized view advisory lock conflict: %s", nil),
+	ErrMVRefreshLogBaselineChanged:        mysql.Message("refresh materialized view %s.%s fast: input log baseline has changed; run COMPLETE refresh to rebuild it", nil),
 }

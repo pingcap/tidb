@@ -40,6 +40,14 @@ func (m *mockPDCliForAffinity) GetAllAffinityGroups(ctx context.Context) (map[st
 	return args.Get(0).(map[string]*pdhttp.AffinityGroupState), args.Error(1)
 }
 
+func (m *mockPDCliForAffinity) GetAffinityGroups(ctx context.Context, ids []string) (map[string]*pdhttp.AffinityGroupState, error) {
+	args := m.Called(ctx, ids)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]*pdhttp.AffinityGroupState), args.Error(1)
+}
+
 func TestShowAffinity(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -201,15 +209,15 @@ func TestShowAffinityColumns(t *testing.T) {
 	is := tk.Session().GetLatestInfoSchema()
 	tbl, err := is.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
-	groupID := ddl.GetTableAffinityGroupID(tbl.ID)
+	groupID := ddl.GetTableAffinityGroupID(store.GetCodec(), tbl.ID)
 
 	// Step 3: Set up mock PD client
 	mockCli := &mockPDCliForAffinity{}
 	recoverFn := affinity.SetPDClientForTest(mockCli)
 	defer recoverFn()
 
-	// Step 4: Mock the GetAllAffinityGroups call with actual group ID
-	mockCli.On("GetAllAffinityGroups", mock.Anything).Return(
+	// Step 4: Request only the codec-aware group ID, including for a filtered query.
+	mockCli.On("GetAffinityGroups", mock.Anything, []string{groupID}).Return(
 		map[string]*pdhttp.AffinityGroupState{
 			groupID: {
 				AffinityGroup: pdhttp.AffinityGroup{
@@ -221,7 +229,7 @@ func TestShowAffinityColumns(t *testing.T) {
 				AffinityRegionCount: 9,
 			},
 		}, nil,
-	).Once()
+	).Twice()
 
 	// Step 5: Execute query and verify results
 	result := tk.MustQuery("show affinity")
@@ -247,6 +255,37 @@ func TestShowAffinityColumns(t *testing.T) {
 	require.Equal(t, "10", row[6])
 	// Affinity_region_count
 	require.Equal(t, "9", row[7])
+
+	tk.MustExec(`create table t2 (id int) affinity='partition'
+		partition by range (id) (
+			partition p0 values less than (100),
+			partition p1 values less than maxvalue
+		)`)
+	defer tk.MustExec("drop table if exists t2")
+	require.Equal(t, rows, tk.MustQuery("show affinity like 't1'").Rows())
+	partitioned, err := tk.Session().GetLatestInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+	partitionIDs := make([]string, 0, len(partitioned.Partition.Definitions))
+	for _, def := range partitioned.Partition.Definitions {
+		partitionIDs = append(partitionIDs, ddl.GetPartitionAffinityGroupID(store.GetCodec(), partitioned.ID, def.ID))
+	}
+	mockCli.On("GetAffinityGroups", mock.Anything, partitionIDs).Return(map[string]*pdhttp.AffinityGroupState{
+		partitionIDs[0]: {
+			AffinityGroup: pdhttp.AffinityGroup{ID: partitionIDs[0], LeaderStoreID: 1, VoterStoreIDs: []uint64{1, 2, 3}},
+			Phase:         "stable", RegionCount: 10, AffinityRegionCount: 9,
+		},
+		partitionIDs[1]: {
+			AffinityGroup: pdhttp.AffinityGroup{ID: partitionIDs[1], LeaderStoreID: 4, VoterStoreIDs: []uint64{4, 5, 6}},
+			Phase:         "preparing", RegionCount: 20, AffinityRegionCount: 7,
+		},
+	}, nil).Once()
+	tk.MustQuery("show affinity like 't2'").Sort().Check(testkit.Rows(
+		"test t2 p0 1 1,2,3 Stable 10 9",
+		"test t2 p1 4 4,5,6 Preparing 20 7",
+	))
+	// No matching tables must not issue a PD request (including a full scan).
+	require.Empty(t, tk.MustQuery("show affinity like 'missing'").Rows())
+	mockCli.AssertExpectations(t)
 }
 
 func TestShowAffinityNullStatus(t *testing.T) {
@@ -265,7 +304,10 @@ func TestShowAffinityNullStatus(t *testing.T) {
 	defer recoverFn()
 
 	// Step 3: Mock PD response with empty map (group not found)
-	mockCli.On("GetAllAffinityGroups", mock.Anything).Return(
+	tbl, err := tk.Session().GetLatestInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+	groupID := ddl.GetTableAffinityGroupID(store.GetCodec(), tbl.ID)
+	mockCli.On("GetAffinityGroups", mock.Anything, []string{groupID}).Return(
 		map[string]*pdhttp.AffinityGroupState{}, nil,
 	).Once()
 
@@ -281,4 +323,5 @@ func TestShowAffinityNullStatus(t *testing.T) {
 	require.Equal(t, "<nil>", rows[0][5]) // Status should be NULL (native NULL, not string "NULL")
 	require.Equal(t, "<nil>", rows[0][6]) // Region_count should be NULL
 	require.Equal(t, "<nil>", rows[0][7]) // Affinity_region_count should be NULL
+	mockCli.AssertExpectations(t)
 }

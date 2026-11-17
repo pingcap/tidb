@@ -407,6 +407,7 @@ func TestDDLJobErrorCount(t *testing.T) {
 	require.NotNil(t, historyJob)
 	require.Equal(t, int64(1), historyJob.ErrorCount)
 	require.True(t, kv.ErrEntryTooLarge.Equal(historyJob.Error))
+	require.Zero(t, historyJob.RU)
 	tk.MustQuery("select * from ddl_error_table;").Check(testkit.Rows())
 }
 

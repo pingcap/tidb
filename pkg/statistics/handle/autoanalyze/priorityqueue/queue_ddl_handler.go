@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -31,12 +32,16 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
 // HandleDDLEvent handles DDL events for the priority queue.
 func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionctx.Context, event *notifier.SchemaChangeEvent) error {
+	// A panic would stop the DDL notifier, and a new stats owner would replay the same event.
+	// So log the panic and skip the event, the same as an error below.
+	defer util.Recover(metrics.LabelStats, "AnalysisPriorityQueue.HandleDDLEvent", nil, false)
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
 	// If the priority queue is not initialized, we should retry later.
@@ -148,6 +153,8 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJob(
 // So we need to call this function for each partition.
 // For normal tables and dynamic partitioned tables, we only need to recreate the job for the whole table.
 func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionctx.Context, tableInfo *model.TableInfo) error {
+	intest.Assert(tableInfo != nil)
+
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	partitionInfo := tableInfo.GetPartitionInfo()
 	lockedTables, err := lockstats.QueryLockedTables(statsutil.StatsCtx, sctx)
@@ -180,6 +187,8 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 	event *notifier.SchemaChangeEvent,
 ) error {
 	tableInfo, idxes, analyzed := event.GetAddIndexInfo()
+	intest.Assert(tableInfo != nil)
+
 	if analyzed {
 		// if an added index is already analyzed in ddl, skip it here.
 		return nil

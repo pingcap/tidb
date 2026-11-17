@@ -312,8 +312,11 @@ func TestTrace(t *testing.T) {
 	require.True(t, ok)
 
 	// Evict the table cache and check the trace information can catch this calling.
-	raw.EvictTable(ast.NewCIStr("test"), ast.NewCIStr("t_trace"))
-	tk.MustQuery("trace select * from information_schema.tables where table_schema='test' and table_name='t_trace'").CheckContain("infoschema.loadTableInfo")
+	for _, name := range []string{"tables", "columns", "statistics"} {
+		raw.EvictTable(ast.NewCIStr("test"), ast.NewCIStr("t_trace"))
+		query := fmt.Sprintf("trace select * from information_schema.%s where table_schema='test' and table_name='t_trace'", name)
+		tk.MustQuery(query).CheckContain("infoschema.loadTableInfo")
+	}
 }
 
 func TestCachedTable(t *testing.T) {

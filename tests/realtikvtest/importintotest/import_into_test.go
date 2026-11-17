@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
@@ -919,7 +920,7 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 func (s *mockGCSSuite) checkTaskMetaRedacted(jobID int64) {
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	taskKey := importinto.TaskKey(jobID)
+	taskKey := taskkey.ForJob(jobID)
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
@@ -1281,6 +1282,57 @@ func (s *mockGCSSuite) TestDiskQuota() {
 	))
 }
 
+func (s *mockGCSSuite) TestDiskQuotaFromSelect() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("disk quota will cause range overlap, tikv-worker cannot handle it right now")
+	}
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_test_disk_quota_select;")
+	s.tk.MustExec("CREATE DATABASE load_test_disk_quota_select;")
+	s.tk.MustExec("USE load_test_disk_quota_select;")
+	s.tk.MustExec(`CREATE TABLE src(a int, b int)`)
+	s.tk.MustExec(`CREATE TABLE dst(a int, b int)`)
+
+	lineCount := 10000
+	var buf strings.Builder
+	for i := 0; i < lineCount; i += 100 {
+		buf.Reset()
+		for j := range 100 {
+			if j > 0 {
+				buf.WriteByte(',')
+			}
+			fmt.Fprintf(&buf, "(%d,%d)", i+j, i+j)
+		}
+		s.tk.MustExec("INSERT INTO src VALUES " + buf.String())
+	}
+
+	backup := importer.CheckDiskQuotaInterval
+	importer.CheckDiskQuotaInterval = time.Millisecond
+	defer func() {
+		importer.CheckDiskQuotaInterval = backup
+	}()
+
+	for _, failImport := range []bool{true, false} {
+		s.Run(fmt.Sprintf("failImport=%t", failImport), func() {
+			s.tk.MustExec("TRUNCATE TABLE dst")
+			if failImport {
+				testfailpoint.Enable(s.T(),
+					"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/mockUnsafeImportAndResetError", "return")
+			}
+
+			// Only successful quota imports should trigger the hook. A final engine
+			// import can still populate dst even if every quota import failed.
+			diskQuotaImported := atomic.NewBool(false)
+			testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/afterDiskQuotaImport", func() {
+				diskQuotaImported.Store(true)
+			})
+
+			s.tk.MustExec("IMPORT INTO dst FROM SELECT * FROM src WITH disk_quota='819B'")
+			s.tk.MustQuery("SELECT count(1) FROM dst").Check(testkit.Rows(strconv.Itoa(lineCount)))
+			s.Equal(!failImport, diskQuotaImported.Load(), "only successful quota imports should trigger the hook")
+		})
+	}
+}
+
 func (s *mockGCSSuite) TestAnalyze() {
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
 	s.tk.MustExec("CREATE DATABASE load_data;")
@@ -1402,7 +1454,7 @@ func (s *mockGCSSuite) TestImportIntoWithMockDataSize() {
 	defer setAmplifyFactorFn(1)
 	s.tk.MustExec("create table t (a int, b int);")
 	checkResourceParamFn := func(jobID int64, thread, maxNode int) {
-		taskKey := importinto.TaskKey(jobID)
+		taskKey := taskkey.ForJob(jobID)
 		taskRows := s.tk.MustQuery(`
 			with global_tasks as (
 				select id, max_node_count from mysql.tidb_global_task where task_key = ?

@@ -113,13 +113,15 @@ type executorBuilder struct {
 	hasLock bool
 	Ti      *TelemetryInfo
 	// isStaleness means whether this statement use stale read.
-	isStaleness      bool
-	txnScope         string
-	readReplicaScope string
-	inUpdateStmt     bool
-	inDeleteStmt     bool
-	inInsertStmt     bool
-	inSelectLockStmt bool
+	isStaleness                   bool
+	txnScope                      string
+	readReplicaScope              string
+	inUpdateStmt                  bool
+	inDeleteStmt                  bool
+	inInsertStmt                  bool
+	inSelectLockStmt              bool
+	inMViewDeltaMergeStmt         bool
+	inMViewCompleteDeltaApplyStmt bool
 
 	// forDataReaderBuilder indicates whether the builder is used by a dataReaderBuilder.
 	// When forDataReader is true, the builder should use the dataReaderTS as the executor read ts. This is because
@@ -216,6 +218,20 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildAdminPlugins(v)
 	case *plannercore.DDL:
 		return b.buildDDL(v)
+	case *plannercore.PurgeMaterializedViewLog:
+		return b.buildPurgeMaterializedViewLog(v)
+	case *plannercore.CompareMaterializedView:
+		return b.buildCompareMaterializedView(v)
+	case *plannercore.RefreshMaterializedView:
+		return b.buildRefreshMaterializedView(v)
+	case *plannercore.DryRunRefreshMaterializedView:
+		return b.buildDryRunRefreshMaterializedView(v)
+	case *plannercore.ProfileRefreshMaterializedView:
+		return b.buildProfileRefreshMaterializedView(v)
+	case *plannercore.MViewDeltaMerge:
+		return b.buildMViewDeltaMerge(v)
+	case *plannercore.MViewCompleteDeltaApply:
+		return b.buildMViewCompleteDeltaApply(v)
 	case *plannercore.Deallocate:
 		return b.buildDeallocate(v)
 	case *physicalop.Delete:
@@ -858,6 +874,7 @@ func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor 
 		begin:        v.Offset,
 		end:          v.Offset + v.Count,
 	}
+	b.attachAdaptiveLimitController(v, e, childExec)
 
 	childSchemaLen := v.Children()[0].Schema().Len()
 	childUsedSchema := markChildrenUsedCols(v.Schema().Columns, v.Children()[0].Schema())[0]
@@ -870,6 +887,184 @@ func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor 
 		e.columnSwapHelper = chunk.NewColumnSwapHelper(e.columnIdxsUsedByChild)
 	}
 	return e
+}
+
+func (b *executorBuilder) attachAdaptiveLimitController(
+	limitPlan *physicalop.PhysicalLimit, limitExec *LimitExec, childExec exec.Executor,
+) {
+	if !b.sctx.GetSessionVars().EnableAdaptiveLimitScan {
+		return
+	}
+	// Only projections may intervene between Limit and an eligible join or reader.
+	root := skipAdaptiveLimitProjections(childExec)
+	if indexJoin, ok := root.(*join.IndexLookUpJoin); ok && indexJoin != nil {
+		if !indexJoin.AdaptiveLimitEligible {
+			return
+		}
+		outer := skipAdaptiveLimitProjections(indexJoin.Children(0))
+		outerIndexLookup := adaptiveLimitIndexLookupCandidate(outer)
+		if outerIndexLookup == nil && !adaptiveLimitSingleReadEligible(outer) {
+			return
+		}
+		demandRows := limitPlan.Offset + limitPlan.Count
+		vars := b.sctx.GetSessionVars()
+		initialOuterWindow := adaptiveLimitInitialWindow(demandRows, vars.IndexJoinBatchSize)
+		maxOuterWindow := uint64(vars.IndexJoinBatchSize) * uint64(vars.IndexLookupJoinConcurrency())
+		var controller *exec.AdaptiveLimitController
+		if outerIndexLookup != nil {
+			config := b.buildAdaptiveLimitConfig(demandRows, outerIndexLookup)
+			config.InitialOuterWindow = initialOuterWindow
+			config.MaxOuterWindow = maxOuterWindow
+			controller = exec.NewAdaptiveLimitController(config)
+			outerIndexLookup.adaptiveLimitController = controller
+		} else {
+			controller = exec.NewAdaptiveLimitOuterJoinController(exec.AdaptiveLimitConfig{
+				DemandRows:         demandRows,
+				InitialOuterWindow: min(initialOuterWindow, uint64(vars.MaxChunkSize)),
+				MaxOuterWindow:     maxOuterWindow,
+			})
+		}
+		indexJoin.AdaptiveLimitController = controller
+		limitExec.adaptiveLimitController = controller
+		return
+	}
+
+	indexLookup := adaptiveLimitIndexLookupCandidate(root)
+	if indexLookup == nil {
+		return
+	}
+	controller := exec.NewAdaptiveLimitLookupController(b.buildAdaptiveLimitConfig(
+		limitPlan.Offset+limitPlan.Count,
+		indexLookup,
+	))
+	indexLookup.adaptiveLimitController = controller
+	indexLookup.reportAdaptiveLimitStats = true
+	limitExec.adaptiveLimitController = controller
+}
+
+func (b *executorBuilder) buildAdaptiveLimitConfig(
+	demandRows uint64, indexLookup *IndexLookUpExecutor,
+) exec.AdaptiveLimitConfig {
+	sessionVars := b.sctx.GetSessionVars()
+	initialLookupWindow := adaptiveLimitInitialWindow(demandRows, sessionVars.IndexLookupSize)
+	return exec.AdaptiveLimitConfig{
+		DemandRows:          demandRows,
+		InitialLookupWindow: initialLookupWindow,
+		MaxLookupWindow: uint64(sessionVars.IndexLookupSize) *
+			uint64(sessionVars.IndexLookupConcurrency()),
+		InitialLookupBatchSize: adaptiveLimitInitialLookupBatchSize(
+			initialLookupWindow,
+			indexLookup.indexPaging,
+			sessionVars.MaxChunkSize,
+			sessionVars.IndexLookupSize,
+		),
+		MaxLookupBatchSize: uint64(sessionVars.IndexLookupSize),
+	}
+}
+
+func adaptiveLimitInitialWindow(demandRows uint64, ceiling int) uint64 {
+	if demandRows == 0 || ceiling <= 1 {
+		return 1
+	}
+	return min(demandRows, uint64(ceiling))
+}
+
+// adaptiveLimitInitialLookupBatchSize keeps paging tasks aligned with the
+// initial logical window. Without paging, it preserves at least one chunk of
+// execution granularity while respecting the configured lookup batch limit.
+func adaptiveLimitInitialLookupBatchSize(initialWindow uint64, indexPaging bool, maxChunkSize, maxBatchSize int) uint64 {
+	if indexPaging {
+		return initialWindow
+	}
+	return min(max(initialWindow, uint64(maxChunkSize)), uint64(maxBatchSize))
+}
+
+func adaptiveLimitIndexLookupCandidate(executor exec.Executor) *IndexLookUpExecutor {
+	indexLookup, ok := executor.(*IndexLookUpExecutor)
+	if !ok || indexLookup.adaptiveLimitController != nil || !adaptiveLimitIndexLookupEligible(indexLookup) {
+		return nil
+	}
+	return indexLookup
+}
+
+func skipAdaptiveLimitProjections(executor exec.Executor) exec.Executor {
+	for {
+		projection, ok := executor.(*ProjectionExec)
+		if !ok {
+			return executor
+		}
+		children := projection.AllChildren()
+		if len(children) != 1 {
+			return nil
+		}
+		executor = children[0]
+	}
+}
+
+func adaptiveLimitSingleReadEligible(executor exec.Executor) bool {
+	switch e := executor.(type) {
+	case *IndexReaderExecutor:
+		if !e.keepOrder || e.dummy || len(e.groupedRanges) != 0 || len(e.byItems) != 0 ||
+			len(e.partitions) != 0 || len(e.partRangeMap) != 0 || len(e.partitionIDMap) != 0 ||
+			adaptiveLimitSingleReadTable(e.table) == nil || len(e.plans) == 0 {
+			return false
+		}
+		scan, ok := e.plans[0].(*physicalop.PhysicalIndexScan)
+		return ok && len(scan.GroupByColIdxs) == 0
+	case *TableReaderExecutor:
+		if !e.keepOrder || e.dummy || e.storeType != kv.TiKV || e.batchCop || e.kvRangeBuilder != nil ||
+			len(e.groupedRanges) != 0 || len(e.groupByColIdxs) != 0 || len(e.byItems) != 0 {
+			return false
+		}
+		meta := adaptiveLimitSingleReadTable(e.table)
+		if meta == nil {
+			return false
+		}
+		if !meta.PKIsHandle {
+			return true
+		}
+		// A keep-order scan of unsigned integer handles can open two results.
+		pk := meta.GetPkColInfo()
+		return pk != nil && !mysql.HasUnsignedFlag(pk.GetFlag())
+	default:
+		return false
+	}
+}
+
+func adaptiveLimitSingleReadTable(tbl table.Table) *model.TableInfo {
+	if tbl == nil {
+		return nil
+	}
+	meta := tbl.Meta()
+	if meta == nil || meta.Partition != nil {
+		return nil
+	}
+	return meta
+}
+
+func adaptiveLimitIndexLookupEligible(indexLookup *IndexLookUpExecutor) bool {
+	// Merge-sort double reads create all SelectResults before rolling handle
+	// admission. PushedLimit already applies its own index-side offset/count
+	// boundary, and pushed-down lookup does not preserve order. Concurrency 1
+	// cannot run the index and table workers at the same time in the shared pool.
+	// Keep these paths unchanged in v1.
+	return indexLookup.PushedLimit == nil && indexLookup.keepOrder && indexLookup.indexLookupConcurrency > 1 &&
+		!adaptiveLimitIndexLookupMayNeedMergeSort(indexLookup) && !indexLookup.indexLookUpPushDown
+}
+
+func adaptiveLimitIndexLookupMayNeedMergeSort(indexLookup *IndexLookUpExecutor) bool {
+	if indexLookup.partitionTableMode || len(indexLookup.groupedRanges) > 0 {
+		return true
+	}
+	if len(indexLookup.byItems) == 0 {
+		return false
+	}
+	if len(indexLookup.idxPlans) == 0 {
+		return true
+	}
+	// Correlated access can rebuild groupedRanges from GroupByColIdxs in Open.
+	indexScan, ok := indexLookup.idxPlans[0].(*physicalop.PhysicalIndexScan)
+	return !ok || len(indexScan.GroupByColIdxs) > 0
 }
 
 func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) exec.Executor {
@@ -997,6 +1192,11 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 			BaseExecutor: exec.NewBaseExecutor(b.sctx, nil, 0),
 			jobID:        uint64(s.JobID),
 		}
+	case *ast.CancelMaterializedViewJobStmt:
+		return &CancelMaterializedViewJobExec{
+			BaseExecutor: exec.NewBaseExecutor(b.sctx, nil, 0),
+			stmt:         s,
+		}
 	}
 	base := exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID())
 	base.SetInitCap(chunk.ZeroCapacity)
@@ -1019,6 +1219,13 @@ func (b *executorBuilder) buildSet(v *plannercore.Set) exec.Executor {
 		vars:         v.VarAssigns,
 	}
 	return e
+}
+
+func (b *executorBuilder) buildPurgeMaterializedViewLog(v *plannercore.PurgeMaterializedViewLog) exec.Executor {
+	return &PurgeMaterializedViewLogExec{
+		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		stmt:         v.Statement,
+	}
 }
 
 func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) exec.Executor {
@@ -1045,9 +1252,26 @@ func (b *executorBuilder) buildInsert(v *physicalop.Insert) exec.Executor {
 	baseExec := exec.NewBaseExecutor(b.sctx, nil, v.ID(), children...)
 	baseExec.SetInitCap(chunk.ZeroCapacity)
 
+	op := "INSERT"
+	sourceStmt := tables.MLogSourceInsert
+	if v.IsReplace {
+		op = "REPLACE"
+		sourceStmt = tables.MLogSourceReplace
+	}
+	// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+	intest.AssertFunc(func() bool {
+		sv := b.sctx.GetSessionVars()
+		intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, v.Table.Meta(), "", op))
+		return true
+	})
+	insertTable := b.wrapTableWithMLogIfExists(v.Table, sourceStmt)
+	if b.err != nil {
+		return nil
+	}
+
 	ivs := &InsertValues{
 		BaseExecutor:              baseExec,
-		Table:                     v.Table,
+		Table:                     insertTable,
 		Columns:                   v.Columns,
 		Lists:                     v.Lists,
 		GenExprs:                  v.GenCols.Exprs,
@@ -1089,8 +1313,20 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
+	// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+	intest.AssertFunc(func() bool {
+		sv := b.sctx.GetSessionVars()
+		intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, tbl.Meta(), "", "IMPORT"))
+		return true
+	})
 	if !tbl.Meta().IsBaseTable() {
 		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "IMPORT")
+		return nil
+	}
+	if meta := tbl.Meta(); meta.MaterializedViewBase != nil && meta.MaterializedViewBase.MLogID != 0 {
+		b.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
+			"IMPORT INTO on tables with materialized view log",
+		)
 		return nil
 	}
 
@@ -1098,7 +1334,15 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 		selectExec exec.Executor
 		children   []exec.Executor
 	)
-	if v.SelectPlan != nil {
+	if v.SelectPlan != nil && b.sctx.GetSessionVars().InMViewMaintenance {
+		// MV builds persist the read timestamp as the refresh watermark, even
+		// when the SELECT becomes a TableDual and never opens a data reader.
+		if _, err := sessiontxn.GetTxnManager(b.sctx).GetStmtReadTS(); err != nil {
+			b.err = err
+			return nil
+		}
+	}
+	if v.SelectPlan != nil && !runsQueryOnWorker(v) {
 		selectExec = b.build(v.SelectPlan)
 		if b.err != nil {
 			return nil
@@ -1121,8 +1365,18 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) exec.Executor {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
+	// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+	intest.AssertFunc(func() bool {
+		sv := b.sctx.GetSessionVars()
+		intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, tbl.Meta(), "", "LOAD"))
+		return true
+	})
 	if !tbl.Meta().IsBaseTable() {
 		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD")
+		return nil
+	}
+	tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogSourceLoadData)
+	if b.err != nil {
 		return nil
 	}
 
@@ -1197,10 +1451,9 @@ func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) exec.Ex
 	e := &PlanReplayerExec{
 		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 		DumpInfo: &PlanReplayerDumpInfo{
-			Analyze:           v.Analyze,
-			Path:              v.File,
-			ctx:               b.sctx,
-			HistoricalStatsTS: v.HistoricalStatsTS,
+			Analyze: v.Analyze,
+			Path:    v.File,
+			ctx:     b.sctx,
 		},
 	}
 	if len(v.StmtList) > 0 {
@@ -2349,7 +2602,7 @@ func (b *executorBuilder) buildExpand(v *physicalop.PhysicalExpand) exec.Executo
 
 	// Use un-parallel projection for query that write on memdb to avoid data race.
 	// See also https://github.com/pingcap/tidb/issues/26832
-	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.inMViewDeltaMergeStmt || b.inMViewCompleteDeltaApplyStmt || b.hasLock {
 		e.numWorkers = 0
 	}
 	return e
@@ -2382,7 +2635,7 @@ func (b *executorBuilder) newProjectionExec(childExec exec.Executor, v *physical
 
 	// Use un-parallel projection for query that write on memdb to avoid data race.
 	// See also https://github.com/pingcap/tidb/issues/26832
-	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.inMViewDeltaMergeStmt || b.inMViewCompleteDeltaApplyStmt || b.hasLock {
 		e.numWorkers = 0
 	}
 	return e
@@ -2402,15 +2655,16 @@ func (b *executorBuilder) buildTableDual(v *physicalop.PhysicalTableDual) exec.E
 	return e
 }
 
-// `getSnapshotTS` returns for-update-ts if in insert/update/delete/lock statement otherwise the isolation read ts
-// Please notice that in RC isolation, the above two ts are the same
+// getSnapshotTS returns an explicit data-reader timestamp when provided. Otherwise,
+// writes and locking reads use for-update-ts, and other reads use the isolation read ts.
+// The two statement timestamps are the same in RC isolation.
 func (b *executorBuilder) getSnapshotTS() (ts uint64, err error) {
 	if b.forDataReaderBuilder {
 		return b.dataReaderTS, nil
 	}
 
 	txnManager := sessiontxn.GetTxnManager(b.sctx)
-	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
+	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt || b.inMViewDeltaMergeStmt || b.inMViewCompleteDeltaApplyStmt {
 		return txnManager.GetStmtForUpdateTS()
 	}
 	return txnManager.GetStmtReadTS()
@@ -2423,7 +2677,7 @@ func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
 	var err error
 
 	txnManager := sessiontxn.GetTxnManager(b.sctx)
-	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
+	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt || b.inMViewDeltaMergeStmt || b.inMViewCompleteDeltaApplyStmt {
 		snapshot, err = txnManager.GetSnapshotWithStmtForUpdateTS()
 	} else {
 		snapshot, err = txnManager.GetSnapshotWithStmtReadTS()
@@ -2606,6 +2860,7 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 			strings.ToLower(infoschema.TableTiDBHotRegions),
 			strings.ToLower(infoschema.TableConstraints),
 			strings.ToLower(infoschema.TableTiFlashReplica),
+			strings.ToLower(infoschema.TableStorageClassTransitions),
 			strings.ToLower(infoschema.TableTiDBServersInfo),
 			strings.ToLower(infoschema.TableTiKVStoreStatus),
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
@@ -2627,6 +2882,9 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 			strings.ToLower(infoschema.TableTiDBCheckConstraints),
 			strings.ToLower(infoschema.TableKeywords),
 			strings.ToLower(infoschema.TableTiDBIndexUsage),
+			strings.ToLower(infoschema.TableTiDBMViews),
+			strings.ToLower(infoschema.TableTiDBMLogs),
+			strings.ToLower(infoschema.TableTiDBTableMViewDependencies),
 			strings.ToLower(infoschema.TableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
@@ -3016,11 +3274,11 @@ func (b *executorBuilder) buildUpdate(v *physicalop.Update) exec.Executor {
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	multiUpdateOnSameTable := make(map[int64]bool)
 	for _, info := range v.TblColPosInfos {
-		tbl, _ := b.is.TableByID(context.Background(), info.TblID)
 		if _, ok := tblID2table[info.TblID]; ok {
 			multiUpdateOnSameTable[info.TblID] = true
+			continue
 		}
-		tblID2table[info.TblID] = tbl
+		tbl, _ := b.is.TableByID(context.Background(), info.TblID)
 		if len(v.PartitionedTable) > 0 {
 			// The v.PartitionedTable collects the partitioned table.
 			// Replace the original table with the partitioned table to support partition selection.
@@ -3028,10 +3286,21 @@ func (b *executorBuilder) buildUpdate(v *physicalop.Update) exec.Executor {
 			// Using the table in v.PartitionedTable returns a proper error, while using the original table can't.
 			for _, p := range v.PartitionedTable {
 				if info.TblID == p.Meta().ID {
-					tblID2table[info.TblID] = p
+					tbl = p
 				}
 			}
 		}
+		// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+		intest.AssertFunc(func() bool {
+			sv := b.sctx.GetSessionVars()
+			intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, tbl.Meta(), "", "UPDATE"))
+			return true
+		})
+		tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogSourceUpdate)
+		if b.err != nil {
+			return nil
+		}
+		tblID2table[info.TblID] = tbl
 	}
 	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
@@ -3059,6 +3328,7 @@ func (b *executorBuilder) buildUpdate(v *physicalop.Update) exec.Executor {
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
 		virtualAssignmentsOffset:  v.VirtualAssignmentsOffset,
 		multiUpdateOnSameTable:    multiUpdateOnSameTable,
+		isMultiTable:              v.IsMultiTable,
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
 		assignFlag:                assignFlag,
@@ -3097,7 +3367,18 @@ func (b *executorBuilder) buildDelete(v *physicalop.Delete) exec.Executor {
 	b.inDeleteStmt = true
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	for _, info := range v.TblColPosInfos {
-		tblID2table[info.TblID], _ = b.is.TableByID(context.Background(), info.TblID)
+		tbl, _ := b.is.TableByID(context.Background(), info.TblID)
+		// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+		intest.AssertFunc(func() bool {
+			sv := b.sctx.GetSessionVars()
+			intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, tbl.Meta(), "", "DELETE"))
+			return true
+		})
+		tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogSourceDelete)
+		if b.err != nil {
+			return nil
+		}
+		tblID2table[info.TblID] = tbl
 	}
 
 	if b.err = b.updateForUpdateTS(); b.err != nil {
@@ -3128,13 +3409,45 @@ func (b *executorBuilder) buildDelete(v *physicalop.Delete) exec.Executor {
 	return deleteExec
 }
 
+// wrapTableWithMLogIfExists wraps a base table with its MLog table when configured.
+func (b *executorBuilder) wrapTableWithMLogIfExists(tbl table.Table, sourceStmt tables.MLogSourceStmt) table.Table {
+	if tbl == nil {
+		return nil
+	}
+	meta := tbl.Meta()
+	if meta == nil || meta.MaterializedViewBase == nil || meta.MaterializedViewBase.MLogID == 0 {
+		return tbl
+	}
+	if meta.GetPartitionInfo() != nil {
+		b.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("materialized view log on partitioned tables")
+		return nil
+	}
+	mlogID := meta.MaterializedViewBase.MLogID
+	mlogTable, ok := b.is.TableByID(context.Background(), mlogID)
+	if !ok {
+		b.err = errors.Errorf(
+			"cannot get materialized view log table id=%d (base=%s id=%d)",
+			mlogID,
+			meta.Name.O,
+			meta.ID,
+		)
+		return nil
+	}
+	wrapped, err := tables.WrapTableWithMaterializedViewLog(tbl, mlogTable, sourceStmt)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	return wrapped
+}
+
 func (b *executorBuilder) updateForUpdateTS() error {
 	// GetStmtForUpdateTS will auto update the for update ts if it is necessary
 	_, err := sessiontxn.GetTxnManager(b.sctx).GetStmtForUpdateTS()
 	return err
 }
 
-func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, planID int) *analyzeTask {
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze index " + task.IndexInfo.Name.O}
 	_, offset := timeutil.Zone(b.sctx.GetSessionVars().Location())
 	sc := b.sctx.GetSessionVars().StmtCtx
@@ -3149,6 +3462,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	concurrency := adaptiveAnlayzeDistSQLConcurrency(b.ctx, b.sctx)
 	base := baseAnalyzeExec{
 		ctx:         b.sctx,
+		planID:      planID,
 		tableID:     task.TableID,
 		concurrency: concurrency,
 		analyzePB: &tipb.AnalyzeReq{
@@ -3190,6 +3504,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	task plannercore.AnalyzeColumnsTask,
 	opts map[ast.AnalyzeOptionType]uint64,
 	schemaForVirtualColEval *expression.Schema,
+	planID int,
 ) *analyzeTask {
 	if task.V2Options != nil {
 		opts = task.V2Options.FilledOpts
@@ -3266,6 +3581,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	concurrency := adaptiveAnlayzeDistSQLConcurrency(b.ctx, b.sctx)
 	base := baseAnalyzeExec{
 		ctx:         b.sctx,
+		planID:      planID,
 		tableID:     task.TableID,
 		concurrency: concurrency,
 		analyzePB: &tipb.AnalyzeReq{
@@ -3296,6 +3612,11 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle, false, false),
 		ColumnGroups: colGroups,
 	}
+	// A rate raised to 1 is still sent, so the job shows it and NDVRATE does not
+	// look unused. TiKV reads every row at 1.
+	if rate, raised := b.chooseNDVRate(task, opts, count, *sampleRate); rate < 1 || raised {
+		e.analyzePB.ColReq.NdvRate = &rate
+	}
 	if task.TblInfo != nil {
 		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
 		if task.TblInfo.IsCommonHandle {
@@ -3304,6 +3625,54 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	}
 	b.err = tables.SetPBColumnsDefaultValue(b.sctx.GetExprCtx(), e.analyzePB.ColReq.ColumnsInfo, task.ColsInfo)
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
+}
+
+// minNDVRate is the lowest rate the row-count rule picks. Below it, scanning every
+// row dominates ANALYZE, so a lower rate saves little time while the NDV error
+// keeps growing.
+const minNDVRate = 0.05
+
+// chooseNDVRate returns the fraction of rows that TiKV processes for NDV. While
+// tidb_analyze_sampled_ndv_threshold is not 0, a table or partition with more
+// rows than it uses its NDVRATE option or, without one, max(minNDVRate,
+// threshold / rows). Others use full input. TiKV draws the TopN and histogram
+// rows from the rows selected for NDV, so the rate covers sampleRate, or with
+// a fixed sample size that many rows. It also reports whether it raised the rate.
+func (b *executorBuilder) chooseNDVRate(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, count int64, sampleRate float64) (float64, bool) {
+	threshold := vardef.AnalyzeSampledNDVThreshold.Load()
+	rate := math.Float64frombits(opts[ast.AnalyzeOptNDVRate])
+	// 1 NDVRATE reads every row whatever the row count, so skip the PD lookup.
+	if threshold == 0 || rate >= 1 {
+		return 1, false
+	}
+	rows := float64(count)
+	// Like getAdjustedSampleRate, trust PD when stats_meta is far behind.
+	if approx, _ := b.getApproximateTableCountFromStorage(b.ctx, task.TableID.GetStatisticsID(), task); statsCountFarBehindPD(rows, approx) {
+		rows = approx
+	}
+	if rows <= float64(threshold) {
+		return 1, false
+	}
+	if rate <= 0 {
+		rate = max(minNDVRate, float64(threshold)/rows)
+	}
+	needed := sampleRate
+	if samples := opts[ast.AnalyzeOptNumSamples]; samples > 0 {
+		needed = min(1, float64(samples)/rows)
+	}
+	if rate >= needed {
+		return rate, false
+	}
+	// Raise instead of failing: the low rate can come from saved options or an
+	// adjusted SAMPLERATE, and Auto Analyze has no user to fix it.
+	table := task.DBName + "." + task.TableName
+	if task.PartitionName != "" {
+		table += "'s partition " + task.PartitionName
+	}
+	b.sctx.GetSessionVars().StmtCtx.AppendNote(errors.NewNoStackErrorf(
+		"Analyze raised the NDV rate from %g to %g for table %s, because TopN and histograms sample only the rows selected for NDV",
+		rate, needed, table))
+	return needed, true
 }
 
 // getAdjustedSampleRate calculate the sample rate by the table size. If we cannot get the table size. We use the 0.001 as the default sample rate.
@@ -3344,7 +3713,7 @@ func (b *executorBuilder) getAdjustedSampleRate(ctx context.Context, task planne
 	// To do a workaround for this issue, we check the approxiCount from the pd side to do a comparison.
 	// If the count from the stats_meta is extremely smaller than the approximate count from the pd,
 	// we think that we meet this issue and use the approximate count to calculate the sample rate.
-	if float64(statsTbl.RealtimeCount*5) < approxiCount {
+	if statsCountFarBehindPD(float64(statsTbl.RealtimeCount), approxiCount) {
 		// Confirmed by TiKV side, the experience error rate of the approximate count is about 20%.
 		// So we increase the number to 150000 to reduce this error rate.
 		sampleRate = math.Min(1, 150000/approxiCount)
@@ -3358,6 +3727,13 @@ func (b *executorBuilder) getAdjustedSampleRate(ctx context.Context, task planne
 	// Since there's tiny error rate around the count from the stats meta, we use 110000 to get a little big result
 	sampleRate = math.Min(1, config.DefRowsForSampleRate/float64(statsTbl.RealtimeCount))
 	return sampleRate, fmt.Sprintf("use min(1, %v/%v) as the sample-rate=%v", config.DefRowsForSampleRate, statsTbl.RealtimeCount, sampleRate)
+}
+
+// statsCountFarBehindPD reports whether the stats_meta count is so far below the
+// PD approximate count that PD is more reliable, for example right after a
+// physical import (https://github.com/pingcap/tidb/issues/29216).
+func statsCountFarBehindPD(statsCount, pdCount float64) bool {
+	return statsCount*5 < pdCount
 }
 
 func (b *executorBuilder) getApproximateTableCountFromStorage(ctx context.Context, tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {
@@ -3413,14 +3789,14 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 			return nil
 		}
 		schema := expression.NewSchema(columns...)
-		e.tasks = append(e.tasks, b.buildAnalyzeSamplingPushdown(task, v.Opts, schema))
+		e.tasks = append(e.tasks, b.buildAnalyzeSamplingPushdown(task, v.Opts, schema, v.ID()))
 		// Other functions may set b.err, so we need to check it here.
 		if b.err != nil {
 			return nil
 		}
 	}
 	for _, task := range v.IdxTasks {
-		e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze))
+		e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze, v.ID()))
 		if b.err != nil {
 			return nil
 		}
@@ -3563,6 +3939,27 @@ func (b *executorBuilder) newDataReaderBuilder(p base.PhysicalPlan) (*dataReader
 	}, nil
 }
 
+func (b *executorBuilder) newDataReaderBuilderWithSnapshot(p base.PhysicalPlan, snapshot *plannercore.DataReaderSnapshot) (*dataReaderBuilder, error) {
+	if snapshot == nil {
+		return nil, errors.New("snapshot is nil")
+	}
+	if snapshot.TS == 0 {
+		return nil, errors.New("snapshot ts is zero")
+	}
+	if snapshot.InfoSchema == nil {
+		return nil, errors.New("snapshot infoschema is nil")
+	}
+	builderForDataReader := *b
+	builderForDataReader.forDataReaderBuilder = true
+	builderForDataReader.dataReaderTS = snapshot.TS
+	builderForDataReader.is = snapshot.InfoSchema
+	builderForDataReader.isStaleness = true
+	if builderForDataReader.stmtCtxLock == nil {
+		builderForDataReader.stmtCtxLock = &sync.Mutex{}
+	}
+	return &dataReaderBuilder{plan: p, executorBuilder: &builderForDataReader, once: &dataReaderBuilderOnce{}}, nil
+}
+
 func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) exec.Executor {
 	outerExec := b.build(v.Children()[1-v.InnerChildIdx])
 	if b.err != nil {
@@ -3658,12 +4055,13 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 			ColLens:       v.IdxColLens,
 			HasPrefixCol:  hasPrefixCol,
 		},
-		WorkerWg:      new(sync.WaitGroup),
-		IsOuterJoin:   v.JoinType.IsOuterJoin(),
-		IndexRanges:   v.Ranges,
-		KeyOff2IdxOff: v.KeyOff2IdxOff,
-		LastColHelper: v.CompareFilters,
-		Finished:      &atomic.Value{},
+		WorkerWg:              new(sync.WaitGroup),
+		IsOuterJoin:           v.JoinType.IsOuterJoin(),
+		IndexRanges:           v.Ranges,
+		KeyOff2IdxOff:         v.KeyOff2IdxOff,
+		LastColHelper:         v.CompareFilters,
+		Finished:              &atomic.Value{},
+		AdaptiveLimitEligible: v.GetChildReqProps(1 - v.InnerChildIdx).NeedKeepOrder(),
 	}
 	colsFromChildren := v.Schema().Columns
 	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {
@@ -3911,12 +4309,18 @@ func (b *executorBuilder) buildMPPGather(v *physicalop.PhysicalTableReader) exec
 		return nil
 	}
 
+	serverID, err := getMPPServerID(b.sctx)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
 	gather := &MPPGather{
 		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
-		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.sctx), LocalQueryID: getMPPQueryID(b.sctx), ServerID: domain.GetDomain(b.sctx).ServerID()},
+		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.sctx), LocalQueryID: getMPPQueryID(b.sctx), ServerID: serverID},
 		memTracker:   memory.NewTracker(v.ID(), -1),
 
 		columns:                    []*model.ColumnInfo{},
@@ -6352,4 +6756,11 @@ func (b *executorBuilder) buildRecommendIndex(v *plannercore.RecommendIndexPlan)
 func (b *executorBuilder) buildWorkloadRepoCreate(_ *plannercore.WorkloadRepoCreate) exec.Executor {
 	base := exec.NewBaseExecutor(b.sctx, nil, 0)
 	return &WorkloadRepoCreateExec{base}
+}
+
+func (b *executorBuilder) buildCompareMaterializedView(v *plannercore.CompareMaterializedView) exec.Executor {
+	return &CompareMaterializedViewExec{
+		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		stmt:         v.Statement,
+	}
 }
