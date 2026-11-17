@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mviewutil"
@@ -295,9 +296,9 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	advisoryLockName := mviewutil.PurgeAdvisoryLockName(mlogID)
 	if err := purgeSctx.GetAdvisoryLock(advisoryLockName, 1); err != nil {
 		if storeerr.ErrLockWaitTimeout.Equal(err) {
-			return errors.Annotatef(errMLogPurgeLockConflict,
+			return exeerrors.ErrMVAdvisoryLockConflict.FastGenByArgs(fmt.Sprintf(
 				"another purge or materialized view cutover is running for materialized view log on %s.%s, please retry later",
-				schemaName.O, baseTable.Name.O)
+				schemaName.O, baseTable.Name.O))
 		}
 		return errors.Trace(err)
 	}

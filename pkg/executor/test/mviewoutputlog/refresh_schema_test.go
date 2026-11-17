@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -271,6 +272,7 @@ func TestMaterializedViewRefreshCreateMLogConflict(t *testing.T) {
 			select {
 			case err := <-ddlDone:
 				ddlFinished = true
+				require.True(t, exeerrors.ErrMVAdvisoryLockConflict.Equal(err), "%v", err)
 				require.ErrorContains(t, err, "materialized view refresh is running")
 				require.ErrorContains(t, err, "please retry later")
 			case <-time.After(15 * time.Second):

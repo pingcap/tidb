@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -2366,11 +2367,19 @@ func TestMaterializedViewRefreshCompleteConcurrentNowait(t *testing.T) {
 
 	tkLocker := newMViewTestKit(t, store)
 	tkLocker.MustExec("use test")
+	tkRefresh := newMViewTestKit(t, store)
+	tkRefresh.MustExec("use test")
+	advisoryLockName := fmt.Sprintf("mv_refresh_%d_%d", mvTable.Meta().DBID, mviewID)
+	require.NoError(t, tkLocker.Session().GetAdvisoryLock(advisoryLockName, 1))
+	defer tkLocker.Session().ReleaseAllAdvisoryLocks()
+	for _, method := range []string{"fast", "complete delta apply", "complete in place", "complete out of place"} {
+		tkRefresh.MustGetErrCode("refresh materialized view mv "+method, int(exeerrors.ErrMVAdvisoryLockConflict.Code()))
+	}
+	require.True(t, tkLocker.Session().ReleaseAdvisoryLock(advisoryLockName))
+
 	tkLocker.MustExec("begin pessimistic")
 	tkLocker.MustQuery(fmt.Sprintf("select MVIEW_ID from mysql.tidb_mview_refresh_info where MVIEW_ID = %d for update", mviewID))
 
-	tkRefresh := newMViewTestKit(t, store)
-	tkRefresh.MustExec("use test")
 	err = tkRefresh.ExecToErr("refresh materialized view mv complete delta apply")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "NOWAIT")

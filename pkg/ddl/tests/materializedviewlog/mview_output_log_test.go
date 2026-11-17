@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -82,8 +83,8 @@ func TestCreateMaterializedViewLogRefreshLockLifetime(t *testing.T) {
 			}
 			tkLock := newMViewTestKit(t, store)
 			tkLock.MustExec("use test")
-			err = tkLock.ExecToErr("refresh materialized view mv_mlog_lock fast")
-			require.ErrorContains(t, err, "another refresh or materialized view log creation is running", "the job must hold the refresh lock after its metadata transaction commits")
+			// The job must hold the refresh lock after its metadata transaction commits.
+			tkLock.MustGetErrCode("refresh materialized view mv_mlog_lock fast", errno.ErrMVAdvisoryLockConflict)
 			release()
 			select {
 			case err = <-ddlDone:
