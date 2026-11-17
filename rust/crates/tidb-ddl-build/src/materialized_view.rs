@@ -57,6 +57,102 @@ pub fn field_type_for_materialized_view_log_column(base: &ColumnInfo) -> FieldTy
     field_type
 }
 
+/// A column definition whose type Go's caller builds already
+/// (`ast.ColumnDef{Name, Tp: &ft}`): it declares no options, and its declared
+/// type is never read.
+#[must_use]
+pub fn built_type_column_def(name: &str) -> ColumnDef {
+    ColumnDef {
+        qualifier: Vec::new(),
+        name: name.to_owned(),
+        ty: ColumnType {
+            name: String::new(),
+            args: Vec::new(),
+            unsigned: false,
+            zerofill: false,
+            binary: false,
+            charset: None,
+        },
+        options: Vec::new(),
+    }
+}
+
+/// Go `refreshMLogAddedColumnFromBase`'s type: the base column's type
+/// without its key, auto-increment and on-update flags.
+#[must_use]
+pub fn mlog_added_column_field_type(base: &ColumnInfo) -> FieldType {
+    let mut field_type = base.field_type.clone();
+    field_type.del_flag(
+        FieldTypeFlags::PRI_KEY
+            | FieldTypeFlags::UNIQUE_KEY
+            | FieldTypeFlags::MULTIPLE_KEY
+            | FieldTypeFlags::AUTO_INCREMENT
+            | FieldTypeFlags::ON_UPDATE_NOW,
+    );
+    field_type
+}
+
+/// Go `setMLogAddedColumnOriginDefault`: a NOT NULL log column added to a
+/// log with rows reads a single space (a non-binary string) or its type's
+/// zero value in the rows before it.
+///
+/// # Errors
+///
+/// The origin default cannot be built.
+pub fn set_mlog_added_column_origin_default(col: &mut ColumnInfo) -> Result<(), MysqlError> {
+    if !col.field_type.has_flag(FieldTypeFlags::NOT_NULL) {
+        return Ok(());
+    }
+    if use_single_space_default_for_mlog_string_column(col) {
+        return col
+            .set_origin_default_value(tidb_model::ColumnDefaultValue::str(" "))
+            .map_err(|error| MysqlError::from_terror(&error));
+    }
+    if !col.get_origin_default_value().is_nil() {
+        return Ok(());
+    }
+    crate::table_info_build::stamp_origin_default_without_session(col).map_err(|error| error.to_mysql_error())
+}
+
+/// Go `useSingleSpaceDefaultForMLogStringColumn`.
+fn use_single_space_default_for_mlog_string_column(col: &ColumnInfo) -> bool {
+    col.field_type.charset_name() != "binary"
+        && matches!(
+            col.field_type.code(),
+            FieldTypeCode::String
+                | FieldTypeCode::Varchar
+                | FieldTypeCode::VarString
+                | FieldTypeCode::Blob
+                | FieldTypeCode::TinyBlob
+                | FieldTypeCode::MediumBlob
+                | FieldTypeCode::LongBlob
+        )
+}
+
+/// Go `syncMLogColumnsAfterAddColumn`: a log tracks its public columns but
+/// its two meta columns.
+pub fn sync_mlog_columns_after_add_column(info: &mut TableInfo) {
+    let Some(log) = &info.materialized_view_log else {
+        return;
+    };
+    let tracked: Vec<_> = info
+        .columns
+        .iter_deref()
+        .filter_map(|column| {
+            let column = column.read();
+            (column.state == tidb_model::SchemaState::PUBLIC && !is_mlog_meta_column_name(column.name.lowercase()))
+                .then(|| column.name.clone())
+        })
+        .collect();
+    log.write().columns = tracked.into();
+}
+
+/// Go `isMLogMetaColumnName`.
+fn is_mlog_meta_column_name(name: &str) -> bool {
+    name == tidb_hack::go_to_lower(tidb_model::table::MATERIALIZED_VIEW_LOG_DML_TYPE_COLUMN_NAME)
+        || name == tidb_hack::go_to_lower(tidb_model::table::MATERIALIZED_VIEW_LOG_OLD_NEW_COLUMN_NAME)
+}
+
 /// Go `checkMaterializedViewLogColumnSupportedForOp`.
 ///
 /// # Errors
@@ -187,19 +283,7 @@ pub fn build_materialized_view_log_table_info(
     let mut seen = std::collections::HashSet::new();
     let mut columns = Vec::with_capacity(stmt.cols.len() + 2);
     let mut field_types = Vec::with_capacity(stmt.cols.len() + 2);
-    let column_def = |name: &str| ColumnDef {
-        qualifier: Vec::new(),
-        name: name.to_owned(),
-        ty: ColumnType {
-            name: String::new(),
-            args: Vec::new(),
-            unsigned: false,
-            zerofill: false,
-            binary: false,
-            charset: None,
-        },
-        options: Vec::new(),
-    };
+    let column_def = built_type_column_def;
     for col in &stmt.cols {
         let lower = tidb_hack::go_to_lower(col);
         let column_exists = || {

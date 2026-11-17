@@ -2297,8 +2297,13 @@ fn column_option_sql_name(option: &ColumnOption) -> &'static str {
     }
 }
 
+/// Go `executor.AddColumn`'s `checkAndCreateNewColumn` for one column
+/// definition; `built_type` is a type Go's internal callers build already
+/// (`ast.ColumnDef.Tp`, ALTER MATERIALIZED VIEW LOG ADD COLUMN), which the
+/// declared `ty` then does not override.
 pub fn build_added_column(
     column: &ColumnDef,
+    built_type: Option<&FieldType>,
     table_charset: &str,
     table_collate: &str,
     context: &tidb_metabuild::Context,
@@ -2368,7 +2373,7 @@ pub fn build_added_column(
     let (mut info, _constraints) = build_column(
         0,
         column,
-        None,
+        built_type,
         None,
         table_charset,
         table_collate,
@@ -2644,6 +2649,13 @@ pub fn check_drop_column_for_state_public(info: &mut ColumnInfo) -> Refusal<()> 
     {
         return Ok(());
     }
+    stamp_origin_default_without_session(info)
+}
+
+/// Go `col.SetOriginDefaultValue(generateOriginDefaultValue(col, nil, true))`:
+/// with no session an expression default (other than CURRENT_TIMESTAMP)
+/// gives the type's zero value instead of being evaluated.
+pub fn stamp_origin_default_without_session(info: &mut ColumnInfo) -> Refusal<()> {
     let declared = info.get_default_value();
     let is_now = matches!(
         declared.view(),

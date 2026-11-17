@@ -236,37 +236,56 @@ pub(super) fn alter_materialized_view_log<S: StoreClient>(
     executor: &RealClusterDdl<S>,
     stmt: &tidb_ast::AlterMaterializedViewLogStmt,
     current_db: &str,
-    context: &dyn DdlSessionContext,
+    context: &DdlContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
     let catalog = executor.latest_schema();
-    let steps = super::executor_mview::alter_materialized_view_log_steps(&catalog, stmt, current_db, context)
+    let steps = super::executor_mview::alter_materialized_view_log_steps(&catalog, stmt, current_db, context.as_ref())
         .map_err(mysql_query_error)?;
     let mut last = None;
     let mut warnings = Vec::new();
     for step in steps {
-        let super::executor_mview::AlterMaterializedViewLogStep::Purge { job, start_with, next, sql_mode, mlog_id } =
-            step;
-        let report = do_ddl_job_wrapper(executor, context, job)?;
-        // Go keeps the metadata change and the schedule row decoupled: an
-        // error below does not undo the finished job.
-        let (next_unix_seconds, should_update) =
-            tidb_ddl_build::materialized_view::derive_materialized_schedule_next_unix_seconds(
-                &start_with,
-                &next,
-                sql_mode,
-                chrono::Utc::now(),
-            )
-            .map_err(mysql_query_error)?;
-        if should_update {
-            super::executor_mview::best_effort_update_materialized_schedule_info_next_unix_seconds(
-                executor.scheduler.session_pool.as_ref(),
-                &super::executor_mview::MLOG_PURGE_INFO_UPDATE_SPEC,
-                mlog_id,
-                next_unix_seconds,
-                &mut warnings,
-            )
-            .map_err(mysql_query_error)?;
-        }
+        let report = match step {
+            super::executor_mview::AlterMaterializedViewLogStep::Purge { job, start_with, next, sql_mode, mlog_id } => {
+                let report = do_ddl_job_wrapper(executor, context.as_ref(), job)?;
+                // Go keeps the metadata change and the schedule row
+                // decoupled: an error below does not undo the finished job.
+                let (next_unix_seconds, should_update) =
+                    tidb_ddl_build::materialized_view::derive_materialized_schedule_next_unix_seconds(
+                        &start_with,
+                        &next,
+                        sql_mode,
+                        chrono::Utc::now(),
+                    )
+                    .map_err(mysql_query_error)?;
+                if should_update {
+                    super::executor_mview::best_effort_update_materialized_schedule_info_next_unix_seconds(
+                        executor.scheduler.session_pool.as_ref(),
+                        &super::executor_mview::MLOG_PURGE_INFO_UPDATE_SPEC,
+                        mlog_id,
+                        next_unix_seconds,
+                        &mut warnings,
+                    )
+                    .map_err(mysql_query_error)?;
+                }
+                report
+            }
+            super::executor_mview::AlterMaterializedViewLogStep::AddColumns { schema, mlog, base_columns, after } => {
+                let store_count = executor.store_count();
+                executor.with_meta(context.as_ref(), |snapshot, start_ts, upgrading| {
+                    crate::cluster_ddl::add_materialized_view_log_columns(
+                        snapshot,
+                        &schema,
+                        &mlog,
+                        &base_columns,
+                        after.as_deref(),
+                        context,
+                        start_ts,
+                        upgrading,
+                        store_count,
+                    )
+                })?
+            }
+        };
         last = Some(report);
     }
     let mut report = last.expect("a statement has at least one action");

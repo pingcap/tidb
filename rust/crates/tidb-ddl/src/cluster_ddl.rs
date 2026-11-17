@@ -1542,6 +1542,7 @@ pub(super) fn build_add_column(
     schema: &str,
     table: &str,
     column: &tidb_ast::ColumnDef,
+    built_type: Option<&tidb_datatype::FieldType>,
     position: &tidb_ast::ColumnPosition,
     if_not_exists: bool,
     context: &dyn DdlSessionContext,
@@ -1584,6 +1585,7 @@ pub(super) fn build_add_column(
         .collect::<Vec<_>>();
     let added = tidb_ddl_build::table_info_build::build_added_column(
         column,
+        built_type,
         &info.charset,
         &info.collate,
         &context.metabuild_context(),
@@ -6694,4 +6696,4 @@ fn check_cluster_drop_object(
 }
 
 mod executor_alter;
-pub(crate) use executor_alter::alter_table_job;
+pub(crate) use executor_alter::{add_materialized_view_log_columns, alter_table_job};

@@ -350,7 +350,7 @@ pub trait ClusterDdl: Send + Sync {
         &self,
         statement: &tidb_ast::AlterMaterializedViewLogStmt,
         current_db: &str,
-        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+        context: &crate::cluster_ddl::DdlContext,
     ) -> Result<ClusterDdlReport, SqlQueryError>;
 
     /// Go `executor.DropSequence`.
@@ -424,7 +424,7 @@ pub trait ClusterDdl: Send + Sync {
                     self.drop_materialized_view_log(statement, current_db, context)
                 }
                 tidb_ast::DdlStmt::AlterMaterializedViewLog(statement) => {
-                    self.alter_materialized_view_log(statement, current_db, context.as_ref())
+                    self.alter_materialized_view_log(statement, current_db, context)
                 }
                 tidb_ast::DdlStmt::RecoverTable(statement) => self.recover_table(
                     &statement.table,
@@ -3844,7 +3844,7 @@ where
         &self,
         statement: &tidb_ast::AlterMaterializedViewLogStmt,
         current_db: &str,
-        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+        context: &crate::cluster_ddl::DdlContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         executor::alter_materialized_view_log(self, statement, current_db, context)
     }

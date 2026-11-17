@@ -238,6 +238,9 @@ pub(crate) enum AlterMaterializedViewLogStep {
     /// `alterMaterializedViewLogPurge`: the job, and the schedule the
     /// executor stores after it.
     Purge { job: crate::JobWrapper, start_with: String, next: String, sql_mode: i64, mlog_id: i64 },
+    /// `addMaterializedViewLogColumns`: the base columns, added to the log
+    /// `schema`.`mlog` after `after` (or first).
+    AddColumns { schema: String, mlog: String, base_columns: Vec<tidb_model::ColumnInfo>, after: Option<String> },
 }
 
 /// Go master `executor.AlterMaterializedViewLog`'s checks and the jobs of its
@@ -279,12 +282,12 @@ pub(crate) fn alter_materialized_view_log_steps(
             "MATERIALIZED VIEW LOG".into(),
         ])));
     }
-    let add_columns = stmt
+    let add_column_actions = stmt
         .actions
         .iter()
         .filter(|action| matches!(action, tidb_ast::AlterMaterializedViewLogAction::AddColumn(_)))
         .count();
-    if add_columns > 1 {
+    if add_column_actions > 1 {
         return Err(MysqlError::from_terror(&tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL.gen_with_stack_by_args(&[
             "ALTER MATERIALIZED VIEW LOG with multiple ADD COLUMN actions".into(),
         ])));
@@ -328,18 +331,30 @@ pub(crate) fn alter_materialized_view_log_steps(
             }
         }
     }
-    if add_columns > 0 {
-        // Go runs ADD COLUMN as `executor.AddColumn` of the log table with
-        // the base column's log type; this node has no such job yet, so the
-        // statement is refused before any of its jobs runs.
-        return Err(MysqlError::from_terror(&tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL.gen_with_stack_by_args(&[
-            "ALTER MATERIALIZED VIEW LOG ADD COLUMN on this node".into(),
-        ])));
-    }
+    let mut last_tracked = log_info_last_column(&mlog);
     let mut steps = Vec::new();
     for action in &stmt.actions {
-        let tidb_ast::AlterMaterializedViewLogAction::Purge(purge) = action else {
-            continue;
+        let purge = match action {
+            tidb_ast::AlterMaterializedViewLogAction::Purge(purge) => purge,
+            tidb_ast::AlterMaterializedViewLogAction::AddColumn(columns) => {
+                let base_columns = columns
+                    .iter()
+                    .map(|column| {
+                        let lower = tidb_hack::GoToLower::go_to_lower(column);
+                        base_columns.iter().find(|base| base.name.lowercase() == lower).expect("checked above").clone()
+                    })
+                    .collect();
+                steps.push(AlterMaterializedViewLogStep::AddColumns {
+                    schema: schema_name.clone(),
+                    mlog: mlog.name.original().to_owned(),
+                    base_columns,
+                    after: last_tracked.clone(),
+                });
+                if let Some(last) = columns.last() {
+                    last_tracked = Some(last.clone());
+                }
+                continue;
+            }
         };
         let (purge_method, purge_start_with, purge_next) =
             tidb_ddl_build::materialized_view::build_mlog_purge_meta(&expr_ctx, Some(purge))?;
@@ -370,6 +385,12 @@ pub(crate) fn alter_materialized_view_log_steps(
         });
     }
     Ok(steps)
+}
+
+/// Go `lastTrackedCol`: the log's last tracked column, if it tracks any.
+fn log_info_last_column(mlog: &tidb_model::TableInfo) -> Option<String> {
+    let log = mlog.materialized_view_log.as_ref()?.read();
+    log.columns.iter().last().map(|column| column.original().to_owned())
 }
 
 /// Go `alterMaterializedScheduleInfoUnixSecondsUpdateSpec`.

@@ -30,6 +30,7 @@ pub(crate) fn add_column_with_info<S: MetaSnapshot>(
     table: &String,
     if_not_exists: &bool,
     column: &Box<tidb_ast::ColumnDef>,
+    built_type: Option<&tidb_datatype::FieldType>,
     position: &tidb_ast::ColumnPosition,
     context: &DdlStatementContext,
     job_context: &dyn DdlSessionContext,
@@ -41,6 +42,7 @@ pub(crate) fn add_column_with_info<S: MetaSnapshot>(
         schema,
         table,
         column,
+        built_type,
         position,
         *if_not_exists,
         &context.0,
@@ -183,6 +185,48 @@ fn check_unsupported_charset_for_tiflash(
     ))
 }
 
+/// Go `refreshMLogAddedColumnFromBase`: a column added to a materialized
+/// view log takes its base column's current type until it is public.
+fn refresh_mlog_added_column_from_base(
+    txn: &mut JobTxn<'_>,
+    active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    mlog: &TableInfo,
+    column: Option<&GoShared<tidb_model::ColumnInfo>>,
+    args: &GoShared<tidb_model::TableColumnArgs>,
+) -> Result<(), DdlPlanError> {
+    let (Some(log), Some(from_args)) = (&mlog.materialized_view_log, args.read().col.clone()) else {
+        return Ok(());
+    };
+    if column.is_some_and(|column| {
+        !matches!(column.read().state, SchemaState::NONE | SchemaState::DELETE_ONLY | SchemaState::WRITE_ONLY)
+    }) {
+        return Ok(());
+    }
+    let base_id = log.read().base_table_id;
+    let meta = txn.meta();
+    // Go `t.GetTable`: nil without an error when the table key is absent.
+    let base = meta
+        .table(active.job.schema_id, base_id)
+        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+    let Some(base) = base else {
+        return Err(DdlPlanError::from(tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL.gen_with_stack_by_args(&[
+            "ALTER MATERIALIZED VIEW LOG with invalid base table metadata".into(),
+        ])));
+    };
+    let name = from_args.read().name.clone();
+    let base_column = tidb_model::column::find_column_info(&base.columns, name.lowercase())
+        .filter(|column| column.read().state == SchemaState::PUBLIC);
+    let Some(base_column) = base_column else {
+        return Err(DdlPlanError::from(
+            tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS
+                .gen_with_stack_by_args(&[name.original().into(), base.name.original().into()]),
+        ));
+    };
+    from_args.write().field_type =
+        tidb_ddl_build::materialized_view::mlog_added_column_field_type(&base_column.read());
+    Ok(())
+}
+
 /// Go `onAddColumn`.
 pub(super) fn on_add_column(
     txn: &mut JobTxn<'_>,
@@ -218,6 +262,8 @@ pub(super) fn on_add_column(
         }
         Err((false, error)) => return Err(error),
     };
+    refresh_mlog_added_column_from_base(txn, active, &info, column.as_ref(), &args)
+        .map_err(|error| cancel_ddl_job(active, error))?;
     let column = match column {
         Some(column) => column,
         None => {
@@ -227,6 +273,10 @@ pub(super) fn on_add_column(
                 args.read().col.clone().ok_or_else(|| {
                     DdlPlanError::Encode("ADD COLUMN job has no column".to_owned())
                 })?;
+            if info.materialized_view_log.is_some() {
+                tidb_ddl_build::materialized_view::set_mlog_added_column_origin_default(&mut added.write())
+                    .map_err(|error| cancel_ddl_job(active, DdlPlanError::from_mysql_error(error)))?;
+            }
             {
                 let mut added = added.write();
                 info.max_column_id += 1;
@@ -267,6 +317,9 @@ pub(super) fn on_add_column(
         move_column_info(&mut info, offset, destination);
     }
     column.write().state = next;
+    if next == SchemaState::PUBLIC {
+        tidb_ddl_build::materialized_view::sync_mlog_columns_after_add_column(&mut info);
+    }
     // Go `updateVersionAndTableInfoWithCheck` on the first and last steps.
     if matches!(next, SchemaState::DELETE_ONLY | SchemaState::PUBLIC) {
         check_table_info_valid(&info)?;

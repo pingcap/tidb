@@ -139,3 +139,68 @@ fn alter_materialized_view_log_purge_answers_as_go_master() {
     assert_eq!(answer(&mut session, "select NEXT_PURGE_UNIX_SECONDS from mysql.tidb_mlog_purge_info"), r#"RS:[["2208988800"]]"#);
     assert_eq!(stored(&stack).2, "TIMESTAMP '2041-01-01 00:00:00'");
 }
+
+/// ALTER MATERIALIZED VIEW LOG ... ADD COLUMN against a Go master
+/// `eca4674a6f` node's answers (`testdata/mview_mlog_add_column_go.jsonl`):
+/// each column added after the last tracked one (several as one
+/// multi-schema change), typed from its base column, the rows already
+/// logged reading Go's origin defaults, and the log's tracked columns.
+#[test]
+fn alter_materialized_view_log_add_column_answers_as_go_master() {
+    let (stack, _session) = replay_go_master(include_str!("../../../../../testdata/mview_mlog_add_column_go.jsonl"));
+    let (_, mlog) = stack.factory.catalog_snapshot().table_info_by_name("e29", "$mlog$t").unwrap();
+    let mlog = mlog.read();
+    let tracked: Vec<String> = mlog
+        .materialized_view_log
+        .as_ref()
+        .expect("a log table")
+        .read()
+        .columns
+        .iter()
+        .map(|column| column.original().to_owned())
+        .collect();
+    assert_eq!(tracked, ["a", "s", "n", "e", "tx", "bn", "d", "ts", "id", "u", "k"]);
+    // Go's `/schema/e29/$mlog$t`: name, Tp, Flag, Flen, origin default,
+    // state and offset of each column.
+    let columns: Vec<String> = mlog
+        .columns
+        .iter_deref()
+        .map(|column| {
+            let column = column.read();
+            let origin = column.get_origin_default_value();
+            let origin = match origin.view() {
+                None => "None".to_owned(),
+                Some(tidb_model::GoAnyView::String(bytes)) => String::from_utf8_lossy(bytes.as_bytes()).into_owned(),
+                Some(other) => format!("{other:?}"),
+            };
+            format!(
+                "{} {} {} {} {} {} {}",
+                column.name.original(),
+                column.field_type.code().mysql_type(),
+                column.field_type.flags(),
+                column.field_type.flen(),
+                origin,
+                column.state.0,
+                column.offset
+            )
+        })
+        .collect();
+    assert_eq!(
+        columns,
+        [
+            "a 3 0 11 None 5 0",
+            "s 15 4097 10   5 1",
+            "n 3 4097 11 0 5 2",
+            "e 247 4097 1 x 5 3",
+            "tx 252 4097 65535   5 4",
+            "bn 254 4225 4 \0\0\0\0 5 5",
+            "d 246 0 6 None 5 6",
+            "ts 7 129 19 0000-00-00 00:00:00 5 7",
+            "id 3 1 11 0 5 8",
+            "u 3 0 11 None 5 9",
+            "k 3 0 11 None 5 10",
+            "_MLOG$_DML_TYPE 15 4097 1 None 5 11",
+            "_MLOG$_OLD_NEW 1 4097 4 None 5 12",
+        ]
+    );
+}

@@ -597,6 +597,7 @@ fn build_alter_table_spec<S: MetaSnapshot>(
                 &(table),
                 &(*if_not_exists),
                 &(Box::new(column.clone())),
+                None,
                 &(position.clone()),
                 &(DdlStatementContext(context.clone())),
                 context.as_ref(),
@@ -1158,4 +1159,71 @@ pub(crate) fn alter_table_job<S: MetaSnapshot>(
         start_ts,
         upgrading,
     )
+}
+
+/// Go master `executor.addMaterializedViewLogColumns`: an ADD COLUMN of the
+/// log per base column, typed as the log keeps it
+/// (`FieldTypeForMaterializedViewLogColumn`), after `after` (the last
+/// tracked column) or first. Several run as one multi-schema change whose
+/// sub-jobs are submitted in reverse, so the public order is the list's.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_materialized_view_log_columns<S: MetaSnapshot>(
+    snapshot: &mut S,
+    schema: &str,
+    mlog: &str,
+    base_columns: &[tidb_model::ColumnInfo],
+    after: Option<&str>,
+    context: &DdlContext,
+    start_ts: u64,
+    upgrading: bool,
+    store_count: usize,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_info_schema(snapshot)?;
+    let position = after.map_or(tidb_ast::ColumnPosition::First, |after| tidb_ast::ColumnPosition::After(after.to_owned()));
+    let (schema, mlog) = (schema.to_owned(), mlog.to_owned());
+    let add = |snapshot: &mut S, base: &tidb_model::ColumnInfo| {
+        let field_type = tidb_ddl_build::materialized_view::field_type_for_materialized_view_log_column(base);
+        add_column::add_column_with_info(
+            snapshot,
+            &catalog,
+            &schema,
+            &mlog,
+            &false,
+            &Box::new(tidb_ddl_build::materialized_view::built_type_column_def(base.name.original())),
+            Some(&field_type),
+            &position,
+            &DdlStatementContext(context.clone()),
+            context.as_ref(),
+        )
+    };
+    if let [base] = base_columns {
+        let built = add(snapshot, base)?;
+        return submit_built_job(snapshot, built, start_ts, upgrading);
+    }
+    let mut specs = Vec::new();
+    for base in base_columns.iter().rev() {
+        match add(snapshot, base)? {
+            Some(AddIndexSubmission::Job(spec, warnings)) => {
+                for warning in warnings {
+                    context.append_sql_warn(warning);
+                }
+                multi_schema::append_to_sub_jobs(&mut specs, *spec)?;
+            }
+            Some(AddIndexSubmission::AlreadySatisfied { warnings, .. }) => {
+                for warning in warnings {
+                    context.append_sql_warn(warning);
+                }
+            }
+            None => {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::plain(
+                    "the ADD COLUMN specification has no executor",
+                )))
+            }
+        }
+    }
+    if specs.is_empty() {
+        return Ok(None);
+    }
+    let job = multi_schema::build_multi_schema_job(&catalog, &schema, &mlog, specs, context.as_ref(), store_count)?;
+    submit_built_job(snapshot, Some(AddIndexSubmission::Job(Box::new(job), Vec::new())), start_ts, upgrading)
 }
