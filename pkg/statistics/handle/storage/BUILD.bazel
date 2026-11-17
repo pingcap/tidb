@@ -20,6 +20,7 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+        "//pkg/planner/core/resolve",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
@@ -60,7 +61,11 @@ go_test(
         "stats_read_writer_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 26,
+=======
+    shard_count = 29,
+>>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
     deps = [
         ":storage",
         "//pkg/domain",

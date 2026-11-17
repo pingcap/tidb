@@ -25,18 +25,28 @@ func TestKeywords(t *testing.T) {
 	require.Equal(t, "ADD", parser.Keywords[0].Word)
 	require.Equal(t, true, parser.Keywords[0].Reserved)
 
-	// Make sure TiDBKeywords are included.
-	found := false
+	// Make sure TiDBKeywords are included and AUTO is unreserved.
+	foundAdmin := false
+	foundAuto := false
 	for _, kw := range parser.Keywords {
 		if kw.Word == "ADMIN" {
-			found = true
+			foundAdmin = true
+		}
+		if kw.Word == "AUTO" {
+			foundAuto = true
+			require.False(t, kw.Reserved)
 		}
 	}
-	require.Equal(t, found, true, "TiDBKeyword ADMIN is part of the list")
+	require.True(t, foundAdmin, "TiDBKeyword ADMIN is part of the list")
+	require.True(t, foundAuto, "AUTO is part of the keyword list")
 }
 
 func TestKeywordsLength(t *testing.T) {
+<<<<<<< HEAD
 	require.Equal(t, 677, len(parser.Keywords))
+=======
+	require.Equal(t, 690, len(parser.Keywords))
+>>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
 
 	reservedNr := 0
 	for _, kw := range parser.Keywords {
