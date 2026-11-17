@@ -534,7 +534,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealFMSketch() {
 		case fms, ok := <-a.fmsketch:
 			if !ok {
 				for i := range ndvMergers {
-					ndv := min(ndvMergers[i].NDV(), a.globalStats.Count)
+					ndv := ndvMergers[i].NDV()
 					a.globalStatsNDV = append(a.globalStatsNDV, ndv)
 					a.sampledNDV = append(a.sampledNDV, ndvMergers[i].Sampled())
 				}
@@ -609,11 +609,12 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			// MergePartTopNAndHistToGlobal already leaves bucket NDV = 0; here
 			// we just set the table-level NDV.
 			if *globalHg != nil {
-				ndv := a.globalStatsNDV[item.idx]
+				upperBound := globalNDVUpperBound(a.globalTableInfo, isIndex, *globalHg, a.globalStats.TopN[item.idx], a.globalStats.Count)
+				ndv := min(a.globalStatsNDV[item.idx], upperBound)
 				if statistics.UniqueByLocalIndex(a.globalTableInfo, isIndex, a.histIDs[item.idx]) {
-					ndv = uniqueGlobalNDV(wrapper.AllHg, a.globalStats.Count)
+					ndv = uniqueGlobalNDV(wrapper.AllHg, upperBound)
 				} else if a.sampledNDV[item.idx] {
-					ndv = sampledGlobalNDV(ndv, *globalHg, a.globalStats.TopN[item.idx], wrapper.missedNotNull, a.globalStats.Count)
+					ndv = sampledGlobalNDV(ndv, *globalHg, a.globalStats.TopN[item.idx], wrapper.missedNotNull, upperBound)
 				}
 				(*globalHg).NDV = ndv
 			}
