@@ -106,10 +106,6 @@ pub fn cluster_session_stack(
     spill_storage: Arc<tidb_spill_storage::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_memory::MemArbitrator>>,
 ) -> Result<(ClusterStack, ProductionReadProcessAuthority), RunConfiguredNodeError> {
-    let mut loaded = None;
-    let mut start_mode = tidb_ddl::StartMode::Normal;
-    let mut run_upgrade = false;
-    let mut upgrade_lock: Option<Box<dyn FnOnce() + Send>> = None;
     // Go `tikv.NewKVStore` in `driver.TiKVDriver.Open`: the node's one
     // client-rust store, which loads the txn safe point before serving.
     let mut store_config = tidb_txnkv::driver::tikv_store::cluster_security(&config.cluster_security);
@@ -136,8 +132,9 @@ pub fn cluster_session_stack(
     // Go `initDomainSysVars` and `LoadSysVarCacheLoop`: the domain owns the
     // sysvar cache from here, and the SetGlobal hooks run.
     global_vars.arm_domain_hooks();
-    // Go `domain.NewDomain`'s `etcdClient`: the node's one etcd client, which
-    // every owner, syncer, notifier and watch below shares.
+    // Go `domain.NewDomain`'s `etcdClient`: the node's etcd client, which
+    // every syncer, notifier, watch and owner below but the DDL owner
+    // manager shares.
     let unprefixed_etcd = tidb_session::domain::real_tikv_node::connect_etcd_client(config);
     // Go `Domain.Init`: KV, transactions and watches use the opened store's
     // namespace. Keep an unprefixed handle for cluster-wide metadata.
@@ -147,12 +144,14 @@ pub fn cluster_session_stack(
         Arc::new(client)
     });
     // Go `createStoreDDLOwnerMgrAndDomain`'s `ddl.StartOwnerManager`, before
-    // `BootstrapSession`: the bootstrap and the DDL below campaign the DDL
-    // owner through this one manager, whose ID is the DDL's and the server
-    // info's.
+    // `BootstrapSession`: the bootstrap domain's DDL and the serving
+    // domain's campaign the DDL owner through this one manager, over its own
+    // etcd client; its ID is each domain's DDL and server-info ID.
     let keyspace = tikv_store.get_keyspace().to_owned();
-    tidb_ddl::owner_mgr::start_owner_manager(&keyspace, etcd.clone())
-        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    tidb_ddl::owner_mgr::start_owner_manager(&keyspace, || {
+        new_etcd_cli(config, &tikv_store)
+    })
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     let ddl_owner = tidb_ddl::owner_mgr::get_owner_manager(&keyspace)
         .expect("the DDL owner manager was just started");
     let owner_manager_guard = OwnerManagerGuard(keyspace);
@@ -166,134 +165,10 @@ pub fn cluster_session_stack(
     let authority = ProductionReadProcessAuthority::connect_with_store(
         COPROCESSOR_QUERY_TIMEOUT,
         tikv_store,
-        |opener| {
-            // tiup's deploy->patch->start flow boots this node against a
-            // FRESH keyspace before any Go TiDB ever ran, so `mysql.*` does
-            // not exist yet. The convergence node owns the cluster's system
-            // catalog from then on, so bootstrap it right here and let the
-            // catalog load below read the schema just published. A cluster a
-            // TiDB already bootstrapped skips the publish entirely.
-            let upgrade_store =
-                tidb_session::bootstrap::TxnUpgradeStore::new(opener, COPROCESSOR_QUERY_TIMEOUT);
-            // Go `getStoreBootstrapVersionWithCache` and `getStartMode`.
-            let ver = tidb_session::upgrade_run::must_get_store_bootstrap_version(&upgrade_store)?;
-            let mut mode = tidb_session::upgrade_run::get_start_mode(ver);
-            if mode == tidb_ddl::StartMode::Upgrade {
-                // Go `runInBootstrapSession`: the lock is held until the
-                // upgrade finishes.
-                tidb_logutil::bg_logger().info("[upgrade] get owner lock to upgrade", &[]);
-                let release = tidb_session::bootstrap::acquire_lock(
-                    etcd.clone().map(|client| client as Arc<dyn tidb_owner::OwnerStore>),
-                )
-                .map_err(|error| format!("[upgrade] get owner lock failed: {error}"))?;
-                upgrade_lock = Some(release);
-                let curr_ver =
-                    tidb_session::upgrade_run::must_get_store_bootstrap_version(&upgrade_store)?;
-                if curr_ver >= tidb_session::upgrade_def::CURRENT_BOOTSTRAP_VERSION {
-                    // It is already bootstrapped/upgraded by another TiDB instance.
-                    tidb_logutil::bg_logger().info(
-                        "[upgrade] already upgraded by other nodes, switch to normal mode",
-                        &[],
-                    );
-                    mode = tidb_ddl::StartMode::Normal;
-                }
-            }
-            start_mode = mode;
-            let bootstrap = tidb_domain_core::real_tikv_privileges::read_bootstrap_state_from_cluster(
-                opener,
-                COPROCESSOR_QUERY_TIMEOUT,
-            )
-            .map_err(|error| error.to_string())?;
-            // Go `bootstrap(s)`: a store whose `mysql.tidb` is already
-            // bootstrapped is upgraded instead -- "for rolling upgrade, we
-            // can't do upgrade only in the owner".
-            run_upgrade = mode == tidb_ddl::StartMode::Upgrade
-                || (mode == tidb_ddl::StartMode::Bootstrap && bootstrap.already_bootstrapped());
-            if mode == tidb_ddl::StartMode::Bootstrap && !bootstrap.already_bootstrapped() {
-                let started = std::time::Instant::now();
-                // Go `runInBootstrapSession`'s `dom.Start`: the bootstrap
-                // domain's DDL campaigns the DDL owner when
-                // `tidb_enable_ddl` is on.
-                let owner = ddl_owner.owner_manager();
-                if config.run_ddl {
-                    owner.campaign_owner(&[])?;
-                }
-                let boot_logger = tidb_logutil::sample_logger_factory(
-                    std::time::Duration::from_secs(30),
-                    1,
-                    Vec::new(),
-                )();
-                // Go `bootstrap`.
-                let published = loop {
-                    let state = tidb_domain_core::real_tikv_privileges::read_bootstrap_state_from_cluster(
-                        opener,
-                        COPROCESSOR_QUERY_TIMEOUT,
-                    )
-                    .map_err(|error| error.to_string())?;
-                    // "For rolling upgrade, we can't do upgrade only in the
-                    // owner": a store another node bootstrapped is upgraded.
-                    if state.already_bootstrapped() {
-                        run_upgrade = true;
-                        break None;
-                    }
-                    // "Only one server need to do the bootstrap. So we chose
-                    // DDL owner to do this."
-                    if owner.is_owner() {
-                        break Some(tidb_session::bootstrap_publish::publish_bootstrap_with_splits(
-                            opener,
-                            COPROCESSOR_QUERY_TIMEOUT,
-                        )?);
-                    }
-                    boot_logger.info("bootstrap not done yet, waiting for owner to finish", &[]);
-                    std::thread::sleep(std::time::Duration::from_millis(200));
-                };
-                // Go `runInBootstrapSession`'s `dom.Close`: the bootstrap
-                // domain's DDL breaks its campaign loop; the owner manager
-                // keeps its session for the node's DDL.
-                owner.break_campaign_loop();
-                if let Some((outcome, schema_version, bootstrap_splits)) = published {
-                tidb_session::bootstrap_publish::notify_committed_bootstrap(
-                    &outcome,
-                    schema_version,
-                    None,
-                )
-                .map_err(|error| error.to_string())?;
-                tidb_session::bootstrap_publish::log_bootstrap_successful(started);
-                // Go `EnableSplitTableRegion`: the bootstrap cut every system
-                // table's region (re-cutting an existing boundary is a no-op).
-                if tidb_config::config_tree::config::get_global_config().split_table {
-                    tidb_ddl::pre_split::split_bootstrap_tables(
-                        region_store.as_ref(),
-                        &bootstrap_splits,
-                    );
-                }
-                }
-            }
-            loaded = Some(
-                load_catalog_from_cluster_at(opener, COPROCESSOR_QUERY_TIMEOUT)
-                    .map_err(|error| error.to_string())?,
-            );
-            Ok(())
-        },
+        |_| Ok(()),
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    let (startup, startup_lease_grant_ts) = loaded.expect("the catalog closure ran exactly once");
-    let schema_version = startup.schema_meta_version();
-
     let users = node_accounts(config, global_vars)?;
-    if start_mode == tidb_ddl::StartMode::Normal {
-        tidb_logutil::bg_logger().info(
-            "cluster already bootstrapped",
-            &[tidb_log::Field::new(
-                "version",
-                tidb_log::Value::I64(tidb_session::upgrade_def::CURRENT_BOOTSTRAP_VERSION),
-            )],
-        );
-    }
-    tidb_session::domain::real_tikv_node::init_startup_variables_from_cluster(
-        &authority.transaction_opener(),
-        start_mode,
-    )?;
     // Go `domain_sysvars.go`: the TSO and follower sysvars tune the store's
     // PD client (`store.GetPDClient().UpdateOption`).
     if let Some(options) = authority.tikv_store().store().pd_client().pd_options() {
@@ -304,421 +179,45 @@ pub fn cluster_session_stack(
                 authority.tikv_store().clone(),
             )));
     }
+    let process = NodeProcess {
+        config,
+        authority: &authority,
+        etcd: etcd.clone(),
+        unprefixed_etcd: unprefixed_etcd.clone(),
+        region_store: Arc::clone(&region_store),
+        users: Arc::clone(&users),
+        ddl_id: ddl_owner.id().to_owned(),
+        spill_storage,
+        memory_arbitrator,
+    };
+    // Go `bootstrapSessionImpl`: the DDL tables, then the bootstrap or the
+    // upgrade in a bootstrap domain that is closed again, then the persisted
+    // global variables.
+    bootstrap_session(&process)?;
+    // Go `bootstrapSessionImpl`'s serving domain: `createSessions` creates it
+    // and `dom.Start(ddl.Normal)` starts it, whatever mode the bootstrap
+    // domain ran in.
+    let ClusterDomain {
+        factory,
+        schema_version,
+        stats,
+        server_info,
+        server_id,
+        mut server_info_runner,
+        server_id_keeper,
+        schema_sync_ack,
+        resource_groups_controller,
+        ddl_session_pool,
+        sysvar_publication_fence,
+        reloader,
+        replica_read_checker,
+        log_backup_advancer,
+        replica_poll,
+        global_config_keeper,
+    } = new_cluster_domain(&process, tidb_ddl::StartMode::Normal)?;
     // The cluster-session path owns one process-wide sysvar reloader below,
     // started once the domain's sessions exist; its first rebuild runs before
     // it returns, so the persisted image is in force before bind.
-    let auto_id_etcd = etcd.clone().ok_or_else(|| {
-        RunConfiguredNodeError::Engine(SqlQueryError::unknown(
-            "cluster AutoID discovery requires its configured etcd client",
-        ))
-    })?;
-    let auto_id_service = Arc::new(
-        tidb_autoid::auto_id_client::AutoIdClient::new(
-            Arc::new(tidb_autoid::auto_id_client::EtcdAutoIdLeader(auto_id_etcd)),
-            config.cluster_security.clone(),
-        )
-        .map_err(|e| RunConfiguredNodeError::Engine(SqlQueryError::unknown(e.to_string())))?,
-    );
-    // One registry for the whole node, so every connection inserting into a
-    // table allocates from the one range this node reserved -- Go's
-    // per-`tidb-server` allocator, not a per-session one. The statistics
-    // writers allocate their `mysql.*` rows from it too.
-    let node_auto_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds> = Arc::new(
-        tidb_domain_core::cluster_auto_id_seam::ClusterTableAutoIds::new(
-            authority.transaction_opener(),
-            CONTROL_PLANE_TIMEOUT,
-        )
-        .with_service(auto_id_service.clone()),
-    );
-    let (catalog, reloader, schema_validator) = spawn_catalog_reloader(
-        startup,
-        startup_lease_grant_ts,
-        authority.transaction_opener(),
-        config.schema_lease,
-        Arc::clone(&node_auto_ids),
-    )
-    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    // Statistics always resolve targets from this published catalog, so the
-    // reload loop follows DDL-added tables and changed column types instead of
-    // freezing the boot image.
-    let stats = tidb_session::domain::real_tikv_node::new_node_stats()
-        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    // The sysvar half of the same division: a Go peer's `SET GLOBAL` is
-    // durable in `mysql.global_variables` the instant it commits, and this
-    // reloader is what makes THIS node notice it -- one tick, or one round
-    // trip if the etcd watch fires first. The fallback is capped at Go's
-    // 30-second `LoadSysVarCacheLoop` interval even with a longer lease.
-    let sysvar_publication_fence = SysvarPublicationFence::default();
-    // The node's coprocessor: base-table scans now carry their predicate,
-    // their row cap and their column list to the region, and only the
-    // surviving rows come back. The session's own staged writes are merged on
-    // top of them client-side, which is Go's `UnionScan` over a distsql
-    // reader.
-    //
-    // TiFlash discovery and range lookup retain the node's existing PD and
-    // canonical region-cache capabilities (Go MPPClient.ConstructMPPTasks).
-    let mpp_client: Arc<dyn tidb_txnkv::MppClient> = {
-        let catalog = Arc::clone(&catalog);
-        Arc::new(build_mpp_client(
-            &authority,
-            move || catalog.get_latest().schema_meta_version(),
-        ))
-    };
-    // This node's identity in the cluster: `/tidb/server/info/<uuid>` under
-    // a lease, plus the `/topology/tidb/<host:port>` pair, refreshed for as
-    // long as the process lives -- Go's `Domain.Init` starting the
-    // server-info syncer beside its reloaders. A node with no reachable
-    // etcd still HAS the record; it just publishes nowhere, and
-    // `information_schema.TIDB_SERVERS_INFO` then reports this node alone,
-    // which is Go's `etcdCli == nil` answer.
-    let server_etcd = etcd.clone().map(|client| {
-        Arc::new(tidb_ddl::etcd_ops::EtcdClientOps::new(client))
-            as Arc<dyn tidb_domain_serverinfo::serverinfo_syncer::EtcdOps>
-    });
-    // A failed cluster connection is not a standalone deployment.
-    if config.global_config.enable_global_kill && server_etcd.is_none() {
-        return Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(
-            "cluster server identity requires its configured etcd client",
-        )));
-    }
-    let server_identity = config.global_config.enable_global_kill.then(|| {
-        tidb_domain::server_id::ServerIdAuthority::new(
-            server_etcd.clone(),
-            config.global_config.enable_32bits_connection_id,
-        )
-    });
-    // Go `Domain.ServerID`: the acquired global server ID, 0 without one.
-    let server_id: Arc<dyn Fn() -> u64 + Send + Sync> = match &server_identity {
-        Some(identity) => {
-            let identity = Arc::clone(identity);
-            Arc::new(move || identity.id())
-        }
-        None => Arc::new(|| 0),
-    };
-    let mut info = tidb_session::domain::serverinfo_etcd::get_server_info(config);
-    // Go `GlobalInfoSyncerInit(ctx, do.ddl.GetID(), ...)`: the server info's
-    // ID is the DDL's, which is the owner manager's.
-    ddl_owner.id().clone_into(&mut info.static_info.id);
-    if let Some(identity) = &server_identity {
-        let identity = Arc::clone(identity);
-        info.static_info.server_id_getter = Some(Arc::new(move || identity.id()));
-    }
-    let server_info = Arc::new(
-        tidb_domain_serverinfo::serverinfo_syncer::Syncer::new_with_status_endpoint_claim(
-            info,
-            server_etcd,
-            config.report_status,
-        ).with_min_start_ts_etcd(if authority.tikv_store().store().is_keyspace_using_keyspace_level_gc() {
-            etcd.clone().map(|client| Arc::new(tidb_ddl::etcd_ops::EtcdClientOps::new(client)) as _)
-        } else {
-            unprefixed_etcd.clone().map(|client| Arc::new(tidb_ddl::etcd_ops::EtcdClientOps::new(client)) as _)
-        }),
-    );
-    let mut server_info_runner = match tidb_domain_serverinfo::serverinfo_syncer::SyncerRunner::start(
-        Arc::clone(&server_info),
-        tidb_domain_serverinfo::serverinfo_syncer::SyncIntervals::default(),
-    ) {
-        Ok(runner) => Some(runner),
-        Err(error) => {
-            // Go GlobalInfoSyncerInit fails startup if initial leased
-            // publication fails; serving invisibly also hides GC protection.
-            return Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(
-                error,
-            )));
-        }
-    };
-    let server_id_keeper = server_identity
-        .as_ref()
-        .map(|identity| {
-            tidb_domain::server_id::ServerIdKeeper::start(
-                Arc::clone(identity),
-                Arc::clone(&server_info),
-                Default::default(),
-            )
-        })
-        .transpose()
-        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
-    // Go `initResourceGroupsController`, after the server ID is fetched.
-    let resource_groups_controller = tidb_session::domain::resource_groups_controller::init_resource_groups_controller(
-        authority.tikv_store(),
-        server_identity.as_ref().map_or(0, |identity| identity.id()),
-    )?;
-    let discovery = Some(tidb_domain::cluster_discovery::PdClusterDiscovery::new(
-        authority.tikv_store().clone(),
-        &config.cluster_security,
-        COPROCESSOR_QUERY_TIMEOUT,
-    ))
-    .map(|discovery| {
-        discovery.map(|discovery| {
-            Arc::new(discovery) as Arc<dyn tidb_domain::cluster_topology::ClusterDiscovery>
-        })
-    })
-    .transpose()
-    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
-    let cluster_topology = Arc::new(tidb_domain::cluster_topology::ClusterTopology::new(
-        Arc::clone(&server_info),
-        discovery,
-    ));
-    let replica_read_checker = tidb_session::domain::cluster_topology::ReplicaReadChecker::start(
-        Arc::clone(&cluster_topology),
-        users.global_vars(),
-    )
-    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    // Go `Domain.Start`: the log backup advancer, outside BR mode.
-    let log_backup_advancer = if start_mode == tidb_ddl::StartMode::Br {
-        None
-    } else {
-        crate::log_backup::init_log_backup(authority.tikv_store(), etcd.clone(), &config.cluster_security)
-            .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?
-    };
-    let stats_owner: Arc<dyn tidb_owner::Manager> = match etcd.clone() {
-        Some(client) => Arc::new(tidb_owner::OwnerManager::new(
-            tidb_owner::Context::background(),
-            client as Arc<dyn tidb_owner::OwnerStore>,
-            tidb_session::domain::cluster_session_node::STATS_OWNER_PROMPT,
-            server_info.get_local_server_info().static_info.id,
-            tidb_session::domain::cluster_session_node::STATS_OWNER_KEY,
-        )),
-        None => Arc::new(tidb_owner::MockManager::new(
-            tidb_owner::Context::background(),
-            server_info.get_local_server_info().static_info.id,
-            // Match the store-scoped mock DDL owner and Go store.UUID().
-            Some(&format!(
-                "embedded-authority-{}",
-                authority.transaction_opener().authority_id()
-            )),
-            tidb_session::domain::cluster_session_node::STATS_OWNER_KEY,
-        )),
-    };
-    // Go `NewDomain` / `mdlCheckLoop`: the schema-version syncer -- etcd's
-    // when the node has etcd, else Go's `NewMemSyncer` -- and the MDL check
-    // that acknowledges a job once no transaction here holds its tables at
-    // an older version. The owner's `WaitVersionSynced` waits on it.
-    let schema_pins = Arc::new(tidb_ddl::schema_sync::SchemaPinRegistry::default());
-    let min_job_id_refresher = Arc::new(MinJobIdRefresher::new());
-    let schema_sync_ack = tidb_ddl::schema_sync::SchemaSyncAck::spawn(
-        Arc::clone(&catalog),
-        authority.transaction_opener(),
-        Arc::clone(&schema_pins),
-        Arc::clone(&min_job_id_refresher),
-        etcd.clone(),
-        server_info.get_local_server_info().static_info.id,
-        Arc::clone(&server_info),
-        Arc::clone(&schema_validator),
-        reloader.waker(),
-        reloader.stats_source(),
-        tidb_ddl::schema_sync::MDL_CHECK_LOOK_DURATION,
-        CONTROL_PLANE_TIMEOUT,
-    )
-    .map_err(|error| {
-        RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
-            "initialize schema-version syncer failed: {error}"
-        )))
-    })?;
-    let schema_version_syncer = Some(schema_sync_ack.syncer());
-    let ddl_session_pool = Arc::new(tidb_session::ddl_session_pool::NodeDdlSessionPool::default());
-    let cluster_ddl = Arc::new(
-        RealClusterDdl::new_with_min_job_id_refresher(
-            authority.transaction_opener(),
-            Arc::clone(&catalog),
-            CONTROL_PLANE_TIMEOUT,
-            etcd.clone(),
-            Arc::clone(&server_info),
-            schema_version_syncer,
-            Arc::clone(&schema_validator),
-            config.run_ddl,
-            min_job_id_refresher,
-            Arc::clone(&ddl_session_pool) as _,
-            Arc::clone(&node_auto_ids),
-            start_mode,
-        )
-        .map_err(|error| {
-            RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
-                "campaign DDL owner failed: {error}"
-            )))
-        })?
-        .with_auto_ids(auto_id_service.clone())
-        .with_region_store(Arc::clone(&region_store)),
-    );
-    // Go `GlobalInfoSyncerInit(..., store.GetPDHTTPClient(), ...)`: the
-    // info syncer's managers share the store's PD HTTP client.
-    let pd_http_client = authority.tikv_store().pd_http_client();
-    // Go `InfoSyncer` init's `affinity.InitManager(is.pdHTTPCli)`: the DDL
-    // job workers create and delete PD affinity groups through it.
-    tidb_domain_affinity::init_manager(pd_http_client.as_ref().map(|client| {
-        Arc::new(tidb_domain_infosync::pd_affinity_client::PdHttpAffinityClient::new(
-            client,
-        )) as Arc<dyn tidb_domain_affinity::PdAffinityClient>
-    }));
-    // Go `InfoSyncer.initLabelRuleManager`: PD's region-label rules, which
-    // the DDL job workers write and `information_schema.attributes` reads.
-    tidb_domain_infosync::label_manager::init_label_rule_manager(pd_http_client.as_ref().map(|client| {
-        Arc::new(tidb_domain_infosync::label_delivery::PdLabelManager::new(client))
-            as Arc<dyn tidb_domain_infosync::label_manager::LabelRuleManager>
-    }));
-    // Go `GlobalInfoSyncerInit`'s `etcdCli`, which `GetPrometheusAddr` finds
-    // the `metrics_schema` tables' Prometheus through.
-    tidb_domain_infosync::prometheus_addr::init_prometheus_addr(
-        etcd.clone().map(|client| client as Arc<dyn tidb_domain_infosync::prometheus_addr::PrometheusEtcd>),
-        &config.cluster_security,
-    );
-    // Go `InfoSyncer.initScheduleManager`: PD's schedule configuration, which
-    // FLASHBACK CLUSTER closes and restores.
-    tidb_domain_infosync::schedule_manager::init_schedule_manager(pd_http_client.as_ref().map(|client| {
-        Arc::new(tidb_domain_infosync::schedule_manager::PdScheduleManager::new(client))
-            as Arc<dyn tidb_domain_infosync::schedule_manager::ScheduleManager>
-    }));
-    // Go `InfoSyncer.initTiFlashReplicaManager`: the TiFlash placement rules
-    // DDL jobs set and the GC worker deletes.
-    tidb_domain_infosync::tiflash_manager::init_tiflash_replica_manager(pd_http_client.as_ref().map(|client| {
-        Arc::new(tidb_domain_infosync::tiflash_manager::TiFlashReplicaManagerCtx::new(
-            client,
-            &config.cluster_security,
-        ))
-            as Arc<dyn tidb_domain_infosync::tiflash_manager::TiFlashReplicaManager>
-    }));
-    // One DDL-gated worker. Its guard joins before the node releases DDL/PD.
-    let replica_poll = tidb_session::domain::cluster_session_node::build_tiflash_replica_poll(
-        Arc::clone(&catalog),
-        pd_http_client,
-        &config.cluster_security,
-        cluster_ddl.clone(),
-    );
-    let global_config_keeper =
-        tidb_session::domain::global_config_sync::GlobalConfigKeeper::start(Some(authority.tikv_store().clone()))
-            .map_err(|error| {
-                RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
-            })?;
-    let analyze: Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze> = Arc::new(
-        RealClusterAnalyze::new(
-            Arc::new(authority.transaction_opener()),
-            Arc::clone(&stats),
-            // Go's ANALYZE reads rows and stats tables through the same
-            // data-plane requests any query uses, each bounded per request
-            // (`TiKVClient.CoprReqTimeout`, coprocessor.go:1791) rather than
-            // by a control-plane budget. This statement walks the whole
-            // catalog plus every row of the table, so its requests take the
-            // data-plane deadline.
-            COPROCESSOR_QUERY_TIMEOUT,
-            config.stats_lease.slow_save_interval(),
-        ),
-    );
-    let factory = Domain::new(
-        // Row reads and writes are DATA-plane traffic: a statement's snapshot
-        // gets queue behind concurrent coprocessor scans on the same store,
-        // so their admission deadline must tolerate store-side latency rather
-        // than the 5s control-plane budget -- go gives the same surface
-        // `coprocessor` timeouts measured in tens of seconds
-        // (`tikv-worker`/client default 30s+).
-        Arc::new(RealClusterTransactions::new(
-            authority.transaction_opener(),
-            TRANSACTION_RPC_TIMEOUT,
-        )),
-        cluster_ddl,
-        Arc::new(
-            RealClusterAccountWriter::new(
-                Arc::new(authority.transaction_opener()),
-                users.accounts(),
-                CONTROL_PLANE_TIMEOUT,
-                etcd.clone(),
-            )
-            .with_server_id(Arc::clone(&server_id)),
-        ),
-        Arc::new(RealClusterSysvarWriter::new(
-            Arc::new(authority.transaction_opener()),
-            users.global_vars(),
-            CONTROL_PLANE_TIMEOUT,
-            etcd.clone(),
-            sysvar_publication_fence.clone(),
-            Arc::clone(&ddl_session_pool) as _,
-        )),
-        catalog,
-        users.accounts(),
-        users.global_vars(),
-        Arc::clone(&stats),
-        Arc::clone(&node_auto_ids),
-        tidb_session::domain::cluster_session_node::open_pool_session,
-    )
-    .with_global_config_syncer(global_config_keeper.syncer())
-    .with_mpp_client(mpp_client)
-    .with_kv_client(Arc::new(tidb_copr::cop_client::CopClient::new(
-        authority.transport_factory(),
-    )))
-    .with_region_store(region_store)
-    .with_server_info(Arc::clone(&server_info))
-    .with_connection_ids(tidb_domain_core::connection_ids::new_connection_id_allocator(
-        &config.global_config,
-        server_identity.clone(),
-    ))
-    .with_server_identity(server_identity)
-    .with_cluster_topology(cluster_topology)
-    .with_stats_owner(stats_owner)
-    .with_schema_pins(schema_pins)
-    .with_schema_validator(Arc::clone(&schema_validator))
-    .with_spill_storage(spill_storage);
-    let factory = match memory_arbitrator {
-        Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
-        None => factory,
-    };
-    factory.install_store_keyspace(authority.tikv_store().get_keyspace().to_owned());
-    if let Some(client) = &unprefixed_etcd {
-        factory.install_unprefixed_etcd_client(Arc::clone(client));
-    }
-    let factory = factory.shared();
-    tidb_session::domain::cross_ks::install_cross_ks_runtime_factory(&factory,config)
-        .map_err(|error|RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
-    tidb_session::domain::cluster_session_node::NodeServices::new(analyze)
-    .with_cluster_peer_client(Arc::new(tidb_executor::cluster_peer::ClusterPeerClient::new(
-        authority.tikv_store().clone(),
-    )))
-    .with_cluster_config_client(Arc::new(
-        tidb_executor::cluster_config::ClusterConfigClient::new(&config.cluster_security)
-            .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?,
-    ))
-    .with_cluster_diagnostics_client(Arc::new(
-        tidb_executor::cluster_diagnostics::ClusterDiagnosticsClient::new(&config.cluster_security)
-            .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?,
-    ))
-    .bind(&factory);
-    // The pool's sessions are the node's, so it is bound once the node's
-    // session services are: the job scheduler takes one as soon as it can.
-    ddl_session_pool.bind(&factory);
-    tidb_session::domain::real_tikv_node::new_privilege_handle(&users, factory.advanced_sys_session_pool());
-    // Go `runInBootstrapSession`'s `upgrade(s)` and `finishBootstrap`, on the
-    // domain's sessions before any global variable or privilege loads, so
-    // the rows the upgrade writes are the ones those loops read.
-    if start_mode != tidb_ddl::StartMode::Normal {
-        let opener = authority.transaction_opener();
-        let upgrade_store =
-            tidb_session::bootstrap::TxnUpgradeStore::new(&opener, CONTROL_PLANE_TIMEOUT);
-        if run_upgrade {
-            if start_mode == tidb_ddl::StartMode::Upgrade {
-                // below sleep is used to mitigate https://github.com/pingcap/tidb/issues/57003,
-                // to let the older owner have time to notice that it's already retired.
-                std::thread::sleep(std::time::Duration::from_millis(
-                    tidb_owner::WAIT_TIME_ON_FORCE_OWNER_MILLIS
-                        .load(std::sync::atomic::Ordering::Acquire)
-                        .max(0) as u64,
-                ));
-            }
-            // Go `domain.GetDomain(s).DDL().StateSyncer()`.
-            let state_syncer = factory
-                .ddl
-                .state_syncer()
-                .expect("a started DDL has its state syncer");
-            tidb_session::domain::cluster_session_node::run_upgrade(
-                &factory,
-                &upgrade_store,
-                state_syncer.as_ref(),
-            )
-            .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
-        }
-        tidb_session::upgrade_run::finish_bootstrap(&upgrade_store)
-            .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
-    }
-    if let Some(release) = upgrade_lock.take() {
-        release();
-    }
     // Go `LoadSysVarCacheLoop`, started once the domain's sessions exist:
     // each rebuild reads `mysql.global_variables` through them.
     let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
@@ -881,8 +380,9 @@ pub fn cluster_session_stack(
     // Go `BootstrapSession`'s `dom.StartTTLJobManager()`, over the domain's
     // etcd client; Go `Domain.Close` stops it first, so its guard is the
     // first worker retired.
-    // Go `Domain.Init`: load SYSTEM only after normal user-keyspace startup.
-    if tidb_config_kerneltype::is_next_gen() && factory.store_keyspace()!=tidb_keyspace::SYSTEM && start_mode==tidb_ddl::StartMode::Normal {
+    // Go `Domain.Start`: load SYSTEM only after normal user-keyspace startup;
+    // the serving domain starts in normal mode.
+    if tidb_config_kerneltype::is_next_gen() && factory.store_keyspace()!=tidb_keyspace::SYSTEM {
         factory.load_sys_ks_info_schema().map_err(|error|RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     }
     let ttl_job_manager = factory.start_ttl_job_manager();
@@ -901,12 +401,12 @@ pub fn cluster_session_stack(
         ddl_session_pool: Arc::clone(&ddl_session_pool) as _,
         workers: vec![
             Box::new(ttl_job_manager),
-            Box::new(replica_read_checker),
-            Box::new(log_backup_advancer),
+            replica_read_checker,
+            log_backup_advancer,
             Box::new(stats_maintenance),
-            Box::new(replica_poll),
-            Box::new(global_config_keeper),
-            Box::new(reloader),
+            replica_poll,
+            global_config_keeper,
+            reloader,
             Box::new(privilege_watcher),
             Box::new(privilege_reloader),
             Box::new(sysvar_watcher),
@@ -921,12 +421,713 @@ pub fn cluster_session_stack(
             // Go `closeDomainAndStorage`'s `ddl.CloseOwnerManager`, right
             // after `dom.Close`.
             Box::new(owner_manager_guard),
-            Box::new(server_id_keeper),
+            server_id_keeper,
             Box::new(server_info_runner),
-            Box::new(schema_sync_ack),
+            schema_sync_ack,
         ],
         resource_groups: Some((tikv_store_for_shutdown, resource_groups_controller)),
     }, authority))
+}
+
+/// What the node's two domains share, opened once by [`cluster_session_stack`]:
+/// Go's process-wide store, etcd clients, DDL owner manager and global
+/// variable cache, which both `runInBootstrapSession`'s domain and the
+/// serving domain reach.
+struct NodeProcess<'a> {
+    config: &'a NodeConfig,
+    authority: &'a ProductionReadProcessAuthority,
+    /// The keyspace-namespaced etcd client.
+    etcd: Option<Arc<tidb_pd_client::EtcdClient>>,
+    /// The same connection without the keyspace namespace.
+    unprefixed_etcd: Option<Arc<tidb_pd_client::EtcdClient>>,
+    region_store: Arc<dyn tidb_kv::region_map::RegionStore>,
+    users: Arc<tidb_session::domain::configured_user_store::ConfiguredUserStore>,
+    /// Go `ddl.GetID()`: the DDL owner manager's ID, which each domain's
+    /// DDL and server info take.
+    ddl_id: String,
+    spill_storage: Arc<tidb_spill_storage::SpillStorage>,
+    memory_arbitrator: Option<Arc<tidb_memory::MemArbitrator>>,
+}
+
+/// Go `domain.Domain` after `NewDomain`, `Init` and `Start(startMode)`, as
+/// [`new_cluster_domain`] builds it: the session factory and the loops that
+/// run beside it. The opaque fields are workers and leases, retired by
+/// [`ClusterDomain::close`] or by the node's shutdown.
+struct ClusterDomain {
+    factory: Arc<Domain>,
+    /// The schema version the domain loaded at.
+    schema_version: i64,
+    stats: Arc<tidb_stats_handle_syncload::stats_watch::SharedStats>,
+    server_info: Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>,
+    server_id: Arc<dyn Fn() -> u64 + Send + Sync>,
+    server_info_runner: Option<tidb_domain_serverinfo::serverinfo_syncer::SyncerRunner>,
+    server_id_keeper: Box<dyn std::any::Any>,
+    schema_sync_ack: Box<dyn std::any::Any>,
+    resource_groups_controller: Arc<tikv_client::pd_resource_group::controller::ResourceGroupsController>,
+    ddl_session_pool: Arc<tidb_session::ddl_session_pool::NodeDdlSessionPool>,
+    sysvar_publication_fence: SysvarPublicationFence,
+    reloader: Box<dyn std::any::Any>,
+    replica_read_checker: Box<dyn std::any::Any>,
+    log_backup_advancer: Box<dyn std::any::Any>,
+    replica_poll: Box<dyn std::any::Any>,
+    global_config_keeper: Box<dyn std::any::Any>,
+}
+
+impl ClusterDomain {
+    /// Go `Domain.Close` for `runInBootstrapSession`'s domain, in the
+    /// serving node's shutdown order (`cluster_boot.rs`): the loops, the
+    /// domain (its DDL breaks its owner campaign loop; the process's owner
+    /// manager keeps its session), the resource-group controller, then the
+    /// server-ID, server-info and schema-version leases.
+    fn close(self, store: &tidb_txnkv::driver::tikv_store::TikvStore) {
+        let Self {
+            factory,
+            server_info_runner,
+            server_id_keeper,
+            schema_sync_ack,
+            resource_groups_controller,
+            reloader,
+            replica_read_checker,
+            log_backup_advancer,
+            replica_poll,
+            global_config_keeper,
+            ..
+        } = self;
+        drop(replica_read_checker);
+        drop(log_backup_advancer);
+        drop(replica_poll);
+        drop(global_config_keeper);
+        drop(reloader);
+        factory.close();
+        drop(factory);
+        tidb_session::domain::resource_groups_controller::stop_resource_groups_controller(
+            store,
+            &resource_groups_controller,
+        );
+        drop(server_id_keeper);
+        drop(server_info_runner);
+        drop(schema_sync_ack);
+    }
+}
+
+fn engine_error(error: impl std::fmt::Display) -> RunConfiguredNodeError {
+    RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
+}
+
+/// Go `EnableSplitTableRegion` (config `split-table`): the bootstrap's tables
+/// get their own regions once their meta is committed.
+fn split_bootstrap_tables(process: &NodeProcess<'_>, splits: &tidb_ddl::pre_split::BootstrapSplits) {
+    if tidb_config::config_tree::config::get_global_config().split_table {
+        tidb_ddl::pre_split::split_bootstrap_tables(process.region_store.as_ref(), splits);
+    }
+}
+
+/// Go `bootstrapSessionImpl` up to the serving domain: `bootstrapSchemas`
+/// (next-gen) and `InitDDLTables`; `runInBootstrapSession` when the store's
+/// bootstrap version is behind, else `InitMDLVariable`; then
+/// `initGlobalVarFromSystemDB`.
+fn bootstrap_session(process: &NodeProcess<'_>) -> Result<(), RunConfiguredNodeError> {
+    let opener = process.authority.transaction_opener();
+    let splits = tidb_session::bootstrap_publish::init_system_tables(&opener, COPROCESSOR_QUERY_TIMEOUT)
+        .map_err(engine_error)?;
+    split_bootstrap_tables(process, &splits);
+    // Go `getStoreBootstrapVersionWithCache`.
+    let upgrade_store =
+        tidb_session::bootstrap::TxnUpgradeStore::new(&opener, COPROCESSOR_QUERY_TIMEOUT);
+    let ver = tidb_session::upgrade_run::must_get_store_bootstrap_version(&upgrade_store)
+        .map_err(engine_error)?;
+    if ver < tidb_session::upgrade_def::CURRENT_BOOTSTRAP_VERSION {
+        run_in_bootstrap_session(process, ver)?;
+    } else {
+        tidb_logutil::bg_logger().info(
+            "cluster already bootstrapped",
+            &[tidb_log::Field::new("version", tidb_log::Value::I64(ver))],
+        );
+        tidb_session::domain::real_tikv_node::init_mdl_variable(&opener, CONTROL_PLANE_TIMEOUT)?;
+    }
+    tidb_session::domain::real_tikv_node::init_global_var_from_system_db(&opener)
+}
+
+/// Go `runInBootstrapSession`: a bootstrap domain started in the store's
+/// start mode runs the bootstrap or the upgrade and `finishBootstrap`, and
+/// is closed before the serving domain is created. An upgrade holds the
+/// owner lock until the bootstrap domain is closed.
+fn run_in_bootstrap_session(process: &NodeProcess<'_>, ver: i64) -> Result<(), RunConfiguredNodeError> {
+    let mut start_mode = tidb_session::upgrade_run::get_start_mode(ver);
+    let start_time = std::time::Instant::now();
+    let opener = process.authority.transaction_opener();
+    let mut release_lock = None;
+    if start_mode == tidb_ddl::StartMode::Upgrade {
+        // TODO at this time domain must not be created, else it will register server
+        // info, and cause deadlock, we need to make sure this in a clear way
+        tidb_logutil::bg_logger().info("[upgrade] get owner lock to upgrade", &[]);
+        release_lock = Some(
+            tidb_session::bootstrap::acquire_lock(
+                process.etcd.clone().map(|client| client as Arc<dyn tidb_owner::OwnerStore>),
+            )
+            .map_err(|error| engine_error(format!("[upgrade] get owner lock failed: {error}")))?,
+        );
+        let curr_ver = tidb_session::upgrade_run::must_get_store_bootstrap_version(
+            &tidb_session::bootstrap::TxnUpgradeStore::new(&opener, COPROCESSOR_QUERY_TIMEOUT),
+        )
+        .map_err(engine_error)?;
+        if curr_ver >= tidb_session::upgrade_def::CURRENT_BOOTSTRAP_VERSION {
+            // It is already bootstrapped/upgraded by another TiDB instance.
+            tidb_logutil::bg_logger().info(
+                "[upgrade] already upgraded by other nodes, switch to normal mode",
+                &[],
+            );
+            start_mode = tidb_ddl::StartMode::Normal;
+        }
+    }
+    let domain = new_cluster_domain(process, start_mode)?;
+    let result = run_bootstrap_mode(process, &domain, start_mode);
+    domain.close(process.authority.tikv_store());
+    if let Some(release) = release_lock {
+        release();
+    }
+    tidb_logutil::bg_logger().info(
+        "bootstrap cluster finished",
+        &[
+            tidb_log::Field::new("bootMode", tidb_log::Value::Str(start_mode.as_str().into())),
+            tidb_log::Field::new(
+                "cost",
+                tidb_log::Value::Duration(
+                    i64::try_from(start_time.elapsed().as_nanos()).unwrap_or(i64::MAX),
+                ),
+            ),
+        ],
+    );
+    result
+}
+
+/// `runInBootstrapSession`'s work on the started bootstrap domain.
+fn run_bootstrap_mode(
+    process: &NodeProcess<'_>,
+    domain: &ClusterDomain,
+    start_mode: tidb_ddl::StartMode,
+) -> Result<(), RunConfiguredNodeError> {
+    let opener = process.authority.transaction_opener();
+    let upgrade_store = tidb_session::bootstrap::TxnUpgradeStore::new(&opener, CONTROL_PLANE_TIMEOUT);
+    match start_mode {
+        tidb_ddl::StartMode::Bootstrap => bootstrap(process, domain, &upgrade_store)?,
+        tidb_ddl::StartMode::Upgrade => {
+            // below sleep is used to mitigate https://github.com/pingcap/tidb/issues/57003,
+            // to let the older owner have time to notice that it's already retired.
+            std::thread::sleep(std::time::Duration::from_millis(
+                tidb_owner::WAIT_TIME_ON_FORCE_OWNER_MILLIS
+                    .load(std::sync::atomic::Ordering::Acquire)
+                    .max(0) as u64,
+            ));
+            upgrade(domain, &upgrade_store)?;
+        }
+        tidb_ddl::StartMode::Normal | tidb_ddl::StartMode::Br => {
+            // We need to init MDL variable before start the domain to prevent potential stuck issue
+            // when upgrade is skipped. See https://github.com/pingcap/tidb/issues/64539.
+            tidb_session::domain::real_tikv_node::init_mdl_variable(&opener, CONTROL_PLANE_TIMEOUT)
+                .map_err(|error| {
+                    engine_error(format!("init metadata lock failed during normal startup: {error}"))
+                })?;
+        }
+    }
+    tidb_session::upgrade_run::finish_bootstrap(&upgrade_store).map_err(engine_error)
+}
+
+/// Go `upgrade(s)` on a new internal session of the bootstrap domain.
+fn upgrade(
+    domain: &ClusterDomain,
+    store: &dyn tidb_session::bootstrap::UpgradeStore,
+) -> Result<(), RunConfiguredNodeError> {
+    // Go `domain.GetDomain(s).DDL().StateSyncer()`.
+    let state_syncer = domain
+        .factory
+        .ddl
+        .state_syncer()
+        .expect("a started DDL has its state syncer");
+    tidb_session::domain::cluster_session_node::run_upgrade(&domain.factory, store, state_syncer.as_ref())
+        .map_err(engine_error)
+}
+
+/// Go `bootstrap(s)`: only the DDL owner bootstraps; every other node polls
+/// `checkBootstrapped` every 200ms until the owner is done, then upgrades
+/// ("for rolling upgrade, we can't do upgrade only in the owner").
+fn bootstrap(
+    process: &NodeProcess<'_>,
+    domain: &ClusterDomain,
+    upgrade_store: &dyn tidb_session::bootstrap::UpgradeStore,
+) -> Result<(), RunConfiguredNodeError> {
+    let start_time = std::time::Instant::now();
+    tidb_session::upgrade_run::init_mdl_variable_for_bootstrap(upgrade_store)
+        .map_err(|error| engine_error(format!("init metadata lock failed during bootstrap: {error}")))?;
+    let opener = process.authority.transaction_opener();
+    let owner = domain.factory.ddl.owner_manager();
+    let boot_logger =
+        tidb_logutil::sample_logger_factory(std::time::Duration::from_secs(30), 1, Vec::new())();
+    loop {
+        let state = tidb_domain_core::real_tikv_privileges::read_bootstrap_state_from_cluster(
+            &opener,
+            COPROCESSOR_QUERY_TIMEOUT,
+        )
+        .map_err(|error| engine_error(format!("check bootstrap error: {error}")))?;
+        // For rolling upgrade, we can't do upgrade only in the owner.
+        if state.already_bootstrapped() {
+            upgrade(domain, upgrade_store)?;
+            tidb_logutil::bg_logger().info(
+                "upgrade successful in bootstrap",
+                &[tidb_log::Field::new(
+                    "take time",
+                    tidb_log::Value::Duration(
+                        i64::try_from(start_time.elapsed().as_nanos()).unwrap_or(i64::MAX),
+                    ),
+                )],
+            );
+            return Ok(());
+        }
+        // To reduce conflict when multiple TiDB-server start at the same time.
+        // Actually only one server need to do the bootstrap. So we chose DDL owner to do this.
+        if owner.as_ref().is_some_and(|owner| owner.is_owner()) {
+            let published = tidb_session::bootstrap_publish::publish_bootstrap_on(
+                &domain.factory,
+                &opener,
+                COPROCESSOR_QUERY_TIMEOUT,
+            )
+            .map_err(engine_error)?;
+            tidb_session::bootstrap_publish::notify_committed_bootstrap(
+                &published.outcome,
+                published.schema_version,
+                None,
+            )
+            .map_err(engine_error)?;
+            split_bootstrap_tables(process, &published.splits);
+            tidb_session::bootstrap_publish::log_bootstrap_successful(start_time);
+            return Ok(());
+        }
+        boot_logger.info("bootstrap not done yet, waiting for owner to finish", &[]);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+/// Go `NewDomain`, `Domain.Init` and `Domain.Start(startMode)` over the
+/// node's store: the catalog and its reloader, the server info and server
+/// ID, the schema-version syncer, the DDL started in `start_mode` (its owner
+/// is the process's DDL owner manager), the infosync managers and the
+/// session factory with its services. [`run_in_bootstrap_session`] builds
+/// one to bootstrap or upgrade the store and closes it; the serving domain is
+/// the second, started in normal mode.
+fn new_cluster_domain(
+    process: &NodeProcess<'_>,
+    start_mode: tidb_ddl::StartMode,
+) -> Result<ClusterDomain, RunConfiguredNodeError> {
+    let NodeProcess {
+        config,
+        authority,
+        etcd,
+        unprefixed_etcd,
+        region_store,
+        users,
+        ddl_id,
+        spill_storage,
+        memory_arbitrator,
+    } = process;
+    let (startup, startup_lease_grant_ts) =
+        load_catalog_from_cluster_at(&authority.transaction_opener(), COPROCESSOR_QUERY_TIMEOUT)
+            .map_err(engine_error)?;
+    let schema_version = startup.schema_meta_version();
+    let auto_id_etcd = etcd.clone().ok_or_else(|| {
+        RunConfiguredNodeError::Engine(SqlQueryError::unknown(
+            "cluster AutoID discovery requires its configured etcd client",
+        ))
+    })?;
+    let auto_id_service = Arc::new(
+        tidb_autoid::auto_id_client::AutoIdClient::new(
+            Arc::new(tidb_autoid::auto_id_client::EtcdAutoIdLeader(auto_id_etcd)),
+            config.cluster_security.clone(),
+        )
+        .map_err(|e| RunConfiguredNodeError::Engine(SqlQueryError::unknown(e.to_string())))?,
+    );
+    // One registry for the whole domain, so every connection inserting into
+    // a table allocates from the one range this node reserved -- Go's
+    // per-`tidb-server` allocator, not a per-session one. The statistics
+    // writers allocate their `mysql.*` rows from it too.
+    let node_auto_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds> = Arc::new(
+        tidb_domain_core::cluster_auto_id_seam::ClusterTableAutoIds::new(
+            authority.transaction_opener(),
+            CONTROL_PLANE_TIMEOUT,
+        )
+        .with_service(auto_id_service.clone()),
+    );
+    let (catalog, reloader, schema_validator) = spawn_catalog_reloader(
+        startup,
+        startup_lease_grant_ts,
+        authority.transaction_opener(),
+        config.schema_lease,
+        Arc::clone(&node_auto_ids),
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
+    // Statistics always resolve targets from this published catalog, so the
+    // reload loop follows DDL-added tables and changed column types instead of
+    // freezing the boot image.
+    let stats = tidb_session::domain::real_tikv_node::new_node_stats()
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
+    // The sysvar half of the same division: a Go peer's `SET GLOBAL` is
+    // durable in `mysql.global_variables` the instant it commits, and this
+    // reloader is what makes THIS node notice it -- one tick, or one round
+    // trip if the etcd watch fires first. The fallback is capped at Go's
+    // 30-second `LoadSysVarCacheLoop` interval even with a longer lease.
+    let sysvar_publication_fence = SysvarPublicationFence::default();
+    // The node's coprocessor: base-table scans now carry their predicate,
+    // their row cap and their column list to the region, and only the
+    // surviving rows come back. The session's own staged writes are merged on
+    // top of them client-side, which is Go's `UnionScan` over a distsql
+    // reader.
+    //
+    // TiFlash discovery and range lookup retain the node's existing PD and
+    // canonical region-cache capabilities (Go MPPClient.ConstructMPPTasks).
+    let mpp_client: Arc<dyn tidb_txnkv::MppClient> = {
+        let catalog = Arc::clone(&catalog);
+        Arc::new(build_mpp_client(
+            &authority,
+            move || catalog.get_latest().schema_meta_version(),
+        ))
+    };
+    // This node's identity in the cluster: `/tidb/server/info/<uuid>` under
+    // a lease, plus the `/topology/tidb/<host:port>` pair, refreshed for as
+    // long as the process lives -- Go's `Domain.Init` starting the
+    // server-info syncer beside its reloaders. A node with no reachable
+    // etcd still HAS the record; it just publishes nowhere, and
+    // `information_schema.TIDB_SERVERS_INFO` then reports this node alone,
+    // which is Go's `etcdCli == nil` answer.
+    let server_etcd = etcd.clone().map(|client| {
+        Arc::new(tidb_ddl::etcd_ops::EtcdClientOps::new(client))
+            as Arc<dyn tidb_domain_serverinfo::serverinfo_syncer::EtcdOps>
+    });
+    // A failed cluster connection is not a standalone deployment.
+    if config.global_config.enable_global_kill && server_etcd.is_none() {
+        return Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(
+            "cluster server identity requires its configured etcd client",
+        )));
+    }
+    let server_identity = config.global_config.enable_global_kill.then(|| {
+        tidb_domain::server_id::ServerIdAuthority::new(
+            server_etcd.clone(),
+            config.global_config.enable_32bits_connection_id,
+        )
+    });
+    // Go `Domain.ServerID`: the acquired global server ID, 0 without one.
+    let server_id: Arc<dyn Fn() -> u64 + Send + Sync> = match &server_identity {
+        Some(identity) => {
+            let identity = Arc::clone(identity);
+            Arc::new(move || identity.id())
+        }
+        None => Arc::new(|| 0),
+    };
+    let mut info = tidb_session::domain::serverinfo_etcd::get_server_info(config);
+    // Go `GlobalInfoSyncerInit(ctx, do.ddl.GetID(), ...)`: the server info's
+    // ID is the DDL's, which is the owner manager's.
+    ddl_id.clone_into(&mut info.static_info.id);
+    if let Some(identity) = &server_identity {
+        let identity = Arc::clone(identity);
+        info.static_info.server_id_getter = Some(Arc::new(move || identity.id()));
+    }
+    let server_info = Arc::new(
+        tidb_domain_serverinfo::serverinfo_syncer::Syncer::new_with_status_endpoint_claim(
+            info,
+            server_etcd,
+            config.report_status,
+        ).with_min_start_ts_etcd(if authority.tikv_store().store().is_keyspace_using_keyspace_level_gc() {
+            etcd.clone().map(|client| Arc::new(tidb_ddl::etcd_ops::EtcdClientOps::new(client)) as _)
+        } else {
+            unprefixed_etcd.clone().map(|client| Arc::new(tidb_ddl::etcd_ops::EtcdClientOps::new(client)) as _)
+        }),
+    );
+    let mut server_info_runner = match tidb_domain_serverinfo::serverinfo_syncer::SyncerRunner::start(
+        Arc::clone(&server_info),
+        tidb_domain_serverinfo::serverinfo_syncer::SyncIntervals::default(),
+    ) {
+        Ok(runner) => Some(runner),
+        Err(error) => {
+            // Go GlobalInfoSyncerInit fails startup if initial leased
+            // publication fails; serving invisibly also hides GC protection.
+            return Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(
+                error,
+            )));
+        }
+    };
+    let server_id_keeper = server_identity
+        .as_ref()
+        .map(|identity| {
+            tidb_domain::server_id::ServerIdKeeper::start(
+                Arc::clone(identity),
+                Arc::clone(&server_info),
+                Default::default(),
+            )
+        })
+        .transpose()
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    // Go `initResourceGroupsController`, after the server ID is fetched.
+    let resource_groups_controller = tidb_session::domain::resource_groups_controller::init_resource_groups_controller(
+        authority.tikv_store(),
+        server_identity.as_ref().map_or(0, |identity| identity.id()),
+    )?;
+    let discovery = Some(tidb_domain::cluster_discovery::PdClusterDiscovery::new(
+        authority.tikv_store().clone(),
+        &config.cluster_security,
+        COPROCESSOR_QUERY_TIMEOUT,
+    ))
+    .map(|discovery| {
+        discovery.map(|discovery| {
+            Arc::new(discovery) as Arc<dyn tidb_domain::cluster_topology::ClusterDiscovery>
+        })
+    })
+    .transpose()
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    let cluster_topology = Arc::new(tidb_domain::cluster_topology::ClusterTopology::new(
+        Arc::clone(&server_info),
+        discovery,
+    ));
+    let replica_read_checker = tidb_session::domain::cluster_topology::ReplicaReadChecker::start(
+        Arc::clone(&cluster_topology),
+        users.global_vars(),
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
+    // Go `Domain.Start`: the log backup advancer, outside BR mode.
+    let log_backup_advancer = if start_mode == tidb_ddl::StartMode::Br {
+        None
+    } else {
+        crate::log_backup::init_log_backup(authority.tikv_store(), etcd.clone(), &config.cluster_security)
+            .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?
+    };
+    let stats_owner: Arc<dyn tidb_owner::Manager> = match etcd.clone() {
+        Some(client) => Arc::new(tidb_owner::OwnerManager::new(
+            tidb_owner::Context::background(),
+            client as Arc<dyn tidb_owner::OwnerStore>,
+            tidb_session::domain::cluster_session_node::STATS_OWNER_PROMPT,
+            server_info.get_local_server_info().static_info.id,
+            tidb_session::domain::cluster_session_node::STATS_OWNER_KEY,
+        )),
+        None => Arc::new(tidb_owner::MockManager::new(
+            tidb_owner::Context::background(),
+            server_info.get_local_server_info().static_info.id,
+            // Match the store-scoped mock DDL owner and Go store.UUID().
+            Some(&format!(
+                "embedded-authority-{}",
+                authority.transaction_opener().authority_id()
+            )),
+            tidb_session::domain::cluster_session_node::STATS_OWNER_KEY,
+        )),
+    };
+    // Go `NewDomain` / `mdlCheckLoop`: the schema-version syncer -- etcd's
+    // when the node has etcd, else Go's `NewMemSyncer` -- and the MDL check
+    // that acknowledges a job once no transaction here holds its tables at
+    // an older version. The owner's `WaitVersionSynced` waits on it.
+    let schema_pins = Arc::new(tidb_ddl::schema_sync::SchemaPinRegistry::default());
+    let min_job_id_refresher = Arc::new(MinJobIdRefresher::new());
+    let schema_sync_ack = tidb_ddl::schema_sync::SchemaSyncAck::spawn(
+        Arc::clone(&catalog),
+        authority.transaction_opener(),
+        Arc::clone(&schema_pins),
+        Arc::clone(&min_job_id_refresher),
+        etcd.clone(),
+        server_info.get_local_server_info().static_info.id,
+        Arc::clone(&server_info),
+        Arc::clone(&schema_validator),
+        reloader.waker(),
+        reloader.stats_source(),
+        tidb_ddl::schema_sync::MDL_CHECK_LOOK_DURATION,
+        CONTROL_PLANE_TIMEOUT,
+    )
+    .map_err(|error| {
+        RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+            "initialize schema-version syncer failed: {error}"
+        )))
+    })?;
+    let schema_version_syncer = Some(schema_sync_ack.syncer());
+    let ddl_session_pool = Arc::new(tidb_session::ddl_session_pool::NodeDdlSessionPool::default());
+    let cluster_ddl = Arc::new(
+        RealClusterDdl::new_with_min_job_id_refresher(
+            authority.transaction_opener(),
+            Arc::clone(&catalog),
+            CONTROL_PLANE_TIMEOUT,
+            etcd.clone(),
+            Arc::clone(&server_info),
+            schema_version_syncer,
+            Arc::clone(&schema_validator),
+            config.run_ddl,
+            min_job_id_refresher,
+            Arc::clone(&ddl_session_pool) as _,
+            Arc::clone(&node_auto_ids),
+            start_mode,
+        )
+        .map_err(|error| {
+            RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+                "campaign DDL owner failed: {error}"
+            )))
+        })?
+        .with_auto_ids(auto_id_service.clone())
+        .with_region_store(Arc::clone(region_store)),
+    );
+    // Go `GlobalInfoSyncerInit(..., store.GetPDHTTPClient(), ...)`: the
+    // info syncer's managers share the store's PD HTTP client.
+    let pd_http_client = authority.tikv_store().pd_http_client();
+    // Go `InfoSyncer` init's `affinity.InitManager(is.pdHTTPCli)`: the DDL
+    // job workers create and delete PD affinity groups through it.
+    tidb_domain_affinity::init_manager(pd_http_client.as_ref().map(|client| {
+        Arc::new(tidb_domain_infosync::pd_affinity_client::PdHttpAffinityClient::new(
+            client,
+        )) as Arc<dyn tidb_domain_affinity::PdAffinityClient>
+    }));
+    // Go `InfoSyncer.initLabelRuleManager`: PD's region-label rules, which
+    // the DDL job workers write and `information_schema.attributes` reads.
+    tidb_domain_infosync::label_manager::init_label_rule_manager(pd_http_client.as_ref().map(|client| {
+        Arc::new(tidb_domain_infosync::label_delivery::PdLabelManager::new(client))
+            as Arc<dyn tidb_domain_infosync::label_manager::LabelRuleManager>
+    }));
+    // Go `GlobalInfoSyncerInit`'s `etcdCli`, which `GetPrometheusAddr` finds
+    // the `metrics_schema` tables' Prometheus through.
+    tidb_domain_infosync::prometheus_addr::init_prometheus_addr(
+        etcd.clone().map(|client| client as Arc<dyn tidb_domain_infosync::prometheus_addr::PrometheusEtcd>),
+        &config.cluster_security,
+    );
+    // Go `InfoSyncer.initScheduleManager`: PD's schedule configuration, which
+    // FLASHBACK CLUSTER closes and restores.
+    tidb_domain_infosync::schedule_manager::init_schedule_manager(pd_http_client.as_ref().map(|client| {
+        Arc::new(tidb_domain_infosync::schedule_manager::PdScheduleManager::new(client))
+            as Arc<dyn tidb_domain_infosync::schedule_manager::ScheduleManager>
+    }));
+    // Go `InfoSyncer.initTiFlashReplicaManager`: the TiFlash placement rules
+    // DDL jobs set and the GC worker deletes.
+    tidb_domain_infosync::tiflash_manager::init_tiflash_replica_manager(pd_http_client.as_ref().map(|client| {
+        Arc::new(tidb_domain_infosync::tiflash_manager::TiFlashReplicaManagerCtx::new(
+            client,
+            &config.cluster_security,
+        ))
+            as Arc<dyn tidb_domain_infosync::tiflash_manager::TiFlashReplicaManager>
+    }));
+    // One DDL-gated worker. Its guard joins before the node releases DDL/PD.
+    let replica_poll = tidb_session::domain::cluster_session_node::build_tiflash_replica_poll(
+        Arc::clone(&catalog),
+        pd_http_client,
+        &config.cluster_security,
+        cluster_ddl.clone(),
+    );
+    let global_config_keeper =
+        tidb_session::domain::global_config_sync::GlobalConfigKeeper::start(Some(authority.tikv_store().clone()))
+            .map_err(|error| {
+                RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
+            })?;
+    let analyze: Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze> = Arc::new(
+        RealClusterAnalyze::new(
+            Arc::new(authority.transaction_opener()),
+            Arc::clone(&stats),
+            // Go's ANALYZE reads rows and stats tables through the same
+            // data-plane requests any query uses, each bounded per request
+            // (`TiKVClient.CoprReqTimeout`, coprocessor.go:1791) rather than
+            // by a control-plane budget. This statement walks the whole
+            // catalog plus every row of the table, so its requests take the
+            // data-plane deadline.
+            COPROCESSOR_QUERY_TIMEOUT,
+            config.stats_lease.slow_save_interval(),
+        ),
+    );
+    let factory = Domain::new(
+        // Row reads and writes are DATA-plane traffic: a statement's snapshot
+        // gets queue behind concurrent coprocessor scans on the same store,
+        // so their admission deadline must tolerate store-side latency rather
+        // than the 5s control-plane budget -- go gives the same surface
+        // `coprocessor` timeouts measured in tens of seconds
+        // (`tikv-worker`/client default 30s+).
+        Arc::new(RealClusterTransactions::new(
+            authority.transaction_opener(),
+            TRANSACTION_RPC_TIMEOUT,
+        )),
+        cluster_ddl,
+        Arc::new(
+            RealClusterAccountWriter::new(
+                Arc::new(authority.transaction_opener()),
+                users.accounts(),
+                CONTROL_PLANE_TIMEOUT,
+                etcd.clone(),
+            )
+            .with_server_id(Arc::clone(&server_id)),
+        ),
+        Arc::new(RealClusterSysvarWriter::new(
+            Arc::new(authority.transaction_opener()),
+            users.global_vars(),
+            CONTROL_PLANE_TIMEOUT,
+            etcd.clone(),
+            sysvar_publication_fence.clone(),
+            Arc::clone(&ddl_session_pool) as _,
+        )),
+        catalog,
+        users.accounts(),
+        users.global_vars(),
+        Arc::clone(&stats),
+        Arc::clone(&node_auto_ids),
+        tidb_session::domain::cluster_session_node::open_pool_session,
+    )
+    .with_global_config_syncer(global_config_keeper.syncer())
+    .with_mpp_client(mpp_client)
+    .with_kv_client(Arc::new(tidb_copr::cop_client::CopClient::new(
+        authority.transport_factory(),
+    )))
+    .with_region_store(Arc::clone(region_store))
+    .with_server_info(Arc::clone(&server_info))
+    .with_connection_ids(tidb_domain_core::connection_ids::new_connection_id_allocator(
+        &config.global_config,
+        server_identity.clone(),
+    ))
+    .with_server_identity(server_identity)
+    .with_cluster_topology(cluster_topology)
+    .with_stats_owner(stats_owner)
+    .with_schema_pins(schema_pins)
+    .with_schema_validator(Arc::clone(&schema_validator))
+    .with_spill_storage(Arc::clone(spill_storage));
+    let factory = match memory_arbitrator.clone() {
+        Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
+        None => factory,
+    };
+    factory.install_store_keyspace(authority.tikv_store().get_keyspace().to_owned());
+    if let Some(client) = &unprefixed_etcd {
+        factory.install_unprefixed_etcd_client(Arc::clone(client));
+    }
+    let factory = factory.shared();
+    tidb_session::domain::cross_ks::install_cross_ks_runtime_factory(&factory,config)
+        .map_err(|error|RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    tidb_session::domain::cluster_session_node::NodeServices::new(analyze)
+    .with_cluster_peer_client(Arc::new(tidb_executor::cluster_peer::ClusterPeerClient::new(
+        authority.tikv_store().clone(),
+    )))
+    .with_cluster_config_client(Arc::new(
+        tidb_executor::cluster_config::ClusterConfigClient::new(&config.cluster_security)
+            .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?,
+    ))
+    .with_cluster_diagnostics_client(Arc::new(
+        tidb_executor::cluster_diagnostics::ClusterDiagnosticsClient::new(&config.cluster_security)
+            .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?,
+    ))
+    .bind(&factory);
+    // The pool's sessions are the node's, so it is bound once the node's
+    // session services are: the job scheduler takes one as soon as it can.
+    ddl_session_pool.bind(&factory);
+    tidb_session::domain::real_tikv_node::new_privilege_handle(&users, factory.advanced_sys_session_pool());
+    Ok(ClusterDomain {
+        factory,
+        schema_version,
+        stats,
+        server_info,
+        server_id,
+        server_info_runner,
+        server_id_keeper: Box::new(server_id_keeper),
+        schema_sync_ack: Box::new(schema_sync_ack),
+        resource_groups_controller,
+        ddl_session_pool,
+        sysvar_publication_fence,
+        reloader: Box::new(reloader),
+        replica_read_checker: Box::new(replica_read_checker),
+        log_backup_advancer: Box::new(log_backup_advancer),
+        replica_poll: Box::new(replica_poll),
+        global_config_keeper: Box::new(global_config_keeper),
+    })
 }
 
 /// Go `ddl.CloseOwnerManager` for the node's keyspace, when the stack's
@@ -937,6 +1138,25 @@ impl Drop for OwnerManagerGuard {
     fn drop(&mut self) {
         tidb_ddl::owner_mgr::close_owner_manager(&self.0);
     }
+}
+
+/// Go `storepkg.NewEtcdCli(store)`: a new etcd client over the store's PD
+/// endpoints, namespaced by the store's keyspace; `None` without endpoints.
+fn new_etcd_cli(
+    config: &NodeConfig,
+    store: &tidb_txnkv::driver::tikv_store::TikvStore,
+) -> Result<Option<tidb_pd_client::EtcdClient>, String> {
+    if config.pd_endpoints.is_empty() {
+        return Ok(None);
+    }
+    let mut client = tidb_pd_client::EtcdClient::connect_with_security(
+        config.pd_endpoints.iter().map(String::as_str),
+        CONTROL_PLANE_TIMEOUT,
+        Arc::new(config.cluster_security.clone()),
+    )
+    .map_err(|error| error.to_string())?;
+    client.set_etcd_cli_by_namespace(&tidb_keyspace::make_keyspace_etcd_namespace(store));
+    Ok(Some(client))
 }
 
 /// Renders the boot-time refusals for the node's ready event.

@@ -194,6 +194,21 @@ where
             init_mdl_variable(opener, PRODUCTION_CONTROL_PLANE_TIMEOUT)?;
         }
     }
+    init_global_var_from_system_db(opener)
+}
+
+/// Go `initGlobalVarFromSystemDB`'s system time zone: the one the bootstrap
+/// persisted in `mysql.tidb`.
+///
+/// # Errors
+///
+/// The read failed.
+pub fn init_global_var_from_system_db<S>(
+    opener: &RealOptimisticTransactionOpener<S>,
+) -> Result<(), RunConfiguredNodeError>
+where
+    S: StoreClient,
+{
     let system_tz = tidb_domain_core::real_tikv_privileges::load_system_tz_from_cluster(
         opener,
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
