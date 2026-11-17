@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/bits"
 	"net"
 	"slices"
 	"strings"
@@ -722,6 +723,31 @@ func compareBaseRecord(x, y *baseRecord) int {
 }
 
 func compareUserRecord(x, y UserRecord) int {
+	switch {
+	case x.hostIPNet != nil && y.hostIPNet != nil:
+		// More set bits means a smaller address range, even for noncontiguous masks.
+		var xBits, yBits int
+		for _, b := range x.hostIPNet.Mask {
+			xBits += bits.OnesCount8(b)
+		}
+		for _, b := range y.hostIPNet.Mask {
+			yBits += bits.OnesCount8(b)
+		}
+		if c := cmp.Compare(yBits, xBits); c != 0 {
+			return c
+		}
+	case x.hostIPNet != nil:
+		// Exact hosts precede netmasks; wildcard hosts follow them.
+		if y.Host != "" && stringutil.IsExactMatch(y.patTypes) {
+			return 1
+		}
+		return -1
+	case y.hostIPNet != nil:
+		if x.Host != "" && stringutil.IsExactMatch(x.patTypes) {
+			return -1
+		}
+		return 1
+	}
 	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
 }
 
