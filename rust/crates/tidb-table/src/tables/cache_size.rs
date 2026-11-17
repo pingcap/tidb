@@ -112,6 +112,8 @@ impl TableCommon {
                 .map(|v| vec_bytes(&v.index.column_offsets))
                 .sum::<usize>();
         bytes += vec_bytes(&self.hidden_offsets)
+            + vec_bytes(&self.visible_offsets)
+            + vec_bytes(&self.writable_offsets)
             + vec_bytes(&self.common_handle_offsets)
             + vec_bytes(&self.common_handle_prefix_lengths);
         bytes += self.read_partitions.as_ref().map_or(0, vec_bytes);

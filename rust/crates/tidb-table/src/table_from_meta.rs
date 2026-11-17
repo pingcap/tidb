@@ -969,15 +969,14 @@ fn loaded_partition_spec(
         .map_err(|error| format!("its partitioning cannot be rebuilt: {error}"))
 }
 
-/// Translates one stored `IndexInfo` into the executor's `Index`, against
-/// the loaded executor table's full native column list.
+/// Go `NewIndex`: one stored `IndexInfo` as the executor's `Index`, over
+/// `columns`, the table's Go `TableCommon.Columns`
+/// ([`TableCommon::deletable_columns`]).
 ///
-/// The offsets are resolved by NAME here even though `IndexColumn.Offset`
-/// carries one, because the two count different things: Go's offset is a
-/// position in `TableInfo.Columns`, and a `Index`'s is a position in the
-/// native columns this loader built from `TableInfo.Cols()`, the public
-/// ones. Resolving against that same list also keeps backfill and normal
-/// writes from indexing different row slots.
+/// Each key part's offset is its Go `IndexColumn.Offset`, a position in
+/// `TableInfo.Columns`, which `columns` lists in order. Like Go, the offset
+/// is trusted; a part whose offset is past the last column is refused
+/// rather than read out of bounds.
 ///
 /// It is one function rather than a loop inside [`cluster_table`] because the
 /// `CREATE INDEX` backfill has to build the very same `Index` for an index
@@ -991,26 +990,15 @@ pub fn kv_index(
     let index = shared.read();
     let mut offsets = Vec::with_capacity(index.columns.len());
     for column in index.columns.iter_deref() {
-        let (name, original_name, recorded) = {
-            let column = column.read();
-            (column.name.lowercase().to_owned(), column.name.original().to_owned(), column.offset)
-        };
-        let names_part = |column: &crate::column::Column| {
-            tidb_hack::GoCaseCompare::go_lower_eq(column.read().name.original(), &name)
-        };
-        // Go `IndexColumn.Offset`: the part's column in `TableInfo.Columns`,
-        // which `columns` lists in order. An index built for a table
-        // assembled from columns alone may carry no offset; its part is
-        // found by name.
-        let offset = usize::try_from(recorded)
+        let column = column.read();
+        let offset = usize::try_from(column.offset)
             .ok()
-            .filter(|offset| columns.get(*offset).is_some_and(names_part))
-            .or_else(|| columns.iter().position(names_part))
+            .filter(|offset| *offset < columns.len())
             .ok_or_else(|| {
                 format!(
                     "its index {} covers unknown column {}",
                     index.name.original(),
-                    original_name
+                    column.name.original()
                 )
             })?;
         offsets.push(offset);

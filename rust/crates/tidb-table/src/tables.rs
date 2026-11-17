@@ -491,11 +491,21 @@ pub struct TableCommon {
     /// [`Self::reset_columns_cache`]. What every reader, planned expression
     /// and public row addresses.
     pub(crate) public_columns: std::sync::Arc<Vec<crate::column::Column>>,
-    /// The offsets of `columns` whose Go `ColumnInfo.Hidden` is set, read
-    /// off [`Self::meta`] whenever it or the column list changes: Go reads
-    /// `Hidden` straight off each column, which a per-row lookup into the
+    /// Go `hiddenColumns`, the `HiddenCols()` cache: the offsets in
+    /// [`Self::public_columns`] of the columns whose Go `ColumnInfo.Hidden`
+    /// is set, rebuilt by [`Self::reset_columns_cache`]. Go reads `Hidden`
+    /// straight off each column, which a per-row lookup into the
     /// `TableInfo` would not afford.
     hidden_offsets: Vec<usize>,
+    /// Go `visibleColumns`, the `VisibleCols()` cache: the offsets in
+    /// [`Self::public_columns`] of the columns that are not hidden, rebuilt
+    /// by [`Self::reset_columns_cache`].
+    visible_offsets: Vec<usize>,
+    /// Go `writableColumns`, the `WritableCols()` cache: the offsets in
+    /// [`Self::columns`] of the columns DML writes (every state but
+    /// delete-only and delete-reorganization), rebuilt by
+    /// [`Self::reset_columns_cache`].
+    writable_offsets: Vec<usize>,
     /// Go `model.IndexInfo.MVIndex`, carried as the SOURCE column each
     /// multi-valued index's single ARRAY key part was built over
     /// (`ColumnInfo.Dependences`, which DDL's `buildHiddenColumnInfoWithCheck`
@@ -993,11 +1003,15 @@ impl TableCommon {
             .cloned()
             .collect();
         self.public_columns = std::sync::Arc::new(public);
-        self.hidden_offsets = self
-            .public_columns
+        let (hidden, visible): (Vec<usize>, Vec<usize>) =
+            (0..self.public_columns.len()).partition(|offset| self.public_columns[*offset].read().hidden);
+        self.hidden_offsets = hidden;
+        self.visible_offsets = visible;
+        self.writable_offsets = self
+            .columns
             .iter()
             .enumerate()
-            .filter(|(_, column)| column.read().hidden)
+            .filter(|(_, column)| is_column_writable(column))
             .map(|(offset, _)| offset)
             .collect();
     }
@@ -1120,9 +1134,10 @@ impl TableCommon {
     }
 
     /// Go `WritableCols()`: the columns DML writes, every state but
-    /// delete-only and delete-reorganization, with their offsets.
-    pub fn writable_columns(&self) -> impl Iterator<Item = (usize, &crate::column::Column)> {
-        self.columns.iter().enumerate().filter(|(_, column)| is_column_writable(column))
+    /// delete-only and delete-reorganization, with their offsets in
+    /// [`Self::columns`].
+    pub fn writable_columns(&self) -> impl ExactSizeIterator<Item = (usize, &crate::column::Column)> {
+        self.writable_offsets.iter().map(|offset| (*offset, &self.columns[*offset]))
     }
 
     /// Whether a DDL holds any column in a non-public state.
@@ -1193,6 +1208,8 @@ impl TableCommon {
             columns: std::sync::Arc::new(columns),
             public_columns: std::sync::Arc::new(Vec::new()),
             hidden_offsets: Vec::new(),
+            visible_offsets: Vec::new(),
+            writable_offsets: Vec::new(),
             mv_key_part_sources: std::collections::BTreeMap::new(),
             keys_read: None,
             pk_handle_offset: None,
@@ -2803,21 +2820,17 @@ impl TableCommon {
         self.meta.read().max_index_id + 1
     }
 
-    /// The columns a user can name or see (Go `table.Cols()` without the
-    /// `Hidden` ones), with their offsets in [`Self::columns`].
+    /// Go `VisibleCols()`: the columns a user can name or see (Go `Cols()`
+    /// without the `Hidden` ones), with their offsets in [`Self::columns`].
     #[must_use]
     pub fn visible_columns(&self) -> Vec<(usize, &crate::column::Column)> {
-        self.public_columns
-            .iter()
-            .enumerate()
-            .filter(|(offset, _)| !self.is_hidden(*offset))
-            .collect()
+        self.visible_offsets.iter().map(|offset| (*offset, &self.public_columns[*offset])).collect()
     }
 
     /// The offsets of [`Self::visible_columns`].
     #[must_use]
-    pub fn visible_offsets(&self) -> Vec<usize> {
-        (0..self.public_columns.len()).filter(|offset| !self.is_hidden(*offset)).collect()
+    pub fn visible_offsets(&self) -> &[usize] {
+        &self.visible_offsets
     }
 
     /// The visible columns' values of a stored `row`, in order: the row a
@@ -2855,7 +2868,7 @@ impl TableCommon {
     /// How many columns a user can name or see.
     #[must_use]
     pub fn visible_column_count(&self) -> usize {
-        self.public_columns.len() - self.hidden_offsets.len()
+        self.visible_offsets.len()
     }
 
     /// Columns Go's logical `DataSource` allocates before appending its
@@ -4993,7 +5006,7 @@ pub fn hypo_kv_indexes(
     hypo.table_indexes(database, &table.name())
         .into_iter()
         .filter_map(|index| {
-            crate::table_from_meta::kv_index(&tidb_model::GoShared::new(index.clone()), &table.public_columns).ok()
+            crate::table_from_meta::kv_index(&tidb_model::GoShared::new(index.clone()), table.deletable_columns()).ok()
         })
         .collect()
 }

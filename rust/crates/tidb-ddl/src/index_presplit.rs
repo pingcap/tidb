@@ -170,7 +170,7 @@ fn gen_index_key(
     let encode = |error: String| DdlPlanError::Encode(error);
     let table = tidb_table::table_from_meta::table_from_meta(tbl_info, &tidb_table::table_from_meta::AutoIdSource::Unavailable)
         .map_err(encode)?;
-    let index = tidb_table::table_from_meta::kv_index(&GoShared::new(idx_info.clone()), table.columns()).map_err(encode)?;
+    let index = tidb_table::table_from_meta::kv_index(&GoShared::new(idx_info.clone()), table.deletable_columns()).map_err(encode)?;
     table
         .split_index_key(&index, values, physical_id, zone)
         .map_err(|error| encode(format!("{error:?}")))

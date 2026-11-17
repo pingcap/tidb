@@ -1217,7 +1217,7 @@ fn table_with_plan_index(
     let Some(hypo) = ctx.hypo_indexes().and_then(|hypo| hypo.index_by_id(index_id)) else {
         return Ok(table);
     };
-    let index = tidb_table::table_from_meta::kv_index(&tidb_model::GoShared::new(hypo.clone()), table.columns())
+    let index = tidb_table::table_from_meta::kv_index(&tidb_model::GoShared::new(hypo.clone()), table.deletable_columns())
         .map_err(DriverError::unsupported)?;
     Arc::make_mut(&mut table).add_index(index, false);
     Ok(table)
