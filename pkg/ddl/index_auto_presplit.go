@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -423,6 +424,15 @@ func buildAutoPreSplitHistogramValues(
 			// String Histogram bounds are stored as collation comparison bytes.
 			// GetUpper returns KindString, so restore bytes before index encoding.
 			upper = types.NewBytesDatum(upper.GetBytes())
+		}
+		if upper.Kind() == types.KindMysqlTime && colInfo.GetType() == mysql.TypeTimestamp {
+			timestamp := upper.GetMysqlTime()
+			if !timestamp.IsZero() {
+				if err := timestamp.ConvertTimeZone(time.UTC, loc); err != nil {
+					return nil, err
+				}
+				upper.SetMysqlTime(timestamp)
+			}
 		}
 		value, err := newAutoPreSplitValue(sctx, loc, upper, uint64(delta), colInfo)
 		if err != nil {
