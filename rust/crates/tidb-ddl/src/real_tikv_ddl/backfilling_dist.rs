@@ -1364,6 +1364,8 @@ impl<S: StoreClient> tidb_dxf_taskexecutor::Extension for BackfillDistExecutor<S
                 crate::job_ctx::set_ddl_source_for_diagnosis(meta.job.id, meta.job.type_);
                 Ok(Arc::new(ReadIndexStepExecutor {
                     info: FrameworkInfoSlot::default(),
+                    exec_id: self.base.get_exec_id().to_owned(),
+                    runtime_slots: task.base.get_runtime_slots() as i64,
                     ddl: self.ddl.clone(),
                     table,
                     meta: RwLock::new(meta),
@@ -1433,6 +1435,10 @@ impl std::error::Error for IndexInfoNotFound {}
 /// Go `readIndexStepExecutor`.
 struct ReadIndexStepExecutor<S: StoreClient> {
     info: FrameworkInfoSlot,
+    /// Go `execID`.
+    exec_id: String,
+    /// Go `runtimeSlots`.
+    runtime_slots: i64,
     ddl: Arc<BackfillDdl<S>>,
     table: tidb_model::TableInfo,
     meta: RwLock<BackfillTaskMeta>,
@@ -1566,6 +1572,12 @@ impl<S: StoreClient> StepExecutor for ReadIndexStepExecutor<S> {
             if let Some(reorg_meta) = &meta.job.reorg_meta {
                 reorg_meta.write().use_cloud_storage = true;
             }
+        } else {
+            // A point-in-time, best-effort precheck of this local-sort
+            // backfill's disk headroom, to reduce the risk of frequent small
+            // SST imports. It reserves no disk and is not rechecked after an
+            // ADMIN ALTER DDL JOB raises the concurrency.
+            tidb_ddl_ingest::disk_root::check_local_sort_disk_space(&self.exec_id, self.runtime_slots)?;
         }
         if tidb_config::config_tree::config::get_global_config()
             .store

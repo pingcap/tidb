@@ -628,6 +628,25 @@ impl TableCommon {
         }
     }
 
+    /// Go `tables.GenIndexValueFromIndex`: the indexed columns' values of
+    /// one index KV, rendered as text. Go decodes time values in
+    /// `time.Local`; this tier's index KVs are decoded in UTC, as its other
+    /// index readers do.
+    ///
+    /// # Errors
+    /// The key or the value does not decode as an entry of `index`.
+    pub fn gen_index_value_from_index(&self, index: &Index, key: &[u8], value: &[u8]) -> Result<Vec<Vec<u8>>, KvTableError> {
+        self.codec_table_info()
+            .generate_index_values_from_index(
+                self.use_new_collation,
+                Some(&SessionTimeZone::utc()),
+                &self.codec_index_info(index),
+                key,
+                value,
+            )
+            .map_err(|error| KvTableError::Decode(format!("{error:?}")))
+    }
+
     /// The `tidb-tablecodec` view of one of this table's indexes.
     pub(crate) fn codec_index_info(&self, index: &Index) -> CodecIndexInfo {
         CodecIndexInfo {

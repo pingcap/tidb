@@ -604,15 +604,22 @@ impl TableImporter {
     }
 
     /// Go `ImportAndCleanup`: imports and cleans the engine; returns the
-    /// data engine's imported KV count.
+    /// data engine's imported KV count. A duplicate key found by the import
+    /// becomes the conflicting row's error
+    /// (`ingestctrl.ConvertToErrFoundConflictRecords`).
     pub fn import_and_cleanup(&self, ctx: &Context, closed: &ClosedEngine<'_>) -> Result<i64, String> {
-        let import_err = closed.import(ctx, self.region_split_size, self.region_split_keys).err();
+        let import_err = closed.import(ctx, self.region_split_size, self.region_split_keys).err().map(|error| {
+            match tidb_ingestor_ingestctrl::duplicate::convert_to_err_found_conflict_records(&error, &self.controller.table) {
+                Some(converted) => converted.to_string(),
+                None => error.to_string(),
+            }
+        });
         let kv_count = if closed.id() == INDEX_ENGINE_ID {
             0
         } else {
             self.backend.get_imported_kv_count(*closed.uuid().as_bytes())
         };
-        let cleanup_err = closed.cleanup(ctx).err();
+        let cleanup_err = closed.cleanup(ctx).err().map(|error| error.to_string());
         match (import_err, cleanup_err) {
             (None, None) => Ok(kv_count),
             (Some(a), None) | (None, Some(a)) => Err(a.to_string()),

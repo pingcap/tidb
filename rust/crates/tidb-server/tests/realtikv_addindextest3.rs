@@ -599,6 +599,42 @@ fn test_add_index_ingest_failures() {
     tk.must_exec("set global tidb_enable_dist_task=off;");
 }
 
+/// Go `TestAddIndexLocalSortDiskSpace`: the read-index step's local-sort
+/// disk precheck fails the job, and a failed disk probe is retried.
+#[test]
+fn test_add_index_local_sort_disk_space() {
+    let store = realtikv!();
+    let mut tk = store.new_tk();
+    tk.must_exec("drop database if exists addindexlit;");
+    tk.must_exec("create database addindexlit;");
+    tk.must_exec("use addindexlit;");
+    tk.must_exec("set global tidb_ddl_enable_fast_reorg=on;");
+    tk.must_exec("set global tidb_enable_dist_task=on;");
+
+    tk.must_exec("create table t(id int primary key, b int, k int);");
+    tk.must_exec("insert into t values (1, 1, 1);");
+
+    tk.must_exec("alter table t add index idx(b);");
+    tk.must_exec("admin check table t;");
+
+    tk.must_exec("drop index idx on t;");
+    {
+        let _probe =
+            tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceProbeFailed", "1*return");
+        tk.must_exec("alter table t add index idx2(b);");
+    }
+    tk.must_exec("admin check table t;");
+
+    let err = {
+        let _insufficient =
+            tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceInsufficient", "return");
+        tk.exec_to_err("alter table t add index idx3(b);")
+    };
+    assert!(err.contains("Check ingest environment failed"), "{err}");
+    assert!(err.contains("mock insufficient local sort disk space"), "{err}");
+    tk.must_exec("set global tidb_enable_dist_task=off;");
+}
+
 /// Go `TestAddIndexImportFailed`.
 #[test]
 fn test_add_index_import_failed() {
