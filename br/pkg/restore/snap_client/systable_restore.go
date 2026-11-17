@@ -161,11 +161,12 @@ var unRecoverableTable = map[string]map[string]struct{}{
 
 		// MV maintenance metadata uses cluster-local table IDs and TSOs, so it
 		// cannot be meaningfully restored into another cluster.
-		"tidb_mview_refresh_info":  {},
-		"tidb_mlog_purge_info":     {},
-		"tidb_mview_refresh_hist":  {},
-		"tidb_mview_refresh_alert": {},
-		"tidb_mlog_purge_hist":     {},
+		"tidb_mview_refresh_info":             {},
+		"tidb_mview_fast_refresh_source_info": {},
+		"tidb_mlog_purge_info":                {},
+		"tidb_mview_refresh_hist":             {},
+		"tidb_mview_refresh_alert":            {},
+		"tidb_mlog_purge_hist":                {},
 		// Storage-class transition history uses cluster-local table IDs and TSOs.
 		"tidb_storage_class_transition_history": {},
 

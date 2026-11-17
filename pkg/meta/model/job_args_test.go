@@ -690,9 +690,12 @@ func TestGetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(t *testing.T) {
 	revision := uint64(789)
 	testCases := []*RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
 		{
+			OldMLogID:                          501,
+			NewMLogID:                          502,
 			OldMViewID:                         101,
 			ShadowTableID:                      202,
-			BuildReadTSO:                       303,
+			BuildReadTSO:                       (uint64(1) << 63) + 303,
+			BuildSources:                       []MViewRefreshSource{{TableID: 20, MLogID: 30}, {TableID: 21}},
 			ExpectedOldMViewRevision:           &revision,
 			ExpectedLastSuccessReadTSO:         404,
 			ExpectedLastSuccessReadTSONull:     false,
@@ -702,7 +705,7 @@ func TestGetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(t *testing.T) {
 		{
 			OldMViewID:                         101,
 			ShadowTableID:                      202,
-			BuildReadTSO:                       303,
+			BuildReadTSO:                       (uint64(1) << 63) + 303,
 			ExpectedLastSuccessReadTSONull:     true,
 			NextRefreshUnixSeconds:             nil,
 			ShouldUpdateNextRefreshUnixSeconds: true,
@@ -710,7 +713,7 @@ func TestGetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(t *testing.T) {
 		{
 			OldMViewID:                         101,
 			ShadowTableID:                      202,
-			BuildReadTSO:                       303,
+			BuildReadTSO:                       (uint64(1) << 63) + 303,
 			ExpectedLastSuccessReadTSONull:     true,
 			NextRefreshUnixSeconds:             nil,
 			ShouldUpdateNextRefreshUnixSeconds: false,

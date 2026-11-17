@@ -138,6 +138,7 @@ type Executor interface {
 		oldMViewID int64,
 		shadowTableID int64,
 		buildReadTSO uint64,
+		buildSources []model.MViewRefreshSource,
 		expectedOldMViewRevision *uint64,
 		expectedLastSuccessReadTSO uint64,
 		expectedLastSuccessReadTSONull bool,
@@ -2050,6 +2051,15 @@ func checkProtectedMaterializedViewShadowConstraint(
 	if allowInternalMViewShadowBypass(sv) {
 		return nil
 	}
+	if op == "DROP TABLE" {
+		// The DDL owner runs this check again before dropping the table.
+		if isMaterializedViewShadowTableExpired(tblInfo.Name.L, time.Now()) {
+			return nil
+		}
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			"DROP TABLE on materialized view shadow table younger than 7 days or with an invalid creation timestamp",
+		)
+	}
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 		fmt.Sprintf("%s on materialized view shadow table", op),
 	)
@@ -2081,6 +2091,27 @@ func CheckIndexOperationMaterializedViewConstraints(sv *variable.SessionVars, tb
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
 	}
 	return checkProtectedMaterializedViewShadowConstraint(sv, tblInfo, op)
+}
+
+func checkMaterializedViewGroupKeyIndexConstraints(tblInfo *model.TableInfo, indexName ast.CIStr, op string) error {
+	if tblInfo.MaterializedView == nil {
+		return nil
+	}
+	// Additional UNIQUE/PRIMARY indexes on MVs are disallowed, so the only such
+	// index is the auto-created group key. Integer clustered PKs have no IndexInfo.
+	if index := tblInfo.FindIndexByName(indexName.L); index != nil {
+		if !index.Unique && !index.Primary {
+			return nil
+		}
+		indexName = index.Name
+	} else if tblInfo.PKIsHandle && indexName.L == strings.ToLower(mysql.PrimaryKeyName) {
+		indexName = ast.NewCIStr(mysql.PrimaryKeyName)
+	} else {
+		return nil
+	}
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+		fmt.Sprintf("%s on automatically created index %s of materialized view %s", op, indexName.O, tblInfo.Name.O),
+	)
 }
 
 func checkBaseTableDependentMViewMinMaxIndexConstraints(
@@ -6357,6 +6388,9 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast
 		return e.dropHypoIndexFromCtx(ctx, ti.Schema, ti.Name, indexName, ifExist)
 	}
 
+	if err := checkMaterializedViewGroupKeyIndexConstraints(t.Meta(), indexName, "DROP INDEX"); err != nil {
+		return errors.Trace(err)
+	}
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
 
 	isPK, err := CheckIsDropPrimaryKey(indexName, indexInfo, t)

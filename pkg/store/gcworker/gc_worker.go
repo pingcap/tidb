@@ -1710,14 +1710,22 @@ func doGCPlacementRules(se sessionapi.Session, _ uint64,
 				}
 				mockJ.FillFinishedArgs(&model.DropTableArgs{})
 			} else if strings.HasPrefix(x, "mview-cutover:") {
-				ids := strings.Split(strings.TrimPrefix(x, "mview-cutover:"), ":")
-				if len(ids) != 2 {
+				values := strings.Split(strings.TrimPrefix(x, "mview-cutover:"), ":")
+				if len(values) < 2 || len(values) > 4 {
 					return
 				}
-				oldMViewID, oldErr := strconv.ParseInt(ids[0], 10, 64)
-				shadowTableID, shadowErr := strconv.ParseInt(ids[1], 10, 64)
+				oldMViewID, oldErr := strconv.ParseInt(values[0], 10, 64)
+				shadowTableID, shadowErr := strconv.ParseInt(values[1], 10, 64)
 				if oldErr != nil || shadowErr != nil {
 					return
+				}
+				var oldMLogID int64
+				if len(values) >= 3 {
+					var logErr error
+					oldMLogID, logErr = strconv.ParseInt(values[2], 10, 64)
+					if logErr != nil {
+						return
+					}
 				}
 				mockJ = &model.Job{
 					Version: model.GetJobVerInUse(),
@@ -1725,8 +1733,21 @@ func doGCPlacementRules(se sessionapi.Session, _ uint64,
 					Type:    model.ActionMViewRefreshOutOfPlaceCutover,
 					TableID: oldMViewID,
 				}
+				var newMLogID int64
+				if len(values) == 4 {
+					var logErr error
+					newMLogID, logErr = strconv.ParseInt(values[3], 10, 64)
+					if logErr != nil {
+						return
+					}
+					mockJ.State = model.JobStateCancelled
+				}
 				mockJ.FillArgs(&model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
-					OldMViewID: oldMViewID, ShadowTableID: shadowTableID, BuildReadTSO: 1,
+					OldMViewID:    oldMViewID,
+					ShadowTableID: shadowTableID,
+					OldMLogID:     oldMLogID,
+					NewMLogID:     newMLogID,
+					BuildReadTSO:  1,
 				})
 			}
 		default:
@@ -1775,7 +1796,16 @@ func doGCPlacementRules(se sessionapi.Session, _ uint64,
 		if err2 != nil {
 			return err2
 		}
-		physicalTableIDs = append(physicalTableIDs, args.OldMViewID)
+		if historyJob.IsCancelled() {
+			if args.NewMLogID != 0 {
+				physicalTableIDs = append(physicalTableIDs, args.NewMLogID)
+			}
+		} else {
+			physicalTableIDs = append(physicalTableIDs, args.OldMViewID)
+			if args.OldMLogID != 0 {
+				physicalTableIDs = append(physicalTableIDs, args.OldMLogID)
+			}
+		}
 	case model.ActionTruncateTable, model.ActionTruncateTablePartition:
 		var args *model.TruncateTableArgs
 		args, err = model.GetFinishedTruncateTableArgs(historyJob)

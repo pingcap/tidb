@@ -31,6 +31,7 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -553,7 +554,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 		sql := "import into unused_target from select /*+ STREAM_AGG() SET_VAR(tidb_mem_quota_query=1073741824) */ g,count(*) from query_source use index(idx_g) where v >= 10 group by g"
 		require.NoError(t, tk.Session().PrepareTxnCtx(ctx, nil))
-		require.NoError(t, importer.PlanImportQueryForTest(tk.Session(), sql))
+		require.NoError(t, executor.PlanImportQueryForTest(tk.Session(), sql))
 		captured, err := importer.CaptureQuerySource(tk.Session(), sql)
 		require.NoError(t, err)
 
@@ -569,7 +570,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		require.NoError(t, err)
 		defer pool.Destroy(resource)
 		output := make(chan importer.QueryChunk, 4)
-		err = importer.RunImportQuery(ctx, resource.(sessionctx.Context), captured, sql, 1<<20, output)
+		err = executor.RunImportQuery(ctx, resource.(sessionctx.Context), captured, sql, 1<<20, output)
 		require.NoError(t, err)
 		close(output)
 		result := make(map[int64]int64)

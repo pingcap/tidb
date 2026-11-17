@@ -18,8 +18,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -37,6 +39,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannercorebase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	mvmerge "github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -47,19 +50,22 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
-var errMVRefreshAdvisoryLockConflict = errors.NewNoStackError("materialized view refresh advisory lock conflict")
+// Refreshes with stale schemas share reload results by rechecking their
+// domain version under this mutex. Up-to-date refreshes do not acquire it.
+var mvRefreshSchemaReloadMu sync.Mutex
 
 const (
 	mvRefreshAdvisoryLockTimeoutSec = int64(1)
-	mvRefreshShadowTablePrefix      = "__mv_shadow_"
 	mvRefreshImportIntoStoreName    = "TiKV"
 )
 
@@ -399,6 +405,15 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if err := checkRefreshMaterializedViewBaseTableSelect(e.Ctx(), domain.GetDomain(e.Ctx()).InfoSchema(), tblInfo.MaterializedView); err != nil {
 		return err
 	}
+	if refreshMode == ast.RefreshMaterializedViewModeCompleteInPlace {
+		if baseInfo := tblInfo.MaterializedViewBase; baseInfo != nil && baseInfo.MLogID != 0 {
+			return errors.Errorf(
+				"refresh materialized view complete IN PLACE is not supported for materialized view %s.%s with a materialized view log",
+				schemaName.O,
+				tblInfo.Name.O,
+			)
+		}
+	}
 	reportRefreshFailed := tblInfo.MaterializedView != nil && tblInfo.MaterializedView.AlertRefreshFailed
 	mviewID = tblInfo.ID
 	refreshHistRunningInserted := false
@@ -492,6 +507,32 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		}
 		err = errors.Annotate(err, invariantErr.Error())
 	}()
+	// Check schema freshness under the shared lock so refresh sees MLogs
+	// committed by a previous DDL owner, even before normal schema synchronization.
+	if err := ensureMVRefreshSchemaVersion(kctx, e.Ctx()); err != nil {
+		return err
+	}
+	currentTbl, ok := domain.GetDomain(e.Ctx()).InfoSchema().TableByID(context.Background(), tblInfo.ID)
+	if !ok {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(schemaName, tblInfo.Name)
+	}
+	if refreshMode == ast.RefreshMaterializedViewModeCompleteInPlace {
+		if baseInfo := currentTbl.Meta().MaterializedViewBase; baseInfo != nil && baseInfo.MLogID != 0 {
+			return errors.Errorf(
+				"refresh materialized view complete IN PLACE is not supported for materialized view %s.%s with a materialized view log",
+				schemaName.O,
+				tblInfo.Name.O,
+			)
+		}
+	}
+	// CREATE publishes input logs with ready state. Missing registration is metadata corruption.
+	registeredLogs, err := mviewutil.ReadRefreshSourceIDs(kctx, sqlExec, mviewID)
+	if err != nil {
+		return err
+	}
+	if len(registeredLogs) == 0 {
+		return errors.Errorf("refresh materialized view: input log records are missing for %s.%s", schemaName.O, tblInfo.Name.O)
+	}
 	failpoint.InjectCall("refreshMaterializedViewAfterAcquireAdvisoryLock")
 	failpoint.Inject("mockRefreshMaterializedViewErrorBeforeInsertHist", func(val failpoint.Value) {
 		if msg, ok := val.(string); ok {
@@ -701,6 +742,25 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	histSQLExec := histSctx.GetSQLExecutor()
 	histLoc := histSctx.GetSessionVars().Location()
 
+	// Re-read the registration under the refresh-info row lock, in this transaction.
+	registeredLogs, err = mviewutil.ReadRefreshSourceIDs(kctx, sqlExec, mviewID)
+	if err != nil {
+		return err
+	}
+	if len(registeredLogs) == 0 {
+		return errors.New("refresh materialized view: input log records are missing")
+	}
+	if refreshMode == ast.RefreshMaterializedViewModeFast {
+		is := domain.GetDomain(e.Ctx()).InfoSchema()
+		currentSources, err := mviewutil.ResolveRefreshSources(kctx, is, mviewID)
+		if err != nil {
+			return err
+		}
+		if err := checkMVRefreshLogBaseline(is, mviewID, currentSources, registeredLogs); err != nil {
+			return err
+		}
+	}
+
 	boundedFastRefresh := refreshMode == ast.RefreshMaterializedViewModeFast &&
 		targetRefreshReadTSO > 0 &&
 		targetRefreshReadTSO > lockedRefreshInfo.lastSuccessReadTSO
@@ -713,7 +773,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		// In theory, a concurrently-started purge should still be safe because purge computes safePurgeTSO
 		// from persisted LAST_SUCCESS_READ_TSO, which does not advance until this refresh commits.
 		is := e.Ctx().GetLatestInfoSchema().(infoschema.InfoSchema)
-		mlogIntegrity, err := checkFastRefreshMLogIntegrity(kctx, histSQLExec, is, schemaName, tblInfo, lockedRefreshInfo.lastSuccessReadTSO)
+		mlogIntegrity, err := checkFastRefreshMLogIntegrity(kctx, histSQLExec, is, tblInfo, lockedRefreshInfo.lastSuccessReadTSO)
 		if err != nil {
 			return err
 		}
@@ -871,6 +931,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			lastSuccessfulRefreshReadTSO: lastSuccessfulRefreshReadTSO,
 			targetRefreshReadTSO:         targetRefreshReadTSO,
 			mlogRetainedLowerTSO:         mlogRetainedLowerTSO,
+			registeredMLogIDs:            registeredLogs,
 		},
 		stepSet,
 		e.stepObserver,
@@ -879,17 +940,32 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	); err != nil {
 		return finalizeFailure(err)
 	}
+	// Capture the successful attempt before bookkeeping SQL can advance the read timestamp.
+	var actualRefreshReadTSO uint64
+	var confirmedSources []model.MViewRefreshSource
+	if refreshMode == ast.RefreshMaterializedViewModeCompleteDeltaApply {
+		refreshPlan := sessVars.StmtCtx.GetPlan().(*plannercore.MViewCompleteDeltaApply)
+		actualRefreshReadTSO, confirmedSources = refreshPlan.RefreshReadTSO, refreshPlan.RefreshSources
+	} else {
+		actualRefreshReadTSO, err = getRefreshReadTSOForSuccess(sessVars)
+		if err != nil {
+			return finalizeFailure(err)
+		}
+	}
+	refreshStmtResult := captureMVRefreshStmtResult(sessVars)
+	failpoint.InjectCall("mvRefreshInputCaptured", refreshSctx, actualRefreshReadTSO)
+	failpoint.InjectCall("refreshMaterializedViewAfterDataChanges")
 	failpoint.Inject("mockRefreshMaterializedViewErrorAfterDataChanges", func(val failpoint.Value) {
 		if msg, ok := val.(string); ok {
 			failpoint.Return(finalizeFailure(errors.New(msg)))
 		}
 		failpoint.Return(finalizeFailure(errors.New("mock refresh materialized view error after data changes")))
 	})
-	refreshStmtResult := captureMVRefreshStmtResult(sessVars)
-
-	actualRefreshReadTSO, err := getRefreshReadTSOForSuccess(sessVars)
-	if err != nil {
-		return finalizeFailure(err)
+	if refreshMode == ast.RefreshMaterializedViewModeCompleteInPlace {
+		confirmedSources, err = resolveMVCompleteRefreshSources(kctx, refreshSctx, mviewID, actualRefreshReadTSO)
+		if err != nil {
+			return finalizeFailure(err)
+		}
 	}
 	refreshReadTSO := actualRefreshReadTSO
 	if boundedFastRefresh {
@@ -924,6 +1000,18 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 
 	lastSuccessRefreshEndUnixSeconds := time.Now().Unix()
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.persistRefreshInfo, func() error {
+		if refreshMode != ast.RefreshMaterializedViewModeFast {
+			confirmedLogs := mviewutil.RefreshSourceLogIDs(confirmedSources)
+			if !slices.Equal(registeredLogs, confirmedLogs) {
+				if err := mviewutil.ReplaceRefreshSourceIDs(kctx, sqlExec, mviewID, confirmedLogs); err != nil {
+					return err
+				}
+			}
+		}
+		failpoint.InjectCall("refreshMaterializedViewAfterReplaceSourceInfo", actualRefreshReadTSO)
+		failpoint.Inject("mockRefreshMaterializedViewAfterReplaceSourceInfoError", func() {
+			failpoint.Return(errors.New("mock refresh error after replacing source info"))
+		})
 		return persistRefreshSuccess(
 			kctx,
 			sqlExec,
@@ -1176,16 +1264,10 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		}
 		failpoint.Return(uint64(0), errors.New("mock refresh materialized view out-of-place build error after load shadow"))
 	})
-	failpoint.Inject("mockRefreshMaterializedViewOutOfPlaceBuildReadTSO", func(val failpoint.Value) {
-		s, ok := val.(string)
-		if !ok {
-			return
-		}
-		overrideTSO, parseErr := strconv.ParseUint(s, 10, 64)
-		if parseErr == nil && overrideTSO > 0 {
-			buildReadTSO = overrideTSO
-		}
-	})
+	confirmedSources, err := resolveMVCompleteRefreshSources(kctx, buildSctx, tblInfo.ID, buildReadTSO)
+	if err != nil {
+		return 0, err
+	}
 	failpoint.InjectCall("refreshMaterializedViewOutOfPlaceAfterBuildDataLoad", buildReadTSO)
 	failpoint.Inject("pauseRefreshMaterializedViewOutOfPlaceAfterBuildDataLoad", func() {})
 	var shadowTableID int64
@@ -1224,7 +1306,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 			return err
 		}
 		ddlExecutor, ok := domain.GetDomain(e.Ctx()).DDLExecutor().(interface {
-			RefreshMaterializedViewCompleteOutOfPlaceCutover(sessionctx.Context, int64, ast.CIStr, ast.CIStr, int64, int64, uint64, *uint64, uint64, bool, *int64, bool) error
+			RefreshMaterializedViewCompleteOutOfPlaceCutover(sessionctx.Context, int64, ast.CIStr, ast.CIStr, int64, int64, uint64, []model.MViewRefreshSource, *uint64, uint64, bool, *int64, bool) error
 		})
 		if !ok {
 			return errors.New("materialized view complete out-of-place refresh is not supported")
@@ -1237,6 +1319,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 			tblInfo.ID,
 			shadowTableID,
 			buildReadTSO,
+			confirmedSources,
 			&expectedOldMViewRevision,
 			expectedLastSuccessReadTSO,
 			expectedLastSuccessReadTSONull,
@@ -1408,7 +1491,7 @@ func applyRefreshExecutionSessionVars(
 }
 
 func buildMVRefreshShadowTableName(mviewID int64) string {
-	return fmt.Sprintf("%s%d_%d", mvRefreshShadowTablePrefix, mviewID, time.Now().UnixNano())
+	return fmt.Sprintf("%s%d_%d", mviewutil.ShadowTablePrefix, mviewID, time.Now().UnixNano())
 }
 
 func buildMVRefreshOutOfPlaceShadowTableInfo(
@@ -1608,36 +1691,12 @@ func (e *RefreshMaterializedViewExec) resolveRefreshMaterializedViewTarget(
 	return schemaName, tblInfo, nil
 }
 
-func resolveRefreshMaterializedViewLogInfo(
-	is infoschema.InfoSchema,
-	schemaName ast.CIStr,
-	tblInfo *model.TableInfo,
-) (int64, error) {
-	if tblInfo == nil || tblInfo.MaterializedView == nil {
-		return 0, errors.New("refresh materialized view: target is not a materialized view")
+func resolveRefreshMaterializedViewLogInfo(is infoschema.InfoSchema, tblInfo *model.TableInfo) (int64, error) {
+	fastSource, err := mvmerge.ResolveFastRefreshSource(is, tblInfo)
+	if err != nil {
+		return 0, errors.Annotate(err, "refresh materialized view fast")
 	}
-	if len(tblInfo.MaterializedView.BaseTableIDs) != 1 {
-		return 0, errors.New("refresh materialized view: fast refresh requires exactly one base table")
-	}
-
-	baseTableID := tblInfo.MaterializedView.BaseTableIDs[0]
-	baseTable, ok := is.TableByID(context.Background(), baseTableID)
-	if !ok {
-		return 0, errors.Errorf("refresh materialized view: cannot resolve base table %d for materialized view %s.%s", baseTableID, schemaName.O, tblInfo.Name.O)
-	}
-	baseTableInfo := baseTable.Meta()
-	if baseTableInfo.MaterializedViewBase == nil {
-		return 0, errors.Errorf("refresh materialized view: base table %d is missing materialized view base metadata", baseTableID)
-	}
-	mlogID := baseTableInfo.MaterializedViewBase.MLogID
-	if mlogID == 0 {
-		return 0, errors.Errorf(
-			"refresh materialized view: materialized view log does not exist for base table %s.%s",
-			schemaName.O,
-			baseTableInfo.Name.O,
-		)
-	}
-	return mlogID, nil
+	return fastSource.MLogTableID, nil
 }
 
 func checkRefreshMaterializedViewReady(schemaName ast.CIStr, tblInfo *model.TableInfo) error {
@@ -1747,8 +1806,60 @@ func lockRefreshInfoRow(
 	return decodeRefreshInfoSnapshot(lockRows[0], 1, 2), nil
 }
 
-func buildMVRefreshAdvisoryLockName(schemaID int64, mviewID int64) string {
-	return fmt.Sprintf("mv_refresh_%d_%d", schemaID, mviewID)
+func ensureMVRefreshSchemaVersion(ctx context.Context, sctx sessionctx.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	dom := domain.GetDomain(sctx)
+	ver, err := sctx.GetStore().CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return errors.Annotate(err, "refresh materialized view: failed to get schema-check timestamp")
+	}
+	m := dom.GetSnapshotMeta(ver.Ver)
+	requiredVersion, err := m.GetSchemaVersion()
+	if err != nil {
+		return errors.Annotate(err, "refresh materialized view: failed to get schema version")
+	}
+	// DDL can reserve versions without committing their schema diffs. Skip
+	// empty versions: Reload may retain an older version for those no-op changes.
+	// An up-to-date refresh only needs the schema-version read above.
+	currentVersion := dom.InfoSchema().SchemaMetaVersion()
+	for requiredVersion > currentVersion {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		diff, err := m.GetSchemaDiff(requiredVersion)
+		if err != nil {
+			return errors.Annotatef(err, "refresh materialized view: failed to get schema diff for version %d", requiredVersion)
+		}
+		if diff != nil {
+			break
+		}
+		requiredVersion--
+	}
+	if dom.InfoSchema().SchemaMetaVersion() >= requiredVersion {
+		return nil
+	}
+	failpoint.InjectCall("refreshMaterializedViewBeforeSchemaReloadLock", requiredVersion)
+	mvRefreshSchemaReloadMu.Lock()
+	defer mvRefreshSchemaReloadMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Another refresh or the background schema loader may have caught up while
+	// this refresh was waiting. Recheck before invoking Reload, which still does
+	// KV reads on a cache hit.
+	if dom.InfoSchema().SchemaMetaVersion() >= requiredVersion {
+		return nil
+	}
+	failpoint.InjectCall("refreshMaterializedViewBeforeSchemaReload", requiredVersion)
+	if err := dom.Reload(); err != nil {
+		return errors.Annotate(err, "refresh materialized view: failed to reload schema")
+	}
+	if currentVersion := dom.InfoSchema().SchemaMetaVersion(); currentVersion < requiredVersion {
+		return errors.Errorf("refresh materialized view: schema version %d is behind required version %d", currentVersion, requiredVersion)
+	}
+	return nil
 }
 
 func acquireMVRefreshAdvisoryLock(
@@ -1756,23 +1867,18 @@ func acquireMVRefreshAdvisoryLock(
 	schemaName ast.CIStr,
 	tblInfo *model.TableInfo,
 ) (string, error) {
-	lockName := buildMVRefreshAdvisoryLockName(tblInfo.DBID, tblInfo.ID)
+	lockName := mviewutil.RefreshAdvisoryLockName(tblInfo.DBID, tblInfo.ID)
 	if err := refreshSctx.GetAdvisoryLock(lockName, mvRefreshAdvisoryLockTimeoutSec); err != nil {
-		if isMVRefreshAdvisoryLockConflict(err) {
-			return lockName, errors.Annotatef(
-				errMVRefreshAdvisoryLockConflict,
-				"another refresh is running for materialized view %s.%s, please retry later",
+		if storeerr.ErrLockWaitTimeout.Equal(err) {
+			return lockName, exeerrors.ErrMVAdvisoryLockConflict.FastGenByArgs(fmt.Sprintf(
+				"another refresh or materialized view log creation is running for materialized view %s.%s, please retry later",
 				schemaName.O,
 				tblInfo.Name.O,
-			)
+			))
 		}
 		return lockName, errors.Trace(err)
 	}
 	return lockName, nil
-}
-
-func isMVRefreshAdvisoryLockConflict(err error) bool {
-	return err != nil && storeerr.ErrLockWaitTimeout.Equal(err)
 }
 
 func releaseMVRefreshAdvisoryLockFully(refreshSctx sessionctx.Context, lockName string) int {
@@ -1897,11 +2003,10 @@ func checkFastRefreshMLogIntegrity(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
 	is infoschema.InfoSchema,
-	schemaName ast.CIStr,
 	tblInfo *model.TableInfo,
 	lastSuccessfulRefreshReadTSO uint64,
 ) (fastRefreshMLogIntegrity, error) {
-	mlogID, err := resolveRefreshMaterializedViewLogInfo(is, schemaName, tblInfo)
+	mlogID, err := resolveRefreshMaterializedViewLogInfo(is, tblInfo)
 	if err != nil {
 		return fastRefreshMLogIntegrity{}, err
 	}
@@ -1940,6 +2045,7 @@ type refreshImplementOptions struct {
 	lastSuccessfulRefreshReadTSO uint64
 	targetRefreshReadTSO         uint64
 	mlogRetainedLowerTSO         uint64
+	registeredMLogIDs            []int64
 }
 
 func executeRefreshMaterializedViewDataChanges(
@@ -2114,6 +2220,7 @@ func executeRefreshMaterializedViewImplement(
 		LastSuccessfulRefreshReadTSO: implementOpts.lastSuccessfulRefreshReadTSO,
 		TargetRefreshReadTSO:         implementOpts.targetRefreshReadTSO,
 		MLogRetainedLowerTSO:         implementOpts.mlogRetainedLowerTSO,
+		RegisteredMLogIDs:            implementOpts.registeredMLogIDs,
 	}
 
 	if internalExec, ok := sqlExec.(interface {

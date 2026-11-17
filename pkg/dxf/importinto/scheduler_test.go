@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -104,7 +105,7 @@ func (s *importIntoSuite) TestSchedulerGetEligibleInstances() {
 }
 
 func (s *importIntoSuite) TestUpdateCurrentTask() {
-	taskMeta := TaskMeta{
+	taskMeta := taskinfo.TaskMeta{
 		Plan: importer.Plan{
 			DisableTiKVImportMode: true,
 		},
@@ -182,7 +183,7 @@ func (s *importIntoSuite) TestSchedulerClose() {
 }
 
 func (s *importIntoSuite) TestSchedulerInit() {
-	meta := TaskMeta{
+	meta := taskinfo.TaskMeta{
 		Plan: importer.Plan{
 			CloudStorageURI: "",
 		},

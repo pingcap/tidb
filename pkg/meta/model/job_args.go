@@ -790,29 +790,39 @@ func GetAlterMaterializedViewLogPurgeArgs(job *Job) (*AlterMaterializedViewLogPu
 	return getOrDecodeArgs[*AlterMaterializedViewLogPurgeArgs](&AlterMaterializedViewLogPurgeArgs{}, job)
 }
 
+// MViewRefreshSource records a physical input binding at a refresh computation snapshot.
+// MLogID is zero when the source has no materialized view log.
+type MViewRefreshSource struct {
+	TableID int64 `json:"table_id"`
+	MLogID  int64 `json:"mlog_id"`
+}
+
 // RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs contains the metadata
 // needed to atomically replace an MV with its freshly built shadow table.
 type RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs struct {
-	OldMViewID                         int64   `json:"old_mview_id,omitempty"`
-	ShadowTableID                      int64   `json:"shadow_table_id,omitempty"`
-	BuildReadTSO                       uint64  `json:"build_read_tso,omitempty"`
-	ExpectedOldMViewRevision           *uint64 `json:"expected_old_mview_revision,omitempty"`
-	ExpectedLastSuccessReadTSO         uint64  `json:"expected_last_success_read_tso,omitempty"`
-	ExpectedLastSuccessReadTSONull     bool    `json:"expected_last_success_read_tso_null,omitempty"`
-	NextRefreshUnixSeconds             *int64  `json:"next_refresh_unix_seconds,omitempty"`
-	ShouldUpdateNextRefreshUnixSeconds bool    `json:"should_update_next_refresh_unix_seconds,omitempty"`
+	OldMLogID                          int64                `json:"old_mlog_id,omitempty"`
+	NewMLogID                          int64                `json:"new_mlog_id,omitempty"`
+	OldMViewID                         int64                `json:"old_mview_id,omitempty"`
+	ShadowTableID                      int64                `json:"shadow_table_id,omitempty"`
+	BuildReadTSO                       uint64               `json:"build_read_tso,omitempty"`
+	BuildSources                       []MViewRefreshSource `json:"build_sources"`
+	ExpectedOldMViewRevision           *uint64              `json:"expected_old_mview_revision,omitempty"`
+	ExpectedLastSuccessReadTSO         uint64               `json:"expected_last_success_read_tso,omitempty"`
+	ExpectedLastSuccessReadTSONull     bool                 `json:"expected_last_success_read_tso_null,omitempty"`
+	NextRefreshUnixSeconds             *int64               `json:"next_refresh_unix_seconds,omitempty"`
+	ShouldUpdateNextRefreshUnixSeconds bool                 `json:"should_update_next_refresh_unix_seconds,omitempty"`
 }
 
 func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) getArgsV1(*Job) []any {
 	return []any{a.OldMViewID, a.ShadowTableID, a.BuildReadTSO, a.ExpectedLastSuccessReadTSO,
 		a.ExpectedLastSuccessReadTSONull, a.NextRefreshUnixSeconds, a.ShouldUpdateNextRefreshUnixSeconds,
-		a.ExpectedOldMViewRevision}
+		a.ExpectedOldMViewRevision, a.BuildSources, a.OldMLogID, a.NewMLogID}
 }
 
 func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) decodeV1(job *Job) error {
 	return errors.Trace(job.decodeArgs(&a.OldMViewID, &a.ShadowTableID, &a.BuildReadTSO,
 		&a.ExpectedLastSuccessReadTSO, &a.ExpectedLastSuccessReadTSONull, &a.NextRefreshUnixSeconds,
-		&a.ShouldUpdateNextRefreshUnixSeconds, &a.ExpectedOldMViewRevision))
+		&a.ShouldUpdateNextRefreshUnixSeconds, &a.ExpectedOldMViewRevision, &a.BuildSources, &a.OldMLogID, &a.NewMLogID))
 }
 
 // GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs gets cutover args.

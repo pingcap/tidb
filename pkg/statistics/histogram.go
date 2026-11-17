@@ -2346,9 +2346,11 @@ func (r *globalMergeRefs) mergeVirtualTopN(virtualHistTopN []topNEntry, firstHis
 //     at least ~80% of target (avoids runt buckets after an
 //     overshoot).
 //  2. Coalesce the group: a "group" is the set of refs sharing one
-//     effective upper-bound value. The gate can fire mid-group, so
-//     consume the rest of the group before closing the bucket, keeping
-//     a value's summed Repeat on the bucket whose upper is that value.
+//     effective upper-bound value. If the gate fires mid-group at the
+//     merged upper, consume the rest of the group. Otherwise, restore
+//     the bucket to its state before the group and leave the whole group
+//     for the next bucket. This keeps a partial Repeat from becoming
+//     the next bucket's upper-bound frequency.
 //  3. Overlap scan: refs further left whose [lower, effectiveUpper]
 //     crosses the closed bucket's lower bound (currentLeftMost) are
 //     either totally inside (their whole mass joins the bucket) or
@@ -2359,14 +2361,6 @@ func (r *globalMergeRefs) mergeVirtualTopN(virtualHistTopN []topNEntry, firstHis
 //     left residue is recorded via recordSplit with the cut as the
 //     ref's new effective upper, to be consumed by later merged
 //     buckets.
-//
-// TODO: phase 2 only reunites a group when the gate fires while the
-// current ref still sits at the bucket's upper, since its check compares
-// against mergedUpper. When the gate fires deeper in, the group straddles
-// the cut and the part away from a bucket upper degrades to interior
-// mass, so an equality estimate on that value sees only some of its rows.
-// Handing the whole group to the next bucket fixes it, at the cost of
-// reshaping bucket boundaries, so it is left to a follow-up change.
 //
 // Merged buckets are collected right-to-left, each with the mass
 // accumulated since the previous emit, then reversed into the
@@ -2402,6 +2396,14 @@ func buildGlobalHistogram(
 	var currentLeftMost *types.Datum
 	var mergedUpper *types.Datum
 	var mergedRepeat int64
+
+	// Checkpoint before the current same-upper group. A cut within the
+	// group can be moved back here, even if it makes the bucket smaller
+	// than the equi-depth target, so the next bucket retains its Repeat.
+	var groupUpper types.Datum
+	var groupStart int
+	var groupStartSum int64
+	var groupStartLower *types.Datum
 
 	updateLeftMost := func(d *types.Datum) (err error) {
 		if currentLeftMost == nil {
@@ -2440,6 +2442,20 @@ func buildGlobalHistogram(
 		}
 
 		refs.effectiveUpper(i, &refUpper)
+		newGroup := mergedUpper == nil
+		if !newGroup {
+			c, err := refs.cmpBounds(&refUpper, &groupUpper)
+			if err != nil {
+				return nil, err
+			}
+			newGroup = c != 0
+		}
+		if newGroup {
+			groupUpper = refUpper
+			groupStart = i
+			groupStartSum = sum
+			groupStartLower = currentLeftMost
+		}
 		if mergedUpper == nil {
 			v := refUpper
 			mergedUpper = &v
@@ -2476,7 +2492,7 @@ func buildGlobalHistogram(
 			continue
 		}
 
-		// Coalesce same-upper refs into the merged bucket.
+		// Do not split the current same-upper group at the size gate.
 		for i > 0 {
 			ahead := i - 1
 			mass2, repeat2, fresh2, err := refs.massAndRepeat(ahead)
@@ -2488,11 +2504,22 @@ func buildGlobalHistogram(
 				continue
 			}
 			refs.effectiveUpper(ahead, &scanUpper)
-			c, err := refs.cmpBounds(&scanUpper, mergedUpper)
+			c, err := refs.cmpBounds(&scanUpper, &groupUpper)
 			if err != nil {
 				return nil, err
 			}
 			if c != 0 {
+				break
+			}
+			if groupStartSum > prevSum {
+				// This group's upper is below mergedUpper. Returning just
+				// the unconsumed refs would leave a partial Repeat on the
+				// next bucket, so return the already consumed refs as well.
+				sum = groupStartSum
+				currentLeftMost = groupStartLower
+				// The overlap scan starts at groupStart; the outer loop
+				// revisits it after decrementing i.
+				i = groupStart + 1
 				break
 			}
 			i = ahead

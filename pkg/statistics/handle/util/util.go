@@ -41,19 +41,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// StatsMetaHistorySourceAnalyze indicates stats history meta source from analyze
-	StatsMetaHistorySourceAnalyze = "analyze"
-	// StatsMetaHistorySourceLoadStats indicates stats history meta source from load stats
-	StatsMetaHistorySourceLoadStats = "load stats"
-	// StatsMetaHistorySourceFlushStats indicates stats history meta source from flush stats
-	StatsMetaHistorySourceFlushStats = "flush stats"
-	// StatsMetaHistorySourceSchemaChange indicates stats history meta source from schema change
-	StatsMetaHistorySourceSchemaChange = "schema change"
-	// StatsMetaHistorySourceExtendedStats indicates stats history meta source from extended stats
-	StatsMetaHistorySourceExtendedStats = "extended stats"
-)
-
 var (
 	// UseCurrentSessionOpt to make sure the sql is executed in current session.
 	UseCurrentSessionOpt = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
@@ -80,7 +67,11 @@ var (
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
 func CallWithSCtx(pool syssession.Pool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
-	defer util.Recover(metrics.LabelStats, "CallWithSCtx", nil, false)
+	// Return a panic as an error, because callers use the results of f when the error is nil.
+	// For example, TableStatsFromStorage would return the cached table as newly loaded stats.
+	defer util.Recover(metrics.LabelStats, "CallWithSCtx", func() {
+		err = errors.New("panic in CallWithSCtx")
+	}, false)
 	return pool.WithSession(func(se *syssession.Session) error {
 		return se.WithSessionContext(func(sctx sessionctx.Context) error {
 			restoreStatsVars, err := UpdateSCtxVarsForStats(sctx)
@@ -116,8 +107,6 @@ type statsSessionVarsSnapshot struct {
 	analyzePartitionConcurrency int
 	skipMissingPartitionStats   bool
 	enableAnalyzeSnapshot       bool
-	enableHistoricalStats       bool
-	enableAsyncMergeGlobalStats bool
 }
 
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
@@ -127,8 +116,6 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) (func(), error) {
 	snapshot := statsSessionVarsSnapshot{
 		analyzeSkipColumnTypes:      vars.AnalyzeSkipColumnTypes,
 		partitionPruneMode:          vars.PartitionPruneMode.Load(),
-		enableAsyncMergeGlobalStats: vars.EnableAsyncMergeGlobalStats,
-		enableHistoricalStats:       vars.EnableHistoricalStats,
 		enableAnalyzeSnapshot:       vars.EnableAnalyzeSnapshot,
 		skipMissingPartitionStats:   vars.SkipMissingPartitionStats,
 		analyzePartitionConcurrency: vars.AnalyzePartitionConcurrency,
@@ -163,13 +150,6 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) (func(), error) {
 		return nil, err
 	}
 
-	// async merge global stats
-	enableAsyncMergeGlobalStats, err := vars.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableAsyncMergeGlobalStats)
-	if err != nil {
-		return restoreOnErr(err)
-	}
-	vars.EnableAsyncMergeGlobalStats = variable.TiDBOptOn(enableAsyncMergeGlobalStats)
-
 	// concurrency of save stats to storage
 	analyzePartitionConcurrency, err := vars.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzePartitionConcurrency)
 	if err != nil {
@@ -202,13 +182,6 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) (func(), error) {
 		return restoreOnErr(err)
 	}
 
-	// enable historical stats
-	val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableHistoricalStats)
-	if err != nil {
-		return restoreOnErr(err)
-	}
-	vars.EnableHistoricalStats = variable.TiDBOptOn(val)
-
 	// partition mode
 	pruneMode, err := vars.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBPartitionPruneMode)
 	if err != nil {
@@ -224,7 +197,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) (func(), error) {
 	vars.EnableAnalyzeSnapshot = variable.TiDBOptOn(analyzeSnapshot)
 
 	// enable skip column types
-	val, err = vars.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes)
+	val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes)
 	if err != nil {
 		return restoreOnErr(err)
 	}
@@ -269,8 +242,6 @@ func (s statsSessionVarsSnapshot) restore(vars *variable.SessionVars) {
 	}
 	vars.AnalyzeSkipColumnTypes = s.analyzeSkipColumnTypes
 	vars.PartitionPruneMode.Store(s.partitionPruneMode)
-	vars.EnableAsyncMergeGlobalStats = s.enableAsyncMergeGlobalStats
-	vars.EnableHistoricalStats = s.enableHistoricalStats
 	vars.EnableAnalyzeSnapshot = s.enableAnalyzeSnapshot
 	vars.SkipMissingPartitionStats = s.skipMissingPartitionStats
 	vars.AnalyzePartitionConcurrency = s.analyzePartitionConcurrency
@@ -296,10 +267,17 @@ func WrapTxn(sctx sessionctx.Context, f func(sctx sessionctx.Context) error) (er
 	if _, _, err := ExecRows(sctx, "BEGIN PESSIMISTIC"); err != nil {
 		return err
 	}
+	fReturned := false
 	defer func() {
+		// If f panics, this call runs while err is still nil.
+		// Roll back then, so that the panic does not commit the partial writes of f.
+		if !fReturned {
+			err = errors.New("panic in WrapTxn")
+		}
 		err = finishTransaction(sctx, err)
 	}()
 	err = f(sctx)
+	fReturned = true
 	return
 }
 
