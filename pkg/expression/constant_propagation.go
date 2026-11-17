@@ -255,10 +255,11 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 		return false, true, cond
 	}
 	if sf.FuncName.L == ast.Like || sf.FuncName.L == ast.Ilike {
-		// Pattern matching preserves trailing spaces, unlike equality under PAD SPACE
-		// collations. Only propagate string columns whose equality is byte-exact.
-		// Non-string types can also carry the binary collation, but their conversion
-		// to strings need not preserve equality.
+		// LIKE and ILIKE preserve trailing spaces, unlike equality under PAD SPACE
+		// collations: 'a ' = 'a', but 'a ' LIKE 'a_' is true and 'a' LIKE 'a_' is false.
+		// String equality under binary and utf8mb4_0900_bin is byte-exact, so equal
+		// values have the same pattern-matching result. Numeric types can also have
+		// binary collation, but equal numbers need not have identical string forms.
 		collation := src.RetType.GetCollate()
 		if src.RetType.EvalType() != types.ETString || tgt.RetType.EvalType() != types.ETString ||
 			collation != tgt.RetType.GetCollate() ||
