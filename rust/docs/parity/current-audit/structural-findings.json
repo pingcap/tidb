@@ -43,9 +43,9 @@
       "id": "E32",
       "status": "open",
       "group": "Expanded subsystem ownership review",
-      "finding": "BR's remaining differences from Go master's `pkg/objstore` and `br/pkg/streamhelper`. The storages' `Copier` copies between local storages and within one S3 bucket only: the `opendal` operator is bound to its bucket, where Go's S3 `CopyFrom` sends `CopyObject` from any source bucket, GCS copies through the rewrite API and Azure through `StartCopyFromURL`; so a SQL `RESTORE` during a log backup whose storage is another S3 bucket, GCS or Azure fails in the PITR collector where Go copies the SSTs. The log backup metadata client reads an etcd prefix in one range request where Go pages it (`scanEtcdPrefix`).",
-      "go_owner": "`pkg/objstore/s3like/store.go` (`CopyFrom`), `pkg/objstore/gcs.go` (`CopyFrom`), `pkg/objstore/azblob.go` (`CopyFrom`), `br/pkg/streamhelper/client.go` (`scanEtcdPrefix`)",
-      "rust_evidence": "`rust/crates/tidb-objstore/src/cloud.rs` (`Copier for CloudStorage`), `rust/crates/tidb-br/src/streamhelper/client.rs` (`MetaStore::get_prefix`)"
+      "finding": "BR's remaining difference from Go master's `pkg/objstore`: the GCS and Azure storages are not `Copier`s. Go's GCS `CopyFrom` copies through the rewrite API and Azure's through `StartCopyFromURL` (polling the copy status); here the `opendal` operators copy only within their own bucket or container, so a SQL `RESTORE` during a log backup whose storage is GCS or Azure fails in the PITR collector where Go copies the SSTs. (S3 copies across buckets through Go's `CopyObject`, and the log backup metadata is read in pages, as Go's `scanEtcdPrefix` reads it.)",
+      "go_owner": "`pkg/objstore/gcs.go` (`CopyFrom`), `pkg/objstore/azblob.go` (`CopyFrom`)",
+      "rust_evidence": "`rust/crates/tidb-objstore/src/cloud.rs` (`CloudStorage::as_copier`)"
     },
     {
       "id": "S01",

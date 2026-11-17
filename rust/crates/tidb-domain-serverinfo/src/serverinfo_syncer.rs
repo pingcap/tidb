@@ -150,6 +150,14 @@ pub trait EtcdOps: Send + Sync {
     }
     /// `KV.Range` over `[prefix, prefix+1)` -- `clientv3.WithPrefix()`.
     fn get_prefix(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, String>;
+    /// `KV.Range` over `[from, to)` with at most `limit` pairs --
+    /// `clientv3.WithRange(to), clientv3.WithLimit(limit)`: the pairs in key
+    /// order and the response's `More`. A client without range reads (test
+    /// doubles) refuses.
+    fn scan(&self, from: &[u8], to: &[u8], limit: usize) -> Result<(Vec<(Vec<u8>, Vec<u8>)>, bool), String> {
+        let _ = (from, to, limit);
+        Err("this etcd client has no range reads".to_owned())
+    }
     /// `KV.Get` of one key: `Some(lease)` when the key exists (zero when it
     /// has no lease), `None` when it does not.
     fn get_key_lease(&self, key: &str) -> Result<Option<i64>, String> {

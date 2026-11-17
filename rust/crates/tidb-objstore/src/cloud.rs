@@ -10,7 +10,7 @@
 
 use std::future::IntoFuture;
 use std::io::{self, Read, Seek, SeekFrom};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use tidb_gocontext::Context;
@@ -70,6 +70,9 @@ pub struct CloudStorage {
     /// Go `s3like.Storage.bucketPrefix`.
     bucket_prefix: BucketPrefix,
     access_rec: Option<std::sync::Arc<tidb_objstore_recording::AccessStats>>,
+    /// Go `s3like.Storage.s3Cli` for what `opendal` cannot send; `None`
+    /// for GCS and Azure.
+    s3: Option<crate::s3client::S3Client>,
 }
 
 impl CloudStorage {
@@ -284,8 +287,7 @@ impl Storage for CloudStorage {
 
 impl storeapi::Copier for CloudStorage {
     /// Go `s3like.Storage.CopyFrom`: a server-side `CopyObject` from another
-    /// S3 storage. The `opendal` operator copies within its own bucket, so a
-    /// source in another bucket is refused, where Go copies across buckets.
+    /// S3 storage, in any bucket.
     fn copy_from(&self, ctx: &Context, e: &dyn Storage, spec: &storeapi::CopySpec) -> Result<()> {
         let source = e.as_any().and_then(|a| a.downcast_ref::<CloudStorage>()).filter(|s| s.flavor == Flavor::S3);
         let Some(source) = source else {
@@ -294,14 +296,16 @@ impl storeapi::Copier for CloudStorage {
                 e.uri()
             )));
         };
-        if source.bucket_prefix.bucket != self.bucket_prefix.bucket {
-            return Err(Error::other(format!(
-                "copying from bucket {} to bucket {} is not supported by this TiDB",
-                source.bucket_prefix.bucket, self.bucket_prefix.bucket
-            )));
-        }
+        let client = self.s3.as_ref().ok_or_else(|| Error::other("an S3 storage without its S3 client"))?;
         let (from, to) = (source.key(&spec.from), self.key(&spec.to));
-        run(ctx, self.op.copy(&from, &to))
+        check_ctx(ctx)?;
+        RUNTIME
+            .block_on(async {
+                tokio::select! {
+                    result = client.copy_object(&source.bucket_prefix.bucket, &from, &to) => result,
+                    () = async { while check_ctx(ctx).is_ok() { tokio::time::sleep(Duration::from_millis(20)).await } } => check_ctx(ctx),
+                }
+            })
             .map_err(|e| e.annotate(format!("failed to copy object, bucket={} from={from} to={to}", self.bucket)))
     }
 }
@@ -438,20 +442,12 @@ pub fn new_s3_storage(ctx: &Context, s3: &S3, opts: &Options) -> Result<CloudSto
     if !s3.force_path_style {
         builder = builder.enable_virtual_host_style();
     }
-    if opts.no_credentials {
-        builder = builder.allow_anonymous().disable_config_load().disable_ec2_metadata();
-    } else if !s3.access_key.is_empty() {
-        builder = builder.access_key_id(&s3.access_key).secret_access_key(&s3.secret_access_key);
-        if !s3.session_token.is_empty() {
-            builder = builder.session_token(&s3.session_token);
-        }
-    } else if !s3.profile.is_empty() {
-        builder = builder.customized_credential_load(Box::new(tidb_aws_sdk::ProfileCredentials::new(&s3.profile, region)));
-    }
-    if !s3.role_arn.is_empty() {
-        builder = builder.role_arn(&s3.role_arn);
-        if !s3.external_id.is_empty() {
-            builder = builder.external_id(&s3.external_id);
+    let http = crate::s3client::http_client()?;
+    let credentials = crate::s3client::credentials(s3, region, opts, &http)?;
+    match &credentials {
+        None => builder = builder.allow_anonymous().disable_config_load().disable_ec2_metadata(),
+        Some(loader) => {
+            builder = builder.customized_credential_load(Box::new(crate::s3client::SharedCredentials(Arc::clone(loader))));
         }
     }
     if !s3.storage_class.is_empty() {
@@ -467,6 +463,15 @@ pub fn new_s3_storage(ctx: &Context, s3: &S3, opts: &Options) -> Result<CloudSto
         let _guard = RUNTIME.enter();
         opendal::Operator::new(builder).map_err(|e| native_error(&e))?.finish()
     };
+    let s3_client = crate::s3client::S3Client {
+        http,
+        credentials,
+        region: region.to_owned(),
+        endpoint: crate::s3client::bucket_endpoint(s3, region, opts),
+        sse: s3.sse.clone(),
+        sse_kms_key_id: s3.sse_kms_key_id.clone(),
+        sse_kms_encryption_context: s3.sse_kms_encryption_context.clone(),
+    };
     let storage = CloudStorage {
         op,
         flavor: Flavor::S3,
@@ -474,6 +479,7 @@ pub fn new_s3_storage(ctx: &Context, s3: &S3, opts: &Options) -> Result<CloudSto
         raw_prefix: s3.prefix.clone(),
         bucket_prefix: BucketPrefix::new(&s3.bucket, &s3.prefix),
         access_rec: opts.access_recording.clone(),
+        s3: Some(s3_client),
     };
     check_permissions(ctx, &storage, &opts.check_permissions)?;
     Ok(storage)
@@ -509,6 +515,7 @@ pub fn new_gcs_storage(ctx: &Context, gcs: &Gcs, opts: &Options) -> Result<Cloud
         raw_prefix: gcs.prefix.clone(),
         bucket_prefix: BucketPrefix::new(&gcs.bucket, &gcs.prefix),
         access_rec: opts.access_recording.clone(),
+        s3: None,
     };
     check_permissions(ctx, &storage, &opts.check_permissions)?;
     Ok(storage)
@@ -555,6 +562,7 @@ pub fn new_azure_blob_storage(ctx: &Context, az: &AzureBlobStorage, opts: &Optio
         raw_prefix: az.prefix.clone(),
         bucket_prefix: BucketPrefix::new(&az.bucket, &az.prefix),
         access_rec: opts.access_recording.clone(),
+        s3: None,
     };
     check_permissions(ctx, &storage, &opts.check_permissions)?;
     Ok(storage)

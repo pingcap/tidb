@@ -106,6 +106,12 @@ fn test_namespace_operations() {
                     assert_eq!(prefix, b"/keyspaces/tidb/42/");
                     reply.send(Ok((vec![entry()], 3))).unwrap();
                 }
+                EtcdCommand::Scan { from, to, limit, reply } => {
+                    assert_eq!(from, b"/keyspaces/tidb/42/");
+                    assert_eq!(to, b"/keyspaces/tidb/420");
+                    assert_eq!(limit, 2);
+                    reply.send(Ok((vec![(physical.to_vec(), b"v2".to_vec())], true))).unwrap();
+                }
                 EtcdCommand::CreateWithLease {
                     key, lease, reply, ..
                 } => {
@@ -189,6 +195,10 @@ fn test_namespace_operations() {
     assert_eq!(
         scoped.get_prefix(b"/").unwrap(),
         [(key.to_vec(), b"v2".to_vec())]
+    );
+    assert_eq!(
+        scoped.scan(b"/", b"0", 2).unwrap(),
+        (vec![(b"/a".to_vec(), b"v2".to_vec())], true)
     );
     let (entries, revision) = scoped.get_prefix_metadata_with_revision(b"/").unwrap();
     assert_eq!(revision, 3);
