@@ -317,6 +317,19 @@ PRs, each stacked on the previous one (the first on #56):
    restored by database and by table over `local://` and MinIO S3, a Go
    backup restored by Rust, a refused restore over existing tables, and a
    failed restore resumed from its checkpoint, with KV counts, bytes and
-   ordered rows equal to the source. TiFlash progress, log restore and
-   name routing are not ported.
-7. Delete the E07 row; record the unreachable parts as a gap row.
+   ordered rows equal to the source. Log restore and name routing are not
+   ported.
+7. Done (the last E07 PR): `WAIT_TIFLASH_READY` works. Go's
+   `calculateTiFlashProgress`, `MustGetTiFlashProgress`,
+   `GetTiFlashProgressStores` and `helper.CollectTiFlashStatusWithCtx` /
+   `ComputeTiFlashStatus` are in `tidb-domain-infosync` as in Go (the DDL
+   TiFlash poller calls the same calculation), and the BR glue reads the
+   stores once, as Go's pipeline does. Live with one TiFlash store: a table
+   and a partitioned table with TiFlash replicas restored with
+   `WAIT_TIFLASH_READY = 1`, replicas available and TiFlash reads correct.
+   The E07 row is deleted from the structural findings register (Markdown
+   and JSON); what SQL cannot reach (log backup and PiTR, including a
+   restore during a running log backup task, EBS, raw/txn, the repo layout,
+   name routing, the `br` CLI) is the new open row E28. The `zzprobe/e07*`
+   Go probes were removed after their captures were committed under
+   `tidb-br/testdata`.

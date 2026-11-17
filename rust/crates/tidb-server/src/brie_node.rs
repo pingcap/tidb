@@ -365,6 +365,28 @@ impl tidb_br::glue::Domain for BrDomain {
             })
     }
 
+    /// Go `infosync.GetTiFlashProgressStores`.
+    fn tiflash_progress_stores(&self) -> Result<tidb_br::glue::TiFlashProgressStores> {
+        tidb_domain_infosync::tiflash_manager::get_tiflash_progress_stores().map_err(errorf)
+    }
+
+    /// Go `infosync.MustGetTiFlashProgress`.
+    fn tiflash_progress(
+        &self,
+        _ctx: &tidb_gocontext::Context,
+        physical_id: i64,
+        replica_count: u64,
+        stores: &tidb_br::glue::TiFlashProgressStores,
+    ) -> Result<f64> {
+        tidb_domain_infosync::tiflash_manager::must_get_tiflash_progress(
+            physical_id,
+            replica_count,
+            &stores.0,
+            &stores.1,
+        )
+        .map_err(errorf)
+    }
+
     /// Go `infosync.UpdateLabelRules`.
     fn update_label_rules(&self, patch: &tidb_ddl_label::LabelRulePatch) -> Result<()> {
         tidb_domain_infosync::label_manager::label_rule_manager()

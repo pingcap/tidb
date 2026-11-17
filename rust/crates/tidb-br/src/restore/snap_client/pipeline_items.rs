@@ -656,6 +656,17 @@ impl SnapClient {
         update_ch: Arc<dyn Progress>,
     ) -> Result<()> {
         let dom = Arc::clone(self.dom()?);
+        // Go reads the stores once (`TODO support tiflash store changes`).
+        let (tiflash_stores, tikv_stores) = dom.tiflash_progress_stores()?;
+        // Without TiFlash stores the columnar stores answer instead.
+        let stores = (
+            tiflash_stores.clone(),
+            if tiflash_stores.is_empty() {
+                tikv_stores
+            } else {
+                Vec::new()
+            },
+        );
         builder.register_pipeline_task(
             "Wait For Tiflash Ready",
             4,
@@ -674,6 +685,9 @@ impl SnapClient {
                     return Ok(());
                 };
                 let count = replica.read().count;
+                if stores.0.is_empty() {
+                    tidb_log::warn("no tiflash store found, check columnar store for replica instead", &fields());
+                }
                 tidb_log::info("table has tiflash replica, start sync..", &fields());
                 let partition_ids: Vec<i64> = new
                     .get_partition_info()
@@ -681,7 +695,7 @@ impl SnapClient {
                     .unwrap_or_default();
                 loop {
                     let progress = if partition_ids.is_empty() {
-                        match dom.tiflash_progress(c, new.id, count) {
+                        match dom.tiflash_progress(c, new.id, count, &stores) {
                             Ok(p) => p,
                             Err(e) => {
                                 tidb_log::warn(
@@ -699,7 +713,7 @@ impl SnapClient {
                         // averages over all of them.
                         let mut sum = 0.0;
                         for &id in &partition_ids {
-                            match dom.tiflash_progress(c, id, count) {
+                            match dom.tiflash_progress(c, id, count, &stores) {
                                 Ok(p) => sum += p,
                                 Err(e) => {
                                     tidb_log::warn(

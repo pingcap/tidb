@@ -138,6 +138,12 @@ pub struct MetaUpdate {
     pub modify_count: i64,
 }
 
+/// Go `GetTiFlashProgressStores`'s `(tiFlashStores, tikvStores)`.
+pub type TiFlashProgressStores = (
+    Vec<tikv_client::pd_http::StoreInfo>,
+    Vec<tikv_client::pd_http::StoreInfo>,
+);
+
 /// A PD region label rule: its ID and `(key, value)` labels.
 pub type LabelRule = (String, Vec<(String, String)>);
 
@@ -250,17 +256,27 @@ pub trait Domain: Send + Sync {
             "UpdateLabelRules is not supported by this domain",
         ))
     }
-    /// Go `infosync.GetTiFlashProgressStores` then
-    /// `MustGetTiFlashProgress(ctx, id, replicaCount, tiflash, tikv)`: the
-    /// replica sync progress of a physical table, in `[0, 1]`.
+    /// Go `infosync.GetTiFlashProgressStores`: the TiFlash write stores and
+    /// the TiKV stores.
     ///
     /// # Errors
     /// PD's error.
+    fn tiflash_progress_stores(&self) -> Result<TiFlashProgressStores> {
+        Err(crate::errors::errorf(
+            "GetTiFlashProgressStores is not supported by this domain",
+        ))
+    }
+    /// Go `infosync.MustGetTiFlashProgress(ctx, id, replicaCount, tiflash,
+    /// tikv)`: the replica sync progress of a physical table, in `[0, 1]`.
+    ///
+    /// # Errors
+    /// PD's or a store's error.
     fn tiflash_progress(
         &self,
         _ctx: &Context,
         _physical_id: i64,
         _replica_count: u64,
+        _stores: &TiFlashProgressStores,
     ) -> Result<f64> {
         Err(crate::errors::errorf(
             "MustGetTiFlashProgress is not supported by this domain",

@@ -365,7 +365,16 @@ impl Domain for MockCluster {
             .push(patch.set_rules.map_visible(|r| r.id.clone()));
         Ok(())
     }
-    fn tiflash_progress(&self, _: &Context, physical_id: i64, _: u64) -> Result<f64> {
+    fn tiflash_progress_stores(&self) -> Result<crate::glue::TiFlashProgressStores> {
+        Ok((Vec::new(), Vec::new()))
+    }
+    fn tiflash_progress(
+        &self,
+        _: &Context,
+        physical_id: i64,
+        _: u64,
+        _: &crate::glue::TiFlashProgressStores,
+    ) -> Result<f64> {
         Ok(self
             .state()
             .tiflash_progress

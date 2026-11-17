@@ -597,45 +597,30 @@ impl TiFlashReplicaManager {
     ) -> Result<(f64, f64), String> {
         // Go `GetRegionCountFromPD`: `GetRegionStatusByKeyRange(.., true)`
         // over the escaped binary memcomparable keys.
-        let (start_key, end_key) = tidb_domain_infosync::tiflash_manager::table_region_range(table_id);
-        let stats = block_on_pd_http(
+        let (start_key, end_key) =
+            tidb_domain_infosync::tiflash_manager::table_region_range(table_id);
+        let region_count = block_on_pd_http(
             self.pd_http_client
                 .get_region_status_by_key_range(&pd_http::new_key_range(start_key, end_key), true),
+        )
+        .map(|stats| stats.count);
+        // Go `CollectTiFlashStatusWithCtx` parses the body regardless of
+        // the HTTP status.
+        let (full, one) = tidb_domain_infosync::tiflash_manager::calculate_tiflash_progress(
+            region_count,
+            table_id,
+            replica_count,
+            stores,
+            |status_address| {
+                let url = format!(
+                    "{}://{status_address}/tiflash/sync-status/keyspace/{NULL_KEYSPACE_ID}/table/{table_id}",
+                    self.http_scheme,
+                );
+                self.http_call("GET", &url, None, TIFLASH_HTTP_TIMEOUT)
+                    .and_then(|(_, body)| parse_sync_status(&body))
+            },
         )?;
-        let region_count = stats.count;
-        if region_count <= 0 {
-            return Err("region count getting from PD is 0".to_owned());
-        }
-
-        // Go `getTiFlashPeerWithoutLagCount`: union the per-store region
-        // reports; a region counts once even when several stores hold it.
-        let mut regions_with_peer = std::collections::HashSet::new();
-        let mut peer_count = 0usize;
-        for store in stores {
-            let url = format!(
-                "{}://{}/tiflash/sync-status/keyspace/{NULL_KEYSPACE_ID}/table/{table_id}",
-                self.http_scheme, store.store.status_address,
-            );
-            // CollectTiFlashStatusWithCtx parses the body regardless of HTTP status.
-            let regions = self
-                .http_call("GET", &url, None, TIFLASH_HTTP_TIMEOUT)
-                .and_then(|(_, body)| parse_sync_status(&body));
-            let store_regions: std::collections::HashSet<_> = match regions {
-                Ok(regions) => regions.into_iter().collect(),
-                // Just skip down or offline or tombstone stores, because PD
-                // will migrate regions from these stores.
-                Err(error) if store.store.state_name == "Up" || store.store.state_name == "Disconnected" => {
-                    return Err(error)
-                }
-                Err(_) => continue,
-            };
-            peer_count += store_regions.len();
-            regions_with_peer.extend(store_regions);
-        }
-        let region_count = region_count as f64;
-        let one_replica_progress = regions_with_peer.len() as f64 / region_count;
-        let full_progress = (peer_count as f64 / (region_count * replica_count as f64)).min(1.0);
-        Ok((one_replica_progress, full_progress))
+        Ok((one, full))
     }
 }
 
@@ -655,39 +640,8 @@ fn is_tiflash_write_http_resp(store: &pd_http::MetaStore) -> bool {
         .any(|label| label.key == "engine" && label.value == "tiflash")
 }
 
-/// Go helper.ComputeTiFlashStatus: a count line followed by space-separated IDs.
-fn parse_sync_status(body: &str) -> Result<Vec<i64>, String> {
-    let mut lines = body.split_inclusive('\n');
-    let mut next_line = || {
-        lines
-            .next()
-            .filter(|line| line.ends_with('\n'))
-            .map(|line| line.trim_matches(['\r', '\n', '\t']))
-            .ok_or_else(|| "incomplete TiFlash sync-status response".to_owned())
-    };
-    let expected: i64 = next_line()?
-        .parse()
-        .map_err(|error| format!("TiFlash region count: {error}"))?;
-    let regions: Vec<i64> = next_line()?
-        .split(' ')
-        .filter(|id| !id.is_empty())
-        .map(|id| {
-            id.parse()
-                .map_err(|error| format!("TiFlash region ID: {error}"))
-        })
-        .collect::<Result<_, _>>()?;
-    // Go warns on count disagreement but accepts the successfully parsed IDs.
-    if expected != regions.len() as i64 {
-        tidb_logutil::bg_logger().warn(
-            "ComputeTiFlashStatus count check failed",
-            &[
-                Field::new("claim", Value::I64(expected)),
-                Field::new("real", Value::I64(regions.len() as i64)),
-            ],
-        );
-    }
-    Ok(regions)
-}
+/// Go `helper.ComputeTiFlashStatus`.
+use tidb_domain_infosync::tiflash_manager::compute_tiflash_status as parse_sync_status;
 
 /// zap `zap.Error(err)`.
 fn zap_error(error: &str) -> Field {
@@ -1442,6 +1396,9 @@ mod tests {
             fn sync_tiflash_table_schema(&self, _: i64, _: &[pd_http::StoreInfo]) -> Result<(), String> {
                 Ok(())
             }
+            fn get_region_count_from_pd(&self, _: i64) -> Result<i64, String> {
+                Ok(1)
+            }
         }
         let http = HttpFixture::new(columnar_response);
         // The TiFlash stores serve no columnar status: asking one fails.
@@ -1689,6 +1646,9 @@ mod tests {
             }
             fn sync_tiflash_table_schema(&self, _: i64, _: &[pd_http::StoreInfo]) -> Result<(), String> {
                 Ok(())
+            }
+            fn get_region_count_from_pd(&self, _: i64) -> Result<i64, String> {
+                Ok(1)
             }
         }
         init_tiflash_replica_manager(Some(Arc::new(Rules)));
