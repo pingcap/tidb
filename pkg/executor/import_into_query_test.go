@@ -156,6 +156,25 @@ func TestImportQueryPlanExecution(t *testing.T) {
 			require.Equal(t, expected, got)
 		})
 	}
+	t.Run("empty results retain their schema", func(t *testing.T) {
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
+		q := captureImportQuery(t, tk, "import into unused_target from select i from query_src")
+		for _, tc := range []struct {
+			projection string
+			width      int
+		}{{"i", 1}, {"i, g", 2}} {
+			output := make(chan importer.QueryChunk, 1)
+			sql := "import into unused_target from (select " + tc.projection + " from query_src where 1=0)"
+			require.NoError(t, executor.RunImportQuery(context.Background(), newWorkerSession(t, store), q, sql, importQueryMemQuota, output))
+			close(output)
+			result, ok := <-output
+			require.True(t, ok, "an empty SELECT must still send its result schema")
+			require.Zero(t, result.Chk.NumRows())
+			require.Len(t, result.Fields, tc.width)
+			_, ok = <-output
+			require.False(t, ok)
+		}
+	})
 	t.Run("mv maintenance follows the submitter", func(t *testing.T) {
 		sql := "import into unused_target from select i from query_src"
 		for _, inMaintenance := range []bool{false, true} {

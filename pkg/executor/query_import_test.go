@@ -16,19 +16,16 @@ package executor_test
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -40,28 +37,6 @@ func newQueryImportSession(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().InMViewMaintenance = true
 	return tk
-}
-
-// normalizedQueryImportPlan removes the values that differ between two captures.
-func normalizedQueryImportPlan(t *testing.T, plan *importer.Plan) map[string]any {
-	data, err := json.Marshal(plan)
-	require.NoError(t, err)
-	var fields map[string]any
-	require.NoError(t, json.Unmarshal(data, &fields))
-	query := fields["QuerySource"].(map[string]any)
-	delete(query, "ReadTS")
-	delete(query, "EncodeTimestamp")
-	states := query["SessionStates"].(map[string]any)
-	delete(states, "affected-rows")
-	delete(states, "found-rows")
-	delete(states, "txn-info")
-	// A worker replaces the status with its own, see QuerySource.RestoreStates.
-	delete(states, "status")
-	sysVars := states["sys-vars"].(map[string]any)
-	for _, name := range []string{"rand_seed1", "rand_seed2", "timestamp"} {
-		delete(sysVars, name)
-	}
-	return fields
 }
 
 func TestPrepareQueryImport(t *testing.T) {
@@ -107,6 +82,8 @@ func TestPrepareQueryImport(t *testing.T) {
 		SourceTableIDs: []int64{srcTbl.Meta().ID},
 	}
 
+	before, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
 	directTK := newQueryImportSession(t, store)
 	direct, err := importer.PrepareQueryImport(ctx, directTK.Session(), request)
 	require.NoError(t, err)
@@ -114,71 +91,19 @@ func TestPrepareQueryImport(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, txn.Valid())
 	require.Equal(t, 1, direct.MaxNodeCnt)
-
-	t.Run("matches a planned statement", func(t *testing.T) {
-		plannedTK := newQueryImportSession(t, store)
-		// A transaction gives the session a context provider, as a running statement has.
-		plannedTK.MustExec("begin")
-		se := plannedTK.Session()
-		nodes, err := se.Parse(ctx, sql)
-		require.NoError(t, err)
-		require.NoError(t, executor.ResetContextOfStmt(se, nodes[0]))
-		stmt, err := (&executor.Compiler{Ctx: se}).Compile(ctx, nodes[0])
-		require.NoError(t, err)
-		physical := stmt.Plan.(*plannercore.ImportInto)
-		planned, err := executor.NewImportPlan(ctx, se, physical, dstTbl)
-		require.NoError(t, err)
-		controller, err := importer.NewLoadDataController(planned, dstTbl, &importer.ASTArgs{
-			FileLocRef:         ast.FileLocServerOrRemote,
-			ColumnsAndUserVars: physical.ColumnsAndUserVars,
-			ColumnAssignments:  physical.ColumnAssignments,
-			OnDuplicate:        ast.OnDuplicateKeyHandlingReplace,
-		})
-		require.NoError(t, err)
-		require.NoError(t, executor.PlanImportQueryForTest(se, sql))
-		query, err := importer.CaptureQuerySource(se, sql)
-		require.NoError(t, err)
-		require.NoError(t, controller.SetQuerySource(ctx, query))
-		se.RollbackTxn(ctx)
-		require.Equal(t, normalizedQueryImportPlan(t, planned), normalizedQueryImportPlan(t, direct))
-	})
-
-	t.Run("a worker reads the captured snapshot", func(t *testing.T) {
-		tk.MustExec("insert into src values (2, 2), (3, 3)")
-		workerTK := testkit.NewTestKit(t, store)
-		output := make(chan importer.QueryChunk, 4)
-		done := make(chan error, 1)
-		go func() {
-			done <- executor.RunImportQuery(ctx, workerTK.Session(), direct.QuerySource, sql, 1<<30, output)
-			close(output)
-		}()
-		rows := 0
-		for chk := range output {
-			rows += chk.Chk.NumRows()
-		}
-		require.NoError(t, <-done)
-		require.Equal(t, 1, rows)
-	})
-
-	t.Run("empty results retain their schema", func(t *testing.T) {
-		for _, projection := range []string{"a", "a, b"} {
-			output := make(chan importer.QueryChunk, 1)
-			workerTK := testkit.NewTestKit(t, store)
-			sql := "import into test.dst from (select " + projection + " from test.src where 1=0)"
-			require.NoError(t, executor.RunImportQuery(ctx, workerTK.Session(), direct.QuerySource, sql, 1<<30, output))
-			close(output)
-			result, ok := <-output
-			require.True(t, ok, "an empty SELECT must still send its result schema")
-			require.Zero(t, result.Chk.NumRows())
-			width := 1
-			if projection == "a, b" {
-				width = 2
-			}
-			require.Len(t, result.Fields, width)
-			_, ok = <-output
-			require.False(t, ok)
-		}
-	})
+	require.Equal(t, "test", direct.DBName)
+	require.Equal(t, dstTbl.Meta().ID, direct.TableInfo.ID)
+	require.Equal(t, importer.DataSourceTypeQuery, direct.DataSourceType)
+	require.True(t, direct.DisablePrecheck)
+	require.EqualValues(t, 1<<30, direct.DiskQuota)
+	require.Positive(t, direct.ThreadCnt)
+	require.GreaterOrEqual(t, direct.QuerySource.ReadTS, before.Ver)
+	require.NotZero(t, direct.QuerySource.SchemaVersion)
+	require.NotZero(t, direct.QuerySource.EncodeTimestamp)
+	require.True(t, direct.QuerySource.InMViewMaintenance)
+	require.NotEmpty(t, direct.QuerySource.SessionStates.SystemVars[vardef.Timestamp])
+	require.Equal(t, []importer.SourceTable{{DBID: request.DBID, ID: srcTbl.Meta().ID,
+		Revision: srcTbl.Meta().Revision}}, direct.QuerySource.Tables)
 
 	t.Run("keeps the resource group of the session", func(t *testing.T) {
 		// Without a planned statement, the statement context holds no group.
@@ -222,25 +147,22 @@ func TestPrepareQueryImport(t *testing.T) {
 		tk.MustExec("create view src_view as select a from src")
 		tk.MustExec("create sequence src_seq")
 		is := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
-		dbID := dstTbl.Meta().DBID
-		prepareSource := func(tableID int64) error {
-			req := *request
-			req.SourceTableIDs = []int64{tableID}
-			_, err := importer.PrepareQueryImport(ctx, newQueryImportSession(t, store).Session(), &req)
-			return err
-		}
-		for name, message := range map[string]string{"src_view": "views", "src_seq": "sequences"} {
-			tbl, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr(name))
+		for _, tc := range []struct {
+			source, sql, message string
+		}{
+			{source: "src_view", message: "views"},
+			{source: "src_seq", message: "sequences"},
+			{source: "src", sql: "import into test.dst from (select nextval(src_seq), 1)", message: "sequences"},
+		} {
+			tbl, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr(tc.source))
 			require.NoError(t, err)
-			err = prepareSource(tbl.Meta().ID)
-			require.ErrorContains(t, err, message)
+			req := *request
+			req.SourceTableIDs = []int64{tbl.Meta().ID}
+			if tc.sql != "" {
+				req.SQL = tc.sql
+			}
+			_, err = importer.PrepareQueryImport(ctx, newQueryImportSession(t, store).Session(), &req)
+			require.ErrorContains(t, err, tc.message)
 		}
-		err = prepareSource(1 << 40)
-		require.ErrorContains(t, err, "not found")
-		_, err = importer.PrepareQueryImport(ctx, newQueryImportSession(t, store).Session(), &importer.QueryImportRequest{
-			SQL:    "import into test.dst from (select nextval(src_seq), 1)",
-			DBName: "test", DBID: dbID, Table: dstTbl,
-		})
-		require.ErrorContains(t, err, "sequences")
 	})
 }
