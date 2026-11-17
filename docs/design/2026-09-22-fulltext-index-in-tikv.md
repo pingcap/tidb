@@ -565,6 +565,33 @@ structure and is what MySQL's InnoDB FTS does too.
   sets instead of a merge.
 - **Posting lists as blobs per term**, as InnoDB does: every insert touching
   a common term rewrites the same blob, serialising writers.
+- **IndexMerge over one partial path per term, without the excluded (`-`)
+  operator.** Not preferred: it limits customers who want the full
+  three-valued logic of boolean mode, required (`+`), optional and excluded
+  (`-`), which MySQL applications already write and expect the index to
+  serve.
+  - Required terms map to an IndexMerge intersection and optional terms, in
+    a group without required ones, to a union. The excluded operator is the
+    only one needing a set difference, which IndexMerge does not have. It
+    never yields rows on its own (a search of excluded terms only matches
+    nothing), it only removes rows from the positive set.
+  - Without it in the index, a `-` search either reads the positive rows and
+    re-evaluates the MATCH on each document, fetching every row the excluded
+    terms would have removed and tokenizing it again, which is the cost the
+    path exists to avoid; or it does not use the index and scans the table.
+  - The posting engine applies `-` cheaply: an excluded list is read in
+    handle order and stepped alongside the result as it streams, costing the
+    size of that list (counted by `PostingReads`), never adding rows.
+  - Independently of `-`, per-term IndexMerge cannot serve phrases, which
+    need positions; NGRAM searches, where every word is a phrase of grams;
+    or nested groups such as `+(a b) +(c d)`. Its intersection also reads
+    every list in full, where the engine reads the smallest list and seeks
+    in the others, and a search of up to 32 terms would plan as many
+    partial paths.
+  - A per-term IndexMerge remains a possible later optimisation for the
+    simplest searches: exact single words, `+` and optional only, one
+    level, STANDARD parser. It would reuse IndexMerge's executor, cost and
+    EXPLAIN, at the price of two plan shapes for one feature.
 
 ## Unresolved Questions
 
