@@ -564,16 +564,6 @@ pub trait Columns {
         Err(EvalError::Unsupported("unbound prepared parameter"))
     }
 
-    /// Go `SessionVars.CurrInsertValues`, read by `builtinValues*Sig` at
-    /// evaluation time. A statement without an active insert row returns
-    /// `Ok(None)` (the SQL NULL result); an active row whose offset is outside
-    /// its field list returns the source-shaped length/offset error. The
-    /// default keeps expression-only contexts equivalent to Go's empty
-    /// `chunk.Row` used by constant folding.
-    fn current_insert_value(&self, _offset: usize) -> Result<Option<Datum>, EvalError> {
-        Ok(None)
-    }
-
     /// Go `exprctx.ParamValues.GetParamValue`, used by the internal
     /// `GETPARAM()` builtin. A resolver with no plan-cache parameter list
     /// exposes Go's empty-list error by default; statement/session owners
@@ -681,12 +671,6 @@ pub trait Columns {
     /// Releases every advisory-lock reference held by this session.
     fn release_all_advisory_locks(&self) -> Result<usize, EvalError> {
         Err(EvalError::Unsupported("advisory locks require a session"))
-    }
-
-    /// Go `TIDB_CURRENT_TSO()`: the active transaction's start timestamp, or
-    /// zero when this session has no active transaction.
-    fn current_tso(&self) -> i64 {
-        0
     }
 
     /// Go `DDLOwnerPropReader.IsDDLOwner`: whether this node is the DDL

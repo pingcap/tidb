@@ -736,6 +736,8 @@ struct StmtSessionVars {
     sql_killer: Arc<tidb_sqlkiller::SqlKiller>,
     has_table_ids: bool,
     in_insert_update_or_delete: bool,
+    current_tso: CurrentTso,
+    current_insert_values: Arc<Mutex<Option<Vec<Datum>>>>,
 }
 
 /// Go `SessionVars.User` of a session that matched the account
@@ -817,6 +819,16 @@ impl tidb_expropt::SessionVars for StmtSessionVars {
 
     fn stmt_in_insert_update_or_delete(&self) -> bool {
         self.in_insert_update_or_delete
+    }
+
+    fn current_ts(&self) -> i64 {
+        self.current_tso.value()
+    }
+
+    fn curr_insert_values_at(&self, offset: usize) -> Option<(usize, Option<Datum>)> {
+        let values = self.current_insert_values.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let values = values.as_ref().filter(|values| !values.is_empty())?;
+        Some((values.len(), values.get(offset).cloned()))
     }
 }
 
@@ -6625,6 +6637,8 @@ impl StmtContext {
                 self.statement_class,
                 StatementClass::Insert | StatementClass::Update | StatementClass::Delete
             ),
+            current_tso: self.current_tso.clone(),
+            current_insert_values: Arc::clone(&self.current_insert_values),
         }
     }
 
@@ -7423,28 +7437,6 @@ impl Columns for StmtContext {
             ))
     }
 
-    fn current_insert_value(&self, offset: usize) -> Result<Option<Datum>, tidb_exprctx::EvalError> {
-        let values = self
-            .current_insert_values
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let Some(values) = values.as_ref() else {
-            return Ok(None);
-        };
-        if values.is_empty() {
-            return Ok(None);
-        }
-        values.get(offset).cloned().map_or_else(
-            || {
-                Err(tidb_exprctx::EvalError::IncorrectArguments(format!(
-                    "Session current insert values len {} and column's offset {offset} don't match",
-                    values.len()
-                )))
-            },
-            |value| Ok(Some(value)),
-        )
-    }
-
     fn connection_charset_info(&self) -> (&str, &str) {
         StmtContext::connection_charset_info(self)
     }
@@ -7555,10 +7547,6 @@ impl Columns for StmtContext {
                 provider(&tidb_config::tikvcfg::get_txn_scope_from_config())
             })
         })
-    }
-
-    fn current_tso(&self) -> i64 {
-        self.current_tso.value()
     }
 
     fn tidb_info(&self) -> String {

@@ -8666,14 +8666,14 @@ use super::*;
         let ctx = crate::StmtContext::for_query_with_memory(session.statement()).with_txn_store(Box::new(store.clone()));
         let _executor = build(&plan, &catalog, &ctx).expect("build physical table reader");
 
-        assert!(tidb_exprctx::Columns::sleep_for(
-            &ctx,
-            std::time::Duration::from_secs(1)
-        ));
-        assert!(tidb_exprctx::Columns::sleep_for(
-            &ctx,
-            std::time::Duration::from_secs(1)
-        ));
+        // Building the physical table reader is Go's non-empty
+        // `StmtCtx.TableIDs`: `doSleep` keeps the kill for the rest of the
+        // statement.
+        let vars = tidb_expropt::SessionVarsPropReader
+            .get_session_vars(&ctx as &dyn tidb_exprctx::Columns)
+            .unwrap();
+        assert!(vars.stmt_has_table_ids());
+        assert!(vars.sql_killer().unwrap().handle_signal().is_some());
     }
 
     #[test]

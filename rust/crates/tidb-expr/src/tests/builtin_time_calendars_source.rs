@@ -1067,8 +1067,11 @@ fn current_tso_reports_session_transaction_tso() {
             None
         }
 
-        fn current_tso(&self) -> i64 {
-            self.0
+        fn get_optional_prop_provider(
+            &self,
+            key: tidb_exprctx::OptionalEvalPropKey,
+        ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+            crate::test_identity::TestSession { current_ts: self.0, ..Default::default() }.props().get(key)
         }
     }
 
@@ -1077,9 +1080,6 @@ fn current_tso_reports_session_transaction_tso() {
         dispatched("TIDB_CURRENT_TSO", &[], &ctx),
         Datum::Int(452_605_852_463_012_352)
     );
-    // No active transaction (the trait default): Go's zero value.
-    assert_eq!(
-        dispatched("TIDB_CURRENT_TSO", &[], &NoColumns),
-        Datum::Int(0)
-    );
+    // No active transaction: Go's zero value.
+    assert_eq!(dispatched("TIDB_CURRENT_TSO", &[], &SessionTso(0)), Datum::Int(0));
 }

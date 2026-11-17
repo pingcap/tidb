@@ -81,6 +81,18 @@ pub trait SessionVars: Any + Send + Sync {
     fn stmt_in_insert_update_or_delete(&self) -> bool {
         false
     }
+    /// Go `GetSessionOrGlobalSystemVar("tidb_current_ts")`: the active
+    /// transaction's start timestamp, 0 outside one.
+    fn current_ts(&self) -> i64 {
+        0
+    }
+    /// Go `SessionVars.CurrInsertValues` as `VALUES(col)` reads it: `None`
+    /// for an empty row (outside `INSERT ... ON DUPLICATE KEY UPDATE`), else
+    /// the row's length and its value at `offset` when the row has one.
+    fn curr_insert_values_at(&self, offset: usize) -> Option<(usize, Option<tidb_datatype::Datum>)> {
+        let _ = offset;
+        None
+    }
 }
 
 /// boundary: Go `pkg/sessionctx/variable.SessionVarsProvider` — anything that

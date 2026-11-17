@@ -110,12 +110,12 @@ impl tidb_exprctx::context::Columns for ParamStore {
 /// read without evaluating an expression argument.
 #[derive(Default)]
 struct InsertValuesStore {
-    values: RefCell<Option<Vec<Datum>>>,
+    session: crate::test_identity::TestSession,
 }
 
 impl InsertValuesStore {
     fn set(&self, values: Vec<Datum>) {
-        *self.values.borrow_mut() = Some(values);
+        *self.session.curr_insert_values.lock().unwrap() = Some(values);
     }
 }
 
@@ -124,23 +124,11 @@ impl tidb_exprctx::context::Columns for InsertValuesStore {
         None
     }
 
-    fn current_insert_value(&self, offset: usize) -> Result<Option<Datum>, EvalError> {
-        let values = self.values.borrow();
-        let Some(values) = values.as_ref() else {
-            return Ok(None);
-        };
-        if values.is_empty() {
-            return Ok(None);
-        }
-        values.get(offset).cloned().map_or_else(
-            || {
-                Err(EvalError::IncorrectArguments(format!(
-                    "Session current insert values len {} and column's offset {offset} don't match",
-                    values.len()
-                )))
-            },
-            |value| Ok(Some(value)),
-        )
+    fn get_optional_prop_provider(
+        &self,
+        key: tidb_exprctx::OptionalEvalPropKey,
+    ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+        self.session.props().get(key)
     }
 }
 

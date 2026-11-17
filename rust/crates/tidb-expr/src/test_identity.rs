@@ -46,6 +46,10 @@ pub(crate) struct TestSession {
     pub(crate) sql_killer: Option<Arc<tidb_sqlkiller::SqlKiller>>,
     /// Go `StmtCtx.InInsertStmt || InUpdateStmt || InDeleteStmt`.
     pub(crate) in_insert_update_or_delete: bool,
+    /// Go `tidb_current_ts`.
+    pub(crate) current_ts: i64,
+    /// Go `SessionVars.CurrInsertValues`.
+    pub(crate) curr_insert_values: Arc<Mutex<Option<Vec<tidb_datatype::Datum>>>>,
 }
 
 #[derive(Clone)]
@@ -95,6 +99,16 @@ impl tidb_expropt::SessionVars for Vars {
 
     fn stmt_in_insert_update_or_delete(&self) -> bool {
         self.session.in_insert_update_or_delete
+    }
+
+    fn current_ts(&self) -> i64 {
+        self.session.current_ts
+    }
+
+    fn curr_insert_values_at(&self, offset: usize) -> Option<(usize, Option<tidb_datatype::Datum>)> {
+        let values = self.session.curr_insert_values.lock().unwrap();
+        let values = values.as_ref().filter(|values| !values.is_empty())?;
+        Some((values.len(), values.get(offset).cloned()))
     }
 }
 

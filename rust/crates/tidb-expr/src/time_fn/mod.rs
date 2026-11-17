@@ -41,7 +41,12 @@ pub(crate) fn current_tso(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, E
     if !vals.is_empty() {
         return Err(EvalError::Unsupported("bad function arity"));
     }
-    Ok(Datum::Int(cols.current_tso()))
+    // Go `builtinTiDBCurrentTsoSig.evalInt`: `GetSessionVars`, then
+    // `tidb_current_ts`.
+    let vars = tidb_expropt::SessionVarsPropReader
+        .get_session_vars(cols)
+        .map_err(crate::builtin_ext::misc::opt_prop_error)?;
+    Ok(Datum::Int(vars.current_ts()))
 }
 
 /// Go `builtinTiDBBoundedStalenessSig.evalTime`: a read timestamp from the

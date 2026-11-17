@@ -275,23 +275,32 @@ pub(crate) fn json_schema_valid(function: &ScalarFunction, ctx: &dyn Columns, ro
     function.json_schema_cache.eval(&function.args, ctx, row)
 }
 
-/// Go `builtinValues*Sig`: the statement's current insert row at the
-/// offset `NewValuesFunc` fixed; no row is SQL NULL.
+/// Go `builtinValues*Sig`: `SessionVars.CurrInsertValues` at the offset
+/// `NewValuesFunc` fixed; an empty row is SQL NULL, and an offset past the
+/// row is Go's length/offset error.
 pub(crate) fn values(function: &ScalarFunction, ctx: &dyn Columns, _: Row<'_>) -> Result<Datum, EvalError> {
+    let vars = session_vars(ctx)?;
     let offset = function
         .values_offset()
         .ok_or(EvalError::Unsupported("VALUES offset is not initialized"))?;
-    match ctx.current_insert_value(offset)? {
-        None => Ok(Datum::Null),
+    let Some((len, value)) = vars.curr_insert_values_at(offset) else {
+        return Ok(Datum::Null);
+    };
+    let Some(value) = value else {
+        return Err(EvalError::IncorrectArguments(format!(
+            "Session current insert values len {len} and column's offset {offset} don't match"
+        )));
+    };
+    match value {
         // Go `builtinValuesStringSig` reads an ENUM/SET value back through
         // `row.GetDatum(offset, retType).ToString()`: the member name.
-        Some(value @ (Datum::Enum(..) | Datum::Set(..))) => {
+        value @ (Datum::Enum(..) | Datum::Set(..)) => {
             let bytes = value
                 .to_bytes()
                 .map_err(|_| EvalError::Unsupported("ENUM/SET VALUES() name"))?;
             Ok(Datum::new_collation_string_datum(bytes, function.derived_collation()))
         }
-        Some(value) => Ok(value),
+        value => Ok(value),
     }
 }
 
