@@ -40,6 +40,7 @@ use crate::metautil::Storage;
 
 pub mod backup;
 pub mod gojson;
+pub mod restore;
 
 /// Go `CheckpointDir`.
 pub const CHECKPOINT_DIR: &str = "checkpoints";

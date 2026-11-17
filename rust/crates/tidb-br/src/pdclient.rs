@@ -85,6 +85,74 @@ pub trait PdClient: Send + Sync {
     /// # Errors
     /// PD's error.
     fn delete_gc_barrier(&self, ctx: &Context, keyspace_id: u32, barrier_id: &str) -> Result<()>;
+    /// Go `GetRegion(key)` from PD, with its pending and down peers; `None`
+    /// for no region.
+    ///
+    /// # Errors
+    /// PD's error.
+    fn get_region(&self, _ctx: &Context, _key: &[u8]) -> Result<Option<PdRegion>> {
+        Err(errors::errorf("GetRegion is not implemented by this PD client"))
+    }
+    /// Go `GetRegionByID` from PD.
+    ///
+    /// # Errors
+    /// PD's error.
+    fn get_region_by_id(&self, _ctx: &Context, _region_id: u64) -> Result<Option<PdRegion>> {
+        Err(errors::errorf("GetRegionByID is not implemented by this PD client"))
+    }
+    /// Go `ScanRegions(key, endKey, limit)`.
+    ///
+    /// # Errors
+    /// PD's error.
+    fn scan_regions(&self, _ctx: &Context, _key: &[u8], _end_key: &[u8], _limit: usize) -> Result<Vec<PdRegion>> {
+        Err(errors::errorf("ScanRegions is not implemented by this PD client"))
+    }
+    /// Go `ScatterRegions(regionIDs, opt.WithSkipStoreLimit())`.
+    ///
+    /// # Errors
+    /// PD's error.
+    fn scatter_regions(&self, _ctx: &Context, _region_ids: &[u64]) -> Result<tidb_proto::pdpb::ScatterRegionResponse> {
+        Err(errors::errorf("ScatterRegions is not implemented by this PD client"))
+    }
+    /// Go `ScatterRegion(regionID)`: the legacy one-region scatter.
+    ///
+    /// # Errors
+    /// PD's error.
+    fn scatter_region(&self, _ctx: &Context, _region_id: u64) -> Result<()> {
+        Err(errors::errorf("ScatterRegion is not implemented by this PD client"))
+    }
+    /// Go `GetOperator(regionID)`.
+    ///
+    /// # Errors
+    /// PD's error.
+    fn get_operator(&self, _ctx: &Context, _region_id: u64) -> Result<tidb_proto::pdpb::GetOperatorResponse> {
+        Err(errors::errorf("GetOperator is not implemented by this PD client"))
+    }
+}
+
+/// Go `pd.Region`: a region PD reports, with its leader and the peers that
+/// are pending or down.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PdRegion {
+    /// Go `Meta`.
+    pub meta: metapb::Region,
+    /// Go `Leader`.
+    pub leader: Option<metapb::Peer>,
+    /// Go `PendingPeers`.
+    pub pending_peers: Vec<metapb::Peer>,
+    /// Go `DownPeers`.
+    pub down_peers: Vec<metapb::Peer>,
+}
+
+impl From<tikv_client::RegionWithLeader> for PdRegion {
+    fn from(r: tikv_client::RegionWithLeader) -> Self {
+        Self {
+            meta: r.region,
+            leader: r.leader,
+            pending_peers: r.pending_peers,
+            down_peers: r.down_peers.into_iter().filter_map(|p| p.peer).collect(),
+        }
+    }
 }
 
 /// Go `oracle.ComposeTS`.
@@ -198,5 +266,52 @@ impl PdClient for TikvPdClient {
         let pd = self.store.store().pd_client();
         let id = barrier_id.to_owned();
         self.store.block_on(async move { pd.delete_gc_barrier(&id).await }).map_err(from_client_error)
+    }
+
+    fn get_store(&self, _: &Context, store_id: u64) -> Result<metapb::Store> {
+        let pd = self.store.store().pd_client();
+        self.store
+            .block_on(async move { pd.pd_get_store(store_id).await })
+            .map_err(from_client_error)?
+            .ok_or_else(|| errors::errorf(format!("invalid store ID {store_id}, not found")))
+    }
+
+    fn get_region(&self, _: &Context, key: &[u8]) -> Result<Option<PdRegion>> {
+        let pd = self.store.store().pd_client();
+        let key = key.to_vec();
+        Ok(self.store.block_on(async move { pd.pd_get_region(key).await }).map_err(from_client_error)?.map(PdRegion::from))
+    }
+
+    fn get_region_by_id(&self, _: &Context, region_id: u64) -> Result<Option<PdRegion>> {
+        let pd = self.store.store().pd_client();
+        Ok(self.store.block_on(async move { pd.pd_get_region_by_id(region_id).await }).map_err(from_client_error)?.map(PdRegion::from))
+    }
+
+    fn scan_regions(&self, _: &Context, key: &[u8], end_key: &[u8], limit: usize) -> Result<Vec<PdRegion>> {
+        let pd = self.store.store().pd_client();
+        let (key, end_key) = (key.to_vec(), end_key.to_vec());
+        Ok(self
+            .store
+            .block_on(async move { pd.pd_scan_regions(key, end_key, limit).await })
+            .map_err(from_client_error)?
+            .into_iter()
+            .map(PdRegion::from)
+            .collect())
+    }
+
+    fn scatter_regions(&self, _: &Context, region_ids: &[u64]) -> Result<tidb_proto::pdpb::ScatterRegionResponse> {
+        let pd = self.store.store().pd_client();
+        let ids = region_ids.to_vec();
+        self.store.block_on(async move { pd.pd_scatter_regions_skip_store_limit(ids).await }).map_err(from_client_error)
+    }
+
+    fn scatter_region(&self, _: &Context, region_id: u64) -> Result<()> {
+        let pd = self.store.store().pd_client();
+        self.store.block_on(async move { pd.pd_scatter_region(region_id).await }).map(|_| ()).map_err(from_client_error)
+    }
+
+    fn get_operator(&self, _: &Context, region_id: u64) -> Result<tidb_proto::pdpb::GetOperatorResponse> {
+        let pd = self.store.store().pd_client();
+        self.store.block_on(async move { pd.get_operator(region_id).await }).map_err(from_client_error)
     }
 }

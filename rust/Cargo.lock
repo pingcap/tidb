@@ -5089,6 +5089,7 @@ dependencies = [
  "tidb-go-url",
  "tidb-gocontext",
  "tidb-goruntime",
+ "tidb-lightning-common",
  "tidb-log",
  "tidb-meta",
  "tidb-metadef",

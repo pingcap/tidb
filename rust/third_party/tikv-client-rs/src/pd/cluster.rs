@@ -856,6 +856,41 @@ impl Cluster {
         }
     }
 
+    /// pd-client `ScatterRegion(regionID)`: the legacy one-region scatter,
+    /// over the deprecated `region_id` field as Go's client sends it.
+    #[allow(deprecated)]
+    pub fn scatter_region(
+        &self,
+        region_id: u64,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<pdpb::ScatterRegionResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let client = self.rpc_client();
+        async move {
+            let mut client = client.await?;
+            let mut req = pd_request!(cluster_id, pdpb::ScatterRegionRequest);
+            req.region_id = region_id;
+            req.send(&mut client, timeout).await
+        }
+    }
+
+    /// pd-client `ScatterRegions(ids, opt.WithSkipStoreLimit())`.
+    pub fn scatter_regions_skip_store_limit(
+        &self,
+        region_ids: Vec<u64>,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<pdpb::ScatterRegionResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let client = self.rpc_client();
+        async move {
+            let mut client = client.await?;
+            let mut req = pd_request!(cluster_id, pdpb::ScatterRegionRequest);
+            req.regions_id = region_ids;
+            req.skip_store_limit = true;
+            req.send(&mut client, timeout).await
+        }
+    }
+
     pub fn get_operator(
         &self,
         region_id: u64,

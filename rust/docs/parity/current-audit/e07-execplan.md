@@ -279,8 +279,19 @@ PRs, each stacked on the previous one (the first on #56):
    cases (`/tmp/e07/live.sh`) of Rust backups restored by Go with matching
    KV counts, bytes and row hashes, over `local://` and MinIO S3, plus
    Go's error texts. Rust-by-Rust restore comes with PR 5.
-4. Restore split and import: `restore/split`, `restore/utils`,
-   `snap_client` import and `tikv_sender`.
+4. Done: restore split and import: `restore/split` (`pdClient` with
+   TiKV's `SplitRegion`, batch and one-region scatter, `RegionSplitter`,
+   `PaginateScanRegion`), `internal/import_client`, `import_mode_switcher`,
+   `restorer` (`MultiTablesRestorer`), the snapshot `checkpoint/restore`
+   items, and `snap_client`'s `import.go` (`TiDBFull` download and ingest),
+   `tikv_sender.go`, `placement_rule_manager.go` and the import half of
+   `client.go`. The PD client reads regions and stores from PD directly and
+   scatters one region (vendored-client patch 130). Pinned by Go's split,
+   restorer and `snap_client` tests over a port of Go's
+   `MockPDClientForSplit`, plus Go's `TestSortAndValidateFileRanges` cases
+   captured from Go master. Live (`tidb-br/tests/restore_live.rs`): Rust
+   backups over `local://` and MinIO S3, and a Go backup on the Go cluster,
+   imported into unused table IDs with every KV equal to the source.
 5. `snap_client` and `task.RunRestore` (`restore`, checkpoints, system
    tables, statistics, TiFlash replicas, placement). Live: backup, drop and
    restore with row and checksum comparison; Go backups restored by Rust.

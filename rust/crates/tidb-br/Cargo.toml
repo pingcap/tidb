@@ -42,6 +42,7 @@ tidb-ddl-label = { path = "../tidb-ddl-label" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-go-time-layout = { path = "../tidb-go-time-layout" }
+tidb-lightning-common = { path = "../tidb-lightning-common" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-versioninfo = { path = "../tidb-versioninfo" }

@@ -23,6 +23,7 @@ pub mod register;
 pub mod retry;
 pub mod store_manager;
 pub mod storewatch;
+pub mod worker_pool;
 #[cfg(test)]
 mod tests;
 

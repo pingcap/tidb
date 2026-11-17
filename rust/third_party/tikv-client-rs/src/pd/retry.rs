@@ -359,6 +359,19 @@ pub trait RetryClientTrait {
         Err(Error::Unimplemented)
     }
 
+    /// pd-client `ScatterRegions(ids, opt.WithSkipStoreLimit())`.
+    async fn scatter_regions_skip_store_limit(
+        self: Arc<Self>,
+        _region_ids: Vec<u64>,
+    ) -> Result<pdpb::ScatterRegionResponse> {
+        Err(Error::Unimplemented)
+    }
+
+    /// pd-client `ScatterRegion(regionID)`.
+    async fn scatter_region(self: Arc<Self>, _region_id: u64) -> Result<pdpb::ScatterRegionResponse> {
+        Err(Error::Unimplemented)
+    }
+
     async fn get_operator(self: Arc<Self>, _region_id: u64) -> Result<pdpb::GetOperatorResponse> {
         Err(Error::Unimplemented)
     }
@@ -1886,6 +1899,21 @@ impl RetryClientTrait for RetryClient<Cluster> {
     ) -> Result<pdpb::ScatterRegionResponse> {
         retry!(self, "scatter_regions", |cluster| {
             cluster.scatter_regions(region_ids.clone(), group.clone(), self.timeout)
+        })
+    }
+
+    async fn scatter_regions_skip_store_limit(
+        self: Arc<Self>,
+        region_ids: Vec<u64>,
+    ) -> Result<pdpb::ScatterRegionResponse> {
+        retry!(self, "scatter_regions", |cluster| {
+            cluster.scatter_regions_skip_store_limit(region_ids.clone(), self.timeout)
+        })
+    }
+
+    async fn scatter_region(self: Arc<Self>, region_id: u64) -> Result<pdpb::ScatterRegionResponse> {
+        retry!(self, "scatter_region", |cluster| {
+            cluster.scatter_region(region_id, self.timeout)
         })
     }
 

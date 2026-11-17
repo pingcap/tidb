@@ -92,6 +92,12 @@ impl StoreManager {
         self.security.is_tls_enabled()
     }
 
+    /// Go `TLSConfig()`: the cluster TLS files the config is built from.
+    #[must_use]
+    pub fn security(&self) -> &tidb_pd_client::ClusterSecurity {
+        &self.security
+    }
+
     /// The runtime connections run on.
     #[must_use]
     pub fn runtime(&self) -> &Arc<tokio::runtime::Runtime> {

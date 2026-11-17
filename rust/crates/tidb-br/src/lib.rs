@@ -89,6 +89,7 @@ pub mod glue;
 pub mod metareader;
 pub mod pdclient;
 pub mod pdutil;
+pub mod restore;
 pub mod restore_utils;
 pub mod rtree;
 pub mod spans;

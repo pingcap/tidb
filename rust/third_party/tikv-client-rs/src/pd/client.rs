@@ -257,6 +257,45 @@ pub trait PdClient: Send + Sync + 'static {
         Err(crate::Error::Unimplemented)
     }
 
+    /// pd-client `GetRegion(key)` answered by PD, not the region cache, with
+    /// the pending and down peers; `None` when PD has no such region.
+    async fn pd_get_region(self: Arc<Self>, _key: Vec<u8>) -> Result<Option<RegionWithLeader>> {
+        Err(crate::Error::Unimplemented)
+    }
+
+    /// pd-client `GetRegionByID` answered by PD, not the region cache.
+    async fn pd_get_region_by_id(self: Arc<Self>, _region_id: u64) -> Result<Option<RegionWithLeader>> {
+        Err(crate::Error::Unimplemented)
+    }
+
+    /// pd-client `ScanRegions(start, end, limit)` answered by PD.
+    async fn pd_scan_regions(
+        self: Arc<Self>,
+        _start_key: Vec<u8>,
+        _end_key: Vec<u8>,
+        _limit: usize,
+    ) -> Result<Vec<RegionWithLeader>> {
+        Err(crate::Error::Unimplemented)
+    }
+
+    /// pd-client `GetStore(id)` answered by PD; `None` for an unknown store.
+    async fn pd_get_store(self: Arc<Self>, _store_id: u64) -> Result<Option<metapb::Store>> {
+        Err(crate::Error::Unimplemented)
+    }
+
+    /// pd-client `ScatterRegions(ids, opt.WithSkipStoreLimit())`.
+    async fn pd_scatter_regions_skip_store_limit(
+        self: Arc<Self>,
+        _region_ids: Vec<u64>,
+    ) -> Result<pdpb::ScatterRegionResponse> {
+        Err(crate::Error::Unimplemented)
+    }
+
+    /// pd-client `ScatterRegion(regionID)`.
+    async fn pd_scatter_region(self: Arc<Self>, _region_id: u64) -> Result<pdpb::ScatterRegionResponse> {
+        Err(crate::Error::Unimplemented)
+    }
+
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta>;
 
     /// client-go `pd.Client.Close` for the transaction client's owner: joins
@@ -1801,6 +1840,46 @@ where
 
     async fn get_operator(self: Arc<Self>, region_id: u64) -> Result<pdpb::GetOperatorResponse> {
         self.pd.clone().get_operator(region_id).await
+    }
+
+    async fn pd_get_region(self: Arc<Self>, key: Vec<u8>) -> Result<Option<RegionWithLeader>> {
+        match self.pd.clone().get_region(key).await {
+            Ok(region) => Ok(Some(region)),
+            Err(crate::Error::RegionForKeyNotFound { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn pd_get_region_by_id(self: Arc<Self>, region_id: u64) -> Result<Option<RegionWithLeader>> {
+        match self.pd.clone().get_region_by_id(region_id).await {
+            Ok(region) => Ok(Some(region)),
+            Err(crate::Error::RegionNotFoundInResponse { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn pd_scan_regions(
+        self: Arc<Self>,
+        start_key: Vec<u8>,
+        end_key: Vec<u8>,
+        limit: usize,
+    ) -> Result<Vec<RegionWithLeader>> {
+        self.pd.clone().scan_regions(start_key, end_key, limit).await
+    }
+
+    async fn pd_get_store(self: Arc<Self>, store_id: u64) -> Result<Option<metapb::Store>> {
+        self.pd.clone().get_store(store_id).await
+    }
+
+    async fn pd_scatter_regions_skip_store_limit(
+        self: Arc<Self>,
+        region_ids: Vec<u64>,
+    ) -> Result<pdpb::ScatterRegionResponse> {
+        self.pd.clone().scatter_regions_skip_store_limit(region_ids).await
+    }
+
+    async fn pd_scatter_region(self: Arc<Self>, region_id: u64) -> Result<pdpb::ScatterRegionResponse> {
+        self.pd.clone().scatter_region(region_id).await
     }
 
     async fn update_leader(&self, ver_id: RegionVerId, leader: metapb::Peer) -> Result<()> {
