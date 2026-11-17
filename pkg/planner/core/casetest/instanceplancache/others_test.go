@@ -250,6 +250,41 @@ func TestInstancePlanCacheSchemaChange(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // due to DDL
 	tk.MustExec(`execute st`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// Issue #73300: rebuilding privileges after unrelated DDL must initialize
+	// query blocks even when the prepared plan cache is disabled.
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustExec(`create table unrelated (a int)`)
+	tk.MustExec(`create table dst (a int)`)
+	// Before the first EXECUTE, the AST has not acquired query block offsets.
+	tk.MustExec(`prepare fresh from 'select * from (select a from t where a < 2) dt'`)
+	tk.MustExec(`alter table unrelated comment='before first execute'`)
+	tk.MustQuery(`execute fresh`).Check(testkit.Rows("1"))
+	tk.MustExec(`deallocate prepare fresh`)
+	for _, mode := range []struct{ instance, prepared int }{{1, 1}, {0, 1}, {0, 0}} {
+		tk.MustExec(fmt.Sprintf("set global tidb_enable_instance_plan_cache=%d", mode.instance))
+		tk.MustExec(fmt.Sprintf("set tidb_enable_prepared_plan_cache=%d", mode.prepared))
+		for _, sql := range []string{
+			"select * from (select a from t) dt",
+			"select * from (select * from (select a from t) dt) nested_dt",
+			"select * from (select a from t union all select a from t where a > 1) dt",
+			"with cte as (select a from t) select * from (select * from cte) dt",
+			"insert into dst select * from (select a from t) dt",
+		} {
+			tk.MustExec(fmt.Sprintf("prepare st from '%s'", sql))
+			tk.MustExec(`execute st`)
+			tk.MustExec(`alter table unrelated comment='changed'`)
+			if strings.HasPrefix(sql, "insert") {
+				tk.MustExec(`execute st`)
+				tk.MustQuery(`select * from dst`).Check(testkit.Rows("1", "1"))
+				tk.MustExec(`delete from dst`)
+			} else {
+				tk.MustQuery(`execute st`).Check(testkit.Rows("1"))
+			}
+			tk.MustExec(`alter table unrelated comment=''`)
+			tk.MustExec(`deallocate prepare st`)
+		}
+	}
 }
 
 func TestInstancePlanCachePrivilegeChanges(t *testing.T) {

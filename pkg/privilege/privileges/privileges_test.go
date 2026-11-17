@@ -3203,6 +3203,21 @@ func TestColumnPrivilege4PreparePlanCache(t *testing.T) {
 	tk.MustExec("REVOKE SELECT ON test.sq FROM 'testuser'@'localhost'")
 	tk.MustExec("ALTER TABLE test.ins ADD COLUMN c INT")
 	userTk.MustGetErrCode("EXECUTE stmt4", mysql.ErrColumnaccessDenied)
+
+	// Issue #73300: derived tables must still collect newly added columns.
+	tk.MustExec("CREATE TABLE test.derived (a INT)")
+	tk.MustExec("INSERT INTO test.derived VALUES (1)")
+	tk.MustExec("GRANT SELECT(a) ON test.derived TO 'testuser'@'localhost'")
+	userTk.MustExec("SET @@tidb_enable_prepared_plan_cache = 1")
+	userTk.MustExec("PREPARE derived FROM 'SELECT * FROM (SELECT * FROM test.derived) dt'")
+	userTk.MustQuery("EXECUTE derived").Check(testkit.Rows("1"))
+	tk.MustExec("ALTER TABLE test.derived ADD COLUMN b INT DEFAULT 2")
+	userTk.MustGetErrCode("EXECUTE derived", mysql.ErrTableaccessDenied)
+	tk.MustExec("GRANT SELECT(b) ON test.derived TO 'testuser'@'localhost'")
+	userTk.MustQuery("EXECUTE derived").Check(testkit.Rows("1 2"))
+	userTk.MustQuery("EXECUTE derived").Check(testkit.Rows("1 2"))
+	tk.MustExec("REVOKE SELECT(b) ON test.derived FROM 'testuser'@'localhost'")
+	userTk.MustGetErrCode("EXECUTE derived", mysql.ErrTableaccessDenied)
 }
 
 func TestColumnPrivilege4Views(t *testing.T) {
