@@ -855,8 +855,8 @@ pub struct WriteExternalStoreOperator {
 
 impl WriteExternalStoreOperator {
     /// Go `NewWriteExternalStoreOperator`: each worker's writers put their
-    /// files under `<task ID>/<subtask ID>`, and `on_close` gets each
-    /// writer's summary.
+    /// files under `<task ID>/<subtask ID>`, encode keys with `tikv_codec`,
+    /// and `on_close` gets each writer's summary.
     #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn new<S: StoreClient + 'static>(
@@ -869,6 +869,7 @@ impl WriteExternalStoreOperator {
         on_close: tidb_ingestor_simplesst::OnWriterCloseFunc,
         memory_quota: u64,
         collector: Arc<dyn Collector>,
+        tikv_codec: Option<tidb_ingestor_simplesst::KeyCodec>,
     ) -> Self {
         let mut on_duplicate_key = tidb_ingestor_engineapi::OnDuplicateKey::Error;
         tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/ignoreReadIndexDupKey", |_| {
@@ -888,14 +889,13 @@ impl WriteExternalStoreOperator {
                     let prefix = format!("{task_id}/{subtask_id}");
                     let writers = (0..scan.reorg.index_ids.len())
                         .map(|offset| {
-                            // Rust applies the keyspace codec at ingest (register
-                            // row E30), so the writer gets no `TiKVCodec`.
                             let writer = tidb_ingestor_simplesst::WriterBuilder::new()
                                 .set_on_close_func(Arc::clone(&on_close))
                                 .set_memory_size_limit(memory_quota)
                                 .set_block_size(block_size)
                                 .set_group_offset(offset as i64)
                                 .set_on_dup(on_duplicate_key)
+                                .set_tikv_codec(tikv_codec.clone())
                                 .build(Arc::clone(&store), &prefix, &uuid::Uuid::new_v4().to_string());
                             Box::new(ExternalWriter { writer, ctx: tidb_gocontext::Context::background() })
                                 as Box<dyn tidb_ddl_ingest::engine::IngestWriter>
@@ -1150,7 +1150,8 @@ pub fn new_add_index_ingest_pipeline<S: StoreClient + 'static>(
 
 /// Go `NewWriteIndexToExternalStoragePipeline`: the source, scan, external
 /// write and sink operators of a global-sort read over `[start_key,
-/// end_key)`, writing under `<task ID>/<subtask ID>` of `ext_store`.
+/// end_key)`, writing under `<task ID>/<subtask ID>` of `ext_store` with
+/// the store's `tikv_codec`.
 #[allow(clippy::too_many_arguments)]
 pub fn new_write_index_to_external_storage_pipeline<S: StoreClient + 'static>(
     ctx: &Arc<Context>,
@@ -1166,6 +1167,7 @@ pub fn new_write_index_to_external_storage_pipeline<S: StoreClient + 'static>(
     concurrency: usize,
     resource: &tidb_dxf::StepResource,
     collector: Arc<dyn Collector>,
+    tikv_codec: Option<tidb_ingestor_simplesst::KeyCodec>,
 ) -> Arc<AsyncPipeline> {
     let use_cloud_storage = reorg_meta.as_ref().is_some_and(|meta| meta.read().use_cloud_storage);
     let (reader_cnt, writer_cnt) = expected_ingest_worker_cnt(concurrency, avg_row_size, use_cloud_storage);
@@ -1203,6 +1205,7 @@ pub fn new_write_index_to_external_storage_pipeline<S: StoreClient + 'static>(
         on_close,
         mem_size_per_index,
         collector,
+        tikv_codec,
     ));
     let sink_op = Arc::new(IndexWriteResultSink::new(Arc::clone(ctx), None));
     compose(src_op.as_ref(), scan_op.as_ref());

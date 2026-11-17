@@ -1533,6 +1533,8 @@ impl<S: StoreClient> ReadIndexStepExecutor<S> {
             concurrency,
             &self.get_resource(),
             Arc::new(DistTaskRowCntCollector { summary: Arc::clone(&self.summary) }),
+            // Go `r.backend.GetTiKVCodec()`.
+            self.backend.lock().unwrap().as_ref().map(|backend| backend.get_tikv_codec()),
         );
         *self.curr_pipe.lock().unwrap() = Some(Arc::clone(&pipe));
         let check = || ctx.err().map_or(Ok(()), |e| Err(e.to_string()));
