@@ -19,8 +19,10 @@
 ///
 /// boundary: Go `pkg/infoschema/context.MetaOnlyInfoSchema` — metabuild only
 /// keeps the value for later constraint checks, so one identifying method
-/// stands in for the full meta-only interface.
-pub trait MetaOnlyInfoSchema {
+/// stands in for the full meta-only interface. A reader that needs the whole
+/// schema asserts its concrete type, as Go's `isVer.(infoschema.InfoSchema)`
+/// does: the `Any` supertrait is that assertion.
+pub trait MetaOnlyInfoSchema: std::any::Any {
     /// Go `MetaOnlyInfoSchema.SchemaMetaVersion`.
     fn schema_meta_version(&self) -> i64;
 }

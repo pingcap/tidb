@@ -127,6 +127,15 @@ pub struct BaseFuncDesc {
 }
 
 impl BaseFuncDesc {
+    /// Go `baseFuncDesc.MemoryUsage` (`base_func.go:541`).
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        tidb_size::SIZE_OF_STRING
+            + self.name.len() as i64
+            + self.ret_type.memory_usage() as i64
+            + self.args.iter().map(Expression::memory_usage).sum::<i64>()
+    }
+
     /// Go `newBaseFuncDesc` (`base_func.go:44`): lower-case the name, then
     /// infer.
     pub fn new(

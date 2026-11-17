@@ -449,9 +449,6 @@ pub struct Session {
     /// The cluster transaction layer owns the attempt boundary while this is
     /// true, so inner pessimistic retries do not re-arm the first-run hook.
     external_executor_breakpoint_scope: bool,
-    /// Metadata snapshot cache keyed by the catalog mutation version.
-    tidb_decode_key_cache:
-        std::sync::Mutex<Option<(u64, Arc<tidb_infoschema::tidb_decode_key::TidbDecodeKeySnapshot>)>>,
     /// One connection-wide memory/disk tracker pair. Every statement gets a
     /// fresh child below these roots, so an open cursor remains counted when
     /// the client starts its next command.
@@ -1022,7 +1019,6 @@ impl Session {
             executor_first_run_breakpoint: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             statement_runaway: Arc::default(),
             external_executor_breakpoint_scope: false,
-            tidb_decode_key_cache: std::sync::Mutex::new(None),
             session_memory: tidb_executor::SessionMemory::new(
                 tidb_memory::DEF_MEM_QUOTA_QUERY,
                 tidb_vardef::OomAction::Cancel,

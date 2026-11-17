@@ -660,6 +660,7 @@ impl SessionExtendedInfoSchema {
                 schema_meta_version: self.schema.metadata_version,
                 table_indexes,
                 lazy: self.v2().cloned(),
+                codec: Arc::new(self.tidb_decode_key_snapshot()),
             })
         }))
     }

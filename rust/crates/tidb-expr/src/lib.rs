@@ -40,6 +40,10 @@ mod builtin_cast;
 mod builtin_control;
 mod builtin_encryption;
 mod builtin_ext;
+pub use builtin_ext::misc::{
+    set_decode_key_from_string, set_encode_index_key_from_row, set_encode_record_key_from_row, DecodeKeyFromStringFn,
+    EncodeKeyFromRowFn,
+};
 mod builtin_json;
 mod builtin_other;
 mod builtin_regexp;

@@ -6714,6 +6714,7 @@ dependencies = [
  "tidb-expr",
  "tidb-exprctx",
  "tidb-expression-aggregation",
+ "tidb-expropt",
  "tidb-failpoint",
  "tidb-filter",
  "tidb-fixcontrol",
@@ -6727,6 +6728,7 @@ dependencies = [
  "tidb-hack",
  "tidb-hint",
  "tidb-infoschema",
+ "tidb-infoschema-context",
  "tidb-infoschema-issyncer",
  "tidb-infoschema-perfschema",
  "tidb-ingestor-ingestctrl",
@@ -7173,6 +7175,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser-types",
  "tidb-proto",
+ "tidb-size",
 ]
 
 [[package]]

@@ -1004,6 +1004,7 @@ mod enumeration_tests {
         source.set_table_id(42);
         let latest = LatestIndexSchema {
             lazy: None,
+            codec: Default::default(),
             schema_meta_version: 8,
             table_indexes: BTreeMap::from([(
                 42,
@@ -1038,6 +1039,7 @@ mod enumeration_tests {
         source.set_table_id(42);
         let latest = LatestIndexSchema {
             lazy: None,
+            codec: Default::default(),
             schema_meta_version: 8,
             table_indexes: BTreeMap::from([(42, vec![source.table_indices()[0].clone()])]),
         };
@@ -1080,6 +1082,7 @@ mod enumeration_tests {
         source.set_table_id(42);
         let latest = LatestIndexSchema {
             lazy: None,
+            codec: Default::default(),
             schema_meta_version: 8,
             table_indexes: BTreeMap::from([(42, Vec::new())]),
         };

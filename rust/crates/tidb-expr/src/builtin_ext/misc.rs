@@ -19,8 +19,47 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::coerce::coerce_str;
 use crate::{Datum, Decimal, EvalError};
+use tidb_infoschema_context::MetaOnlyInfoSchema;
 use tidb_vitess::hash_uint64;
 
+/// Go `expression.DecodeKeyFromString`, which `planner/core`'s `init` sets
+/// (`tidbCodecFuncHelper.decodeKeyFromString`): the decoded form of the
+/// hexadecimal key, warning in the type context and returning the input when
+/// it does not decode.
+pub type DecodeKeyFromStringFn = fn(&dyn crate::Columns, &dyn MetaOnlyInfoSchema, &[u8]) -> Vec<u8>;
+
+/// Go `expression.EncodeRecordKeyFromRow` / `EncodeIndexKeyFromRow`, which
+/// `planner/core`'s `init` sets (`encodeHandleFromRow` /
+/// `encodeIndexKeyFromRow`), over the arguments Rust has already evaluated.
+pub type EncodeKeyFromRowFn = fn(
+    &dyn crate::Columns,
+    &dyn tidb_expropt::PrivilegeChecker,
+    &dyn MetaOnlyInfoSchema,
+    &tidb_exprctx::EncodeKeyArgs<'_>,
+) -> Result<Vec<u8>, tidb_exprctx::EncodeKeyError>;
+
+static DECODE_KEY_FROM_STRING: OnceLock<DecodeKeyFromStringFn> = OnceLock::new();
+static ENCODE_RECORD_KEY_FROM_ROW: OnceLock<EncodeKeyFromRowFn> = OnceLock::new();
+static ENCODE_INDEX_KEY_FROM_ROW: OnceLock<EncodeKeyFromRowFn> = OnceLock::new();
+
+/// Sets Go `expression.DecodeKeyFromString` (`planner/core`'s `init`). The
+/// first setting stays, as one Go binary's `init` runs once.
+pub fn set_decode_key_from_string(decode: DecodeKeyFromStringFn) {
+    let _ = DECODE_KEY_FROM_STRING.set(decode);
+}
+
+/// Sets Go `expression.EncodeRecordKeyFromRow` (`planner/core`'s `init`).
+pub fn set_encode_record_key_from_row(encode: EncodeKeyFromRowFn) {
+    let _ = ENCODE_RECORD_KEY_FROM_ROW.set(encode);
+}
+
+/// Sets Go `expression.EncodeIndexKeyFromRow` (`planner/core`'s `init`).
+pub fn set_encode_index_key_from_row(encode: EncodeKeyFromRowFn) {
+    let _ = ENCODE_INDEX_KEY_FROM_ROW.set(encode);
+}
+
+/// Go `builtinTiDBDecodeKeySig.evalString`: the latest infoschema's decoding
+/// of the key, the key itself when `DecodeKeyFromString` is not set.
 pub(crate) fn tidb_decode_key(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     if value.is_null() {
         return Ok(Datum::Null);
@@ -28,7 +67,11 @@ pub(crate) fn tidb_decode_key(value: &Datum, ctx: &dyn crate::Columns) -> Result
     let input = value
         .sql_bytes()
         .map_err(|_| EvalError::IncorrectArguments("tidb_decode_key".to_owned()))?;
-    Ok(Datum::new_string_datum(ctx.tidb_decode_key(&input)))
+    let is = tidb_expropt::InfoSchemaPropReader.get_latest_info_schema(ctx).map_err(opt_prop_error)?;
+    let Some(decode) = DECODE_KEY_FROM_STRING.get() else {
+        return Ok(Datum::new_string_datum(input));
+    };
+    Ok(Datum::new_string_datum(decode(ctx, &*is, &input)))
 }
 
 /// Go `ErrSpecificAccessDenied` (1227) for the PROCESS privilege
@@ -66,6 +109,14 @@ fn err_specific_access_denied_for(privilege: &str) -> EvalError {
 /// `builtinTiDBEncodeIndexKeySig.evalString`: the lower-case hex of the
 /// record or index key the names and values give, NULL for a NULL name.
 pub(crate) fn tidb_encode_key(values: &[Datum], index: bool, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    let is = tidb_expropt::InfoSchemaPropReader.get_latest_info_schema(ctx).map_err(opt_prop_error)?;
+    let encode = if index { &ENCODE_INDEX_KEY_FROM_ROW } else { &ENCODE_RECORD_KEY_FROM_ROW };
+    let Some(encode) = encode.get() else {
+        return Err(EvalError::Raw(
+            if index { "EncodeIndexKeyFromRow is not initialized" } else { "EncodeRecordKeyFromRow is not initialized" }.to_owned(),
+        ));
+    };
+    let priv_checker = tidb_expropt::PrivilegeCheckerPropReader.get_privilege_checker(ctx).map_err(opt_prop_error)?;
     let names = if index { 3 } else { 2 };
     let mut evaluated = Vec::with_capacity(names);
     for value in &values[..names] {
@@ -80,13 +131,22 @@ pub(crate) fn tidb_encode_key(values: &[Datum], index: bool, ctx: &dyn crate::Co
         index: index.then(|| evaluated[2].as_str()),
         values: &values[names..],
     };
-    let Some(key) = ctx.tidb_encode_key(&args) else {
-        return Err(EvalError::Raw(
-            if index { "EncodeIndexKeyFromRow is not initialized" } else { "EncodeRecordKeyFromRow is not initialized" }.to_owned(),
-        ));
-    };
-    let key = key?;
-    Ok(Datum::new_string_datum(key.iter().map(|byte| format!("{byte:02x}")).collect::<String>()))
+    match encode(ctx, &*priv_checker, &*is, &args) {
+        Ok(key) => Ok(Datum::new_string_datum(key.iter().map(|byte| format!("{byte:02x}")).collect::<String>())),
+        Err(tidb_exprctx::EncodeKeyError::Eval(error)) => Err(error),
+        // Go `ErrTableaccessDenied.FastGenByArgs("SELECT",
+        // sv.User.AuthUsername, sv.User.AuthHostname, tblName)`.
+        Err(tidb_exprctx::EncodeKeyError::SpecificAccessDenied) => {
+            let login = ctx.login_user().unwrap_or_default();
+            let (user, host) = login.rsplit_once('@').unwrap_or((&login, ""));
+            Err(EvalError::Conversion(tidb_plannererrors::ERR_TABLEACCESS_DENIED.gen_with_stack_by_args(&[
+                "SELECT".into(),
+                user.to_owned().into(),
+                host.to_owned().into(),
+                args.table.to_owned().into(),
+            ])))
+        }
+    }
 }
 
 /// Go `builtinTiDBMVCCInfoSig.evalString`: TiKV's MVCC record of the

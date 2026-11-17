@@ -160,13 +160,11 @@
 //!   which this crate does not have (only `HashCode`). The identity that
 //!   `TestAggFuncDesc` pins is reproduced through [`AggFuncDesc::equals`]
 //!   instead, which discriminates on exactly the same six fields.
-//! - **`MemoryUsage` is not ported** (`descriptor.go:389`,
-//!   `base_func.go:519`). It sums `pkg/util/size` constants plus
-//!   `Expression.MemoryUsage`, which this crate does not implement.
-//! - **`StringWithCtx` is not ported** (`descriptor.go:98`,
-//!   `base_func.go:110`). It needs `Expression.StringWithCtx` and the redact
-//!   modes -- the same boundary [`tidb_expr::expr_util`] already names for
-//!   `ExprsToStringsForDisplay`.
+//! - **`StringWithCtx` has no redact modes** (`descriptor.go:98`,
+//!   `base_func.go:110`): [`AggFuncDesc::string_with_ctx`] renders the
+//!   arguments as `errors.RedactLogDisable` does; the other modes need
+//!   `Expression.StringWithCtx`'s redaction -- the same boundary
+//!   [`tidb_expr::expr_util`] already names for `ExprsToStringsForDisplay`.
 //! - **`ExplainAggFunc`'s context-dependent half is not ported.** Only the
 //!   `normalized == true` branch has a Rust counterpart
 //!   ([`tidb_expr::expr_util::explain_normalized_info`]); the `ExplainInfo(ctx)`

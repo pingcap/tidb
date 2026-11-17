@@ -602,54 +602,6 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         self.with_txn_catalog(snapshot).unwrap_or_default()
     }
 
-    /// Go `expression.DecodeKeyFromString` over this statement's catalog
-    /// version.
-    fn decode_key_from_string(&self) -> tidb_exprctx::DecodeKeyFromString {
-        let snapshot = self.tidb_decode_key_snapshot();
-        Arc::new(move |input, zone| snapshot.decode(input, zone))
-    }
-
-    /// Go `expression.EncodeRecordKeyFromRow` / `EncodeIndexKeyFromRow`
-    /// over the statement's catalog version (the snapshot `TIDB_DECODE_KEY`
-    /// reads: evaluation never locks the domain's catalog, which planning
-    /// holds while it folds constants).
-    fn encode_key_from_row(&self) -> tidb_exprctx::EncodeKeyFromRow {
-        let snapshot = self.tidb_decode_key_snapshot();
-        Arc::new(move |args, privileged, ctx| {
-            crate::expression_codec_fn::encode_key_from_row(&snapshot, args, privileged, ctx)
-        })
-    }
-
-    fn tidb_decode_key_snapshot(&self) -> Arc<crate::TidbDecodeKeySnapshot> {
-        let domain = self.domain_info_schema();
-        let Ok(catalog) = domain.lock() else {
-            return Arc::default();
-        };
-        // Keyed on the METADATA counter, not the mutation counter: Go's
-        // row-decode metadata is cached per infoschema version, which DDL
-        // moves and DML never does. Keying on `version()` here would rebuild
-        // this snapshot on every write statement.
-        let version = catalog.metadata_version();
-        {
-            let cache = self
-                .tidb_decode_key_cache_ref()
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some((cached_version, snapshot)) = cache.as_ref() {
-                if *cached_version == version {
-                    return Arc::clone(snapshot);
-                }
-            }
-        }
-        let snapshot = Arc::new(catalog.tidb_decode_key_snapshot());
-        *self
-            .tidb_decode_key_cache_ref()
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            Some((version, Arc::clone(&snapshot)));
-        snapshot
-    }
-
     /// The scanner-facing half of `@@sql_mode`: the input Go hands
     /// `Parser.SetSQLMode`, read fresh at every parse so a `SET sql_mode`
     /// changes the statements AFTER it and no AST built before it.
@@ -1450,6 +1402,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         ignore_err: bool,
         read_only: bool,
     ) -> crate::StmtContext {
+        crate::expression_codec_fn::init();
         // Go hands the same `SessionVars` to every expression, which is where
         // `DATABASE()` and `VERSION()` read from.
         let current_db = if self.session_vars().current_db.is_empty() {
@@ -1818,8 +1771,6 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_parallel_apply(enable_parallel_apply)
                     .with_allow_derive_topn(allow_derive_topn)
                     .with_block_encryption_mode(block_encryption_mode)
-                    .with_decode_key_from_string(self.decode_key_from_string())
-                    .with_encode_key_from_row(self.encode_key_from_row())
                     .with_parser_config(self.session_vars().build_parser_switches())
                     .with_ddl_job_context(
                         snapshot.ddl_cdc_write_source,
@@ -2035,8 +1986,6 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_apply_cache_capacity(apply_cache_capacity)
                 .with_parallel_apply(enable_parallel_apply)
                 .with_block_encryption_mode(block_encryption_mode)
-                .with_decode_key_from_string(self.decode_key_from_string())
-                    .with_encode_key_from_row(self.encode_key_from_row())
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_replica_read(replica_read)
                 .with_coprocessor_read_policy(snapshot.coprocessor_read_policy.clone())
@@ -2646,10 +2595,6 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn stmt_hints_ref(&self) -> &tidb_hint::StmtHints;
     /// Go `SessionVars` / `StmtCtx` state `stmt_hints`, mutably.
     fn stmt_hints_mut(&mut self) -> &mut tidb_hint::StmtHints;
-    /// Go `SessionVars` / `StmtCtx` state `tidb_decode_key_cache`, read.
-    fn tidb_decode_key_cache_ref(&self) -> &std::sync::Mutex<Option<(u64, Arc<crate::TidbDecodeKeySnapshot>)>>;
-    /// Go `SessionVars` / `StmtCtx` state `tidb_decode_key_cache`, mutably.
-    fn tidb_decode_key_cache_mut(&mut self) -> &mut std::sync::Mutex<Option<(u64, Arc<crate::TidbDecodeKeySnapshot>)>>;
     /// Go `SessionVars` / `StmtCtx` state `transaction_table_delta`, read.
     fn transaction_table_delta_ref(&self) -> &std::sync::Arc<tidb_variable::table_delta::TableDeltaMap>;
     /// Go `SessionVars` / `StmtCtx` state `transaction_table_delta`, mutably.

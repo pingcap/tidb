@@ -12,27 +12,68 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/planner/core/expression_codec_fn.go`'s encode half
-//! (`tidbCodecFuncHelper.encodeHandleFromRow` / `encodeIndexKeyFromRow`),
-//! which `TIDB_ENCODE_RECORD_KEY` and `TIDB_ENCODE_INDEX_KEY` call.
+//! Go `pkg/planner/core/expression_codec_fn.go` (`tidbCodecFuncHelper`):
+//! the functions `planner/core`'s `init` sets as `expression`'s
+//! `DecodeKeyFromString`, `EncodeRecordKeyFromRow` and
+//! `EncodeIndexKeyFromRow`, which `TIDB_DECODE_KEY`,
+//! `TIDB_ENCODE_RECORD_KEY` and `TIDB_ENCODE_INDEX_KEY` call.
+
+use std::any::Any;
 
 use tidb_datatype::{Datum, FieldType};
 use tidb_exprctx::{Columns, EncodeKeyArgs, EncodeKeyError, EvalError};
+use tidb_expropt::PrivilegeChecker;
+use tidb_infoschema::table_source::LatestIndexSchema;
 use tidb_infoschema::TableEntry;
+use tidb_infoschema_context::MetaOnlyInfoSchema;
 use tidb_table::tables::{TableCommon, TableHandle};
+
+/// Go `planner/core`'s `init` (`core_init.go`) for the codec helpers: sets
+/// `expression.DecodeKeyFromString`, `EncodeRecordKeyFromRow` and
+/// `EncodeIndexKeyFromRow`. Go runs it when the binary loads; Rust runs it
+/// once, before the first statement context is built.
+pub(crate) fn init() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        tidb_expr::set_decode_key_from_string(decode_key_from_string);
+        tidb_expr::set_encode_record_key_from_row(encode_key_from_row);
+        tidb_expr::set_encode_index_key_from_row(encode_key_from_row);
+    });
+}
 
 fn raw(message: impl Into<String>) -> EncodeKeyError {
     EncodeKeyError::Eval(EvalError::Raw(message.into()))
 }
 
+/// Go `tidbCodecFuncHelper.decodeKeyFromString`: the key decoded against the
+/// infoschema, or the input with the decoding's warning.
+fn decode_key_from_string(ctx: &dyn Columns, is_ver: &dyn MetaOnlyInfoSchema, input: &[u8]) -> Vec<u8> {
+    // Go `isVer.(infoschema.InfoSchema)`.
+    let Some(is) = (is_ver as &dyn Any).downcast_ref::<LatestIndexSchema>() else {
+        ctx.append_warning(1105, "infoschema not found when decoding key");
+        return input.to_vec();
+    };
+    match is.codec.decode(input, &ctx.time_zone()) {
+        Ok(decoded) => decoded,
+        Err(message) => {
+            ctx.append_warning(1105, &message);
+            input.to_vec()
+        }
+    }
+}
+
 /// Go `encodeHandleFromRow` (no index) and `encodeIndexKeyFromRow`.
-pub(crate) fn encode_key_from_row(
-    is: &crate::TidbDecodeKeySnapshot,
-    args: &EncodeKeyArgs<'_>,
-    privileged: &dyn Fn(&str, &str) -> bool,
+fn encode_key_from_row(
     ctx: &dyn Columns,
+    checker: &dyn PrivilegeChecker,
+    is_ver: &dyn MetaOnlyInfoSchema,
+    args: &EncodeKeyArgs<'_>,
 ) -> Result<Vec<u8>, EncodeKeyError> {
-    let (entry, physical_id) = find_common_or_partitioned_table(is, privileged, args.db, args.table)?;
+    // Go `isVer.(infoschema.InfoSchema)`.
+    let Some(is) = (is_ver as &dyn Any).downcast_ref::<LatestIndexSchema>() else {
+        return Err(raw("interface conversion: the infoschema is not an infoschema.InfoSchema"));
+    };
+    let (entry, physical_id) = find_common_or_partitioned_table(checker, &is.codec, args.db, args.table)?;
     let TableEntry::Kv(tbl) = &*entry else {
         unreachable!("only a stored table is found")
     };
@@ -80,8 +121,8 @@ pub(crate) fn encode_key_from_row(
 /// also returns a view or a sequence, whose `TableInfo` no Rust catalog
 /// entry carries, so this answers those as missing.
 fn find_common_or_partitioned_table(
+    checker: &dyn PrivilegeChecker,
     is: &crate::TidbDecodeKeySnapshot,
-    privileged: &dyn Fn(&str, &str) -> bool,
     db_name: &str,
     tbl_name: &str,
 ) -> Result<(std::sync::Arc<TableEntry>, i64), EncodeKeyError> {
@@ -95,7 +136,7 @@ fn find_common_or_partitioned_table(
             )))
         }
     };
-    if !privileged(db_name, tbl_name) {
+    if !checker.request_verification(db_name, tbl_name, "", tidb_mysql::AllPrivMask) {
         // The arguments will be filled by caller.
         return Err(EncodeKeyError::SpecificAccessDenied);
     }

@@ -43,6 +43,12 @@ pub struct ByItems {
 }
 
 impl ByItems {
+    /// Go `ByItems.MemoryUsage`.
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        tidb_size::SIZE_OF_BOOL + self.expr.memory_usage()
+    }
+
     /// Go `ByItems.Clone` is a deep copy; `#[derive(Clone)]` is the same
     /// thing here because [`Expression`] owns its subtree.
     #[must_use]
@@ -78,6 +84,15 @@ pub struct AggFuncDesc {
 }
 
 impl AggFuncDesc {
+    /// Go `AggFuncDesc.MemoryUsage` (`descriptor.go:389`).
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        self.base.memory_usage()
+            + tidb_size::SIZE_OF_INT
+            + tidb_size::SIZE_OF_BOOL
+            + self.order_by_items.iter().map(ByItems::memory_usage).sum::<i64>()
+    }
+
     /// Go `NewAggFuncDesc` (`descriptor.go:47`).
     ///
     /// As Go's own comment says, this CANNOT be called twice on the same

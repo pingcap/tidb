@@ -68,36 +68,12 @@ fn columns_memory_usage(columns: &[Column]) -> i64 {
     columns.iter().map(Column::memory_usage).sum()
 }
 
-/// Go `ByItems.MemoryUsage` (`planner/util/byitem.go:70`).
-fn by_items_memory_usage(items: &[ByItems]) -> i64 {
-    items
-        .iter()
-        .map(|item| SIZE_OF_BOOL + item.expr.memory_usage())
-        .sum()
-}
-
 /// Go `property.SortItem.MemoryUsage`.
 fn sort_items_memory_usage(items: &[ColumnSortItem]) -> i64 {
     items
         .iter()
         .map(|item| SIZE_OF_BOOL + item.col.memory_usage())
         .sum()
-}
-
-/// Go `baseFuncDesc.MemoryUsage` (`aggregation/base_func.go:541`).
-fn base_func_desc_memory_usage(desc: &BaseFuncDesc) -> i64 {
-    SIZE_OF_STRING
-        + desc.name.len() as i64
-        + desc.ret_type.memory_usage() as i64
-        + exprs_memory_usage(&desc.args)
-}
-
-/// Go `AggFuncDesc.MemoryUsage` (`aggregation/descriptor.go:389`).
-fn agg_func_desc_memory_usage(desc: &AggFuncDesc) -> i64 {
-    base_func_desc_memory_usage(&desc.base)
-        + SIZE_OF_INT
-        + SIZE_OF_BOOL
-        + by_items_memory_usage(&desc.order_by_items)
 }
 
 fn mpp_columns_memory_usage(columns: &[MppPartitionColumn]) -> i64 {
@@ -292,7 +268,7 @@ pub(super) fn go_node_memory_usage(node: &PhysicalPlan) -> i64 {
                 + SIZE_OF_UINT64 * 2
                 + SIZE_OF_POINTER
                 + SIZE_OF_INT
-                + by_items_memory_usage(&op.by_items)
+                + op.by_items.iter().map(ByItems::memory_usage).sum::<i64>()
                 + op.partition_by
                     .iter()
                     .map(|item| SIZE_OF_BOOL + item.col.memory_usage())
@@ -309,7 +285,7 @@ pub(super) fn go_node_memory_usage(node: &PhysicalPlan) -> i64 {
                 + SIZE_OF_INT
                 + op.agg_funcs
                     .iter()
-                    .map(agg_func_desc_memory_usage)
+                    .map(AggFuncDesc::memory_usage)
                     .sum::<i64>()
                 + exprs_memory_usage(&op.group_by_items)
                 + mpp_columns_memory_usage(&op.mpp_partition_cols)
@@ -319,7 +295,7 @@ pub(super) fn go_node_memory_usage(node: &PhysicalPlan) -> i64 {
                 + SIZE_OF_INT
                 + op.agg_funcs
                     .iter()
-                    .map(agg_func_desc_memory_usage)
+                    .map(AggFuncDesc::memory_usage)
                     .sum::<i64>()
                 + exprs_memory_usage(&op.group_by_items)
         }
@@ -356,7 +332,7 @@ pub(super) fn go_node_memory_usage(node: &PhysicalPlan) -> i64 {
                 + SIZE_OF_UINT8
                 + op.window_func_descs
                     .iter()
-                    .map(|desc| base_func_desc_memory_usage(&desc.base))
+                    .map(|desc| desc.base.memory_usage())
                     .sum::<i64>()
                 + sort_items_memory_usage(&op.partition_by)
                 + sort_items_memory_usage(&op.order_by)
@@ -556,7 +532,7 @@ pub(super) fn sort_memory_usage(op: &super::PhysicalSort) -> i64 {
         + SIZE_OF_SLICE
         + op.by_items.len() as i64 * SIZE_OF_POINTER
         + SIZE_OF_BOOL
-        + by_items_memory_usage(&op.by_items)
+        + op.by_items.iter().map(ByItems::memory_usage).sum::<i64>()
 }
 
 /// Go `collectPartitionInfosFromMPPPlan`: an MPP reader keeps a

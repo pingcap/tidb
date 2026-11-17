@@ -470,10 +470,6 @@ impl BlockEncryptionMode {
     }
 }
 
-/// Resolves column and session state during evaluation.
-/// Go `expression.DecodeKeyFromString` bound to the statement's infoschema
-/// (`GetLatestInfoSchema`): `TIDB_DECODE_KEY`'s hexadecimal argument decoded
-/// in the session's time zone, or the warning it raises instead.
 /// The evaluated arguments of `TIDB_ENCODE_RECORD_KEY` (no `index`) and
 /// `TIDB_ENCODE_INDEX_KEY`: the names, then the index values and the handle.
 pub struct EncodeKeyArgs<'a> {
@@ -497,18 +493,7 @@ pub enum EncodeKeyError {
     Eval(EvalError),
 }
 
-/// Go `expression.EncodeRecordKeyFromRow` / `EncodeIndexKeyFromRow` over the
-/// latest infoschema, given Go's `checker.RequestVerification(db, table, "",
-/// mysql.AllPrivMask)`: the encoded key.
-pub type EncodeKeyFromRow = std::sync::Arc<
-    dyn Fn(&EncodeKeyArgs<'_>, &dyn Fn(&str, &str) -> bool, &dyn Columns) -> Result<Vec<u8>, EncodeKeyError>
-        + Send
-        + Sync,
->;
-
-pub type DecodeKeyFromString =
-    std::sync::Arc<dyn Fn(&[u8], &SessionTimeZone) -> Result<Vec<u8>, String> + Send + Sync>;
-
+/// Resolves column and session state during evaluation.
 pub trait Columns {
     /// Returns the referenced column, matched by its final name segment.
     fn get(&self, path: &[String]) -> Option<Datum>;
@@ -719,20 +704,6 @@ pub trait Columns {
         &self,
         _digests: &[String],
     ) -> Option<Result<std::collections::HashMap<String, String>, String>> {
-        None
-    }
-
-    /// Go `TIDB_DECODE_KEY`'s statement infoschema hook. A resolver without
-    /// a session has no hook and returns the input unchanged.
-    fn tidb_decode_key(&self, input: &[u8]) -> Vec<u8> {
-        input.to_vec()
-    }
-
-    /// `TIDB_ENCODE_RECORD_KEY` / `TIDB_ENCODE_INDEX_KEY`'s statement hook
-    /// (Go `EncodeRecordKeyFromRow` / `EncodeIndexKeyFromRow`), with Go's
-    /// access-denied error filled in. `None` is a context without it, Go's
-    /// uninitialized function.
-    fn tidb_encode_key(&self, _args: &EncodeKeyArgs<'_>) -> Option<Result<Vec<u8>, EvalError>> {
         None
     }
 

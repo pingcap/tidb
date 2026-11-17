@@ -758,7 +758,12 @@ pub trait PrivilegeVerifier {
     ) -> bool;
 }
 
-/// The latest domain infoschema fields read by Go `GetLatestIndexInfo`.
+/// The latest domain infoschema (Go `sctx.GetLatestInfoSchema()`) as one
+/// statement reads it: the fields Go `GetLatestIndexInfo` reads, and the
+/// tables `planner/core`'s codec helpers read (`TIDB_DECODE_KEY`,
+/// `TIDB_ENCODE_RECORD_KEY`, `TIDB_ENCODE_INDEX_KEY`). Immutable, so
+/// evaluation never locks the domain's catalog (planning may hold it while it
+/// folds constants).
 #[derive(Clone, Debug, Default)]
 pub struct LatestIndexSchema {
     /// Go `InfoSchema.SchemaMetaVersion()`.
@@ -767,6 +772,9 @@ pub struct LatestIndexSchema {
     pub table_indexes: BTreeMap<i64, Vec<tidb_model::GoShared<tidb_model::IndexInfo>>>,
     /// Go V2's lazy TableByID at the latest schema timestamp.
     pub lazy: Option<crate::infoschema_v2::InfoSchemaV2>,
+    /// Go `InfoSchema.TableByName` / `FindTableByTblOrPartID` as the codec
+    /// helpers call them.
+    pub codec: std::sync::Arc<crate::TidbDecodeKeySnapshot>,
 }
 impl LatestIndexSchema {
     /// Go `GetLatestIndexInfo`: retrieve only this logical table's indexes.

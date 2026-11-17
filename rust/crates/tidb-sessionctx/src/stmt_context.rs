@@ -966,11 +966,6 @@ pub struct StmtContextData {
     /// the builtin is evaluated.
     active_roles: Option<Arc<Vec<(String, String)>>>,
     connection_id: Option<u64>,
-    /// Go `expression.DecodeKeyFromString` over this statement's catalog
-    /// version, which `TIDB_DECODE_KEY` runs.
-    decode_key_from_string: Option<tidb_exprctx::DecodeKeyFromString>,
-    /// Go `expression.EncodeRecordKeyFromRow` / `EncodeIndexKeyFromRow`.
-    encode_key_from_row: Option<tidb_exprctx::EncodeKeyFromRow>,
     /// Go session advisory-lock map and its shared physical lock authority.
     advisory_locks: crate::advisory_lock_state::AdvisoryLockSession,
     selected_lock_keys: Option<crate::select_lock::SelectedLockKeys>,
@@ -2328,9 +2323,18 @@ context_configuration! {
         self
     }
 
-    /// Attaches the statement's latest-domain index metadata.
+    /// Attaches the statement's latest domain infoschema (Go
+    /// `sctx.GetLatestInfoSchema()`), and installs Go `sessionexpr`'s
+    /// infoschema provider over it for the builtins that read it
+    /// (`InfoSchemaPropReader`). Rust's statement holds one infoschema, the
+    /// domain's as the statement starts, so the provider answers it for the
+    /// session's schema too; no Rust builtin asks for that one yet.
     #[must_use]
     pub fn with_latest_info_schema(mut self, schema: LatestInfoSchema) -> Self {
+        let latest = schema.meta_only();
+        self.optional_props.add(Arc::new(tidb_expropt::InfoSchemaPropProvider::new(move |_is_domain| {
+            Arc::clone(&latest)
+        })));
         self.latest_info_schema = Some(schema);
         self
     }
@@ -2942,20 +2946,6 @@ context_configuration! {
         self
     }
 
-    /// Attaches `TIDB_DECODE_KEY`'s decoder over the catalog visible to this
-    /// statement.
-    #[must_use]
-    pub fn with_encode_key_from_row(mut self, encode: tidb_exprctx::EncodeKeyFromRow) -> Self {
-        self.encode_key_from_row = Some(encode);
-        self
-    }
-
-    /// See [`Self::with_encode_key_from_row`]'s decode counterpart.
-    pub fn with_decode_key_from_string(mut self, decode: tidb_exprctx::DecodeKeyFromString) -> Self {
-        self.decode_key_from_string = Some(decode);
-        self
-    }
-
     /// Attaches the session-scoped generator unseeded `RAND()` reads and
     /// advances, which Go keeps on `SessionVars.Rng` for the session's whole
     /// lifetime (shared across statements, unlike constant `RAND(N)`'s
@@ -3295,8 +3285,6 @@ impl StmtContext {
             table_lock_context: None,
             global_sysvars: None,
             connection_id: None,
-            decode_key_from_string: None,
-            encode_key_from_row: None,
             advisory_locks: session.advisory_locks,
             selected_lock_keys: None,
             statement_clock: None,
@@ -7393,43 +7381,6 @@ impl Columns for StmtContext {
 
     fn optimizer_use_invisible_indexes(&self) -> bool {
         self.optimizer_use_invisible_indexes
-    }
-
-    fn tidb_encode_key(&self, args: &tidb_exprctx::EncodeKeyArgs<'_>) -> Option<Result<Vec<u8>, tidb_exprctx::EvalError>> {
-        let encode = self.encode_key_from_row.as_ref()?;
-        let privileged = |db: &str, table: &str| {
-            self.session_privilege
-                .as_ref()
-                .is_none_or(|check| check(db, table, "", tidb_mysql::AllPrivMask))
-        };
-        Some(encode(args, &privileged, self).map_err(|error| match error {
-            tidb_exprctx::EncodeKeyError::Eval(error) => error,
-            // Go `ErrTableaccessDenied.FastGenByArgs("SELECT",
-            // sv.User.AuthUsername, sv.User.AuthHostname, tblName)`.
-            tidb_exprctx::EncodeKeyError::SpecificAccessDenied => {
-                let login = self.login_user_name().unwrap_or_default();
-                let (user, host) = login.rsplit_once('@').unwrap_or((login, ""));
-                tidb_exprctx::EvalError::Conversion(tidb_plannererrors::ERR_TABLEACCESS_DENIED.gen_with_stack_by_args(&[
-                    "SELECT".into(),
-                    user.to_owned().into(),
-                    host.to_owned().into(),
-                    args.table.to_owned().into(),
-                ]))
-            }
-        }))
-    }
-
-    fn tidb_decode_key(&self, input: &[u8]) -> Vec<u8> {
-        let Some(decode) = &self.decode_key_from_string else {
-            return input.to_vec();
-        };
-        match decode(input, &self.time_zone()) {
-            Ok(decoded) => decoded,
-            Err(message) => {
-                self.append_warning(1105, &message);
-                input.to_vec()
-            }
-        }
     }
 
     fn acquire_advisory_lock(

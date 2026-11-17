@@ -15,7 +15,7 @@ Five places in the Rust rewrite differ from Go's structure in ways that make eve
 - [ ] S01: the live session builds Go's `sessionexpr` expression context; builtins read the optional eval-property providers.
   - [x] (2026-11-16, `6393cff6b34`) Step 1: `Columns::get_optional_prop_provider`; `StmtContext` installs Go's KV-store and privilege-checker providers; `TIDB_MVCC_INFO` reads them through `KVStorePropReader` / `PrivilegeCheckerPropReader`, and the `has_super_privilege` / `get_mvcc_by_encoded_key` hooks are gone. `expropt`'s readers take any `EvalPropContext`, sized or not, so the live `dyn Columns` is one.
   - [x] (2026-11-16, `b866895054f`) Step 2a: `TIDB_DECODE_SQL_DIGESTS`' PROCESS check (build and evaluation) and the extension functions' dynamic-privilege check read `PrivilegeCheckerPropReader`; the `has_process_privilege` / `has_privilege_checker` / `request_dynamic_verification` hooks and the eager per-statement PROCESS lookup are gone.
-  - [ ] Step 2b: `TIDB_DECODE_KEY` / `TIDB_ENCODE_*_KEY` over `InfoSchemaPropReader`. Open question: Go's `DecodeKeyFromString` / `EncodeRecordKeyFromRow` are `expression` package variables that `planner/core`'s `init` sets; Rust has no `init`, and today the statement context carries the function. Decide whether an explicit install at domain start (like Go's `init`) or the per-statement function stays.
+  - [x] (2026-11-17) Step 2b: `TIDB_DECODE_KEY` / `TIDB_ENCODE_*_KEY` read `InfoSchemaPropReader.GetLatestInfoSchema` (and `PrivilegeCheckerPropReader` for the encoders) and call `tidb-expr`'s Go package variables `DecodeKeyFromString` / `EncodeRecordKeyFromRow` / `EncodeIndexKeyFromRow`, which the executor's port of `planner/core`'s `init` sets once before the first session statement context. `StmtContext::with_latest_info_schema` installs Go's infoschema provider; the statement's latest infoschema (`LatestIndexSchema`) carries the codec tables, so the per-session `TidbDecodeKeySnapshot` cache, the `decode_key_from_string` / `encode_key_from_row` hooks and their `tidb_exprctx::Columns` methods are gone. `MetaOnlyInfoSchema: Any` is Go's `isVer.(infoschema.InfoSchema)`.
   - [ ] Step 2c: `active_role_identities` and `retrieve_sql_digest_texts` over `SessionVarsPropReader` / `SQLExecutorPropReader`; expropt's `SessionVars` is a marker today, so this needs the session-variables provider of step 3.
 - [ ] S02: `TableCommon` holds Go's one `Columns` list in metadata order; `Cols` / `VisibleCols` / `WritableCols` / `DeletableCols` are views; index offsets are `IndexColumn.Offset`.
 - [ ] S04: the local backfill runs under the job's `reorgCtx` like the DXF path (`DistReorgSlot` generalised to Go's `reorgCtx`).
@@ -40,6 +40,13 @@ Five places in the Rust rewrite differ from Go's structure in ways that make eve
 - Decision: S01's first step moves `DynOptionalEvalPropProvider` (the `Any`-capable form of Go's `exprctx.OptionalEvalPropProvider`) from `tidb-expropt` into `tidb-exprctx`, and gives `tidb_exprctx::Columns` Go's `GetOptionalPropProvider(key)`; `OptionalEvalPropProviders` stays in `tidb-expropt`, as Go's does (`expropt/optional.go`).
   Rationale: Go's `GetOptionalPropProvider` is a method of `pkg/expression/exprctx`'s `EvalContext` (`exprctx/context.go:94`) returning `exprctx.OptionalEvalPropProvider`; `tidb-expropt` depends on `tidb-exprctx`, so the method cannot name an `expropt` type without a cycle. `expropt`'s readers then take any `Columns`.
   Date/Author: 2026-11-16, Claude.
+
+- Decision: S01 step 2b keeps Go's package variables (`expression.DecodeKeyFromString` and the two encoders) as `OnceLock`s in `tidb-expr`, set by `tidb_executor::expression_codec_fn::init` (Go `core_init.go`), which `session_statement_context` runs once through a `Once`.
+  Rationale: Go sets them in `planner/core`'s `init`, which runs before any statement; the executor crate is where `planner/core`'s codec helper lives in Rust, and every session statement context is built there. The per-statement closures the statement context carried were a second way to reach the same function.
+  Date/Author: 2026-11-17, Claude.
+- Decision: the infoschema provider answers the statement's one latest infoschema for both `p(true)` and `p(false)`.
+  Rationale: a Rust statement holds one infoschema snapshot (the domain's as it starts), and every Rust reader asks for the latest one (`GetLatestInfoSchema`); the session's transaction schema is added when a builtin that reads `GetSessionInfoSchema` is ported.
+  Date/Author: 2026-11-17, Claude.
 
 ## Outcomes & Retrospective
 

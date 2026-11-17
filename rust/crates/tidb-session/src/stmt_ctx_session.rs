@@ -382,14 +382,6 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.stmt_hints
     }
 
-    fn tidb_decode_key_cache_ref(&self) -> &std::sync::Mutex<Option<(u64, Arc<tidb_infoschema::tidb_decode_key::TidbDecodeKeySnapshot>)>> {
-        &self.tidb_decode_key_cache
-    }
-
-    fn tidb_decode_key_cache_mut(&mut self) -> &mut std::sync::Mutex<Option<(u64, Arc<tidb_infoschema::tidb_decode_key::TidbDecodeKeySnapshot>)>> {
-        &mut self.tidb_decode_key_cache
-    }
-
     fn transaction_table_delta_ref(&self) -> &std::sync::Arc<tidb_variable::table_delta::TableDeltaMap> {
         &self.transaction_table_delta
     }

@@ -2,8 +2,8 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 9,
-    "open": 6,
+    "unresolved": 10,
+    "open": 7,
     "partial": 3
   },
   "findings": [
@@ -35,7 +35,7 @@
       "id": "E27",
       "status": "open",
       "group": "Expanded subsystem ownership review",
-      "finding": "`AggFuncDesc` lacks Go's `MemoryUsage` (`descriptor.go`, `base_func.go`: plan-cache memory accounting of aggregate operators), `StringWithCtx` with the redact modes and the `ExplainInfo(ctx)` half of `ExplainAggFunc` (a redacted EXPLAIN of an aggregate's arguments), and `Hash64` (Go's cascades memo); `tidb-expression-aggregation`'s module doc names each, and `Expression` itself lacks the `MemoryUsage` / `StringWithCtx` it would build on",
+      "finding": "`AggFuncDesc` lacks Go's `StringWithCtx` with the redact modes and the `ExplainInfo(ctx)` half of `ExplainAggFunc` (a redacted EXPLAIN of an aggregate's arguments), and `Hash64` (Go's cascades memo); `tidb-expression-aggregation`'s module doc names each, and `Expression` itself lacks the `StringWithCtx` it would build on",
       "go_owner": "`pkg/expression/aggregation/descriptor.go`, `pkg/expression/aggregation/base_func.go`",
       "rust_evidence": "`rust/crates/tidb-expression-aggregation/src/lib.rs` (module doc)"
     },
@@ -54,6 +54,14 @@
       "finding": "The TiKV key codec (the keyspace prefix) is applied when the ingest writes to TiKV, not when the KV pairs are written to the engine. Go encodes each key as it is written (`openLocalWriter`'s `tikvCodec` for local engines, `WriterBuilder.SetTiKVCodec` for global-sort files) and `doWrite` sends the stored keys as they are; Rust's local engine and global-sort files hold unprefixed keys and `do_write` encodes each one (`ImportClient::encode_key`). Under API V1 the keys are the same; on a keyspace cluster the global-sort files, their split and job keys in the subtask metas, and the conflict collectors' keys differ from Go's, which also keeps `codec.DecodeKey` out of the conflict handlers.",
       "rust_evidence": "`rust/crates/tidb-ingestor-ingestctrl/src/region_job.rs` (`do_write`), `rust/crates/tidb-ingestor-simplesst/src/writer.rs` (no codec), `rust/crates/tidb-ingestor-ingestctrl/src/engine.rs`",
       "go_owner": "`pkg/ingestor/ingestctrl/local.go` (`openLocalWriter`), `pkg/ingestor/ingestctrl/job_worker.go` (`doWrite`), `pkg/ingestor/simplesst/writer.go` (`SetTiKVCodec`), `pkg/dxf/importinto/conflictedkv`"
+    },
+    {
+      "id": "E31",
+      "status": "open",
+      "group": "Expanded subsystem ownership review",
+      "finding": "EXPLAIN ignores `tidb_redact_log`: the executor renders every operator with redaction off (`tidb-executor/src/explain.rs` passes `RedactMode::Disable` to `PhysicalLimit::explain_info`, and no other operator takes a mode). Go's operators read `SessionVars.EnableRedactLog` and render constants and ranges through `Expression.StringWithCtx(ctx, redact)` (`?` when ON, `‹v›` for MARKER), so `EXPLAIN` under `tidb_redact_log=ON` shows the query's values in this port. The three Rust redaction enums (`tidb_planner_core_operator_physicalop::RedactMode`, `tidb_parser::RedactMode`, `tidb_mysql::errors::RedactionMode`) stand for Go's one `errors.RedactLog*` string",
+      "rust_evidence": "`rust/crates/tidb-executor/src/explain.rs`, `rust/crates/tidb-expr/src/explain.rs`",
+      "go_owner": "`pkg/planner/core/operator/physicalop` (each `ExplainInfo`), `pkg/expression/explain.go`, `pkg/expression/constant.go` (`StringWithCtx`)"
     },
     {
       "id": "S01",
@@ -80,7 +88,7 @@
       "rust_evidence": "`rust/crates/tidb-ddl/src/real_tikv_ddl/add_index_reorg.rs`, `rust/crates/tidb-ddl/src/real_tikv_ddl/backfilling.rs`"
     }
   ],
-  "unresolved": 9,
-  "open": 6,
+  "unresolved": 10,
+  "open": 7,
   "partial": 3
 }

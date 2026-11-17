@@ -159,6 +159,7 @@ tidb-table = { path = "../tidb-table" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-driver-error = { path = "../tidb-driver-error" }
 tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-infoschema-context = { path = "../tidb-infoschema-context" }
 tidb-stats-handle = { path = "../tidb-stats-handle" }
 tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
@@ -204,6 +205,7 @@ tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-expr = { path = "../tidb-expr" }
+tidb-expropt = { path = "../tidb-expropt" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
