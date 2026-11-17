@@ -173,7 +173,6 @@ type Config struct {
 
 	SpecifiedTables          bool
 	AllowCleartextPasswords  bool
-	AskPassword              bool
 	SortByPk                 bool
 	NoViews                  bool
 	NoSequences              bool
@@ -496,19 +495,20 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagDumpService, "", "Export using an external dump service at unix:///absolute/path.sock. Renders schema SQL using TiDB default session settings with time_zone='+00:00', character_set_connection='utf8mb4', character_set_results='utf8mb4'")
 }
 
-// ParseFromFlags parses dumpling's export.Config from flags
+// ParseFromFlags parses dumpling's export.Config from flags.
+// It never prompts for a password. When --ask-password is set, callers must
+// populate Password before constructing a dumper.
 // nolint: gocyclo
 func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err := validateDumpServiceFlags(flags); err != nil {
 		return err
 	}
 
-	var err error
-	conf.AskPassword, err = flags.GetBool(flagAskPassword)
+	askPassword, err := flags.GetBool(flagAskPassword)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if conf.AskPassword && flags.Changed(flagPassword) {
+	if askPassword && flags.Changed(flagPassword) {
 		return errors.New("--ask-password cannot be combined with --password")
 	}
 	conf.Databases, err = flags.GetStringSlice(flagDatabase)

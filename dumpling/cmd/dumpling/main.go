@@ -59,7 +59,8 @@ func main() {
 		fmt.Printf("\nmeet some unparsed arguments, please check again: %+v\n", pflag.Args())
 		os.Exit(1)
 	}
-	if conf.AskPassword {
+	// ParseFromFlags has already validated this flag and its conflicts.
+	if askPassword, _ := pflag.CommandLine.GetBool("ask-password"); askPassword {
 		// Use the controlling terminal so redirected stdin is never consumed.
 		tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 		if err != nil {

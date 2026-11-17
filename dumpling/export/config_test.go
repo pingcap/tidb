@@ -637,7 +637,9 @@ func TestAskPasswordFlags(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.Equal(t, testCase.wantAsk, conf.AskPassword)
+			askPassword, err := pflag.CommandLine.GetBool(flagAskPassword)
+			require.NoError(t, err)
+			require.Equal(t, testCase.wantAsk, askPassword)
 			require.Equal(t, testCase.password, conf.Password)
 		})
 	}
