@@ -41,11 +41,8 @@ type QueryImportRequest struct {
 	SourceTableIDs []int64
 }
 
-// PrepareQueryImport prepares and checks the plan of a query import in sctx
-// without planning the statement. sctx must have no open transaction; the
-// prechecks run internal SELECT statements and leave no transaction behind. The query is first
-// planned by the worker that runs it, so errors in the SELECT surface there.
-func PrepareQueryImport(ctx context.Context, sctx sessionctx.Context, req *QueryImportRequest) (*Plan, error) {
+// BuildQueryImportPlan builds and checks an import plan without planning its SELECT.
+func BuildQueryImportPlan(ctx context.Context, sctx sessionctx.Context, req *QueryImportRequest) (*Plan, error) {
 	stmt, node, err := ParseImportQuery(sctx, req.SQL)
 	if err != nil {
 		return nil, err

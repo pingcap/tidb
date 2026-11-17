@@ -39,7 +39,7 @@ func newQueryImportSession(t *testing.T, store kv.Storage) *testkit.TestKit {
 	return tk
 }
 
-func TestPrepareQueryImport(t *testing.T) {
+func TestBuildQueryImportPlan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -85,7 +85,7 @@ func TestPrepareQueryImport(t *testing.T) {
 	before, err := store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
 	directTK := newQueryImportSession(t, store)
-	direct, err := importer.PrepareQueryImport(ctx, directTK.Session(), request)
+	direct, err := importer.BuildQueryImportPlan(ctx, directTK.Session(), request)
 	require.NoError(t, err)
 	txn, err := directTK.Session().Txn(false)
 	require.NoError(t, err)
@@ -109,7 +109,7 @@ func TestPrepareQueryImport(t *testing.T) {
 		// Without a planned statement, the statement context holds no group.
 		se := newQueryImportSession(t, store).Session()
 		se.GetSessionVars().ResourceGroupName = "rg1"
-		plan, err := importer.PrepareQueryImport(ctx, se, request)
+		plan, err := importer.BuildQueryImportPlan(ctx, se, request)
 		require.NoError(t, err)
 		require.Equal(t, "rg1", plan.QuerySource.SessionStates.ResourceGroupName)
 	})
@@ -122,21 +122,21 @@ func TestPrepareQueryImport(t *testing.T) {
 		req := *request
 		req.SQL = "import into test.dst from (select a, b from test.src_other union all select a, b from test.src) with disable_precheck"
 		req.SourceTableIDs = []int64{other.Meta().ID, srcTbl.Meta().ID, other.Meta().ID}
-		plan, err := importer.PrepareQueryImport(ctx, newQueryImportSession(t, store).Session(), &req)
+		plan, err := importer.BuildQueryImportPlan(ctx, newQueryImportSession(t, store).Session(), &req)
 		require.NoError(t, err)
 		require.Len(t, plan.QuerySource.Tables, len(req.SourceTableIDs))
 		for i, id := range req.SourceTableIDs {
 			require.Equal(t, id, plan.QuerySource.Tables[i].ID)
 		}
 		req.SourceTableIDs[1] = 1 << 40
-		_, err = importer.PrepareQueryImport(ctx, newQueryImportSession(t, store).Session(), &req)
+		_, err = importer.BuildQueryImportPlan(ctx, newQueryImportSession(t, store).Session(), &req)
 		require.ErrorContains(t, err, "source table 1099511627776 not found")
 	})
 
 	t.Run("runs the import prechecks", func(t *testing.T) {
 		fullTbl, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("full_dst"))
 		require.NoError(t, err)
-		_, err = importer.PrepareQueryImport(ctx, newQueryImportSession(t, store).Session(), &importer.QueryImportRequest{
+		_, err = importer.BuildQueryImportPlan(ctx, newQueryImportSession(t, store).Session(), &importer.QueryImportRequest{
 			SQL:    "import into test.full_dst from (select a, count(1) c from test.src group by a) with disable_precheck",
 			DBName: "test", DBID: fullTbl.Meta().DBID, Table: fullTbl, SourceTableIDs: []int64{srcTbl.Meta().ID},
 		})
@@ -150,7 +150,7 @@ func TestPrepareQueryImport(t *testing.T) {
 			req := *request
 			req.SQL = "import into test.dst from (select * from information_schema." + name + ") with disable_precheck"
 			req.SourceTableIDs = []int64{tbl.Meta().ID}
-			_, err = importer.PrepareQueryImport(ctx, newQueryImportSession(t, store).Session(), &req)
+			_, err = importer.BuildQueryImportPlan(ctx, newQueryImportSession(t, store).Session(), &req)
 			require.ErrorContains(t, err, "virtual source tables in IMPORT INTO FROM SELECT")
 		}
 	})
@@ -171,7 +171,7 @@ func TestPrepareQueryImport(t *testing.T) {
 			if tc.sql != "" {
 				req.SQL = tc.sql
 			}
-			_, err = importer.PrepareQueryImport(ctx, newQueryImportSession(t, store).Session(), &req)
+			_, err = importer.BuildQueryImportPlan(ctx, newQueryImportSession(t, store).Session(), &req)
 			require.ErrorContains(t, err, tc.message)
 		}
 	})
