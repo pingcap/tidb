@@ -457,6 +457,7 @@ var Keywords = []KeywordsType{
 	{"MAX_USER_CONNECTIONS", false, "unreserved"},
 	{"MB", false, "unreserved"},
 	{"MEMBER", false, "unreserved"},
+	{"MEMBER_SLOTS", false, "unreserved"},
 	{"MEMORY", false, "unreserved"},
 	{"MERGE", false, "unreserved"},
 	{"MICROSECOND", false, "unreserved"},
