@@ -396,3 +396,22 @@ func TestAnalyzeVirtualTimestampColumnUsesSessionTimeZone(t *testing.T) {
 			"test t  b 1 2025 512",
 		))
 }
+
+func TestAnalyzeVirtualTimestampSamplesPreserveRepeatedDSTHour(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@time_zone = '+00:00'")
+	tk.MustExec("create table t (ts timestamp, year_value year generated always as (year(ts)) virtual, index(year_value))")
+	tk.MustExec("insert into t (ts) values ('2011-11-06 05:15:00'), ('2011-11-06 06:15:00')")
+	tk.MustExec("set @@time_zone = 'America/New_York'")
+	tk.MustExec("analyze table t with 2 topn")
+
+	tk.MustExec("set @@time_zone = '+00:00'")
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't' and is_index = 0 and column_name = 'ts'").
+		Sort().
+		Check(testkit.Rows(
+			"test t  ts 0 2011-11-06 05:15:00 1",
+			"test t  ts 0 2011-11-06 06:15:00 1",
+		))
+}

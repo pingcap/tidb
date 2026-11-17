@@ -137,14 +137,22 @@ func (e *AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	for _, col := range e.schemaForVirtualColEval.Columns {
 		totFts = append(totFts, col.RetType)
 	}
-	chk := chunk.NewChunkWithCapacity(totFts, len(collector.Base().Samples))
+	isVirtualColumn := make([]bool, len(totFts))
+	for _, colOffset := range virtualColIdx {
+		isVirtualColumn[colOffset] = true
+	}
+	utcChunk := chunk.NewChunkWithCapacity(totFts, len(collector.Base().Samples))
+	utcDecoder := codec.NewDecoder(utcChunk, time.UTC)
+	evaluationChunk := chunk.NewChunkWithCapacity(totFts, len(collector.Base().Samples))
 	sessionLocation := e.ctx.GetSessionVars().Location()
-	decoder := codec.NewDecoder(chk, sessionLocation)
+	evaluationDecoder := codec.NewDecoder(evaluationChunk, sessionLocation)
 	for _, sample := range collector.Base().Samples {
 		for i, columns := range sample.Columns {
 			// Virtual columns will be decoded as null first.
-			_, err := decoder.DecodeOne(columns.GetBytes(), i, e.schemaForVirtualColEval.Columns[i].RetType)
-			if err != nil {
+			if _, err := utcDecoder.DecodeOne(columns.GetBytes(), i, e.schemaForVirtualColEval.Columns[i].RetType); err != nil {
+				return err
+			}
+			if _, err := evaluationDecoder.DecodeOne(columns.GetBytes(), i, e.schemaForVirtualColEval.Columns[i].RetType); err != nil {
 				return err
 			}
 		}
@@ -152,29 +160,30 @@ func (e *AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	intest.AssertFunc(func() bool {
 		// Ensure all columns in the chunk have the same number of rows.
 		// Checking for virtual columns.
-		for i := 1; i < chk.NumCols(); i++ {
-			if chk.Column(i).Rows() != chk.Column(0).Rows() {
+		for i := 1; i < evaluationChunk.NumCols(); i++ {
+			if evaluationChunk.Column(i).Rows() != evaluationChunk.Column(0).Rows() {
 				return false
 			}
 		}
 		return true
 	}, "all columns in chunk should have the same number of rows")
-	err := table.FillVirtualColumnValue(fieldTps, virtualColIdx, schema.Columns, e.colsInfo, e.ctx.GetExprCtx(), chk)
-	if err != nil {
+	if err := table.FillVirtualColumnValue(fieldTps, virtualColIdx, schema.Columns, e.colsInfo, e.ctx.GetExprCtx(), evaluationChunk); err != nil {
 		return err
 	}
-	iter := chunk.NewIterator4Chunk(chk)
-	for row, i := iter.Begin(), 0; row != iter.End(); row, i = iter.Next(), i+1 {
-		datums := row.GetDatumRow(totFts)
-		for columnIndex, columnType := range totFts {
-			if datums[columnIndex].Kind() != types.KindMysqlTime || columnType.GetType() != mysql.TypeTimestamp {
-				continue
+	// A local-time round trip is lossy during a repeated DST hour. Keep UTC
+	// samples for storage and evaluate virtual columns on the local copy only.
+	utcIter := chunk.NewIterator4Chunk(utcChunk)
+	evaluationIter := chunk.NewIterator4Chunk(evaluationChunk)
+	for utcRow, evaluationRow, i := utcIter.Begin(), evaluationIter.Begin(), 0; utcRow != utcIter.End(); utcRow, evaluationRow, i = utcIter.Next(), evaluationIter.Next(), i+1 {
+		utcDatums := utcRow.GetDatumRow(totFts)
+		evaluationDatums := evaluationRow.GetDatumRow(totFts)
+		datums := make([]types.Datum, len(totFts))
+		for columnIndex := range datums {
+			if isVirtualColumn[columnIndex] {
+				datums[columnIndex] = evaluationDatums[columnIndex]
+			} else {
+				datums[columnIndex] = utcDatums[columnIndex]
 			}
-			timestamp := datums[columnIndex].GetMysqlTime()
-			if err := timestamp.ConvertTimeZone(sessionLocation, time.UTC); err != nil {
-				return err
-			}
-			datums[columnIndex] = types.NewTimeDatum(timestamp)
 		}
 		collector.Base().Samples[i].Columns = datums
 	}
