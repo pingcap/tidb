@@ -455,6 +455,8 @@ func TestMaterializedViewDDLStatements(t *testing.T) {
 			true,
 			"CREATE MATERIALIZED VIEW LOG IF NOT EXISTS ON `t` (`a`) SHARD_ROW_ID_BITS = 4 PURGE START WITH NOW() NEXT 300 ALERT ROWS 100",
 		},
+		{"CREATE MATERIALIZED VIEW log (a) AS SELECT 1", true, "CREATE MATERIALIZED VIEW `log` (`a`) AS SELECT 1"},
+		{"CREATE MATERIALIZED VIEW IF NOT EXISTS log (a) AS SELECT 1", true, "CREATE MATERIALIZED VIEW IF NOT EXISTS `log` (`a`) AS SELECT 1"},
 		{"CREATE MATERIALIZED VIEW mv (a) AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) AS SELECT 1"},
 		{"CREATE MATERIALIZED VIEW mv (a) COMMENT = 'c1' SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 3 REFRESH FAST NEXT 300 ATTRIBUTES = 'x' AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) COMMENT = 'c1' SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 3 REFRESH FAST NEXT 300 ATTRIBUTES = 'x' AS SELECT 1"},
 		{"CREATE MATERIALIZED VIEW mv (a) COMMENT 'c1' AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) COMMENT = 'c1' AS SELECT 1"},
@@ -474,6 +476,7 @@ func TestMaterializedViewDDLStatements(t *testing.T) {
 	wantTypes := []ast.StmtNode{
 		&ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{},
 		&ast.CreateMaterializedViewLogStmt{}, &ast.CreateMaterializedViewLogStmt{},
+		&ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{},
 		&ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{},
 		&ast.CreateMaterializedViewLogStmt{}, &ast.CreateMaterializedViewLogStmt{},
 		&ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewStmt{},
@@ -481,11 +484,17 @@ func TestMaterializedViewDDLStatements(t *testing.T) {
 		&ast.PurgeMaterializedViewLogStmt{}, &ast.PurgeMaterializedViewLogStmt{},
 		&ast.DropMaterializedViewStmt{}, &ast.DropMaterializedViewLogStmt{},
 	}
-	p := parser.New()
-	for i, tc := range table {
-		stmt, err := p.ParseOneStmt(tc.src, "", "")
-		require.NoError(t, err, tc.src)
-		require.IsType(t, wantTypes[i], stmt, tc.src)
+	for _, mode := range []mysql.SQLMode{0, mysql.ModeHighNotPrecedence} {
+		p := parser.New()
+		p.SetSQLMode(mode)
+		for i, tc := range table {
+			stmt, err := p.ParseOneStmt(tc.src, "", "")
+			require.NoError(t, err, "sql_mode=%v, sql=%s", mode, tc.src)
+			require.IsType(t, wantTypes[i], stmt, tc.src)
+			var restored strings.Builder
+			require.NoError(t, stmt.Restore(NewRestoreCtx(DefaultRestoreFlags, &restored)), tc.src)
+			require.Equal(t, tc.restore, restored.String(), tc.src)
+		}
 	}
 	RunTest(t, []testCase{
 		{"CREATE MATERIALIZED VIEW mv IF NOT EXISTS (a) AS SELECT 1", false, ""},
