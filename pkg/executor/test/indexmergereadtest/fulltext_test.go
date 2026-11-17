@@ -278,7 +278,30 @@ func TestFullTextIndexMatchAgainstPartitioned(t *testing.T) {
 		}
 		sql := "select id from pt where match(body) against('+rareword' in boolean mode) and id in (97, 194, 291, 5) order by id"
 		tk.MustQuery(sql).Check(testkit.Rows("97", "194", "291"))
+
+		// Changes made earlier in the same transaction are visible through
+		// the index of every partition they touch: UnionScan re-checks the
+		// changed rows of each pruned partition against the MATCH. Changing
+		// an id moves the row to another partition.
+		tk.MustExec("begin")
+		tk.MustExec("insert into pt values (100001, 0, 'rareword freshly inserted'), (100002, 0, 'rareword again')")
+		tk.MustExec("update pt set body = 'no longer rare' where id = 97")
+		tk.MustExec("delete from pt where id = 194")
+		tk.MustExec("update pt set k = 99 where id = 291")
+		tk.MustExec("update pt set id = 100003 where id = 388")
+		tk.MustExec("update pt set body = 'now rareword' where id = 6")
+		for _, search := range []string{"+rareword", "+rareword +alpha", "+rareword -freshly"} {
+			sql := fmt.Sprintf("select id, k from pt use index (idx) where match(body) against('%s' in boolean mode) order by id", search)
+			mustUseFullTextIndex(t, tk, sql, "idx(body)", search)
+			tk.MustQuery(sql).Check(tk.MustQuery(fmt.Sprintf("select id, k from pt ignore index (idx) where match(body) against('%s' in boolean mode) order by id", search)).Rows())
+		}
+		// Pruned to some partitions while others hold changes too.
+		sql = "select id from pt use index (idx) where match(body) against('+rareword' in boolean mode) and id in (6, 97, 194, 291, 388, 100001, 100003) order by id"
+		tk.MustQuery(sql).Check(testkit.Rows("6", "291", "100001", "100003"))
+		tk.MustExec("rollback")
+		tk.MustQuery("select count(*) from pt where match(body) against('+rareword' in boolean mode)").Check(testkit.Rows("15"))
 	}
+	tk.MustExec("admin check table pt")
 }
 
 // TestFullTextIndexMatchAgainstOtherMatches covers MATCH predicates the
