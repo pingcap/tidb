@@ -323,6 +323,7 @@ pub trait DdlExec {
                     | DdlStmt::CreateMaterializedViewLog(_)
                     | DdlStmt::DropMaterializedViewLog(_)
                     | DdlStmt::AlterMaterializedViewLog(_)
+                    | DdlStmt::CreateMaterializedView(_)
             ) {
                 self.run_executor_statement(sql, stmt).map_err(map_error)?;
                 return Ok(());

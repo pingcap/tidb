@@ -296,6 +296,19 @@ pub(super) fn alter_materialized_view_log<S: StoreClient>(
     Ok(report)
 }
 
+/// Go master `executor.CreateMaterializedView`.
+pub(super) fn create_materialized_view<S: StoreClient>(
+    executor: &RealClusterDdl<S>,
+    stmt: &tidb_ast::CreateMaterializedViewStmt,
+    current_db: &str,
+    context: &DdlContext,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    let catalog = executor.latest_schema();
+    let job = super::executor_mview::create_materialized_view_job(&catalog, stmt, current_db, context.as_ref())
+        .map_err(mysql_query_error)?;
+    do_ddl_job_wrapper(executor, context.as_ref(), job)
+}
+
 /// Go master `executor.CreateMaterializedViewLog` through `DoDDLJobWrapper`:
 /// the report, and the log table's schema and name.
 pub fn submit_create_materialized_view_log<E: ExecutorStore>(

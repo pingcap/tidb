@@ -1097,6 +1097,31 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     }
                 }
             }
+            // Go master `buildDDL`: the SELECT is built (its errors first,
+            // then the column-list count), and CREATE VIEW is checked on the
+            // view's name.
+            DdlStmt::CreateMaterializedView(create) => {
+                if super::create_view::check_for_user_variables(&create.select) {
+                    return Err(PlanError::from(tidb_dbterror::ERR_VIEW_SELECT_VARIABLE.gen_with_stack_by_args(&[])));
+                }
+                tidb_mviewutil::check_materialized_view_select(&create.select).map_err(PlanError::from)?;
+                let node = tidb_resolve::NodeW::new((*create.select).clone());
+                let plan = self.build_query_node(&node, false)?;
+                let schema_len = plan.schema().map_or(0, |schema| schema.columns.len());
+                if create.cols.len() != schema_len {
+                    return Err(PlanError::from(tidb_dbterror::ERR_VIEW_WRONG_LIST.gen_with_stack_by_args(&[])));
+                }
+                let (database, table, _) = self.qualified(&create.view_name);
+                if database.is_empty() {
+                    return Err(PlanError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])));
+                }
+                self.visit_info.push(visit(
+                    tidb_mysql::CreateViewPriv,
+                    &database,
+                    &table,
+                    table_denied("CREATE VIEW", &table),
+                ));
+            }
             DdlStmt::CreateSequence(create) => {
                 let (database, table, _) = self.qualified(&create.name);
                 self.visit_info.push(visit(

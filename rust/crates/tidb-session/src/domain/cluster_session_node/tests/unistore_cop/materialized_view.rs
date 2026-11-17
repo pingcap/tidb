@@ -365,3 +365,12 @@ fn drop_log_waits_for_a_base_modify_column() {
     drop.join().unwrap();
     assert_eq!(answer(&mut session, "show tables"), r#"RS:[["t"]]"#);
 }
+
+/// CREATE MATERIALIZED VIEW's refusals against a Go master `eca4674a6f`
+/// node's answers (`testdata/mview_create_checks_go.jsonl`): the planner's
+/// SELECT build and column-list count, then the DDL's checks and
+/// `validateCreateMaterializedViewQuery`, in Go's order.
+#[test]
+fn create_materialized_view_refusals_answer_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/mview_create_checks_go.jsonl"));
+}

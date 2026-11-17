@@ -297,6 +297,15 @@ impl ClusterDdl for MockDdl {
         unreachable!("these tests create no materialized view log")
     }
 
+    fn create_materialized_view(
+        &self,
+        _: &tidb_ast::CreateMaterializedViewStmt,
+        _: &str,
+        _: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        unreachable!("these tests create no materialized view")
+    }
+
     fn alter_materialized_view_log(
         &self,
         _: &tidb_ast::AlterMaterializedViewLogStmt,

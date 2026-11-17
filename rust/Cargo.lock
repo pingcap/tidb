@@ -5539,6 +5539,7 @@ dependencies = [
  "tidb-metadef",
  "tidb-metrics",
  "tidb-model",
+ "tidb-mviewutil",
  "tidb-mysql",
  "tidb-owner",
  "tidb-parser",
@@ -8182,6 +8183,18 @@ name = "tidb-murmur3"
 version = "0.0.0"
 
 [[package]]
+name = "tidb-mviewutil"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-dbterror",
+ "tidb-hack",
+ "tidb-model",
+ "tidb-mysql",
+ "tidb-terror",
+]
+
+[[package]]
 name = "tidb-mvmap"
 version = "0.0.0"
 
@@ -8464,6 +8477,7 @@ dependencies = [
  "tidb-memory",
  "tidb-metadef",
  "tidb-model",
+ "tidb-mviewutil",
  "tidb-mysql",
  "tidb-objstore",
  "tidb-objstore-s3like",
