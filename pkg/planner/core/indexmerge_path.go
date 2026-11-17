@@ -962,6 +962,10 @@ func buildPartialPaths4MVIndex(
 		}
 		virColVals = append(virColVals, v)
 	case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
+		if len(sf.GetArgs()) != 2 {
+			// json_contains(a, '1', path) is not supported, see checkAccessFilter4IdxCol.
+			return nil, false, false, nil
+		}
 		isIntersection = true
 		virColVals, ok = jsonArrayExpr2Exprs(
 			sctx.GetExprCtx(),
@@ -1389,6 +1393,11 @@ func checkAccessFilter4IdxCol(
 			virColVals = append(virColVals, v)
 			tp = singleValueOnMVColTp
 		case ast.JSONContains: // json_contains(a, '1')
+			// json_contains(a, '1', path) only checks the value at path, but the index ranges would be built from
+			// the candidate alone and the filter would be dropped. Don't use it as an access filter.
+			if len(sf.GetArgs()) != 2 {
+				return false, unspecifiedFilterTp
+			}
 			if !targetJSONPath.Equal(sctx.GetExprCtx().GetEvalCtx(), sf.GetArgs()[0]) {
 				return false, unspecifiedFilterTp
 			}
