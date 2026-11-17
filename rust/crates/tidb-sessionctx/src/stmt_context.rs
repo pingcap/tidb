@@ -664,11 +664,15 @@ pub type DynamicPrivilegeCheck = Arc<dyn Fn(&str, bool) -> bool + Send + Sync>;
 
 /// Go `kv.Storage` as `sessionexpr` hands it to expressions: the session's
 /// store, a `helper.Storage` over its regions.
-struct SessionKvStorage(Arc<dyn tidb_kv::region_map::RegionStore>);
+struct SessionKvStorage(Arc<dyn tidb_kv::region_map::RegionStore>, Option<MinSafeTsProvider>);
 
 impl tidb_expropt::KvStorage for SessionKvStorage {
     fn as_helper_storage(&self) -> Option<&dyn tidb_kv::region_map::RegionStore> {
         Some(&*self.0)
+    }
+
+    fn get_min_safe_ts(&self, txn_scope: &str) -> u64 {
+        self.1.as_ref().map_or(0, |provider| provider(txn_scope))
     }
 }
 
@@ -694,13 +698,14 @@ impl tidb_expropt::PrivilegeChecker for SessionPrivilegeChecker {
 /// properties the session already holds.
 fn optional_eval_props(
     regions: &Arc<dyn tidb_kv::region_map::RegionStore>,
+    min_safe_ts: Option<MinSafeTsProvider>,
     session_privilege: &Option<SessionPrivilegeCheck>,
     dynamic_privilege: &Option<DynamicPrivilegeCheck>,
     sql_executor: Option<Arc<dyn tidb_expropt::SqlExecutor>>,
     ddl_owner_info: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 ) -> tidb_expropt::OptionalEvalPropProviders {
     let mut props = tidb_expropt::OptionalEvalPropProviders::new();
-    let store: Arc<dyn tidb_expropt::KvStorage> = Arc::new(SessionKvStorage(Arc::clone(regions)));
+    let store: Arc<dyn tidb_expropt::KvStorage> = Arc::new(SessionKvStorage(Arc::clone(regions), min_safe_ts));
     props.add(Arc::new(tidb_expropt::KvStorePropProvider::new(move || Arc::clone(&store))));
     let checker: Arc<dyn tidb_expropt::PrivilegeChecker> = Arc::new(SessionPrivilegeChecker {
         session: session_privilege.clone(),
@@ -738,6 +743,8 @@ struct StmtSessionVars {
     current_tso: CurrentTso,
     current_insert_values: Arc<Mutex<Option<Vec<Datum>>>>,
     sequence_state: SequenceState,
+    stmt_safe_ts: Arc<std::sync::OnceLock<u64>>,
+    fts_function_is_used: Arc<AtomicBool>,
 }
 
 /// Go `SessionVars.User` of a session that matched the account
@@ -837,6 +844,14 @@ impl tidb_expropt::SessionVars for StmtSessionVars {
 
     fn sequence_last_value(&self, sequence_id: i64) -> Option<i64> {
         self.sequence_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&sequence_id).copied()
+    }
+
+    fn get_or_store_stmt_safe_ts(&self, min_safe_ts: u64) -> u64 {
+        *self.stmt_safe_ts.get_or_init(|| min_safe_ts)
+    }
+
+    fn set_stmt_fts_function_is_used(&self) {
+        self.fts_function_is_used.store(true, Ordering::Relaxed);
     }
 }
 
@@ -1225,11 +1240,9 @@ pub struct StmtContextData {
     plan_privilege_check: Option<Arc<dyn std::any::Any + Send + Sync>>,
     /// See [`StmtContextSessionState::mdl_related_table`].
     mdl_related_table: Option<MdlRelatedTableRecorder>,
-    /// See [`StmtContextSessionState::min_safe_ts_provider`].
-    min_safe_ts_provider: Option<MinSafeTsProvider>,
     /// Go `StmtCtx.GetOrStoreStmtCache(StmtSafeTSCacheKey, ...)`: the min
     /// SafeTS the statement's first `GetStmtMinSafeTime` read.
-    stmt_safe_ts: std::sync::OnceLock<u64>,
+    stmt_safe_ts: Arc<std::sync::OnceLock<u64>>,
     /// See [`StmtContextSessionState::locked_tables`].
     locked_tables: Option<LockedTables>,
     /// What Go's `core.CheckTableMode` finds for the statement this context
@@ -3417,6 +3430,7 @@ impl StmtContext {
         Self(Arc::new(StmtContextData {
             optional_props: optional_eval_props(
                 &session.regions,
+                session.min_safe_ts_provider.clone(),
                 &session.session_privilege,
                 &session.dynamic_privilege,
                 session.sql_executor,
@@ -3502,8 +3516,7 @@ impl StmtContext {
             session_privilege: session.session_privilege,
             plan_privilege_check: None,
             mdl_related_table: session.mdl_related_table,
-            min_safe_ts_provider: session.min_safe_ts_provider,
-            stmt_safe_ts: std::sync::OnceLock::new(),
+            stmt_safe_ts: Arc::default(),
             locked_tables: session.locked_tables,
             protected_table_mode: None,
             new_collation_enabled: tidb_datatype::new_collation_enabled(),
@@ -6679,6 +6692,8 @@ impl StmtContext {
             current_tso: self.current_tso.clone(),
             current_insert_values: Arc::clone(&self.current_insert_values),
             sequence_state: Arc::clone(&self.sequence_state),
+            stmt_safe_ts: Arc::clone(&self.stmt_safe_ts),
+            fts_function_is_used: Arc::clone(&self.fts_function_is_used),
         }
     }
 
@@ -7448,10 +7463,6 @@ impl Columns for StmtContext {
         self.fts_function_is_used.load(Ordering::Relaxed)
     }
 
-    fn set_fts_function_is_used(&self) {
-        self.fts_function_is_used.store(true, Ordering::Relaxed);
-    }
-
     fn alternative_logical_plan_signals(
         &self,
     ) -> Option<&tidb_exprctx::context::AlternativeLogicalPlanSignals> {
@@ -7562,14 +7573,6 @@ impl Columns for StmtContext {
             }
             _ => self.optional_props.get(key),
         }
-    }
-
-    fn get_stmt_min_safe_ts(&self) -> u64 {
-        *self.stmt_safe_ts.get_or_init(|| {
-            self.min_safe_ts_provider.as_ref().map_or(0, |provider| {
-                provider(&tidb_config::tikvcfg::get_txn_scope_from_config())
-            })
-        })
     }
 
     fn tidb_info(&self) -> String {

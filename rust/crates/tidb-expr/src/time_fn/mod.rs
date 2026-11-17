@@ -58,6 +58,7 @@ pub(crate) fn tidb_bounded_staleness(vals: &[Datum], cols: &dyn Columns) -> Resu
     let [left, right] = vals else {
         return Err(EvalError::WrongParameterCount("tidb_bounded_staleness"));
     };
+    let (store, vars) = bounded_staleness_props(cols)?;
     let (Datum::Time(left), Datum::Time(right)) = (left, right) else {
         return if vals.iter().any(Datum::is_null) {
             Ok(Datum::Null)
@@ -81,8 +82,7 @@ pub(crate) fn tidb_bounded_staleness(vals: &[Datum], cols: &dyn Columns) -> Resu
     if left.compare(*right).is_gt() {
         return Ok(Datum::Null);
     }
-    let min_safe_ts = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/expression/injectSafeTS")
-        .map_or_else(|| cols.get_stmt_min_safe_ts(), |value| value.int() as u64);
+    let min_safe_ts = get_stmt_min_safe_ts(&*vars, &*store);
     let Some(min_safe_time) = session_tz::get_time_from_ts(min_safe_ts, cols)? else {
         return Ok(Datum::Null);
     };
@@ -92,6 +92,29 @@ pub(crate) fn tidb_bounded_staleness(vals: &[Datum], cols: &dyn Columns) -> Resu
         .set_fsp(3)
         .map_err(|_| EvalError::Unsupported("invalid bounded-staleness result precision"))?;
     Ok(Datum::Time(result))
+}
+
+/// Go `builtinTiDBBoundedStalenessSig`'s `GetKVStore` and `GetSessionVars`,
+/// read before either argument.
+#[allow(clippy::type_complexity)]
+pub(crate) fn bounded_staleness_props(
+    ctx: &dyn Columns,
+) -> Result<(std::sync::Arc<dyn tidb_expropt::KvStorage>, std::sync::Arc<dyn tidb_expropt::SessionVars>), EvalError> {
+    let opt_err = crate::builtin_ext::misc::opt_prop_error;
+    let store = tidb_expropt::KvStorePropReader.get_kv_store(ctx).map_err(opt_err)?;
+    let vars = tidb_expropt::SessionVarsPropReader.get_session_vars(ctx).map_err(opt_err)?;
+    Ok((store, vars))
+}
+
+/// Go `GetStmtMinSafeTime` before its time conversion: the store's min
+/// SafeTS for the configured txn scope (the `injectSafeTS` failpoint
+/// replaces it), cached in the statement so every call answers the first.
+pub(crate) fn get_stmt_min_safe_ts(vars: &dyn tidb_expropt::SessionVars, store: &dyn tidb_expropt::KvStorage) -> u64 {
+    let mut min_safe_ts = store.get_min_safe_ts(&tidb_config::tikvcfg::get_txn_scope_from_config());
+    if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/expression/injectSafeTS") {
+        min_safe_ts = value.int() as u64;
+    }
+    vars.get_or_store_stmt_safe_ts(min_safe_ts)
 }
 
 /// Go `calAppropriateTime`: the SafeTS when it lies in `[min_time,

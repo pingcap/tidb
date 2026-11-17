@@ -322,9 +322,11 @@ fn bounded_staleness(
     input: &Chunk,
     result: &mut Column,
 ) -> Result<(), EvalError> {
+    let (store, vars) = crate::time_fn::bounded_staleness_props(ctx)?;
     let left = vec_eval::argument(&function.args[0], EvalType::Datetime, ctx, input)?;
     let right = vec_eval::argument(&function.args[1], EvalType::Datetime, ctx, input)?;
-    let safe = crate::time_fn::session_tz::get_time_from_ts(ctx.get_stmt_min_safe_ts(), ctx)?;
+    let min_safe_ts = crate::time_fn::get_stmt_min_safe_ts(&*vars, &*store);
+    let safe = crate::time_fn::session_tz::get_time_from_ts(min_safe_ts, ctx)?;
     result.resize_time(input.num_rows(), false);
     result.merge_nulls(&[&left, &right]);
     for row in 0..input.num_rows() {

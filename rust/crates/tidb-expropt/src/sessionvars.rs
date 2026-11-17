@@ -103,6 +103,15 @@ pub trait SessionVars: Any + Send + Sync {
         let _ = sequence_id;
         None
     }
+    /// Go `StmtCtx.GetOrStoreStmtCache(StmtSafeTSCacheKey, minSafeTS)`: the
+    /// min SafeTS the statement stored first, storing `min_safe_ts` when it
+    /// stored none.
+    fn get_or_store_stmt_safe_ts(&self, min_safe_ts: u64) -> u64 {
+        min_safe_ts
+    }
+    /// Go `StmtCtx.FTSFunctionIsUsed = true`, set where `FTS_MATCH_WORD()`
+    /// is built.
+    fn set_stmt_fts_function_is_used(&self) {}
 }
 
 /// boundary: Go `pkg/sessionctx/variable.SessionVarsProvider` — anything that
