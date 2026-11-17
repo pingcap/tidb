@@ -19,6 +19,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use prost::Message as _;
 use tidb_gocontext::Context;
@@ -114,40 +115,49 @@ pub trait StreamMeta: Send + Sync {
     fn pause_task(&self, ctx: &Context, task_name: &str, opts: Vec<PauseTaskOption>) -> Result<()>;
 }
 
-/// Go `metadataRequestTimeouts`' length: the attempts of one request.
-const METADATA_REQUEST_ATTEMPTS: usize = 3;
+/// Go `metadataRequestTimeouts`: one request's attempts, each under its
+/// own deadline.
+const METADATA_REQUEST_TIMEOUTS: [Duration; 3] =
+    [Duration::from_secs(5), Duration::from_secs(10), Duration::from_secs(15)];
 
-/// Go `runMetadataRequestWithRetry`: three attempts, retried only on a
-/// timeout or an unreachable etcd. The etcd client bounds each attempt
-/// with its own timeout, where Go uses 5s, 10s and 15s.
+/// Go `runMetadataRequestWithRetry`: each attempt runs under the next of
+/// [`METADATA_REQUEST_TIMEOUTS`], and a failed one is retried only when it
+/// timed out or found no reachable etcd (`isRetryableMetadataRequestError`).
 fn run_metadata_request_with_retry<T>(
     ctx: &Context,
     warn_message: &str,
     fields: &[Field],
-    mut request: impl FnMut() -> Result<T>,
+    mut request: impl FnMut(Duration) -> Result<T>,
 ) -> Result<T> {
-    let mut attempt = 0;
-    loop {
-        attempt += 1;
-        match request() {
+    let mut last_err = None;
+    for (attempt, timeout) in METADATA_REQUEST_TIMEOUTS.into_iter().enumerate() {
+        let err = match request(timeout) {
             Ok(v) => return Ok(v),
-            Err(err) => {
-                let retryable = attempt < METADATA_REQUEST_ATTEMPTS
-                    && ctx.err().is_none()
-                    && errors::cause(err.as_ref()).downcast_ref::<RetryableMetaError>().is_some();
-                let mut log_fields = vec![Field::new("category", Value::Str("log backup advancer".into()))];
-                log_fields.extend_from_slice(fields);
-                log_fields.push(Field::new("attempt", Value::U64(attempt as u64)));
-                log_fields.push(Field::new("max-attempts", Value::U64(METADATA_REQUEST_ATTEMPTS as u64)));
-                log_fields.push(Field::new("retry", Value::Bool(retryable)));
-                log_fields.push(Field::new("error", Value::Str(err.to_string())));
-                tidb_log::warn(warn_message, &log_fields);
-                if !retryable {
-                    return Err(err);
-                }
-            }
+            Err(err) => err,
+        };
+        let retryable = attempt + 1 < METADATA_REQUEST_TIMEOUTS.len()
+            && ctx.err().is_none()
+            && errors::cause(err.as_ref()).downcast_ref::<RetryableMetaError>().is_some();
+        let mut log_fields = vec![Field::new("category", Value::Str("log backup advancer".into()))];
+        log_fields.extend_from_slice(fields);
+        log_fields.push(Field::new("attempt", Value::U64(attempt as u64 + 1)));
+        log_fields.push(Field::new("max-attempts", Value::U64(METADATA_REQUEST_TIMEOUTS.len() as u64)));
+        log_fields.push(Field::new("timeout", Value::Duration(timeout.as_nanos() as i64)));
+        log_fields.push(Field::new("retry", Value::Bool(retryable)));
+        log_fields.push(Field::new("error", Value::Str(err.to_string())));
+        tidb_log::warn(warn_message, &log_fields);
+        if !retryable {
+            return Err(err);
         }
+        last_err = Some(err);
     }
+    Err(last_err.unwrap_or_else(|| errors::errorf("no metadata request attempt")))
+}
+
+/// Go's `context.DeadlineExceeded` from one metadata request, as the
+/// request-timeout failpoints return it.
+fn deadline_exceeded() -> errors::Error {
+    Arc::new(RetryableMetaError("context deadline exceeded".to_owned()))
 }
 
 /// Go `parseGlobalCheckpointValue`.
@@ -325,7 +335,16 @@ impl AdvancerExt {
                 Field::new("key", Value::Str(tidb_redact::key(key.as_bytes()))),
                 Field::new("task", Value::Str(task_name.to_owned())),
             ],
-            || self.meta.client.get(key.as_bytes()),
+            |timeout| {
+                if tidb_failpoint::eval(
+                    "github.com/pingcap/tidb/br/pkg/streamhelper/advancer_get_global_checkpoint_request_timeout",
+                )
+                .is_some()
+                {
+                    return Err(deadline_exceeded());
+                }
+                self.meta.client.get_with_timeout(key.as_bytes(), timeout)
+            },
         )?;
         value.map_or(Ok(0), |v| parse_global_checkpoint_value(&v))
     }
@@ -356,7 +375,26 @@ impl AdvancerExt {
                 Field::new("task", Value::Str(task_name.to_owned())),
                 Field::new("checkpoint", Value::U64(checkpoint)),
             ],
-            || self.meta.client.put(key.as_bytes(), &checkpoint.to_be_bytes()),
+            |timeout| {
+                if tidb_failpoint::eval(
+                    "github.com/pingcap/tidb/br/pkg/streamhelper/advancer_upload_global_checkpoint_request_timeout",
+                )
+                .is_some()
+                {
+                    return Err(deadline_exceeded());
+                }
+                self.meta.client.put_with_timeout(key.as_bytes(), &checkpoint.to_be_bytes(), timeout)?;
+                // The put landed, but its answer did not: the next attempt
+                // writes the same checkpoint again.
+                if tidb_failpoint::eval(
+                    "github.com/pingcap/tidb/br/pkg/streamhelper/advancer_upload_global_checkpoint_commit_timeout",
+                )
+                .is_some()
+                {
+                    return Err(deadline_exceeded());
+                }
+                Ok(())
+            },
         )
     }
 
@@ -374,5 +412,145 @@ impl AdvancerExt {
     /// The write error.
     pub fn pause_task(&self, _ctx: &Context, task_name: &str, opts: Vec<PauseTaskOption>) -> Result<()> {
         self.meta.pause_task(task_name, opts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::streamhelper::client::{MetaStore, PrefixRead};
+
+    /// An etcd held in memory. The first `fail_next` requests time out, and
+    /// every request records the deadline it ran under.
+    #[derive(Default)]
+    struct MemMeta {
+        kvs: Mutex<BTreeMap<Vec<u8>, Vec<u8>>>,
+        fail_next: Mutex<usize>,
+        timeouts: Mutex<Vec<Duration>>,
+    }
+
+    impl MemMeta {
+        fn attempt(&self, timeout: Duration) -> Result<()> {
+            self.timeouts.lock().unwrap().push(timeout);
+            let mut fail_next = self.fail_next.lock().unwrap();
+            if *fail_next > 0 {
+                *fail_next -= 1;
+                return Err(deadline_exceeded());
+            }
+            Ok(())
+        }
+    }
+
+    impl MetaStore for MemMeta {
+        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+            Ok(self.kvs.lock().unwrap().get(key).cloned())
+        }
+
+        fn get_with_timeout(&self, key: &[u8], timeout: Duration) -> Result<Option<Vec<u8>>> {
+            self.attempt(timeout)?;
+            self.get(key)
+        }
+
+        fn get_prefix(&self, prefix: &[u8]) -> Result<PrefixRead> {
+            let kvs = self.kvs.lock().unwrap();
+            Ok((kvs.iter().filter(|(k, _)| k.starts_with(prefix)).map(|(k, v)| (k.clone(), v.clone())).collect(), 0))
+        }
+
+        fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+            self.kvs.lock().unwrap().insert(key.to_vec(), value.to_vec());
+            Ok(())
+        }
+
+        fn put_with_timeout(&self, key: &[u8], value: &[u8], timeout: Duration) -> Result<()> {
+            self.attempt(timeout)?;
+            self.put(key, value)
+        }
+
+        fn delete(&self, key: &[u8]) -> Result<()> {
+            self.kvs.lock().unwrap().remove(key);
+            Ok(())
+        }
+
+        fn watch_prefix(
+            &self,
+            _: &[u8],
+            _: i64,
+            _: Box<dyn Fn() -> bool + Send>,
+            _: Box<dyn Fn(&tidb_pd_client::WatchResponse) + Send>,
+        ) -> Result<Box<dyn Send>> {
+            Err(errors::errorf("no watch in memory"))
+        }
+    }
+
+    fn ext() -> (AdvancerExt, Arc<MemMeta>) {
+        let meta = Arc::new(MemMeta::default());
+        (AdvancerExt { meta: MetaDataClient::new(Arc::clone(&meta) as Arc<dyn MetaStore>) }, meta)
+    }
+
+    /// Go `testGetGlobalCheckpointRetriesTimeout`.
+    #[test]
+    fn test_get_global_checkpoint_retries_timeout() {
+        let (ext, _) = ext();
+        let ctx = Context::background();
+        ext.upload_v3_global_checkpoint_for_task(&ctx, "checkpoint_get_retry", 200).unwrap();
+        let _fp = tidb_failpoint::enable_for_test(
+            "github.com/pingcap/tidb/br/pkg/streamhelper/advancer_get_global_checkpoint_request_timeout",
+            "2*return(true)",
+        );
+        assert_eq!(ext.get_global_checkpoint_for_task(&ctx, "checkpoint_get_retry").unwrap(), 200);
+    }
+
+    /// Go `testUploadGlobalCheckpointRetriesTimeout`.
+    #[test]
+    fn test_upload_global_checkpoint_retries_timeout() {
+        let (ext, _) = ext();
+        let ctx = Context::background();
+        let _fp = tidb_failpoint::enable_for_test(
+            "github.com/pingcap/tidb/br/pkg/streamhelper/advancer_upload_global_checkpoint_request_timeout",
+            "2*return(true)",
+        );
+        ext.upload_v3_global_checkpoint_for_task(&ctx, "checkpoint_upload_retry", 300).unwrap();
+        assert_eq!(ext.get_global_checkpoint_for_task(&ctx, "checkpoint_upload_retry").unwrap(), 300);
+    }
+
+    /// Go `testUploadGlobalCheckpointRetriesCommitTimeout`: a put whose
+    /// answer timed out is written again, and the checkpoint never moves
+    /// back.
+    #[test]
+    fn test_upload_global_checkpoint_retries_commit_timeout() {
+        let (ext, _) = ext();
+        let ctx = Context::background();
+        let task = "checkpoint_upload_commit_retry";
+        {
+            let _fp = tidb_failpoint::enable_for_test(
+                "github.com/pingcap/tidb/br/pkg/streamhelper/advancer_upload_global_checkpoint_commit_timeout",
+                "1*return(true)",
+            );
+            ext.upload_v3_global_checkpoint_for_task(&ctx, task, 400).unwrap();
+        }
+        assert_eq!(ext.get_global_checkpoint_for_task(&ctx, task).unwrap(), 400);
+        ext.upload_v3_global_checkpoint_for_task(&ctx, task, 350).unwrap();
+        assert_eq!(ext.get_global_checkpoint_for_task(&ctx, task).unwrap(), 400);
+    }
+
+    /// Go `metadataRequestTimeouts`: each attempt runs under its own
+    /// deadline, and a request that keeps timing out fails after three.
+    #[test]
+    fn metadata_requests_run_under_go_deadlines() {
+        let (ext, meta) = ext();
+        let ctx = Context::background();
+        *meta.fail_next.lock().unwrap() = 2;
+        assert_eq!(ext.get_global_checkpoint_for_task(&ctx, "deadlines").unwrap(), 0);
+        let secs = |s| Duration::from_secs(s);
+        assert_eq!(*meta.timeouts.lock().unwrap(), [secs(5), secs(10), secs(15)]);
+
+        meta.timeouts.lock().unwrap().clear();
+        *meta.fail_next.lock().unwrap() = 3;
+        let err = ext.get_global_checkpoint_for_task(&ctx, "deadlines").unwrap_err();
+        assert!(err.to_string().contains("context deadline exceeded"), "{err}");
+        assert_eq!(meta.timeouts.lock().unwrap().len(), 3);
     }
 }

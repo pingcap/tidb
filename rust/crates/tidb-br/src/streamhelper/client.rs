@@ -22,7 +22,7 @@ use std::sync::Arc;
 use prost::Message as _;
 use tidb_proto::backup::StreamBackupTaskInfo;
 
-use super::models::{pause, prefix_of_task, range_key_of, ranges_of, task_of, Range};
+use super::models::{pause, prefix_of_task, ranges_of, Range};
 use crate::errors::{self, Result};
 
 /// Go `SeverityError`.
@@ -41,6 +41,11 @@ pub trait MetaStore: Send + Sync {
     /// # Errors
     /// The request error.
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>>;
+    /// Go `Get(ctx, key)` under a ctx that times out after `timeout`.
+    ///
+    /// # Errors
+    /// The request error; a timeout is a [`RetryableMetaError`].
+    fn get_with_timeout(&self, key: &[u8], timeout: std::time::Duration) -> Result<Option<Vec<u8>>>;
     /// Go `Get(prefix, WithPrefix())`: the pairs in key order and the
     /// response header revision.
     ///
@@ -52,6 +57,11 @@ pub trait MetaStore: Send + Sync {
     /// # Errors
     /// The request error.
     fn put(&self, key: &[u8], value: &[u8]) -> Result<()>;
+    /// Go `Put(ctx, key, value)` under a ctx that times out after `timeout`.
+    ///
+    /// # Errors
+    /// The request error; a timeout is a [`RetryableMetaError`].
+    fn put_with_timeout(&self, key: &[u8], value: &[u8], timeout: std::time::Duration) -> Result<()>;
     /// Go `Delete`.
     ///
     /// # Errors
@@ -101,6 +111,10 @@ impl MetaStore for tidb_pd_client::EtcdClient {
         Self::get(self, key).map_err(etcd_error)
     }
 
+    fn get_with_timeout(&self, key: &[u8], timeout: std::time::Duration) -> Result<Option<Vec<u8>>> {
+        Self::get_with_timeout(self, key, timeout).map_err(etcd_error)
+    }
+
     fn get_prefix(&self, prefix: &[u8]) -> Result<PrefixRead> {
         let (kvs, revision) = self.get_prefix_metadata_with_revision(prefix).map_err(etcd_error)?;
         Ok((kvs.into_iter().map(|kv| (kv.key, kv.value)).collect(), revision))
@@ -108,6 +122,10 @@ impl MetaStore for tidb_pd_client::EtcdClient {
 
     fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
         Self::put(self, key, value).map_err(etcd_error)
+    }
+
+    fn put_with_timeout(&self, key: &[u8], value: &[u8], timeout: std::time::Duration) -> Result<()> {
+        Self::put_with_timeout(self, key, value, timeout).map_err(etcd_error)
     }
 
     fn delete(&self, key: &[u8]) -> Result<()> {
@@ -231,26 +249,6 @@ impl MetaDataClient {
     #[must_use]
     pub fn new(client: Arc<dyn MetaStore>) -> Self {
         Self { client }
-    }
-
-    /// Go `PutTask`: the task, its ranges and its pause mark.
-    ///
-    /// # Errors
-    /// The write error.
-    pub fn put_task(&self, info: &StreamBackupTaskInfo, ranges: &[Range], pausing: bool) -> Result<()> {
-        let name = &info.name;
-        // Go commits these in one transaction; the client here writes them
-        // in order, the task key last so a watcher reading the ranges of a
-        // new task finds them.
-        for r in ranges {
-            self.client.put(&range_key_of(name, &r.start_key), &r.end_key)?;
-        }
-        if pausing {
-            self.client.put(pause(name).as_bytes(), b"")?;
-        }
-        self.client
-            .put(task_of(name).as_bytes(), &info.encode_to_vec())
-            .map_err(|e| errors::annotate(e, format!("failed to commit the change for task {name}")))
     }
 
     /// Go `PauseTask`.

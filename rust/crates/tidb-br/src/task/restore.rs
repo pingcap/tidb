@@ -586,6 +586,14 @@ impl crate::streamhelper::MetaStore for EtcdOpsMetaStore {
     fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
         self.0.put(&String::from_utf8_lossy(key), value).map_err(errors::errorf)
     }
+    // The collector makes none of the advancer's deadline-bounded metadata
+    // requests; the server's etcd client bounds each call itself.
+    fn get_with_timeout(&self, key: &[u8], _timeout: std::time::Duration) -> Result<Option<Vec<u8>>> {
+        self.get(key)
+    }
+    fn put_with_timeout(&self, key: &[u8], value: &[u8], _timeout: std::time::Duration) -> Result<()> {
+        self.put(key, value)
+    }
     fn delete(&self, key: &[u8]) -> Result<()> {
         self.0.delete(&String::from_utf8_lossy(key)).map_err(errors::errorf)
     }
