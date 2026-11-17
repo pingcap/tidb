@@ -399,7 +399,7 @@ func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
 	require.NoError(t, err)
 	bogusKey = append(bogusKey, encodedTerm...)
 	mutate(func(txn kv.Transaction) {
-		require.NoError(t, txn.Set(bogusKey, tablecodec.EncodeTiKVFullTextIndexValue(nil, tablecodec.EncodeTiKVFullTextPositions(nil, []int{0}), false)))
+		require.NoError(t, txn.Set(bogusKey, tablecodec.EncodeTiKVFullTextIndexValue(nil, tablecodec.EncodeTiKVFullTextPayload(nil, 1, []int{0}), false)))
 	})
 	tk.MustContainErrMsg("admin check table t", "data inconsistency in table: t, index: idx, handle: 1")
 	// The check remembers the rows it has tokenized only up to a bound; a
@@ -490,7 +490,7 @@ func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
 	ptBogusKey := tablecodec.EncodeIndexSeekKey(ptInfo.Partition.Definitions[0].ID, ptIdx.ID, nil)
 	ptBogusKey = append(ptBogusKey, encodedTerm...)
 	mutate(func(txn kv.Transaction) {
-		require.NoError(t, txn.Set(ptBogusKey, tablecodec.EncodeTiKVFullTextIndexValue(nil, tablecodec.EncodeTiKVFullTextPositions(nil, []int{0}), false)))
+		require.NoError(t, txn.Set(ptBogusKey, tablecodec.EncodeTiKVFullTextIndexValue(nil, tablecodec.EncodeTiKVFullTextPayload(nil, 1, []int{0}), false)))
 	})
 	tk.MustContainErrMsg("admin check table pt", "data inconsistency in table: pt, index: idx, handle: 1")
 	mutate(func(txn kv.Transaction) { require.NoError(t, txn.Delete(ptBogusKey)) })
@@ -553,7 +553,7 @@ func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
 	require.NoError(t, err)
 	strayKey = append(strayKey, encodedStray...)
 	mutate(func(txn kv.Transaction) {
-		require.NoError(t, txn.Set(strayKey, tablecodec.EncodeTiKVFullTextIndexValue(nil, tablecodec.EncodeTiKVFullTextPositions(nil, []int{0}), false)))
+		require.NoError(t, txn.Set(strayKey, tablecodec.EncodeTiKVFullTextIndexValue(nil, tablecodec.EncodeTiKVFullTextPayload(nil, 1, []int{0}), false)))
 	})
 	tk.MustContainErrMsg("admin check table kt", "data inconsistency in table: kt, index: idx, handle: 1")
 	mutate(func(txn kv.Transaction) { require.NoError(t, txn.Delete(strayKey)) })

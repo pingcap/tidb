@@ -41,17 +41,24 @@ func TestTiKVFullTextIndexValueRoundTrip(t *testing.T) {
 		{0, 1, 2, 3},
 		{7, 300, 301, 70000, 1 << 30},
 	} {
-		encoded := EncodeTiKVFullTextPositions(nil, positions)
+		docLength := len(positions) + 300
+		encoded := EncodeTiKVFullTextPayload(nil, docLength, positions)
 		value := EncodeTiKVFullTextIndexValue(nil, encoded, false)
 		require.GreaterOrEqual(t, len(value), tikvFullTextValueMinLen)
 		decoded, err := DecodeTiKVFullTextIndexValue(value)
 		require.NoError(t, err)
 		require.Equal(t, positions, decoded)
+		decodedLength, err := DecodeTiKVFullTextDocLength(value)
+		require.NoError(t, err)
+		require.Equal(t, docLength, decodedLength)
 
 		untouched := EncodeTiKVFullTextIndexValue(nil, encoded, true)
 		decoded, err = DecodeTiKVFullTextIndexValue(untouched)
 		require.NoError(t, err)
 		require.Equal(t, positions, decoded)
+		decodedLength, err = DecodeTiKVFullTextDocLength(untouched)
+		require.NoError(t, err)
+		require.Equal(t, docLength, decodedLength)
 		require.True(t, IsUntouchedIndexKValue(key, untouched))
 		require.False(t, IsUntouchedIndexKValue(key, value))
 	}
@@ -64,7 +71,7 @@ func TestTiKVFullTextIndexValueIsInertToOtherDecoders(t *testing.T) {
 	// A short position list and a long one: the padding path and the
 	// unpadded path.
 	for _, positions := range [][]int{{1}, {1, 5, 9, 200, 201, 202, 203, 204, 205, 206}} {
-		value := EncodeTiKVFullTextIndexValue(nil, EncodeTiKVFullTextPositions(nil, positions), false)
+		value := EncodeTiKVFullTextIndexValue(nil, EncodeTiKVFullTextPayload(nil, len(positions), positions), false)
 		require.Greater(t, len(value), MaxOldEncodeValueLen)
 		require.Equal(t, 0, getIndexVersion(value))
 		segs := SplitIndexValue(value)
@@ -84,7 +91,7 @@ func TestTiKVFullTextIndexValueIsInertToOtherDecoders(t *testing.T) {
 	}
 
 	// The value survives the temp-index wrapping used during ADD INDEX.
-	value := EncodeTiKVFullTextIndexValue(nil, EncodeTiKVFullTextPositions(nil, []int{4, 8}), false)
+	value := EncodeTiKVFullTextIndexValue(nil, EncodeTiKVFullTextPayload(nil, 9, []int{4, 8}), false)
 	elem := TempIndexValueElem{Value: value, KeyVer: TempIndexKeyTypeBackfill}
 	wrapped := elem.Encode(nil)
 	decoded, err := DecodeTempIndexValue(wrapped)
@@ -94,6 +101,12 @@ func TestTiKVFullTextIndexValueIsInertToOtherDecoders(t *testing.T) {
 	_, err = DecodeTiKVFullTextIndexValue([]byte{'0'})
 	require.Error(t, err)
 	_, err = DecodeTiKVFullTextIndexValue(append([]byte{0, 0x7f}, make([]byte, 8)...))
+	require.Error(t, err)
+	// Kind 0x01, the pre-release layout without the document length, is
+	// refused rather than misread.
+	_, err = DecodeTiKVFullTextIndexValue(append([]byte{0, 0x01, 1, 0}, make([]byte, 6)...))
+	require.Error(t, err)
+	_, err = DecodeTiKVFullTextDocLength(append([]byte{0, 0x01, 1, 0}, make([]byte, 6)...))
 	require.Error(t, err)
 	require.Equal(t, byte('1'), kv.UnCommitIndexKVFlag)
 }

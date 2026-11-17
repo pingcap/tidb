@@ -37,12 +37,13 @@ import (
 // entries of one value of them, such as one tenant, form a contiguous range.
 // The index object tokenizes the column itself, with the analyzer frozen in
 // its metadata, and fans the row out into one (key values..., term,
-// positions) tuple per term. The term is encoded as binary bytes so that no
-// collation is involved; the positions become the value. See
-// tablecodec.EncodeTiKVFullTextIndexValue for the value layout.
+// payload) tuple per term. The term is encoded as binary bytes so that no
+// collation is involved; the payload, the document's length and the term's
+// positions, becomes the value. See tablecodec.EncodeTiKVFullTextIndexValue
+// for the value layout.
 //
 // The tuples this file produces have the shape [key values..., term, encoded
-// positions], the last two bytes datums, which is what GenIndexKey and
+// payload], the last two bytes datums, which is what GenIndexKey and
 // GenIndexValue expect for this index kind.
 
 // fullTextIndex is the per-index state of a FULLTEXT index built in TiKV.
@@ -82,7 +83,7 @@ func (c *index) fullTextKeyColumnCount() int {
 }
 
 // fullTextIndexedValues tokenizes the document, the last of indexedValues,
-// and returns one [key values..., term, encoded positions] tuple per distinct
+// and returns one [key values..., term, encoded payload] tuple per distinct
 // term, in term order. A NULL document, or one that analyzes to no term,
 // yields no tuple: the row then has no entry in the index, and no query can
 // find it through the index, which is what matching nothing means.
@@ -94,7 +95,7 @@ func (c *index) fullTextIndexedValues(indexedValues []types.Datum) ([][]types.Da
 	if err := c.castIndexValuesToChangingTypes(keyValues); err != nil {
 		return nil, errors.Trace(err)
 	}
-	positions, err := c.fullTextPositions(indexedValues[len(indexedValues)-1])
+	positions, docLength, err := c.fullTextPositions(indexedValues[len(indexedValues)-1])
 	if err != nil || len(positions) == 0 {
 		return nil, err
 	}
@@ -109,36 +110,37 @@ func (c *index) fullTextIndexedValues(indexedValues []types.Datum) ([][]types.Da
 		tuple = append(tuple, keyValues...)
 		tuple = append(tuple,
 			types.NewBytesDatum([]byte(term)),
-			types.NewBytesDatum(tablecodec.EncodeTiKVFullTextPositions(nil, positions[term])))
+			types.NewBytesDatum(tablecodec.EncodeTiKVFullTextPayload(nil, docLength, positions[term])))
 		vals = append(vals, tuple)
 	}
 	return vals, nil
 }
 
 // fullTextPositions tokenizes a document and returns the positions of each
-// distinct term in it; a NULL document has none.
-func (c *index) fullTextPositions(doc types.Datum) (map[string][]int, error) {
+// distinct term in it, and its length: the number of tokens it analyzes to.
+// A NULL document has none.
+func (c *index) fullTextPositions(doc types.Datum) (map[string][]int, int, error) {
 	if c.fullText.unusable != nil {
-		return nil, c.fullText.unusable
+		return nil, 0, c.fullText.unusable
 	}
 	if doc.IsNull() {
-		return nil, nil
+		return nil, 0, nil
 	}
 	tokens, err := c.fullText.analyzer.Analyze(doc.GetString())
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	positions := make(map[string][]int, len(tokens))
 	for _, token := range tokens {
 		positions[token.Text] = append(positions[token.Text], token.Position)
 	}
-	return positions, nil
+	return positions, len(tokens), nil
 }
 
 // fullTextTerms returns the distinct terms of the document, for consistency
 // checks that need to know whether a key belongs to a row.
 func (c *index) fullTextTerms(doc types.Datum) (map[string]struct{}, error) {
-	positions, err := c.fullTextPositions(doc)
+	positions, _, err := c.fullTextPositions(doc)
 	if err != nil {
 		return nil, err
 	}

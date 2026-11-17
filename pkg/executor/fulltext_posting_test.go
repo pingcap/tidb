@@ -95,12 +95,13 @@ func testPostingIndex() *model.IndexInfo {
 }
 
 // putPosting writes the entry of term for handle the way the write path
-// encodes it.
+// encodes it. The reader does not use the document length, so the term's own
+// occurrence count stands in for it.
 func putPosting(t *testing.T, s *memPostingSnapshot, term string, handle kv.Handle, positions ...int) {
 	encoded, err := codec.EncodeKey(nil, nil, types.NewBytesDatum([]byte(term)))
 	require.NoError(t, err)
 	key := appendHandleKey(tablecodec.EncodeIndexSeekKey(testPostingTableID, testPostingIndexID, encoded), handle)
-	s.put(key, tablecodec.EncodeTiKVFullTextIndexValue(nil, tablecodec.EncodeTiKVFullTextPositions(nil, positions), false))
+	s.put(key, tablecodec.EncodeTiKVFullTextIndexValue(nil, tablecodec.EncodeTiKVFullTextPayload(nil, len(positions), positions), false))
 }
 
 func newTestPostingSource(s *memPostingSnapshot) *tikvPostingSource {
