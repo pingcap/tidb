@@ -114,6 +114,36 @@ func TestSetVar(t *testing.T) {
 			require.Equal(t, tc.res, sessionVar.GetValue())
 		}
 	}
+
+	unsignedValue := uint64(18446744073709551609)
+	intTestCases := []struct {
+		name     string
+		value    any
+		want     any
+		unsigned bool
+	}{
+		{name: "signed", value: int64(-7), want: int64(-7)},
+		{name: "unsigned", value: unsignedValue, want: unsignedValue, unsigned: true},
+	}
+	for _, tc := range intTestCases {
+		fn, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tc.name, tc.value)))
+		require.NoError(t, err)
+		require.Equal(t, tc.unsigned, mysql.HasUnsignedFlag(fn.getRetTp().GetFlag()))
+
+		d, err := evalBuiltinFunc(fn, ctx, chunk.Row{})
+		require.NoError(t, err)
+		require.Equal(t, tc.want, d.GetValue())
+	}
+
+	fn, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums("vectorized", unsignedValue)))
+	require.NoError(t, err)
+	require.True(t, fn.isChildrenVectorized())
+	input := chunk.NewChunkWithCapacity(nil, 1)
+	input.SetNumVirtualRows(1)
+	result := chunk.NewColumn(fn.getRetTp(), 1)
+	require.NoError(t, fn.vecEvalInt(ctx, input, result))
+	require.False(t, result.IsNull(0))
+	require.Equal(t, unsignedValue, result.GetUint64(0))
 }
 
 func TestGetVar(t *testing.T) {

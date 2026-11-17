@@ -1002,6 +1002,7 @@ func (c *setVarFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	case types.ETDecimal:
 		sig = &builtinSetDecimalVarSig{baseBuiltinFunc: bf}
 	case types.ETInt:
+		bf.tp.AddFlag(args[1].GetType(ctx.GetEvalCtx()).GetFlag() & mysql.UnsignedFlag)
 		sig = &builtinSetIntVarSig{baseBuiltinFunc: bf}
 	case types.ETDatetime:
 		sig = &builtinSetTimeVarSig{baseBuiltinFunc: bf}
