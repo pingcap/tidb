@@ -226,7 +226,8 @@ func CaptureQuerySource(sctx sessionctx.Context, sql string) (*QuerySource, erro
 
 // newQuerySourceAtSnapshot captures a query source without planning it. The
 // caller supplies the source tables, which must be all the tables the SELECT
-// reads, and their definitions are read at readTS. Reading them from the same
+// reads, including views and their dependencies; this helper does not expand
+// views. Their definitions are read at readTS. Reading them from the same
 // snapshot as the data means a lagging info schema cannot make a worker reject
 // the source as changed.
 func newQuerySourceAtSnapshot(
@@ -247,10 +248,6 @@ func newQuerySourceAtSnapshot(
 		id := tableIDs[i]
 		if tblInfo == nil {
 			return nil, errors.Errorf("source table %d not found at the import query snapshot", id)
-		}
-		// A planner expands a view into its tables, but nothing expands it here.
-		if tblInfo.IsView() {
-			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("views as unplanned import query sources")
 		}
 		if err := checkQuerySourceTableInfo(tblInfo); err != nil {
 			return nil, err
