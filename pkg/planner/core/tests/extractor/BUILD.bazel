@@ -9,7 +9,7 @@ go_test(
         "table_name_batch_test.go",
     ],
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         "//pkg/domain",
         "//pkg/infoschema",

@@ -699,6 +699,11 @@ func findTableAndSchemaByName(
 	schemas []ast.CIStr,
 	tableNames []ast.CIStr,
 ) ([]ast.CIStr, []*model.TableInfo, error) {
+	// INFORMATION_SCHEMA enumerates persistent tables. Local temporary tables
+	// must not hide them on name lookups either. Preserve the MDL table overlay.
+	if extended, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && extended.LocalTemporaryTables != nil {
+		is = extended.DetachTemporaryTableInfoSchema()
+	}
 	type schemaAndTable struct {
 		schema ast.CIStr
 		table  *model.TableInfo
