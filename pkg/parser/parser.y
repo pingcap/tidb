@@ -534,7 +534,6 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	maxUserConnections         "MAX_USER_CONNECTIONS"
 	mb                         "MB"
 	member                     "MEMBER"
-	memberSlots                "MEMBER_SLOTS"
 	memory                     "MEMORY"
 	merge                      "MERGE"
 	microsecond                "MICROSECOND"
@@ -1191,6 +1190,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	AdminShowSlow                          "Admin Show Slow statement"
 	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
 	AffinityTableGroupMemberSlotsOpt       "Optional MEMBER_SLOTS of CREATE AFFINITY TABLE GROUP"
+	AffinityTableGroupMemberSlotsKwd       "MEMBER_SLOTS of CREATE AFFINITY TABLE GROUP"
 	LikeOrIlikeEscapeOpt                   "like or ilike escape option"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
@@ -8094,7 +8094,6 @@ UnReservedKeyword:
 |	"INCREMENTAL"
 |	"CPU"
 |	"MEMBER"
-|	"MEMBER_SLOTS"
 |	"MEMORY"
 |	"BLOCK"
 |	"IO"
@@ -17232,9 +17231,20 @@ AffinityTableGroupMemberSlotsOpt:
 	{
 		$$ = nil
 	}
-|	"MEMBER_SLOTS" EqOpt LengthNum
+|	AffinityTableGroupMemberSlotsKwd EqOpt LengthNum
 	{
 		$$ = $3
+	}
+
+AffinityTableGroupMemberSlotsKwd:
+	identifier
+	{
+		// MEMBER_SLOTS is matched as an identifier rather than a keyword, so that
+		// role and procedure names that only accept plain identifiers keep working.
+		if !strings.EqualFold($1, "member_slots") {
+			yylex.AppendError(yylex.Errorf("syntax error: expected MEMBER_SLOTS"))
+			return 1
+		}
 	}
 
 DropAffinityTableGroupStmt:
