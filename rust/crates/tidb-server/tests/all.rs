@@ -54,5 +54,6 @@ mod realtikv_addindextest;
 mod realtikv_addindextest2;
 mod realtikv_addindextest3;
 mod realtikv_addindextest4;
+mod realtikv_brietest;
 mod realtikv_txntest;
 mod realtikv_pessimistictest;

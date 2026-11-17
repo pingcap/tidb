@@ -353,3 +353,17 @@ PRs, each stacked on the previous one (the first on #56):
    EBS snapshot backup and restore, raw and txn KV backup and restore, the
    repo layout, restore name routing, the `br` CLI, BR's metrics, and the
    GCS and Azure `CopyFrom` (an S3 copy works within one bucket only).
+9. Done (2026-11-17, takeover): the stack (#57-#63) merged onto
+   `hparser-integration` in one merge commit. Go's
+   `pauseSchedulerByKeyRangeWithTTL` is one function for IMPORT INTO's
+   `PauseSchedulersByKeyRange` and the restore's
+   `PdController.RemoveSchedulersOnRegion`. The PD-client additions are
+   upstream in ngaut/client-rust (8a478f6) instead of local patches 120 and
+   130. The advancer's metadata requests run under Go's 5s/10s/15s
+   deadlines with Go's three request-timeout failpoints, and the unused,
+   non-transactional `PutTask` is gone. The realtikv harness installs the
+   BRIE node as the server does, and Go's `tests/realtikvtest/brietest`
+   `backup_restore_test.go` and `brie_test.go` run over it
+   (`tidb-server/tests/realtikv_brietest.rs`). What stays different from Go
+   (the S3 cross-bucket, GCS and Azure copiers; etcd prefix paging) is
+   register row E32.

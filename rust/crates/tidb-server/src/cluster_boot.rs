@@ -53,12 +53,27 @@ pub fn realtikv_test_stack(
     let global_vars = tidb_domain::global_sysvars::GlobalSysvars::before_domain();
     crate::set_global_vars::set_global_vars(config, &global_vars);
     let (mut stack, authority) = cluster_session_stack(config, global_vars, spill_storage, None)?;
+    install_brie_node(&stack, &authority);
     let dist_task_loop = stack
         .factory
         .init_dist_task_loop()
         .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     stack.workers.insert(0, Box::new(dist_task_loop));
     Ok((stack, authority))
+}
+
+/// Go `tidbGlue`: a BRIE statement's tasks back up and restore this node's
+/// TiKV store, through its domain and sessions.
+fn install_brie_node(
+    stack: &ClusterStack,
+    authority: &tidb_store_driver::real_tikv_read::ProductionReadProcessAuthority,
+) {
+    tidb_executor::brie::set_brie_node(Some(Arc::new(crate::brie_node::TikvBrieNode::new(
+        authority.tikv_store().clone(),
+        authority.transaction_opener(),
+        Arc::new(tidb_copr::cop_client::CopClient::new(authority.transport_factory())),
+        Arc::clone(&stack.factory),
+    ))));
 }
 
 pub(crate) fn run_cluster_session_node_with_spill(
@@ -94,13 +109,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         authority.tikv_store().clone(),
         Arc::clone(&stack.factory),
     ))));
-    // Go `tidbGlue`: BRIE tasks back up this node's TiKV store.
-    tidb_executor::brie::set_brie_node(Some(Arc::new(crate::brie_node::TikvBrieNode::new(
-        authority.tikv_store().clone(),
-        authority.transaction_opener(),
-        Arc::new(tidb_copr::cop_client::CopClient::new(authority.transport_factory())),
-        Arc::clone(&stack.factory),
-    ))));
+    install_brie_node(&stack, &authority);
     // Go `BootstrapSession` ends with `dom.InitDistTaskLoop()`; the loop
     // retires before the GC worker, as Go's `Domain.Close` stops it before
     // the store closes.

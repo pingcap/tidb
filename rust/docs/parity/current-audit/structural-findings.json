@@ -2,8 +2,8 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 6,
-    "open": 4,
+    "unresolved": 7,
+    "open": 5,
     "partial": 2
   },
   "findings": [
@@ -40,6 +40,14 @@
       "go_owner": "`pkg/ingestor/ingestctrl/local.go` (`openLocalWriter`), `pkg/ingestor/ingestctrl/job_worker.go` (`doWrite`), `pkg/ingestor/simplesst/writer.go` (`SetTiKVCodec`), `pkg/dxf/importinto/conflictedkv`"
     },
     {
+      "id": "E32",
+      "status": "open",
+      "group": "Expanded subsystem ownership review",
+      "finding": "BR's remaining differences from Go master's `pkg/objstore` and `br/pkg/streamhelper`. The storages' `Copier` copies between local storages and within one S3 bucket only: the `opendal` operator is bound to its bucket, where Go's S3 `CopyFrom` sends `CopyObject` from any source bucket, GCS copies through the rewrite API and Azure through `StartCopyFromURL`; so a SQL `RESTORE` during a log backup whose storage is another S3 bucket, GCS or Azure fails in the PITR collector where Go copies the SSTs. The log backup metadata client reads an etcd prefix in one range request where Go pages it (`scanEtcdPrefix`).",
+      "go_owner": "`pkg/objstore/s3like/store.go` (`CopyFrom`), `pkg/objstore/gcs.go` (`CopyFrom`), `pkg/objstore/azblob.go` (`CopyFrom`), `br/pkg/streamhelper/client.go` (`scanEtcdPrefix`)",
+      "rust_evidence": "`rust/crates/tidb-objstore/src/cloud.rs` (`Copier for CloudStorage`), `rust/crates/tidb-br/src/streamhelper/client.rs` (`MetaStore::get_prefix`)"
+    },
+    {
       "id": "S01",
       "status": "open",
       "group": "Structure: Go's shape before more ports",
@@ -56,7 +64,7 @@
       "rust_evidence": "`rust/crates/tidb-table/src/tables.rs`, `rust/crates/tidb-table/src/tables/nonpublic_columns.rs`, `rust/crates/tidb-table/src/table_from_meta.rs`"
     }
   ],
-  "unresolved": 6,
-  "open": 4,
+  "unresolved": 7,
+  "open": 5,
   "partial": 2
 }
