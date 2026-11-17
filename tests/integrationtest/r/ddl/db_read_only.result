@@ -367,7 +367,7 @@ execute stmt_select using @a;
 a	b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt_select using @a;
 a	b
 select @@last_plan_from_cache;
@@ -378,7 +378,7 @@ execute stmt_select using @a;
 a	b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt_select using @a;
 a	b
 select @@last_plan_from_cache;
@@ -397,7 +397,7 @@ select * from read_only.t1 where a = 1;
 a	b
 SELECT @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 select * from read_only.t1 where a = 1;
 a	b
 SELECT @@last_plan_from_cache;
@@ -408,7 +408,7 @@ select * from read_only.t1 where a = 1;
 a	b
 SELECT @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 select * from read_only.t1 where a = 1;
 a	b
 SELECT @@last_plan_from_cache;

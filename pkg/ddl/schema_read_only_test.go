@@ -41,7 +41,6 @@ import (
 )
 
 func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
-
 	t.Run("ImportModeTransition", func(t *testing.T) {
 		if !kerneltype.IsClassic() {
 			t.Skip("physical import uses table mode in classic kernel")

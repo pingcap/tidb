@@ -358,25 +358,25 @@ execute stmt_drop_table;
 -- error 8113
 execute stmt_alter_table;
 
-## test prepared plan cache after altering read only mode
+## test prepared SELECT plans stay cached across read-only transitions under RR
 alter schema read_only read only 0;
 set @a = 1;
 execute stmt_select using @a;
 execute stmt_select using @a;
 # should be 1
 select @@last_plan_from_cache;
-# read only 0 -> 1, can't use plan cache
+# read only 0 -> 1, the SELECT plan remains reusable
 alter schema read_only read only 1;
 execute stmt_select using @a;
-# should be 0
+# should be 1
 select @@last_plan_from_cache;
 execute stmt_select using @a;
 # should be 1
 select @@last_plan_from_cache;
-# read only 1 -> 0, can use plan cache
+# read only 1 -> 0, the SELECT plan remains reusable
 alter schema read_only read only 0;
 execute stmt_select using @a;
-# should be 0
+# should be 1
 select @@last_plan_from_cache;
 execute stmt_select using @a;
 # should be 1
@@ -388,18 +388,18 @@ select * from read_only.t1 where a = 1;
 select * from read_only.t1 where a = 1;
 # should be 1
 SELECT @@last_plan_from_cache;
-# read only 0 -> 1, can't use plan cache
+# read only 0 -> 1, the SELECT plan remains reusable
 alter schema read_only read only 1;
 select * from read_only.t1 where a = 1;
-# should be 0
+# should be 1
 SELECT @@last_plan_from_cache;
 select * from read_only.t1 where a = 1;
 # should be 1
 SELECT @@last_plan_from_cache;
-# read only 1 -> 0, can use plan cache
+# read only 1 -> 0, the SELECT plan remains reusable
 alter schema read_only read only 0;
 select * from read_only.t1 where a = 1;
-# should be 0
+# should be 1
 SELECT @@last_plan_from_cache;
 select * from read_only.t1 where a = 1;
 # should be 1
