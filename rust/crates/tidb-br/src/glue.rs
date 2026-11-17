@@ -96,6 +96,48 @@ pub trait Storage: Send + Sync {
     }
 }
 
+/// Go `prealloctableid.Allocator`: `meta.Mutator`'s global ID counter.
+pub trait GlobalIdAllocator {
+    /// Go `GetGlobalID`.
+    ///
+    /// # Errors
+    /// The read error.
+    fn get_global_id(&self) -> Result<i64>;
+    /// Go `AdvanceGlobalIDs(n)`: the counter before the advance.
+    ///
+    /// # Errors
+    /// The write error.
+    fn advance_global_ids(&self, n: i32) -> Result<i64>;
+}
+
+/// Go `infoschema.InfoSchema`, the reads restore does. Names compare
+/// case-insensitively, as Go's.
+pub trait InfoSchema: Send + Sync {
+    /// Go `SchemaByName`.
+    fn schema_by_name(&self, db: &str) -> Option<DBInfo>;
+    /// Go `TableByName(...).Meta()`: `None` for a missing table.
+    fn table_by_name(&self, db: &str, table: &str) -> Option<TableInfo>;
+    /// Go `SchemaTableInfos`.
+    fn schema_table_infos(&self, db: &str) -> Vec<TableInfo>;
+    /// Go `AllSchemas`.
+    fn all_schemas(&self) -> Vec<DBInfo>;
+    /// Go `TableExists`.
+    fn table_exists(&self, db: &str, table: &str) -> bool {
+        self.table_by_name(db, table).is_some()
+    }
+}
+
+/// Go `statstypes.MetaUpdate`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MetaUpdate {
+    /// Go `PhysicalID`.
+    pub physical_id: i64,
+    /// Go `Count`.
+    pub count: i64,
+    /// Go `ModifyCount`.
+    pub modify_count: i64,
+}
+
 /// A PD region label rule: its ID and `(key, value)` labels.
 pub type LabelRule = (String, Vec<(String, String)>);
 
@@ -120,6 +162,106 @@ pub trait Domain: Send + Sync {
     /// # Errors
     /// PD's error.
     fn get_label_rules(&self, rule_ids: &[String]) -> Result<Vec<LabelRule>>;
+    /// Go `kv.RunInNewTxn(ctx, dom.Store(), true, func(txn) {
+    /// f(meta.NewMutator(txn)) })` under `kv.InternalTxnBR`: the global ID
+    /// allocator restore preallocates table IDs from.
+    ///
+    /// # Errors
+    /// The transaction's or `f`'s error.
+    fn run_in_new_meta_txn(
+        &self,
+        _f: &mut dyn FnMut(&dyn GlobalIdAllocator) -> Result<()>,
+    ) -> Result<()> {
+        Err(crate::errors::errorf(
+            "RunInNewTxn is not supported by this domain",
+        ))
+    }
+    /// Go `InfoSchema()`: the latest schema.
+    ///
+    /// # Errors
+    /// The schema cannot be loaded.
+    fn info_schema(&self) -> Result<Arc<dyn InfoSchema>> {
+        Err(crate::errors::errorf(
+            "InfoSchema is not supported by this domain",
+        ))
+    }
+    /// Go `StatsHandle().LoadStatsFromJSONNoUpdate(ctx, InfoSchema(),
+    /// jsonTbl, 0)`: a table's statistics, its `database_name` /
+    /// `table_name` naming the target table.
+    ///
+    /// # Errors
+    /// The load error.
+    fn load_stats_from_json_no_update(
+        &self,
+        _ctx: &Context,
+        _json_table: &tidb_stats_util::JsonTable,
+    ) -> Result<()> {
+        Err(crate::errors::errorf(
+            "LoadStatsFromJSONNoUpdate is not supported by this domain",
+        ))
+    }
+    /// Go `StatsHandle().LoadStatsFromJSONConcurrently(ctx, table, tasks, 0)`:
+    /// each `(physical ID, statistics)` partition task into `table`.
+    ///
+    /// # Errors
+    /// The load error.
+    fn load_partition_stats_from_json(
+        &self,
+        _ctx: &Context,
+        _table: &TableInfo,
+        _tasks: Vec<(i64, tidb_stats_util::JsonTable)>,
+    ) -> Result<()> {
+        Err(crate::errors::errorf(
+            "LoadStatsFromJSONConcurrently is not supported by this domain",
+        ))
+    }
+    /// Go `StatsHandle().SaveMetaToStorage(false, updates...)`.
+    ///
+    /// # Errors
+    /// The write error.
+    fn save_meta_to_storage(&self, _updates: &[MetaUpdate]) -> Result<()> {
+        Err(crate::errors::errorf(
+            "SaveMetaToStorage is not supported by this domain",
+        ))
+    }
+    /// Go `NotifyUpdateAllUsersPrivilege`.
+    ///
+    /// # Errors
+    /// The notification error.
+    fn notify_update_all_users_privilege(&self) -> Result<()> {
+        Err(crate::errors::errorf(
+            "NotifyUpdateAllUsersPrivilege is not supported by this domain",
+        ))
+    }
+    /// Go `Store().GetCodec()`, as the region label rules encode ranges.
+    fn label_codec(&self) -> Box<dyn tidb_ddl_label::LabelCodec> {
+        Box::new(tidb_ddl_label::CodecV1)
+    }
+    /// Go `infosync.UpdateLabelRules`.
+    ///
+    /// # Errors
+    /// PD's error.
+    fn update_label_rules(&self, _patch: &tidb_ddl_label::LabelRulePatch) -> Result<()> {
+        Err(crate::errors::errorf(
+            "UpdateLabelRules is not supported by this domain",
+        ))
+    }
+    /// Go `infosync.GetTiFlashProgressStores` then
+    /// `MustGetTiFlashProgress(ctx, id, replicaCount, tiflash, tikv)`: the
+    /// replica sync progress of a physical table, in `[0, 1]`.
+    ///
+    /// # Errors
+    /// PD's error.
+    fn tiflash_progress(
+        &self,
+        _ctx: &Context,
+        _physical_id: i64,
+        _replica_count: u64,
+    ) -> Result<f64> {
+        Err(crate::errors::errorf(
+            "MustGetTiFlashProgress is not supported by this domain",
+        ))
+    }
 }
 /// Go `Glue`.
 pub trait Glue: Send + Sync {
@@ -222,6 +364,22 @@ pub trait Session: Send {
     /// # Errors
     /// The DDL error.
     fn alter_table_mode(&self, ctx: &Context, schema_id: i64, table_id: i64, mode: tidb_model::TableMode) -> Result<()>;
+    /// Go `GetSessionCtx().GetRestrictedSQLExecutor().ExecRestrictedSQL`:
+    /// the rows of `sql` with `%?` / `%n` arguments, under
+    /// `kv.InternalTxnBR`.
+    ///
+    /// # Errors
+    /// The statement's error.
+    fn exec_restricted_sql(
+        &self,
+        _ctx: &Context,
+        _sql: &str,
+        _args: &[SqlArg<'_>],
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>> {
+        Err(crate::errors::errorf(
+            "ExecRestrictedSQL is not supported by this session",
+        ))
+    }
 }
 
 /// Go `Progress`.

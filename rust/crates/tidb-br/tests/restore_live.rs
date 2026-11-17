@@ -195,6 +195,7 @@ fn restore_tables_into_new_ids_matches_source() {
             table: Some(new),
             old_table: Some(t),
             rewrite_rule: Some(rules),
+            ..Default::default()
         });
     }
     assert!(!created.is_empty(), "the backup has no table");

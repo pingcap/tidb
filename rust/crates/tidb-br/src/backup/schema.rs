@@ -36,7 +36,7 @@ use crate::utils::misc::{is_sys_db, temporary_db_name, LABEL_RULE_BATCH_SIZE};
 pub const DEFAULT_SCHEMA_CONCURRENCY: usize = 64;
 
 /// Go `kvutil.ExplicitTypeBR`.
-const EXPLICIT_TYPE_BR: &str = "br";
+pub(crate) const EXPLICIT_TYPE_BR: &str = "br";
 
 /// Go `schemaInfo`.
 #[derive(Default)]

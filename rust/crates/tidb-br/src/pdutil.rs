@@ -658,6 +658,23 @@ impl PdController {
         self.block_on(self.pd_http.get_min_resolved_ts_by_stores_ids(&[])).map(|(ts, _)| ts).map_err(pd_err)
     }
 
+    /// Go `ResetTS`: PD's TSO moved to at least `ts`, past the default
+    /// 24-hour bound (`force-use-larger`). A `Forbidden` answer means PD's
+    /// TSO is already larger and is ignored.
+    ///
+    /// # Errors
+    /// PD's error.
+    pub fn reset_ts(&self, _: &Context, ts: u64) -> Result<()> {
+        match self.block_on(self.pd_http.reset_ts(ts, true)) {
+            Ok(()) => Ok(()),
+            Err(err) if err.to_string().contains("Forbidden") => {
+                tidb_log::info("reset-ts returns with status forbidden, ignore", &[]);
+                Ok(())
+            }
+            Err(err) => Err(pd_err(err)),
+        }
+    }
+
     /// Go `CanPauseSchedulerByKeyRange`.
     #[must_use]
     pub fn can_pause_scheduler_by_key_range(&self) -> bool {

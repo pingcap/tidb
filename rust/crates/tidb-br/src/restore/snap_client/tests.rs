@@ -642,6 +642,7 @@ fn new_created_table(
             BTreeMap::new(),
         )),
         rewrite_rule: None,
+        ..Default::default()
     }
 }
 
@@ -725,6 +726,7 @@ fn generate_created_tables(case: &Json) -> Vec<CreatedTable<metautil::Table>> {
             table: Some(table),
             old_table: Some(old_table(info, files_of)),
             rewrite_rule: Some(rules),
+            target_db: Default::default(),
         });
     }
     // Go shuffles the tables; the result must not depend on their order.

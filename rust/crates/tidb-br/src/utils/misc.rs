@@ -52,6 +52,82 @@ pub fn enclose_name(name: &str) -> String {
     format!("`{}`", name.replace('`', "``"))
 }
 
+/// Go `EncloseDBAndTable`.
+#[must_use]
+pub fn enclose_db_and_table(database: &str, table: &str) -> String {
+    format!("{}.{}", enclose_name(database), enclose_name(table))
+}
+
+/// Go `GetSysDBCIStrName`: the system database a temporary one stands for,
+/// both cases stripped of the prefix.
+#[must_use]
+pub fn get_sys_db_cistr_name(temp_db: &tidb_ast::CiString) -> (tidb_ast::CiString, bool) {
+    match temp_db.original().strip_prefix(TEMPORARY_DB_NAME_PREFIX) {
+        Some(o) => (tidb_ast::CiString::new(o), true),
+        None => (temp_db.clone(), false),
+    }
+}
+
+/// Go `IsTypeCompatible`: whether backed-up data of `src` fits a `target`
+/// column, and whether the collations are equal.
+#[must_use]
+pub fn is_type_compatible(
+    src: &tidb_datatype::FieldType,
+    target: &tidb_datatype::FieldType,
+) -> (bool, bool) {
+    use tidb_datatype::FieldTypeFlags;
+    let collate_eq = src.collation_name() == target.collation_name();
+    let not_null = |t: &tidb_datatype::FieldType| t.flags() & FieldTypeFlags::NOT_NULL != 0;
+    let unsigned = |t: &tidb_datatype::FieldType| t.flags() & FieldTypeFlags::UNSIGNED != 0;
+    // Backup NOT NULL data always fits a nullable column; the reverse may
+    // bring NULLs into a NOT NULL column.
+    if !not_null(src) && not_null(target) {
+        return (false, collate_eq);
+    }
+    if unsigned(src) != unsigned(target) {
+        return (false, collate_eq);
+    }
+    if src.eval_type() != target.eval_type() {
+        return (false, collate_eq);
+    }
+    // Go `FieldType.CompactStr`'s defaults for unspecified lengths.
+    let flen_and_decimal = |t: &tidb_datatype::FieldType| {
+        let (default_flen, default_decimal) = t.code().get_default_field_length_and_decimal();
+        let flen = if t.flen() == tidb_datatype::UNSPECIFIED_LENGTH {
+            i64::from(default_flen)
+        } else {
+            t.flen()
+        };
+        let decimal = if t.decimal() == tidb_datatype::UNSPECIFIED_LENGTH {
+            i64::from(default_decimal)
+        } else {
+            t.decimal()
+        };
+        (flen, decimal)
+    };
+    let (src_flen, src_decimal) = flen_and_decimal(src);
+    let (target_flen, target_decimal) = flen_and_decimal(target);
+    if src_flen > target_flen || src_decimal > target_decimal {
+        return (false, collate_eq);
+    }
+    // Enum and set elements must all exist in the target.
+    let src_elems = src.elems_snapshot();
+    let target_elems: std::collections::HashSet<_> = target.elems_snapshot().into_iter().collect();
+    if src_elems.len() > target_elems.len() || src_elems.iter().any(|e| !target_elems.contains(e)) {
+        return (false, collate_eq);
+    }
+    (src.charset_name() == target.charset_name(), collate_eq)
+}
+
+/// The MySQL error code of the innermost normalized error, Go's
+/// `errors.Cause(err).(*terror.Error).Code()`.
+#[must_use]
+pub fn sql_error_code(err: &(dyn std::error::Error + 'static)) -> Option<isize> {
+    errors::cause(err)
+        .downcast_ref::<tidb_terror::TerrorError>()
+        .map(|t| t.code().value())
+}
+
 /// Go `IsTemplateSysDB`.
 #[must_use]
 pub fn is_template_sys_db(db_name_o: &str) -> bool {

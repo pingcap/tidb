@@ -21,6 +21,8 @@
 
 pub mod import_client;
 pub mod import_mode_switcher;
+pub mod internal;
+pub mod misc;
 pub mod restorer;
 pub mod snap_client;
 pub mod split;

@@ -25,6 +25,8 @@ use tidb_proto::metapb;
 use crate::errors::Result;
 use crate::pdclient::PdClient;
 
+pub mod cluster;
+
 /// The records of `kind` in `testdata/conn_go.jsonl`.
 pub fn go_records(kind: &str) -> Vec<Json> {
     include_str!("../testdata/conn_go.jsonl")

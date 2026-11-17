@@ -12,14 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `br/pkg/restore/snap_client`: the snapshot restore client. This part
-//! holds the SST import path (`import.go`, `tikv_sender.go`), the online
-//! placement rules and the client's import setup; the schema side of
-//! `SnapClient` comes with the restore task.
+//! Go `br/pkg/restore/snap_client`: the snapshot restore client: the SST
+//! import path (`import.go`, `tikv_sender.go`), the online placement
+//! rules, the schema side of `SnapClient` (`client.go`), the steps after a
+//! table's data is in (`pipeline_items.go`) and the logical system table
+//! restore (`systable_restore.go`).
 
 pub mod client;
 pub mod import;
+pub mod pipeline_items;
 pub mod placement_rule_manager;
+pub mod systable_restore;
 pub mod tikv_sender;
 
 pub use client::SnapClient;

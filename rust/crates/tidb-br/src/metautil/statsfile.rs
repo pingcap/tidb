@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `br/pkg/metautil/statsfile.go`, the writing half: a table's
-//! statistics in `backupmeta.schema.stats.<physical ID>` files, or inline
-//! when small. `RestoreStats` comes with the restore code.
+//! Go `br/pkg/metautil/statsfile.go`: a table's statistics in
+//! `backupmeta.schema.stats.<physical ID>` files, or inline when small,
+//! written at backup and loaded back at restore.
 
 use prost::Message;
 use sha2::{Digest, Sha256};
@@ -126,4 +126,77 @@ impl StatsWriter {
         self.write_stats_file_and_clear(ctx, physical_id)?;
         Ok(self.stats_file_indexes.clone())
     }
+}
+
+/// Go `RestoreStats`: each partition's statistics downloaded, its physical
+/// ID rewritten, and loaded into `new_table_info`. Go downloads with four
+/// workers into a channel the stats handle drains concurrently; here the
+/// files are read in order and handed over in one call.
+///
+/// # Errors
+/// A read, decrypt, checksum or decode error, an ID without a rewrite, or
+/// the load error.
+pub fn restore_stats(
+    ctx: &Context,
+    storage: &Storage,
+    cipher: Option<&CipherInfo>,
+    dom: &dyn crate::glue::Domain,
+    new_table_info: &tidb_model::TableInfo,
+    stats_file_indexes: &[StatsFileIndex],
+    rewrite_id_map: &std::collections::BTreeMap<i64, i64>,
+) -> crate::errors::Result<()> {
+    let tasks = download_stats(ctx, storage, cipher, stats_file_indexes, rewrite_id_map)?;
+    dom.load_partition_stats_from_json(ctx, new_table_info, tasks)
+}
+
+/// Go `downloadStats`.
+fn download_stats(
+    ctx: &Context,
+    storage: &Storage,
+    cipher: Option<&CipherInfo>,
+    stats_file_indexes: &[StatsFileIndex],
+    rewrite_id_map: &std::collections::BTreeMap<i64, i64>,
+) -> crate::errors::Result<Vec<(i64, tidb_stats_util::JsonTable)>> {
+    use crate::errors;
+    let mut tasks = Vec::new();
+    for stats_file in stats_file_indexes {
+        if let Some(err) = ctx.err() {
+            return Err(errors::errorf(err.to_string()));
+        }
+        let content = if stats_file.inline_data.is_empty() {
+            let content = storage
+                .read_file(ctx, &stats_file.name)
+                .map_err(|e| errors::errorf(e.to_string()))?;
+            let decrypted = crate::utils::decrypt(&content, cipher, &stats_file.cipher_iv)
+                .map_err(errors::errorf)?;
+            let checksum = Sha256::digest(&decrypted);
+            if stats_file.sha256.as_slice() != checksum.as_slice() {
+                return Err(std::sync::Arc::new(
+                    errors::ERR_INVALID_META_FILE.gen_with_stack(format!(
+                        "invalid metafile: checksum mismatch expect {}, got {}",
+                        hex::encode(&stats_file.sha256),
+                        hex::encode(checksum)
+                    )),
+                ));
+            }
+            decrypted
+        } else {
+            stats_file.inline_data.clone()
+        };
+        let blocks =
+            StatsFile::decode(content.as_slice()).map_err(|e| errors::errorf(e.to_string()))?;
+        for block in blocks.blocks {
+            let Some(&physical_id) = rewrite_id_map.get(&block.physical_id) else {
+                return Err(std::sync::Arc::new(errors::ERR_RESTORE_INVALID_REWRITE.gen_with_stack(format!(
+                    // Go's message has no verb for the argument.
+                    "invalid rewrite rule%!(EXTRA string=not rewrite rule matched, old physical id: {})",
+                    block.physical_id
+                ))));
+            };
+            let json_table: tidb_stats_util::JsonTable = serde_json::from_slice(&block.json_table)
+                .map_err(|e| errors::errorf(e.to_string()))?;
+            tasks.push((physical_id, json_table));
+        }
+    }
+    Ok(tasks)
 }

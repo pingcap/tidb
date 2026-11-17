@@ -5,12 +5,25 @@ use std::collections::BTreeMap;
 use tidb_gocontext::Context;
 
 /// Go `Database`.
+#[derive(Clone)]
 pub struct Database {
     /// Go `Info`.
     pub info: tidb_model::DBInfo,
     /// Go `Tables`.
     pub tables: Vec<Table>,
     reused_by_pitr: bool,
+}
+
+impl Database {
+    /// A database with its tables, not reused by PiTR.
+    #[must_use]
+    pub fn new(info: tidb_model::DBInfo, tables: Vec<Table>) -> Self {
+        Self {
+            info,
+            tables,
+            reused_by_pitr: false,
+        }
+    }
 }
 impl Database {
     /// Go `Database.SetReusedByPITR`.

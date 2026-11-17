@@ -40,20 +40,22 @@ use crate::metautil::Storage;
 
 pub mod backup;
 pub mod gojson;
+pub mod manager;
 pub mod restore;
+pub mod storage;
 
 /// Go `CheckpointDir`.
 pub const CHECKPOINT_DIR: &str = "checkpoints";
 /// Go `MaxChecksumTotalCost`.
 pub const MAX_CHECKSUM_TOTAL_COST: f64 = 60.0;
 /// Go `defaultTickDurationForFlush`.
-const DEFAULT_TICK_DURATION_FOR_FLUSH: Duration = Duration::from_secs(30);
+pub(crate) const DEFAULT_TICK_DURATION_FOR_FLUSH: Duration = Duration::from_secs(30);
 /// Go `defaultTickDurationForChecksum`.
-const DEFAULT_TICK_DURATION_FOR_CHECKSUM: Duration = Duration::from_secs(5);
+pub(crate) const DEFAULT_TICK_DURATION_FOR_CHECKSUM: Duration = Duration::from_secs(5);
 /// Go `defaultTickDurationForLock`.
 const DEFAULT_TICK_DURATION_FOR_LOCK: Duration = Duration::from_secs(4 * 60);
 /// Go `defaultRetryDuration`.
-const DEFAULT_RETRY_DURATION: Duration = Duration::from_secs(3);
+pub(crate) const DEFAULT_RETRY_DURATION: Duration = Duration::from_secs(3);
 /// Go `lockTimeToLive`.
 const LOCK_TIME_TO_LIVE: Duration = Duration::from_secs(5 * 60);
 
@@ -605,7 +607,7 @@ fn flush_loop<K, V>(
 /// Go `parseCheckpointData`: each group of a checkpoint file through `f`.
 /// A file that does not parse, or a group whose checksum does not match, is
 /// skipped as in Go.
-fn parse_checkpoint_data<K, V>(
+pub(crate) fn parse_checkpoint_data<K, V>(
     content: &[u8],
     past_dure_time: &mut Duration,
     cipher: Option<&CipherInfo>,
@@ -684,7 +686,7 @@ pub fn walk_checkpoint_file<K, V>(
 
 /// Go `parseCheckpointChecksum`: a file that does not parse or does not
 /// match its checksum is skipped.
-fn parse_checkpoint_checksum(
+pub(crate) fn parse_checkpoint_checksum(
     data: &[u8],
     out: &mut HashMap<i64, ChecksumItem>,
     past: &mut Duration,

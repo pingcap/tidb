@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 use tidb_proto::backup::{BackupMeta, CipherInfo, MetaFile, Schema};
 
 mod writer;
-mod statsfile;
+pub mod statsfile;
 pub use statsfile::{get_stats_file_name, StatsWriter};
 pub use writer::{AppendOp, MetaItem, MetaWriter, SizedMetaFile, encrypt};
 pub use writer::{BACKUP_SCHEMA_VERSION, META_FILE_SIZE};
@@ -54,6 +54,7 @@ pub struct MetaReader {
 }
 
 /// Go `metautil.Table`, the schema and checksum fields used by SHOW.
+#[derive(Clone)]
 pub struct Table {
     /// Go `Table.DB`.
     pub db: tidb_model::DBInfo,
@@ -77,6 +78,36 @@ pub struct Table {
     pub is_merge_option_allowed: bool,
     /// Go `Table.PartitionMergeOptionAllowed`.
     pub partition_merge_option_allowed: std::collections::HashMap<String, bool>,
+}
+
+impl Table {
+    /// A table with only its schema, as Go's `&metautil.Table{DB: db,
+    /// Info: info}`.
+    #[must_use]
+    pub fn with_schema(db: tidb_model::DBInfo, info: tidb_model::TableInfo) -> Self {
+        Self {
+            db,
+            info: Some(info),
+            total_kvs: 0,
+            total_bytes: 0,
+            tiflash_replicas: 0,
+            crc64_xor: 0,
+            files_of_physicals: BTreeMap::new(),
+            stats: None,
+            stats_file_indexes: Vec::new(),
+            is_merge_option_allowed: false,
+            partition_merge_option_allowed: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Go `table.Info`, which a table entry always has on the restore path.
+    ///
+    /// # Panics
+    /// A database-only entry, as Go's nil dereference.
+    #[must_use]
+    pub fn info(&self) -> &tidb_model::TableInfo {
+        self.info.as_ref().expect("a restored table has its schema")
+    }
 }
 
 /// Go `ChecksumStats`.

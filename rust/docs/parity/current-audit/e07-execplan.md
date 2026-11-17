@@ -292,7 +292,23 @@ PRs, each stacked on the previous one (the first on #56):
    captured from Go master. Live (`tidb-br/tests/restore_live.rs`): Rust
    backups over `local://` and MinIO S3, and a Go backup on the Go cluster,
    imported into unused table IDs with every KV equal to the source.
-5. `snap_client` and `task.RunRestore` (`restore`, checkpoints, system
-   tables, statistics, TiFlash replicas, placement). Live: backup, drop and
-   restore with row and checksum comparison; Go backups restored by Rust.
-6. Delete the E07 row; record the unreachable parts as a gap row.
+5. Done: the schema half of `snap_client`: `client.go`'s loading,
+   `AllocTableIDs` (`internal/prealloc_table_id`), `InitCheckpoint`,
+   policies, databases and tables through `internal/prealloc_db`, DDL job
+   replay, merge-option label rules, `ResetTS` and the checksum;
+   `pipeline_items.go` (checksum, logical statistics load with
+   `metautil.RestoreStats`, TiFlash wait) and the logical half of
+   `systable_restore.go`; the table-backed snapshot checkpoint
+   (`checkpoint/storage.go`, the `TableMetaManager` of `manager.go`) with
+   `CheckpointMetadataForSnapshotRestore` pinned to Go's JSON; and the
+   restore methods of the glue traits, erroring until the server implements
+   them. Pinned by Go's `prealloc_table_id`, `prealloc_db`, client,
+   pipeline and system table tests over an in-memory glue cluster. The
+   `br` CLI's physical stats and system table loads, the external-storage
+   checkpoint and `txn-total-size-limit` are not ported.
+6. `task.RunRestore`, the restore registry, task registration and the
+   log-backup / changefeed checks; BRIE restore execution and the server's
+   restore glue (DDL, restricted SQL, statistics, label rules, TiFlash).
+   Live: backup, drop and restore with row and checksum comparison; Go
+   backups restored by Rust.
+7. Delete the E07 row; record the unreachable parts as a gap row.
