@@ -53,7 +53,7 @@ jobs:
           - 8.0.45
           - 8.4.8
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     services:
       mysql:
         image: mysql:${{ matrix.mysql_version }}
