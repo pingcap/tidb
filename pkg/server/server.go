@@ -374,7 +374,7 @@ func (s *Server) initTiDBListener() (err error) {
 		}
 	}
 
-	if s.cfg.Socket != "" {
+	if needUnixSocket && s.socket == nil {
 		if err := cleanupStaleSocket(s.cfg.Socket); err != nil {
 			return errors.Trace(err)
 		}

@@ -176,10 +176,11 @@ func TestInitTiDBListenerIsIdempotent(t *testing.T) {
 	require.NotNil(t, svr.Listener())
 	require.NotNil(t, svr.Socket())
 	listenAddr := svr.Listener().Addr().String()
+	socket := svr.Socket()
 
 	require.NoError(t, svr.initTiDBListener())
 	require.Equal(t, listenAddr, svr.Listener().Addr().String())
-	require.NotNil(t, svr.Socket())
+	require.Same(t, socket, svr.Socket())
 
 	t.Run("diagnostic skip grant", func(t *testing.T) {
 		if !intest.InTest {

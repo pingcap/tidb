@@ -15,7 +15,7 @@
 - `pkg/server/driver_tidb_test.go` - server: Tests convert column info.
 - `pkg/server/main_test.go` - Configures default goleak settings and registers testdata.
 - `pkg/server/mock_conn_test.go` - server: Tests mock conn.
-- `pkg/server/server_test.go` - server: Tests issue46197.
+- `pkg/server/server_test.go` - server: Tests issue46197, server health, and listener initialization idempotence with Unix socket reuse in normal and diagnostic modes.
 - `pkg/server/stat_test.go` - server: Tests uptime.
 - `pkg/server/tidb_library_test.go` - server: Tests memory leak.
 - `pkg/server/tidb_test.go` - server: Tests RC read check TSO conflict.
