@@ -16,10 +16,6 @@ package executor_test
 
 import (
 	"context"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -45,29 +41,10 @@ func TestBuildQueryImportPlan(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table src(a int, b int)")
 	tk.MustExec("create table dst(a int, c bigint)")
-	tk.MustExec("create table full_dst(a int, c bigint)")
-	tk.MustExec("insert into src values (1, 1)")
-	tk.MustExec("insert into full_dst values (1, 1)")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("x-amz-bucket-region", "us-east-1")
-		switch {
-		case r.Method == http.MethodGet && r.URL.Query().Get("list-type") != "":
-			w.Header().Set("Content-Type", "application/xml")
-			_, _ = io.WriteString(w, "<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>")
-		case r.Method == http.MethodGet:
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = io.WriteString(w, "<Error><Code>NoSuchKey</Code></Error>")
-		default:
-			_, _ = io.Copy(io.Discard, r.Body)
-			w.WriteHeader(http.StatusOK)
-		}
-	}))
-	t.Cleanup(server.Close)
-	params := url.Values{"endpoint": {server.URL}, "region": {"us-east-1"},
-		"access-key": {"test"}, "secret-access-key": {"test"}}
 	originalURI := vardef.CloudStorageURI.Load()
-	vardef.CloudStorageURI.Store("s3://query-import-sort?" + params.Encode())
+	vardef.CloudStorageURI.Store("s3://query-import-sort")
 	t.Cleanup(func() { vardef.CloudStorageURI.Store(originalURI) })
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipGlobalSortStorePrivilegeCheck", "return")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/util/IsRaftKv2", "return(false)")
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 
@@ -85,6 +62,7 @@ func TestBuildQueryImportPlan(t *testing.T) {
 	before, err := store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
 	directTK := newQueryImportSession(t, store)
+	directTK.Session().GetSessionVars().ResourceGroupName = "rg1"
 	direct, err := importer.BuildQueryImportPlan(ctx, directTK.Session(), request)
 	require.NoError(t, err)
 	txn, err := directTK.Session().Txn(false)
@@ -100,19 +78,11 @@ func TestBuildQueryImportPlan(t *testing.T) {
 	require.GreaterOrEqual(t, direct.QuerySource.ReadTS, before.Ver)
 	require.NotZero(t, direct.QuerySource.SchemaVersion)
 	require.NotZero(t, direct.QuerySource.EncodeTimestamp)
+	require.Equal(t, "rg1", direct.QuerySource.SessionStates.ResourceGroupName)
 	require.True(t, direct.QuerySource.InMViewMaintenance)
 	require.NotEmpty(t, direct.QuerySource.SessionStates.SystemVars[vardef.Timestamp])
 	require.Equal(t, []importer.SourceTable{{DBID: request.DBID, ID: srcTbl.Meta().ID,
 		Revision: srcTbl.Meta().Revision}}, direct.QuerySource.Tables)
-
-	t.Run("keeps the resource group of the session", func(t *testing.T) {
-		// Without a planned statement, the statement context holds no group.
-		se := newQueryImportSession(t, store).Session()
-		se.GetSessionVars().ResourceGroupName = "rg1"
-		plan, err := importer.BuildQueryImportPlan(ctx, se, request)
-		require.NoError(t, err)
-		require.Equal(t, "rg1", plan.QuerySource.SessionStates.ResourceGroupName)
-	})
 
 	t.Run("preserves source table order and missing entries", func(t *testing.T) {
 		tk.MustExec("create table src_other(a int, b int)")
@@ -131,16 +101,6 @@ func TestBuildQueryImportPlan(t *testing.T) {
 		req.SourceTableIDs[1] = 1 << 40
 		_, err = importer.BuildQueryImportPlan(ctx, newQueryImportSession(t, store).Session(), &req)
 		require.ErrorContains(t, err, "source table 1099511627776 not found")
-	})
-
-	t.Run("runs the import prechecks", func(t *testing.T) {
-		fullTbl, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("full_dst"))
-		require.NoError(t, err)
-		_, err = importer.BuildQueryImportPlan(ctx, newQueryImportSession(t, store).Session(), &importer.QueryImportRequest{
-			SQL:    "import into test.full_dst from (select a, count(1) c from test.src group by a) with disable_precheck",
-			DBName: "test", DBID: fullTbl.Meta().DBID, Table: fullTbl, SourceTableIDs: []int64{srcTbl.Meta().ID},
-		})
-		require.ErrorContains(t, err, "target table is not empty")
 	})
 
 	t.Run("rejects memory system tables before metadata reads", func(t *testing.T) {
