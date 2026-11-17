@@ -133,6 +133,10 @@ func TestFullTextIndexKVGeneration(t *testing.T) {
 		positions, err := tablecodec.DecodeTiKVFullTextIndexValue(value)
 		require.NoError(t, err)
 		got[string(term)] = positions
+		// Every entry of the row carries the document's length in tokens.
+		docLength, err := tablecodec.DecodeTiKVFullTextDocLength(value)
+		require.NoError(t, err)
+		require.Equal(t, 4, docLength)
 	}
 	require.Equal(t, map[string][]int{"hello": {0, 2}, "world": {1}, "sql": {3}}, got)
 
@@ -159,9 +163,13 @@ func TestFullTextIndexKVGeneration(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, vals, 2)
 	require.Equal(t, "ab", string(vals[0][0].GetBytes()))
-	positions, err := tablecodec.DecodeTiKVFullTextIndexValue(tablecodec.EncodeTiKVFullTextIndexValue(nil, vals[0][1].GetBytes(), false))
+	value := tablecodec.EncodeTiKVFullTextIndexValue(nil, vals[0][1].GetBytes(), false)
+	positions, err := tablecodec.DecodeTiKVFullTextIndexValue(value)
 	require.NoError(t, err)
 	require.Equal(t, []int{0, 2}, positions)
+	docLength, err := tablecodec.DecodeTiKVFullTextDocLength(value)
+	require.NoError(t, err)
+	require.Equal(t, 3, docLength)
 }
 
 // TestFullTextIndexMutationCheck covers the membership check the mutation
@@ -174,7 +182,7 @@ func TestFullTextIndexMutationCheck(t *testing.T) {
 	keyFor := func(term string) []byte {
 		key, _, err := idx.GenIndexKey(ec, time.UTC, []types.Datum{
 			types.NewBytesDatum([]byte(term)),
-			types.NewBytesDatum(tablecodec.EncodeTiKVFullTextPositions(nil, []int{0})),
+			types.NewBytesDatum(tablecodec.EncodeTiKVFullTextPayload(nil, 1, []int{0})),
 		}, kv.IntHandle(1), nil)
 		require.NoError(t, err)
 		return key
@@ -234,7 +242,7 @@ func TestFullTextIndexKeyColumns(t *testing.T) {
 		key, _, err := idx.GenIndexKey(ec, time.UTC, []types.Datum{
 			types.NewIntDatum(tenant),
 			types.NewBytesDatum([]byte(term)),
-			types.NewBytesDatum(tablecodec.EncodeTiKVFullTextPositions(nil, []int{0})),
+			types.NewBytesDatum(tablecodec.EncodeTiKVFullTextPayload(nil, 1, []int{0})),
 		}, kv.IntHandle(1), nil)
 		require.NoError(t, err)
 		return key

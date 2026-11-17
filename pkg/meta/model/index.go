@@ -266,8 +266,8 @@ type FullTextIndexInfo struct {
 
 // TiKVFullTextIndexInfo describes a FULLTEXT index materialised in TiKV as a
 // positional inverted index: one KV entry per distinct term per row, keyed by
-// the term and the row handle, whose value carries the term's positions in the
-// document. It exists only on the classic kernel; the next-gen kernel keeps
+// the term and the row handle, whose value carries the document's length and
+// the term's positions in it. It exists only on the classic kernel; the next-gen kernel keeps
 // FULLTEXT indexes in the columnar engine, described by FullTextIndexInfo.
 // The two are never set together.
 //
