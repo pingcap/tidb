@@ -1700,7 +1700,8 @@ func (w *indexWorker) extractLookupTaskData(
 	if w.adaptiveLimitController != nil {
 		// Reserve before extracting handles so a large DistSQL chunk cannot be
 		// admitted directly into table lookup tasks beyond the physical window.
-		reserved, ok, err := w.adaptiveLimitController.ReserveLookup(ctx, w.batchSize)
+		// The controller applies its current batch limit after waking up.
+		reserved, ok, err := w.adaptiveLimitController.ReserveLookup(ctx, w.maxBatchSize)
 		if err != nil {
 			return data, err
 		}
