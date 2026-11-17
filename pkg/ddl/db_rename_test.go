@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
+	metamodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -501,7 +502,7 @@ func TestRenameTableRevision(t *testing.T) {
 			t.Cleanup(func() { tk.MustExec("set global tidb_enable_foreign_key = on") })
 			tk.MustExec("create database rename_revision")
 			tk.MustExec("use test")
-			getInfo := func(db, name string) *model.TableInfo {
+			getInfo := func(db, name string) *metamodel.TableInfo {
 				tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(
 					context.Background(), model.NewCIStr(db), model.NewCIStr(name))
 				require.NoError(t, err)
@@ -557,7 +558,7 @@ func TestRenameTableRevisionWithForeignKeys(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table parent(a int primary key, b int, foreign key(b) references parent(a))")
 	tk.MustExec("create table child(a int primary key, b int, foreign key(b) references parent(a))")
-	getInfo := func(name string) *model.TableInfo {
+	getInfo := func(name string) *metamodel.TableInfo {
 		tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(name))
 		require.NoError(t, err)
 		return tbl.Meta()
@@ -586,15 +587,15 @@ func TestRenameTableRevisionRetry(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table revision_retry(a int)")
-	getInfo := func(name string) *model.TableInfo {
+	getInfo := func(name string) *metamodel.TableInfo {
 		tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(name))
 		require.NoError(t, err)
 		return tbl.Meta()
 	}
 	before := getInfo("revision_retry")
 	injected := make(chan struct{}, 1)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable", func(job *model.Job, err *error) {
-		if job.Type != model.ActionRenameTable || job.TableID != before.ID || job.SchemaState != model.StatePublic || *err != nil {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable", func(job *metamodel.Job, err *error) {
+		if job.Type != metamodel.ActionRenameTable || job.TableID != before.ID || job.SchemaState != metamodel.StatePublic || *err != nil {
 			return
 		}
 		select {
@@ -606,8 +607,8 @@ func TestRenameTableRevisionRetry(t *testing.T) {
 	// The new name must already carry the new revision after the first schema
 	// synchronization, before the separate step that marks the job done.
 	observed := make(chan uint64, 1)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
-		if job.Type == model.ActionRenameTable && job.TableID == before.ID && job.SchemaState == model.StatePublic && job.State == model.JobStateRunning {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *metamodel.Job) {
+		if job.Type == metamodel.ActionRenameTable && job.TableID == before.ID && job.SchemaState == metamodel.StatePublic && job.State == metamodel.JobStateRunning {
 			tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("revision_renamed"))
 			if err == nil {
 				select {
