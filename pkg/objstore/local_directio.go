@@ -97,8 +97,14 @@ func (w *localDirectWriter) flush(data []byte) error {
 	}
 	if err != nil {
 		w.err = errors.Trace(err)
-		// Compression wrappers may stop without calling Close after a failed
-		// Write. Release the descriptor here and keep the original write error.
+		// Close here despite the usual Write/Close separation: BufferedWriter.Close
+		// returns after a failed final upload without closing its underlying writer.
+		// Making that wrapper always close is unsafe for multipart backends, whose
+		// Close commits uploaded parts and could publish a truncated object after
+		// an upload failure. Release this local descriptor eagerly and preserve the
+		// write error; our Close can then return it without closing the file again.
+		// TODO: Refactor wrapper error handling to safely propagate Close, then move
+		// descriptor cleanup from Write to Close.
 		_ = w.file.Close()
 		w.closed = true
 		w.buf = nil
