@@ -33,6 +33,8 @@ const (
 	PKDBSequenceCacheEpoch = "pkdb_sequence_cache_epoch"
 	// TiDBSlowLogEscapeNewline controls whether slow logs escape SQL line breaks as literal `\n`.
 	TiDBSlowLogEscapeNewline = "tidb_slow_log_escape_newline"
+	// PKDBPrivilege allows SHOW STATS_HEALTHY to filter by business-table SELECT privileges.
+	PKDBPrivilege = "pkdb_privilege"
 )
 
 // Default TiDB system variable values.
@@ -60,6 +62,8 @@ const (
 
 	// fusion mode related variables
 	DefPKDBSequenceCacheEpoch = uint64(0)
+
+	DefPKDBPrivilege = false
 )
 
 // UnspecifiedServerID indicates the unspecified server id.
@@ -84,6 +88,9 @@ var (
 	SlowLogEscapeNewline            = atomic.NewBool(DefTiDBSlowLogEscapeNewline)
 
 	sequenceCacheRuntimeEpoch = atomic.NewUint64(DefPKDBSequenceCacheEpoch)
+
+	// EnablePKDBPrivilege is synchronized by the global system variable hooks.
+	EnablePKDBPrivilege = atomic.NewBool(DefPKDBPrivilege)
 )
 
 // SetSequenceCacheEpoch updates the process-local sequence cache invalidation epoch.

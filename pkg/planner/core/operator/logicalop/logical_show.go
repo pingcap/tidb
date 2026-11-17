@@ -64,6 +64,9 @@ type ShowContents struct {
 	ImportJobID *int64 // Used for SHOW LOAD DATA JOB <jobID>
 
 	DistributionJobID *int64 // Used for SHOW DISTRIBUTION JOB <JobID>
+
+	// StatsHealthyTablePrivilege records the filtered authorization mode for this execution.
+	StatsHealthyTablePrivilege bool
 }
 
 const emptyShowContentsSize = int64(unsafe.Sizeof(ShowContents{}))

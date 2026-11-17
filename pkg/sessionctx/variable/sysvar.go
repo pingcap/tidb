@@ -3918,6 +3918,14 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: PKDBPrivilege, Value: BoolToOnOff(DefPKDBPrivilege), Type: TypeBool,
+		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+			EnablePKDBPrivilege.Store(TiDBOptOn(val))
+			return nil
+		}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return BoolToOnOff(EnablePKDBPrivilege.Load()), nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: PKDBEnableWhitelist, Value: BoolToOnOff(DefPKDBEnableWhitelist), Type: TypeBool,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
 			EnableWhitelist.Store(TiDBOptOn(val))

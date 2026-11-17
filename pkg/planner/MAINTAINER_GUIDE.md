@@ -590,6 +590,11 @@ Checklist:
 Checklist:
 - Validate normal hit path and PointGet-executor reuse path explicitly.
 - Add a regression test that changes privileges between executes.
+- With `pkdb_privilege=ON`, `SHOW STATS_HEALTHY`
+  may defer its mysql SELECT check to table filtering during execution. Do not
+  exempt subquery privileges.
+  SHOW plans are rebuilt for each execution, so the mode is not reused across
+  global-switch changes.
 
 ## 8. Glossary
 
