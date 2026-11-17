@@ -323,6 +323,8 @@ pub use crate::transaction::CheckLevel;
 #[doc(inline)]
 pub use crate::transaction::Client as TransactionClient;
 #[doc(inline)]
+pub use crate::transaction::KvSnapshot;
+#[doc(inline)]
 pub use crate::transaction::Priority;
 #[doc(inline)]
 pub use crate::transaction::ProtoLockInfo;

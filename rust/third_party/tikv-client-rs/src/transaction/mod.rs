@@ -13,6 +13,7 @@ pub use buffer::{
 };
 pub use client::Client;
 pub use client::ProtoLockInfo;
+pub use kv_snapshot::KvSnapshot;
 pub(crate) use lock::HasLocks;
 pub use priority::Priority;
 pub use snapshot::Snapshot;
@@ -72,6 +73,7 @@ mod art;
 mod buffer;
 mod client;
 pub mod gc;
+mod kv_snapshot;
 pub(crate) mod latch;
 mod lock;
 pub mod lowering;

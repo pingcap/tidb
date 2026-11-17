@@ -34,6 +34,7 @@ use crate::transaction::lowering::new_unsafe_destroy_range_request;
 use crate::transaction::range_task::{RangeTaskHandler, Runner, TaskStat};
 use crate::transaction::resolve_locks_with_context;
 use crate::transaction::resolve_locks_with_context_result;
+use crate::transaction::KvSnapshot;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::ResolveLocksResult;
 use crate::transaction::Snapshot;
@@ -805,20 +806,40 @@ impl<PdC: PdClient> Client<PdC> {
         );
         transaction.set_lock_resolver_context(self.lock_resolver_context.clone());
         transaction.set_read_timestamp_validator(self.read_timestamp_validator.clone());
-        // client-go checks the store's txn safe point after a read returns
-        // (`KVSnapshot.Get` / `BatchGet`, `Scanner.Next`), not before it is
-        // sent, so a GC that overtakes a slow read still aborts it.
-        if let Some(safe_point) = self
+        if let Some(visibility) = self.store_visibility() {
+            transaction.set_snapshot_visibility_validator(visibility);
+        }
+        transaction.set_enable_async_batch_get(self.enable_async_batch_get);
+        transaction
+    }
+
+    /// client-go `KVStore.GetSnapshot(ts)`: a [`KvSnapshot`] at `timestamp`
+    /// with the store's lock resolver, read-timestamp validation and txn
+    /// safe point, as [`Self::begin_with_options`] gives a transaction.
+    pub fn kv_snapshot(&self, timestamp: Timestamp) -> KvSnapshot<PdC> {
+        KvSnapshot::new(
+            timestamp,
+            self.pd.clone(),
+            self.keyspace,
+            self.keyspace_name.clone(),
+            self.lock_resolver_context.clone(),
+            Some(self.read_timestamp_validator.clone()),
+            self.store_visibility(),
+        )
+    }
+
+    /// client-go `KVStore.CheckVisibility` as a snapshot's post-read check:
+    /// client-go checks the store's txn safe point after a read returns
+    /// (`KVSnapshot.Get` / `BatchGet`, `Scanner.Next`), not before it is sent,
+    /// so a GC that overtakes a slow read still aborts it.
+    fn store_visibility(&self) -> Option<Arc<dyn crate::SnapshotVisibilityValidator>> {
+        let safe_point = self
             .read_timestamp_validator
             .safe_point
             .read()
             .expect("read timestamp validator lock poisoned")
-            .clone()
-        {
-            transaction.set_snapshot_visibility_validator(Arc::new(StoreVisibility(safe_point)));
-        }
-        transaction.set_enable_async_batch_get(self.enable_async_batch_get);
-        transaction
+            .clone()?;
+        Some(Arc::new(StoreVisibility(safe_point)))
     }
 
     /// Returns the injected or production PD/routing client shared by this
@@ -992,6 +1013,48 @@ mod latch_config_tests {
             TransactionOptions::new_optimistic(),
         );
         drop(snapshot);
+    }
+
+    /// client-go `KVStore.GetSnapshot`: the snapshot reads through the store's
+    /// lock resolver (an abandoned transaction's expired lock is rolled back
+    /// and the committed value read) and checks the store's txn safe point
+    /// after the read (`KVSnapshot.Get` -> `KVStore.CheckVisibility`).
+    #[tokio::test]
+    async fn a_kv_snapshot_reads_through_the_stores_lock_resolver_and_safe_point() {
+        let (_client, cluster, pd) =
+            crate::mock::mocktikv::new_tikv_and_pd_client("", None).unwrap();
+        crate::mock::mocktikv::bootstrap_with_single_store(&cluster);
+        let client = Client::new_with_pd_client(Arc::new(pd), Config::default())
+            .await
+            .unwrap();
+        let mut writer = client.begin_optimistic().await.unwrap();
+        writer.put(b"k".to_vec(), b"v1".to_vec()).await.unwrap();
+        writer.commit().await.unwrap();
+        let abandoned = client.current_timestamp().await.unwrap().version();
+        assert!(crate::mock::mocktikv::must_prewrite(
+            &cluster.engine(),
+            &crate::mock::mocktikv::put_mutations(&[(b"k", b"v2")]),
+            "k",
+            abandoned,
+            0,
+        ));
+
+        let snapshot: crate::KvSnapshot<_> = client.kv_snapshot(Timestamp::from_version(u64::MAX));
+        assert_eq!(
+            snapshot.get(b"k".to_vec()).await.unwrap(),
+            Some(b"v1".to_vec())
+        );
+
+        let read_timestamp = client.current_timestamp().await.unwrap();
+        client.attach_safe_point_cache(Arc::new(crate::tikv::TxnSafePointCache::new(
+            read_timestamp.version() + 1,
+            std::time::SystemTime::now(),
+        )));
+        let snapshot = client.kv_snapshot(read_timestamp);
+        assert!(matches!(
+            snapshot.get(b"k".to_vec()).await.unwrap_err(),
+            crate::Error::TransactionAbortedByGc(_)
+        ));
     }
 
     /// client-go `KVStore.SetOracle`: the store's timestamps come from the

@@ -1015,7 +1015,7 @@ const SNAPSHOT_READ_TIMEOUT_MEDIUM: Duration = Duration::from_secs(60);
 /// client-go's `txnkv/txnsnapshot.DefaultScanBatchSize`.
 pub(crate) const DEFAULT_SNAPSHOT_SCAN_BATCH_SIZE: u32 = super::snapshot::DEFAULT_SCAN_BATCH_SIZE;
 
-fn snapshot_runtime_interceptor(
+pub(super) fn snapshot_runtime_interceptor(
     interceptor: Option<RpcInterceptorChain>,
     stats: Option<Arc<SnapshotRuntimeStats>>,
 ) -> Option<RpcInterceptorChain> {
@@ -1052,6 +1052,168 @@ pub type SnapshotResourceGroupTagger = Arc<dyn Fn(SnapshotRequestType) -> Vec<u8
 /// Transaction write-request tagger corresponding to client-go's
 /// `tikvrpc.ResourceGroupTagger`.
 pub type TransactionResourceGroupTagger = crate::store::ResourceGroupTagger;
+
+/// client-go `KVSnapshot.Get`/`BatchGet`/`newScanner`'s ctx for a read at
+/// `version`: the statement ctx ([`statement_trace_context_of`]) carrying
+/// `retry.TxnStartKey` = `version`. `None` keeps the active ctx.
+pub(super) fn snapshot_read_trace_context_of(
+    exec_details: Option<&Arc<crate::util::ExecDetails>>,
+    caller_context: Option<&crate::trace::TraceContext>,
+    version: u64,
+) -> Option<crate::trace::TraceContext> {
+    let base = match statement_trace_context_of(exec_details, caller_context) {
+        Some(statement) => statement,
+        None => {
+            if crate::trace::with_active_trace_context(crate::retry::txn_start_ts_from_context)
+                .flatten()
+                == Some(version)
+            {
+                return None;
+            }
+            crate::trace::current_trace_context()
+        }
+    };
+    Some(crate::retry::context_with_txn_start_ts(&base, version))
+}
+
+/// The statement ctx for one operation: the active trace context with the
+/// caller ctx's RPC interceptor and the statement's execution details as
+/// client-go's `ExecDetailsKey`. `None` once the operation already runs under
+/// both.
+fn statement_trace_context_of(
+    exec_details: Option<&Arc<crate::util::ExecDetails>>,
+    caller_context: Option<&crate::trace::TraceContext>,
+) -> Option<crate::trace::TraceContext> {
+    let active = crate::trace::current_trace_context();
+    let details = exec_details.filter(|details| {
+        !crate::util::exec_details_from_context(&active)
+            .is_some_and(|active| Arc::ptr_eq(active, details))
+    });
+    // The active ctx keeps what the caller scoped around this call (its
+    // commit and lock-keys detail slots); the statement's caller ctx adds
+    // its RPC interceptor, which client-go's `ctx` carries throughout.
+    let interceptor = caller_context
+        .and_then(crate::interceptor::get_rpc_interceptor_from_ctx)
+        .filter(|chain| {
+            !crate::interceptor::get_rpc_interceptor_from_ctx(&active)
+                .is_some_and(|active| active.contains_all(chain))
+        });
+    if details.is_none() && interceptor.is_none() {
+        return None;
+    }
+    let mut context = active;
+    if let Some(chain) = interceptor {
+        context = crate::interceptor::with_rpc_interceptor(&context, Arc::new(chain));
+    }
+    if let Some(details) = details {
+        context = crate::util::context_with_exec_details(&context, Arc::clone(details));
+    }
+    Some(context)
+}
+
+/// One client-go `KVSnapshot.get` once its cache missed: the version it
+/// reads at and every setting its request is built from, owned by the read.
+/// [`Transaction::get`] and [`KvSnapshot::get`] fill one from their settings.
+pub(crate) struct PointGet<PdC: PdClient> {
+    pub(crate) timestamp: Timestamp,
+    pub(crate) rpc: Arc<PdC>,
+    pub(crate) keyspace: Keyspace,
+    pub(crate) keyspace_name: Option<String>,
+    pub(crate) lock_backoff: Backoff,
+    pub(crate) rpc_interceptor: Option<RpcInterceptorChain>,
+    pub(crate) runtime_stats: Option<Arc<SnapshotRuntimeStats>>,
+    pub(crate) variables: Arc<Variables>,
+    pub(crate) resource_group_name: Option<String>,
+    pub(crate) resource_control: Option<ResourceGroupControllerHandle>,
+    pub(crate) ru_details: Option<Arc<crate::RuDetails>>,
+    pub(crate) priority: Priority,
+    pub(crate) not_fill_cache: bool,
+    pub(crate) isolation_level: kvrpcpb::IsolationLevel,
+    pub(crate) task_id: u64,
+    pub(crate) resource_group_tag: Option<Vec<u8>>,
+    pub(crate) resource_group_tagger: Option<SnapshotResourceGroupTagger>,
+    pub(crate) transaction_resource_group_tagger: Option<TransactionResourceGroupTagger>,
+    pub(crate) read_timeout: Option<Duration>,
+    pub(crate) read_timestamp_validator: Option<Arc<dyn ReadTimestampValidator>>,
+    pub(crate) visibility_validator: Option<Arc<dyn SnapshotVisibilityValidator>>,
+    pub(crate) read_replica_scope: String,
+    pub(crate) replica_read_config: ReplicaReadConfig,
+    pub(crate) read_lock_context: ReadLockContext,
+    pub(crate) lock_resolver_context: ResolveLocksContext,
+    pub(crate) request_source: String,
+}
+
+impl<PdC: PdClient> PointGet<PdC> {
+    /// Sends the Get for the physical `key` and returns its value. The
+    /// block reads `self`'s fields in place: moving them into locals would
+    /// keep a second copy of them in the future.
+    pub(crate) fn run(self, key: Key) -> impl Future<Output = Result<Option<Value>>> + Send {
+        async move {
+            let snapshot_version = self.timestamp.version();
+            let mut request = new_get_request(key, self.timestamp.clone());
+            let resource_group_tag = apply_snapshot_resource_group_tag(
+                &mut request,
+                self.resource_group_tag.as_ref(),
+                self.transaction_resource_group_tagger.as_ref(),
+                self.resource_group_tagger.as_ref(),
+                SnapshotRequestType::Get,
+            );
+            let stale_read = self.replica_read_config.stale_read;
+            let plan = plan_with_keyspace_name(
+                self.rpc,
+                self.keyspace,
+                self.keyspace_name.as_deref(),
+                self.rpc_interceptor,
+                self.resource_group_name.as_deref(),
+                self.resource_control,
+                self.ru_details,
+                self.replica_read_config,
+                request,
+            )
+            .request_source(self.request_source)
+            .priority(self.priority)
+            .not_fill_cache(self.not_fill_cache)
+            .isolation_level(self.isolation_level)
+            .task_id(self.task_id)
+            .resource_group_tag(resource_group_tag)
+            .snapshot_read_timeout(self.read_timeout, SNAPSHOT_READ_TIMEOUT_SHORT)
+            .validate_read_timestamp(
+                self.read_timestamp_validator,
+                snapshot_version,
+                stale_read,
+                self.read_replica_scope,
+            )
+            .resolve_lock_for_read(
+                self.timestamp,
+                self.lock_backoff,
+                self.keyspace,
+                self.read_lock_context,
+                self.lock_resolver_context,
+                self.runtime_stats.clone(),
+                self.variables.clone(),
+            )
+            .force_lite_lock_resolution()
+            .max_timestamp_point_get(snapshot_version == u64::MAX)
+            .retry_multi_region_with_snapshot_stats(
+                DEFAULT_REGION_BACKOFF,
+                self.runtime_stats,
+                self.variables,
+            )
+            .plan();
+            // client-go `KVSnapshot.get` sends the one request it built: the
+            // plan runs once, on itself, and its one response is the value.
+            // Boxed: inline, the request's state would be moved with every
+            // future around the Get.
+            let responses = Box::pin(plan.execute_once()).await;
+            let value = DefaultProcessor
+                .process(responses.and_then(|responses| CollectSingle.merge(responses)))?;
+            if let Some(validator) = self.visibility_validator {
+                validator.check_visibility(snapshot_version).await?;
+            }
+            Ok(value)
+        }
+    }
+}
 
 fn apply_snapshot_resource_group_tag<R: StoreRequest>(
     request: &mut R,
@@ -2069,33 +2231,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// as client-go's `ExecDetailsKey`. `None` once the operation already
     /// runs under both.
     fn statement_trace_context(&self) -> Option<crate::trace::TraceContext> {
-        let active = crate::trace::current_trace_context();
-        let details = self.exec_details.as_ref().filter(|details| {
-            !crate::util::exec_details_from_context(&active)
-                .is_some_and(|active| Arc::ptr_eq(active, details))
-        });
-        // The active ctx keeps what the caller scoped around this call (its
-        // commit and lock-keys detail slots); the statement's caller ctx adds
-        // its RPC interceptor, which client-go's `ctx` carries throughout.
-        let interceptor = self
-            .caller_context
-            .as_ref()
-            .and_then(crate::interceptor::get_rpc_interceptor_from_ctx)
-            .filter(|chain| {
-                !crate::interceptor::get_rpc_interceptor_from_ctx(&active)
-                    .is_some_and(|active| active.contains_all(chain))
-            });
-        if details.is_none() && interceptor.is_none() {
-            return None;
-        }
-        let mut context = active;
-        if let Some(chain) = interceptor {
-            context = crate::interceptor::with_rpc_interceptor(&context, Arc::new(chain));
-        }
-        if let Some(details) = details {
-            context = crate::util::context_with_exec_details(&context, Arc::clone(details));
-        }
-        Some(context)
+        statement_trace_context_of(self.exec_details.as_ref(), self.caller_context.as_ref())
     }
 
     /// client-go `KVSnapshot.Get`/`BatchGet`/`newScanner`'s ctx: the
@@ -2103,21 +2239,11 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// every Backoffer of the read reports it. `None` when the active context
     /// already is that ctx.
     fn snapshot_read_trace_context(&self) -> Option<crate::trace::TraceContext> {
-        let version = self.snapshot_timestamp.version();
-        let statement = self.statement_trace_context();
-        let base = match statement {
-            Some(statement) => statement,
-            None => {
-                if crate::trace::with_active_trace_context(crate::retry::txn_start_ts_from_context)
-                    .flatten()
-                    == Some(version)
-                {
-                    return None;
-                }
-                crate::trace::current_trace_context()
-            }
-        };
-        Some(crate::retry::context_with_txn_start_ts(&base, version))
+        snapshot_read_trace_context_of(
+            self.exec_details.as_ref(),
+            self.caller_context.as_ref(),
+            self.snapshot_timestamp.version(),
+        )
     }
 
     /// Create a new 'get' request
@@ -2172,105 +2298,45 @@ impl<PdC: PdClient> Transaction<PdC> {
                 .map(|pair| pair.1));
         }
         let timestamp = self.snapshot_timestamp.clone();
-        let snapshot_version = timestamp.version();
         let cache_snapshot_read = timestamp.version() != u64::MAX;
-        let rpc = self.rpc.clone();
         let key = key.encode_keyspace(self.keyspace, KeyMode::Txn);
-        let retry_options = self.options.retry_options.clone();
-        let keyspace = self.keyspace;
-        let keyspace_name = self.keyspace_name.clone();
-        let rpc_interceptor = snapshot_runtime_interceptor(
-            self.rpc_interceptor.clone(),
-            self.snapshot_runtime_stats.clone(),
-        );
-        let snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
-        let snapshot_variables = self.snapshot_variables.clone();
-        let resource_group_name = self.snapshot_resource_group_name().map(str::to_owned);
-        let resource_control = self.resource_control.clone();
-        let ru_details = self.ru_details.clone();
-        let priority = self.options.priority;
-        let not_fill_cache = self.not_fill_cache;
-        let isolation_level = self.isolation_level;
-        let task_id = self.task_id;
-        let resource_group_tag = self.resource_group_tag.clone();
-        let resource_group_tagger = self.resource_group_tagger.clone();
-        let transaction_resource_group_tagger = self.transaction_resource_group_tagger.clone();
-        let snapshot_read_timeout = self.snapshot_read_timeout;
-        let read_timestamp_validator = self.read_timestamp_validator.clone();
-        let snapshot_visibility_validator = self.snapshot_visibility_validator.clone();
-        let read_replica_scope = self.read_replica_scope.clone();
-        let replica_read_config = self.replica_read_config_for_items(1);
-        let read_lock_context = self.read_lock_context.clone();
-        let lock_resolver_context = self.lock_resolver_context.clone();
-        let request_source = self.commit_settings.request_source.context_value();
-        let max_timestamp_point_get = timestamp.version() == u64::MAX;
+        let point_get = PointGet {
+            rpc: self.rpc.clone(),
+            keyspace: self.keyspace,
+            keyspace_name: self.keyspace_name.clone(),
+            lock_backoff: self.options.retry_options.lock_backoff.clone(),
+            rpc_interceptor: snapshot_runtime_interceptor(
+                self.rpc_interceptor.clone(),
+                self.snapshot_runtime_stats.clone(),
+            ),
+            runtime_stats: self.snapshot_runtime_stats.clone(),
+            variables: self.snapshot_variables.clone(),
+            resource_group_name: self.snapshot_resource_group_name().map(str::to_owned),
+            resource_control: self.resource_control.clone(),
+            ru_details: self.ru_details.clone(),
+            priority: self.options.priority,
+            not_fill_cache: self.not_fill_cache,
+            isolation_level: self.isolation_level,
+            task_id: self.task_id,
+            resource_group_tag: self.resource_group_tag.clone(),
+            resource_group_tagger: self.resource_group_tagger.clone(),
+            transaction_resource_group_tagger: self.transaction_resource_group_tagger.clone(),
+            read_timeout: self.snapshot_read_timeout,
+            read_timestamp_validator: self.read_timestamp_validator.clone(),
+            visibility_validator: self.snapshot_visibility_validator.clone(),
+            read_replica_scope: self.read_replica_scope.clone(),
+            replica_read_config: self.replica_read_config_for_items(1),
+            read_lock_context: self.read_lock_context.clone(),
+            lock_resolver_context: self.lock_resolver_context.clone(),
+            request_source: self.commit_settings.request_source.context_value(),
+            timestamp,
+        };
 
         self.buffer
             .get_or_else_with_cache(key, cache_snapshot_read, |key| {
                 // client-go `KVSnapshot.get` opens its span after the
                 // snapshot cache misses and discards the derived ctx.
-                crate::trace::detached_client_span("tikvSnapshot.get", async move {
-                    let mut request = new_get_request(key, timestamp.clone());
-                    let resource_group_tag = apply_snapshot_resource_group_tag(
-                        &mut request,
-                        resource_group_tag.as_ref(),
-                        transaction_resource_group_tagger.as_ref(),
-                        resource_group_tagger.as_ref(),
-                        SnapshotRequestType::Get,
-                    );
-                    let plan = plan_with_keyspace_name(
-                        rpc,
-                        keyspace,
-                        keyspace_name.as_deref(),
-                        rpc_interceptor,
-                        resource_group_name.as_deref(),
-                        resource_control,
-                        ru_details,
-                        replica_read_config.clone(),
-                        request,
-                    )
-                    .request_source(request_source)
-                    .priority(priority)
-                    .not_fill_cache(not_fill_cache)
-                    .isolation_level(isolation_level)
-                    .task_id(task_id)
-                    .resource_group_tag(resource_group_tag)
-                    .snapshot_read_timeout(snapshot_read_timeout, SNAPSHOT_READ_TIMEOUT_SHORT)
-                    .validate_read_timestamp(
-                        read_timestamp_validator,
-                        timestamp.version(),
-                        replica_read_config.stale_read,
-                        read_replica_scope,
-                    )
-                    .resolve_lock_for_read(
-                        timestamp,
-                        retry_options.lock_backoff,
-                        keyspace,
-                        read_lock_context,
-                        lock_resolver_context,
-                        snapshot_runtime_stats.clone(),
-                        snapshot_variables.clone(),
-                    )
-                    .force_lite_lock_resolution()
-                    .max_timestamp_point_get(max_timestamp_point_get)
-                    .retry_multi_region_with_snapshot_stats(
-                        DEFAULT_REGION_BACKOFF,
-                        snapshot_runtime_stats.clone(),
-                        snapshot_variables,
-                    )
-                    .plan();
-                    // client-go `KVSnapshot.get` sends the one request it
-                    // built: the plan runs once, on itself, and its one
-                    // response is the value. Boxed: inline, the request's
-                    // state would be moved with every future around the Get.
-                    let responses = Box::pin(plan.execute_once()).await;
-                    let value = DefaultProcessor
-                        .process(responses.and_then(|responses| CollectSingle.merge(responses)))?;
-                    if let Some(validator) = snapshot_visibility_validator {
-                        validator.check_visibility(snapshot_version).await?;
-                    }
-                    Ok(value)
-                })
+                crate::trace::detached_client_span("tikvSnapshot.get", point_get.run(key))
             })
             .await
     }

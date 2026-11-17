@@ -21,9 +21,10 @@ use async_trait::async_trait;
 use super::transaction::{KvFilter, Mutation, MutationFlags, MutationOptions};
 use super::unionstore::MemDb;
 
-const SNAPSHOT_CACHE_SIZE_LIMIT: i64 = 10 << 30;
+/// client-go `KVSnapshot.UpdateSnapshotCache`'s `cachedSizeLimit`.
+pub(super) const SNAPSHOT_CACHE_SIZE_LIMIT: i64 = 10 << 30;
 
-fn snapshot_cache_entry_size(key: &Key, value: &Option<ValueEntry>) -> i64 {
+pub(super) fn snapshot_cache_entry_size(key: &Key, value: &Option<ValueEntry>) -> i64 {
     key.len() as i64
         + value
             .as_ref()
