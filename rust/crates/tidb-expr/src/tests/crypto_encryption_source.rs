@@ -79,14 +79,15 @@ impl Columns for PasswordGlobals {
         &self,
         key: tidb_exprctx::OptionalEvalPropKey,
     ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
-        crate::test_identity::identity_props(self.current_user.as_deref(), self.login_user.as_deref(), &[]).get(key)
-    }
-
-    fn sysvar(&self, scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
-        matches!(scope, Some(tidb_ast::SysVarScope::Global))
-            .then(|| self.globals.get(name).cloned())
-            .flatten()
-            .map(|value| Datum::Bytes(value.into_bytes()))
+        // Go's mock `GlobalVarsAccessor` holds the globals.
+        crate::test_identity::TestSession {
+            current_user: self.current_user.clone(),
+            login_user: self.login_user.clone(),
+            global_vars: Some(self.globals.clone()),
+            ..crate::test_identity::TestSession::default()
+        }
+        .props()
+        .get(key)
     }
 }
 

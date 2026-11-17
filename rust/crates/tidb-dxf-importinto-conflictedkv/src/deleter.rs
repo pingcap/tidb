@@ -53,6 +53,7 @@ impl Deleter {
     pub fn new(
         target_tbl: TableCommon,
         store: Arc<dyn Storage>,
+        keyspace: &[u8],
         kv_group: &str,
         encoder: TableKVEncoder,
         progress_collector: Option<Arc<dyn Collector>>,
@@ -64,7 +65,8 @@ impl Deleter {
             buffered_keys: Vec::new(),
             buf_size: 0,
         };
-        let base = BaseHandler::new(target_tbl, kv_group, Some(encoder), progress_collector);
+        // Go `store.GetCodec()`.
+        let base = BaseHandler::new(target_tbl, kv_group, keyspace, Some(encoder), progress_collector);
         let handler = ConflictKVHandler::for_kv_group(base, &store, traffic_rec.clone(), None, sink);
         Self { handler, store, traffic_rec }
     }

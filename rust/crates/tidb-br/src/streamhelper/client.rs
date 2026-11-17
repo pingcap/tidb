@@ -23,6 +23,7 @@ use prost::Message as _;
 use tidb_proto::backup::StreamBackupTaskInfo;
 
 use super::models::{pause, prefix_of_task, ranges_of, Range};
+use super::prefix_scanner::scan_etcd_prefix;
 use crate::errors::{self, Result};
 
 /// Go `SeverityError`.
@@ -52,6 +53,12 @@ pub trait MetaStore: Send + Sync {
     /// # Errors
     /// The request error.
     fn get_prefix(&self, prefix: &[u8]) -> Result<PrefixRead>;
+    /// Go `Get(from, WithRange(to), WithLimit(limit))`: at most `limit`
+    /// pairs of `[from, to)` in key order, and the response's `More`.
+    ///
+    /// # Errors
+    /// The request error.
+    fn scan(&self, from: &[u8], to: &[u8], limit: usize) -> Result<(Vec<(Vec<u8>, Vec<u8>)>, bool)>;
     /// Go `Put`.
     ///
     /// # Errors
@@ -118,6 +125,10 @@ impl MetaStore for tidb_pd_client::EtcdClient {
     fn get_prefix(&self, prefix: &[u8]) -> Result<PrefixRead> {
         let (kvs, revision) = self.get_prefix_metadata_with_revision(prefix).map_err(etcd_error)?;
         Ok((kvs.into_iter().map(|kv| (kv.key, kv.value)).collect(), revision))
+    }
+
+    fn scan(&self, from: &[u8], to: &[u8], limit: usize) -> Result<(Vec<(Vec<u8>, Vec<u8>)>, bool)> {
+        Self::scan(self, from, to, i64::try_from(limit).unwrap_or(i64::MAX)).map_err(etcd_error)
     }
 
     fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
@@ -305,10 +316,8 @@ impl Task {
     /// The read error.
     pub fn ranges(&self) -> Result<Vec<Range>> {
         let prefix = ranges_of(&self.info.name);
-        let (kvs, _) = self
-            .cli
-            .client
-            .get_prefix(prefix.as_bytes())
+        let kvs = scan_etcd_prefix(&*self.cli.client, &prefix)
+            .all_pages(64)
             .map_err(|e| errors::annotate(e, format!("failed to fetch ranges of task {}", self.info.name)))?;
         Ok(kvs
             .into_iter()

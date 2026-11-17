@@ -103,6 +103,27 @@ pub trait SessionVars: Any + Send + Sync {
         let _ = sequence_id;
         None
     }
+    /// Go `StmtCtx.GetOrStoreStmtCache(StmtSafeTSCacheKey, minSafeTS)`: the
+    /// min SafeTS the statement stored first, storing `min_safe_ts` when it
+    /// stored none.
+    fn get_or_store_stmt_safe_ts(&self, min_safe_ts: u64) -> u64 {
+        min_safe_ts
+    }
+    /// Go `StmtCtx.FTSFunctionIsUsed = true`, set where `FTS_MATCH_WORD()`
+    /// is built.
+    fn set_stmt_fts_function_is_used(&self) {}
+    /// Go `SessionVars.ConnectionInfo`.
+    fn connection_info(&self) -> Option<Arc<tidb_variable::connection_info::ConnectionInfo>> {
+        None
+    }
+    /// Go `SessionVars.GlobalVarsAccessor.GetGlobalSysVar(name)`; a session
+    /// without the accessor cannot answer.
+    fn get_global_sys_var(&self, name: &str) -> Result<String, crate::ExprOptError> {
+        let _ = name;
+        Err(crate::ExprOptError::from_eval(tidb_exprctx::EvalError::Unsupported(
+            "validate_password globals require a session",
+        )))
+    }
 }
 
 /// boundary: Go `pkg/sessionctx/variable.SessionVarsProvider` — anything that

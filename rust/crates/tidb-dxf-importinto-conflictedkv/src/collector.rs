@@ -115,7 +115,7 @@ impl Collector {
             writer: None,
             stop_recording: false,
         };
-        let base = BaseHandler::new(target_tbl, kv_group, Some(encoder), progress_collector);
+        let base = BaseHandler::new(target_tbl, kv_group, keyspace, Some(encoder), progress_collector);
         let filter = KeyFilter::new(global_set, local_set);
         Self { handler: ConflictKVHandler::for_kv_group(base, store, traffic_rec, Some(filter), sink) }
     }

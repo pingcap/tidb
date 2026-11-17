@@ -2863,19 +2863,25 @@ mod schema_route_tests {
         use prost::Message as _;
         use std::io::Read as _;
         tidb_cpuprofile::start_cpu_profiler().unwrap();
-        let busy = std::thread::spawn(|| {
-            tidb_cpuprofile::labels::set_goroutine_labels(Some(tidb_cpuprofile::labels::with_labels(
-                None,
-                &[("sql", "select ?".to_owned()), ("sql_digest", "aa".to_owned())],
-            )));
-            let start = std::time::Instant::now();
-            let mut x = 0u64;
-            while start.elapsed() < std::time::Duration::from_millis(1500) {
-                x = std::hint::black_box(x.wrapping_mul(31).wrapping_add(7));
+        // The labeled work runs until the profile is served, so it spans the
+        // profile's window however late a loaded machine opens it.
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let busy = std::thread::spawn({
+            let done = std::sync::Arc::clone(&done);
+            move || {
+                tidb_cpuprofile::labels::set_goroutine_labels(Some(tidb_cpuprofile::labels::with_labels(
+                    None,
+                    &[("sql", "select ?".to_owned()), ("sql_digest", "aa".to_owned())],
+                )));
+                let mut x = 0u64;
+                while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                    x = std::hint::black_box(x.wrapping_mul(31).wrapping_add(7));
+                }
+                x
             }
-            x
         });
         let (code, header, body) = routed("/debug/pprof/profile?seconds=1", &StatusRoutes::default());
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
         busy.join().unwrap();
         tidb_cpuprofile::stop_cpu_profiler();
         assert_eq!(code, 200);

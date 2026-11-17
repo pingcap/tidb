@@ -912,22 +912,30 @@ fn tidb_parse_tso_logical_consecutive_tso_counters() {
 #[test]
 fn tidb_bounded_staleness_safets_windows_and_monotonicity() {
     // Go's test injects the SafeTS (`injectSafeTS`) as the TSO of a UTC
-    // wall clock and evaluates in UTC.
+    // wall clock and evaluates in UTC; here the store answers it through
+    // Go's KV-store provider.
     struct SafeTsContext {
-        safe: Time,
+        props: tidb_expropt::OptionalEvalPropProviders,
     }
 
-    impl Columns for SafeTsContext {
-        fn get(&self, _: &[String]) -> Option<Datum> {
-            None
+    struct SafeTsStore(u64);
+
+    impl tidb_expropt::KvStorage for SafeTsStore {
+        fn get_min_safe_ts(&self, _: &str) -> u64 {
+            self.0
+        }
+    }
+
+    impl SafeTsContext {
+        fn new(safe: Time) -> Self {
+            let mut props = crate::test_identity::TestSession::default().props();
+            let store: std::sync::Arc<dyn tidb_expropt::KvStorage> = std::sync::Arc::new(SafeTsStore(Self::tso(safe)));
+            props.add(std::sync::Arc::new(tidb_expropt::KvStorePropProvider::new(move || std::sync::Arc::clone(&store))));
+            SafeTsContext { props }
         }
 
-        fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
-            tidb_datatype::SessionTimeZone::utc()
-        }
-
-        fn get_stmt_min_safe_ts(&self) -> u64 {
-            let c = self.safe.core_time();
+        fn tso(safe: Time) -> u64 {
+            let c = safe.core_time();
             let utc = chrono::NaiveDate::from_ymd_opt(
                 c.year() as i32,
                 c.month() as u32,
@@ -946,11 +954,28 @@ fn tidb_bounded_staleness_safets_windows_and_monotonicity() {
         }
     }
 
+    impl Columns for SafeTsContext {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+            tidb_datatype::SessionTimeZone::utc()
+        }
+
+        fn get_optional_prop_provider(
+            &self,
+            key: tidb_exprctx::OptionalEvalPropKey,
+        ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+            self.props.get(key)
+        }
+    }
+
     let left = Time::from_date_checked(2015, 9, 21, 9, 53, 4, 0, TimeType::DateTime, 0).unwrap();
     let right = Time::from_date_checked(2025, 1, 2, 10, 0, 0, 0, TimeType::DateTime, 0).unwrap();
     let safe =
         Time::from_date_checked(2020, 6, 7, 8, 9, 10, 123_000, TimeType::DateTime, 6).unwrap();
-    let ctx = SafeTsContext { safe };
+    let ctx = SafeTsContext::new(safe);
     assert_eq!(
         dispatched(
             "TIDB_BOUNDED_STALENESS",
@@ -962,9 +987,9 @@ fn tidb_bounded_staleness_safets_windows_and_monotonicity() {
         )
     );
 
-    let before = SafeTsContext {
-        safe: Time::from_date_checked(2015, 9, 21, 9, 53, 3, 0, TimeType::DateTime, 0).unwrap(),
-    };
+    let before = SafeTsContext::new(
+        Time::from_date_checked(2015, 9, 21, 9, 53, 3, 0, TimeType::DateTime, 0).unwrap(),
+    );
     assert_eq!(
         dispatched(
             "TIDB_BOUNDED_STALENESS",
@@ -976,9 +1001,9 @@ fn tidb_bounded_staleness_safets_windows_and_monotonicity() {
         )
     );
 
-    let after = SafeTsContext {
-        safe: Time::from_date_checked(2025, 1, 2, 10, 0, 1, 0, TimeType::DateTime, 0).unwrap(),
-    };
+    let after = SafeTsContext::new(
+        Time::from_date_checked(2025, 1, 2, 10, 0, 1, 0, TimeType::DateTime, 0).unwrap(),
+    );
     assert_eq!(
         dispatched(
             "TIDB_BOUNDED_STALENESS",

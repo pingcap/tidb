@@ -664,11 +664,15 @@ pub type DynamicPrivilegeCheck = Arc<dyn Fn(&str, bool) -> bool + Send + Sync>;
 
 /// Go `kv.Storage` as `sessionexpr` hands it to expressions: the session's
 /// store, a `helper.Storage` over its regions.
-struct SessionKvStorage(Arc<dyn tidb_kv::region_map::RegionStore>);
+struct SessionKvStorage(Arc<dyn tidb_kv::region_map::RegionStore>, Option<MinSafeTsProvider>);
 
 impl tidb_expropt::KvStorage for SessionKvStorage {
     fn as_helper_storage(&self) -> Option<&dyn tidb_kv::region_map::RegionStore> {
         Some(&*self.0)
+    }
+
+    fn get_min_safe_ts(&self, txn_scope: &str) -> u64 {
+        self.1.as_ref().map_or(0, |provider| provider(txn_scope))
     }
 }
 
@@ -680,41 +684,30 @@ struct SessionPrivilegeChecker {
     dynamic: Option<DynamicPrivilegeCheck>,
 }
 
-impl tidb_expropt::PrivilegeChecker for SessionPrivilegeChecker {
-    fn request_verification(&self, db: &str, table: &str, column: &str, privilege: tidb_mysql::PrivilegeType) -> bool {
+/// The session's checks are bound to its active roles, which are the
+/// `activeRoles` Go's `sessionexpr` hands the manager.
+impl tidb_sessionexpr::PrivilegeManager for SessionPrivilegeChecker {
+    fn request_verification(
+        &self,
+        _active_roles: &[Arc<tidb_parser::auth::RoleIdentity>],
+        db: &str,
+        table: &str,
+        column: &str,
+        privilege: tidb_mysql::PrivilegeType,
+    ) -> bool {
         self.session.as_ref().is_none_or(|check| check(db, table, column, privilege))
     }
 
-    fn request_dynamic_verification(&self, priv_name: &str, grantable: bool) -> bool {
+    fn request_dynamic_verification(
+        &self,
+        _active_roles: &[Arc<tidb_parser::auth::RoleIdentity>],
+        priv_name: &str,
+        grantable: bool,
+    ) -> bool {
         self.dynamic.as_ref().is_none_or(|check| check(priv_name, grantable))
     }
 }
 
-/// Go `sessionexpr.NewExprContext`'s `setOptionalProp` calls, for the
-/// properties the session already holds.
-fn optional_eval_props(
-    regions: &Arc<dyn tidb_kv::region_map::RegionStore>,
-    session_privilege: &Option<SessionPrivilegeCheck>,
-    dynamic_privilege: &Option<DynamicPrivilegeCheck>,
-    sql_executor: Option<Arc<dyn tidb_expropt::SqlExecutor>>,
-    ddl_owner_info: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
-) -> tidb_expropt::OptionalEvalPropProviders {
-    let mut props = tidb_expropt::OptionalEvalPropProviders::new();
-    let store: Arc<dyn tidb_expropt::KvStorage> = Arc::new(SessionKvStorage(Arc::clone(regions)));
-    props.add(Arc::new(tidb_expropt::KvStorePropProvider::new(move || Arc::clone(&store))));
-    let checker: Arc<dyn tidb_expropt::PrivilegeChecker> = Arc::new(SessionPrivilegeChecker {
-        session: session_privilege.clone(),
-        dynamic: dynamic_privilege.clone(),
-    });
-    props.add(Arc::new(tidb_expropt::PrivilegeCheckerProvider::new(move || Arc::clone(&checker))));
-    if let Some(exec) = sql_executor {
-        props.add(Arc::new(tidb_expropt::SqlExecutorPropProvider::new(move || Ok(Arc::clone(&exec)))));
-    }
-    if let Some(is_owner) = ddl_owner_info {
-        props.add(Arc::new(tidb_expropt::DdlOwnerInfoProvider::new(move || is_owner())));
-    }
-    props
-}
 
 /// Go `variable.SessionVars` as a statement's builtins read it through
 /// `SessionVarsPropReader` and `CurrentUserPropReader`: the fields Go's
@@ -738,6 +731,10 @@ struct StmtSessionVars {
     current_tso: CurrentTso,
     current_insert_values: Arc<Mutex<Option<Vec<Datum>>>>,
     sequence_state: SequenceState,
+    stmt_safe_ts: Arc<std::sync::OnceLock<u64>>,
+    fts_function_is_used: Arc<AtomicBool>,
+    connection_info: Option<Arc<tidb_variable::connection_info::ConnectionInfo>>,
+    global_sysvars: Option<Arc<dyn GlobalSysvarAccessor>>,
 }
 
 /// Go `SessionVars.User` of a session that matched the account
@@ -838,34 +835,145 @@ impl tidb_expropt::SessionVars for StmtSessionVars {
     fn sequence_last_value(&self, sequence_id: i64) -> Option<i64> {
         self.sequence_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&sequence_id).copied()
     }
+
+    fn get_or_store_stmt_safe_ts(&self, min_safe_ts: u64) -> u64 {
+        *self.stmt_safe_ts.get_or_init(|| min_safe_ts)
+    }
+
+    fn set_stmt_fts_function_is_used(&self) {
+        self.fts_function_is_used.store(true, Ordering::Relaxed);
+    }
+
+    fn connection_info(&self) -> Option<Arc<tidb_variable::connection_info::ConnectionInfo>> {
+        self.connection_info.clone()
+    }
+
+    fn get_global_sys_var(&self, name: &str) -> Result<String, tidb_expropt::ExprOptError> {
+        self.global_sysvars.as_ref().and_then(|accessor| accessor.get_global_sysvar(name)).ok_or_else(|| {
+            tidb_expropt::ExprOptError::from_eval(tidb_exprctx::EvalError::Unsupported(
+                "validate_password globals require a session",
+            ))
+        })
+    }
 }
 
-/// Go `sessionexpr`'s sequence operator: the sequence `database`.`name` of
-/// the statement's infoschema, read and advanced through the statement.
-struct StmtSequenceOperator {
+/// Go `util.GetSequenceByName(sctx.GetInfoSchema(), db, name)`'s table: the
+/// sequence `database`.`name` of the statement's infoschema, looked up on
+/// each call as the statement holds it.
+struct StmtSequenceTable {
     ctx: StmtContext,
     path: [String; 2],
 }
 
-impl tidb_expropt::SequenceOperator for StmtSequenceOperator {
+impl std::fmt::Debug for StmtSequenceTable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StmtSequenceTable").field("path", &self.path).finish_non_exhaustive()
+    }
+}
+
+impl StmtSequenceTable {
+    fn table(&self) -> Result<&dyn SequenceTable, tidb_terror::TerrorError> {
+        self.ctx.resolve_sequence(&self.path).map_err(|error| match error {
+            tidb_exprctx::EvalError::Sequence(tidb_exprctx::SequenceEvalError::Raised(error)) => error,
+            other => tidb_util::misc::syntax_error(format!("{other:?}")),
+        })
+    }
+}
+
+impl SequenceTable for StmtSequenceTable {
     fn get_sequence_id(&self) -> i64 {
-        self.ctx.resolve_sequence(&self.path).map_or(0, |sequence| sequence.get_sequence_id())
+        self.table().map_or(0, |sequence| sequence.get_sequence_id())
     }
 
-    fn get_sequence_next_val(&self) -> Result<i64, tidb_expropt::ExprOptError> {
-        let sequence = self.ctx.resolve_sequence(&self.path).map_err(tidb_expropt::ExprOptError::from_eval)?;
-        let (database, name) = self.ctx.sequences().key(&self.path);
-        sequence
-            .get_sequence_next_val(&self.ctx, &database, &name)
-            .map_err(|error| tidb_expropt::ExprOptError::from_eval(sequence_error(error)))
+    fn get_sequence_next_val(
+        &self,
+        ctx: &dyn std::any::Any,
+        db_name: &str,
+        seq_name: &str,
+    ) -> Result<i64, tidb_terror::TerrorError> {
+        self.table()?.get_sequence_next_val(ctx, db_name, seq_name)
     }
 
-    fn set_sequence_val(&self, new_val: i64) -> Result<(i64, bool), tidb_expropt::ExprOptError> {
-        let sequence = self.ctx.resolve_sequence(&self.path).map_err(tidb_expropt::ExprOptError::from_eval)?;
-        let (database, name) = self.ctx.sequences().key(&self.path);
-        sequence
-            .set_sequence_val(&self.ctx, new_val, &database, &name)
-            .map_err(|error| tidb_expropt::ExprOptError::from_eval(sequence_error(error)))
+    fn set_sequence_val(
+        &self,
+        ctx: &dyn std::any::Any,
+        new_val: i64,
+        db_name: &str,
+        seq_name: &str,
+    ) -> Result<(i64, bool), tidb_terror::TerrorError> {
+        self.table()?.set_sequence_val(ctx, new_val, db_name, seq_name)
+    }
+}
+
+/// The live session's statement context as Go `sessionexpr` reads a
+/// `sessionctx.Context`: its optional properties answer the statement's
+/// state when a builtin reads them (Go's call `sctx.GetSessionVars()` then).
+impl tidb_sessionexpr::PropSessionContext for StmtContext {
+    fn get_trace_ctx(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+        None
+    }
+
+    fn get_prop_session_vars(&self) -> Arc<dyn tidb_expropt::SessionVars> {
+        Arc::new(self.session_vars())
+    }
+
+    fn get_domain(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+        None
+    }
+
+    fn get_store(&self) -> Arc<dyn tidb_expropt::KvStorage> {
+        Arc::new(SessionKvStorage(Arc::clone(&self.regions.0), self.min_safe_ts_provider.clone()))
+    }
+
+    fn is_ddl_owner(&self) -> bool {
+        self.ddl_owner_info.as_ref().is_some_and(|is_owner| is_owner())
+    }
+
+    fn get_info_schema(&self) -> Arc<dyn tidb_infoschema_context::MetaOnlyInfoSchema + Send + Sync> {
+        self.get_latest_info_schema()
+    }
+
+    fn get_latest_info_schema(&self) -> Arc<dyn tidb_infoschema_context::MetaOnlyInfoSchema + Send + Sync> {
+        self.latest_info_schema.as_ref().expect("has_optional_prop checked the infoschema").meta_only()
+    }
+
+    fn get_restricted_sql_executor(&self) -> Arc<dyn tidb_expropt::SqlExecutor> {
+        Arc::clone(self.sql_executor.as_ref().expect("has_optional_prop checked the SQL executor"))
+    }
+
+    fn get_advisory_lock_context(&self) -> Arc<dyn tidb_expropt::AdvisoryLockContext> {
+        Arc::new(StmtAdvisoryLocks(self.advisory_locks.clone()))
+    }
+
+    fn get_privilege_manager(&self) -> Option<Arc<dyn tidb_sessionexpr::PrivilegeManager>> {
+        if self.session_privilege.is_none() && self.dynamic_privilege.is_none() {
+            return None;
+        }
+        Some(Arc::new(SessionPrivilegeChecker {
+            session: self.session_privilege.clone(),
+            dynamic: self.dynamic_privilege.clone(),
+        }))
+    }
+
+    fn get_sequence_by_name(
+        &self,
+        db: &str,
+        name: &str,
+    ) -> Result<Arc<dyn SequenceTable>, tidb_expropt::ExprOptError> {
+        let path = [db.to_owned(), name.to_owned()];
+        // Go `GetSequenceByName`: a missing sequence, or another kind of
+        // object, fails here.
+        self.resolve_sequence(&path).map_err(tidb_expropt::ExprOptError::from_eval)?;
+        Ok(Arc::new(StmtSequenceTable { ctx: self.clone(), path }))
+    }
+
+    fn has_optional_prop(&self, key: tidb_exprctx::OptionalEvalPropKey) -> bool {
+        match key {
+            tidb_exprctx::OptionalEvalPropKey::InfoSchema => self.latest_info_schema.is_some(),
+            tidb_exprctx::OptionalEvalPropKey::SqlExecutor => self.sql_executor.is_some(),
+            tidb_exprctx::OptionalEvalPropKey::DdlOwnerInfo => self.ddl_owner_info.is_some(),
+            _ => true,
+        }
     }
 }
 
@@ -1025,9 +1133,14 @@ impl SessionTableLocks {
 #[doc(hidden)]
 #[derive(Clone, Default)]
 pub struct StmtContextData {
-    /// Go `sessionexpr`'s `OptionalEvalPropProviders`: what builtins that
-    /// need session state read through `expropt`'s readers.
-    optional_props: tidb_expropt::OptionalEvalPropProviders,
+    /// See [`StmtContextSessionState::sql_executor`]: Go
+    /// `GetRestrictedSQLExecutor`, which `sessionexpr`'s property reads.
+    sql_executor: Option<Arc<dyn tidb_expropt::SqlExecutor>>,
+    /// See [`StmtContextSessionState::ddl_owner_info`]: Go `IsDDLOwner`.
+    ddl_owner_info: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    /// See [`StmtContextSessionState::min_safe_ts_provider`]: the store's Go
+    /// `GetMinSafeTS`.
+    min_safe_ts_provider: Option<MinSafeTsProvider>,
     mpp_query_info: Arc<tidb_kv::mpp_query::MppQueryInfo>,
     mpp_server_id: u64,
     tiflash_compute_dispatch_policy: String,
@@ -1134,7 +1247,6 @@ pub struct StmtContextData {
     /// DDL workers use reorganization flags independently of statement class.
     reorg: bool,
     current_db: Option<String>,
-    version: Option<String>,
     current_user: Option<String>,
     auth_plugin: String,
     connection_info: Option<Arc<tidb_variable::connection_info::ConnectionInfo>>,
@@ -1225,11 +1337,9 @@ pub struct StmtContextData {
     plan_privilege_check: Option<Arc<dyn std::any::Any + Send + Sync>>,
     /// See [`StmtContextSessionState::mdl_related_table`].
     mdl_related_table: Option<MdlRelatedTableRecorder>,
-    /// See [`StmtContextSessionState::min_safe_ts_provider`].
-    min_safe_ts_provider: Option<MinSafeTsProvider>,
     /// Go `StmtCtx.GetOrStoreStmtCache(StmtSafeTSCacheKey, ...)`: the min
     /// SafeTS the statement's first `GetStmtMinSafeTime` read.
-    stmt_safe_ts: std::sync::OnceLock<u64>,
+    stmt_safe_ts: Arc<std::sync::OnceLock<u64>>,
     /// See [`StmtContextSessionState::locked_tables`].
     locked_tables: Option<LockedTables>,
     /// What Go's `core.CheckTableMode` finds for the statement this context
@@ -2502,17 +2612,12 @@ context_configuration! {
     }
 
     /// Attaches the statement's latest domain infoschema (Go
-    /// `sctx.GetLatestInfoSchema()`), and installs Go `sessionexpr`'s
-    /// infoschema provider over it for the builtins that read it
-    /// (`InfoSchemaPropReader`). Rust's statement holds one infoschema, the
-    /// domain's as the statement starts, so the provider answers it for the
-    /// session's schema too; no Rust builtin asks for that one yet.
+    /// `sctx.GetLatestInfoSchema()`), which Go `sessionexpr`'s infoschema
+    /// property answers (`InfoSchemaPropReader`). Rust's statement holds one
+    /// infoschema, the domain's as the statement starts, so the property
+    /// answers it for the session's schema too.
     #[must_use]
     pub fn with_latest_info_schema(mut self, schema: LatestInfoSchema) -> Self {
-        let latest = schema.meta_only();
-        self.optional_props.add(Arc::new(tidb_expropt::InfoSchemaPropProvider::new(move |_is_domain| {
-            Arc::clone(&latest)
-        })));
         self.latest_info_schema = Some(schema);
         self
     }
@@ -3066,17 +3171,10 @@ context_configuration! {
         self
     }
 
-    /// Attaches the session state the builtins read: Go reads both from
-    /// `SessionVars`, where `DATABASE()` is `CurrentDB` and `VERSION()` is
-    /// the same string `@@version` reports.
+    /// Attaches Go `SessionVars.CurrentDB`, which `DATABASE()` reports.
     #[must_use]
-    pub fn with_session_state(
-        mut self,
-        current_db: Option<String>,
-        version: Option<String>,
-    ) -> Self {
+    pub fn with_current_db(mut self, current_db: Option<String>) -> Self {
         self.current_db = current_db;
-        self.version = version;
         self
     }
 
@@ -3415,13 +3513,9 @@ impl StmtContext {
         session: StmtContextSessionState,
     ) -> Self {
         Self(Arc::new(StmtContextData {
-            optional_props: optional_eval_props(
-                &session.regions,
-                &session.session_privilege,
-                &session.dynamic_privilege,
-                session.sql_executor,
-                session.ddl_owner_info,
-            ),
+            sql_executor: session.sql_executor,
+            ddl_owner_info: session.ddl_owner_info,
+            min_safe_ts_provider: session.min_safe_ts_provider,
             mpp_query_info: session.mpp_query_info,
             mpp_server_id: session.mpp_server_id,
             tiflash_compute_dispatch_policy: session.tiflash_compute_dispatch_policy,
@@ -3461,7 +3555,6 @@ impl StmtContext {
             string_type_flags: tidb_datatype::ConversionFlags::default(),
             reorg: false,
             current_db: None,
-            version: None,
             current_user: None,
             auth_plugin: String::new(),
             connection_info: None,
@@ -3502,8 +3595,7 @@ impl StmtContext {
             session_privilege: session.session_privilege,
             plan_privilege_check: None,
             mdl_related_table: session.mdl_related_table,
-            min_safe_ts_provider: session.min_safe_ts_provider,
-            stmt_safe_ts: std::sync::OnceLock::new(),
+            stmt_safe_ts: Arc::default(),
             locked_tables: session.locked_tables,
             protected_table_mode: None,
             new_collation_enabled: tidb_datatype::new_collation_enabled(),
@@ -6679,6 +6771,10 @@ impl StmtContext {
             current_tso: self.current_tso.clone(),
             current_insert_values: Arc::clone(&self.current_insert_values),
             sequence_state: Arc::clone(&self.sequence_state),
+            stmt_safe_ts: Arc::clone(&self.stmt_safe_ts),
+            fts_function_is_used: Arc::clone(&self.fts_function_is_used),
+            connection_info: self.connection_info.clone(),
+            global_sysvars: self.global_sysvars.clone(),
         }
     }
 
@@ -7448,10 +7544,6 @@ impl Columns for StmtContext {
         self.fts_function_is_used.load(Ordering::Relaxed)
     }
 
-    fn set_fts_function_is_used(&self) {
-        self.fts_function_is_used.store(true, Ordering::Relaxed);
-    }
-
     fn alternative_logical_plan_signals(
         &self,
     ) -> Option<&tidb_exprctx::context::AlternativeLogicalPlanSignals> {
@@ -7514,11 +7606,6 @@ impl Columns for StmtContext {
         self.like_default_escape
     }
 
-    fn connection_info(&self) -> Option<Arc<tidb_variable::connection_info::ConnectionInfo>> {
-        self.connection_info.clone()
-    }
-
-
     fn connection_id(&self) -> Option<u64> {
         self.connection_id
     }
@@ -7537,39 +7624,7 @@ impl Columns for StmtContext {
         &self,
         key: tidb_exprctx::OptionalEvalPropKey,
     ) -> Option<Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
-        match key {
-            tidb_exprctx::OptionalEvalPropKey::SessionVars => {
-                Some(Arc::new(tidb_expropt::new_session_vars_provider(Arc::new(self.session_vars()))))
-            }
-            tidb_exprctx::OptionalEvalPropKey::CurrentUser => {
-                let vars = self.session_vars();
-                Some(Arc::new(tidb_expropt::CurrentUserPropProvider::new(move || {
-                    (vars.user.clone(), vars.active_roles.clone())
-                })))
-            }
-            tidb_exprctx::OptionalEvalPropKey::AdvisoryLock => Some(Arc::new(tidb_expropt::AdvisoryLockPropProvider::new(
-                Arc::new(StmtAdvisoryLocks(self.advisory_locks.clone())),
-            ))),
-            tidb_exprctx::OptionalEvalPropKey::SequenceOperator => {
-                let ctx = self.clone();
-                Some(Arc::new(tidb_expropt::SequenceOperatorProvider::new(move |db, name| {
-                    let path = [db.to_owned(), name.to_owned()];
-                    // Go `GetSequenceByName`: a missing sequence, or another
-                    // kind of object, fails here.
-                    ctx.resolve_sequence(&path).map_err(tidb_expropt::ExprOptError::from_eval)?;
-                    Ok(Arc::new(StmtSequenceOperator { ctx: ctx.clone(), path }) as Arc<dyn tidb_expropt::SequenceOperator>)
-                })))
-            }
-            _ => self.optional_props.get(key),
-        }
-    }
-
-    fn get_stmt_min_safe_ts(&self) -> u64 {
-        *self.stmt_safe_ts.get_or_init(|| {
-            self.min_safe_ts_provider.as_ref().map_or(0, |provider| {
-                provider(&tidb_config::tikvcfg::get_txn_scope_from_config())
-            })
-        })
+        tidb_sessionexpr::optional_prop_provider(&Arc::new(self.clone()), key)
     }
 
     fn tidb_info(&self) -> String {
@@ -7627,12 +7682,6 @@ impl Columns for StmtContext {
     fn sysvar(&self, scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
         // Only the variables a builtin reads are answered here; the session
         // resolves every other `@@var` before the driver sees the statement.
-        if name.eq_ignore_ascii_case("version") {
-            return self
-                .version
-                .as_ref()
-                .map(|value| Datum::Bytes(value.clone().into_bytes()));
-        }
         // `GROUP_CONCAT`'s byte budget travels this way rather than as its own
         // `Columns` method: the aggregate reads it once per statement, and the
         // trait already has a general variable channel.

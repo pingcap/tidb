@@ -33,6 +33,13 @@ pub trait KvStorage: Any + Send + Sync {
     fn as_helper_storage(&self) -> Option<&dyn tidb_kv::region_map::RegionStore> {
         None
     }
+
+    /// Go `kv.Storage.GetMinSafeTS(txnScope)`: the minimum SafeTS of the
+    /// stores in `txn_scope`; zero when none is known.
+    fn get_min_safe_ts(&self, txn_scope: &str) -> u64 {
+        let _ = txn_scope;
+        0
+    }
 }
 
 /// Go `KVStorePropProvider`: `func() kv.Storage`.

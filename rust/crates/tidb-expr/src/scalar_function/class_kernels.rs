@@ -118,7 +118,7 @@ session_values! {
     /// Go `builtinDatabaseSig`: NULL when no database is selected.
     database => |ctx| string_or_null(ctx.current_database());
     /// Go `builtinVersionSig`: the string `@@version` reports.
-    version => |ctx| ctx.sysvar(None, "version").unwrap_or(Datum::Null);
+    version => |ctx| Datum::new_string_datum(tidb_mysql::consts::runtime_versions().server_version.into_bytes());
     /// Go `builtinTiDBVersionSig`.
     tidb_version => |ctx| Datum::new_string_datum(ctx.tidb_info().into_bytes());
     /// Go `builtinTiDBIsDDLOwnerSig.evalInt`: 1 or 0, never NULL.

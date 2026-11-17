@@ -125,6 +125,7 @@ impl ConflictResolutionStepExecutor {
                     let deleter = Deleter::new(
                         ti.controller.table.clone(),
                         Arc::clone(&store),
+                        ti.key_space(),
                         kv_group,
                         encoder,
                         Some(Arc::clone(&progress)),

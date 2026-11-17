@@ -7144,6 +7144,7 @@ dependencies = [
  "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
+ "tidb-config",
  "tidb-config-deploymode",
  "tidb-context",
  "tidb-datatype",
@@ -7237,6 +7238,7 @@ dependencies = [
  "tidb-sqlescape",
  "tidb-sqlexec",
  "tidb-sqlkiller",
+ "tidb-variable",
 ]
 
 [[package]]
@@ -8213,12 +8215,17 @@ version = "0.0.0"
 name = "tidb-objstore"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "base64 0.22.1",
  "chrono",
  "flate2",
  "hex",
+ "http 1.4.2",
  "opendal",
  "prost 0.14.4",
+ "reqsign",
+ "reqwest 0.12.28",
  "rustix 1.1.4",
  "serde",
  "serde_json",
@@ -9772,6 +9779,7 @@ dependencies = [
  "tidb-ppcpuusage",
  "tidb-printer",
  "tidb-proto",
+ "tidb-sessionexpr",
  "tidb-spill-storage",
  "tidb-sqlkiller",
  "tidb-stats-handle-usage-indexusage",

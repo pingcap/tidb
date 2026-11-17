@@ -2,8 +2,8 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 7,
-    "open": 5,
+    "unresolved": 4,
+    "open": 2,
     "partial": 2
   },
   "findings": [
@@ -32,30 +32,6 @@
       "go_owner": "`pkg/ddl/materialized_view.go`, `pkg/ddl/mview_*.go`, `pkg/planner/mview`, `pkg/executor/mviewdeltamergeagg`, `pkg/util/mviewutil`, the parser's materialized-view grammar, `ImportStepQuery` in `pkg/dxf/importinto` (Go master)"
     },
     {
-      "id": "E30",
-      "status": "open",
-      "group": "Expanded subsystem ownership review",
-      "finding": "The TiKV key codec (the keyspace prefix) is applied when the ingest writes to TiKV, not when the KV pairs are written to the engine. Go encodes each key as it is written (`openLocalWriter`'s `tikvCodec` for local engines, `WriterBuilder.SetTiKVCodec` for global-sort files) and `doWrite` sends the stored keys as they are; Rust's local engine and global-sort files hold unprefixed keys and `do_write` encodes each one (`ImportClient::encode_key`). Under API V1 the keys are the same; on a keyspace cluster the global-sort files, their split and job keys in the subtask metas, and the conflict collectors' keys differ from Go's, which also keeps `codec.DecodeKey` out of the conflict handlers.",
-      "rust_evidence": "`rust/crates/tidb-ingestor-ingestctrl/src/region_job.rs` (`do_write`), `rust/crates/tidb-ingestor-simplesst/src/writer.rs` (no codec), `rust/crates/tidb-ingestor-ingestctrl/src/engine.rs`",
-      "go_owner": "`pkg/ingestor/ingestctrl/local.go` (`openLocalWriter`), `pkg/ingestor/ingestctrl/job_worker.go` (`doWrite`), `pkg/ingestor/simplesst/writer.go` (`SetTiKVCodec`), `pkg/dxf/importinto/conflictedkv`"
-    },
-    {
-      "id": "E32",
-      "status": "open",
-      "group": "Expanded subsystem ownership review",
-      "finding": "BR's remaining differences from Go master's `pkg/objstore` and `br/pkg/streamhelper`. The storages' `Copier` copies between local storages and within one S3 bucket only: the `opendal` operator is bound to its bucket, where Go's S3 `CopyFrom` sends `CopyObject` from any source bucket, GCS copies through the rewrite API and Azure through `StartCopyFromURL`; so a SQL `RESTORE` during a log backup whose storage is another S3 bucket, GCS or Azure fails in the PITR collector where Go copies the SSTs. The log backup metadata client reads an etcd prefix in one range request where Go pages it (`scanEtcdPrefix`).",
-      "go_owner": "`pkg/objstore/s3like/store.go` (`CopyFrom`), `pkg/objstore/gcs.go` (`CopyFrom`), `pkg/objstore/azblob.go` (`CopyFrom`), `br/pkg/streamhelper/client.go` (`scanEtcdPrefix`)",
-      "rust_evidence": "`rust/crates/tidb-objstore/src/cloud.rs` (`Copier for CloudStorage`), `rust/crates/tidb-br/src/streamhelper/client.rs` (`MetaStore::get_prefix`)"
-    },
-    {
-      "id": "S01",
-      "status": "open",
-      "group": "Structure: Go's shape before more ports",
-      "finding": "Builtins reach session state through hand-built hooks (a method on `tidb_exprctx::Columns`, a field on `StmtContext`, a method on the executor's builder trait, a session implementation) instead of Go's optional eval-property providers: Go's `session.go` builds `sessionexpr.NewExprContext`, which installs the KV-store, infoschema, privilege-checker, session-vars, SQL-executor, sequence, advisory-lock and DDL-owner providers that builtins read (`builtinTiDBMVCCInfoSig` embeds `KVStorePropReader` / `PrivilegeCheckerPropReader`). `tidb-sessionexpr` and `tidb-expropt` port them, but the live session never builds that context. A consequence: `StmtContext` computes the PROCESS privilege for every statement, where Go asks the privilege checker only when `TIDB_DECODE_SQL_DIGESTS` is built or evaluated",
-      "go_owner": "`pkg/expression/sessionexpr`, `pkg/expression/expropt`, `pkg/session/session.go`",
-      "rust_evidence": "`rust/crates/tidb-exprctx/src/context.rs`, `rust/crates/tidb-sessionctx/src/stmt_context.rs`, `rust/crates/tidb-sessionexpr`"
-    },
-    {
       "id": "S02",
       "status": "open",
       "group": "Structure: Go's shape before more ports",
@@ -64,7 +40,7 @@
       "rust_evidence": "`rust/crates/tidb-table/src/tables.rs`, `rust/crates/tidb-table/src/tables/nonpublic_columns.rs`, `rust/crates/tidb-table/src/table_from_meta.rs`"
     }
   ],
-  "unresolved": 7,
-  "open": 5,
+  "unresolved": 4,
+  "open": 2,
   "partial": 2
 }

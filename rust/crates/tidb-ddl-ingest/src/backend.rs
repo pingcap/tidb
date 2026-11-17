@@ -307,6 +307,9 @@ impl LitBackendCtx {
         if let Some(partition) = table.get_partition_info() {
             ids.extend(partition.read().definitions.snapshot().iter().map(|d| d.id));
         }
+        // Go's duplicate tasks are encoded with the store's codec
+        // (`EncodeRange`), as the engine's keys are.
+        let codec = self.backend.get_tikv_codec();
         for id in ids {
             let start = tidb_tablecodec::table_key::encode_index_seek_key(id, index_id, &[]);
             let end = tidb_txnkv::Key::from_bytes(start.clone())
@@ -314,7 +317,7 @@ impl LitBackendCtx {
                 .as_bytes()
                 .to_vec();
             self.backend
-                .collect_remote_duplicate_rows(ctx, &start, &end, self.init_ts)
+                .collect_remote_duplicate_rows(ctx, &codec(&start), &codec(&end), self.init_ts)
                 .map_err(|error| {
                     crate::util::try_convert_to_key_exists_err(error.into(), &index.read(), table)
                 })?;

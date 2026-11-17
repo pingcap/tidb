@@ -50,6 +50,9 @@ pub(crate) struct TestSession {
     pub(crate) current_ts: i64,
     /// Go `SessionVars.CurrInsertValues`.
     pub(crate) curr_insert_values: Arc<Mutex<Option<Vec<tidb_datatype::Datum>>>>,
+    /// Go `SessionVars.GlobalVarsAccessor`'s values; `None` is a session
+    /// without the accessor.
+    pub(crate) global_vars: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Clone)]
@@ -109,6 +112,16 @@ impl tidb_expropt::SessionVars for Vars {
         let values = self.session.curr_insert_values.lock().unwrap();
         let values = values.as_ref().filter(|values| !values.is_empty())?;
         Some((values.len(), values.get(offset).cloned()))
+    }
+
+    fn get_global_sys_var(&self, name: &str) -> Result<String, tidb_expropt::ExprOptError> {
+        match &self.session.global_vars {
+            Some(vars) => vars
+                .get(name)
+                .cloned()
+                .ok_or_else(|| tidb_expropt::ExprOptError::new(format!("unknown system variable '{name}'"))),
+            None => Err(tidb_expropt::ExprOptError::new("no global variable accessor")),
+        }
     }
 }
 

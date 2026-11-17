@@ -918,3 +918,109 @@ fn test_s3_sse_kms_context_url() {
         );
     }
 }
+
+/// Go `s3like.Storage.CopyFrom` against a live S3 service: a server-side
+/// copy from a storage in one bucket to a storage in another, each under
+/// its prefix. `TIDB_TEST_S3_ENDPOINT` names a MinIO (or S3) endpoint whose
+/// `minioadmin` account owns the buckets `copy-src` and `copy-dst`.
+#[test]
+#[ignore = "needs a live S3 endpoint"]
+fn s3_copy_from_another_bucket() {
+    let endpoint = std::env::var("TIDB_TEST_S3_ENDPOINT").expect("TIDB_TEST_S3_ENDPOINT");
+    let ctx = tidb_gocontext::Context::background();
+    let url = |bucket: &str, prefix: &str| {
+        format!(
+            "s3://{bucket}/{prefix}?endpoint={endpoint}&access-key=minioadmin&secret-access-key=minioadmin&force-path-style=true&region=us-east-1"
+        )
+    };
+    let src = crate::new_from_url(&ctx, &url("copy-src", "from")).unwrap();
+    let dst = crate::new_from_url(&ctx, &url("copy-dst", "to")).unwrap();
+    src.write_file(&ctx, "dir/a b+c.sst", b"payload").unwrap();
+    let copier = dst.as_copier().expect("an S3 storage is a Copier");
+    copier
+        .copy_from(&ctx, &*src, &crate::storeapi::CopySpec { from: "dir/a b+c.sst".into(), to: "out/copied.sst".into() })
+        .unwrap();
+    assert_eq!(dst.read_file(&ctx, "out/copied.sst").unwrap(), b"payload");
+    // Within one bucket, the same request.
+    let same = crate::new_from_url(&ctx, &url("copy-src", "again")).unwrap();
+    same.as_copier()
+        .unwrap()
+        .copy_from(&ctx, &*src, &crate::storeapi::CopySpec { from: "dir/a b+c.sst".into(), to: "x.sst".into() })
+        .unwrap();
+    assert_eq!(same.read_file(&ctx, "x.sst").unwrap(), b"payload");
+    // A missing source is the service's error.
+    let missing = copier
+        .copy_from(&ctx, &*src, &crate::storeapi::CopySpec { from: "nope".into(), to: "y.sst".into() })
+        .unwrap_err()
+        .to_string();
+    assert!(missing.contains("NoSuchKey"), "{missing}");
+}
+
+/// Go `GCSStorage.CopyFrom` against a live GCS JSON API: a rewrite from a
+/// storage in one bucket to a storage in another, each under its prefix.
+/// `TIDB_TEST_GCS_ENDPOINT` names an endpoint (fake-gcs-server) that holds
+/// the buckets `copy-src` and `copy-dst` and needs no credentials.
+#[test]
+#[ignore = "needs a live GCS endpoint"]
+fn gcs_copy_from_another_bucket() {
+    let endpoint = std::env::var("TIDB_TEST_GCS_ENDPOINT").expect("TIDB_TEST_GCS_ENDPOINT");
+    let ctx = tidb_gocontext::Context::background();
+    let opts = crate::storeapi::Options { no_credentials: true, ..crate::storeapi::Options::default() };
+    let open = |bucket: &str, prefix: &str| {
+        let backend = crate::parse_backend(&format!("gcs://{bucket}/{prefix}?endpoint={endpoint}"), None).unwrap();
+        crate::new(&ctx, &backend, Some(&opts)).unwrap()
+    };
+    let (src, dst) = (open("copy-src", "from"), open("copy-dst", "to"));
+    // fake-gcs-server keeps `opendal`'s escaped upload name literally, so the
+    // live key has no byte to escape (`escape_segment` is unit-tested).
+    src.write_file(&ctx, "dir/a.sst", b"payload").unwrap();
+    let spec = |from: &str, to: &str| crate::storeapi::CopySpec { from: from.into(), to: to.into() };
+    dst.as_copier().unwrap().copy_from(&ctx, &*src, &spec("dir/a.sst", "out/copied.sst")).unwrap();
+    assert_eq!(dst.read_file(&ctx, "out/copied.sst").unwrap(), b"payload");
+    let missing = dst.as_copier().unwrap().copy_from(&ctx, &*src, &spec("nope", "y.sst")).unwrap_err().to_string();
+    assert!(missing.contains("failed to copy copy-src/from/nope to copy-dst/to/y.sst"), "{missing}");
+}
+
+/// Go `AzureBlobStorage.CopyFrom` against a live Blob service:
+/// `StartCopyFromURL` from a container to another, waited on.
+/// `TIDB_TEST_AZURE_ENDPOINT` names Azurite's blob endpoint
+/// (`http://127.0.0.1:10000/devstoreaccount1`), whose well-known account
+/// holds the containers `copy-src` and `copy-dst`.
+#[test]
+#[ignore = "needs a live Azure Blob endpoint"]
+fn azure_copy_from_another_container() {
+    const KEY: &str = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==";
+    let endpoint = std::env::var("TIDB_TEST_AZURE_ENDPOINT").expect("TIDB_TEST_AZURE_ENDPOINT");
+    let ctx = tidb_gocontext::Context::background();
+    let open = |container: &str, prefix: &str| {
+        let uri = format!("azure://{container}/{prefix}?account-name=devstoreaccount1&account-key={}&endpoint={endpoint}", KEY.replace('+', "%2B").replace('/', "%2F").replace('=', "%3D"));
+        crate::new_from_url(&ctx, &uri).unwrap()
+    };
+    let (src, dst) = (open("copy-src", "from"), open("copy-dst", "to"));
+    src.write_file(&ctx, "dir/a b+c.sst", b"payload").unwrap();
+    let spec = |from: &str, to: &str| crate::storeapi::CopySpec { from: from.into(), to: to.into() };
+    dst.as_copier().unwrap().copy_from(&ctx, &*src, &spec("dir/a b+c.sst", "out/copied.sst")).unwrap();
+    assert_eq!(dst.read_file(&ctx, "out/copied.sst").unwrap(), b"payload");
+    let missing = dst.as_copier().unwrap().copy_from(&ctx, &*src, &spec("nope", "y.sst")).unwrap_err().to_string();
+    assert!(missing.contains("failed to copy blob from"), "{missing}");
+}
+
+/// Go `s3like.Storage.Features`, `GCSStorage.Features` and
+/// `AzureBlobStorage.Features`, and every cloud storage a `Copier`.
+#[test]
+fn cloud_storage_features_and_copier_follow_go() {
+    let ctx = tidb_gocontext::Context::background();
+    let opts = crate::storeapi::Options { no_credentials: true, ..crate::storeapi::Options::default() };
+    let open = |uri: &str| crate::new(&ctx, &crate::parse_backend(uri, None).unwrap(), Some(&opts)).unwrap();
+    let strong = crate::storeapi::FEATURE_STRONG_CONSISTENCY;
+    let start_after = crate::storeapi::FEATURE_SUPPORTS_START_AFTER;
+    for (uri, features) in [
+        ("s3://b/p?endpoint=http://127.0.0.1:1&force-path-style=true", strong | start_after),
+        ("gcs://b/p?endpoint=http://127.0.0.1:1", strong | start_after),
+        ("azure://b/p?account-name=a&account-key=a2V5&endpoint=http://127.0.0.1:1/a", strong),
+    ] {
+        let storage = open(uri);
+        assert_eq!(storage.features(), features, "{uri}");
+        assert!(storage.as_copier().is_some(), "{uri}");
+    }
+}

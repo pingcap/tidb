@@ -543,10 +543,6 @@ pub trait Columns {
         false
     }
 
-    /// Go `StmtCtx.FTSFunctionIsUsed = true`; a context with no statement
-    /// has nothing to mark.
-    fn set_fts_function_is_used(&self) {}
-
     /// The statement's alternative-logical-plan signals, which a context
     /// that plans no statement does not have.
     fn alternative_logical_plan_signals(&self) -> Option<&AlternativeLogicalPlanSignals> {
@@ -570,14 +566,6 @@ pub trait Columns {
     /// carrying prepared parameters override this method.
     fn get_param_value(&self, _idx: usize) -> Result<Datum, EvalError> {
         Err(EvalError::ParamIndexExceedParamCounts)
-    }
-
-    /// Go `GetStmtMinSafeTime`'s TSO: the stores' min SafeTS
-    /// (`store.GetMinSafeTS(txnScope)`), cached for the statement
-    /// (`StmtSafeTSCacheKey`) so every evaluation of it agrees. Zero is a
-    /// context with no store, as Go's nil store leaves it.
-    fn get_stmt_min_safe_ts(&self) -> u64 {
-        0
     }
 
     /// The statement's connection charset/collation used by implicit casts.
@@ -614,13 +602,6 @@ pub trait Columns {
     /// Go `SessionVars.CurrentDB`, which `DATABASE()`/`SCHEMA()` return.
     /// `None` is the no-database-selected state, where Go returns NULL.
     fn current_database(&self) -> Option<String> {
-        None
-    }
-
-    /// Go `SessionVars.ConnectionInfo`.
-    fn connection_info(
-        &self,
-    ) -> Option<std::sync::Arc<tidb_variable::connection_info::ConnectionInfo>> {
         None
     }
 

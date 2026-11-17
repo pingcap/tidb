@@ -73,26 +73,41 @@ pub trait EncodedRowHandler {
 pub struct BaseHandler {
     target_table: TableCommon,
     kv_group: String,
+    /// Go `codec.GetKeyspace()` of the handler's `tikv.Codec`: the prefix
+    /// the sorted files' keys carry, which `DecodeKey` removes.
+    keyspace: Vec<u8>,
     encoder: Option<TableKVEncoder>,
     collector: Arc<dyn Collector>,
 }
 
 impl BaseHandler {
-    /// Go `NewBaseHandler`. Keys are not decoded: the files hold keys
-    /// without the keyspace prefix, which the ingest adds.
+    /// Go `NewBaseHandler`, with the store's codec as its keyspace.
     #[must_use]
     pub fn new(
         target_table: TableCommon,
         kv_group: &str,
+        keyspace: &[u8],
         encoder: Option<TableKVEncoder>,
         collector: Option<Arc<dyn Collector>>,
     ) -> Self {
         Self {
             target_table,
             kv_group: kv_group.to_owned(),
+            keyspace: keyspace.to_vec(),
             encoder,
             collector: collector.unwrap_or_else(|| Arc::new(NoopCollector)),
         }
+    }
+
+    /// Go `tikv.Codec.DecodeKey`: a key of the keyspace without its prefix;
+    /// without a keyspace (API V1) the key itself.
+    fn decode_key(&self, key: &[u8]) -> Result<Vec<u8>> {
+        if self.keyspace.is_empty() || key.is_empty() {
+            return Ok(key.to_vec());
+        }
+        key.strip_prefix(self.keyspace.as_slice())
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| other("given key does not belong to the keyspace"))
     }
 
     /// Go `encodeAndHandleRow`: the row of a data KV re-encoded, then
@@ -215,25 +230,28 @@ impl<R: EncodedRowHandler> ConflictKVHandler<R> {
     /// # Errors
     /// The key does not decode, or the row could not be handled.
     pub fn handle(&mut self, ctx: &Context, kv: &KVPair) -> Result<()> {
+        // Go `h.codec.DecodeKey(kv.Key)`: the sorted files hold the store's
+        // encoded keys.
+        let key = self.base.decode_key(&kv.key)?;
         match &mut self.kind {
             KVHandlerKind::Data => {
-                let handle = match tidb_tablecodec::table_key::decode_row_key(&kv.key).map_err(|e| other(e.to_string()))? {
+                let handle = match tidb_tablecodec::table_key::decode_row_key(&key).map_err(|e| other(e.to_string()))? {
                     tidb_tablecodec::table_key::RecordHandle::Int(h) => TableHandle::Int(h),
                     tidb_tablecodec::table_key::RecordHandle::Common(h) => TableHandle::Common(h),
                     tidb_tablecodec::table_key::RecordHandle::Partition { .. } => {
                         return Err(other("partition handle in a row key"));
                     }
                 };
-                self.base.encode_and_handle_row(ctx, &kv.key, &handle, &kv.value, &mut self.row_handler)
+                self.base.encode_and_handle_row(ctx, &key, &handle, &kv.value, &mut self.row_handler)
             }
             KVHandlerKind::Index(h) => {
                 // The table ID of the key, for a partitioned table.
-                let table_id = tidb_tablecodec::table_key::decode_table_id(&kv.key);
+                let table_id = tidb_tablecodec::table_key::decode_table_id(&key);
                 if table_id == 0 {
                     // should not happen
-                    return Err(other(format!("invalid table ID in key {}", tidb_redact::key(&kv.key))));
+                    return Err(other(format!("invalid table ID in key {}", tidb_redact::key(&key))));
                 }
-                let handle = tidb_tablecodec::decode_index_handle(&kv.key, &kv.value, h.index_columns)
+                let handle = tidb_tablecodec::decode_index_handle(&key, &kv.value, h.index_columns)
                     .map_err(|e| other(e.to_string()))?
                     .ok_or_else(|| other("no handle in index key or value"))?;
                 // The filter and the snapshot need the data row key.

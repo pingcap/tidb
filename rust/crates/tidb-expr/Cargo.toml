@@ -31,6 +31,7 @@ tidb-sem-compat = { path = "../tidb-sem-compat" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-parser-types = { path = "../tidb-parser-types" }
 tidb-context = { path = "../tidb-context" }
+tidb-config = { path = "../tidb-config" }
 tidb-config-deploymode = { path = "../tidb-config-deploymode" }
 tidb-encrypt = { path = "../tidb-encrypt" }
 tidb-go-regexp = { path = "../tidb-go-regexp" }

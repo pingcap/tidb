@@ -206,6 +206,15 @@ enum EtcdCommand {
         prefix: Vec<u8>,
         reply: mpsc::Sender<Result<(Vec<EtcdKeyValue>, i64), EtcdError>>,
     },
+    /// `KV.Range` over `[from, to)` with at most `limit` pairs:
+    /// `clientv3.WithRange(to), clientv3.WithLimit(limit)`. Answers the
+    /// pairs in key order and the response's `More`.
+    Scan {
+        from: Vec<u8>,
+        to: Vec<u8>,
+        limit: i64,
+        reply: mpsc::Sender<Result<(Vec<(Vec<u8>, Vec<u8>)>, bool), EtcdError>>,
+    },
     CreateWithLease {
         key: Vec<u8>,
         value: Vec<u8>,
@@ -681,6 +690,33 @@ impl EtcdClient {
         })
     }
 
+    /// Go `Get(ctx, from, clientv3.WithRange(to), clientv3.WithLimit(limit))`:
+    /// at most `limit` pairs of `[from, to)` in key order, and whether the
+    /// range holds more.
+    pub fn scan(
+        &self,
+        from: &[u8],
+        to: &[u8],
+        limit: i64,
+    ) -> Result<(Vec<(Vec<u8>, Vec<u8>)>, bool), EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::Scan {
+                from: self.namespace_key(from),
+                to: self.namespace_key(to),
+                limit,
+                reply,
+            })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed)).map(|(mut kvs, more)| {
+            for (key, _) in &mut kvs {
+                self.strip_namespace(key);
+            }
+            (kvs, more)
+        })
+    }
+
     /// Reads every key under `prefix`, ordered by creation revision, and
     /// retains the MVCC fields used by etcd's concurrency recipes.
     pub fn get_prefix_metadata(&self, prefix: &[u8]) -> Result<Vec<EtcdKeyValue>, EtcdError> {
@@ -1082,6 +1118,9 @@ fn run_kv_worker(
                 EtcdCommand::GetPrefixMetadata { reply, .. } => {
                     let _ = reply.send(Err(EtcdError::Closed));
                 }
+                EtcdCommand::Scan { reply, .. } => {
+                    let _ = reply.send(Err(EtcdError::Closed));
+                }
                 EtcdCommand::CreateWithLease { reply, .. }
                 | EtcdCommand::Create { reply, .. }
                 | EtcdCommand::CompareValueAndPut { reply, .. }
@@ -1260,6 +1299,30 @@ impl KvWorker {
                                     .into_iter()
                                     .map(|kv| kv.into_key_value())
                                     .collect()
+                            })
+                    },
+                );
+                let _ = reply.send(result);
+            }
+            EtcdCommand::Scan { from, to, limit, reply } => {
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    clients,
+                    timeout,
+                    security,
+                    |runtime, mut client| {
+                        let options = GetOptions::new().with_range(to.clone()).with_limit(limit);
+                        runtime
+                            .block_on(client.get(from.clone(), Some(options)))
+                            .map(|mut response| {
+                                let more = response.more();
+                                let kvs = response
+                                    .take_kvs()
+                                    .into_iter()
+                                    .map(|kv| kv.into_key_value())
+                                    .collect();
+                                (kvs, more)
                             })
                     },
                 );

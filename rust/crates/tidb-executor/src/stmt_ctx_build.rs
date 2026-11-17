@@ -52,7 +52,6 @@ use tidb_hack::GoToLower;
 /// builder, while expressions retain the shared global accessor itself.
 pub struct StatementVarSnapshot {
     generation: u64,
-    version: Option<String>,
     time_zone: crate::SessionTimeZone,
     connection_charset: String,
     connection_collation: String,
@@ -998,7 +997,6 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             string_type_flags: tidb_datatype::ConversionFlags::default()
                 .with_skip_ascii_check(on(tidb_vardef::tidb_vars::TIDB_SKIP_ASCII_CHECK))
                 .with_skip_utf8_check(on(tidb_vardef::tidb_vars::TIDB_SKIP_UTF8_CHECK)),
-            version: self.session_vars().get_system("version").ok(),
             time_zone: self.session_vars().session_time_zone(),
             connection_charset: self
                 .session_vars()
@@ -1420,7 +1418,6 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         let string_type_flags = snapshot
             .string_type_flags
             .with_skip_utf8mb4_check(!check_mb4);
-        let version = snapshot.version.clone();
         let connection_charset = snapshot.connection_charset.clone();
         let connection_collation = snapshot.connection_collation.clone();
         let default_collation_for_utf8mb4 = snapshot.default_collation_for_utf8mb4.clone();
@@ -1729,7 +1726,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     )
                     .with_tmp_table_max_size(snapshot.tmp_table_max_size)
                     .with_remove_orderby_in_subquery(remove_orderby_in_subquery)
-                    .with_session_state(current_db, version)
+                    .with_current_db(current_db)
                     .with_user(self.session_vars().current_user.clone(), self.session_vars().login_user.clone())
                     .with_connection_info(self.session_vars().connection_info.clone(), self.session_vars().auth_plugin.clone())
                     .with_global_sysvar_accessor(Arc::clone(&global_sysvar_accessor))
@@ -1939,7 +1936,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 )
                 .with_tmp_table_max_size(snapshot.tmp_table_max_size)
                 .with_remove_orderby_in_subquery(remove_orderby_in_subquery)
-                .with_session_state(current_db, version)
+                .with_current_db(current_db)
                 .with_user(
                     self.session_vars().current_user.clone(),
                     self.session_vars().login_user.clone(),
