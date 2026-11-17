@@ -796,9 +796,10 @@ func canReuseInjectedJoinExpr(expr expression.Expression) bool {
 // injectExpr materializes expr as a column on top of p so rewritten join edges can keep using
 // column arguments only.
 //
-// If p is already a projection and substitution preserves its materialized values, we append/reuse
-// the expression there. Otherwise we wrap p in a pass-through projection first, so the new derived
-// column stays local to this branch and the branch's output schema remains explicit.
+// If p is already a projection and inlining its referenced outputs would not re-evaluate volatile
+// or side-effecting expressions, we append/reuse the expression there. Otherwise we wrap p in a
+// pass-through projection first, preserving p's materialized outputs while keeping the new derived
+// column local to this branch with an explicit output schema for later join construction.
 //
 // When possible, we reuse an existing semantically equivalent deterministic expression instead of
 // appending a duplicate column. This keeps the rewritten join tree smaller and prevents repeated
@@ -807,12 +808,15 @@ func (s *baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr exp
 	originalPlanID := p.ID()
 	proj, ok := p.(*logicalop.LogicalProjection)
 	if ok {
+		// AppendExpr substitutes proj's output columns with their defining expressions.
+		// When expr references a volatile or side-effecting output of p, keep p as a
+		// child projection and wrap a new projection on top: for example, first compute
+		// `r = RAND()` in p and then `key = r + r + 1` in the outer projection; otherwise
+		// appending into p would inline `r` as `RAND() + RAND() + 1` and evaluate `RAND()`
+		// multiple times.
 		for _, col := range expression.ExtractColumns(expr) {
 			idx := proj.Schema().ColumnIndex(col)
 			if idx >= 0 && !canReuseInjectedJoinExpr(proj.Exprs[idx]) {
-				// AppendExpr substitutes projection outputs with their definitions. Preserve
-				// this boundary when doing so would re-evaluate a volatile or side-effect
-				// expression instead of consuming the value already produced by p.
 				ok = false
 				break
 			}
