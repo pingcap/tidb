@@ -111,7 +111,7 @@ type queryChunkEncodeReader struct {
 }
 
 func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error) {
-	for r.currChk.Chk == nil || r.cursor >= r.numRows {
+	if r.currChk.Chk == nil || r.cursor >= r.numRows {
 		select {
 		case <-ctx.Done():
 			err = ctx.Err()
@@ -570,7 +570,7 @@ func (p *dataDeliver) summaryFields() []zap.Field {
 	}
 }
 
-// QueryChunk is a chunk from a query result.
+// QueryChunk is a chunk from query result.
 type QueryChunk struct {
 	Fields      []*types.FieldType
 	Chk         *chunk.Chunk

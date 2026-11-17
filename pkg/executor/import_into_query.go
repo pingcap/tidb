@@ -76,17 +76,16 @@ func sendQueryChunks(ctx context.Context, e exec.Executor, output chan<- importe
 		if err := exec.Next(ctx, e, chk); err != nil {
 			return err
 		}
-		numRows := chk.NumRows()
-		if numRows == 0 {
+		if chk.NumRows() == 0 {
 			return nil
 		}
 		select {
 		case output <- importer.QueryChunk{Fields: fields, Chk: chk, RowIDOffset: rowID}:
+			rowID += int64(chk.NumRows())
+			chk = chunk.Renew(chk, e.MaxChunkSize())
 		case <-ctx.Done():
 			return context.Cause(ctx)
 		}
-		rowID += int64(numRows)
-		chk = chunk.Renew(chk, e.MaxChunkSize())
 	}
 }
 
