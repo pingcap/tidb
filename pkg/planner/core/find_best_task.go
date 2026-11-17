@@ -2665,8 +2665,19 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			sortItems := prop.GetSortItemsForKeepOrder()
 			byItems := make([]*util.ByItems, 0, len(sortItems))
 			for _, si := range sortItems {
+				col := si.Col
+				if cop.TablePlan != nil && is.Schema().ColumnIndex(col) == -1 {
+					// IndexLookUp merges index-side rows before fetching table rows, so
+					// its sort keys must name the actual index columns. IndexReader instead
+					// merges output rows and must retain the columns in its output schema.
+					resolved, ok := col.ResolveIndicesByVirtualExpr(ds.SCtx().GetExprCtx().GetEvalCtx(), is.Schema())
+					if !ok {
+						return base.InvalidTask, nil
+					}
+					col = is.Schema().Columns[resolved.(*expression.Column).Index]
+				}
 				byItems = append(byItems, &util.ByItems{
-					Expr: si.Col,
+					Expr: col,
 					Desc: si.Desc,
 				})
 			}

@@ -1054,3 +1054,46 @@ func TestDuplicateExpressionIndexOrdering(t *testing.T) {
 		require.Equal(t, c.index, orderingIndex("/* issue:70708 */ "+c.sql))
 	}
 }
+
+func TestExpressionIndexMergeSort(t *testing.T) {
+	for _, partitioned := range []bool{false, true} {
+		t.Run(fmt.Sprintf("partitioned=%v", partitioned), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+			ddl := `create table t_merge_expr (
+				id bigint primary key, ns int, s varchar(20),
+				g varchar(20) generated always as (lower(s)) virtual,
+				key ix(ns, (lower(s))))`
+			if partitioned {
+				ddl += ` partition by range(id) (
+					partition p0 values less than (10),
+					partition p1 values less than (maxvalue))`
+			}
+			tk.MustExec(ddl)
+			tk.MustExec("insert into t_merge_expr(id,ns,s) values (1,1,'B'),(11,1,'a'),(2,2,'D'),(12,2,'c')")
+			for _, predicate := range []string{"ns = 1", "ns in (1,2)"} {
+				for _, fields := range []string{"id, g", "id, s, g"} {
+					for _, order := range []string{"asc", "desc"} {
+						// g and the index's hidden column have different IDs. Covering scans
+						// merge output rows, while lookups merge rows from the index side.
+						suffix := " where " + predicate + " order by g " + order + " limit 3"
+						sql := "select " + fields + " from t_merge_expr force index(ix)" + suffix
+						plan := fmt.Sprint(tk.MustQuery("explain format='brief' " + sql).Rows())
+						require.NotContains(t, plan, "TopN", sql)
+						require.NotContains(t, plan, "Sort", sql)
+						require.Contains(t, plan, "keep order:true", sql)
+						if fields == "id, g" {
+							require.Contains(t, plan, "IndexReader", sql)
+						} else {
+							require.Contains(t, plan, "IndexLookUp", sql)
+						}
+						want := tk.MustQuery("select " + fields + " from t_merge_expr ignore index(ix)" + suffix).Rows()
+						tk.MustQuery(sql).Check(want)
+					}
+				}
+			}
+		})
+	}
+}
