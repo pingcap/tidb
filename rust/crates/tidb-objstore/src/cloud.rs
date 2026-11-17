@@ -270,6 +270,40 @@ impl Storage for CloudStorage {
             Flavor::Gcs | Flavor::Azure => 0,
         }
     }
+
+    /// Go's S3 storage is a `Copier`; the GCS and Azure `CopyFrom` are not
+    /// ported.
+    fn as_copier(&self) -> Option<&dyn storeapi::Copier> {
+        (self.flavor == Flavor::S3).then_some(self as &dyn storeapi::Copier)
+    }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+}
+
+impl storeapi::Copier for CloudStorage {
+    /// Go `s3like.Storage.CopyFrom`: a server-side `CopyObject` from another
+    /// S3 storage. The `opendal` operator copies within its own bucket, so a
+    /// source in another bucket is refused, where Go copies across buckets.
+    fn copy_from(&self, ctx: &Context, e: &dyn Storage, spec: &storeapi::CopySpec) -> Result<()> {
+        let source = e.as_any().and_then(|a| a.downcast_ref::<CloudStorage>()).filter(|s| s.flavor == Flavor::S3);
+        let Some(source) = source else {
+            return Err(Error::other(format!(
+                "CopyFrom is only supported by S3 storage, get {}: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config",
+                e.uri()
+            )));
+        };
+        if source.bucket_prefix.bucket != self.bucket_prefix.bucket {
+            return Err(Error::other(format!(
+                "copying from bucket {} to bucket {} is not supported by this TiDB",
+                source.bucket_prefix.bucket, self.bucket_prefix.bucket
+            )));
+        }
+        let (from, to) = (source.key(&spec.from), self.key(&spec.to));
+        run(ctx, self.op.copy(&from, &to))
+            .map_err(|e| e.annotate(format!("failed to copy object, bucket={} from={from} to={to}", self.bucket)))
+    }
 }
 
 /// Helper so `writer_with(..)` builders resolve to a writer future.

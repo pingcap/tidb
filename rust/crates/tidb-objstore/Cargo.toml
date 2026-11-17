@@ -20,7 +20,11 @@ tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-objstore-recording = { path = "../tidb-objstore-recording" }
 flate2 = { workspace = true }
 opendal = { version = "=0.55.0", features = ["services-s3", "services-azblob", "services-gcs"] }
-rustix = { workspace = true, features = ["fs", "process"] }
+rustix = { workspace = true, features = ["fs", "process", "system"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+chrono.workspace = true
+hex = "0.4"
 snap = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "macros"] }
 uuid = { version = "1", features = ["v4"] }

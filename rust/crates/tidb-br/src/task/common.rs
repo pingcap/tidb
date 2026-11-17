@@ -77,6 +77,8 @@ pub struct Config {
     pub tables: std::collections::BTreeSet<String>,
     /// Go `ExplicitFilter`: `-f` given.
     pub explicit_filter: bool,
+    /// Go `OperationContext`: identifies this command for lock metadata.
+    pub operation_context: crate::operation::Context,
 }
 
 /// Go `defaultGRPCKeepaliveTime`.
@@ -104,6 +106,26 @@ impl Config {
         if self.metadata_download_batch_size == 0 {
             self.metadata_download_batch_size = DEFAULT_METADATA_DOWNLOAD_BATCH_SIZE;
         }
+    }
+
+    /// Go `EnsureOperationContext`: the command's operation context, made
+    /// once.
+    ///
+    /// # Errors
+    /// A half-initialized context.
+    pub fn ensure_operation_context(&mut self, command: &str) -> crate::errors::Result<()> {
+        let oc = &self.operation_context;
+        if !oc.operation_id.is_empty() {
+            if oc.started_at.is_none() {
+                return Err(crate::errors::errorf("operation started time is required"));
+            }
+            return Ok(());
+        }
+        if oc.started_at.is_some() {
+            return Err(crate::errors::errorf("operation ID is required"));
+        }
+        self.operation_context = crate::operation::Context::new(command);
+        Ok(())
     }
 
     /// Go `UserFiltered`.
@@ -214,6 +236,7 @@ pub fn default_config() -> Config {
         schemas: std::collections::BTreeSet::new(),
         tables: std::collections::BTreeSet::new(),
         explicit_filter: false,
+        operation_context: crate::operation::Context::default(),
     }
 }
 

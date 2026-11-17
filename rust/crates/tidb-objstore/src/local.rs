@@ -271,6 +271,27 @@ impl Storage for LocalStorage {
     fn features(&self) -> storeapi::Features {
         storeapi::FEATURE_SUPPORTS_START_AFTER
     }
+
+    fn as_copier(&self) -> Option<&dyn storeapi::Copier> {
+        Some(self)
+    }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+}
+
+impl storeapi::Copier for LocalStorage {
+    /// Go `LocalStorage.CopyFrom`: a hard link from another local storage.
+    fn copy_from(&self, _ctx: &Context, e: &dyn Storage, spec: &storeapi::CopySpec) -> Result<()> {
+        let Some(source) = e.as_any().and_then(|a| a.downcast_ref::<LocalStorage>()) else {
+            return Err(Error::other(format!(
+                "expect source to be LocalStorage, got {}: [BR:Common:ErrInvalidArgument]invalid argument",
+                e.uri()
+            )));
+        };
+        LocalStorage::copy_from(self, source, &spec.from, &spec.to)
+    }
 }
 
 /// Go `localFile`: a file read up to an optional end offset.

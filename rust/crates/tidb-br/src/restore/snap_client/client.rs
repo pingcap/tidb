@@ -305,6 +305,42 @@ impl SnapClient {
         )
     }
 
+    /// Go `InstallPiTRSupport`: with a log backup task running, the
+    /// importer copies each batch's SSTs into the task's storage before
+    /// ingesting it and commits them when it closes.
+    ///
+    /// # Errors
+    /// The collector cannot be built, or the restore is incremental.
+    pub fn install_pitr_support(&mut self, ctx: &Context, mut deps: super::pitr_collector::PitrCollDep) -> Result<()> {
+        deps.load_max_copy_concurrency(ctx, self.concurrency_per_store)?;
+        let collector = super::pitr_collector::new_pitr_coll(ctx, &deps)?;
+        if !collector.enabled() {
+            return Ok(());
+        }
+        if self.is_incremental() {
+            // Even an error here would only confuse the user.
+            let _ = collector.close();
+            return Err(errors::annotatef(
+                &errors::ERR_STREAM_LOG_TASK_EXIST,
+                "it seems there is a log backup task exists, if an incremental restore were performed to such cluster, log backup cannot properly handle this, the restore will be aborted, you may stop the log backup task, then restore, finally restart the task",
+            ));
+        }
+        let mut restore_uuid = self.restore_uuid;
+        if restore_uuid.is_nil() {
+            restore_uuid = uuid::Uuid::new_v4();
+            tidb_log::warn(
+                "UUID not found(checkpoint not enabled?), generating a new UUID for backup.",
+                &[Field::new("uuid", Value::Str(restore_uuid.to_string()))],
+            );
+        }
+        collector.set_restore_uuid(restore_uuid);
+        let importer = self.importer.as_ref().ok_or_else(|| errors::errorf("the importer is not initialized"))?;
+        let on_batch = collector.clone();
+        importer.add_before_ingest_callback(Box::new(move |ctx, file_sets| on_batch.on_batch(ctx, file_sets)));
+        importer.add_close_callback(Box::new(move |_| collector.close()));
+        Ok(())
+    }
+
     /// Go `initClients` for a TiDB (`TiDBFull`) restore: the store count,
     /// the worker pool, and the importer with its create and close
     /// callbacks. Raw and txn KV restore are not ported.

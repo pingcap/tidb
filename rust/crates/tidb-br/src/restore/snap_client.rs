@@ -21,6 +21,7 @@
 pub mod client;
 pub mod import;
 pub mod pipeline_items;
+pub mod pitr_collector;
 pub mod placement_rule_manager;
 pub mod systable_restore;
 pub mod tikv_sender;

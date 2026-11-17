@@ -2,8 +2,8 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 5,
-    "open": 2,
+    "unresolved": 4,
+    "open": 1,
     "partial": 3
   },
   "findings": [
@@ -36,17 +36,9 @@
       "finding": "Materialized views are not ported. The parser rejects `CREATE MATERIALIZED VIEW` and `CREATE MATERIALIZED VIEW LOG` as syntax errors (1064), where Go parses them and gates them on `tidb_mview_enable` (8200 when off). The materialized-view DDL and its logs, `REFRESH MATERIALIZED VIEW`, the mview worker and its schedule, the planner's materialized-view rewrite and the executor's delta merge aggregation are absent. IMPORT INTO depends on them in one place: a next-gen IMPORT INTO ... FROM SELECT runs on a DXF worker (`ImportStepQuery`) only during materialized-view maintenance (`InMViewMaintenance`), so this port refuses every next-gen FROM SELECT, as Go does outside maintenance, and `ImportStepQuery` is not ported.",
       "rust_evidence": "`rust/crates/tidb-parser` (no materialized-view grammar), `rust/crates/tidb-session/src/import_into.rs` (the next-gen FROM SELECT refusal)",
       "go_owner": "`pkg/ddl/materialized_view.go`, `pkg/ddl/mview_*.go`, `pkg/planner/mview`, `pkg/executor/mviewdeltamergeagg`, `pkg/util/mviewutil`, the parser's materialized-view grammar, `ImportStepQuery` in `pkg/dxf/importinto`"
-    },
-    {
-      "id": "E28",
-      "status": "open",
-      "group": "Expanded subsystem ownership review",
-      "finding": "BR's paths that SQL cannot reach are not ported. Log backup and PiTR (`br/pkg/stream`, `br/pkg/streamhelper`, `br/pkg/restore/log_client`, `task/stream.go`, `RunStreamRestore`): Go's SQL also refuses `BACKUP LOGS`, `RESTORE POINT` and the other log statements, as this port does, but a SQL `RESTORE` while a log backup task (started by the `br` CLI) runs is refused here, where Go copies the restored SSTs into the log backup (`snap_client/pitr_collector.go`, `InstallPiTRSupport`). EBS snapshot backup and restore (`backup/prepare_snap`, `task/backup_ebs.go`, `task/restore_ebs_meta.go`). Raw and txn KV backup and restore (`task/backup_raw.go`, `backup_txn.go`, `restore_raw.go`, `restore_txn.go`, the raw split and `SimpleRestorer`). The repo layout (`PerStoreBackupAdapter`) and restore name routing (`--rename`, the restore registry's route columns, which are refused). The `br` CLI (`br/cmd/br`, `ParseFromFlags`), the external-storage checkpoint (`checkpoint/external_storage.go`), and the CLI's physical system table and statistics loads (`replaceTables`). BR's Prometheus metrics. Snapshot `BACKUP` and `RESTORE` from SQL run as Go's: `pd_enable_follower_handle_region` is read but not applied to the node's shared PD client.",
-      "rust_evidence": "`rust/crates/tidb-br/src/task/restore.rs` (`run_restore` refuses a stream restore and a restore during a log backup), `rust/crates/tidb-br/src/registry.rs` (routes refused), `rust/docs/parity/current-audit/e07-execplan.md`",
-      "go_owner": "`br/pkg/stream`, `br/pkg/streamhelper`, `br/pkg/restore/log_client`, `br/pkg/restore/snap_client/pitr_collector.go`, `br/pkg/backup/prepare_snap`, `br/pkg/task` (`stream.go`, `*_raw.go`, `*_txn.go`, `*_ebs*.go`), `br/cmd/br`"
     }
   ],
-  "unresolved": 5,
-  "open": 2,
+  "unresolved": 4,
+  "open": 1,
   "partial": 3
 }

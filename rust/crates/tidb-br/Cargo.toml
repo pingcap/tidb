@@ -17,6 +17,8 @@ tidb-objstore-s3like = { path = "../tidb-objstore-s3like" }
 tidb-table-filter = { path = "../tidb-table-filter" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-redact = { path = "../tidb-redact" }
+tidb-owner = { path = "../tidb-owner" }
+async-trait.workspace = true
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-log = { path = "../tidb-log" }
 tidb-codec = { path = "../tidb-codec" }
@@ -63,11 +65,11 @@ sha2.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
 hex = "0.4"
+tidb-sem = { path = "../tidb-sem" }
 getrandom.workspace = true
 tidb-failpoint = { path = "../tidb-failpoint" }
 tidb-stats-util = { path = "../tidb-stats-util" }
 
 [dev-dependencies]
 tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
-async-trait.workspace = true
 tempfile.workspace = true

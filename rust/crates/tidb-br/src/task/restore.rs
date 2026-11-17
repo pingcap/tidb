@@ -562,6 +562,44 @@ fn check_conflicting_log_backup(
     Ok(())
 }
 
+/// Go `restoreOperationCommandName`.
+fn restore_operation_command_name(cmd_name: &str) -> &str {
+    if is_stream_restore(cmd_name) {
+        return "log-restore";
+    }
+    cmd_name
+}
+
+/// The server's etcd client as the reads of Go's `MetaDataClient` the PITR
+/// collector makes; the advancer's writes and watches are not needed here.
+struct EtcdOpsMetaStore(Arc<dyn tidb_domain_serverinfo::serverinfo_syncer::EtcdOps>);
+
+impl crate::streamhelper::MetaStore for EtcdOpsMetaStore {
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        let key = String::from_utf8_lossy(key).into_owned();
+        Ok(self.0.get_prefix(&key).map_err(errors::errorf)?.into_iter().find(|(k, _)| *k == key).map(|(_, v)| v))
+    }
+    fn get_prefix(&self, prefix: &[u8]) -> Result<crate::streamhelper::client::PrefixRead> {
+        let kvs = self.0.get_prefix(&String::from_utf8_lossy(prefix)).map_err(errors::errorf)?;
+        Ok((kvs.into_iter().map(|(k, v)| (k.into_bytes(), v)).collect(), 0))
+    }
+    fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        self.0.put(&String::from_utf8_lossy(key), value).map_err(errors::errorf)
+    }
+    fn delete(&self, key: &[u8]) -> Result<()> {
+        self.0.delete(&String::from_utf8_lossy(key)).map_err(errors::errorf)
+    }
+    fn watch_prefix(
+        &self,
+        _prefix: &[u8],
+        _start_revision: i64,
+        _is_cancelled: Box<dyn Fn() -> bool + Send>,
+        _on_response: Box<dyn Fn(&tidb_pd_client::WatchResponse) + Send>,
+    ) -> Result<Box<dyn Send>> {
+        Err(errors::errorf("watching is not supported over the restore's etcd client"))
+    }
+}
+
 /// Go `checkIncompatibleChangefeed`.
 fn check_incompatible_changefeed(
     backup_ts: u64,
@@ -1390,6 +1428,7 @@ pub fn run_restore(
     cmd_name: &str,
     cfg: &mut RestoreConfig,
 ) -> Result<()> {
+    cfg.config.ensure_operation_context(restore_operation_command_name(cmd_name))?;
     if is_stream_restore(cmd_name) {
         return Err(errors::errorf("log restore (PiTR) is not supported"));
     }
@@ -2033,19 +2072,19 @@ fn run_snapshot_restore_inner(
     }
     cleanup.post_work = Some((switcher, restore_schedulers, cfg.online));
 
-    // Go's `InstallPiTRSupport` copies the restored files into a running
-    // log backup, which this port does not do.
-    if let Some(etcd) = dom.etcd_client() {
-        if !etcd
-            .get_prefix(LOG_BACKUP_TASK_PREFIX)
-            .map_err(errors::errorf)?
-            .is_empty()
-        {
-            return Err(errors::errorf(
-                "restoring while a log backup task runs is not supported by this TiDB",
-            ));
-        }
-    }
+    let etcd = dom
+        .etcd_client()
+        .ok_or_else(|| errors::errorf("the restore needs PD's etcd, and this node has none"))?;
+    let client = cleanup.client.as_mut().expect("set above");
+    client.install_pitr_support(
+        ctx,
+        crate::restore::snap_client::pitr_collector::PitrCollDep::new(
+            Arc::clone(mgr.get_pd_client()),
+            crate::streamhelper::MetaDataClient::new(Arc::new(EtcdOpsMetaStore(etcd))),
+            u.clone(),
+            cfg.config.operation_context.clone(),
+        ),
+    )?;
 
     let sp = crate::gc::BrServiceSafePoint {
         backup_ts: restore_ts,

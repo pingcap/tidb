@@ -328,8 +328,28 @@ PRs, each stacked on the previous one (the first on #56):
    and a partitioned table with TiFlash replicas restored with
    `WAIT_TIFLASH_READY = 1`, replicas available and TiFlash reads correct.
    The E07 row is deleted from the structural findings register (Markdown
-   and JSON); what SQL cannot reach (log backup and PiTR, including a
-   restore during a running log backup task, EBS, raw/txn, the repo layout,
-   name routing, the `br` CLI) is the new open row E28. The `zzprobe/e07*`
-   Go probes were removed after their captures were committed under
-   `tidb-br/testdata`.
+   and JSON). The `zzprobe/e07*` Go probes were removed after their
+   captures were committed under `tidb-br/testdata`.
+8. Done (same PR): log backup and PiTR as Go TiDB runs them. Every node
+   runs the checkpoint advancer (`br/pkg/streamhelper`: `advancer*.go`,
+   `client.go`, `collector.go`, `flush_subscriber.go`, `regioniter.go`,
+   `config`, `daemon`) under the `/tidb/br-stream/owner` election, started
+   as Go's `Domain.initLogBackup` (`tidb-server` `log_backup.rs`); its
+   tests run Go's `advancer_test.go`, `subscription_test.go` and
+   `regioniter_test.go` cases over a port of `utiltest/fakecluster`. A SQL
+   `RESTORE` while a log backup task runs installs Go's PITR collector
+   (`snap_client/pitr_collector.go`, `InstallPiTRSupport`) instead of
+   refusing: the restored SSTs are copied into the task's storage and a
+   migration names them, through Go's `stream.MigrationExt.AppendMigration`,
+   `pkg/objstore/locking.go`, the storages' `Copier` and `br/pkg/operation`.
+   Live on the Rust cluster with Go's `br`: `br log start`, the Rust
+   advancer moved the global checkpoint, the GC safe point and
+   `v1/global_checkpoint/central_global.ts`; a SQL `RESTORE DATABASE` ran
+   during the task and committed its SSTs to `v1/ext_backups`; `br restore
+   point` into the Go cluster replayed the full backup, the log and the
+   restored SSTs, and the rows at the restore TS equal the source's. The
+   log restore itself (`RESTORE POINT`, `br/pkg/restore/log_client`) stays
+   in the `br` command, as Go's SQL refuses it too. Not ported, by choice:
+   EBS snapshot backup and restore, raw and txn KV backup and restore, the
+   repo layout, restore name routing, the `br` CLI, BR's metrics, and the
+   GCS and Azure `CopyFrom` (an S3 copy works within one bucket only).

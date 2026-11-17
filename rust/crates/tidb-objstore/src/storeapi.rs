@@ -101,6 +101,29 @@ pub trait Storage: Send + Sync {
     fn features(&self) -> Features {
         0
     }
+    /// Go's `storage.(Copier)` assertion: the storage as a [`Copier`].
+    fn as_copier(&self) -> Option<&dyn Copier> {
+        None
+    }
+    /// The concrete storage, for a [`Copier`] reading its source's type.
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+}
+
+/// Go `CopySpec`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CopySpec {
+    /// Go `From`: the key in the source storage.
+    pub from: String,
+    /// Go `To`: the key in this storage.
+    pub to: String,
+}
+
+/// Go `Copier`.
+pub trait Copier {
+    /// Go `CopyFrom`: copies an object of `e` into this storage.
+    fn copy_from(&self, ctx: &Context, e: &dyn Storage, spec: &CopySpec) -> Result<()>;
 }
 
 /// Go `Options`.
