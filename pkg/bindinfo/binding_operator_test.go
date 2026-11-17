@@ -172,6 +172,42 @@ func TestBindingCache(t *testing.T) {
 	})
 }
 
+func TestBindingCacheBatchReload(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	queries := make([]string, 3)
+	digests := make([]string, 3)
+	for i, db := range []string{"batch_a", "batch_b", "batch_c"} {
+		tk.MustExec("create database " + db)
+		tk.MustExec("create table " + db + ".t(a int, b int, key idx_a(a), key idx_b(b))")
+		queries[i] = fmt.Sprintf("select * from %s.t where a=1 and b=2", db)
+		tk.MustExec("create global binding for " + queries[i] + " using " +
+			fmt.Sprintf("select /*+ use_index(t, idx_a) */ * from %s.t where a=1 and b=2", db))
+		stmt, err := parser.New().ParseOneStmt(queries[i], "", "")
+		require.NoError(t, err)
+		_, digests[i] = bindinfo.NormalizeStmtForBinding(stmt, "", false)
+	}
+
+	// Storage now contains both a deletion and a later recreation of A.
+	tk.MustExec("drop global binding for " + queries[0])
+	tk.MustExec("create global binding for " + queries[0] + " using " +
+		"select /*+ use_index(t, idx_b) */ * from batch_a.t where a=1 and b=2")
+	tk.MustExec(fmt.Sprintf("drop global binding for sql digest '%s', '%s'", digests[1], digests[2]))
+	for _, fullLoad := range []bool{true, false} {
+		// Also exercise selecting a recreation without an existing cached entry.
+		dom.BindingHandle().RemoveBinding(digests[0])
+		require.NoError(t, dom.BindingHandle().LoadFromStorageToCache(fullLoad, false))
+		tk.MustUseIndex(queries[0], "idx_b")
+		tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+		require.NotNil(t, dom.BindingHandle().GetBinding(digests[0]))
+		for i := 1; i < len(queries); i++ {
+			tk.MustQuery(queries[i])
+			tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+			require.Nil(t, dom.BindingHandle().GetBinding(digests[i]))
+		}
+	}
+}
+
 // TestConcurrentBindingCacheReloadAndMatch mirrors the hot-binding repro:
 // keep a small set of digests hot while repeatedly reloading many bindings from storage.
 func TestConcurrentBindingCacheReloadAndMatch(t *testing.T) {

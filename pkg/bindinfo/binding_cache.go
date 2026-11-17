@@ -110,48 +110,15 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad, fromRemote bool) 
 		return err
 	}
 
-	// Resolve each digest before changing the cache. Rows are ordered by update
-	// time, so a later live record can recreate a deleted binding.
-	type bindingUpdate struct {
-		binding   *Binding
-		lastIndex int
-	}
-	updates := make(map[string]bindingUpdate, len(bindings))
-	for i, binding := range bindings {
+	for _, binding := range bindings {
 		// Update lastUpdateTime to the newest one.
 		// Even if this one is an invalid bind.
 		if binding.UpdateTime.Compare(lastUpdateTime) > 0 {
 			lastUpdateTime = binding.UpdateTime
 			hasNewBinding = true
 		}
-
-		update, ok := updates[binding.SQLDigest]
-		if !ok {
-			update.binding = u.GetBinding(binding.SQLDigest)
-		}
-		update.binding = pickCachedBinding(update.binding, binding)
-		update.lastIndex = i
-		updates[binding.SQLDigest] = update
 	}
-	// Free deleted entries before admitting live bindings so obsolete entries
-	// cannot cause unrelated live bindings to be evicted under a tight quota.
-	var removedDigests []string
-	for digest, update := range updates {
-		if update.binding == nil {
-			removedDigests = append(removedDigests, digest)
-		}
-	}
-	u.RemoveBinding(removedDigests...)
-	// Apply each final live binding once, in last-record storage order.
-	for i, binding := range bindings {
-		update := updates[binding.SQLDigest]
-		if update.binding == nil || update.lastIndex != i {
-			continue
-		}
-		if err = u.SetBinding(binding.SQLDigest, update.binding); err != nil {
-			bindingLogger().Warn("BindingHandle.Update", zap.Error(err))
-		}
-	}
+	err = u.applyBindings(bindings)
 
 	// update last-update-time and metrics
 	u.lastUpdateTime.Store(lastUpdateTime)
@@ -159,6 +126,51 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad, fromRemote bool) 
 	metrics.BindingCacheMemLimit.Set(float64(u.GetMemCapacity()))
 	metrics.BindingCacheNumBindings.Set(float64(len(u.GetAllBindings())))
 	return nil
+}
+
+// applyBindings resolves each digest's ordered history before publishing changes.
+// In particular, a historical deletion must not remove a later recreation.
+func (u *bindingCacheUpdater) applyBindings(bindings []*Binding) (err error) {
+	type update struct {
+		binding      *Binding
+		insertion    int
+		needsRemoval bool
+	}
+	selected := make(map[string]update, len(bindings))
+	digests := make([]string, 0, len(bindings))
+	var removed []string
+	for _, binding := range bindings {
+		current, seen := selected[binding.SQLDigest]
+		if !seen {
+			current.binding = u.GetBinding(binding.SQLDigest)
+		}
+		next := pickCachedBinding(current.binding, binding)
+		if next == nil {
+			// A recreation must reinsert the digest after candidates inserted
+			// in the meantime, preserving equal-specificity fuzzy binding order.
+			if !current.needsRemoval {
+				removed = append(removed, binding.SQLDigest)
+				current.needsRemoval = true
+			}
+		} else if !seen || current.binding == nil {
+			current.insertion = len(digests)
+			digests = append(digests, binding.SQLDigest)
+		}
+		current.binding = next
+		selected[binding.SQLDigest] = current
+	}
+
+	// Free obsolete entries before admitting replacements under a tight quota.
+	u.RemoveBinding(removed...)
+	for i, digest := range digests {
+		current := selected[digest]
+		if current.binding != nil && current.insertion == i {
+			if err = u.SetBinding(digest, current.binding); err != nil {
+				bindingLogger().Warn("BindingHandle.Update", zap.Error(err))
+			}
+		}
+	}
+	return err
 }
 
 // UpdateBindingUsageInfoToStorage is to update the binding usage info into storage
