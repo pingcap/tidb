@@ -40,16 +40,15 @@ type txnFileCounters struct {
 }
 
 func TestReadTxnFileCounters(t *testing.T) {
-	for _, name := range []string{txnFileMetricName, tidbTxnFileMetricName} {
-		t.Run(name, func(t *testing.T) {
+	for _, metricName := range []string{txnFileMetricName, tidbTxnFileMetricName} {
+		t.Run(metricName, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				fmt.Fprintf(w, "# TYPE %s counter\n%s{type=\"ok\"} 3\n%s{type=\"err\"} 2\n", name, name, name)
+				fmt.Fprintf(w, "# TYPE %s counter\n%s{type=\"ok\"} 12\n%s{type=\"err\"} 3\n", metricName, metricName, metricName)
 			}))
-			defer server.Close()
-
+			t.Cleanup(server.Close)
 			counters, err := readTxnFileCounters(context.Background(), server.URL)
 			require.NoError(t, err)
-			require.Equal(t, txnFileCounters{ok: 3, err: 2}, counters)
+			require.Equal(t, txnFileCounters{ok: 12, err: 3}, counters)
 		})
 	}
 }
