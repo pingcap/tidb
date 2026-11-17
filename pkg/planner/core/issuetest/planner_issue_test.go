@@ -1056,6 +1056,68 @@ func TestDuplicateExpressionIndexOrdering(t *testing.T) {
 }
 
 func TestExpressionIndexMergeSort(t *testing.T) {
+	t.Run("nullability", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec(`create table t_order_null (
+			id int primary key, s varchar(20),
+			g varchar(20) as (lower(s)) virtual,
+			gn varchar(20) as (lower(s)) virtual not null,
+			key ig(g,id), key ign(gn,id))`)
+		// INSERT IGNORE coerces NULL to '' for gn, so the generated expressions
+		// alone do not establish that g and gn have the same index ordering.
+		tk.MustExec("insert ignore into t_order_null(id,s) values (1,''),(2,null),(3,'A')")
+		for _, sortCol := range []string{"g", "gn"} {
+			t.Run(sortCol, func(t *testing.T) {
+				for _, index := range []string{"ig", "ign"} {
+					for _, direction := range []string{"asc", "desc"} {
+						for _, limit := range []int{1, 3} {
+							suffix := fmt.Sprintf(" order by %s %s,id limit %d", sortCol, direction, limit)
+							want := tk.MustQuery("select id,s,g,gn from t_order_null ignore index(ig,ign)" + suffix).Rows()
+							sql := "select id,s,g,gn from t_order_null force index(" + index + ")" + suffix
+							require.Equal(t, want, tk.MustQuery(sql).Rows(), sql)
+						}
+					}
+				}
+			})
+		}
+	})
+	t.Run("unionIndexMerge", func(t *testing.T) {
+		for _, partitioned := range []bool{false, true} {
+			t.Run(fmt.Sprintf("partitioned=%v", partitioned), func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("use test")
+				tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+				ddl := `create table t_order_merge (
+					id int primary key, a int, b int, s varchar(20),
+					key ia(a,(lower(s))), key ib(b,(lower(s))))`
+				if partitioned {
+					ddl += ` partition by range(id) (partition p0 values less than (3), partition p1 values less than (maxvalue))`
+				}
+				tk.MustExec(ddl)
+				// id=3 is returned by both partial paths and must still be deduplicated.
+				tk.MustExec("insert into t_order_merge values (1,1,0,'B'),(2,0,1,'a'),(3,1,1,'C'),(4,2,0,'D'),(5,0,2,'e')")
+				for _, predicate := range []string{"a=1 or b=1", "a in (1,2) or b in (1,2)"} {
+					for _, direction := range []string{"asc", "desc"} {
+						for _, limit := range []int{1, 5} {
+							suffix := fmt.Sprintf(" where %s order by lower(s) %s limit %d", predicate, direction, limit)
+							sql := "select /*+ use_index_merge(t_order_merge,ia,ib) */ id,s from t_order_merge" + suffix
+							want := tk.MustQuery("select id,s from t_order_merge ignore index(ia,ib)" + suffix).Rows()
+							tk.MustQuery(sql).Check(want)
+							plan := fmt.Sprint(tk.MustQuery("explain format='brief' " + sql).Rows())
+							require.Contains(t, plan, "IndexMerge", sql)
+							require.Contains(t, plan, "keep order:true", sql)
+							require.NotContains(t, plan, "TopN", sql)
+							require.NotContains(t, plan, "Sort", sql)
+						}
+					}
+				}
+			})
+		}
+	})
+
 	t.Run("prefixColumns", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
