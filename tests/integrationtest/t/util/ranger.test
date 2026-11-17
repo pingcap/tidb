@@ -6,9 +6,9 @@ set @@tidb_opt_fix_control = '44389:ON';
 explain format='plan_tree' select * from t where c = 10 and (a = 'xx' or (a = 'kk' and b = 1));
 --sorted_result
 select * from t where c = 10 and (a = 'xx' or (a = 'kk' and b = 1));
-explain format='plan_tree' select * from t where c = 10 and ((a = 'xx' or a = 'yy') or ((a = 'kk' and b = 1) or (a = 'hh' and b = 2)));
+explain format='plan_tree' select /*+ use_index(t, idx_ab) */ * from t where c = 10 and ((a = 'xx' or a = 'yy') or ((a = 'kk' and b = 1) or (a = 'hh' and b = 2)));
 --sorted_result
-select * from t where c = 10 and ((a = 'xx' or a = 'yy') or ((a = 'kk' and b = 1) or (a = 'hh' and b = 2)));
+select /*+ use_index(t, idx_ab) */ * from t where c = 10 and ((a = 'xx' or a = 'yy') or ((a = 'kk' and b = 1) or (a = 'hh' and b = 2)));
 set @@tidb_opt_fix_control = default;
 
 # TestPrefixIndexAppendPointRanges

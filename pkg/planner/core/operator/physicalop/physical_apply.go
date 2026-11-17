@@ -100,8 +100,9 @@ func (p *PhysicalApply) GetPlanCostVer1(taskType property.TaskType,
 }
 
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
-// plan-cost = build-child-cost + build-filter-cost + probe-cost + probe-filter-cost
+// plan-cost = build-child-cost + build-filter-cost + probe-cost + probe-filter-cost + probe-request-cost
 // probe-cost = probe-child-cost * build-rows
+// probe-request-cost prices this Apply's repeated probe executions.
 func (p *PhysicalApply) GetPlanCostVer2(taskType property.TaskType,
 	option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalApply(p, taskType, option)

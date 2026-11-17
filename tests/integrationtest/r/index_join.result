@@ -20,13 +20,14 @@ Projection	root		index_join.t1.a, index_join.t1.b, index_join.t2.a, index_join.t
 explain format = 'plan_tree' select * from t1 join t2 on t1.a=t2.a;
 id	task	access object	operator info
 Projection	root		index_join.t1.a, index_join.t1.b, index_join.t2.a, index_join.t2.b
-└─HashJoin	root		inner join, equal:[eq(index_join.t2.a, index_join.t1.a)]
+└─IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:index_join.t2.a, inner key:index_join.t1.a, equal cond:eq(index_join.t2.a, index_join.t1.a)
   ├─TableReader(Build)	root		data:Selection
   │ └─Selection	cop[tikv]		not(isnull(index_join.t2.a))
   │   └─TableFullScan	cop[tikv]	table:t2	keep order:false
-  └─TableReader(Probe)	root		data:Selection
-    └─Selection	cop[tikv]		not(isnull(index_join.t1.a))
-      └─TableFullScan	cop[tikv]	table:t1	keep order:false
+  └─IndexLookUp(Probe)	root		
+    ├─Selection(Build)	cop[tikv]		not(isnull(index_join.t1.a))
+    │ └─IndexRangeScan	cop[tikv]	table:t1, index:idx(a)	range: decided by [eq(index_join.t1.a, index_join.t2.a)], keep order:false
+    └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false
 drop table if exists t1, t2;
 create table t1(a int not null, b int not null);
 create table t2(a int not null, b int not null, key a(a));
