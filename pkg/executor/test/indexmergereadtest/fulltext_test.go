@@ -367,7 +367,7 @@ func TestFullTextIndexMatchAgainstKeyColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table tn (id int primary key, tenant int, body text, fulltext index idx (tenant, body))")
+	tk.MustExec("create table tn (id int primary key, tenant int, body text, fulltext index idx (body) key_columns (tenant))")
 	fullTextCorpus(t, tk, "tn", 1500, 4)
 	tk.MustExec("update tn set tenant = null where id % 50 = 0")
 	tk.MustExec("analyze table tn")
@@ -425,7 +425,7 @@ func TestFullTextIndexMatchAgainstKeyColumns(t *testing.T) {
 
 	// A string key column under a case-insensitive collation: the key holds
 	// the sort key, so an equality finds every spelling, as the scan does.
-	tk.MustExec("create table ts (id int primary key, tenant varchar(16) collate utf8mb4_general_ci, body text, fulltext index idx (tenant, body))")
+	tk.MustExec("create table ts (id int primary key, tenant varchar(16) collate utf8mb4_general_ci, body text, fulltext index idx (body) key_columns (tenant))")
 	tk.MustExec("insert into ts values (1, 'acme', 'rareword one'), (2, 'Acme', 'rareword two'), (3, 'ACME ', 'rareword three'), (4, 'globex', 'rareword four'), (5, 'acme', 'nothing here')")
 	sql = "select id from ts use index (idx) where tenant = 'ACME' and match(body) against('+rareword' in boolean mode) order by id"
 	mustUseFullTextIndex(t, tk, sql, "idx(tenant, body)", "+rareword")
@@ -434,7 +434,7 @@ func TestFullTextIndexMatchAgainstKeyColumns(t *testing.T) {
 	tk.MustExec("admin check table ts")
 
 	// Several key columns, and a partitioned table.
-	tk.MustExec("create table tp (id int primary key, tenant int, region varchar(8), body text, fulltext index idx (tenant, region, body)) partition by hash(id) partitions 4")
+	tk.MustExec("create table tp (id int primary key, tenant int, region varchar(8), body text, fulltext index idx (body) key_columns (tenant, region)) partition by hash(id) partitions 4")
 	tk.MustExec("insert into tp select id, tenant, if(id % 2 = 0, 'eu', 'us'), body from tn")
 	tk.MustExec("analyze table tp")
 	for _, mode := range []string{"dynamic", "static"} {

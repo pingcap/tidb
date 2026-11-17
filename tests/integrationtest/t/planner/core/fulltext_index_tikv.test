@@ -41,7 +41,7 @@ select id from articles ignore index (idx_body) where match(body) against('+dist
 drop table articles;
 
 # Key columns ahead of the tokenized column confine a search to one value of them, such as a tenant.
-create table tenant_docs (id int primary key, tenant_id int, body text, fulltext index idx_body (tenant_id, body));
+create table tenant_docs (id int primary key, tenant_id int, body text, fulltext index idx_body (body) key_columns (tenant_id));
 insert into tenant_docs values
   (1, 1, 'distributed sql for the first tenant'),
   (2, 1, 'another document of the first tenant'),
