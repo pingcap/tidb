@@ -413,7 +413,7 @@ func waitVersionSynced(
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.DDLWaitSchemaSynced, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
-	checkAssumedSvr := shouldCheckAssumedServer(job, jobCtx.isLegacyNextGen)
+	checkAssumedSvr := shouldCheckAssumedServer(job)
 	logger := logutil.DDLLogger().With(zap.Int64("ver", latestSchemaVersion), zap.Bool("checkAssumedSvr", checkAssumedSvr))
 	// WaitVersionSynced returns only when all TiDB schemas are synced(exclude the isolated TiDB).
 	sum, err := jobCtx.schemaVerSyncer.WaitVersionSynced(ctx, job.ID, latestSchemaVersion, checkAssumedSvr)
@@ -432,11 +432,12 @@ func waitVersionSynced(
 // assumedServer is the virtual server that involved in the online schema change
 // of some keyspace, it's run on a real server with different keyspace, it's only
 // used in cross keyspace scenario.
-func shouldCheckAssumedServer(job *model.Job, isLegacyNextGen bool) bool {
+func shouldCheckAssumedServer(job *model.Job) bool {
 	if kerneltype.IsClassic() {
 		return false
 	}
-	if isLegacyNextGen {
+	if !metadef.IsReservedID(job.SchemaID) {
+		// Legacy NextGen uses ordinary schema IDs for mysql.
 		// The owner's InfoSchema may not have loaded a newly created built-in yet.
 		return metadef.IsBuiltinSystemTable(job.SchemaName, job.TableName)
 	}

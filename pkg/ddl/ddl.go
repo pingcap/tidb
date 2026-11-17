@@ -354,8 +354,6 @@ type ddlCtx struct {
 	autoidCli    *autoid.ClientDiscover
 	schemaLoader SchemaLoader
 	extWorkload  extworkload.Manager
-	// isLegacyNextGen indicates that this NextGen keyspace retains Classic system-table IDs.
-	isLegacyNextGen bool
 
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts
@@ -875,17 +873,6 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 // Start implements DDL.Start interface.
 func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	failpoint.InjectCall("beforeDDLStart", startMode)
-	if kerneltype.IsNextGen() {
-		version, err := d.store.CurrentVersion(kv.GlobalTxnScope)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		isLegacyNextGen, err := meta.NewReader(d.store.GetSnapshot(version)).IsLegacyNextGen()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		d.isLegacyNextGen = isLegacyNextGen
-	}
 	if kerneltype.IsClassic() {
 		d.detectAndUpdateJobVersion()
 	}
