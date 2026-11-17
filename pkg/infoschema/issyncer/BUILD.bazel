@@ -29,7 +29,6 @@ go_library(
         "//pkg/session/sessmgr",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
-        "//pkg/store/helper",
         "//pkg/util",
         "//pkg/util/domainutil",
         "//pkg/util/intest",

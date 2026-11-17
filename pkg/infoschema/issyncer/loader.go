@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -401,19 +400,7 @@ func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newV
 
 // Returns the timestamp of a schema version, which is the commit timestamp of the schema diff
 func (l *Loader) getTimestampForSchemaVersionWithNonEmptyDiff(m meta.Reader, version int64, startTS uint64) (uint64, error) {
-	tikvStore, ok := l.store.(helper.Storage)
-	if ok {
-		newHelper := helper.NewHelper(tikvStore)
-		mvccResp, err := newHelper.GetMvccByEncodedKeyWithTS(m.EncodeSchemaDiffKey(version), startTS)
-		if err != nil {
-			return 0, err
-		}
-		if mvccResp == nil || mvccResp.Info == nil || len(mvccResp.Info.Writes) == 0 {
-			return 0, errors.Errorf("There is no Write MVCC info for the schema version")
-		}
-		return mvccResp.Info.Writes[0].CommitTs, nil
-	}
-	return 0, errors.Errorf("cannot get store from domain")
+	return meta.GetSchemaDiffCommitTS(m, l.store, version, startTS)
 }
 
 // fetchAllSchemasWithTables fetches all schemas with their tables.
