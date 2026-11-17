@@ -92,8 +92,30 @@ func TestBindingCacheDigestSnapshot(t *testing.T) {
 		require.Equal(t, []string{b1.SQLDigest, b2.SQLDigest}, snapshot)
 	})
 
+	t.Run("insertion allocation grows linearly", func(t *testing.T) {
+		const count = 10000
+		sqlDigests := make([]string, count)
+		for i := range sqlDigests {
+			sqlDigests[i] = fmt.Sprintf("binding-%d", i)
+		}
+		result := testing.Benchmark(func(b *testing.B) {
+			for range b.N {
+				digests := newDigestBiMap()
+				for _, sqlDigest := range sqlDigests {
+					digests.Add(noDBDigest, sqlDigest)
+				}
+			}
+		})
+		// Allow ample room for both maps and amortized slice growth, but reject
+		// copying the whole bucket on every insertion (about 800 MB here).
+		t.Logf("allocated %d bytes for %d bindings", result.AllocedBytesPerOp(), count)
+		require.Less(t, result.AllocedBytesPerOp(), int64(count*1024))
+	})
+
 	t.Run("snapshots survive updates", func(t *testing.T) {
-		digests := newDigestBiMap()
+		digests := newDigestBiMap().(*digestBiMapImpl)
+		// Exercise append with spare capacity as well as copy-on-write deletion.
+		digests.noDBDigest2SQLDigest[noDBDigest] = make([]string, 0, 4)
 		digests.Add(noDBDigest, b1.SQLDigest)
 		first := digests.NoDBDigest2SQLDigest(noDBDigest)
 		digests.Add(noDBDigest, b2.SQLDigest)

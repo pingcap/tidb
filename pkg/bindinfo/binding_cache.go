@@ -186,8 +186,9 @@ type digestBiMap interface {
 
 type digestBiMapImpl struct {
 	mu sync.RWMutex
-	// Published slices are immutable. Updates replace them so lookups can
-	// iterate their snapshots after releasing mu.
+	// Published elements are immutable so lookups can iterate their snapshots
+	// after releasing mu. Appends preserve the existing prefix; deletions copy
+	// the slice to avoid changing elements visible to earlier snapshots.
 	noDBDigest2SQLDigest map[string][]string // noDBDigest --> sqlDigests
 	sqlDigest2noDBDigest map[string]string   // sqlDigest --> noDBDigest
 }
@@ -213,7 +214,7 @@ func (b *digestBiMapImpl) Add(noDBDigest, sqlDigest string) {
 		}
 	}
 	if !exist { // avoid adding duplicated binding digests
-		b.noDBDigest2SQLDigest[noDBDigest] = slices.Concat(b.noDBDigest2SQLDigest[noDBDigest], []string{sqlDigest})
+		b.noDBDigest2SQLDigest[noDBDigest] = append(b.noDBDigest2SQLDigest[noDBDigest], sqlDigest)
 	}
 	b.sqlDigest2noDBDigest[sqlDigest] = noDBDigest
 }
