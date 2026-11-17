@@ -244,9 +244,6 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 // rewriterSchemaAndNames returns the schema and names an expression rewriter
 // over p resolves column references against.
 func rewriterSchemaAndNames(p base.LogicalPlan) (*expression.Schema, types.NameSlice) {
-	if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
-		return join.FullSchema, join.FullNames
-	}
 	return p.Schema(), p.OutputNames()
 }
 
@@ -263,12 +260,7 @@ func rewriterNames(p base.LogicalPlan) types.NameSlice {
 func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalPlan) (rewriter *expressionRewriter) {
 	defer func() {
 		if p != nil {
-<<<<<<< HEAD
-			rewriter.schema = p.Schema()
-			rewriter.names = p.OutputNames()
-=======
 			rewriter.schema, rewriter.names = rewriterSchemaAndNames(p)
->>>>>>> 8626dd78607 (planner, expression: index field names when building wide projections (#72825))
 		}
 	}()
 
@@ -2558,31 +2550,6 @@ func (er *expressionRewriter) clause() clauseCode {
 	return expressionClause
 }
 
-<<<<<<< HEAD
-func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
-	var fieldName4PrivilegeCheck *types.FieldName
-	defer func() {
-		if fieldName4PrivilegeCheck != nil && er.planCtx != nil {
-			er.precollectColNames(fieldName4PrivilegeCheck)
-		}
-	}()
-	idx, err := expression.FindFieldName(er.names, v)
-=======
-func shouldRemapRedundantBaseColumn(planCtx *exprRewriterPlanCtx, clause clauseCode, name *types.FieldName) bool {
-	if planCtx == nil || planCtx.builder == nil || name == nil {
-		return false
-	}
-	if clause != whereClause && clause != havingClause {
-		return false
-	}
-	// UPDATE/DELETE build JOIN schema/output names in merged (non-coalesced) order.
-	// Skip redundant-column remap in DML to avoid mixing coalesced mapping semantics.
-	if planCtx.builder.inUpdateStmt || planCtx.builder.inDeleteStmt {
-		return false
-	}
-	return name.Redundant && name.OrigTblName.L != ""
-}
-
 // fieldNameLookupHookForTest, when set in tests, is told for each column
 // reference resolved by findFieldName whether the projection name index served it.
 var fieldNameLookupHookForTest func(v *ast.ColumnName, indexed bool)
@@ -2603,9 +2570,13 @@ func (er *expressionRewriter) findFieldName(v *ast.ColumnName) (int, error) {
 }
 
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
-	planCtx := er.planCtx
+	var fieldName4PrivilegeCheck *types.FieldName
+	defer func() {
+		if fieldName4PrivilegeCheck != nil && er.planCtx != nil {
+			er.precollectColNames(fieldName4PrivilegeCheck)
+		}
+	}()
 	idx, err := er.findFieldName(v)
->>>>>>> 8626dd78607 (planner, expression: index field names when building wide projections (#72825))
 	if err != nil {
 		er.err = plannererrors.ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
 		return
