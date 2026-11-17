@@ -10644,6 +10644,7 @@ dependencies = [
  "tidb-expr",
  "tidb-exprctx",
  "tidb-exprstatic",
+ "tidb-failpoint",
  "tidb-goruntime",
  "tidb-hack",
  "tidb-kv",

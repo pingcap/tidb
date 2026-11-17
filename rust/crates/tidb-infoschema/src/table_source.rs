@@ -106,6 +106,16 @@ pub struct SourceTable {
 }
 
 impl SourceTable {
+    /// Go `tblInfo.MaterializedViewBase != nil && MLogID != 0`: the table's
+    /// DML writes a materialized view log.
+    #[must_use]
+    pub fn has_mlog(&self) -> bool {
+        self.table_info
+            .as_ref()
+            .and_then(|info| info.read().materialized_view_base.as_ref().map(|base| base.read().mlog_id))
+            .is_some_and(|mlog_id| mlog_id != 0)
+    }
+
     /// Go `TableInfo.GetPartitionInfo().Definitions[i].ID`.
     #[must_use]
     pub fn partition_definition_ids(&self) -> Vec<i64> {

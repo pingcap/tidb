@@ -1509,8 +1509,18 @@ fn run_insert_rows(
     // it writes them, and adds them with `DupKeyCheckSkip`, which hands them
     // to no check; every other insert hands each added row to the checks.
     let fk_checks_batch = insert.ignore && !has_on_duplicate && !insert.replace;
-    let mut updates = UpdateRecords::new(&fk);
-    let mut removals = DeleteRecords::new(&fk);
+    // Go `buildInsert` / LOAD DATA: the target's MV log, written by the
+    // statement's AddRecord, UpdateRecord and RemoveRecord.
+    let mlog_source = if load_rows.is_some() {
+        tidb_table::tables::mview_log::MLogSourceStmt::LoadData
+    } else if insert.replace {
+        tidb_table::tables::mview_log::MLogSourceStmt::Replace
+    } else {
+        tidb_table::tables::mview_log::MLogSourceStmt::Insert
+    };
+    let mlog = wrap_table_with_mlog_if_exists(catalog, &database, &table_name, mlog_source)?;
+    let mut updates = UpdateRecords::new(&fk).with_mlog(mlog.as_ref());
+    let mut removals = DeleteRecords::new(&fk).with_mlog(mlog.as_ref());
     let insert_stats = dml.and_then(|dml| dml.insert_stats());
     let _collect_snapshot_stats =
         insert_stats.map(|stats| CollectInsertSnapshotStats::install(ctx, &stats.lock().unwrap()));
@@ -2383,6 +2393,16 @@ fn run_insert_rows(
                     lazy_dup_check,
                 ))
             };
+            // Go `mlogTable.AddRecord`: the added row's MV log row.
+            let insert_result = match (insert_result, &mlog) {
+                (Ok(handle), Some(mlog)) => {
+                    let mut store = crate::statement_store(ctx);
+                    mlog.borrow_mut()
+                        .add_record(&mut *store, row, false, lazy_dup_check, ctx)
+                        .map(|()| handle)
+                }
+                (result, _) => result,
+            };
             match insert_result {
                 Ok(_) => {
                     // Go `addRecord`.
@@ -2764,6 +2784,46 @@ fn written_row_id(value: &Datum, ctx: &crate::StmtContext) -> Option<i64> {
 /// carries its own MySQL code (1365 for a zero divisor under
 /// `ERROR_FOR_DIVISION_BY_ZERO`), and rendering it as a generic parse failure
 /// would replace the code an application branches on.
+/// Go `executorBuilder.wrapTableWithMLogIfExists`: the statement's MV log
+/// writer for its target `database`.`name`, when the table's
+/// `MaterializedViewBase` names an MV log.
+pub(crate) fn wrap_table_with_mlog_if_exists(
+    catalog: &SessionExtendedInfoSchema,
+    database: &str,
+    name: &str,
+    source: tidb_table::tables::mview_log::MLogSourceStmt,
+) -> Result<Option<std::cell::RefCell<tidb_table::tables::mview_log::MLogTable>>, DriverError> {
+    let Some(TableEntry::Kv(kv)) = catalog.get_in(database, name) else {
+        return Ok(None);
+    };
+    let (mlog_id, partitioned, table_name, table_id) = {
+        let shared = kv.meta();
+        let meta = shared.read();
+        (
+            meta.materialized_view_base.as_ref().map_or(0, |base| base.read().mlog_id),
+            meta.get_partition_info().is_some(),
+            meta.name.original().to_owned(),
+            meta.id,
+        )
+    };
+    if mlog_id == 0 {
+        return Ok(None);
+    }
+    if partitioned {
+        return Err(tidb_plannererrors::ERR_NOT_SUPPORTED_YET
+            .gen_with_stack_by_args(&["materialized view log on partitioned tables".into()])
+            .into());
+    }
+    let Some((_, mlog)) = catalog.table_by_id(mlog_id) else {
+        return Err(kv_write_error(tidb_table::tables::KvTableError::Encode(format!(
+            "cannot get materialized view log table id={mlog_id} (base={table_name} id={table_id})"
+        ))));
+    };
+    tidb_table::tables::mview_log::wrap_table_with_materialized_view_log(kv, (**mlog).clone(), source)
+        .map(|mlog| Some(std::cell::RefCell::new(mlog)))
+        .map_err(kv_write_error)
+}
+
 pub fn kv_write_error(error: tidb_table::tables::KvTableError) -> DriverError {
     match error {
         tidb_table::tables::KvTableError::Storage(error) => error.into(),
@@ -4151,7 +4211,14 @@ fn run_update_with_physical(
         catalog,
     )?);
     fk.borrow().prepare_fk_cascade_context(ctx);
-    let mut records = UpdateRecords::new(&fk);
+    // Go `buildUpdate`'s `wrapTableWithMLogIfExists`.
+    let mlog = wrap_table_with_mlog_if_exists(
+        catalog,
+        &database,
+        &name,
+        tidb_table::tables::mview_log::MLogSourceStmt::Update,
+    )?;
+    let mut records = UpdateRecords::new(&fk).with_mlog(mlog.as_ref());
     let writes_stored_columns = set_exprs
         .iter()
         .any(|(offset, _)| Some(*offset) != stored_handle_slot);
@@ -4651,7 +4718,14 @@ fn run_delete_with_physical(
         catalog,
     )?);
     fk.borrow().prepare_fk_cascade_context(ctx);
-    let mut records = DeleteRecords::new(&fk);
+    // Go `buildDelete`'s `wrapTableWithMLogIfExists`.
+    let mlog = wrap_table_with_mlog_if_exists(
+        catalog,
+        &database,
+        &name,
+        tidb_table::tables::mview_log::MLogSourceStmt::Delete,
+    )?;
+    let mut records = DeleteRecords::new(&fk).with_mlog(mlog.as_ref());
     // Go's `columnCount` of each deleted row: the child row's cells but the
     // partition id (`ExtraPhysTblID`), less the `_tidb_rowid` handle.
     let row_cells = {

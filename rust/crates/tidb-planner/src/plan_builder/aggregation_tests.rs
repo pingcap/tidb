@@ -1209,6 +1209,15 @@ fn single_table_delete_prunes_the_read_to_the_handle_and_index_columns() {
         build_delete(&partial, "SELECT * FROM t", false),
         (None, Some(3))
     );
+    // Go `hasMLog`: a table whose DML writes a materialized view log keeps
+    // its whole row, which the log's tracked columns are read from.
+    let logged = Harness::new();
+    logged.catalog.tables[0].table_info.as_ref().expect("the harness table has its TableInfo").write().materialized_view_base =
+        Some(tidb_model::GoShared::new(tidb_model::table::MaterializedViewBaseInfo { mlog_id: 9, ..Default::default() }));
+    assert_eq!(
+        build_delete(&logged, "SELECT * FROM t", false),
+        (None, Some(3))
+    );
     // A heap table (no integer primary key, no common handle) also reads
     // `_tidb_rowid`.
     let mut heap = Harness::new();

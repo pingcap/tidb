@@ -108,3 +108,79 @@ fn writes_carry_nonpublic_columns_like_go() {
     assert_eq!(row.get(&3), None);
     assert_eq!(row.get(&4), Some(&Datum::Int(3)));
 }
+
+/// Go `mlogTable` (`pkg/table/tables/mview_log.go`): the MV log rows a base
+/// table's writes append, as Go master writes them for the same statement
+/// shapes (captured: INSERT logs `I,1`; a tracked UPDATE `U,-1` then `U,1`;
+/// an untracked one nothing; DELETE `D,-1`; REPLACE's removal `U,-1` and its
+/// insert `U,1`).
+#[test]
+fn mview_log_rows_follow_go_master() {
+    use tidb_table::tables::mview_log::{wrap_table_with_materialized_view_log, MLogSourceStmt};
+    let mut base = TableCommon::new(
+        42,
+        vec![
+            column("a", 1, FieldTypeCode::LongLong, None),
+            column("b", 2, FieldTypeCode::LongLong, None),
+            column("c", 3, FieldTypeCode::LongLong, None),
+        ],
+    );
+    base.update_meta_for_test(|meta| {
+        meta.materialized_view_base = Some(tidb_model::GoShared::new(tidb_model::table::MaterializedViewBaseInfo {
+            mlog_id: 43,
+            ..Default::default()
+        }));
+    });
+    let mut mlog = TableCommon::new(
+        43,
+        vec![
+            column("b", 1, FieldTypeCode::LongLong, None),
+            column("a", 2, FieldTypeCode::LongLong, None),
+            column("_MLOG$_DML_TYPE", 3, FieldTypeCode::Varchar, None),
+            column("_MLOG$_OLD_NEW", 4, FieldTypeCode::Tiny, None),
+        ],
+    );
+    mlog.update_meta_for_test(|meta| {
+        meta.materialized_view_log = Some(tidb_model::GoShared::new(tidb_model::table::MaterializedViewLogInfo {
+            base_table_id: 42,
+            columns: vec![tidb_ast::CiString::new("b"), tidb_ast::CiString::new("a")].into(),
+            ..Default::default()
+        }));
+    });
+    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let ctx = crate::StmtContext::for_dml(false, false, false);
+    let row = |a: i64, b: i64, c: i64| [Datum::Int(a), Datum::Int(b), Datum::Int(c)];
+    let mut insert = wrap_table_with_materialized_view_log(&base, mlog.clone(), MLogSourceStmt::Insert).unwrap();
+    insert.add_record(&mut store, &row(1, 10, 100), false, false, &ctx).unwrap();
+    let mut update = wrap_table_with_materialized_view_log(&base, mlog.clone(), MLogSourceStmt::Update).unwrap();
+    // `b` (offset 1) assigned: logged; only `c` (offset 2): not.
+    update.update_record(&mut store, &row(1, 10, 100), &row(1, 11, 100), &|offset| offset == 1, false, &ctx).unwrap();
+    update.update_record(&mut store, &row(1, 11, 100), &row(1, 11, 101), &|offset| offset == 2, false, &ctx).unwrap();
+    let mut delete = wrap_table_with_materialized_view_log(&base, mlog.clone(), MLogSourceStmt::Delete).unwrap();
+    delete.remove_record(&mut store, &row(1, 11, 101), &ctx).unwrap();
+    let mut replace = wrap_table_with_materialized_view_log(&base, mlog.clone(), MLogSourceStmt::Replace).unwrap();
+    replace.remove_record(&mut store, &row(2, 20, 200), &ctx).unwrap();
+    replace.add_record(&mut store, &row(2, 21, 200), false, false, &ctx).unwrap();
+    replace.add_record(&mut store, &row(3, 30, 300), false, false, &ctx).unwrap();
+    // The log's rows, in row-id order: tracked columns, type, old/new.
+    let mut rows = Vec::new();
+    for handle in 1..=8 {
+        let Some((_, entry)) = mlog.stored_record(&mut store, &TableHandle::Int(handle)).unwrap() else { continue };
+        let types = [(1, FieldType::new(FieldTypeCode::LongLong)), (2, FieldType::new(FieldTypeCode::LongLong)), (3, FieldType::new(FieldTypeCode::Varchar)), (4, FieldType::new(FieldTypeCode::Tiny))]
+            .into_iter()
+            .collect();
+        let values = tidb_tablecodec::decode_table_row_to_map(&entry, &types, None).unwrap();
+        rows.push(format!(
+            "{}|{}|{}|{}",
+            values[&1].sql_string().unwrap(),
+            values[&2].sql_string().unwrap(),
+            values[&3].sql_string().unwrap(),
+            values[&4].sql_string().unwrap()
+        ));
+    }
+    assert_eq!(rows, ["10|1|I|1", "10|1|U|-1", "11|1|U|1", "11|1|D|-1", "20|2|U|-1", "21|2|U|1", "30|3|I|1"]);
+    // Go `WrapTableWithMaterializedViewLog`'s checks: the IDs must pair up.
+    let mut other = mlog.clone();
+    other.update_meta_for_test(|meta| meta.materialized_view_log.as_ref().unwrap().write().base_table_id = 7);
+    assert!(wrap_table_with_materialized_view_log(&base, other, MLogSourceStmt::Insert).is_err());
+}

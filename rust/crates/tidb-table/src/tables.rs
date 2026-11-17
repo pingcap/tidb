@@ -42,6 +42,7 @@ pub mod cache;
 pub mod index_entries;
 pub mod mutation_checker;
 pub(crate) mod index_states;
+pub mod mview_log;
 pub mod nonpublic_columns;
 pub mod partition_reorg;
 mod raw_row;
@@ -2641,6 +2642,13 @@ impl TableCommon {
 
     /// [`Self::update_meta`] over Go `TableInfo.Clone`, for a change that
     /// writes through the column or index pointers.
+    /// Changes the table's `TableInfo` in place, for a test that needs
+    /// metadata only a DDL this port lacks would write.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn update_meta_for_test(&mut self, change: impl FnOnce(&mut tidb_model::TableInfo)) {
+        self.update_meta_cloned(change);
+    }
+
     fn update_meta_cloned(&mut self, change: impl FnOnce(&mut tidb_model::TableInfo)) {
         let mut meta = self.meta.read().clone_like_go();
         change(&mut meta);

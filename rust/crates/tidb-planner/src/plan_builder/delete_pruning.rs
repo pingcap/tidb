@@ -68,7 +68,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if table.is_memory_table || has_fk {
             return None;
         }
+        // Go `hasMLog`: an MV log records the deleted rows' tracked columns.
         if table.is_partitioned()
+            || table.has_mlog()
             || table.is_temporary()
             || table.columns.iter().any(|column| column.read().hidden)
             || table.columns.iter().any(|column| column.read().is_generated())
@@ -188,11 +190,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 let id = schema.columns[position].id;
                 table.columns.iter().position(|column| column.read().id == id)
             };
-            // Go skips pruning for a partitioned table, a partial index and a
-            // foreign key anywhere in the statement; this port also keeps the
+            // Go skips pruning for a partitioned table, a table with an MV log,
+            // a partial index and a foreign key anywhere in the statement; this
+            // port also keeps the
             // whole row for generated or hidden columns and temporary tables.
             let skip = input.has_fk
                 || table.is_partitioned()
+                || table.has_mlog()
                 || table.is_temporary()
                 || table.columns.iter().any(|column| column.read().hidden)
                 || table.columns.iter().any(|column| column.read().is_generated())

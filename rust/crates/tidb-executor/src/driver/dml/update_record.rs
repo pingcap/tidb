@@ -24,6 +24,8 @@ use std::cell::RefCell;
 
 pub(crate) struct UpdateRecords<'a> {
     fk: &'a RefCell<WithForeignKeyTrigger>,
+    /// Go's `mlogTable` wrapping the statement's target: its MV log rows.
+    mlog: Option<&'a RefCell<tidb_table::tables::mview_log::MLogTable>>,
 }
 
 #[derive(Clone, Copy)]
@@ -51,7 +53,14 @@ impl UpdateOutcome {
 
 impl<'a> UpdateRecords<'a> {
     pub(crate) fn new(fk: &'a RefCell<WithForeignKeyTrigger>) -> Self {
-        Self { fk }
+        Self { fk, mlog: None }
+    }
+
+    /// Writes the target's MV log rows beside its own (Go
+    /// `wrapTableWithMLogIfExists`).
+    pub(crate) fn with_mlog(mut self, mlog: Option<&'a RefCell<tidb_table::tables::mview_log::MLogTable>>) -> Self {
+        self.mlog = mlog;
+        self
     }
 
     /// Assignments and on-update timestamps have been evaluated by the caller.
@@ -190,6 +199,25 @@ impl<'a> UpdateRecords<'a> {
         };
         if let Err(error) = result {
             return ignored_write_error(error, ignore, ctx);
+        }
+        // Go `mlogTable`: the base write's MV log rows. A changed handle is
+        // Go `updateRecord`'s RemoveRecord(old) and AddRecord(new, IsUpdate),
+        // which always log; otherwise `UpdateRecord` logs when a tracked
+        // column is among the assigned ones (`touched`).
+        if let Some(mlog) = self.mlog {
+            let handle_changed = matches!(
+                catalog.get_in(database, name),
+                Some(TableEntry::Kv(kv)) if kv.handle_columns_changed(old, new)
+            );
+            let mut store = crate::statement_store(ctx);
+            let mut mlog = mlog.borrow_mut();
+            let logged = if handle_changed {
+                mlog.remove_record(&mut *store, old, ctx)
+                    .and_then(|()| mlog.add_record(&mut *store, new, true, false, ctx))
+            } else {
+                mlog.update_record(&mut *store, old, new, &|offset| assigned.contains(&offset), false, ctx)
+            };
+            logged.map_err(kv_write_error)?;
         }
         // Go `updateRecord`: a row whose handle stayed locks its unique keys
         // as they were.
