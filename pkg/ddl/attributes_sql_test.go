@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/stretchr/testify/require"
 	tikvutil "github.com/tikv/client-go/v2/util"
@@ -372,6 +373,42 @@ PARTITION BY RANGE (c) (
 
 	rows = tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows, 0)
+}
+
+func TestDropSchema(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), dom.GetPDClient(), dom.GetPDHTTPClient(), keyspace.CodecV1, true, dom.InfoCache())
+	require.NoError(t, err)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database drop_db")
+	tk.MustExec("use drop_db")
+	for _, tbl := range []string{"t1", "t2"} {
+		tk.MustExec(fmt.Sprintf(`create table %s (c int)
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (6),
+	PARTITION p1 VALUES LESS THAN (11)
+);`, tbl))
+	}
+	tk.MustExec("create table t3 (c int)")
+	tk.MustExec("create table t4 (c int)")
+	tk.MustExec(`alter table t1 attributes="key=value";`)
+	tk.MustExec(`alter table t1 partition p0 attributes="key1=value1";`)
+	tk.MustExec(`alter table t3 attributes="key=value";`)
+	// A rule of another schema must be kept.
+	tk.MustExec("create table test.t1 (c int)")
+	tk.MustExec(`alter table test.t1 attributes="key=value";`)
+	require.Len(t, tk.MustQuery(`select * from information_schema.attributes;`).Rows(), 4)
+
+	// Only the label rules that exist should be deleted from PD, since deleting
+	// a rule for every table and partition is slow when there are many of them.
+	var deletedRuleIDs []string
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/dropSchemaDeleteLabelRules", func(ruleIDs []string) {
+		deletedRuleIDs = ruleIDs
+	})
+	tk.MustExec("drop database drop_db")
+	require.ElementsMatch(t, []string{"schema/drop_db/t1", "schema/drop_db/t1/p0", "schema/drop_db/t3"}, deletedRuleIDs)
+	tk.MustQuery(`select id from information_schema.attributes;`).Check(testkit.Rows("schema/test/t1"))
 }
 
 func TestCreateWithSameName(t *testing.T) {
