@@ -18,6 +18,8 @@ mod local;
 pub mod locking;
 mod memstore;
 mod noop;
+mod azclient;
+mod gcsclient;
 mod s3client;
 pub mod objectio;
 mod storage;
