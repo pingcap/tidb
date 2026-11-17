@@ -233,7 +233,7 @@ func newQuerySourceAtSnapshot(
 	ctx context.Context, sctx sessionctx.Context, readTS uint64, dbID int64, tableIDs []int64,
 ) (*QuerySource, error) {
 	snapshot := sctx.GetStore().GetSnapshot(tidbkv.NewVersion(readTS))
-	m := meta.NewReader(&querySourceSnapshot{Snapshot: snapshot, ctx: ctx})
+	m := meta.NewReader(snapshot)
 	schemaVersion, err := m.GetSchemaVersion()
 	if err != nil {
 		return nil, err
@@ -258,29 +258,6 @@ func newQuerySourceAtSnapshot(
 		tables = append(tables, SourceTable{DBID: dbID, ID: id, Revision: tblInfo.Revision})
 	}
 	return newQuerySource(sctx, readTS, schemaVersion, tables)
-}
-
-// querySourceSnapshot binds legacy metadata point reads, which use
-// context.TODO(), to the preparation context. Batch reads share that lifetime.
-type querySourceSnapshot struct {
-	tidbkv.Snapshot
-	ctx context.Context
-}
-
-func (s *querySourceSnapshot) Get(_ context.Context, key tidbkv.Key, options ...tidbkv.GetOption) (tidbkv.ValueEntry, error) {
-	if err := s.ctx.Err(); err != nil {
-		return tidbkv.ValueEntry{}, err
-	}
-	return s.Snapshot.Get(s.ctx, key, options...)
-}
-
-func (s *querySourceSnapshot) BatchGet(
-	_ context.Context, keys []tidbkv.Key, options ...tidbkv.BatchGetOption,
-) (map[string]tidbkv.ValueEntry, error) {
-	if err := s.ctx.Err(); err != nil {
-		return nil, err
-	}
-	return s.Snapshot.BatchGet(s.ctx, keys, options...)
 }
 
 func newQuerySource(sctx sessionctx.Context, readTS uint64, schemaVersion int64, tables []SourceTable) (*QuerySource, error) {

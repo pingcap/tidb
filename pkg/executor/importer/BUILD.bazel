@@ -121,7 +121,6 @@ go_test(
         "main_test.go",
         "meta_service_group_test.go",
         "precheck_test.go",
-        "query_source_internal_test.go",
         "query_source_test.go",
         "sampler_test.go",
         "table_import_test.go",
