@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
@@ -252,6 +253,18 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 	}
 	if _, ok := inequalFunctions[sf.FuncName.L]; ok {
 		return false, true, cond
+	}
+	if sf.FuncName.L == ast.Like || sf.FuncName.L == ast.Ilike {
+		// Pattern matching preserves trailing spaces, unlike equality under PAD SPACE
+		// collations. Only propagate string columns whose equality is byte-exact.
+		// Non-string types can also carry the binary collation, but their conversion
+		// to strings need not preserve equality.
+		collation := src.RetType.GetCollate()
+		if src.RetType.EvalType() != types.ETString || tgt.RetType.EvalType() != types.ETString ||
+			collation != tgt.RetType.GetCollate() ||
+			(collation != charset.CollationBin && collation != charset.CollationUTF8MB40900Bin) {
+			return false, true, cond
+		}
 	}
 	// See
 	//	https://github.com/pingcap/tidb/issues/15782
