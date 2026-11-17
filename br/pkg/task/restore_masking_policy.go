@@ -56,7 +56,10 @@ func (v *restoredMaskingColumn) Enter(node ast.Node) (ast.Node, bool) {
 func (*restoredMaskingColumn) Leave(node ast.Node) (ast.Node, bool) { return node, true }
 
 func rebindRestoredMaskingExpression(expr, sourceColumn, targetColumn string) (string, error) {
-	stmt, err := parser.New().ParseOneStmt("SELECT "+expr, "", "")
+	var query strings.Builder
+	query.WriteString("SELECT ")
+	query.WriteString(expr)
+	stmt, err := parser.New().ParseOneStmt(query.String(), "", "")
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -194,6 +197,12 @@ func restoreMaskingPoliciesAfterLogReplay(ctx context.Context, dom *domain.Domai
 	if len(staging) == 0 {
 		return nil
 	}
+	// Keep restored user tables protected until every policy is installed.
+	// Only internal masking-policy DDL may operate on Restore-mode tables.
+	vars := se.GetSessionCtx().GetSessionVars()
+	previousRestore := vars.InMaskingPolicyRestore
+	vars.InMaskingPolicyRestore = true
+	defer func() { vars.InMaskingPolicyRestore = previousRestore }()
 	var statements []string
 	for _, stage := range staging {
 		db, ok := is.SchemaByID(stage.DBID)

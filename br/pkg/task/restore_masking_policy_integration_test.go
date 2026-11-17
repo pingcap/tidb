@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -144,4 +146,48 @@ func TestRestoreMaskingPolicyStagingCheckpointPhases(t *testing.T) {
 		tk.MustQuery("select _tidb_rowid,policy_id,table_id from " + utils.EncloseDBAndTable(mysql.SystemDB, privateName.O)).Check(testkit.Rows("456 123 42"))
 	}
 	require.False(t, dom.InfoSchema().TableExists(tempDB, pmodel.NewCIStr("tidb_masking_policy")))
+}
+
+func TestRestoreMaskingPoliciesInRestoreMode(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table protected(c varchar(20))")
+	tk.MustExec("insert into protected values ('secret')")
+	tk.MustExec("create masking policy p on protected(c) as 'baseline'")
+	stageName := snapclient.MaskingPolicyStagingTableName(123)
+	qualified := utils.EncloseDBAndTable(snapclient.MaskingPolicyStagingDB, stageName)
+	tk.MustExec("create table " + qualified + " like mysql.tidb_masking_policy")
+	tk.MustExec("insert into " + qualified + " (policy_id,policy_name,db_name,table_name,table_id,column_name,column_id,expression,status,masking_type,created_at,updated_at,created_by) values (321,'p','upstream','original',42,'c',1,'MASK_FULL(`c`)','ENABLED','MASK_FULL',now(),now(),'root')")
+	ctx := context.Background()
+	tbl, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("protected"))
+	require.NoError(t, err)
+	stage, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr(snapclient.MaskingPolicyStagingDB), pmodel.NewCIStr(stageName))
+	require.NoError(t, err)
+	args := &model.AlterTableModeArgs{SchemaID: tbl.Meta().DBID, TableID: tbl.Meta().ID, TableMode: model.TableModeRestore}
+	require.NoError(t, dom.DDLExecutor().AlterTableMode(tk.Session(), args))
+	tk.MustGetErrCode("select c from protected", errno.ErrProtectedTableMode)
+	userDB := stream.NewDBReplace("upstream", tbl.Meta().DBID)
+	userDB.TableMap[42] = stream.NewTableReplace("protected", tbl.Meta().ID)
+	sysDB := stream.NewDBReplace(mysql.SystemDB, stage.Meta().DBID)
+	sysDB.TableMap[99] = stream.NewTableReplace("tidb_masking_policy", stage.Meta().ID)
+	schemas := stream.NewSchemasReplace(map[int64]*stream.DBReplace{1: userDB, 2: sysDB}, false, nil, 0, nil, false)
+	g := &gluemock.MockGlue{}
+	g.SetSession(tk.Session())
+	se, err := g.CreateSession(store)
+	require.NoError(t, err)
+	for range 2 {
+		require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas))
+		require.False(t, tk.Session().GetSessionVars().InMaskingPolicyRestore)
+		tk.MustGetErrCode("select c from protected", errno.ErrProtectedTableMode)
+		tk.MustGetErrCode("create masking policy other on protected(c) as c", errno.ErrProtectedTableMode)
+	}
+	// A replay-scoped flag must not authorize unrelated DDL or reads.
+	tk.Session().GetSessionVars().InMaskingPolicyRestore = true
+	require.ErrorContains(t, se.Execute(ctx, "select c from protected"), "is in mode Restore")
+	require.ErrorContains(t, se.Execute(ctx, "alter table protected add column d int"), "is in mode Restore")
+	tk.Session().GetSessionVars().InMaskingPolicyRestore = false
+	args.TableMode = model.TableModeNormal
+	require.NoError(t, dom.DDLExecutor().AlterTableMode(tk.Session(), args))
+	tk.MustQuery("select c from protected").Check(testkit.Rows("XXXXXX"))
 }

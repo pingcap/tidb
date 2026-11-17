@@ -70,6 +70,9 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 	case model.ActionDropSchema:
 		return applyDropSchema(b, diff), nil
 	case model.ActionRecoverSchema:
+		if err := refreshMaskingPoliciesForTableIDs(b); err != nil {
+			return nil, err
+		}
 		return applyRecoverSchema(b, m, diff)
 	case model.ActionModifySchemaCharsetAndCollate:
 		return nil, applyModifySchemaCharsetAndCollate(b, m, diff)
@@ -643,6 +646,7 @@ func maskingPolicyTableAction(tp model.ActionType) bool {
 		model.ActionAlterMaskingPolicy,
 		model.ActionDropMaskingPolicy,
 		model.ActionDropTable,
+		model.ActionRecoverTable,
 		model.ActionTruncateTable,
 		model.ActionExchangeTablePartition,
 		model.ActionDropColumn,

@@ -15,7 +15,9 @@
 package domain_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"math"
 	"sync/atomic"
 	"testing"
@@ -23,11 +25,15 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	core "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -36,7 +42,18 @@ import (
 )
 
 func TestMaskingPolicyPersistAfterRestart(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+	session.DisableStats4Test()
+	originalDomain, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	currentDomain := originalDomain
+	defer func() {
+		if currentDomain != nil {
+			currentDomain.Close()
+		}
+	}()
 	tk := testkit.NewTestKit(t, store)
 
 	// Create table and masking policy
@@ -58,13 +75,18 @@ func TestMaskingPolicyPersistAfterRestart(t *testing.T) {
 	tk.MustQuery("select policy_name, db_name, table_name, column_name, status from mysql.tidb_masking_policy where policy_name = 'simple_mask'").
 		Check(testkit.Rows("simple_mask test t c ENABLED"))
 
-	// Simulate restart by creating a new test kit
-	// This should trigger a fresh info schema load
+	// Close the original Domain and its cache, then bootstrap a new Domain on
+	// the same store so persisted policy rows must be loaded again.
+	tk.Session().Close()
+	originalDomain.Close()
+	currentDomain = nil
+	restartedDomain, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	currentDomain = restartedDomain
+	require.NotSame(t, originalDomain, restartedDomain)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
-	// BUG: Policy disappears after restart!
-	// This test should FAIL until the bug is fixed
 	tk2.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
@@ -276,4 +298,72 @@ func TestMaskingPolicyPreloadTimeoutDoesNotExpireSchema(t *testing.T) {
 	require.False(t, dom.IsLeaseExpired())
 	tk.MustExec("commit")
 	tk.MustQuery("select count(*) from test.t_unrelated").Check(testkit.Rows("1"))
+}
+
+func newColdMaskingInfoSchema(t *testing.T, store kv.Storage, dom *domain.Domain, factory func() (pools.Resource, error)) infoschema.InfoSchema {
+	t.Helper()
+	ctx := context.Background()
+	latest := dom.InfoSchema()
+	dbs := latest.AllSchemas()
+	for i, db := range dbs {
+		dbs[i] = db.Copy()
+		dbs[i].TableName2ID = nil
+		var err error
+		dbs[i].Deprecated.Tables, err = latest.SchemaTableInfos(ctx, db.Name)
+		require.NoError(t, err)
+	}
+	version, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	b := infoschema.NewBuilder(dom, factory, infoschema.NewData(), false)
+	require.NoError(t, b.InitWithDBInfos(dbs, latest.AllPlacementPolicies(), latest.AllResourceGroups(), latest.SchemaMetaVersion()))
+	cold := b.Build(version.Ver)
+	require.False(t, infoschema.MaskingPoliciesLoaded(cold))
+	return cold
+}
+
+func TestMaskingPolicyColdPointGetCancellation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_cold_point(id int primary key,c varchar(20))")
+	tk.MustExec("create masking policy p on t_cold_point(c) as mask_full(c)")
+	var loads atomic.Int32
+	cold := newColdMaskingInfoSchema(t, store, dom, func() (pools.Resource, error) {
+		loads.Add(1)
+		return nil, errors.New("unexpected fast-plan policy SQL")
+	})
+	vars := tk.Session().GetSessionVars()
+	vars.SnapshotInfoschema = cold
+	defer func() { vars.SnapshotInfoschema = nil }()
+	for _, sql := range []string{"select c from t_cold_point where id=1", "select c from t_cold_point where id in (1,2)"} {
+		stmts, err := session.Parse(tk.Session(), sql)
+		require.NoError(t, err)
+		node := resolve.NewNodeW(stmts[0])
+		ret := &core.PreprocessorReturn{}
+		require.NoError(t, core.Preprocess(context.Background(), tk.Session(), node, core.WithPreprocessorReturn(ret)))
+		require.Nil(t, core.TryFastPlan(tk.Session().GetPlanCtx(), node), sql)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err = cold.HasMaskingPolicies(ctx)
+		require.ErrorIs(t, err, context.Canceled)
+	}
+	require.Zero(t, loads.Load(), "neither the fast path nor a cancelled planner may start policy SQL")
+}
+
+func TestMaskingPolicyTemporaryShowColdCache(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create temporary table tmp_mask_show(c varchar(20))")
+	tbl, err := tk.Session().GetInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("tmp_mask_show"))
+	require.NoError(t, err)
+	var loads atomic.Int32
+	cold := newColdMaskingInfoSchema(t, store, dom, func() (pools.Resource, error) { loads.Add(1); return nil, errors.New("policy table unavailable") })
+	vars := tk.Session().GetSessionVars()
+	vars.SnapshotInfoschema = cold
+	defer func() { vars.SnapshotInfoschema = nil }()
+	var buf bytes.Buffer
+	require.NoError(t, executor.ConstructResultOfShowCreateTable(tk.Session(), tbl.Meta(), tbl.Allocators(tk.Session().GetTableCtx()), &buf))
+	require.Contains(t, buf.String(), "CREATE TEMPORARY TABLE")
+	require.Zero(t, loads.Load())
 }

@@ -117,6 +117,7 @@ go_library(
         "//pkg/lightning/metric",
         "//pkg/meta",
         "//pkg/meta/autoid",
+        "//pkg/meta/masking",
         "//pkg/meta/metabuild",
         "//pkg/meta/model",
         "//pkg/metrics",

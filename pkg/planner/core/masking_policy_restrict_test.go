@@ -202,7 +202,7 @@ func TestMaskingPolicyRestrictRoleBranches(t *testing.T) {
 				user.MustExec("set role none")
 				_, err := user.ExecWithContext(ctx, "execute st")
 				require.Error(t, err)
-				require.ErrorContains(t, err, "Access denied to masked column")
+				require.ErrorContains(t, err, "Access to masked column")
 				user.MustExec("set role all")
 				user.MustExecWithContext(ctx, "execute st")
 				user.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("1"))
@@ -249,7 +249,7 @@ func TestMaskingPolicyRestrictInstancePlanCache(t *testing.T) {
 				execCtx := context.WithValue(ctx, core.PlanCacheKeyTestClone{}, func(base.Plan, base.Plan) { cloned = true })
 				if sessionIdx == 1 {
 					_, err := tk.ExecWithContext(execCtx, executeSQL)
-					require.ErrorContains(t, err, "Access denied to masked column")
+					require.ErrorContains(t, err, "Access to masked column")
 					require.True(t, cloned, "authorization must run after looking up the other session's cached plan")
 					continue
 				}

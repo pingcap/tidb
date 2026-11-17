@@ -2773,7 +2773,7 @@ error = '''
 
 ["planner:8277"]
 error = '''
-Access denied to masked column '%-.192s'. Obtain the required privileges and retry.
+Access to masked column '%-.192s' is blocked by the masking policy RESTRICT ON setting. Contact the policy administrator to check the expression and current user or role.
 '''
 
 ["privilege:1045"]

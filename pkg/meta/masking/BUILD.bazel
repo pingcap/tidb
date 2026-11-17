@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "masking",
+    srcs = ["codec.go"],
+    importpath = "github.com/pingcap/tidb/pkg/meta/masking",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/util/chunk",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)

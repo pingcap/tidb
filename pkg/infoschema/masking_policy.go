@@ -101,6 +101,15 @@ func PreloadMaskingPolicies(ctx context.Context, is InfoSchema) error {
 	return is.base().loadMaskingPolicies(ctx, is)
 }
 
+// MaskingPoliciesLoaded reports whether policy lookups can avoid internal SQL.
+// Fast planning has no query context and must fall back while the cache is cold.
+func MaskingPoliciesLoaded(is InfoSchema) bool {
+	base := is.base()
+	base.maskingPolicyMutex.RLock()
+	defer base.maskingPolicyMutex.RUnlock()
+	return base.maskingPoliciesLoaded || base.factory == nil
+}
+
 // loadMaskingPoliciesIfNeeded loads masking policies from system table on first access.
 func (is *infoSchema) loadMaskingPoliciesIfNeeded(ctx context.Context) error {
 	return is.loadMaskingPolicies(ctx, nil)

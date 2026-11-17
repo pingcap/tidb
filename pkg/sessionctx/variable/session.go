@@ -880,6 +880,9 @@ type SessionVars struct {
 
 	// InRestrictedSQL indicates if the session is handling restricted SQL execution.
 	InRestrictedSQL bool
+	// InMaskingPolicyRestore permits internal BR policy DDL while user tables
+	// remain in Restore mode. It is scoped to policy replay, not user SQL.
+	InMaskingPolicyRestore bool
 
 	// SnapshotTS is used for reading history data. For simplicity, SnapshotTS only supports distsql request.
 	SnapshotTS uint64

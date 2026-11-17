@@ -6986,6 +6986,7 @@ func (e *executor) createMaskingPolicyWithInfo(
 		Policy:         policy,
 		ReplaceOnExist: onExist == OnExistReplace,
 	}
+	failpoint.InjectCall("beforeSubmitMaskingPolicyCreate")
 	err = e.doDDLJob2(ctx, job, args)
 	if onExist == OnExistIgnore && meta.ErrMaskingPolicyExists.Equal(err) {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)

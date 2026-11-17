@@ -48,7 +48,7 @@ c
 XXXXXX
 XXXXXX
 INSERT INTO privilege__column_masking_cte.t_dst WITH cte AS (SELECT c FROM privilege__column_masking_cte.t_src) SELECT c FROM cte;
-Error 8277 (HY000): Access denied to masked column 'c'. Obtain the required privileges and retry.
+Error 8277 (HY000): Access to masked column 'c' is blocked by the masking policy RESTRICT ON setting. Contact the policy administrator to check the expression and current user or role.
 # Test that HAVING, ORDER BY use original values while output is masked
 DROP TABLE IF EXISTS privilege__column_masking_cte.t_having;
 CREATE TABLE privilege__column_masking_cte.t_having(category VARCHAR(50), amount INT);

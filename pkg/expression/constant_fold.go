@@ -67,6 +67,11 @@ func isNullHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
 		return &Constant{Value: value, RetType: expr.RetType}, false
 	}
 	if mysql.HasNotNullFlag(arg0.GetType(ctx.GetEvalCtx()).GetFlag()) {
+		// Result masking can make a base column nullable. Keep its dependency
+		// until the planner substitutes the policy, while still folding constants.
+		if guard, ok := ctx.(interface{ SkipNotNullFolding() bool }); ok && guard.SkipNotNullFolding() {
+			return expr, false
+		}
 		return NewZero(), false
 	}
 	return expr, false

@@ -775,3 +775,48 @@ func TestMaskingPolicyPredicateSubqueryResults(t *testing.T) {
 	tk.MustExec("alter table t_pred_src disable masking policy p")
 	tk.MustQuery("select id from t_pred_dst where c = (select c from t_pred_src)").Check(testkit.Rows("1"))
 }
+
+func TestMaskingPolicyUsingNaturalJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_common(c varchar(20))")
+	tk.MustExec("insert into t_common values ('secret')")
+	tk.MustExec("create masking policy p on t_common(c) as mask_full(c)")
+	for _, sql := range []string{
+		"select l.c,r.c from t_common l join t_common r using(c)",
+		"select l.c,r.c from t_common l natural join t_common r",
+		"select l.c,r.c from t_common l left join t_common r using(c)",
+		"select l.c,r.c from t_common l right join t_common r using(c)",
+		"select l.c,r.c from t_common l join t_common r using(c) where r.c='secret'",
+	} {
+		tk.MustQuery(sql).Check(testkit.Rows("XXXXXX XXXXXX"))
+	}
+	tk.MustQuery("select r.* from t_common l join t_common r using(c)").Check(testkit.Rows("XXXXXX"))
+	tk.MustQuery("select concat(r.c,'!') from t_common l join t_common r using(c)").Check(testkit.Rows("XXXXXX!"))
+}
+
+func TestMaskingPolicyNotNullResultExpressions(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mask_null(id int primary key, c varchar(20) not null)")
+	tk.MustExec("insert into t_mask_null values (1,'secret'),(2,'hidden')")
+	tk.MustExec("create masking policy p on t_mask_null(c) as mask_null(c)")
+	tk.MustQuery("select c,c is null,c is not null from t_mask_null order by id").Check(testkit.Rows("<nil> 1 0", "<nil> 1 0"))
+	tk.MustQuery("select c is null from (select c from t_mask_null) s").Check(testkit.Rows("1", "1"))
+	// Unreachable mutable branches still fold before masking is applied.
+	tk.MustQuery("select if(1,c,concat(c,rand())) from t_mask_null").Check(testkit.Rows("<nil>", "<nil>"))
+	tk.MustQuery("select c from t_mask_null where c is null").Check(testkit.Rows())
+	tk.MustQuery("select c from t_mask_null where c is not null").Check(testkit.Rows("<nil>", "<nil>"))
+	for _, sql := range []string{
+		"select c from t_mask_null where id=1",
+		"select c from t_mask_null where id in (1,2)",
+		"select c from t_mask_null",
+	} {
+		rs, err := tk.Exec(sql)
+		require.NoError(t, err)
+		require.False(t, mysql.HasNotNullFlag(rs.Fields()[0].Column.GetFlag()), sql)
+		require.NoError(t, rs.Close())
+	}
+}

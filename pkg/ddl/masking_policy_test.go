@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -980,4 +981,87 @@ func TestMaskingPolicyAlterExpressionAfterConcurrentRename(t *testing.T) {
 	require.NoError(t, <-done)
 	tk.MustQuery("select d from t_rename_expr").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select column_name,expression from mysql.tidb_masking_policy where table_name='t_rename_expr'").Check(testkit.Rows("d MASK_NULL(`d`)"))
+}
+
+func TestMaskingPolicyConcurrentCreateRename(t *testing.T) {
+	for _, replace := range []bool{false, true} {
+		t.Run(fmt.Sprint(replace), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t_create_rename(c varchar(20))")
+			tk.MustExec("insert into t_create_rename values ('secret')")
+			if replace {
+				tk.MustExec("create masking policy p on t_create_rename(c) as mask_null(c)")
+			}
+			other := testkit.NewTestKit(t, store)
+			other.MustExec("use test")
+			prepared, release := make(chan struct{}), make(chan struct{})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeSubmitMaskingPolicyCreate", func() { close(prepared); <-release })
+			done := make(chan error, 1)
+			sql := "create masking policy p on t_create_rename(c) as mask_full(c)"
+			if replace {
+				sql = "create or replace masking policy p on t_create_rename(c) as mask_full(c)"
+			}
+			go func() { done <- other.ExecToErr(sql) }()
+			<-prepared
+			tk.MustExec("alter table t_create_rename rename column c to d")
+			close(release)
+			require.NoError(t, <-done)
+			tk.MustQuery("select column_name,expression from mysql.tidb_masking_policy where table_name='t_create_rename'").Check(testkit.Rows("d MASK_FULL(`d`)"))
+			tk.MustQuery("select d from t_create_rename").Check(testkit.Rows("XXXXXX"))
+		})
+	}
+}
+
+func TestMaskingPolicyRecoverTable(t *testing.T) {
+	for _, recoverSQL := range []string{"recover table t_recover_mask", "flashback table t_recover_mask to recovered_mask"} {
+		t.Run(recoverSQL, func(t *testing.T) {
+			gcEnabled := util.IsEmulatorGCEnable()
+			util.EmulatorGCDisable()
+			defer func() {
+				if gcEnabled {
+					util.EmulatorGCEnable()
+				}
+			}()
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t_recover_mask(c varchar(20))")
+			tk.MustExec("create table dst(c varchar(20))")
+			tk.MustExec("insert into t_recover_mask values ('secret')")
+			tk.MustExec("create masking policy p on t_recover_mask(c) as mask_full(t_recover_mask.c) restrict on (INSERT_INTO_SELECT)")
+			tk.MustExec("insert into mysql.tidb(variable_name,variable_value) values ('tikv_gc_safe_point','20000101-00:00:00.000 +0000') on duplicate key update variable_value=values(variable_value)")
+			tk.MustExec("drop table t_recover_mask")
+			// A failed worker step must publish neither the table nor policies.
+			var rolledBack atomic.Bool
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRestoreMaskingPolicyError", "1*return(true)")
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", func(job *model.JobW) {
+				if job.Job.Type == model.ActionRecoverTable && job.Job.ErrorCount > 0 && !rolledBack.Swap(true) {
+					check := testkit.NewTestKit(t, store)
+					check.MustQuery("select count(*) from mysql.tidb_masking_policy").Check(testkit.Rows("0"))
+					check.MustGetErrCode("select c from test.t_recover_mask", errno.ErrNoSuchTable)
+				}
+			})
+			tk.MustExec(recoverSQL)
+			require.True(t, rolledBack.Load())
+			table := "t_recover_mask"
+			if strings.Contains(recoverSQL, " to ") {
+				table = "recovered_mask"
+			}
+			tk.MustQuery("select c from " + table).Check(testkit.Rows("XXXXXX"))
+			tk.MustGetErrCode("insert into dst select c from "+table, errno.ErrAccessDeniedToMaskedColumn)
+			tk.MustQuery("select table_name, column_name, status, restrict_on from mysql.tidb_masking_policy where table_name='" + table + "'").Check(testkit.Rows(table + " c ENABLED INSERT_INTO_SELECT"))
+		})
+	}
+}
+
+func TestMaskingPolicyDropMixedCaseDatabase(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database MixedCaseMask")
+	tk.MustExec("create table MixedCaseMask.t(c varchar(20))")
+	tk.MustExec("create masking policy p on MixedCaseMask.t(c) as mask_full(c)")
+	tk.MustExec("drop database MixedCaseMask")
+	tk.MustQuery("select count(*) from mysql.tidb_masking_policy").Check(testkit.Rows("0"))
 }

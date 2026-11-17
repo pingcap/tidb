@@ -2520,6 +2520,9 @@ func buildMaskingExprsForPointGet(
 	if sv != nil && sv.InRestrictedSQL {
 		return nil, nil
 	}
+	if !infoschema.MaskingPoliciesLoaded(is) {
+		return nil, errors.New("masking policy cache requires normal planning")
+	}
 	hasPolicies, err := is.HasMaskingPolicies(ctx)
 	if err != nil || !hasPolicies {
 		return nil, err
@@ -2560,7 +2563,8 @@ func buildMaskingExprsForPointGet(
 		// Fast executors retain both the original chunk layout and result metadata,
 		// including integer width, string length/charset and temporal precision.
 		// Scalar real expressions produce float64 datums even for FLOAT columns.
-		if !maskedType.Equal(col.RetType) || col.RetType.GetType() == mysql.TypeFloat {
+		if !maskedType.Equal(col.RetType) || col.RetType.GetType() == mysql.TypeFloat ||
+			mysql.HasNotNullFlag(maskedType.GetFlag()) != mysql.HasNotNullFlag(col.RetType.GetFlag()) {
 			return nil, errors.New("masking result requires a different column representation")
 		}
 		replaceExprs[i] = masked

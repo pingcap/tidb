@@ -19,14 +19,13 @@ import (
 	"context"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
+	maskingmeta "github.com/pingcap/tidb/pkg/meta/masking"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -129,11 +128,8 @@ func loadMaskingPoliciesWithTableIDs(ctx context.Context, factory func() (pools.
 }
 
 func buildLoadMaskingPoliciesQuery(tableIDs []int64) (string, []any) {
-	const baseQuery = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
-FROM mysql.tidb_masking_policy`
-
 	var sb strings.Builder
-	sb.WriteString(baseQuery)
+	sb.WriteString(maskingmeta.SelectSQL())
 	args := make([]any, 0, len(tableIDs))
 	if len(tableIDs) > 0 {
 		sb.WriteString(" WHERE table_id IN (")
@@ -151,104 +147,7 @@ FROM mysql.tidb_masking_policy`
 }
 
 func maskingPolicyInfoFromChunkRow(row chunk.Row) (*model.MaskingPolicyInfo, error) {
-	status, err := maskingPolicyStatusFromString(row.GetString(8))
-	if err != nil {
-		return nil, err
-	}
-	restrictOn := ""
-	if !row.IsNull(10) {
-		restrictOn = row.GetString(10)
-	}
-	restrictOps, err := maskingPolicyRestrictOpsFromString(restrictOn)
-	if err != nil {
-		return nil, err
-	}
-
-	createdAt := time.Time{}
-	if !row.IsNull(11) {
-		createdAt, err = row.GetTime(11).GoTime(time.Local)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	updatedAt := time.Time{}
-	if !row.IsNull(12) {
-		updatedAt, err = row.GetTime(12).GoTime(time.Local)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	createdBy := ""
-	if !row.IsNull(13) {
-		createdBy = row.GetString(13)
-	}
-
-	return &model.MaskingPolicyInfo{
-		ID:          row.GetInt64(0),
-		Name:        ast.NewCIStr(row.GetString(1)),
-		DBName:      ast.NewCIStr(row.GetString(2)),
-		TableName:   ast.NewCIStr(row.GetString(3)),
-		TableID:     row.GetInt64(4),
-		ColumnName:  ast.NewCIStr(row.GetString(5)),
-		ColumnID:    row.GetInt64(6),
-		Expression:  row.GetString(7),
-		Status:      status,
-		MaskingType: maskingPolicyTypeFromString(row.GetString(9)),
-		RestrictOps: restrictOps,
-		CreatedAt:   createdAt,
-		UpdatedAt:   updatedAt,
-		CreatedBy:   createdBy,
-		State:       model.StatePublic,
-	}, nil
-}
-
-func maskingPolicyStatusFromString(status string) (model.MaskingPolicyStatus, error) {
-	switch strings.ToUpper(strings.TrimSpace(status)) {
-	case "ENABLE", "ENABLED":
-		return model.MaskingPolicyStatusEnable, nil
-	case "DISABLE", "DISABLED":
-		return model.MaskingPolicyStatusDisable, nil
-	default:
-		return model.MaskingPolicyStatusDisable, errors.Errorf("unknown masking policy status: %s", status)
-	}
-}
-
-func maskingPolicyTypeFromString(tp string) model.MaskingPolicyType {
-	switch model.MaskingPolicyType(strings.ToUpper(strings.TrimSpace(tp))) {
-	case model.MaskingPolicyTypeFull,
-		model.MaskingPolicyTypePartial,
-		model.MaskingPolicyTypeNull,
-		model.MaskingPolicyTypeDate,
-		model.MaskingPolicyTypeCustom:
-		return model.MaskingPolicyType(strings.ToUpper(strings.TrimSpace(tp)))
-	default:
-		return model.MaskingPolicyTypeCustom
-	}
-}
-
-func maskingPolicyRestrictOpsFromString(restrictOn string) (ast.MaskingPolicyRestrictOps, error) {
-	restrictOn = strings.TrimSpace(strings.ToUpper(restrictOn))
-	if restrictOn == "" || restrictOn == "NONE" {
-		return ast.MaskingPolicyRestrictOpNone, nil
-	}
-	ops := ast.MaskingPolicyRestrictOpNone
-	for _, token := range strings.Split(restrictOn, ",") {
-		switch strings.TrimSpace(token) {
-		case ast.MaskingPolicyRestrictNameInsertIntoSelect:
-			ops |= ast.MaskingPolicyRestrictOpInsertIntoSelect
-		case ast.MaskingPolicyRestrictNameUpdateSelect:
-			ops |= ast.MaskingPolicyRestrictOpUpdateSelect
-		case ast.MaskingPolicyRestrictNameDeleteSelect:
-			ops |= ast.MaskingPolicyRestrictOpDeleteSelect
-		case ast.MaskingPolicyRestrictNameCTAS:
-			ops |= ast.MaskingPolicyRestrictOpCTAS
-		case "NONE", "":
-			// No-op.
-		default:
-			return ast.MaskingPolicyRestrictOpNone, errors.Errorf("unknown masking policy restrict option: %s", token)
-		}
-	}
-	return ops, nil
+	return maskingmeta.DecodeMaskingPolicyRow(row)
 }
 
 func normalizeMaskingPolicyTableIDs(tableIDs []int64) ([]int64, bool) {

@@ -162,6 +162,7 @@ go_test(
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/domain",
+        "//pkg/errno",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",

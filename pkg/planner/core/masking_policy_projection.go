@@ -44,6 +44,10 @@ type maskingResultKey struct {
 	columnID int64
 }
 
+type maskingProjectionBuildContext struct{ expression.BuildContext }
+
+func (maskingProjectionBuildContext) SkipNotNullFolding() bool { return true }
+
 type maskingResultBuilder struct {
 	b         *PlanBuilder
 	ctx       context.Context
@@ -161,6 +165,11 @@ func (m *maskingResultBuilder) buildColumn(p base.LogicalPlan, col *expression.C
 	plain := maskingResult{expr: col}
 	idx := p.Schema().ColumnIndex(col)
 	if idx < 0 {
+		// USING/NATURAL joins retain table-qualified common columns only in
+		// FullSchema. Their source is still available in the join's children.
+		if full, _ := findJoinFullSchema(p); full != nil && full.Contains(col) {
+			return m.passThrough(p, col)
+		}
 		return plain, nil
 	}
 	switch x := p.(type) {
@@ -274,7 +283,9 @@ func (m *maskingResultBuilder) passThrough(p base.LogicalPlan, col *expression.C
 	plain := maskingResult{expr: col}
 	for _, child := range p.Children() {
 		if !child.Schema().Contains(col) {
-			continue
+			if full, _ := findJoinFullSchema(child); full == nil || !full.Contains(col) {
+				continue
+			}
 		}
 		result, err := m.column(child, col)
 		if err != nil || !result.masked {

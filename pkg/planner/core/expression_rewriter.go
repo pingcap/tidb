@@ -242,6 +242,13 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	rewriter.asScalar = asScalar
 	rewriter.allowBuildCastArray = b.allowBuildCastArray
 	rewriter.preprocess = preprocess
+	if b.curClause == fieldList && p != nil {
+		var err error
+		rewriter.preserveMaskingDependencies, err = b.maskingEnabled(ctx, p)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 
 	return rewriteExprNode(rewriter, exprNode, asScalar)
 }
@@ -267,6 +274,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	rewriter.asScalar = false
 	rewriter.preprocess = nil
 	rewriter.disableFoldCounter = 0
+	rewriter.preserveMaskingDependencies = false
 	rewriter.tryFoldCounter = 0
 	rewriter.ctxStack = rewriter.ctxStack[:0]
 	rewriter.ctxNameStk = rewriter.ctxNameStk[:0]
@@ -380,8 +388,11 @@ type expressionRewriter struct {
 	// leaving the scope(enable again), the counter will -1.
 	// NOTE: This value can be changed during expression rewritten.
 	disableFoldCounter int
-	tryFoldCounter     int
-	deferredFunctions  map[string]struct{}
+	// Preserve column dependencies in result expressions until policies have
+	// been substituted, since a policy can change a NOT NULL column to NULL.
+	preserveMaskingDependencies bool
+	tryFoldCounter              int
+	deferredFunctions           map[string]struct{}
 
 	planCtx *exprRewriterPlanCtx
 }
@@ -1805,14 +1816,18 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 
 // newFunctionWithInit chooses which expression.NewFunctionImpl() will be used.
 func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *types.FieldType, init expression.ScalarFunctionCallBack, args ...expression.Expression) (ret expression.Expression, err error) {
+	var buildCtx expression.BuildContext = er.sctx
+	if er.preserveMaskingDependencies {
+		buildCtx = maskingProjectionBuildContext{buildCtx}
+	}
 	if init != nil {
-		ret, err = expression.NewFunctionWithInit(er.sctx, funcName, retType, init, args...)
+		ret, err = expression.NewFunctionWithInit(buildCtx, funcName, retType, init, args...)
 	} else if er.disableFoldCounter > 0 {
-		ret, err = expression.NewFunctionBase(er.sctx, funcName, retType, args...)
+		ret, err = expression.NewFunctionBase(buildCtx, funcName, retType, args...)
 	} else if er.tryFoldCounter > 0 {
-		ret, err = expression.NewFunctionTryFold(er.sctx, funcName, retType, args...)
+		ret, err = expression.NewFunctionTryFold(buildCtx, funcName, retType, args...)
 	} else {
-		ret, err = expression.NewFunction(er.sctx, funcName, retType, args...)
+		ret, err = expression.NewFunction(buildCtx, funcName, retType, args...)
 	}
 	if err != nil {
 		return

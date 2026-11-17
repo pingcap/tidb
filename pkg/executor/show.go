@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	maskingmeta "github.com/pingcap/tidb/pkg/meta/masking"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -802,26 +803,6 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	return nil
 }
 
-func maskingPolicyRestrictOpsStr(ops ast.MaskingPolicyRestrictOps) string {
-	if ops == ast.MaskingPolicyRestrictOpNone {
-		return "NONE"
-	}
-	vals := make([]string, 0, 4)
-	if ops&ast.MaskingPolicyRestrictOpInsertIntoSelect != 0 {
-		vals = append(vals, ast.MaskingPolicyRestrictNameInsertIntoSelect)
-	}
-	if ops&ast.MaskingPolicyRestrictOpUpdateSelect != 0 {
-		vals = append(vals, ast.MaskingPolicyRestrictNameUpdateSelect)
-	}
-	if ops&ast.MaskingPolicyRestrictOpDeleteSelect != 0 {
-		vals = append(vals, ast.MaskingPolicyRestrictNameDeleteSelect)
-	}
-	if ops&ast.MaskingPolicyRestrictOpCTAS != 0 {
-		vals = append(vals, ast.MaskingPolicyRestrictNameCTAS)
-	}
-	return strings.Join(vals, ",")
-}
-
 func (e *ShowExec) fetchShowMaskingPolicies(ctx context.Context) error {
 	tb, err := e.getTable()
 	if err != nil {
@@ -852,7 +833,7 @@ func (e *ShowExec) fetchShowMaskingPolicies(ctx context.Context) error {
 	})
 
 	for _, policy := range rows {
-		restrictOn := maskingPolicyRestrictOpsStr(policy.RestrictOps)
+		restrictOn := maskingmeta.RestrictOpsToString(policy.RestrictOps)
 		e.appendRow([]any{
 			policy.Name.O,
 			policy.ColumnName.O,
@@ -1151,7 +1132,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 	}
 
 	var maskingPolicies map[int64]*model.MaskingPolicyInfo
-	if ctx != nil {
+	if ctx != nil && tableInfo.TempTableType == model.TempTableNone {
 		if is, ok := ctx.GetInfoSchema().(infoschema.InfoSchema); ok {
 			allPolicies, loadErr := is.AllMaskingPolicies(context.Background())
 			if loadErr != nil {

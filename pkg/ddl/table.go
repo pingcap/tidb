@@ -248,7 +248,7 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		ver, err = w.recoverTable(jobCtx.stepCtx, metaMut, job, recoverInfo)
+		ver, err = w.recoverTable(jobCtx, metaMut, job, recoverInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -279,11 +279,17 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 }
 
 func (w *worker) recoverTable(
-	ctx context.Context,
+	jobCtx *jobContext,
 	t *meta.Mutator,
 	job *model.Job,
 	recoverInfo *model.RecoverTableInfo,
 ) (ver int64, err error) {
+	ctx := jobCtx.stepCtx
+	// Restore external policy metadata in the same transaction that makes the
+	// table public, including FLASHBACK TABLE's optional target-name change.
+	if err := w.restoreMaskingPoliciesForRecoveredTable(jobCtx, recoverInfo); err != nil {
+		return ver, err
+	}
 	tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err := getOldLabelRules(recoverInfo.TableInfo, recoverInfo.OldSchemaName, recoverInfo.OldTableName)
 	if err != nil {
 		job.State = model.JobStateCancelled
