@@ -257,6 +257,129 @@ pub fn build_mlog_purge_meta(
     Ok(("DEFERRED".to_owned(), start_with, next))
 }
 
+/// Go master `buildMViewRefreshMeta`: the refresh method and the canonical
+/// START WITH / NEXT expressions (FAST with no schedule when unwritten).
+///
+/// # Errors
+///
+/// A schedule expression that is not a time.
+pub fn build_mview_refresh_meta(
+    ctx: &dyn tidb_expr::rewriter::ColumnResolver,
+    refresh: Option<&tidb_ast::MViewRefreshClause>,
+) -> Result<(String, String, String), MysqlError> {
+    let Some(refresh) = refresh else {
+        return Ok(("FAST".to_owned(), String::new(), String::new()));
+    };
+    match refresh.method {
+        tidb_ast::MViewRefreshMethod::Fast => {
+            let start_with = match &refresh.start_with {
+                Some(expr) => build_and_validate_mview_schedule_expr(ctx, expr, "REFRESH START WITH")?,
+                None => String::new(),
+            };
+            let next = match &refresh.next {
+                Some(expr) => build_and_validate_mview_schedule_expr(ctx, expr, "REFRESH NEXT")?,
+                None => String::new(),
+            };
+            Ok(("FAST".to_owned(), start_with, next))
+        }
+    }
+}
+
+/// Go `strconv.Quote` (`%q`): a double-quoted string with Go's escapes.
+fn go_quote(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for ch in text.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{7}' => out.push_str("\\a"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            '\u{b}' => out.push_str("\\v"),
+            ch if (ch as u32) < 0x20 || ch as u32 == 0x7f => out.push_str(&format!("\\x{:02x}", ch as u32)),
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Go master `mviewAttrAlertWarning`.
+pub const MVIEW_ATTR_ALERT_WARNING: &str = "mview_alert_warning";
+/// Go master `mviewAttrAlertOverdue`.
+pub const MVIEW_ATTR_ALERT_OVERDUE: &str = "mview_alert_overdue";
+/// Go master `mviewAttrAlertRefreshFailed`.
+pub const MVIEW_ATTR_ALERT_REFRESH_FAILED: &str = "mview_alert_refresh_failed";
+
+/// Go master `parseMViewAttributes`: `ATTRIBUTES` as the alert warning and
+/// overdue seconds and whether a failed refresh alerts.
+///
+/// # Errors
+///
+/// Go's plain errors for a malformed list, an unknown or repeated key, or a
+/// bad value.
+pub fn parse_mview_attributes(attrs: &str) -> Result<(i64, i64, bool), MysqlError> {
+    let attrs = attrs.trim();
+    if attrs.is_empty() {
+        return Ok((0, 0, false));
+    }
+    let plain = |message: String| MysqlError::unknown(message);
+    let mut seen: Vec<String> = Vec::new();
+    let (mut warning, mut overdue, mut refresh_failed) = (0i64, 0i64, false);
+    for raw in attrs.split(',') {
+        let kv = raw.trim();
+        if kv.is_empty() {
+            return Err(plain("invalid ATTRIBUTES format: empty key-value pair".to_owned()));
+        }
+        let pos = kv.find('=');
+        let Some(pos) = pos.filter(|&pos| pos > 0 && pos < kv.len() - 1) else {
+            return Err(plain(format!("invalid ATTRIBUTES format: {}", go_quote(kv))));
+        };
+        let key = tidb_hack::go_to_lower(kv[..pos].trim());
+        let value = kv[pos + 1..].trim();
+        if key.is_empty() || value.is_empty() {
+            return Err(plain(format!("invalid ATTRIBUTES format: {}", go_quote(kv))));
+        }
+        if seen.contains(&key) {
+            return Err(plain(format!("duplicate ATTRIBUTES key: {key}")));
+        }
+        seen.push(key.clone());
+        let seconds = |key: &str| {
+            value.parse::<i64>().ok().filter(|&seconds| seconds >= 0).ok_or_else(|| {
+                plain(format!(
+                    "invalid ATTRIBUTES value for {key}: {value} (must be non-negative integer seconds)"
+                ))
+            })
+        };
+        match key.as_str() {
+            MVIEW_ATTR_ALERT_WARNING => warning = seconds(&key)?,
+            MVIEW_ATTR_ALERT_OVERDUE => overdue = seconds(&key)?,
+            MVIEW_ATTR_ALERT_REFRESH_FAILED => {
+                refresh_failed = match tidb_hack::go_to_lower(value).as_str() {
+                    "yes" => true,
+                    "no" => false,
+                    _ => {
+                        return Err(plain(format!(
+                            "invalid ATTRIBUTES value for {key}: {value} (must be yes or no)"
+                        )))
+                    }
+                };
+            }
+            _ => return Err(plain(format!("unsupported ATTRIBUTES key: {key}"))),
+        }
+    }
+    if warning > 0 && overdue > 0 && warning > overdue {
+        return Err(plain(format!(
+            "invalid ATTRIBUTES: {MVIEW_ATTR_ALERT_WARNING} ({warning}) must be less than or equal to {MVIEW_ATTR_ALERT_OVERDUE} ({overdue})"
+        )));
+    }
+    Ok((warning, overdue, refresh_failed))
+}
+
 /// Go `BuildMaterializedViewLogTableInfo`: the log table of `base` for
 /// `stmt`, its tracked columns followed by the DML-type and old/new columns,
 /// with its `MaterializedViewLogInfo`.

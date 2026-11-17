@@ -3405,7 +3405,7 @@ fn do_reorg_work_for_modify_column(
             active.job.row_count = *rows;
             ColumnReorgVisit::Failed(crate::cluster_ddl::reorg_failure(*code, message, *identity))
         }
-        Some(ReorgResult::Checked(_) | ReorgResult::AutoPaused { .. }) => {
+        Some(ReorgResult::Checked(_) | ReorgResult::AutoPaused { .. } | ReorgResult::Built(_)) => {
             return Err(DdlPlanError::Encode(
                 "a column rewrite got a column check's outcome".to_owned(),
             ))

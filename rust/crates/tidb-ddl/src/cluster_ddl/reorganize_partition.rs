@@ -1162,7 +1162,7 @@ fn do_partition_reorg_work(
                 *code, message, *identity,
             )))
         }
-        Some((ReorgResult::Checked(_) | ReorgResult::AutoPaused { .. }, _)) => Err(DdlPlanError::Encode(
+        Some((ReorgResult::Checked(_) | ReorgResult::AutoPaused { .. } | ReorgResult::Built(_), _)) => Err(DdlPlanError::Encode(
             "a partition reorganization got a check's outcome".to_owned(),
         )),
     }

@@ -133,16 +133,12 @@ pub(super) fn create_table(
             table.name.lowercase() == info.name.lowercase() || table.id == info.id
         })
     {
+        // Go `checkTableNotExists(..., tbInfo.Name.L)`: the name alone.
         return Err(cancel_ddl_job(
             active,
             DdlPlanError::from(
-                tidb_dbterror::CLASS_SCHEMA
-                    .new_std(tidb_errno::errcode::ErrTableExists)
-                    .generate(format!(
-                        "Table '{}.{}' already exists",
-                        schema,
-                        info.name.original()
-                    )),
+                tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
+                    .gen_with_stack_by_args(&[info.name.lowercase().to_owned().into()]),
             ),
         ));
     }

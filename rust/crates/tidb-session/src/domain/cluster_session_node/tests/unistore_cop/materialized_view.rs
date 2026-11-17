@@ -69,6 +69,11 @@ fn replay_go_master(capture: &str) -> (UnistoreClusterStack, Session) {
     }) {
         assert_eq!(answer(&mut session, table.create_sql), "OK", "{}", table.name);
     }
+    // Go master bootstrap version 321's refresh-source table.
+    assert_eq!(
+        answer(&mut session, tidb_metadef::system_tables_def::CREATE_TI_DBMVIEW_FAST_REFRESH_SOURCE_INFO_TABLE),
+        "OK"
+    );
     let mut mismatches = Vec::new();
     for line in capture.lines() {
         let (sql, go): (String, String) = serde_json::from_str(line).expect("a captured statement");
@@ -373,4 +378,98 @@ fn drop_log_waits_for_a_base_modify_column() {
 #[test]
 fn create_materialized_view_refusals_answer_as_go_master() {
     replay_go_master(include_str!("../../../../../testdata/mview_create_checks_go.jsonl"));
+}
+
+/// CREATE MATERIALIZED VIEW against a Go master `eca4674a6f` node's answers
+/// (`testdata/mview_create_go.jsonl`): the view table Go builds from the
+/// SELECT's output types with its group key (`SHOW CREATE TABLE`), its
+/// initial rows, the refresh rows, the refusals in Go's order, and the
+/// guards on the view and its base table afterwards.
+#[test]
+fn create_materialized_view_answers_as_go_master() {
+    let (stack, mut session) = replay_go_master(include_str!("../../../../../testdata/mview_create_go.jsonl"));
+    // Go master `insertMViewRefreshSourceInfo`: each view registers its
+    // base table's log; its refresh row has the build's read TS and no
+    // schedule.
+    assert_eq!(
+        answer(
+            &mut session,
+            "select count(*), count(distinct MLOG_ID), min(MLOG_ID) = max(MLOG_ID) from mysql.tidb_mview_fast_refresh_source_info"
+        ),
+        r#"RS:[["5","1","1"]]"#
+    );
+    assert_eq!(
+        answer(
+            &mut session,
+            "select count(*) from mysql.tidb_mview_refresh_info where LAST_SUCCESS_READ_TSO > 0 and LAST_SUCCESS_REFRESH_END_UNIX_SECONDS > 0 and NEXT_REFRESH_UNIX_SECONDS is null"
+        ),
+        r#"RS:[["5"]]"#
+    );
+    let catalog = stack.factory.catalog_snapshot();
+    let table = |name: &str| catalog.table_info_by_name("e29", name).unwrap().1.read().clone_like_go();
+    let (base, mlog) = (table("t"), table("$mlog$t"));
+    // Go's `/schema/e29/mv1` and `/schema/e29/mv2` (its time zone is the
+    // capturing node's own).
+    for (name, sql) in [
+        ("mv1", "SELECT `g`,COUNT(1),SUM(`w`) FROM `e29`.`t` GROUP BY `g`"),
+        ("mv2", "SELECT `g`,`h`,COUNT(1),SUM(`v`),COUNT(`v`) FROM `e29`.`t` WHERE `v`>0 GROUP BY `g`,`h`"),
+    ] {
+        let mview = table(name);
+        let info = mview.materialized_view.as_ref().expect("a materialized view").read().clone();
+        assert_eq!(info.base_table_ids.iter().copied().collect::<Vec<_>>(), [base.id], "{name}");
+        assert_eq!(info.sql_content, sql, "{name}");
+        assert_eq!(info.refresh_method, "FAST", "{name}");
+        assert_eq!(info.definition_sql_mode, 1436549152, "{name}");
+        assert_eq!(info.refresh_schedule_sql_mode, 1436549152, "{name}");
+        assert_eq!(info.definition_div_precision_increment, 4, "{name}");
+        assert_eq!(info.init_build_state, tidb_model::table::MViewInitBuildState::READY, "{name}");
+    }
+    // The base table lists every view, and its log reads for each.
+    let mview_ids: Vec<i64> = ["mv1", "mv2", "mv3", "mv24", "mv27"].iter().map(|name| table(name).id).collect();
+    assert_eq!(
+        answer(&mut session, &format!("select MLOG_ID = {} from mysql.tidb_mview_fast_refresh_source_info limit 1", mlog.id)),
+        r#"RS:[["1"]]"#
+    );
+    let base_info = base.materialized_view_base.as_ref().expect("a base table").read().clone();
+    assert_eq!(base_info.mlog_id, mlog.id);
+    assert_eq!(base_info.mview_ids.iter().copied().collect::<Vec<_>>(), mview_ids);
+    let log = mlog.materialized_view_log.as_ref().expect("a log").read().clone();
+    assert_eq!(log.dependent_mview_ids.iter().copied().collect::<Vec<_>>(), mview_ids);
+}
+
+/// Go master `rollbackCreateMaterializedView` after a failed initial build
+/// (`mockCreateMaterializedViewBuildErr`): the statement fails with the
+/// build's error, and the view, its refresh rows and its entries in the base
+/// table and the log are gone.
+#[test]
+fn create_materialized_view_rolls_back_a_failed_build() {
+    let (stack, mut session) = replay_go_master(
+        r#"["set tidb_mview_enable = ON", "OK"]
+["create database e29", "OK"]
+["use e29", "OK"]
+["create table t (id int primary key, g int not null, v int)", "OK"]
+["create materialized view log on t (g, v)", "OK"]"#,
+    );
+    {
+        let _build_fails = tidb_failpoint::enable_for_test(
+            "github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr",
+            "return(true)",
+        );
+        assert_eq!(
+            answer(&mut session, "create materialized view mv (g, c) as select g, count(*) from t group by g"),
+            "ERR 1105 mock create materialized view build error"
+        );
+    }
+    assert_eq!(answer(&mut session, "show tables"), r#"RS:[["$mlog$t"],["t"]]"#);
+    assert_eq!(answer(&mut session, "select count(*) from mysql.tidb_mview_refresh_info"), r#"RS:[["0"]]"#);
+    assert_eq!(answer(&mut session, "select count(*) from mysql.tidb_mview_fast_refresh_source_info"), r#"RS:[["0"]]"#);
+    let catalog = stack.factory.catalog_snapshot();
+    let (_, base) = catalog.table_info_by_name("e29", "t").unwrap();
+    let (_, mlog) = catalog.table_info_by_name("e29", "$mlog$t").unwrap();
+    let base_info = base.read().materialized_view_base.clone().expect("the log's base");
+    assert!(base_info.read().mview_ids.is_empty());
+    let log = mlog.read().materialized_view_log.clone().expect("a log");
+    assert!(log.read().dependent_mview_ids.is_empty());
+    assert_eq!(answer(&mut session, "create materialized view mv (g, c) as select g, count(*) from t group by g"), "OK");
+    assert_eq!(answer(&mut session, "select count(*) from mysql.tidb_mview_refresh_info"), r#"RS:[["1"]]"#);
 }

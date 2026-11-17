@@ -772,6 +772,18 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .unwrap_or_else(|_| defaults.scatter_region.clone()),
             time_zone_name,
             time_zone_offset,
+            div_precision_increment: int_var(
+                tidb_vars::DIV_PRECISION_INCREMENT,
+                tidb_vardef::defaults::DEF_DIV_PRECISION_INCREMENT,
+            ),
+            sql_mode_var: self.session_vars().get_system("sql_mode").unwrap_or_default(),
+            time_zone_var: self
+                .session_vars()
+                .get_system("time_zone")
+                .unwrap_or_else(|_| defaults.time_zone_var.clone()),
+            mview_execution: tidb_variable::mview_execution::MViewExecutionSessionVars::capture(|name| {
+                self.session_vars().get_system(name).ok()
+            }),
         }
     }
 

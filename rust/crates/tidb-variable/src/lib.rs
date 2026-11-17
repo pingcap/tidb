@@ -25,6 +25,7 @@ pub mod wire_status;
 pub mod savepoints;
 pub mod user_vars;
 pub mod hypo_index;
+pub mod mview_execution;
 pub mod variable_errors;
 pub mod hint_updatable_vars;
 pub mod phase_durations;

@@ -141,6 +141,19 @@ where
                 ReorgResult::Checked(answer.err().map(|error| (error.code, error.message)))
             })?
         }
+        ReorgStageRequest::BuildMaterializedView(build) => {
+            // Go `runReorgJob(..., buildCreateMaterializedViewData)`: an error
+            // rolls the job back.
+            match crate::cluster_ddl::materialized_view::build_create_materialized_view_data(sess_pool.as_ref(), build) {
+                Ok(read_ts) => ReorgResult::Built(read_ts),
+                Err(error) => ReorgResult::Failed {
+                    code: error.code,
+                    message: error.message.clone(),
+                    rows: reorg.row_count,
+                    identity: error.identity,
+                },
+            }
+        }
         ReorgStageRequest::CheckExchangePartition(check) => {
             reorg_transaction(opener, timeout, &crate::job_ctx::internal_ddl_source(), |_, snapshot, buffer, _| {
                 let answer = backfiller.stage_exchange_partition_check(check, snapshot, buffer);

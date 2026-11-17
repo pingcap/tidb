@@ -41,6 +41,14 @@ impl QueryStmt {
         out
     }
 
+    /// Restores this query using `flags` (Go `Restore` with a
+    /// `format.RestoreCtx` of those flags).
+    pub fn restore_with_flags(&self, flags: tidb_parser_format::RestoreFlags) -> String {
+        let mut out = String::new();
+        self.restore_into_with_context(&mut out, &RestoreContext::new(flags));
+        out
+    }
+
     /// Appends the query's canonical SQL to `out`.
     pub(crate) fn restore_into(&self, out: &mut String) {
         self.restore_into_with_context(out, &RestoreContext::default());

@@ -135,6 +135,9 @@ pub enum ReorgStageRequest {
     /// Go `checkExchangePartitionRecordValidation`: the standalone table's
     /// rows against the exchanged partition, answered as a check.
     CheckExchangePartition(Box<super::ExchangePartitionValidation>),
+    /// Go master `buildCreateMaterializedViewData`: a new materialized
+    /// view's initial rows, answered with the build's read TS.
+    BuildMaterializedView(Box<super::materialized_view::MViewBuild>),
 }
 
 /// One `mysql.tidb_ddl_reorg` row.
@@ -214,6 +217,9 @@ pub enum ReorgResult {
     /// An index reorganization (Go `addTableIndex`) returned this error,
     /// which the next step handles as Go's `runReorgJobAndHandleErr`.
     Error(DdlPlanError),
+    /// A materialized view's initial build finished at this read TS (Go
+    /// master `setCreateMaterializedViewBuildReadTSInReorgCtx`).
+    Built(u64),
 }
 
 /// The ADD INDEX submission's answer.
@@ -1843,7 +1849,7 @@ pub(super) fn do_reorg_work_for_create_index(
             crate::index::auto_pause_add_index_job_on_kv_disk_full(&mut active.job,*task_id,error.as_ref().map(|e|e.as_ref() as &(dyn std::error::Error+'static)));
             return Ok(CreateIndexReorg::Step(action_step(job_only_write(active.job.id,Vec::new()))));
         }
-        Some(ReorgResult::Checked(_)) => {
+        Some(ReorgResult::Checked(_) | ReorgResult::Built(_)) => {
             return Err(DdlPlanError::Encode(
                 "an index reorganization got a column check's outcome".to_owned(),
             ))

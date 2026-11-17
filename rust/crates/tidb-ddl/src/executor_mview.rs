@@ -748,7 +748,7 @@ pub(crate) fn validate_create_materialized_view_query(
     let mut count_expr_cols: Vec<String> = Vec::new();
     let mut nullable_sum_cols: Vec<String> = Vec::new();
     let mut used_cols: Vec<String> = Vec::new();
-    let mut use_col = |used: &mut Vec<String>, name: &str| {
+    let use_col = |used: &mut Vec<String>, name: &str| {
         if !used.iter().any(|seen| seen == name) {
             used.push(name.to_owned());
         }
@@ -901,17 +901,58 @@ pub(crate) fn validate_create_materialized_view_query(
     Ok(MViewQueryAnalysis { group_by_infos, group_by_cols, has_min_or_max })
 }
 
-/// Go master `executor.CreateMaterializedView` through
-/// `validateCreateMaterializedViewQuery`: the statement's checks in Go's
-/// order. The job that follows (the SELECT's output types, the table and its
-/// initial build) is not ported yet, so a statement that passes them is
-/// refused.
-pub(crate) fn create_materialized_view_job(
+/// What Go master's `executor.CreateMaterializedView` has settled before it
+/// runs the SELECT for its output types.
+pub(crate) struct CreateMaterializedViewPlan {
+    pub schema: tidb_model::db::DBInfo,
+    pub view_name: String,
+    pub comment: String,
+    pub base: tidb_model::TableInfo,
+    pub mlog: tidb_model::TableInfo,
+    pub analysis: MViewQueryAnalysis,
+    /// Go `restoreNodeToCanonicalSQL(s.Select)` once the base table carries
+    /// its schema and hints their database.
+    pub select_sql: String,
+}
+
+/// Go master `normalizeMVDefinitionHintDBNames`: a hint's table without a
+/// database names `default_db`'s.
+fn normalize_mv_definition_hint_db_names(query: &mut tidb_ast::QueryStmt, default_db: &str) {
+    struct Normalizer<'a>(&'a str);
+    impl tidb_ast::Visitor for Normalizer<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(hint) = node.downcast_mut::<tidb_ast::Hint>() {
+                let fill = |table: &mut tidb_ast::HintTable| {
+                    if table.db_name.as_deref().is_none_or(str::is_empty) {
+                        table.db_name = Some(self.0.to_owned());
+                    }
+                };
+                match &mut hint.kind {
+                    tidb_ast::HintKind::Tables { tables, .. } => tables.iter_mut().for_each(fill),
+                    tidb_ast::HintKind::Index { table, .. } => fill(table),
+                    _ => {}
+                }
+            }
+            false
+        }
+        fn leave(&mut self, _: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    if default_db.is_empty() {
+        return;
+    }
+    tidb_ast::Visitable::accept(query, &mut Normalizer(default_db));
+}
+
+/// Go master `executor.CreateMaterializedView` up to the SELECT it runs for
+/// the output types: the checks in Go's order, then the definition SQL.
+pub(crate) fn create_materialized_view_plan(
     catalog: &SessionExtendedInfoSchema,
     stmt: &tidb_ast::CreateMaterializedViewStmt,
     current_db: &str,
     context: &dyn DdlSessionContext,
-) -> Result<crate::JobWrapper, MysqlError> {
+) -> Result<CreateMaterializedViewPlan, MysqlError> {
     check_materialized_view_enabled(context)?;
     let (schema_name, view_name) = match stmt.view_name.as_slice() {
         [schema, view] => (schema.clone(), view.clone()),
@@ -923,24 +964,33 @@ pub(crate) fn create_materialized_view_job(
         }
         _ => return Err(MysqlError::unknown("invalid materialized view name".to_owned())),
     };
-    if catalog.schema_by_name(&schema_name).is_none() {
+    let Some(schema) = catalog.schema_by_name(&schema_name) else {
         return Err(MysqlError::from_terror(
             &tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS.gen_with_stack_by_args(&[schema_name.into()]),
         ));
-    }
-    tidb_ddl_build::validate_comment_length(
+    };
+    let schema = schema.read().clone();
+    let comment = tidb_ddl_build::validate_comment_length(
         &stmt.comment,
-        &tidb_hack::GoToLower::go_to_lower(&view_name),
+        &tidb_hack::go_to_lower(&view_name),
         tidb_ddl_build::CommentOwner::Table,
         &context.metabuild_context(),
     )?;
-    let tidb_ast::QueryStmt::Select(select) = &*stmt.select else {
+    let mut select = (*stmt.select).clone();
+    let tidb_ast::QueryStmt::Select(select_stmt) = &mut select else {
         return Err(general_unsupported("CREATE MATERIALIZED VIEW only supports SELECT statement"));
     };
-    let (base_path, _) = extract_single_table_name_and_alias_from_select(select)?;
+    let (base_path, _) = extract_single_table_name_and_alias_from_select(select_stmt)?;
     let (mut base_schema, base_table) = split_table_path(&base_path);
     if base_schema.is_empty() {
+        // Go sets the TableName's schema in the statement, so the restored
+        // definition names it.
         base_schema = schema_name.clone();
+        if let Some(from) = &mut select_stmt.from {
+            if let tidb_ast::JoinNode::Table(table) = &mut from.left {
+                table.name = vec![schema_name.clone(), base_table.clone()];
+            }
+        }
     }
     let lower = |name: &str| tidb_hack::go_to_lower(name);
     if lower(&base_schema) != lower(&schema_name) {
@@ -980,13 +1030,240 @@ pub(crate) fn create_materialized_view_job(
         )));
     };
     let mlog_columns: Vec<String> = log.read().columns.iter().map(|column| column.original().to_owned()).collect();
-    let _analysis = validate_create_materialized_view_query(
-        context,
-        &base_schema,
-        &base_table,
-        &base,
-        &mlog_columns,
-        &stmt.select,
+    let analysis =
+        validate_create_materialized_view_query(context, &base_schema, &base_table, &base, &mlog_columns, &select)?;
+    normalize_mv_definition_hint_db_names(&mut select, &schema_name);
+    let select_sql = select.restore_with_flags(
+        tidb_parser_format::RestoreFlags::DEFAULT | tidb_parser_format::RestoreFlags::STRING_WITHOUT_CHARSET,
+    );
+    Ok(CreateMaterializedViewPlan { schema, view_name, comment, base, mlog, analysis, select_sql })
+}
+
+/// Go master `executor.CreateMaterializedView` after the SELECT's output
+/// types (`field_types`, one per output column) are known: the table with
+/// its group-key PRIMARY / UNIQUE key and `MaterializedViewInfo`, and the job.
+pub(crate) fn create_materialized_view_job(
+    plan: CreateMaterializedViewPlan,
+    stmt: &tidb_ast::CreateMaterializedViewStmt,
+    field_types: Vec<tidb_datatype::FieldType>,
+    context: &dyn DdlSessionContext,
+) -> Result<crate::JobWrapper, MysqlError> {
+    if field_types.len() != stmt.cols.len() {
+        return Err(MysqlError::unknown(format!(
+            "materialized view column count {} does not match query output {}",
+            stmt.cols.len(),
+            field_types.len()
+        )));
+    }
+    let field_types: Vec<tidb_datatype::FieldType> = field_types
+        .into_iter()
+        .map(|mut field_type| {
+            field_type.del_flag(
+                tidb_datatype::FieldTypeFlags::PRI_KEY
+                    | tidb_datatype::FieldTypeFlags::UNIQUE_KEY
+                    | tidb_datatype::FieldTypeFlags::MULTIPLE_KEY
+                    | tidb_datatype::FieldTypeFlags::AUTO_INCREMENT
+                    | tidb_datatype::FieldTypeFlags::ON_UPDATE_NOW,
+            );
+            field_type
+        })
+        .collect();
+    let columns: Vec<tidb_ast::ColumnDef> =
+        stmt.cols.iter().map(|name| tidb_ddl_build::materialized_view::built_type_column_def(name)).collect();
+    // Go: one row per group, a PRIMARY KEY when every group key is NOT NULL,
+    // else UNIQUE.
+    let all_not_null = plan.analysis.group_by_infos.iter().all(|info| info.not_null);
+    let parts = plan
+        .analysis
+        .group_by_infos
+        .iter()
+        .map(|info| tidb_ast::IndexPart::Column { name: stmt.cols[info.select_idx].clone(), prefix_len: None, desc: false })
+        .collect();
+    let key = tidb_ast::IndexConstraintDefinition {
+        kind: if all_not_null { tidb_ast::IndexConstraintKind::PrimaryKey } else { tidb_ast::IndexConstraintKind::Unique },
+        if_not_exists: false,
+        name: None,
+        is_empty_index: false,
+        parts,
+        options: tidb_ast::IndexOptions::default(),
+    };
+    let create = tidb_ast::CreateTableStmt {
+        temporary: tidb_ast::CreateTableTemporary::None,
+        on_commit_delete: false,
+        if_not_exists: false,
+        name: vec![plan.schema.name.original().to_owned(), plan.view_name.clone()],
+        like_table: None,
+        columns,
+        table_constraints: vec![tidb_ast::TableConstraint::Index(key)],
+        table_options: stmt.options.clone(),
+        partitioning: None,
+        splits: Vec::new(),
+        ctas: None,
+    };
+    let mut info = tidb_ddl_build::table_info_build::build_table_info_with_field_types(
+        &create,
+        &field_types,
+        plan.schema.name.original(),
+        &plan.schema.charset,
+        &plan.schema.collate,
+        &context.metabuild_context(),
+        context.enable_check_constraint(),
+    )
+    .map_err(|error| error.to_mysql_error())?;
+    info.comment = plan.comment.clone();
+    let expr_ctx = SessionExprContext(context);
+    let (refresh_method, refresh_start_with, refresh_next) =
+        tidb_ddl_build::materialized_view::build_mview_refresh_meta(&expr_ctx, stmt.refresh.as_ref())?;
+    let (alert_warning_sec, alert_overdue_sec, alert_refresh_failed) =
+        tidb_ddl_build::materialized_view::parse_mview_attributes(&stmt.attributes)?;
+    let vars = context.ddl_reorg_vars();
+    let sql_mode = context.ddl_sql_mode();
+    info.materialized_view = Some(GoShared::new(tidb_model::table::MaterializedViewInfo {
+        base_table_ids: vec![plan.base.id].into(),
+        init_build_state: tidb_model::table::MViewInitBuildState::BUILDING,
+        sql_content: plan.select_sql.clone(),
+        refresh_method,
+        refresh_start_with,
+        refresh_next,
+        alert_warning_sec,
+        alert_overdue_sec,
+        alert_refresh_failed,
+        definition_sql_mode: sql_mode,
+        refresh_schedule_sql_mode: sql_mode,
+        definition_div_precision_increment: vars.div_precision_increment,
+        definition_time_zone: tidb_model::TimeZoneLocation::new(vars.time_zone_name.clone(), vars.time_zone_offset),
+        ..tidb_model::table::MaterializedViewInfo::default()
+    }));
+    let schema_l = plan.schema.name.lowercase().to_owned();
+    let mut job = crate::cluster_ddl::session_job(context, ActionType::ACTION_CREATE_MATERIALIZED_VIEW);
+    job.schema_id = plan.schema.id;
+    job.schema_name = schema_l.clone().into();
+    job.table_name = info.name.lowercase().to_owned().into();
+    let involving = |table: &str| tidb_model::InvolvingSchemaInfo {
+        database: schema_l.clone().into(),
+        table: table.to_owned().into(),
+        ..tidb_model::InvolvingSchemaInfo::default()
+    };
+    job.involving_schema_info = tidb_goruntime::go_runtime::GoSharedSlice::from_vec(vec![
+        involving(info.name.lowercase()),
+        involving(plan.base.name.lowercase()),
+        involving(plan.mlog.name.lowercase()),
+    ]);
+    // Go `initMaterializedViewReorgMetaFromVariables`.
+    let mut reorg = tidb_model::DDLReorgMeta::new(
+        sql_mode as u64,
+        tidb_model::TimeZoneLocation::new(vars.time_zone_name.clone(), vars.time_zone_offset),
+        vars.resource_group_name.clone(),
+    );
+    reorg.set_concurrency(vars.worker_count);
+    reorg.set_batch_size(vars.batch_size);
+    reorg.set_max_write_speed(vars.max_write_speed);
+    job.reorg_meta = Some(GoShared::new(reorg));
+    let mut session_vars = std::collections::BTreeMap::new();
+    session_vars.insert(tidb_vardef::tidb_vars::TIDB_SCATTER_REGION.to_owned(), vars.scatter_region.clone().into());
+    for (name, value) in vars.mview_execution.job_system_vars() {
+        session_vars.insert(name.to_owned(), value.into());
+    }
+    job.session_vars = Some(GoShared::new(session_vars));
+    let args = tidb_model::CreateMaterializedViewArgs {
+        table_info: Some(GoShared::new(info)),
+        mlog_table_ids: vec![plan.mlog.id],
+    };
+    Ok(crate::JobWrapper {
+        job,
+        args: JobArgsValue::CreateMaterializedView(Some(GoShared::new(args))),
+        id_allocated: false,
+    })
+}
+
+/// Go master `executor.CreateMaterializedView`'s
+/// `ExecRestrictedSQL("SELECT * FROM (<sql>) AS tidb_mv_query LIMIT 0")`
+/// under the definition's sql_mode, div_precision_increment and time zone:
+/// the output column types, on a session of the DDL session pool (Go's
+/// restricted executor borrows one too).
+pub(crate) fn materialized_view_query_output_types(
+    session_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    select_sql: &str,
+    context: &dyn DdlSessionContext,
+) -> Result<Vec<tidb_datatype::FieldType>, MysqlError> {
+    let pool = session_pool
+        .sess_pool()
+        .ok_or_else(|| MysqlError::unknown("the DDL session pool has no sessions"))?;
+    let sess_ctx = pool.get().map_err(|error| MysqlError::unknown(error.to_string()))?;
+    let result = query_output_types_on(&*sess_ctx, select_sql, context);
+    pool.put(sess_ctx);
+    result
+}
+
+fn query_output_types_on(
+    session: &(impl tidb_ddl_session::SessionContext + ?Sized),
+    select_sql: &str,
+    context: &dyn DdlSessionContext,
+) -> Result<Vec<tidb_datatype::FieldType>, MysqlError> {
+    let exec_context = tidb_sqlexec::BackgroundContext;
+    let source = tidb_ddl_session::INTERNAL_TXN_DDL;
+    let run = |sql: &str, args: &[tidb_sqlescape::SqlArg<'_>]| {
+        session.execute_internal(&exec_context, source, sql, args).map_err(|error| cause_mysql_error(error.as_ref()))
+    };
+    let read_vars = |record_set: Option<Box<dyn tidb_sqlexec::RecordSet>>| -> Result<Vec<String>, MysqlError> {
+        let Some(mut record_set) = record_set else {
+            return Ok(Vec::new());
+        };
+        let rows = tidb_sqlexec::drain_record_set(&exec_context, record_set.as_mut(), 1)
+            .map_err(|error| cause_mysql_error(error.as_ref()))?;
+        Ok(rows.first().map(|row| row.iter().map(datum_text).collect()).unwrap_or_default())
+    };
+    // Go's `ExecOptionWithSessionVarsSetup`: the definition's settings for
+    // this statement, the session's own restored afterwards.
+    let original = read_vars(run("SELECT @@SESSION.sql_mode, @@SESSION.time_zone, @@SESSION.div_precision_increment", &[])?)?;
+    let vars = context.ddl_reorg_vars();
+    let div_precision_increment = vars.div_precision_increment.to_string();
+    run(
+        "SET @@SESSION.sql_mode = %?, @@SESSION.time_zone = %?, @@SESSION.div_precision_increment = %?",
+        &[
+            tidb_sqlescape::SqlArg::String(vars.sql_mode_var.as_bytes()),
+            tidb_sqlescape::SqlArg::String(vars.time_zone_var.as_bytes()),
+            tidb_sqlescape::SqlArg::String(div_precision_increment.as_bytes()),
+        ],
     )?;
-    Err(general_unsupported("CREATE MATERIALIZED VIEW on this node"))
+    let query = format!("SELECT * FROM ({select_sql}) AS `tidb_mv_query` LIMIT 0");
+    let result = run(&query, &[]).and_then(|record_set| {
+        let Some(record_set) = record_set else {
+            return Ok(Vec::new());
+        };
+        record_set
+            .fields()
+            .iter()
+            .map(|field| {
+                field
+                    .read()
+                    .column
+                    .as_ref()
+                    .map(|column| column.read().field_type.clone())
+                    .ok_or_else(|| MysqlError::unknown("a result field of the definition has no column"))
+            })
+            .collect::<Result<Vec<_>, _>>()
+    });
+    if let [sql_mode, time_zone, div] = original.as_slice() {
+        let _ = run(
+            "SET @@SESSION.sql_mode = %?, @@SESSION.time_zone = %?, @@SESSION.div_precision_increment = %?",
+            &[
+                tidb_sqlescape::SqlArg::String(sql_mode.as_bytes()),
+                tidb_sqlescape::SqlArg::String(time_zone.as_bytes()),
+                tidb_sqlescape::SqlArg::String(div.as_bytes()),
+            ],
+        );
+    }
+    result
+}
+
+/// A system variable's value as `SELECT @@var` answers it.
+fn datum_text(datum: &tidb_datatype::Datum) -> String {
+    match datum {
+        tidb_datatype::Datum::Int(value) => value.to_string(),
+        tidb_datatype::Datum::UInt(value) => value.to_string(),
+        tidb_datatype::Datum::String(value) => String::from_utf8_lossy(value.bytes()).into_owned(),
+        tidb_datatype::Datum::Bytes(value) => String::from_utf8_lossy(value).into_owned(),
+        _ => String::new(),
+    }
 }

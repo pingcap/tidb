@@ -1064,3 +1064,847 @@ pub(super) fn on_alter_materialized_view_log_purge(
     write.mutations.extend(mutations);
     Ok(super::add_index::action_step(write))
 }
+
+/// Go master `formatSQLMode`: every mode name the bits touch, sorted.
+fn format_sql_mode(mode: i64) -> String {
+    let mut names: Vec<&str> = tidb_mysql::consts::SQL_MODE_NAMES
+        .iter()
+        .filter(|(_, bits)| mode & bits.0 != 0)
+        .map(|(name, _)| *name)
+        .collect();
+    names.sort_unstable();
+    names.join(",")
+}
+
+/// What a CREATE MATERIALIZED VIEW job's initial build needs (Go master
+/// `buildCreateMaterializedViewData`'s arguments).
+#[derive(Clone, Debug)]
+pub struct MViewBuild {
+    /// The job's schema name.
+    pub schema_name: String,
+    /// The view, as the job created it.
+    pub mview: Box<TableInfo>,
+    /// The job's session variables (Go `MViewExecutionSessionVarsFromJob`).
+    pub job_session_vars: Vec<(String, String)>,
+    /// The job's resource group (Go `job.ReorgMeta.ResourceGroupName`).
+    pub resource_group: String,
+}
+
+fn ddl_session_sql<C: tidb_ddl_session::SessionContext + ?Sized>(
+    session: &C,
+    sql: &str,
+    args: &[tidb_sqlescape::SqlArg<'_>],
+) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
+    let context = tidb_sqlexec::BackgroundContext;
+    let record_set = session
+        .execute_internal(&context, tidb_ddl_session::INTERNAL_TXN_DDL, sql, args)
+        .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
+    match record_set {
+        Some(mut record_set) => tidb_sqlexec::drain_record_set(&context, record_set.as_mut(), 8)
+            .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string())),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Go master `initCreateMaterializedViewBuildSession`
+/// (`ApplyMViewExecutionSessionVars` then `InitMViewSession`) on a session
+/// of the pool: the settings it applies, the session's own values to
+/// restore afterwards.
+fn create_materialized_view_build_session_vars(build: &MViewBuild) -> Result<Vec<(String, String)>, tidb_terror::MysqlError> {
+    let info = build
+        .mview
+        .materialized_view
+        .as_ref()
+        .ok_or_else(|| invalid_ddl_job("create materialized view: invalid materialized view metadata"))?
+        .read()
+        .clone();
+    let job_var = |name: &str| build.job_session_vars.iter().find(|(var, _)| var == name).map(|(_, value)| value.clone());
+    let mut vars = Vec::new();
+    // Go `ApplyMViewExecutionSessionVars`: the maintenance memory quota and
+    // read engines as the session's own, and the rest by name.
+    use tidb_vardef::tidb_vars;
+    for (from, to) in [
+        (tidb_vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA, "tidb_mem_quota_query"),
+        (tidb_vars::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES, "tidb_isolation_read_engines"),
+        (tidb_vars::TIDB_MAX_TIFLASH_THREADS, tidb_vars::TIDB_MAX_TIFLASH_THREADS),
+        (tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN, tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN),
+        (tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY, tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY),
+        (tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT, tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT),
+        (tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE, tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE),
+        (tidb_vars::TIFLASH_QUERY_SPILL_RATIO, tidb_vars::TIFLASH_QUERY_SPILL_RATIO),
+        (tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT, tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT),
+        (tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE, tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE),
+        (tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS, tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS),
+        (tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA, tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA),
+        (tidb_vars::TIDB_TRACK_AGGREGATE_MEMORY_USAGE, tidb_vars::TIDB_TRACK_AGGREGATE_MEMORY_USAGE),
+        (tidb_vars::TIDB_ENABLE_PARALLEL_HASHAGG_SPILL, tidb_vars::TIDB_ENABLE_PARALLEL_HASHAGG_SPILL),
+    ] {
+        if let Some(value) = job_var(from) {
+            vars.push((to.to_owned(), value));
+        }
+    }
+    // Go `InitMViewSession`.
+    vars.push((tidb_vars::TIDB_MVIEW_ENABLE.to_owned(), "ON".to_owned()));
+    vars.push(("sql_mode".to_owned(), format_sql_mode(info.definition_sql_mode)));
+    let zone = &info.definition_time_zone;
+    let zone_name = if zone.offset == 0 {
+        zone.name.to_string()
+    } else {
+        let offset = zone.offset;
+        let sign = if offset < 0 { '-' } else { '+' };
+        format!("{sign}{:02}:{:02}", offset.abs() / 3600, offset.abs() % 3600 / 60)
+    };
+    vars.push(("time_zone".to_owned(), zone_name));
+    vars.push(("div_precision_increment".to_owned(), info.definition_div_precision_increment.to_string()));
+    Ok(vars)
+}
+
+/// Go master `buildCreateMaterializedViewData` by INSERT (Go's non-TiKV
+/// store path; IMPORT INTO is its TiKV path, which this node does not run):
+/// `REPLACE INTO schema.view <definition>` on a pooled session set up as the
+/// view's maintenance session, answered with the statement's read TS.
+///
+/// # Errors
+///
+/// The session could not be set up, the build failed, or its read TS is
+/// unknown.
+pub fn build_create_materialized_view_data(
+    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    build: &MViewBuild,
+) -> Result<u64, tidb_terror::MysqlError> {
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr").is_some() {
+        return Err(tidb_terror::MysqlError::unknown("mock create materialized view build error"));
+    }
+    let info = build
+        .mview
+        .materialized_view
+        .as_ref()
+        .filter(|info| !info.read().sql_content.is_empty())
+        .ok_or_else(|| invalid_ddl_job("create materialized view: invalid select sql"))?
+        .read()
+        .clone();
+    let vars = create_materialized_view_build_session_vars(build)?;
+    let pool = sess_pool
+        .sess_pool()
+        .ok_or_else(|| tidb_terror::MysqlError::unknown("the DDL session pool has no sessions"))?;
+    let session = pool.get().map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
+    let result = (|| {
+        let select = format!(
+            "SELECT {}",
+            vars.iter().map(|(name, _)| format!("@@SESSION.{name}")).collect::<Vec<_>>().join(", ")
+        );
+        let original: Vec<String> = ddl_session_sql(&*session, &select, &[])?
+            .first()
+            .map(|row| row.iter().map(datum_as_text).collect())
+            .unwrap_or_default();
+        let set = |pairs: &[(String, String)]| -> Result<(), tidb_terror::MysqlError> {
+            for (name, value) in pairs {
+                ddl_session_sql(
+                    &*session,
+                    &format!("SET @@SESSION.{name} = %?"),
+                    &[tidb_sqlescape::SqlArg::String(value.as_bytes())],
+                )?;
+            }
+            Ok(())
+        };
+        set(&vars)?;
+        let built = (|| {
+            // Go `sqlescape.MustEscapeSQL("REPLACE INTO %n.%n ", ...)` then
+            // the definition, which carries no placeholders.
+            let prefix = tidb_sqlescape::escape_sql_text(
+                "REPLACE INTO %n.%n ",
+                &[
+                    tidb_sqlescape::SqlArg::String(build.schema_name.as_bytes()),
+                    tidb_sqlescape::SqlArg::String(build.mview.name.original().as_bytes()),
+                ],
+            )
+            .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
+            ddl_session_sql(&*session, &format!("{prefix}{}", info.sql_content), &[])?;
+            // Go `getCreateMaterializedViewBuildReadTS`.
+            let rows = ddl_session_sql(
+                &*session,
+                "SELECT COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(@@tidb_last_query_info, '$.start_ts')) AS UNSIGNED), CAST(0 AS UNSIGNED))",
+                &[],
+            )?;
+            let read_ts = match rows.first().and_then(|row| row.first()) {
+                Some(tidb_datatype::Datum::UInt(ts)) => *ts,
+                Some(tidb_datatype::Datum::Int(ts)) => u64::try_from(*ts).unwrap_or_default(),
+                _ => return Err(invalid_ddl_job("create materialized view: cannot fetch build read tso")),
+            };
+            if read_ts == 0 {
+                return Err(invalid_ddl_job("create materialized view: invalid build read tso"));
+            }
+            Ok(read_ts)
+        })();
+        let restore: Vec<(String, String)> =
+            vars.iter().map(|(name, _)| name.clone()).zip(original).collect();
+        let _ = set(&restore);
+        built
+    })();
+    pool.put(session);
+    result
+}
+
+fn datum_as_text(datum: &tidb_datatype::Datum) -> String {
+    match datum {
+        tidb_datatype::Datum::Int(value) => value.to_string(),
+        tidb_datatype::Datum::UInt(value) => value.to_string(),
+        tidb_datatype::Datum::String(value) => String::from_utf8_lossy(value.bytes()).into_owned(),
+        tidb_datatype::Datum::Bytes(value) => String::from_utf8_lossy(value).into_owned(),
+        tidb_datatype::Datum::Real(value) => tidb_goruntime::go_strconv::format_float(*value, b'f', -1, 64),
+        _ => String::new(),
+    }
+}
+
+/// Go master `onCreateMaterializedViewBaseCheck`.
+fn on_create_materialized_view_base_check(
+    txn: &mut JobTxn<'_>,
+    schema_id: i64,
+    base_id: i64,
+    schema_name: &str,
+) -> Result<TableInfo, DdlPlanError> {
+    let base = get_table_info(txn, base_id, schema_id)?;
+    if base.is_view()
+        || base.is_sequence()
+        || base.temp_table_type != tidb_model::TempTableType::NONE
+        || base.materialized_view.is_some()
+    {
+        return Err(DdlPlanError::from(tidb_dbterror::ERR_WRONG_OBJECT.gen_with_stack_by_args(&[
+            schema_name.to_owned().into(),
+            base.name.original().to_owned().into(),
+            "BASE TABLE".into(),
+        ])));
+    }
+    if base.get_partition_info().is_some() {
+        return Err(err_unsupported_materialized_view_on_partition_table("CREATE MATERIALIZED VIEW"));
+    }
+    let invalid_state = |state: SchemaState| {
+        DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
+            FormatArg::from("table"),
+            FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
+        ]))
+    };
+    if base.state != SchemaState::PUBLIC {
+        return Err(invalid_state(base.state));
+    }
+    let mlog_id = base.materialized_view_base.as_ref().map_or(0, |info| info.read().mlog_id);
+    if mlog_id == 0 {
+        return Err(DdlPlanError::from_mysql_error(invalid_ddl_job(
+            "create materialized view: base table has no materialized view log",
+        )));
+    }
+    let mlog = get_table_info(txn, mlog_id, schema_id)?;
+    if mlog.materialized_view_log.as_ref().is_none_or(|log| log.read().base_table_id != base.id) {
+        return Err(DdlPlanError::from_mysql_error(invalid_ddl_job(
+            "create materialized view: invalid materialized view log metadata",
+        )));
+    }
+    if mlog.state != SchemaState::PUBLIC {
+        return Err(invalid_state(mlog.state));
+    }
+    Ok(base)
+}
+
+/// Go master `isCreateMaterializedViewBaseCheckCancelledErr`.
+fn is_create_materialized_view_base_check_cancelled_err(error: &DdlPlanError) -> bool {
+    error.equal(&tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS)
+        || error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS)
+        || error.equal(&tidb_dbterror::ERR_INVALID_DDL_JOB)
+        || error.equal(&tidb_dbterror::ERR_WRONG_OBJECT)
+        || error.equal(&tidb_dbterror::ERR_INVALID_DDL_STATE)
+        || error.equal(&tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL)
+}
+
+/// Go master `updateMaterializedViewBaseInfoOnCreate` for a materialized
+/// view: its base tables list it, its logs read for it. An error cancels the
+/// job.
+fn update_materialized_view_base_info_on_create(
+    txn: &mut JobTxn<'_>,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    created: &TableInfo,
+    mlog_ids: &[i64],
+    start_ts: u64,
+) -> Result<Vec<(i64, TableInfo)>, DdlPlanError> {
+    let schema_id = active.job.schema_id;
+    let base_ids: Vec<i64> = created
+        .materialized_view
+        .as_ref()
+        .map(|info| info.read().base_table_ids.iter().copied().collect())
+        .unwrap_or_default();
+    if base_ids.is_empty() {
+        return Err(cancel_ddl_job(
+            active,
+            DdlPlanError::plain_refusal("materialized view must reference at least one base table"),
+        ));
+    }
+    let mut extra = Vec::new();
+    let mut processed: Vec<i64> = Vec::new();
+    for &base_id in &base_ids {
+        if base_id == 0 {
+            return Err(cancel_ddl_job(active, DdlPlanError::plain_refusal("materialized view base table id is invalid")));
+        }
+        if processed.contains(&base_id) {
+            continue;
+        }
+        processed.push(base_id);
+        let mut base = get_table_info(txn, base_id, schema_id).map_err(|error| cancel_ddl_job(active, error))?;
+        {
+            let info = base.materialized_view_base.get_or_insert_with(Default::default);
+            let mut info = info.write();
+            if !info.mview_ids.iter().any(|&id| id == created.id) {
+                let mut ids: Vec<i64> = info.mview_ids.iter().copied().collect();
+                ids.push(created.id);
+                info.mview_ids = ids.into();
+            }
+        }
+        update_table(txn, schema_id, &mut base, start_ts).map_err(|error| cancel_ddl_job(active, error))?;
+        extra.push((schema_id, base));
+    }
+    let mut processed_mlogs: Vec<i64> = Vec::new();
+    for &mlog_id in mlog_ids {
+        if mlog_id == 0 {
+            return Err(cancel_ddl_job(active, DdlPlanError::plain_refusal("materialized view log id is invalid")));
+        }
+        if processed_mlogs.contains(&mlog_id) {
+            continue;
+        }
+        processed_mlogs.push(mlog_id);
+        let mut mlog = get_table_info(txn, mlog_id, schema_id).map_err(|error| cancel_ddl_job(active, error))?;
+        let Some(log) = mlog.materialized_view_log.clone() else {
+            return Err(cancel_ddl_job(
+                active,
+                DdlPlanError::from_mysql_error(invalid_ddl_job("create materialized view: invalid materialized view log")),
+            ));
+        };
+        if !base_ids.contains(&log.read().base_table_id) {
+            return Err(cancel_ddl_job(
+                active,
+                DdlPlanError::from_mysql_error(invalid_ddl_job(
+                    "create materialized view: materialized view log does not belong to a base table",
+                )),
+            ));
+        }
+        if log.read().dependent_mview_ids.iter().any(|&id| id == created.id) {
+            continue;
+        }
+        let mut ids: Vec<i64> = log.read().dependent_mview_ids.iter().copied().collect();
+        ids.push(created.id);
+        log.write().dependent_mview_ids = ids.into();
+        update_table(txn, schema_id, &mut mlog, start_ts).map_err(|error| cancel_ddl_job(active, error))?;
+        extra.push((schema_id, mlog));
+    }
+    Ok(extra)
+}
+
+/// Go master `updateMaterializedViewBaseInfoOnDrop` for a materialized view:
+/// its base tables and their logs forget it.
+pub(crate) fn update_materialized_view_base_info_on_drop_mview(
+    txn: &mut JobTxn<'_>,
+    active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    dropping: &TableInfo,
+) -> Result<Vec<(i64, TableInfo)>, DdlPlanError> {
+    let Some(info) = &dropping.materialized_view else {
+        return Ok(Vec::new());
+    };
+    let base_ids: Vec<i64> = info.read().base_table_ids.iter().copied().collect();
+    let schema_id = active.job.schema_id;
+    let mview_id = active.job.table_id;
+    let mut extra = Vec::new();
+    let mut processed: Vec<i64> = Vec::new();
+    for base_id in base_ids {
+        if processed.contains(&base_id) {
+            continue;
+        }
+        processed.push(base_id);
+        let meta = txn.meta();
+        let base = meta.table(schema_id, base_id).map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+        let Some(mut base) = base else {
+            continue;
+        };
+        let mlog_id = base.materialized_view_base.as_ref().map_or(0, |info| info.read().mlog_id);
+        if let Some(info) = base.materialized_view_base.clone() {
+            let empty = {
+                let mut info = info.write();
+                let kept: Vec<i64> = info.mview_ids.iter().copied().filter(|&id| id != mview_id).collect();
+                info.mview_ids = kept.into();
+                info.mlog_id == 0 && info.mview_ids.is_empty()
+            };
+            if empty {
+                base.materialized_view_base = None;
+            }
+        }
+        extra.push((schema_id, base));
+        if mlog_id == 0 {
+            continue;
+        }
+        let meta = txn.meta();
+        let mlog = meta.table(schema_id, mlog_id).map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+        let Some(mlog) = mlog else {
+            continue;
+        };
+        let Some(log) = mlog.materialized_view_log.clone() else {
+            continue;
+        };
+        if log.read().base_table_id != base_id || !log.read().dependent_mview_ids.iter().any(|&id| id == mview_id) {
+            continue;
+        }
+        let kept: Vec<i64> = log.read().dependent_mview_ids.iter().copied().filter(|&id| id != mview_id).collect();
+        log.write().dependent_mview_ids = kept.into();
+        extra.push((schema_id, mlog));
+    }
+    Ok(extra)
+}
+
+/// Go master `buildCreateMaterializedViewRefreshInfoUpsertSQL`.
+fn create_materialized_view_refresh_info_upsert_sql(
+    mview_id: i64,
+    read_ts: u64,
+    last_success: Option<i64>,
+    next: Option<i64>,
+    should_update: bool,
+) -> String {
+    let last = last_success.map_or_else(|| "NULL".to_owned(), |last| last.to_string());
+    if should_update {
+        let next = next.map_or_else(|| "NULL".to_owned(), |next| next.to_string());
+        return format!(
+            "INSERT INTO mysql.tidb_mview_refresh_info (MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS, NEXT_REFRESH_UNIX_SECONDS)\nVALUES ({mview_id}, {read_ts}, {last}, {next}) ON DUPLICATE KEY UPDATE LAST_SUCCESS_READ_TSO = VALUES(LAST_SUCCESS_READ_TSO), LAST_SUCCESS_REFRESH_END_UNIX_SECONDS = VALUES(LAST_SUCCESS_REFRESH_END_UNIX_SECONDS), NEXT_REFRESH_UNIX_SECONDS = VALUES(NEXT_REFRESH_UNIX_SECONDS)"
+        );
+    }
+    format!(
+        "INSERT INTO mysql.tidb_mview_refresh_info (MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS)\nVALUES ({mview_id}, {read_ts}, {last}) ON DUPLICATE KEY UPDATE LAST_SUCCESS_READ_TSO = VALUES(LAST_SUCCESS_READ_TSO), LAST_SUCCESS_REFRESH_END_UNIX_SECONDS = VALUES(LAST_SUCCESS_REFRESH_END_UNIX_SECONDS)"
+    )
+}
+
+/// Go master `convertCreateMaterializedViewRefreshInfoTableNotExistsErr`.
+fn convert_refresh_info_table_not_exists(error: tidb_terror::MysqlError) -> DdlPlanError {
+    if error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS) {
+        return DdlPlanError::from_mysql_error(invalid_ddl_job(
+            "create materialized view: required system table mysql.tidb_mview_refresh_info does not exist",
+        ));
+    }
+    DdlPlanError::from_mysql_error(error)
+}
+
+/// Go master `prewriteCreateMaterializedViewRefreshInfo`: the view's refresh
+/// row, read TS its own transaction's start TS, in a transaction of a pooled
+/// session.
+fn prewrite_create_materialized_view_refresh_info(
+    sessions: Option<&DdlStepWorker>,
+    mview_id: i64,
+) -> Result<(), DdlPlanError> {
+    let sessions =
+        sessions.ok_or_else(|| DdlPlanError::Encode("the DDL step has no session pool".to_owned()))?;
+    let pool = sessions
+        .sess_pool
+        .sess_pool()
+        .ok_or_else(|| DdlPlanError::Encode("the DDL session pool has no sessions".to_owned()))?;
+    let session_ctx = pool.get().map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    let context = tidb_sqlexec::BackgroundContext;
+    let session = tidb_ddl_session::Session::new(std::sync::Arc::clone(&session_ctx));
+    let result = (|| {
+        session.begin(&context).map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        let mut committed = false;
+        let done = (|| {
+            ddl_session_sql(
+                &*session_ctx,
+                "SELECT 1 FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? LIMIT 1",
+                &[tidb_sqlescape::SqlArg::Signed(mview_id)],
+            )
+            .map_err(convert_refresh_info_table_not_exists)?;
+            let start_ts = session
+                .txn()
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+                .map(|txn| txn.start_ts())
+                .filter(|&ts| ts != 0)
+                .ok_or_else(|| {
+                    DdlPlanError::from_mysql_error(invalid_ddl_job("create materialized view: invalid init refresh tso"))
+                })?;
+            ddl_session_sql(
+                &*session_ctx,
+                &create_materialized_view_refresh_info_upsert_sql(mview_id, start_ts, None, None, false),
+                &[],
+            )
+            .map_err(convert_refresh_info_table_not_exists)?;
+            session.commit(&context).map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            committed = true;
+            Ok(())
+        })();
+        if !committed {
+            session.rollback();
+        }
+        done
+    })();
+    pool.put(session_ctx);
+    result
+}
+
+/// Go master `mviewutil.InsertRefreshSourceIDs` on the step's session: the
+/// view's whole input log set.
+fn insert_mview_refresh_source_info(txn: &JobTxn<'_>, mview_id: i64, mlog_ids: &[i64]) -> Result<(), DdlPlanError> {
+    if mlog_ids.is_empty() {
+        return Ok(());
+    }
+    let values = mlog_ids.iter().map(|mlog_id| format!("({mview_id}, {mlog_id})")).collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "INSERT INTO mysql.{} (MVIEW_ID, MLOG_ID) VALUES {values}",
+        tidb_metadef::system_tables_def::TIDB_MVIEW_FAST_REFRESH_SOURCE_INFO_TABLE_NAME
+    );
+    execute_job_sql(txn, &sql).map_err(DdlPlanError::from_mysql_error)
+}
+
+/// Go master `deleteCreateMaterializedViewRefreshInfos` (with
+/// `deleteMViewRefreshSourceInfos` first): a missing info table deletes
+/// nothing.
+fn delete_create_materialized_view_refresh_info(txn: &JobTxn<'_>, mview_id: i64) -> Result<(), DdlPlanError> {
+    let source = format!(
+        "DELETE FROM mysql.{} WHERE MVIEW_ID IN ({mview_id})",
+        tidb_metadef::system_tables_def::TIDB_MVIEW_FAST_REFRESH_SOURCE_INFO_TABLE_NAME
+    );
+    execute_job_sql(txn, &source).map_err(DdlPlanError::from_mysql_error)?;
+    match execute_job_sql(txn, &format!("DELETE FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN ({mview_id})")) {
+        Err(error) if error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS) => Ok(()),
+        other => other.map_err(DdlPlanError::from_mysql_error),
+    }
+}
+
+/// Go master `deleteCreateMaterializedViewRefreshAlerts`: best effort.
+fn delete_create_materialized_view_refresh_alert(txn: &JobTxn<'_>, mview_id: i64) {
+    let _ = execute_job_sql(txn, &format!("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID IN ({mview_id})"));
+}
+
+/// Go master `upsertCreateMaterializedViewRefreshInfo`: the refresh row with
+/// the build's read TS, now as the last success, and the next refresh.
+fn upsert_create_materialized_view_refresh_info(
+    txn: &JobTxn<'_>,
+    mview: &TableInfo,
+    read_ts: u64,
+) -> Result<(), DdlPlanError> {
+    let info = mview
+        .materialized_view
+        .as_ref()
+        .ok_or_else(|| {
+            DdlPlanError::from_mysql_error(invalid_ddl_job("create materialized view: invalid materialized view metadata"))
+        })?
+        .read()
+        .clone();
+    let (next, should_update) = tidb_ddl_build::materialized_view::derive_materialized_schedule_next_unix_seconds(
+        &info.refresh_start_with,
+        &info.refresh_next,
+        info.refresh_schedule_sql_mode,
+        chrono::Utc::now(),
+    )
+    .map_err(DdlPlanError::from_mysql_error)?;
+    let last_success = chrono::Utc::now().timestamp();
+    let sql = create_materialized_view_refresh_info_upsert_sql(mview.id, read_ts, Some(last_success), next, should_update);
+    execute_job_sql(txn, &sql).map_err(convert_refresh_info_table_not_exists)
+}
+
+/// Go master `(*worker).onCreateMaterializedView`.
+pub(super) fn on_create_materialized_view(
+    txn: &mut JobTxn<'_>,
+    catalog: &SessionExtendedInfoSchema,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    start_ts: u64,
+    reorg_outcome: Option<&super::add_index::ReorgOutcome>,
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
+    sessions: Option<&DdlStepWorker>,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    let invalid_args = |active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob, message: &str| {
+        cancel_ddl_job(active, DdlPlanError::from_mysql_error(invalid_ddl_job(message)))
+    };
+    let args = tidb_model::get_create_materialized_view_args(&mut active.job)
+        .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?;
+    let Some(args) = args else {
+        return Err(invalid_args(active, "create materialized view: invalid job args"));
+    };
+    let (table_handle, mlog_ids) = {
+        let args = args.read();
+        (args.table_info.clone(), args.mlog_table_ids.clone())
+    };
+    let Some(table_handle) = table_handle else {
+        return Err(invalid_args(active, "create materialized view: invalid job args"));
+    };
+    let mut mview = table_handle.read().clone_like_go();
+    let base_ids: Vec<i64> = match &mview.materialized_view {
+        Some(info) if !info.read().base_table_ids.is_empty() => info.read().base_table_ids.iter().copied().collect(),
+        _ => return Err(invalid_args(active, "create materialized view: invalid job args")),
+    };
+    let mut seen: Vec<i64> = Vec::new();
+    for &id in &base_ids {
+        if id == 0 {
+            return Err(invalid_args(active, "create materialized view: invalid base table id"));
+        }
+        if seen.contains(&id) {
+            return Err(invalid_args(active, "create materialized view: duplicate base table id"));
+        }
+        seen.push(id);
+    }
+    if active.job.is_rollingback() {
+        return rollback_create_materialized_view(txn, active, &mview, &mlog_ids, start_ts);
+    }
+    let schema_id = active.job.schema_id;
+    let schema_name = active.job.schema_name.to_string();
+    match active.job.schema_state {
+        SchemaState::NONE => {
+            for &id in &base_ids {
+                if let Err(error) = on_create_materialized_view_base_check(txn, schema_id, id, &schema_name) {
+                    if is_create_materialized_view_base_check_cancelled_err(&error) {
+                        active.job.state = JobState::CANCELLED;
+                    }
+                    return Err(error);
+                }
+            }
+            let database = job_schema_with_tables(txn, schema_id)?.ok_or_else(|| {
+                cancel_ddl_job(
+                    active,
+                    DdlPlanError::from(
+                        tidb_dbterror::CLASS_SCHEMA
+                            .new_std(tidb_errno::errcode::ErrBadDB)
+                            .generate(format!("Unknown database '(Schema ID {schema_id})'")),
+                    ),
+                )
+            })?;
+            let mut placement_bundles = Vec::new();
+            let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
+            mview.state = SchemaState::NONE;
+            create_table::create_table(
+                txn,
+                catalog,
+                &database,
+                active,
+                &mut mview,
+                false,
+                start_ts,
+                &mut placement_bundles,
+                &mut affinity_groups,
+            )?;
+            active.job.table_id = mview.id;
+            let extra = update_materialized_view_base_info_on_create(txn, active, &mview, &mlog_ids, start_ts)?;
+            let mut diff = SchemaDiff {
+                action_type: active.job.type_,
+                schema_id,
+                table_id: mview.id,
+                ..SchemaDiff::default()
+            };
+            let infos: Vec<(i64, i64)> = extra.iter().map(|(schema, table)| (*schema, table.id)).collect();
+            set_schema_diff_for_multi_infos(&mut diff, &infos);
+            let (schema_version, diff) = update_schema_version(&txn.meta(), active, diff)?;
+            *table_handle.write() = mview.clone_like_go();
+            let mut mutations = Vec::new();
+            append_schema_change_mutations(
+                txn,
+                catalog,
+                active.job.id,
+                &[(-1, SchemaChangeEvent::create_table(mview.clone_like_go()))],
+                &mut mutations,
+                row_ids,
+            )?;
+            if let Err(error) = prewrite_create_materialized_view_refresh_info(sessions, mview.id) {
+                active.job.state = JobState::ROLLINGBACK;
+                return Err(error);
+            }
+            active.job.schema_state = SchemaState::WRITE_REORGANIZATION;
+            active.job.state = JobState::RUNNING;
+            let mut write = job_only_write(active.job.id, mutations);
+            write.schema_version = schema_version;
+            write.diff = diff;
+            write.created_id = Some(mview.id);
+            write.placement_bundles = placement_bundles;
+            write.affinity_groups = affinity_groups;
+            Ok(PersistedDdlActionStep { write, update_raw_args: true, run_error: None, reorg: None })
+        }
+        SchemaState::WRITE_REORGANIZATION => {
+            let Some(outcome) = reorg_outcome else {
+                // Go: rows left by a build that did not finish fail the retry.
+                let check_args = [
+                    tidb_sqlescape::SqlArg::String(schema_name.as_bytes()),
+                    tidb_sqlescape::SqlArg::String(mview.name.original().as_bytes()),
+                ];
+                match txn.execute("SELECT 1 FROM %n.%n LIMIT 1", &check_args) {
+                    Some(Ok(rows)) if !rows.is_empty() => {
+                        active.job.state = JobState::ROLLINGBACK;
+                        return Err(DdlPlanError::from_mysql_error(invalid_ddl_job(
+                            "create materialized view: detected residual build rows on retry",
+                        )));
+                    }
+                    Some(Err(error)) => {
+                        active.job.state = JobState::ROLLINGBACK;
+                        return Err(DdlPlanError::from_mysql_error(error));
+                    }
+                    _ => {}
+                }
+                let build = MViewBuild {
+                    schema_name: schema_name.clone(),
+                    mview: Box::new(mview.clone_like_go()),
+                    job_session_vars: active
+                        .job
+                        .session_vars
+                        .as_ref()
+                        .map(|vars| vars.read().iter().map(|(name, value)| (name.clone(), value.to_string())).collect())
+                        .unwrap_or_default(),
+                    resource_group: active
+                        .job
+                        .reorg_meta
+                        .as_ref()
+                        .map(|meta| meta.read().resource_group_name.to_string())
+                        .unwrap_or_default(),
+                };
+                return Ok(PersistedDdlActionStep {
+                    write: job_only_write(active.job.id, Vec::new()),
+                    update_raw_args: false,
+                    run_error: None,
+                    reorg: Some(super::add_index::AddIndexReorg {
+                        job_id: active.job.id,
+                        query: active.job.query.clone(),
+                        stage: super::add_index::ReorgStageRequest::BuildMaterializedView(Box::new(build)),
+                        table: Box::new(mview.clone_like_go()),
+                        index_ids: Vec::new(),
+                        merging: false,
+                        physical_ids: Vec::new(),
+                        batch_size: 1,
+                        concurrency: 1,
+                        session_vars: tidb_ddl_build::session_pool::ReorgSessionVars::of_job(&active.job),
+                        row_count: active.job.row_count,
+                        column: None,
+                        sub_job: super::add_index::reorg_sub_job(&active.job),
+                        clean_up_global_index: false,
+                        partition_phase: None,
+                        schema_id,
+                    }),
+                });
+            };
+            let read_ts = match &outcome.result {
+                super::add_index::ReorgResult::Built(read_ts) => *read_ts,
+                super::add_index::ReorgResult::Failed { code, message, identity, .. } => {
+                    active.job.state = JobState::ROLLINGBACK;
+                    return Err(DdlPlanError::from_mysql_error(
+                        tidb_terror::MysqlError::sql_error(*code, message.clone()).with_identity_opt(*identity),
+                    ));
+                }
+                _ => {
+                    active.job.state = JobState::ROLLINGBACK;
+                    return Err(DdlPlanError::Encode("create materialized view: unexpected build outcome".to_owned()));
+                }
+            };
+            active.job.snapshot_version = read_ts;
+            if active.job.snapshot_version == 0 {
+                active.job.state = JobState::ROLLINGBACK;
+                return Err(DdlPlanError::from_mysql_error(invalid_ddl_job(
+                    "create materialized view: invalid build read tso",
+                )));
+            }
+            let mut finished = Vec::new();
+            let mut source_mlogs = Vec::new();
+            for &id in &base_ids {
+                let base = match on_create_materialized_view_base_check(txn, schema_id, id, &schema_name) {
+                    Ok(base) => base,
+                    Err(error) => {
+                        active.job.state = JobState::ROLLINGBACK;
+                        return Err(error);
+                    }
+                };
+                source_mlogs.push(base.materialized_view_base.as_ref().map_or(0, |info| info.read().mlog_id));
+                finished.push(base);
+            }
+            if let Err(error) = upsert_create_materialized_view_refresh_info(txn, &mview, read_ts) {
+                active.job.state = JobState::ROLLINGBACK;
+                return Err(error);
+            }
+            if let Err(error) = insert_mview_refresh_source_info(txn, mview.id, &source_mlogs) {
+                active.job.state = JobState::ROLLINGBACK;
+                return Err(error);
+            }
+            if let Some(info) = &mview.materialized_view {
+                info.write().init_build_state = tidb_model::table::MViewInitBuildState::READY;
+            }
+            if let Err(error) = update_table(txn, schema_id, &mut mview, start_ts) {
+                active.job.state = JobState::ROLLINGBACK;
+                return Err(error);
+            }
+            let diff = SchemaDiff {
+                action_type: active.job.type_,
+                schema_id,
+                table_id: mview.id,
+                ..SchemaDiff::default()
+            };
+            let (schema_version, diff) = match update_schema_version(&txn.meta(), active, diff) {
+                Ok(updated) => updated,
+                Err(error) => {
+                    active.job.state = JobState::ROLLINGBACK;
+                    return Err(error);
+                }
+            };
+            finished.push(mview.clone_like_go());
+            active.job.finish_multiple_table_job(
+                JobState::DONE,
+                SchemaState::PUBLIC,
+                schema_version,
+                &GoSharedPointerSlice::from(finished),
+            );
+            let mut write = job_only_write(active.job.id, Vec::new());
+            write.schema_version = schema_version;
+            write.diff = diff;
+            Ok(PersistedDdlActionStep { write, update_raw_args: true, run_error: None, reorg: None })
+        }
+        state => Err(DdlPlanError::from(
+            tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack(format!("invalid create materialized view schema state {state}")),
+        )),
+    }
+}
+
+/// Go master `(*worker).rollbackCreateMaterializedView`.
+fn rollback_create_materialized_view(
+    txn: &mut JobTxn<'_>,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    mview: &TableInfo,
+    mlog_ids: &[i64],
+    start_ts: u64,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    let schema_id = active.job.schema_id;
+    let table_id = active.job.table_id;
+    let actual = match get_table_info(txn, table_id, schema_id) {
+        Ok(table) => Some(table),
+        Err(error) if is_not_exists(&error) => None,
+        Err(error) => return Err(error),
+    };
+    let dropping = actual.clone().unwrap_or_else(|| mview.clone_like_go());
+    let extra = update_materialized_view_base_info_on_drop_mview(txn, active, &dropping)?;
+    for (extra_schema, table) in &extra {
+        update_table(txn, *extra_schema, &mut table.clone_like_go(), start_ts)?;
+    }
+    if actual.is_some() {
+        let meta = txn.meta();
+        meta.drop_table_or_view(schema_id, table_id).map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+        meta.auto_ids(schema_id, table_id).delete().map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+    }
+    delete_create_materialized_view_refresh_info(txn, table_id)?;
+    delete_create_materialized_view_refresh_alert(txn, table_id);
+    let (prev_state, prev_schema_state) = (active.job.state, active.job.schema_state);
+    active.job.state = JobState::ROLLBACK_DONE;
+    active.job.schema_state = SchemaState::NONE;
+    let mut diff = SchemaDiff {
+        action_type: active.job.type_,
+        schema_id,
+        old_table_id: table_id,
+        table_id: 0,
+        ..SchemaDiff::default()
+    };
+    let infos: Vec<(i64, i64)> = extra.iter().map(|(schema, table)| (*schema, table.id)).collect();
+    set_schema_diff_for_multi_infos(&mut diff, &infos);
+    let (schema_version, diff) = match update_schema_version(&txn.meta(), active, diff) {
+        Ok(updated) => updated,
+        Err(error) => {
+            active.job.state = prev_state;
+            active.job.schema_state = prev_schema_state;
+            return Err(error);
+        }
+    };
+    active.job.fill_args(Some(GoShared::new(tidb_model::CreateMaterializedViewArgs {
+        table_info: Some(GoShared::new(mview.clone_like_go())),
+        mlog_table_ids: mlog_ids.to_vec(),
+    })));
+    let mut write = job_only_write(active.job.id, Vec::new());
+    write.schema_version = schema_version;
+    write.diff = diff;
+    Ok(PersistedDdlActionStep { write, update_raw_args: true, run_error: None, reorg: None })
+}

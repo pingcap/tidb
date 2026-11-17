@@ -296,7 +296,8 @@ pub(super) fn alter_materialized_view_log<S: StoreClient>(
     Ok(report)
 }
 
-/// Go master `executor.CreateMaterializedView`.
+/// Go master `executor.CreateMaterializedView`: the checks, the SELECT's
+/// output types, the job, then `createTableWithInfoPost` for the view.
 pub(super) fn create_materialized_view<S: StoreClient>(
     executor: &RealClusterDdl<S>,
     stmt: &tidb_ast::CreateMaterializedViewStmt,
@@ -304,9 +305,23 @@ pub(super) fn create_materialized_view<S: StoreClient>(
     context: &DdlContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
     let catalog = executor.latest_schema();
-    let job = super::executor_mview::create_materialized_view_job(&catalog, stmt, current_db, context.as_ref())
+    let plan = super::executor_mview::create_materialized_view_plan(&catalog, stmt, current_db, context.as_ref())
         .map_err(mysql_query_error)?;
-    do_ddl_job_wrapper(executor, context.as_ref(), job)
+    let field_types = super::executor_mview::materialized_view_query_output_types(
+        executor.scheduler.session_pool.as_ref(),
+        &plan.select_sql,
+        context.as_ref(),
+    )
+    .map_err(mysql_query_error)?;
+    let schema = plan.schema.name.original().to_owned();
+    let job = super::executor_mview::create_materialized_view_job(plan, stmt, field_types, context.as_ref())
+        .map_err(mysql_query_error)?;
+    let name = job.job.table_name.to_string();
+    let report = do_ddl_job_wrapper(executor, context.as_ref(), job)?;
+    if matches!(report, ClusterDdlReport::Applied { .. }) {
+        after_create_tables(executor, &schema, &[name], context.as_ref())?;
+    }
+    Ok(report)
 }
 
 /// Go master `executor.CreateMaterializedViewLog` through `DoDDLJobWrapper`:

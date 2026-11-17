@@ -862,6 +862,18 @@ pub const CREATE_TI_DBMVIEW_REFRESH_ALERT_TABLE: &str = r#"CREATE TABLE IF NOT E
 		UPDATE_TIME datetime(6) DEFAULT NULL,
 		PRIMARY KEY(MVIEW_ID))"#;
 
+/// Go master `TiDBMViewFastRefreshSourceInfoTableName`.
+pub const TIDB_MVIEW_FAST_REFRESH_SOURCE_INFO_TABLE_NAME: &str = "tidb_mview_fast_refresh_source_info";
+
+/// Go master `CreateTiDBMViewFastRefreshSourceInfoTable`: each materialized
+/// view's registered input logs. Go master creates it at bootstrap version
+/// 321, after this tree's bootstrap.
+pub const CREATE_TI_DBMVIEW_FAST_REFRESH_SOURCE_INFO_TABLE: &str = r#"CREATE TABLE IF NOT EXISTS mysql.tidb_mview_fast_refresh_source_info (
+		MVIEW_ID bigint NOT NULL,
+		MLOG_ID bigint NOT NULL,
+		PRIMARY KEY(MVIEW_ID, MLOG_ID) CLUSTERED,
+		KEY idx_mlog (MLOG_ID, MVIEW_ID))"#;
+
 /// Go `CreateTiDBMLogPurgeHistTable`.
 pub const CREATE_TI_DBMLOG_PURGE_HIST_TABLE: &str = r#"CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_hist (
 		PURGE_JOB_ID bigint unsigned NOT NULL,

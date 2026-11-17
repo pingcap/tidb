@@ -691,7 +691,7 @@ mod tests {
 
 /// The session variables Go reads when it builds a reorganizing job's
 /// `ReorgMeta` (`NewDDLReorgMeta`, `initJobReorgMetaFromVariables`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DdlReorgVars {
     /// `tidb_ddl_reorg_worker_cnt`.
     pub worker_count: i64,
@@ -720,6 +720,18 @@ pub struct DdlReorgVars {
     pub time_zone_name: String,
     /// See [`Self::time_zone_name`].
     pub time_zone_offset: i64,
+    /// `div_precision_increment`, which a materialized view's definition
+    /// keeps (Go master `DefinitionDivPrecisionIncrement`).
+    pub div_precision_increment: i64,
+    /// The session's `sql_mode` and `time_zone` values, which CREATE
+    /// MATERIALIZED VIEW applies to the session that reads its SELECT's
+    /// output types (Go master's `setupDefinitionSession`).
+    pub sql_mode_var: String,
+    /// See [`Self::sql_mode_var`].
+    pub time_zone_var: String,
+    /// Go master `CaptureMViewExecutionSessionVars`, which CREATE
+    /// MATERIALIZED VIEW snapshots into its job.
+    pub mview_execution: crate::mview_execution::MViewExecutionSessionVars,
 }
 
 impl Default for DdlReorgVars {
@@ -738,6 +750,10 @@ impl Default for DdlReorgVars {
             scatter_region: tidb_vardef::defaults::DEF_TIDB_SCATTER_REGION.to_owned(),
             time_zone_name: "UTC".to_owned(),
             time_zone_offset: 0,
+            div_precision_increment: tidb_vardef::defaults::DEF_DIV_PRECISION_INCREMENT,
+            sql_mode_var: String::new(),
+            time_zone_var: "SYSTEM".to_owned(),
+            mview_execution: crate::mview_execution::MViewExecutionSessionVars::default(),
         }
     }
 }

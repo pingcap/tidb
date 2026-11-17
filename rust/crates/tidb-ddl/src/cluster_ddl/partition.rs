@@ -570,7 +570,7 @@ fn clean_global_index_entries_from_dropped_partitions(
         Some(ReorgResult::Failed { code, message, identity, .. }) => {
             Err(crate::cluster_ddl::reorg_failure(*code, message, *identity))
         }
-        Some(ReorgResult::Checked(_) | ReorgResult::AutoPaused { .. }) => Err(DdlPlanError::Encode(
+        Some(ReorgResult::Checked(_) | ReorgResult::AutoPaused { .. } | ReorgResult::Built(_)) => Err(DdlPlanError::Encode(
             "a global-index cleanup got a check's outcome".to_owned(),
         )),
     }
