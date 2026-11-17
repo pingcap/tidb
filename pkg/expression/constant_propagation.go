@@ -295,7 +295,11 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 		}
 	}
 	if replaced {
-		return true, false, NewFunctionInternal(ctx, sf.FuncName.L, sf.GetType(ctx.GetEvalCtx()), args...)
+		rebuilt := NewFunctionInternal(ctx, sf.FuncName.L, sf.GetType(ctx.GetEvalCtx()), args...)
+		if rebuiltScalar, ok := rebuilt.(*ScalarFunction); ok {
+			SetFTSMatchWordOptions(rebuiltScalar, GetFTSMatchWordOptions(sf))
+		}
+		return true, false, rebuilt
 	}
 	return false, false, cond
 }

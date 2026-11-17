@@ -197,7 +197,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	var p base.Plan
 	destBuilder, _ := NewPlanBuilder().Init(sctx.GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
-	p, err = destBuilder.Build(ctx, nodeW)
+	p, err = buildPlanForPrepare(ctx, destBuilder, nodeW, isPrepStmt, paramCount)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -278,6 +278,31 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 var tableIDSlicePool = zeropool.New[[]int64](func() []int64 {
 	return make([]int64, 0, 8)
 })
+
+// buildPlanForPrepare builds enough of a prepared statement to validate it and
+// report its result metadata. A parameterized EXPLAIN must not optimize its
+// inner statement here: prepared parameters are NULL until EXECUTE installs
+// their current values, and value-dependent planning can otherwise reject a
+// statement that is valid once its parameters are bound.
+func buildPlanForPrepare(
+	ctx context.Context,
+	builder *PlanBuilder,
+	nodeW *resolve.NodeW,
+	isPrepStmt bool,
+	paramCount int,
+) (base.Plan, error) {
+	explain, isParameterizedExplain := nodeW.Node.(*ast.ExplainStmt)
+	if !isPrepStmt || paramCount == 0 || !isParameterizedExplain {
+		return builder.Build(ctx, nodeW)
+	}
+
+	targetNodeW := resolve.NewNodeWWithCtx(explain.Stmt, nodeW.GetResolveContext())
+	targetPlan, err := builder.Build(ctx, targetNodeW)
+	if err != nil {
+		return nil, err
+	}
+	return builder.buildExplainPlan(targetPlan, explain.Format, "", explain.Analyze, explain.Explore, explain.Stmt, nil, explain.SQLDigest, explain.ReplayerFile)
+}
 
 func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 	n := len(m)

@@ -202,7 +202,7 @@ func withHeavyCostFunctionForTiFlashPrefetch(cond expression.Expression) bool {
 // @param: conds: the filter conditions
 // @param: ts: the PhysicalTableScan to be pushed down to
 func predicatePushDownToTableScan(sctx base.PlanContext, conds []expression.Expression, ts *PhysicalTableScan) {
-	if ts.hasFullTextIndexPushDown() {
+	if ts.HasFullTextIndexPushDown() {
 		return
 	}
 	// A forced column list is exclusive from cost-based filter selection.

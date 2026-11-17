@@ -2747,6 +2747,13 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxInfo *model.I
 			return dbterror.ErrKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ic.Name)
 		}
 
+		if indexType == model.ColumnarIndexTypeFulltext {
+			for _, field := range idxInfo.FullTextInfo.IndexFieldsForColumn(col.ID) {
+				if err := checkFullTextParserColumnType(col, field.IndexFieldOption.AnalyzerType); err != nil {
+					return err
+				}
+			}
+		}
 		if indexType != model.ColumnarIndexTypeNA {
 			continue
 		}

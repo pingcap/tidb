@@ -373,6 +373,15 @@ type Config struct {
 	IsTiFlashComputeFixedPool    bool   `toml:"is-tiflashcompute-fixed-pool" json:"is-tiflashcompute-fixed-pool"`
 	AutoScalerClusterID          string `toml:"autoscaler-cluster-id" json:"autoscaler-cluster-id"`
 	UseAutoScaler                bool   `toml:"use-autoscaler" json:"use-autoscaler"`
+	// UseColumnar is used to control whether to enable columnar execution.
+	UseColumnar bool `toml:"use-columnar" json:"use-columnar"`
+	// UseColumnarFTS controls whether TiDB forwards full-text search (FTS) requests to columnar TiFlash nodes
+	// when TiDB is in disaggregated-tiflash mode.
+	//
+	// When DisaggregatedTiFlash=true, UseAutoScaler=true and UseColumnar=true, TiDB historically
+	// forces FTS requests to AutoScaler TiFlash nodes. Enable this config to route FTS requests to
+	// columnar TiFlash nodes instead.
+	UseColumnarFTS bool `toml:"use-columnar-fts" json:"use-columnar-fts"`
 
 	// TiDBMaxReuseChunk indicates max cached chunk num
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`

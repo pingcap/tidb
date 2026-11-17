@@ -15,17 +15,41 @@
 package plancache
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGeneratePlanCacheStmtDefersParameterizedExplainOptimization(t *testing.T) {
+	const sql = "explain select ?"
+	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	sctx := mock.NewContext()
+	prepared, plan, paramCount, err := plannercore.GeneratePlanCacheStmtWithAST(
+		context.Background(), sctx, true, sql, stmt, infoschema.MockInfoSchema(nil),
+	)
+	require.NoError(t, err)
+	require.Equal(t, 1, paramCount)
+	require.Len(t, prepared.Params, 1)
+
+	explainPlan, ok := plan.(*plannercore.Explain)
+	require.True(t, ok)
+	_, isLogical := explainPlan.TargetPlan.(base.LogicalPlan)
+	require.True(t, isLogical, "the inner statement must not be physically optimized before parameters are bound")
+	require.NotEmpty(t, explainPlan.Schema().Columns)
+}
 
 func TestParameterize(t *testing.T) {
 	cases := []struct {

@@ -109,6 +109,16 @@ func (n *ColumnOption) AcceptInPlace(v InPlaceVisitor) bool {
 	return v.Leave(n)
 }
 
+func (n *FullTextIndexPartSpecification) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	if !n.Column.AcceptInPlace(v) {
+		return false
+	}
+	return v.Leave(n)
+}
+
 func (n *IndexOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -126,6 +136,11 @@ func (n *Constraint) AcceptInPlace(v InPlaceVisitor) bool {
 		return v.Leave(n)
 	}
 	for _, val := range n.Keys {
+		if !val.AcceptInPlace(v) {
+			return false
+		}
+	}
+	for _, val := range n.FullTextIndexPartSpecifications {
 		if !val.AcceptInPlace(v) {
 			return false
 		}
@@ -511,6 +526,11 @@ func (n *CreateIndexStmt) AcceptInPlace(v InPlaceVisitor) bool {
 		return false
 	}
 	for _, val := range n.IndexPartSpecifications {
+		if !val.AcceptInPlace(v) {
+			return false
+		}
+	}
+	for _, val := range n.FullTextIndexPartSpecifications {
 		if !val.AcceptInPlace(v) {
 			return false
 		}
@@ -1653,6 +1673,16 @@ func (n *TableNameExpr) AcceptInPlace(v InPlaceVisitor) bool {
 func (n *ColumnName) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
+	}
+	return v.Leave(n)
+}
+
+func (n *FTSQueryFieldExpr) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	if !n.Column.AcceptInPlace(v) {
+		return false
 	}
 	return v.Leave(n)
 }

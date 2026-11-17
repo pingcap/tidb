@@ -706,6 +706,9 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			if err != nil {
 				return true, true, v
 			}
+			if scalar, ok := newFunc.(*ScalarFunction); ok {
+				SetFTSMatchWordOptions(scalar, GetFTSMatchWordOptions(v))
+			}
 			return true, hasFail, newFunc
 		}
 	}

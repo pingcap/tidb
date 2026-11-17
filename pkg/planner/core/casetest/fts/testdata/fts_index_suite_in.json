@@ -1,0 +1,128 @@
+[
+  {
+    "name": "TestTiFlashFTSIndexWhere",
+    "cases": [
+      // Basic FTS scans, handle ranges, residual predicates, and aggregations.
+      "explain format='brief' select * from t1 where fts_match_word('hello', title)",
+      "explain format='brief' select * from t1 where fts_match_word('hello', body)",
+      "explain format='brief' select * from t1 where fts_match_word('hello', title) AND id > 10",
+      "explain format='brief' select * from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 1",
+      "explain format='brief' select title from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 1",
+      "explain format='brief' select count(id) from t1 where fts_match_word('hello', title)",
+      "explain format='brief' select count(*) from t1 where fts_match_word('hello', title)",
+      "explain format='brief' select id from t1 where fts_match_word('hello', title)",
+      "explain format='brief' select id from t1 where fts_match_word('hello', title) AND id > 10",
+      "explain format='brief' select id from t1 where fts_match_word('hello', title) AND LENGTH(body) > 10",
+
+      // Score projection and column-pruning combinations.
+      "explain format='brief' select fts_match_word('hello', title) from t1 where fts_match_word('hello', title)",
+      "explain format='brief' select fts_match_word('hello', title) as score1, fts_match_word('hello', title) as score2 from t1 where fts_match_word('hello', title)",
+      "explain format='brief' select fts_match_word('hello', body) from t1 where fts_match_word('hello', body)",
+      "explain format='brief' select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10",
+      "explain format='brief' select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 1",
+      "explain format='brief' select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title)",
+      "explain format='brief' select *, fts_match_word('hello', body) from t1 where fts_match_word('hello', body)",
+      "explain format='brief' select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10",
+      "explain format='brief' select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 1",
+      "explain format='brief' select title, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 1",
+      "explain format='brief' select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title)",
+      "explain format='brief' select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10",
+      "explain format='brief' select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND LENGTH(body) > 10",
+      "explain format='brief' select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title)",
+      "explain format='brief' select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) AND id > 10",
+      "explain format='brief' select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) AND LENGTH(body) > 10",
+
+      // Keep a point primary-key range on the FTS scan instead of using Point_Get or IndexMerge.
+      "explain format='brief' select * from t1 where fts_match_word('hello', title) and id = 1",
+      // Build one FTS scan for each side of an MPP join.
+      "explain format='brief' select t1.id from t1 join t2 on t1.id = t2.id where fts_match_word('hello', t1.title) and fts_match_word('world', t2.title)",
+      // Derive ranges for common handles and signed _tidb_rowid handles.
+      "explain format='brief' select * from t_common where fts_match_word('hello', title) and a = 1",
+      "explain format='brief' select * from t_rowid where fts_match_word('hello', title) and _tidb_rowid >= -2 and _tidb_rowid < 0",
+      // ORDER_INDEX cannot provide natural order for an FTS path and should emit a warning.
+      "explain format='brief' select /*+ order_index(t1, title) */ * from t1 where fts_match_word('hello', title) order by id",
+
+      // Search multiple indexed columns with an explicit parser for each field.
+      "explain format='brief' select id from t_multi where fts_match_word('hello', a with parser standard, b with parser ngram)",
+      // Preserve the complete AND, OR, and NOT tree in one compound text-search expression.
+      "explain format='brief' select id from t_multi where (fts_match_word('apple', a) and fts_match_word('boy', b with parser ngram)) or (fts_match_word('banana', a) and not fts_match_word('girl', b with parser ngram))",
+      // Absorb path-prefix and exact-IN predicates without leaving a residual Selection.
+      "explain format='brief' select * from t_multi where (fts_match_word('foo', a) or fts_match_word('bar', b with parser ngram)) and c like '/path/to/%' and d in ('first', 'second')",
+      // Use an NGRAM prefilter for lossy LIKE while retaining the original residual condition.
+      "explain format='brief' select * from t_multi where fts_match_word('foo', a) and b like 'abcd%wxyz'",
+      // Push TopK into the FTS scan and mark the covered path predicate as a non-scoring filter.
+      "explain format='brief' select id, fts_match_word('foo', a) as score from t_multi where fts_match_word('foo', a) and c like '/path/to/%' order by score desc limit 10"
+    ]
+  },
+  {
+    "name": "TestTiFlashFTSPathUsesPrimaryIndexForCommonHandleRange",
+    "cases": [
+      // Only the common-handle prefix is a table range; the path disjunction stays residual.
+      "explain format='brief' select /*+ read_from_storage(tiflash[file_nodes]) */ path from file_nodes force index(idx_path_fts) where fs_id = 1 and (path = '/docs' or path like '/docs/%') order by path"
+    ]
+  },
+  {
+    "name": "TestTiFlashFTSLikePrefilterExplain",
+    "cases": [
+      // Lossy character-NGRAM, word-NGRAM, and path-hierarchy prefilters keep their residual predicates.
+      "explain format='brief' select * from t where fts_match_word('foo', anchor) and char_ngram like 'abcd%wxyz'",
+      "explain format='brief' select * from t where fts_match_word('foo', anchor) and word_ci ilike 'Alpha-Beta%Gamma'",
+      "explain format='brief' select * from t where fts_match_word('foo', anchor) and path like '/path/to/prefix%'",
+      // A complete OR can combine safe prefilters from both covered branches.
+      "explain format='brief' select * from t where fts_match_word('foo', anchor) and (char_ngram like 'abcd%' or path like '/path/to/prefix%')",
+      // NOT and an OR with an uncovered branch must not derive a positive NGRAM prefilter.
+      "explain format='brief' select * from t where fts_match_word('foo', anchor) and not(char_ngram like 'abcd%')",
+      "explain format='brief' select * from t where fts_match_word('foo', anchor) and (char_ngram like 'abcd%' or id > 10)"
+    ]
+  },
+  {
+    "name": "TestTiFlashFTSOrderByWithMultipleCoveredConditions",
+    "cases": [
+      // Keep more than two covered exact predicates as non-scoring filters in a TopK tree.
+      "explain format='brief' select * from t where fts_match_word('foo', anchor) and filter_a = 'one' and filter_b = 'two' and filter_c = 'three' order by fts_match_word('foo', anchor) desc limit 10"
+    ]
+  },
+  {
+    "name": "TestTiFlashFTSIndexTopN",
+    "cases": [
+      // ASC stays as normal TopN; DESC pushes TopK, including LIMIT plus OFFSET.
+      "explain format='brief' select * from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) LIMIT 10",
+      "explain format='brief' select * from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+      "explain format='brief' select * from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100",
+      // A residual primary-key predicate prevents FTS TopK pushdown.
+      "explain format='brief' select * from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100",
+      "explain format='brief' select body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+      "explain format='brief' select count(*) from (select id from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10) AS tmp",
+      "explain format='brief' select id from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+      "explain format='brief' select id from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+      "explain format='brief' select id, body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+      "explain format='brief' select id from t1 where fts_match_word('hello', title) AND LENGTH(body)>10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+
+      "explain format='brief' select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) LIMIT 10",
+      "explain format='brief' select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+      "explain format='brief' select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100",
+      "explain format='brief' select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100",
+      "explain format='brief' select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) LIMIT 10",
+      "explain format='brief' select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+      "explain format='brief' select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100",
+      "explain format='brief' select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100",
+      "explain format='brief' select fts_match_word('hello', title), body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+      "explain format='brief' select body, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+      "explain format='brief' select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+      "explain format='brief' select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+      "explain format='brief' select fts_match_word('hello', title), id, body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+      "explain format='brief' select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) AND LENGTH(body)>10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+      "explain format='brief' select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+      "explain format='brief' select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+      "explain format='brief' select id, fts_match_word('hello', title), body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+      "explain format='brief' select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND LENGTH(body)>10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10"
+    ]
+  },
+  {
+    "name": "TestTiFlashFTSIndexJoin",
+    "cases": [
+      // Push FTS TopK into the IN subquery before joining its result to the outer table.
+      "explain format='brief' select * from files WHERE file_id IN (SELECT file_id FROM file_chunks c WHERE fts_match_word('hello', c.body) ORDER BY fts_match_word('hello', c.body) DESC LIMIT 5)"
+    ]
+  }
+]

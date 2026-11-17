@@ -87,6 +87,9 @@ func genHash64EqualsForLogicalOps(x any) ([]byte, error) {
 			c.Hash64Element(f.Type, callName)
 		}
 	}
+	if vType.Name() == "DataSource" {
+		c.write("op.hashFTSQuery(h)")
+	}
 	c.write("}")
 	// for Equals function.
 	c.write("// Equals implements the Hash64Equals interface, only receive *%v pointer.", vType.Name())
@@ -108,6 +111,9 @@ func genHash64EqualsForLogicalOps(x any) ([]byte, error) {
 	}
 	if !hasValidField {
 		c.write("_ = op2")
+	}
+	if vType.Name() == "DataSource" {
+		c.write("if !op.equalFTSQuery(op2) { return false }")
 	}
 	c.write("return true")
 	c.write("}")

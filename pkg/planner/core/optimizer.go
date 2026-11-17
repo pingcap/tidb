@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -97,7 +96,6 @@ var optRuleList = []base.LogicalOptRule{
 	&ProjectionEliminator{},
 	&rule.MaxMinEliminator{},
 	&rule.ConstantPropagationSolver{},
-	&FullTextIndexResolverWhere{},
 	&PPDSolver{},
 	&rule.JoinKeyTypeCastRewriter{},
 	&OuterJoinEliminator{},
@@ -134,7 +132,6 @@ var optRuleFlags = []uint64{
 	rule.FlagEliminateProjection,
 	rule.FlagMaxMinEliminate,
 	rule.FlagConstantPropagation,
-	rule.FlagFullTextIndexResolveWhere,
 	rule.FlagPredicatePushDown,
 	rule.FlagJoinKeyTypeCast,
 	rule.FlagEliminateOuterJoin,
@@ -398,8 +395,7 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^rule.FlagJoinReOrder
 	}
-	if logic.SCtx().GetSessionVars().StmtCtx.FTSFunctionIsUsed && deploymode.IsStarter() {
-		flag |= rule.FlagFullTextIndexResolveWhere
+	if logic.SCtx().GetSessionVars().StmtCtx.FTSFunctionIsUsed {
 		flag |= rule.FlagFullTextIndexResolveTopN
 		flag |= rule.FlagFullTextIndexResolveProjection
 		flag |= rule.FlagFullTextIndexResolveReject

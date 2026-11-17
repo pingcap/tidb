@@ -292,6 +292,69 @@ func TestDisableFold(t *testing.T) {
 	}
 }
 
+func TestRewriteFTSMatchWordParserOptions(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("starter deploy mode is nextgen-only")
+	}
+	originalMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+
+	column := &expression.Column{
+		ID:       11,
+		UniqueID: 21,
+		RetType:  types.NewFieldType(mysql.TypeVarchar),
+	}
+	tests := []struct {
+		name           string
+		sql            string
+		expectedFields []expression.QueryField
+	}{
+		{
+			name: "dedicated syntax with parser selectors",
+			sql:  "select fts_match_word('hello', col1 WITH PARSER STANDARD, col1 WITH PARSER NGRAM)",
+			expectedFields: []expression.QueryField{
+				{ColID: column.ID, IndexField: "STANDARD"},
+				{ColID: column.ID, IndexField: "NGRAM"},
+			},
+		},
+		{
+			name: "quoted legacy function name",
+			sql:  "select `fts_match_word`('hello', col1)",
+			expectedFields: []expression.QueryField{
+				{ColID: column.ID},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := mock.NewContext()
+			stmt, err := parser.New().ParseOneStmt(test.sql, "", "")
+			require.NoError(t, err)
+			call := stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
+
+			builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
+			builder.rewriterCounter++
+			rewriter := builder.getExpressionRewriter(context.TODO(), nil)
+			rewriter.schema = expression.NewSchema(column)
+			rewriter.names = types.NameSlice{&types.FieldName{ColName: ast.NewCIStr("col1")}}
+			rewritten, _, err := rewriteExprNode(rewriter, call, true)
+			builder.rewriterCounter--
+			require.NoError(t, err)
+
+			info := expression.InterpretFullTextSearchExpr(rewritten)
+			require.NotNil(t, info)
+			require.Equal(t, test.expectedFields, info.Clause.Fields)
+			require.Len(t, info.Columns, len(test.expectedFields))
+			for _, rewrittenColumn := range info.Columns {
+				require.Same(t, column, rewrittenColumn)
+			}
+		})
+	}
+}
+
 func TestDeepClone(t *testing.T) {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	expr := &expression.Column{RetType: tp}

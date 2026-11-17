@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -225,22 +224,6 @@ func extractStringFromBoolSlice(slice []bool) string {
 	}
 	slices.Sort(l)
 	return strings.Join(l, ",")
-}
-
-// tableHasDirtyContent checks whether the table or its partitions have dirty content in the current transaction.
-func tableHasDirtyContent(ctx base.PlanContext, tableInfo *model.TableInfo) bool {
-	pi := tableInfo.GetPartitionInfo()
-	if pi == nil {
-		return ctx.HasDirtyContent(tableInfo.ID)
-	}
-	// Currently, we add UnionScan on every partition even though only one partition's data is changed.
-	// This is limited by current implementation of Partition Prune. It'll be updated once we modify that part.
-	for _, partition := range pi.Definitions {
-		if ctx.HasDirtyContent(partition.ID) {
-			return true
-		}
-	}
-	return false
 }
 
 func getLowerDB(dbName ast.CIStr, vars *variable.SessionVars) string {

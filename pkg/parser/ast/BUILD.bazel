@@ -21,6 +21,7 @@ go_library(
         "expressions.go",
         "flag.go",
         "functions.go",
+        "index_full_text.go",
         "misc.go",
         "model.go",
         "procedure.go",

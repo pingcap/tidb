@@ -14,12 +14,44 @@
 package ast_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	. "github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/stretchr/testify/require"
 )
+
+func TestIndexOptionLegacyFullTextParserWireCompatibility(t *testing.T) {
+	newOption := &IndexOption{FullTextParser: &FullTextParserSpec{
+		ParserType: FullTextParserTypeMultilingualV1,
+	}}
+	newOption.FillLegacyFullTextParserName()
+
+	encoded, err := json.Marshal(newOption)
+	require.NoError(t, err)
+	var oldOption struct {
+		ParserName CIStr
+	}
+	require.NoError(t, json.Unmarshal(encoded, &oldOption))
+	require.Equal(t, NewCIStr("MULTILINGUAL"), oldOption.ParserName)
+
+	legacyEncoded, err := json.Marshal(oldOption)
+	require.NoError(t, err)
+	var decoded IndexOption
+	require.NoError(t, json.Unmarshal(legacyEncoded, &decoded))
+	require.Nil(t, decoded.FullTextParser)
+	decoded.NormalizeLegacyFullTextParserName()
+	require.Equal(t, newOption.FullTextParser, decoded.FullTextParser)
+
+	ngramOption := &IndexOption{FullTextParser: &FullTextParserSpec{ParserType: FullTextParserTypeNgramV1}}
+	ngramOption.FillLegacyFullTextParserName()
+	require.Equal(t, CIStr{}, ngramOption.ParserName)
+
+	standardOption := &IndexOption{FullTextParser: &FullTextParserSpec{ParserType: FullTextParserTypeStandardV1}}
+	standardOption.FillLegacyFullTextParserName()
+	require.Equal(t, NewCIStr("STANDARD"), standardOption.ParserName)
+}
 
 func TestDDLVisitorCover(t *testing.T) {
 	ce := &checkExpr{}
@@ -136,6 +168,18 @@ func TestDDLIndexOption(t *testing.T) {
 	runNodeRestoreTest(t, testCases, "CREATE INDEX idx ON t (a) %s", extractNodeFunc)
 }
 
+func TestDDLIndexOptionFullTextParserSpec(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{"with parser ngram (min_gram = 2, max_gram = 3)", "WITH PARSER NGRAM(MIN_GRAM = 2, MAX_GRAM = 3)"},
+		{"with parser ngram (min_gram = 3, max_gram = 3, granularity = 'char')", "WITH PARSER NGRAM(MIN_GRAM = 3, MAX_GRAM = 3, GRANULARITY = 'char')"},
+		{"with parser ngram (min_gram = 3, max_gram = 3, lower_case = false)", "WITH PARSER NGRAM(MIN_GRAM = 3, MAX_GRAM = 3, LOWER_CASE = FALSE)"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*CreateIndexStmt).IndexOption
+	}
+	runNodeRestoreTestWithFlagsStmtChange(t, testCases, "CREATE INDEX idx ON t (a) %s", extractNodeFunc, format.DefaultRestoreFlags)
+}
+
 func TestTableToTableRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"t1 to t2", "`t1` TO `t2`"},
@@ -181,7 +225,7 @@ func TestDDLConstraintRestore(t *testing.T) {
 		{"unique index expr_ind ((lower(id)))", "UNIQUE `expr_ind`((LOWER(`id`)))"},
 		{"fulltext key full_id (parent_id)", "FULLTEXT `full_id`(`parent_id`)"},
 		{"fulltext INDEX full_id (parent_id)", "FULLTEXT `full_id`(`parent_id`)"},
-		{"fulltext INDEX full_id ((parent_id+1))", "FULLTEXT `full_id`((`parent_id`+1))"},
+		{"fulltext INDEX full_id (parent_id with (multilingual, ngram(min_gram = 3)), id with (exact, path_hierarchy(delimiter = '/')))", "FULLTEXT `full_id`(`parent_id` WITH (MULTILINGUAL, NGRAM(MIN_GRAM = 3)), `id` WITH (EXACT, PATH_HIERARCHY(DELIMITER = '/')))"},
 		{"PRIMARY KEY (id)", "PRIMARY KEY(`id`)"},
 		{"PRIMARY KEY (id) key_block_size = 32 using hash comment 'hello'", "PRIMARY KEY(`id`) KEY_BLOCK_SIZE=32 USING HASH COMMENT 'hello'"},
 		{"PRIMARY KEY ((id+1))", "PRIMARY KEY((`id`+1))"},

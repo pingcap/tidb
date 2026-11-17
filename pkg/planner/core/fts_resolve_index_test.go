@@ -26,25 +26,38 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
-func TestFTSRequiresStarterMode(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		originDeployMode := deploymode.Get()
-		require.NoError(t, deploymode.Set(deploymode.Premium))
-		defer func() {
-			require.NoError(t, deploymode.Set(originDeployMode))
-		}()
+func TestFTSDeploymentModes(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("deployment modes are nextgen-only")
 	}
 
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustContainErrMsg("create table fts_blocked(id int primary key, title text, fulltext key ft_title(title))", "FULLTEXT index is only supported in starter deployment mode")
-	tk.MustExec("create table fts_t(id int primary key, title text)")
-	tk.MustContainErrMsg("alter table fts_t add fulltext index ft_title(title)", "FULLTEXT index is only supported in starter deployment mode")
-	tk.MustContainErrMsg("explain select * from fts_t where fts_match_word('hello', title)", "FTS_MATCH_WORD() is only supported in starter deployment mode")
+	for _, mode := range deploymode.ModeList() {
+		t.Run(mode.String(), func(t *testing.T) {
+			originDeployMode := deploymode.Get()
+			require.NoError(t, deploymode.Set(mode))
+			t.Cleanup(func() { require.NoError(t, deploymode.Set(originDeployMode)) })
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", "return(1)")
+			store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithMockTiFlash(2))
+			tk := testkit.NewTestKit(t, store)
+			setupTiFlashFTSMatchWordTable(t, tk, dom)
+
+			tk.MustExec("alter table fts_t add fulltext index ft_body(body)")
+			tk.MustExec("create fulltext index ft_title_body on fts_t(title, body)")
+			testkit.SetTiFlashReplica(t, dom, "test", "fts_t")
+			plan := testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' select * from fts_t where fts_match_word('hello', title)").Rows())
+			require.Contains(t, plan[len(plan)-1], "ftsIndex:hello IN test.fts_t.title")
+			plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' select id, fts_match_word('hello', title) as score from fts_t where fts_match_word('hello', title) order by score desc limit 10").Rows())
+			require.Contains(t, plan[len(plan)-1], "ftsIndex:top10 hello IN test.fts_t.title->_FTS_SCORE")
+			tk.MustContainErrMsg("explain select fts_match_word('hello', title) from fts_t", "'FTS_MATCH_WORD()' in SELECT requires a matching 'FTS_MATCH_WORD()' in WHERE")
+			tk.MustContainErrMsg("explain select * from fts_t where fts_match_word(title, body)", "match against a non-constant string")
+			tk.MustExec("create table no_replica(title text)")
+			tk.MustContainErrMsg("alter table no_replica add fulltext index ft_title(title)", "columnar replica must exist")
+		})
+	}
 }
 
 func TestTiFlashFTSMatchWordPushDown(t *testing.T) {
@@ -87,7 +100,7 @@ func TestTiFlashFTSMatchWordPushDown(t *testing.T) {
 		tk.MustContainErrMsg("explain select fts_match_word('hello', title) * 2 from fts_t where fts_match_word('hello', title)", "'FTS_MATCH_WORD()' in SELECT must not be wrapped in expressions")
 		tk.MustContainErrMsg("explain select fts_match_word('world', title) from fts_t where fts_match_word('hello', title)", "'FTS_MATCH_WORD()' in SELECT must match the one in WHERE")
 		tk.MustContainErrMsg("explain select * from fts_t where fts_match_word('hello', title) and fts_match_word('world', title)", "Currently 'FTS_MATCH_WORD()' must be used alone")
-		tk.MustContainErrMsg("explain select * from fts_t where fts_match_word('hello', body)", "Full text search can only be used with a matching fulltext index")
+		tk.MustContainErrMsg("explain select * from fts_t where fts_match_word('hello', body)", "full-text search index ft_title does not cover column test.fts_t.body")
 		tk.MustContainErrMsg("explain select * from fts_t order by fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' in ORDER BY without a LIMIT clause is not supported")
 	})
 }

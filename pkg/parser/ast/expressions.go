@@ -30,6 +30,7 @@ var (
 	_ ExprNode = &BinaryOperationExpr{}
 	_ ExprNode = &CaseExpr{}
 	_ ExprNode = &ColumnNameExpr{}
+	_ ExprNode = &FTSQueryFieldExpr{}
 	_ ExprNode = &TableNameExpr{}
 	_ ExprNode = &CompareSubqueryExpr{}
 	_ ExprNode = &DefaultExpr{}
@@ -623,6 +624,54 @@ type ColumnNameExpr struct {
 
 	// Name is the referenced column name.
 	Name *ColumnName
+}
+
+// FTSQueryFieldExpr is a column reference with an optional full-text analyzer
+// selector. It is only produced for FTS_MATCH_WORD arguments.
+type FTSQueryFieldExpr struct {
+	exprNode
+
+	Column     *ColumnNameExpr
+	ParserName string
+}
+
+// Restore implements Node interface.
+func (n *FTSQueryFieldExpr) Restore(ctx *format.RestoreCtx) error {
+	if err := n.Column.Restore(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if n.ParserName != "" {
+		ctx.WriteKeyWord(" WITH PARSER ")
+		ctx.WriteKeyWord(n.ParserName)
+	}
+	return nil
+}
+
+// Format formats the expression into a writer.
+func (n *FTSQueryFieldExpr) Format(w io.Writer) {
+	name := strings.ReplaceAll(n.Column.Name.String(), ".", "`.`")
+	fmt.Fprintf(w, "`%s`", name)
+	if n.ParserName != "" {
+		fmt.Fprintf(w, " WITH PARSER %s", n.ParserName)
+	}
+}
+
+// Accept implements Node interface.
+func (n *FTSQueryFieldExpr) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*FTSQueryFieldExpr)
+	// Visit through ColumnNameExpr so ORDER BY/HAVING resolvers can append the
+	// referenced column as an auxiliary select field, matching unqualified
+	// column resolution for FTS_MATCH_WORD arguments.
+	node, ok := n.Column.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Column = node.(*ColumnNameExpr)
+	return v.Leave(n)
 }
 
 // Restore implements Node interface.

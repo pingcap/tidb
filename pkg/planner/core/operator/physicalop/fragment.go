@@ -712,8 +712,11 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	}
 	tiflashReplicaRead := e.ctx.GetSessionVars().TiFlashReplicaRead
 
+	// The same ranges can be scanned by both FTS and ordinary operators, which
+	// may use different worker pools. Keep their discovery results separate.
+	ctx = config.WithFTSQuery(ctx, ts.HasFullTextIndexPushDown())
 	var metas []kv.MPPTaskMeta
-	if val := req.ToString(); e.tableReaderCache[val] != nil {
+	if val := req.ToString() + ":fts=" + strconv.FormatBool(ts.HasFullTextIndexPushDown()); e.tableReaderCache[val] != nil {
 		metas = e.tableReaderCache[val]
 		failpoint.InjectCall("mppTaskGeneratorTableReaderCacheHit")
 	} else {

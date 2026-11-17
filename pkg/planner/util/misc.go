@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -88,6 +89,24 @@ func sliceRecursiveFlattenIterHelper[E any, Slice any](
 		}
 	}
 	return idx, false
+}
+
+// TableHasDirtyContent checks whether a table or any of its partitions has
+// dirty content in the current transaction.
+func TableHasDirtyContent(ctx base.PlanContext, tableInfo *model.TableInfo) bool {
+	pi := tableInfo.GetPartitionInfo()
+	if pi == nil {
+		return ctx.HasDirtyContent(tableInfo.ID)
+	}
+	// Currently, UnionScan is added on every partition even when only one
+	// partition changed. Keep the planner-wide dirty-table decision aligned
+	// with that behavior.
+	for _, partition := range pi.Definitions {
+		if ctx.HasDirtyContent(partition.ID) {
+			return true
+		}
+	}
+	return false
 }
 
 // CloneFieldNames uses types.FieldName.Clone to clone a slice of types.FieldName.

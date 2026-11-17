@@ -1157,7 +1157,7 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_VecL2NormSig:
 		f = &builtinVecL2NormSig{base}
 	case tipb.ScalarFuncSig_FTSMatchWord:
-		f = &builtinFtsMatchWordSig{base}
+		f = &builtinFtsMatchWordSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_FTSMatchExpression:
 		// NOTE: builtinFtsMysqlMatchAgainstSig.modifier is not serialized in the
 		// protobuf encoding because the tipb schema has no FTS metadata message.

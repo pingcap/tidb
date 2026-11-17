@@ -42,6 +42,7 @@ go_test(
         "//pkg/util/hint",
         "//pkg/util/mock",
         "//pkg/util/set",
+        "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
