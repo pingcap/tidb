@@ -378,7 +378,6 @@ batch on a limit 10 dry run delete /*+ USE_INDEX(t) */ from t;
 
 # TestNonTransactionalWithReadStaleness
 set @@tidb_max_chunk_size=35;
-set @@tidb_read_staleness=-100;
 drop table if exists t, t1;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, unique key(a));
@@ -482,6 +481,11 @@ insert into t values (96, 192);
 insert into t values (97, 194);
 insert into t values (98, 196);
 insert into t values (99, 198);
+set @@tidb_read_staleness=-100;
+--error 1105
+batch on a limit 10 insert into t1 select * from t;
+select @@tidb_read_staleness;
+set @@tidb_read_staleness=0;
 batch on a limit 10 insert into t1 select * from t;
 connect (conn1, localhost, root,, session__nontransactional);
 connection conn1;
@@ -490,7 +494,6 @@ update t1 set b=a;
 disconnect conn1;
 batch on a limit 10 insert into t1 select * from t on duplicate key update t1.b=t.b;
 batch on a limit 10 delete from t;
-set @@tidb_read_staleness=0;
 select * from t;
 select * from t1 order by a;
 set @@tidb_max_chunk_size=default;
