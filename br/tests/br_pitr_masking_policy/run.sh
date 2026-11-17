@@ -48,7 +48,10 @@ assert_value dropped secret
 # Restored policies must also protect data written after recovery.
 run_sql "INSERT INTO $DB.added VALUES ('another secret');"
 output=$(run_sql "SELECT c AS masked_value FROM $DB.added;")
-if [ "$(printf '%s\n' "$output" | grep -c '^masked_value: XXXXXX$')" != "2" ]; then
+# MASK_FULL returns one X per character: 6 for 'secret', 14 for 'another secret'.
+masked_values=$(printf '%s\n' "$output" | sed -n 's/^masked_value: //p' | sort)
+expected_values=$(printf '%s\n' XXXXXX XXXXXXXXXXXXXX)
+if [ "$masked_values" != "$expected_values" ]; then
     printf 'Policy did not protect post-restore writes:\n%s\n' "$output"
     exit 1
 fi
