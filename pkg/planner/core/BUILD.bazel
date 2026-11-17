@@ -290,6 +290,7 @@ go_test(
         "//pkg/expression/exprctx",
         "//pkg/expression/expropt",
         "//pkg/expression/exprstatic",
+        "//pkg/expression/fulltext",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta/model",

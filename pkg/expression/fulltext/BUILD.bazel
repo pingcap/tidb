@@ -30,7 +30,7 @@ go_test(
     ],
     embed = [":fulltext"],
     flaky = False,
-    shard_count = 18,
+    shard_count = 40,
     deps = [
         "//pkg/expression/matchagainst",
         "//pkg/meta/model",
