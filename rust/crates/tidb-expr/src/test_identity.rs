@@ -42,6 +42,10 @@ pub(crate) struct TestSession {
     pub(crate) last_insert_id_calls: Arc<Mutex<Vec<u64>>>,
     /// Go `getHintResourceGroupName`.
     pub(crate) resource_group_name: String,
+    /// Go `SessionVars.SQLKiller`.
+    pub(crate) sql_killer: Option<Arc<tidb_sqlkiller::SqlKiller>>,
+    /// Go `StmtCtx.InInsertStmt || InUpdateStmt || InDeleteStmt`.
+    pub(crate) in_insert_update_or_delete: bool,
 }
 
 #[derive(Clone)]
@@ -83,6 +87,14 @@ impl tidb_expropt::SessionVars for Vars {
 
     fn hint_resource_group_name(&self) -> String {
         self.session.resource_group_name.clone()
+    }
+
+    fn sql_killer(&self) -> Option<Arc<tidb_sqlkiller::SqlKiller>> {
+        self.session.sql_killer.clone()
+    }
+
+    fn stmt_in_insert_update_or_delete(&self) -> bool {
+        self.session.in_insert_update_or_delete
     }
 }
 

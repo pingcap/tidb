@@ -21,3 +21,4 @@ tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-resolve = { path = "../tidb-resolve" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-sqlkiller = { path = "../tidb-sqlkiller" }

@@ -68,6 +68,19 @@ pub trait SessionVars: Any + Send + Sync {
     fn set_user_var_val(&self, name: &str, value: tidb_datatype::Datum) {
         let _ = (name, value);
     }
+    /// Go `SessionVars.SQLKiller`, which `SLEEP` polls.
+    fn sql_killer(&self) -> Option<Arc<tidb_sqlkiller::SqlKiller>> {
+        None
+    }
+    /// Go `len(SessionVars.StmtCtx.TableIDs) != 0`: the statement reads a
+    /// table.
+    fn stmt_has_table_ids(&self) -> bool {
+        false
+    }
+    /// Go `StmtCtx.InInsertStmt || InUpdateStmt || InDeleteStmt`.
+    fn stmt_in_insert_update_or_delete(&self) -> bool {
+        false
+    }
 }
 
 /// boundary: Go `pkg/sessionctx/variable.SessionVarsProvider` — anything that

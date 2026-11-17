@@ -327,8 +327,36 @@ pub(crate) fn benchmark(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'
     Ok(Datum::Int(0))
 }
 
+/// Go `doSleep`: waits `duration`, polling the session's killer every 10ms;
+/// a kill ends the wait (true) and, for a statement that reads no table and
+/// is not an INSERT, UPDATE or DELETE, is reset so the session continues.
+fn do_sleep(duration: std::time::Duration, vars: &dyn tidb_expropt::SessionVars) -> bool {
+    let started = std::time::Instant::now();
+    let tick = std::time::Duration::from_millis(10);
+    let killer = vars.sql_killer();
+    loop {
+        let elapsed = started.elapsed();
+        if elapsed >= duration {
+            return false;
+        }
+        std::thread::sleep(tick.min(duration - elapsed));
+        if started.elapsed() >= duration {
+            return false;
+        }
+        if let Some(killer) = killer.as_ref() {
+            if killer.handle_signal().is_some() {
+                if !vars.stmt_has_table_ids() && !vars.stmt_in_insert_update_or_delete() {
+                    killer.reset();
+                }
+                return true;
+            }
+        }
+    }
+}
+
 /// Go `builtinSleepSig.evalInt`.
 pub(crate) fn sleep(values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    let vars = session_vars(ctx)?;
     let [value] = values else {
         return Err(EvalError::WrongParameterCount("sleep"));
     };
@@ -349,7 +377,7 @@ pub(crate) fn sleep(values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalEr
     }
     let duration = std::time::Duration::try_from_secs_f64(seconds)
         .map_err(|_| EvalError::IncorrectArguments("Incorrect arguments to sleep".to_owned()))?;
-    Ok(Datum::Int(i64::from(ctx.sleep_for(duration))))
+    Ok(Datum::Int(i64::from(do_sleep(duration, vars.as_ref()))))
 }
 
 /// The lock name the advisory-lock signatures read from their first

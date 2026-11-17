@@ -7166,6 +7166,7 @@ dependencies = [
  "tidb-size",
  "tidb-sqlescape",
  "tidb-sqlexec",
+ "tidb-sqlkiller",
  "tidb-stringutil",
  "tidb-tablecodec",
  "tidb-terror",
@@ -7224,6 +7225,7 @@ dependencies = [
  "tidb-resolve",
  "tidb-sqlescape",
  "tidb-sqlexec",
+ "tidb-sqlkiller",
 ]
 
 [[package]]
@@ -9755,6 +9757,7 @@ dependencies = [
  "tidb-printer",
  "tidb-proto",
  "tidb-spill-storage",
+ "tidb-sqlkiller",
  "tidb-stats-handle-usage-indexusage",
  "tidb-stmtctx",
  "tidb-tblctx",

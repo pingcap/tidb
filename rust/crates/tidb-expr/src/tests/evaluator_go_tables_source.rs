@@ -309,8 +309,11 @@ fn sleep_errctx_levels_and_null_arguments_follow_the_caller() {
                 tidb_exprctx::ErrorLevel::Error
             }
         }
-        fn sleep_for(&self, _duration: std::time::Duration) -> bool {
-            false
+        fn get_optional_prop_provider(
+            &self,
+            key: tidb_exprctx::OptionalEvalPropKey,
+        ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+            crate::test_identity::TestSession::default().props().get(key)
         }
     }
 

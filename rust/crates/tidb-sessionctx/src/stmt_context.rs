@@ -733,6 +733,9 @@ struct StmtSessionVars {
     last_insert_id: Arc<Mutex<Option<u64>>>,
     resource_group_name: String,
     user_vars: Option<tidb_variable::user_vars::UserVars>,
+    sql_killer: Arc<tidb_sqlkiller::SqlKiller>,
+    has_table_ids: bool,
+    in_insert_update_or_delete: bool,
 }
 
 /// Go `SessionVars.User` of a session that matched the account
@@ -802,6 +805,18 @@ impl tidb_expropt::SessionVars for StmtSessionVars {
         if let Some(vars) = self.user_vars.as_ref() {
             vars.set_user_var_val(name, value);
         }
+    }
+
+    fn sql_killer(&self) -> Option<Arc<tidb_sqlkiller::SqlKiller>> {
+        Some(Arc::clone(&self.sql_killer))
+    }
+
+    fn stmt_has_table_ids(&self) -> bool {
+        self.has_table_ids
+    }
+
+    fn stmt_in_insert_update_or_delete(&self) -> bool {
+        self.in_insert_update_or_delete
     }
 }
 
@@ -6602,6 +6617,14 @@ impl StmtContext {
             last_insert_id: Arc::clone(&self.last_insert_id),
             resource_group_name: self.resource_group_name.clone(),
             user_vars: self.user_vars.clone(),
+            sql_killer: Arc::clone(self.memory.sql_killer()),
+            // Go's `StmtCtx.TableIDs` lists the tables the statement reads;
+            // the statement's physical table reader is that here.
+            has_table_ids: self.has_physical_table_reader.load(Ordering::Relaxed),
+            in_insert_update_or_delete: matches!(
+                self.statement_class,
+                StatementClass::Insert | StatementClass::Update | StatementClass::Delete
+            ),
         }
     }
 
@@ -7660,17 +7683,6 @@ impl Columns for StmtContext {
         StmtContext::expr_pushdown_blacklist(self)
     }
 
-    fn sleep_for(&self, duration: std::time::Duration) -> bool {
-        let killed = self.memory.sleep_for(duration);
-        if killed
-            && self.statement_class == StatementClass::Select
-            && !self.has_physical_table_reader.load(Ordering::Relaxed)
-        {
-            self.memory.reset_kill_signal();
-        }
-        killed
-    }
-
     fn strict_sql_mode(&self) -> bool {
         self.session_sql_mode().has_strict_mode()
     }
@@ -7968,28 +7980,20 @@ mod tests {
     }
 
     #[test]
-    fn sleep_keeps_a_kill_installed_after_a_physical_table_reader_is_built() {
+    fn sleep_sees_the_statements_killer_and_its_table_reads() {
         let session = tidb_variable::mem_quota::SessionMemory::new(-1, tidb_vardef::OomAction::Cancel, 7);
         let cancellation = session.begin_query_cancellation();
         cancellation.cancel();
         let ctx = StmtContext::for_query_with_memory(session.statement());
+        // Go `doSleep` reads `SessionVars.SQLKiller` and, to decide whether to
+        // reset it, `StmtCtx.TableIDs` and the DML flags.
+        let vars = tidb_expropt::SessionVarsPropReader.get_session_vars(&ctx as &dyn tidb_exprctx::Columns).unwrap();
+        assert!(!vars.stmt_has_table_ids());
+        assert!(!vars.stmt_in_insert_update_or_delete());
+        assert!(vars.sql_killer().unwrap().handle_signal().is_some(), "the cancelled statement's killer");
         ctx.mark_physical_table_reader();
-
-        let started = std::time::Instant::now();
-        assert!(tidb_exprctx::Columns::sleep_for(
-            &ctx,
-            std::time::Duration::from_secs(1)
-        ));
-        assert!(started.elapsed() < std::time::Duration::from_millis(100));
-
-        // Go retains the killer when `StmtCtx.TableIDs` is non-empty, so the
-        // rest of a table-backed evaluation is interrupted too.
-        let started = std::time::Instant::now();
-        assert!(tidb_exprctx::Columns::sleep_for(
-            &ctx,
-            std::time::Duration::from_secs(1)
-        ));
-        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+        let vars = tidb_expropt::SessionVarsPropReader.get_session_vars(&ctx as &dyn tidb_exprctx::Columns).unwrap();
+        assert!(vars.stmt_has_table_ids(), "a physical table reader is Go's non-empty TableIDs");
     }
 
     /// Go `EvalContext.GetMaxAllowedPacket`, read by every result-sizing

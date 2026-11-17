@@ -789,13 +789,6 @@ pub trait Columns {
         ErrorLevel::Error
     }
 
-    /// Waits for a SQL `SLEEP` duration, returning whether the statement was
-    /// killed before the deadline.
-    fn sleep_for(&self, duration: std::time::Duration) -> bool {
-        std::thread::sleep(duration);
-        false
-    }
-
     /// Records a statement warning, which Go appends to `StmtCtx.warnings`.
     fn append_warning(&self, code: u16, message: &str) {
         let _ = (code, message);
