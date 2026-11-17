@@ -64,7 +64,7 @@ fn pipeline_async_multi_operators_without_error() {
                 };
                 drop(counts);
                 if mock_error {
-                    counter_context.on_error(OperatorError("mock error for testing".to_owned()));
+                    counter_context.on_error(OperatorError::new("mock error for testing"));
                 }
                 result
             },

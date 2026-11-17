@@ -34,3 +34,19 @@ pub static ERR_CHECKSUM_MISMATCH: LazyLock<TerrorError> = LazyLock::new(|| {
 pub static ERR_FOUND_DUPLICATE_KEYS: LazyLock<TerrorError> = LazyLock::new(|| {
     normalize("found duplicate key '%x', value '%x'", "Lightning:Restore:ErrFoundDuplicateKey")
 });
+
+/// Go `ErrFoundDataConflictRecords`.
+pub static ERR_FOUND_DATA_CONFLICT_RECORDS: LazyLock<TerrorError> = LazyLock::new(|| {
+    normalize(
+        "found data conflict records in table %s, primary key is '%s', row data is '%s'",
+        "Lightning:Restore:ErrFoundDataConflictRecords",
+    )
+});
+
+/// Go `ErrFoundIndexConflictRecords`.
+pub static ERR_FOUND_INDEX_CONFLICT_RECORDS: LazyLock<TerrorError> = LazyLock::new(|| {
+    normalize(
+        "found index conflict records in table %s, index name is '%s', unique key is '%s', primary key is '%s'",
+        "Lightning:Restore:ErrFoundIndexConflictRecords",
+    )
+});

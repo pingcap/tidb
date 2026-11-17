@@ -2498,6 +2498,7 @@ fn init_for_reorg_indexes(job: &Job, indexes: &[GoShared<IndexInfo>]) -> Result<
     if indexes.is_empty() {
         return Ok(());
     }
+    add_index::load_cloud_storage_uri(job);
     let reorg_type = add_index::pick_backfill_type(job)?;
     if matches!(
         reorg_type,

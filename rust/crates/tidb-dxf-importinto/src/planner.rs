@@ -500,7 +500,9 @@ pub(crate) fn global_sort_error(e: tidb_ingestor_globalsort::Error) -> Error {
     if let Some(t) = e.downcast_ref::<tidb_terror::TerrorError>() {
         return std::sync::Arc::new(t.clone());
     }
-    if let Some(tidb_ingestor_simplesst::Error::Terror(t)) = e.downcast_ref::<tidb_ingestor_simplesst::Error>() {
+    if let Some(tidb_ingestor_simplesst::Error::Terror(t) | tidb_ingestor_simplesst::Error::FoundDuplicateKeys { error: t, .. }) =
+        e.downcast_ref::<tidb_ingestor_simplesst::Error>()
+    {
         return std::sync::Arc::new(t.clone());
     }
     plain(e.to_string())

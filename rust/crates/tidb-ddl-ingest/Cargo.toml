@@ -25,6 +25,7 @@ tidb-memory = { path = "../tidb-memory" }
 tidb-log = { path = "../tidb-log" }
 hex = "0.4"
 tidb-ingestor-ingestctrl = { path = "../tidb-ingestor-ingestctrl" }
+tidb-ingestor-simplesst = { path = "../tidb-ingestor-simplesst" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-goruntime = { path = "../tidb-goruntime" }

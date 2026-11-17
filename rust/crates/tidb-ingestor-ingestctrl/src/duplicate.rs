@@ -241,15 +241,144 @@ impl DupeDetector {
         .collect())
     }
 }
-/// Go `RetrieveKeyAndValueFromErrFoundDuplicateKeys`; Rust retains typed KV
-/// arguments, rather than extracting untyped arguments from terror.Error.
+/// Go `RetrieveKeyAndValueFromErrFoundDuplicateKeys`: the key and value of
+/// an `ErrFoundDuplicateKeys` anywhere in `error`'s chain, as the local
+/// engine's [`Error::Duplicate`] or a global-sort writer's
+/// `simplesst::Error::FoundDuplicateKeys` carries them. Go reads them back
+/// from the untyped `terror.Error` arguments.
+#[must_use]
 pub fn retrieve_key_and_value_from_err_found_duplicate_keys(
-    error: Error,
-) -> Result<(Vec<u8>, Vec<u8>)> {
-    match error {
-        Error::Duplicate { key, value } => Ok((key, value)),
-        error => Err(error),
+    error: &(dyn std::error::Error + 'static),
+) -> Option<(Vec<u8>, Vec<u8>)> {
+    let mut cause = Some(error);
+    while let Some(error) = cause {
+        if let Some(Error::Duplicate { key, value }) = error.downcast_ref::<Error>() {
+            return Some((key.clone(), value.clone()));
+        }
+        if let Some((key, value)) = tidb_ingestor_simplesst::duplicate_key_and_value(error) {
+            return Some((key.to_vec(), value.to_vec()));
+        }
+        cause = error.source();
     }
+    None
+}
+
+/// Go `ConvertToErrFoundConflictRecords`: an `ErrFoundDuplicateKeys` becomes
+/// `ErrFoundDataConflictRecords` or `ErrFoundIndexConflictRecords`, naming
+/// the conflicting row of `tbl`. `None` when `error` is not one; Go then
+/// returns the error unchanged.
+#[must_use]
+pub fn convert_to_err_found_conflict_records(
+    error: &(dyn std::error::Error + 'static),
+    tbl: &tidb_table::tables::TableCommon,
+) -> Option<Error> {
+    let (key, value) = retrieve_key_and_value_from_err_found_duplicate_keys(error)?;
+    Some(new_err_found_conflict_records(&key, &value, tbl))
+}
+
+/// Go `kv.NewTableKVDecoder`'s session: `SQLMode: mysql.ModeStrictAllTables`.
+fn decoder_session() -> tidb_lightning_backend_kv::Session {
+    tidb_lightning_backend_kv::Session::new(&tidb_lightning_backend_encode::SessionOptions {
+        sql_mode: tidb_mysql::ModeStrictAllTables.0,
+        ..Default::default()
+    })
+}
+
+/// Go `kv.Handle.String()` of a stored handle.
+fn handle_string(handle: &tidb_table::tables::TableHandle) -> String {
+    match handle {
+        tidb_table::tables::TableHandle::Int(h) => h.to_string(),
+        tidb_table::tables::TableHandle::Common(encoded) => tidb_txnkv::CommonHandle::new(encoded.clone())
+            .map_or_else(|error| format!("{error:?}"), |h| h.to_string()),
+    }
+}
+
+/// Go `newErrFoundConflictRecords`: the error for a duplicated data or
+/// index KV.
+fn new_err_found_conflict_records(key: &[u8], value: &[u8], tbl: &tidb_table::tables::TableCommon) -> Error {
+    let table_name = tbl.meta().read().name.original().to_owned();
+    if tidb_tablecodec::is_record_key(key) {
+        // For a data KV.
+        let handle = match tidb_tablecodec::table_key::decode_row_key(key) {
+            Ok(tidb_tablecodec::table_key::RecordHandle::Int(h)) => tidb_table::tables::TableHandle::Int(h),
+            Ok(tidb_tablecodec::table_key::RecordHandle::Common(h)) => tidb_table::tables::TableHandle::Common(h),
+            Ok(tidb_tablecodec::table_key::RecordHandle::Partition { .. }) => {
+                return Error::Other("partition handle in a row key".to_owned());
+            }
+            Err(error) => return Error::Other(error.to_string()),
+        };
+        // Go `TableKVDecoder.DecodeRawRowDataAsStr` over `tbl.Cols()`.
+        let session = decoder_session();
+        let offsets: Vec<usize> = (0..tbl.columns().len()).collect();
+        let row_data = tbl
+            .decode_raw_row_data(session.context(), &handle, &offsets, value)
+            .map_err(|error| error.into_mysql_error().to_string())
+            .and_then(|row: Vec<tidb_datatype::Datum>| {
+                tidb_datatype::datums_to_string(&row, true, false).map_err(|error| error.to_string())
+            })
+            .unwrap_or_else(|error| format!("/* ERROR: {error} */"));
+        return Error::Ingest(tidb_lightning_common::errors::ERR_FOUND_DATA_CONFLICT_RECORDS.fast_gen_by_args(&[
+            table_name.as_str().into(),
+            handle_string(&handle).as_str().into(),
+            row_data.as_str().into(),
+        ]));
+    }
+    // For an index KV.
+    let index_id = match tidb_tablecodec::table_key::decode_index_key(key) {
+        Ok((_, index_id, _)) => index_id,
+        Err(error) => return Error::Other(error.to_string()),
+    };
+    let Some(index) = tbl.indexes().iter().find(|index| index.read().id == index_id) else {
+        // Go dereferences the missing index; report it instead.
+        return Error::Other(format!("index {index_id} of table {table_name} not found"));
+    };
+    new_err_found_index_conflict_records(key, value, tbl, index)
+}
+
+/// Go `newErrFoundIndexConflictRecords`.
+fn new_err_found_index_conflict_records(
+    key: &[u8],
+    value: &[u8],
+    tbl: &tidb_table::tables::TableCommon,
+    index: &tidb_table::tables::Index,
+) -> Error {
+    let table_name = tbl.meta().read().name.original().to_owned();
+    let index_name = format!("{table_name}.{}", index.read().name.original());
+    let values = match tbl.gen_index_value_from_index(index, key, value) {
+        Ok(values) => values,
+        Err(error) => {
+            tidb_log::warn(
+                "decode index key value / column value failed",
+                &[
+                    tidb_log::Field::new("index", tidb_log::Value::Str(index_name.clone())),
+                    tidb_log::Field::new("key", tidb_log::Value::Str(hex::encode(key))),
+                    tidb_log::Field::new("value", tidb_log::Value::Str(hex::encode(value))),
+                    tidb_log::Field::new("error", tidb_log::Value::Str(error.into_mysql_error().to_string())),
+                ],
+            );
+            return Error::Ingest(tidb_lightning_common::errors::ERR_FOUND_INDEX_CONFLICT_RECORDS.fast_gen_by_args(&[
+                table_name.as_str().into(),
+                index_name.as_str().into(),
+                String::from_utf8_lossy(key).as_ref().into(),
+                String::from_utf8_lossy(value).as_ref().into(),
+            ]));
+        }
+    };
+    // Go `fmt.Sprintf("%s", []string)`.
+    let value_str =
+        format!("[{}]", values.iter().map(|v| String::from_utf8_lossy(v)).collect::<Vec<_>>().join(" "));
+    // Go `TableKVDecoder.DecodeHandleFromIndex`.
+    let handle = match tidb_tablecodec::decode_index_handle(key, value, index.column_offsets.len()) {
+        Ok(Some(handle)) => handle,
+        Ok(None) => return Error::Other("no handle in index key or value".to_owned()),
+        Err(error) => return Error::Other(error.to_string()),
+    };
+    Error::Ingest(tidb_lightning_common::errors::ERR_FOUND_INDEX_CONFLICT_RECORDS.fast_gen_by_args(&[
+        table_name.as_str().into(),
+        index_name.as_str().into(),
+        value_str.as_str().into(),
+        handle.to_string().as_str().into(),
+    ]))
 }
 
 #[cfg(test)]
@@ -337,24 +466,24 @@ mod task_tests {
         );
         assert_eq!(&tasks[0].start_key[..4], &[b'x', 0, 0, 42]);
     }
-    /// Go `TestRetrieveKeyAndValueFromErrFoundDuplicateKeys`.
+    /// Go `TestRetrieveKeyAndValueFromErrFoundDuplicateKeys`, with the
+    /// error behind the lightning backend's cause and a global-sort writer's
+    /// duplicate.
     #[test]
     fn test_retrieve_key_and_value_from_err_found_duplicate_keys() {
+        let local = tidb_lightning_backend::Error::from_cause(Error::Duplicate {
+            key: b"key".to_vec(),
+            value: b"value".to_vec(),
+        });
         assert_eq!(
-            retrieve_key_and_value_from_err_found_duplicate_keys(Error::Duplicate {
-                key: b"key".to_vec(),
-                value: b"value".to_vec()
-            })
-            .unwrap(),
-            (b"key".to_vec(), b"value".to_vec())
+            retrieve_key_and_value_from_err_found_duplicate_keys(&local),
+            Some((b"key".to_vec(), b"value".to_vec()))
         );
+        let external = Error::Source(std::sync::Arc::new(tidb_ingestor_simplesst::found_duplicate_keys(b"k", b"v")));
         assert_eq!(
-            retrieve_key_and_value_from_err_found_duplicate_keys(Error::Other(
-                "other error".into()
-            ))
-            .unwrap_err()
-            .to_string(),
-            "other error"
+            retrieve_key_and_value_from_err_found_duplicate_keys(&external),
+            Some((b"k".to_vec(), b"v".to_vec()))
         );
+        assert_eq!(retrieve_key_and_value_from_err_found_duplicate_keys(&Error::Other("other error".into())), None);
     }
 }

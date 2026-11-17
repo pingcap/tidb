@@ -789,6 +789,7 @@ impl WriteAndIngestStepExecutor {
 fn ingest_error(e: tidb_ingestor_ingestctrl::Error) -> Error {
     match e {
         tidb_ingestor_ingestctrl::Error::Ingest(t) => Arc::new(t),
+        tidb_ingestor_ingestctrl::Error::Source(e) => e,
         e => plain(e.to_string()),
     }
 }
@@ -1042,7 +1043,7 @@ mod global_sort_tests {
         let dup = tidb_ingestor_simplesst::found_duplicate_keys(b"k", b"v");
         let want = "[executor:8167]Duplicate key conflict found. Please resolve conflicts in the input dataset, or set on_duplicate_key to a strategy that can handle conflicts, for example 'capture'";
         assert_eq!(normalize_subtask_err(Arc::new(dup.clone())).to_string(), want);
-        let tidb_ingestor_simplesst::Error::Terror(t) = dup else { unreachable!() };
+        let tidb_ingestor_simplesst::Error::FoundDuplicateKeys { error: t, .. } = dup else { unreachable!() };
         assert_eq!(normalize_subtask_err(Arc::new(t.clone())).to_string(), want);
         let writer_error = tidb_lightning_backend::Error::from_cause(tidb_ingestor_simplesst::Error::Terror(t.clone()));
         assert_eq!(normalize_subtask_err(Arc::new(writer_error)).to_string(), want);

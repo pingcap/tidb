@@ -589,3 +589,24 @@ fn test_add_index_dist_clean_up_block() {
     tk.must_exec("set global tidb_enable_dist_task=0;");
     restore();
 }
+
+/// Go `addindextest1.TestUseClusterIdInGlobalSortPath`.
+#[test]
+fn test_use_cluster_id_in_global_sort_path() {
+    let store = realtikv!();
+    *tidb_vardef::CLOUD_STORAGE_URI.write().unwrap() = "s3://bucket/path/to/folder?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws".to_owned();
+    let path = tidb_dxf_handle::get_cloud_storage_uri(Some(store.tikv_store().cluster_id()));
+    assert_eq!(
+        path,
+        format!(
+            "s3://bucket/path/to/folder/dxf/{}/?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws",
+            store.tikv_store().cluster_id()
+        )
+    );
+    // Without a cluster ID.
+    assert_eq!(
+        tidb_dxf_handle::get_cloud_storage_uri(None),
+        "s3://bucket/path/to/folder/dxf/?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws"
+    );
+    tidb_vardef::CLOUD_STORAGE_URI.write().unwrap().clear();
+}

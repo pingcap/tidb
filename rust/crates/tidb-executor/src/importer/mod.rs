@@ -13,6 +13,8 @@ pub mod table_import;
 #[cfg(test)]
 mod chunk_process_tests;
 #[cfg(test)]
+mod conflict_records_tests;
+#[cfg(test)]
 mod plan_tests;
 #[cfg(test)]
 mod sampler_tests;

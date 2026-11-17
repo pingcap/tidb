@@ -48,6 +48,29 @@ where
         })
     }
 
+    /// Go `NewContext(ctx)` over a non-workerpool parent: the context also
+    /// ends when `parent` disconnects (Go's parent `ctx.Done()`).
+    pub fn with_parent_receiver(parent: crossbeam_channel::Receiver<()>) -> Arc<Self> {
+        Arc::new(Self {
+            cancellation: Cancellation::new(),
+            parent: Some(parent),
+            first_error: Mutex::new(None),
+        })
+    }
+
+    /// Go `ctx.Err() != nil`: this context or its parent ended.
+    pub fn is_done(&self) -> bool {
+        let ended = |receiver: &crossbeam_channel::Receiver<()>| {
+            matches!(receiver.try_recv(), Err(crossbeam_channel::TryRecvError::Disconnected))
+        };
+        ended(&self.cancellation.receiver()) || self.parent.as_ref().is_some_and(ended)
+    }
+
+    /// Go `ctx.Done()` of the parent context, `never` without one.
+    pub fn parent_done(&self) -> crossbeam_channel::Receiver<()> {
+        self.parent_cancelled()
+    }
+
     /// Stores the first error, logs every error, and cancels the pipeline.
     pub fn on_error(&self, error: E) {
         let mut first = self

@@ -906,6 +906,22 @@ fn merge_physical_ids(table: &TableInfo, indexes: &[GoShared<IndexInfo>]) -> Vec
     ids
 }
 
+/// Go `loadCloudStorageURI`: a distributed reorganization sorts in cloud
+/// storage when `tidb_cloud_storage_uri` is set; the owner's job context
+/// keeps the URI for the task (`resolve_cloud_storage_uri`).
+pub(super) fn load_cloud_storage_uri(job: &Job) {
+    let Some(meta) = job.reorg_meta.as_ref() else {
+        return;
+    };
+    let cloud_storage_uri = tidb_dxf_handle::get_cloud_storage_uri(tidb_dxf_handle::cluster_id());
+    crate::job_ctx::with_job_ctx(job.id, |jc| jc.cloud_storage_uri = cloud_storage_uri.clone());
+    let mut meta = meta.write();
+    meta.use_cloud_storage = !cloud_storage_uri.is_empty() && meta.is_dist_reorg;
+    drop(meta);
+    let mut job = job.clone();
+    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterLoadCloudStorageURI", &mut job);
+}
+
 /// Go `pickBackfillType`.
 pub(super) fn pick_backfill_type(job: &Job) -> Result<tidb_model::ReorgType, DdlPlanError> {
     let Some(meta) = job.reorg_meta.as_ref() else {
@@ -1291,6 +1307,7 @@ pub(super) fn plan_persisted_add_index_job_step(
     match original_state {
         SchemaState::NONE => {
             // Go `initForReorgIndexes`.
+            load_cloud_storage_uri(&active.job);
             let reorg_type = match pick_backfill_type(&active.job) {
                 Ok(reorg_type) => reorg_type,
                 Err(error) => return Err(cancel_ddl_job(active, error)),

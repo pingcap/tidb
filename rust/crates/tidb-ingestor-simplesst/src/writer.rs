@@ -521,13 +521,15 @@ fn value_of(block: &[u8]) -> &[u8] {
 
 /// Go `ErrFoundDuplicateKeys.FastGenByArgs(key, value)`.
 pub fn found_duplicate_keys(key: &[u8], value: &[u8]) -> Error {
-    Error::Terror(
-        tidb_lightning_common::errors::ERR_FOUND_DUPLICATE_KEYS.generate(format!(
+    Error::FoundDuplicateKeys {
+        key: key.to_vec(),
+        value: value.to_vec(),
+        error: tidb_lightning_common::errors::ERR_FOUND_DUPLICATE_KEYS.generate(format!(
             "found duplicate key '{}', value '{}'",
             hex::encode(key),
             hex::encode(value)
         )),
-    )
+    }
 }
 
 impl Writer {

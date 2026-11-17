@@ -139,6 +139,33 @@ impl RealTiKV {
         self.stack.factory.processes()
     }
 
+    /// Go `store` as the DDL's transactions open on it.
+    pub(crate) fn transaction_opener(
+        &self,
+    ) -> std::sync::Arc<tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener> {
+        std::sync::Arc::new(self.authority.transaction_opener())
+    }
+
+    /// Go `store`'s region cache.
+    pub(crate) fn region_store(&self) -> std::sync::Arc<dyn tidb_kv::region_map::RegionStore> {
+        std::sync::Arc::new(tidb_kv::tikv_region_store::TikvRegionStore::new(
+            self.tikv_store.clone(),
+            vec![self.pd.clone()],
+        ))
+    }
+
+    /// Go `dom.InfoSchema().TableByName(db, table).Meta()`.
+    pub(crate) fn table_info(&self, db: &str, table: &str) -> tidb_model::TableInfo {
+        let (_, table) = self
+            .stack
+            .factory
+            .catalog_snapshot()
+            .table_info_by_name(db, table)
+            .unwrap_or_else(|| panic!("table {db}.{table} exists"));
+        let table = table.read().clone_like_go();
+        table
+    }
+
     /// The DDL's system sessions (Go tests reach them through the domain).
     pub(crate) fn ddl_session_pool(&self) -> &std::sync::Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool> {
         &self.stack.ddl_session_pool

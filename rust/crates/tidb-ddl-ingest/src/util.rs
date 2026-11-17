@@ -7,10 +7,37 @@ pub fn try_convert_to_key_exists_err(
     index: &tidb_model::IndexInfo,
     table: &tidb_model::TableInfo,
 ) -> Error {
-    let Error::Backend(tidb_ingestor_ingestctrl::Error::Duplicate { mut key, value }) = error
-    else {
-        return error;
-    };
+    match error {
+        Error::Backend(tidb_ingestor_ingestctrl::Error::Duplicate { key, value }) => {
+            gen_key_exists_err(key, value, index, table)
+        }
+        error => match tidb_ingestor_simplesst::duplicate_key_and_value(&error) {
+            Some((key, value)) => gen_key_exists_err(key.to_vec(), value.to_vec(), index, table),
+            None => error,
+        },
+    }
+}
+
+/// Go `TryConvertToKeyExistsErr` over any error, as the global-sort steps
+/// meet it: an `ErrFoundDuplicateKeys` in `error`'s chain (with its key and
+/// value arguments) becomes the index's `ErrKeyExists`; `None` otherwise.
+#[must_use]
+pub fn key_exists_err_of(
+    error: &(dyn std::error::Error + 'static),
+    index: &tidb_model::IndexInfo,
+    table: &tidb_model::TableInfo,
+) -> Option<Error> {
+    let (key, value) = tidb_ingestor_simplesst::duplicate_key_and_value(error)?;
+    Some(gen_key_exists_err(key.to_vec(), value.to_vec(), index, table))
+}
+
+/// Go `ddlutil.GenKeyExistsErr`.
+fn gen_key_exists_err(
+    mut key: Vec<u8>,
+    value: Vec<u8>,
+    index: &tidb_model::IndexInfo,
+    table: &tidb_model::TableInfo,
+) -> Error {
     if key.len() > 4
         && key[0] == b'x'
         && !tidb_config::config_tree::config::get_global_keyspace_name().is_empty()

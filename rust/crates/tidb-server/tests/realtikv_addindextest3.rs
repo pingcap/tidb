@@ -599,6 +599,42 @@ fn test_add_index_ingest_failures() {
     tk.must_exec("set global tidb_enable_dist_task=off;");
 }
 
+/// Go `TestAddIndexLocalSortDiskSpace`: the read-index step's local-sort
+/// disk precheck fails the job, and a failed disk probe is retried.
+#[test]
+fn test_add_index_local_sort_disk_space() {
+    let store = realtikv!();
+    let mut tk = store.new_tk();
+    tk.must_exec("drop database if exists addindexlit;");
+    tk.must_exec("create database addindexlit;");
+    tk.must_exec("use addindexlit;");
+    tk.must_exec("set global tidb_ddl_enable_fast_reorg=on;");
+    tk.must_exec("set global tidb_enable_dist_task=on;");
+
+    tk.must_exec("create table t(id int primary key, b int, k int);");
+    tk.must_exec("insert into t values (1, 1, 1);");
+
+    tk.must_exec("alter table t add index idx(b);");
+    tk.must_exec("admin check table t;");
+
+    tk.must_exec("drop index idx on t;");
+    {
+        let _probe =
+            tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceProbeFailed", "1*return");
+        tk.must_exec("alter table t add index idx2(b);");
+    }
+    tk.must_exec("admin check table t;");
+
+    let err = {
+        let _insufficient =
+            tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceInsufficient", "return");
+        tk.exec_to_err("alter table t add index idx3(b);")
+    };
+    assert!(err.contains("Check ingest environment failed"), "{err}");
+    assert!(err.contains("mock insufficient local sort disk space"), "{err}");
+    tk.must_exec("set global tidb_enable_dist_task=off;");
+}
+
 /// Go `TestAddIndexImportFailed`.
 #[test]
 fn test_add_index_import_failed() {
@@ -1575,4 +1611,357 @@ fn test_backend_ctx_concurrent_unregister() {
     });
     b_ctx.close();
     bd.close().unwrap();
+}
+
+// Go `operator_test.go`.
+
+/// Go `getRealAddIndexJob`.
+fn get_real_add_index_job(tk: &mut Tk) -> tidb_model::Job {
+    tk.must_exec("use test;");
+    tk.must_exec("create table t (a int);");
+    let real_job = Arc::new(Mutex::new(None::<tidb_model::Job>));
+    let _synced = {
+        let real_job = Arc::clone(&real_job);
+        tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", move |job| {
+            let job = job.downcast_mut::<tidb_model::Job>().unwrap();
+            if job.state == tidb_model::JobState::DONE && job.type_ == tidb_model::ActionType::ACTION_ADD_INDEX {
+                *real_job.lock().unwrap() = Some(job.clone());
+            }
+        })
+    };
+    tk.must_exec("alter table t add index idx(a);");
+    let job = real_job.lock().unwrap().clone().expect("the add index job");
+    job
+}
+
+type ScanContext = tidb_ddl::real_tikv_ddl::backfilling_operators::ScanContext<tikv_client::PdRpcClient>;
+
+/// Go `prepare`: table `op.t` with one row in each of `region_cnt` regions,
+/// and the scan of its index `idx` (Go's `copCtx` and session pool).
+fn prepare_operator_table(
+    store: &crate::realtikvtest::RealTiKV,
+    tk: &mut Tk,
+    job: &tidb_model::Job,
+    region_cnt: i64,
+) -> (Arc<ScanContext>, Vec<u8>, Vec<u8>) {
+    tk.must_exec("drop database if exists op;");
+    tk.must_exec("create database op;");
+    tk.must_exec("use op;");
+    tk.must_exec("set global tidb_ddl_enable_fast_reorg=on;");
+    tk.must_exec("create table t(a int primary key, b int, index idx(b));");
+    for i in 0..region_cnt {
+        tk.must_exec(&format!("insert into t values ({}, {i})", i * 10000));
+    }
+    let max_row_id = region_cnt * 10000;
+    assert_eq!(
+        tk.must_query(&format!("split table t between (0) and ({max_row_id}) regions {region_cnt};")),
+        vec![vec![region_cnt.to_string(), "1".to_owned()]]
+    );
+    // Refresh the region cache.
+    assert_eq!(tk.must_query("select count(*) from t;"), vec![vec![region_cnt.to_string()]]);
+    let table = store.table_info("op", "t");
+    let index_id = table.indices.iter_deref().find(|index| index.read().name.lowercase() == "idx").unwrap().read().id;
+    let start = tidb_tablecodec::table_key::gen_table_record_prefix(table.id);
+    let end = tidb_txnkv::Key::from_bytes(start.clone()).prefix_next().as_bytes().to_vec();
+    let row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds> =
+        Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default());
+    let backfiller = tidb_ddl::worker::new_index_backfiller(&row_ids, store.ddl_session_pool(), Some(store.region_store()));
+    let physical_id = table.id;
+    let scan = ScanContext::new(
+        store.transaction_opener(),
+        std::time::Duration::from_secs(60),
+        backfiller,
+        job,
+        table,
+        vec![index_id],
+        physical_id,
+    );
+    (scan, start, end)
+}
+
+/// Go `ingest.CreateLocalBackend` and `NewBackendCtxBuilder(...).Build` for
+/// `job`.
+fn operator_backend(
+    store: &crate::realtikvtest::RealTiKV,
+    job: &tidb_model::Job,
+) -> (Arc<tidb_ingestor_ingestctrl::local::Backend>, Arc<dyn tidb_ddl_ingest::backend::BackendCtx>) {
+    let concurrency = job.reorg_meta.as_ref().unwrap().read().get_concurrency(tidb_ddl::index::reorg_defaults()) as usize;
+    let bd = tidb_ddl_ingest::backend_mgr::create_local_backend(store.tikv_store().clone(), job, false, false, concurrency, 0)
+        .unwrap();
+    let b_ctx = tidb_ddl_ingest::backend_mgr::BackendCtxBuilder::new(
+        tidb_gocontext::Context::background(),
+        store.tikv_store().clone(),
+        job.clone(),
+    )
+    .build(Some(Arc::clone(&bd)))
+    .unwrap();
+    (bd, b_ctx)
+}
+
+/// Go `ingest.NewMockEngineInfo(nil)` with its write hook.
+fn mock_engine(
+    on_write: impl Fn(&[u8], &[u8]) + Send + Sync + 'static,
+) -> Arc<dyn tidb_ddl_ingest::engine::IngestEngine> {
+    let engine = tidb_ddl_ingest::mock::MockEngineInfo::new(tidb_store_driver_txn::cluster_storage::MutationBuffer::new());
+    engine.set_hook(on_write);
+    Arc::new(engine)
+}
+
+/// Go `TestBackfillOperators`.
+#[test]
+fn test_backfill_operators() {
+    use operator::{compose, AsyncPipeline, Context, Operator};
+    use tidb_ddl::real_tikv_ddl::backfilling_operators::{
+        IndexIngestOperator, IndexRecordChunk, IndexWriteResult, TableScanOperator, TableScanTask, TableScanTaskSource,
+    };
+    use tidb_ddl::testutil::{OperatorTestSink, OperatorTestSource};
+    let store = realtikv!();
+    let mut tk = store.new_tk();
+    let real_job = get_real_add_index_job(&mut tk);
+    let region_cnt = 10;
+    let (scan, start_key, end_key) = prepare_operator_table(&store, &mut tk, &real_job, region_cnt);
+
+    // Test TableScanTaskSource operator.
+    let op_tasks = {
+        let wctx = Arc::new(Context::new());
+        let src = Arc::new(TableScanTaskSource::new(
+            Arc::clone(&wctx),
+            Some(store.region_store()),
+            scan.physical_id,
+            start_key.clone(),
+            end_key.clone(),
+            None,
+        ));
+        let sink = Arc::new(OperatorTestSink::<TableScanTask>::new());
+        compose(src.as_ref(), sink.as_ref());
+        let pipeline = AsyncPipeline::new(vec![src, Arc::clone(&sink) as Arc<dyn Operator>]);
+        pipeline.execute().unwrap();
+        pipeline.close().unwrap();
+        let tasks = sink.collect();
+        assert_eq!(tasks.len(), 10);
+        assert_eq!(tasks[0].id, 0);
+        assert_eq!(tasks[0].start, start_key);
+        assert_eq!(tasks[9].end, end_key);
+        wctx.cancel();
+        assert!(wctx.operator_err().is_none());
+        tasks
+    };
+
+    // Test TableScanOperator.
+    let chunk_results = {
+        let wctx = Arc::new(Context::new());
+        let src = Arc::new(OperatorTestSource::new(op_tasks));
+        let scan_op = Arc::new(TableScanOperator::new(
+            Arc::clone(&wctx),
+            Arc::clone(&scan),
+            3,
+            0,
+            Some(tidb_model::GoShared::new(tidb_model::DDLReorgMeta::default())),
+            None,
+            Arc::new(tidb_dxf_execute::TestCollector::default()),
+        ));
+        let sink = Arc::new(OperatorTestSink::<IndexRecordChunk>::new());
+        compose(src.as_ref(), scan_op.as_ref());
+        compose(scan_op.as_ref(), sink.as_ref());
+        let pipeline = AsyncPipeline::new(vec![src, scan_op, Arc::clone(&sink) as Arc<dyn Operator>]);
+        pipeline.execute().unwrap();
+        pipeline.close().unwrap();
+        let mut cnt = 0;
+        let mut chunk_results = Vec::new();
+        for rs in sink.collect() {
+            let chk_row_cnt = rs.chunk.as_ref().map_or(0, |chunk| chunk.num_rows());
+            cnt += chk_row_cnt;
+            if chk_row_cnt > 0 {
+                chunk_results.push(rs);
+            }
+        }
+        assert_eq!(cnt, 10);
+        wctx.cancel();
+        assert!(wctx.operator_err().is_none());
+        chunk_results
+    };
+
+    // Test IndexIngestOperator.
+    {
+        let wctx = Arc::new(Context::new());
+        let written = Arc::new(Mutex::new(Vec::<(Vec<u8>, Vec<u8>)>::new()));
+        let on_write = {
+            let written = Arc::clone(&written);
+            move |key: &[u8], value: &[u8]| written.lock().unwrap().push((key.to_vec(), value.to_vec()))
+        };
+        let (bd, b_ctx) = operator_backend(&store, &real_job);
+        let src = Arc::new(OperatorTestSource::new(chunk_results));
+        let ingest_op = Arc::new(IndexIngestOperator::new(
+            Arc::clone(&wctx),
+            Arc::clone(&scan),
+            vec![mock_engine(on_write)],
+            3,
+            0,
+            Arc::new(tidb_dxf_execute::TestCollector::default()),
+        ));
+        let sink = Arc::new(OperatorTestSink::<IndexWriteResult>::new());
+        compose(src.as_ref(), ingest_op.as_ref());
+        compose(ingest_op.as_ref(), sink.as_ref());
+        let pipeline = AsyncPipeline::new(vec![src, ingest_op, Arc::clone(&sink) as Arc<dyn Operator>]);
+        pipeline.execute().unwrap();
+        pipeline.close().unwrap();
+        let cnt: usize = sink.collect().iter().map(|rs| rs.row_cnt).sum();
+        assert_eq!(written.lock().unwrap().len(), 10);
+        assert_eq!(cnt, 10);
+        wctx.cancel();
+        assert!(wctx.operator_err().is_none());
+        b_ctx.close();
+        bd.close().unwrap();
+    }
+}
+
+/// Go `TestBackfillOperatorPipeline`.
+#[test]
+fn test_backfill_operator_pipeline() {
+    let store = realtikv!();
+    let mut tk = store.new_tk();
+    let real_job = get_real_add_index_job(&mut tk);
+    let (scan, start_key, end_key) = prepare_operator_table(&store, &mut tk, &real_job, 10);
+    let wctx = Arc::new(operator::Context::new());
+    let (bd, b_ctx) = operator_backend(&store, &real_job);
+    let pipeline = tidb_ddl::real_tikv_ddl::backfilling_operators::new_add_index_ingest_pipeline(
+        &wctx,
+        scan,
+        Arc::clone(&b_ctx),
+        vec![mock_engine(|_, _| {})],
+        1, // job id
+        start_key,
+        end_key,
+        real_job.reorg_meta.clone(),
+        0,
+        2,
+        Arc::new(tidb_dxf_execute::TestCollector::default()),
+    );
+    pipeline.execute().unwrap();
+    pipeline.close().unwrap();
+    assert!(wctx.operator_err().is_none());
+    wctx.cancel();
+    b_ctx.close();
+    bd.close().unwrap();
+}
+
+/// Go `TestBackfillOperatorPipelineException`.
+#[test]
+fn test_backfill_operator_pipeline_exception() {
+    let store = realtikv!();
+    let mut tk = store.new_tk();
+    let real_job = get_real_add_index_job(&mut tk);
+    let (scan, start_key, end_key) = prepare_operator_table(&store, &mut tk, &real_job, 10);
+    let (bd, b_ctx) = operator_backend(&store, &real_job);
+    for (fail_point_path, close_err_msg, operator_err_msg) in [
+        ("github.com/pingcap/tidb/pkg/ddl/mockScanRecordError", "context canceled", "mock scan record error"),
+        ("github.com/pingcap/tidb/pkg/ddl/scanRecordExec", "context canceled", "context canceled"),
+        ("github.com/pingcap/tidb/pkg/ddl/mockWriteLocalError", "context canceled", "mock write local error"),
+        ("github.com/pingcap/tidb/pkg/ddl/writeLocalExec", "context canceled", ""),
+        ("github.com/pingcap/tidb/pkg/ddl/mockFlushError", "mock flush error", "mock flush error"),
+    ] {
+        let wctx = Arc::new(operator::Context::new());
+        let _fp = if fail_point_path.contains("writeLocalExec") {
+            let counter = AtomicI32::new(0);
+            let wctx = Arc::clone(&wctx);
+            tidb_failpoint::enable_call_for_test(fail_point_path, move |done| {
+                if !*done.downcast_ref::<bool>().unwrap() {
+                    return;
+                }
+                // Every table scan worker must finish scanning first, or the
+                // scan might answer the context's error. 10 is the table scan
+                // task count.
+                if counter.fetch_add(1, Ordering::SeqCst) + 1 == 10 {
+                    wctx.cancel();
+                }
+            })
+        } else if fail_point_path.contains("scanRecordExec") {
+            let wctx = Arc::clone(&wctx);
+            tidb_failpoint::enable_call_for_test(fail_point_path, move |_| wctx.cancel())
+        } else {
+            tidb_failpoint::enable_for_test(fail_point_path, "return")
+        };
+        let pipeline = tidb_ddl::real_tikv_ddl::backfilling_operators::new_add_index_ingest_pipeline(
+            &wctx,
+            Arc::clone(&scan),
+            Arc::clone(&b_ctx),
+            vec![mock_engine(|_, _| {})],
+            1, // job id
+            start_key.clone(),
+            end_key.clone(),
+            real_job.reorg_meta.clone(),
+            0,
+            2,
+            Arc::new(tidb_dxf_execute::TestCollector::default()),
+        );
+        pipeline.execute().unwrap();
+        let err = pipeline.close().expect_err(fail_point_path);
+        assert!(err.to_string().contains(close_err_msg), "case: {fail_point_path}: {err}");
+        if operator_err_msg.is_empty() {
+            assert!(wctx.operator_err().is_none(), "case: {fail_point_path}");
+        } else {
+            let op_err = wctx.operator_err().unwrap_or_else(|| panic!("case: {fail_point_path}"));
+            assert!(op_err.to_string().contains(operator_err_msg), "case: {fail_point_path}: {op_err}");
+        }
+        wctx.cancel();
+    }
+    b_ctx.close();
+    bd.close().unwrap();
+}
+
+/// Go `TestTuneWorkerPoolSize`.
+#[test]
+fn test_tune_worker_pool_size() {
+    use operator::Operator;
+    use tidb_ddl::real_tikv_ddl::backfilling_operators::{IndexIngestOperator, TableScanOperator};
+    let store = realtikv!();
+    let mut tk = store.new_tk();
+    let real_job = get_real_add_index_job(&mut tk);
+    let (scan, _, _) = prepare_operator_table(&store, &mut tk, &real_job, 10);
+
+    // Test TableScanOperator.
+    {
+        let wctx = Arc::new(operator::Context::new());
+        let scan_op = TableScanOperator::new(
+            Arc::clone(&wctx),
+            Arc::clone(&scan),
+            2,
+            0,
+            Some(tidb_model::GoShared::new(tidb_model::DDLReorgMeta::default())),
+            None,
+            Arc::new(tidb_dxf_execute::TestCollector::default()),
+        );
+        scan_op.open().unwrap();
+        assert_eq!(scan_op.get_worker_pool_size(), 2);
+        scan_op.tune_worker_pool_size(8, false);
+        assert_eq!(scan_op.get_worker_pool_size(), 8);
+        scan_op.tune_worker_pool_size(1, false);
+        assert_eq!(scan_op.get_worker_pool_size(), 1);
+        wctx.cancel();
+        assert!(wctx.operator_err().is_none());
+    }
+
+    // Test IndexIngestOperator.
+    {
+        let wctx = Arc::new(operator::Context::new());
+        let (bd, b_ctx) = operator_backend(&store, &real_job);
+        let ingest_op = IndexIngestOperator::new(
+            Arc::clone(&wctx),
+            Arc::clone(&scan),
+            vec![mock_engine(|_, _| {})],
+            2,
+            0,
+            Arc::new(tidb_dxf_execute::TestCollector::default()),
+        );
+        ingest_op.open().unwrap();
+        assert_eq!(ingest_op.get_worker_pool_size(), 2);
+        ingest_op.tune_worker_pool_size(8, false);
+        assert_eq!(ingest_op.get_worker_pool_size(), 8);
+        ingest_op.tune_worker_pool_size(1, false);
+        assert_eq!(ingest_op.get_worker_pool_size(), 1);
+        wctx.cancel();
+        assert!(wctx.operator_err().is_none());
+        b_ctx.close();
+        bd.close().unwrap();
+    }
 }

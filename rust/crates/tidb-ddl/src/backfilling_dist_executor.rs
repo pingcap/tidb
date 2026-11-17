@@ -9,6 +9,17 @@ pub const BACKFILL_TASK_META_VERSION_1: i32 = 1;
 fn is_zero(value: &i32) -> bool {
     *value == 0
 }
+/// Go `BackfillTaskSummary`: the execution summary of a backfill task.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BackfillTaskSummary {
+    /// Go `IndexKVSize`: collected only for global-sort backfills.
+    #[serde(skip_serializing_if = "zero_u64")]
+    pub index_kv_size: u64,
+    /// Go `MergeTempIndexTxnKVSize`.
+    #[serde(skip_serializing_if = "zero_u64")]
+    pub merge_temp_index_txn_kv_size: u64,
+}
 /// Go `BackfillTaskMeta`. Do not derive Debug: the storage URI may contain credentials.
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -26,6 +37,9 @@ pub struct BackfillTaskMeta {
     pub estimate_row_size: usize,
     /// Go `MergeTempIndex`.
     pub merge_temp_index: bool,
+    /// Go `Summary`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<BackfillTaskSummary>,
     /// Go `Version`.
     #[serde(skip_serializing_if = "is_zero")]
     pub version: i32,
@@ -65,46 +79,10 @@ mod tests {
     }
 }
 
-/// Go `engineapi.ConflictInfo` in backfill external metadata.
-#[derive(Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ConflictInfo {
-    #[serde(skip_serializing_if = "zero_u64")]
-    pub count: u64,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub files: Vec<String>,
-}
+/// Go `globalsort.SortedKVMeta`, embedded by the backfill protocol.
+pub use tidb_ingestor_globalsort::SortedKVMeta;
 fn zero_u64(v: &u64) -> bool {
     *v == 0
-}
-/// Go `simplesst.MultipleFilesStat` in backfill external metadata.
-#[derive(Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct MultipleFilesStat {
-    #[serde(rename = "min-key", with = "go_bytes")]
-    pub min_key: Vec<u8>,
-    #[serde(rename = "max-key", with = "go_bytes")]
-    pub max_key: Vec<u8>,
-    pub filenames: Option<Vec<[String; 2]>>,
-    #[serde(rename = "max-overlapping-num")]
-    pub max_overlapping_num: i64,
-}
-/// Go `globalsort.SortedKVMeta` embedded by the backfill protocol.
-#[derive(Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct SortedKVMeta {
-    #[serde(rename = "start-key", with = "go_bytes")]
-    pub start_key: Vec<u8>,
-    #[serde(rename = "end-key", with = "go_bytes")]
-    pub end_key: Vec<u8>,
-    #[serde(rename = "total-kv-size")]
-    pub total_kv_size: u64,
-    #[serde(rename = "total-kv-cnt")]
-    pub total_kv_cnt: u64,
-    #[serde(rename = "multiple-files-stats")]
-    pub multiple_files_stats: Option<Vec<MultipleFilesStat>>,
-    #[serde(rename = "conflict-info")]
-    pub conflict_info: ConflictInfo,
 }
 /// Go `BackfillSubTaskMeta` including the v7.5 inline representation.
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -134,17 +112,84 @@ pub struct BackfillSubTaskMeta {
     #[serde(flatten)]
     pub sorted_kv_meta: SortedKVMeta,
 }
+/// The fields of `BackfillSubTaskMeta` Go tags `external:"true"`, which
+/// `BaseExternalMeta` keeps in external storage: everything but
+/// `ExternalPath`, `physical_table_id`, `row_start`, `row_end` and `ts`.
+const EXTERNAL_FIELDS: [&str; 12] = [
+    "range_job_keys",
+    "range_split_keys",
+    "data-files",
+    "stat-files",
+    "meta_groups",
+    "ele_ids",
+    "start-key",
+    "end-key",
+    "total-kv-size",
+    "total-kv-cnt",
+    "multiple-files-stats",
+    "conflict-info",
+];
+
 impl BackfillSubTaskMeta {
-    /// Go `BackfillSubTaskMeta.Marshal`, excluding external fields if stored outside.
+    /// Go `BackfillSubTaskMeta.Marshal` (`BaseExternalMeta.Marshal`): every
+    /// field, or, when the meta has an `ExternalPath`, only those not tagged
+    /// `external:"true"`.
     pub fn marshal(&self) -> serde_json::Result<Vec<u8>> {
         if self.external_path.is_empty() {
             return serde_json::to_vec(self);
         }
-        serde_json::to_vec(&serde_json::json!({
-            "ExternalPath":self.external_path,"physical_table_id":self.physical_table_id,
-            "row_start":base64_value(&self.row_start),"row_end":base64_value(&self.row_end),"ts":self.ts
-        }))
+        self.marshal_fields(|name| !EXTERNAL_FIELDS.contains(&name))
     }
+
+    /// Go `marshalExternalFields`: only the `external:"true"` fields.
+    fn marshal_external_fields(&self) -> serde_json::Result<Vec<u8>> {
+        self.marshal_fields(|name| EXTERNAL_FIELDS.contains(&name))
+    }
+
+    fn marshal_fields(&self, keep: impl Fn(&str) -> bool) -> serde_json::Result<Vec<u8>> {
+        let serde_json::Value::Object(fields) = serde_json::to_value(self)? else {
+            unreachable!("a struct serializes to an object")
+        };
+        let mut out = serde_json::Map::new();
+        for (name, value) in fields {
+            if keep(&name) {
+                out.insert(name, value);
+            }
+        }
+        serde_json::to_vec(&out)
+    }
+
+    /// Go `BaseExternalMeta.WriteJSONToExternalStorage`: the external fields
+    /// to `ExternalPath`, when the meta has one.
+    ///
+    /// # Errors
+    /// The file could not be written.
+    pub fn write_external(
+        &self,
+        ctx: &tidb_gocontext::Context,
+        store: &dyn tidb_objstore::storeapi::Storage,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if self.external_path.is_empty() {
+            return Ok(());
+        }
+        store.write_file(ctx, &self.external_path, &self.marshal_external_fields()?)?;
+        Ok(())
+    }
+}
+
+/// Go `writeExternalBackfillSubTaskMeta`: the meta's external fields go to
+/// `external_path`.
+///
+/// # Errors
+/// The file could not be written.
+pub fn write_external_backfill_sub_task_meta(
+    ctx: &tidb_gocontext::Context,
+    store: &dyn tidb_objstore::storeapi::Storage,
+    subtask: &mut BackfillSubTaskMeta,
+    external_path: String,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    subtask.external_path = external_path;
+    subtask.write_external(ctx, store)
 }
 fn base64_value(value: &[u8]) -> Option<String> {
     use base64::Engine;

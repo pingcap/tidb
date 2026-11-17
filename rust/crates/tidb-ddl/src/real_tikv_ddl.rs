@@ -51,7 +51,8 @@ use tidb_infoschema_issyncer::real_tikv_catalog::{SnapshotMetaSnapshot, Transact
 
 pub(crate) mod add_index_reorg;
 /// Go `operator.AsyncPipeline` of the ingest backfill, as Go's test hooks see it.
-pub use add_index_reorg::ingest::{IngestPipelineWorkers, ScopedPoolTuner};
+pub use add_index_reorg::ingest::PipelineError;
+pub use add_index_reorg::operators as backfilling_operators;
 mod backfilling;
 pub mod delete_range;
 
@@ -496,6 +497,17 @@ pub trait IndexBackfiller: Sync {
         )))
     }
 
+    /// Go `indexIngestWorker`'s table and index condition checkers, which
+    /// `writeChunk` encodes a scanned chunk's rows with.
+    fn ingest_chunk_encoder(
+        &self,
+        _reorg: &crate::cluster_ddl::add_index::AddIndexReorg,
+    ) -> Result<Box<dyn IngestChunkEncoder>, LockSqlError> {
+        Err(LockSqlError::from(tidb_terror::MysqlError::unknown(
+            "this path cannot encode index entries",
+        )))
+    }
+
     /// The node's live row-ID allocators, for the `mysql.*` rows the owner
     /// inserts (Go's internal INSERTs: the reorg handle, the delete ranges).
     fn system_row_ids(&self) -> Arc<dyn tidb_table::table_from_meta::TableAutoIds>;
@@ -597,14 +609,28 @@ pub enum AddIndexReorgWork<'a> {
     },
 }
 
+/// See [`IndexBackfiller::ingest_chunk_encoder`].
+pub trait IngestChunkEncoder: Send {
+    /// Go `writeChunk`: the index KVs of a chunk of `physical_id`'s rows.
+    ///
+    /// # Errors
+    /// A row's index entry could not be encoded.
+    fn encode(
+        &mut self,
+        physical_id: i64,
+        rows: &tidb_ddl_build::table_backfill::IngestRows,
+    ) -> Result<Vec<tidb_ddl_build::table_backfill::IndexKV>, LockSqlError>;
+}
+
 /// See [`IndexBackfiller::reorg_add_index`].
 pub enum AddIndexReorgAnswer {
     /// The record range, `None` for an empty physical table.
     Range(Option<(Vec<u8>, Vec<u8>)>),
     /// What a batch did.
     Batch(tidb_ddl_build::backfilling::ReorgBatch),
-    /// Go `IndexRecordChunk` encoded by `writeChunk`, with no transaction mutations.
-    Ingest(tidb_ddl_build::table_backfill::IngestBatch),
+    /// Go `IndexRecordChunk`: the rows an ingest scan read, with no
+    /// transaction mutations.
+    Ingest(tidb_ddl_build::table_backfill::IngestRows),
     /// What a column check found: `None` when every row fits.
     Checked(Option<LockSqlError>),
     /// A task's actual end key.

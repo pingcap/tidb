@@ -63,6 +63,7 @@ impl<S: StoreClient> BackendCtx for MockBackendCtx<S> {
                 Arc::new(MockEngineInfo {
                     buffer: self.buffer.clone(),
                     lock: lock.clone(),
+                    on_write: Mutex::new(None),
                 }) as Arc<dyn IngestEngine>
             })
             .collect())
@@ -149,6 +150,22 @@ impl<S: StoreClient> BackendCtx for MockBackendCtx<S> {
 pub struct MockEngineInfo {
     buffer: MutationBuffer,
     lock: Arc<Mutex<()>>,
+    /// Go `onWrite`.
+    on_write: Mutex<Option<Arc<dyn Fn(&[u8], &[u8]) + Send + Sync>>>,
+}
+impl MockEngineInfo {
+    /// Go `NewMockEngineInfo`: the rows go to `buffer` (Go `sessCtx`'s
+    /// transaction).
+    #[must_use]
+    pub fn new(buffer: MutationBuffer) -> Self {
+        Self { buffer, lock: Arc::new(Mutex::new(())), on_write: Mutex::new(None) }
+    }
+
+    /// Go `MockEngineInfo.SetHook`: each written row goes to `on_write`
+    /// instead of the buffer.
+    pub fn set_hook(&self, on_write: impl Fn(&[u8], &[u8]) + Send + Sync + 'static) {
+        *self.on_write.lock().unwrap() = Some(Arc::new(on_write));
+    }
 }
 impl IngestEngine for MockEngineInfo {
     fn flush(&self) -> Result<()> {
@@ -172,6 +189,10 @@ impl IngestWriter for MockWriter {
             &mut (),
         );
         let _lock = self.engine.lock.lock().unwrap();
+        if let Some(on_write) = self.engine.on_write.lock().unwrap().as_ref() {
+            on_write(key, value);
+            return Ok(());
+        }
         self.engine
             .buffer
             .set(tidb_txnkv::Key::from_bytes(key.to_vec()), value.to_vec())

@@ -25,21 +25,59 @@ pub(crate) fn display_type_name<T>() -> String {
     components[components.len().saturating_sub(2)..].join(".")
 }
 
-/// Error returned by a Go `Operator` method.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OperatorError(pub String);
+/// Error returned by a Go `Operator` method: Go's `error`, which keeps the
+/// error a worker or source returned so the pipeline's caller can match it.
+#[derive(Clone, Debug)]
+pub struct OperatorError(Arc<dyn std::error::Error + Send + Sync>);
 
-impl fmt::Display for OperatorError {
+#[derive(Debug)]
+struct Message(String);
+
+impl fmt::Display for Message {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
     }
 }
 
-impl std::error::Error for OperatorError {}
+impl std::error::Error for Message {}
+
+impl OperatorError {
+    /// Go `errors.New(message)`.
+    pub fn new(message: impl Into<String>) -> Self {
+        Self(Arc::new(Message(message.into())))
+    }
+
+    /// The error a worker or source returned.
+    pub fn from_error(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self(Arc::new(error))
+    }
+
+    /// Go `context.Canceled`.
+    pub fn canceled() -> Self {
+        Self::new("context canceled")
+    }
+
+    /// The returned error itself.
+    pub fn cause(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+        self.0.as_ref()
+    }
+}
+
+impl fmt::Display for OperatorError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, formatter)
+    }
+}
+
+impl std::error::Error for OperatorError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref())
+    }
+}
 
 impl From<PanicError> for OperatorError {
     fn from(error: PanicError) -> Self {
-        Self(error.to_string())
+        Self::from_error(error)
     }
 }
 
@@ -54,6 +92,26 @@ impl Context {
         Self {
             inner: WorkerContext::new(Option::None),
         }
+    }
+
+    /// Go `workerpool.NewContext(ctx)`: the context also ends when the parent
+    /// `ctx` does (`parent_done` is its `Done()`).
+    pub fn with_parent(parent_done: crossbeam_channel::Receiver<()>) -> Self {
+        Self {
+            inner: WorkerContext::with_parent_receiver(parent_done),
+        }
+    }
+
+    /// Go `ctx.Err()`: `context canceled` once this context or its parent
+    /// ended.
+    pub fn err(&self) -> Option<OperatorError> {
+        self.inner.is_done().then(OperatorError::canceled)
+    }
+
+    /// Go `ctx.Done()`: this context's and its parent's done channels; the
+    /// context has ended once either disconnects.
+    pub fn done(&self) -> [crossbeam_channel::Receiver<()>; 2] {
+        [self.inner.cancelled(), self.inner.parent_done()]
     }
 
     /// Go `Context.OnError`.

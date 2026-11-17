@@ -1688,6 +1688,7 @@ where
         crate::real_tikv_ddl::add_index_reorg::dist::register_backfill_task(Arc::new(
             crate::real_tikv_ddl::add_index_reorg::dist::BackfillDdl {
                 opener:opener.clone(),timeout,etcd:notifier.clone(),
+                server_info:Arc::clone(&server_info) as Arc<dyn tidb_dxf_scheduler::ServerInfoSource>,
                 backfiller:Arc::new({let scheduler=Arc::downgrade(&scheduler);move || {
                     let scheduler=scheduler.upgrade().expect("DDL owns backfill task factories");
                     Arc::new(KvTableIndexBackfiller::new(&scheduler.row_ids,&scheduler.session_pool)
@@ -4306,6 +4307,18 @@ impl KvTableIndexBackfiller {
     }
 }
 
+/// The backfiller a DDL worker reorganizes tables with, over `session_pool`'s
+/// sessions and `region_store`'s regions: what Go's backfill operators reach
+/// through `sessPool` and the table codecs.
+#[must_use]
+pub fn new_index_backfiller(
+    row_ids: &Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
+    session_pool: &Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
+    region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
+) -> Arc<dyn IndexBackfiller + Send> {
+    Arc::new(KvTableIndexBackfiller::new(row_ids, session_pool).with_region_store(region_store))
+}
+
 impl IndexBackfiller for KvTableIndexBackfiller {
     fn shared(&self) -> Arc<dyn IndexBackfiller + Send> {
         Arc::new(self.clone())
@@ -4361,6 +4374,20 @@ impl IndexBackfiller for KvTableIndexBackfiller {
             &[column.as_str()],
         )
         .map_err(LockSqlError::from)
+    }
+
+    fn ingest_chunk_encoder(
+        &self,
+        reorg: &crate::cluster_ddl::add_index::AddIndexReorg,
+    ) -> Result<Box<dyn crate::real_tikv_ddl::IngestChunkEncoder>, LockSqlError> {
+        let context = reorg_table_mutate_context(&reorg.session_vars);
+        let mut table = reorg_table(reorg)?;
+        add_partial_index_conditions(&mut table, reorg, &context)?;
+        Ok(Box::new(KvTableIngestChunkEncoder {
+            table,
+            index_ids: reorg.index_ids.clone(),
+            context,
+        }))
     }
 
     fn reorg_add_index(
@@ -4431,30 +4458,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 Err((false, error)) => Err(LockSqlError::from(error)),
             };
         }
-        let info = reorg.table.clone_like_go();
-        for index in info.indices.iter_deref() {
-            let mut index = index.write();
-            if reorg.index_ids.contains(&index.id) {
-                index.state = tidb_model::SchemaState::PUBLIC;
-                index.backfill_state = tidb_model::BackfillState::INAPPLICABLE;
-            }
-        }
-        // A MODIFY COLUMN's changing indexes are backfilled from its changing
-        // column, which the row rewrite filled: the backfill reads it as an
-        // ordinary column.
-        if reorg.column.is_none() {
-            for column in info.columns.iter_deref() {
-                let mut column = column.write();
-                if column.change_state_info.is_some()
-                    && column.state != tidb_model::SchemaState::PUBLIC
-                {
-                    column.state = tidb_model::SchemaState::PUBLIC;
-                }
-            }
-        }
-        let mut table = cluster_table(&info, &AutoIdSource::Unavailable)
-            .map_err(exchange_validation_internal)?
-            .with_new_collation_mode(tidb_datatype::new_collation_enabled());
+        let mut table = reorg_table(reorg)?;
         let ingest=matches!(&work,AddIndexReorgWork::Ingest{..});
         match work {
             AddIndexReorgWork::CheckColumn(_) | AddIndexReorgWork::PartitionCopy { .. } => {
@@ -4511,31 +4515,14 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 end,
                 batch_size,
             } | AddIndexReorgWork::Ingest { physical_id,start,end,batch_size } => {
-                // A partial index's entries are the rows its condition holds
-                // for (Go `buildIndexConditionChecker` in the backfill).
-                for index in info.indices.iter_deref() {
-                    let index = index.read();
-                    if !reorg.index_ids.contains(&index.id) || !index.has_condition() {
-                        continue;
-                    }
-                    let condition = index
-                        .condition_expr()
-                        .map_err(|error| exchange_validation_internal(error.message))?;
-                    table
-                        .add_partial_index_condition(
-                            index.id,
-                            index.name.original(),
-                            &condition,
-                            &tidb_tblctx::MutateContext::session_zone(context),
-                            tidb_exprctx::Columns::like_default_escape(context),
-                        )
-                        .map_err(backfill_failure)?;
-                }
                 let decode = RowDecodeContext::for_write(context);
+                // Go `tableScanWorker.scanRecords`: the ingest scan reads the
+                // rows; the ingest workers encode them (`writeChunk`).
                 if ingest {
-                    return tidb_ddl_build::table_backfill::write_chunk(&mut table,&mut storage.clone(),&reorg.index_ids,physical_id,start,end,batch_size,&decode)
+                    return tidb_ddl_build::table_backfill::fetch_ingest_rows(&mut table,&mut storage.clone(),start,end,batch_size,&decode)
                         .map(AddIndexReorgAnswer::Ingest).map_err(backfill_failure);
                 }
+                add_partial_index_conditions(&mut table, reorg, context)?;
                 let mut combined: Option<tidb_ddl_build::backfilling::ReorgBatch> = None;
                 for index_id in &reorg.index_ids {
                     let batch = table
@@ -4727,6 +4714,93 @@ fn backfill_failure(error: tidb_table::tables::KvTableError) -> LockSqlError {
 /// the table context a reorganization batch writes under, the job's SQL
 /// mode and location with no session.
 #[must_use]
+/// The table an ADD INDEX backfill writes through: the indexes being added
+/// as public ones and, outside a column rewrite, a MODIFY COLUMN's changing
+/// columns as ordinary ones.
+fn reorg_table(
+    reorg: &crate::cluster_ddl::add_index::AddIndexReorg,
+) -> Result<tidb_table::tables::TableCommon, LockSqlError> {
+    let info = reorg.table.clone_like_go();
+    for index in info.indices.iter_deref() {
+        let mut index = index.write();
+        if reorg.index_ids.contains(&index.id) {
+            index.state = tidb_model::SchemaState::PUBLIC;
+            index.backfill_state = tidb_model::BackfillState::INAPPLICABLE;
+        }
+    }
+    // A MODIFY COLUMN's changing indexes are backfilled from its changing
+    // column, which the row rewrite filled: the backfill reads it as an
+    // ordinary column.
+    if reorg.column.is_none() {
+        for column in info.columns.iter_deref() {
+            let mut column = column.write();
+            if column.change_state_info.is_some()
+                && column.state != tidb_model::SchemaState::PUBLIC
+            {
+                column.state = tidb_model::SchemaState::PUBLIC;
+            }
+        }
+    }
+    Ok(cluster_table(&info, &AutoIdSource::Unavailable)
+        .map_err(exchange_validation_internal)?
+        .with_new_collation_mode(tidb_datatype::new_collation_enabled()))
+}
+
+/// A partial index's entries are the rows its condition holds for (Go
+/// `buildIndexConditionChecker` in the backfill).
+fn add_partial_index_conditions(
+    table: &mut tidb_table::tables::TableCommon,
+    reorg: &crate::cluster_ddl::add_index::AddIndexReorg,
+    context: &tidb_tblctx::StaticMutateContext,
+) -> Result<(), LockSqlError> {
+    for index in reorg.table.indices.iter_deref() {
+        let index = index.read();
+        if !reorg.index_ids.contains(&index.id) || !index.has_condition() {
+            continue;
+        }
+        let condition = index
+            .condition_expr()
+            .map_err(|error| exchange_validation_internal(error.message))?;
+        table
+            .add_partial_index_condition(
+                index.id,
+                index.name.original(),
+                &condition,
+                &tidb_tblctx::MutateContext::session_zone(context),
+                tidb_exprctx::Columns::like_default_escape(context),
+            )
+            .map_err(backfill_failure)?;
+    }
+    Ok(())
+}
+
+/// Go `indexIngestWorker`: the table, its index condition checkers
+/// (`initIndexConditionCheckers`) and the session settings (`initSessCtx`)
+/// `writeChunk` encodes a chunk's rows with, built once per worker.
+struct KvTableIngestChunkEncoder {
+    table: tidb_table::tables::TableCommon,
+    index_ids: Vec<i64>,
+    context: tidb_tblctx::StaticMutateContext,
+}
+
+impl crate::real_tikv_ddl::IngestChunkEncoder for KvTableIngestChunkEncoder {
+    fn encode(
+        &mut self,
+        physical_id: i64,
+        rows: &tidb_ddl_build::table_backfill::IngestRows,
+    ) -> Result<Vec<tidb_ddl_build::table_backfill::IndexKV>, LockSqlError> {
+        let decode = RowDecodeContext::for_write(&self.context);
+        tidb_ddl_build::table_backfill::encode_index_kvs(
+            &self.table,
+            &self.index_ids,
+            physical_id,
+            &rows.rows,
+            decode.zone(),
+        )
+        .map_err(backfill_failure)
+    }
+}
+
 fn reorg_table_mutate_context(
     vars: &tidb_ddl_build::session_pool::ReorgSessionVars,
 ) -> tidb_tblctx::StaticMutateContext {
