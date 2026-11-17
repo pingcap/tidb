@@ -43,6 +43,22 @@ import (
 	tracing "github.com/uber/jaeger-client-go/config"
 )
 
+func TestKVServerSecurityConfig(t *testing.T) {
+	cfg := NewConfig()
+	require.Equal(t, "off", cfg.Security.KVServerVerifyCNMode)
+	require.NoError(t, json.Unmarshal([]byte(`{"security":{"cluster-ssl-ca":"test-ca.pem","kv-server-verify-cn-mode":"enforce","kv-server-verify-cn":["trusted-server"]}}`), cfg))
+	security := cfg.GetTiKVConfig().Security
+	require.Equal(t, "enforce", security.KVServerVerifyCNMode)
+	require.Equal(t, []string{"trusted-server"}, security.KVServerVerifyCN)
+	cfg.Security.KVServerVerifyCN[0] = "changed"
+	require.Equal(t, []string{"trusted-server"}, security.KVServerVerifyCN)
+	cfg.Security.KVServerVerifyCNMode = "invalid"
+	require.ErrorContains(t, cfg.Valid(), "kv-server-verify-cn-mode")
+	cfg.Security.KVServerVerifyCNMode = "enforce"
+	cfg.Security.ClusterSSLCA = ""
+	require.ErrorContains(t, cfg.Valid(), "requires cluster-ssl-ca")
+}
+
 func TestAtomicBoolUnmarshal(t *testing.T) {
 	type data struct {
 		Ab AtomicBool `toml:"ab"`
