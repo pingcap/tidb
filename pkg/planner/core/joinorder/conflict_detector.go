@@ -294,6 +294,12 @@ func (d *ConflictDetector) buildRecursive(group *joinGroup, p base.LogicalPlan, 
 		d.groupVertexes = append(d.groupVertexes, vertexNode)
 		return nil, vertexNode.bitSet, nil
 	}
+	// Projections not accepted by extraction are already handled as vertices.
+	// Accepted projections only define derived columns; substitute those columns
+	// in predicates below and restore their outputs after reordering.
+	if proj, ok := p.(*logicalop.LogicalProjection); ok {
+		return d.buildRecursive(group, proj.Children()[0], vertexMap)
+	}
 
 	// Look through Selection nodes that were kept in the original tree
 	// (e.g., Selection between two joins in a nested case).
@@ -314,6 +320,9 @@ func (d *ConflictDetector) buildRecursive(group *joinGroup, p base.LogicalPlan, 
 		// But its TES is its all children vertexes for correctness.
 		selEdge := d.makeEdgeInternal(base.InnerJoin, intset.FastIntSet{}, intset.FastIntSet{}, nil, nil, childVertexes)
 		selEdge.nonEQConds = conds
+		if len(group.colExprMap) > 0 {
+			selEdge.nonEQConds = SubstituteColsInExprs(conds, group.colExprMap)
+		}
 		return append(childEdges, selEdge), childVertexes, nil
 	}
 
@@ -322,6 +331,16 @@ func (d *ConflictDetector) buildRecursive(group *joinGroup, p base.LogicalPlan, 
 	joinop, ok := p.(*logicalop.LogicalJoin)
 	if !ok {
 		return nil, intset.FastIntSet{}, errors.New("unexpected plan type in conflict detector")
+	}
+	if len(group.colExprMap) > 0 {
+		// Keep the original tree and its expression slices intact: it is also
+		// used for fallback and can be visited by multiple search attempts.
+		rewritten := *joinop
+		rewritten.EqualConditions = SubstituteColsInEqEdges(joinop.EqualConditions, group.colExprMap)
+		rewritten.LeftConditions = SubstituteColsInExprs(joinop.LeftConditions, group.colExprMap)
+		rewritten.RightConditions = SubstituteColsInExprs(joinop.RightConditions, group.colExprMap)
+		rewritten.OtherConditions = SubstituteColsInExprs(joinop.OtherConditions, group.colExprMap)
+		joinop = &rewritten
 	}
 
 	leftEdges, leftVertexes, err := d.buildRecursive(group, joinop.Children()[0], vertexMap)
@@ -729,58 +748,70 @@ func alignEQConds(ctx base.PlanContext, left, right base.LogicalPlan, eqConds []
 		return left, right, nil, nil
 	}
 	res := make([]*expression.ScalarFunction, 0, len(eqConds))
+	var leftProj, rightProj *logicalop.LogicalProjection
+	materialize := func(input base.LogicalPlan, proj *logicalop.LogicalProjection, expr expression.Expression) (*logicalop.LogicalProjection, *expression.Column) {
+		if proj == nil {
+			// Inputs are shared by search candidates. Always add an owned projection
+			// instead of appending to an existing one, which could also duplicate
+			// evaluation of volatile expressions in that input projection.
+			proj = logicalop.LogicalProjection{Exprs: expression.Column2Exprs(input.Schema().Columns)}.Init(ctx, input.QueryBlockOffset())
+			proj.SetSchema(input.Schema().Clone())
+			proj.SetChildren(input)
+		}
+		return proj, proj.AppendExpr(expr)
+	}
 	for _, cond := range eqConds {
 		args := cond.GetArgs()
 		if len(args) != 2 {
 			return nil, nil, nil, errors.Errorf("unexpected eq condition args: %d", len(args))
 		}
+		leftExpr, rightExpr := args[0], args[1]
 		if expression.ExprFromSchema(args[0], left.Schema()) && expression.ExprFromSchema(args[1], right.Schema()) {
+			// Already aligned.
+		} else if expression.ExprFromSchema(args[1], left.Schema()) && expression.ExprFromSchema(args[0], right.Schema()) {
+			leftExpr, rightExpr = args[1], args[0]
+		} else {
+			return nil, nil, nil, errors.New("eq condition does not match join sides")
+		}
+		// Projection inlining can expose expression keys in either orientation.
+		// LogicalJoin requires its equality arguments to be materialized columns.
+		if _, isCol := leftExpr.(*expression.Column); !isCol {
+			leftProj, leftExpr = materialize(left, leftProj, leftExpr)
+			left = leftProj
+		}
+		if _, isCol := rightExpr.(*expression.Column); !isCol {
+			rightProj, rightExpr = materialize(right, rightProj, rightExpr)
+			right = rightProj
+		}
+		if leftExpr == args[0] && rightExpr == args[1] {
 			res = append(res, cond)
 			continue
 		}
-		if expression.ExprFromSchema(args[1], left.Schema()) && expression.ExprFromSchema(args[0], right.Schema()) {
-			swapped, ok := expression.NewFunctionInternal(ctx.GetExprCtx(), cond.FuncName.L, cond.GetStaticType(), args[1], args[0]).(*expression.ScalarFunction)
-			if !ok {
-				return nil, nil, nil, errors.New("failed to build swapped eq condition")
-			}
-			_, isCol0 := swapped.GetArgs()[0].(*expression.Column)
-			_, isCol1 := swapped.GetArgs()[1].(*expression.Column)
-			if !isCol0 || !isCol1 {
-				lCol := swapped.GetArgs()[0]
-				rCol := swapped.GetArgs()[1]
-				if !isCol0 {
-					left, lCol = logicalop.InjectExpr(left, swapped.GetArgs()[0])
-				}
-				if !isCol1 {
-					right, rCol = logicalop.InjectExpr(right, swapped.GetArgs()[1])
-				}
-				swapped = expression.NewFunctionInternal(ctx.GetExprCtx(), cond.FuncName.L, cond.GetStaticType(),
-					lCol, rCol).(*expression.ScalarFunction)
-			}
-			res = append(res, swapped)
-			continue
+		aligned, ok := expression.NewFunctionInternal(ctx.GetExprCtx(), cond.FuncName.L, cond.GetStaticType(), leftExpr, rightExpr).(*expression.ScalarFunction)
+		if !ok {
+			return nil, nil, nil, errors.New("failed to build aligned eq condition")
 		}
-		return nil, nil, nil, errors.New("eq condition does not match join sides")
+		res = append(res, aligned)
 	}
 	return left, right, res, nil
 }
 
 func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, vertexHints map[int]*JoinMethodHint) (*logicalop.LogicalJoin, error) {
 	e := checkResult.appliedNonInnerEdge
-	var alignedEQConds []*expression.ScalarFunction
-	var err error
-
-	checkResult.node1.p, checkResult.node2.p, alignedEQConds, err = alignEQConds(ctx, checkResult.node1.p, checkResult.node2.p, e.eqConds)
+	left, right, alignedEQConds, err := alignEQConds(ctx, checkResult.node1.p, checkResult.node2.p, e.eqConds)
 	if err != nil {
 		return nil, err
 	}
 
-	left := checkResult.node1.p
-	right := checkResult.node2.p
-
-	join, err := newCartesianJoin(ctx, e.joinType, left, right, vertexHints)
+	// Restore method hints against the original vertices before installing
+	// projections used only by this candidate's expression keys.
+	join, err := newCartesianJoin(ctx, e.joinType, checkResult.node1.p, checkResult.node2.p, vertexHints)
 	if err != nil {
 		return nil, err
+	}
+	if left != checkResult.node1.p || right != checkResult.node2.p {
+		join.SetChildren(left, right)
+		join.MergeSchema()
 	}
 	// After join reorder, the NOT_NULL flag of the null-producing side should be removed.
 	// We've done this for new join's output schema in LogicalJoin.MergeSchema().
@@ -899,21 +930,23 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 		return resSelection, nil
 	}
 
-	var err error
-	var alignedEQConds []*expression.ScalarFunction
 	newEqConds := make([]*expression.ScalarFunction, 0, 8)
 	newOtherConds := make([]expression.Expression, 0, 8)
 	for _, e := range checkResult.appliedInnerEdges {
-		checkResult.node1.p, checkResult.node2.p, alignedEQConds, err = alignEQConds(ctx, checkResult.node1.p, checkResult.node2.p, e.eqConds)
-		if err != nil {
-			return nil, err
-		}
-		newEqConds = append(newEqConds, alignedEQConds...)
+		newEqConds = append(newEqConds, e.eqConds...)
 		newOtherConds = append(newOtherConds, e.nonEQConds...)
+	}
+	left, right, newEqConds, err := alignEQConds(ctx, checkResult.node1.p, checkResult.node2.p, newEqConds)
+	if err != nil {
+		return nil, err
 	}
 	join, err := newCartesianJoin(ctx, checkResult.appliedInnerEdges[0].joinType, checkResult.node1.p, checkResult.node2.p, vertexHints)
 	if err != nil {
 		return nil, err
+	}
+	if left != checkResult.node1.p || right != checkResult.node2.p {
+		join.SetChildren(left, right)
+		join.MergeSchema()
 	}
 	join.EqualConditions = append(join.EqualConditions, newEqConds...)
 	join.OtherConditions = append(join.OtherConditions, newOtherConds...)

@@ -45,6 +45,76 @@ func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name, cascades st
 	}
 }
 
+func TestAdvancedJoinReorderThroughProjection(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a decimal(20,4), b int)")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("create table t3 (a int, b int)")
+	tk.MustExec("set tidb_opt_enable_advanced_join_reorder=on")
+	query := "select * from t3, t2, t1 where t3.a=t1.a and t2.b=t1.b"
+	hinted := "select /*+ leading(t1,t2,t3) */ * from t3, t2, t1 where t3.a=t1.a and t2.b=t1.b"
+	for _, threshold := range []string{"0", "10"} {
+		t.Run("threshold="+threshold, func(t *testing.T) {
+			tk.MustExec("set tidb_opt_join_reorder_threshold=" + threshold)
+			tk.MustExec("set tidb_opt_join_reorder_through_proj=off")
+			tk.MustQuery("explain format='brief' " + query).CheckContain("CARTESIAN")
+			tk.MustExec("set tidb_opt_join_reorder_through_proj=on")
+			tk.MustQuery("explain format='brief' " + query).CheckNotContain("CARTESIAN")
+			if threshold == "0" {
+				tk.MustQuery("explain format='brief' " + hinted).CheckNotContain("CARTESIAN")
+				tk.MustQuery("show warnings").Check(testkit.Rows())
+			}
+		})
+	}
+	tk.MustExec("insert into t1 values (1,10),(2,20),(2,20),(3.5,30),(null,40),(4,null)")
+	tk.MustExec("insert into t2 values (100,10),(200,20),(300,30),(400,40),(500,null)")
+	tk.MustExec("insert into t3 values (1,1000),(2,2000),(3,3000),(null,4000),(4,5000)")
+	for _, threshold := range []string{"0", "10"} {
+		tk.MustExec("set tidb_opt_join_reorder_threshold=" + threshold)
+		tk.MustQuery(query).Sort().Check(testkit.Rows("1 1000 100 10 1.0000 10", "2 2000 200 20 2.0000 20", "2 2000 200 20 2.0000 20"))
+	}
+
+	tk.MustExec("create table u1(a int)")
+	tk.MustExec("create table u2(a int, b int)")
+	tk.MustExec("create table u3(a int)")
+	tk.MustExec("insert into u1 values (1),(2)")
+	tk.MustExec("insert into u2 values (1,5),(3,null)")
+	tk.MustExec("insert into u3 values (0),(1),(3),(5)")
+	tk.MustExec("set tidb_enable_outer_join_reorder=on")
+	for _, threshold := range []string{"0", "10"} {
+		tk.MustExec("set tidb_opt_join_reorder_threshold=" + threshold)
+		for _, through := range []string{"off", "on"} {
+			tk.MustExec("set tidb_opt_join_reorder_through_proj=" + through)
+			// Derived outputs and residual predicates must use the original definitions.
+			tk.MustQuery("select d.k,d.v,t1.a from (select t3.a+0 k,t2.b+0 v from t3,t2) d " +
+				"join t1 on d.k=t1.a and d.v=t1.b where d.k+d.v>10").Sort().Check(
+				testkit.Rows("1 10 1.0000", "2 20 2.0000", "2 20 2.0000"))
+			// A derived value computed on the nullable side must itself become NULL.
+			tk.MustQuery("select x.a,d.k from u1 x left join " +
+				"(select u2.a,ifnull(u2.b,0) k from u2 join u3 on u2.a=u3.a) d on x.a=d.a").Sort().Check(
+				testkit.Rows("1 5", "2 <nil>"))
+			tk.MustQuery("select x.a,d.k from " +
+				"(select u2.a,ifnull(u2.b,0) k from u2 join u3 on u2.a=u3.a) d right join u1 x on x.a=d.a").Sort().Check(
+				testkit.Rows("1 5", "2 <nil>"))
+			// An expression above a nullable input must observe the manufactured NULL.
+			tk.MustQuery("select d.a,d.k,z.a from " +
+				"(select x.a,ifnull(y.b,0) k from u1 x left join u2 y on x.a=y.a) d " +
+				"join u3 z on d.k=z.a").Sort().Check(testkit.Rows("1 5 5", "2 0 0"))
+			// Inlining is safe on the preserved side of an outer join.
+			tk.MustQuery("select d.k,z.a from " +
+				"(select x.a+1 k from u1 x join u2 y on x.a=y.a) d " +
+				"left join u3 z on d.k=z.a").Check(testkit.Rows("2 <nil>"))
+		}
+	}
+	// Referencing a derived table by alias in LEADING must preserve its boundary.
+	tk.MustExec("set tidb_opt_join_reorder_threshold=0")
+	tk.MustQuery("select /*+ leading(t1,d) */ d.k,d.v,t1.a from " +
+		"(select t3.a+0 k,t2.b+0 v from t3,t2) d join t1 on d.k=t1.a and d.v=t1.b").Sort().Check(
+		testkit.Rows("1 10 1.0000", "2 20 2.0000", "2 20 2.0000"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
 func TestJoinReorderProjectionRand(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
