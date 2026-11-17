@@ -472,7 +472,7 @@ func TestMaterializedViewDDLProtectsGroupKeyIndex(t *testing.T) {
 		{name: "primary_int_handle", notNull: "not null", clustered: "on", indexName: "PRIMARY", isPrimary: true},
 		{name: "primary_common_handle", notNull: "not null", composite: true, clustered: "on", indexName: "PRIMARY", isPrimary: true},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		t.Run("frontend/"+tc.name, func(t *testing.T) {
 			store, dom := testkit.CreateMockStoreAndDomain(t)
 			tk := newMViewTestKit(t, store)
 			tk.MustExec("use test")
@@ -561,12 +561,10 @@ func TestMaterializedViewDDLProtectsGroupKeyIndex(t *testing.T) {
 			tk.MustQuery("select * from mv order by " + orderBy).Check(tk.MustQuery(fmt.Sprintf("select %s, count(*) from t group by %s order by %s", groupBy, groupBy, groupBy)).Rows())
 		})
 	}
-}
 
-func TestMaterializedViewDDLProtectsGroupKeyIndexInOwner(t *testing.T) {
 	for _, primary := range []bool{false, true} {
 		for _, operation := range []string{"drop", "rename", "invisible"} {
-			t.Run(fmt.Sprintf("primary=%t/operation=%s", primary, operation), func(t *testing.T) {
+			t.Run(fmt.Sprintf("owner/primary=%t/operation=%s", primary, operation), func(t *testing.T) {
 				store, dom := testkit.CreateMockStoreAndDomain(t)
 				tk := newMViewTestKit(t, store)
 				tk.MustExec("use test")
