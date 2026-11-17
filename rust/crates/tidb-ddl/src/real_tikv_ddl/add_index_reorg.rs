@@ -53,7 +53,7 @@ where
 {
     // Go `w.sessPool`: every reorg-handle statement runs on its sessions.
     let sess_pool = backfiller.session_pool().ok_or_else(||
-        ClusterDdlError::Backfill("the DDL worker has no session pool".to_owned()))?;
+        ClusterDdlError::backfill_message("the DDL worker has no session pool".to_owned()))?;
     let mut warnings = Vec::new();
     let result = match &reorg.stage {
         ReorgStageRequest::Init => init_reorg(
@@ -118,12 +118,16 @@ where
                 Ok(AddIndexReorgAnswer::Checked(found)) => Ok(ReorgResult::Checked(
                     found.map(|error| (error.code, error.message)),
                 )),
-                Ok(_) => Err(ClusterDdlError::Backfill(
+                Ok(_) => Err(ClusterDdlError::backfill_message(
                     "a column check answered something else".to_owned(),
                 )),
                 // Go: a failure to run the check is retried, not the job's
                 // error.
-                Err(error) => Err(ClusterDdlError::Backfill(error.message)),
+                Err(error) => Err(ClusterDdlError::Backfill(crate::cluster_ddl::reorg_failure(
+                    error.code,
+                    &error.message,
+                    error.identity,
+                ))),
             })?
         }
         ReorgStageRequest::CheckForeignKey(check) => {
@@ -254,17 +258,17 @@ where
         let staged = (|| {
             let slot = Arc::new(Mutex::new(SwappableSnapshot::new()));
             slot.lock()
-                .map_err(|_| ClusterDdlError::Backfill("snapshot slot poisoned".to_owned()))?
+                .map_err(|_| ClusterDdlError::backfill_message("snapshot slot poisoned".to_owned()))?
                 .bind(
                     transaction
                         .snapshot()
-                        .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+                        .map_err(|error| ClusterDdlError::backfill_storage(error))?,
                 );
             let handle: Arc<Mutex<dyn ClusterSnapshot>> = slot;
             let mut meta = SnapshotMetaSnapshot::new(
                 transaction
                     .snapshot()
-                    .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+                    .map_err(|error| ClusterDdlError::backfill_storage(error))?,
             );
             work(&mut meta, handle, &buffer, start_ts)
         })();
@@ -350,7 +354,7 @@ fn table_range(
         ) {
             Ok(AddIndexReorgAnswer::Range(range)) => Ok(range),
             Ok(_) => {
-                return Err(ClusterDdlError::Backfill(
+                return Err(ClusterDdlError::backfill_message(
                     "a table-range request answered something else".to_owned(),
                 ))
             }
@@ -372,12 +376,12 @@ where
     S: StoreClient,
 {
     let (first_index, element_type) = reorg_element(reorg)
-        .ok_or_else(|| ClusterDdlError::Backfill("ADD INDEX reorg names no index".to_owned()))?;
+        .ok_or_else(|| ClusterDdlError::backfill_message("ADD INDEX reorg names no index".to_owned()))?;
     let last_index = *reorg.index_ids.last().unwrap_or(&first_index);
     let first_physical = *reorg
         .physical_ids
         .first()
-        .ok_or_else(|| ClusterDdlError::Backfill("ADD INDEX reorg names no table".to_owned()))?;
+        .ok_or_else(|| ClusterDdlError::backfill_message("ADD INDEX reorg names no table".to_owned()))?;
     crate::job_ctx::attach_reorg_skip_check(&reorg.query.to_utf8_lossy_go());
     let mut initialized = None;
     // Go `getReorgInfo` / `getReorgInfoFromPartitions`: `delayForAsyncCommit`
@@ -468,8 +472,12 @@ fn is_index_reorg(reorg: &AddIndexReorg) -> bool {
 fn reorg_fn_error(error: ClusterDdlError) -> DdlPlanError {
     match error {
         ClusterDdlError::Plan(error) => error,
-        // A plain error, which Go's `isRetryableError` retries as unknown.
-        ClusterDdlError::Backfill(message) => DdlPlanError::Encode(message),
+        // The step's own error, as Go's `isRetryableError` reads its cause.
+        ClusterDdlError::Backfill(error) => error,
+        // A SQL failure keeps the Go identity it was raised with.
+        ClusterDdlError::Commit(error) | ClusterDdlError::IndexBackfill(error) => {
+            crate::cluster_ddl::reorg_failure(error.code, &error.message, error.identity)
+        }
         error => DdlPlanError::Encode(error.to_string()),
     }
 }
@@ -574,7 +582,7 @@ impl DistReorgSlot {
             }
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                 self.lock().take();
-                Err(ClusterDdlError::Backfill("the distributed reorganization ended without a result".to_owned()))
+                Err(ClusterDdlError::backfill_message("the distributed reorganization ended without a result".to_owned()))
             }
         }
     }
@@ -633,13 +641,13 @@ pub(crate) fn latest_job(
     job_id: i64,
 ) -> Result<Option<tidb_model::Job>, ClusterDdlError> {
     let pool = sess_pool.sess_pool().ok_or_else(||
-        ClusterDdlError::Backfill("the DDL session pool has no sessions".to_owned()))?;
+        ClusterDdlError::backfill_message("the DDL session pool has no sessions".to_owned()))?;
     match tidb_ddl_systable::Manager::get_job_by_id(
         &tidb_ddl_systable::SystemTableManager::new(pool), job_id,
     ) {
         Ok(job) => Ok(job.job.map(|job| job.read().clone())),
         Err(tidb_ddl_systable::SystemTableManagerError::NotFound) => Ok(None),
-        Err(error) => Err(ClusterDdlError::Backfill(error.to_string())),
+        Err(error) => Err(ClusterDdlError::backfill(&error)),
     }
 }
 
@@ -770,14 +778,14 @@ where
             if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/MockCaseWhenParseFailure") {
                 if value.bool() {
                     let error_count = latest_job(sess_pool, reorg.job_id)?.map_or(0, |job| job.error_count);
-                    return Err(ClusterDdlError::Backfill(format!(
+                    return Err(ClusterDdlError::backfill_message(format!(
                         "job.ErrCount:{error_count}, mock unknown type: ast.whenClause."
                     )));
                 }
             }
             let handle = current.clone();
             if let Some(job)=&ingest_job {
-                let pool=backfiller.session_pool().ok_or_else(||ClusterDdlError::Backfill("ingest requires the DDL session pool".into()))?;
+                let pool=backfiller.session_pool().ok_or_else(||ClusterDdlError::backfill_message("ingest requires the DDL session pool"))?;
                 update_reorg_meta(sess_pool,reorg,&handle);
                 match ingest::add_index_with_local_ingest(opener,timeout,backfiller,pool,reorg,job,&handle,check_owner,step_cancelled,warnings)? {
                     ReorgResult::Done(rows)=>{total+=rows;continue;},
@@ -841,10 +849,14 @@ where
                 })
                 .and_then(|answer| match answer {
                     Ok(AddIndexReorgAnswer::EndKey(key)) => Ok(key),
-                    Ok(_) => Err(ClusterDdlError::Backfill(
+                    Ok(_) => Err(ClusterDdlError::backfill_message(
                         "a range-end request answered something else".to_owned(),
                     )),
-                    Err(error) => Err(ClusterDdlError::Backfill(error.message)),
+                    Err(error) => Err(ClusterDdlError::Backfill(crate::cluster_ddl::reorg_failure(
+                    error.code,
+                    &error.message,
+                    error.identity,
+                ))),
                 })
             };
             let update_reorg_meta = |next_key: &[u8]| {
@@ -961,7 +973,7 @@ where
         let batch = match backfiller.reorg_add_index(reorg, work, snapshot, buffer) {
             Ok(AddIndexReorgAnswer::Batch(batch)) => batch,
             Ok(_) => {
-                return Err(ClusterDdlError::Backfill(
+                return Err(ClusterDdlError::backfill_message(
                     "a batch request answered something else".to_owned(),
                 ))
             }
@@ -975,7 +987,7 @@ where
         for key in &batch.locks {
             mutations.push(
                 BufferMutation::lock_only(key.clone())
-                    .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+                    .map_err(|error| ClusterDdlError::backfill(&error))?,
             );
         }
         Ok((
@@ -1067,7 +1079,7 @@ mod tests {
         ] {
             let answers = vec![
                 Ok(Some(job_in(JobState::RUNNING))),
-                Err(ClusterDdlError::Backfill("get job failed".to_owned())),
+                Err(ClusterDdlError::backfill_message("get job failed".to_owned())),
                 Ok(Some(job_in(state))),
                 Ok(Some(job_in(JobState::RUNNING))),
             ];

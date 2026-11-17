@@ -19,7 +19,8 @@ Five places in the Rust rewrite differ from Go's structure in ways that make eve
   - [ ] Step 2c: `active_role_identities` and `retrieve_sql_digest_texts` over `SessionVarsPropReader` / `SQLExecutorPropReader`; expropt's `SessionVars` is a marker today, so this needs the session-variables provider of step 3.
 - [ ] S02: `TableCommon` holds Go's one `Columns` list in metadata order; `Cols` / `VisibleCols` / `WritableCols` / `DeletableCols` are views; index offsets are `IndexColumn.Offset`.
 - [ ] S04: the local backfill runs under the job's `reorgCtx` like the DXF path (`DistReorgSlot` generalised to Go's `reorgCtx`).
-- [ ] S03: one Go-faithful DDL/reorg error type (plain error vs `*terror.Error`) through backfill, DXF and `is_retryable_job_error`.
+- [x] (2026-11-17) S03: `ClusterDdlError::Backfill` carries a `DdlPlanError` built from the error's Go cause (`DdlPlanError::from_cause`, Go `errors.Cause`); storage and SQL failures keep their identity; `reorg_fn_error` keeps it for commit and index-backfill failures.
+- [x] (2026-11-17) S06: `Domain::close` (Go `Domain.Close`, DDL stops first) and `ClusterDdl::stop` (Go `DDL.Stop`); server shutdown and the realtikv harness close the domain (commit `80beac1d46f`).
 
 ## Surprises & Discoveries
 

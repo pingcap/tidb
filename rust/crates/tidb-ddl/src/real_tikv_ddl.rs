@@ -228,7 +228,7 @@ pub enum ClusterDdlError {
     Undetermined(String),
     /// The index entries for the rows the table already holds could not be
     /// built, so the change was abandoned before anything was published.
-    Backfill(String),
+    Backfill(DdlPlanError),
     /// An index value failed evaluation or violated a SQL constraint.
     IndexBackfill(LockSqlError),
     /// A CHECK schema phase is durable but not yet acknowledged by every
@@ -273,16 +273,39 @@ impl fmt::Display for ClusterDdlError {
     }
 }
 
+impl ClusterDdlError {
+    /// A reorganization step's error, kept as Go keeps the `err` it returns:
+    /// a `*terror.Error` cause keeps its identity (`DdlPlanError::from_cause`).
+    pub(crate) fn backfill(error: &(dyn std::error::Error + 'static)) -> Self {
+        Self::Backfill(DdlPlanError::from_cause(error))
+    }
+
+    /// A storage failure of a reorganization step: a SQL failure keeps the
+    /// Go identity it was raised with; the others are plain errors.
+    pub(crate) fn backfill_storage(error: tidb_kv::storage::StorageError) -> Self {
+        match error {
+            tidb_kv::storage::StorageError::Sql(error) => Self::Backfill(
+                crate::cluster_ddl::reorg_failure(error.code, &error.message, error.identity),
+            ),
+            error => Self::backfill_message(error.to_string()),
+        }
+    }
+
+    /// A reorganization step's plain `errors.New` / `errors.Errorf`.
+    pub(crate) fn backfill_message(message: impl Into<String>) -> Self {
+        Self::Backfill(DdlPlanError::Encode(message.into()))
+    }
+}
+
 impl std::error::Error for ClusterDdlError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Plan(error) => Some(error),
+            Self::Plan(error) | Self::Backfill(error) => Some(error),
             Self::Transaction(error) => Some(error),
             Self::ConcurrentSchemaChange { .. }
             | Self::Commit(_)
             | Self::NotCommitted(_)
             | Self::Undetermined(_)
-            | Self::Backfill(_)
             | Self::IndexBackfill(_)
             | Self::SchemaSync(_) => None,
         }
@@ -1228,7 +1251,7 @@ where
             let mut snapshot = SnapshotMetaSnapshot::new(
                 transaction
                     .snapshot_at_for(for_update_ts, true)
-                    .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+                    .map_err(|error| ClusterDdlError::backfill_storage(error))?,
             );
             let mut ddl_se = sess_pool.open_step_session(for_update_ts, &buffer)
                 .map_err(DdlPlanError::from_mysql_error)?;
@@ -1297,7 +1320,7 @@ pub(crate) fn prepare_executor_job<S: StoreClient>(
                     .flat_map(|database| database.read().deprecated_tables.iter_deref())
                     .find(|table| table.read().id == table_id)
                     .ok_or_else(|| {
-                        ClusterDdlError::Backfill(format!("table {table_id} is gone"))
+                        ClusterDdlError::backfill_message(format!("table {table_id} is gone"))
                     })?;
                 let table = table.read();
                 backfiller
@@ -1458,7 +1481,7 @@ pub fn load_history_persisted_ddl_job<S: StoreClient>(
         let mut snapshot = SnapshotMetaSnapshot::new(
             transaction
                 .snapshot()
-                .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+                .map_err(|error| ClusterDdlError::backfill_storage(error))?,
         );
         snapshot
             .get(&tidb_meta::key::ddl_job_history_kv_key(ddl_job_id))
@@ -1495,7 +1518,7 @@ fn commit_cluster_ddl_phase<S: StoreClient>(
     let preflight = SessionTransaction::begin(Arc::clone(&opener), timeout, ddl_transaction_options())?;
     let recovery = crate::cluster_ddl::schema_sync_before_step(
         &mut SnapshotMetaSnapshot::new(preflight.snapshot()
-            .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?),
+            .map_err(|error| ClusterDdlError::backfill_storage(error))?),
         &phase.schema_state, &job_w.job.as_ref().unwrap().read(),
     );
     preflight.rollback().map_err(ClusterDdlError::NotCommitted)?;
@@ -1538,7 +1561,7 @@ fn commit_cluster_ddl_phase<S: StoreClient>(
         let mut snapshot = SnapshotMetaSnapshot::new(
             transaction
                 .snapshot()
-                .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+                .map_err(|error| ClusterDdlError::backfill_storage(error))?,
         );
         match plan_persisted_ddl_job_step(
             &mut snapshot,
@@ -1595,12 +1618,12 @@ fn commit_cluster_ddl_phase<S: StoreClient>(
         let stage_action = || {
             transaction
                 .snapshot()
-                .map_err(|error| ClusterDdlError::Backfill(error.to_string()))
+                .map_err(|error| ClusterDdlError::backfill_storage(error))
                 .and_then(|snapshot| {
                     let slot = Arc::new(Mutex::new(SwappableSnapshot::new()));
                     slot.lock()
                         .map_err(|_| {
-                            ClusterDdlError::Backfill("snapshot slot poisoned".to_owned())
+                            ClusterDdlError::backfill_message("snapshot slot poisoned".to_owned())
                         })?
                         .bind(snapshot);
                     let handle: Arc<Mutex<dyn ClusterSnapshot>> = slot;

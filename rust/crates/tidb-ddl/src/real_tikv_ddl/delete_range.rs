@@ -156,7 +156,7 @@ where
             for (key, _) in &pairs {
                 mutations.push(
                     BufferMutation::delete(key.to_vec())
-                        .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+                        .map_err(|error| ClusterDdlError::backfill(&error))?,
                 );
             }
             Ok((Some(next), mutations))

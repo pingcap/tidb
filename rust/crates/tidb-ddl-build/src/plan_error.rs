@@ -73,6 +73,21 @@ impl fmt::Display for DdlPlanError {
 }
 
 impl DdlPlanError {
+    /// Go's `error` value as `toTError` and `isRetryableError` read it:
+    /// `errors.Cause(err)` when that is a `*terror.Error` keeps its class
+    /// and code; any other error is a plain one carrying its own message.
+    #[must_use]
+    pub fn from_cause(error: &(dyn std::error::Error + 'static)) -> Self {
+        let mut cause = error;
+        while let Some(source) = cause.source() {
+            cause = source;
+        }
+        match cause.downcast_ref::<TerrorError>() {
+            Some(terror) => Self::Source(terror.clone()),
+            None => Self::Encode(error.to_string()),
+        }
+    }
+
     /// A refusal carrying an already classified driver-tier failure.
     pub fn from_mysql_error(error: tidb_terror::MysqlError) -> Self {
         Self::Admission(DdlAdmissionError::from_mysql_error(error))
@@ -233,5 +248,37 @@ impl From<tidb_ddl_jobsubmit::JobSubmitError> for DdlPlanError {
                 None => Self::plain_refusal(refusal.to_string()),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod from_cause_tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct Wrapped(TerrorError);
+    impl fmt::Display for Wrapped {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(formatter, "wrapped: {}", self.0)
+        }
+    }
+    impl std::error::Error for Wrapped {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    /// Go `toTError` / `isRetryableError` read `errors.Cause(err)`: a
+    /// `*terror.Error` cause keeps its class and code however it is wrapped;
+    /// any other error stays plain, with its own message.
+    #[test]
+    fn a_terror_cause_keeps_its_identity_and_a_plain_error_stays_plain() {
+        let terror = tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&["x".into(), "y".into()]);
+        let code = terror.to_sql_error().code;
+        let kept = DdlPlanError::from_cause(&Wrapped(terror));
+        assert!(matches!(kept, DdlPlanError::Source(_)), "{kept:?}");
+        assert_eq!(kept.mysql_error_code(), Some(code));
+        let plain = DdlPlanError::from_cause(&std::io::Error::other("disk gone"));
+        assert!(matches!(&plain, DdlPlanError::Encode(message) if message == "disk gone"), "{plain:?}");
     }
 }

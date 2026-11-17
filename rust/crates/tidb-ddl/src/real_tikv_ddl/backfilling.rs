@@ -152,7 +152,7 @@ impl DoneTaskKeeper {
 }
 
 fn invalid_split_region_ranges(message: String) -> ClusterDdlError {
-    ClusterDdlError::Backfill(
+    ClusterDdlError::backfill_message(
         tidb_dbterror::ERR_INVALID_SPLIT_REGION_RANGES
             .gen_with_stack_by_args(&[message.into()])
             .to_string(),
@@ -263,16 +263,16 @@ pub(super) fn load_table_ranges(
         {
             let msg = value.string();
             if !msg.is_empty() {
-                return Err(ClusterDdlError::Backfill(msg));
+                return Err(ClusterDdlError::backfill_message(msg));
             }
         }
         let mut ranges = region_store
             .batch_load_regions_with_key_range(start_key, end_key, limit)
-            .map_err(ClusterDdlError::Backfill)?;
+            .map_err(ClusterDdlError::backfill_message)?;
         let mut mock_err = false;
         tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/beforeLoadRangeFromPD", &mut mock_err);
         if mock_err {
-            return Err(ClusterDdlError::Backfill(
+            return Err(ClusterDdlError::backfill_message(
                 tidb_kv::kv_errors::ERR_TXN_RETRYABLE.gen_with_stack_by_args(&[]).to_string(),
             ));
         }

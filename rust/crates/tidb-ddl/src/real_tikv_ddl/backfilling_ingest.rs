@@ -94,7 +94,7 @@ pub(super) fn add_index_with_local_ingest<S: StoreClient>(
                 .iter_deref()
                 .find(|i| i.read().id == *id)
                 .map(|i| i.read().unique)
-                .ok_or_else(|| ClusterDdlError::Backfill(format!("index info not found: {id}")))
+                .ok_or_else(|| ClusterDdlError::backfill_message(format!("index info not found: {id}")))
         })
         .collect::<Result<Vec<_>, _>>()?;
     let ctx = tidb_gocontext::Context::background();
@@ -112,7 +112,7 @@ pub(super) fn add_index_with_local_ingest<S: StoreClient>(
                 reorg.concurrency,
                 0,
             )
-            .map_err(|e| ClusterDdlError::Backfill(e.to_string()))?,
+            .map_err(|e| ClusterDdlError::backfill(&e))?,
         )
     } else {
         None
@@ -145,7 +145,7 @@ pub(super) fn add_index_with_local_ingest<S: StoreClient>(
     let bc = BackendCtxBuilder::new(ctx.clone(), opener.store().clone(), job.clone())
         .with_checkpoint_manager_param(sess_pool, handle.physical_id)
         .build(backend.clone())
-        .map_err(|e| ClusterDdlError::Backfill(e.to_string()))?;
+        .map_err(|e| ClusterDdlError::backfill(&e))?;
     let result = (|| {
         let engines = bc.register(&reorg.index_ids, &uniques, &reorg.table)?;
         let start = bc.next_start_key().max(handle.start_key.clone());
@@ -185,7 +185,7 @@ pub(super) fn add_index_with_local_ingest<S: StoreClient>(
     let close = backend.as_ref().map_or(Ok(()), |backend| backend.close());
     match result {
         Ok(()) => {
-            close.map_err(|e| ClusterDdlError::Backfill(e.to_string()))?;
+            close.map_err(|e| ClusterDdlError::backfill(&e))?;
             Ok(ReorgResult::Done(rows))
         }
         Err(PipelineError::Interrupted) => Ok(ReorgResult::Interrupted),
@@ -195,7 +195,7 @@ pub(super) fn add_index_with_local_ingest<S: StoreClient>(
             &LockSqlError::from(tidb_terror::MysqlError::from_terror(&error)),
             rows,
         )),
-        Err(PipelineError::Ingest(error)) => Err(ClusterDdlError::Backfill(error.to_string())),
+        Err(PipelineError::Ingest(error)) => Err(ClusterDdlError::backfill(&error)),
     }
 }
 /// Go `Operator.TuneWorkerPoolSize` for workers borrowing the running subtask.
@@ -733,8 +733,8 @@ fn scan_records_at<S: StoreClient>(
                             Ok(AddIndexReorgAnswer::Ingest(chunk)) => chunk,
                             Err(e) => return Err(PipelineError::Sql(e)),
                             _ => {
-                                return Err(PipelineError::Storage(ClusterDdlError::Backfill(
-                                    "ingest scan answered something else".into(),
+                                return Err(PipelineError::Storage(ClusterDdlError::backfill_message(
+                                    "ingest scan answered something else",
                                 )));
                             }
                         };

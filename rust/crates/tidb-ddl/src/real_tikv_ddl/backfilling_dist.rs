@@ -70,10 +70,10 @@ fn get_tbl_info<S: StoreClient>(
                 .get(&tidb_meta::key::table_kv_key(job.schema_id, job.table_id))
                 .map_err(DdlPlanError::from)?
                 .ok_or_else(|| {
-                    ClusterDdlError::Backfill(format!("table {} not found", job.table_id))
+                    ClusterDdlError::backfill_message(format!("table {} not found", job.table_id))
                 })?;
             let table = serde_json::from_slice(&raw)
-                .map_err(|e| ClusterDdlError::Backfill(e.to_string()))?;
+                .map_err(|e| ClusterDdlError::backfill(&e))?;
             Ok((table, Vec::new()))
         },
     )
@@ -994,7 +994,7 @@ pub(super) fn execute_dist_task<S: StoreClient>(
         None => builder.build(job.id),
     };
     let manager = tidb_dxf_storage::get_dxf_svc_task_mgr()
-        .map_err(|e| ClusterDdlError::Backfill(e.to_string()))?;
+        .map_err(|e| ClusterDdlError::backfill(&e))?;
     // Go `lastRequiredSlots, lastBatchSize, lastMaxWriteSpeed`.
     let mut last = (0, 0, 0);
     let task = match manager.get_task_by_key_with_history(&ctx, &key) {
@@ -1004,10 +1004,10 @@ pub(super) fn execute_dist_task<S: StoreClient>(
             }
             if task.base.state != TASK_STATE_SUCCEED {
                 tidb_dxf_handle::resume_task(&ctx, &key)
-                    .map_err(|e| ClusterDdlError::Backfill(e.to_string()))?;
+                    .map_err(|e| ClusterDdlError::backfill(&e))?;
             }
             let task_meta: BackfillTaskMeta = serde_json::from_slice(&task.meta)
-                .map_err(|e| ClusterDdlError::Backfill(e.to_string()))?;
+                .map_err(|e| ClusterDdlError::backfill(&e))?;
             let reorg_meta = task_meta.job.reorg_meta.as_ref().expect("a backfill task's job has reorg meta").read();
             last = (
                 task.base.required_slots as i64,
@@ -1021,7 +1021,7 @@ pub(super) fn execute_dist_task<S: StoreClient>(
             let required_slots = (reorg.concurrency as isize).min(
                 manager
                     .get_cpu_count_of_node(&ctx)
-                    .map_err(|e| ClusterDdlError::Backfill(e.to_string()))?,
+                    .map_err(|e| ClusterDdlError::backfill(&e))?,
             );
             let meta = BackfillTaskMeta {
                 job: job.clone(),
@@ -1054,15 +1054,15 @@ pub(super) fn execute_dist_task<S: StoreClient>(
                     pause_on_kv_disk_full: true,
                     ..Default::default()
                 },
-                &serde_json::to_vec(&meta).map_err(|e| ClusterDdlError::Backfill(e.to_string()))?,
+                &serde_json::to_vec(&meta).map_err(|e| ClusterDdlError::backfill(&e))?,
             )
-            .map_err(|e| ClusterDdlError::Backfill(e.to_string()))?
+            .map_err(|e| ClusterDdlError::backfill(&e))?
         }
-        Err(error) => return Err(ClusterDdlError::Backfill(error.to_string())),
+        Err(error) => return Err(ClusterDdlError::backfill(&error)),
     };
     let pool = sess_pool
         .sess_pool()
-        .ok_or_else(|| ClusterDdlError::Backfill("the DDL session pool has no sessions".to_owned()))?;
+        .ok_or_else(|| ClusterDdlError::backfill_message("the DDL session pool has no sessions".to_owned()))?;
     let sys_tbl_mgr = tidb_ddl_systable::SystemTableManager::new(pool);
     // Go `done`: closed when the task wait returns, which ends the modify loop.
     let (done_tx, done) = crossbeam_channel::bounded::<()>(0);
@@ -1119,7 +1119,7 @@ fn wait_dist_task<S: StoreClient>(
         }
         let current = manager
             .get_task_by_id_with_history(&ctx, task.base.id)
-            .map_err(|e| ClusterDdlError::Backfill(e.to_string()))?;
+            .map_err(|e| ClusterDdlError::backfill(&e))?;
         if current.base.state == TASK_STATE_PAUSED
             && current
                 .error
@@ -1131,7 +1131,7 @@ fn wait_dist_task<S: StoreClient>(
         if current.base.is_done() || current.base.state == TASK_STATE_PAUSED {
             let rows = manager
                 .get_subtask_row_count(&ctx, task.base.id, BACKFILL_STEP_READ_INDEX)
-                .map_err(|e| ClusterDdlError::Backfill(e.to_string()))?;
+                .map_err(|e| ClusterDdlError::backfill(&e))?;
             let found = tidb_dxf_handle::wait_task_done_or_paused_with_result(&ctx, task.base.id);
             match found {
                 Ok(_) => {
@@ -1158,7 +1158,7 @@ fn wait_dist_task<S: StoreClient>(
                                 let error = tidb_terror::MysqlError::from_terror(error);
                                 return Ok(ReorgResult::Failed { code: error.code, message: error.message, rows, identity: error.identity });
                             }
-                            return Err(ClusterDdlError::Backfill(error.to_string()));
+                            return Err(ClusterDdlError::backfill(error.as_ref()));
                         }
                     }
                     return Ok(ReorgResult::Done(rows));
@@ -1185,9 +1185,9 @@ fn wait_dist_task<S: StoreClient>(
                             identity: error.identity,
                         });
                     }
-                    return Err(ClusterDdlError::Backfill(error.to_string()));
+                    return Err(ClusterDdlError::backfill(&error));
                 }
-                Err(error) => return Err(ClusterDdlError::Backfill(error.to_string())),
+                Err(error) => return Err(ClusterDdlError::backfill(&error)),
             }
         }
         ctx.sleep(Duration::from_millis(300));

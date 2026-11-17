@@ -2,8 +2,8 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 9,
-    "open": 5,
+    "unresolved": 8,
+    "open": 4,
     "partial": 4
   },
   "findings": [
@@ -64,14 +64,6 @@
       "rust_evidence": "`rust/crates/tidb-table/src/tables.rs`, `rust/crates/tidb-table/src/tables/nonpublic_columns.rs`, `rust/crates/tidb-table/src/table_from_meta.rs`"
     },
     {
-      "id": "S03",
-      "status": "open",
-      "group": "Structure: Go's shape before more ports",
-      "finding": "DDL and reorg errors lose their Go identity on the way to the job: `ClusterDdlError::Backfill(String)` drops the code, and `DdlPlanError::Encode` stands for Go's plain `errors.New`, so `is_retryable_job_error` tells a plain error from a `*terror.Error` only through that variant. Go keeps one `err` whose cause `isRetryableError` type-checks (`*terror.Error` with a retryable code, else any plain error retries).",
-      "go_owner": "`pkg/ddl/job_worker.go` (`isRetryableJobError`), `pkg/ddl/index.go` (`runReorgJobAndHandleErr`)",
-      "rust_evidence": "`rust/crates/tidb-ddl/src/real_tikv_ddl.rs`, `rust/crates/tidb-ddl-build/src/plan_error.rs`"
-    },
-    {
       "id": "S04",
       "status": "open",
       "group": "Structure: Go's shape before more ports",
@@ -80,7 +72,7 @@
       "rust_evidence": "`rust/crates/tidb-ddl/src/real_tikv_ddl/add_index_reorg.rs`, `rust/crates/tidb-ddl/src/real_tikv_ddl/backfilling.rs`"
     }
   ],
-  "unresolved": 9,
-  "open": 5,
+  "unresolved": 8,
+  "open": 4,
   "partial": 4
 }
