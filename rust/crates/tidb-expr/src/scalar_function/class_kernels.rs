@@ -122,11 +122,11 @@ session_values! {
     /// Go `builtinTiDBVersionSig`.
     tidb_version => |ctx| Datum::new_string_datum(ctx.tidb_info().into_bytes());
     /// Go `builtinTiDBIsDDLOwnerSig.evalInt`: 1 or 0, never NULL.
-    tidb_is_ddl_owner => |ctx| Datum::Int(i64::from(ctx.ddl_owner_info()?));
+    tidb_is_ddl_owner => |ctx| Datum::Int(i64::from(
+        tidb_expropt::DdlOwnerPropReader.is_ddl_owner(ctx).map_err(crate::builtin_ext::misc::opt_prop_error)?,
+    ));
     /// Go `builtinReleaseAllLocksSig`.
-    release_all_locks => |ctx| {
-        Datum::Int(i64::try_from(ctx.release_all_advisory_locks()?).unwrap_or(i64::MAX))
-    };
+    release_all_locks => |ctx| Datum::Int(tidb_expropt::AdvisoryLockContext::release_all_advisory_locks(&*advisory_lock_ctx(ctx)?));
 }
 
 unary_values! {
@@ -396,8 +396,17 @@ fn lock_name(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> 
     advisory_lock_name(name)
 }
 
+/// Go `AdvisoryLockPropReader.AdvisoryLockCtx`.
+fn advisory_lock_ctx(ctx: &dyn Columns) -> Result<std::sync::Arc<tidb_expropt::AdvisoryLockPropProvider>, EvalError> {
+    tidb_expropt::AdvisoryLockPropReader
+        .advisory_lock_ctx(ctx)
+        .map_err(crate::builtin_ext::misc::opt_prop_error)
+}
+
 /// Go `builtinLockSig.evalInt`.
 pub(crate) fn get_lock(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    use tidb_expropt::AdvisoryLockContext as _;
+    let lock_ctx = advisory_lock_ctx(ctx)?;
     let lock_name = lock_name(function, values, ctx)?;
     let timeout = crate::cast::cast_arg_as_int(&values[1], function.args[1].static_type(), ctx)?;
     let mut timeout = crate::arg_eval_type::eval_int(&timeout)?.unwrap_or(0);
@@ -408,29 +417,45 @@ pub(crate) fn get_lock(function: &ScalarFunction, values: &[Datum], ctx: &dyn Co
         );
         timeout = MAX_ADVISORY_LOCK_TIMEOUT_SECS;
     }
-    let acquired =
-        ctx.acquire_advisory_lock(&lock_name, std::time::Duration::from_secs(timeout as u64))?;
-    Ok(Datum::Int(i64::from(acquired)))
+    match lock_ctx.get_advisory_lock(&lock_name, timeout) {
+        Ok(()) => Ok(Datum::Int(1)),
+        // Another user has the lock.
+        Err(tidb_expropt::GetAdvisoryLockError::LockWaitTimeout) => Ok(Datum::Int(0)),
+        Err(tidb_expropt::GetAdvisoryLockError::LockDeadlock) => Err(EvalError::AdvisoryLock {
+            code: 3058,
+            message: "Deadlock found when trying to get user-level lock; try rolling back transaction/releasing locks and restarting lock acquisition.".to_owned(),
+        }),
+        Err(tidb_expropt::GetAdvisoryLockError::Other(error)) => {
+            Err(EvalError::AdvisoryLock { code: 1105, message: error.message().to_owned() })
+        }
+    }
 }
 
 /// Go `builtinReleaseLockSig.evalInt`.
 pub(crate) fn release_lock(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    use tidb_expropt::AdvisoryLockContext as _;
+    let lock_ctx = advisory_lock_ctx(ctx)?;
     let lock_name = lock_name(function, values, ctx)?;
-    Ok(Datum::Int(i64::from(ctx.release_advisory_lock(&lock_name)?)))
+    Ok(Datum::Int(i64::from(lock_ctx.release_advisory_lock(&lock_name))))
 }
 
 /// Go `builtinFreeLockSig.evalInt`.
 pub(crate) fn is_free_lock(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    use tidb_expropt::AdvisoryLockContext as _;
+    let lock_ctx = advisory_lock_ctx(ctx)?;
     let lock_name = lock_name(function, values, ctx)?;
-    Ok(Datum::Int(i64::from(ctx.advisory_lock_owner(&lock_name)?.is_none())))
+    Ok(Datum::Int(i64::from(lock_ctx.is_used_advisory_lock(&lock_name) == 0)))
 }
 
 /// Go `builtinUsedLockSig.evalInt`: the owning connection, or NULL.
 pub(crate) fn is_used_lock(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    use tidb_expropt::AdvisoryLockContext as _;
+    let lock_ctx = advisory_lock_ctx(ctx)?;
     let lock_name = lock_name(function, values, ctx)?;
-    Ok(ctx
-        .advisory_lock_owner(&lock_name)?
-        .map_or(Datum::Null, |owner| Datum::Int(owner as i64)))
+    Ok(match lock_ctx.is_used_advisory_lock(&lock_name) {
+        0 => Datum::Null,
+        owner => Datum::Int(owner as i64),
+    })
 }
 
 /// Go `builtinGetVar*Sig`: the variable's name is a build-time constant and

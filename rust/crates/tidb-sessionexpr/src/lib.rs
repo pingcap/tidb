@@ -1436,7 +1436,7 @@ mod tests {
     }
 
     impl AdvisoryLockContext for MockSession {
-        fn get_advisory_lock(&self, name: &str, _timeout: i64) -> Result<(), ExprOptError> {
+        fn get_advisory_lock(&self, name: &str, _timeout: i64) -> Result<(), tidb_expropt::GetAdvisoryLockError> {
             self.advisory_locks.lock().unwrap().push(name.to_owned());
             Ok(())
         }

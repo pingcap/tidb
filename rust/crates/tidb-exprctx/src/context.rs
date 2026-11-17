@@ -649,40 +649,6 @@ pub trait Columns {
         None
     }
 
-    /// Acquires a session advisory lock. `Ok(false)` is lock-wait timeout.
-    fn acquire_advisory_lock(
-        &self,
-        _name: &str,
-        _timeout: std::time::Duration,
-    ) -> Result<bool, EvalError> {
-        Err(EvalError::Unsupported("advisory locks require a session"))
-    }
-
-    /// Returns the source-visible advisory-lock owner, or `None` when free.
-    fn advisory_lock_owner(&self, _name: &str) -> Result<Option<u64>, EvalError> {
-        Err(EvalError::Unsupported("advisory locks require a session"))
-    }
-
-    /// Releases one session reference to an advisory lock.
-    fn release_advisory_lock(&self, _name: &str) -> Result<bool, EvalError> {
-        Err(EvalError::Unsupported("advisory locks require a session"))
-    }
-
-    /// Releases every advisory-lock reference held by this session.
-    fn release_all_advisory_locks(&self) -> Result<usize, EvalError> {
-        Err(EvalError::Unsupported("advisory locks require a session"))
-    }
-
-    /// Go `DDLOwnerPropReader.IsDDLOwner`: whether this node is the DDL
-    /// owner. A context that does not carry the `OptPropDDLOwnerInfo`
-    /// provider fails exactly as Go's `getPropProvider` does; a session that
-    /// registers `DdlOwnerInfoProvider` answers 1/0.
-    fn ddl_owner_info(&self) -> Result<bool, EvalError> {
-        Err(EvalError::Unsupported(
-            "optional property: 'OptPropDDLOwnerInfo' not exists in EvalContext",
-        ))
-    }
-
     /// Reads a supported system variable.
     fn sysvar(&self, scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
         let _ = (scope, name);

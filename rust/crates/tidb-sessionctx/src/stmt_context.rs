@@ -596,6 +596,9 @@ pub struct StmtContextSessionState {
     /// runs its summary queries through; `None` is a context with no session
     /// to run them.
     pub sql_executor: Option<Arc<dyn tidb_expropt::SqlExecutor>>,
+    /// Go `sessionexpr`'s DDL-owner property (`DDLOwnerInfoProvider`):
+    /// whether this node is the DDL owner; `None` is a context with no node.
+    pub ddl_owner_info: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     /// Go `kv.Storage.GetMinSafeTS`, which `GetStmtMinSafeTime` asks of the
     /// session's store; `None` is a context with no store.
     pub min_safe_ts_provider: Option<MinSafeTsProvider>,
@@ -648,6 +651,7 @@ impl Default for StmtContextSessionState {
             session_privilege: None,
             mdl_related_table: None,
             sql_executor: None,
+            ddl_owner_info: None,
             min_safe_ts_provider: None,
             locked_tables: None,
             ddl_sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
@@ -702,6 +706,7 @@ fn optional_eval_props(
     session_privilege: &Option<SessionPrivilegeCheck>,
     dynamic_privilege: &Option<DynamicPrivilegeCheck>,
     sql_executor: Option<Arc<dyn tidb_expropt::SqlExecutor>>,
+    ddl_owner_info: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 ) -> tidb_expropt::OptionalEvalPropProviders {
     let mut props = tidb_expropt::OptionalEvalPropProviders::new();
     let store: Arc<dyn tidb_expropt::KvStorage> = Arc::new(SessionKvStorage(Arc::clone(regions)));
@@ -713,6 +718,9 @@ fn optional_eval_props(
     props.add(Arc::new(tidb_expropt::PrivilegeCheckerProvider::new(move || Arc::clone(&checker))));
     if let Some(exec) = sql_executor {
         props.add(Arc::new(tidb_expropt::SqlExecutorPropProvider::new(move || Ok(Arc::clone(&exec)))));
+    }
+    if let Some(is_owner) = ddl_owner_info {
+        props.add(Arc::new(tidb_expropt::DdlOwnerInfoProvider::new(move || is_owner())));
     }
     props
 }
@@ -835,6 +843,35 @@ impl tidb_expropt::SessionVars for StmtSessionVars {
 impl tidb_expropt::SessionVarsProvider for StmtSessionVars {
     fn get_session_vars(&self) -> Arc<dyn tidb_expropt::SessionVars> {
         Arc::new(self.clone())
+    }
+}
+
+/// Go `sessionexpr`'s advisory-lock property over the session's locks.
+struct StmtAdvisoryLocks(crate::advisory_lock_state::AdvisoryLockSession);
+
+impl tidb_expropt::AdvisoryLockContext for StmtAdvisoryLocks {
+    fn get_advisory_lock(&self, name: &str, timeout: i64) -> Result<(), tidb_expropt::GetAdvisoryLockError> {
+        use crate::advisory_lock_state::AdvisoryLockError;
+        let timeout = std::time::Duration::from_secs(u64::try_from(timeout).unwrap_or(0));
+        self.0.acquire(name, timeout).map_err(|error| match error {
+            AdvisoryLockError::Timeout => tidb_expropt::GetAdvisoryLockError::LockWaitTimeout,
+            AdvisoryLockError::Deadlock => tidb_expropt::GetAdvisoryLockError::LockDeadlock,
+            AdvisoryLockError::Internal(message) => {
+                tidb_expropt::GetAdvisoryLockError::Other(tidb_expropt::ExprOptError::new(message))
+            }
+        })
+    }
+
+    fn is_used_advisory_lock(&self, name: &str) -> u64 {
+        self.0.owner(name).unwrap_or(0)
+    }
+
+    fn release_advisory_lock(&self, name: &str) -> bool {
+        self.0.release(name)
+    }
+
+    fn release_all_advisory_locks(&self) -> i64 {
+        i64::try_from(self.0.release_all()).unwrap_or(i64::MAX)
     }
 }
 
@@ -3356,6 +3393,7 @@ impl StmtContext {
                 &session.session_privilege,
                 &session.dynamic_privilege,
                 session.sql_executor,
+                session.ddl_owner_info,
             ),
             mpp_query_info: session.mpp_query_info,
             mpp_server_id: session.mpp_server_id,
@@ -7487,36 +7525,6 @@ impl Columns for StmtContext {
         self.optimizer_use_invisible_indexes
     }
 
-    fn acquire_advisory_lock(
-        &self,
-        name: &str,
-        timeout: std::time::Duration,
-    ) -> Result<bool, tidb_exprctx::EvalError> {
-        use crate::advisory_lock_state::AdvisoryLockError;
-        match self.advisory_locks.acquire(name, timeout) {
-            Ok(()) => Ok(true),
-            Err(AdvisoryLockError::Timeout) => Ok(false),
-            Err(AdvisoryLockError::Deadlock) => Err(tidb_exprctx::EvalError::AdvisoryLock {
-                code: 3058,
-                message: "Deadlock found when trying to get user-level lock; try rolling back transaction/releasing locks and restarting lock acquisition.".to_owned(),
-            }),
-            Err(AdvisoryLockError::Internal(message)) => {
-                Err(tidb_exprctx::EvalError::AdvisoryLock { code: 1105, message })
-            }
-        }
-    }
-
-    fn advisory_lock_owner(&self, name: &str) -> Result<Option<u64>, tidb_exprctx::EvalError> {
-        Ok(self.advisory_locks.owner(name))
-    }
-
-    fn release_advisory_lock(&self, name: &str) -> Result<bool, tidb_exprctx::EvalError> {
-        Ok(self.advisory_locks.release(name))
-    }
-
-    fn release_all_advisory_locks(&self) -> Result<usize, tidb_exprctx::EvalError> {
-        Ok(self.advisory_locks.release_all())
-    }
 
 
     /// Go `sessionexpr`'s providers: the session-vars and current-user ones
@@ -7537,6 +7545,9 @@ impl Columns for StmtContext {
                     (vars.user.clone(), vars.active_roles.clone())
                 })))
             }
+            tidb_exprctx::OptionalEvalPropKey::AdvisoryLock => Some(Arc::new(tidb_expropt::AdvisoryLockPropProvider::new(
+                Arc::new(StmtAdvisoryLocks(self.advisory_locks.clone())),
+            ))),
             _ => self.optional_props.get(key),
         }
     }

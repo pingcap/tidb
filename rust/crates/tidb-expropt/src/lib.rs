@@ -86,7 +86,9 @@ mod sessioncontext;
 mod sessionvars;
 mod sqlexec;
 
-pub use advisory_lock::{AdvisoryLockContext, AdvisoryLockPropProvider, AdvisoryLockPropReader};
+pub use advisory_lock::{
+    AdvisoryLockContext, AdvisoryLockPropProvider, AdvisoryLockPropReader, GetAdvisoryLockError,
+};
 pub use current_user::{CurrentUserPropProvider, CurrentUserPropReader};
 pub use ddlowner::{DdlOwnerInfoProvider, DdlOwnerPropReader};
 pub use infoschema::{InfoSchemaPropProvider, InfoSchemaPropReader};

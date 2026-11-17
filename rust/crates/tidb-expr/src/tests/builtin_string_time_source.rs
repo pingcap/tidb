@@ -1603,17 +1603,41 @@ fn test_is_null_func() {
 /// `GET_LOCK("mylock", ...)` succeeds once and releases back to free.
 struct LockSession;
 
+impl tidb_expropt::AdvisoryLockContext for LockSession {
+    fn get_advisory_lock(&self, name: &str, _: i64) -> Result<(), tidb_expropt::GetAdvisoryLockError> {
+        if name == "mylock" {
+            Ok(())
+        } else {
+            Err(tidb_expropt::GetAdvisoryLockError::LockWaitTimeout)
+        }
+    }
+
+    fn is_used_advisory_lock(&self, _: &str) -> u64 {
+        0
+    }
+
+    fn release_advisory_lock(&self, name: &str) -> bool {
+        name == "mylock"
+    }
+
+    fn release_all_advisory_locks(&self) -> i64 {
+        0
+    }
+}
+
 impl Columns for LockSession {
     fn get(&self, _: &[String]) -> Option<Datum> {
         None
     }
 
-    fn acquire_advisory_lock(&self, name: &str, _: std::time::Duration) -> Result<bool, EvalError> {
-        Ok(name == "mylock")
-    }
-
-    fn release_advisory_lock(&self, name: &str) -> Result<bool, EvalError> {
-        Ok(name == "mylock")
+    fn get_optional_prop_provider(
+        &self,
+        key: tidb_exprctx::OptionalEvalPropKey,
+    ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+        (key == tidb_exprctx::OptionalEvalPropKey::AdvisoryLock).then(|| {
+            std::sync::Arc::new(tidb_expropt::AdvisoryLockPropProvider::new(std::sync::Arc::new(LockSession)))
+                as std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>
+        })
     }
 }
 

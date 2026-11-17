@@ -1641,6 +1641,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             session_privilege: self.session_privilege_check(),
             mdl_related_table: self.mdl_related_table_recorder(),
             sql_executor: self.sql_executor(),
+            ddl_owner_info: self.ddl_owner_info(),
             min_safe_ts_provider: self.min_safe_ts_provider(),
             locked_tables: self.locked_tables(),
             point_plan_val: self.point_plan_val(),
@@ -2762,6 +2763,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// through `SQLExecutorPropReader`; `None` is a session with no node to
     /// run restricted SQL on.
     fn sql_executor(&self) -> Option<Arc<dyn tidb_sqlexec::RestrictedSqlExecutor>>;
+    /// Go `sessionexpr`'s DDL-owner property: whether this node is the DDL
+    /// owner (`dom.DDL().OwnerManager().IsOwner()`).
+    fn ddl_owner_info(&self) -> Option<Arc<dyn Fn() -> bool + Send + Sync>>;
     /// Go `kv.Storage.GetMinSafeTS` of the session's store, which the
     /// statement's `GetStmtMinSafeTime` reads; `None` without a store.
     fn min_safe_ts_provider(&self) -> Option<tidb_sessionctx::MinSafeTsProvider>;

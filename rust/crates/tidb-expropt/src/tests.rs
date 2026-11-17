@@ -236,7 +236,7 @@ impl SequenceOperator for MockSequenceOperator {
 struct MockAdvisoryLockContext;
 
 impl AdvisoryLockContext for MockAdvisoryLockContext {
-    fn get_advisory_lock(&self, _name: &str, _timeout: i64) -> Result<(), ExprOptError> {
+    fn get_advisory_lock(&self, _name: &str, _timeout: i64) -> Result<(), GetAdvisoryLockError> {
         Ok(())
     }
 

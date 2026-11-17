@@ -518,6 +518,13 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::restricted_sql_executor(self)
     }
 
+    /// A session with no owner manager runs its node's DDL itself, as Go's
+    /// mock store's one node is the owner.
+    fn ddl_owner_info(&self) -> Option<std::sync::Arc<dyn Fn() -> bool + Send + Sync>> {
+        let owner = self.ddl_owner_manager.clone();
+        Some(std::sync::Arc::new(move || owner.as_ref().is_none_or(|owner| owner.is_owner())))
+    }
+
     fn stale_tso_timestamp(&self) -> Option<f64> {
         self.stale_tso_now
     }
