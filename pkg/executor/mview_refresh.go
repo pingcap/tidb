@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
@@ -511,7 +512,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	}()
 	// Check schema freshness under the shared lock so refresh sees MLogs
 	// committed by a previous DDL owner, even before normal schema synchronization.
-	if err := ensureMVRefreshSchemaVersion(kctx, e.Ctx()); err != nil {
+	if err := ensureMVRefreshSchemaVersion(kctx, e.Ctx(), tblInfo.ID); err != nil {
 		return err
 	}
 	currentTbl, ok := domain.GetDomain(e.Ctx()).InfoSchema().TableByID(context.Background(), tblInfo.ID)
@@ -1807,37 +1808,12 @@ func lockRefreshInfoRow(
 	return decodeRefreshInfoSnapshot(lockRows[0], 1, 2), nil
 }
 
-func ensureMVRefreshSchemaVersion(ctx context.Context, sctx sessionctx.Context) error {
-	if err := ctx.Err(); err != nil {
+func ensureMVRefreshSchemaVersion(ctx context.Context, sctx sessionctx.Context, mviewID int64) error {
+	requiredVersion, err := mvRefreshRequiredSchemaVersion(ctx, sctx, mviewID)
+	if err != nil {
 		return err
 	}
 	dom := domain.GetDomain(sctx)
-	ver, err := sctx.GetStore().CurrentVersion(kv.GlobalTxnScope)
-	if err != nil {
-		return errors.Annotate(err, "refresh materialized view: failed to get schema-check timestamp")
-	}
-	m := dom.GetSnapshotMeta(ver.Ver)
-	requiredVersion, err := m.GetSchemaVersion()
-	if err != nil {
-		return errors.Annotate(err, "refresh materialized view: failed to get schema version")
-	}
-	// DDL can reserve versions without committing their schema diffs. Skip
-	// empty versions: Reload may retain an older version for those no-op changes.
-	// An up-to-date refresh only needs the schema-version read above.
-	currentVersion := dom.InfoSchema().SchemaMetaVersion()
-	for requiredVersion > currentVersion {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		diff, err := m.GetSchemaDiff(requiredVersion)
-		if err != nil {
-			return errors.Annotatef(err, "refresh materialized view: failed to get schema diff for version %d", requiredVersion)
-		}
-		if diff != nil {
-			break
-		}
-		requiredVersion--
-	}
 	if dom.InfoSchema().SchemaMetaVersion() >= requiredVersion {
 		return nil
 	}
@@ -1861,6 +1837,120 @@ func ensureMVRefreshSchemaVersion(ctx context.Context, sctx sessionctx.Context) 
 		return errors.Errorf("refresh materialized view: schema version %d is behind required version %d", currentVersion, requiredVersion)
 	}
 	return nil
+}
+
+// mvRefreshRequiredSchemaVersion returns zero if the local schema is sufficient.
+// Otherwise it returns the newest committed version in the check snapshot.
+func mvRefreshRequiredSchemaVersion(ctx context.Context, sctx sessionctx.Context, mviewID int64) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	dom := domain.GetDomain(sctx)
+	ver, err := sctx.GetStore().CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return 0, errors.Annotate(err, "refresh materialized view: failed to get schema-check timestamp")
+	}
+	m := dom.GetSnapshotMeta(ver.Ver)
+	latestVersion, err := m.GetSchemaVersion()
+	if err != nil {
+		return 0, errors.Annotate(err, "refresh materialized view: failed to get schema version")
+	}
+	currentIS := dom.InfoSchema()
+	currentVersion := currentIS.SchemaMetaVersion()
+	if currentVersion >= latestVersion {
+		return 0, nil
+	}
+	// Use the same InfoSchema for the dependency IDs and the lower version bound.
+	failpoint.InjectCall("refreshMaterializedViewBeforeCollectRelatedTables")
+	tableIDs, err := mvRefreshRelatedTableIDs(ctx, currentIS, mviewID)
+	if err != nil {
+		return 0, err
+	}
+	var latestCommittedVersion int64
+	for version := latestVersion; version > currentVersion; version-- {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		diff, err := m.GetSchemaDiff(version)
+		if err != nil {
+			return 0, errors.Annotatef(err, "refresh materialized view: failed to get schema diff for version %d", version)
+		}
+		if diff == nil {
+			// DDL can reserve versions without committing schema diffs. Reload
+			// may retain an older version for these empty versions.
+			continue
+		}
+		latestCommittedVersion = max(latestCommittedVersion, version)
+		// Related DDL can introduce new dependencies absent from tableIDs, so
+		// require the newest committed version, including subsequent changes.
+		if latestVersion-currentVersion >= issyncer.LoadSchemaDiffVersionGapThreshold || mvRefreshSchemaDiffAffectsTables(diff, tableIDs) {
+			return latestCommittedVersion, nil
+		}
+	}
+	return 0, nil
+}
+
+func mvRefreshRelatedTableIDs(ctx context.Context, is infoschema.InfoSchema, mviewID int64) (map[int64]struct{}, error) {
+	getTableInfo := func(id int64) (*model.TableInfo, error) {
+		item, ok := is.TableItemByID(id)
+		if !ok {
+			return nil, errors.Errorf("refresh materialized view: related table ID %d not found in infoschema", id)
+		}
+		// TableByName loads and caches missing table metadata in V2, while
+		// preserving storage errors that TableByID hides behind a false result.
+		tbl, err := is.TableByName(ctx, item.DBName, item.TableName)
+		if err != nil {
+			return nil, errors.Annotate(err, "refresh materialized view: failed to load related table")
+		}
+		return tbl.Meta(), nil
+	}
+	mview, err := getTableInfo(mviewID)
+	if err != nil {
+		return nil, err
+	}
+	if mview.MaterializedView == nil || len(mview.MaterializedView.BaseTableIDs) == 0 {
+		return nil, errors.Errorf("refresh materialized view: invalid metadata for materialized view ID %d", mviewID)
+	}
+	tableIDs := map[int64]struct{}{mviewID: {}}
+	if base := mview.MaterializedViewBase; base != nil && base.MLogID != 0 {
+		tableIDs[base.MLogID] = struct{}{}
+	}
+	for _, baseID := range mview.MaterializedView.BaseTableIDs {
+		tableIDs[baseID] = struct{}{}
+		base, err := getTableInfo(baseID)
+		if err != nil {
+			return nil, err
+		}
+		if base.MaterializedViewBase == nil || base.MaterializedViewBase.MLogID == 0 {
+			return nil, errors.Errorf("refresh materialized view: source table ID %d has no materialized view log", baseID)
+		}
+		tableIDs[base.MaterializedViewBase.MLogID] = struct{}{}
+	}
+	return tableIDs, nil
+}
+
+func mvRefreshSchemaDiffAffectsTables(diff *model.SchemaDiff, tableIDs map[int64]struct{}) bool {
+	// Schema/global changes and indirect metadata changes cannot be excluded by
+	// table ID. Batch CREATE TABLE is fully described by its affected options.
+	if diff.RegenerateSchemaMap || diff.ReadTableFromMeta ||
+		(diff.TableID <= 0 && diff.Type != model.ActionCreateTables) {
+		return true
+	}
+	if _, ok := tableIDs[diff.TableID]; ok {
+		return true
+	}
+	if _, ok := tableIDs[diff.OldTableID]; ok {
+		return true
+	}
+	for _, opt := range diff.AffectedOpts {
+		if _, ok := tableIDs[opt.TableID]; ok {
+			return true
+		}
+		if _, ok := tableIDs[opt.OldTableID]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func acquireMVRefreshAdvisoryLock(

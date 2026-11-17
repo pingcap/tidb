@@ -172,6 +172,7 @@ go_library(
         "//pkg/extworkload",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
+        "//pkg/infoschema/issyncer",
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/lightning/backend/encode",
