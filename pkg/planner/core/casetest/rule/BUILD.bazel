@@ -13,6 +13,7 @@ go_test(
         "rule_derive_topn_from_window_test.go",
         "rule_eliminate_empty_selection_test.go",
         "rule_eliminate_projection_test.go",
+        "rule_fts_like_fallback_test.go",
         "rule_inject_extra_projection_test.go",
         "rule_join_reorder_test.go",
         "rule_outer2inner_test.go",

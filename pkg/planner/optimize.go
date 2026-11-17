@@ -515,7 +515,7 @@ func buildAndOptimizeLogicalPlanRound(
 	bestCost *float64,
 	bestLogicalPlanCtx *logicalPlanBuildCtx,
 	optFlagAdjust func(uint64) uint64,
-) (base.Plan, types.NameSlice, bool, error) {
+) (p base.Plan, names types.NameSlice, nonLogical bool, rebuildWithFTSLikeFallback bool, err error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
 	// TODO: when buildRound > 1, only emit unused view-hint warnings for the winner build.
@@ -524,11 +524,11 @@ func buildAndOptimizeLogicalPlanRound(
 	builder.Init(sctx, is, hintProcessor)
 
 	// todo: you can customize each round's special builder (like semi join rewrite or not by signal)
-	p, err := buildLogicalPlan(ctx, sctx, node, builder)
+	p, err = buildLogicalPlan(ctx, sctx, node, builder)
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, false, false, err
 	}
-	names := p.OutputNames()
+	names = p.OutputNames()
 
 	if !*checked {
 		// Keep privilege and lock checks fail-fast. These depend on visitInfo
@@ -536,16 +536,16 @@ func buildAndOptimizeLogicalPlanRound(
 		if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
 			visitInfo := core.VisitInfo4PrivCheck(ctx, is, node.Node, builder.GetVisitInfo())
 			if err := core.CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
-				return nil, nil, false, err
+				return nil, nil, false, false, err
 			}
 		}
 
 		if err := core.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
-			return nil, nil, false, err
+			return nil, nil, false, false, err
 		}
 
 		if err := core.CheckTableMode(node); err != nil {
-			return nil, nil, false, err
+			return nil, nil, false, false, err
 		}
 		*checked = true
 	}
@@ -553,7 +553,7 @@ func buildAndOptimizeLogicalPlanRound(
 	// Handle the non-logical plan statement.
 	logic, isLogicalPlan := p.(base.LogicalPlan)
 	if !isLogicalPlan {
-		return p, names, true, nil
+		return p, names, true, false, nil
 	}
 
 	core.RecheckCTE(logic)
@@ -569,13 +569,6 @@ func buildAndOptimizeLogicalPlanRound(
 		optFlag&rule.FlagJoinReOrder > 0 {
 		sctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanOrderAwareJoinReorder()
 	}
-	if optFlagAdjust != nil {
-		optFlag = optFlagAdjust(optFlag)
-	}
-	finalPlan, cost, err := core.DoOptimize(ctx, sctx, optFlag, logic)
-	if err != nil {
-		return nil, nil, false, err
-	}
 
 	// Record predicate-context MATCH for cost competition. The fts-like-fallback
 	// alternative round reads this signal to decide whether to build a competing
@@ -586,15 +579,22 @@ func buildAndOptimizeLogicalPlanRound(
 	}
 
 	// If this round saw a predicate-context MATCH that cannot be served by the
-	// native FTSMysqlMatchAgainst builtin, the produced plan would fail at
-	// execution. Discard it and arm AlternativeLogicalPlanFTSLikeFallback so
-	// any intervening rounds (correlate, etc.) re-rewrite with ILIKE too. The
-	// fts-like-fallback round below also forces this flag during setup; this
-	// outer assignment covers the non-viable case where the flag must stay
-	// true across all subsequent rounds, not just inside the LIKE round.
+	// native FTSMysqlMatchAgainst builtin, the plan would fail at execution, and
+	// that is already known from the build. Do not optimize it: arm
+	// AlternativeLogicalPlanFTSLikeFallback so this and all later rounds
+	// (correlate, etc.) rewrite with ILIKE, and tell the caller that the round
+	// must be rebuilt.
 	if builder.HasNonViableFTSMatch() {
 		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanFTSLikeFallback = true
-		return p, names, false, nil
+		return p, names, false, true, nil
+	}
+
+	if optFlagAdjust != nil {
+		optFlag = optFlagAdjust(optFlag)
+	}
+	finalPlan, cost, err := core.DoOptimize(ctx, sctx, optFlag, logic)
+	if err != nil {
+		return nil, nil, false, false, err
 	}
 
 	if *bestPlan == nil || cost < *bestCost {
@@ -605,7 +605,7 @@ func buildAndOptimizeLogicalPlanRound(
 			*bestLogicalPlanCtx = saveLogicalPlanBuildCtx(sctx.GetSessionVars())
 		}
 	}
-	return p, names, false, nil
+	return p, names, false, false, nil
 }
 
 // optimizeCnt is a global variable only used for test.
@@ -808,12 +808,13 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		//     ILIKE-based plan; the cheaper of the two wins.
 		//   * HasNonViableFTSMatch: a predicate-context MATCH whose native form
 		//     cannot execute (no FTS index / no TiFlash replica / unsupported
-		//     modifier). The round driver discards round 1's plan and forces
-		//     AlternativeLogicalPlanFTSLikeFallback true so all subsequent
-		//     rounds (correlate, etc.) re-rewrite with ILIKE.
+		//     modifier). The round stops before optimizing its plan and forces
+		//     AlternativeLogicalPlanFTSLikeFallback true, and round 1 is rebuilt
+		//     right away with the ILIKE rewrite, so all rounds (correlate, etc.)
+		//     use ILIKE.
 	}
 
-	p, names, nonLogical, err := buildAndOptimizeLogicalPlanRound(
+	p, names, nonLogical, rebuildWithFTSLikeFallback, err := buildAndOptimizeLogicalPlanRound(
 		ctx,
 		sctx,
 		node,
@@ -829,6 +830,31 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		&bestLogicalPlanCtx,
 		nil,
 	)
+	// Round 1's native MATCH cannot execute, so rebuild round 1 with the ILIKE
+	// rewrite instead of optimizing a plan that would be discarded. The rebuilt
+	// round is exactly the plan the fts-like-fallback round would build (default
+	// flags, ILIKE rewrite), so that round is skipped below.
+	round1UsedFTSLikeFallback := false
+	if err == nil && rebuildWithFTSLikeFallback {
+		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
+		round1UsedFTSLikeFallback = true
+		p, names, nonLogical, _, err = buildAndOptimizeLogicalPlanRound(
+			ctx,
+			sctx,
+			node,
+			is,
+			hintProcessor,
+			&checked,
+			&optimizeStarted,
+			&beginOpt,
+			needRestoreLogicalPlanCtx,
+			&bestPlan,
+			&bestNames,
+			&bestCost,
+			&bestLogicalPlanCtx,
+			nil,
+		)
+	}
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -850,7 +876,11 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	// scan is the way this feature can turn a good mixed plan into a slow one,
 	// so leave those plans exactly as round 1 built them instead of putting
 	// them up for a cost comparison.
-	if needRestoreLogicalPlanCtx && bestPlan != nil {
+	//
+	// When round 1 was rebuilt with the ILIKE rewrite, its plan stands in for
+	// the fts-like-fallback round, which never armed these rounds, so keep
+	// that behavior.
+	if needRestoreLogicalPlanCtx && bestPlan != nil && !round1UsedFTSLikeFallback {
 		hasTiKV, hasTiFlash := physicalop.StorageEngineUsage(bestPlan)
 		if hasTiKV && hasTiFlash && !physicalop.HasSingleScanIndexJoin(bestPlan) {
 			sessVars.StmtCtx.MarkAlternativeLogicalPlanMixedStorageEngines()
@@ -865,6 +895,9 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	// original build's signals.
 	enabledRounds := make([]alternativeRound, 0, len(alternativeRounds))
 	for _, round := range alternativeRounds {
+		if round1UsedFTSLikeFallback && round.name == "fts-like-fallback" {
+			continue
+		}
 		if round.enabled(sessVars) {
 			enabledRounds = append(enabledRounds, round)
 		}
@@ -887,7 +920,10 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 				cleanup := round.setup(sessVars)
 				defer cleanup()
 			}
-			p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
+			// An alternative round whose native MATCH cannot execute returns
+			// without a plan, which leaves the round out of the comparison as
+			// before.
+			p, names, nonLogical, _, err = buildAndOptimizeLogicalPlanRound(
 				ctx,
 				sctx,
 				node,
