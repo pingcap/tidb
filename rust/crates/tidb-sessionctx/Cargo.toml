@@ -10,6 +10,8 @@ description = "TiDB session context: Go pkg/sessionctx, the context a session ha
 [dependencies]
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-expropt = { path = "../tidb-expropt" }
+tidb-sessionexpr = { path = "../tidb-sessionexpr" }
+tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 tidb-infoschema-context = { path = "../tidb-infoschema-context" }
 tidb-metabuild = { path = "../tidb-metabuild" }
 tidb-tblctx = { path = "../tidb-tblctx" }

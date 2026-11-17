@@ -103,6 +103,12 @@ impl EtcdOps for EtcdClientOps {
             .map_err(|error| error.to_string())
     }
 
+    fn scan(&self, from: &[u8], to: &[u8], limit: usize) -> Result<(Vec<(Vec<u8>, Vec<u8>)>, bool), String> {
+        self.client
+            .scan(from, to, i64::try_from(limit).unwrap_or(i64::MAX))
+            .map_err(|error| error.to_string())
+    }
+
     fn get_prefix(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
         self.client
             .get_prefix(prefix.as_bytes())

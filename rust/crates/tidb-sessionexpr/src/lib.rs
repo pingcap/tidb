@@ -92,7 +92,10 @@
 //!   needs the context inside an `Arc` before its own providers can name it, so
 //!   [`EvalContext::new`] builds through `Arc::new_cyclic` and the provider
 //!   holds a `Weak`. The upgrade cannot fail: the provider lives inside the
-//!   context it points at.
+//!   context it points at. A context that is not an `EvalContext` (the live
+//!   session's statement context, through [`optional_prop_provider`]) hands
+//!   a [`SessionPrivilegeChecker`], whose two methods are the
+//!   `EvalContext`'s.
 //! - Go embeds `*EvalContext` in `ExprContext`, which promotes every evaluation
 //!   method onto the expression context. Rust has no embedding, so
 //!   [`ExprContext::eval_context`] (Go's `ctx.EvalContext` field) and
@@ -190,13 +193,15 @@ pub trait SessionVarsAccessor: SessionVarsSnapshot + ExproptSessionVars {
     fn session_or_global_system_var(&self, name: &str) -> Result<String, EvalCtxError>;
 }
 
-/// boundary: Go `sessionctx.Context`, narrowed to the accessors this package
-/// calls on a session. See the module header.
-pub trait SessionContext: Send + Sync {
+/// boundary: the part of Go `sessionctx.Context` that `NewEvalContext`'s
+/// optional properties read ([`optional_prop_provider`]). The live
+/// session's statement context implements it as well as [`SessionContext`]
+/// does, so both install their properties through the same code.
+pub trait PropSessionContext: Send + Sync {
     /// Go `Context.GetTraceCtx`.
     fn get_trace_ctx(&self) -> Option<Arc<dyn Any + Send + Sync>>;
-    /// Go `Context.GetSessionVars`.
-    fn get_session_vars(&self) -> Arc<dyn SessionVarsAccessor>;
+    /// Go `Context.GetSessionVars`, as the properties read it.
+    fn get_prop_session_vars(&self) -> Arc<dyn ExproptSessionVars>;
     /// Go `ValueStoreContext.GetDomain` as exposed by `sessionctx.Context`.
     fn get_domain(&self) -> Option<Arc<dyn Any + Send + Sync>>;
     /// Go `Context.GetStore`.
@@ -221,6 +226,21 @@ pub trait SessionContext: Send + Sync {
         db: &str,
         name: &str,
     ) -> Result<Arc<dyn tidb_util::misc::SequenceTable>, ExprOptError>;
+    /// boundary: whether the context has what property `key` reads. Go
+    /// builds every `EvalContext` from a session, which has all of them; a
+    /// statement context built without a session (tests, internal
+    /// evaluation) lacks some, and their properties stay uninstalled.
+    fn has_optional_prop(&self, key: OptionalEvalPropKey) -> bool {
+        let _ = key;
+        true
+    }
+}
+
+/// boundary: Go `sessionctx.Context`, narrowed to the accessors this package
+/// calls on a session. See the module header.
+pub trait SessionContext: PropSessionContext {
+    /// Go `Context.GetSessionVars`.
+    fn get_session_vars(&self) -> Arc<dyn SessionVarsAccessor>;
     /// Go `sctx.GetPlanCtx().GetReadonlyUserVarMap()` membership, which is all
     /// `IsReadonlyUserVar` asks of the map.
     fn is_readonly_user_var(&self, name: &str) -> bool;
@@ -336,54 +356,19 @@ fn set_optional_prop(
 
 impl EvalContext {
     /// Go `NewEvalContext`, which installs *all* optional properties.
-    ///
-    /// The `Arc::new_cyclic` shape is the adaptation named in the module
-    /// header: the privilege-checker provider must hand back this very
-    /// context.
     #[must_use]
     pub fn new(sctx: Arc<dyn SessionContext>) -> Arc<EvalContext> {
         Arc::new_cyclic(|weak: &Weak<EvalContext>| {
             let mut props = OptionalEvalPropProviders::new();
-
-            set_optional_prop(&mut props, Arc::new(current_user_prop(Arc::clone(&sctx))));
-            set_optional_prop(
-                &mut props,
-                Arc::new(new_session_vars_provider(Arc::new(
-                    SessionVarsProviderAdapter(Arc::clone(&sctx)),
-                ))),
-            );
-            set_optional_prop(
-                &mut props,
-                Arc::new(SessionContextPropProvider::from_context(Arc::new(
-                    SessionContextProviderAdapter(Arc::clone(&sctx)),
-                ))),
-            );
-            set_optional_prop(&mut props, Arc::new(info_schema_prop(Arc::clone(&sctx))));
-
-            let store_sctx = Arc::clone(&sctx);
-            set_optional_prop(
-                &mut props,
-                Arc::new(KvStorePropProvider::new(move || store_sctx.get_store())),
-            );
-
-            set_optional_prop(&mut props, Arc::new(sql_executor_prop(Arc::clone(&sctx))));
-            set_optional_prop(
-                &mut props,
-                Arc::new(sequence_operator_prop(Arc::clone(&sctx))),
-            );
-            set_optional_prop(
-                &mut props,
-                Arc::new(AdvisoryLockPropProvider::new(
-                    sctx.get_advisory_lock_context(),
-                )),
-            );
-
-            let ddl_sctx = Arc::clone(&sctx);
-            set_optional_prop(
-                &mut props,
-                Arc::new(DdlOwnerInfoProvider::new(move || ddl_sctx.is_ddl_owner())),
-            );
-
+            for key in OptionalEvalPropKey::ALL {
+                if key == OptionalEvalPropKey::PrivilegeChecker {
+                    continue;
+                }
+                if let Some(prop) = optional_prop_provider(&sctx, key) {
+                    set_optional_prop(&mut props, prop);
+                }
+            }
+            // Go hands the context itself as its privilege checker.
             let this = weak.clone();
             set_optional_prop(
                 &mut props,
@@ -559,19 +544,13 @@ impl EvalContext {
         column: &str,
         privilege: PrivilegeType,
     ) -> bool {
-        let Some(checker) = self.sctx.get_privilege_manager() else {
-            return true;
-        };
-        checker.request_verification(&self.vars().active_roles(), db, table, column, privilege)
+        SessionPrivilegeChecker(Arc::clone(&self.sctx)).request_verification(db, table, column, privilege)
     }
 
     /// Go `RequestDynamicVerification`, for a DYNAMIC privilege.
     #[must_use]
     pub fn request_dynamic_verification(&self, priv_name: &str, grantable: bool) -> bool {
-        let Some(checker) = self.sctx.get_privilege_manager() else {
-            return true;
-        };
-        checker.request_dynamic_verification(&self.vars().active_roles(), priv_name, grantable)
+        SessionPrivilegeChecker(Arc::clone(&self.sctx)).request_dynamic_verification(priv_name, grantable)
     }
 
     /// Go `GetParamValue`.
@@ -955,16 +934,72 @@ pub fn get_stmt_timestamp(sctx: &Arc<dyn SessionContext>) -> Result<DateTime<Utc
         .ok_or_else(|| EvalCtxError::new(format!("timestamp out of range: '{timestamp_str}'")))
 }
 
+/// Go `NewEvalContext`'s `setOptionalProp` of property `key` over a
+/// session: the provider Go installs for it, or `None` when the context
+/// lacks what it reads ([`PropSessionContext::has_optional_prop`]).
+pub fn optional_prop_provider<C: PropSessionContext + ?Sized + 'static>(
+    sctx: &Arc<C>,
+    key: OptionalEvalPropKey,
+) -> Option<Arc<dyn DynOptionalEvalPropProvider>> {
+    if !sctx.has_optional_prop(key) {
+        return None;
+    }
+    let sctx = Arc::clone(sctx);
+    Some(match key {
+        OptionalEvalPropKey::CurrentUser => Arc::new(current_user_prop(sctx)),
+        OptionalEvalPropKey::SessionVars => {
+            Arc::new(new_session_vars_provider(Arc::new(SessionVarsProviderAdapter(sctx))))
+        }
+        OptionalEvalPropKey::SessionContext => Arc::new(SessionContextPropProvider::from_context(Arc::new(
+            SessionContextProviderAdapter(sctx),
+        ))),
+        OptionalEvalPropKey::InfoSchema => Arc::new(info_schema_prop(sctx)),
+        OptionalEvalPropKey::KvStore => Arc::new(KvStorePropProvider::new(move || sctx.get_store())),
+        OptionalEvalPropKey::SqlExecutor => Arc::new(sql_executor_prop(sctx)),
+        OptionalEvalPropKey::SequenceOperator => Arc::new(sequence_operator_prop(sctx)),
+        OptionalEvalPropKey::AdvisoryLock => {
+            Arc::new(AdvisoryLockPropProvider::new(sctx.get_advisory_lock_context()))
+        }
+        OptionalEvalPropKey::DdlOwnerInfo => Arc::new(DdlOwnerInfoProvider::new(move || sctx.is_ddl_owner())),
+        // Go hands the `EvalContext` itself, whose `RequestVerification` is
+        // this checker's.
+        OptionalEvalPropKey::PrivilegeChecker => Arc::new(PrivilegeCheckerProvider::new(move || {
+            Arc::new(SessionPrivilegeChecker(Arc::clone(&sctx))) as Arc<dyn PrivilegeChecker>
+        })),
+    })
+}
+
+/// Go `EvalContext.RequestVerification` / `RequestDynamicVerification`: the
+/// session's privilege manager over its active roles; no bound manager
+/// passes everything.
+pub struct SessionPrivilegeChecker<C: ?Sized>(pub Arc<C>);
+
+impl<C: PropSessionContext + ?Sized + 'static> PrivilegeChecker for SessionPrivilegeChecker<C> {
+    fn request_verification(&self, db: &str, table: &str, column: &str, privilege: PrivilegeType) -> bool {
+        let Some(checker) = self.0.get_privilege_manager() else {
+            return true;
+        };
+        checker.request_verification(&self.0.get_prop_session_vars().active_roles(), db, table, column, privilege)
+    }
+
+    fn request_dynamic_verification(&self, priv_name: &str, grantable: bool) -> bool {
+        let Some(checker) = self.0.get_privilege_manager() else {
+            return true;
+        };
+        checker.request_dynamic_verification(&self.0.get_prop_session_vars().active_roles(), priv_name, grantable)
+    }
+}
+
 /// Go `currentUserProp`.
-fn current_user_prop(sctx: Arc<dyn SessionContext>) -> CurrentUserPropProvider {
+fn current_user_prop<C: PropSessionContext + ?Sized + 'static>(sctx: Arc<C>) -> CurrentUserPropProvider {
     CurrentUserPropProvider::new(move || {
-        let vars = sctx.get_session_vars();
+        let vars = sctx.get_prop_session_vars();
         (vars.user(), vars.active_roles())
     })
 }
 
 /// Go `infoSchemaProp`.
-fn info_schema_prop(sctx: Arc<dyn SessionContext>) -> InfoSchemaPropProvider {
+fn info_schema_prop<C: PropSessionContext + ?Sized + 'static>(sctx: Arc<C>) -> InfoSchemaPropProvider {
     InfoSchemaPropProvider::new(move |is_domain| {
         if is_domain {
             sctx.get_latest_info_schema()
@@ -975,38 +1010,39 @@ fn info_schema_prop(sctx: Arc<dyn SessionContext>) -> InfoSchemaPropProvider {
 }
 
 /// Go `sqlExecutorProp`.
-fn sql_executor_prop(sctx: Arc<dyn SessionContext>) -> SqlExecutorPropProvider {
+fn sql_executor_prop<C: PropSessionContext + ?Sized + 'static>(sctx: Arc<C>) -> SqlExecutorPropProvider {
     SqlExecutorPropProvider::new(move || Ok(sctx.get_restricted_sql_executor()))
 }
 
 /// Go `sequenceOperator`: one sequence, bound to the session that reached it.
-pub struct SessionSequenceOperator {
-    sctx: Arc<dyn SessionContext>,
+pub struct SessionSequenceOperator<C: ?Sized> {
+    sctx: Arc<C>,
     db: String,
     name: String,
     tbl: Arc<dyn tidb_util::misc::SequenceTable>,
 }
 
-impl SequenceOperator for SessionSequenceOperator {
+/// A sequence error as the table raised it, its code kept.
+fn sequence_error(error: tidb_terror::TerrorError) -> ExprOptError {
+    ExprOptError::from_eval(tidb_exprctx::EvalError::Sequence(tidb_exprctx::SequenceEvalError::Raised(error)))
+}
+
+impl<C: PropSessionContext + ?Sized + 'static> SequenceOperator for SessionSequenceOperator<C> {
     fn get_sequence_id(&self) -> i64 {
         self.tbl.get_sequence_id()
     }
 
     fn get_sequence_next_val(&self) -> Result<i64, ExprOptError> {
-        self.tbl
-            .get_sequence_next_val(&self.sctx, &self.db, &self.name)
-            .map_err(|error| ExprOptError::new(error.to_string()))
+        self.tbl.get_sequence_next_val(&self.sctx, &self.db, &self.name).map_err(sequence_error)
     }
 
     fn set_sequence_val(&self, new_val: i64) -> Result<(i64, bool), ExprOptError> {
-        self.tbl
-            .set_sequence_val(&self.sctx, new_val, &self.db, &self.name)
-            .map_err(|error| ExprOptError::new(error.to_string()))
+        self.tbl.set_sequence_val(&self.sctx, new_val, &self.db, &self.name).map_err(sequence_error)
     }
 }
 
 /// Go `sequenceOperatorProp`.
-fn sequence_operator_prop(sctx: Arc<dyn SessionContext>) -> SequenceOperatorProvider {
+fn sequence_operator_prop<C: PropSessionContext + ?Sized + 'static>(sctx: Arc<C>) -> SequenceOperatorProvider {
     SequenceOperatorProvider::new(move |db, name| {
         let sequence = sctx.get_sequence_by_name(db, name)?;
         Ok(Arc::new(SessionSequenceOperator {
@@ -1021,26 +1057,26 @@ fn sequence_operator_prop(sctx: Arc<dyn SessionContext>) -> SequenceOperatorProv
 /// Go passes the session straight to `expropt.NewSessionVarsProvider`, because
 /// a `sessionctx.Context` *is* a `variable.SessionVarsProvider`. Rust needs a
 /// named adapter for the same hand-off.
-struct SessionVarsProviderAdapter(Arc<dyn SessionContext>);
+struct SessionVarsProviderAdapter<C: ?Sized>(Arc<C>);
 
-impl SessionVarsProvider for SessionVarsProviderAdapter {
+impl<C: PropSessionContext + ?Sized + 'static> SessionVarsProvider for SessionVarsProviderAdapter<C> {
     fn get_session_vars(&self) -> Arc<dyn ExproptSessionVars> {
-        self.0.get_session_vars()
+        self.0.get_prop_session_vars()
     }
 }
 
 /// Go hands the session straight to `NewSessionContextPropProvider`. The
 /// local session boundary is wider than expropt's three-method view, so this
 /// adapter exposes exactly that view without introducing a crate dependency.
-struct SessionContextProviderAdapter(Arc<dyn SessionContext>);
+struct SessionContextProviderAdapter<C: ?Sized>(Arc<C>);
 
-impl ExproptSessionContext for SessionContextProviderAdapter {
+impl<C: PropSessionContext + ?Sized + 'static> ExproptSessionContext for SessionContextProviderAdapter<C> {
     fn get_trace_ctx(&self) -> Option<Arc<dyn Any + Send + Sync>> {
         self.0.get_trace_ctx()
     }
 
     fn get_session_vars(&self) -> Arc<dyn ExproptSessionVars> {
-        self.0.get_session_vars()
+        self.0.get_prop_session_vars()
     }
 
     fn get_domain(&self) -> Option<Arc<dyn Any + Send + Sync>> {
@@ -1436,7 +1472,7 @@ mod tests {
     }
 
     impl AdvisoryLockContext for MockSession {
-        fn get_advisory_lock(&self, name: &str, _timeout: i64) -> Result<(), ExprOptError> {
+        fn get_advisory_lock(&self, name: &str, _timeout: i64) -> Result<(), tidb_expropt::GetAdvisoryLockError> {
             self.advisory_locks.lock().unwrap().push(name.to_owned());
             Ok(())
         }
@@ -1467,11 +1503,25 @@ mod tests {
     }
 
     impl SessionContext for MockSession {
+        fn get_session_vars(&self) -> Arc<dyn SessionVarsAccessor> {
+            Arc::clone(&self.vars) as _
+        }
+
+        fn is_readonly_user_var(&self, name: &str) -> bool {
+            self.readonly_user_vars
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|n| n == name)
+        }
+    }
+
+    impl PropSessionContext for MockSession {
         fn get_trace_ctx(&self) -> Option<Arc<dyn Any + Send + Sync>> {
             Some(Arc::new(()))
         }
 
-        fn get_session_vars(&self) -> Arc<dyn SessionVarsAccessor> {
+        fn get_prop_session_vars(&self) -> Arc<dyn ExproptSessionVars> {
             Arc::clone(&self.vars) as _
         }
 
@@ -1518,14 +1568,6 @@ mod tests {
                 .get_sequence_by_name(db, name)
                 .expect_err("no infoschema names no sequence");
             Err(ExprOptError::new(error.to_string()))
-        }
-
-        fn is_readonly_user_var(&self, name: &str) -> bool {
-            self.readonly_user_vars
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|n| n == name)
         }
     }
 

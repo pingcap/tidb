@@ -25,9 +25,20 @@ use tidb_exprctx::{
 /// Go `AdvisoryLockContext`: the advisory-lock operations behind
 /// `GET_LOCK()`, `IS_USED_LOCK()`, `RELEASE_LOCK()` and
 /// `RELEASE_ALL_LOCKS()`.
+/// Go `GetAdvisoryLock`'s errors that `GET_LOCK` tells apart by code.
+#[derive(Debug)]
+pub enum GetAdvisoryLockError {
+    /// Go `ErrLockWaitTimeout`: another session holds the lock.
+    LockWaitTimeout,
+    /// Go `ErrLockDeadlock`.
+    LockDeadlock,
+    /// Any other error.
+    Other(ExprOptError),
+}
+
 pub trait AdvisoryLockContext: Any + Send + Sync {
     /// Go `GetAdvisoryLock`, taking the lock name and a timeout in seconds.
-    fn get_advisory_lock(&self, name: &str, timeout: i64) -> Result<(), ExprOptError>;
+    fn get_advisory_lock(&self, name: &str, timeout: i64) -> Result<(), GetAdvisoryLockError>;
 
     /// Go `IsUsedAdvisoryLock`: the holder's connection ID, or 0.
     fn is_used_advisory_lock(&self, name: &str) -> u64;
@@ -64,7 +75,7 @@ impl AdvisoryLockPropProvider {
 
 /// The embedded-field promotion Go gets for free.
 impl AdvisoryLockContext for AdvisoryLockPropProvider {
-    fn get_advisory_lock(&self, name: &str, timeout: i64) -> Result<(), ExprOptError> {
+    fn get_advisory_lock(&self, name: &str, timeout: i64) -> Result<(), GetAdvisoryLockError> {
         self.lock_ctx.get_advisory_lock(name, timeout)
     }
 

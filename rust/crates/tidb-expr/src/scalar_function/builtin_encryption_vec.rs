@@ -76,11 +76,16 @@ pub(super) fn eval(
         return Ok(());
     }
     if function.func_name.lowercase() == "validate_password_strength" {
+        // Go `vecEvalInt`: no length shortcut, unlike `evalInt`.
         let user = crypto::password_validation_user(ctx)?;
+        let vars = tidb_expropt::SessionVarsPropReader
+            .get_session_vars(ctx)
+            .map_err(crate::builtin_ext::misc::opt_prop_error)?;
         let buffer = vec_eval::argument(&function.args[0], EvalType::String, ctx, input)?;
         result.resize_int64(input.num_rows(), false);
         result.merge_nulls(&[&buffer]);
-        let enabled = crypto::password_validation_enabled(ctx)?;
+        let globals = crypto::EvalGlobalVars(&*vars);
+        let enabled = crypto::password_validation_enabled(&globals)?;
         for row in 0..input.num_rows() {
             if result.is_null(row) {
                 continue;
@@ -93,7 +98,7 @@ pub(super) fn eval(
                         EvalType::String,
                         function.args[0].static_type(),
                     ),
-                    ctx,
+                    &globals,
                     user.as_ref(),
                 )?
             } else {

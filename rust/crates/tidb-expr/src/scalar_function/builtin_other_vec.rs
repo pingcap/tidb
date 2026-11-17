@@ -107,6 +107,9 @@ fn set_var(
     input: &Chunk,
     result: &mut Column,
 ) -> Result<(), EvalError> {
+    let vars = tidb_expropt::SessionVarsPropReader
+        .get_session_vars(ctx)
+        .map_err(crate::builtin_ext::misc::opt_prop_error)?;
     let n = input.num_rows();
     let buf0 = vec_eval::argument(&function.args[0], EvalType::String, ctx, input)?;
     let buf1 = vec_eval::argument(&function.args[1], domain, ctx, input)?;
@@ -125,7 +128,7 @@ fn set_var(
             }
             _ => vec_eval::value(&buf1, i, domain, None),
         };
-        ctx.set_uservar(&var_name, res.clone());
+        vars.set_user_var_val(&tidb_hack::go_to_lower(&var_name), res.clone());
         vec_eval::put(result, i, domain, &res)?;
     }
     Ok(())

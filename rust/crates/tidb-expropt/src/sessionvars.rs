@@ -24,26 +24,106 @@ use tidb_exprctx::{
 
 /// boundary: Go `pkg/sessionctx/variable.SessionVars` — the session variable
 /// bundle, which the session owns above this crate. The trait is the part of
-/// it that builtins read through [`SessionVarsPropReader`].
+/// it that builtins read and write through [`SessionVarsPropReader`]. Each
+/// method's default is a zero-valued Go `SessionVars` that keeps nothing; a
+/// session implements them all.
 pub trait SessionVars: Any + Send + Sync {
     /// Go `SessionVars.User`: the login and the account it matched; `None`
     /// is a session with no user (an internal one).
-    fn user(&self) -> Option<Arc<tidb_parser::auth::UserIdentity>>;
+    fn user(&self) -> Option<Arc<tidb_parser::auth::UserIdentity>> {
+        None
+    }
     /// Go `SessionVars.ActiveRoles`.
-    fn active_roles(&self) -> Vec<Arc<tidb_parser::auth::RoleIdentity>>;
+    fn active_roles(&self) -> Vec<Arc<tidb_parser::auth::RoleIdentity>> {
+        Vec::new()
+    }
     /// Go `SessionVars.ConnectionID`; 0 for a session with no connection.
-    fn connection_id(&self) -> u64;
+    fn connection_id(&self) -> u64 {
+        0
+    }
     /// Go `SessionVars.LastFoundRows`: the rows the previous query found.
-    fn last_found_rows(&self) -> u64;
+    fn last_found_rows(&self) -> u64 {
+        0
+    }
     /// Go `SessionVars.StmtCtx.PrevAffectedRows`.
-    fn prev_affected_rows(&self) -> i64;
+    fn prev_affected_rows(&self) -> i64 {
+        0
+    }
     /// Go `SessionVars.StmtCtx.PrevLastInsertID`.
-    fn prev_last_insert_id(&self) -> u64;
+    fn prev_last_insert_id(&self) -> u64 {
+        0
+    }
     /// Go `SessionVars.SetLastInsertID`, which `LAST_INSERT_ID(expr)` calls.
-    fn set_last_insert_id(&self, id: u64);
+    fn set_last_insert_id(&self, id: u64) {
+        let _ = id;
+    }
     /// Go `getHintResourceGroupName(vars)`: the statement's resource group,
     /// a `RESOURCE_GROUP()` hint's first.
-    fn hint_resource_group_name(&self) -> String;
+    fn hint_resource_group_name(&self) -> String {
+        String::new()
+    }
+    /// Go `SessionVars.SetUserVarVal` (and `SetStringUserVar`, whose
+    /// collation the datum carries), which `SET @v := expr` calls; the name
+    /// as given (Go's callers lowercase it).
+    fn set_user_var_val(&self, name: &str, value: tidb_datatype::Datum) {
+        let _ = (name, value);
+    }
+    /// Go `SessionVars.SQLKiller`, which `SLEEP` polls.
+    fn sql_killer(&self) -> Option<Arc<tidb_sqlkiller::SqlKiller>> {
+        None
+    }
+    /// Go `len(SessionVars.StmtCtx.TableIDs) != 0`: the statement reads a
+    /// table.
+    fn stmt_has_table_ids(&self) -> bool {
+        false
+    }
+    /// Go `StmtCtx.InInsertStmt || InUpdateStmt || InDeleteStmt`.
+    fn stmt_in_insert_update_or_delete(&self) -> bool {
+        false
+    }
+    /// Go `GetSessionOrGlobalSystemVar("tidb_current_ts")`: the active
+    /// transaction's start timestamp, 0 outside one.
+    fn current_ts(&self) -> i64 {
+        0
+    }
+    /// Go `SessionVars.CurrInsertValues` as `VALUES(col)` reads it: `None`
+    /// for an empty row (outside `INSERT ... ON DUPLICATE KEY UPDATE`), else
+    /// the row's length and its value at `offset` when the row has one.
+    fn curr_insert_values_at(&self, offset: usize) -> Option<(usize, Option<tidb_datatype::Datum>)> {
+        let _ = offset;
+        None
+    }
+    /// Go `SessionVars.SequenceState.UpdateState(sequenceID, value)`.
+    fn update_sequence_state(&self, sequence_id: i64, value: i64) {
+        let _ = (sequence_id, value);
+    }
+    /// Go `SessionVars.SequenceState.GetLastValue(sequenceID)`: the value
+    /// `NEXTVAL` last returned in this session, if any.
+    fn sequence_last_value(&self, sequence_id: i64) -> Option<i64> {
+        let _ = sequence_id;
+        None
+    }
+    /// Go `StmtCtx.GetOrStoreStmtCache(StmtSafeTSCacheKey, minSafeTS)`: the
+    /// min SafeTS the statement stored first, storing `min_safe_ts` when it
+    /// stored none.
+    fn get_or_store_stmt_safe_ts(&self, min_safe_ts: u64) -> u64 {
+        min_safe_ts
+    }
+    /// Go `StmtCtx.FTSFunctionIsUsed = true`, set where `FTS_MATCH_WORD()`
+    /// is built.
+    fn set_stmt_fts_function_is_used(&self) {}
+    /// Go `SessionVars.ConnectionInfo`.
+    fn connection_info(&self) -> Option<Arc<tidb_variable::connection_info::ConnectionInfo>> {
+        None
+    }
+    /// Go `SessionVars.GlobalVarsAccessor.GetGlobalSysVar(name)`; a session
+    /// without the accessor cannot answer.
+    fn get_global_sys_var(&self, name: &str) -> Result<String, crate::ExprOptError> {
+        let _ = name;
+        Err(crate::ExprOptError::from_eval(tidb_exprctx::EvalError::Unsupported(
+            "validate_password globals require a session",
+        )))
+    }
 }
 
 /// boundary: Go `pkg/sessionctx/variable.SessionVarsProvider` — anything that

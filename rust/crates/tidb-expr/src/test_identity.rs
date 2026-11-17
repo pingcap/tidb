@@ -42,6 +42,17 @@ pub(crate) struct TestSession {
     pub(crate) last_insert_id_calls: Arc<Mutex<Vec<u64>>>,
     /// Go `getHintResourceGroupName`.
     pub(crate) resource_group_name: String,
+    /// Go `SessionVars.SQLKiller`.
+    pub(crate) sql_killer: Option<Arc<tidb_sqlkiller::SqlKiller>>,
+    /// Go `StmtCtx.InInsertStmt || InUpdateStmt || InDeleteStmt`.
+    pub(crate) in_insert_update_or_delete: bool,
+    /// Go `tidb_current_ts`.
+    pub(crate) current_ts: i64,
+    /// Go `SessionVars.CurrInsertValues`.
+    pub(crate) curr_insert_values: Arc<Mutex<Option<Vec<tidb_datatype::Datum>>>>,
+    /// Go `SessionVars.GlobalVarsAccessor`'s values; `None` is a session
+    /// without the accessor.
+    pub(crate) global_vars: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Clone)]
@@ -83,6 +94,34 @@ impl tidb_expropt::SessionVars for Vars {
 
     fn hint_resource_group_name(&self) -> String {
         self.session.resource_group_name.clone()
+    }
+
+    fn sql_killer(&self) -> Option<Arc<tidb_sqlkiller::SqlKiller>> {
+        self.session.sql_killer.clone()
+    }
+
+    fn stmt_in_insert_update_or_delete(&self) -> bool {
+        self.session.in_insert_update_or_delete
+    }
+
+    fn current_ts(&self) -> i64 {
+        self.session.current_ts
+    }
+
+    fn curr_insert_values_at(&self, offset: usize) -> Option<(usize, Option<tidb_datatype::Datum>)> {
+        let values = self.session.curr_insert_values.lock().unwrap();
+        let values = values.as_ref().filter(|values| !values.is_empty())?;
+        Some((values.len(), values.get(offset).cloned()))
+    }
+
+    fn get_global_sys_var(&self, name: &str) -> Result<String, tidb_expropt::ExprOptError> {
+        match &self.session.global_vars {
+            Some(vars) => vars
+                .get(name)
+                .cloned()
+                .ok_or_else(|| tidb_expropt::ExprOptError::new(format!("unknown system variable '{name}'"))),
+            None => Err(tidb_expropt::ExprOptError::new("no global variable accessor")),
+        }
     }
 }
 

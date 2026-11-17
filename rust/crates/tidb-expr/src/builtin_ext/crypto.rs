@@ -421,33 +421,14 @@ fn sql_string_bytes(value: &Datum) -> Result<Option<Vec<u8>>, EvalError> {
     })
 }
 
-struct EvalGlobalVars<'a>(&'a dyn Columns);
+/// Go `SessionVars.GlobalVarsAccessor`.
+pub(crate) struct EvalGlobalVars<'a>(pub(crate) &'a dyn tidb_expropt::SessionVars);
 
 impl tidb_password_validation::GlobalVarAccessor for EvalGlobalVars<'_> {
     type Error = EvalError;
 
     fn get_global_sys_var(&self, name: &str) -> Result<String, Self::Error> {
-        let value = self
-            .0
-            .sysvar(Some(tidb_ast::SysVarScope::Global), name)
-            .ok_or(EvalError::Unsupported(
-                "validate_password globals require a session",
-            ))?;
-        match value {
-            Datum::Bytes(value) => String::from_utf8(value).map_err(|_| {
-                EvalError::IncorrectArguments(format!(
-                    "invalid UTF-8 value for global system variable {name}"
-                ))
-            }),
-            Datum::String(value) => value.as_utf8().map(str::to_owned).map_err(|_| {
-                EvalError::IncorrectArguments(format!(
-                    "invalid UTF-8 value for global system variable {name}"
-                ))
-            }),
-            _ => Err(EvalError::IncorrectArguments(format!(
-                "non-string value for global system variable {name}"
-            ))),
-        }
+        self.0.get_global_sys_var(name).map_err(crate::builtin_ext::misc::opt_prop_error)
     }
 }
 
@@ -466,29 +447,25 @@ fn identity_username(identity: &str) -> &str {
     identity.rsplit_once('@').map_or(identity, |(user, _)| user)
 }
 
-/// `VALIDATE_PASSWORD_STRENGTH(str)`.
+/// Go `builtinValidatePasswordStrengthSig.evalInt`: the user and session
+/// first; a password under four characters is 0 before the globals are
+/// read.
 pub(crate) fn validate_password_strength(value: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    use tidb_password_validation as password_validation;
-
+    let user = password_validation_user(ctx)?;
+    let vars = tidb_expropt::SessionVarsPropReader
+        .get_session_vars(ctx)
+        .map_err(crate::builtin_ext::misc::opt_prop_error)?;
     let Some(password) = sql_string_bytes(value)? else {
         return Ok(Datum::Null);
     };
-    let password = tidb_goruntime::GoString::from_bytes(password);
-    if password.to_utf8_lossy_go().chars().count() < 4 {
+    if tidb_goruntime::GoString::from_bytes(password).to_utf8_lossy_go().chars().count() < 4 {
         return Ok(Datum::Int(0));
     }
-
-    let globals = EvalGlobalVars(ctx);
-    let validation = password_validation::GlobalVarAccessor::get_global_sys_var(
-        &globals,
-        "validate_password.enable",
-    )
-    .map_err(|error| password_eval_error(password_validation::PwdError::Accessor(error)))?;
-    if !(validation.eq_ignore_ascii_case("ON") || validation == "1") {
+    let globals = EvalGlobalVars(&*vars);
+    if !password_validation_enabled(&globals)? {
         return Ok(Datum::Int(0));
     }
-    let user = password_validation_user(ctx)?;
-    validate_password_strength_with_user(value, ctx, user.as_ref())
+    validate_password_strength_with_user(value, &globals, user.as_ref())
 }
 
 /// Go `builtinValidatePasswordStrengthSig.CurrentUser`: one identity per batch.
@@ -505,36 +482,39 @@ pub(crate) fn password_validation_user(
     }))
 }
 
-/// Go `builtinValidatePasswordStrengthSig.vecEvalInt` reads this global once.
-pub(crate) fn password_validation_enabled(ctx: &dyn Columns) -> Result<bool, EvalError> {
-    let value = tidb_password_validation::GlobalVarAccessor::get_global_sys_var(&EvalGlobalVars(ctx), "validate_password.enable")?;
+/// Go `variable.TiDBOptOn(globalVars.GetGlobalSysVar(ValidatePasswordEnable))`.
+pub(crate) fn password_validation_enabled(globals: &EvalGlobalVars<'_>) -> Result<bool, EvalError> {
+    let value = tidb_password_validation::GlobalVarAccessor::get_global_sys_var(globals, "validate_password.enable")?;
     Ok(value.eq_ignore_ascii_case("ON") || value == "1")
 }
 
-/// Go `builtinValidatePasswordStrengthSig.validateStr`.
-pub(crate) fn validate_password_strength_with_user(value: &Datum, ctx: &dyn Columns, user: Option<&tidb_password_validation::PasswordUser>) -> Result<Datum, EvalError> {
+/// Go `builtinValidatePasswordStrengthSig.validateStr`: the score of the
+/// password `value` (a NULL is NULL), with no length shortcut.
+pub(crate) fn validate_password_strength_with_user(
+    value: &Datum,
+    globals: &EvalGlobalVars<'_>,
+    user: Option<&tidb_password_validation::PasswordUser>,
+) -> Result<Datum, EvalError> {
     use tidb_password_validation as password_validation;
     let Some(password) = sql_string_bytes(value)? else { return Ok(Datum::Null); };
     let password = tidb_goruntime::GoString::from_bytes(password);
-    if password.to_utf8_lossy_go().chars().count() < 4 { return Ok(Datum::Int(0)); }
-    let globals = EvalGlobalVars(ctx);
     let warning =
-        password_validation::validate_user_name_in_password(&password, user, &globals)
+        password_validation::validate_user_name_in_password(&password, user, globals)
             .map_err(password_eval_error)?;
     if !warning.is_empty() {
         return Ok(Datum::Int(0));
     }
-    let warning = password_validation::validate_password_low_policy(&password, &globals)
+    let warning = password_validation::validate_password_low_policy(&password, globals)
         .map_err(password_eval_error)?;
     if !warning.is_empty() {
         return Ok(Datum::Int(25));
     }
-    let warning = password_validation::validate_password_medium_policy(&password, &globals)
+    let warning = password_validation::validate_password_medium_policy(&password, globals)
         .map_err(password_eval_error)?;
     if !warning.is_empty() {
         return Ok(Datum::Int(50));
     }
-    if !password_validation::validate_dictionary_password(&password, &globals)
+    if !password_validation::validate_dictionary_password(&password, globals)
         .map_err(password_eval_error)?
     {
         return Ok(Datum::Int(75));
@@ -779,14 +759,14 @@ mod tests {
             &self,
             key: tidb_exprctx::OptionalEvalPropKey,
         ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
-            crate::test_identity::identity_props(self.current_user.as_deref(), self.login_user.as_deref(), &[]).get(key)
-        }
-
-        fn sysvar(&self, scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
-            matches!(scope, Some(tidb_ast::SysVarScope::Global))
-                .then(|| self.globals.get(name).cloned())
-                .flatten()
-                .map(|value| Datum::Bytes(value.into_bytes()))
+            crate::test_identity::TestSession {
+                current_user: self.current_user.clone(),
+                login_user: self.login_user.clone(),
+                global_vars: Some(self.globals.clone()),
+                ..crate::test_identity::TestSession::default()
+            }
+            .props()
+            .get(key)
         }
     }
 

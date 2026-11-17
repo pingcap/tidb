@@ -572,9 +572,6 @@ pub struct StmtContextSessionState {
     pub connection_collation: String,
     /// Captured `@@default_collation_for_utf8mb4`.
     pub default_collation_for_utf8mb4: String,
-    /// The session's privilege answer for the sequence builtins; `None` is an
-    /// unrestricted session.
-    pub sequence_privilege: Option<SequencePrivilegeCheck>,
     /// The session's dynamic-privilege answer (Go's `PrivilegeChecker`
     /// property); `None` is an unrestricted session.
     pub dynamic_privilege: Option<DynamicPrivilegeCheck>,
@@ -596,6 +593,9 @@ pub struct StmtContextSessionState {
     /// runs its summary queries through; `None` is a context with no session
     /// to run them.
     pub sql_executor: Option<Arc<dyn tidb_expropt::SqlExecutor>>,
+    /// Go `sessionexpr`'s DDL-owner property (`DDLOwnerInfoProvider`):
+    /// whether this node is the DDL owner; `None` is a context with no node.
+    pub ddl_owner_info: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     /// Go `kv.Storage.GetMinSafeTS`, which `GetStmtMinSafeTime` asks of the
     /// session's store; `None` is a context with no store.
     pub min_safe_ts_provider: Option<MinSafeTsProvider>,
@@ -642,12 +642,12 @@ impl Default for StmtContextSessionState {
             connection_charset: "utf8mb4".to_owned(),
             connection_collation: "utf8mb4_bin".to_owned(),
             default_collation_for_utf8mb4: "utf8mb4_bin".to_owned(),
-            sequence_privilege: None,
             dynamic_privilege: None,
             view_definer_privilege: None,
             session_privilege: None,
             mdl_related_table: None,
             sql_executor: None,
+            ddl_owner_info: None,
             min_safe_ts_provider: None,
             locked_tables: None,
             ddl_sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
@@ -658,22 +658,21 @@ impl Default for StmtContextSessionState {
     }
 }
 
-/// Go `PrivilegeChecker.RequestVerification` as the sequence builtins ask it
-/// while evaluating: `(schema, sequence, insert)` answers whether the session
-/// holds INSERT (`insert`) or SELECT on the sequence.
-pub type SequencePrivilegeCheck = Arc<dyn Fn(&str, &str, bool) -> bool + Send + Sync>;
-
 /// Go `PrivilegeChecker.RequestDynamicVerification(privName, grantable)` as
 /// an extension function asks it while building and evaluating.
 pub type DynamicPrivilegeCheck = Arc<dyn Fn(&str, bool) -> bool + Send + Sync>;
 
 /// Go `kv.Storage` as `sessionexpr` hands it to expressions: the session's
 /// store, a `helper.Storage` over its regions.
-struct SessionKvStorage(Arc<dyn tidb_kv::region_map::RegionStore>);
+struct SessionKvStorage(Arc<dyn tidb_kv::region_map::RegionStore>, Option<MinSafeTsProvider>);
 
 impl tidb_expropt::KvStorage for SessionKvStorage {
     fn as_helper_storage(&self) -> Option<&dyn tidb_kv::region_map::RegionStore> {
         Some(&*self.0)
+    }
+
+    fn get_min_safe_ts(&self, txn_scope: &str) -> u64 {
+        self.1.as_ref().map_or(0, |provider| provider(txn_scope))
     }
 }
 
@@ -685,37 +684,30 @@ struct SessionPrivilegeChecker {
     dynamic: Option<DynamicPrivilegeCheck>,
 }
 
-impl tidb_expropt::PrivilegeChecker for SessionPrivilegeChecker {
-    fn request_verification(&self, db: &str, table: &str, column: &str, privilege: tidb_mysql::PrivilegeType) -> bool {
+/// The session's checks are bound to its active roles, which are the
+/// `activeRoles` Go's `sessionexpr` hands the manager.
+impl tidb_sessionexpr::PrivilegeManager for SessionPrivilegeChecker {
+    fn request_verification(
+        &self,
+        _active_roles: &[Arc<tidb_parser::auth::RoleIdentity>],
+        db: &str,
+        table: &str,
+        column: &str,
+        privilege: tidb_mysql::PrivilegeType,
+    ) -> bool {
         self.session.as_ref().is_none_or(|check| check(db, table, column, privilege))
     }
 
-    fn request_dynamic_verification(&self, priv_name: &str, grantable: bool) -> bool {
+    fn request_dynamic_verification(
+        &self,
+        _active_roles: &[Arc<tidb_parser::auth::RoleIdentity>],
+        priv_name: &str,
+        grantable: bool,
+    ) -> bool {
         self.dynamic.as_ref().is_none_or(|check| check(priv_name, grantable))
     }
 }
 
-/// Go `sessionexpr.NewExprContext`'s `setOptionalProp` calls, for the
-/// properties the session already holds.
-fn optional_eval_props(
-    regions: &Arc<dyn tidb_kv::region_map::RegionStore>,
-    session_privilege: &Option<SessionPrivilegeCheck>,
-    dynamic_privilege: &Option<DynamicPrivilegeCheck>,
-    sql_executor: Option<Arc<dyn tidb_expropt::SqlExecutor>>,
-) -> tidb_expropt::OptionalEvalPropProviders {
-    let mut props = tidb_expropt::OptionalEvalPropProviders::new();
-    let store: Arc<dyn tidb_expropt::KvStorage> = Arc::new(SessionKvStorage(Arc::clone(regions)));
-    props.add(Arc::new(tidb_expropt::KvStorePropProvider::new(move || Arc::clone(&store))));
-    let checker: Arc<dyn tidb_expropt::PrivilegeChecker> = Arc::new(SessionPrivilegeChecker {
-        session: session_privilege.clone(),
-        dynamic: dynamic_privilege.clone(),
-    });
-    props.add(Arc::new(tidb_expropt::PrivilegeCheckerProvider::new(move || Arc::clone(&checker))));
-    if let Some(exec) = sql_executor {
-        props.add(Arc::new(tidb_expropt::SqlExecutorPropProvider::new(move || Ok(Arc::clone(&exec)))));
-    }
-    props
-}
 
 /// Go `variable.SessionVars` as a statement's builtins read it through
 /// `SessionVarsPropReader` and `CurrentUserPropReader`: the fields Go's
@@ -732,6 +724,17 @@ struct StmtSessionVars {
     prev_last_insert_id: u64,
     last_insert_id: Arc<Mutex<Option<u64>>>,
     resource_group_name: String,
+    user_vars: Option<tidb_variable::user_vars::UserVars>,
+    sql_killer: Arc<tidb_sqlkiller::SqlKiller>,
+    has_table_ids: bool,
+    in_insert_update_or_delete: bool,
+    current_tso: CurrentTso,
+    current_insert_values: Arc<Mutex<Option<Vec<Datum>>>>,
+    sequence_state: SequenceState,
+    stmt_safe_ts: Arc<std::sync::OnceLock<u64>>,
+    fts_function_is_used: Arc<AtomicBool>,
+    connection_info: Option<Arc<tidb_variable::connection_info::ConnectionInfo>>,
+    global_sysvars: Option<Arc<dyn GlobalSysvarAccessor>>,
 }
 
 /// Go `SessionVars.User` of a session that matched the account
@@ -796,11 +799,216 @@ impl tidb_expropt::SessionVars for StmtSessionVars {
     fn hint_resource_group_name(&self) -> String {
         self.resource_group_name.clone()
     }
+
+    fn set_user_var_val(&self, name: &str, value: Datum) {
+        if let Some(vars) = self.user_vars.as_ref() {
+            vars.set_user_var_val(name, value);
+        }
+    }
+
+    fn sql_killer(&self) -> Option<Arc<tidb_sqlkiller::SqlKiller>> {
+        Some(Arc::clone(&self.sql_killer))
+    }
+
+    fn stmt_has_table_ids(&self) -> bool {
+        self.has_table_ids
+    }
+
+    fn stmt_in_insert_update_or_delete(&self) -> bool {
+        self.in_insert_update_or_delete
+    }
+
+    fn current_ts(&self) -> i64 {
+        self.current_tso.value()
+    }
+
+    fn curr_insert_values_at(&self, offset: usize) -> Option<(usize, Option<Datum>)> {
+        let values = self.current_insert_values.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let values = values.as_ref().filter(|values| !values.is_empty())?;
+        Some((values.len(), values.get(offset).cloned()))
+    }
+
+    fn update_sequence_state(&self, sequence_id: i64, value: i64) {
+        self.sequence_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(sequence_id, value);
+    }
+
+    fn sequence_last_value(&self, sequence_id: i64) -> Option<i64> {
+        self.sequence_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&sequence_id).copied()
+    }
+
+    fn get_or_store_stmt_safe_ts(&self, min_safe_ts: u64) -> u64 {
+        *self.stmt_safe_ts.get_or_init(|| min_safe_ts)
+    }
+
+    fn set_stmt_fts_function_is_used(&self) {
+        self.fts_function_is_used.store(true, Ordering::Relaxed);
+    }
+
+    fn connection_info(&self) -> Option<Arc<tidb_variable::connection_info::ConnectionInfo>> {
+        self.connection_info.clone()
+    }
+
+    fn get_global_sys_var(&self, name: &str) -> Result<String, tidb_expropt::ExprOptError> {
+        self.global_sysvars.as_ref().and_then(|accessor| accessor.get_global_sysvar(name)).ok_or_else(|| {
+            tidb_expropt::ExprOptError::from_eval(tidb_exprctx::EvalError::Unsupported(
+                "validate_password globals require a session",
+            ))
+        })
+    }
+}
+
+/// Go `util.GetSequenceByName(sctx.GetInfoSchema(), db, name)`'s table: the
+/// sequence `database`.`name` of the statement's infoschema, looked up on
+/// each call as the statement holds it.
+struct StmtSequenceTable {
+    ctx: StmtContext,
+    path: [String; 2],
+}
+
+impl std::fmt::Debug for StmtSequenceTable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StmtSequenceTable").field("path", &self.path).finish_non_exhaustive()
+    }
+}
+
+impl StmtSequenceTable {
+    fn table(&self) -> Result<&dyn SequenceTable, tidb_terror::TerrorError> {
+        self.ctx.resolve_sequence(&self.path).map_err(|error| match error {
+            tidb_exprctx::EvalError::Sequence(tidb_exprctx::SequenceEvalError::Raised(error)) => error,
+            other => tidb_util::misc::syntax_error(format!("{other:?}")),
+        })
+    }
+}
+
+impl SequenceTable for StmtSequenceTable {
+    fn get_sequence_id(&self) -> i64 {
+        self.table().map_or(0, |sequence| sequence.get_sequence_id())
+    }
+
+    fn get_sequence_next_val(
+        &self,
+        ctx: &dyn std::any::Any,
+        db_name: &str,
+        seq_name: &str,
+    ) -> Result<i64, tidb_terror::TerrorError> {
+        self.table()?.get_sequence_next_val(ctx, db_name, seq_name)
+    }
+
+    fn set_sequence_val(
+        &self,
+        ctx: &dyn std::any::Any,
+        new_val: i64,
+        db_name: &str,
+        seq_name: &str,
+    ) -> Result<(i64, bool), tidb_terror::TerrorError> {
+        self.table()?.set_sequence_val(ctx, new_val, db_name, seq_name)
+    }
+}
+
+/// The live session's statement context as Go `sessionexpr` reads a
+/// `sessionctx.Context`: its optional properties answer the statement's
+/// state when a builtin reads them (Go's call `sctx.GetSessionVars()` then).
+impl tidb_sessionexpr::PropSessionContext for StmtContext {
+    fn get_trace_ctx(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+        None
+    }
+
+    fn get_prop_session_vars(&self) -> Arc<dyn tidb_expropt::SessionVars> {
+        Arc::new(self.session_vars())
+    }
+
+    fn get_domain(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+        None
+    }
+
+    fn get_store(&self) -> Arc<dyn tidb_expropt::KvStorage> {
+        Arc::new(SessionKvStorage(Arc::clone(&self.regions.0), self.min_safe_ts_provider.clone()))
+    }
+
+    fn is_ddl_owner(&self) -> bool {
+        self.ddl_owner_info.as_ref().is_some_and(|is_owner| is_owner())
+    }
+
+    fn get_info_schema(&self) -> Arc<dyn tidb_infoschema_context::MetaOnlyInfoSchema + Send + Sync> {
+        self.get_latest_info_schema()
+    }
+
+    fn get_latest_info_schema(&self) -> Arc<dyn tidb_infoschema_context::MetaOnlyInfoSchema + Send + Sync> {
+        self.latest_info_schema.as_ref().expect("has_optional_prop checked the infoschema").meta_only()
+    }
+
+    fn get_restricted_sql_executor(&self) -> Arc<dyn tidb_expropt::SqlExecutor> {
+        Arc::clone(self.sql_executor.as_ref().expect("has_optional_prop checked the SQL executor"))
+    }
+
+    fn get_advisory_lock_context(&self) -> Arc<dyn tidb_expropt::AdvisoryLockContext> {
+        Arc::new(StmtAdvisoryLocks(self.advisory_locks.clone()))
+    }
+
+    fn get_privilege_manager(&self) -> Option<Arc<dyn tidb_sessionexpr::PrivilegeManager>> {
+        if self.session_privilege.is_none() && self.dynamic_privilege.is_none() {
+            return None;
+        }
+        Some(Arc::new(SessionPrivilegeChecker {
+            session: self.session_privilege.clone(),
+            dynamic: self.dynamic_privilege.clone(),
+        }))
+    }
+
+    fn get_sequence_by_name(
+        &self,
+        db: &str,
+        name: &str,
+    ) -> Result<Arc<dyn SequenceTable>, tidb_expropt::ExprOptError> {
+        let path = [db.to_owned(), name.to_owned()];
+        // Go `GetSequenceByName`: a missing sequence, or another kind of
+        // object, fails here.
+        self.resolve_sequence(&path).map_err(tidb_expropt::ExprOptError::from_eval)?;
+        Ok(Arc::new(StmtSequenceTable { ctx: self.clone(), path }))
+    }
+
+    fn has_optional_prop(&self, key: tidb_exprctx::OptionalEvalPropKey) -> bool {
+        match key {
+            tidb_exprctx::OptionalEvalPropKey::InfoSchema => self.latest_info_schema.is_some(),
+            tidb_exprctx::OptionalEvalPropKey::SqlExecutor => self.sql_executor.is_some(),
+            tidb_exprctx::OptionalEvalPropKey::DdlOwnerInfo => self.ddl_owner_info.is_some(),
+            _ => true,
+        }
+    }
 }
 
 impl tidb_expropt::SessionVarsProvider for StmtSessionVars {
     fn get_session_vars(&self) -> Arc<dyn tidb_expropt::SessionVars> {
         Arc::new(self.clone())
+    }
+}
+
+/// Go `sessionexpr`'s advisory-lock property over the session's locks.
+struct StmtAdvisoryLocks(crate::advisory_lock_state::AdvisoryLockSession);
+
+impl tidb_expropt::AdvisoryLockContext for StmtAdvisoryLocks {
+    fn get_advisory_lock(&self, name: &str, timeout: i64) -> Result<(), tidb_expropt::GetAdvisoryLockError> {
+        use crate::advisory_lock_state::AdvisoryLockError;
+        let timeout = std::time::Duration::from_secs(u64::try_from(timeout).unwrap_or(0));
+        self.0.acquire(name, timeout).map_err(|error| match error {
+            AdvisoryLockError::Timeout => tidb_expropt::GetAdvisoryLockError::LockWaitTimeout,
+            AdvisoryLockError::Deadlock => tidb_expropt::GetAdvisoryLockError::LockDeadlock,
+            AdvisoryLockError::Internal(message) => {
+                tidb_expropt::GetAdvisoryLockError::Other(tidb_expropt::ExprOptError::new(message))
+            }
+        })
+    }
+
+    fn is_used_advisory_lock(&self, name: &str) -> u64 {
+        self.0.owner(name).unwrap_or(0)
+    }
+
+    fn release_advisory_lock(&self, name: &str) -> bool {
+        self.0.release(name)
+    }
+
+    fn release_all_advisory_locks(&self) -> i64 {
+        i64::try_from(self.0.release_all()).unwrap_or(i64::MAX)
     }
 }
 
@@ -925,9 +1133,14 @@ impl SessionTableLocks {
 #[doc(hidden)]
 #[derive(Clone, Default)]
 pub struct StmtContextData {
-    /// Go `sessionexpr`'s `OptionalEvalPropProviders`: what builtins that
-    /// need session state read through `expropt`'s readers.
-    optional_props: tidb_expropt::OptionalEvalPropProviders,
+    /// See [`StmtContextSessionState::sql_executor`]: Go
+    /// `GetRestrictedSQLExecutor`, which `sessionexpr`'s property reads.
+    sql_executor: Option<Arc<dyn tidb_expropt::SqlExecutor>>,
+    /// See [`StmtContextSessionState::ddl_owner_info`]: Go `IsDDLOwner`.
+    ddl_owner_info: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    /// See [`StmtContextSessionState::min_safe_ts_provider`]: the store's Go
+    /// `GetMinSafeTS`.
+    min_safe_ts_provider: Option<MinSafeTsProvider>,
     mpp_query_info: Arc<tidb_kv::mpp_query::MppQueryInfo>,
     mpp_server_id: u64,
     tiflash_compute_dispatch_policy: String,
@@ -1034,7 +1247,6 @@ pub struct StmtContextData {
     /// DDL workers use reorganization flags independently of statement class.
     reorg: bool,
     current_db: Option<String>,
-    version: Option<String>,
     current_user: Option<String>,
     auth_plugin: String,
     connection_info: Option<Arc<tidb_variable::connection_info::ConnectionInfo>>,
@@ -1109,8 +1321,6 @@ pub struct StmtContextData {
     /// Go `SessionVars.DefaultCollationForUTF8MB4`: the collation a
     /// `_utf8mb4'...'` literal takes (`adjustUTF8MB4Collation`).
     default_collation_for_utf8mb4: String,
-    /// See [`StmtContextSessionState::sequence_privilege`].
-    sequence_privilege: Option<SequencePrivilegeCheck>,
     /// See [`StmtContextSessionState::dynamic_privilege`].
     dynamic_privilege: Option<DynamicPrivilegeCheck>,
     /// See [`StmtContextSessionState::view_definer_privilege`].
@@ -1127,11 +1337,9 @@ pub struct StmtContextData {
     plan_privilege_check: Option<Arc<dyn std::any::Any + Send + Sync>>,
     /// See [`StmtContextSessionState::mdl_related_table`].
     mdl_related_table: Option<MdlRelatedTableRecorder>,
-    /// See [`StmtContextSessionState::min_safe_ts_provider`].
-    min_safe_ts_provider: Option<MinSafeTsProvider>,
     /// Go `StmtCtx.GetOrStoreStmtCache(StmtSafeTSCacheKey, ...)`: the min
     /// SafeTS the statement's first `GetStmtMinSafeTime` read.
-    stmt_safe_ts: std::sync::OnceLock<u64>,
+    stmt_safe_ts: Arc<std::sync::OnceLock<u64>>,
     /// See [`StmtContextSessionState::locked_tables`].
     locked_tables: Option<LockedTables>,
     /// What Go's `core.CheckTableMode` finds for the statement this context
@@ -2404,17 +2612,12 @@ context_configuration! {
     }
 
     /// Attaches the statement's latest domain infoschema (Go
-    /// `sctx.GetLatestInfoSchema()`), and installs Go `sessionexpr`'s
-    /// infoschema provider over it for the builtins that read it
-    /// (`InfoSchemaPropReader`). Rust's statement holds one infoschema, the
-    /// domain's as the statement starts, so the provider answers it for the
-    /// session's schema too; no Rust builtin asks for that one yet.
+    /// `sctx.GetLatestInfoSchema()`), which Go `sessionexpr`'s infoschema
+    /// property answers (`InfoSchemaPropReader`). Rust's statement holds one
+    /// infoschema, the domain's as the statement starts, so the property
+    /// answers it for the session's schema too.
     #[must_use]
     pub fn with_latest_info_schema(mut self, schema: LatestInfoSchema) -> Self {
-        let latest = schema.meta_only();
-        self.optional_props.add(Arc::new(tidb_expropt::InfoSchemaPropProvider::new(move |_is_domain| {
-            Arc::clone(&latest)
-        })));
         self.latest_info_schema = Some(schema);
         self
     }
@@ -2968,17 +3171,10 @@ context_configuration! {
         self
     }
 
-    /// Attaches the session state the builtins read: Go reads both from
-    /// `SessionVars`, where `DATABASE()` is `CurrentDB` and `VERSION()` is
-    /// the same string `@@version` reports.
+    /// Attaches Go `SessionVars.CurrentDB`, which `DATABASE()` reports.
     #[must_use]
-    pub fn with_session_state(
-        mut self,
-        current_db: Option<String>,
-        version: Option<String>,
-    ) -> Self {
+    pub fn with_current_db(mut self, current_db: Option<String>) -> Self {
         self.current_db = current_db;
-        self.version = version;
         self
     }
 
@@ -3317,12 +3513,9 @@ impl StmtContext {
         session: StmtContextSessionState,
     ) -> Self {
         Self(Arc::new(StmtContextData {
-            optional_props: optional_eval_props(
-                &session.regions,
-                &session.session_privilege,
-                &session.dynamic_privilege,
-                session.sql_executor,
-            ),
+            sql_executor: session.sql_executor,
+            ddl_owner_info: session.ddl_owner_info,
+            min_safe_ts_provider: session.min_safe_ts_provider,
             mpp_query_info: session.mpp_query_info,
             mpp_server_id: session.mpp_server_id,
             tiflash_compute_dispatch_policy: session.tiflash_compute_dispatch_policy,
@@ -3362,7 +3555,6 @@ impl StmtContext {
             string_type_flags: tidb_datatype::ConversionFlags::default(),
             reorg: false,
             current_db: None,
-            version: None,
             current_user: None,
             auth_plugin: String::new(),
             connection_info: None,
@@ -3398,14 +3590,12 @@ impl StmtContext {
             connection_charset: session.connection_charset,
             connection_collation: session.connection_collation,
             default_collation_for_utf8mb4: session.default_collation_for_utf8mb4,
-            sequence_privilege: session.sequence_privilege,
             dynamic_privilege: session.dynamic_privilege,
             view_definer_privilege: session.view_definer_privilege,
             session_privilege: session.session_privilege,
             plan_privilege_check: None,
             mdl_related_table: session.mdl_related_table,
-            min_safe_ts_provider: session.min_safe_ts_provider,
-            stmt_safe_ts: std::sync::OnceLock::new(),
+            stmt_safe_ts: Arc::default(),
             locked_tables: session.locked_tables,
             protected_table_mode: None,
             new_collation_enabled: tidb_datatype::new_collation_enabled(),
@@ -4908,31 +5098,6 @@ impl StmtContext {
         self.mdl_related_table.as_ref()
     }
 
-    fn check_sequence_privilege(
-        &self,
-        path: &[String],
-        insert: bool,
-    ) -> Result<(), tidb_exprctx::EvalError> {
-        let Some(check) = &self.sequence_privilege else {
-            return Ok(());
-        };
-        let Some((database, sequence)) = self.sequences().schema_and_name(path) else {
-            return Ok(());
-        };
-        if check(database, sequence, insert) {
-            return Ok(());
-        }
-        let (user, host) = self.authenticated_identity().unwrap_or(("", ""));
-        Err(tidb_exprctx::EvalError::Sequence(
-            tidb_exprctx::SequenceEvalError::AccessDenied {
-                privilege: if insert { "INSERT" } else { "SELECT" },
-                user: user.to_owned(),
-                host: host.to_owned(),
-                sequence: sequence.to_owned(),
-            },
-        ))
-    }
-
     /// The connection charset/collation used while building expressions.
     #[must_use]
     pub fn connection_charset_info(&self) -> (&str, &str) {
@@ -5016,9 +5181,6 @@ impl StmtContext {
         self
     }
 
-    /// Validates a sequence name without consuming or otherwise mutating its
-    /// allocator. Go resolves sequence builtins while building the expression
-    /// tree, before an executor can evaluate an earlier projection item.
     /// The sequences this statement reaches: none without an attached
     /// snapshot.
     fn sequences(&self) -> &dyn SequenceSchema {
@@ -5027,6 +5189,9 @@ impl StmtContext {
             .unwrap_or(&tidb_util::misc::NoSequences)
     }
 
+    /// Validates a sequence name without consuming or otherwise mutating its
+    /// allocator. Go resolves sequence builtins while building the expression
+    /// tree, before an executor can evaluate an earlier projection item.
     pub fn validate_sequence_path(&self, path: &[String]) -> Result<(), tidb_exprctx::EvalError> {
         self.resolve_sequence(path).map(|_| ())
     }
@@ -6594,6 +6759,22 @@ impl StmtContext {
             prev_last_insert_id: self.prev_last_insert_id,
             last_insert_id: Arc::clone(&self.last_insert_id),
             resource_group_name: self.resource_group_name.clone(),
+            user_vars: self.user_vars.clone(),
+            sql_killer: Arc::clone(self.memory.sql_killer()),
+            // Go's `StmtCtx.TableIDs` lists the tables the statement reads;
+            // the statement's physical table reader is that here.
+            has_table_ids: self.has_physical_table_reader.load(Ordering::Relaxed),
+            in_insert_update_or_delete: matches!(
+                self.statement_class,
+                StatementClass::Insert | StatementClass::Update | StatementClass::Delete
+            ),
+            current_tso: self.current_tso.clone(),
+            current_insert_values: Arc::clone(&self.current_insert_values),
+            sequence_state: Arc::clone(&self.sequence_state),
+            stmt_safe_ts: Arc::clone(&self.stmt_safe_ts),
+            fts_function_is_used: Arc::clone(&self.fts_function_is_used),
+            connection_info: self.connection_info.clone(),
+            global_sysvars: self.global_sysvars.clone(),
         }
     }
 
@@ -7363,10 +7544,6 @@ impl Columns for StmtContext {
         self.fts_function_is_used.load(Ordering::Relaxed)
     }
 
-    fn set_fts_function_is_used(&self) {
-        self.fts_function_is_used.store(true, Ordering::Relaxed);
-    }
-
     fn alternative_logical_plan_signals(
         &self,
     ) -> Option<&tidb_exprctx::context::AlternativeLogicalPlanSignals> {
@@ -7390,28 +7567,6 @@ impl Columns for StmtContext {
             .ok_or(tidb_exprctx::EvalError::Unsupported(
                 "unbound prepared parameter",
             ))
-    }
-
-    fn current_insert_value(&self, offset: usize) -> Result<Option<Datum>, tidb_exprctx::EvalError> {
-        let values = self
-            .current_insert_values
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let Some(values) = values.as_ref() else {
-            return Ok(None);
-        };
-        if values.is_empty() {
-            return Ok(None);
-        }
-        values.get(offset).cloned().map_or_else(
-            || {
-                Err(tidb_exprctx::EvalError::IncorrectArguments(format!(
-                    "Session current insert values len {} and column's offset {offset} don't match",
-                    values.len()
-                )))
-            },
-            |value| Ok(Some(value)),
-        )
     }
 
     fn connection_charset_info(&self) -> (&str, &str) {
@@ -7451,11 +7606,6 @@ impl Columns for StmtContext {
         self.like_default_escape
     }
 
-    fn connection_info(&self) -> Option<Arc<tidb_variable::connection_info::ConnectionInfo>> {
-        self.connection_info.clone()
-    }
-
-
     fn connection_id(&self) -> Option<u64> {
         self.connection_id
     }
@@ -7464,36 +7614,6 @@ impl Columns for StmtContext {
         self.optimizer_use_invisible_indexes
     }
 
-    fn acquire_advisory_lock(
-        &self,
-        name: &str,
-        timeout: std::time::Duration,
-    ) -> Result<bool, tidb_exprctx::EvalError> {
-        use crate::advisory_lock_state::AdvisoryLockError;
-        match self.advisory_locks.acquire(name, timeout) {
-            Ok(()) => Ok(true),
-            Err(AdvisoryLockError::Timeout) => Ok(false),
-            Err(AdvisoryLockError::Deadlock) => Err(tidb_exprctx::EvalError::AdvisoryLock {
-                code: 3058,
-                message: "Deadlock found when trying to get user-level lock; try rolling back transaction/releasing locks and restarting lock acquisition.".to_owned(),
-            }),
-            Err(AdvisoryLockError::Internal(message)) => {
-                Err(tidb_exprctx::EvalError::AdvisoryLock { code: 1105, message })
-            }
-        }
-    }
-
-    fn advisory_lock_owner(&self, name: &str) -> Result<Option<u64>, tidb_exprctx::EvalError> {
-        Ok(self.advisory_locks.owner(name))
-    }
-
-    fn release_advisory_lock(&self, name: &str) -> Result<bool, tidb_exprctx::EvalError> {
-        Ok(self.advisory_locks.release(name))
-    }
-
-    fn release_all_advisory_locks(&self) -> Result<usize, tidb_exprctx::EvalError> {
-        Ok(self.advisory_locks.release_all())
-    }
 
 
     /// Go `sessionexpr`'s providers: the session-vars and current-user ones
@@ -7504,30 +7624,7 @@ impl Columns for StmtContext {
         &self,
         key: tidb_exprctx::OptionalEvalPropKey,
     ) -> Option<Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
-        match key {
-            tidb_exprctx::OptionalEvalPropKey::SessionVars => {
-                Some(Arc::new(tidb_expropt::new_session_vars_provider(Arc::new(self.session_vars()))))
-            }
-            tidb_exprctx::OptionalEvalPropKey::CurrentUser => {
-                let vars = self.session_vars();
-                Some(Arc::new(tidb_expropt::CurrentUserPropProvider::new(move || {
-                    (vars.user.clone(), vars.active_roles.clone())
-                })))
-            }
-            _ => self.optional_props.get(key),
-        }
-    }
-
-    fn get_stmt_min_safe_ts(&self) -> u64 {
-        *self.stmt_safe_ts.get_or_init(|| {
-            self.min_safe_ts_provider.as_ref().map_or(0, |provider| {
-                provider(&tidb_config::tikvcfg::get_txn_scope_from_config())
-            })
-        })
-    }
-
-    fn current_tso(&self) -> i64 {
-        self.current_tso.value()
+        tidb_sessionexpr::optional_prop_provider(&Arc::new(self.clone()), key)
     }
 
     fn tidb_info(&self) -> String {
@@ -7559,14 +7656,6 @@ impl Columns for StmtContext {
         tidb_variable::user_vars::UserVarsReader::get_user_var_val(vars, &tidb_hack::go_to_lower(name))
     }
 
-    /// Go `SessionVars.SetUserVarVal`. A NULL value never reaches here -- the
-    /// evaluator keeps Go's rule that `@x := NULL` leaves the variable alone.
-    fn set_uservar(&self, name: &str, value: Datum) {
-        if let Some(vars) = self.user_vars.as_ref() {
-            vars.set_user_var_val(&tidb_hack::go_to_lower(name), value);
-        }
-    }
-
     fn rand_next(&self) -> Option<f64> {
         self.rand_session.as_ref().map(|rng| rng.gen())
     }
@@ -7593,12 +7682,6 @@ impl Columns for StmtContext {
     fn sysvar(&self, scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
         // Only the variables a builtin reads are answered here; the session
         // resolves every other `@@var` before the driver sees the statement.
-        if name.eq_ignore_ascii_case("version") {
-            return self
-                .version
-                .as_ref()
-                .map(|value| Datum::Bytes(value.clone().into_bytes()));
-        }
         // `GROUP_CONCAT`'s byte budget travels this way rather than as its own
         // `Columns` method: the aggregate reads it once per statement, and the
         // trait already has a general variable channel.
@@ -7658,17 +7741,6 @@ impl Columns for StmtContext {
 
     fn expr_pushdown_blacklist(&self) -> &std::collections::HashMap<String, u32> {
         StmtContext::expr_pushdown_blacklist(self)
-    }
-
-    fn sleep_for(&self, duration: std::time::Duration) -> bool {
-        let killed = self.memory.sleep_for(duration);
-        if killed
-            && self.statement_class == StatementClass::Select
-            && !self.has_physical_table_reader.load(Ordering::Relaxed)
-        {
-            self.memory.reset_kill_signal();
-        }
-        killed
     }
 
     fn strict_sql_mode(&self) -> bool {
@@ -7754,45 +7826,6 @@ impl Columns for StmtContext {
 
 
 
-    fn sequence_nextval(&self, path: &[String]) -> Result<Datum, tidb_exprctx::EvalError> {
-        let sequence = self.resolve_sequence(path)?;
-        self.check_sequence_privilege(path, true)?;
-        let (database, name) = self.sequences().key(path);
-        let value = sequence
-            .get_sequence_next_val(self, &database, &name)
-            .map_err(sequence_error)?;
-        // Go records the value in the SESSION's sequence state, which is what
-        // `LASTVAL` reads back.
-        self.sequence_state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(sequence.get_sequence_id(), value);
-        Ok(Datum::Int(value))
-    }
-
-    fn sequence_lastval(&self, path: &[String]) -> Result<Datum, tidb_exprctx::EvalError> {
-        let sequence = self.resolve_sequence(path)?;
-        self.check_sequence_privilege(path, false)?;
-        Ok(self
-            .sequence_state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&sequence.get_sequence_id())
-            .copied()
-            .map_or(Datum::Null, Datum::Int))
-    }
-
-    fn sequence_setval(&self, path: &[String], value: i64) -> Result<Datum, tidb_exprctx::EvalError> {
-        let sequence = self.resolve_sequence(path)?;
-        self.check_sequence_privilege(path, true)?;
-        // Go `SetSequenceVal`: the reported value is NULL when the stored
-        // counter was already at or past `value` (`alreadySatisfied`).
-        let (database, name) = self.sequences().key(path);
-        let (reported, already_satisfied) = sequence
-            .set_sequence_val(self, value, &database, &name)
-            .map_err(sequence_error)?;
-        Ok(if already_satisfied { Datum::Null } else { Datum::Int(reported) })
-    }
 }
 
 /// A sequence error as its producer raised it.
@@ -7968,28 +8001,20 @@ mod tests {
     }
 
     #[test]
-    fn sleep_keeps_a_kill_installed_after_a_physical_table_reader_is_built() {
+    fn sleep_sees_the_statements_killer_and_its_table_reads() {
         let session = tidb_variable::mem_quota::SessionMemory::new(-1, tidb_vardef::OomAction::Cancel, 7);
         let cancellation = session.begin_query_cancellation();
         cancellation.cancel();
         let ctx = StmtContext::for_query_with_memory(session.statement());
+        // Go `doSleep` reads `SessionVars.SQLKiller` and, to decide whether to
+        // reset it, `StmtCtx.TableIDs` and the DML flags.
+        let vars = tidb_expropt::SessionVarsPropReader.get_session_vars(&ctx as &dyn tidb_exprctx::Columns).unwrap();
+        assert!(!vars.stmt_has_table_ids());
+        assert!(!vars.stmt_in_insert_update_or_delete());
+        assert!(vars.sql_killer().unwrap().handle_signal().is_some(), "the cancelled statement's killer");
         ctx.mark_physical_table_reader();
-
-        let started = std::time::Instant::now();
-        assert!(tidb_exprctx::Columns::sleep_for(
-            &ctx,
-            std::time::Duration::from_secs(1)
-        ));
-        assert!(started.elapsed() < std::time::Duration::from_millis(100));
-
-        // Go retains the killer when `StmtCtx.TableIDs` is non-empty, so the
-        // rest of a table-backed evaluation is interrupted too.
-        let started = std::time::Instant::now();
-        assert!(tidb_exprctx::Columns::sleep_for(
-            &ctx,
-            std::time::Duration::from_secs(1)
-        ));
-        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+        let vars = tidb_expropt::SessionVarsPropReader.get_session_vars(&ctx as &dyn tidb_exprctx::Columns).unwrap();
+        assert!(vars.stmt_has_table_ids(), "a physical table reader is Go's non-empty TableIDs");
     }
 
     /// Go `EvalContext.GetMaxAllowedPacket`, read by every result-sizing

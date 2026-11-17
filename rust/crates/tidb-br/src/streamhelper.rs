@@ -29,6 +29,7 @@ pub mod config;
 pub mod daemon;
 pub mod flush_subscriber;
 pub mod models;
+pub mod prefix_scanner;
 pub mod regioniter;
 
 pub use advancer::CheckpointAdvancer;

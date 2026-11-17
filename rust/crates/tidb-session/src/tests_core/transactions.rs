@@ -567,9 +567,12 @@ fn read_staleness_is_clamped_by_the_stores_min_safe_ts() {
 /// Go `GetStmtMinSafeTime`: `TIDB_BOUNDED_STALENESS` places its window at
 /// the stores' min SafeTS (`calAppropriateTime`), which the statement reads
 /// once (`StmtSafeTSCacheKey`) however often it evaluates the function.
+/// Go `GetStmtMinSafeTime`: each evaluation reads the store's min SafeTS,
+/// and the statement's cache (`StmtSafeTSCacheKey`) answers the first read,
+/// so one statement sees one SafeTS however the store moves.
 #[test]
-fn bounded_staleness_reads_the_stores_min_safe_ts_once_per_statement() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+fn bounded_staleness_answers_the_statements_first_min_safe_ts() {
+    use std::sync::atomic::{AtomicI64, Ordering};
     let mut session = Session::new();
     session.run("SET time_zone = '+00:00'").unwrap();
     let safe_ms = chrono::NaiveDate::from_ymd_opt(2020, 6, 7)
@@ -578,18 +581,23 @@ fn bounded_staleness_reads_the_stores_min_safe_ts_once_per_statement() {
         .unwrap()
         .and_utc()
         .timestamp_millis();
-    let reads = std::sync::Arc::new(AtomicUsize::new(0));
-    let counted = std::sync::Arc::clone(&reads);
+    // Each read moves the store's SafeTS a day later.
+    let next = std::sync::Arc::new(AtomicI64::new(safe_ms));
+    let store = std::sync::Arc::clone(&next);
     session.set_min_safe_ts_provider(std::sync::Arc::new(move |_| {
-        counted.fetch_add(1, Ordering::SeqCst);
-        tikv_client::oracle::compose_ts(safe_ms, 0)
+        tikv_client::oracle::compose_ts(store.fetch_add(86_400_000, Ordering::SeqCst), 0)
     }));
     let window = "TIDB_BOUNDED_STALENESS('2015-09-21 09:53:04', '2025-01-02 10:00:00')";
     assert_eq!(
         crate::tests_support::row_text(session.run(&format!("SELECT {window}, {window}"))),
         vec![vec!["2020-06-07 08:09:10.123", "2020-06-07 08:09:10.123"]]
     );
-    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    assert!(next.load(Ordering::SeqCst) >= safe_ms + 2 * 86_400_000, "each evaluation reads the store");
+    // The next statement caches afresh.
+    assert_eq!(
+        crate::tests_support::row_text(session.run(&format!("SELECT {window}"))),
+        vec![vec!["2020-06-09 08:09:10.123"]]
+    );
     session.set_min_safe_ts_provider(std::sync::Arc::new(|_| 0));
     assert_eq!(
         crate::tests_support::row_text(session.run(&format!("SELECT {window}"))),

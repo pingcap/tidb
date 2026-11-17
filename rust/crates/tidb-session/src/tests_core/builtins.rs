@@ -993,6 +993,15 @@ fn like_between_case_and_builtins() {
     assert!(session.run("SELECT COUNT(b, a) FROM t").is_err());
 }
 
+/// Go `builtinTiDBIsDDLOwnerSig` reads `DDLOwnerPropReader`, which Go's
+/// session installs (`dom.DDL().OwnerManager().IsOwner()`): a node that runs
+/// its own DDL answers 1 (Go's oracle on its one mock-store node: 1).
+#[test]
+fn tidb_is_ddl_owner_reads_the_nodes_ddl_owner() {
+    let mut session = Session::new();
+    assert_eq!(row_text(session.run("SELECT TIDB_IS_DDL_OWNER()")), [["1"]]);
+}
+
 /// `[NOT] REGEXP` through the chunk (table-scan `WHERE`) path, checked
 /// against captured TiDB output. Before this test, the chunk rewriter had
 /// no `Expr::Regexp` arm, so `SELECT ... WHERE b REGEXP '...'` failed

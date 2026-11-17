@@ -52,7 +52,6 @@ use tidb_hack::GoToLower;
 /// builder, while expressions retain the shared global accessor itself.
 pub struct StatementVarSnapshot {
     generation: u64,
-    version: Option<String>,
     time_zone: crate::SessionTimeZone,
     connection_charset: String,
     connection_collation: String,
@@ -998,7 +997,6 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             string_type_flags: tidb_datatype::ConversionFlags::default()
                 .with_skip_ascii_check(on(tidb_vardef::tidb_vars::TIDB_SKIP_ASCII_CHECK))
                 .with_skip_utf8_check(on(tidb_vardef::tidb_vars::TIDB_SKIP_UTF8_CHECK)),
-            version: self.session_vars().get_system("version").ok(),
             time_zone: self.session_vars().session_time_zone(),
             connection_charset: self
                 .session_vars()
@@ -1420,7 +1418,6 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         let string_type_flags = snapshot
             .string_type_flags
             .with_skip_utf8mb4_check(!check_mb4);
-        let version = snapshot.version.clone();
         let connection_charset = snapshot.connection_charset.clone();
         let connection_collation = snapshot.connection_collation.clone();
         let default_collation_for_utf8mb4 = snapshot.default_collation_for_utf8mb4.clone();
@@ -1635,12 +1632,12 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             connection_charset,
             connection_collation,
             default_collation_for_utf8mb4,
-            sequence_privilege: self.sequence_privilege_check(),
             dynamic_privilege: self.dynamic_privilege_check(),
             view_definer_privilege: self.view_definer_privilege_check(),
             session_privilege: self.session_privilege_check(),
             mdl_related_table: self.mdl_related_table_recorder(),
             sql_executor: self.sql_executor(),
+            ddl_owner_info: self.ddl_owner_info(),
             min_safe_ts_provider: self.min_safe_ts_provider(),
             locked_tables: self.locked_tables(),
             point_plan_val: self.point_plan_val(),
@@ -1729,7 +1726,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     )
                     .with_tmp_table_max_size(snapshot.tmp_table_max_size)
                     .with_remove_orderby_in_subquery(remove_orderby_in_subquery)
-                    .with_session_state(current_db, version)
+                    .with_current_db(current_db)
                     .with_user(self.session_vars().current_user.clone(), self.session_vars().login_user.clone())
                     .with_connection_info(self.session_vars().connection_info.clone(), self.session_vars().auth_plugin.clone())
                     .with_global_sysvar_accessor(Arc::clone(&global_sysvar_accessor))
@@ -1939,7 +1936,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 )
                 .with_tmp_table_max_size(snapshot.tmp_table_max_size)
                 .with_remove_orderby_in_subquery(remove_orderby_in_subquery)
-                .with_session_state(current_db, version)
+                .with_current_db(current_db)
                 .with_user(
                     self.session_vars().current_user.clone(),
                     self.session_vars().login_user.clone(),
@@ -2762,6 +2759,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// through `SQLExecutorPropReader`; `None` is a session with no node to
     /// run restricted SQL on.
     fn sql_executor(&self) -> Option<Arc<dyn tidb_sqlexec::RestrictedSqlExecutor>>;
+    /// Go `sessionexpr`'s DDL-owner property: whether this node is the DDL
+    /// owner (`dom.DDL().OwnerManager().IsOwner()`).
+    fn ddl_owner_info(&self) -> Option<Arc<dyn Fn() -> bool + Send + Sync>>;
     /// Go `kv.Storage.GetMinSafeTS` of the session's store, which the
     /// statement's `GetStmtMinSafeTime` reads; `None` without a store.
     fn min_safe_ts_provider(&self) -> Option<tidb_sessionctx::MinSafeTsProvider>;
@@ -2769,11 +2769,6 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// planner: whether this session's account, with its active roles, holds
     /// a privilege. `None` is a session that enforces no privileges.
     fn session_privilege_check(&self) -> Option<crate::SessionPrivilegeCheck>;
-    /// An owned [`Self::has_scoped_privilege`] for checks Go makes while
-    /// EVALUATING an expression (`NEXTVAL`/`LASTVAL`/`SETVAL` ask
-    /// `RequestVerification` from the builtin), which run with the session
-    /// out of reach. `None` is an unrestricted session.
-    fn sequence_privilege_check(&self) -> Option<crate::SequencePrivilegeCheck>;
     /// Go `PrivilegeChecker.RequestDynamicVerification` for checks Go makes
     /// while building and evaluating an extension function. `None` is an
     /// unrestricted session.

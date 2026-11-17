@@ -83,7 +83,8 @@ pub(crate) fn err_specific_access_denied() -> EvalError {
 /// Go `expropt`'s reader errors (`getPropProvider`'s missing or mistyped
 /// property), returned as they are.
 pub(crate) fn opt_prop_error(error: tidb_expropt::ExprOptError) -> EvalError {
-    EvalError::Raw(error.message().to_owned())
+    let message = error.message().to_owned();
+    error.into_eval().unwrap_or(EvalError::Raw(message))
 }
 
 /// Go `TIDB_DECODE_SQL_DIGESTS`' check, at build and at evaluation:

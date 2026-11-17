@@ -278,7 +278,7 @@ pub enum SequenceEvalError {
     /// builtin's own `RequestVerification` refused INSERT or SELECT on the
     /// sequence.
     AccessDenied {
-        /// `INSERT` for `SETVAL`, `SELECT` for `NEXTVAL` / `LASTVAL`.
+        /// `INSERT` for `NEXTVAL` / `SETVAL`, `SELECT` for `LASTVAL`.
         privilege: &'static str,
         /// The authenticated user.
         user: String,
@@ -543,10 +543,6 @@ pub trait Columns {
         false
     }
 
-    /// Go `StmtCtx.FTSFunctionIsUsed = true`; a context with no statement
-    /// has nothing to mark.
-    fn set_fts_function_is_used(&self) {}
-
     /// The statement's alternative-logical-plan signals, which a context
     /// that plans no statement does not have.
     fn alternative_logical_plan_signals(&self) -> Option<&AlternativeLogicalPlanSignals> {
@@ -564,30 +560,12 @@ pub trait Columns {
         Err(EvalError::Unsupported("unbound prepared parameter"))
     }
 
-    /// Go `SessionVars.CurrInsertValues`, read by `builtinValues*Sig` at
-    /// evaluation time. A statement without an active insert row returns
-    /// `Ok(None)` (the SQL NULL result); an active row whose offset is outside
-    /// its field list returns the source-shaped length/offset error. The
-    /// default keeps expression-only contexts equivalent to Go's empty
-    /// `chunk.Row` used by constant folding.
-    fn current_insert_value(&self, _offset: usize) -> Result<Option<Datum>, EvalError> {
-        Ok(None)
-    }
-
     /// Go `exprctx.ParamValues.GetParamValue`, used by the internal
     /// `GETPARAM()` builtin. A resolver with no plan-cache parameter list
     /// exposes Go's empty-list error by default; statement/session owners
     /// carrying prepared parameters override this method.
     fn get_param_value(&self, _idx: usize) -> Result<Datum, EvalError> {
         Err(EvalError::ParamIndexExceedParamCounts)
-    }
-
-    /// Go `GetStmtMinSafeTime`'s TSO: the stores' min SafeTS
-    /// (`store.GetMinSafeTS(txnScope)`), cached for the statement
-    /// (`StmtSafeTSCacheKey`) so every evaluation of it agrees. Zero is a
-    /// context with no store, as Go's nil store leaves it.
-    fn get_stmt_min_safe_ts(&self) -> u64 {
-        0
     }
 
     /// The statement's connection charset/collation used by implicit casts.
@@ -627,13 +605,6 @@ pub trait Columns {
         None
     }
 
-    /// Go `SessionVars.ConnectionInfo`.
-    fn connection_info(
-        &self,
-    ) -> Option<std::sync::Arc<tidb_variable::connection_info::ConnectionInfo>> {
-        None
-    }
-
     /// Go `SessionVars.ConnectionID`, which `CONNECTION_ID()` reports as an
     /// unsigned `LongLong`. Go treats a missing `SessionVars` as an error
     /// rather than NULL (`builtinConnectionIDSig.evalInt`), but that case is
@@ -657,46 +628,6 @@ pub trait Columns {
         _key: crate::OptionalEvalPropKey,
     ) -> Option<std::sync::Arc<dyn crate::DynOptionalEvalPropProvider>> {
         None
-    }
-
-    /// Acquires a session advisory lock. `Ok(false)` is lock-wait timeout.
-    fn acquire_advisory_lock(
-        &self,
-        _name: &str,
-        _timeout: std::time::Duration,
-    ) -> Result<bool, EvalError> {
-        Err(EvalError::Unsupported("advisory locks require a session"))
-    }
-
-    /// Returns the source-visible advisory-lock owner, or `None` when free.
-    fn advisory_lock_owner(&self, _name: &str) -> Result<Option<u64>, EvalError> {
-        Err(EvalError::Unsupported("advisory locks require a session"))
-    }
-
-    /// Releases one session reference to an advisory lock.
-    fn release_advisory_lock(&self, _name: &str) -> Result<bool, EvalError> {
-        Err(EvalError::Unsupported("advisory locks require a session"))
-    }
-
-    /// Releases every advisory-lock reference held by this session.
-    fn release_all_advisory_locks(&self) -> Result<usize, EvalError> {
-        Err(EvalError::Unsupported("advisory locks require a session"))
-    }
-
-    /// Go `TIDB_CURRENT_TSO()`: the active transaction's start timestamp, or
-    /// zero when this session has no active transaction.
-    fn current_tso(&self) -> i64 {
-        0
-    }
-
-    /// Go `DDLOwnerPropReader.IsDDLOwner`: whether this node is the DDL
-    /// owner. A context that does not carry the `OptPropDDLOwnerInfo`
-    /// provider fails exactly as Go's `getPropProvider` does; a session that
-    /// registers `DdlOwnerInfoProvider` answers 1/0.
-    fn ddl_owner_info(&self) -> Result<bool, EvalError> {
-        Err(EvalError::Unsupported(
-            "optional property: 'OptPropDDLOwnerInfo' not exists in EvalContext",
-        ))
     }
 
     /// Reads a supported system variable.
@@ -787,13 +718,6 @@ pub trait Columns {
     /// `SLEEP(NULL)` and negative durations are handled at.
     fn bad_null_level(&self) -> ErrorLevel {
         ErrorLevel::Error
-    }
-
-    /// Waits for a SQL `SLEEP` duration, returning whether the statement was
-    /// killed before the deadline.
-    fn sleep_for(&self, duration: std::time::Duration) -> bool {
-        std::thread::sleep(duration);
-        false
     }
 
     /// Records a statement warning, which Go appends to `StmtCtx.warnings`.
@@ -914,11 +838,6 @@ pub trait Columns {
         None
     }
 
-    /// Assigns a user variable through the resolver's interior mutability.
-    fn set_uservar(&self, name: &str, value: Datum) {
-        let _ = (name, value);
-    }
-
     /// TiDB's session `time_zone`. The default is the exact fixed zone the
     /// goeval oracle's mock session pins (`UTC+11`), so constant folding
     /// stays byte-comparable with the golden corpus; a real session
@@ -964,41 +883,6 @@ pub trait Columns {
     fn rand_seeded_next(&self, key: usize, seed: i64) -> Option<f64> {
         let _ = (key, seed);
         None
-    }
-
-    /// Go `sequenceOperator.GetSequenceNextVal`: consumes and returns the next
-    /// value of the sequence `path` names -- `[name]` or `[db, name]`, exactly
-    /// as the SQL spelled it, resolved against the session's current database.
-    ///
-    /// Consuming is NOT transactional: Go allocates in its own meta
-    /// transaction, so a rolled-back statement still spends the value
-    /// (captured). Nothing behind this method undoes it either.
-    ///
-    /// This is THE sequence seam, shared by both evaluators: the row path
-    /// (`eval_func`) hands over the parser's own path, and the chunk path
-    /// (the `nextval` signature) hands over the string constants the rewriter
-    /// substituted for the column reference. Keeping one method means a
-    /// `NEXTVAL` cannot behave differently depending on which evaluator ran.
-    fn sequence_nextval(&self, path: &[String]) -> Result<Datum, EvalError> {
-        let _ = path;
-        Err(EvalError::Unsupported("NEXTVAL requires a session"))
-    }
-
-    /// Go `sequenceOperator.GetSequenceLastVal`: the last value THIS SESSION
-    /// took from the sequence, or `Datum::Null` when it has taken none --
-    /// `LASTVAL` is session state, not the stored counter (captured: `lastval`
-    /// on a sequence this session has not read is `<nil>`).
-    fn sequence_lastval(&self, path: &[String]) -> Result<Datum, EvalError> {
-        let _ = path;
-        Err(EvalError::Unsupported("LASTVAL requires a session"))
-    }
-
-    /// Go `sequenceOperator.SetSequenceVal`: moves the sequence forward.
-    /// `Datum::Null` is Go's `alreadySatisfied` -- a sequence never moves
-    /// backwards, and reports NULL rather than an error when asked to.
-    fn sequence_setval(&self, path: &[String], value: i64) -> Result<Datum, EvalError> {
-        let _ = (path, value);
-        Err(EvalError::Unsupported("SETVAL requires a session"))
     }
 }
 

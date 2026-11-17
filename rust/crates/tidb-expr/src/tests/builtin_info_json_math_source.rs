@@ -134,14 +134,12 @@ fn math_call(name: &str, vals: &[Datum]) -> Result<Datum, EvalError> {
 }
 
 /// Session columns for `pkg/expression/builtin_info_test.go` information
-/// builtins. `VERSION()` in Go returns `mysql.ServerVersion`; the Rust
-/// evaluator reads `Columns::sysvar("version")`.
+/// builtins.
 #[derive(Default)]
 struct InfoColumns {
     current_user: Option<String>,
     roles: Vec<(&'static str, &'static str)>,
     connection_id: Option<u64>,
-    version: Option<String>,
     tidb_info: Option<String>,
     last_insert_id: Option<u64>,
     published_last_insert_id: std::sync::Arc<std::sync::Mutex<Option<u64>>>,
@@ -174,23 +172,13 @@ impl Columns for InfoColumns {
         self.connection_id
     }
 
-    fn sysvar(&self, _: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
-        name.eq_ignore_ascii_case("version").then(|| {
-            Datum::new_string_datum(
-                self.version
-                    .clone()
-                    .unwrap_or_else(|| runtime_versions().server_version),
-            )
-        })
-    }
-
     fn tidb_info(&self) -> String {
         self.tidb_info.clone().unwrap_or_else(get_tidb_info)
     }
 
 }
 
-fn eval_info(name: &str, result_type: FieldType, ctx: &InfoColumns) -> Datum {
+fn eval_info(name: &str, result_type: FieldType, ctx: &dyn Columns) -> Datum {
     crate::new_function::new_function_base(&crate::NoColumns, name, result_type, vec![]).unwrap().into_scalar_function().unwrap()
         .eval(ctx, tidb_chunk::row::Row::empty())
         .expect("session information builtin must evaluate")
@@ -252,16 +240,17 @@ fn connection_id() {
     assert_eq!(eval_info("connection_id", uint_ft(), &ctx), Datum::UInt(1));
 }
 
-/// Go `pkg/expression/builtin_info_test.go:152 TestVersion`.
+/// Go `pkg/expression/builtin_info_test.go:152 TestVersion`: `VERSION()` is
+/// the process's `mysql.ServerVersion`, with or without a session.
 #[test]
 fn version() {
     let expected = runtime_versions().server_version;
-    let ctx = InfoColumns {
-        version: Some(expected.clone()),
-        ..InfoColumns::default()
-    };
     assert_eq!(
-        eval_info("version", text_ft(), &ctx),
+        eval_info("version", text_ft(), &InfoColumns::default()),
+        Datum::new_string_datum(expected.clone().into_bytes())
+    );
+    assert_eq!(
+        eval_info("version", text_ft(), &NoColumns),
         Datum::new_string_datum(expected.into_bytes())
     );
     assert_eq!(rewrite("version()").static_type().unwrap().flen(), 64);
@@ -477,7 +466,6 @@ fn format_nano_time() {
 fn vectorized_builtin_info_func() {
     let ctx = InfoColumns {
         connection_id: Some(1),
-        version: Some(runtime_versions().server_version),
         tidb_info: Some(get_tidb_info()),
         last_insert_id: Some(7),
         row_count: Some(10),

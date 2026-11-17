@@ -459,6 +459,13 @@ mod tests {
             Ok((kvs.iter().filter(|(k, _)| k.starts_with(prefix)).map(|(k, v)| (k.clone(), v.clone())).collect(), 0))
         }
 
+        fn scan(&self, from: &[u8], to: &[u8], limit: usize) -> Result<(Vec<(Vec<u8>, Vec<u8>)>, bool)> {
+            let kvs = self.kvs.lock().unwrap();
+            let mut in_range = kvs.iter().filter(|(k, _)| k.as_slice() >= from && k.as_slice() < to);
+            let page = in_range.by_ref().take(limit).map(|(k, v)| (k.clone(), v.clone())).collect();
+            Ok((page, in_range.next().is_some()))
+        }
+
         fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
             self.kvs.lock().unwrap().insert(key.to_vec(), value.to_vec());
             Ok(())

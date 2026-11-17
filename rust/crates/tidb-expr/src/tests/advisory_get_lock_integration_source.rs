@@ -48,7 +48,33 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 /// where no competing holder exists.
 #[derive(Default)]
 struct LockSession {
-    held: RefCell<BTreeSet<String>>,
+    held: HeldLocks,
+}
+
+/// Go `AdvisoryLockContext` over the locks this session holds.
+#[derive(Clone, Default)]
+struct HeldLocks(std::sync::Arc<std::sync::Mutex<BTreeSet<String>>>);
+
+impl tidb_expropt::AdvisoryLockContext for HeldLocks {
+    fn get_advisory_lock(&self, name: &str, _: i64) -> Result<(), tidb_expropt::GetAdvisoryLockError> {
+        self.0.lock().unwrap().insert(name.to_owned());
+        Ok(())
+    }
+
+    fn is_used_advisory_lock(&self, name: &str) -> u64 {
+        u64::from(self.0.lock().unwrap().contains(name))
+    }
+
+    fn release_advisory_lock(&self, name: &str) -> bool {
+        self.0.lock().unwrap().remove(name)
+    }
+
+    fn release_all_advisory_locks(&self) -> i64 {
+        let mut held = self.0.lock().unwrap();
+        let count = held.len();
+        held.clear();
+        count as i64
+    }
 }
 
 impl Columns for LockSession {
@@ -56,20 +82,14 @@ impl Columns for LockSession {
         None
     }
 
-    fn acquire_advisory_lock(&self, name: &str, _: std::time::Duration) -> Result<bool, EvalError> {
-        self.held.borrow_mut().insert(name.to_owned());
-        Ok(true)
-    }
-
-    fn release_advisory_lock(&self, name: &str) -> Result<bool, EvalError> {
-        Ok(self.held.borrow_mut().remove(name))
-    }
-
-    fn release_all_advisory_locks(&self) -> Result<usize, EvalError> {
-        let mut held = self.held.borrow_mut();
-        let count = held.len();
-        held.clear();
-        Ok(count)
+    fn get_optional_prop_provider(
+        &self,
+        key: tidb_exprctx::OptionalEvalPropKey,
+    ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+        (key == tidb_exprctx::OptionalEvalPropKey::AdvisoryLock).then(|| {
+            std::sync::Arc::new(tidb_expropt::AdvisoryLockPropProvider::new(std::sync::Arc::new(self.held.clone())))
+                as std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>
+        })
     }
 }
 
@@ -153,12 +173,11 @@ fn test_get_lock_call_semantics_table() {
         fn get(&self, path: &[String]) -> Option<Datum> {
             self.inner.get(path)
         }
-        fn acquire_advisory_lock(
+        fn get_optional_prop_provider(
             &self,
-            name: &str,
-            t: std::time::Duration,
-        ) -> Result<bool, EvalError> {
-            self.inner.acquire_advisory_lock(name, t)
+            key: tidb_exprctx::OptionalEvalPropKey,
+        ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+            self.inner.get_optional_prop_provider(key)
         }
         fn append_warning(&self, code: u16, message: &str) {
             self.warnings.borrow_mut().push((code, message.to_owned()));

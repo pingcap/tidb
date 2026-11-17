@@ -583,6 +583,9 @@ impl crate::streamhelper::MetaStore for EtcdOpsMetaStore {
         let kvs = self.0.get_prefix(&String::from_utf8_lossy(prefix)).map_err(errors::errorf)?;
         Ok((kvs.into_iter().map(|(k, v)| (k.into_bytes(), v)).collect(), 0))
     }
+    fn scan(&self, from: &[u8], to: &[u8], limit: usize) -> Result<(Vec<(Vec<u8>, Vec<u8>)>, bool)> {
+        self.0.scan(from, to, limit).map_err(errors::errorf)
+    }
     fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
         self.0.put(&String::from_utf8_lossy(key), value).map_err(errors::errorf)
     }

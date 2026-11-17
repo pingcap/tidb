@@ -4231,7 +4231,7 @@ use tidb_charset::Collation;
         assert!(
             matches!(
                 &error,
-                EvalError::Unsupported(message)
+                EvalError::Raw(message)
                     if message.contains(
                         "optional property: 'OptPropDDLOwnerInfo' not exists in EvalContext"
                     )

@@ -69,11 +69,17 @@ pub trait BuildContext {
     /// Go `ctx.GetEvalCtx()` itself, for a build that evaluates in the
     /// statement: a context-free resolver has none.
     fn columns(&self) -> Option<&dyn Columns>;
-    /// Go `sessionVars.StmtCtx.FTSFunctionIsUsed = true`.
-    fn set_fts_function_is_used(&self) {
+    /// Go `c.GetSessionVars(ctx.GetEvalCtx())` then
+    /// `sessionVars.StmtCtx.FTSFunctionIsUsed = true`; a context-free
+    /// resolver has no statement to mark.
+    fn set_fts_function_is_used(&self) -> Result<(), EvalError> {
         if let Some(columns) = self.columns() {
-            columns.set_fts_function_is_used();
+            tidb_expropt::SessionVarsPropReader
+                .get_session_vars(columns)
+                .map_err(crate::builtin_ext::misc::opt_prop_error)?
+                .set_stmt_fts_function_is_used();
         }
+        Ok(())
     }
 }
 

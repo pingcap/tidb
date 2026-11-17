@@ -918,3 +918,40 @@ fn test_s3_sse_kms_context_url() {
         );
     }
 }
+
+/// Go `s3like.Storage.CopyFrom` against a live S3 service: a server-side
+/// copy from a storage in one bucket to a storage in another, each under
+/// its prefix. `TIDB_TEST_S3_ENDPOINT` names a MinIO (or S3) endpoint whose
+/// `minioadmin` account owns the buckets `copy-src` and `copy-dst`.
+#[test]
+#[ignore = "needs a live S3 endpoint"]
+fn s3_copy_from_another_bucket() {
+    let endpoint = std::env::var("TIDB_TEST_S3_ENDPOINT").expect("TIDB_TEST_S3_ENDPOINT");
+    let ctx = tidb_gocontext::Context::background();
+    let url = |bucket: &str, prefix: &str| {
+        format!(
+            "s3://{bucket}/{prefix}?endpoint={endpoint}&access-key=minioadmin&secret-access-key=minioadmin&force-path-style=true&region=us-east-1"
+        )
+    };
+    let src = crate::new_from_url(&ctx, &url("copy-src", "from")).unwrap();
+    let dst = crate::new_from_url(&ctx, &url("copy-dst", "to")).unwrap();
+    src.write_file(&ctx, "dir/a b+c.sst", b"payload").unwrap();
+    let copier = dst.as_copier().expect("an S3 storage is a Copier");
+    copier
+        .copy_from(&ctx, &*src, &crate::storeapi::CopySpec { from: "dir/a b+c.sst".into(), to: "out/copied.sst".into() })
+        .unwrap();
+    assert_eq!(dst.read_file(&ctx, "out/copied.sst").unwrap(), b"payload");
+    // Within one bucket, the same request.
+    let same = crate::new_from_url(&ctx, &url("copy-src", "again")).unwrap();
+    same.as_copier()
+        .unwrap()
+        .copy_from(&ctx, &*src, &crate::storeapi::CopySpec { from: "dir/a b+c.sst".into(), to: "x.sst".into() })
+        .unwrap();
+    assert_eq!(same.read_file(&ctx, "x.sst").unwrap(), b"payload");
+    // A missing source is the service's error.
+    let missing = copier
+        .copy_from(&ctx, &*src, &crate::storeapi::CopySpec { from: "nope".into(), to: "y.sst".into() })
+        .unwrap_err()
+        .to_string();
+    assert!(missing.contains("NoSuchKey"), "{missing}");
+}

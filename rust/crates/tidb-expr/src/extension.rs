@@ -226,11 +226,17 @@ fn eval_extension_func(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_
     };
     check_privileges(ctx, def)?;
     // Go `extensionFnContext`'s `vars`, which `SessionVarsPropReader` read:
-    // its `User` and `ActiveRoles`.
+    // its `ConnectionInfo`, `User` and `ActiveRoles`.
     let vars = tidb_expropt::SessionVarsPropReader
         .get_session_vars(ctx)
         .map_err(crate::builtin_ext::misc::opt_prop_error)?;
-    let fn_ctx = ExtensionFnContext { ctx, args: &function.args, user: vars.user(), active_roles: vars.active_roles() };
+    let fn_ctx = ExtensionFnContext {
+        ctx,
+        args: &function.args,
+        connection_info: vars.connection_info(),
+        user: vars.user(),
+        active_roles: vars.active_roles(),
+    };
     match def.eval_tp {
         EvalType::String => {
             let eval = def.eval_string_func.as_ref().expect("newExtensionFuncClass checked EvalStringFunc");
@@ -250,16 +256,17 @@ fn eval_extension_func(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_
 struct ExtensionFnContext<'a> {
     ctx: &'a dyn Columns,
     args: &'a [Expression],
+    connection_info: Option<std::sync::Arc<tidb_variable::connection_info::ConnectionInfo>>,
     user: Option<std::sync::Arc<UserIdentity>>,
     active_roles: Vec<std::sync::Arc<RoleIdentity>>,
 }
 
 impl FunctionContext for ExtensionFnContext<'_> {
-    /// Go `extensionFuncContext.ConnectionInfo`.
+    /// Go `extensionFnContext.ConnectionInfo`: `b.vars.ConnectionInfo`.
     fn connection_info(
         &self,
     ) -> Option<std::sync::Arc<tidb_variable::connection_info::ConnectionInfo>> {
-        self.ctx.connection_info()
+        self.connection_info.clone()
     }
 
     /// Go `extensionFnContext.User`: `b.vars.User`.

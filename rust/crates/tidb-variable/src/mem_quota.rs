@@ -756,33 +756,6 @@ impl StatementMemory {
     }
 
 
-    /// Waits for a SQL `SLEEP` duration or this statement's canonical kill
-    /// signal, polling every 10ms like Go's `doSleep`.
-    #[must_use]
-    pub fn sleep_for(&self, duration: std::time::Duration) -> bool {
-        let started = std::time::Instant::now();
-        let interval = std::time::Duration::from_millis(10);
-        loop {
-            let elapsed = started.elapsed();
-            if elapsed >= duration {
-                return false;
-            }
-            std::thread::sleep(interval.min(duration - elapsed));
-            if started.elapsed() >= duration {
-                return false;
-            }
-            if self.killer.handle_signal().is_some() {
-                return true;
-            }
-        }
-    }
-
-    /// Clears a handled standalone-query kill, as Go's `doSleep` does after
-    /// observing the signal outside a table/DML statement.
-    pub fn reset_kill_signal(&self) {
-        self.killer.reset();
-    }
-
     /// Whether this statement's tracker lifetime has already retired.
     /// Rebuilding a context must share an active lifetime, while a completed
     /// materialization must not be reused as a new statement's tracker.

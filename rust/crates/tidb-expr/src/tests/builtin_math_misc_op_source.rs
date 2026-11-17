@@ -880,10 +880,11 @@ fn sleep_vectorized_incorrect_argument_levels() {
                 tidb_exprctx::ErrorLevel::Error
             }
         }
-        fn sleep_for(&self, _duration: std::time::Duration) -> bool {
-            // Deterministic harness: rows report "not killed" instantly; the
-            // wall-clock rows belong to the ignored timing sibling.
-            false
+        fn get_optional_prop_provider(
+            &self,
+            key: tidb_exprctx::OptionalEvalPropKey,
+        ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+            crate::test_identity::TestSession::default().props().get(key)
         }
     }
 
@@ -919,6 +920,38 @@ fn sleep_vectorized_incorrect_argument_levels() {
     // the >=0.5s duration proof is the ignored sibling's subject).
     assert_eq!(sleep_row(Datum::Real(0.01), &strict), Ok(Datum::Int(0)));
     assert_eq!(strict.warnings.borrow().len(), 0);
+}
+
+/// Go `doSleep`: a pending kill ends SLEEP at the next 10ms poll with 1; the
+/// killer is reset for a statement that reads no table and is not DML, and
+/// kept for an INSERT, UPDATE or DELETE, whose execution reports it.
+#[test]
+fn sleep_is_interrupted_by_the_session_killer() {
+    struct Session(crate::test_identity::TestSession);
+    impl Columns for Session {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+        fn get_optional_prop_provider(
+            &self,
+            key: tidb_exprctx::OptionalEvalPropKey,
+        ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+            self.0.props().get(key)
+        }
+    }
+    for (in_dml, reset) in [(false, true), (true, false)] {
+        let killer = std::sync::Arc::new(tidb_sqlkiller::SqlKiller::default());
+        killer.send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
+        let ctx = Session(crate::test_identity::TestSession {
+            sql_killer: Some(std::sync::Arc::clone(&killer)),
+            in_insert_update_or_delete: in_dml,
+            ..Default::default()
+        });
+        let started = std::time::Instant::now();
+        assert_eq!(sleep_row(Datum::Real(5.0), &ctx), Ok(Datum::Int(1)));
+        assert!(started.elapsed() < std::time::Duration::from_secs(1), "the kill ends the sleep");
+        assert_eq!(killer.get_kill_signal() == tidb_sqlkiller::KillSignal::default(), reset, "in_dml = {in_dml}");
+    }
 }
 
 /// One SLEEP row through the scalar-function tier, exactly what `vecEvalType`

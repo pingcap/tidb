@@ -118,15 +118,15 @@ session_values! {
     /// Go `builtinDatabaseSig`: NULL when no database is selected.
     database => |ctx| string_or_null(ctx.current_database());
     /// Go `builtinVersionSig`: the string `@@version` reports.
-    version => |ctx| ctx.sysvar(None, "version").unwrap_or(Datum::Null);
+    version => |ctx| Datum::new_string_datum(tidb_mysql::consts::runtime_versions().server_version.into_bytes());
     /// Go `builtinTiDBVersionSig`.
     tidb_version => |ctx| Datum::new_string_datum(ctx.tidb_info().into_bytes());
     /// Go `builtinTiDBIsDDLOwnerSig.evalInt`: 1 or 0, never NULL.
-    tidb_is_ddl_owner => |ctx| Datum::Int(i64::from(ctx.ddl_owner_info()?));
+    tidb_is_ddl_owner => |ctx| Datum::Int(i64::from(
+        tidb_expropt::DdlOwnerPropReader.is_ddl_owner(ctx).map_err(crate::builtin_ext::misc::opt_prop_error)?,
+    ));
     /// Go `builtinReleaseAllLocksSig`.
-    release_all_locks => |ctx| {
-        Datum::Int(i64::try_from(ctx.release_all_advisory_locks()?).unwrap_or(i64::MAX))
-    };
+    release_all_locks => |ctx| Datum::Int(tidb_expropt::AdvisoryLockContext::release_all_advisory_locks(&*advisory_lock_ctx(ctx)?));
 }
 
 unary_values! {
@@ -154,10 +154,24 @@ unary_values! {
     vec_from_text => |value, ctx| crate::builtin_ext::vec::from_text(value);
     /// Go `builtinLoadFileSig`: a server reads no client file.
     load_file => |value, ctx| { let _ = value; Ok(Datum::Null) };
-    /// Go `builtinNextValSig`: taken outside the statement's transaction.
-    nextval => |path, ctx| ctx.sequence_nextval(&crate::func::sequence_path(path)?);
-    /// Go `builtinLastValSig`.
-    lastval => |path, ctx| ctx.sequence_lastval(&crate::func::sequence_path(path)?);
+    /// Go `builtinNextValSig.evalInt`: taken outside the statement's
+    /// transaction; the session's sequence state records the value.
+    nextval => |path, ctx| {
+        let Some((sequence, vars)) = sequence_operator(path, ctx, tidb_mysql::InsertPriv, "INSERT")? else {
+            return Ok(Datum::Null);
+        };
+        let next_val = sequence.get_sequence_next_val().map_err(crate::builtin_ext::misc::opt_prop_error)?;
+        vars.update_sequence_state(sequence.get_sequence_id(), next_val);
+        Ok(Datum::Int(next_val))
+    };
+    /// Go `builtinLastValSig.evalInt`: NULL until this session's `NEXTVAL`
+    /// or `SETVAL` touched the sequence.
+    lastval => |path, ctx| {
+        let Some((sequence, vars)) = sequence_operator(path, ctx, tidb_mysql::SelectPriv, "SELECT")? else {
+            return Ok(Datum::Null);
+        };
+        Ok(vars.sequence_last_value(sequence.get_sequence_id()).map_or(Datum::Null, Datum::Int))
+    };
     /// Go `builtinGetParamStringSig.evalString`: the plan-cache parameter the
     /// integer selects, as a string; one `ToString` cannot render is NULL.
     getparam => |value, ctx| {
@@ -176,20 +190,63 @@ unary_values! {
     };
 }
 
-/// Go `builtinSetValSig.evalInt`: a NULL value is NULL before the sequence
-/// is touched.
+/// Go `builtinNextValSig` / `builtinLastValSig` / `builtinSetValSig`: the
+/// sequence `path` names (a bare name is in `ctx.CurrentDB()`), from
+/// `GetSequenceOperator`, once `RequestVerification` grants `privilege`
+/// (`name`, for the error) on it. `None` is a NULL name.
+#[allow(clippy::type_complexity)]
+fn sequence_operator(
+    path: &Datum,
+    ctx: &dyn Columns,
+    privilege: tidb_mysql::PrivilegeType,
+    name: &'static str,
+) -> Result<
+    Option<(std::sync::Arc<dyn tidb_expropt::SequenceOperator>, std::sync::Arc<dyn tidb_expropt::SessionVars>)>,
+    EvalError,
+> {
+    if path.is_null() {
+        return Ok(None);
+    }
+    let path = crate::func::sequence_path(path)?;
+    let (db, seq) = match path.as_slice() {
+        [seq] => (ctx.current_database().unwrap_or_default(), seq.clone()),
+        [leading @ .., seq] => (leading.join("."), seq.clone()),
+        [] => (String::new(), String::new()),
+    };
+    let opt_err = crate::builtin_ext::misc::opt_prop_error;
+    // Check the table name is valid.
+    let sequence = tidb_expropt::SequenceOperatorPropReader.get_sequence_operator(ctx, &db, &seq).map_err(opt_err)?;
+    let vars = session_vars(ctx)?;
+    let checker = tidb_expropt::PrivilegeCheckerPropReader.get_privilege_checker(ctx).map_err(opt_err)?;
+    if !checker.request_verification(&db, &seq, "", privilege) {
+        let user = vars.user().unwrap_or_default();
+        return Err(EvalError::Sequence(tidb_exprctx::SequenceEvalError::AccessDenied {
+            privilege: name,
+            user: user.auth_username.clone(),
+            host: user.auth_hostname.clone(),
+            sequence: seq,
+        }));
+    }
+    Ok(Some((sequence, vars)))
+}
+
+/// Go `builtinSetValSig.evalInt`: the sequence and the privilege are
+/// checked before the value; a NULL value is NULL and sets nothing.
 pub(crate) fn setval(values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [path, value] = values else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
-    let path = crate::func::sequence_path(path)?;
+    let Some((sequence, _)) = sequence_operator(path, ctx, tidb_mysql::InsertPriv, "INSERT")? else {
+        return Ok(Datum::Null);
+    };
     if value.is_null() {
         return Ok(Datum::Null);
     }
-    match value.as_int() {
-        Some(value) => ctx.sequence_setval(&path, value),
-        None => Err(EvalError::Unsupported("SETVAL needs an integer value")),
-    }
+    let Some(value) = value.as_int() else {
+        return Err(EvalError::Unsupported("SETVAL needs an integer value"));
+    };
+    let (set_value, is_null) = sequence.set_sequence_val(value).map_err(crate::builtin_ext::misc::opt_prop_error)?;
+    Ok(if is_null { Datum::Null } else { Datum::Int(set_value) })
 }
 
 /// Go `builtinTiDBDecodeSQLDigestsSig`.
@@ -275,23 +332,32 @@ pub(crate) fn json_schema_valid(function: &ScalarFunction, ctx: &dyn Columns, ro
     function.json_schema_cache.eval(&function.args, ctx, row)
 }
 
-/// Go `builtinValues*Sig`: the statement's current insert row at the
-/// offset `NewValuesFunc` fixed; no row is SQL NULL.
+/// Go `builtinValues*Sig`: `SessionVars.CurrInsertValues` at the offset
+/// `NewValuesFunc` fixed; an empty row is SQL NULL, and an offset past the
+/// row is Go's length/offset error.
 pub(crate) fn values(function: &ScalarFunction, ctx: &dyn Columns, _: Row<'_>) -> Result<Datum, EvalError> {
+    let vars = session_vars(ctx)?;
     let offset = function
         .values_offset()
         .ok_or(EvalError::Unsupported("VALUES offset is not initialized"))?;
-    match ctx.current_insert_value(offset)? {
-        None => Ok(Datum::Null),
+    let Some((len, value)) = vars.curr_insert_values_at(offset) else {
+        return Ok(Datum::Null);
+    };
+    let Some(value) = value else {
+        return Err(EvalError::IncorrectArguments(format!(
+            "Session current insert values len {len} and column's offset {offset} don't match"
+        )));
+    };
+    match value {
         // Go `builtinValuesStringSig` reads an ENUM/SET value back through
         // `row.GetDatum(offset, retType).ToString()`: the member name.
-        Some(value @ (Datum::Enum(..) | Datum::Set(..))) => {
+        value @ (Datum::Enum(..) | Datum::Set(..)) => {
             let bytes = value
                 .to_bytes()
                 .map_err(|_| EvalError::Unsupported("ENUM/SET VALUES() name"))?;
             Ok(Datum::new_collation_string_datum(bytes, function.derived_collation()))
         }
-        Some(value) => Ok(value),
+        value => Ok(value),
     }
 }
 
@@ -327,8 +393,36 @@ pub(crate) fn benchmark(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'
     Ok(Datum::Int(0))
 }
 
+/// Go `doSleep`: waits `duration`, polling the session's killer every 10ms;
+/// a kill ends the wait (true) and, for a statement that reads no table and
+/// is not an INSERT, UPDATE or DELETE, is reset so the session continues.
+fn do_sleep(duration: std::time::Duration, vars: &dyn tidb_expropt::SessionVars) -> bool {
+    let started = std::time::Instant::now();
+    let tick = std::time::Duration::from_millis(10);
+    let killer = vars.sql_killer();
+    loop {
+        let elapsed = started.elapsed();
+        if elapsed >= duration {
+            return false;
+        }
+        std::thread::sleep(tick.min(duration - elapsed));
+        if started.elapsed() >= duration {
+            return false;
+        }
+        if let Some(killer) = killer.as_ref() {
+            if killer.handle_signal().is_some() {
+                if !vars.stmt_has_table_ids() && !vars.stmt_in_insert_update_or_delete() {
+                    killer.reset();
+                }
+                return true;
+            }
+        }
+    }
+}
+
 /// Go `builtinSleepSig.evalInt`.
 pub(crate) fn sleep(values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    let vars = session_vars(ctx)?;
     let [value] = values else {
         return Err(EvalError::WrongParameterCount("sleep"));
     };
@@ -349,7 +443,7 @@ pub(crate) fn sleep(values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalEr
     }
     let duration = std::time::Duration::try_from_secs_f64(seconds)
         .map_err(|_| EvalError::IncorrectArguments("Incorrect arguments to sleep".to_owned()))?;
-    Ok(Datum::Int(i64::from(ctx.sleep_for(duration))))
+    Ok(Datum::Int(i64::from(do_sleep(duration, vars.as_ref()))))
 }
 
 /// The lock name the advisory-lock signatures read from their first
@@ -359,8 +453,17 @@ fn lock_name(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> 
     advisory_lock_name(name)
 }
 
+/// Go `AdvisoryLockPropReader.AdvisoryLockCtx`.
+fn advisory_lock_ctx(ctx: &dyn Columns) -> Result<std::sync::Arc<tidb_expropt::AdvisoryLockPropProvider>, EvalError> {
+    tidb_expropt::AdvisoryLockPropReader
+        .advisory_lock_ctx(ctx)
+        .map_err(crate::builtin_ext::misc::opt_prop_error)
+}
+
 /// Go `builtinLockSig.evalInt`.
 pub(crate) fn get_lock(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    use tidb_expropt::AdvisoryLockContext as _;
+    let lock_ctx = advisory_lock_ctx(ctx)?;
     let lock_name = lock_name(function, values, ctx)?;
     let timeout = crate::cast::cast_arg_as_int(&values[1], function.args[1].static_type(), ctx)?;
     let mut timeout = crate::arg_eval_type::eval_int(&timeout)?.unwrap_or(0);
@@ -371,29 +474,45 @@ pub(crate) fn get_lock(function: &ScalarFunction, values: &[Datum], ctx: &dyn Co
         );
         timeout = MAX_ADVISORY_LOCK_TIMEOUT_SECS;
     }
-    let acquired =
-        ctx.acquire_advisory_lock(&lock_name, std::time::Duration::from_secs(timeout as u64))?;
-    Ok(Datum::Int(i64::from(acquired)))
+    match lock_ctx.get_advisory_lock(&lock_name, timeout) {
+        Ok(()) => Ok(Datum::Int(1)),
+        // Another user has the lock.
+        Err(tidb_expropt::GetAdvisoryLockError::LockWaitTimeout) => Ok(Datum::Int(0)),
+        Err(tidb_expropt::GetAdvisoryLockError::LockDeadlock) => Err(EvalError::AdvisoryLock {
+            code: 3058,
+            message: "Deadlock found when trying to get user-level lock; try rolling back transaction/releasing locks and restarting lock acquisition.".to_owned(),
+        }),
+        Err(tidb_expropt::GetAdvisoryLockError::Other(error)) => {
+            Err(EvalError::AdvisoryLock { code: 1105, message: error.message().to_owned() })
+        }
+    }
 }
 
 /// Go `builtinReleaseLockSig.evalInt`.
 pub(crate) fn release_lock(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    use tidb_expropt::AdvisoryLockContext as _;
+    let lock_ctx = advisory_lock_ctx(ctx)?;
     let lock_name = lock_name(function, values, ctx)?;
-    Ok(Datum::Int(i64::from(ctx.release_advisory_lock(&lock_name)?)))
+    Ok(Datum::Int(i64::from(lock_ctx.release_advisory_lock(&lock_name))))
 }
 
 /// Go `builtinFreeLockSig.evalInt`.
 pub(crate) fn is_free_lock(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    use tidb_expropt::AdvisoryLockContext as _;
+    let lock_ctx = advisory_lock_ctx(ctx)?;
     let lock_name = lock_name(function, values, ctx)?;
-    Ok(Datum::Int(i64::from(ctx.advisory_lock_owner(&lock_name)?.is_none())))
+    Ok(Datum::Int(i64::from(lock_ctx.is_used_advisory_lock(&lock_name) == 0)))
 }
 
 /// Go `builtinUsedLockSig.evalInt`: the owning connection, or NULL.
 pub(crate) fn is_used_lock(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    use tidb_expropt::AdvisoryLockContext as _;
+    let lock_ctx = advisory_lock_ctx(ctx)?;
     let lock_name = lock_name(function, values, ctx)?;
-    Ok(ctx
-        .advisory_lock_owner(&lock_name)?
-        .map_or(Datum::Null, |owner| Datum::Int(owner as i64)))
+    Ok(match lock_ctx.is_used_advisory_lock(&lock_name) {
+        0 => Datum::Null,
+        owner => Datum::Int(owner as i64),
+    })
 }
 
 /// Go `builtinGetVar*Sig`: the variable's name is a build-time constant and
@@ -413,15 +532,19 @@ pub(crate) fn getvar(function: &ScalarFunction, ctx: &dyn Columns, _: Row<'_>) -
     uservar_as_kind(kind, ctx.get_uservar(&var).unwrap_or(Datum::Null), ctx)
 }
 
-/// Go `builtinSetVar*Sig`: a NULL value is returned without touching the
-/// variable.
+/// Go `builtinSetVar*Sig`: `GetSessionVars` first, then the value; a NULL
+/// value is returned without touching the variable, any other is stored
+/// under the lowercased name (`SessionVars.SetUserVarVal`).
 pub(crate) fn setvar(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+    let vars = tidb_expropt::SessionVarsPropReader
+        .get_session_vars(ctx)
+        .map_err(crate::builtin_ext::misc::opt_prop_error)?;
     let var = function
         .uservar_name()
         .ok_or(EvalError::Unsupported("SETVAR has no constant variable name"))?;
     let value = function.args[1].eval(ctx, row)?;
     if !value.is_null() {
-        ctx.set_uservar(&var, value.clone());
+        vars.set_user_var_val(&tidb_hack::go_to_lower(&var), value.clone());
     }
     Ok(value)
 }

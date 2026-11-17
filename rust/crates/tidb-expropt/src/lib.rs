@@ -86,7 +86,9 @@ mod sessioncontext;
 mod sessionvars;
 mod sqlexec;
 
-pub use advisory_lock::{AdvisoryLockContext, AdvisoryLockPropProvider, AdvisoryLockPropReader};
+pub use advisory_lock::{
+    AdvisoryLockContext, AdvisoryLockPropProvider, AdvisoryLockPropReader, GetAdvisoryLockError,
+};
 pub use current_user::{CurrentUserPropProvider, CurrentUserPropReader};
 pub use ddlowner::{DdlOwnerInfoProvider, DdlOwnerPropReader};
 pub use infoschema::{InfoSchemaPropProvider, InfoSchemaPropReader};
@@ -105,20 +107,35 @@ pub use sqlexec::{SqlExecutor, SqlExecutorPropProvider, SqlExecutorPropReader};
 ///
 /// Go uses a bare `errors.Errorf` string here, with no error code attached, so
 /// the message is the whole contract.
+///
+/// A provider's own failure keeps the evaluation error it came from (Go
+/// returns the provider's `error` unchanged, its code included).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExprOptError(String);
+pub struct ExprOptError(String, Option<Box<tidb_exprctx::EvalError>>);
 
 impl ExprOptError {
     /// Builds an error from a message.
     #[must_use]
     pub fn new(message: impl Into<String>) -> Self {
-        ExprOptError(message.into())
+        ExprOptError(message.into(), None)
+    }
+
+    /// A provider's evaluation error, kept as it is.
+    #[must_use]
+    pub fn from_eval(error: tidb_exprctx::EvalError) -> Self {
+        ExprOptError(format!("{error:?}"), Some(Box::new(error)))
     }
 
     /// The error message.
     #[must_use]
     pub fn message(&self) -> &str {
         &self.0
+    }
+
+    /// The provider's evaluation error, when it carried one.
+    #[must_use]
+    pub fn into_eval(self) -> Option<tidb_exprctx::EvalError> {
+        self.1.map(|error| *error)
     }
 }
 

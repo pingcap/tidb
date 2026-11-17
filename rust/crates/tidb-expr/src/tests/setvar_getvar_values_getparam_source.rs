@@ -31,14 +31,45 @@ use tidb_datatype::{FieldType, FieldTypeCode as C, Time, TimeType};
 /// A [`tidb_exprctx::context::Columns`] stub whose only live behavior is a user
 /// variable store behind interior mutability — the value-domain stand-in for
 /// Go's `SessionVars.SetUserVarVal`/`GetUserVarVal`.
+
+/// Go `SessionVars.SetUserVarVal` over a test's variable map.
+#[derive(Clone, Default)]
+struct VarMap(std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, Datum>>>);
+
+impl tidb_expropt::SessionVars for VarMap {
+    fn set_user_var_val(&self, name: &str, value: Datum) {
+        self.0.lock().unwrap().insert(name.to_owned(), value);
+    }
+}
+
+impl tidb_expropt::SessionVarsProvider for VarMap {
+    fn get_session_vars(&self) -> std::sync::Arc<dyn tidb_expropt::SessionVars> {
+        std::sync::Arc::new(self.clone())
+    }
+}
+
+impl VarMap {
+    fn get(&self, name: &str) -> Option<Datum> {
+        self.0.lock().unwrap().get(name).cloned()
+    }
+
+    /// Go `sessionexpr`'s session-vars provider over the map.
+    fn provider(&self, key: tidb_exprctx::OptionalEvalPropKey) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+        (key == tidb_exprctx::OptionalEvalPropKey::SessionVars).then(|| {
+            std::sync::Arc::new(tidb_expropt::new_session_vars_provider(std::sync::Arc::new(self.clone())))
+                as std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>
+        })
+    }
+}
+
 #[derive(Default)]
 struct VarStore {
-    vars: RefCell<BTreeMap<String, Datum>>,
+    vars: VarMap,
 }
 
 impl VarStore {
     fn get(&self, name: &str) -> Option<Datum> {
-        self.vars.borrow().get(name).cloned()
+        self.vars.get(name)
     }
 }
 
@@ -49,8 +80,11 @@ impl tidb_exprctx::context::Columns for VarStore {
     fn get_uservar(&self, name: &str) -> Option<Datum> {
         self.get(name)
     }
-    fn set_uservar(&self, name: &str, value: Datum) {
-        self.vars.borrow_mut().insert(name.to_owned(), value);
+    fn get_optional_prop_provider(
+        &self,
+        key: tidb_exprctx::OptionalEvalPropKey,
+    ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+        self.vars.provider(key)
     }
 }
 
@@ -76,12 +110,12 @@ impl tidb_exprctx::context::Columns for ParamStore {
 /// read without evaluating an expression argument.
 #[derive(Default)]
 struct InsertValuesStore {
-    values: RefCell<Option<Vec<Datum>>>,
+    session: crate::test_identity::TestSession,
 }
 
 impl InsertValuesStore {
     fn set(&self, values: Vec<Datum>) {
-        *self.values.borrow_mut() = Some(values);
+        *self.session.curr_insert_values.lock().unwrap() = Some(values);
     }
 }
 
@@ -90,23 +124,11 @@ impl tidb_exprctx::context::Columns for InsertValuesStore {
         None
     }
 
-    fn current_insert_value(&self, offset: usize) -> Result<Option<Datum>, EvalError> {
-        let values = self.values.borrow();
-        let Some(values) = values.as_ref() else {
-            return Ok(None);
-        };
-        if values.is_empty() {
-            return Ok(None);
-        }
-        values.get(offset).cloned().map_or_else(
-            || {
-                Err(EvalError::IncorrectArguments(format!(
-                    "Session current insert values len {} and column's offset {offset} don't match",
-                    values.len()
-                )))
-            },
-            |value| Ok(Some(value)),
-        )
+    fn get_optional_prop_provider(
+        &self,
+        key: tidb_exprctx::OptionalEvalPropKey,
+    ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+        self.session.props().get(key)
     }
 }
 
@@ -297,7 +319,7 @@ fn getvar_time_variable_signature() {
     let time = Time::from_date_checked(2025, 1, 2, 3, 4, 5, 0, TimeType::Timestamp, 0)
         .expect("a valid fixed timestamp");
     let store = VarStore {
-        vars: RefCell::new(BTreeMap::from([("h".to_owned(), Datum::Time(time))])),
+        vars: VarMap(std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::from([("h".to_owned(), Datum::Time(time))])))),
     };
     assert_eq!(eval_getvar("time", "h", &store).unwrap(), Datum::Time(time));
     assert_eq!(eval_getvar("time", "missing", &store).unwrap(), Datum::Null);
@@ -318,7 +340,7 @@ fn getvar_reads_typed_session_value_by_signature_kind() {
         vars.insert(name.to_owned(), value);
     }
     let store = VarStore {
-        vars: RefCell::new(vars),
+        vars: VarMap(std::sync::Arc::new(std::sync::Mutex::new(vars))),
     };
 
     // String rows: builtinGetStringVarSig returns ToString() of whatever is
@@ -376,7 +398,7 @@ fn eval_getvar(kind: &str, name: &str, ctx: &VarStore) -> Result<Datum, EvalErro
 #[test]
 fn type_conversion_read_one_stored_int_through_decimal_and_real_signatures() {
     let store = VarStore {
-        vars: RefCell::new(BTreeMap::from([("a".to_owned(), Datum::Int(3))])),
+        vars: VarMap(std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::from([("a".to_owned(), Datum::Int(3))])))),
     };
     assert_eq!(
         eval_getvar("decimal", "a", &store).unwrap(),
