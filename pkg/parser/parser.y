@@ -5278,7 +5278,7 @@ CreateMaterializedViewStmt:
 		}
 		$$ = x
 	}
-|	"CREATE" "MATERIALIZED" "VIEW" "IF" "NOT" "EXISTS" TableName '(' ColumnList ')' MViewTableOptionListOpt MViewRefreshClauseOpt MViewAttributesOpt "AS" CreateViewSelectOpt
+|	"CREATE" "MATERIALIZED" "VIEW" "IF" NotSym "EXISTS" TableName '(' ColumnList ')' MViewTableOptionListOpt MViewRefreshClauseOpt MViewAttributesOpt "AS" CreateViewSelectOpt
 	{
 		opts := $11.(*mviewCreateOptions)
 		x := &ast.CreateMaterializedViewStmt{

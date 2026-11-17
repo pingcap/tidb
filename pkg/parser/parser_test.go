@@ -5352,6 +5352,8 @@ func TestMaterializedViewStatements(t *testing.T) {
 			true,
 			"CREATE MATERIALIZED VIEW LOG IF NOT EXISTS ON `t` (`a`) SHARD_ROW_ID_BITS = 4 PURGE START WITH NOW() NEXT 300 ALERT ROWS 100",
 		},
+		{"CREATE MATERIALIZED VIEW log (a) AS SELECT 1", true, "CREATE MATERIALIZED VIEW `log` (`a`) AS SELECT 1"},
+		{"CREATE MATERIALIZED VIEW IF NOT EXISTS log (a) AS SELECT 1", true, "CREATE MATERIALIZED VIEW IF NOT EXISTS `log` (`a`) AS SELECT 1"},
 		{"CREATE MATERIALIZED VIEW mv IF NOT EXISTS (a) AS SELECT 1", false, ""},
 		{"CREATE MATERIALIZED VIEW LOG ON IF NOT EXISTS t (a)", false, ""},
 		{
@@ -5646,6 +5648,26 @@ func TestMaterializedViewStatements(t *testing.T) {
 		},
 	}
 	RunTest(t, table, false)
+	t.Run("high_not_precedence", func(t *testing.T) {
+		p := parser.New()
+		p.SetSQLMode(mysql.ModeHighNotPrecedence)
+		for _, tc := range table {
+			stmt, err := p.ParseOneStmt(tc.src, "", "")
+			if !tc.ok {
+				require.Error(t, err, tc.src)
+				continue
+			}
+			require.NoError(t, err, tc.src)
+			var restored strings.Builder
+			require.NoError(t, stmt.Restore(NewRestoreCtx(DefaultRestoreFlags, &restored)), tc.src)
+			require.Equal(t, tc.restore, restored.String(), tc.src)
+			restoredStmt, err := p.ParseOneStmt(restored.String(), "", "")
+			require.NoError(t, err, tc.src)
+			CleanNodeText(stmt)
+			CleanNodeText(restoredStmt)
+			require.Equal(t, stmt, restoredStmt, tc.src)
+		}
+	})
 }
 
 func TestMaterializedViewCreateRefreshOnClauseSyntax(t *testing.T) {
