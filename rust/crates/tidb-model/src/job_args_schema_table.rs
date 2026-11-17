@@ -728,7 +728,7 @@ impl JobArgs for CreateTableArgs {
             )
         };
         match job.type_ {
-            ActionType::ACTION_CREATE_TABLE => GoSharedSlice::from_vec(vec![
+            ActionType::ACTION_CREATE_TABLE | ActionType::ACTION_CREATE_MATERIALIZED_VIEW_SHADOW => GoSharedSlice::from_vec(vec![
                 table(),
                 ColumnDefaultValue::Bool(value.fk_check.get()).into(),
             ]),
@@ -750,7 +750,7 @@ impl JobArgs for CreateTableArgs {
         });
         let mut decoder = V1Decoder::new(job)?;
         match job.type_ {
-            ActionType::ACTION_CREATE_TABLE => {
+            ActionType::ACTION_CREATE_TABLE | ActionType::ACTION_CREATE_MATERIALIZED_VIEW_SHADOW => {
                 decoder.decode_pointee(&table_info, model_type("TableInfo", GoTypeKind::Struct))?;
                 decoder.decode(
                     &value.read().fk_check,
@@ -1145,6 +1145,18 @@ pub fn get_alter_sequence_args(
     get_or_decode_args(job)
 }
 
+/// Go `DropTableArgs`' table-like drops, whose V1 arguments are the
+/// identifiers and the foreign-key check.
+fn is_table_like_drop(action: ActionType) -> bool {
+    matches!(
+        action,
+        ActionType::ACTION_DROP_TABLE
+            | ActionType::ACTION_DROP_MATERIALIZED_VIEW
+            | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG
+            | ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW
+    )
+}
+
 /// Go `DropTableArgs`: the drop-table arguments, and what a finished drop
 /// table, view or sequence job records for the delete range.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -1200,8 +1212,9 @@ impl JobArgs for DropTableArgs {
 
     fn get_args_v1(value: Option<&GoShared<Self>>, job: &Job) -> GoSharedSlice<GoAny> {
         let value = value.expect("nil *DropTableArgs receiver").read();
-        // Only a drop-table job has arguments; drop view / sequence has none.
-        if job.type_ != ActionType::ACTION_DROP_TABLE {
+        // Only the table-like drop jobs have arguments; drop view / sequence
+        // has none.
+        if !is_table_like_drop(job.type_) {
             return GoSharedSlice::from_vec(Vec::new());
         }
         GoSharedSlice::from_vec(vec![
@@ -1216,7 +1229,7 @@ impl JobArgs for DropTableArgs {
     fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
         let identifiers = GoField::<Vec<Ident>>::default();
         let fk_check = GoField::<bool>::default();
-        if job.type_ == ActionType::ACTION_DROP_TABLE {
+        if is_table_like_drop(job.type_) {
             let mut decoder = V1Decoder::new(job)?;
             decoder.decode(
                 &identifiers,

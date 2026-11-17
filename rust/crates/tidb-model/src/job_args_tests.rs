@@ -1915,3 +1915,153 @@ fn flashback_cluster_args_encode_and_decode_as_go() {
         assert_eq!(decoded.flashback_key_ranges, args.flashback_key_ranges, "{version:?}");
     }
 }
+
+/// Go master `eca4674a6f`'s encoding of its materialized view job arguments
+/// (`job.FillArgs` + `job.Encode`, V1 and V2), captured from Go: each encodes
+/// to Go's raw args and decodes back from them.
+#[test]
+fn materialized_view_job_args_are_go_masters_bytes() {
+    let fixture = include_str!("testdata/mview_job_args_go.txt");
+    let go = |name: &str, version: JobVersion| -> String {
+        let tag = format!("{name} v{} ", if version == JobVersion::V1 { 1 } else { 2 });
+        fixture.lines().find_map(|line| line.strip_prefix(&tag)).unwrap_or_else(|| panic!("{tag}")).to_owned()
+    };
+    let raw = |job: &Job| job.raw_args.as_ref().unwrap().get().to_owned();
+    let from_go = |name: &str, version: JobVersion, action: ActionType| -> Job {
+        Job {
+            version,
+            type_: action,
+            raw_args: Some(crate::PersistedRawJson::from_bytes(go(name, version).into_bytes())),
+            ..Default::default()
+        }
+    };
+    let ident = |schema: &str, name: &str| Ident { schema: CiString::new(schema), name: CiString::new(name) };
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let mlog = TableInfo {
+            id: 101,
+            name: CiString::new("$mlog$t"),
+            materialized_view_log: Some(GoShared::new(crate::table::MaterializedViewLogInfo {
+                base_table_id: 88,
+                columns: vec![CiString::new("a")].into(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        let args = GoShared::new(CreateMaterializedViewLogArgs { table_info: Some(GoShared::new(mlog)) });
+        let job = encoded_job(version, ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG, args);
+        assert_eq!(raw(&job), go("create_mlog", version));
+        let mut job = from_go("create_mlog", version, ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG);
+        let decoded = get_create_materialized_view_log_args(&mut job).unwrap().unwrap();
+        let table = decoded.read().table_info.clone().unwrap();
+        assert_eq!(table.read().materialized_view_log.as_ref().unwrap().read().base_table_id, 88);
+
+        let mview = TableInfo {
+            id: 102,
+            materialized_view: Some(GoShared::new(crate::table::MaterializedViewInfo {
+                base_table_ids: vec![88].into(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        let args = GoShared::new(CreateMaterializedViewArgs {
+            table_info: Some(GoShared::new(mview)),
+            mlog_table_ids: vec![99],
+        });
+        let job = encoded_job(version, ActionType::ACTION_CREATE_MATERIALIZED_VIEW, args);
+        assert_eq!(raw(&job), go("create_mview", version));
+        let mut job = from_go("create_mview", version, ActionType::ACTION_CREATE_MATERIALIZED_VIEW);
+        let decoded = get_create_materialized_view_args(&mut job).unwrap().unwrap();
+        assert_eq!(decoded.read().mlog_table_ids, [99]);
+        assert_eq!(decoded.read().table_info.as_ref().unwrap().read().id, 102);
+
+        let shadow = TableInfo {
+            id: 103,
+            materialized_view_shadow: Some(GoShared::new(crate::table::MaterializedViewShadowInfo {
+                source_mview_id: 88,
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        let args = GoShared::new(CreateTableArgs {
+            table_info: GoField::new(Some(GoShared::new(shadow))),
+            fk_check: GoField::new(true),
+            ..Default::default()
+        });
+        let job = encoded_job(version, ActionType::ACTION_CREATE_MATERIALIZED_VIEW_SHADOW, args);
+        assert_eq!(raw(&job), go("create_shadow", version));
+        let mut job = from_go("create_shadow", version, ActionType::ACTION_CREATE_MATERIALIZED_VIEW_SHADOW);
+        let decoded = get_create_table_args(&mut job).unwrap().unwrap();
+        assert!(decoded.read().fk_check.get());
+
+        let args = GoShared::new(AlterMaterializedViewRefreshArgs {
+            refresh_method: "FAST".into(),
+            refresh_start_with: "NOW()".into(),
+            refresh_next: "300".into(),
+            refresh_schedule_sql_mode: 2_097_152,
+            update_refresh_schedule: true,
+        });
+        let job = encoded_job(version, ActionType::ACTION_ALTER_MATERIALIZED_VIEW_REFRESH, args);
+        assert_eq!(raw(&job), go("alter_refresh", version));
+        let mut job = from_go("alter_refresh", version, ActionType::ACTION_ALTER_MATERIALIZED_VIEW_REFRESH);
+        let decoded = get_alter_materialized_view_refresh_args(&mut job).unwrap().unwrap();
+        assert_eq!((decoded.read().refresh_next.as_str(), decoded.read().refresh_schedule_sql_mode), ("300", 2_097_152));
+
+        let args = GoShared::new(AlterMaterializedViewAttributesArgs {
+            alert_warning_sec: 10,
+            alert_overdue_sec: 20,
+            alert_refresh_failed: true,
+        });
+        let job = encoded_job(version, ActionType::ACTION_ALTER_MATERIALIZED_VIEW_ATTRIBUTES, args);
+        assert_eq!(raw(&job), go("alter_attributes", version));
+        let mut job = from_go("alter_attributes", version, ActionType::ACTION_ALTER_MATERIALIZED_VIEW_ATTRIBUTES);
+        let decoded = get_alter_materialized_view_attributes_args(&mut job).unwrap().unwrap();
+        assert_eq!(
+            (decoded.read().alert_warning_sec, decoded.read().alert_overdue_sec, decoded.read().alert_refresh_failed),
+            (10, 20, true)
+        );
+
+        let args = GoShared::new(AlterMaterializedViewLogPurgeArgs {
+            purge_method: "DEFERRED".into(),
+            purge_start_with: "NOW()".into(),
+            purge_next: "600".into(),
+            purge_schedule_sql_mode: 4,
+            update_purge_schedule: true,
+        });
+        let job = encoded_job(version, ActionType::ACTION_ALTER_MATERIALIZED_VIEW_LOG_PURGE, args);
+        assert_eq!(raw(&job), go("alter_mlog_purge", version));
+        let mut job = from_go("alter_mlog_purge", version, ActionType::ACTION_ALTER_MATERIALIZED_VIEW_LOG_PURGE);
+        let decoded = get_alter_materialized_view_log_purge_args(&mut job).unwrap().unwrap();
+        assert_eq!((decoded.read().purge_method.as_str(), decoded.read().purge_schedule_sql_mode), ("DEFERRED", 4));
+
+        for (name, action, ident_name, fk_check) in [
+            ("drop_mview", ActionType::ACTION_DROP_MATERIALIZED_VIEW, "mv", true),
+            ("drop_mlog", ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG, "$mlog$t", false),
+            ("drop_shadow", ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW, "s", false),
+        ] {
+            let args = GoShared::new(DropTableArgs {
+                identifiers: vec![ident("db", ident_name)],
+                fk_check,
+                ..Default::default()
+            });
+            let job = encoded_job(version, action, args);
+            assert_eq!(raw(&job), go(name, version), "{name}");
+            let mut job = from_go(name, version, action);
+            let decoded = get_drop_table_args(&mut job).unwrap().unwrap();
+            assert_eq!(decoded.read().identifiers[0].name.original(), ident_name);
+            assert_eq!(decoded.read().fk_check, fk_check);
+        }
+    }
+
+    // Go: a job from before `AlertRefreshFailed` carries two V1 arguments.
+    let mut legacy = Job {
+        version: JobVersion::V1,
+        type_: ActionType::ACTION_ALTER_MATERIALIZED_VIEW_ATTRIBUTES,
+        raw_args: Some(crate::PersistedRawJson::from_bytes(b"[10,20]".to_vec())),
+        ..Default::default()
+    };
+    let decoded = get_alter_materialized_view_attributes_args(&mut legacy).unwrap().unwrap();
+    assert_eq!(
+        (decoded.read().alert_warning_sec, decoded.read().alert_overdue_sec, decoded.read().alert_refresh_failed),
+        (10, 20, false)
+    );
+}

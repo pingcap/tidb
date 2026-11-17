@@ -249,7 +249,38 @@ pub fn build_field_type(
         field_type.add_flags(FieldTypeFlags::BINARY);
     }
 
-    // Go `setCharsetCollationFlenDecimal`.
+    field_type.set_flen(flen);
+    field_type.set_decimal(decimal);
+    set_charset_collation_flen_decimal(&mut field_type, charset, collate)?;
+    // Go renders a DECIMAL declared with a zero precision as the type
+    // default: `decimal(0,0)` and `decimal(0)` store and show as
+    // `decimal(10,0)` (recorded in `r/ddl/column.result`).
+    if code == FieldTypeCode::NewDecimal
+        && flen == 0
+        && (decimal == 0 || decimal == UNSPECIFIED_LENGTH)
+    {
+        let (default_flen, default_decimal) = code.default_length_and_decimal();
+        field_type.set_flen(default_flen);
+        field_type.set_decimal(default_decimal);
+    }
+    decode_enum_set_binary_literal_to_utf8(&mut field_type);
+    Ok(field_type)
+}
+
+/// Go `setCharsetCollationFlenDecimal`, up to its closing
+/// `checkTooBigFieldLengthAndTryAutoConvert`, which the callers run: the
+/// column's charset and collation (`binary` for a type without one), and the
+/// type's default length and decimal where they are unspecified.
+///
+/// # Errors
+///
+/// A BLOB/TEXT length whose charset is unknown.
+pub fn set_charset_collation_flen_decimal(
+    field_type: &mut FieldType,
+    charset: &str,
+    collate: &str,
+) -> Result<(), ColumnTypeError> {
+    let code = field_type.code();
     if field_type.has_charset() {
         field_type.set_charset_name(charset);
         field_type.set_collation_name(collate);
@@ -258,45 +289,31 @@ pub fn build_field_type(
         field_type.set_collation_name(BINARY_CHARSET);
     }
     let (default_flen, default_decimal) = code.default_length_and_decimal();
-    if decimal == UNSPECIFIED_LENGTH {
-        decimal = default_decimal;
+    if field_type.decimal() == UNSPECIFIED_LENGTH {
+        field_type.set_decimal(default_decimal);
     }
+    let flen = field_type.flen();
     if flen == UNSPECIFIED_LENGTH {
-        flen = default_flen;
         // Go issue #4684: an unsigned integer other than BIGINT is one digit
         // narrower, because it never prints a sign.
-        if field_type.has_flag(FieldTypeFlags::UNSIGNED)
+        let narrower = field_type.has_flag(FieldTypeFlags::UNSIGNED)
             && code != FieldTypeCode::LongLong
-            && code.is_type_integer()
-        {
-            flen -= 1;
-        }
-        field_type.set_flen(flen);
+            && code.is_type_integer();
+        field_type.set_flen(default_flen - i64::from(narrower));
     } else {
+        // Go `adjustBlobTypesFlen` takes the column's charset; a type without
+        // one was resolved to `binary` above.
         let column_charset = field_type.charset_name().to_owned();
-        adjust_blob_flen(&mut field_type, code, flen, &column_charset)?;
+        adjust_blob_flen(field_type, code, flen, &column_charset)?;
     }
-    // Go renders a DECIMAL declared with a zero precision as the type
-    // default: `decimal(0,0)` and `decimal(0)` store and show as
-    // `decimal(10,0)` (recorded in `r/ddl/column.result`).
-    if code == FieldTypeCode::NewDecimal
-        && flen == 0
-        && (decimal == 0 || decimal == UNSPECIFIED_LENGTH)
-    {
-        flen = default_flen;
-        decimal = default_decimal;
-        field_type.set_flen(flen);
-    }
-    field_type.set_decimal(decimal);
-    decode_enum_set_binary_literal_to_utf8(&mut field_type);
-    Ok(field_type)
+    Ok(())
 }
 
 /// Go `decodeEnumSetBinaryLiteralToUTF8`: an ENUM/SET member written as a
 /// hex or bit literal is text in the column's charset, decoded to UTF-8 with
 /// each invalid sequence replaced by `?` (`enum('a', 0x91) charset gbk`
 /// stores `?`); the literal markers are then cleared.
-fn decode_enum_set_binary_literal_to_utf8(field_type: &mut FieldType) {
+pub(crate) fn decode_enum_set_binary_literal_to_utf8(field_type: &mut FieldType) {
     if !matches!(field_type.code(), FieldTypeCode::Enum | FieldTypeCode::Set) {
         return;
     }

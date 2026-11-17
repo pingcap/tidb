@@ -114,6 +114,11 @@ pub use job_args::{
     AutoIdGroup, get_recover_args, get_flashback_cluster_args, FlashbackClusterArgs, KeyRange, RefreshMetaArgs, RenameTableArgs, RenameTablesArgs,
     ResourceGroupArgs, SetDefaultValueArgs, SetTiFlashReplicaArgs, ShardRowIDArgs, TableColumnArgs,
     TableIDIndexID, TablePartitionArgs, TruncateTableArgs, UpdateTiFlashReplicaStatusArgs,
+    get_alter_materialized_view_attributes_args, get_alter_materialized_view_log_purge_args,
+    get_alter_materialized_view_refresh_args, get_create_materialized_view_args,
+    get_create_materialized_view_log_args, AlterMaterializedViewAttributesArgs,
+    AlterMaterializedViewLogPurgeArgs, AlterMaterializedViewRefreshArgs, CreateMaterializedViewArgs,
+    CreateMaterializedViewLogArgs,
 };
 pub use job_enums::{
     get_job_ver_in_use, modify_type_to_string, set_job_ver_in_use, str_to_job_state, JobState,

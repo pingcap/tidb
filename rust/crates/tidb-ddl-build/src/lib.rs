@@ -33,6 +33,7 @@ pub mod partition_interval;
 pub mod table_partition_range;
 pub mod table_partition_list;
 pub mod table_info_build;
+pub mod materialized_view;
 pub mod table_partition;
 pub mod table_lock;
 pub mod column_changes;

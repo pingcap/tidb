@@ -438,6 +438,16 @@ pub enum JobArgsValue {
     PlacementPolicy(Option<GoShared<PlacementPolicyArgs>>),
     /// `*model.MaskingPolicyArgs`, including a typed nil pointer.
     MaskingPolicy(Option<GoShared<MaskingPolicyArgs>>),
+    /// `*model.CreateMaterializedViewLogArgs`, including a typed nil pointer.
+    CreateMaterializedViewLog(Option<GoShared<CreateMaterializedViewLogArgs>>),
+    /// `*model.CreateMaterializedViewArgs`, including a typed nil pointer.
+    CreateMaterializedView(Option<GoShared<CreateMaterializedViewArgs>>),
+    /// `*model.AlterMaterializedViewRefreshArgs`, including a typed nil pointer.
+    AlterMaterializedViewRefresh(Option<GoShared<AlterMaterializedViewRefreshArgs>>),
+    /// `*model.AlterMaterializedViewAttributesArgs`, including a typed nil pointer.
+    AlterMaterializedViewAttributes(Option<GoShared<AlterMaterializedViewAttributesArgs>>),
+    /// `*model.AlterMaterializedViewLogPurgeArgs`, including a typed nil pointer.
+    AlterMaterializedViewLogPurge(Option<GoShared<AlterMaterializedViewLogPurgeArgs>>),
     /// `*model.FlashbackClusterArgs`, including a typed nil pointer.
     FlashbackCluster(Option<GoShared<FlashbackClusterArgs>>),
     /// `*model.RecoverArgs`, including a typed nil pointer.
@@ -509,6 +519,11 @@ impl JobArgsValue {
             Self::AlterTtlInfo(value) => job.fill_args(value.clone()),
             Self::PlacementPolicy(value) => job.fill_args(value.clone()),
             Self::MaskingPolicy(value) => job.fill_args(value.clone()),
+            Self::CreateMaterializedViewLog(value) => job.fill_args(value.clone()),
+            Self::CreateMaterializedView(value) => job.fill_args(value.clone()),
+            Self::AlterMaterializedViewRefresh(value) => job.fill_args(value.clone()),
+            Self::AlterMaterializedViewAttributes(value) => job.fill_args(value.clone()),
+            Self::AlterMaterializedViewLogPurge(value) => job.fill_args(value.clone()),
             Self::FlashbackCluster(value) => job.fill_args(value.clone()),
             Self::Recover(value) => job.fill_args(value.clone()),
             Self::LockTables(value) => job.fill_args(value.clone()),
@@ -559,6 +574,11 @@ impl JobArgsValue {
             Self::AlterTtlInfo(_) => "AlterTTLInfoArgs",
             Self::PlacementPolicy(_) => "PlacementPolicyArgs",
             Self::MaskingPolicy(_) => "MaskingPolicyArgs",
+            Self::CreateMaterializedViewLog(_) => "CreateMaterializedViewLogArgs",
+            Self::CreateMaterializedView(_) => "CreateMaterializedViewArgs",
+            Self::AlterMaterializedViewRefresh(_) => "AlterMaterializedViewRefreshArgs",
+            Self::AlterMaterializedViewAttributes(_) => "AlterMaterializedViewAttributesArgs",
+            Self::AlterMaterializedViewLogPurge(_) => "AlterMaterializedViewLogPurgeArgs",
             Self::FlashbackCluster(_) => "FlashbackClusterArgs",
             Self::Recover(_) => "RecoverArgs",
             Self::LockTables(_) => "LockTablesArgs",
@@ -612,6 +632,11 @@ impl JobArgsValue {
             Self::AlterTtlInfo(value) => value.as_ref().map(GoShared::identity_address),
             Self::PlacementPolicy(value) => value.as_ref().map(GoShared::identity_address),
             Self::MaskingPolicy(value) => value.as_ref().map(GoShared::identity_address),
+            Self::CreateMaterializedViewLog(value) => value.as_ref().map(GoShared::identity_address),
+            Self::CreateMaterializedView(value) => value.as_ref().map(GoShared::identity_address),
+            Self::AlterMaterializedViewRefresh(value) => value.as_ref().map(GoShared::identity_address),
+            Self::AlterMaterializedViewAttributes(value) => value.as_ref().map(GoShared::identity_address),
+            Self::AlterMaterializedViewLogPurge(value) => value.as_ref().map(GoShared::identity_address),
             Self::FlashbackCluster(value) => value.as_ref().map(GoShared::identity_address),
             Self::Recover(value) => value.as_ref().map(GoShared::identity_address),
             Self::LockTables(value) => value.as_ref().map(GoShared::identity_address),
@@ -764,6 +789,31 @@ impl JobArgsValue {
             .go_json_projection(),
             Self::MaskingPolicy(value) => GoTypedPointer::new(
                 model_type("MaskingPolicyArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::CreateMaterializedViewLog(value) => GoTypedPointer::new(
+                model_type("CreateMaterializedViewLogArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::CreateMaterializedView(value) => GoTypedPointer::new(
+                model_type("CreateMaterializedViewArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::AlterMaterializedViewRefresh(value) => GoTypedPointer::new(
+                model_type("AlterMaterializedViewRefreshArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::AlterMaterializedViewAttributes(value) => GoTypedPointer::new(
+                model_type("AlterMaterializedViewAttributesArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::AlterMaterializedViewLogPurge(value) => GoTypedPointer::new(
+                model_type("AlterMaterializedViewLogPurgeArgs", GoTypeKind::Struct),
                 value.clone(),
             )
             .go_json_projection(),
@@ -1020,6 +1070,10 @@ pub use recover::*;
 #[path = "job_args_flashback.rs"]
 mod flashback;
 pub use flashback::*;
+
+#[path = "job_args_mview.rs"]
+mod mview;
+pub use mview::*;
 
 #[path = "job_args_compat.rs"]
 mod compat;

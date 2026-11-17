@@ -200,7 +200,7 @@ impl fmt::Display for DdlAdmissionError {
 
 impl std::error::Error for DdlAdmissionError {}
 
-type Refusal<T> = Result<T, DdlAdmissionError>;
+pub type Refusal<T> = Result<T, DdlAdmissionError>;
 
 /// Go `BuildTableInfoFromAST` under `metabuild.NewNonStrictContext()`
 /// (`ModeNone`, `tidb_enable_clustered_index` at its `ON` default).
@@ -281,6 +281,39 @@ pub fn build_table_info_from_ast(
 /// which a statement context carries), so the caller supplies it.
 pub fn build_table_info_with_stmt(
     create: &CreateTableStmt,
+    schema: &str,
+    db_charset: &str,
+    db_collate: &str,
+    context: &tidb_metabuild::Context,
+    enable_check_constraint: bool,
+) -> Refusal<TableInfo> {
+    build_table_info_with_column_types(create, None, schema, db_charset, db_collate, context, enable_check_constraint)
+}
+
+/// Go `BuildTableInfoWithStmt` over a statement whose columns carry their
+/// types already built (`ast.ColumnDef.Tp`), as Go's internal callers build
+/// one (`BuildMaterializedViewLogTableInfo`): `field_types[i]` is the type of
+/// `create.columns[i]`, whose declared `ty` is not read.
+///
+/// # Panics
+///
+/// `field_types` does not have one type per column.
+pub fn build_table_info_with_field_types(
+    create: &CreateTableStmt,
+    field_types: &[FieldType],
+    schema: &str,
+    db_charset: &str,
+    db_collate: &str,
+    context: &tidb_metabuild::Context,
+    enable_check_constraint: bool,
+) -> Refusal<TableInfo> {
+    assert_eq!(field_types.len(), create.columns.len(), "one field type per column");
+    build_table_info_with_column_types(create, Some(field_types), schema, db_charset, db_collate, context, enable_check_constraint)
+}
+
+fn build_table_info_with_column_types(
+    create: &CreateTableStmt,
+    field_types: Option<&[FieldType]>,
     schema: &str,
     db_charset: &str,
     db_collate: &str,
@@ -455,6 +488,7 @@ pub fn build_table_info_with_stmt(
         let (info, inline) = build_column(
             offset,
             column,
+            field_types.map(|types| &types[offset]),
             out_primary_key.as_ref(),
             &table_charset,
             &table_collate,
@@ -472,7 +506,11 @@ pub fn build_table_info_with_stmt(
         // so a bare `c_yr YEAR` column warns it too (oracle: the 25-column
         // CREATE with exactly one YEAR column warns exactly once). ADD COLUMN
         // and MODIFY COLUMN build their column elsewhere and never warn it.
-        if column.ty.zerofill || info.field_type.code() == FieldTypeCode::Year {
+        let zerofill = match field_types {
+            Some(types) => types[offset].has_flag(FieldTypeFlags::ZEROFILL),
+            None => column.ty.zerofill,
+        };
+        if zerofill || info.field_type.code() == FieldTypeCode::Year {
             context.append_warning(WarnErr::Terror(
                 tidb_dbterror::ERR_WARN_DEPRECATED_ZEROFILL.clone(),
             ));
@@ -2331,6 +2369,7 @@ pub fn build_added_column(
         0,
         column,
         None,
+        None,
         table_charset,
         table_collate,
         context,
@@ -2887,6 +2926,52 @@ impl<'a> GeneratedColumns<'a> {
     }
 }
 
+/// Go `buildColumnAndConstraint`'s type steps for a column whose type is
+/// already built and which declares no options: the type's own charset and
+/// collation (`getCharsetAndCollateInColumnDef`) resolved against the
+/// table's, `OverwriteCollationWithBinaryFlag`, `setCharsetCollationFlenDecimal`
+/// with its closing `checkTooBigFieldLengthAndTryAutoConvert`, and
+/// `decodeEnumSetBinaryLiteralToUTF8`.
+fn built_column_field_type(
+    name: &str,
+    mut field_type: FieldType,
+    table_charset: &str,
+    table_collate: &str,
+    context: &tidb_metabuild::Context,
+) -> Refusal<FieldType> {
+    let default_utf8mb4_coll = context.get_default_collation_for_utf8mb4();
+    let declared_charset = field_type.charset_name().to_owned();
+    let declared_collate = field_type.collation_name().to_owned();
+    let mut collate = declared_collate.clone();
+    if !declared_charset.is_empty() && collate.is_empty() {
+        collate = crate::column_types::get_default_collation(&declared_charset, default_utf8mb4_coll)
+            .map_err(default_admission_error)?;
+    }
+    let (charset, mut collate) = crate::column_types::resolve_charset_collation(
+        &[(&declared_charset, &collate), (table_charset, table_collate)],
+        default_utf8mb4_coll,
+    )
+    .map_err(default_admission_error)?;
+    // Go `OverwriteCollationWithBinaryFlag`: a declared charset and collation
+    // ignore the binary flag; otherwise a binary string takes its charset's
+    // default collation.
+    let ignore_binary_flag = !declared_charset.is_empty() && !declared_collate.is_empty();
+    if !ignore_binary_flag && field_type.code().is_string() && field_type.has_flag(FieldTypeFlags::BINARY) {
+        if let Ok(default) = crate::column_types::get_default_collation(&charset, default_utf8mb4_coll) {
+            collate = default;
+        }
+    }
+    crate::column_field_type::set_charset_collation_flen_decimal(&mut field_type, &charset, &collate)
+        .map_err(|error| DdlAdmissionError::plain(error.to_string()))?;
+    if let Some(warning) =
+        check_too_big_field_length_and_try_auto_convert(&mut field_type, name, context.get_sql_mode().has_strict_mode())?
+    {
+        context.append_warning(WarnErr::Terror(tidb_dbterror::ERR_AUTO_CONVERT.generate(warning)));
+    }
+    crate::column_field_type::decode_enum_set_binary_literal_to_utf8(&mut field_type);
+    Ok(field_type)
+}
+
 /// A column definition's type as Go settles it before any option is applied:
 /// `getCharsetAndCollateInColumnDef`, `ResolveCharsetCollation` and
 /// `OverwriteCollationWithBinaryFlag` over the table's pair, the type with its
@@ -2965,6 +3050,7 @@ fn build_column_field_type(
 fn build_column(
     offset: usize,
     column: &ColumnDef,
+    built_type: Option<&FieldType>,
     out_primary_key: Option<&Constraint>,
     table_charset: &str,
     table_collate: &str,
@@ -2985,7 +3071,10 @@ fn build_column(
     // by Go's preprocess (`ErrWrongDBName` / `ErrWrongTableName`); the
     // builder then reads the bare name, as `buildColumnAndConstraint` does.
 
-    let mut field_type = build_column_field_type(column, table_charset, table_collate, context)?;
+    let mut field_type = match built_type {
+        Some(built) => built_column_field_type(&column.name, built.clone(), table_charset, table_collate, context)?,
+        None => build_column_field_type(column, table_charset, table_collate, context)?,
+    };
     // Go `checkColumnValueConstraint` (1291 for a duplicate ENUM/SET member),
     // asked of the declared type, as this builder always has.
     crate::column_field_type::check_column_value_constraint(&field_type)
