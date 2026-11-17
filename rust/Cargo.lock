@@ -9763,6 +9763,7 @@ dependencies = [
  "tidb-ppcpuusage",
  "tidb-printer",
  "tidb-proto",
+ "tidb-sessionexpr",
  "tidb-spill-storage",
  "tidb-sqlkiller",
  "tidb-stats-handle-usage-indexusage",

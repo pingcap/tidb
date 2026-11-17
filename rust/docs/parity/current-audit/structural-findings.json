@@ -2,8 +2,8 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 7,
-    "open": 5,
+    "unresolved": 6,
+    "open": 4,
     "partial": 2
   },
   "findings": [
@@ -48,14 +48,6 @@
       "rust_evidence": "`rust/crates/tidb-objstore/src/cloud.rs` (`CloudStorage::as_copier`)"
     },
     {
-      "id": "S01",
-      "status": "open",
-      "group": "Structure: Go's shape before more ports",
-      "finding": "Builtins reach session state through hand-built hooks (a method on `tidb_exprctx::Columns`, a field on `StmtContext`, a method on the executor's builder trait, a session implementation) instead of Go's optional eval-property providers: Go's `session.go` builds `sessionexpr.NewExprContext`, which installs the KV-store, infoschema, privilege-checker, session-vars, SQL-executor, sequence, advisory-lock and DDL-owner providers that builtins read (`builtinTiDBMVCCInfoSig` embeds `KVStorePropReader` / `PrivilegeCheckerPropReader`). `tidb-sessionexpr` and `tidb-expropt` port them, but the live session never builds that context. A consequence: `StmtContext` computes the PROCESS privilege for every statement, where Go asks the privilege checker only when `TIDB_DECODE_SQL_DIGESTS` is built or evaluated",
-      "go_owner": "`pkg/expression/sessionexpr`, `pkg/expression/expropt`, `pkg/session/session.go`",
-      "rust_evidence": "`rust/crates/tidb-exprctx/src/context.rs`, `rust/crates/tidb-sessionctx/src/stmt_context.rs`, `rust/crates/tidb-sessionexpr`"
-    },
-    {
       "id": "S02",
       "status": "open",
       "group": "Structure: Go's shape before more ports",
@@ -64,7 +56,7 @@
       "rust_evidence": "`rust/crates/tidb-table/src/tables.rs`, `rust/crates/tidb-table/src/tables/nonpublic_columns.rs`, `rust/crates/tidb-table/src/table_from_meta.rs`"
     }
   ],
-  "unresolved": 7,
-  "open": 5,
+  "unresolved": 6,
+  "open": 4,
   "partial": 2
 }
