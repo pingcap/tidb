@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
@@ -244,6 +245,11 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	se := CreateSessionAndSetID(t, store)
+	statsOwnerEnabled := config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load()
+	t.Cleanup(func() {
+		config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(statsOwnerEnabled)
+	})
+	MustExec(t, se, "set global tidb_enable_stats_owner=off")
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
