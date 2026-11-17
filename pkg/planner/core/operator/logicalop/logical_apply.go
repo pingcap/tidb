@@ -179,7 +179,7 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 		if len(leftJoinKeys) > 0 {
 			// Explicit ON-clause join keys: use the same join cardinality estimation as
 			// LogicalJoin so that key NDV selectivity is reflected in the row count.
-			la.EqualCondOutCnt = cardinality.EstimateFullJoinRowCount(la.SCtx(),
+			la.EqualCondOutCnt = cardinality.EstimateJoinMatchedRowCount(la.SCtx(),
 				false,
 				leftProfile, rightProfile,
 				leftJoinKeys, rightJoinKeys,
