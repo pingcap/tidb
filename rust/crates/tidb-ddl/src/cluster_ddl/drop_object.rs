@@ -129,10 +129,13 @@ pub fn drop_table<S: MetaSnapshot>(
 }
 
 /// Go master `executor.dropTableObject` for a materialized view log
-/// (`materializedViewLogObject`): its job, `None` when the log is missing.
+/// (`materializedViewLogObject`, `action` DROP MATERIALIZED VIEW LOG) or a
+/// materialized view (`materializedViewObject`, DROP MATERIALIZED VIEW): its
+/// job.
 #[allow(clippy::too_many_arguments)]
-pub fn drop_materialized_view_log<S: MetaSnapshot>(
+pub fn drop_materialized_view_object<S: MetaSnapshot>(
     snapshot: &mut S,
+    action: ActionType,
     schema: &str,
     mlog: &str,
     job_context: &dyn DdlSessionContext,
@@ -161,7 +164,7 @@ pub fn drop_materialized_view_log<S: MetaSnapshot>(
     drop_table_like(
         snapshot,
         job_context,
-        ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG,
+        action,
         db_id,
         schema,
         &stored,

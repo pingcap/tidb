@@ -182,7 +182,7 @@ pub(crate) fn drop_materialized_view_log_target(
     stmt: &tidb_ast::DropMaterializedViewLogStmt,
     current_db: &str,
     context: &dyn DdlSessionContext,
-) -> Result<Option<(String, String)>, MysqlError> {
+) -> Result<Result<(String, String), String>, MysqlError> {
     let (schema, table) = materialized_view_schema(catalog, &stmt.table, current_db)?;
     let Some((_, base)) = catalog.table_info_by_name(&schema, &table) else {
         return Err(MysqlError::from_terror(
@@ -204,11 +204,7 @@ pub(crate) fn drop_materialized_view_log_target(
     let mlog_name = tidb_model::table::materialized_view_log_table_name(&base.name).original().to_owned();
     let Some((_, mlog)) = catalog.table_info_by_name(&schema, &mlog_name) else {
         if stmt.if_exists {
-            let note = tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
-                .gen_with_stack_by_args(&[format!("{schema}.{table}").into()]);
-            let note = MysqlError::from_terror(&note);
-            context.append_note_parts(note.code, &note.message);
-            return Ok(None);
+            return Ok(Err(format!("{schema}.{table}")));
         }
         return Err(MysqlError::from_terror(
             &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
@@ -230,7 +226,7 @@ pub(crate) fn drop_materialized_view_log_target(
             table
         )));
     }
-    Ok(Some((schema, mlog_name)))
+    Ok(Ok((schema, mlog_name)))
 }
 
 /// One planned action of Go master's `executor.AlterMaterializedViewLog`.
@@ -412,6 +408,16 @@ pub(crate) const MLOG_PURGE_INFO_UPDATE_SPEC: ScheduleInfoUpdateSpec = ScheduleI
     row_missing_err: "alter materialized view log purge: purge info row missing in mysql.tidb_mlog_purge_info",
     table_not_exists_err:
         "alter materialized view log purge: required system table mysql.tidb_mlog_purge_info does not exist",
+};
+
+/// Go master `updateMaterializedViewRefreshInfoNextUnixSeconds`'s spec.
+pub(crate) const MVIEW_REFRESH_INFO_UPDATE_SPEC: ScheduleInfoUpdateSpec = ScheduleInfoUpdateSpec {
+    operation: "alter materialized view refresh",
+    info_table: "mysql.tidb_mview_refresh_info",
+    id_column: "MVIEW_ID",
+    schedule_column: "NEXT_REFRESH_UNIX_SECONDS",
+    row_missing_err: "alter materialized view refresh: refresh info row missing in mysql.tidb_mview_refresh_info",
+    table_not_exists_err: "alter materialized view refresh: required system table mysql.tidb_mview_refresh_info does not exist",
 };
 
 /// Go `alterMaterializedScheduleInfoUpdateLockWaitTimeoutSec`.
@@ -1266,4 +1272,227 @@ fn datum_text(datum: &tidb_datatype::Datum) -> String {
         tidb_datatype::Datum::Bytes(value) => String::from_utf8_lossy(value).into_owned(),
         _ => String::new(),
     }
+}
+
+/// Go master `executor.DropMaterializedView` up to `dropTableObject`: the
+/// view's schema and name, or under IF EXISTS the missing `schema.view`
+/// Go's note names (`appendDropMaterializedViewNotExistsNote`).
+pub(crate) fn drop_materialized_view_target(
+    catalog: &SessionExtendedInfoSchema,
+    stmt: &tidb_ast::DropMaterializedViewStmt,
+    current_db: &str,
+) -> Result<Result<(String, String), String>, MysqlError> {
+    let (schema, view) = match stmt.view_name.as_slice() {
+        [schema, view] => (schema.clone(), view.clone()),
+        [view] => {
+            if current_db.is_empty() {
+                return Err(MysqlError::from_terror(&tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])));
+            }
+            (current_db.to_owned(), view.clone())
+        }
+        _ => return Err(MysqlError::unknown("invalid materialized view name".to_owned())),
+    };
+    if catalog.schema_by_name(&schema).is_none() {
+        if stmt.if_exists {
+            return Ok(Err(format!("{schema}.{view}")));
+        }
+        return Err(MysqlError::from_terror(
+            &tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS.gen_with_stack_by_args(&[schema.into()]),
+        ));
+    }
+    let Some((_, table)) = catalog.table_info_by_name(&schema, &view) else {
+        if stmt.if_exists {
+            return Ok(Err(format!("{schema}.{view}")));
+        }
+        return Err(MysqlError::from_terror(
+            &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                .gen_with_stack_by_args(&[schema.into(), view.into()]),
+        ));
+    };
+    let table = table.read().clone_like_go();
+    if table.materialized_view.is_none() {
+        return Err(MysqlError::from_terror(&tidb_dbterror::ERR_WRONG_OBJECT.gen_with_stack_by_args(&[
+            schema.clone().into(),
+            view.clone().into(),
+            "MATERIALIZED VIEW".into(),
+        ])));
+    }
+    crate::cluster_ddl::materialized_view::check_base_table_materialized_view_dependency_constraints(
+        &table,
+        "DROP MATERIALIZED VIEW",
+    )?;
+    Ok(Ok((schema, view)))
+}
+
+/// Go master `executor.deleteMaterializedViewRefreshAlert`: a view whose
+/// schedule was turned off has no refresh-overdue alert left.
+pub(crate) fn delete_materialized_view_refresh_alert(
+    session_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    mview_id: i64,
+) -> Result<(), MysqlError> {
+    let pool = session_pool
+        .sess_pool()
+        .ok_or_else(|| MysqlError::unknown("the DDL session pool has no sessions"))?;
+    let sess_ctx = pool.get().map_err(|error| MysqlError::unknown(error.to_string()))?;
+    let session = tidb_ddl_session::Session::new(std::sync::Arc::clone(&sess_ctx));
+    let context = tidb_sqlexec::BackgroundContext;
+    let id = [tidb_sqlescape::SqlArg::Signed(mview_id)];
+    let result = session
+        .execute(
+            &context,
+            "UPDATE mysql.tidb_mview_refresh_alert SET ALERT_LEVEL = NULL, UPDATE_TIME = NOW(6) WHERE MVIEW_ID = %? AND ALERT_LEVEL IS NOT NULL",
+            "alter-materialized-view-refresh-clear-alert-level",
+            &id,
+        )
+        .and_then(|_| {
+            session.execute(
+                &context,
+                "DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID = %? AND REFRESH_FAILED IS NULL",
+                "alter-materialized-view-refresh-delete-alert",
+                &id,
+            )
+        })
+        .map(|_| ())
+        .map_err(|error| {
+            let error = cause_mysql_error(error.as_ref());
+            if error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS) {
+                MysqlError::unknown(
+                    "alter materialized view refresh: required system table mysql.tidb_mview_refresh_alert does not exist",
+                )
+            } else {
+                error
+            }
+        });
+    pool.put(sess_ctx);
+    result
+}
+
+/// One planned action of Go master's `executor.AlterMaterializedView`.
+pub(crate) enum AlterMaterializedViewStep {
+    /// COMMENT: the view's own ALTER TABLE (`alterTable(..., true)`).
+    Comment(tidb_ast::AlterTableStmt),
+    /// `alterMaterializedViewRefresh`: the job, then the schedule row.
+    Refresh { job: crate::JobWrapper, start_with: String, next: String, sql_mode: i64, mview_id: i64 },
+    /// `alterMaterializedViewAttributes`.
+    Attributes(crate::JobWrapper),
+}
+
+/// Go master `executor.AlterMaterializedView`'s checks and the work of its
+/// actions, in statement order.
+pub(crate) fn alter_materialized_view_steps(
+    catalog: &SessionExtendedInfoSchema,
+    stmt: &tidb_ast::AlterMaterializedViewStmt,
+    current_db: &str,
+    context: &dyn DdlSessionContext,
+) -> Result<Vec<AlterMaterializedViewStep>, MysqlError> {
+    let (schema_name, view) = match stmt.view_name.as_slice() {
+        [schema, view] => (schema.clone(), view.clone()),
+        [view] => {
+            if current_db.is_empty() {
+                return Err(MysqlError::from_terror(&tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])));
+            }
+            (current_db.to_owned(), view.clone())
+        }
+        _ => return Err(MysqlError::unknown("invalid materialized view name".to_owned())),
+    };
+    let Some(schema) = catalog.schema_by_name(&schema_name) else {
+        return Err(MysqlError::from_terror(
+            &tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS.gen_with_stack_by_args(&[schema_name.into()]),
+        ));
+    };
+    let schema = schema.read().clone();
+    let Some((_, table)) = catalog.table_info_by_name(&schema_name, &view) else {
+        return Err(MysqlError::from_terror(
+            &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                .gen_with_stack_by_args(&[schema_name.into(), view.into()]),
+        ));
+    };
+    let table = table.read().clone_like_go();
+    if table.materialized_view.is_none() {
+        return Err(MysqlError::from_terror(&tidb_dbterror::ERR_WRONG_OBJECT.gen_with_stack_by_args(&[
+            schema_name.clone().into(),
+            view.clone().into(),
+            "MATERIALIZED VIEW".into(),
+        ])));
+    }
+    let expr_ctx = SessionExprContext(context);
+    for action in &stmt.actions {
+        match action {
+            tidb_ast::AlterMaterializedViewAction::Comment(comment) => {
+                tidb_ddl_build::validate_comment_length(
+                    comment,
+                    &tidb_hack::go_to_lower(&view),
+                    tidb_ddl_build::CommentOwner::Table,
+                    &context.metabuild_context(),
+                )?;
+            }
+            tidb_ast::AlterMaterializedViewAction::Refresh(refresh) => {
+                tidb_ddl_build::materialized_view::build_mview_refresh_meta(&expr_ctx, Some(refresh))?;
+            }
+            tidb_ast::AlterMaterializedViewAction::Attributes(attributes) => {
+                tidb_ddl_build::materialized_view::parse_mview_attributes(attributes)?;
+            }
+        }
+    }
+    let job_for = |action: ActionType| {
+        let mut job = crate::cluster_ddl::session_job(context, action);
+        job.schema_id = schema.id;
+        job.table_id = table.id;
+        job.schema_name = schema.name.lowercase().to_owned().into();
+        job.table_name = tidb_hack::go_to_lower(&view).into();
+        job
+    };
+    let mut steps = Vec::new();
+    for action in &stmt.actions {
+        match action {
+            // Go hands the comment as written to `alterTable`, which checks
+            // its length again.
+            tidb_ast::AlterMaterializedViewAction::Comment(comment) => {
+                steps.push(AlterMaterializedViewStep::Comment(tidb_ast::AlterTableStmt {
+                    name: vec![schema_name.clone(), view.clone()],
+                    actions: vec![tidb_ast::AlterTableAction::SetTableOptions {
+                        options: vec![tidb_ast::TableOption::Comment(comment.clone())],
+                    }],
+                }));
+            }
+            tidb_ast::AlterMaterializedViewAction::Refresh(refresh) => {
+                let (refresh_method, refresh_start_with, refresh_next) =
+                    tidb_ddl_build::materialized_view::build_mview_refresh_meta(&expr_ctx, Some(refresh))?;
+                let sql_mode = context.ddl_sql_mode();
+                let args = tidb_model::AlterMaterializedViewRefreshArgs {
+                    refresh_method,
+                    refresh_start_with: refresh_start_with.clone(),
+                    refresh_next: refresh_next.clone(),
+                    refresh_schedule_sql_mode: sql_mode,
+                    update_refresh_schedule: refresh.start_with.is_some() || refresh.next.is_some(),
+                };
+                steps.push(AlterMaterializedViewStep::Refresh {
+                    job: crate::JobWrapper {
+                        job: job_for(ActionType::ACTION_ALTER_MATERIALIZED_VIEW_REFRESH),
+                        args: JobArgsValue::AlterMaterializedViewRefresh(Some(GoShared::new(args))),
+                        id_allocated: true,
+                    },
+                    start_with: refresh_start_with,
+                    next: refresh_next,
+                    sql_mode,
+                    mview_id: table.id,
+                });
+            }
+            tidb_ast::AlterMaterializedViewAction::Attributes(attributes) => {
+                let (alert_warning_sec, alert_overdue_sec, alert_refresh_failed) =
+                    tidb_ddl_build::materialized_view::parse_mview_attributes(attributes)?;
+                let args = tidb_model::AlterMaterializedViewAttributesArgs {
+                    alert_warning_sec,
+                    alert_overdue_sec,
+                    alert_refresh_failed,
+                };
+                steps.push(AlterMaterializedViewStep::Attributes(crate::JobWrapper {
+                    job: job_for(ActionType::ACTION_ALTER_MATERIALIZED_VIEW_ATTRIBUTES),
+                    args: JobArgsValue::AlterMaterializedViewAttributes(Some(GoShared::new(args))),
+                    id_allocated: true,
+                }));
+            }
+        }
+    }
+    Ok(steps)
 }

@@ -2618,6 +2618,8 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG
             | ActionType::ACTION_ALTER_MATERIALIZED_VIEW_LOG_PURGE
             | ActionType::ACTION_CREATE_MATERIALIZED_VIEW
+            | ActionType::ACTION_ALTER_MATERIALIZED_VIEW_REFRESH
+            | ActionType::ACTION_ALTER_MATERIALIZED_VIEW_ATTRIBUTES
             | ActionType::ACTION_CREATE_TABLES
             | ActionType::ACTION_RECOVER_TABLE
             | ActionType::ACTION_FLASHBACK_CLUSTER
@@ -2629,6 +2631,7 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_DROP_VIEW
             | ActionType::ACTION_DROP_SEQUENCE
             | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG
+            | ActionType::ACTION_DROP_MATERIALIZED_VIEW
             | ActionType::ACTION_ADD_INDEX
             | ActionType::ACTION_ADD_PRIMARY_KEY
             | ActionType::ACTION_ADD_COLUMNAR_INDEX
@@ -2800,6 +2803,12 @@ fn dispatch_persisted_action(
         ActionType::ACTION_ALTER_MATERIALIZED_VIEW_LOG_PURGE => {
             materialized_view::on_alter_materialized_view_log_purge(txn, catalog, active, start_ts, row_ids)
         }
+        ActionType::ACTION_ALTER_MATERIALIZED_VIEW_REFRESH => {
+            materialized_view::on_alter_materialized_view_refresh(txn, catalog, active, start_ts, row_ids)
+        }
+        ActionType::ACTION_ALTER_MATERIALIZED_VIEW_ATTRIBUTES => {
+            materialized_view::on_alter_materialized_view_attributes(txn, catalog, active, start_ts, row_ids)
+        }
         ActionType::ACTION_CREATE_MATERIALIZED_VIEW => materialized_view::on_create_materialized_view(
             txn,
             catalog,
@@ -2933,7 +2942,8 @@ fn dispatch_persisted_action(
         ActionType::ACTION_DROP_TABLE
         | ActionType::ACTION_DROP_VIEW
         | ActionType::ACTION_DROP_SEQUENCE
-        | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG => {
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW => {
             plan_persisted_drop_table_job_step(txn, catalog, active, row_ids)
         }
         ActionType::ACTION_ADD_COLUMNAR_INDEX => {
@@ -4273,6 +4283,14 @@ fn plan_persisted_drop_table_job_step(
             return Err(cancel_ddl_job(active, DdlPlanError::from_mysql_error(error)));
         }
     }
+    // Go master: a log the view's own table got after the executor's check.
+    if table.state == SchemaState::PUBLIC && active.job.type_ == ActionType::ACTION_DROP_MATERIALIZED_VIEW {
+        if let Err(error) =
+            materialized_view::check_base_table_materialized_view_dependency_constraints(&table, "DROP MATERIALIZED VIEW")
+        {
+            return Err(cancel_ddl_job(active, DdlPlanError::from_mysql_error(error)));
+        }
+    }
     if table.state == SchemaState::PUBLIC && active.job.type_ == ActionType::ACTION_DROP_TABLE {
         // Go `checkDropTableHasForeignKeyReferredInOwner`.
         let args = tidb_model::get_drop_table_args(&mut active.job)
@@ -4328,10 +4346,12 @@ fn plan_persisted_drop_table_job_step(
     }
     // Go master `updateMaterializedViewBaseInfoOnDrop`: the base tables
     // forget the dropped log, in the same version.
-    let extra_tables = if table.state == SchemaState::NONE {
-        materialized_view::update_materialized_view_base_info_on_drop_log(txn, active, &table)?
-    } else {
+    let extra_tables = if table.state != SchemaState::NONE {
         Vec::new()
+    } else if table.materialized_view.is_some() {
+        materialized_view::update_materialized_view_base_info_on_drop_mview(txn, active, &table)?
+    } else {
+        materialized_view::update_materialized_view_base_info_on_drop_log(txn, active, &table)?
     };
     // Go `updateVersionAndTableInfo` on every state change, then, as the
     // table reaches none, `DropTableOrView` with `GetAutoIDAccessors(...)
@@ -4380,6 +4400,12 @@ fn plan_persisted_drop_table_job_step(
         // Go master: a dropped log's purge schedule row goes with it.
         if table.materialized_view_log.is_some() {
             materialized_view::delete_materialized_view_log_purge_info(txn, table.id)?;
+        }
+        // Go master: a dropped view's refresh rows (and, best effort, its
+        // alert) go with it.
+        if table.materialized_view.is_some() {
+            materialized_view::delete_create_materialized_view_refresh_info(txn, table.id)?;
+            materialized_view::delete_create_materialized_view_refresh_alert(txn, table.id);
         }
         // Go `onDropTableOrView`'s `dropMaskingPoliciesOnTable`.
         masking_policy::drop_masking_policies_on_table(txn, table.id)?;
@@ -4687,7 +4713,8 @@ fn plan_cancel_persisted_ddl_job(
         ActionType::ACTION_DROP_TABLE
         | ActionType::ACTION_DROP_VIEW
         | ActionType::ACTION_DROP_SEQUENCE
-        | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG => {
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW => {
             let table = checked_job_table(txn, active, false)?;
             let table = table.read();
             table.state == SchemaState::PUBLIC

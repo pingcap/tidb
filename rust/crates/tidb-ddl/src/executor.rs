@@ -192,18 +192,17 @@ pub fn drop_materialized_view_log<E: ExecutorStore>(
     context: &DdlContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
     let catalog = executor.latest_schema();
-    let Some((schema, mlog)) =
-        super::executor_mview::drop_materialized_view_log_target(&catalog, stmt, current_db, context.as_ref())
+    let (schema, mlog) =
+        match super::executor_mview::drop_materialized_view_log_target(&catalog, stmt, current_db, context.as_ref())
             .map_err(mysql_query_error)?
-    else {
-        return Ok(ClusterDdlReport::AlreadySatisfied {
-            detail: "the materialized view log does not exist".into(),
-            warnings: Vec::new(),
-        });
-    };
+        {
+            Ok(target) => target,
+            Err(missing) => return Ok(drop_missing_note("the materialized view log does not exist", &missing)),
+        };
     let result = executor.with_meta(context.as_ref(), |snapshot, start_ts, upgrading| {
-        crate::cluster_ddl::drop_object::drop_materialized_view_log(
+        crate::cluster_ddl::drop_object::drop_materialized_view_object(
             snapshot,
+            tidb_model::ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG,
             &schema,
             &mlog,
             context.as_ref(),
@@ -320,6 +319,107 @@ pub(super) fn create_materialized_view<S: StoreClient>(
     let report = do_ddl_job_wrapper(executor, context.as_ref(), job)?;
     if matches!(report, ClusterDdlReport::Applied { .. }) {
         after_create_tables(executor, &schema, &[name], context.as_ref())?;
+    }
+    Ok(report)
+}
+
+/// Go `ErrTableDropExists` as the IF EXISTS note of a missing `qualified`.
+fn drop_missing_note(detail: &str, qualified: &str) -> ClusterDdlReport {
+    ClusterDdlReport::AlreadySatisfied {
+        detail: detail.into(),
+        warnings: vec![crate::real_tikv_ddl::ddl_note(
+            tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS.gen_with_stack_by_args(&[qualified.to_owned().into()]),
+        )],
+    }
+}
+
+/// Go master `executor.DropMaterializedView`: the view's checks, then
+/// `dropTableObject` of the view (`materializedViewObject`).
+pub fn drop_materialized_view<E: ExecutorStore>(
+    executor: &E,
+    stmt: &tidb_ast::DropMaterializedViewStmt,
+    current_db: &str,
+    context: &DdlContext,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    let catalog = executor.latest_schema();
+    let (schema, mview) = match super::executor_mview::drop_materialized_view_target(&catalog, stmt, current_db)
+        .map_err(mysql_query_error)?
+    {
+        Ok(target) => target,
+        Err(missing) => return Ok(drop_missing_note("the materialized view does not exist", &missing)),
+    };
+    executor.with_meta(context.as_ref(), |snapshot, start_ts, upgrading| {
+        crate::cluster_ddl::drop_object::drop_materialized_view_object(
+            snapshot,
+            tidb_model::ActionType::ACTION_DROP_MATERIALIZED_VIEW,
+            &schema,
+            &mview,
+            context.as_ref(),
+            start_ts,
+            upgrading,
+        )
+    })
+}
+
+/// Go master `executor.AlterMaterializedView`: the view's checks, every
+/// action validated, then each in order (COMMENT as the view's ALTER TABLE,
+/// REFRESH and ATTRIBUTES as their jobs, a refresh followed by its schedule
+/// row).
+pub(super) fn alter_materialized_view<S: StoreClient>(
+    executor: &RealClusterDdl<S>,
+    stmt: &tidb_ast::AlterMaterializedViewStmt,
+    current_db: &str,
+    context: &DdlContext,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    let catalog = executor.latest_schema();
+    let steps = super::executor_mview::alter_materialized_view_steps(&catalog, stmt, current_db, context.as_ref())
+        .map_err(mysql_query_error)?;
+    let mut last = None;
+    let mut warnings = Vec::new();
+    for step in steps {
+        let report = match step {
+            super::executor_mview::AlterMaterializedViewStep::Comment(alter) => {
+                alter_table_allowing(executor, &alter, current_db, context, true)?
+            }
+            super::executor_mview::AlterMaterializedViewStep::Attributes(job) => {
+                do_ddl_job_wrapper(executor, context.as_ref(), job)?
+            }
+            super::executor_mview::AlterMaterializedViewStep::Refresh { job, start_with, next, sql_mode, mview_id } => {
+                let report = do_ddl_job_wrapper(executor, context.as_ref(), job)?;
+                let (next_unix_seconds, should_update) =
+                    tidb_ddl_build::materialized_view::derive_materialized_schedule_next_unix_seconds(
+                        &start_with,
+                        &next,
+                        sql_mode,
+                        chrono::Utc::now(),
+                    )
+                    .map_err(mysql_query_error)?;
+                if should_update {
+                    let updated = super::executor_mview::best_effort_update_materialized_schedule_info_next_unix_seconds(
+                        executor.scheduler.session_pool.as_ref(),
+                        &super::executor_mview::MVIEW_REFRESH_INFO_UPDATE_SPEC,
+                        mview_id,
+                        next_unix_seconds,
+                        &mut warnings,
+                    )
+                    .map_err(mysql_query_error)?;
+                    if updated && next_unix_seconds.is_none() {
+                        // Go logs a failure here and goes on.
+                        let _ = super::executor_mview::delete_materialized_view_refresh_alert(
+                            executor.scheduler.session_pool.as_ref(),
+                            mview_id,
+                        );
+                    }
+                }
+                report
+            }
+        };
+        last = Some(report);
+    }
+    let mut report = last.expect("a statement has at least one action");
+    match &mut report {
+        ClusterDdlReport::Applied { warnings: report_warnings, .. }
+        | ClusterDdlReport::AlreadySatisfied { warnings: report_warnings, .. } => report_warnings.extend(warnings),
     }
     Ok(report)
 }
@@ -1272,6 +1372,17 @@ pub fn alter_table<E: ExecutorStore>(
     current_db: &str,
     context: &DdlContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
+    alter_table_allowing(executor, statement, current_db, context, false)
+}
+
+/// Go master `executor.alterTable` with its `allowMaterializedViewRelated`.
+fn alter_table_allowing<E: ExecutorStore>(
+    executor: &E,
+    statement: &tidb_ast::AlterTableStmt,
+    current_db: &str,
+    context: &DdlContext,
+    allow_materialized_view_related: bool,
+) -> Result<ClusterDdlReport, SqlQueryError> {
     let statement = crate::cluster_ddl::resolve_alter_table_spec(statement, context)
         .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?;
     let catalog = executor.latest_schema();
@@ -1343,6 +1454,7 @@ pub fn alter_table<E: ExecutorStore>(
             context,
             start_ts,
             upgrading,
+            allow_materialized_view_related,
             store_count,
             &tiflash,
             &mut has_null,

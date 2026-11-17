@@ -1555,7 +1555,7 @@ fn insert_mview_refresh_source_info(txn: &JobTxn<'_>, mview_id: i64, mlog_ids: &
 /// Go master `deleteCreateMaterializedViewRefreshInfos` (with
 /// `deleteMViewRefreshSourceInfos` first): a missing info table deletes
 /// nothing.
-fn delete_create_materialized_view_refresh_info(txn: &JobTxn<'_>, mview_id: i64) -> Result<(), DdlPlanError> {
+pub(crate) fn delete_create_materialized_view_refresh_info(txn: &JobTxn<'_>, mview_id: i64) -> Result<(), DdlPlanError> {
     let source = format!(
         "DELETE FROM mysql.{} WHERE MVIEW_ID IN ({mview_id})",
         tidb_metadef::system_tables_def::TIDB_MVIEW_FAST_REFRESH_SOURCE_INFO_TABLE_NAME
@@ -1568,7 +1568,7 @@ fn delete_create_materialized_view_refresh_info(txn: &JobTxn<'_>, mview_id: i64)
 }
 
 /// Go master `deleteCreateMaterializedViewRefreshAlerts`: best effort.
-fn delete_create_materialized_view_refresh_alert(txn: &JobTxn<'_>, mview_id: i64) {
+pub(crate) fn delete_create_materialized_view_refresh_alert(txn: &JobTxn<'_>, mview_id: i64) {
     let _ = execute_job_sql(txn, &format!("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID IN ({mview_id})"));
 }
 
@@ -1907,4 +1907,107 @@ fn rollback_create_materialized_view(
     write.schema_version = schema_version;
     write.diff = diff;
     Ok(PersistedDdlActionStep { write, update_raw_args: true, run_error: None, reorg: None })
+}
+
+/// Go master `onAlterMaterializedViewRefresh` / `onAlterMaterializedViewAttributes`:
+/// the view's refresh schedule or alert attributes, with a notifier event.
+fn on_alter_materialized_view(
+    txn: &mut JobTxn<'_>,
+    catalog: &SessionExtendedInfoSchema,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    start_ts: u64,
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
+    apply: impl FnOnce(&mut tidb_model::table::MaterializedViewInfo),
+    event: fn(TableInfo, TableInfo) -> SchemaChangeEvent,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    let mut table = checked_job_table(txn, active, true)?.read().clone_like_go();
+    let Some(info) = table.materialized_view.clone() else {
+        return Err(cancel_ddl_job(
+            active,
+            DdlPlanError::from(tidb_dbterror::ERR_WRONG_OBJECT.gen_with_stack_by_args(&[
+                active.job.schema_name.to_string().into(),
+                active.job.table_name.to_string().into(),
+                "MATERIALIZED VIEW".into(),
+            ])),
+        ));
+    };
+    if is_revertible_sub_job(&active.job) {
+        active.job.mark_non_revertible();
+        return Ok(super::add_index::action_step(job_only_write(active.job.id, Vec::new())));
+    }
+    let old_table = table.clone_like_go();
+    apply(&mut info.write());
+    table.materialized_view = Some(info);
+    let schema_id = active.job.schema_id;
+    let mut write = super::add_index::update_version_and_table_info(txn, active, schema_id, &table, true, start_ts)?;
+    let schema_version = write.schema_version;
+    let mut mutations = Vec::new();
+    append_schema_change_mutations(
+        txn,
+        catalog,
+        active.job.id,
+        &[(-1, event(table.clone_like_go(), old_table))],
+        &mut mutations,
+        row_ids,
+    )?;
+    active.job.finish_table_job(JobState::DONE, SchemaState::PUBLIC, schema_version, Some(GoShared::new(table)));
+    write.mutations.extend(mutations);
+    Ok(super::add_index::action_step(write))
+}
+
+/// Go master `onAlterMaterializedViewRefresh`.
+pub(super) fn on_alter_materialized_view_refresh(
+    txn: &mut JobTxn<'_>,
+    catalog: &SessionExtendedInfoSchema,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    start_ts: u64,
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    let args = tidb_model::get_alter_materialized_view_refresh_args(&mut active.job)
+        .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
+        .unwrap_or_default();
+    let args = args.read().clone();
+    on_alter_materialized_view(
+        txn,
+        catalog,
+        active,
+        start_ts,
+        row_ids,
+        |info| {
+            info.refresh_method = args.refresh_method;
+            info.refresh_start_with = args.refresh_start_with;
+            info.refresh_next = args.refresh_next;
+            if args.update_refresh_schedule {
+                info.refresh_schedule_sql_mode = args.refresh_schedule_sql_mode;
+            }
+        },
+        SchemaChangeEvent::alter_materialized_view_refresh,
+    )
+}
+
+/// Go master `onAlterMaterializedViewAttributes`.
+pub(super) fn on_alter_materialized_view_attributes(
+    txn: &mut JobTxn<'_>,
+    catalog: &SessionExtendedInfoSchema,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    start_ts: u64,
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    let args = tidb_model::get_alter_materialized_view_attributes_args(&mut active.job)
+        .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
+        .unwrap_or_default();
+    let args = args.read().clone();
+    on_alter_materialized_view(
+        txn,
+        catalog,
+        active,
+        start_ts,
+        row_ids,
+        |info| {
+            info.alert_warning_sec = args.alert_warning_sec;
+            info.alert_overdue_sec = args.alert_overdue_sec;
+            info.alert_refresh_failed = args.alert_refresh_failed;
+        },
+        SchemaChangeEvent::alter_materialized_view_attributes,
+    )
 }

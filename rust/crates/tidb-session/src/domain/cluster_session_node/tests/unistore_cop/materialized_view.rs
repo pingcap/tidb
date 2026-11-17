@@ -473,3 +473,33 @@ fn create_materialized_view_rolls_back_a_failed_build() {
     assert_eq!(answer(&mut session, "create materialized view mv (g, c) as select g, count(*) from t group by g"), "OK");
     assert_eq!(answer(&mut session, "select count(*) from mysql.tidb_mview_refresh_info"), r#"RS:[["1"]]"#);
 }
+
+/// ALTER and DROP MATERIALIZED VIEW against a Go master `eca4674a6f` node's
+/// answers (`testdata/mview_drop_alter_go.jsonl`): COMMENT as the view's
+/// ALTER TABLE, REFRESH with the next refresh time Go stores, ATTRIBUTES and
+/// their refusals, DROP with its notes, the refresh rows going with the view
+/// and the log droppable once no view reads it.
+#[test]
+fn alter_and_drop_materialized_view_answer_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/mview_drop_alter_go.jsonl"));
+}
+
+/// ALTER MATERIALIZED VIEW ... ATTRIBUTES / COMMENT as Go master's
+/// `onAlterMaterializedViewAttributes` stores them: the capture up to its
+/// combined COMMENT and ATTRIBUTES statement, then the view's metadata.
+#[test]
+fn alter_materialized_view_attributes_are_stored_as_go_master() {
+    let capture = include_str!("../../../../../testdata/mview_drop_alter_go.jsonl");
+    let end = capture.find("[\"alter materialized view mv1 comment = 'a'").expect("the combined statement");
+    let line_end = end + capture[end..].find('\n').expect("a whole line");
+    let (stack, _session) = replay_go_master(&capture[..line_end]);
+    let (_, mview) = stack.factory.catalog_snapshot().table_info_by_name("e29", "mv1").unwrap();
+    let mview = mview.read();
+    assert_eq!(mview.comment, "a");
+    let info = mview.materialized_view.as_ref().expect("a materialized view").read().clone();
+    // The last ATTRIBUTES replaced the whole set: only the warning is left.
+    assert_eq!((info.alert_warning_sec, info.alert_overdue_sec, info.alert_refresh_failed), (5, 0, false));
+    // The REFRESH NEXT NULL left the schedule expression and the method.
+    assert_eq!(info.refresh_method, "FAST");
+    assert_eq!(info.refresh_next, "CAST(NULL AS DATETIME)");
+}

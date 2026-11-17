@@ -345,6 +345,22 @@ pub trait ClusterDdl: Send + Sync {
         context: &crate::cluster_ddl::DdlContext,
     ) -> Result<ClusterDdlReport, SqlQueryError>;
 
+    /// Go master `executor.AlterMaterializedView`.
+    fn alter_materialized_view(
+        &self,
+        statement: &tidb_ast::AlterMaterializedViewStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
+    /// Go master `executor.DropMaterializedView`.
+    fn drop_materialized_view(
+        &self,
+        statement: &tidb_ast::DropMaterializedViewStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
     /// Go master `executor.CreateMaterializedView`.
     fn create_materialized_view(
         &self,
@@ -436,6 +452,12 @@ pub trait ClusterDdl: Send + Sync {
                 }
                 tidb_ast::DdlStmt::CreateMaterializedView(statement) => {
                     self.create_materialized_view(statement, current_db, context)
+                }
+                tidb_ast::DdlStmt::DropMaterializedView(statement) => {
+                    self.drop_materialized_view(statement, current_db, context)
+                }
+                tidb_ast::DdlStmt::AlterMaterializedView(statement) => {
+                    self.alter_materialized_view(statement, current_db, context)
                 }
                 tidb_ast::DdlStmt::RecoverTable(statement) => self.recover_table(
                     &statement.table,
@@ -3867,6 +3889,24 @@ where
         context: &crate::cluster_ddl::DdlContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         executor::create_materialized_view(self, statement, current_db, context)
+    }
+
+    fn drop_materialized_view(
+        &self,
+        statement: &tidb_ast::DropMaterializedViewStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::drop_materialized_view(self, statement, current_db, context)
+    }
+
+    fn alter_materialized_view(
+        &self,
+        statement: &tidb_ast::AlterMaterializedViewStmt,
+        current_db: &str,
+        context: &crate::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::alter_materialized_view(self, statement, current_db, context)
     }
 
     fn drop_sequence(

@@ -1342,6 +1342,22 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     table_denied("DROP MATERIALIZED VIEW LOG", &table),
                 ));
             }
+            // Go master `buildDDL`: ALTER on the view's name.
+            DdlStmt::AlterMaterializedView(alter) => {
+                let (database, table, _) = self.qualified(&alter.view_name);
+                if database.is_empty() {
+                    return Err(PlanError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])));
+                }
+                self.visit_info.push(visit(tidb_mysql::AlterPriv, &database, &table, table_denied("ALTER", &table)));
+            }
+            // Go master `buildDDL`: DROP on the view's name.
+            DdlStmt::DropMaterializedView(drop) => {
+                let (database, table, _) = self.qualified(&drop.view_name);
+                if database.is_empty() {
+                    return Err(PlanError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])));
+                }
+                self.visit_info.push(visit(tidb_mysql::DropPriv, &database, &table, table_denied("DROP", &table)));
+            }
             // Go master `buildDDL`: ALTER on the log table, and SELECT on the
             // base table when an action adds columns.
             DdlStmt::AlterMaterializedViewLog(alter) => {
