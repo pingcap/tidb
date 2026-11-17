@@ -320,6 +320,11 @@ func optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
 			return nil, err
 		}
 		vertexMap[oldID] = joinGroup.vertexes[i]
+		// Join construction looks up method hints by the optimized child's ID.
+		if methodHint, ok := joinGroup.vertexHints[oldID]; ok && oldID != joinGroup.vertexes[i].ID() {
+			delete(joinGroup.vertexHints, oldID)
+			joinGroup.vertexHints[joinGroup.vertexes[i].ID()] = methodHint
+		}
 	}
 	if len(vertexMap) > 0 {
 		joinGroup.root = replaceJoinGroupVertexes(joinGroup.root, vertexMap)
@@ -376,16 +381,18 @@ func optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup) (p base.Logica
 		}
 	}
 
-	// Ensure the schema is not changed after join reorder.
-	if !p.Schema().Equal(originalSchema) {
+	// An inlined root projection can carry a derived-table alias even when its
+	// columns pass through unchanged. Outer LEADING hints still need that identity.
+	_, rootIsProjection := group.root.(*logicalop.LogicalProjection)
+	if p != group.root && (rootIsProjection || !p.Schema().Equal(originalSchema)) {
 		exprs := expression.Column2Exprs(originalSchema.Columns)
 		if len(group.colExprMap) > 0 {
 			exprs = SubstituteColsInExprs(exprs, group.colExprMap)
 		}
 		proj := logicalop.LogicalProjection{
 			Exprs: exprs,
-		}.Init(p.SCtx(), p.QueryBlockOffset())
-		proj.SetSchema(originalSchema.Clone())
+		}.Init(ctx, group.root.QueryBlockOffset())
+		proj.SetSchemaAndNames(originalSchema.Clone(), group.root.OutputNames())
 		proj.SetChildren(p)
 		return proj, nil
 	}

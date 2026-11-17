@@ -795,22 +795,30 @@ func alignEQConds(ctx base.PlanContext, left, right base.LogicalPlan, eqConds []
 	return left, right, res, nil
 }
 
-func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, vertexHints map[int]*JoinMethodHint) (*logicalop.LogicalJoin, error) {
-	e := checkResult.appliedNonInnerEdge
-	left, right, alignedEQConds, err := alignEQConds(ctx, checkResult.node1.p, checkResult.node2.p, e.eqConds)
+func makeJoinWithEQConds(ctx base.PlanContext, joinType base.JoinType, left, right base.LogicalPlan, eqConds []*expression.ScalarFunction, vertexHints map[int]*JoinMethodHint) (*logicalop.LogicalJoin, error) {
+	newLeft, newRight, aligned, err := alignEQConds(ctx, left, right, eqConds)
 	if err != nil {
 		return nil, err
 	}
-
 	// Restore method hints against the original vertices before installing
 	// projections used only by this candidate's expression keys.
-	join, err := newCartesianJoin(ctx, e.joinType, checkResult.node1.p, checkResult.node2.p, vertexHints)
+	join, err := newCartesianJoin(ctx, joinType, left, right, vertexHints)
 	if err != nil {
 		return nil, err
 	}
-	if left != checkResult.node1.p || right != checkResult.node2.p {
-		join.SetChildren(left, right)
+	if newLeft != left || newRight != right {
+		join.SetChildren(newLeft, newRight)
 		join.MergeSchema()
+	}
+	join.EqualConditions = aligned
+	return join, nil
+}
+
+func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, vertexHints map[int]*JoinMethodHint) (*logicalop.LogicalJoin, error) {
+	e := checkResult.appliedNonInnerEdge
+	join, err := makeJoinWithEQConds(ctx, e.joinType, checkResult.node1.p, checkResult.node2.p, e.eqConds, vertexHints)
+	if err != nil {
+		return nil, err
 	}
 	// After join reorder, the NOT_NULL flag of the null-producing side should be removed.
 	// We've done this for new join's output schema in LogicalJoin.MergeSchema().
@@ -819,15 +827,15 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 	//   Before reorder: t1 left (t2 left t3 on t2.c2 = t3.c2) on t1.c1 = t2.c1
 	//   After reorder, (t1 left t2 on t1.c1 = t2.c1) left t3 on t2.c2 = t3.c2;
 	//   We should make sure there is no NOT_NULL flag in `t2.c1`.
-	for i, cond := range alignedEQConds {
+	for i, cond := range join.EqualConditions {
 		newCond, _ := alignNotNullWithSchema(cond, join.Schema())
-		alignedEQConds[i] = newCond.(*expression.ScalarFunction)
+		join.EqualConditions[i] = newCond.(*expression.ScalarFunction)
 	}
 	alignedNonEQConds := make([]expression.Expression, len(e.nonEQConds))
 	for i, cond := range e.nonEQConds {
 		alignedNonEQConds[i], _ = alignNotNullWithSchema(cond, join.Schema())
 	}
-	join.EqualConditions = alignedEQConds
+	left, right := join.Children()[0], join.Children()[1]
 	for _, cond := range alignedNonEQConds {
 		if expression.IsMutableEffectsExpr(cond) {
 			join.OtherConditions = append(join.OtherConditions, cond)
@@ -935,19 +943,10 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 		newEqConds = append(newEqConds, e.eqConds...)
 		newOtherConds = append(newOtherConds, e.nonEQConds...)
 	}
-	left, right, newEqConds, err := alignEQConds(ctx, checkResult.node1.p, checkResult.node2.p, newEqConds)
+	join, err := makeJoinWithEQConds(ctx, checkResult.appliedInnerEdges[0].joinType, checkResult.node1.p, checkResult.node2.p, newEqConds, vertexHints)
 	if err != nil {
 		return nil, err
 	}
-	join, err := newCartesianJoin(ctx, checkResult.appliedInnerEdges[0].joinType, checkResult.node1.p, checkResult.node2.p, vertexHints)
-	if err != nil {
-		return nil, err
-	}
-	if left != checkResult.node1.p || right != checkResult.node2.p {
-		join.SetChildren(left, right)
-		join.MergeSchema()
-	}
-	join.EqualConditions = append(join.EqualConditions, newEqConds...)
 	join.OtherConditions = append(join.OtherConditions, newOtherConds...)
 
 	return join, nil

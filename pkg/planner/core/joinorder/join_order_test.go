@@ -80,6 +80,7 @@ func TestExtractJoinGroupThroughProjection(t *testing.T) {
 			fn(ast.Plus, col, right.Schema().Columns[0]),
 			fn(ast.Plus, col, fn(ast.Rand)),
 			fn(ast.Plus, col, fn(ast.FoundRows)),
+			fn(ast.LastInsertId, col),
 			fn(ast.Plus, col, &expression.Constant{Value: types.NewIntDatum(1), RetType: types.NewFieldType(mysql.TypeLonglong), DeferredExpr: fn(ast.FoundRows)}),
 			&expression.CorrelatedColumn{Column: *col, Data: new(types.Datum)},
 			newLeaf().Schema().Columns[0],
@@ -178,6 +179,33 @@ func TestExtractJoinGroupThroughProjection(t *testing.T) {
 		straight.StraightJoin = true
 		aboveStraight := newProjection(straight, derived)
 		require.Equal(t, []base.LogicalPlan{aboveStraight}, extractJoinGroup(aboveStraight).vertexes)
+	})
+	t.Run("method hint follows optimized projection", func(t *testing.T) {
+		ctx.GetSessionVars().EnableAdvancedJoinHint = true
+		for _, threshold := range []int{0, 10} {
+			ctx.GetSessionVars().TiDBOptJoinReorderThreshold = threshold
+			projected := newProjection(newJoin(base.InnerJoin, left, right), derived)
+			root := newJoin(base.InnerJoin, projected, newLeaf())
+			root.HintInfo = &hint.PlanHints{}
+			root.LeftPreferJoinType = hint.PreferHashJoin
+			root.SetPreferredJoinType()
+
+			result, err := Optimize(root)
+			require.NoError(t, err)
+			if restore, ok := result.(*logicalop.LogicalProjection); ok {
+				result = restore.Children()[0]
+			}
+			reordered := result.(*logicalop.LogicalJoin)
+			if reordered.Children()[0].Schema().Contains(projected.Schema().Columns[0]) {
+				require.Equal(t, hint.PreferHashJoin, reordered.LeftPreferJoinType)
+				require.Zero(t, reordered.RightPreferJoinType)
+			} else {
+				require.True(t, reordered.Children()[1].Schema().Contains(projected.Schema().Columns[0]))
+				require.Equal(t, hint.PreferHashJoin, reordered.RightPreferJoinType)
+				require.Zero(t, reordered.LeftPreferJoinType)
+			}
+			require.Same(t, root.HintInfo, reordered.HintInfo)
+		}
 	})
 }
 

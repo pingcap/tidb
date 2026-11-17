@@ -46,7 +46,8 @@ func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name, cascades st
 }
 
 func TestAdvancedJoinReorderThroughProjection(t *testing.T) {
-	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a decimal(20,4), b int)")
 	tk.MustExec("create table t2 (a int, b int)")
@@ -113,6 +114,39 @@ func TestAdvancedJoinReorderThroughProjection(t *testing.T) {
 		"(select t3.a+0 k,t2.b+0 v from t3,t2) d join t1 on d.k=t1.a and d.v=t1.b").Sort().Check(
 		testkit.Rows("1 10 1.0000", "2 20 2.0000", "2 20 2.0000"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	newGreedyTestKit := func(t *testing.T) *testkit.TestKit {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_opt_enable_advanced_join_reorder=on, tidb_opt_join_reorder_threshold=0")
+		return tk
+	}
+	t.Run("evaluate advisory lock expression once", func(t *testing.T) {
+		tk := newGreedyTestKit(t)
+		tk.MustExec("create table lock_names(a int not null, n varchar(32) not null)")
+		tk.MustExec("create table lock_keys(a int not null)")
+		tk.MustExec("insert into lock_names values (1,'join_reorder_lock')")
+		tk.MustExec("insert into lock_keys values (1)")
+		for _, through := range []string{"off", "on"} {
+			tk.MustExec("set tidb_opt_join_reorder_through_proj=" + through)
+			tk.MustQuery("select get_lock('join_reorder_lock',0)").Check(testkit.Rows("1"))
+			tk.MustQuery("select d.k from (select ifnull(release_lock(n.n),0) k " +
+				"from lock_names n join lock_keys x on n.a=x.a) d join lock_keys y on d.k=y.a").Check(testkit.Rows("1"))
+		}
+	})
+
+	t.Run("leading alias across query blocks", func(t *testing.T) {
+		tk := newGreedyTestKit(t)
+		tk.MustExec("create table leading_keys(a int not null)")
+		tk.MustExec("insert into leading_keys values (1),(2)")
+		for _, through := range []string{"off", "on"} {
+			tk.MustExec("set tidb_opt_join_reorder_through_proj=" + through)
+			tk.MustQuery("select /*+ leading(x,d) */ x.a,d.k from leading_keys x join " +
+				"(select z.a+1 k from (select a from leading_keys limit 10) e " +
+				"join leading_keys z on e.a=z.a) d on x.a=d.k").Check(testkit.Rows("2 2"))
+			tk.MustQuery("show warnings").Check(testkit.Rows())
+		}
+	})
 }
 
 func TestJoinReorderProjectionRand(t *testing.T) {

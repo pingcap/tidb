@@ -68,6 +68,12 @@ func isInlineableProjectionExpr(expr expression.Expression) bool {
 	case *expression.Column:
 		return true
 	case *expression.ScalarFunction:
+		// Optional evaluation properties can expose mutable state (e.g. advisory
+		// locks or session variables). Inlining may evaluate the expression once
+		// for a join key and again to restore the output.
+		if x.Function.RequiredOptionalEvalProps() != 0 {
+			return false
+		}
 		for _, arg := range x.GetArgs() {
 			if !isInlineableProjectionExpr(arg) {
 				return false
