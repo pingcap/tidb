@@ -110,10 +110,14 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad, fromRemote bool) 
 		return err
 	}
 
-	// Rows are ordered by update time. A later live record can recreate a
-	// deleted binding, so defer removals until all records have been processed.
-	pendingRemovals := make(map[string]struct{})
-	for _, binding := range bindings {
+	// Resolve each digest before changing the cache. Rows are ordered by update
+	// time, so a later live record can recreate a deleted binding.
+	type bindingUpdate struct {
+		binding   *Binding
+		lastIndex int
+	}
+	updates := make(map[string]bindingUpdate, len(bindings))
+	for i, binding := range bindings {
 		// Update lastUpdateTime to the newest one.
 		// Even if this one is an invalid bind.
 		if binding.UpdateTime.Compare(lastUpdateTime) > 0 {
@@ -121,24 +125,33 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad, fromRemote bool) 
 			hasNewBinding = true
 		}
 
-		oldBinding := u.GetBinding(binding.SQLDigest)
-		cachedBinding := pickCachedBinding(oldBinding, binding)
-		if cachedBinding != nil {
-			err = u.SetBinding(binding.SQLDigest, cachedBinding)
-			if err != nil {
-				bindingLogger().Warn("BindingHandle.Update", zap.Error(err))
-			} else {
-				delete(pendingRemovals, binding.SQLDigest)
-			}
-		} else {
-			pendingRemovals[binding.SQLDigest] = struct{}{}
+		update, ok := updates[binding.SQLDigest]
+		if !ok {
+			update.binding = u.GetBinding(binding.SQLDigest)
+		}
+		update.binding = pickCachedBinding(update.binding, binding)
+		update.lastIndex = i
+		updates[binding.SQLDigest] = update
+	}
+	// Free deleted entries before admitting live bindings so obsolete entries
+	// cannot cause unrelated live bindings to be evicted under a tight quota.
+	var removedDigests []string
+	for digest, update := range updates {
+		if update.binding == nil {
+			removedDigests = append(removedDigests, digest)
 		}
 	}
-	removedDigests := make([]string, 0, len(pendingRemovals))
-	for digest := range pendingRemovals {
-		removedDigests = append(removedDigests, digest)
-	}
 	u.RemoveBinding(removedDigests...)
+	// Apply each final live binding once, in last-record storage order.
+	for i, binding := range bindings {
+		update := updates[binding.SQLDigest]
+		if update.binding == nil || update.lastIndex != i {
+			continue
+		}
+		if err = u.SetBinding(binding.SQLDigest, update.binding); err != nil {
+			bindingLogger().Warn("BindingHandle.Update", zap.Error(err))
+		}
+	}
 
 	// update last-update-time and metrics
 	u.lastUpdateTime.Store(lastUpdateTime)

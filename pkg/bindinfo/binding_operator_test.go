@@ -120,6 +120,56 @@ func TestBindingCache(t *testing.T) {
 			require.Equal(t, test.removed, cache.GetBinding(binding.SQLDigest) == nil)
 		})
 	}
+
+	t.Run("removals free capacity before insertions", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("DELETE FROM mysql.bind_info WHERE source != 'builtin'")
+		cache := bindinfo.NewBindingCacheUpdater(&mockSessionPool{tk.Session()})
+		defer cache.Close()
+		for _, digest := range []string{"unchanged", "deleted"} {
+			require.NoError(t, cache.SetBinding(digest, &bindinfo.Binding{
+				OriginalSQL: binding.OriginalSQL,
+				BindSQL:     binding.BindSQL,
+				Db:          binding.Db,
+				Status:      binding.Status,
+				CreateTime:  binding.CreateTime,
+				UpdateTime:  binding.UpdateTime,
+				Charset:     binding.Charset,
+				Collation:   binding.Collation,
+				ID:          binding.ID,
+				SQLDigest:   digest,
+			}))
+		}
+		quota := cache.GetMemUsage()
+		oldQuota := tk.MustQuery("SELECT @@global.tidb_mem_quota_binding_cache").Rows()[0][0].(string)
+		defer tk.MustExec("SET GLOBAL tidb_mem_quota_binding_cache = " + oldQuota)
+		tk.MustExec(fmt.Sprintf("SET GLOBAL tidb_mem_quota_binding_cache = %d", quota))
+		// Retaining the hot deleted binding during admission would evict the
+		// cold unchanged binding, even though the final live set fits the quota.
+		for range 8192 {
+			cache.GetBinding("deleted")
+		}
+		time.Sleep(100 * time.Millisecond) // let Ristretto process the access counts
+		for _, row := range []struct{ digest, status, updateTime string }{
+			{"unchanged", "enabled", binding.UpdateTime.String()},
+			{"deleted", "deleted", "2030-01-01 00:00:00"},
+			{"inserted", "enabled", "2030-01-01 00:00:01"},
+		} {
+			tk.MustExec(`INSERT INTO mysql.bind_info
+				(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				binding.OriginalSQL, binding.BindSQL, binding.Db, row.status, binding.CreateTime.String(), row.updateTime,
+				binding.Charset, binding.Collation, binding.Source, row.digest, binding.PlanDigest)
+		}
+		require.NoError(t, cache.LoadFromStorageToCache(true, false))
+		require.Nil(t, cache.GetBinding("deleted"))
+		require.NotNil(t, cache.GetBinding("inserted"))
+		require.NotNil(t, cache.GetBinding("unchanged"))
+		// The unchanged binding is outside the incremental reload window and
+		// cannot be recovered by another poll if it was evicted above.
+		require.NoError(t, cache.LoadFromStorageToCache(false, false))
+		require.Len(t, cache.GetAllBindings(), 2)
+	})
 }
 
 // TestConcurrentBindingCacheReloadAndMatch mirrors the hot-binding repro:
