@@ -138,7 +138,8 @@ func (e *AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 		totFts = append(totFts, col.RetType)
 	}
 	chk := chunk.NewChunkWithCapacity(totFts, len(collector.Base().Samples))
-	decoder := codec.NewDecoder(chk, time.UTC)
+	sessionLocation := e.ctx.GetSessionVars().Location()
+	decoder := codec.NewDecoder(chk, sessionLocation)
 	for _, sample := range collector.Base().Samples {
 		for i, columns := range sample.Columns {
 			// Virtual columns will be decoded as null first.
@@ -165,6 +166,16 @@ func (e *AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	iter := chunk.NewIterator4Chunk(chk)
 	for row, i := iter.Begin(), 0; row != iter.End(); row, i = iter.Next(), i+1 {
 		datums := row.GetDatumRow(totFts)
+		for columnIndex, columnType := range totFts {
+			if datums[columnIndex].Kind() != types.KindMysqlTime || columnType.GetType() != mysql.TypeTimestamp {
+				continue
+			}
+			timestamp := datums[columnIndex].GetMysqlTime()
+			if err := timestamp.ConvertTimeZone(sessionLocation, time.UTC); err != nil {
+				return err
+			}
+			datums[columnIndex] = types.NewTimeDatum(timestamp)
+		}
 		collector.Base().Samples[i].Columns = datums
 	}
 	return nil

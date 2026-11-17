@@ -377,3 +377,22 @@ func TestTimestampStatsAreTimeZoneIndependent(t *testing.T) {
 	require.Equal(t, "1044.48", estimate("+08:00", "2024-04-08 10:00:02"))
 	require.Equal(t, "1044.48", estimate("-05:00", "2024-04-07 21:00:02"))
 }
+
+func TestAnalyzeVirtualTimestampColumnUsesSessionTimeZone(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@time_zone = '+08:00'")
+	tk.MustExec("create table t (a timestamp, b year generated always as (year(a)) virtual, index(b))")
+	tk.MustExec("insert into t (a) values ('2024-12-31 23:00:00'), ('2025-01-01 00:00:00')")
+	for range 9 {
+		tk.MustExec("insert into t (a) select a from t")
+	}
+	tk.MustExec("analyze table t with 2 topn")
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't' and is_index = 1 and column_name = 'b'").
+		Sort().
+		Check(testkit.Rows(
+			"test t  b 1 2024 512",
+			"test t  b 1 2025 512",
+		))
+}
