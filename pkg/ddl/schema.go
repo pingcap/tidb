@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"go.uber.org/zap"
 )
 
@@ -401,6 +402,15 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 			}
 		}
 
+		if schemaInfo.Name.L != recoverSchemaInfo.OldSchemaName.L {
+			for _, recoverInfo := range recoverTbls {
+				if err = rewriteRecoveredViewSchema(recoverInfo.TableInfo, recoverSchemaInfo.OldSchemaName, schemaInfo.Name); err != nil {
+					job.State = model.JobStateCancelled
+					return ver, errors.Trace(err)
+				}
+			}
+		}
+
 		dbInfo := schemaInfo.Clone()
 		dbInfo.State = model.StatePublic
 		err = jobCtx.metaMut.CreateDatabase(dbInfo)
@@ -423,6 +433,12 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
+		}
+		if err = w.recoverSchemaMaterializedViewInfos(jobCtx, recoverTbls, recoverSchemaInfo.SnapshotTS); err != nil {
+			if dbterror.ErrInvalidDDLJob.Equal(err) {
+				job.State = model.JobStateCancelled
+			}
+			return ver, errors.Trace(err)
 		}
 		schemaInfo.State = model.StatePublic
 		// use to update InfoSchema

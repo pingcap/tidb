@@ -62,9 +62,7 @@ var HealthyBucketConfigs = []HealthyBucketConfig{
 
 // statistics metrics vars
 var (
-	StatsHealthyGauges                []prometheus.Gauge
-	DumpHistoricalStatsSuccessCounter prometheus.Counter
-	DumpHistoricalStatsFailedCounter  prometheus.Counter
+	StatsHealthyGauges []prometheus.Gauge
 )
 
 func init() {
@@ -80,7 +78,4 @@ func InitMetricsVars() {
 	for idx, cfg := range HealthyBucketConfigs {
 		StatsHealthyGauges[idx] = metrics.StatsHealthyGauge.WithLabelValues(cfg.Label)
 	}
-
-	DumpHistoricalStatsSuccessCounter = metrics.HistoricalStatsCounter.WithLabelValues("dump", "success")
-	DumpHistoricalStatsFailedCounter = metrics.HistoricalStatsCounter.WithLabelValues("dump", "fail")
 }

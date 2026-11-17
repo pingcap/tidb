@@ -171,10 +171,21 @@ func (sm3 *sm3) Reset() {
 func (sm3 *sm3) Write(p []byte) (int, error) {
 	toWrite := len(p)
 	sm3.length += uint64(len(p) * 8)
-	msg := append(sm3.unhandleMsg, p...)
-	nblocks := len(msg) / sm3.BlockSize()
-	sm3.digest = sm3.update(msg)
-	sm3.unhandleMsg = msg[nblocks*sm3.BlockSize():]
+	// Complete a buffered block, then process full blocks directly from p.
+	// Buffer only the tail so repeated writes do not copy the entire input.
+	if len(sm3.unhandleMsg) > 0 {
+		n := min(sm3.BlockSize()-len(sm3.unhandleMsg), len(p))
+		sm3.unhandleMsg = append(sm3.unhandleMsg, p[:n]...)
+		p = p[n:]
+		if len(sm3.unhandleMsg) < sm3.BlockSize() {
+			return toWrite, nil
+		}
+		sm3.digest = sm3.update(sm3.unhandleMsg)
+		sm3.unhandleMsg = sm3.unhandleMsg[:0]
+	}
+	n := len(p) / sm3.BlockSize() * sm3.BlockSize()
+	sm3.digest = sm3.update(p[:n])
+	sm3.unhandleMsg = append(sm3.unhandleMsg, p[n:]...)
 
 	return toWrite, nil
 }

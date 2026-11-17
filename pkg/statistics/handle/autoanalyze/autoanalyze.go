@@ -463,7 +463,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 				continue
 			}
 
-			if tblInfo.IsView() {
+			if ShouldSkipAutoAnalyzeTable(tblInfo) {
 				continue
 			}
 
@@ -520,6 +520,18 @@ func RandomPickOneTableAndTryAutoAnalyze(
 	}
 
 	return false
+}
+
+// ShouldSkipAutoAnalyzeTable excludes views, materialized view logs, and materialized
+// views whose initial build is not ready from ordinary auto analyze.
+func ShouldSkipAutoAnalyzeTable(tblInfo *model.TableInfo) bool {
+	if tblInfo == nil {
+		return false
+	}
+	if tblInfo.IsView() || tblInfo.MaterializedViewLog != nil {
+		return true
+	}
+	return tblInfo.MaterializedView != nil && !tblInfo.MaterializedView.GetInitBuildState().IsReady()
 }
 
 func getPartitionStats(

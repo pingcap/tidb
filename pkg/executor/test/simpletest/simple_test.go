@@ -922,7 +922,7 @@ func TestKillStmt(t *testing.T) {
 	tk.MustExec("grant CONNECTION_ADMIN on *.* to restricted_killer")
 	tk.MustExec("grant RESTRICTED_USER_ADMIN on *.* to restricted_user")
 
-	sm := &testkit.MockSessionManager{SerID: dom.ServerID}
+	sm := &testkit.MockSessionManager{SerID: dom.ServerID()}
 	tk.Session().SetSessionManager(sm)
 	tk.MustExec(fmt.Sprintf("set @kill_id = %d", killConnID))
 

@@ -138,22 +138,33 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	// Add a fake table ID to prevent the deadlock between the batch get and the point get.
 	//
 	// Deadlock Issue Explanation:
-	// We encountered a stable deadlock issue during the analyze process where the transaction
-	// ultimately failed and the error was propagated to the top layer. From the deadlock records
-	// in information_schema.deadlocks, it's confirmed that this is a non-retryable deadlock.
 	//
-	// Root Cause:
-	// The point get operation acquires locks in two separate phases: first the index lock, then the row lock.
-	// Meanwhile, another transaction doing a batch point get (e.g. during stats delta dump) acquires both locks
-	// together but in the opposite order (row then index). This creates a circular wait condition where:
-	// 1. Transaction 1 holds index lock and waits for row lock
-	// 2. Transaction 2 holds row lock and waits for index lock
-	// Since the locks are acquired in separate lockKeys calls, TiDB cannot detect and retry this deadlock.
+	// For a cluster bootstrapped before v8.5.7, mysql.stats_meta has no primary
+	// key, only UNIQUE INDEX tbl(table_id). A point get FOR UPDATE locks in two
+	// LockKeys calls: the unique-index key first, then the _tidb_rowid row key. A
+	// batch point get (for example the stats delta dump, table_id IN (...)) uses
+	// one LockKeys call. The executor appends row keys and then index keys, but
+	// client-go sorts before sending. Index keys sort before row keys. If the
+	// transaction has no primary yet, the smallest key is selected. The batch
+	// containing the primary is locked first; the remaining region batches are
+	// then locked in parallel.
 	//
-	// Deadlock Sequence:
-	// txn1: lockKeys on point get (index lock)
-	// txn2: lockKeys on batch point get (row lock) — waits for txn1 for index lock
-	// txn1: lockKeys on point get (row lock) — deadlock occurs here and it's not retryable
+	// Take a point get of table_id 2 concurrent with a batch point get of
+	// table_id IN (1, 2). The batch primary is index(1). This deadlocks when
+	// index(2) is outside that primary batch and row(2) is on another region from
+	// index(2), so those two locks run in parallel:
+	//
+	// Deadlock sequence:
+	// txn1: LockKeys(index of 2) — acquired
+	// txn2: LockKeys primary batch — acquires index of 1
+	// txn2: parallel batches — the row region acquires row(2); the index region
+	// waits for index(2)
+	// txn1: LockKeys(row of 2) — waits for txn2
+	//
+	// If the point get is chosen as the victim, this deadlock is not retryable.
+	// Its second LockKeys contains only the row, and the index it already holds
+	// is absent from that call.
+	//
 	// Pick a fake table ID to reduce lock contention on mysql.stats_meta.
 	// Under repeatable-read, even non-existent keys are locked.
 	// Using the negative table ID keeps it separate from real table IDs and from other fake IDs.
@@ -388,10 +399,10 @@ func SaveMetaToStorage(
 	sctx sessionctx.Context,
 	refreshLastHistVer bool,
 	metaUpdates []statstypes.MetaUpdate,
-) (uint64, error) {
+) error {
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	var sql string
 	values := make([]string, 0, len(metaUpdates))
@@ -409,42 +420,54 @@ func SaveMetaToStorage(
 			"on duplicate key update version = values(version), modify_count = values(modify_count), count = values(count)", strings.Join(values, ","))
 	}
 	_, err = util.Exec(sctx, sql)
-	return version, errors.Trace(err)
+	return errors.Trace(err)
 }
 
 // InsertColStats2KV insert a record to stats_histograms with distinct_count 1
 // and insert a bucket to stats_buckets with default value. This operation also
-// updates version.
+// updates version. It locks mysql.stats_meta before those histogram rows, matching
+// the lock order of SaveAnalyzeResultToStorage. On clusters bootstrapped before
+// v8.5.7, a point get for a single table ID can still deadlock with that
+// analyze save.
 func InsertColStats2KV(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	physicalID int64,
 	colInfos []*model.ColumnInfo,
-) (uint64, error) {
+) error {
 	startTS, err := util.GetStartTS(sctx)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
-	// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
+	// Lock mysql.stats_meta before mysql.stats_histograms / mysql.stats_buckets.
+	// SaveAnalyzeResultToStorage already takes that order. Inserting the histogram
+	// first deadlocks with ANALYZE: this transaction holds the new histogram row and
+	// waits for stats_meta, while ANALYZE holds stats_meta and waits for the histogram.
+	// On clusters bootstrapped before v8.5.7, mysql.stats_meta is a non-clustered
+	// table with a unique key on table_id. A point get for a single table ID can
+	// deadlock with the analyze batch point get, as explained in
+	// SaveAnalyzeResultToStorage.
+	// TODO: Resolve the point-get/batch-point-get deadlock on non-clustered
+	// stats_meta tables, possibly in the transaction layer.
 	var rs sqlexec.RecordSet
 	rs, err = util.ExecWithCtx(
 		ctx, sctx,
-		"select count from mysql.stats_meta where table_id = %?",
+		"select count from mysql.stats_meta where table_id = %? for update",
 		physicalID,
 	)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	defer terror.Call(rs.Close)
 	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	// If no row is returned, it means the stats of this table does not exist.
 	if req.NumRows() == 0 {
-		return startTS, nil
+		return nil
 	}
 	count := req.GetRow(0).GetInt64(0)
 	hasStatsUpdate := false
@@ -462,7 +485,7 @@ func InsertColStats2KV(
 				values (%?, %?, 0, %?, 0, 0)`,
 				startTS, physicalID, colInfo.ID,
 			); err != nil {
-				return 0, errors.Trace(err)
+				return errors.Trace(err)
 			}
 			if sctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
 				hasStatsUpdate = true
@@ -472,7 +495,7 @@ func InsertColStats2KV(
 
 		value, err := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if value.IsNull() {
 			// If the adding column has default value null, all the existing rows have null value on the newly added column.
@@ -483,7 +506,7 @@ func InsertColStats2KV(
 				values (%?, %?, 0, %?, 0, %?)`,
 				startTS, physicalID, colInfo.ID, count,
 			); err != nil {
-				return 0, errors.Trace(err)
+				return errors.Trace(err)
 			}
 			if sctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
 				hasStatsUpdate = true
@@ -499,7 +522,7 @@ func InsertColStats2KV(
 			values (%?, %?, 0, %?, 1, GREATEST(%?, 0))`,
 			startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count,
 		); err != nil {
-			return 0, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		// The histogram may have been created by ANALYZE TABLE ... ALL COLUMNS before the add-column DDL event is handled.
 		// Skip inserting the default-value bucket in that case.
@@ -509,7 +532,7 @@ func InsertColStats2KV(
 		hasStatsUpdate = true
 		value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
-			return 0, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		// There must be only one bucket for this new column and the value is the default value.
 		if _, err = util.ExecWithCtx(
@@ -519,21 +542,22 @@ func InsertColStats2KV(
 			values (%?, 0, %?, 0, %?, %?, %?, %?)`,
 			physicalID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes(),
 		); err != nil {
-			return 0, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
 	if !hasStatsUpdate {
-		return startTS, nil
+		return nil
 	}
+	failpoint.InjectCall("pauseBeforeInsertColStatsMetaUpdate")
 	_, err = util.ExecWithCtx(
 		ctx, sctx,
 		"update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %?",
 		startTS, startTS, physicalID,
 	)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	return startTS, nil
+	return nil
 }
 
 // InsertTableStats2KV inserts a record standing for a new table to stats_meta
@@ -544,17 +568,17 @@ func InsertTableStats2KV(
 	sctx sessionctx.Context,
 	info *model.TableInfo,
 	physicalID int64,
-) (uint64, error) {
+) error {
 	startTS, err := util.GetStartTS(sctx)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	if _, err = util.ExecWithCtx(
 		ctx, sctx,
 		"insert ignore into mysql.stats_meta (version, table_id, last_stats_histograms_version) values(%?, %?, %?)",
 		startTS, physicalID, startTS,
 	); err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	for _, col := range info.Columns {
 		if _, err = util.ExecWithCtx(
@@ -564,7 +588,7 @@ func InsertTableStats2KV(
 			values (%?, 0, %?, 0, %?)`,
 			physicalID, col.ID, startTS,
 		); err != nil {
-			return 0, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
 	for _, idx := range info.Indices {
@@ -575,10 +599,10 @@ func InsertTableStats2KV(
 			values(%?, 1, %?, 0, %?)`,
 			physicalID, idx.ID, startTS,
 		); err != nil {
-			return 0, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
-	return startTS, nil
+	return nil
 }
 
 // convertBoundToBlob converts the bound to blob. The `blob` will be used to store in the `mysql.stats_buckets` table.
