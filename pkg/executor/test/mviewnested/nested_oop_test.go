@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -132,7 +133,7 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceRebindsDependentMaterializedVi
 	require.ElementsMatch(t, []int64{child1.ID, child2.ID}, newLog.MaterializedViewLog.DependentMViewIDs)
 	for _, name := range []string{"child1", "child2"} {
 		require.Equal(t, []int64{newMV.ID}, getInfo(name).MaterializedView.BaseTableIDs)
-		require.ErrorContains(t, tk.ExecToErr("refresh materialized view "+name+" fast"), "run COMPLETE refresh")
+		tk.MustGetErrCode("refresh materialized view "+name+" fast", int(exeerrors.ErrMVRefreshLogBaselineChanged.Code()))
 		tk.MustQuery("select * from " + name + " order by a").Check(testkit.Rows("1 10 1 1", "2 20 1 1"))
 	}
 	require.Equal(t, beforeInfo, tk.MustQuery(childInfoSQL).Rows())
@@ -178,7 +179,7 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceRebindsDependentMaterializedVi
 	// only the next level. The sibling's recovered input remains valid.
 	tk.MustExec("refresh materialized view child1 complete out of place")
 	require.NotEqual(t, childLogID, getInfo("$mlog$child1").ID)
-	require.ErrorContains(t, tk.ExecToErr("refresh materialized view grandchild fast"), "run COMPLETE refresh")
+	tk.MustGetErrCode("refresh materialized view grandchild fast", int(exeerrors.ErrMVRefreshLogBaselineChanged.Code()))
 	tk.MustExec("refresh materialized view grandchild complete delta apply")
 	tk.MustExec("insert into t_oop values (5, 50)")
 	for _, name := range []string{"mv_oop", "child1", "child2", "grandchild"} {
@@ -366,7 +367,8 @@ func TestMaterializedViewRefreshCompleteOutOfPlacePurgeConcurrency(t *testing.T)
 				}, 10*time.Second, 10*time.Millisecond)
 				unblock()
 				waitFor(purgeFinished, "stale purge")
-				require.ErrorContains(t, <-purgeDone, "mlog purge lock conflict")
+				err := <-purgeDone
+				require.True(t, exeerrors.ErrMVAdvisoryLockConflict.Equal(err), "%v", err)
 			} else {
 				if stage == "starting" {
 					waitFor(retried, "cutover retry before running history exists")
@@ -380,7 +382,9 @@ func TestMaterializedViewRefreshCompleteOutOfPlacePurgeConcurrency(t *testing.T)
 					// Purge still holds the lock after observing cancellation. The
 					// total budget must fail the job instead of restarting DDL retries.
 					waitFor(cutoverFinished, "cutover purge-lock timeout")
-					require.ErrorContains(t, <-cutoverDone, "timed out waiting for materialized view log purge")
+					err := <-cutoverDone
+					require.True(t, exeerrors.ErrMVAdvisoryLockConflict.Equal(err), "%v", err)
+					require.ErrorContains(t, err, "refresh materialized view complete OUT OF PLACE cutover for test.mv_source_init: timed out waiting for materialized view log purge; retry refresh")
 					require.Equal(t, int32(1), cutoverAttempts.Load())
 					require.False(t, retiring.Load())
 					require.Equal(t, beforeInfo, tk.MustQuery("select * from mysql.tidb_mview_refresh_info order by MVIEW_ID").Rows())
