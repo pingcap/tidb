@@ -34,10 +34,10 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	dxfstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
-	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	litkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -345,7 +345,7 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 		if kerneltype.IsClassic() || kv.IsSystemKS(se.GetStore()) {
 			taskMeta.JobID = jobID
 			planCtx.SessionCtx = se
-			planCtx.TaskKey = taskkey.ForJob(jobID)
+			planCtx.TaskKey = taskkey.ForImportJob(jobID)
 			planCtx.Keyspace = plan.Keyspace
 			if taskID, err2 = submitTask2DXF(taskMeta, extraParams, planCtx, taskManager); err2 != nil {
 				return err2
@@ -369,7 +369,7 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 		if err2 = dxfTaskMgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 			taskMeta.JobID = jobID
 			planCtx.SessionCtx = se
-			planCtx.TaskKey = taskkey.ForJob(jobID)
+			planCtx.TaskKey = taskkey.ForImportJob(jobID)
 			planCtx.Keyspace = plan.Keyspace
 			var err2 error
 			if taskID, err2 = submitTask2DXF(taskMeta, extraParams, planCtx, dxfTaskMgr); err2 != nil {
@@ -570,7 +570,7 @@ func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
 	if err != nil {
 		return err
 	}
-	taskKey := taskkey.ForJob(jobID)
+	taskKey := taskkey.ForImportJob(jobID)
 	_, err = manager.GetTaskBaseByKeyWithHistory(ctx, taskKey)
 	if err == nil {
 		if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
@@ -637,17 +637,7 @@ func (e *ImportIntoExec) prepareQuery(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.controller.Plan.QuerySource = query
-	// TODO: split I/O-bound single-table queries into range subtasks, and remove
-	// this cap, which also keeps the later steps on one node.
-	e.controller.Plan.MaxNodeCnt = 1
-	// The query takes all slots of a DXF node.
-	cpuCnt, err := handle.GetCPUCountOfNode(ctx)
-	if err != nil {
-		return err
-	}
-	e.controller.Plan.ThreadCnt = cpuCnt
-	return nil
+	return e.controller.SetQuerySource(ctx, query)
 }
 
 // fillQueryInfo preserves the affected-row response of IMPORT FROM SELECT.

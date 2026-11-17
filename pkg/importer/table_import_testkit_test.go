@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -98,9 +98,9 @@ func TestImportFromSelectCleanup(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	checkImportDirEmpty(t)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/mockImportFromSelectErr", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/importer/mockImportFromSelectErr", `return(true)`))
 	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/mockImportFromSelectErr"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/importer/mockImportFromSelectErr"))
 	})
 
 	tk.MustExec("use test")

@@ -13,7 +13,6 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
-        "//pkg/ddl",
         "//pkg/ddl/ingest",
         "//pkg/ddl/schemaver",
         "//pkg/dxf/framework/dxfmetric",
@@ -22,6 +21,7 @@ go_test(
         "//pkg/dxf/framework/storage",
         "//pkg/dxf/framework/taskexecutor",
         "//pkg/dxf/framework/testutil",
+        "//pkg/dxf/taskkey",
         "//pkg/errno",
         "//pkg/ingestor/errdef",
         "//pkg/ingestor/ingestcli",

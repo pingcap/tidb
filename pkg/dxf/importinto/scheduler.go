@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -341,8 +341,10 @@ func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle,
 	}
 
 	logicalPlan := &LogicalPlan{
-		Plan:   taskMeta.Plan,
-		Stmt:   taskMeta.Stmt,
+		TaskMeta: taskinfo.TaskMeta{
+			Plan: taskMeta.Plan,
+			Stmt: taskMeta.Stmt,
+		},
 		Logger: sch.GetLogger(),
 	}
 	controller, err := buildControllerForPlan(logicalPlan)

@@ -22,23 +22,23 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 )
 
-// ForJob returns the task key for an import-into job.
-func ForJob(jobID int64) string {
+// ForImportJob returns the task key for an import-into job.
+func ForImportJob(jobID int64) string {
 	if kerneltype.IsNextGen() {
-		return forJobInKeyspace(keyspace.GetKeyspaceNameBySettings(), jobID)
+		return forImportJobInKeyspace(keyspace.GetKeyspaceNameBySettings(), jobID)
 	}
 	return fmt.Sprintf("%s/%d", proto.ImportInto, jobID)
 }
 
-// ForJobInKeyspace returns the task key for an import-into job in a keyspace.
+// ForImportJobInKeyspace returns the task key for an import-into job in a keyspace.
 // In classic mode, keyspace is ignored because task keys are not keyspace-scoped.
-func ForJobInKeyspace(keyspaceName string, jobID int64) string {
+func ForImportJobInKeyspace(keyspaceName string, jobID int64) string {
 	if kerneltype.IsNextGen() {
-		return forJobInKeyspace(keyspaceName, jobID)
+		return forImportJobInKeyspace(keyspaceName, jobID)
 	}
-	return ForJob(jobID)
+	return ForImportJob(jobID)
 }
 
-func forJobInKeyspace(keyspaceName string, jobID int64) string {
+func forImportJobInKeyspace(keyspaceName string, jobID int64) string {
 	return fmt.Sprintf("%s/%s/%d", keyspaceName, proto.ImportInto, jobID)
 }

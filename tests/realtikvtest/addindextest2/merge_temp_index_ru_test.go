@@ -30,6 +30,7 @@ import (
 	diststorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -135,7 +136,7 @@ func TestMergeTempIndexRUAccountingAcrossRetry(t *testing.T) {
 	// successful attempt, so the workload survives the subtask history transfer.
 	taskMgr, err := diststorage.GetTaskManager()
 	require.NoError(t, err)
-	taskKey := ddl.NewTaskKeyBuilder().SetMergeTempIndex(true).Build(capturedJobID)
+	taskKey := taskkey.NewBackfillKeyBuilder().SetMergeTempIndex(true).Build(capturedJobID)
 	taskCtx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 	task, err := taskMgr.GetTaskByKeyWithHistory(taskCtx, taskKey)
 	require.NoError(t, err)
