@@ -690,25 +690,6 @@ pub trait Columns {
         None
     }
 
-    /// Go `SessionVars.ActiveRoles` as `(user, host)` pairs, read through
-    /// `SessionVarsPropReader`. `None` is a context without Go's
-    /// `OptPropSessionVars` property, where Go's reader errors.
-    fn active_role_identities(&self) -> Option<Vec<(String, String)>> {
-        None
-    }
-
-    /// Go `SQLDigestTextRetriever.RetrieveGlobal` (`expression/util.go`),
-    /// which `TIDB_DECODE_SQL_DIGESTS` runs through its SQL-executor
-    /// property: each requested digest's normalized text from the statement
-    /// summaries, empty when none knows it. `Some(Err)` is the retrieval's
-    /// failure; `None` is a resolver with no SQL executor at all.
-    fn retrieve_sql_digest_texts(
-        &self,
-        _digests: &[String],
-    ) -> Option<Result<std::collections::HashMap<String, String>, String>> {
-        None
-    }
-
     /// Acquires a session advisory lock. `Ok(false)` is lock-wait timeout.
     fn acquire_advisory_lock(
         &self,

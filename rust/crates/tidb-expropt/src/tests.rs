@@ -155,7 +155,11 @@ impl SqlExecutor for MockSqlExecutor {
 }
 
 struct MockSessionVars;
-impl SessionVars for MockSessionVars {}
+impl SessionVars for MockSessionVars {
+    fn active_roles(&self) -> Vec<Arc<RoleIdentity>> {
+        Vec::new()
+    }
+}
 
 struct MockSessionContext {
     trace: Arc<dyn std::any::Any + Send + Sync>,

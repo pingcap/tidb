@@ -138,8 +138,6 @@ pub struct ViewerState {
     pub ddl_job_history_store: Option<Arc<dyn DdlJobHistoryStore>>,
     /// The analyze-job reader, absent for a session with no statistics.
     pub analyze_status: Option<Arc<dyn tidb_stats_handle_autoanalyze::analyze_jobs::AnalyzeStatusProvider>>,
-    /// Go's SQL-digest text retriever over this node and its peers.
-    pub digest_retriever: SqlDigestTextRetriever,
     pub data_lock_waits: Option<Arc<dyn DataLockWaitsProvider>>,
     /// The store client the TiFlash system tables query TiFlash through.
     pub tiflash_system_table: Option<Arc<dyn tidb_kv::tiflash_system_table::TiFlashSystemTableClient>>,
@@ -895,130 +893,6 @@ pub fn set_data_for_client_errors_summary(
     Ok(rows)
 }
 
-/// Go `SQLDigestTextRetriever` (`pkg/expression/util.go`): the SQL texts of
-/// statement digests, from the statement summaries through the session's
-/// restricted SQL executor.
-#[derive(Clone)]
-pub struct SqlDigestTextRetriever {
-    /// Go `expropt.SQLExecutor`: the session's `ExecRestrictedSQL`.
-    pub restricted_sql: RestrictedSql,
-}
-
-/// Go `SQLDigestTextRetriever.fetchAllLimit`: past this many digests the
-/// query fetches every row instead of listing them.
-const FETCH_ALL_LIMIT: usize = 512;
-
-impl SqlDigestTextRetriever {
-    /// Go `RetrieveLocal`, then, with `global`, `RetrieveGlobal`. A digest the
-    /// summaries do not know maps to the empty text.
-    pub fn retrieve(
-        &self,
-        _ctx: &crate::StmtContext,
-        digests: impl IntoIterator<Item = String>,
-        global: bool,
-    ) -> Result<std::collections::HashMap<String, String>, DriverError> {
-        let mut texts: std::collections::HashMap<String, String> = digests
-            .into_iter()
-            .map(|digest| (digest, String::new()))
-            .collect();
-        if texts.is_empty() {
-            return Ok(texts);
-        }
-        // Go `RetrieveLocal`.
-        if texts.len() <= FETCH_ALL_LIMIT {
-            let in_values: Vec<String> = texts.keys().cloned().collect();
-            let result = self.run_fetch_digest_query(false, &in_values)?;
-            if result.len() == texts.len() {
-                texts = result;
-            } else {
-                update_digest_info(&mut texts, &result);
-            }
-        } else {
-            let result = self.run_fetch_digest_query(false, &[])?;
-            update_digest_info(&mut texts, &result);
-        }
-        if !global {
-            return Ok(texts);
-        }
-        // Go `RetrieveGlobal`'s pass over the whole cluster.
-        let unknown: Vec<String> = texts
-            .iter()
-            .filter(|(_, text)| text.is_empty())
-            .map(|(digest, _)| digest.clone())
-            .collect();
-        if unknown.is_empty() {
-            return Ok(texts);
-        }
-        let result = if texts.len() <= FETCH_ALL_LIMIT {
-            self.run_fetch_digest_query(true, &unknown)?
-        } else {
-            self.run_fetch_digest_query(true, &[])?
-        };
-        update_digest_info(&mut texts, &result);
-        Ok(texts)
-    }
-
-    /// Go `runFetchDigestQuery`: `statements_summary` and its history (the
-    /// `cluster_` tables when `query_global`), unioned so a digest moved to
-    /// the history is still found, filtered to `in_values` when given.
-    fn run_fetch_digest_query(
-        &self,
-        query_global: bool,
-        in_values: &[String],
-    ) -> Result<std::collections::HashMap<String, String>, DriverError> {
-        let mut stmt = if query_global {
-            "select digest, digest_text from information_schema.cluster_statements_summary union distinct \
-             select digest, digest_text from information_schema.cluster_statements_summary_history"
-                .to_owned()
-        } else {
-            "select digest, digest_text from information_schema.statements_summary union distinct \
-             select digest, digest_text from information_schema.statements_summary_history"
-                .to_owned()
-        };
-        if !in_values.is_empty() {
-            stmt.push_str(" where digest in (");
-            stmt.push_str(&vec!["%?"; in_values.len()].join(","));
-            stmt.push(')');
-        }
-        let arguments: Vec<tidb_sqlescape::SqlArg<'_>> = in_values
-            .iter()
-            .map(|value| tidb_sqlescape::SqlArg::String(value.as_bytes()))
-            .collect();
-        let rows = exec_restricted_sql_over(
-            self.restricted_sql.as_deref(),
-            tidb_txnkv::INTERNAL_TXN_OTHERS,
-            &stmt,
-            &arguments,
-        )?;
-        Ok(rows
-            .into_iter()
-            .filter_map(|row| {
-                let digest = row.first()?.as_raw_bytes()?;
-                let text = row.get(1)?.as_raw_bytes()?;
-                Some((
-                    String::from_utf8_lossy(digest).into_owned(),
-                    String::from_utf8_lossy(text).into_owned(),
-                ))
-            })
-            .collect())
-    }
-}
-
-/// Go `updateDigestInfo`: a digest whose text is still unknown takes the
-/// query's.
-fn update_digest_info(
-    texts: &mut std::collections::HashMap<String, String>,
-    query_result: &std::collections::HashMap<String, String>,
-) {
-    for (digest, text) in texts.iter_mut() {
-        if !text.is_empty() {
-            continue;
-        }
-        if let Some(sql_text) = query_result.get(digest) {
-            text.clone_from(sql_text);
-        }
-    }
-}
 
 
 /// Go `ProcessInfo.ToRow` for each row: the columns of

@@ -591,10 +591,11 @@ pub struct StmtContextSessionState {
     /// statement locks nothing (no metadata-lock gate, or Go's autocommit
     /// read-only exemption).
     pub mdl_related_table: Option<MdlRelatedTableRecorder>,
-    /// The session's `SQLDigestTextRetriever`, which `TIDB_DECODE_SQL_DIGESTS`
-    /// runs through Go's SQL-executor property; `None` is a context with no
-    /// session to run it.
-    pub sql_digest_text_retriever: Option<SqlDigestTextRetrieval>,
+    /// Go `sessionexpr`'s SQL-executor property (`SQLExecutorPropProvider`):
+    /// the session's restricted SQL executor, which `TIDB_DECODE_SQL_DIGESTS`
+    /// runs its summary queries through; `None` is a context with no session
+    /// to run them.
+    pub sql_executor: Option<Arc<dyn tidb_expropt::SqlExecutor>>,
     /// Go `kv.Storage.GetMinSafeTS`, which `GetStmtMinSafeTime` asks of the
     /// session's store; `None` is a context with no store.
     pub min_safe_ts_provider: Option<MinSafeTsProvider>,
@@ -646,7 +647,7 @@ impl Default for StmtContextSessionState {
             view_definer_privilege: None,
             session_privilege: None,
             mdl_related_table: None,
-            sql_digest_text_retriever: None,
+            sql_executor: None,
             min_safe_ts_provider: None,
             locked_tables: None,
             ddl_sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
@@ -700,6 +701,7 @@ fn optional_eval_props(
     regions: &Arc<dyn tidb_kv::region_map::RegionStore>,
     session_privilege: &Option<SessionPrivilegeCheck>,
     dynamic_privilege: &Option<DynamicPrivilegeCheck>,
+    sql_executor: Option<Arc<dyn tidb_expropt::SqlExecutor>>,
 ) -> tidb_expropt::OptionalEvalPropProviders {
     let mut props = tidb_expropt::OptionalEvalPropProviders::new();
     let store: Arc<dyn tidb_expropt::KvStorage> = Arc::new(SessionKvStorage(Arc::clone(regions)));
@@ -709,21 +711,43 @@ fn optional_eval_props(
         dynamic: dynamic_privilege.clone(),
     });
     props.add(Arc::new(tidb_expropt::PrivilegeCheckerProvider::new(move || Arc::clone(&checker))));
+    props.add(session_vars_prop_provider(None));
+    if let Some(exec) = sql_executor {
+        props.add(Arc::new(tidb_expropt::SqlExecutorPropProvider::new(move || Ok(Arc::clone(&exec)))));
+    }
     props
+}
+
+/// Go `variable.SessionVars` as a statement's builtins read it through
+/// `SessionVarsPropReader`: the session's fields they read, as the
+/// statement starts.
+struct StmtSessionVars {
+    active_roles: Option<Arc<Vec<(String, String)>>>,
+}
+
+impl tidb_expropt::SessionVars for StmtSessionVars {
+    fn active_roles(&self) -> Vec<Arc<tidb_parser::auth::RoleIdentity>> {
+        self.active_roles.iter().flat_map(|roles| roles.iter()).map(|(username, hostname)| {
+            Arc::new(tidb_parser::auth::RoleIdentity { username: username.clone(), hostname: hostname.clone() })
+        }).collect()
+    }
+}
+
+impl tidb_expropt::SessionVarsProvider for StmtSessionVars {
+    fn get_session_vars(&self) -> Arc<dyn tidb_expropt::SessionVars> {
+        Arc::new(StmtSessionVars { active_roles: self.active_roles.clone() })
+    }
+}
+
+/// Go `sessionexpr`'s `expropt.NewSessionVarsProvider(sctx)`.
+fn session_vars_prop_provider(
+    active_roles: Option<Arc<Vec<(String, String)>>>,
+) -> Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider> {
+    Arc::new(tidb_expropt::new_session_vars_provider(Arc::new(StmtSessionVars { active_roles })))
 }
 
 /// Go `kv.Storage.GetMinSafeTS(txnScope)`.
 pub type MinSafeTsProvider = Arc<dyn Fn(&str) -> u64 + Send + Sync>;
-
-/// Go `SQLDigestTextRetriever.RetrieveGlobal` as `TIDB_DECODE_SQL_DIGESTS`
-/// runs it while evaluating in `StmtContext`: each requested digest's
-/// normalized text (empty when no summary knows it), or the retrieval's
-/// failure, which the builtin reports as a warning.
-pub type SqlDigestTextRetrieval = Arc<
-    dyn Fn(&StmtContext, &[String]) -> Result<std::collections::HashMap<String, String>, String>
-        + Send
-        + Sync,
->;
 
 /// Go `sctx.GetLatestInfoSchema()`: the latest domain infoschema as
 /// statement code reads it (`infoschema/context.MetaOnlyInfoSchema`), with
@@ -1045,8 +1069,6 @@ pub struct StmtContextData {
     plan_privilege_check: Option<Arc<dyn std::any::Any + Send + Sync>>,
     /// See [`StmtContextSessionState::mdl_related_table`].
     mdl_related_table: Option<MdlRelatedTableRecorder>,
-    /// See [`StmtContextSessionState::sql_digest_text_retriever`].
-    sql_digest_text_retriever: Option<SqlDigestTextRetrieval>,
     /// See [`StmtContextSessionState::min_safe_ts_provider`].
     min_safe_ts_provider: Option<MinSafeTsProvider>,
     /// Go `StmtCtx.GetOrStoreStmtCache(StmtSafeTSCacheKey, ...)`: the min
@@ -2930,9 +2952,12 @@ context_configuration! {
         self
     }
 
-    /// Attaches Go's typed `SessionVars.ActiveRoles` authority.
+    /// Attaches Go's typed `SessionVars.ActiveRoles` authority, and installs
+    /// Go `sessionexpr`'s session-vars provider over it for the builtins that
+    /// read it (`SessionVarsPropReader`).
     #[must_use]
     pub fn with_active_roles(mut self, active_roles: Option<Arc<Vec<(String, String)>>>) -> Self {
+        self.optional_props.add(session_vars_prop_provider(active_roles.clone()));
         self.active_roles = active_roles;
         self
     }
@@ -3236,7 +3261,12 @@ impl StmtContext {
         session: StmtContextSessionState,
     ) -> Self {
         Self(Arc::new(StmtContextData {
-            optional_props: optional_eval_props(&session.regions, &session.session_privilege, &session.dynamic_privilege),
+            optional_props: optional_eval_props(
+                &session.regions,
+                &session.session_privilege,
+                &session.dynamic_privilege,
+                session.sql_executor,
+            ),
             mpp_query_info: session.mpp_query_info,
             mpp_server_id: session.mpp_server_id,
             tiflash_compute_dispatch_policy: session.tiflash_compute_dispatch_policy,
@@ -3318,7 +3348,6 @@ impl StmtContext {
             session_privilege: session.session_privilege,
             plan_privilege_check: None,
             mdl_related_table: session.mdl_related_table,
-            sql_digest_text_retriever: session.sql_digest_text_retriever,
             min_safe_ts_provider: session.min_safe_ts_provider,
             stmt_safe_ts: std::sync::OnceLock::new(),
             locked_tables: session.locked_tables,
@@ -7424,24 +7453,6 @@ impl Columns for StmtContext {
         key: tidb_exprctx::OptionalEvalPropKey,
     ) -> Option<Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
         self.optional_props.get(key)
-    }
-
-    fn active_role_identities(&self) -> Option<Vec<(String, String)>> {
-        Some(
-            self.active_roles
-                .as_ref()
-                .map(|roles| roles.as_ref().clone())
-                .unwrap_or_default(),
-        )
-    }
-
-    fn retrieve_sql_digest_texts(
-        &self,
-        digests: &[String],
-    ) -> Option<Result<std::collections::HashMap<String, String>, String>> {
-        self.sql_digest_text_retriever
-            .as_ref()
-            .map(|retrieve| retrieve(self, digests))
     }
 
     fn get_stmt_min_safe_ts(&self) -> u64 {

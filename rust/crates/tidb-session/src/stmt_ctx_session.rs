@@ -514,8 +514,8 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::sys_error_count(self)
     }
 
-    fn sql_digest_text_retrieval(&self) -> tidb_sessionctx::SqlDigestTextRetrieval {
-        Session::sql_digest_text_retrieval(self)
+    fn sql_executor(&self) -> Option<std::sync::Arc<dyn tidb_sqlexec::RestrictedSqlExecutor>> {
+        Session::restricted_sql_executor(self)
     }
 
     fn stale_tso_timestamp(&self) -> Option<f64> {

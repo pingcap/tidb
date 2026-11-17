@@ -225,9 +225,12 @@ fn eval_extension_func(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_
         return Err(EvalError::Unsupported("an extension signature is built by extensionFuncClass"));
     };
     check_privileges(ctx, def)?;
-    let active_roles = ctx
-        .active_role_identities()
-        .ok_or_else(|| missing_property(OptionalEvalPropKey::SessionVars))?;
+    // Go `extensionFnContext.ActiveRoles`: `b.vars.ActiveRoles`, the vars
+    // `SessionVarsPropReader` read.
+    let vars = tidb_expropt::SessionVarsPropReader
+        .get_session_vars(ctx)
+        .map_err(crate::builtin_ext::misc::opt_prop_error)?;
+    let active_roles = vars.active_roles();
     let fn_ctx = ExtensionFnContext { ctx, args: &function.args, active_roles };
     match def.eval_tp {
         EvalType::String => {
@@ -248,7 +251,7 @@ fn eval_extension_func(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_
 struct ExtensionFnContext<'a> {
     ctx: &'a dyn Columns,
     args: &'a [Expression],
-    active_roles: Vec<(String, String)>,
+    active_roles: Vec<std::sync::Arc<RoleIdentity>>,
 }
 
 impl FunctionContext for ExtensionFnContext<'_> {
@@ -284,13 +287,7 @@ impl FunctionContext for ExtensionFnContext<'_> {
     }
 
     fn active_roles(&self) -> Vec<RoleIdentity> {
-        self.active_roles
-            .iter()
-            .map(|(username, hostname)| RoleIdentity {
-                username: username.clone(),
-                hostname: hostname.clone(),
-            })
-            .collect()
+        self.active_roles.iter().map(|role| RoleIdentity::clone(role)).collect()
     }
 
     fn current_db(&self) -> String {

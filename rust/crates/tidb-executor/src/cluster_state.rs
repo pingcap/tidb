@@ -55,11 +55,27 @@ impl ViewerState {
     /// peers.
     fn sql_digest_texts(
         &self,
-        ctx: &crate::StmtContext,
+        _ctx: &crate::StmtContext,
         digests: impl IntoIterator<Item = String>,
         global: bool,
     ) -> Result<std::collections::HashMap<String, String>, DriverError> {
-        self.digest_retriever.retrieve(ctx, digests, global)
+        let mut retriever = tidb_expr::expr_util::SqlDigestTextRetriever::new();
+        retriever
+            .sql_digests_map
+            .extend(digests.into_iter().map(|digest| (digest, String::new())));
+        if retriever.sql_digests_map.is_empty() {
+            return Ok(retriever.sql_digests_map);
+        }
+        let exec = self.restricted_sql.as_deref().ok_or_else(|| {
+            DriverError::unsupported("restricted SQL runs on the session's node".to_owned())
+        })?;
+        let retrieved = if global {
+            retriever.retrieve_global(exec)
+        } else {
+            retriever.retrieve_local(exec)
+        };
+        retrieved.map_err(crate::memtable_reader::sql_exec_driver_error)?;
+        Ok(retriever.sql_digests_map)
     }
 
     /// Go fetchClusterConfig checks CONFIG before discovery and reports per-node

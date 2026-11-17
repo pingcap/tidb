@@ -1640,7 +1640,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             view_definer_privilege: self.view_definer_privilege_check(),
             session_privilege: self.session_privilege_check(),
             mdl_related_table: self.mdl_related_table_recorder(),
-            sql_digest_text_retriever: Some(self.sql_digest_text_retrieval()),
+            sql_executor: self.sql_executor(),
             min_safe_ts_provider: self.min_safe_ts_provider(),
             locked_tables: self.locked_tables(),
             point_plan_val: self.point_plan_val(),
@@ -2757,9 +2757,11 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn sys_warning_count(&self) -> usize;
     /// Go's matching hook on `error_count`, `s.SysErrorCount`.
     fn sys_error_count(&self) -> usize;
-    /// [`Self::sql_digest_text_retriever`] as `TIDB_DECODE_SQL_DIGESTS` runs
-    /// it from the statement context (Go `RetrieveGlobal`).
-    fn sql_digest_text_retrieval(&self) -> crate::SqlDigestTextRetrieval;
+    /// Go `sessionexpr`'s SQL-executor property: the session's restricted
+    /// SQL executor (`sctx.GetRestrictedSQLExecutor()`), which builtins read
+    /// through `SQLExecutorPropReader`; `None` is a session with no node to
+    /// run restricted SQL on.
+    fn sql_executor(&self) -> Option<Arc<dyn tidb_sqlexec::RestrictedSqlExecutor>>;
     /// Go `kv.Storage.GetMinSafeTS` of the session's store, which the
     /// statement's `GetStmtMinSafeTime` reads; `None` without a store.
     fn min_safe_ts_provider(&self) -> Option<tidb_sessionctx::MinSafeTsProvider>;

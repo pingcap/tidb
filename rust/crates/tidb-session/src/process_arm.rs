@@ -22,23 +22,8 @@
 
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::*;
-use tidb_executor::memtable_reader::SqlDigestTextRetriever;
 
 impl Session {
-    // Go `SimpleExec.executeKillStmt`.
-    /// [`Self::sql_digest_text_retriever`] as `TIDB_DECODE_SQL_DIGESTS` runs
-    /// it from the statement context (Go `RetrieveGlobal`).
-    pub(crate) fn sql_digest_text_retrieval(&self) -> tidb_sessionctx::SqlDigestTextRetrieval {
-        let retriever = self.sql_digest_text_retriever();
-        std::sync::Arc::new(move |ctx, digests| {
-            retriever
-                .retrieve(ctx, digests.iter().cloned(), true)
-                .map_err(|error| error.to_string())
-        })
-    }
-
-    /// An owned [`SqlDigestTextRetriever`] over this session's node, for a
-    /// builtin that retrieves while evaluating with the session out of reach.
     /// Go `newTableReaderExecutorContext`'s `getDDLOwner`: the owner's ID
     /// (`OwnerManager.GetOwnerID`), then its server info
     /// (`infosync.GetServerInfoByID`), as the server ID a request on the DDL
@@ -54,12 +39,6 @@ impl Session {
                 .as_ref()
                 .map_or(info.json_server_id, |get| get()))
         }))
-    }
-
-    pub(crate) fn sql_digest_text_retriever(&self) -> SqlDigestTextRetriever {
-        SqlDigestTextRetriever {
-            restricted_sql: self.restricted_sql_executor(),
-        }
     }
 
     /// The `User` column: Go reports the bare user name, while this session
@@ -99,7 +78,6 @@ impl Session {
                 .unwrap_or_default(),
             ddl_job_history_store: self.ddl_job_history_store.clone(),
             analyze_status: self.analyze_status.clone(),
-            digest_retriever: self.sql_digest_text_retriever(),
             data_lock_waits: self.data_lock_waits.clone(),
             tiflash_system_table: self.tiflash_system_table.clone(),
             cluster_topology: self.cluster_topology.clone(),

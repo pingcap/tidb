@@ -167,8 +167,6 @@ pub trait SessionVarsAccessor: SessionVarsSnapshot + ExproptSessionVars {
     fn current_db(&self) -> String;
     /// Go `SessionVars.User`.
     fn user(&self) -> Option<Arc<UserIdentity>>;
-    /// Go `SessionVars.ActiveRoles`.
-    fn active_roles(&self) -> Vec<Arc<RoleIdentity>>;
     /// Go `SessionVars.PlanCacheParams.AllParamValues()`.
     fn all_param_values(&self) -> Vec<Datum>;
     /// Go `SessionVars.UserVars`.
@@ -1234,7 +1232,11 @@ mod tests {
         }
     }
 
-    impl ExproptSessionVars for MockSessionVars {}
+    impl ExproptSessionVars for MockSessionVars {
+        fn active_roles(&self) -> Vec<Arc<RoleIdentity>> {
+            self.active_roles.lock().unwrap().clone()
+        }
+    }
 
     impl SessionVarsAccessor for MockSessionVars {
         fn ctx_id(&self) -> u64 {
@@ -1259,10 +1261,6 @@ mod tests {
 
         fn user(&self) -> Option<Arc<UserIdentity>> {
             self.user.lock().unwrap().clone()
-        }
-
-        fn active_roles(&self) -> Vec<Arc<RoleIdentity>> {
-            self.active_roles.lock().unwrap().clone()
         }
 
         fn all_param_values(&self) -> Vec<Datum> {

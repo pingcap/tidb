@@ -23,10 +23,12 @@ use tidb_exprctx::{
 };
 
 /// boundary: Go `pkg/sessionctx/variable.SessionVars` — the session variable
-/// bundle, ported in `tidb-session`, a crate that sits above this one. expropt
-/// only carries the value from provider to reader, so an opaque marker trait
-/// stands in and keeps the layering intact.
-pub trait SessionVars: Any + Send + Sync {}
+/// bundle, which the session owns above this crate. The trait is the part of
+/// it that builtins read through [`SessionVarsPropReader`].
+pub trait SessionVars: Any + Send + Sync {
+    /// Go `SessionVars.ActiveRoles`.
+    fn active_roles(&self) -> Vec<Arc<tidb_parser::auth::RoleIdentity>>;
+}
 
 /// boundary: Go `pkg/sessionctx/variable.SessionVarsProvider` — anything that
 /// can hand back the session variables.

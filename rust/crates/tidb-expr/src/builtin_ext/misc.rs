@@ -236,28 +236,26 @@ pub(crate) fn tidb_decode_sql_digests(
         );
         return Ok(Datum::Null);
     };
-    let mut requested: Vec<String> = items
-        .iter()
-        .filter_map(|item| item.as_str().map(str::to_owned))
-        .collect();
-    requested.sort_unstable();
-    requested.dedup();
-    let texts = match ctx.retrieve_sql_digest_texts(&requested) {
-        Some(Ok(texts)) => texts,
+    // Query the SQL statements by digests.
+    let mut retriever = crate::expr_util::SqlDigestTextRetriever::new();
+    for item in &items {
+        if let Some(digest) = item.as_str() {
+            retriever.sql_digests_map.insert(digest.to_owned(), String::new());
+        }
+    }
+    // Go bounds the query with a context timed out at `max_execution_time`
+    // (20s at most), which it reads from `GetSessionVars`; the restricted
+    // SQL executor takes no deadline here, so only the executor is read.
+    let exec = tidb_expropt::SqlExecutorPropReader.get_sql_executor(ctx).map_err(opt_prop_error)?;
+    if let Err(error) = retriever.retrieve_global(exec.as_ref()) {
         // Go `errUnknown.FastGen(...)` (1105), the builtin answering NULL.
-        Some(Err(message)) => {
-            ctx.append_warning(
-                1105,
-                &format!("Retrieving statements information failed with error: {message}"),
-            );
-            return Ok(Datum::Null);
-        }
-        None => {
-            return Err(EvalError::Unsupported(
-                "TIDB_DECODE_SQL_DIGESTS needs a session to read statement summaries",
-            ))
-        }
-    };
+        ctx.append_warning(
+            1105,
+            &format!("Retrieving statements information failed with error: {error}"),
+        );
+        return Ok(Datum::Null);
+    }
+    let texts = retriever.sql_digests_map;
     // Go `json.Marshal(result)` over `[]any` holding nil or the texts.
     let mut result = String::from("[");
     for (position, item) in items.iter().enumerate() {

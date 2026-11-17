@@ -137,6 +137,7 @@ pub mod normal_form;
 pub mod param;
 pub mod predicates;
 pub mod push_not;
+pub mod sql_digest_text_retriever;
 pub mod substitute;
 pub mod traits;
 
@@ -149,6 +150,7 @@ pub use explain_normalized::{
     sorted_explain_normalized_scalar_func_list,
 };
 pub use fold::{fold_constant, fold_constant_with, FoldOptions};
+pub use sql_digest_text_retriever::SqlDigestTextRetriever;
 pub use param::{
     construct_position_expr, datum_to_constant, get_int_from_constant, get_string_from_constant,
     param_marker_expression, pos_from_position_expr, ConstantReadError, ParamMarkerValue,

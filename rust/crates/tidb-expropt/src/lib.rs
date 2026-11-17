@@ -48,9 +48,9 @@
 //!   hands it back.
 //! - `// boundary:` Go `pkg/sessionctx/variable.SessionVarsProvider` and
 //!   `variable.SessionVars` — modeled as [`SessionVarsProvider`] and the
-//!   opaque [`SessionVars`] marker trait. `SessionVars` itself is ported in
-//!   `tidb-session`, which sits *above* this crate, so a dependency on it
-//!   would be a cycle.
+//!   [`SessionVars`] trait, which carries the fields builtins read through
+//!   [`SessionVarsPropReader`]. The session owns its variables above this
+//!   crate, so a dependency on their type would be a cycle.
 //! - `// boundary:` Go `pkg/expression/expropt.SessionContext` — its session
 //!   variables reuse that same opaque [`SessionVars`] boundary, while
 //!   `context.Context` and `GetDomain() any` remain opaque thread-safe values.

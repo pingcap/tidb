@@ -309,7 +309,7 @@ pub use mem_table::MemTableSourceExec;
 pub use mpp_query::MppQueryInfo;
 pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
-use tidb_sessionctx::{scanner_sql_mode, SessionPrivilegeCheck, LatestInfoSchema, LockedTables, RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, ViewDefinerPrivilegeCheck, SqlDigestTextRetrieval, StatementClass, StatementPhase, StmtContext, StmtContextSessionState};
+use tidb_sessionctx::{scanner_sql_mode, SessionPrivilegeCheck, LatestInfoSchema, LockedTables, RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, ViewDefinerPrivilegeCheck, StatementClass, StatementPhase, StmtContext, StmtContextSessionState};
 use tidb_stmtctx::{PlanSource, ProcessPlanInfo, StoredPlan};
 use tidb_variable::session_vars::DdlReorgVars;
 use tidb_variable::MdlRelatedTableRecorder;
