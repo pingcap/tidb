@@ -509,6 +509,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	issuer                     "ISSUER"
 	jsonType                   "JSON"
 	keyBlockSize               "KEY_BLOCK_SIZE"
+	keyColumns                 "KEY_COLUMNS"
 	labels                     "LABELS"
 	language                   "LANGUAGE"
 	last                       "LAST"
@@ -7639,6 +7640,8 @@ IndexOptionList:
 				opt1.SecondaryEngineAttr = opt2.SecondaryEngineAttr
 			} else if opt2.Condition != nil {
 				opt1.Condition = opt2.Condition
+			} else if len(opt2.FullTextKeyColumns) > 0 {
+				opt1.FullTextKeyColumns = opt2.FullTextKeyColumns
 			}
 			$$ = opt1
 		}
@@ -7727,6 +7730,12 @@ IndexOption:
 	{
 		$$ = &ast.IndexOption{
 			Condition: $2.(ast.ExprNode),
+		}
+	}
+|	"KEY_COLUMNS" '(' ColumnNameList ')'
+	{
+		$$ = &ast.IndexOption{
+			FullTextKeyColumns: $3.([]*ast.ColumnName),
 		}
 	}
 
@@ -7978,6 +7987,7 @@ UnReservedKeyword:
 |	"CHECKSUM"
 |	"COMPRESSION"
 |	"KEY_BLOCK_SIZE"
+|	"KEY_COLUMNS"
 |	"MASTER"
 |	"MATERIALIZED"
 |	"MAX_ROWS"

@@ -592,7 +592,10 @@ func (d *SchemaTracker) createIndex(
 		if !kerneltype.IsClassic() {
 			return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index is not supported")
 		}
-		indexOption = ddl.NormalizeTiKVFullTextIndexOption(indexOption)
+		var err error
+		if indexOption, indexPartSpecifications, err = ddl.NormalizeTiKVFullTextIndex(indexOption, indexPartSpecifications); err != nil {
+			return err
+		}
 	}
 
 	hiddenCols, err := ddl.BuildHiddenColumnInfo(ddl.NewMetaBuildContextWithSctx(ctx), indexPartSpecifications, indexName, t.Meta(), t.Cols())

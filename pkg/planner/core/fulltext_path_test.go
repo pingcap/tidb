@@ -115,7 +115,7 @@ func TestFullTextIndexPathPlanning(t *testing.T) {
 	// Key columns ahead of the tokenized column: the path exists only when
 	// every key column is pinned to one value, which the index then serves
 	// in place of the table filter.
-	tk.MustExec("create table tc (id int primary key, tenant_id int, region varchar(8), body text, fulltext index idx_tenant (tenant_id, body), fulltext index idx_region (tenant_id, region, body))")
+	tk.MustExec("create table tc (id int primary key, tenant_id int, region varchar(8), body text, fulltext index idx_tenant (body) key_columns (tenant_id), fulltext index idx_region (body) key_columns (tenant_id, region))")
 	// Statistics let the index pinning more columns estimate fewer rows, and
 	// make reading the postings of a rare term cheaper than scanning.
 	values := make([]string, 0, 3000)
@@ -270,7 +270,7 @@ func TestFullTextIndexPathPlanning(t *testing.T) {
 	// and not rebuilt from the conditions when it is reused: a plan is cached
 	// when they are literals, and searches what it was built for, and is not
 	// when they come from parameters.
-	tk.MustExec("create table tp (id int primary key, tenant_id int, body text, fulltext index idx (tenant_id, body))")
+	tk.MustExec("create table tp (id int primary key, tenant_id int, body text, fulltext index idx (body) key_columns (tenant_id))")
 	tk.MustExec("insert into tp values (1, 7, 'hello'), (2, 8, 'hello'), (3, 7, 'hello'), (4, 7, 'bye')")
 	tk.MustExec("prepare stmt from 'select id from tp use index (idx) where tenant_id = 7 and id > 1 and match(body) against(''+hello'' in boolean mode)'")
 	tk.MustQuery("execute stmt").Check(testkit.Rows("3"))
@@ -494,7 +494,7 @@ func TestFullTextIndexPostingsProbeScope(t *testing.T) {
 	// An index with key columns: the term is counted under the key point,
 	// and the count is the estimate of the rows the search yields there. The
 	// text column has no statistics; the key column has.
-	tk.MustExec("create table tn (id int primary key, tenant int, body longtext, fulltext index idx (tenant, body))")
+	tk.MustExec("create table tn (id int primary key, tenant int, body longtext, fulltext index idx (body) key_columns (tenant))")
 	fill("tn", 3000)
 	tk.MustExec("analyze table tn")
 	rare := count("select count(*) from tn where tenant = 3 and body like '%rareword%'")
@@ -618,7 +618,7 @@ func TestFullTextIndexPostingsProbeEconomy(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (id int primary key, tenant int, k int, body longtext, key ik(k), fulltext index ft (body), fulltext index ftk (tenant, body))")
+	tk.MustExec("create table t (id int primary key, tenant int, k int, body longtext, key ik(k), fulltext index ft (body), fulltext index ftk (body) key_columns (tenant))")
 	tk.MustExec("set cte_max_recursion_depth = 10000")
 	// "mid" is in 600 rows, more than a first count reads; "rare" in 3.
 	tk.MustExec(`insert into t with recursive s(n) as (select 1 union all select n + 1 from s where n < 3000)
@@ -680,7 +680,7 @@ func TestFullTextIndexMergeRowSizeOnWideTable(t *testing.T) {
 		cols = append(cols, fmt.Sprintf("c%d longtext", i))
 	}
 	tk.MustExec("create table w (id int primary key, ws int, k int, body longtext, " + strings.Join(cols, ", ") +
-		", key idx_ws_k (ws, k), fulltext index idx_ws_body (ws, body))")
+		", key idx_ws_k (ws, k), fulltext index idx_ws_body (body) key_columns (ws))")
 	rows := make([]string, 0, 4000)
 	for i := range 4000 {
 		body := "filler text"

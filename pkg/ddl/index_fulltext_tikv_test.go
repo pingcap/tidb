@@ -88,7 +88,7 @@ func TestFullTextIndexBuiltInTiKV(t *testing.T) {
 
 	// Key columns ahead of the tokenized column: ordinary columns of any
 	// indexable type, rendered and copied like the rest of the definition.
-	tk.MustExec("create table t_tenant (id int primary key, tenant_id bigint, region varchar(16), body text, fulltext index idx (tenant_id, body), fulltext index idx_region (tenant_id, region, body))")
+	tk.MustExec("create table t_tenant (id int primary key, tenant_id bigint, region varchar(16), body text, fulltext index idx (body) key_columns (tenant_id), fulltext index idx_region (body) key_columns (tenant_id, region))")
 	_, tenant := tikvFullTextIndex(t, dom, "t_tenant", "idx")
 	require.Equal(t, []string{"tenant_id", "body"}, []string{tenant.Columns[0].Name.L, tenant.Columns[1].Name.L})
 	require.Equal(t, "body", tenant.TiKVFullTextColumn().Name.L)
@@ -96,12 +96,17 @@ func TestFullTextIndexBuiltInTiKV(t *testing.T) {
 	_, region := tikvFullTextIndex(t, dom, "t_tenant", "idx_region")
 	require.Len(t, region.Columns, 3)
 	require.Equal(t, "body", region.TiKVFullTextColumn().Name.L)
-	tk.MustQuery("show create table t_tenant").CheckContain("FULLTEXT INDEX `idx`(`tenant_id`,`body`)")
-	tk.MustQuery("show create table t_tenant").CheckContain("FULLTEXT INDEX `idx_region`(`tenant_id`,`region`,`body`)")
+	tk.MustQuery("show create table t_tenant").CheckContain("FULLTEXT INDEX `idx`(`body`) WITH PARSER STANDARD /*T![fts_key] KEY_COLUMNS(`tenant_id`) */")
+	tk.MustQuery("show create table t_tenant").CheckContain("FULLTEXT INDEX `idx_region`(`body`) WITH PARSER STANDARD /*T![fts_key] KEY_COLUMNS(`tenant_id`,`region`) */")
+	// What SHOW CREATE TABLE prints builds the same index.
+	showCreate := tk.MustQuery("show create table t_tenant").Rows()[0][1].(string)
+	tk.MustExec(strings.Replace(showCreate, "CREATE TABLE `t_tenant`", "CREATE TABLE `t_tenant_copy`", 1))
+	_, regionCopy := tikvFullTextIndex(t, dom, "t_tenant_copy", "idx_region")
+	require.Equal(t, []string{"tenant_id", "region", "body"}, []string{regionCopy.Columns[0].Name.L, regionCopy.Columns[1].Name.L, regionCopy.Columns[2].Name.L})
 	tk.MustExec("create table t_tenant_like like t_tenant")
 	_, tenantLike := tikvFullTextIndex(t, dom, "t_tenant_like", "idx_region")
 	require.Len(t, tenantLike.Columns, 3)
-	tk.MustExec("alter table t_tenant add fulltext index idx_added (region, body)")
+	tk.MustExec("alter table t_tenant add fulltext index idx_added (body) key_columns (region)")
 	_, added := tikvFullTextIndex(t, dom, "t_tenant", "idx_added")
 	require.Equal(t, "body", added.TiKVFullTextColumn().Name.L)
 	tk.MustExec("insert into t_tenant values (1, 10, 'eu', 'distributed sql database')")
@@ -130,7 +135,7 @@ func TestFullTextIndexBuiltInTiKV(t *testing.T) {
 	require.Equal(t, 8, frozen.TiKVFullText.MinTokenSize)
 	// A second index over the column is checked against the first on the DDL
 	// owner too, which must compare the statement's settings, not defaults.
-	tk.MustExec("alter table t_frozen add fulltext index idx_second (id, body)")
+	tk.MustExec("alter table t_frozen add fulltext index idx_second (body) key_columns (id)")
 	_, frozenSecond := tikvFullTextIndex(t, dom, "t_frozen", "idx_second")
 	require.Equal(t, 8, frozenSecond.TiKVFullText.MinTokenSize)
 	tk.MustExec("alter table t_frozen drop index idx_second")
@@ -206,20 +211,28 @@ func TestFullTextIndexBuiltInTiKVRefusals(t *testing.T) {
 		{"create fulltext index idx on t (body desc)", "FULLTEXT index does not support DESC order"},
 		// Only the last column is tokenized; the ones before it are key
 		// columns under the ordinary rules.
-		{"create fulltext index idx on t (body, title)", "BLOB/TEXT column 'body' used in key specification without a key length"},
-		{"create fulltext index idx on t (title, n)", "FULLTEXT index requires a string column"},
-		{"create fulltext index idx on t (n, b)", "FULLTEXT index requires a non-binary string column"},
-		{"create fulltext index idx on t (title(3), body)", "FULLTEXT index does not support prefix length"},
-		{"create fulltext index idx on t (n desc, body)", "FULLTEXT index does not support DESC order"},
-		{"create fulltext index idx on t (j, body)", "JSON column 'j' cannot be used in key specification"},
-		{"create fulltext index idx on t ((cast(j as signed array)), body)", "FULLTEXT index does not support an expression key part"},
-		{"create fulltext index idx on t ((lower(title)), body)", "FULLTEXT index does not support an expression key part"},
-		{"create table bad (j json, body text, fulltext index idx ((cast(j as signed array)), body))", "FULLTEXT index does not support an expression key part"},
+		// As in MySQL, the column list names the tokenized columns, and
+		// several are refused rather than read as key columns.
+		{"create fulltext index idx on t (body, title)", "FULLTEXT index over several columns is not supported; name the columns that confine a search with KEY_COLUMNS"},
+		{"create fulltext index idx on t (title, body)", "FULLTEXT index over several columns is not supported"},
+		{"create fulltext index idx on t (n) key_columns (title)", "FULLTEXT index requires a string column"},
+		{"create fulltext index idx on t (b) key_columns (n)", "FULLTEXT index requires a non-binary string column"},
+		{"create fulltext index idx on t (body) key_columns (j)", "JSON column 'j' cannot be used in key specification"},
+		{"create fulltext index idx on t (body) key_columns (body)", "Duplicate column name 'body'"},
+		{"create fulltext index idx on t (body) key_columns (n, n)", "Duplicate column name 'n'"},
+		{"create fulltext index idx on t (body) key_columns (nosuch)", "nosuch"},
+		{"create fulltext index idx on t (body) key_columns ((n))", "You have an error in your SQL syntax"},
+		{"create fulltext index idx on t ((lower(title)))", "FULLTEXT index does not support an expression key part"},
+		{"create table bad (j json, body text, fulltext index idx ((cast(j as signed array))))", "FULLTEXT index does not support an expression key part"},
+		{"create index idx on t (n) key_columns (title)", "KEY_COLUMNS can only be used on a FULLTEXT index stored in TiKV"},
+		{"alter table t add unique index idx (n) key_columns (title)", "KEY_COLUMNS can only be used on a FULLTEXT index stored in TiKV"},
+		{"create table bad (n int, body text, index idx (n) key_columns (body))", "KEY_COLUMNS can only be used on a FULLTEXT index stored in TiKV"},
 		{"create fulltext index idx on t (body) using hash", "'USING HASH' is not supported for FULLTEXT INDEX"},
 		{"create fulltext index idx on t (body) where id > 0", "FULLTEXT index does not support a partial condition"},
 		{"create fulltext index idx on pt (body) global", "FULLTEXT index does not support GLOBAL"},
 		{"create table bad (n int, fulltext index idx (n))", "FULLTEXT index requires a string column"},
-		{"create table bad (body text, title text, fulltext index idx (body, title))", "BLOB/TEXT column 'body' used in key specification without a key length"},
+		{"create table bad (body text, title text, fulltext index idx (body, title))", "FULLTEXT index over several columns is not supported"},
+		{"create table bad (title varchar(200), body text, fulltext index idx (title, body))", "FULLTEXT index over several columns is not supported"},
 		{"alter table t add fulltext index idx (body) with parser unknown", "Unsupported parser 'unknown'"},
 		// The rows of a local temporary table never reach TiKV, where the
 		// index is read, as MySQL refuses one on an InnoDB temporary table.
@@ -232,13 +245,13 @@ func TestFullTextIndexBuiltInTiKVRefusals(t *testing.T) {
 	// MATCH compiles its search string the same way whichever index serves
 	// it; a second index with another parser or other settings is refused.
 	tk.MustExec("create fulltext index idx_body on t (body)")
-	tk.MustContainErrMsg("create fulltext index idx_tenant_body on t (n, body) with parser ngram", "FULLTEXT index over body must use the parser and analyzer settings of the existing FULLTEXT index idx_body")
+	tk.MustContainErrMsg("create fulltext index idx_tenant_body on t (body) key_columns (n) with parser ngram", "FULLTEXT index over body must use the parser and analyzer settings of the existing FULLTEXT index idx_body")
 	tk.MustExec("set global innodb_ft_min_token_size = 4")
-	tk.MustContainErrMsg("create fulltext index idx_tenant_body on t (n, body)", "must use the parser and analyzer settings of the existing FULLTEXT index idx_body")
+	tk.MustContainErrMsg("create fulltext index idx_tenant_body on t (body) key_columns (n)", "must use the parser and analyzer settings of the existing FULLTEXT index idx_body")
 	tk.MustExec("set global innodb_ft_min_token_size = 3")
-	tk.MustExec("create fulltext index idx_tenant_body on t (n, body)")
+	tk.MustExec("create fulltext index idx_tenant_body on t (body) key_columns (n)")
 	tk.MustExec("create fulltext index idx_title on t (title) with parser ngram")
-	tk.MustContainErrMsg("create table bad (n int, body text, fulltext index a (body), fulltext index b (n, body) with parser ngram)", "must use the parser and analyzer settings of the existing FULLTEXT index a")
+	tk.MustContainErrMsg("create table bad (n int, body text, fulltext index a (body), fulltext index b (body) key_columns (n) with parser ngram)", "must use the parser and analyzer settings of the existing FULLTEXT index a")
 	tk.MustContainErrMsg("create temporary table bad like t", "Cannot create FULLTEXT index on temporary InnoDB table")
 	tk.MustExec("alter table t drop index idx_body, drop index idx_tenant_body, drop index idx_title")
 
@@ -527,7 +540,7 @@ func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
 	// Key columns ahead of the tokenized column: each entry of a row carries
 	// the row's key values before the term, follows the row when they
 	// change, and an entry under another tenant is reported by the check.
-	tk.MustExec("create table kt (id int primary key, tenant int, body text, fulltext index idx (tenant, body))")
+	tk.MustExec("create table kt (id int primary key, tenant int, body text, fulltext index idx (body) key_columns (tenant))")
 	tk.MustExec("insert into kt values (1, 10, 'hello world'), (2, 20, 'hello sql'), (3, null, 'hello null')")
 	ktInfo, ktIdx := tikvFullTextIndex(t, dom, "kt", "idx")
 	entries, keys := fullTextEntries(t, tk, ktInfo, ktIdx)
@@ -564,7 +577,7 @@ func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
 
 	// A string key column is stored whole, as an ordinary index stores it;
 	// only the last column is tokenized.
-	tk.MustExec("create table ks (id int primary key, tenant varchar(32), body text, fulltext index idx (tenant, body))")
+	tk.MustExec("create table ks (id int primary key, tenant varchar(32), body text, fulltext index idx (body) key_columns (tenant))")
 	tk.MustExec("insert into ks values (1, 'acme corp', 'hello world')")
 	ksInfo, ksIdx := tikvFullTextIndex(t, dom, "ks", "idx")
 	entries, keys = fullTextEntries(t, tk, ksInfo, ksIdx)
@@ -590,7 +603,7 @@ func TestFullTextIndexAdminCheckAddedColumn(t *testing.T) {
 	tk.MustExec("alter table t add column body varchar(64) default 'hello world', add column tenant int default 7")
 	tk.MustExec("insert into t values (3, 'third', 'hello again', 8)")
 	tk.MustExec("create fulltext index idx_body on t (body)")
-	tk.MustExec("create fulltext index idx_tenant on t (tenant, body)")
+	tk.MustExec("create fulltext index idx_tenant on t (body) key_columns (tenant)")
 	tk.MustExec("admin check table t")
 	tk.MustExec("admin check index t idx_body")
 	tk.MustExec("admin check index t idx_tenant")
@@ -611,7 +624,7 @@ func TestFullTextIndexNotUsedByForeignKey(t *testing.T) {
 	// are one per term, so the foreign key gets an index of its own.
 	tk.MustExec(`create table child (
 		id int primary key, tenant_id int, doc text,
-		fulltext index ft (tenant_id, doc),
+		fulltext index ft (doc) key_columns (tenant_id),
 		constraint fk foreign key (tenant_id) references parent (id) on delete cascade)`)
 	tk.MustQuery("select count(distinct key_name) from information_schema.tidb_indexes " +
 		"where table_schema = 'test' and table_name = 'child' and key_name not in ('PRIMARY', 'ft')").Check(testkit.Rows("1"))
@@ -625,7 +638,7 @@ func TestFullTextIndexNotUsedByForeignKey(t *testing.T) {
 	tk.MustExec("admin check table child")
 
 	// Added to a table whose only index over the column is FULLTEXT.
-	tk.MustExec("create table child2 (id int primary key, tenant_id int, doc text, fulltext index ft (tenant_id, doc))")
+	tk.MustExec("create table child2 (id int primary key, tenant_id int, doc text, fulltext index ft (doc) key_columns (tenant_id))")
 	tk.MustExec("alter table child2 add constraint fk2 foreign key (tenant_id) references parent (id)")
 	tk.MustExec("insert into parent values (3)")
 	tk.MustExec("insert into child2 values (1, 3, '')")

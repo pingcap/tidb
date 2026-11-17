@@ -1300,6 +1300,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, dbName ast.CIStr, 
 			}
 			cols = append(cols, colInfo)
 		}
+		// A FULLTEXT index built in TiKV lists the tokenized column, its
+		// last, as MySQL lists the columns it searches; the columns ahead of
+		// it are key columns, which KEY_COLUMNS names.
+		var fullTextKeyCols []string
+		if idxInfo.TiKVFullText != nil && len(cols) > 1 {
+			fullTextKeyCols, cols = cols[:len(cols)-1], cols[len(cols)-1:]
+		}
 		if idxInfo.VectorInfo != nil {
 			funcName := model.IndexableDistanceMetricToFnName[idxInfo.VectorInfo.DistanceMetric]
 			fmt.Fprintf(buf, "((%s(%s)))", strings.ToUpper(funcName), strings.Join(cols, ","))
@@ -1315,6 +1322,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, dbName ast.CIStr, 
 		}
 		if idxInfo.TiKVFullText != nil {
 			fmt.Fprintf(buf, " WITH PARSER %s", idxInfo.TiKVFullText.ParserType.SQLName())
+		}
+		if len(fullTextKeyCols) > 0 {
+			fmt.Fprintf(buf, " /*T![%s] KEY_COLUMNS(%s) */", tidb.FeatureIDFullTextKey, strings.Join(fullTextKeyCols, ","))
 		}
 		if idxInfo.ConditionExprString != "" {
 			fmt.Fprintf(buf, " WHERE %s", idxInfo.ConditionExprString)

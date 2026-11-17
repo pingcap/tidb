@@ -1590,9 +1590,17 @@ func BuildTableInfo(
 			// On the classic kernel a FULLTEXT index is an ordinary KV index
 			// whose entries are analyzed terms. The preprocessor marks the
 			// option; callers that build metadata without it, such as
-			// Lightning, reach here with the bare constraint.
+			// Lightning, reach here with the bare constraint. The index is
+			// built from a normalized copy, which leaves the statement as
+			// written.
 			if kerneltype.IsClassic() {
-				constr.Option = NormalizeTiKVFullTextIndexOption(constr.Option)
+				option, keys, err := NormalizeTiKVFullTextIndex(constr.Option, constr.Keys)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				normalized := *constr
+				normalized.Option, normalized.Keys = option, keys
+				constr = &normalized
 			}
 		}
 

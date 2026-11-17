@@ -56,21 +56,54 @@ func checkTiKVFullTextClusterSupport() error {
 
 // IsTiKVFullTextIndexOption reports whether an index option describes a
 // FULLTEXT index built in TiKV. The preprocessor marks the option on the
-// classic kernel; NormalizeTiKVFullTextIndexOption does the same for callers
-// that build metadata without the preprocessor.
+// classic kernel; NormalizeTiKVFullTextIndex does the same for callers that
+// build metadata without the preprocessor.
 func IsTiKVFullTextIndexOption(option *ast.IndexOption) bool {
 	return option != nil && option.Tp == ast.IndexTypeFulltext
 }
 
-// NormalizeTiKVFullTextIndexOption marks the option of a FULLTEXT index
-// definition so that index building recognises it, returning an option that
-// is never nil.
-func NormalizeTiKVFullTextIndexOption(option *ast.IndexOption) *ast.IndexOption {
-	if option == nil {
-		option = &ast.IndexOption{}
+// NormalizeTiKVFullTextIndex turns a FULLTEXT index definition as written
+// into the form index building takes, and returns the option, never nil,
+// and the key parts to build the index from.
+//
+// As in MySQL, the column list names the columns that are tokenized. One is
+// supported; several, which MySQL searches as one document, are refused
+// rather than read as anything else. Key columns, which confine a search to
+// one value of each instead of being tokenized, are named by KEY_COLUMNS.
+// Index building takes them as the key parts ahead of the tokenized column,
+// the order in which the index encodes them, and the returned option no
+// longer names them, so DDL job arguments carry the built form only. The
+// definition itself is not modified.
+func NormalizeTiKVFullTextIndex(option *ast.IndexOption, partSpecs []*ast.IndexPartSpecification) (*ast.IndexOption, []*ast.IndexPartSpecification, error) {
+	normalized := ast.IndexOption{}
+	if option != nil {
+		normalized = *option
 	}
-	option.Tp = ast.IndexTypeFulltext
-	return option
+	normalized.Tp = ast.IndexTypeFulltext
+	keyColumns := normalized.FullTextKeyColumns
+	normalized.FullTextKeyColumns = nil
+	if len(partSpecs) > 1 {
+		return nil, nil, dbterror.ErrUnsupportedIndexType.GenWithStack(
+			"FULLTEXT index over several columns is not supported; name the columns that confine a search with KEY_COLUMNS (col, ...)")
+	}
+	if len(keyColumns) == 0 {
+		return &normalized, partSpecs, nil
+	}
+	seen := make(map[string]struct{}, len(keyColumns)+1)
+	for _, spec := range partSpecs {
+		if spec.Column != nil {
+			seen[spec.Column.Name.L] = struct{}{}
+		}
+	}
+	parts := make([]*ast.IndexPartSpecification, 0, len(keyColumns)+len(partSpecs))
+	for _, col := range keyColumns {
+		if _, dup := seen[col.Name.L]; dup {
+			return nil, nil, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name.O)
+		}
+		seen[col.Name.L] = struct{}{}
+		parts = append(parts, &ast.IndexPartSpecification{Column: col, Length: types.UnspecifiedLength})
+	}
+	return &normalized, append(parts, partSpecs...), nil
 }
 
 // buildTiKVFullTextInfoWithCheck validates a FULLTEXT index definition and

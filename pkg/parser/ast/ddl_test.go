@@ -719,6 +719,11 @@ func TestIfExistsRestore(t *testing.T) {
 			"ALTER TABLE `t` DROP PARTITION IF EXISTS `p1`,`p2`",
 			"ALTER TABLE `t` DROP PARTITION /*T! IF EXISTS  */`p1`,`p2`",
 		},
+		{
+			"alter table t add fulltext index idx (body) with parser ngram key_columns (tenant, region)",
+			"ALTER TABLE `t` ADD FULLTEXT `idx`(`body`) WITH PARSER `ngram` KEY_COLUMNS(`tenant`,`region`)",
+			"ALTER TABLE `t` ADD FULLTEXT `idx`(`body`) WITH PARSER `ngram` /*T![fts_key] KEY_COLUMNS(`tenant`,`region`) */",
+		},
 	}
 
 	normalCases := make([]NodeRestoreTestCase, len(cases))

@@ -768,6 +768,12 @@ type IndexOption struct {
 	SecondaryEngineAttr        string
 	AddColumnarReplicaOnDemand int
 	Condition                  ExprNode `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
+	// FullTextKeyColumns are the key columns of a FULLTEXT index built in
+	// TiKV: columns encoded ahead of each term, which confine a search to
+	// one value of each, rather than columns that are tokenized. The DDL
+	// layer moves them ahead of the tokenized column before building the
+	// index, so DDL job arguments never carry them.
+	FullTextKeyColumns []*ColumnName `json:"-"`
 }
 
 // IsEmpty is true if only default options are given
@@ -783,7 +789,8 @@ func (n *IndexOption) IsEmpty() bool {
 		n.SplitOpt != nil ||
 		n.AutoPreSplit ||
 		len(n.SecondaryEngineAttr) > 0 ||
-		n.Condition != nil {
+		n.Condition != nil ||
+		len(n.FullTextKeyColumns) > 0 {
 		return false
 	}
 	return true
@@ -829,6 +836,30 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord("WITH PARSER ")
 		ctx.WriteName(n.ParserName.O)
+		hasPrevOption = true
+	}
+
+	if len(n.FullTextKeyColumns) > 0 {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		err := ctx.WriteWithSpecialComments(tidb.FeatureIDFullTextKey, func() error {
+			ctx.WriteKeyWord("KEY_COLUMNS")
+			ctx.WritePlain("(")
+			for i, col := range n.FullTextKeyColumns {
+				if i > 0 {
+					ctx.WritePlain(",")
+				}
+				if err := col.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while splicing IndexOption FullTextKeyColumns[%d]", i)
+				}
+			}
+			ctx.WritePlain(")")
+			return nil
+		})
+		if err != nil {
+			return err
+		}
 		hasPrevOption = true
 	}
 

@@ -5883,7 +5883,10 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		if err := checkTiKVFullTextClusterSupport(); err != nil {
 			return errors.Trace(err)
 		}
-		indexOption = NormalizeTiKVFullTextIndexOption(indexOption)
+		var err error
+		if indexOption, indexPartSpecifications, err = NormalizeTiKVFullTextIndex(indexOption, indexPartSpecifications); err != nil {
+			return errors.Trace(err)
+		}
 		tikvFullText = true
 	}
 	unique := keyType == ast.IndexKeyTypeUnique

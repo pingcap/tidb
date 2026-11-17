@@ -46,6 +46,9 @@ const (
 	FeatureIDAffinity = "affinity"
 	// FeatureIDSplitRegion is the `region split` feature.
 	FeatureIDSplitRegion = "region_split"
+	// FeatureIDFullTextKey is the `KEY_COLUMNS` option of a FULLTEXT index
+	// built in TiKV.
+	FeatureIDFullTextKey = "fts_key"
 )
 
 var featureIDs = map[string]struct{}{
@@ -61,6 +64,7 @@ var featureIDs = map[string]struct{}{
 	FeatureIDAutoPreSplit:   {},
 	FeatureIDAffinity:       {},
 	FeatureIDSplitRegion:    {},
+	FeatureIDFullTextKey:    {},
 }
 
 // CanParseFeature is used to check if a feature can be parsed.
