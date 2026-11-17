@@ -295,6 +295,169 @@ pub fn build_materialized_view_log_table_info(
     Ok(info)
 }
 
+/// Go master `SetMaterializedScheduleEvalSession`'s evaluation state: the
+/// schedule's SQL mode, the UTC time zone, and the statement clock it reads
+/// `NOW()` from.
+struct ScheduleEvalContext {
+    sql_mode: tidb_mysql::SqlMode,
+    now: chrono::DateTime<chrono::Utc>,
+}
+
+impl ScheduleEvalContext {
+    fn date_modes(&self) -> tidb_datatype::DateModes {
+        tidb_datatype::DateModes {
+            no_zero_date: self.sql_mode.has_no_zero_date_mode(),
+            no_zero_in_date: self.sql_mode.has_no_zero_in_date_mode(),
+            allow_invalid_dates: self.sql_mode.has_allow_invalid_dates_mode(),
+        }
+    }
+}
+
+impl tidb_expr::rewriter::ColumnResolver for ScheduleEvalContext {
+    fn resolve(&self, _path: &[String]) -> Option<(usize, FieldType, i64)> {
+        None
+    }
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        tidb_datatype::SessionTimeZone::utc()
+    }
+    fn date_modes(&self) -> tidb_datatype::DateModes {
+        ScheduleEvalContext::date_modes(self)
+    }
+}
+
+impl tidb_exprctx::context::Columns for ScheduleEvalContext {
+    fn get(&self, _path: &[String]) -> Option<tidb_datatype::Datum> {
+        None
+    }
+    fn now(&self) -> Option<(i64, u32, i32)> {
+        Some((self.now.timestamp(), self.now.timestamp_subsec_nanos(), 0))
+    }
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        tidb_datatype::SessionTimeZone::utc()
+    }
+    fn date_modes(&self) -> tidb_datatype::DateModes {
+        ScheduleEvalContext::date_modes(self)
+    }
+    fn strict_sql_mode(&self) -> bool {
+        self.sql_mode.has_strict_mode()
+    }
+    /// Go `MaterializedScheduleErrLevelsWithSQLMode`.
+    fn truncate_level(&self) -> tidb_exprctx::context::ErrorLevel {
+        if self.sql_mode.has_strict_mode() {
+            tidb_exprctx::context::ErrorLevel::Error
+        } else {
+            tidb_exprctx::context::ErrorLevel::Warn
+        }
+    }
+    fn division_by_zero_level(&self) -> tidb_exprctx::context::ErrorLevel {
+        use tidb_exprctx::context::ErrorLevel;
+        if !self.sql_mode.has_error_for_division_by_zero_mode() {
+            ErrorLevel::Ignore
+        } else if self.sql_mode.has_strict_mode() {
+            ErrorLevel::Error
+        } else {
+            ErrorLevel::Warn
+        }
+    }
+    /// Go `MaterializedScheduleTypeFlagsWithSQLMode`.
+    fn type_flags(&self) -> tidb_datatype::ConversionFlags {
+        let strict = self.sql_mode.has_strict_mode();
+        let allow_invalid = self.sql_mode.has_allow_invalid_dates_mode();
+        tidb_datatype::STRICT_FLAGS
+            .with_truncate_as_warning(!strict)
+            .with_ignore_invalid_date_err(allow_invalid)
+            .with_ignore_zero_in_date_err(!strict || allow_invalid)
+            .with_cast_time_to_year_through_concat(true)
+    }
+    fn cast_time_to_year_through_concat(&self) -> bool {
+        true
+    }
+}
+
+/// Go master `MaterializedScheduleTimeToUnixSeconds`: the time read as UTC.
+///
+/// # Errors
+///
+/// A time Go's `GoTime` cannot build.
+pub fn materialized_schedule_time_to_unix_seconds(time: tidb_datatype::Time) -> Result<i64, MysqlError> {
+    time.go_time(&chrono::Utc)
+        .map(|time| time.timestamp())
+        .map_err(|error| MysqlError::unknown(error.to_string()))
+}
+
+/// Go master `EvalMaterializedScheduleExpr` under
+/// `SetMaterializedScheduleEvalSession`: the stored expression parsed under
+/// its SQL mode and evaluated in UTC at `now`; `None` for NULL.
+///
+/// # Errors
+///
+/// The expression does not parse, build or evaluate, or evaluates to a value
+/// that is not a DATE, DATETIME or TIMESTAMP.
+pub fn eval_materialized_schedule_expr(
+    expr_sql: &str,
+    schedule_sql_mode: i64,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<Option<tidb_datatype::Time>, MysqlError> {
+    let sql_mode = tidb_mysql::SqlMode(schedule_sql_mode);
+    let ctx = ScheduleEvalContext { sql_mode, now };
+    let expr = tidb_model::generated_expr::parse_expression_with_sql_mode(
+        expr_sql,
+        tidb_sessionctx::scanner_sql_mode(sql_mode),
+    )
+    .map_err(|error| MysqlError::unknown(error.compatibility_message(expr_sql)))?;
+    let built = tidb_expr::simple_expr::build_simple_expr(&ctx, &expr, &tidb_expr::simple_expr::BuildOptions::default())
+        .map_err(|error| MysqlError::unknown(error.to_string()))?;
+    let value = built.eval(&ctx, tidb_chunk::row::Row::empty()).map_err(|error| tidb_expr::EvalErrorSql::to_mysql_error(&error))?;
+    let wrong = |what: &str| {
+        MysqlError::unknown(format!(
+            "materialized schedule expression evaluated to {what}, expected DATE/DATETIME/TIMESTAMP"
+        ))
+    };
+    match value {
+        tidb_datatype::Datum::Null => Ok(None),
+        // Go's DATE/DATETIME/TIMESTAMP check: every time is one of them.
+        tidb_datatype::Datum::Time(time) => Ok(Some(time)),
+        other => Err(wrong(other.kind().as_str())),
+    }
+}
+
+/// Go master `deriveMaterializedScheduleNextUnixSecondsForDDL`: the next
+/// purge or refresh time (unix seconds, `None` for NULL) a DDL stores for a
+/// `START WITH` / `NEXT` schedule, and whether the stored value is replaced.
+/// A `START WITH` within ten seconds of `now` defers to `NEXT` when there is
+/// one.
+///
+/// # Errors
+///
+/// A schedule expression does not evaluate to a time.
+pub fn derive_materialized_schedule_next_unix_seconds(
+    start_expr: &str,
+    next_expr: &str,
+    schedule_sql_mode: i64,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(Option<i64>, bool), MysqlError> {
+    let (start_expr, next_expr) = (start_expr.trim(), next_expr.trim());
+    if start_expr.is_empty() && next_expr.is_empty() {
+        return Ok((None, true));
+    }
+    let eval = |expr: &str| eval_materialized_schedule_expr(expr, schedule_sql_mode, now);
+    let unix = |time: Option<tidb_datatype::Time>| time.map(materialized_schedule_time_to_unix_seconds).transpose();
+    if !start_expr.is_empty() {
+        let Some(start_at) = eval(start_expr)? else {
+            return Ok((None, true));
+        };
+        if next_expr.is_empty() {
+            return Ok((unix(Some(start_at))?, true));
+        }
+        let near_now = now + chrono::Duration::seconds(10);
+        if start_at.go_time(&chrono::Utc).map_err(|error| MysqlError::unknown(error.to_string()))? < near_now {
+            return Ok((unix(eval(next_expr)?)?, true));
+        }
+        return Ok((unix(Some(start_at))?, true));
+    }
+    Ok((unix(eval(next_expr)?)?, true))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,5 +545,32 @@ mod tests {
             .to_mysql_error();
             assert_eq!((error.code, error.message.as_str()), (code, message), "{sql}");
         }
+    }
+
+    /// Go master `deriveMaterializedScheduleNextUnixSecondsForDDL` at a fixed
+    /// clock: a START WITH within ten seconds of now defers to NEXT, a later
+    /// one is the next time itself, NULL clears the stored time, and a value
+    /// that is not a time is refused. A Go master node stored now() + 3600
+    /// for `START WITH now() NEXT date_add(now(), interval 1 hour)`.
+    #[test]
+    fn materialized_schedule_next_time_follows_go_master() {
+        use chrono::TimeZone as _;
+        let now = chrono::Utc.with_ymd_and_hms(2026, 11, 18, 3, 4, 5).unwrap();
+        let mode = 1_436_549_152; // Go's default SQL mode.
+        let derive = |start: &str, next: &str| derive_materialized_schedule_next_unix_seconds(start, next, mode, now);
+        assert_eq!(derive("", "").unwrap(), (None, true));
+        assert_eq!(
+            derive("NOW()", "DATE_ADD(NOW(), INTERVAL 1 HOUR)").unwrap(),
+            (Some(now.timestamp() + 3600), true)
+        );
+        assert_eq!(derive("NOW()", "").unwrap(), (Some(now.timestamp()), true));
+        assert_eq!(
+            derive("TIMESTAMP('2030-01-02 03:04:05')", "DATE_ADD(NOW(), INTERVAL 1 HOUR)").unwrap(),
+            (Some(chrono::Utc.with_ymd_and_hms(2030, 1, 2, 3, 4, 5).unwrap().timestamp()), true)
+        );
+        assert_eq!(derive("", "DATE_ADD(NOW(), INTERVAL 2 DAY)").unwrap(), (Some(now.timestamp() + 2 * 86400), true));
+        assert_eq!(derive("NULL", "NOW()").unwrap(), (None, true));
+        let error = derive("", "5").unwrap_err();
+        assert!(error.message.contains("evaluated to bigint, expected DATE/DATETIME/TIMESTAMP"), "{}", error.message);
     }
 }

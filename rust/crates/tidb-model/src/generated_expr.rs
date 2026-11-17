@@ -33,9 +33,29 @@ use crate::TableInfo;
 /// returned, matching the source package rather than inventing a stricter
 /// single-expression grammar.
 pub fn parse_expression(expression: &str) -> Result<Expr, tidb_parser::ParseError> {
+    parse_expression_in(expression, None)
+}
+
+/// Go master `generatedexpr.ParseExpressionWithSQLMode`: [`parse_expression`]
+/// with the parser under `sql_mode`, which is part of the parsing semantics
+/// of an expression restored from metadata (materialized view schedules).
+pub fn parse_expression_with_sql_mode(
+    expression: &str,
+    sql_mode: tidb_lexer::SqlMode,
+) -> Result<Expr, tidb_parser::ParseError> {
+    parse_expression_in(expression, Some(sql_mode))
+}
+
+fn parse_expression_in(
+    expression: &str,
+    sql_mode: Option<tidb_lexer::SqlMode>,
+) -> Result<Expr, tidb_parser::ParseError> {
     let sql = format!("select {expression}");
-    let statements = tidb_parser::parse_multi(&sql)?;
-    let Some(Stmt::Query(query)) = statements.into_iter().next() else {
+    let first = match sql_mode {
+        Some(mode) => Some(tidb_parser::parse_with_sql_mode(&sql, mode)?),
+        None => tidb_parser::parse_multi(&sql)?.into_iter().next(),
+    };
+    let Some(Stmt::Query(query)) = first else {
         return Err(expression_shape_error(&sql));
     };
     let QueryStmt::Select(select) = &*query else {

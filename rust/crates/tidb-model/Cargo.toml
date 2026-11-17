@@ -23,6 +23,7 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
+tidb-lexer = { path = "../tidb-lexer" }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
 serde = { workspace = true }
