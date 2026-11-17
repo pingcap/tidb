@@ -766,12 +766,11 @@ func alignEQConds(ctx base.PlanContext, left, right base.LogicalPlan, eqConds []
 			return nil, nil, nil, errors.Errorf("unexpected eq condition args: %d", len(args))
 		}
 		leftExpr, rightExpr := args[0], args[1]
-		if expression.ExprFromSchema(args[0], left.Schema()) && expression.ExprFromSchema(args[1], right.Schema()) {
-			// Already aligned.
-		} else if expression.ExprFromSchema(args[1], left.Schema()) && expression.ExprFromSchema(args[0], right.Schema()) {
+		if !expression.ExprFromSchema(args[0], left.Schema()) || !expression.ExprFromSchema(args[1], right.Schema()) {
+			if !expression.ExprFromSchema(args[1], left.Schema()) || !expression.ExprFromSchema(args[0], right.Schema()) {
+				return nil, nil, nil, errors.New("eq condition does not match join sides")
+			}
 			leftExpr, rightExpr = args[1], args[0]
-		} else {
-			return nil, nil, nil, errors.New("eq condition does not match join sides")
 		}
 		// Projection inlining can expose expression keys in either orientation.
 		// LogicalJoin requires its equality arguments to be materialized columns.
