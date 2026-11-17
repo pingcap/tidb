@@ -153,31 +153,30 @@ func newQueryParser(sctx sessionctx.Context) *parser.Parser {
 	return p
 }
 
-// ParseImportQuery parses an IMPORT INTO ... FROM SELECT statement, and returns
-// the statement and its SELECT.
-func ParseImportQuery(sctx sessionctx.Context, sql string) (*ast.ImportIntoStmt, ast.StmtNode, error) {
+// ParseImportQuery parses and checks an IMPORT INTO ... FROM SELECT statement.
+func ParseImportQuery(sctx sessionctx.Context, sql string) (*ast.ImportIntoStmt, error) {
 	p := newQueryParser(sctx)
 	p.SetSQLMode(sctx.GetSessionVars().SQLMode)
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
 	node, err := p.ParseOneStmt(sql, charset, collation)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	stmt, ok := node.(*ast.ImportIntoStmt)
 	if !ok {
-		return nil, nil, errors.New("import query requires a SELECT")
+		return nil, errors.New("import query requires a SELECT")
 	}
 
 	selectNode, ok := stmt.Select.(ast.StmtNode)
 	if !ok {
-		return nil, nil, errors.New("import query requires a SELECT")
+		return nil, errors.New("import query requires a SELECT")
 	}
 	// Sequence functions are not captured as source tables by the planner.
 	if hasSequenceFunc(selectNode) {
-		return nil, nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("sequences in IMPORT INTO FROM SELECT")
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("sequences in IMPORT INTO FROM SELECT")
 	}
-	return stmt, selectNode, nil
+	return stmt, nil
 }
 
 // CaptureQuerySource captures the SELECT of the IMPORT INTO statement sql that
@@ -185,8 +184,7 @@ func ParseImportQuery(sctx sessionctx.Context, sql string) (*ast.ImportIntoStmt,
 // runs another statement, since it takes the source tables that the planner
 // records in the statement context.
 func CaptureQuerySource(sctx sessionctx.Context, sql string) (*QuerySource, error) {
-	_, _, err := ParseImportQuery(sctx, sql)
-	if err != nil {
+	if _, err := ParseImportQuery(sctx, sql); err != nil {
 		return nil, err
 	}
 	vars := sctx.GetSessionVars()

@@ -120,7 +120,7 @@ func prepareImportQuery(
 	if err != nil {
 		return nil, nil, err
 	}
-	importStmt, node, err := importer.ParseImportQuery(sctx, importSQL)
+	importStmt, err := importer.ParseImportQuery(sctx, importSQL)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -143,7 +143,7 @@ func prepareImportQuery(
 	}
 	vars.SnapshotTS = q.ReadTS
 	vars.SnapshotInfoschema = is
-	return is, node, nil
+	return is, importStmt.Select.(ast.StmtNode), nil
 }
 
 func buildImportQueryExecutor(
@@ -182,7 +182,7 @@ func buildImportQueryExecutor(
 // PlanImportQueryForTest plans the SELECT of the IMPORT INTO statement sql in
 // sctx like the statement does, so that CaptureQuerySource can capture it.
 func PlanImportQueryForTest(sctx sessionctx.Context, sql string) error {
-	stmt, node, err := importer.ParseImportQuery(sctx, sql)
+	stmt, err := importer.ParseImportQuery(sctx, sql)
 	if err != nil {
 		return err
 	}
@@ -196,6 +196,6 @@ func PlanImportQueryForTest(sctx sessionctx.Context, sql string) error {
 		return err
 	}
 	_, err = plannercore.BuildLogicalPlanForTest(context.Background(), sctx,
-		resolve.NewNodeWWithCtx(node, stmtW.GetResolveContext()), ret.InfoSchema)
+		resolve.NewNodeWWithCtx(stmt.Select.(ast.StmtNode), stmtW.GetResolveContext()), ret.InfoSchema)
 	return err
 }
