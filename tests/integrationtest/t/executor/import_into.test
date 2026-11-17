@@ -212,3 +212,17 @@ create table import_into_ttl_precheck_target (id int primary key, created_at dat
 -- error 8173
 IMPORT INTO import_into_ttl_precheck_target FROM SELECT * FROM import_into_ttl_precheck_source WITH DISABLE_PRECHECK;
 drop table if exists import_into_ttl_precheck_source, import_into_ttl_precheck_target;
+
+# Global-sort compression defaults off and is explicitly selectable in each scope.
+select @@global.tidb_global_sort_compression, @@session.tidb_global_sort_compression;
+set @@session.tidb_global_sort_compression = 'zstd';
+select @@global.tidb_global_sort_compression, @@session.tidb_global_sort_compression;
+set @@session.tidb_global_sort_compression = 'none';
+set @@global.tidb_global_sort_compression = 'zstd';
+select @@global.tidb_global_sort_compression, @@session.tidb_global_sort_compression;
+set @@global.tidb_global_sort_compression = 'none';
+-- error 1231
+set @@session.tidb_global_sort_compression = 'gzip';
+-- error 1231
+set @@global.tidb_global_sort_compression = 'gzip';
+select @@global.tidb_global_sort_compression, @@session.tidb_global_sort_compression;

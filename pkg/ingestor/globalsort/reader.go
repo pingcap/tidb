@@ -17,18 +17,21 @@ package globalsort
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	goerrors "errors"
 	"io"
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -42,9 +45,10 @@ var readAllDataConcThreshold = uint64(4)
 func readAllData(
 	ctx context.Context,
 	store storeapi.Storage,
-	dataFiles, statsFiles []string,
+	dataFiles []string,
+	cachedReaders []cachedReader,
 	startKey, endKey []byte,
-	startOffsets, estimatedEndOffsets []uint64,
+	startOffsets, endOffsets []uint64,
 	smallBlockBufPool *membuf.Pool,
 	largeBlockBufPool *membuf.Pool,
 	output *memKVsAndBuffers,
@@ -52,12 +56,17 @@ func readAllData(
 	task := log.BeginTask(logutil.Logger(ctx), "read all data")
 	task.Info("arguments",
 		zap.Int("data-file-count", len(dataFiles)),
-		zap.Int("stat-file-count", len(statsFiles)),
 		zap.String("start-key", hex.EncodeToString(startKey)),
 		zap.String("end-key", hex.EncodeToString(endKey)),
 	)
 	defer func() {
 		if err != nil {
+			// A failed batch may have advanced cached streams. Close them before
+			// releasing buffers and waiting for memory, so a retry reopens at the
+			// original range and does not hold object-store connections meanwhile.
+			if closeErr := closeCachedReaders(cachedReaders); closeErr != nil {
+				err = errors.Annotatef(closeErr, "close cached readers after read failure: %v", err)
+			}
 			output.kvs = nil
 			output.kvsPerFile = nil
 			for _, b := range output.memKVBuffers {
@@ -76,37 +85,16 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	concurrences := make([]uint64, len(statsFiles))
 	totalFileSize := uint64(0)
-	bufSize := uint64(simplesst.ConcurrentReaderBufferSizePerConc)
-	for i := range statsFiles {
-		size := estimatedEndOffsets[i] - startOffsets[i]
+	for i := range dataFiles {
+		size := endOffsets[i] - startOffsets[i]
 		totalFileSize += size
-		expectedConc := size / bufSize
-		// let the stat internals cover the [startKey, endKey) since the offsets
-		// always point to a position that is less than or equal to the key.
-		expectedConc += 1
-
-		if expectedConc >= readAllDataConcThreshold {
-			concurrences[i] = expectedConc
-		} else {
-			concurrences[i] = 1
-		}
-		if expectedConc > 1 {
-			logutil.Logger(ctx).Info("found hotspot file in readAllData",
-				zap.String("filename", statsFiles[i]),
-				zap.Uint64("startOffset", startOffsets[i]),
-				zap.Uint64("endOffset", estimatedEndOffsets[i]),
-				zap.Uint64("expectedConc", expectedConc),
-				zap.Uint64("concurrency", concurrences[i]),
-			)
-		}
 	}
 	logutil.Logger(ctx).Info("estimated file size of this range group",
 		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	readConn := 1000
+	readConn := 32
 	readConn = min(readConn, len(dataFiles))
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
@@ -125,20 +113,25 @@ func readAllData(
 					if !ok {
 						return nil
 					}
-					err2 := readOneFile(
-						egCtx,
+					if err := cachedReaders[fileIdx].open(
+						ctx,
 						store,
 						dataFiles[fileIdx],
+						int64(startOffsets[fileIdx]),
+						int64(endOffsets[fileIdx]),
+						largeBlockBuf,
+					); err != nil {
+						return err
+					}
+
+					if err := cachedReaders[fileIdx].read(
+						egCtx,
 						startKey,
 						endKey,
-						startOffsets[fileIdx],
-						concurrences[fileIdx],
 						smallBlockBuf,
-						largeBlockBuf,
 						output,
-					)
-					if err2 != nil {
-						return errors.Annotatef(err2, "failed to read file %s", dataFiles[fileIdx])
+					); err != nil {
+						return errors.Annotatef(err, "failed to read file %s", dataFiles[fileIdx])
 					}
 				}
 			}
@@ -156,81 +149,14 @@ func readAllData(
 	return eg.Wait()
 }
 
-func readOneFile(
-	ctx context.Context,
-	storage storeapi.Storage,
-	dataFile string,
-	startKey, endKey []byte,
-	startOffset uint64,
-	concurrency uint64,
-	smallBlockBuf *membuf.Buffer,
-	largeBlockBuf *membuf.Buffer,
-	output *memKVsAndBuffers,
-) error {
-	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_one_file")
-
-	ts := time.Now()
-
-	rd, err := simplesst.NewKVReader(ctx, dataFile, storage, startOffset, 64*1024)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = rd.Close()
-	}()
-	if concurrency > 1 {
-		rd.EnableConcurrentRead(
-			storage,
-			dataFile,
-			int(concurrency),
-			simplesst.ConcurrentReaderBufferSizePerConc,
-			largeBlockBuf,
-		)
-		err = rd.SwitchConcurrentMode(true)
-		if err != nil {
-			return err
+func closeCachedReaders(cachedReaders []cachedReader) error {
+	var firstErr error
+	for i := range cachedReaders {
+		if err := cachedReaders[i].close(); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-
-	kvs := make([]simplesst.KVPair, 0, 1024)
-	size := 0
-	droppedSize := 0
-
-	for {
-		k, v, err := rd.NextKV()
-		if err != nil {
-			if goerrors.Is(err, io.EOF) {
-				break
-			}
-			return errors.Trace(err)
-		}
-		if bytes.Compare(k, startKey) < 0 {
-			droppedSize += len(k) + len(v)
-			continue
-		}
-		if bytes.Compare(k, endKey) >= 0 {
-			break
-		}
-		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
-		// directly read into memBuf?
-		key, err := smallBlockBuf.TryAddBytes(k)
-		if err != nil {
-			return err
-		}
-		value, err := smallBlockBuf.TryAddBytes(v)
-		if err != nil {
-			return err
-		}
-		kvs = append(kvs, simplesst.KVPair{Key: key, Value: value})
-		size += len(k) + len(v)
-	}
-	readAndSortDurHist.Observe(time.Since(ts).Seconds())
-	output.mu.Lock()
-	output.kvsPerFile = append(output.kvsPerFile, kvs)
-	output.size += size
-	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
-	output.mu.Unlock()
-	return nil
+	return firstErr
 }
 
 // ReadKVFilesAsync reads multiple KV files asynchronously and sends the KV pairs
@@ -251,7 +177,19 @@ func ReadKVFilesAsync(ctx context.Context, eg *util.ErrorGroupWithRecover,
 }
 
 func readOneKVFile2Ch(ctx context.Context, store storeapi.Storage, file string, outCh chan *simplesst.KVPair) error {
-	reader, err := simplesst.NewKVReader(ctx, file, store, 0, 3*simplesst.DefaultReadBufferSize)
+	// Probe the first simplesst.FileHeaderLen bytes to pick the right reader. v0 uses
+	// the streaming KVReader; v1 uses StreamingV1KVReader (zstd frames are
+	// self-delimiting, so sequential decode works without a props slice).
+	version, err := simplesst.DetectDataFileFormat(ctx, store, file)
+	if err != nil {
+		return err
+	}
+	var reader simplesst.KVStream
+	if version == simplesst.FileFormatV1 {
+		reader, err = simplesst.NewStreamingV1KVReader(ctx, store, file)
+	} else {
+		reader, err = simplesst.NewKVReader(ctx, file, store, 0, 3*simplesst.DefaultReadBufferSize)
+	}
 	if err != nil {
 		return err
 	}
@@ -275,5 +213,542 @@ func readOneKVFile2Ch(ctx context.Context, store storeapi.Storage, file string, 
 		}:
 		}
 	}
+	return nil
+}
+
+type fileReader interface {
+	// nextKV reads the next key-value pair from the file. The key and value
+	// will be allocated from the provided membuf.Buffer if needed.
+	nextKV(*membuf.Buffer) ([]byte, []byte, error)
+
+	// reserve stores the first key-value pair outside the current range so a
+	// reused sequential reader can continue from it in the next batch. Readers
+	// that are never reused may implement this as a no-op.
+	reserve(key, value []byte)
+
+	close() error
+}
+
+type sequentialReader struct {
+	kvr *simplesst.KVReader
+
+	reserved    bool
+	reservedKey []byte
+	reservedVal []byte
+}
+
+func newSequentialReader(
+	ctx context.Context,
+	store storeapi.Storage,
+	dataFile string,
+	initFileOffset uint64,
+) (*sequentialReader, error) {
+	kr, err := simplesst.NewKVReader(ctx, dataFile, store, initFileOffset, 3*simplesst.DefaultReadBufferSize)
+	if err != nil {
+		return nil, err
+	}
+
+	return &sequentialReader{kvr: kr}, nil
+}
+
+func (r *sequentialReader) nextKV(buf *membuf.Buffer) (key, value []byte, err error) {
+	var k, v []byte
+	if r.reserved {
+		k, v = r.reservedKey, r.reservedVal
+	} else {
+		k, v, err = r.kvr.NextKV()
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	key, err = buf.TryAddBytes(k)
+	if err != nil {
+		return nil, nil, err
+	}
+	value, err = buf.TryAddBytes(v)
+	if err != nil {
+		return nil, nil, err
+	}
+	r.reserved = false
+	r.reservedKey, r.reservedVal = nil, nil
+	return key, value, nil
+}
+
+func (r *sequentialReader) reserve(key, value []byte) {
+	r.reserved = true
+	r.reservedKey = bytes.Clone(key)
+	r.reservedVal = bytes.Clone(value)
+}
+
+func (r *sequentialReader) close() (err error) {
+	if r.kvr != nil {
+		err = r.kvr.Close()
+		r.kvr = nil
+	}
+	return err
+}
+
+// rangedV1Reader reads v1 (zstd-compressed) data files over a specific
+// physical byte range and implements the fileReader interface for use
+// inside cachedReader. It opens the underlying store.Reader at
+// [startOffset, endOffset), wraps it in a streaming zstd decoder, and
+// iterates KVs from the decompressed bytes. Unlike sequentialReader, a
+// rangedV1Reader is bound to one byte range and is NOT reused across
+// batches; cachedReader closes and reopens it per batch.
+type rangedV1Reader struct {
+	source  objectio.Reader
+	decoder *zstd.Decoder
+
+	reserved    bool
+	reservedKey []byte
+	reservedVal []byte
+}
+
+// newRangedV1Reader opens `dataFile` over [startOffset, endOffset) and
+// returns a reader that iterates KVs from a streaming zstd decoder. The
+// caller MUST have already verified the file is v1 (e.g. via
+// simplesst.DetectDataFileFormat).
+//
+// Clamping rules for degenerate ranges (both come from
+// simplesst.GetReadRangeFromPropsWithFileFormats's behavior when the requested key is outside the
+// file's key coverage):
+//
+//   - startOffset < simplesst.FileHeaderLen means simplesst.GetReadRangeFromPropsWithFileFormats returned the
+//     zero-initialized offset because the requested start key was before
+//     any prop in this file. We clamp to simplesst.FileHeaderLen (the position of
+//     the first segment) so the zstd decoder sees a valid frame header.
+//   - endOffset <= simplesst.FileHeaderLen (after clamping) means the batch does not
+//     overlap any segment in this file; we return an empty-EOF reader
+//     without touching the underlying storage.
+func newRangedV1Reader(
+	ctx context.Context,
+	store storeapi.Storage,
+	dataFile string,
+	startOffset, endOffset int64,
+) (*rangedV1Reader, error) {
+	if startOffset < int64(simplesst.FileHeaderLen) {
+		startOffset = int64(simplesst.FileHeaderLen)
+	}
+	if endOffset <= startOffset {
+		// Empty range: return a reader that immediately returns io.EOF.
+		return &rangedV1Reader{}, nil
+	}
+	sr, err := store.Open(ctx, dataFile, &storeapi.ReaderOption{
+		StartOffset: &startOffset,
+		EndOffset:   &endOffset,
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	dec, err := zstd.NewReader(sr)
+	if err != nil {
+		_ = sr.Close()
+		return nil, errors.Trace(err)
+	}
+	return &rangedV1Reader{source: sr, decoder: dec}, nil
+}
+
+func (r *rangedV1Reader) nextKV(buf *membuf.Buffer) (key, value []byte, err error) {
+	if r.reserved {
+		key, err = buf.TryAddBytes(r.reservedKey)
+		if err != nil {
+			return nil, nil, err
+		}
+		value, err = buf.TryAddBytes(r.reservedVal)
+		if err != nil {
+			return nil, nil, err
+		}
+		r.reserved = false
+		r.reservedKey, r.reservedVal = nil, nil
+		return key, value, nil
+	}
+	if r.decoder == nil {
+		return nil, nil, io.EOF
+	}
+	var header [2 * simplesst.LengthBytes]byte
+	if _, err = io.ReadFull(r.decoder, header[:]); err != nil {
+		return nil, nil, err
+	}
+	keySize := binary.BigEndian.Uint64(header[:simplesst.LengthBytes])
+	valueSize := binary.BigEndian.Uint64(header[simplesst.LengthBytes:])
+	maxInt := uint64(^uint(0) >> 1)
+	if keySize > maxInt || valueSize > maxInt-keySize {
+		return nil, nil, errors.New("v1 KV lengths overflow the addressable buffer size")
+	}
+	body, err := buf.TryAllocBytes(int(keySize + valueSize))
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, err = io.ReadFull(r.decoder, body); err != nil {
+		if goerrors.Is(err, io.EOF) {
+			err = io.ErrUnexpectedEOF
+		}
+		return nil, nil, err
+	}
+	return body[:int(keySize)], body[int(keySize):], nil
+}
+
+func (r *rangedV1Reader) reserve(key, value []byte) {
+	r.reserved = true
+	r.reservedKey = bytes.Clone(key)
+	r.reservedVal = bytes.Clone(value)
+}
+
+func (r *rangedV1Reader) close() error {
+	if r.decoder != nil {
+		r.decoder.Close()
+		r.decoder = nil
+	}
+	if r.source != nil {
+		err := r.source.Close()
+		r.source = nil
+		return err
+	}
+	return nil
+}
+
+// concurrentReader reads data from multiple concurrent file range read tasks.
+type concurrentReader struct {
+	ctx context.Context
+
+	store    storeapi.Storage
+	dataFile string
+
+	largeBlockBuf *membuf.Buffer
+
+	startOffset int64
+	endOffset   int64
+	buffers     [][]byte
+
+	curIndex  int
+	curOffset int
+}
+
+// newConcurrentReader creates a concurrentReader that reads the specified data file in parallel.
+// It divides the file into multiple range read tasks and starts goroutines to read
+// each range concurrently. The data is read into buffers allocated from blockBuf.
+// It returns a concurrentReader that can be used to read KV pairs from the file.
+func newConcurrentReader(
+	ctx context.Context,
+	store storeapi.Storage,
+	dataFile string,
+	startOffset, endOffset int64,
+	largeBlockBuf *membuf.Buffer,
+) (*concurrentReader, error) {
+	reader := &concurrentReader{
+		ctx:           ctx,
+		largeBlockBuf: largeBlockBuf,
+		startOffset:   startOffset,
+		endOffset:     endOffset,
+		store:         store,
+		dataFile:      dataFile,
+	}
+	if err := reader.startOnce(); err != nil {
+		return nil, err
+	}
+	return reader, nil
+}
+
+func (r *concurrentReader) startOnce() error {
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(r.ctx)
+
+	offset := r.startOffset
+	for offset < r.endOffset {
+		readSize := min(int64(simplesst.ConcurrentReaderBufferSizePerConc), r.endOffset-offset)
+		block, err := r.largeBlockBuf.TryAllocBytes(int(readSize))
+		if err != nil {
+			_ = eg.Wait()
+			return err
+		}
+		r.buffers = append(r.buffers, block)
+		readOffset := offset
+		offset += readSize
+
+		eg.Go(func() error {
+			_, err := objstore.ReadDataInRange(
+				egCtx,
+				r.store,
+				r.dataFile,
+				readOffset,
+				block,
+			)
+			return err
+		})
+	}
+
+	return eg.Wait()
+}
+
+func (r *concurrentReader) close() error {
+	return nil
+}
+
+// readNBytes reads exactly n bytes from the reader.
+// If the requested data is within a single task's buffer, it returns a direct
+// slice reference without copying, as the task's buffer is already allocated
+// from blockBuf. When the data spans multiple tasks, it allocates a new buffer
+// from blockBuf and copies the data from the involved tasks.
+func (r *concurrentReader) readNBytes(blockBuf *membuf.Buffer, n int) ([]byte, error) {
+	if r.curIndex >= len(r.buffers) {
+		return nil, io.EOF
+	}
+
+	// First, check if all data is available in the current task
+	currentBuffer := r.buffers[r.curIndex]
+	availableInCurrent := len(currentBuffer) - r.curOffset
+	if availableInCurrent >= n {
+		start := r.curOffset
+		r.curOffset += n
+		if r.curOffset >= len(currentBuffer) {
+			r.curIndex++
+			r.curOffset = 0
+		}
+		return currentBuffer[start : start+n], nil
+	}
+
+	// Data spans multiple buffers, need to copy to a new buffer
+	result, err := blockBuf.TryAllocBytes(n)
+	if err != nil {
+		return nil, err
+	}
+	copied := 0
+
+	// Copy remaining data from current buffer
+	bytesToCopy := availableInCurrent
+	copy(result[copied:], currentBuffer[r.curOffset:r.curOffset+bytesToCopy])
+	copied += bytesToCopy
+	r.curIndex++
+	r.curOffset = 0
+
+	// Copy from subsequent buffers
+	for copied < n && r.curIndex < len(r.buffers) {
+		buffer := r.buffers[r.curIndex]
+
+		availableInBuffer := len(buffer)
+		bytesToCopy := min(n-copied, availableInBuffer)
+		copy(result[copied:], buffer[0:bytesToCopy])
+
+		copied += bytesToCopy
+		r.curOffset = bytesToCopy
+
+		// Move to next buffer
+		if r.curOffset >= len(buffer) {
+			r.curIndex++
+			r.curOffset = 0
+		}
+	}
+
+	if copied < n {
+		return result[:copied], io.EOF
+	}
+
+	return result, nil
+}
+
+func (r *concurrentReader) nextKV(blockBuf *membuf.Buffer) ([]byte, []byte, error) {
+	lenBytes, err := r.readNBytes(blockBuf, 8)
+	if err != nil {
+		return nil, nil, err
+	}
+	keyLen := int(binary.BigEndian.Uint64(lenBytes))
+	lenBytes, err = r.readNBytes(blockBuf, 8)
+	if err != nil {
+		if goerrors.Is(err, io.EOF) {
+			err = io.ErrUnexpectedEOF
+		}
+		return nil, nil, err
+	}
+	valLen := int(binary.BigEndian.Uint64(lenBytes))
+	keyAndValue, err := r.readNBytes(blockBuf, keyLen+valLen)
+	if err != nil {
+		if goerrors.Is(err, io.EOF) {
+			err = io.ErrUnexpectedEOF
+		}
+		return nil, nil, err
+	}
+	return keyAndValue[:keyLen], keyAndValue[keyLen:], nil
+}
+
+// reserve is a no-op because concurrent readers are not reused across batches.
+func (r *concurrentReader) reserve([]byte, []byte) {}
+
+// cachedReader keeps a file reader across readAllData calls so sequential reads
+// can resume from the previous batch boundary without reopening the file.
+// Only v0 sequential readers are reused; v0 concurrent readers and all v1
+// ranged readers always read a fresh byte range into new buffers and are
+// recreated per batch.
+type cachedReader struct {
+	r                fileReader
+	lastIsConcurrent bool
+	// lastIsV1 is true if the most recently opened reader was a ranged v1
+	// reader. v1 readers are bound to a specific physical byte range and
+	// cannot be reused across batches, so canReuse returns false whenever
+	// the last call to open was for a v1 file.
+	lastIsV1 bool
+	// formatKnown is set when the caller has already told us the file's
+	// format via setFormat (typically because simplesst.GetReadRangeFromPropsWithFileFormats read
+	// the companion stat file and returned the per-file version). When
+	// not set, open() probes the data file itself via
+	// simplesst.DetectDataFileFormat — that extra Open defeats the sequential-reader
+	// reuse optimisation, so callers SHOULD set it up front.
+	formatKnown bool
+	formatIsV1  bool
+}
+
+// setFormat records the data file's format on this cachedReader without
+// opening it. Callers that already know the format (from reading the
+// companion stat file) MUST call setFormat before the first open(); this
+// avoids an extra store.Open on the data file that would double-count
+// opens in the sequential-reuse scenario.
+func (cr *cachedReader) setFormat(version uint8) {
+	cr.formatKnown = true
+	cr.formatIsV1 = version == simplesst.FileFormatV1
+}
+
+func (cr *cachedReader) canReuse(isConcurrent, isV1 bool) bool {
+	return !isConcurrent && !isV1 &&
+		!cr.lastIsConcurrent && !cr.lastIsV1 && cr.r != nil
+}
+
+func (cr *cachedReader) open(
+	ctx context.Context,
+	store storeapi.Storage,
+	dataFile string,
+	startOffset, endOffset int64,
+	largeBlockBuf *membuf.Buffer,
+) error {
+	// Detect the file format if the caller did not already provide it.
+	// Callers that go through simplesst.GetReadRangeFromPropsWithFileFormats (engine.go,
+	// merge_v2.go, testutil.go, TestReadAllData_V1Files) should call
+	// setFormat beforehand so this probe is skipped. Other callers fall
+	// back to probing the data file directly; that costs one extra
+	// store.Open but is still correct.
+	if !cr.formatKnown {
+		version, err := simplesst.DetectDataFileFormat(ctx, store, dataFile)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cr.setFormat(version)
+	}
+	isV1 := cr.formatIsV1
+
+	concurrentRead := false
+	if !isV1 {
+		bufSize := int64(simplesst.ConcurrentReaderBufferSizePerConc)
+		concurrency := (endOffset - startOffset + bufSize - 1) / bufSize
+		if concurrency >= int64(readAllDataConcThreshold) {
+			concurrentRead = true
+		}
+
+		// only log for files with expected concurrency > 1, to avoid too many logs
+		if concurrency > 1 {
+			logutil.Logger(ctx).Info("found hotspot file in readAllData",
+				zap.String("filename", dataFile),
+				zap.Int64("startOffset", startOffset),
+				zap.Int64("endOffset", endOffset),
+				zap.Int64("concurrency", concurrency),
+			)
+		}
+	}
+
+	if cr.canReuse(concurrentRead, isV1) {
+		return nil
+	}
+
+	var err error
+	if err = cr.close(); err != nil {
+		return err
+	}
+
+	switch {
+	case isV1:
+		cr.r, err = newRangedV1Reader(
+			ctx,
+			store,
+			dataFile,
+			startOffset,
+			endOffset,
+		)
+	case concurrentRead:
+		cr.r, err = newConcurrentReader(
+			ctx,
+			store,
+			dataFile,
+			startOffset,
+			endOffset,
+			largeBlockBuf,
+		)
+	default:
+		cr.r, err = newSequentialReader(
+			ctx,
+			store,
+			dataFile,
+			uint64(startOffset),
+		)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	cr.lastIsConcurrent = concurrentRead
+	cr.lastIsV1 = isV1
+	return nil
+}
+
+func (cr *cachedReader) close() (err error) {
+	if cr.r != nil {
+		err = cr.r.close()
+		cr.r = nil
+	}
+	cr.lastIsConcurrent = false
+	cr.lastIsV1 = false
+	return err
+}
+
+func (cr *cachedReader) read(
+	ctx context.Context,
+	startKey, endKey []byte,
+	smallBlockBuf *membuf.Buffer,
+	output *memKVsAndBuffers,
+) error {
+	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_one_file")
+	ts := time.Now()
+
+	kvs := make([]simplesst.KVPair, 0, 1024)
+	size := 0
+	droppedSize := 0
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		k, v, err := cr.r.nextKV(smallBlockBuf)
+		if err != nil {
+			if goerrors.Is(err, io.EOF) {
+				break
+			}
+			return err
+		}
+		if bytes.Compare(k, startKey) < 0 {
+			droppedSize += len(k) + len(v)
+			continue
+		}
+		if bytes.Compare(k, endKey) >= 0 {
+			cr.r.reserve(k, v)
+			break
+		}
+		kvs = append(kvs, simplesst.KVPair{Key: k, Value: v})
+		size += len(k) + len(v)
+	}
+	readAndSortDurHist.Observe(time.Since(ts).Seconds())
+	output.mu.Lock()
+	output.kvsPerFile = append(output.kvsPerFile, kvs)
+	output.size += size
+	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
+	output.mu.Unlock()
 	return nil
 }

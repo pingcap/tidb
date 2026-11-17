@@ -119,6 +119,10 @@ func newChunkWorker(
 		op:  op,
 	}
 	if op.tableImporter.IsGlobalSort() {
+		compression := simplesst.CompressionNone
+		if op.tableImporter.Plan.GlobalSortCompression == "zstd" {
+			compression = simplesst.CompressionZstd
+		}
 		// in case on network partition, 2 nodes might run the same subtask.
 		workerUUID := uuid.New().String()
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
@@ -132,6 +136,7 @@ func newChunkWorker(
 					op.sharedVars.mergeIndexSummary(indexID, summary)
 					op.sharedVars.indexKVFileCount.Add(int64(summary.KVFileCount))
 				}).
+				SetCompression(compression).
 				SetMemorySizeLimit(perIndexKVMemSizePerCon).
 				SetBlockSize(indexBlockSize).
 				SetOnDup(onDup).
@@ -149,6 +154,7 @@ func newChunkWorker(
 				op.sharedVars.mergeDataSummary(summary)
 				op.sharedVars.dataKVFileCount.Add(int64(summary.KVFileCount))
 			}).
+			SetCompression(compression).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(dataBlockSize).
 			SetOnDup(getOnDupForConflictedKV(op.onDupKey)).

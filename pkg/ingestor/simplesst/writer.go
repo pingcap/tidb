@@ -83,6 +83,20 @@ const (
 	DefaultBlockSize = 16 * units.MiB
 )
 
+// CompressionAlgo selects the on-disk format for files written by this
+// writer. CompressionNone produces v0 raw files (the historical format).
+// CompressionZstd produces v1 files where each stat segment is zstd-encoded
+// independently. The reader path auto-detects the format from the file's
+// magic header (see file_header.go).
+type CompressionAlgo int
+
+const (
+	// CompressionNone means raw uncompressed v0 format.
+	CompressionNone CompressionAlgo = iota
+	// CompressionZstd means per-segment zstd-compressed v1 format.
+	CompressionZstd
+)
+
 func commonGetAdjustCount(isOverlapThreshold bool, concurrency int) int64 {
 	intest.Assert(concurrency > 0, "concurrency must be greater than 0, got %d", concurrency)
 	if concurrency <= 0 {
@@ -135,6 +149,12 @@ type RangePropertiesCollector struct {
 	currProp     *RangeProperty
 	propSizeDist uint64
 	propKeysDist uint64
+	// onBoundary, if non-nil, is invoked synchronously after a new prop is
+	// finalized and appended to props. The callback may inspect or mutate
+	// the just-finalized prop (e.g. to fill in compressedSize/offset for v1
+	// compressed data files). Returning an error aborts the calling
+	// addEncodedData and propagates the error to the writer.
+	onBoundary func(finalizedProp *RangeProperty) error
 }
 
 // NewRangePropertiesCollector creates a new RangePropertiesCollector.
@@ -153,7 +173,7 @@ func (rc *RangePropertiesCollector) CurrProp() *RangeProperty {
 }
 
 // size: the file size after adding 'data'
-func (rc *RangePropertiesCollector) onNextEncodedData(data []byte, size uint64) {
+func (rc *RangePropertiesCollector) onNextEncodedData(data []byte, size uint64) error {
 	keyLen := binary.BigEndian.Uint64(data)
 	key := data[2*LengthBytes : 2*LengthBytes+keyLen]
 
@@ -169,12 +189,18 @@ func (rc *RangePropertiesCollector) onNextEncodedData(data []byte, size uint64) 
 		rc.currProp.Keys >= rc.propKeysDist {
 		newProp := *rc.currProp
 		rc.props = append(rc.props, &newProp)
+		if rc.onBoundary != nil {
+			if err := rc.onBoundary(&newProp); err != nil {
+				return err
+			}
+		}
 		// reset currProp, and start to update this prop.
 		rc.currProp.FirstKey = nil
 		rc.currProp.Offset = size
 		rc.currProp.Keys = 0
 		rc.currProp.Size = 0
 	}
+	return nil
 }
 
 func (rc *RangePropertiesCollector) onFileEnd() {
@@ -226,14 +252,15 @@ func dummyOnWriterCloseFunc(*WriterSummary) {}
 
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
-	groupOffset  int
-	memSizeLimit uint64
-	blockSize    int
-	propSizeDist uint64
-	propKeysDist uint64
-	onClose      OnWriterCloseFunc
-	tikvCodec    tikv.Codec
-	onDup        engineapi.OnDuplicateKey
+	groupOffset     int
+	memSizeLimit    uint64
+	blockSize       int
+	propSizeDist    uint64
+	propKeysDist    uint64
+	onClose         OnWriterCloseFunc
+	tikvCodec       tikv.Codec
+	onDup           engineapi.OnDuplicateKey
+	compressionAlgo CompressionAlgo
 }
 
 // NewWriterBuilder creates a WriterBuilder.
@@ -304,6 +331,12 @@ func (b *WriterBuilder) SetOnDup(onDup engineapi.OnDuplicateKey) *WriterBuilder 
 	return b
 }
 
+// SetCompression selects the on-disk format. Default is CompressionNone (v0).
+func (b *WriterBuilder) SetCompression(algo CompressionAlgo) *WriterBuilder {
+	b.compressionAlgo = algo
+	return b
+}
+
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
@@ -318,21 +351,22 @@ func (b *WriterBuilder) Build(
 	)
 	rnd := rand.New(rand.NewSource(getHash(filenamePrefix)))
 	ret := &Writer{
-		rc:             NewRangePropertiesCollector(b.propSizeDist, b.propKeysDist),
-		store:          store,
-		kvBuffer:       p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
-		currentSeq:     0,
-		filenamePrefix: filenamePrefix,
-		rnd:            rnd,
-		writerID:       writerID,
-		groupOffset:    b.groupOffset,
-		onClose:        b.onClose,
-		onDup:          b.onDup,
-		closed:         false,
-		multiFileStats: make([]MultipleFilesStat, 0),
-		fileMinKeys:    make([]tidbkv.Key, 0, MultiFileStatNum),
-		fileMaxKeys:    make([]tidbkv.Key, 0, MultiFileStatNum),
-		tikvCodec:      b.tikvCodec,
+		rc:              NewRangePropertiesCollector(b.propSizeDist, b.propKeysDist),
+		store:           store,
+		kvBuffer:        p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
+		currentSeq:      0,
+		filenamePrefix:  filenamePrefix,
+		rnd:             rnd,
+		writerID:        writerID,
+		groupOffset:     b.groupOffset,
+		onClose:         b.onClose,
+		onDup:           b.onDup,
+		closed:          false,
+		multiFileStats:  make([]MultipleFilesStat, 0),
+		fileMinKeys:     make([]tidbkv.Key, 0, MultiFileStatNum),
+		fileMaxKeys:     make([]tidbkv.Key, 0, MultiFileStatNum),
+		tikvCodec:       b.tikvCodec,
+		compressionAlgo: b.compressionAlgo,
 	}
 
 	return ret
@@ -351,16 +385,17 @@ func (b *WriterBuilder) BuildOneFile(
 	rnd := rand.New(rand.NewSource(getHash(filenamePrefix)))
 
 	ret := &OneFileWriter{
-		rc:             NewRangePropertiesCollector(b.propSizeDist, b.propKeysDist),
-		kvBuffer:       p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
-		store:          store,
-		filenamePrefix: filenamePrefix,
-		writerID:       writerID,
-		rnd:            rnd,
-		kvStore:        nil,
-		onClose:        b.onClose,
-		closed:         false,
-		onDup:          b.onDup,
+		rc:              NewRangePropertiesCollector(b.propSizeDist, b.propKeysDist),
+		kvBuffer:        p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
+		store:           store,
+		filenamePrefix:  filenamePrefix,
+		writerID:        writerID,
+		rnd:             rnd,
+		kvStore:         nil,
+		onClose:         b.onClose,
+		closed:          false,
+		onDup:           b.onDup,
+		compressionAlgo: b.compressionAlgo,
 	}
 	return ret
 }
@@ -476,6 +511,11 @@ type Writer struct {
 	tikvCodec tikv.Codec
 	// duplicate key's statistics.
 	conflictInfo engineapi.ConflictInfo
+
+	// compressionAlgo controls the on-disk format per flush. CompressionNone
+	// (the default) keeps the historical v0 path byte-identical; CompressionZstd
+	// emits v1 files with per-segment zstd frames.
+	compressionAlgo CompressionAlgo
 }
 
 // WriteRow implements ingest.Writer.
@@ -729,7 +769,36 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocat
 		}
 	}()
 	w.rc.Reset()
+	// Clear any boundary callback left over from a previous flush. v1 below
+	// will re-install a closure bound to this flush's compressor; v0 relies on
+	// onBoundary being nil so that addEncodedData behaves as before.
+	w.rc.onBoundary = nil
+
+	var compressor *segmentCompressor
+	if w.compressionAlgo == CompressionZstd {
+		if _, err = dataWriter.Write(ctx, fileHeaderV1Zstd); err != nil {
+			return "", "", "", err
+		}
+		if _, err = statWriter.Write(ctx, fileHeaderV1Zstd); err != nil {
+			return "", "", "", err
+		}
+		compressor = newSegmentCompressor()
+		compressor.physOffset = uint64(FileHeaderLen)
+		defer compressor.release()
+	}
+
 	kvStore := NewKeyValueStore(ctx, dataWriter, w.rc)
+	if compressor != nil {
+		kvStore.WithCompressor(compressor)
+		w.rc.onBoundary = func(p *RangeProperty) error {
+			return compressor.flushSegment(ctx, dataWriter, p, p.totalSize())
+		}
+		// The closure captures this flush's compressor and dataWriter, both
+		// of which become invalid as soon as flushSortedKVs returns. Clear
+		// the boundary callback before any later flush can observe a stale
+		// reference.
+		defer func() { w.rc.onBoundary = nil }()
+	}
 
 	for _, pair := range w.kvLocations {
 		err = kvStore.addEncodedData(w.kvBuffer.GetSlice(&pair))
@@ -738,8 +807,15 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocat
 		}
 	}
 
-	kvStore.Finish()
-	encodedStat := w.rc.Encode()
+	if err = kvStore.Finish(); err != nil {
+		return "", "", "", err
+	}
+	var encodedStat []byte
+	if w.compressionAlgo == CompressionZstd {
+		encodedStat = encodeMultiPropsV1(nil, w.rc.props)
+	} else {
+		encodedStat = w.rc.Encode()
+	}
 	statSize := len(encodedStat)
 	_, err = statWriter.Write(ctx, encodedStat)
 	if err != nil {
@@ -796,7 +872,9 @@ func (w *Writer) writeDupKVs(ctx context.Context, kvLocs []membuf.SliceLocation)
 			return "", err
 		}
 	}
-	dupStore.Finish()
+	if err := dupStore.Finish(); err != nil {
+		return "", err
+	}
 	err = dupWriter.Close(ctx)
 	dupWriter = nil
 	if err != nil {

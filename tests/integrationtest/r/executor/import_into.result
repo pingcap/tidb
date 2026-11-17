@@ -203,3 +203,23 @@ create table import_into_ttl_precheck_target (id int primary key, created_at dat
 IMPORT INTO import_into_ttl_precheck_target FROM SELECT * FROM import_into_ttl_precheck_source WITH DISABLE_PRECHECK;
 Error 8173 (HY000): PreCheck failed: target table has TTL enabled, please disable TTL before IMPORT INTO
 drop table if exists import_into_ttl_precheck_source, import_into_ttl_precheck_target;
+select @@global.tidb_global_sort_compression, @@session.tidb_global_sort_compression;
+@@global.tidb_global_sort_compression	@@session.tidb_global_sort_compression
+none	none
+set @@session.tidb_global_sort_compression = 'zstd';
+select @@global.tidb_global_sort_compression, @@session.tidb_global_sort_compression;
+@@global.tidb_global_sort_compression	@@session.tidb_global_sort_compression
+none	zstd
+set @@session.tidb_global_sort_compression = 'none';
+set @@global.tidb_global_sort_compression = 'zstd';
+select @@global.tidb_global_sort_compression, @@session.tidb_global_sort_compression;
+@@global.tidb_global_sort_compression	@@session.tidb_global_sort_compression
+zstd	none
+set @@global.tidb_global_sort_compression = 'none';
+set @@session.tidb_global_sort_compression = 'gzip';
+Error 1231 (42000): Variable 'tidb_global_sort_compression' can't be set to the value of 'gzip'
+set @@global.tidb_global_sort_compression = 'gzip';
+Error 1231 (42000): Variable 'tidb_global_sort_compression' can't be set to the value of 'gzip'
+select @@global.tidb_global_sort_compression, @@session.tidb_global_sort_compression;
+@@global.tidb_global_sort_compression	@@session.tidb_global_sort_compression
+none	none

@@ -469,9 +469,19 @@ func (p *KVPair) len() int {
 	return len(p.Key) + len(p.Value)
 }
 
+// kvReaderProxy adapts a KV-yielding reader to the sortedReader interface
+// used by the merge iterator. Exactly one of r (v0) or rStream (v1) is
+// non-nil; the proxy dispatches on which is set.
+//
+// For v0 files, next() delegates to *KVReader and switchConcurrentMode
+// toggles the byteReader's concurrent-prefetch mode. For v1 files, next()
+// delegates to *StreamingV1KVReader and switchConcurrentMode is a no-op —
+// streaming zstd has no equivalent concurrent-prefetch knob, so the merge
+// iterator's hotspot detection does not accelerate v1 reads.
 type kvReaderProxy struct {
-	p string
-	r *KVReader
+	p       string
+	r       *KVReader            // v0 file reader; nil for v1
+	rStream *StreamingV1KVReader // v1 streaming reader; nil for v0
 }
 
 func (p kvReaderProxy) path() string {
@@ -479,6 +489,13 @@ func (p kvReaderProxy) path() string {
 }
 
 func (p kvReaderProxy) next() (*KVPair, error) {
+	if p.rStream != nil {
+		k, v, err := p.rStream.NextKV()
+		if err != nil {
+			return nil, err
+		}
+		return &KVPair{Key: k, Value: v}, nil
+	}
 	k, v, err := p.r.NextKV()
 	if err != nil {
 		return nil, err
@@ -487,10 +504,17 @@ func (p kvReaderProxy) next() (*KVPair, error) {
 }
 
 func (p kvReaderProxy) switchConcurrentMode(useConcurrent bool) error {
+	if p.rStream != nil {
+		// v1 streaming reader has no concurrent-prefetch mode.
+		return nil
+	}
 	return p.r.byteReader.switchConcurrentMode(useConcurrent)
 }
 
 func (p kvReaderProxy) close() error {
+	if p.rStream != nil {
+		return p.rStream.Close()
+	}
 	return p.r.Close()
 }
 
@@ -527,10 +551,51 @@ func NewMergeKVIter(
 
 	for i := range paths {
 		readerOpeners = append(readerOpeners, func() (*kvReaderProxy, error) {
-			rd, err := NewKVReader(ctx, paths[i], exStorage, pathsStartOffset[i], readBufferSize)
+			// Probe the first FileHeaderLen bytes to detect v0 vs v1. The merge
+			// step receives only data file paths (MergeSortStepMeta does not
+			// carry stat files), so probing the data file itself is the only
+			// way to dispatch without widening the task-meta schema.
+			version, err := DetectDataFileFormat(ctx, exStorage, paths[i])
 			if err != nil {
 				return nil, err
 			}
+			if version == FileFormatV1 {
+				// v1 merge path: sequential streaming decode over the whole
+				// file. No props needed, no concurrent prefetch — zstd frames
+				// are self-delimiting and we read from start to EOF.
+				//
+				// Non-zero pathsStartOffset on a v1 file is rejected
+				// deliberately. v0 offsets are uncompressed-byte offsets,
+				// which have no meaning inside the zstd stream; a v1 reader
+				// cannot seek to a mid-stream uncompressed-byte position
+				// without companion segment metadata (and the merge step's
+				// task meta does not carry it today). Silently starting
+				// from zero would mask caller bugs and produce duplicate or
+				// out-of-range KVs, so fail fast instead.
+				if pathsStartOffset[i] != 0 {
+					return nil, errors.Errorf(
+						"NewMergeKVIter: non-zero pathsStartOffset %d is not supported for v1 file %s",
+						pathsStartOffset[i], paths[i])
+				}
+				sr, err := NewStreamingV1KVReader(ctx, exStorage, paths[i])
+				if err != nil {
+					return nil, err
+				}
+				fileSize, err := sr.source.GetFileSize()
+				if err != nil {
+					_ = sr.Close()
+					return nil, err
+				}
+				inputSize.Add(fileSize)
+				return &kvReaderProxy{p: paths[i], rStream: sr}, nil
+			}
+			// v0 merge path: unchanged. KVReader + byteReader concurrent
+			// prefetch, driven by the merge iterator's hotspot detection.
+			stream, err := openKVStream(ctx, exStorage, paths[i], FileFormatV0, nil, pathsStartOffset[i], readBufferSize)
+			if err != nil {
+				return nil, err
+			}
+			rd := stream.(*KVReader)
 			fileSize, err := rd.getFileSize()
 			if err != nil {
 				_ = rd.Close()

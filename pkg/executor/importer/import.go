@@ -312,6 +312,8 @@ type Plan struct {
 	Detached              bool
 	DisableTiKVImportMode bool
 	MaxEngineSize         config.ByteSize
+	// GlobalSortCompression is snapshotted into task metadata. Empty legacy values use the raw format.
+	GlobalSortCompression string
 	CloudStorageURI       string
 	DisablePrecheck       bool
 	GroupKey              string
@@ -692,6 +694,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		return err
 	}
 	p.initDefaultOptions(ctx, targetNodeCPUCnt, seCtx.GetStore())
+	p.GlobalSortCompression, err = seCtx.GetSessionVars().GetSessionOrGlobalSystemVar(ctx, vardef.TiDBGlobalSortCompression)
+	if err != nil {
+		return err
+	}
 
 	specifiedOptions := map[string]*ImportOption{}
 	for _, opt := range options {

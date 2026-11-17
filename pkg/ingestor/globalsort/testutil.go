@@ -72,24 +72,29 @@ func testReadAndCompare(
 			curEnd = dbkv.Key(kvs[len(kvs)-1].Key).Next()
 		}
 
-		readRanges, err := simplesst.GetReadRangeFromProps(
+		readRanges, fileVersions, err := simplesst.GetReadRangeFromPropsWithFileFormats(
 			ctx, [][]byte{curStart, curEnd}, statFilesOfGroup, store)
 		require.NoError(t, err)
+		cachedReaders := make([]cachedReader, len(dataFilesOfGroup))
+		for i := range cachedReaders {
+			cachedReaders[i].setFormat(fileVersions[i])
+		}
 
 		err = readAllData(
 			ctx,
 			store,
 			dataFilesOfGroup,
-			statFilesOfGroup,
+			cachedReaders,
 			curStart,
 			curEnd,
-			readRanges[0],
-			readRanges[1],
+			readRanges[0].Start,
+			readRanges[1].End,
 			bufPool,
 			bufPool,
 			loaded,
 		)
 		require.NoError(t, err)
+		require.NoError(t, closeCachedReaders(cachedReaders))
 		loaded.build(ctx)
 
 		// check kvs sorted

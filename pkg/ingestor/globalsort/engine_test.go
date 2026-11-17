@@ -260,11 +260,12 @@ func TestLoadRangeBatchDataReleasesReadersWhileWaitingForDownstream(t *testing.T
 		}
 	})
 
-	// Stats offsets are precomputed before the range loop. After the first range
-	// is emitted, the next failed read only opens the data file, so three opens
-	// prove the retry path has reached object storage.
+	// The stats file and the first data reader account for two opens. The next
+	// batch can reuse that stream, so it need not open the object again before
+	// encountering memory pressure. The closed-reader check below proves that
+	// the failed batch released its cached stream while the first data is held.
 	require.Eventually(t, func() bool {
-		return store.TotalOpened.Load() >= 3
+		return store.TotalOpened.Load() >= 2
 	}, 3*time.Second, 10*time.Millisecond)
 
 	require.Eventually(t, func() bool {
