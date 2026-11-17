@@ -270,8 +270,15 @@ PRs, each stacked on the previous one (the first on #56):
    through `tidb-meta` over a glue snapshot (`metareader`). Pinned by Go's
    unit tests that need no cluster; schema building and DDL jobs are
    checked live in PR 3.
-3. `task.RunBackup` and BRIE backup execution. Live: Rust backup restored
-   by Go and by Rust.
+3. Done: `task.RunBackup` (`BackupConfig` with Go's flag defaults,
+   `Adjust`, `Hash` pinned to Go's JSON and SHA-256), BRIE backup execution
+   (Go `BRIEExec.Next`, `tidbGlue`, `mapBRIEErr`, `cancelBRIEOnKill`), and
+   the server's BRIE node over its TiKV store (snapshot reads, coprocessor
+   client, statistics by snapshot, PD label rules, internal sessions).
+   `BackupSchemaVersion` is Go master's 2. Live on the playgrounds: eleven
+   cases (`/tmp/e07/live.sh`) of Rust backups restored by Go with matching
+   KV counts, bytes and row hashes, over `local://` and MinIO S3, plus
+   Go's error texts. Rust-by-Rust restore comes with PR 5.
 4. Restore split and import: `restore/split`, `restore/utils`,
    `snap_client` import and `tikv_sender`.
 5. `snap_client` and `task.RunRestore` (`restore`, checkpoints, system

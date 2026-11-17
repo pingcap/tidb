@@ -9,8 +9,9 @@ use std::thread::JoinHandle;
 use tidb_gocontext::Context;
 use tidb_proto::backup::{BackupMeta, CipherInfo, File, MetaFile, Schema};
 
-/// Go `backuppb.BackupSchemaVersion`, from the pinned kvproto module.
-pub const BACKUP_SCHEMA_VERSION: u32 = 1;
+/// Go `backuppb.BackupSchemaVersion` of the kvproto Go master pins
+/// (`v0.0.0-20261029034354-9192d38c8b67`).
+pub const BACKUP_SCHEMA_VERSION: u32 = 2;
 /// Go `MetaFileSize`.
 pub const META_FILE_SIZE: usize = 128 * 1024 * 1024;
 /// Go `MaxBatchSize`.

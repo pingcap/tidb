@@ -25,6 +25,8 @@ use crate::errors::{self, Result, ERR_KV_STORAGE};
 
 /// Go `temporaryDBNamePrefix`.
 pub const TEMPORARY_DB_NAME_PREFIX: &str = "__TiDB_BR_Temporary_";
+/// Go `TidbNewCollationEnabled`.
+pub const TIDB_NEW_COLLATION_ENABLED: &str = "new_collation_enabled";
 /// Go `LabelRuleBatchSize`.
 pub const LABEL_RULE_BATCH_SIZE: usize = 50;
 /// Go `storeDisconnectionDuration`.

@@ -253,7 +253,9 @@ impl<'a> ExecutorBuilder<'a> {
     }
 
     /// Go's `SetStartTS`, `SetChecksumRequest`, `SetConcurrency`,
-    /// `SetResourceGroupName`, `SetRequestSource`, `Build`.
+    /// `SetResourceGroupName`, `SetRequestSource`, `Build`. Go's builder
+    /// starts from a zero `kv.Request`, whose paging is off; the coprocessor
+    /// refuses a paged checksum.
     fn finish(
         &self,
         mut builder: RequestBuilder,
@@ -262,6 +264,7 @@ impl<'a> ExecutorBuilder<'a> {
         builder
             .set_start_ts(self.ts)
             .set_checksum_request(checksum.encode_to_vec())
+            .set_paging(false)
             .set_concurrency(self.concurrency)
             .set_resource_group_name(self.resource_group_name.clone())
             .set_request_source(self.request_source.clone());

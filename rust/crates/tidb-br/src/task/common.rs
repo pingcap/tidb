@@ -55,6 +55,98 @@ pub struct Config {
     pub filter_str: Vec<String>,
     /// Go `TableFilter`.
     pub table_filter: Box<dyn tidb_table_filter::Filter>,
+    /// Go `LogProgress`.
+    pub log_progress: bool,
+    /// Go `NoCreds`.
+    pub no_creds: bool,
+    /// Go `CheckRequirements`.
+    pub check_requirements: bool,
+    /// Go `GRPCKeepaliveTime`.
+    pub grpc_keepalive_time: std::time::Duration,
+    /// Go `GRPCKeepaliveTimeout`.
+    pub grpc_keepalive_timeout: std::time::Duration,
+    /// Go `KeyspaceName`.
+    pub keyspace_name: String,
+    /// Go `MetadataDownloadBatchSize`.
+    pub metadata_download_batch_size: u32,
+}
+
+/// Go `defaultGRPCKeepaliveTime`.
+const DEFAULT_GRPC_KEEPALIVE_TIME: std::time::Duration = std::time::Duration::from_secs(10);
+/// Go `defaultGRPCKeepaliveTimeout`.
+const DEFAULT_GRPC_KEEPALIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+/// Go `defaultMetadataDownloadBatchSize`.
+const DEFAULT_METADATA_DOWNLOAD_BATCH_SIZE: u32 = 128;
+/// Go `vardef.DefChecksumTableConcurrency`.
+const DEF_CHECKSUM_TABLE_CONCURRENCY: usize = 4;
+
+impl Config {
+    /// Go `Config.adjust`: the defaults of values left zero (BRIE does not
+    /// parse the CLI flags).
+    pub fn adjust(&mut self) {
+        if self.grpc_keepalive_time.is_zero() {
+            self.grpc_keepalive_time = DEFAULT_GRPC_KEEPALIVE_TIME;
+        }
+        if self.grpc_keepalive_timeout.is_zero() {
+            self.grpc_keepalive_timeout = DEFAULT_GRPC_KEEPALIVE_TIMEOUT;
+        }
+        if self.checksum_concurrency == 0 {
+            self.checksum_concurrency = DEF_CHECKSUM_TABLE_CONCURRENCY;
+        }
+        if self.metadata_download_batch_size == 0 {
+            self.metadata_download_batch_size = DEFAULT_METADATA_DOWNLOAD_BATCH_SIZE;
+        }
+    }
+
+    /// Go `TLSConfig.IsEnabled`.
+    #[must_use]
+    pub fn tls_enabled(&self) -> bool {
+        !self.tls.ca.is_empty()
+    }
+}
+
+/// Go `GetKeepalive`.
+#[must_use]
+pub fn get_keepalive(cfg: &Config) -> crate::utils::store_manager::Keepalive {
+    crate::utils::store_manager::Keepalive { time: cfg.grpc_keepalive_time, timeout: cfg.grpc_keepalive_timeout }
+}
+
+/// Go `NewMgr`: the BR connection over the glue's store, skipping TiFlash.
+///
+/// # Errors
+/// No PD address, or `conn.NewMgr`'s error.
+pub fn new_mgr(
+    ctx: &tidb_gocontext::Context,
+    g: &dyn crate::glue::Glue,
+    cfg: &Config,
+    need_domain: bool,
+    version_checker: crate::conn::VersionCheckerType,
+) -> crate::errors::Result<crate::conn::Mgr> {
+    if cfg.pd.is_empty() {
+        return Err(crate::errors::annotate(
+            crate::errors::new(&crate::errors::ERR_INVALID_ARGUMENT),
+            "pd address can not be empty",
+        ));
+    }
+    let security = if cfg.tls_enabled() {
+        tidb_pd_client::ClusterSecurity::new(cfg.tls.ca.clone(), cfg.tls.cert.clone(), cfg.tls.key.clone(), Vec::new())
+    } else {
+        tidb_pd_client::ClusterSecurity::plaintext()
+    };
+    crate::conn::Mgr::new(
+        ctx,
+        g,
+        crate::conn::MgrOptions {
+            keyspace_name: &cfg.keyspace_name,
+            pd_addrs: &cfg.pd,
+            security,
+            keepalive: get_keepalive(cfg),
+            store_behavior: crate::conn::StoreBehavior::SkipTiFlash,
+            check_requirements: cfg.check_requirements,
+            need_domain,
+            version_checker,
+        },
+    )
 }
 
 /// Go `DefaultConfig`'s SQL-builder fields. Values from `TestDefault`.
@@ -82,6 +174,13 @@ pub fn default_config() -> Config {
         },
         filter_str: vec!["*.*".into()],
         table_filter: tidb_table_filter::case_insensitive(tidb_table_filter::all()),
+        log_progress: false,
+        no_creds: false,
+        check_requirements: true,
+        grpc_keepalive_time: DEFAULT_GRPC_KEEPALIVE_TIME,
+        grpc_keepalive_timeout: DEFAULT_GRPC_KEEPALIVE_TIMEOUT,
+        keyspace_name: String::new(),
+        metadata_download_batch_size: DEFAULT_METADATA_DOWNLOAD_BATCH_SIZE,
     }
 }
 

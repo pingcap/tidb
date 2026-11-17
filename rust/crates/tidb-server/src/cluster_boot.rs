@@ -68,6 +68,13 @@ pub(crate) fn run_cluster_session_node_with_spill(
         authority.tikv_store().clone(),
         Arc::clone(&stack.factory),
     ))));
+    // Go `tidbGlue`: BRIE tasks back up this node's TiKV store.
+    tidb_executor::brie::set_brie_node(Some(Arc::new(crate::brie_node::TikvBrieNode::new(
+        authority.tikv_store().clone(),
+        authority.transaction_opener(),
+        Arc::new(tidb_copr::cop_client::CopClient::new(authority.transport_factory())),
+        Arc::clone(&stack.factory),
+    ))));
     // Go `BootstrapSession` ends with `dom.InitDistTaskLoop()`; the loop
     // retires before the GC worker, as Go's `Domain.Close` stops it before
     // the store closes.

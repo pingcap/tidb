@@ -96,6 +96,7 @@ tidb-sessionstates = { path = "../tidb-sessionstates" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-bindinfo = { path = "../tidb-bindinfo" }
 tidb-domain-core = { path = "../tidb-domain-core" }
+tidb-br = { path = "../tidb-br" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-variable = { path = "../tidb-variable" }
 tidb-stats-handle-syncload = { path = "../tidb-stats-handle-syncload" }

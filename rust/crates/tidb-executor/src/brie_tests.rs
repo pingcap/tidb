@@ -239,3 +239,148 @@ fn test_cancel_waiting_task() {
     queue.release_task();
     assert!(!queue.cancel_task(u64::MAX));
 }
+
+/// Serializes the tests that use the process-wide BRIE queue and node.
+fn global_queue() -> std::sync::MutexGuard<'static, ()> {
+    static QUEUE: Mutex<()> = Mutex::new(());
+    QUEUE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Go `TestGlueGetVersion`.
+#[test]
+fn test_glue_get_version() {
+    struct NoNode;
+    impl BrieNode for NoNode {
+        fn storage(&self) -> Result<Arc<dyn tidb_br::glue::Storage>, String> {
+            Err("none".into())
+        }
+        fn domain(&self) -> Result<Arc<dyn tidb_br::glue::Domain>, String> {
+            Err("none".into())
+        }
+        fn create_session(&self) -> Result<Box<dyn tidb_br::glue::Session>, String> {
+            Err("none".into())
+        }
+    }
+    let glue = TidbGlue {
+        node: Arc::new(NoNode),
+        progress: Arc::new(BrieTaskProgress::waiting()),
+        info: Arc::new(Mutex::new(BrieTaskInfo::new(&statement(BrieKind::Backup, "noop://")))),
+    };
+    let version = tidb_br::glue::Glue::get_version(&glue);
+    assert!(version.starts_with("TiDB\n"), "{version}");
+    assert!(version.contains("Release Version"), "{version}");
+    assert!(version.contains("Git Commit Hash"), "{version}");
+    // The glue records what the task reports for SHOW BACKUPS.
+    tidb_br::glue::Glue::record(&glue, "BackupTS", 7);
+    tidb_br::glue::Glue::record(&glue, "Size", 9);
+    let p = tidb_br::glue::Glue::start_progress(&glue, &Context::background(), "Backup", 4, false);
+    p.inc();
+    assert_eq!(p.get_current(), 1);
+    let info = glue.info.lock().unwrap();
+    assert_eq!((info.backup_ts, info.archive_size), (7, 9));
+}
+
+/// Go `TestBRIEKillMonitorHandlesWrappedQueryInterrupted`.
+#[test]
+fn test_brie_kill_monitor_handles_query_interrupted() {
+    let killer = Arc::new(tidb_sqlkiller::SqlKiller::default());
+    let (task_ctx, cancel_task_ctx) = Context::with_cancel(&Context::background());
+    let (tick_tx, tick_rx) = crossbeam_channel::bounded(1);
+    let (cancelled_tx, cancelled_rx) = crossbeam_channel::bounded(1);
+    let k = Arc::clone(&killer);
+    std::thread::spawn(move || {
+        cancel_brie_on_kill(&task_ctx, &k, &tick_rx, || {
+            let _ = cancelled_tx.send(());
+        });
+    });
+    killer.send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
+    tick_tx.send(Instant::now()).unwrap();
+    assert!(cancelled_rx.recv_timeout(Duration::from_secs(1)).is_ok(), "BRIE task was not cancelled after QueryInterrupted");
+    cancel_task_ctx.cancel();
+}
+
+/// Go `TestMapBRIEErrPreservesCancelCause`.
+#[test]
+fn test_map_brie_err_preserves_cancel_cause() {
+    let killer = tidb_sqlkiller::SqlKiller::default();
+    let backup_failed = &*tidb_exeerrors::ERR_BRIE_BACKUP_FAILED;
+    let (err, message) = map_brie_err(&killer, "disk full".into(), Some(backup_failed));
+    assert_eq!(err.to_mysql_error().code, 8124);
+    assert_eq!(message, "[executor:8124]Backup failed: disk full");
+
+    killer.send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
+    let (err, _) = map_brie_err(&killer, "context canceled".into(), Some(backup_failed));
+    assert_eq!(err.to_mysql_error().code, 1317);
+
+    // CANCEL BR JOB cancels the task without the killer: 8124 stays.
+    let no_kill = tidb_sqlkiller::SqlKiller::default();
+    let (err, _) = map_brie_err(&no_kill, "context canceled".into(), Some(backup_failed));
+    assert_eq!(err.to_mysql_error().code, 8124);
+    let (err, message) = map_brie_err(&no_kill, "context canceled".into(), None);
+    assert!(err.to_string().contains("context canceled"), "{err}");
+    assert_eq!(message, "context canceled");
+}
+
+/// Go `TestBRIEAcquireTaskCancellationRecordsTerminalState`: a queued task
+/// whose statement is cancelled records its finish and message.
+#[test]
+fn test_brie_acquire_task_cancellation_records_terminal_state() {
+    let _queue = global_queue();
+    // Another task holds the worker.
+    let (held_ctx, held_id) = GLOBAL_BRIE_QUEUE.register_task(&Context::background(), BrieTaskInfo::new(&statement(BrieKind::Backup, "noop://held")));
+    let _held = GLOBAL_BRIE_QUEUE.acquire_task(&held_ctx, held_id).unwrap();
+    let exec = BRIEExec { backup_cfg: None, restore_cfg: None, info: BrieTaskInfo::new(&statement(BrieKind::Backup, "noop://queued")) };
+    let (ctx, cancel) = Context::with_cancel(&Context::background());
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    std::thread::spawn(move || {
+        let _ = tx.send(brie_next(&ctx, exec, 3, Arc::new(tidb_sqlkiller::SqlKiller::default())));
+    });
+    let queued = (0..100)
+        .find_map(|_| {
+            std::thread::sleep(Duration::from_millis(10));
+            GLOBAL_BRIE_QUEUE.tasks.lock().unwrap().iter().find(|(_, item)| item.info.lock().unwrap().storage == "noop://queued").map(|(id, _)| *id)
+        })
+        .expect("the task is queued");
+    cancel.cancel();
+    let err = rx.recv_timeout(Duration::from_secs(1)).expect("the queued task returns after cancellation").unwrap_err();
+    assert!(err.to_string().contains("context canceled"), "{err}");
+    let info = GLOBAL_BRIE_QUEUE.query_task(queued).unwrap();
+    let info = info.lock().unwrap();
+    assert!(info.finish_time.is_some());
+    assert_eq!(info.message, "context canceled");
+    assert_eq!(info.conn_id, 3);
+    drop(info);
+    GLOBAL_BRIE_QUEUE.release_task();
+    GLOBAL_BRIE_QUEUE.cancel_task(held_id);
+}
+
+/// A BACKUP on a node without a TiKV store fails as Go's task does when it
+/// cannot open the store: 8124, recorded for SHOW BACKUPS.
+#[test]
+fn test_backup_without_a_node_fails_with_8124() {
+    let _queue = global_queue();
+    let (_fp, _store) = tikv_store();
+    set_brie_node(None);
+    let exec = build_brie(&parse_brie("BACKUP DATABASE d TO 'noop://nonode'"), &tidb_datatype::SessionTimeZone::default()).unwrap();
+    let err = brie_next(&Context::background(), exec, 5, Arc::new(tidb_sqlkiller::SqlKiller::default())).unwrap_err();
+    let mysql = err.to_mysql_error();
+    assert_eq!(mysql.code, 8124);
+    assert_eq!(mysql.message, "Backup failed: BACKUP and RESTORE need a TiKV store, and this instance has none");
+    let rows = GLOBAL_BRIE_QUEUE.fetch_show_brie(BrieKind::Backup);
+    let row = rows.iter().find(|r| r[1] == Datum::new_string_datum("noop://nonode")).expect("the job is listed");
+    assert_eq!(row[8], Datum::new_string_datum("[executor:8124]Backup failed: BACKUP and RESTORE need a TiKV store, and this instance has none"));
+    assert_eq!(row[7], Datum::UInt(5));
+}
+
+/// Go `buildBackupRestoreSchema`: the BACKUP and RESTORE result columns.
+#[test]
+fn test_backup_restore_columns() {
+    let names = |kind| backup_restore_columns(kind).into_iter().map(|(n, _)| n).collect::<Vec<_>>();
+    assert_eq!(names(BrieKind::Backup), ["Destination", "Size", "BackupTS", "Queue Time", "Execution Time"]);
+    assert_eq!(names(BrieKind::Restore), ["Destination", "Size", "BackupTS", "Cluster TS", "Queue Time", "Execution Time"]);
+    let columns = backup_restore_columns(BrieKind::Backup);
+    assert_eq!(columns[0].1.flen(), 255);
+    assert!(!columns[0].1.has_flag(tidb_datatype::FieldTypeFlags::UNSIGNED));
+    assert!(columns[1].1.has_flag(tidb_datatype::FieldTypeFlags::UNSIGNED));
+    assert_eq!(columns[4].1.flen(), 19);
+}

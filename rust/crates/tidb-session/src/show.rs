@@ -347,6 +347,10 @@ impl tidb_executor::index_advisor::RecommendIndexExec for Session {
 }
 
 impl tidb_executor::admin::AdminExec for Session {
+    fn brie_sql_killer(&self) -> std::sync::Arc<tidb_sqlkiller::SqlKiller> {
+        self.sql_killer()
+    }
+
     fn reload_bindings(&mut self) -> Result<(), DriverError> {
         self.reload_global_bindings()
     }

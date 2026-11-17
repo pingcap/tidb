@@ -32,7 +32,7 @@ fn test_new_meta_writer_initializes_backup_schema_version() {
         "",
         None,
     );
-    assert_eq!(writer.backupmeta().backup_schema_version, 1);
+    assert_eq!(writer.backupmeta().backup_schema_version, BACKUP_SCHEMA_VERSION);
 }
 
 /// Go `metafile_test.go:TestEncryptAndDecrypt`, including invalid cipher/key
