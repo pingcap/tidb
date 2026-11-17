@@ -17,6 +17,7 @@ package core
 import (
 	"fmt"
 	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"unsafe"
@@ -972,6 +973,8 @@ type PhysicalTableScan struct {
 	// that are pushed down to table scan from selection by late materialization.
 	// TODO: remove this field after we support pushing down selection to coprocessor.
 	LateMaterializationFilterCondition []expression.Expression
+	// ForcedLateMaterializationFilterColumnIDs records the columns specified by TIFLASH_LM_FILTER hints.
+	ForcedLateMaterializationFilterColumnIDs []int64
 
 	Table   *model.TableInfo    `plan-cache-clone:"shallow"`
 	Columns []*model.ColumnInfo `plan-cache-clone:"shallow"`
@@ -1059,6 +1062,7 @@ func (ts *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, 
 	clonedScan.AccessCondition = util.CloneExprs(ts.AccessCondition)
 	clonedScan.filterCondition = util.CloneExprs(ts.filterCondition)
 	clonedScan.LateMaterializationFilterCondition = util.CloneExprs(ts.LateMaterializationFilterCondition)
+	clonedScan.ForcedLateMaterializationFilterColumnIDs = slices.Clone(ts.ForcedLateMaterializationFilterColumnIDs)
 	if ts.Table != nil {
 		clonedScan.Table = ts.Table.Clone()
 	}
@@ -1216,6 +1220,7 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 	for _, cond := range ts.LateMaterializationFilterCondition {
 		sum += cond.MemoryUsage()
 	}
+	sum += int64(cap(ts.ForcedLateMaterializationFilterColumnIDs)) * size.SizeOfInt64
 	for _, rang := range ts.Ranges {
 		sum += rang.MemUsage()
 	}

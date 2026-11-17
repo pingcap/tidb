@@ -26,6 +26,24 @@ Usage: ./run-tests.sh [options]
     -p <portgenerator-path>: Use port generator in <portgenerator-path> for generating port numbers.
 ```
 
+## Reused TiKV Stores
+
+Golden results require `tidb_redact_log = OFF` to preserve literal values in
+errors and EXPLAIN output. The runner passes `-initialize-sql-file init.sql`,
+which applies this setting only on first bootstrap. A reused TiKV store
+bootstrapped with this `init.sql` already has the setting, unless it was
+subsequently changed. If the store was bootstrapped without it, or redaction
+has since been enabled, run the following statement against the test server
+before running golden cases:
+
+```sql
+SET GLOBAL tidb_redact_log = OFF;
+```
+
+This changes the persisted global setting and disables log redaction on the
+server. Use a dedicated test server; restore its previous setting afterward if
+needed.
+
 ## How it works
 
 IntegrationTest will read test case in `t/*.test`, and execute them in TiDB server with `s/*.json` stat, and compare integration result in `r/*.result`.

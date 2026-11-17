@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/planner/cascades"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -574,11 +573,9 @@ func buildAndOptimizeLogicalPlanRound(
 	if optFlagAdjust != nil {
 		optFlag = optFlagAdjust(optFlag)
 	}
-	if sctx.GetSessionVars().GetEnableCascadesPlanner() {
-		finalPlan, cost, optErr = cascades.DefaultOptimizer.FindBestPlan(sctx, logic)
-	} else {
-		finalPlan, cost, optErr = core.DoOptimize(ctx, sctx, optFlag, logic)
-	}
+	// The Cascades planner has been removed; the Cascades optimizer is no longer
+	// reachable, so all statements use the default planner.
+	finalPlan, cost, optErr = core.DoOptimize(ctx, sctx, optFlag, logic)
 	if optErr != nil {
 		return nil, nil, false, optErr
 	}

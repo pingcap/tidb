@@ -17,9 +17,11 @@ package executor
 import (
 	"context"
 	"fmt"
+	"net"
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
@@ -79,4 +81,30 @@ func TestCanBroadcastToTiDBRPCForTestRejectsInvalidEndpoints(t *testing.T) {
 func BuildExecutorForTest(ctx context.Context, stmt *ExecStmt) error {
 	_, err := stmt.buildExecutor(ctx)
 	return err
+}
+
+func TestCanBroadcastAnalyzeStatsDeltaSkipsNonServingNodes(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, listener.Close()) })
+	port := listener.Addr().(*net.TCPAddr).Port
+	const fp = "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo"
+	t.Cleanup(func() { require.NoError(t, failpoint.Disable(fp)) })
+	for _, tc := range []struct {
+		name         string
+		info         string
+		canBroadcast bool
+	}{
+		{"only disabled", `{"br":{"disable_rpc":true}}`, false},
+		{"serving and disabled", fmt.Sprintf(`{"tidb":{"ip":"127.0.0.1","status_port":%d},"br":{"disable_rpc":true}}`, port), true},
+		{"explicit false and disabled", fmt.Sprintf(`{"tidb":{"ip":"127.0.0.1","status_port":%d,"disable_rpc":false},"br":{"disable_rpc":true}}`, port), true},
+		{"non-serving endpoint without flag", fmt.Sprintf(`{"tidb":{"ip":"127.0.0.1","status_port":%d},"other":{"ip":""}}`, port), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, failpoint.Enable(fp, fmt.Sprintf("return(`%s`)", tc.info)))
+			canBroadcast, err := canBroadcastAnalyzeStatsDeltaForTest(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, tc.canBroadcast, canBroadcast)
+		})
+	}
 }

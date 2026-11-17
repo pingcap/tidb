@@ -94,4 +94,3 @@ desc format='brief' select max(d) from tt;
 select max(d) from tt;
 desc format='brief' select max(d collate utf8mb4_bin) from tt;
 select max(d collate utf8mb4_bin) from tt;
-

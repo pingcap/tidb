@@ -14,7 +14,12 @@
 
 package sqlkiller
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/stretchr/testify/require"
+)
 
 func TestConnectionAliveCallbackCleanupKeepsNewerCallback(t *testing.T) {
 	var killer SQLKiller
@@ -50,4 +55,35 @@ func TestConnectionAliveCallbackCleanupKeepsNewerCallback(t *testing.T) {
 	if newCallbackCalls != 1 {
 		t.Fatalf("expected newer callback to be cleared, got %d calls", newCallbackCalls)
 	}
+}
+
+func TestSQLKillerConcurrentReset(t *testing.T) {
+	t.Run("reset after successful kill signal CAS", func(t *testing.T) {
+		killer := &SQLKiller{}
+		const beforeLogFailpoint = "github.com/pingcap/tidb/pkg/util/sqlkiller/" +
+			"beforeLogKillSignal"
+		testfailpoint.EnableCall(t, beforeLogFailpoint, func() {
+			killer.Reset()
+		})
+
+		require.NotPanics(t, func() {
+			killer.SendKillSignal(QueryInterrupted)
+		})
+		require.Equal(t, UnspecifiedKillSignal, killer.GetKillSignal())
+		require.NoError(t, killer.HandleSignal())
+	})
+
+	t.Run("kill signal after reset clear", func(t *testing.T) {
+		killer := &SQLKiller{}
+		killer.SendKillSignal(QueryInterrupted)
+		const afterResetFailpoint = "github.com/pingcap/tidb/pkg/util/sqlkiller/" +
+			"afterResetKillSignalSwap"
+		testfailpoint.EnableCall(t, afterResetFailpoint, func() {
+			killer.SendKillSignal(MaxExecTimeExceeded)
+		})
+
+		killer.Reset()
+		require.Equal(t, MaxExecTimeExceeded, killer.GetKillSignal())
+		require.Error(t, killer.HandleSignal())
+	})
 }

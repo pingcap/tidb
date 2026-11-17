@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -281,12 +280,6 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	}
 
 	tidbCfg := config.GetGlobalConfig()
-	tlsCfg := task.TLSConfig{
-		CA:   tidbCfg.Security.ClusterSSLCA,
-		Cert: tidbCfg.Security.ClusterSSLCert,
-		Key:  tidbCfg.Security.ClusterSSLKey,
-	}
-	pds := strings.Split(tidbCfg.Path, ",")
 
 	// build common config and override for specific task if needed
 	cfg := task.DefaultConfig()
@@ -296,8 +289,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	default:
 	}
 
-	cfg.PD = pds
-	cfg.TLS = tlsCfg
+	task.ApplyTiDBRuntimeConfig(&cfg)
 
 	storageURL, err := storage.ParseRawURL(s.Storage)
 	if err != nil {
@@ -307,9 +299,15 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 
 	switch storageURL.Scheme {
 	case "s3":
-		storage.ExtractQueryParameters(storageURL, &cfg.S3)
+		if err := storage.ExtractQueryParameters(storageURL, &cfg.S3); err != nil {
+			b.err = errors.Annotate(err, "invalid destination URL")
+			return nil
+		}
 	case "gs", "gcs":
-		storage.ExtractQueryParameters(storageURL, &cfg.GCS)
+		if err := storage.ExtractQueryParameters(storageURL, &cfg.GCS); err != nil {
+			b.err = errors.Annotate(err, "invalid destination URL")
+			return nil
+		}
 	case "hdfs":
 		if sem.IsEnabled() {
 			// Storage is not permitted to be hdfs when SEM is enabled.

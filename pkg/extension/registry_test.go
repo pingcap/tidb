@@ -311,7 +311,7 @@ func TestCustomAccessCheck(t *testing.T) {
 	tk1.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 10"))
 	tk1.MustQuery("select * from t1").Check(testkit.Rows("1 10", "2 20"))
 
-	require.EqualError(t, tk2.ExecToErr("select * from t1 where id=1"), "[planner:1143]SELECT command denied to user 'u2'@'localhost' for column 'id' in table 't1'")
+	require.EqualError(t, tk2.ExecToErr("select * from t1 where id=1"), "[planner:1142]SELECT command denied to user 'u2'@'localhost' for table 't1'")
 	require.EqualError(t, tk2.ExecToErr("select * from t1"), "[planner:1142]SELECT command denied to user 'u2'@'localhost' for table 't1'")
 
 	tk.MustExec("GRANT priv1 on *.* TO u2@localhost")

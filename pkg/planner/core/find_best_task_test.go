@@ -16,15 +16,21 @@ package core
 
 import (
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -275,4 +281,30 @@ func TestHintCannotFitProperty(t *testing.T) {
 	mockPhysicalPlan, ok = task.Plan().(*mockPhysicalPlan4Test)
 	require.True(t, ok)
 	require.Equal(t, 1, mockPhysicalPlan.planType)
+}
+
+func TestIndexJoinSkylinePruningWithoutStableNDV(t *testing.T) {
+	ctx := mock.NewContext().GetPlanCtx()
+	col := &expression.Column{UniqueID: 1}
+	ranges := ranger.FullIntRange(false)
+	buildCandidate := func(count float64) *candidatePath {
+		path := &util.AccessPath{
+			Index:            &model.IndexInfo{},
+			IdxCols:          []*expression.Column{col},
+			IdxColLens:       []int{types.UnspecifiedLength},
+			FullIdxCols:      []*expression.Column{col},
+			FullIdxColLens:   []int{types.UnspecifiedLength},
+			CountAfterAccess: count,
+			IsSingleScan:     true,
+			Ranges:           ranges,
+		}
+		result := indexJoinPathConstructResult(ctx, &indexJoinPathInfo{},
+			&indexJoinPathTmp{curIdxOff2KeyOff: []int{0}}, ranges, path, nil, nil, nil, 1)
+		return result.candidate
+	}
+	// Without stable join-key NDV, full-table counts cannot prove which runtime
+	// lookup reads fewer rows. Leave the candidates for the IndexJoin comparison.
+	result, _ := compareCandidates(ctx, nil, &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64},
+		buildCandidate(2000000), buildCandidate(1000), false)
+	require.Zero(t, result)
 }
