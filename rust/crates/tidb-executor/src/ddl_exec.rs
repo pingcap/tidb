@@ -314,9 +314,10 @@ pub trait DdlExec {
             }
         }
         // Go `executor.CreateMaskingPolicy` (the `ALTER TABLE` masking specs
-        // run in `executor.AlterTable`).
+        // run in `executor.AlterTable`) and Go master's
+        // `executor.CreateMaterializedViewLog`.
         if let Stmt::Ddl(ddl) = stmt {
-            if matches!(&**ddl, DdlStmt::CreateMaskingPolicy(_)) {
+            if matches!(&**ddl, DdlStmt::CreateMaskingPolicy(_) | DdlStmt::CreateMaterializedViewLog(_)) {
                 self.run_executor_statement(sql, stmt).map_err(map_error)?;
                 return Ok(());
             }

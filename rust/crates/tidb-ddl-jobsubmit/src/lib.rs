@@ -175,6 +175,30 @@ fn truncate_table_args(spec: &JobSpec) -> GoShared<tidb_model::TruncateTableArgs
     }
 }
 
+fn create_materialized_view_log_args(spec: &JobSpec) -> GoShared<tidb_model::CreateMaterializedViewLogArgs> {
+    match &spec.args {
+        JobArgsValue::CreateMaterializedViewLog(Some(args)) => args.clone(),
+        _ => panic!("Go JobSpec.Args is not *model.CreateMaterializedViewLogArgs"),
+    }
+}
+
+fn create_materialized_view_args(spec: &JobSpec) -> GoShared<tidb_model::CreateMaterializedViewArgs> {
+    match &spec.args {
+        JobArgsValue::CreateMaterializedView(Some(args)) => args.clone(),
+        _ => panic!("Go JobSpec.Args is not *model.CreateMaterializedViewArgs"),
+    }
+}
+
+/// The table a materialized view or MV log job creates.
+fn materialized_table(spec: &JobSpec) -> GoShared<TableInfo> {
+    if spec.job.type_ == ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG {
+        create_materialized_view_log_args(spec).read().table_info.clone()
+    } else {
+        create_materialized_view_args(spec).read().table_info.clone()
+    }
+    .expect("nil TableInfo")
+}
+
 fn table_id_count(table: &TableInfo) -> usize {
     1 + table
         .get_partition_info()
@@ -190,9 +214,13 @@ pub fn get_required_gid_count(specs: &[JobSpec]) -> usize {
             continue;
         }
         match spec.job.type_ {
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG | ActionType::ACTION_CREATE_MATERIALIZED_VIEW => {
+                count += table_id_count(&materialized_table(spec).read());
+            }
             ActionType::ACTION_CREATE_VIEW
             | ActionType::ACTION_CREATE_SEQUENCE
-            | ActionType::ACTION_CREATE_TABLE => {
+            | ActionType::ACTION_CREATE_TABLE
+            | ActionType::ACTION_CREATE_MATERIALIZED_VIEW_SHADOW => {
                 let args = create_table_args(spec);
                 let table = args
                     .read()
@@ -292,9 +320,17 @@ pub fn assign_g_ids_for_jobs(specs: &mut [JobSpec], ids: &[i64]) {
     let mut allocator = GlobalIdAssigner { ids, next: 0 };
     for spec in specs {
         match spec.job.type_ {
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG | ActionType::ACTION_CREATE_MATERIALIZED_VIEW => {
+                let table = materialized_table(spec);
+                if !spec.id_allocated {
+                    allocator.assign_table(&table);
+                }
+                spec.job.table_id = table.read().id;
+            }
             ActionType::ACTION_CREATE_VIEW
             | ActionType::ACTION_CREATE_SEQUENCE
-            | ActionType::ACTION_CREATE_TABLE => {
+            | ActionType::ACTION_CREATE_TABLE
+            | ActionType::ACTION_CREATE_MATERIALIZED_VIEW_SHADOW => {
                 let args = create_table_args(spec);
                 let table = args
                     .read()
@@ -668,6 +704,24 @@ pub fn job_2_table_ids(spec: &JobSpec) -> String {
         ) => string_for_ids([spec.job.table_id, args.read().partitioned_table_id.get()]),
         (ActionType::ACTION_TRUNCATE_TABLE, JobArgsValue::TruncateTable(Some(args))) => {
             format!("{},{}", spec.job.table_id, args.read().new_table_id.get())
+        }
+        (ActionType::ACTION_CREATE_MATERIALIZED_VIEW, JobArgsValue::CreateMaterializedView(Some(args)))
+            if !args.read().mlog_table_ids.is_empty() =>
+        {
+            string_for_ids(std::iter::once(spec.job.table_id).chain(args.read().mlog_table_ids.iter().copied()))
+        }
+        (ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG, JobArgsValue::CreateMaterializedViewLog(Some(args))) => {
+            let base_table_id = args
+                .read()
+                .table_info
+                .as_ref()
+                .and_then(|table| table.read().materialized_view_log.as_ref().map(|log| log.read().base_table_id))
+                .unwrap_or(0);
+            if base_table_id > 0 {
+                string_for_ids([spec.job.table_id, base_table_id])
+            } else {
+                spec.job.table_id.to_string()
+            }
         }
         _ => spec.job.table_id.to_string(),
     }

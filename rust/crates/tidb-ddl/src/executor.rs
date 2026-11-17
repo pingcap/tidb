@@ -168,6 +168,37 @@ pub(super) fn repair_table<S: StoreClient>(
     Ok(report)
 }
 
+/// Go master `executor.CreateMaterializedViewLog`: the job, then
+/// `createTableWithInfoPost` for the log table.
+pub(super) fn create_materialized_view_log<S: StoreClient>(
+    executor: &RealClusterDdl<S>,
+    stmt: &tidb_ast::CreateMaterializedViewLogStmt,
+    current_db: &str,
+    context: &dyn DdlSessionContext,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    let (report, schema, name) = submit_create_materialized_view_log(executor, stmt, current_db, context)?;
+    if matches!(report, ClusterDdlReport::Applied { .. }) {
+        after_create_tables(executor, &schema, &[name], context)?;
+    }
+    Ok(report)
+}
+
+/// Go master `executor.CreateMaterializedViewLog` through `DoDDLJobWrapper`:
+/// the report, and the log table's schema and name.
+pub fn submit_create_materialized_view_log<E: ExecutorStore>(
+    executor: &E,
+    stmt: &tidb_ast::CreateMaterializedViewLogStmt,
+    current_db: &str,
+    context: &dyn DdlSessionContext,
+) -> Result<(ClusterDdlReport, String, String), SqlQueryError> {
+    let catalog = executor.latest_schema();
+    let (job, schema) = super::executor_mview::create_materialized_view_log_job(&catalog, stmt, current_db, context)
+        .map_err(mysql_query_error)?;
+    let name = job.job.table_name.to_string();
+    let report = do_ddl_job_wrapper(executor, context, job)?;
+    Ok((report, schema, name))
+}
+
 /// Go `executor.CreateSchema` through `CreateSchemaWithInfo`.
 pub fn create_schema<E: ExecutorStore>(
     executor: &E,

@@ -23,6 +23,8 @@
 pub mod executor;
 #[path = "executor_masking.rs"]
 mod executor_masking;
+#[path = "executor_mview.rs"]
+mod executor_mview;
 pub use executor::ExecutorStore;
 
 use tidb_ddl_build::partition_reorg::KvTablePartitionReorg;
@@ -218,6 +220,14 @@ pub trait ClusterDdl: Send + Sync {
         context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
     ) -> Result<ClusterDdlReport, SqlQueryError>;
 
+    /// Go master `executor.CreateMaterializedViewLog`.
+    fn create_materialized_view_log(
+        &self,
+        stmt: &tidb_ast::CreateMaterializedViewLogStmt,
+        current_db: &str,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
     /// Go `executor.CreateView` after `DDLExec.executeCreateView` resolves its body.
     fn create_view(
         &self,
@@ -390,6 +400,9 @@ pub trait ClusterDdl: Send + Sync {
                 }
                 tidb_ast::DdlStmt::CreateMaskingPolicy(statement) => {
                     self.create_masking_policy(statement, current_db, context.as_ref())
+                }
+                tidb_ast::DdlStmt::CreateMaterializedViewLog(statement) => {
+                    self.create_materialized_view_log(statement, current_db, context.as_ref())
                 }
                 tidb_ast::DdlStmt::RecoverTable(statement) => self.recover_table(
                     &statement.table,
@@ -3718,6 +3731,15 @@ where
         context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         executor::create_masking_policy(self, stmt, current_db, context)
+    }
+
+    fn create_materialized_view_log(
+        &self,
+        stmt: &tidb_ast::CreateMaterializedViewLogStmt,
+        current_db: &str,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::create_materialized_view_log(self, stmt, current_db, context)
     }
 
     fn create_view(

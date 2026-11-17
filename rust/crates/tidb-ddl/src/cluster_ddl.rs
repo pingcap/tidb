@@ -2588,6 +2588,7 @@ pub mod multi_schema;
 pub mod partition;
 pub mod flashback_cluster;
 pub mod masking_policy;
+pub mod materialized_view;
 pub mod placement_policy;
 pub mod rename_table;
 pub mod repair_table;
@@ -2612,6 +2613,7 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_ALTER_CHECK_CONSTRAINT
             | ActionType::ACTION_CREATE_SCHEMA
             | ActionType::ACTION_CREATE_TABLE
+            | ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG
             | ActionType::ACTION_CREATE_TABLES
             | ActionType::ACTION_RECOVER_TABLE
             | ActionType::ACTION_FLASHBACK_CLUSTER
@@ -2787,6 +2789,9 @@ fn dispatch_persisted_action(
         ActionType::ACTION_CREATE_TABLE => create_table::on_create_table(
             txn, catalog, active, start_ts, row_ids,
         ),
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG => {
+            materialized_view::on_create_materialized_view_log(txn, catalog, active, start_ts, row_ids)
+        }
         ActionType::ACTION_CREATE_TABLES => {
             plan_persisted_create_tables_job_step(txn, catalog, active, start_ts, row_ids)
         }

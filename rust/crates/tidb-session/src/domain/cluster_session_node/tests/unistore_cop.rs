@@ -52,6 +52,7 @@ mod table_mode;
 mod repair_table;
 mod session_schema_changes;
 mod masking_policy;
+mod materialized_view;
 mod ddl_executor;
 mod create_with_info;
 mod analyzetest;

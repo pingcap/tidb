@@ -1484,6 +1484,9 @@ pub struct StmtContextData {
     /// read this value when deciding whether CHECK declarations are discarded
     /// with a warning or persisted and enforced.
     enable_check_constraint: bool,
+    /// Go master `SessionVars.EnableMView` (`tidb_mview_enable`), which the
+    /// materialized view DDL checks.
+    enable_mview: bool,
     /// Go `SessionVars.PlacementMode == PlacementModeIgnore`
     /// (`@@tidb_placement_mode = 'IGNORE'`): placement options and placement
     /// DDL are dropped with a note.
@@ -2998,6 +3001,13 @@ context_configuration! {
         self
     }
 
+    /// Sets the session's `tidb_mview_enable` for this statement.
+    #[must_use]
+    pub fn with_enable_mview(mut self, enabled: bool) -> Self {
+        self.enable_mview = enabled;
+        self
+    }
+
     /// Sets `@@tidb_placement_mode = 'IGNORE'` for this statement.
     #[must_use]
     pub fn with_placement_mode_ignore(mut self, ignore: bool) -> Self {
@@ -3634,6 +3644,7 @@ impl StmtContext {
             default_week_format: 0,
             foreign_key_checks: true,
             enable_check_constraint: false,
+            enable_mview: false,
             placement_mode_ignore: false,
             lock_unchanged_keys: tidb_vardef::defaults::DEF_TIDB_LOCK_UNCHANGED_KEYS,
             hash_exchange_with_new_collation:
@@ -5843,6 +5854,12 @@ impl StmtContext {
     #[must_use]
     pub fn enable_check_constraint(&self) -> bool {
         self.enable_check_constraint
+    }
+
+    /// Go master `SessionVars.EnableMView`.
+    #[must_use]
+    pub fn enable_mview(&self) -> bool {
+        self.enable_mview
     }
 
     /// Go `SessionVars.PlacementMode == PlacementModeIgnore`.

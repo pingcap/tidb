@@ -29,6 +29,8 @@ pub trait DdlSessionContext: Send + Sync {
     }
     /// `tidb_enable_check_constraint`.
     fn enable_check_constraint(&self) -> bool;
+    /// Go master `SessionVars.EnableMView` (`tidb_mview_enable`).
+    fn enable_mview(&self) -> bool;
     /// `foreign_key_checks`.
     fn foreign_key_checks(&self) -> bool;
     /// `tidb_allow_remove_auto_inc`.
@@ -145,6 +147,10 @@ impl<T: DdlSessionContext + ?Sized> DdlSessionContext for std::sync::Arc<T> {
 
     fn enable_check_constraint(&self) -> bool {
         (**self).enable_check_constraint()
+    }
+
+    fn enable_mview(&self) -> bool {
+        (**self).enable_mview()
     }
 
     fn foreign_key_checks(&self) -> bool {

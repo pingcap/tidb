@@ -1810,6 +1810,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                         self.session_vars().query_cop_store_limit() as isize,
                     ))
                     .with_enable_check_constraint(self.enable_check_constraint())
+                .with_enable_mview(self.session_vars().enable_mview())
                     .with_placement_mode_ignore(self.placement_mode_ignore())
                     .with_lock_unchanged_keys(self.lock_unchanged_keys())
                     .with_rc_check_ts(self.stmt_rc_check_ts())
@@ -2030,6 +2031,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_auto_increment_step(increment, offset)
                 .with_foreign_key_checks(self.foreign_key_checks())
                 .with_enable_check_constraint(self.enable_check_constraint())
+                .with_enable_mview(self.session_vars().enable_mview())
                 .with_placement_mode_ignore(self.placement_mode_ignore())
                     .with_lock_unchanged_keys(self.lock_unchanged_keys())
                     .with_rc_check_ts(self.stmt_rc_check_ts())

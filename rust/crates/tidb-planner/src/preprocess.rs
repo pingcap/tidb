@@ -250,7 +250,12 @@ pub fn resolve_ctx_table_names(stmt: &Stmt) -> Vec<Vec<String>> {
             | DdlStmt::RenameTable(_)
             | DdlStmt::CreateSequence(_)
             | DdlStmt::DropSequence(_)
-            | DdlStmt::RepairTable(_) => return names,
+            | DdlStmt::RepairTable(_)
+            // Go master: `inCreateOrDropTable` for these materialized view
+            // statements.
+            | DdlStmt::CreateMaterializedView(_)
+            | DdlStmt::DropMaterializedView(_)
+            | DdlStmt::AlterMaterializedView(_) => return names,
             DdlStmt::AlterTable(alter) => {
                 if alter.actions.iter().any(|action| {
                     matches!(
@@ -268,10 +273,20 @@ pub fn resolve_ctx_table_names(stmt: &Stmt) -> Vec<Vec<String>> {
             DdlStmt::LockTables(locks) => names.extend(locks.iter().map(|lock| lock.table.clone())),
             DdlStmt::AlterSequence(alter) => names.push(alter.name.clone()),
             DdlStmt::CleanupTableLock(cleanup) => names.extend(cleanup.tables.iter().cloned()),
+            DdlStmt::CreateMaterializedViewLog(create) => names.push(create.table.clone()),
+            DdlStmt::DropMaterializedViewLog(drop) => names.push(drop.table.clone()),
+            DdlStmt::AlterMaterializedViewLog(alter) => names.push(alter.table.clone()),
             _ => {}
         },
         Stmt::Admin(admin) => match &**admin {
-            AdminStmt::Brie(_) => return names,
+            AdminStmt::Brie(_) | AdminStmt::CompareMaterializedView(_) => return names,
+            AdminStmt::RefreshMaterializedView(refresh)
+                if refresh.mode == tidb_ast::RefreshMaterializedViewMode::CompleteOutOfPlace =>
+            {
+                return names;
+            }
+            AdminStmt::RefreshMaterializedView(refresh) => names.push(refresh.view_name.clone()),
+            AdminStmt::PurgeMaterializedViewLog(purge) => names.push(purge.table.clone()),
             AdminStmt::AnalyzeTable(analyze) => names.extend(analyze.tables.iter().cloned()),
             AdminStmt::AdminCheck(check) => match &**check {
                 AdminCheckStmt::Table { tables } => names.extend(tables.iter().cloned()),

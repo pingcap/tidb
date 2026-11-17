@@ -235,6 +235,15 @@ impl ClusterDdl for ReportDdl {
         unreachable!("these tests create no masking policy")
     }
 
+    fn create_materialized_view_log(
+        &self,
+        _: &tidb_ast::CreateMaterializedViewLogStmt,
+        _: &str,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        unreachable!("these tests create no materialized view log")
+    }
+
     fn create_view(
         &self,
         _: &str,
@@ -682,6 +691,15 @@ impl ClusterDdl for UndeterminedDdl {
         _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         unreachable!("these tests create no masking policy")
+    }
+
+    fn create_materialized_view_log(
+        &self,
+        _: &tidb_ast::CreateMaterializedViewLogStmt,
+        _: &str,
+        _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        unreachable!("these tests create no materialized view log")
     }
 
     fn create_view(

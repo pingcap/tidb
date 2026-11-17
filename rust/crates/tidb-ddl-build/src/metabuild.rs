@@ -57,6 +57,10 @@ impl crate::session_context::DdlSessionContext for StmtContext {
         StmtContext::enable_check_constraint(self)
     }
 
+    fn enable_mview(&self) -> bool {
+        StmtContext::enable_mview(self)
+    }
+
     fn placement_mode_ignore(&self) -> bool {
         StmtContext::placement_mode_ignore(self)
     }
