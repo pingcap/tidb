@@ -188,6 +188,19 @@ pub struct TableInfo {
     /// The view metadata, if this is a view.
     #[serde(rename = "view", default)]
     pub view: Option<GoShared<ViewInfo>>,
+    /// Go `MaterializedViewBase`: the materialized views and log of a base
+    /// table.
+    #[serde(rename = "materialized_view_base", default, skip_serializing_if = "Option::is_none")]
+    pub materialized_view_base: Option<GoShared<crate::table::MaterializedViewBaseInfo>>,
+    /// Go `MaterializedView`: the metadata of a materialized view.
+    #[serde(rename = "materialized_view", default, skip_serializing_if = "Option::is_none")]
+    pub materialized_view: Option<GoShared<crate::table::MaterializedViewInfo>>,
+    /// Go `MaterializedViewShadow`: a complete refresh's shadow table.
+    #[serde(rename = "materialized_view_shadow", default, skip_serializing_if = "Option::is_none")]
+    pub materialized_view_shadow: Option<GoShared<crate::table::MaterializedViewShadowInfo>>,
+    /// Go `MaterializedViewLog`: the metadata of a materialized view log.
+    #[serde(rename = "materialized_view_log", default, skip_serializing_if = "Option::is_none")]
+    pub materialized_view_log: Option<GoShared<crate::table::MaterializedViewLogInfo>>,
     /// The sequence metadata, if this is a sequence.
     #[serde(rename = "sequence", default)]
     pub sequence: Option<GoShared<SequenceInfo>>,
@@ -338,6 +351,11 @@ impl TableInfo {
                 .map(|pointer| GoShared::new(pointer.read().clone_like_go())),
             compression: self.compression.clone(),
             view: self.view.clone(),
+            // Go `TableInfo.Clone` deep-copies the materialized-view metadata.
+            materialized_view_base: self.materialized_view_base.as_ref().map(|p| GoShared::new(p.read().clone())),
+            materialized_view: self.materialized_view.as_ref().map(|p| GoShared::new(p.read().clone())),
+            materialized_view_shadow: self.materialized_view_shadow.as_ref().map(|p| GoShared::new(p.read().clone())),
+            materialized_view_log: self.materialized_view_log.as_ref().map(|p| GoShared::new(p.read().clone())),
             sequence: self.sequence.clone(),
             lock: self.lock.clone(),
             version: self.version,

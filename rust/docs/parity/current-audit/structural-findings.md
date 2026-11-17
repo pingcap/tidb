@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**4 unresolved: 2 open, 2 partial.**
+**4 unresolved: 1 open, 3 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -28,7 +28,7 @@ unresolved until it is restated against its Go owner or closed.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| E29 | open | Materialized views are not ported. The parser rejects `CREATE MATERIALIZED VIEW` and `CREATE MATERIALIZED VIEW LOG` as syntax errors (1064), where Go master parses them and gates them on `tidb_mview_enable` (8200 when off). The materialized-view DDL and its logs, `REFRESH MATERIALIZED VIEW`, the mview worker and its schedule, the planner's materialized-view rewrite and the executor's delta merge aggregation are absent. IMPORT INTO depends on them in one place: a next-gen IMPORT INTO ... FROM SELECT runs on a DXF worker (`ImportStepQuery`) only during materialized-view maintenance (`InMViewMaintenance`), so this port refuses every next-gen FROM SELECT, as Go does outside maintenance, and `ImportStepQuery` is not ported. | `pkg/ddl/materialized_view.go`, `pkg/ddl/mview_*.go`, `pkg/planner/mview`, `pkg/executor/mviewdeltamergeagg`, `pkg/util/mviewutil`, the parser's materialized-view grammar, `ImportStepQuery` in `pkg/dxf/importinto` (Go master) |
+| E29 | partial | Materialized views are ported only as metadata (`TableInfo` keeps Go master's `materialized_view*` fields byte for byte; phases in `rust/docs/go-shape-refactors-execplan.md`); the base table's DML does not write its MV log rows (Go `pkg/table/tables/mview_log.go`). The parser rejects `CREATE MATERIALIZED VIEW` and `CREATE MATERIALIZED VIEW LOG` as syntax errors (1064), where Go master parses them and gates them on `tidb_mview_enable` (8200 when off). The materialized-view DDL and its logs, `REFRESH MATERIALIZED VIEW`, the mview worker and its schedule, the planner's materialized-view rewrite and the executor's delta merge aggregation are absent. IMPORT INTO depends on them in one place: a next-gen IMPORT INTO ... FROM SELECT runs on a DXF worker (`ImportStepQuery`) only during materialized-view maintenance (`InMViewMaintenance`), so this port refuses every next-gen FROM SELECT, as Go does outside maintenance, and `ImportStepQuery` is not ported. | `pkg/ddl/materialized_view.go`, `pkg/ddl/mview_*.go`, `pkg/planner/mview`, `pkg/executor/mviewdeltamergeagg`, `pkg/util/mviewutil`, the parser's materialized-view grammar, `ImportStepQuery` in `pkg/dxf/importinto` (Go master) |
 
 ### Structure: Go's shape before more ports
 

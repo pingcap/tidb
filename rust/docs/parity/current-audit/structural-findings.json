@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 4,
-    "open": 2,
-    "partial": 2
+    "open": 1,
+    "partial": 3
   },
   "findings": [
     {
@@ -25,9 +25,9 @@
     },
     {
       "id": "E29",
-      "status": "open",
+      "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "Materialized views are not ported. The parser rejects `CREATE MATERIALIZED VIEW` and `CREATE MATERIALIZED VIEW LOG` as syntax errors (1064), where Go master parses them and gates them on `tidb_mview_enable` (8200 when off). The materialized-view DDL and its logs, `REFRESH MATERIALIZED VIEW`, the mview worker and its schedule, the planner's materialized-view rewrite and the executor's delta merge aggregation are absent. IMPORT INTO depends on them in one place: a next-gen IMPORT INTO ... FROM SELECT runs on a DXF worker (`ImportStepQuery`) only during materialized-view maintenance (`InMViewMaintenance`), so this port refuses every next-gen FROM SELECT, as Go does outside maintenance, and `ImportStepQuery` is not ported.",
+      "finding": "Materialized views are ported only as metadata (`TableInfo` keeps Go master's `materialized_view*` fields byte for byte; phases in `rust/docs/go-shape-refactors-execplan.md`); the base table's DML does not write its MV log rows (Go `pkg/table/tables/mview_log.go`). The parser rejects `CREATE MATERIALIZED VIEW` and `CREATE MATERIALIZED VIEW LOG` as syntax errors (1064), where Go master parses them and gates them on `tidb_mview_enable` (8200 when off). The materialized-view DDL and its logs, `REFRESH MATERIALIZED VIEW`, the mview worker and its schedule, the planner's materialized-view rewrite and the executor's delta merge aggregation are absent. IMPORT INTO depends on them in one place: a next-gen IMPORT INTO ... FROM SELECT runs on a DXF worker (`ImportStepQuery`) only during materialized-view maintenance (`InMViewMaintenance`), so this port refuses every next-gen FROM SELECT, as Go does outside maintenance, and `ImportStepQuery` is not ported.",
       "rust_evidence": "`rust/crates/tidb-parser` (no materialized-view grammar), `rust/crates/tidb-session/src/import_into.rs` (the next-gen FROM SELECT refusal)",
       "go_owner": "`pkg/ddl/materialized_view.go`, `pkg/ddl/mview_*.go`, `pkg/planner/mview`, `pkg/executor/mviewdeltamergeagg`, `pkg/util/mviewutil`, the parser's materialized-view grammar, `ImportStepQuery` in `pkg/dxf/importinto` (Go master)"
     },
@@ -41,6 +41,6 @@
     }
   ],
   "unresolved": 4,
-  "open": 2,
-  "partial": 2
+  "open": 1,
+  "partial": 3
 }
