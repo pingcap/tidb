@@ -773,6 +773,9 @@ type candidatePath struct {
 	accessCondsColMap util.Col2Len // accessCondsColMap maps Column.UniqueID to column length for the columns in AccessConds.
 	indexCondsColMap  util.Col2Len // indexCondsColMap maps Column.UniqueID to column length for the columns in AccessConds and indexFilters.
 	matchPropResult   property.PhysicalPropMatchResult
+	// matchedSortCols records the index columns satisfying SortItems for this candidate.
+	// Keep this property-specific mapping off the shared AccessPath.
+	matchedSortCols []*expression.Column
 	// partialOrderMatch records the partial order match result for TopN optimization.
 	// When the matched is true, it means this path can provide partial order using prefix index.
 	partialOrderMatchResult property.PartialOrderMatchResult // Result of matching partial order property
@@ -1116,7 +1119,9 @@ func isFullIndexMatch(candidate *candidatePath) bool {
 	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
 }
 
-func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) property.PhysicalPropMatchResult {
+// matchProperty also returns the index columns satisfying SortItems, in sort-item order.
+// Failed matches and the special vector/int-handle paths return no column mapping.
+func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) (property.PhysicalPropMatchResult, []*expression.Column) {
 	// This function may set the two fields below for the PropMatchedNeedMergeSort case, so we reset them here to
 	// avoid leaving the AccessPath with an inconsistent state when there are multiple calls to matchProperty with
 	// different properties.
@@ -1125,29 +1130,29 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 
 	if ds.Table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
 		// TableScan with cluster table can't keep order.
-		return property.PropNotMatched
+		return property.PropNotMatched, nil
 	}
 	if prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.VectorInfo != nil {
 		if ds.TableInfo.Columns[path.Index.Columns[0].Offset].ID != prop.VectorProp.Column.ID {
-			return property.PropNotMatched
+			return property.PropNotMatched, nil
 		}
 
 		if model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L] != path.Index.VectorInfo.DistanceMetric {
-			return property.PropNotMatched
+			return property.PropNotMatched, nil
 		}
-		return property.PropMatched
+		return property.PropMatched, nil
 	}
 	if path.IsIntHandlePath {
 		pkCol := ds.GetPKIsHandleCol()
 		if len(prop.SortItems) != 1 || pkCol == nil {
-			return property.PropNotMatched
+			return property.PropNotMatched, nil
 		}
 		item := prop.SortItems[0]
 		if !item.Col.EqualColumn(pkCol) ||
 			path.StoreType == kv.TiFlash && item.Desc {
-			return property.PropNotMatched
+			return property.PropNotMatched, nil
 		}
-		return property.PropMatched
+		return property.PropMatched, nil
 	}
 
 	// Match SortItems physical property.
@@ -1155,7 +1160,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	// When the prop is empty or `all` is false, `matchProperty` is better to be `PropNotMatched` because
 	// it needs not to keep order for index scan.
 	if prop.IsSortItemEmpty() || !all {
-		return property.PropNotMatched
+		return property.PropNotMatched, nil
 	}
 
 	// For non-unique secondary indexes on CommonHandle tables, the index physically
@@ -1202,7 +1207,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	}
 
 	if len(idxCols) < len(prop.SortItems) {
-		return property.PropNotMatched
+		return property.PropNotMatched, nil
 	}
 
 	// Basically, if `prop.SortItems` is the prefix of `idxCols`, then the property is matched.
@@ -1222,7 +1227,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	// Moreover, we also need to consider the situation when some columns of `path.IdxCols` are a list of constant
 	// values. For example, for query `SELECT * FROM t WHERE a IN (1,2,3) ORDER BY b, c`, we can use `idx_a_b_c` to
 	// access 3 ranges and use a merge sort to satisfy `ORDER BY b, c`. This corresponds to Case 3 in the code below.
-	matchResult := property.PropMatched
+	matchedCols := make([]*expression.Column, 0, len(prop.SortItems))
 	groupByColIdxs := make([]int, 0)
 	colIdx := 0
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
@@ -1236,6 +1241,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 			// carrying any of them still delivers the requested order.
 			if idxColLens[colIdx] == types.UnspecifiedLength && sortItem.Col.EqualByExprAndID(evalCtx, idxCols[colIdx]) {
 				found = true
+				matchedCols = append(matchedCols, idxCols[colIdx])
 				colIdx++
 				break
 			}
@@ -1277,14 +1283,13 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 			break
 		}
 		if !found {
-			matchResult = property.PropNotMatched
-			break
+			return property.PropNotMatched, nil
 		}
 	}
-	if len(groupByColIdxs) > 0 && matchResult == property.PropMatched {
+	if len(groupByColIdxs) > 0 {
 		groups, err := GroupRangesByCols(path.Ranges, groupByColIdxs)
 		if err != nil {
-			return property.PropNotMatched
+			return property.PropNotMatched, nil
 		}
 		// Multiple ranges can be put into one cop task. But when we group them, they are forced to be split into
 		// multiple cop tasks. This can cause large overhead besides the merge sort operation itself.
@@ -1292,15 +1297,15 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		// overhead becomes too large unexpectedly.
 		const maxGroupCount = 2048
 		if len(groups) > maxGroupCount {
-			return property.PropNotMatched
+			return property.PropNotMatched, nil
 		}
 		if len(groups) > 0 {
 			path.GroupedRanges = groups
 			path.GroupByColIdxs = groupByColIdxs
-			return property.PropMatchedNeedMergeSort
+			return property.PropMatchedNeedMergeSort, matchedCols
 		}
 	}
-	return matchResult
+	return property.PropMatched, matchedCols
 }
 
 // matchPartialOrderProperty checks if the index can provide partial order for TopN optimization.
@@ -1528,7 +1533,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 				match := true
 				results := make([]property.PhysicalPropMatchResult, 0, len(oneAlternative))
 				for _, oneAccessPath := range oneAlternative {
-					result := matchProperty(ds, oneAccessPath, hintsProp)
+					result, _ := matchProperty(ds, oneAccessPath, hintsProp)
 					results = append(results, result)
 					if !result.Matched() {
 						match = false
@@ -1551,7 +1556,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 				for _, oneAccessPath := range oneAlternative {
 					var result property.PhysicalPropMatchResult
 					if !noSortItem {
-						result = matchProperty(ds, oneAccessPath, prop)
+						result, _ = matchProperty(ds, oneAccessPath, prop)
 					}
 					results = append(results, result)
 					if !noSortItem && !result.Matched() {
@@ -1738,7 +1743,7 @@ func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, p
 	}
 	results := make([]property.PhysicalPropMatchResult, 0, len(path.PartialIndexPaths))
 	for _, partialPath := range path.PartialIndexPaths {
-		result := matchProperty(ds, partialPath, prop)
+		result, _ := matchProperty(ds, partialPath, prop)
 		results = append(results, result)
 		if !result.Matched() {
 			return nil, property.PropNotMatched
@@ -1749,7 +1754,7 @@ func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, p
 
 func getTableCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
-	candidate.matchPropResult = matchProperty(ds, path, prop)
+	candidate.matchPropResult, _ = matchProperty(ds, path, prop)
 	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
 	candidate.isFullRange = path.IsFullScanRange(ds.TableInfo)
 	candidate.eqOrInCount = candidate.equalPredicateCount()
@@ -1758,7 +1763,7 @@ func getTableCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 
 func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
-	candidate.matchPropResult = matchProperty(ds, path, prop)
+	candidate.matchPropResult, candidate.matchedSortCols = matchProperty(ds, path, prop)
 	// Because the skyline pruning already prune the indexes that cannot provide partial order
 	// when prop has PartialOrderInfo physical property,
 	// So here we just need to record the partial order match result(prefixCol, prefixLen).
@@ -2957,24 +2962,14 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			candidate.matchPropResult == property.PropMatchedNeedMergeSort {
 			sortItems := prop.GetSortItemsForKeepOrder()
 			byItems := make([]*util.ByItems, 0, len(sortItems))
-			for _, si := range sortItems {
+			for i, si := range sortItems {
 				col := si.Col
-				if cop.TablePlan != nil && is.Schema().ColumnIndex(col) == -1 {
-					// IndexLookUp merges index-side rows before fetching table rows, so
-					// its sort keys must name the actual index columns. IndexReader instead
-					// merges output rows and must retain the columns in its output schema.
-					matched := false
-					evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
-					for _, indexCol := range is.Schema().Columns {
-						if col.EqualByExprAndID(evalCtx, indexCol) {
-							col = indexCol
-							matched = true
-							break
-						}
-					}
-					if !matched {
-						return base.InvalidTask, nil
-					}
+				if cop.TablePlan != nil && prop.PartialOrderInfo == nil {
+					// IndexLookUp merges index-side rows, so use the actual full-length
+					// columns selected by matchProperty. IndexReader merges output rows;
+					// partial-order plans use the original keys, which may be prefixes.
+					intest.Assert(len(candidate.matchedSortCols) == len(sortItems))
+					col = candidate.matchedSortCols[i]
 				}
 				byItems = append(byItems, &util.ByItems{
 					Expr: col,

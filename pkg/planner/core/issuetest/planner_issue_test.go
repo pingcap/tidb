@@ -1056,6 +1056,47 @@ func TestDuplicateExpressionIndexOrdering(t *testing.T) {
 }
 
 func TestExpressionIndexMergeSort(t *testing.T) {
+	t.Run("prefixColumns", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+		tk.MustExec(`create table t_merge_prefix (
+			id int primary key, s varchar(20),
+			g1 varchar(20) as (lower(s)) virtual,
+			g2 varchar(20) as (lower(s)) virtual,
+			g3 varchar(20) as (lower(s)) virtual,
+			key ix(g1(1), g2))
+			partition by range(id) (
+				partition p0 values less than (10),
+				partition p1 values less than (maxvalue))`)
+		tk.MustExec("insert into t_merge_prefix(id,s) values (1,'ab'),(11,'aa')")
+		// g1 exists in the index schema but only stores a prefix; g3 is absent.
+		// Both must use the complete g2 values for the cross-partition merge.
+		for _, sortCol := range []string{"g1", "g2", "g3"} {
+			t.Run(sortCol, func(t *testing.T) {
+				for _, order := range []string{"asc", "desc"} {
+					want := testkit.Rows("11 aa aa", "1 ab ab")
+					if order == "desc" {
+						want = testkit.Rows("1 ab ab", "11 aa aa")
+					}
+					for _, limit := range []int{1, 2} {
+						// Keep the residual predicate on the table side to isolate sorting
+						// from prefix-index filtering and still build a point prefix range.
+						sql := "select id,s,g3 from t_merge_prefix force index(ix) " +
+							"where (g1='aa' and s='aa') or (g1='ab' and s='ab') " +
+							fmt.Sprintf("order by %s %s limit %d", sortCol, order, limit)
+						plan := fmt.Sprint(tk.MustQuery("explain format='brief' " + sql).Rows())
+						require.Contains(t, plan, "IndexLookUp", sql)
+						require.Contains(t, plan, "keep order:true", sql)
+						require.NotContains(t, plan, "TopN", sql)
+						require.NotContains(t, plan, "Sort", sql)
+						require.Equal(t, want[:limit], tk.MustQuery(sql).Rows(), sql)
+					}
+				}
+			})
+		}
+	})
 	for _, partitioned := range []bool{false, true} {
 		t.Run(fmt.Sprintf("partitioned=%v", partitioned), func(t *testing.T) {
 			store := testkit.CreateMockStore(t)
