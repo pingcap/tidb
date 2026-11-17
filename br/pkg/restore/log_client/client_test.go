@@ -3185,7 +3185,7 @@ func TestRepairIngestFullTextIndex(t *testing.T) {
 	tk.MustExec("set global innodb_ft_min_token_size = 2")
 	tk.MustExec("set @@session.innodb_ft_enable_stopword = off")
 	tk.MustExec("set @@tidb_enable_tikv_fulltext_index = on")
-	tk.MustExec("CREATE TABLE test.repair_fulltext_t1(id int primary key, tenant int, body text, fulltext index ft(tenant, body));")
+	tk.MustExec("CREATE TABLE test.repair_fulltext_t1(id int primary key, tenant int, body text, fulltext index ft(body) key_columns (tenant));")
 	tk.MustExec("insert into test.repair_fulltext_t1 values (1, 7, 'to be or not to be')")
 	tk.MustExec("set global innodb_ft_min_token_size = 3")
 	g := gluetidb.New()
@@ -3235,7 +3235,11 @@ func TestRepairIngestFullTextIndex(t *testing.T) {
 	require.Less(t, oldIndex.ID, newIndex.ID)
 	require.NotNil(t, newIndex.TiKVFullText)
 	require.True(t, oldIndex.TiKVFullText.SameAnalyzer(newIndex.TiKVFullText))
+	// The key column is named by KEY_COLUMNS in the repair statement and
+	// keeps its place ahead of the tokenized column.
 	require.Len(t, newIndex.Columns, 2)
+	require.Equal(t, "tenant", newIndex.Columns[0].Name.L)
+	require.Equal(t, "body", newIndex.Columns[1].Name.L)
 	tk.MustExec("admin check table test.repair_fulltext_t1")
 }
 

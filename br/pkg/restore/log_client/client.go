@@ -2043,6 +2043,11 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 		var (
 			addSQL  strings.Builder
 			addArgs []any = make([]any, 0, 5+len(info.ColumnArgs))
+			// fullTextKeyArgs are the key columns of a FULLTEXT index built
+			// in TiKV, every column but the tokenized last one, which
+			// KEY_COLUMNS names. Such an index has no expression or prefix
+			// key parts, so each column is one name argument.
+			fullTextKeyArgs []any
 		)
 		if info.IsPrimary {
 			fmt.Fprintf(&addSQL, alterTableAddPrimaryFormat, info.ColumnList)
@@ -2052,10 +2057,11 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			fmt.Fprintf(&addSQL, alterTableAddUniqueIndexFormat, info.ColumnList)
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
-		} else if info.IndexInfo.TiKVFullText != nil {
-			fmt.Fprintf(&addSQL, alterTableAddFullTextFormat, info.ColumnList)
-			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
-			addArgs = append(addArgs, info.ColumnArgs...)
+		} else if info.IndexInfo.TiKVFullText != nil && len(info.ColumnArgs) > 0 {
+			last := len(info.ColumnArgs) - 1
+			fmt.Fprintf(&addSQL, alterTableAddFullTextFormat, "%n")
+			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O, info.ColumnArgs[last])
+			fullTextKeyArgs = info.ColumnArgs[:last]
 		} else {
 			fmt.Fprintf(&addSQL, alterTableAddIndexFormat, info.ColumnList)
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
@@ -2081,6 +2087,17 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 		if info.IndexInfo.TiKVFullText != nil {
 			addSQL.WriteString(" WITH PARSER ")
 			addSQL.WriteString(info.IndexInfo.TiKVFullText.ParserType.SQLName())
+		}
+		if len(fullTextKeyArgs) > 0 {
+			addSQL.WriteString(" KEY_COLUMNS(")
+			for i := range fullTextKeyArgs {
+				if i > 0 {
+					addSQL.WriteByte(',')
+				}
+				addSQL.WriteString("%n")
+			}
+			addSQL.WriteByte(')')
+			addArgs = append(addArgs, fullTextKeyArgs...)
 		}
 		// COMMENT [...]
 		if len(info.IndexInfo.Comment) > 0 {

@@ -432,6 +432,7 @@ var Keywords = []KeywordsType{
 	{"ISSUER", false, "unreserved"},
 	{"JSON", false, "unreserved"},
 	{"KEY_BLOCK_SIZE", false, "unreserved"},
+	{"KEY_COLUMNS", false, "unreserved"},
 	{"LABELS", false, "unreserved"},
 	{"LANGUAGE", false, "unreserved"},
 	{"LAST", false, "unreserved"},

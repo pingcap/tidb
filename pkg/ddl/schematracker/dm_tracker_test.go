@@ -858,15 +858,22 @@ func TestFullTextIndexMirrorsExecutor(t *testing.T) {
 		return nil
 	}
 
-	for _, tc := range []struct{ name, create, add, columns string }{
+	// keys is how SHOW CREATE TABLE names the key columns, if any.
+	for _, tc := range []struct{ name, create, add, keys string }{
 		{
 			name:   "create table",
 			create: "create table test.t (id int primary key, body varchar(255), fulltext index idx(body) with parser ngram)",
 		},
 		{
-			name:    "key columns",
-			create:  "create table test.t (id int primary key, tenant int, body varchar(255), fulltext index idx(tenant, body) with parser ngram)",
-			columns: "`tenant`,`body`",
+			name:   "key columns",
+			create: "create table test.t (id int primary key, tenant int, body varchar(255), fulltext index idx(body) key_columns (tenant) with parser ngram)",
+			keys:   "`tenant`",
+		},
+		{
+			name:   "create index with key columns",
+			create: "create table test.t (id int primary key, tenant int, region int, body varchar(255))",
+			add:    "create fulltext index idx on test.t(body) key_columns (tenant, region) with parser ngram",
+			keys:   "`tenant`,`region`",
 		},
 		{
 			name:   "create index",
@@ -895,13 +902,13 @@ func TestFullTextIndexMirrorsExecutor(t *testing.T) {
 			require.Nil(t, idx.FullTextInfo)
 			require.False(t, idx.MVIndex)
 			require.Equal(t, "body", idx.TiKVFullTextColumn().Name.L)
-			columns := tc.columns
-			if columns == "" {
-				columns = "`body`"
+			rendered := "FULLTEXT INDEX `idx`(`body`) WITH PARSER NGRAM"
+			if tc.keys != "" {
+				rendered += " /*T![fts_key] KEY_COLUMNS(" + tc.keys + ") */"
 			}
 			result := bytes.NewBuffer(make([]byte, 0, 512))
 			require.NoError(t, executor.ConstructResultOfShowCreateTable(sctx, ast.CIStr{}, info, autoid.Allocators{}, result))
-			require.Contains(t, result.String(), "FULLTEXT INDEX `idx`("+columns+") WITH PARSER NGRAM")
+			require.Contains(t, result.String(), rendered)
 		})
 	}
 }

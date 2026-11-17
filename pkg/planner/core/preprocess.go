@@ -1266,6 +1266,9 @@ func checkIndexOptions(isColumnar, isFullText bool, indexOptions *ast.IndexOptio
 	if indexOptions == nil {
 		return nil
 	}
+	if len(indexOptions.FullTextKeyColumns) > 0 && !isFullText {
+		return dbterror.ErrUnsupportedIndexType.FastGen("KEY_COLUMNS can only be used on a FULLTEXT index stored in TiKV")
+	}
 	if isColumnar {
 		switch indexOptions.Tp {
 		case ast.IndexTypeVector, ast.IndexTypeInverted:
@@ -1315,9 +1318,9 @@ func checkIndexSpecs(indexOptions *ast.IndexOption, partSpecs []*ast.IndexPartSp
 		}
 	case ast.IndexTypeFulltext:
 		// The columnar index of the next-gen kernel tokenizes one column. On
-		// the classic kernel the index is built in TiKV, where the last
-		// column is tokenized and the columns before it are key columns,
-		// which the DDL layer checks.
+		// the classic kernel the index is built in TiKV, which also tokenizes
+		// one column and takes its key columns from KEY_COLUMNS; the DDL
+		// layer checks that, for callers that skip the preprocessor too.
 		if kerneltype.IsNextGen() && (len(partSpecs) != 1 || partSpecs[0].Column == nil) {
 			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index must specify one column name")
 		}
