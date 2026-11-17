@@ -115,8 +115,11 @@ func TestParallelApplyWarnning(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, c int, key(a));")
 	tk.MustExec("create table t3(a int, b int, c int, key(a));")
 	tk.MustExec("set tidb_enable_parallel_apply=on;")
-	tk.MustQuery("select (select /*+ inl_hash_join(t2, t3) */  1 from t2, t3 where t2.a=t3.a and t2.b > t1.b) from t1;")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
+	for _, mode := range []string{"off", "on"} {
+		tk.MustExec("set tidb_enable_adaptive_limit_scan=" + mode)
+		tk.MustQuery("select (select /*+ inl_hash_join(t2, t3) */  1 from t2, t3 where t2.a=t3.a and t2.b > t1.b) from t1;")
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+	}
 	// https://github.com/pingcap/tidb/issues/59863
 	tk.MustExec("create table t(a int, b int, index idx(a));")
 	tk.MustQuery(`explain format='brief' select  t3.a from t t3 where (select /*+ inl_join(t1) */  count(*) from t t1 join t t2 on t1.a=t2.a and t1.b>t3.b);`).

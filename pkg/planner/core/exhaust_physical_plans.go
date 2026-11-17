@@ -595,6 +595,7 @@ func constructIndexJoin(
 		InnerHashKeys:    innerHashKeys,
 		// Only count candidates that keep the original Apply outer/inner order.
 		FromDecorrelatedApply: p.FromDecorrelatedApply && outerIdx == 0,
+		OuterOrderRequired:    chReqProps[outerIdx].NeedKeepOrder(),
 	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
 	if path != nil {
 		join.IdxColLens = path.IdxColLens

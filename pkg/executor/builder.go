@@ -268,7 +268,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 	case *plannercore.PhysicalMergeJoin:
 		return b.buildMergeJoin(v)
 	case *plannercore.PhysicalIndexJoin:
-		return b.buildIndexLookUpJoin(v)
+		return b.buildIndexLookUpJoin(v, v.OuterOrderRequired)
 	case *plannercore.PhysicalIndexMergeJoin:
 		return b.buildIndexLookUpMergeJoin(v)
 	case *plannercore.PhysicalIndexHashJoin:
@@ -3593,7 +3593,7 @@ func (b *executorBuilder) newDataReaderBuilder(p base.PhysicalPlan) (*dataReader
 	}, nil
 }
 
-func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin) exec.Executor {
+func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin, adaptiveLimitEligible bool) exec.Executor {
 	outerExec := b.build(v.Children()[1-v.InnerChildIdx])
 	if b.err != nil {
 		return nil
@@ -3691,7 +3691,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		KeyOff2IdxOff:         v.KeyOff2IdxOff,
 		LastColHelper:         v.CompareFilters,
 		Finished:              &atomic.Value{},
-		AdaptiveLimitEligible: v.GetChildReqProps(1 - v.InnerChildIdx).NeedKeepOrder(),
+		AdaptiveLimitEligible: adaptiveLimitEligible,
 	}
 	colsFromChildren := v.Schema().Columns
 	if v.JoinType == logicalop.LeftOuterSemiJoin || v.JoinType == logicalop.AntiLeftOuterSemiJoin {
@@ -3833,7 +3833,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 }
 
 func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *plannercore.PhysicalIndexHashJoin) exec.Executor {
-	joinExec := b.buildIndexLookUpJoin(&(v.PhysicalIndexJoin))
+	joinExec := b.buildIndexLookUpJoin(&v.PhysicalIndexJoin, false)
 	if b.err != nil {
 		return nil
 	}
