@@ -910,3 +910,32 @@ fn tiflash_partition_available() {
     assert!(tr.is_partition_available(7));
     assert!(!tr.is_partition_available(5));
 }
+
+/// Go master's `TableInfo.MaterializedView*` metadata, as Go's encoder
+/// writes it (captured from `json.Marshal` at master `eca4674a6f`): one
+/// table with every field set, one with the zero structs. Each decodes and
+/// re-encodes byte for byte, so a node rewriting such a table keeps it.
+#[test]
+fn materialized_view_metadata_round_trips_go_bytes() {
+    // Lines 1-2: the tables; lines 3-4: Go `TableInfo.Clone` of each.
+    let lines: Vec<&str> = include_str!("testdata/mview_table_info_go.txt").lines().collect();
+    for (line, cloned) in lines[..2].iter().zip(&lines[2..]) {
+        let decoded: crate::TableInfo = serde_json::from_str(line).unwrap();
+        assert_eq!(go_json(&decoded), *line);
+        assert_eq!(go_json(&decoded.clone_like_go()), *cloned);
+    }
+    let full: crate::TableInfo =
+        serde_json::from_str(include_str!("testdata/mview_table_info_go.txt").lines().next().unwrap()).unwrap();
+    let mv = full.materialized_view.as_ref().unwrap().read().clone();
+    assert_eq!(mv.init_build_state, crate::table::MViewInitBuildState::BUILDING);
+    assert_eq!(mv.init_build_state.access_error_message("v"), "materialized view v initial build is in progress");
+    assert_eq!(full.materialized_view_log.as_ref().unwrap().read().log_accumulation_alert_rows, Some(1000));
+    // Go `MaterializedViewLogTableName`: the prefix, then the name cut to fit.
+    assert_eq!(
+        crate::table::materialized_view_log_table_name(&tidb_ast::CiString::new(
+            "t_with_a_name_long_enough_to_be_cut_when_the_mlog_prefix_is_added_xx"
+        ))
+        .original(),
+        "$mlog$t_with_a_name_long_enough_to_be_cut_when_the_mlog_prefix_i"
+    );
+}
