@@ -31,7 +31,9 @@ impl IndexConflictDetector {
         Ok(())
     }
 }
-/// Go `collectDuplicateRowsFromTiKV` / `NewRemoteDupKVStream` for one index range.
+/// Go `collectDuplicateRowsFromTiKV` / `NewRemoteDupKVStream` for one index
+/// range, `[start, end)` encoded with the store's codec as Go's duplicate
+/// tasks are (`EncodeRange`).
 pub fn collect_remote_duplicate_rows(
     ctx: &Context,
     client: &dyn ImportClient,
@@ -72,8 +74,8 @@ pub fn collect_remote_duplicate_rows(
                     request_source: format!("internal_lightning_{}", cfg.task_type),
                     ..Default::default()
                 }),
-                start_key: client.encode_key(&start),
-                end_key: client.encode_key(&range_end),
+                start_key: start.clone(),
+                end_key: range_end.clone(),
                 min_commit_ts,
                 key_only: false,
             };

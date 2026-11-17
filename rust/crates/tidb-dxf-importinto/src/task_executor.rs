@@ -310,6 +310,9 @@ impl ImportStepExecutor {
             plan.table_info.as_ref().ok_or_else(|| plain("import plan has no table info"))?,
         ));
         let prefix = subtask_prefix(self.task_id, subtask_id);
+        // Go `SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())`: the
+        // sorted files hold the store's encoded keys.
+        let tikv_codec = ti.backend.get_tikv_codec();
         // Go's worker pool starts every one of its `concurrency` chunk
         // workers, each with its own data and index writers.
         let workers = concurrency.max(1);
@@ -328,6 +331,7 @@ impl ImportStepExecutor {
                                 sink.lock().unwrap_or_else(std::sync::PoisonError::into_inner).merge_data_summary(s);
                             }))
                             .set_memory_size_limit(data_mem)
+                            .set_tikv_codec(Some(Arc::clone(&tikv_codec)))
                             .set_block_size(data_block_size)
                             .set_on_dup(get_on_dup_for_conflicted_kv(&on_dup_key))
                             .build(
@@ -337,8 +341,8 @@ impl ImportStepExecutor {
                             ),
                     );
                     let (store, prefix, sink) = (Arc::clone(store), prefix.clone(), Arc::clone(shared));
-                    let (indices_gen_kv, on_dup_key, worker_uuid2) =
-                        (Arc::clone(&indices_gen_kv), on_dup_key.clone(), worker_uuid.clone());
+                    let (indices_gen_kv, on_dup_key, worker_uuid2, index_codec) =
+                        (Arc::clone(&indices_gen_kv), on_dup_key.clone(), worker_uuid.clone(), Arc::clone(&tikv_codec));
                     let mut index_writer = tidb_executor::importer::chunk_process::IndexRouteWriter::new(Box::new(
                         move |index_id| {
                             let on_dup = get_on_dup_for_index(&indices_gen_kv, index_id, &on_dup_key).map_err(|e| e.to_string())?;
@@ -353,6 +357,7 @@ impl ImportStepExecutor {
                                     sink.lock().unwrap_or_else(std::sync::PoisonError::into_inner).merge_index_summary(index_id, s);
                                 }))
                                 .set_memory_size_limit(index_mem)
+                                .set_tikv_codec(Some(Arc::clone(&index_codec)))
                                 .set_block_size(index_block_size)
                                 .set_on_dup(on_dup)
                                 .build(Arc::clone(&store), &prefix, &writer_id))

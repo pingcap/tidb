@@ -12,15 +12,19 @@ pub type ExternalEngine = Arc<Mutex<Box<dyn tidb_ingestor_engineapi::Engine>>>;
 /// Go `engineManager`.
 pub struct EngineManager {
     cfg: BackendConfig,
+    /// Go `StoreHelper.GetTiKVCodec`, which `openLocalWriter` hands every
+    /// writer.
+    tikv_codec: Option<tidb_ingestor_simplesst::KeyCodec>,
     engines: Mutex<HashMap<[u8; 16], Arc<Engine>>>,
     external_engines: Mutex<HashMap<[u8; 16], ExternalEngine>>,
 }
 impl EngineManager {
     /// Go `newEngineManager`.
-    pub fn new(cfg: BackendConfig) -> Result<Self> {
+    pub fn new(cfg: BackendConfig, tikv_codec: Option<tidb_ingestor_simplesst::KeyCodec>) -> Result<Self> {
         prepare_sort_dir(&cfg)?;
         Ok(Self {
             cfg,
+            tikv_codec,
             engines: Mutex::new(HashMap::new()),
             external_engines: Mutex::new(HashMap::new()),
         })
@@ -38,7 +42,8 @@ impl EngineManager {
             ts,
             self.cfg.dupe_detect_enabled,
             self.cfg.local_writer_mem_cache_size,
-        )?);
+        )?
+        .with_tikv_codec(self.tikv_codec.clone()));
         engines.insert(id, engine.clone());
         Ok(engine)
     }
@@ -288,7 +293,7 @@ mod tests {
     fn test_engine_manager() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config(dir.path().join("sorted-kv"));
-        let manager = EngineManager::new(cfg.clone()).unwrap();
+        let manager = EngineManager::new(cfg.clone(), None).unwrap();
         let id = *uuid::Uuid::new_v4().as_bytes();
         let engine = manager.open_engine(id, 123).unwrap();
         assert_eq!(manager.engine_file_sizes().len(), 1);
@@ -328,7 +333,7 @@ mod tests {
     #[test]
     fn test_cleanup_all_local_engines_logs_error_only() {
         let dir = tempfile::tempdir().unwrap();
-        let manager = EngineManager::new(config(dir.path().join("sorted-kv"))).unwrap();
+        let manager = EngineManager::new(config(dir.path().join("sorted-kv")), None).unwrap();
         let engine = manager.open_engine([1; 16], 1).unwrap();
         engine.set_error("injected finishWrite error".into());
         let errors = manager.cleanup_all_local_engines();

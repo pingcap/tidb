@@ -190,7 +190,8 @@ impl<S: tikv_client::PdClient> crate::localhelper::SplitClient for RemoteImportC
         if let Some(error) = ctx.err() {
             return Err(Error::Other(error.to_string()));
         }
-        let keys = keys.iter().map(|key| self.encode_key(key)).collect();
+        // Go's codec-aware split client takes the engine's encoded keys.
+        let keys = keys.to_vec();
         let (ids, result) = self
             .store
             .block_on(self.store.store().split_regions(keys, true, None));
@@ -327,21 +328,14 @@ impl<S: tikv_client::PdClient> ImportClient for RemoteImportClient<S> {
     /// Go `split.SplitClient.GetRegion`.
     fn get_region(&self, key: &[u8]) -> Result<RegionInfo> {
         let pd = self.store.store().pd_client();
-        let key = tikv_client::Key::from(self.encode_key(key));
+        // The engine's key, already encoded (Go's codec-aware split client
+        // keeps regions in that space, `encodeRegionKeys`).
+        let key = tikv_client::Key::from(key.to_vec());
         let region = self
             .store
             .block_on(async move { pd.region_for_key(&key).await })
             .map_err(|e| Error::Source(std::sync::Arc::new(e)))?;
-        let mut metadata = region.region;
-        if let tikv_client::request::Keyspace::Enable { keyspace_id } =
-            self.store.store().keyspace()
-        {
-            let codec = tikv_client::request::ApiV2Codec::new(KeyMode::Txn, keyspace_id)
-                .map_err(|e| Error::Source(std::sync::Arc::new(e)))?;
-            (metadata.start_key, metadata.end_key) = codec
-                .decode_range(&metadata.start_key, &metadata.end_key)
-                .map_err(|e| Error::Source(std::sync::Arc::new(e)))?;
-        }
+        let metadata = region.region;
         Ok(RegionInfo {
             region: metadata,
             leader: region.leader,
@@ -843,9 +837,10 @@ fn do_write(
         )
     })?;
     let mut first = Vec::new();
-    tidb_codec::encode_bytes(&mut first, &client.encode_key(&pairs[0].key));
+    // Go `doWrite`: the stored keys, which the engine's writers encoded.
+    tidb_codec::encode_bytes(&mut first, &pairs[0].key);
     let mut last = Vec::new();
-    tidb_codec::encode_bytes(&mut last, &client.encode_key(&pairs[pairs.len() - 1].key));
+    tidb_codec::encode_bytes(&mut last, &pairs[pairs.len() - 1].key);
     let meta = sst::SstMeta {
         uuid: uuid::Uuid::new_v4().as_bytes().to_vec(),
         region_id: region.region.id,
@@ -866,7 +861,7 @@ fn do_write(
     let mut size = 0;
     for pair in pairs {
         let pair = sst::Pair {
-            key: client.encode_key(&pair.key),
+            key: pair.key.clone(),
             value: pair.value.clone(),
             ..Default::default()
         };

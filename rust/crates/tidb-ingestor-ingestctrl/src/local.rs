@@ -53,6 +53,12 @@ pub const PAUSE_PD_SCHEDULER_SCOPE_GLOBAL: &str = "global";
 /// Go `ForcePartitionRegionThreshold`: force partition ranges only for tables
 /// of at least this many regions.
 pub const FORCE_PARTITION_REGION_THRESHOLD: usize = 100;
+/// The import client's Go `tikvCodec.EncodeKey`.
+fn tikv_codec(importer: &Arc<dyn ImportClient>) -> tidb_ingestor_simplesst::KeyCodec {
+    let importer = Arc::clone(importer);
+    Arc::new(move |key| importer.encode_key(key))
+}
+
 /// Go `Backend`, owning local engines and their import client.
 pub struct Backend {
     /// Go backend configuration.
@@ -66,7 +72,7 @@ impl Backend {
     /// Go `NewBackend`.
     pub fn new(cfg: BackendConfig, importer: Arc<dyn ImportClient>) -> Result<Self> {
         importer.check_multi_ingest_support(&Context::background())?;
-        let engine_mgr = crate::engine_mgr::EngineManager::new(cfg.clone())?;
+        let engine_mgr = crate::engine_mgr::EngineManager::new(cfg.clone(), Some(tikv_codec(&importer)))?;
         Ok(Self {
             cfg,
             engine_mgr,
@@ -74,6 +80,13 @@ impl Backend {
             write_limiter: crate::localhelper::StoreWriteLimiter::new(0),
             collector: Mutex::new(None),
         })
+    }
+
+    /// Go `Backend.GetTiKVCodec`: the store's key codec, which the local
+    /// engine's and the global-sort writers encode keys with.
+    #[must_use]
+    pub fn get_tikv_codec(&self) -> tidb_ingestor_simplesst::KeyCodec {
+        tikv_codec(&self.importer)
     }
 
     /// Go `SetCollector`: told the bytes and pairs of every written job of

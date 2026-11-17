@@ -303,7 +303,7 @@ fn data_kv_handler() {
         let mut enc = encoder(&meta, &tbl);
         let record = row_pairs(&mut enc, 100, 100, 100).pairs.into_iter().find(|p| index_id(&p.key).is_none()).unwrap();
         let progress = Arc::new(Progress::default());
-        let base = BaseHandler::new(tbl.clone(), "data", Some(encoder(&meta, &tbl)), Some(progress.clone()));
+        let base = BaseHandler::new(tbl.clone(), "data", &[], Some(encoder(&meta, &tbl)), Some(progress.clone()));
         let mut h = ConflictKVHandler::new_data(base, Recorder::default());
         h.pre_run().unwrap();
         let rx = receiver(vec![KVPair { key: record.key.clone(), value: record.val.clone() }; 10]);
@@ -338,10 +338,40 @@ fn data_kv_handler_visible_columns() {
     // uk_tail=NULL is among them.
     assert!(fixture.pairs.iter().any(|p| index_id(&p.key) == Some(2)));
     let record = fixture.pairs.iter().find(|p| index_id(&p.key).is_none()).unwrap();
-    let base = BaseHandler::new(tbl.clone(), "data", Some(encoder(&meta, &tbl)), None);
+    let base = BaseHandler::new(tbl.clone(), "data", &[], Some(encoder(&meta, &tbl)), None);
     let mut h = ConflictKVHandler::new_data(base, Check(want, false));
     h.handle(&Context::background(), &KVPair { key: record.key.clone(), value: record.val.clone() }).unwrap();
     assert!(h.row_handler.1);
+}
+
+/// Go `DataKVHandler.Handle`'s `h.codec.DecodeKey(kv.Key)`: on a keyspace the
+/// sorted files hold the store's encoded keys, whose prefix the handler
+/// removes before decoding the row key; a key of another keyspace fails.
+#[test]
+fn data_kv_handler_decodes_keyspace_keys() {
+    /// Records the row key it is handed and checks the re-encoded KVs.
+    struct Check(BTreeMap<Vec<u8>, Vec<u8>>, Option<Vec<u8>>);
+    impl EncodedRowHandler for Check {
+        fn handle_encoded_row(&mut self, _: &Context, row_key: &[u8], _: &[Datum], pairs: &Pairs) -> Result<()> {
+            let got: BTreeMap<Vec<u8>, Vec<u8>> = pairs.pairs.iter().map(|p| (p.key.clone(), p.val.clone())).collect();
+            assert_eq!(got, self.0);
+            self.1 = Some(row_key.to_vec());
+            Ok(())
+        }
+    }
+    let (meta, tbl) = table("tf");
+    let fixture = encoder(&meta, &tbl).encode(&[Datum::Int(1), Datum::Int(10), Datum::Null], 1).unwrap();
+    let want: BTreeMap<Vec<u8>, Vec<u8>> = fixture.pairs.iter().map(|p| (p.key.clone(), p.val.clone())).collect();
+    let record = fixture.pairs.iter().find(|p| index_id(&p.key).is_none()).unwrap();
+    let keyspace = b"x\0\0\x01".to_vec();
+    let base = BaseHandler::new(tbl.clone(), "data", &keyspace, Some(encoder(&meta, &tbl)), None);
+    let mut h = ConflictKVHandler::new_data(base, Check(want, None));
+    let encoded = [keyspace.as_slice(), &record.key].concat();
+    h.handle(&Context::background(), &KVPair { key: encoded, value: record.val.clone() }).unwrap();
+    // The row handler is given the decoded row key, as Go's.
+    assert_eq!(h.row_handler.1.as_deref(), Some(record.key.as_slice()));
+    let other = [b"x\0\0\x02".as_slice(), &record.key].concat();
+    assert!(h.handle(&Context::background(), &KVPair { key: other, value: record.val.clone() }).is_err());
 }
 
 /// Go `TestHandler/test index kv handler`: of 16 rows conflicting in pairs
@@ -364,7 +394,7 @@ fn index_kv_handler() {
         global.write().unwrap().add(&row_key(meta.id, 3));
         let progress = Arc::new(Progress::default());
         let traffic = Arc::new(Traffic::default());
-        let base = BaseHandler::new(tbl.clone(), "2", Some(encoder(&meta, &tbl)), Some(progress.clone()));
+        let base = BaseHandler::new(tbl.clone(), "2", &[], Some(encoder(&meta, &tbl)), Some(progress.clone()));
         let snapshot = LazyRefreshedSnapshot::new(Arc::new(store), Some(traffic.clone()));
         let filter = KeyFilter::new(Arc::clone(&global), new_set(&size, 1 << 20));
         let mut h = ConflictKVHandler::new_index(base, snapshot, Some(filter), Recorder::default());
@@ -412,7 +442,7 @@ fn index_row_marked_local_after_success() {
     let old = BUFFERED_HANDLE_LIMIT.swap(1, Ordering::SeqCst);
     let size = Arc::new(AtomicI64::new(0));
     let filter = KeyFilter::new(Arc::new(RwLock::new(new_set(&size, 1 << 20))), new_set(&size, 1 << 20));
-    let base = BaseHandler::new(tbl.clone(), "2", Some(encoder(&meta, &tbl)), None);
+    let base = BaseHandler::new(tbl.clone(), "2", &[], Some(encoder(&meta, &tbl)), None);
     let snapshot = LazyRefreshedSnapshot::new(Arc::new(store), None);
     let mut h = ConflictKVHandler::new_index(base, snapshot, Some(filter), Recorder { fail: 1, ..Recorder::default() });
     h.pre_run().unwrap();
@@ -456,7 +486,7 @@ fn deleter() {
         let old = BUFFERED_KEY_COUNT_LIMIT.swap(2, Ordering::SeqCst);
         let traffic = Arc::new(Traffic::default());
         let storage: Arc<dyn Storage> = Arc::new(store.clone());
-        let deleter = Deleter::new(tbl.clone(), storage, kv_group, encoder(&meta, &tbl), None, Some(traffic.clone()));
+        let deleter = Deleter::new(tbl.clone(), storage, &[], kv_group, encoder(&meta, &tbl), None, Some(traffic.clone()));
         deleter.run(&Context::background(), &receiver(conflicted_kvs)).unwrap();
         BUFFERED_KEY_COUNT_LIMIT.store(old, Ordering::SeqCst);
         assert_eq!(*store.0.data.lock().unwrap(), kept, "{kv_group}");

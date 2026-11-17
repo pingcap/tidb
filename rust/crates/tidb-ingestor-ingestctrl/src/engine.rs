@@ -57,6 +57,9 @@ pub struct Engine {
     importing: AtomicBool,
     imported_size: AtomicU64,
     imported_count: AtomicU64,
+    /// Go `Writer.tikvCodec`: every key `AppendRows` receives is encoded
+    /// with it before the engine stores it; `None` stores keys as given.
+    tikv_codec: Option<tidb_ingestor_simplesst::KeyCodec>,
 }
 impl Engine {
     /// Go `engineManager.OpenEngine`: reopen durable runs and retain their TS.
@@ -117,7 +120,16 @@ impl Engine {
             importing: AtomicBool::new(false),
             imported_size: AtomicU64::new(0),
             imported_count: AtomicU64::new(0),
+            tikv_codec: None,
         })
+    }
+
+    /// Go `openLocalWriter`'s `tikvCodec`: the codec the engine's writers
+    /// encode each key with.
+    #[must_use]
+    pub fn with_tikv_codec(mut self, codec: Option<tidb_ingestor_simplesst::KeyCodec>) -> Self {
+        self.tikv_codec = codec;
+        self
     }
     /// Go `localWriter.AppendRows`, retaining RowID for duplicate detection.
     pub fn append_rows(
@@ -150,12 +162,18 @@ impl Engine {
             s.writers.insert(writer_id, writer);
         }
         for (key, value, row_id) in rows {
+            // Go `Writer.AppendRows`: `tikvCodec.EncodeKey` first, then the
+            // engine's key adapter.
+            let key = match &self.tikv_codec {
+                Some(codec) => std::borrow::Cow::Owned(codec(key)),
+                None => std::borrow::Cow::Borrowed(key.as_slice()),
+            };
             let encoded;
             let stored = if self.duplicate_detection {
-                encoded = encode_duplicate_key(key, row_id);
+                encoded = encode_duplicate_key(&key, row_id);
                 encoded.as_slice()
             } else {
-                key.as_slice()
+                &key[..]
             };
             s.writers.get_mut(&writer_id).unwrap().put(stored, value)?;
             s.buffered_bytes += (stored.len() + value.len()) as u64;
@@ -411,6 +429,30 @@ fn directory_size(path: &Path) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Go `Writer.AppendRows`: each key is encoded with the writer's
+    /// `tikvCodec` (the keyspace prefix) before the engine stores it, so the
+    /// engine's range, split keys and region jobs are in the store's encoded
+    /// key space; under duplicate detection the row id goes after the
+    /// encoded key.
+    #[test]
+    fn append_rows_stores_codec_encoded_keys() {
+        let codec: tidb_ingestor_simplesst::KeyCodec = std::sync::Arc::new(|key| [b"x\0\0\x01".as_slice(), key].concat());
+        for duplicate_detection in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let engine = Engine::open(dir.path().join("engine"), 1, duplicate_detection, 1024)
+                .unwrap()
+                .with_tikv_codec(Some(std::sync::Arc::clone(&codec)));
+            engine
+                .append_rows(0, &[b"a", b"c"].map(|k| (k.to_vec(), k.to_vec(), b"r".to_vec())))
+                .unwrap();
+            engine.flush().unwrap();
+            assert_eq!(
+                engine.get_key_range().unwrap(),
+                Some((b"x\0\0\x01a".to_vec(), b"x\0\0\x01c\0".to_vec()))
+            );
+        }
+    }
+
     /// Go `engine_test.go:TestGetFirstAndLastKey`.
     #[test]
     fn test_get_first_and_last_key() {
