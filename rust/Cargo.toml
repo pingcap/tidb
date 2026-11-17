@@ -69,6 +69,7 @@ members = [
     "crates/tidb-dumpformat-parquetfile",
     "crates/tidb-go-rand",
     "crates/tidb-go-url",
+    "crates/tidb-go-semver",
     "crates/tidb-lightning-backend",
     "crates/tidb-lightning-backend-encode",
     "crates/tidb-lightning-backend-kv",

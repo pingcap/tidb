@@ -1348,6 +1348,42 @@ impl Domain {
         }))
     }
 
+    /// Go `statsReadWriter.PersistStatsBySnapshot`: each partition's
+    /// statistics at `snapshot` and then the global ones (or the table's),
+    /// handed to `persist` with the physical ID; a partition without
+    /// statistics is skipped.
+    ///
+    /// # Errors
+    /// A read error, or `persist`'s.
+    pub fn persist_stats_by_snapshot(
+        &self,
+        database_name: &str,
+        table: &tidb_model::table_info::TableInfo,
+        snapshot: u64,
+        persist: &mut dyn FnMut(Option<tidb_stats_util::JsonTable>, i64) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let handle = ClusterHistoricalStatsHandle {
+            transactions: Arc::clone(&self.transactions),
+            catalog: Arc::clone(&self.catalog),
+            global_vars: self.global_vars.clone(),
+            auto_ids: Arc::clone(&self.auto_ids),
+            domain: self.binding_session_factory.clone(),
+        };
+        let Some(partition) = table.get_partition_info() else {
+            let json = handle.table_json_at(database_name, table, table.id, snapshot)?;
+            return persist(json, table.id);
+        };
+        for definition in partition.read().definitions.snapshot() {
+            if let Some(json) = handle.table_json_at(database_name, table, definition.id, snapshot)? {
+                persist(Some(json), definition.id)?;
+            }
+        }
+        if let Some(global) = handle.table_json_at(database_name, table, table.id, snapshot)? {
+            persist(Some(global), table.id)?;
+        }
+        Ok(())
+    }
+
     /// Pinned Go `StatsHandle.DumpHistoricalStatsBySnapshot` over the live
     /// shared catalog and restricted cluster transactions.
     pub fn dump_historical_stats_by_snapshot(
@@ -2561,6 +2597,18 @@ impl ClusterHistoricalStatsHandle {
         table: &tidb_model::table_info::TableInfo,
         physical_id: i64,
     ) -> Result<Option<tidb_stats_util::JsonTable>, String> {
+        self.table_json_at(database_name, table, physical_id, 0)
+    }
+
+    /// Go `statsReadWriter.TableStatsToJSON`: the statistics of one
+    /// physical table at `snapshot` (0 for the latest).
+    fn table_json_at(
+        &self,
+        database_name: &str,
+        table: &tidb_model::table_info::TableInfo,
+        physical_id: i64,
+        snapshot: u64,
+    ) -> Result<Option<tidb_stats_util::JsonTable>, String> {
         let domain = self.domain.upgrade();
         let session_pool = domain.as_ref().map(|domain| domain.advanced_sys_session_pool());
         let pool = crate::sys_session::StatsPool {
@@ -2573,7 +2621,7 @@ impl ClusterHistoricalStatsHandle {
                 // `loadAll` reads every item, so the lease decides nothing.
                 tbl = tidb_stats_handle_storage::read::table_stats_from_storage(
                     sctx,
-                    0,
+                    snapshot,
                     table,
                     physical_id,
                     true,
@@ -2595,7 +2643,7 @@ impl ClusterHistoricalStatsHandle {
                     tidb_stats_handle_storage::read::stats_meta_by_table_id_from_storage(
                         sctx,
                         physical_id,
-                        0,
+                        snapshot,
                     )?;
                 tbl.version = version;
                 tbl.hist_coll.modify_count = modify_count;

@@ -444,6 +444,13 @@ pub fn cluster_session_stack(
         users.global_vars(),
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
+    // Go `Domain.Start`: the log backup advancer, outside BR mode.
+    let log_backup_advancer = if start_mode == tidb_ddl::StartMode::Br {
+        None
+    } else {
+        crate::log_backup::init_log_backup(authority.tikv_store(), etcd.clone(), &config.cluster_security)
+            .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?
+    };
     let stats_owner: Arc<dyn tidb_owner::Manager> = match etcd.clone() {
         Some(client) => Arc::new(tidb_owner::OwnerManager::new(
             tidb_owner::Context::background(),
@@ -875,6 +882,7 @@ pub fn cluster_session_stack(
         workers: vec![
             Box::new(ttl_job_manager),
             Box::new(replica_read_checker),
+            Box::new(log_backup_advancer),
             Box::new(stats_maintenance),
             Box::new(replica_poll),
             Box::new(global_config_keeper),

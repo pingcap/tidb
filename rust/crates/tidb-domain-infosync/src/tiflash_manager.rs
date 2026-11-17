@@ -51,6 +51,26 @@ pub trait TiFlashReplicaManager: Send + Sync {
     fn get_stores_stat(&self) -> Result<pd_http::StoresInfo, String>;
     /// Go `SyncTiFlashTableSchema` syncs the table's schema to TiFlash.
     fn sync_tiflash_table_schema(&self, table_id: i64, stores: &[pd_http::StoreInfo]) -> Result<(), String>;
+    /// Go `GetRegionCountFromPD`: PD's `/stats/region` count over the
+    /// table's record range.
+    fn get_region_count_from_pd(&self, table_id: i64) -> Result<i64, String>;
+    /// Go `CalculateTiFlashProgress`: `(full replica progress, one replica
+    /// progress)`. This node serves the null keyspace.
+    fn calculate_tiflash_progress(
+        &self,
+        table_id: i64,
+        replica_count: u64,
+        tiflash_stores: &[pd_http::StoreInfo],
+    ) -> Result<(f64, f64), String> {
+        let security = self.security();
+        calculate_tiflash_progress(
+            self.get_region_count_from_pd(table_id),
+            table_id,
+            replica_count,
+            tiflash_stores,
+            |addr| collect_tiflash_status(&security, addr, table_id),
+        )
+    }
     /// Go `SetMockTiFlash`'s type assertion: only the mock manager takes a
     /// mock TiFlash.
     fn set_mock_tiflash(&self, _tiflash: Arc<MockTiFlash>) {}
@@ -216,6 +236,15 @@ impl TiFlashReplicaManager for TiFlashReplicaManagerCtx {
         Ok(())
     }
 
+    fn get_region_count_from_pd(&self, table_id: i64) -> Result<i64, String> {
+        let (start, end) = table_region_range(table_id);
+        block_on(
+            self.pd_http_client
+                .get_region_status_by_key_range(&pd_http::new_key_range(start, end), true),
+        )
+        .map(|stats| stats.count)
+    }
+
     fn security(&self) -> tidb_pd_client::ClusterSecurity {
         self.security.clone()
     }
@@ -348,6 +377,17 @@ impl TiFlashReplicaManager for MockTiFlashReplicaManagerCtx {
 
     fn sync_tiflash_table_schema(&self, _table_id: i64, _stores: &[pd_http::StoreInfo]) -> Result<(), String> {
         Ok(())
+    }
+
+    /// Go's mock: one region (`HandleGetPDRegionRecordStats`), none without
+    /// a mock TiFlash.
+    fn get_region_count_from_pd(&self, _table_id: i64) -> Result<i64, String> {
+        Ok(i64::from(
+            self.tiflash
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_some(),
+        ))
     }
 
     fn set_mock_tiflash(&self, tiflash: Arc<MockTiFlash>) {
@@ -538,6 +578,199 @@ pub fn is_tiflash_http_resp(store: &pd_http::MetaStore) -> bool {
         .any(|label| label.key == "engine" && (label.value == "tiflash_compute" || label.value == "tiflash"))
 }
 
+/// Go `helper.ComputeTiFlashStatus`: a count line followed by
+/// space-separated region IDs.
+///
+/// # Errors
+/// A missing line or an unparsable number.
+pub fn compute_tiflash_status(body: &str) -> Result<Vec<i64>, String> {
+    let mut lines = body.split_inclusive('\n');
+    let mut next_line = || {
+        lines
+            .next()
+            .filter(|line| line.ends_with('\n'))
+            .map(|line| line.trim_matches(['\r', '\n', '\t']))
+            .ok_or_else(|| "incomplete TiFlash sync-status response".to_owned())
+    };
+    let expected: i64 = next_line()?
+        .parse()
+        .map_err(|error| format!("TiFlash region count: {error}"))?;
+    let regions: Vec<i64> = next_line()?
+        .split(' ')
+        .filter(|id| !id.is_empty())
+        .map(|id| {
+            id.parse()
+                .map_err(|error| format!("TiFlash region ID: {error}"))
+        })
+        .collect::<Result<_, _>>()?;
+    // Go warns on count disagreement but accepts the successfully parsed IDs.
+    if expected != regions.len() as i64 {
+        tidb_logutil::bg_logger().warn(
+            "ComputeTiFlashStatus count check failed",
+            &[
+                Field::new("claim", Value::I64(expected)),
+                Field::new("real", Value::I64(regions.len() as i64)),
+            ],
+        );
+    }
+    Ok(regions)
+}
+
+/// Go `helper.CollectTiFlashStatusWithCtx`: the regions of the table one
+/// TiFlash store holds, from its `sync-status` API in the null keyspace.
+/// The body is parsed whatever the HTTP status.
+///
+/// # Errors
+/// The request or parse error.
+pub fn collect_tiflash_status(
+    security: &tidb_pd_client::ClusterSecurity,
+    status_address: &str,
+    table_id: i64,
+) -> Result<Vec<i64>, String> {
+    let schema = if security.is_tls_enabled() {
+        "https"
+    } else {
+        "http"
+    };
+    let stat_url = format!(
+        "{schema}://{status_address}/tiflash/sync-status/keyspace/{}/table/{table_id}",
+        tikv_client::tikv::NULLSPACE_ID,
+    );
+    let client = tidb_store_driver_txn::cluster_http::internal_http_client(security)?;
+    let body = client
+        .get(stat_url)
+        .send()
+        .and_then(|response| response.text())
+        .map_err(|error| error.to_string())?;
+    compute_tiflash_status(&body)
+}
+
+/// Go `calculateTiFlashProgress` over `region_count` (Go
+/// `GetTiFlashRegionCountFromPD`) and `collect` (Go
+/// `CollectTiFlashStatusWithCtx` by status address): `(full replica
+/// progress, one replica progress)`. A store that fails is skipped unless
+/// it is up or disconnected (Go `getTiFlashPeerWithoutLagCount`).
+///
+/// # Errors
+/// PD's error, a zero region count, or a live store's error.
+pub fn calculate_tiflash_progress(
+    region_count: Result<i64, String>,
+    table_id: i64,
+    replica_count: u64,
+    tiflash_stores: &[pd_http::StoreInfo],
+    collect: impl Fn(&str) -> Result<Vec<i64>, String>,
+) -> Result<(f64, f64), String> {
+    let region_count = region_count.inspect_err(|_| {
+        tidb_logutil::bg_logger().warn(
+            "Fail to get regionCount from PD.",
+            &[Field::new("tableID", Value::I64(table_id))],
+        );
+    })?;
+    if region_count <= 0 {
+        tidb_logutil::bg_logger().warn(
+            "region count getting from PD is 0.",
+            &[Field::new("tableID", Value::I64(table_id))],
+        );
+        return Err("region count getting from PD is 0".to_owned());
+    }
+    // A region counts once even when several stores hold it.
+    let mut regions_with_peer = std::collections::HashSet::new();
+    let mut peer_count = 0usize;
+    for store in tiflash_stores {
+        let store_regions: std::collections::HashSet<_> = match collect(&store.store.status_address)
+        {
+            Ok(regions) => regions.into_iter().collect(),
+            // Down, offline or tombstone stores are skipped: PD migrates
+            // their regions.
+            Err(error)
+                if store.store.state_name == "Up" || store.store.state_name == "Disconnected" =>
+            {
+                tidb_logutil::bg_logger().warn(
+                    "Fail to get peer count from TiFlash.",
+                    &[
+                        Field::new("tableID", Value::I64(table_id)),
+                        Field::new("storeAddr", Value::Str(store.store.status_address.clone())),
+                        Field::new("error", Value::Str(error.clone())),
+                    ],
+                );
+                return Err(error);
+            }
+            Err(_) => continue,
+        };
+        peer_count += store_regions.len();
+        regions_with_peer.extend(store_regions);
+    }
+    let region_count = region_count as f64;
+    // Balancing between TiFlash stores may leave more than `replica_count`
+    // peers on some regions.
+    let full_replica_progress =
+        (peer_count as f64 / (region_count * replica_count as f64)).min(1.0);
+    let one_replica_progress = regions_with_peer.len() as f64 / region_count;
+    Ok((full_replica_progress, one_replica_progress))
+}
+
+/// Go `infosync.GetTiFlashProgressStores`: the TiFlash write stores and the
+/// TiKV stores, TiFlash compute nodes left out.
+///
+/// # Errors
+/// PD's error.
+pub fn get_tiflash_progress_stores(
+) -> Result<(Vec<pd_http::StoreInfo>, Vec<pd_http::StoreInfo>), String> {
+    let stats = get_tiflash_stores_stat()?;
+    let (mut tiflash_stores, mut tikv_stores) = (Vec::new(), Vec::new());
+    for store in stats.stores {
+        if is_tiflash_http_resp(&store.store) {
+            if is_tiflash_write_http_resp(&store.store) {
+                tiflash_stores.push(store);
+            }
+            continue;
+        }
+        tikv_stores.push(store);
+    }
+    Ok((tiflash_stores, tikv_stores))
+}
+
+/// Go `engine.IsTiFlashWriteHTTPResp`: a TiFlash node under the classic
+/// kernel or a TiFlash write node under the next-gen one.
+#[must_use]
+pub fn is_tiflash_write_http_resp(store: &pd_http::MetaStore) -> bool {
+    store
+        .labels
+        .iter()
+        .any(|label| label.key == "engine" && label.value == "tiflash")
+}
+
+/// Go `infosync.MustGetTiFlashProgress`: the cached progress, or the
+/// lower of the TiFlash progress (with TiFlash stores) and the columnar
+/// progress (with TiKV stores), cached.
+///
+/// # Errors
+/// The calculation's error.
+pub fn must_get_tiflash_progress(
+    table_id: i64,
+    replica_count: u64,
+    tiflash_stores: &[pd_http::StoreInfo],
+    tikv_stores: &[pd_http::StoreInfo],
+) -> Result<f64, String> {
+    let manager = tiflash_replica_manager();
+    if let Some(progress) = manager.get_tiflash_progress_from_cache(table_id) {
+        return Ok(progress);
+    }
+    let mut tiflash_progress = 1.0;
+    let mut columnar_progress = 1.0;
+    if !tiflash_stores.is_empty() {
+        tiflash_progress = manager
+            .calculate_tiflash_progress(table_id, replica_count, tiflash_stores)?
+            .0;
+    }
+    if !tikv_stores.is_empty() {
+        columnar_progress = calculate_columnar_progress(table_id, tikv_stores)?;
+    }
+    let progress = f64::min(tiflash_progress, columnar_progress);
+    manager.update_tiflash_progress_cache(table_id, progress);
+    Ok(progress)
+}
+
 /// Go `infosync.UpdateTiFlashProgressCache`.
 pub fn update_tiflash_progress_cache(table_id: i64, progress: f64) {
     tiflash_replica_manager().update_tiflash_progress_cache(table_id, progress);
@@ -688,5 +921,84 @@ mod tests {
         // `t\x80\0\0\0\0\0\0\x64_r` and `t\x80\0\0\0\0\0\0\x65`, memcomparable.
         assert_eq!("7480000000000000ff645f720000000000fa", rule["start_key"]);
         assert_eq!("7480000000000000ff6500000000000000f8", rule["end_key"]);
+    }
+
+    fn store(state: &str, labels: &[(&str, &str)], addr: &str) -> pd_http::StoreInfo {
+        pd_http::StoreInfo {
+            store: pd_http::MetaStore {
+                state_name: state.to_owned(),
+                status_address: addr.to_owned(),
+                labels: labels
+                    .iter()
+                    .map(|(key, value)| pd_http::StoreLabel {
+                        key: (*key).to_owned(),
+                        value: (*value).to_owned(),
+                    })
+                    .collect(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    /// Go `calculateTiFlashProgress`: a region counts once for the one
+    /// replica progress, peers count toward the full one (capped at 1), and
+    /// only a live store's failure is an error.
+    #[test]
+    fn tiflash_progress_counts_regions_and_peers_like_go() {
+        let stores = [
+            store("Up", &[], "a"),
+            store("Up", &[], "b"),
+            store("Down", &[], "c"),
+        ];
+        let collect = |addr: &str| match addr {
+            "a" => Ok(vec![1, 2]),
+            "b" => Ok(vec![2]),
+            _ => Err("down".to_owned()),
+        };
+        assert_eq!(
+            calculate_tiflash_progress(Ok(4), 7, 2, &stores, collect).unwrap(),
+            (3.0 / 8.0, 0.5)
+        );
+        // More peers than replicas while PD balances: capped.
+        assert_eq!(
+            calculate_tiflash_progress(Ok(1), 7, 1, &stores, collect).unwrap(),
+            (1.0, 2.0)
+        );
+        assert_eq!(
+            calculate_tiflash_progress(Ok(0), 7, 1, &stores, collect).unwrap_err(),
+            "region count getting from PD is 0"
+        );
+        calculate_tiflash_progress(Err("pd".to_owned()), 7, 1, &stores, collect).unwrap_err();
+        let live_failure = [store("Disconnected", &[], "c")];
+        assert_eq!(
+            calculate_tiflash_progress(Ok(1), 7, 1, &live_failure, collect).unwrap_err(),
+            "down"
+        );
+    }
+
+    /// Go `ComputeTiFlashStatus`: the count line, then the IDs.
+    #[test]
+    fn compute_tiflash_status_reads_the_region_ids() {
+        assert_eq!(
+            compute_tiflash_status("2\n1009 1010 \n").unwrap(),
+            vec![1009, 1010]
+        );
+        compute_tiflash_status("2\n1009").unwrap_err();
+    }
+
+    /// Go `engine.IsTiFlashWriteHTTPResp`: a compute node is not a write
+    /// store.
+    #[test]
+    fn tiflash_write_stores_exclude_compute_nodes() {
+        assert!(is_tiflash_write_http_resp(
+            &store("Up", &[("engine", "tiflash")], "").store
+        ));
+        assert!(!is_tiflash_write_http_resp(
+            &store("Up", &[("engine", "tiflash_compute")], "").store
+        ));
+        assert!(is_tiflash_http_resp(
+            &store("Up", &[("engine", "tiflash_compute")], "").store
+        ));
     }
 }

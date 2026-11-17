@@ -173,6 +173,19 @@ where
         self.inner.clone().advance_gc_safe_point(target).await
     }
 
+    async fn set_gc_barrier(
+        self: Arc<Self>,
+        barrier_id: &str,
+        barrier_ts: u64,
+        ttl_seconds: i64,
+    ) -> Result<crate::proto::pdpb::GcBarrierInfo> {
+        self.inner.clone().set_gc_barrier(barrier_id, barrier_ts, ttl_seconds).await
+    }
+
+    async fn delete_gc_barrier(self: Arc<Self>, barrier_id: &str) -> Result<()> {
+        self.inner.clone().delete_gc_barrier(barrier_id).await
+    }
+
     async fn scatter_regions(
         self: Arc<Self>,
         region_ids: Vec<u64>,

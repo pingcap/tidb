@@ -635,3 +635,301 @@ pub fn require_brie_privilege(
     }
     Ok(())
 }
+
+impl tidb_br::glue::Progress for BrieTaskProgress {
+    fn inc(&self) {
+        BrieTaskProgress::inc(self);
+    }
+    fn inc_by(&self, cnt: i64) {
+        BrieTaskProgress::inc_by(self, cnt);
+    }
+    fn get_current(&self) -> i64 {
+        BrieTaskProgress::get_current(self)
+    }
+    fn close(&self) {
+        BrieTaskProgress::close(self);
+    }
+}
+
+/// What a BRIE task uses of the node it runs on: Go `tidbGlue`'s
+/// `se.GetStore()`, `domain.GetDomain(se)` and `CreateSession(se)`. The
+/// server installs it over its TiKV store; a node without one has none.
+pub trait BrieNode: Send + Sync {
+    /// The node's store.
+    ///
+    /// # Errors
+    /// The store cannot be reached.
+    fn storage(&self) -> Result<Arc<dyn tidb_br::glue::Storage>, String>;
+    /// The node's domain.
+    ///
+    /// # Errors
+    /// The domain is stopped.
+    fn domain(&self) -> Result<Arc<dyn tidb_br::glue::Domain>, String>;
+    /// A new internal session (Go `CreateSession`).
+    ///
+    /// # Errors
+    /// No session can be opened.
+    fn create_session(&self) -> Result<Box<dyn tidb_br::glue::Session>, String>;
+}
+
+static BRIE_NODE: std::sync::RwLock<Option<Arc<dyn BrieNode>>> = std::sync::RwLock::new(None);
+
+/// Installs the node BRIE tasks run on.
+pub fn set_brie_node(node: Option<Arc<dyn BrieNode>>) {
+    *BRIE_NODE.write().unwrap_or_else(std::sync::PoisonError::into_inner) = node;
+}
+
+fn brie_node() -> Result<Arc<dyn BrieNode>, String> {
+    BRIE_NODE
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+        .ok_or_else(|| "BACKUP and RESTORE need a TiKV store, and this instance has none".to_owned())
+}
+
+fn glue_err(e: String) -> tidb_br::errors::Error {
+    tidb_br::errors::errorf(e)
+}
+
+/// Go `tidbGlue`.
+struct TidbGlue {
+    node: Arc<dyn BrieNode>,
+    progress: Arc<BrieTaskProgress>,
+    info: Arc<Mutex<BrieTaskInfo>>,
+}
+
+impl tidb_br::glue::Glue for TidbGlue {
+    fn get_domain(&self) -> tidb_br::errors::Result<Arc<dyn tidb_br::glue::Domain>> {
+        self.node.domain().map_err(glue_err)
+    }
+
+    fn create_session(&self) -> tidb_br::errors::Result<Box<dyn tidb_br::glue::Session>> {
+        self.node.create_session().map_err(glue_err)
+    }
+
+    fn open(&self) -> tidb_br::errors::Result<Arc<dyn tidb_br::glue::Storage>> {
+        self.node.storage().map_err(glue_err)
+    }
+
+    fn owns_storage(&self) -> bool {
+        false
+    }
+
+    fn start_progress(
+        &self,
+        _ctx: &Context,
+        cmd_name: &str,
+        total: i64,
+        _redirect_log: bool,
+    ) -> Arc<dyn tidb_br::glue::Progress> {
+        self.progress.start_progress(cmd_name, total);
+        Arc::clone(&self.progress) as Arc<dyn tidb_br::glue::Progress>
+    }
+
+    fn record(&self, name: &str, value: u64) {
+        self.info.lock().unwrap().record(name, value);
+    }
+
+    fn get_version(&self) -> String {
+        format!("TiDB\n{}", tidb_printer::get_tidb_info())
+    }
+
+    /// In SQL backup the domain stays; a new session runs `f`.
+    fn use_one_shot_session(
+        &self,
+        _close_domain: bool,
+        f: &mut dyn FnMut(&dyn tidb_br::glue::Session) -> tidb_br::errors::Result<()>,
+    ) -> tidb_br::errors::Result<()> {
+        let session = self.node.create_session().map_err(glue_err)?;
+        let res = f(session.as_ref());
+        drop(session);
+        tidb_log::info("one shot session from brie closed", &[]);
+        res
+    }
+
+    fn get_client(&self) -> tidb_br::glue::GlueClient {
+        tidb_br::glue::GlueClient::Sql
+    }
+}
+
+/// Go `cancelBRIEOnKill`: every `tick`, a KILLed statement cancels the task.
+fn cancel_brie_on_kill(
+    task_ctx: &Context,
+    killer: &tidb_sqlkiller::SqlKiller,
+    tick_ch: &crossbeam_channel::Receiver<Instant>,
+    cancel_task: impl Fn(),
+) {
+    loop {
+        crossbeam_channel::select! {
+            recv(tick_ch) -> tick => {
+                if tick.is_err() {
+                    return;
+                }
+                if killer.handle_signal().is_some_and(|e| tidb_exeerrors::ERR_QUERY_INTERRUPTED.equal(Some(&e))) {
+                    cancel_task();
+                    return;
+                }
+            }
+            recv(task_ctx.done()) -> _ => return,
+        }
+    }
+}
+
+/// Go `mapBRIEErr`: a KILLed statement is 1317; any other failure is
+/// `brie_err` over the error's text, when there is one. The second value is
+/// Go's `err.Error()`, which `SHOW BACKUPS` shows.
+fn map_brie_err(
+    killer: &tidb_sqlkiller::SqlKiller,
+    err: String,
+    brie_err: Option<&tidb_terror::TerrorError>,
+) -> (DriverError, String) {
+    if killer.handle_signal().is_some_and(|e| tidb_exeerrors::ERR_QUERY_INTERRUPTED.equal(Some(&e))) {
+        let e = tidb_exeerrors::ERR_QUERY_INTERRUPTED.gen_with_stack_by_args(&[]);
+        let message = e.to_string();
+        return (DriverError::from(e), message);
+    }
+    match brie_err {
+        None => (DriverError::unsupported(err.clone()), err),
+        Some(e) => {
+            let e = e.gen_with_stack_by_args(&[err.into()]);
+            let message = e.to_string();
+            (DriverError::from(e), message)
+        }
+    }
+}
+
+/// Go `buildBackupRestoreSchema`'s columns (`buildColumnWithName`:
+/// unsigned on every type but VARCHAR).
+fn backup_restore_columns(kind: BrieKind) -> Vec<(String, FieldType)> {
+    let column = |name: &str, code: FieldTypeCode, flen: i64| {
+        let mut ft = FieldType::new(code).with_flen(flen);
+        if code != FieldTypeCode::Varchar {
+            ft.set_flag(tidb_datatype::FieldTypeFlags::UNSIGNED);
+        }
+        (name.to_owned(), ft)
+    };
+    let mut columns = vec![
+        column("Destination", FieldTypeCode::Varchar, 255),
+        column("Size", FieldTypeCode::LongLong, 20),
+        column("BackupTS", FieldTypeCode::LongLong, 20),
+    ];
+    if kind == BrieKind::Restore {
+        columns.push(column("Cluster TS", FieldTypeCode::LongLong, 20));
+    }
+    columns.push(column("Queue Time", FieldTypeCode::Datetime, 19));
+    columns.push(column("Execution Time", FieldTypeCode::Datetime, 19));
+    columns
+}
+
+/// Go `BRIEExec.Next`: queues the task, waits for the node's one BRIE
+/// worker, runs it, and answers its row. `SHOW BACKUPS` sees it meanwhile.
+pub fn brie_next(
+    ctx: &Context,
+    exec: BRIEExec,
+    conn_id: u64,
+    killer: Arc<tidb_sqlkiller::SqlKiller>,
+) -> Result<StmtOutput, DriverError> {
+    let bq = &*GLOBAL_BRIE_QUEUE;
+    bq.clear_task();
+    let now = || chrono::Local::now().timestamp();
+    let BRIEExec { mut backup_cfg, mut restore_cfg, mut info } = exec;
+    let kind = info.kind;
+    info.conn_id = conn_id;
+    info.queue_time = Some(now());
+    let (task_ctx, task_id) = bq.register_task(ctx, info);
+    let info = bq.query_task(task_id).expect("the task was just registered");
+    // Go `defer bq.cancelTask(taskID)`.
+    struct CancelOnDrop(u64);
+    impl Drop for CancelOnDrop {
+        fn drop(&mut self) {
+            GLOBAL_BRIE_QUEUE.cancel_task(self.0);
+        }
+    }
+    let _cancel = CancelOnDrop(task_id);
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/block-on-brie").is_some() {
+        tidb_log::warn("You shall not pass, nya. :3", &[]);
+        let _ = task_ctx.done().recv();
+        if let Some(err) = task_ctx.err() {
+            return Err(DriverError::unsupported(err.to_string()));
+        }
+    }
+    {
+        let (task_ctx, killer) = (task_ctx.clone(), Arc::clone(&killer));
+        std::thread::spawn(move || {
+            cancel_brie_on_kill(&task_ctx, &killer, &crossbeam_channel::tick(Duration::from_secs(3)), || {
+                GLOBAL_BRIE_QUEUE.cancel_task(task_id);
+            });
+        });
+    }
+    let progress = match bq.acquire_task(&task_ctx, task_id) {
+        Ok(p) => p,
+        Err(err) => {
+            let (err, message) = map_brie_err(&killer, err, None);
+            let mut info = info.lock().unwrap();
+            info.finish_time = Some(now());
+            info.message = message;
+            return Err(err);
+        }
+    };
+    struct ReleaseOnDrop;
+    impl Drop for ReleaseOnDrop {
+        fn drop(&mut self) {
+            GLOBAL_BRIE_QUEUE.release_task();
+        }
+    }
+    let _release = ReleaseOnDrop;
+    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/executor/beforeRunBRIETask", &mut ());
+    info.lock().unwrap().exec_time = Some(now());
+    let result = match brie_node() {
+        Err(err) => Err(err),
+        Ok(node) => {
+            let glue = TidbGlue { node, progress, info: Arc::clone(&info) };
+            match kind {
+                BrieKind::Backup => {
+                    let cfg = backup_cfg.as_mut().expect("a BACKUP has its configuration");
+                    tidb_br::task::backup::run_backup(&task_ctx, &glue, "Backup", cfg).map_err(|e| e.to_string())
+                }
+                BrieKind::Restore => {
+                    let cfg = restore_cfg.as_mut().expect("a RESTORE has its configuration");
+                    tidb_br::task::restore::run_restore(&task_ctx, &glue, "Restore", cfg).map_err(|e| e.to_string())
+                }
+                _ => Err(format!("unsupported BRIE statement kind: {}", kind_name(kind))),
+            }
+        }
+    };
+    let brie_err = match kind {
+        BrieKind::Backup => Some(&*tidb_exeerrors::ERR_BRIE_BACKUP_FAILED),
+        BrieKind::Restore => Some(&*tidb_exeerrors::ERR_BRIE_RESTORE_FAILED),
+        _ => None,
+    };
+    let mut info = info.lock().unwrap();
+    info.finish_time = Some(now());
+    if let Err(err) = result {
+        let (err, message) = map_brie_err(&killer, err, brie_err);
+        info.message = message;
+        return Err(err);
+    }
+    info.message.clear();
+    let queue_time = local_time(info.queue_time);
+    let exec_time = local_time(info.exec_time);
+    let mut row = vec![
+        Datum::new_string_datum(info.storage.as_str()),
+        Datum::UInt(info.archive_size),
+        Datum::UInt(info.backup_ts),
+    ];
+    if kind == BrieKind::Restore {
+        row.push(Datum::UInt(info.restore_ts));
+    }
+    row.push(queue_time);
+    row.push(exec_time);
+    Ok(StmtOutput::Rows { columns: backup_restore_columns(kind), rows: vec![row] })
+}
+
+/// Go `ast.BRIEKind.String`.
+fn kind_name(kind: BrieKind) -> &'static str {
+    match kind {
+        BrieKind::Backup => "BACKUP",
+        BrieKind::Restore => "RESTORE",
+        _ => "",
+    }
+}

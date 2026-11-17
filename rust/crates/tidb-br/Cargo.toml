@@ -17,11 +17,46 @@ tidb-objstore-s3like = { path = "../tidb-objstore-s3like" }
 tidb-table-filter = { path = "../tidb-table-filter" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-redact = { path = "../tidb-redact" }
+tidb-owner = { path = "../tidb-owner" }
+async-trait.workspace = true
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-log = { path = "../tidb-log" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-model = { path = "../tidb-model" }
+tidb-datatype = { path = "../tidb-datatype" }
 tidb-proto = { path = "../tidb-proto" }
+tidb-terror = { path = "../tidb-terror" }
+tidb-go-semver = { path = "../tidb-go-semver" }
+tonic.workspace = true
+base64.workspace = true
+tokio.workspace = true
+crossbeam-channel = "0.5"
+regex.workspace = true
+serde.workspace = true
+uuid = { version = "1", features = ["v4"] }
+reqwest = { workspace = true, features = ["blocking"] }
+tikv-client.workspace = true
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-distsql = { path = "../tidb-distsql" }
+tidb-ranger = { path = "../tidb-ranger" }
+tidb-meta = { path = "../tidb-meta" }
+tidb-structure = { path = "../tidb-structure" }
+tidb-ddl-label = { path = "../tidb-ddl-label" }
+tidb-cdcutil = { path = "../tidb-cdcutil" }
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
+tidb-metadef = { path = "../tidb-metadef" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-go-time-layout = { path = "../tidb-go-time-layout" }
+tidb-lightning-common = { path = "../tidb-lightning-common" }
+tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-versioninfo = { path = "../tidb-versioninfo" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-errno = { path = "../tidb-errno" }
+tidb-go-url = { path = "../tidb-go-url" }
+tidb-go-strconv = { path = "../tidb-go-strconv" }
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 
 tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-encrypt = { path = "../tidb-encrypt" }
@@ -30,16 +65,12 @@ sha2.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
 hex = "0.4"
-tikv-client.workspace = true
+tidb-sem = { path = "../tidb-sem" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
-crossbeam-channel = "0.5"
-uuid = { version = "1", features = ["v4"] }
-serde = { workspace = true }
 getrandom.workspace = true
 tidb-failpoint = { path = "../tidb-failpoint" }
 tidb-stats-util = { path = "../tidb-stats-util" }
 
 [dev-dependencies]
-tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
 tempfile.workspace = true
-tidb-ast = { path = "../tidb-ast" }

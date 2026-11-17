@@ -799,6 +799,46 @@ impl Cluster {
         }
     }
 
+    /// pd-client `GCStatesClient.SetGCBarrier`.
+    pub fn set_gc_barrier(
+        &self,
+        keyspace_id: u32,
+        barrier_id: String,
+        barrier_ts: u64,
+        ttl_seconds: i64,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<pdpb::SetGcBarrierResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let client = self.rpc_client();
+        async move {
+            let mut client = client.await?;
+            let mut req = pd_request!(cluster_id, pdpb::SetGcBarrierRequest);
+            req.keyspace_scope = Some(keyspace_scope(keyspace_id));
+            req.barrier_id = barrier_id;
+            req.barrier_ts = barrier_ts;
+            req.ttl_seconds = ttl_seconds;
+            req.send(&mut client, timeout).await
+        }
+    }
+
+    /// pd-client `GCStatesClient.DeleteGCBarrier`.
+    pub fn delete_gc_barrier(
+        &self,
+        keyspace_id: u32,
+        barrier_id: String,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<pdpb::DeleteGcBarrierResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let client = self.rpc_client();
+        async move {
+            let mut client = client.await?;
+            let mut req = pd_request!(cluster_id, pdpb::DeleteGcBarrierRequest);
+            req.keyspace_scope = Some(keyspace_scope(keyspace_id));
+            req.barrier_id = barrier_id;
+            req.send(&mut client, timeout).await
+        }
+    }
+
     pub fn scatter_regions(
         &self,
         region_ids: Vec<u64>,
@@ -812,6 +852,41 @@ impl Cluster {
             let mut req = pd_request!(cluster_id, pdpb::ScatterRegionRequest);
             req.regions_id = region_ids;
             req.group = group;
+            req.send(&mut client, timeout).await
+        }
+    }
+
+    /// pd-client `ScatterRegion(regionID)`: the legacy one-region scatter,
+    /// over the deprecated `region_id` field as Go's client sends it.
+    #[allow(deprecated)]
+    pub fn scatter_region(
+        &self,
+        region_id: u64,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<pdpb::ScatterRegionResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let client = self.rpc_client();
+        async move {
+            let mut client = client.await?;
+            let mut req = pd_request!(cluster_id, pdpb::ScatterRegionRequest);
+            req.region_id = region_id;
+            req.send(&mut client, timeout).await
+        }
+    }
+
+    /// pd-client `ScatterRegions(ids, opt.WithSkipStoreLimit())`.
+    pub fn scatter_regions_skip_store_limit(
+        &self,
+        region_ids: Vec<u64>,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<pdpb::ScatterRegionResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let client = self.rpc_client();
+        async move {
+            let mut client = client.await?;
+            let mut req = pd_request!(cluster_id, pdpb::ScatterRegionRequest);
+            req.regions_id = region_ids;
+            req.skip_store_limit = true;
             req.send(&mut client, timeout).await
         }
     }
@@ -2418,6 +2493,26 @@ impl PdMessage for pdpb::AdvanceTxnSafePointRequest {
 }
 
 #[async_trait]
+impl PdMessage for pdpb::SetGcBarrierRequest {
+    type Client = RoutedPdClient;
+    type Response = pdpb::SetGcBarrierResponse;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.set_gc_barrier(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
+impl PdMessage for pdpb::DeleteGcBarrierRequest {
+    type Client = RoutedPdClient;
+    type Response = pdpb::DeleteGcBarrierResponse;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.delete_gc_barrier(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
 impl PdMessage for pdpb::AdvanceGcSafePointRequest {
     type Client = RoutedPdClient;
     type Response = pdpb::AdvanceGcSafePointResponse;
@@ -2595,6 +2690,18 @@ impl PdResponse for pdpb::GetGcStateResponse {
 }
 
 impl PdResponse for pdpb::AdvanceTxnSafePointResponse {
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
+    }
+}
+
+impl PdResponse for pdpb::SetGcBarrierResponse {
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
+    }
+}
+
+impl PdResponse for pdpb::DeleteGcBarrierResponse {
     fn header(&self) -> Option<&pdpb::ResponseHeader> {
         self.header.as_ref()
     }

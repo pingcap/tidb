@@ -52,6 +52,9 @@ tidb-owner = { path = "../tidb-owner" }
 tidb-util = { path = "../tidb-util" }
 tidb-stats-handle-lockstats = { path = "../tidb-stats-handle-lockstats" }
 tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
+tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }
+tidb-stats-util = { path = "../tidb-stats-util" }
+tidb-ddl-label = { path = "../tidb-ddl-label" }
 tidb-table = { path = "../tidb-table" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
 tidb-server-err = { path = "../tidb-server-err" }
@@ -97,6 +100,7 @@ tidb-sessionstates = { path = "../tidb-sessionstates" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-bindinfo = { path = "../tidb-bindinfo" }
 tidb-domain-core = { path = "../tidb-domain-core" }
+tidb-br = { path = "../tidb-br" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-variable = { path = "../tidb-variable" }
 tidb-stats-handle-syncload = { path = "../tidb-stats-handle-syncload" }

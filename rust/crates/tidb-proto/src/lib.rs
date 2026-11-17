@@ -91,6 +91,9 @@ pub use tikv_client_kvproto::import_sstpb;
 /// Complete BR contracts shared with the native client.
 pub use tikv_client_kvproto::backup;
 
+/// Go `logbackuppb`: TiKV's log backup service.
+pub use tikv_client_kvproto::logbackup;
+
 /// Complete etcd authentication metadata.
 pub mod authpb {
     include!(concat!(env!("OUT_DIR"), "/authpb.rs"));

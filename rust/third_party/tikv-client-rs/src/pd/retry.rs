@@ -331,11 +331,44 @@ pub trait RetryClientTrait {
         Err(Error::Unimplemented)
     }
 
+    /// pd-client `GCStatesClient.SetGCBarrier`.
+    async fn set_gc_barrier(
+        self: Arc<Self>,
+        _keyspace_id: u32,
+        _barrier_id: String,
+        _barrier_ts: u64,
+        _ttl_seconds: i64,
+    ) -> Result<pdpb::SetGcBarrierResponse> {
+        Err(Error::Unimplemented)
+    }
+
+    /// pd-client `GCStatesClient.DeleteGCBarrier`.
+    async fn delete_gc_barrier(
+        self: Arc<Self>,
+        _keyspace_id: u32,
+        _barrier_id: String,
+    ) -> Result<pdpb::DeleteGcBarrierResponse> {
+        Err(Error::Unimplemented)
+    }
+
     async fn scatter_regions(
         self: Arc<Self>,
         _region_ids: Vec<u64>,
         _group: String,
     ) -> Result<pdpb::ScatterRegionResponse> {
+        Err(Error::Unimplemented)
+    }
+
+    /// pd-client `ScatterRegions(ids, opt.WithSkipStoreLimit())`.
+    async fn scatter_regions_skip_store_limit(
+        self: Arc<Self>,
+        _region_ids: Vec<u64>,
+    ) -> Result<pdpb::ScatterRegionResponse> {
+        Err(Error::Unimplemented)
+    }
+
+    /// pd-client `ScatterRegion(regionID)`.
+    async fn scatter_region(self: Arc<Self>, _region_id: u64) -> Result<pdpb::ScatterRegionResponse> {
         Err(Error::Unimplemented)
     }
 
@@ -1837,6 +1870,28 @@ impl RetryClientTrait for RetryClient<Cluster> {
         })
     }
 
+    async fn set_gc_barrier(
+        self: Arc<Self>,
+        keyspace_id: u32,
+        barrier_id: String,
+        barrier_ts: u64,
+        ttl_seconds: i64,
+    ) -> Result<pdpb::SetGcBarrierResponse> {
+        retry!(self, "set_gc_barrier", |cluster| {
+            cluster.set_gc_barrier(keyspace_id, barrier_id.clone(), barrier_ts, ttl_seconds, self.timeout)
+        })
+    }
+
+    async fn delete_gc_barrier(
+        self: Arc<Self>,
+        keyspace_id: u32,
+        barrier_id: String,
+    ) -> Result<pdpb::DeleteGcBarrierResponse> {
+        retry!(self, "delete_gc_barrier", |cluster| {
+            cluster.delete_gc_barrier(keyspace_id, barrier_id.clone(), self.timeout)
+        })
+    }
+
     async fn scatter_regions(
         self: Arc<Self>,
         region_ids: Vec<u64>,
@@ -1844,6 +1899,21 @@ impl RetryClientTrait for RetryClient<Cluster> {
     ) -> Result<pdpb::ScatterRegionResponse> {
         retry!(self, "scatter_regions", |cluster| {
             cluster.scatter_regions(region_ids.clone(), group.clone(), self.timeout)
+        })
+    }
+
+    async fn scatter_regions_skip_store_limit(
+        self: Arc<Self>,
+        region_ids: Vec<u64>,
+    ) -> Result<pdpb::ScatterRegionResponse> {
+        retry!(self, "scatter_regions", |cluster| {
+            cluster.scatter_regions_skip_store_limit(region_ids.clone(), self.timeout)
+        })
+    }
+
+    async fn scatter_region(self: Arc<Self>, region_id: u64) -> Result<pdpb::ScatterRegionResponse> {
+        retry!(self, "scatter_region", |cluster| {
+            cluster.scatter_region(region_id, self.timeout)
         })
     }
 

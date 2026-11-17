@@ -376,7 +376,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         name => name,
                     };
                     Ok((
-                        crate::show::create::construct_result_of_show_create_table(&database, &stored, table, &ctx)?,
+                        crate::show::create::construct_result_of_show_create_table(&database, &stored, table, &ctx, true)?,
                         stored,
                         None,
                     ))

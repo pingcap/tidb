@@ -15,6 +15,7 @@ pub mod error;
 pub mod gopath;
 mod hdfs;
 mod local;
+pub mod locking;
 mod memstore;
 mod noop;
 pub mod objectio;

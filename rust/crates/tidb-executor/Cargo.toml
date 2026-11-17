@@ -43,6 +43,7 @@ tidb-planner-core-access = { path = "../tidb-planner-core-access" }
 tidb-planner-core-cost = { path = "../tidb-planner-core-cost" }
 tidb-planner-core-metrics = { path = "../tidb-planner-core-metrics" }
 tidb-exeerrors = { path = "../tidb-exeerrors" }
+tidb-printer = { path = "../tidb-printer" }
 tidb-stats-asyncload = { path = "../tidb-stats-asyncload" }
 tidb-stats-util = { path = "../tidb-stats-util" }
 tidb-stats-handle-globalstats = { path = "../tidb-stats-handle-globalstats" }

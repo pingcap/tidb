@@ -907,6 +907,9 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
     ) -> Result<StmtOutput, DriverError>;
 
     fn server_id(&self) -> u64;
+    /// The session's statement-kill switch, which a BRIE task watches (Go
+    /// `cancelBRIEOnKill`).
+    fn brie_sql_killer(&self) -> std::sync::Arc<tidb_sqlkiller::SqlKiller>;
     /// Go's TiDB peer RPC client (`KILL` of another node's connection).
     fn cluster_peer(&self) -> Option<&std::sync::Arc<crate::cluster_peer::ClusterPeerClient>>;
     /// Go `infosync`'s server discovery.
@@ -944,10 +947,9 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                         &crate::brie::GLOBAL_BRIE_QUEUE, stmt.job_id as u64, self,
                     ))),
                     tidb_ast::BrieKind::Backup | tidb_ast::BrieKind::Restore => {
-                        // Go's builder errors are available before the physical BR
-                        // runners. Do not report a successful task.
-                        let _ = crate::brie::build_brie(stmt, &self.session_time_zone())?;
-                        Ok(None)
+                        let exec = crate::brie::build_brie(stmt, &self.session_time_zone())?;
+                        let conn_id = self.session_vars().connection_id.unwrap_or(0);
+                        crate::brie::brie_next(&tidb_gocontext::Context::background(), exec, conn_id, self.brie_sql_killer()).map(Some)
                     }
                     _ => Ok(None),
                 }

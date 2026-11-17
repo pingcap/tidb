@@ -1,11 +1,10 @@
 // Copyright 2026 PingCAP, Inc. Licensed under Apache-2.0.
 use super::*;
-use crate::local_storage::LocalStorage;
 use tidb_proto::backup::{BackupMeta, CipherInfo, File, Schema};
 
 fn check_load(partition: bool) {
     let dir = tempfile::tempdir().unwrap();
-    let storage = LocalStorage::from_url(dir.path().to_str().unwrap()).unwrap();
+    let storage = std::sync::Arc::new(tidb_objstore::LocalStorage::new(dir.path().to_str().unwrap()).unwrap()) as crate::metautil::Storage;
     let table = if partition {
         br#"{"id":123,"name":{"O":"t1","L":"t1"},"partition":{"definitions":[{"id":124},{"id":125}]}}"#.to_vec()
     } else {

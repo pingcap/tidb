@@ -228,3 +228,128 @@ Go master's own `ParseRawURL` no longer echoes the URL, so the earlier
 deliberate redaction difference for BRIE is gone. The job's shown storage is
 still `RedactURL(cfg.Storage)` rather than Go's raw `cfg.Storage` (AGENTS.md
 rule 7: Go shows an Azure query's credentials in SHOW BACKUPS).
+
+
+## Physical BACKUP/RESTORE (2026-11-16)
+
+
+Scope agreed with the user: everything SQL can reach. `BRIEExec.Next`
+runs `task.RunBackup(ctx, glue, "Backup", cfg)` and
+`task.RunRestore(ctx, glue, "Restore", cfg)` only, so the port covers
+snapshot full/database/table backup and restore with every option the SQL
+builder sets: LAST_BACKUP (incremental), BACKUP_TS / SNAPSHOT, compression,
+encryption, rate limit, concurrency, checksum, checkpoints, ONLINE,
+WAIT_TIFLASH_READY, WITH_SYS_TABLE and LOAD_STATS. Not reachable from SQL,
+recorded as a new gap row when E07 closes: log backup and PiTR
+(`br/pkg/stream`, `restore/log_client`), EBS snapshots, raw/txn KV mode,
+the repo layout, and the `br` CLI. Go's refusal on a non-TiKV store stays.
+Live roundtrips run on the TiUP playgrounds over `local://` and S3 (MinIO);
+GCS and Azure are covered by Go's tables only.
+
+Crate layout. `tidb-br` sits below `tidb-domain-core`, so it keeps the BR
+packages that need no session or domain: `errors`, `version`, `conn/util`,
+`gc`, `pdutil`, `utils`, `checkpoint`'s storage parts. The runners that need
+a session reach it through Go's `glue.Glue` / `glue.Session` interfaces,
+defined in `tidb-br::glue` and implemented by the executor (Go `tidbGlue` in
+`pkg/executor/brie.go`).
+
+PRs, each stacked on the previous one (the first on #56):
+
+1. Done: BR connection: `errors`, `version`, `conn` / `conn/util`, `gc`,
+   `pdutil`, `config` (`kv.go`), `glue`, `utils` (retry/backoff, error
+   handling, `StoreManager`), over a synchronous `pd.Client` trait
+   (`pdclient`); `coreos/go-semver` as `tidb-go-semver`, Go
+   `strconv.Unquote` in `tidb-go-strconv`, and the PD client's keyspace
+   GC barriers (vendored-client patch 120). Pinned by a Go capture
+   (`zzprobe/e07conn`, `tidb-br/testdata/conn_go.jsonl`) and Go's tests.
+2. Done: backup client: `backup` (`client.go`, `schema.go`, `store.go`,
+   `limit.go`: ranges and schemas, the per-store push-down loop with lock
+   resolution and store watching), `checksum`, the checkpoint runner and
+   its backup flavour, statistics files, DDL jobs for incremental backup,
+   `utils/storewatch` and the schema helpers; the catalog at a TS is read
+   through `tidb-meta` over a glue snapshot (`metareader`). Pinned by Go's
+   unit tests that need no cluster; schema building and DDL jobs are
+   checked live in PR 3.
+3. Done: `task.RunBackup` (`BackupConfig` with Go's flag defaults,
+   `Adjust`, `Hash` pinned to Go's JSON and SHA-256), BRIE backup execution
+   (Go `BRIEExec.Next`, `tidbGlue`, `mapBRIEErr`, `cancelBRIEOnKill`), and
+   the server's BRIE node over its TiKV store (snapshot reads, coprocessor
+   client, statistics by snapshot, PD label rules, internal sessions).
+   `BackupSchemaVersion` is Go master's 2. Live on the playgrounds: eleven
+   cases (`/tmp/e07/live.sh`) of Rust backups restored by Go with matching
+   KV counts, bytes and row hashes, over `local://` and MinIO S3, plus
+   Go's error texts. Rust-by-Rust restore comes with PR 5.
+4. Done: restore split and import: `restore/split` (`pdClient` with
+   TiKV's `SplitRegion`, batch and one-region scatter, `RegionSplitter`,
+   `PaginateScanRegion`), `internal/import_client`, `import_mode_switcher`,
+   `restorer` (`MultiTablesRestorer`), the snapshot `checkpoint/restore`
+   items, and `snap_client`'s `import.go` (`TiDBFull` download and ingest),
+   `tikv_sender.go`, `placement_rule_manager.go` and the import half of
+   `client.go`. The PD client reads regions and stores from PD directly and
+   scatters one region (vendored-client patch 130). Pinned by Go's split,
+   restorer and `snap_client` tests over a port of Go's
+   `MockPDClientForSplit`, plus Go's `TestSortAndValidateFileRanges` cases
+   captured from Go master. Live (`tidb-br/tests/restore_live.rs`): Rust
+   backups over `local://` and MinIO S3, and a Go backup on the Go cluster,
+   imported into unused table IDs with every KV equal to the source.
+5. Done: the schema half of `snap_client`: `client.go`'s loading,
+   `AllocTableIDs` (`internal/prealloc_table_id`), `InitCheckpoint`,
+   policies, databases and tables through `internal/prealloc_db`, DDL job
+   replay, merge-option label rules, `ResetTS` and the checksum;
+   `pipeline_items.go` (checksum, logical statistics load with
+   `metautil.RestoreStats`, TiFlash wait) and the logical half of
+   `systable_restore.go`; the table-backed snapshot checkpoint
+   (`checkpoint/storage.go`, the `TableMetaManager` of `manager.go`) with
+   `CheckpointMetadataForSnapshotRestore` pinned to Go's JSON; and the
+   restore methods of the glue traits, erroring until the server implements
+   them. Pinned by Go's `prealloc_table_id`, `prealloc_db`, client,
+   pipeline and system table tests over an in-memory glue cluster. The
+   `br` CLI's physical stats and system table loads, the external-storage
+   checkpoint and `txn-total-size-limit` are not ported.
+6. Done: `task.RunRestore` for snapshot restore (`runSnapshotRestore`, its
+   requirement checks, `Hash` pinned to Go's fingerprints), the restore
+   registry (`br/pkg/registry`, legacy columns), `utils.RegisterTask` with
+   its keepalive, and the log-backup / changefeed checks; BRIE `RESTORE`
+   execution; `pkg/executor/brie_utils.go`; and the server's restore glue
+   (one owned session for SQL and DDL, the meta transaction, info schema,
+   statistics through `LOAD STATS`, stats meta, privilege reload, label
+   rules, PD's unprefixed etcd). Live on the Rust cluster: Rust backups
+   restored by database and by table over `local://` and MinIO S3, a Go
+   backup restored by Rust, a refused restore over existing tables, and a
+   failed restore resumed from its checkpoint, with KV counts, bytes and
+   ordered rows equal to the source. Log restore and name routing are not
+   ported.
+7. Done (the last E07 PR): `WAIT_TIFLASH_READY` works. Go's
+   `calculateTiFlashProgress`, `MustGetTiFlashProgress`,
+   `GetTiFlashProgressStores` and `helper.CollectTiFlashStatusWithCtx` /
+   `ComputeTiFlashStatus` are in `tidb-domain-infosync` as in Go (the DDL
+   TiFlash poller calls the same calculation), and the BR glue reads the
+   stores once, as Go's pipeline does. Live with one TiFlash store: a table
+   and a partitioned table with TiFlash replicas restored with
+   `WAIT_TIFLASH_READY = 1`, replicas available and TiFlash reads correct.
+   The E07 row is deleted from the structural findings register (Markdown
+   and JSON). The `zzprobe/e07*` Go probes were removed after their
+   captures were committed under `tidb-br/testdata`.
+8. Done (same PR): log backup and PiTR as Go TiDB runs them. Every node
+   runs the checkpoint advancer (`br/pkg/streamhelper`: `advancer*.go`,
+   `client.go`, `collector.go`, `flush_subscriber.go`, `regioniter.go`,
+   `config`, `daemon`) under the `/tidb/br-stream/owner` election, started
+   as Go's `Domain.initLogBackup` (`tidb-server` `log_backup.rs`); its
+   tests run Go's `advancer_test.go`, `subscription_test.go` and
+   `regioniter_test.go` cases over a port of `utiltest/fakecluster`. A SQL
+   `RESTORE` while a log backup task runs installs Go's PITR collector
+   (`snap_client/pitr_collector.go`, `InstallPiTRSupport`) instead of
+   refusing: the restored SSTs are copied into the task's storage and a
+   migration names them, through Go's `stream.MigrationExt.AppendMigration`,
+   `pkg/objstore/locking.go`, the storages' `Copier` and `br/pkg/operation`.
+   Live on the Rust cluster with Go's `br`: `br log start`, the Rust
+   advancer moved the global checkpoint, the GC safe point and
+   `v1/global_checkpoint/central_global.ts`; a SQL `RESTORE DATABASE` ran
+   during the task and committed its SSTs to `v1/ext_backups`; `br restore
+   point` into the Go cluster replayed the full backup, the log and the
+   restored SSTs, and the rows at the restore TS equal the source's. The
+   log restore itself (`RESTORE POINT`, `br/pkg/restore/log_client`) stays
+   in the `br` command, as Go's SQL refuses it too. Not ported, by choice:
+   EBS snapshot backup and restore, raw and txn KV backup and restore, the
+   repo layout, restore name routing, the `br` CLI, BR's metrics, and the
+   GCS and Azure `CopyFrom` (an S3 copy works within one bucket only).

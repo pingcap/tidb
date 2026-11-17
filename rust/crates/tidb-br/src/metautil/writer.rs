@@ -1,7 +1,7 @@
 // Copyright 2026 PingCAP, Inc. Licensed under Apache-2.0.
 
 //! Go `br/pkg/metautil/metafile.go`: physical backup metadata writing.
-use crate::local_storage::LocalStorage;
+use super::Storage;
 use prost::Message;
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex, mpsc};
@@ -9,8 +9,9 @@ use std::thread::JoinHandle;
 use tidb_gocontext::Context;
 use tidb_proto::backup::{BackupMeta, CipherInfo, File, MetaFile, Schema};
 
-/// Go `backuppb.BackupSchemaVersion`, from the pinned kvproto module.
-pub const BACKUP_SCHEMA_VERSION: u32 = 1;
+/// Go `backuppb.BackupSchemaVersion` of the kvproto Go master pins
+/// (`v0.0.0-20261029034354-9192d38c8b67`).
+pub const BACKUP_SCHEMA_VERSION: u32 = 2;
 /// Go `MetaFileSize`.
 pub const META_FILE_SIZE: usize = 128 * 1024 * 1024;
 /// Go `MaxBatchSize`.
@@ -137,7 +138,7 @@ pub fn encrypt(content: &[u8], cipher: Option<&CipherInfo>) -> Result<(Vec<u8>, 
 
 /// Go `MetaWriter`'s mutable state, shared with its single writing worker.
 struct WriterState {
-    storage: LocalStorage,
+    storage: Storage,
     use_v2_meta: bool,
     backup_meta: BackupMeta,
     metafiles: SizedMetaFile,
@@ -201,7 +202,7 @@ impl WriterState {
         self.total_meta_file_size = self
             .total_meta_file_size
             .wrapping_add(encrypted.len() as u64);
-        self.storage.write_file(&name, &encrypted)?;
+        self.storage.write_file(&Context::background(), &name, &encrypted).map_err(|e| e.to_string())?;
         let file = File {
             name,
             sha256: Sha256::digest(&content).to_vec(),
@@ -238,7 +239,7 @@ pub struct MetaWriter {
 impl MetaWriter {
     /// Go `NewMetaWriter`.
     pub fn new(
-        storage: LocalStorage,
+        storage: Storage,
         size_limit: usize,
         use_v2: bool,
         name: &str,
@@ -358,7 +359,7 @@ impl MetaWriter {
         let (encrypted, mut iv) =
             encrypt(&state.backup_meta.encode_to_vec(), state.cipher.as_ref())?;
         iv.extend_from_slice(&encrypted);
-        state.storage.write_file(&state.meta_file_name, &iv)
+        state.storage.write_file(&Context::background(), &state.meta_file_name, &iv).map_err(|e| e.to_string())
     }
     /// Go `MetaWriter.ArchiveSize`.
     pub fn archive_size(&self) -> u64 {
@@ -367,6 +368,12 @@ impl MetaWriter {
     /// Go `MetaWriter.MetaFilesSize`.
     pub fn meta_files_size(&self) -> u64 {
         self.state.lock().unwrap().total_meta_file_size
+    }
+    /// Go `MetaWriter.NewStatsWriter`.
+    #[must_use]
+    pub fn new_stats_writer(&self) -> super::StatsWriter {
+        let state = self.state.lock().unwrap();
+        super::StatsWriter::new(state.storage.clone(), state.cipher.clone())
     }
     /// Go `MetaWriter.Backupmeta`.
     pub fn backupmeta(&self) -> BackupMeta {

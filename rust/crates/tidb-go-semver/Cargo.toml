@@ -1,0 +1,17 @@
+[package]
+name = "tidb-go-semver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "github.com/coreos/go-semver v0.3.1, the semantic versions Go BR checks cluster versions with (Rust rewrite)."
+
+[dependencies]
+tidb-go-strconv = { path = "../tidb-go-strconv" }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

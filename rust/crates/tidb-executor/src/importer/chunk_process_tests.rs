@@ -198,7 +198,11 @@ impl tidb_br::pdutil::LabelRuleClient for LabelRules {
         self.0.lock().unwrap().push("set");
         Ok(())
     }
-    fn patch_region_label_rules(&self, _: &tikv_client::pd_http::LabelRulePatch) -> Result<(), String> {
+    fn patch_region_label_rules(
+        &self,
+        _: &tikv_client::pd_http::LabelRulePatch,
+        _: Option<std::time::Duration>,
+    ) -> Result<(), String> {
         self.0.lock().unwrap().push("delete");
         Ok(())
     }

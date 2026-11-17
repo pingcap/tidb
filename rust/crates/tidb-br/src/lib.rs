@@ -78,13 +78,30 @@
 //! - `br/pkg/errors`' normalized sentinels become
 //!   [`restore_utils::RestoreErrorKind`] and [`rtree::RtreeError`].
 
+pub mod backup;
+pub mod checkpoint;
+pub mod checksum;
+pub mod config;
+pub mod conn;
+pub mod errors;
+pub mod gc;
+pub mod glue;
+pub mod metareader;
+pub mod operation;
+pub mod pdclient;
+pub mod pdutil;
+pub mod registry;
+pub mod restore;
 pub mod restore_utils;
 pub mod rtree;
 pub mod spans;
+pub mod stream;
+pub mod streamhelper;
 pub mod summary;
 pub mod utils;
+pub mod version;
 
-pub mod local_storage;
 pub mod metautil;
-pub mod pdutil;
 pub mod task;
+#[cfg(test)]
+mod test_util;

@@ -26,6 +26,8 @@
 
 
 mod cluster_stack;
+mod brie_node;
+mod log_backup;
 mod import_store;
 mod process_shutdown;
 mod auth_exchange;
