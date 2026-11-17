@@ -315,6 +315,26 @@ func TestAnalyze(t *testing.T) {
 	require.InDelta(t, float64(19)/13*17, scanBytes, 1e-9)
 	require.Equal(t, 1, dctx.ExecDetails.GetExecDetails().RequestCount)
 
+	t.Run("uses backend scan bytes", func(t *testing.T) {
+		for _, detail := range []*tikvutil.ScanDetail{
+			{TotalKeys: 10, ProcessedKeys: 2, ProcessedKeysSize: 6, TotalKeysSize: 123},
+			{TotalKeys: 10, TotalKeysSize: 123},
+		} {
+			dctx := newAnalyzeTestDistSQLContext()
+			response := &analyzeTestResponse{result: &analyzeTestResultSubset{
+				data:  []byte("analyze payload!"),
+				stats: &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{ScanDetail: detail}},
+			}}
+			result, _ := newResult(t, dctx, response)
+			_, err := result.NextRaw(context.TODO())
+			require.NoError(t, err)
+			require.NoError(t, result.Close())
+			scanBytes, found := dctx.RuntimeStatsColl.GetAnalyzeScanBytes(planID)
+			require.True(t, found)
+			require.Equal(t, float64(123), scanBytes)
+		}
+	})
+
 	t.Run("sums estimates before independent requests are flattened", func(t *testing.T) {
 		dctx := newAnalyzeTestDistSQLContext()
 		for _, detail := range []*tikvutil.ScanDetail{
