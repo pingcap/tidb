@@ -3241,6 +3241,9 @@ const (
 	ShowDistributionJobs
 	ShowAffinity
 	ShowStorageClassTransitions
+	ShowAffinityTableGroups
+	ShowAffinityTableGroupStatus
+	ShowCreateAffinityTableGroup
 	// showTpCount is the count of all kinds of `SHOW` statements.
 	showTpCount
 )
@@ -3297,6 +3300,8 @@ type ShowStmt struct {
 	RawImportJob bool   // Used for `SHOW RAW IMPORT JOB(S)` syntax
 
 	DistributionJobID *int64 // Used for `SHOW DISTRIBUTION JOB <ID>` syntax
+
+	AffinityTableGroupName string // Used for `SHOW AFFINITY TABLE GROUP STATUS <name>` and `SHOW CREATE AFFINITY TABLE GROUP <name>` syntax
 }
 
 // Restore implements Node interface.
@@ -3393,6 +3398,18 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 	case ShowCreateResourceGroup:
 		ctx.WriteKeyWord("CREATE RESOURCE GROUP ")
 		ctx.WriteName(n.ResourceGroupName)
+	case ShowCreateAffinityTableGroup:
+		ctx.WriteKeyWord("CREATE AFFINITY TABLE GROUP ")
+		ctx.WriteName(n.AffinityTableGroupName)
+	case ShowAffinityTableGroupStatus:
+		ctx.WriteKeyWord("AFFINITY TABLE GROUP STATUS ")
+		ctx.WriteName(n.AffinityTableGroupName)
+		if n.Where != nil {
+			ctx.WriteKeyWord(" WHERE ")
+			if err := n.Where.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore ShowStmt.Where")
+			}
+		}
 	case ShowCreateUser:
 		ctx.WriteKeyWord("CREATE USER ")
 		if err := n.User.Restore(ctx); err != nil {
@@ -3697,6 +3714,8 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("REPLICA STATUS")
 		case ShowStorageClassTransitions:
 			ctx.WriteKeyWord("STORAGE_CLASS TRANSITIONS")
+		case ShowAffinityTableGroups:
+			ctx.WriteKeyWord("AFFINITY TABLE GROUPS")
 		default:
 			return errors.New("Unknown ShowStmt type")
 		}

@@ -28,6 +28,9 @@ import (
 var (
 	_ DDLNode = &AlterTableStmt{}
 	_ DDLNode = &AlterSequenceStmt{}
+	_ DDLNode = &CreateAffinityTableGroupStmt{}
+	_ DDLNode = &DropAffinityTableGroupStmt{}
+	_ DDLNode = &RepairAffinityTableGroupStmt{}
 	_ DDLNode = &AlterPlacementPolicyStmt{}
 	_ DDLNode = &AlterResourceGroupStmt{}
 	_ DDLNode = &CreateDatabaseStmt{}
@@ -2402,6 +2405,111 @@ func (n *CreatePlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// CreateAffinityTableGroupStmt is a statement to create an affinity table group.
+type CreateAffinityTableGroupStmt struct {
+	ddlNode
+
+	IfNotExists bool
+	GroupName   CIStr
+	Partitions  uint64
+	// MemberSlots is nil when MEMBER_SLOTS is omitted.
+	MemberSlots *uint64
+}
+
+// Restore implements Node interface.
+func (n *CreateAffinityTableGroupStmt) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasTiDBSpecialCommentFlag() {
+		return restoreStmtInSpecialComment(ctx, n, tidb.FeatureIDAffinityTableGroup)
+	}
+
+	ctx.WriteKeyWord("CREATE AFFINITY TABLE GROUP ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	ctx.WriteName(n.GroupName.O)
+	ctx.WriteKeyWord(" PARTITIONS ")
+	ctx.WritePlainf("%d", n.Partitions)
+	if n.MemberSlots != nil {
+		ctx.WriteKeyWord(" MEMBER_SLOTS ")
+		ctx.WritePlainf("= %d", *n.MemberSlots)
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateAffinityTableGroupStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateAffinityTableGroupStmt)
+	return v.Leave(n)
+}
+
+// DropAffinityTableGroupStmt is a statement to drop an affinity table group.
+type DropAffinityTableGroupStmt struct {
+	ddlNode
+
+	IfExists  bool
+	GroupName CIStr
+}
+
+// Restore implements Node interface.
+func (n *DropAffinityTableGroupStmt) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasTiDBSpecialCommentFlag() {
+		return restoreStmtInSpecialComment(ctx, n, tidb.FeatureIDAffinityTableGroup)
+	}
+
+	ctx.WriteKeyWord("DROP AFFINITY TABLE GROUP ")
+	if n.IfExists {
+		ctx.WriteKeyWord("IF EXISTS ")
+	}
+	ctx.WriteName(n.GroupName.O)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DropAffinityTableGroupStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropAffinityTableGroupStmt)
+	return v.Leave(n)
+}
+
+// RepairAffinityTableGroupStmt is a statement to repair the PD affinity groups of an affinity table group.
+type RepairAffinityTableGroupStmt struct {
+	ddlNode
+
+	GroupName CIStr
+	Force     bool
+}
+
+// Restore implements Node interface.
+func (n *RepairAffinityTableGroupStmt) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasTiDBSpecialCommentFlag() {
+		return restoreStmtInSpecialComment(ctx, n, tidb.FeatureIDAffinityTableGroup)
+	}
+
+	ctx.WriteKeyWord("ADMIN REPAIR AFFINITY TABLE GROUP ")
+	ctx.WriteName(n.GroupName.O)
+	if n.Force {
+		ctx.WriteKeyWord(" FORCE")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *RepairAffinityTableGroupStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RepairAffinityTableGroupStmt)
+	return v.Leave(n)
+}
+
 // MaskingPolicyState represents the optional ENABLE/DISABLE state of a masking policy.
 type MaskingPolicyState struct {
 	Enabled  bool
@@ -3425,6 +3533,7 @@ const (
 	TableOptionSequence
 	TableOptionAffinity
 	TableOptionStartTransaction
+	TableOptionAffinityTableGroup
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -3865,6 +3974,13 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		})
 	case TableOptionStartTransaction:
 		ctx.WriteKeyWord("START TRANSACTION")
+	case TableOptionAffinityTableGroup:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDAffinityTableGroup, func() error {
+			ctx.WriteKeyWord("AFFINITY TABLE GROUP ")
+			ctx.WritePlain("= ")
+			ctx.WriteName(n.StrValue)
+			return nil
+		})
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}

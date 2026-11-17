@@ -154,6 +154,39 @@ func TestFullOuterJoinSyntaxUnsupported(t *testing.T) {
 	}
 }
 
+func TestAffinityTableGroupSyntaxUnsupported(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int) comment = 'c'")
+
+	cases := []struct {
+		sql  string
+		name string
+	}{
+		{"create affinity table group g partitions 4", "CREATE AFFINITY TABLE GROUP"},
+		{"drop affinity table group if exists g", "DROP AFFINITY TABLE GROUP"},
+		{"admin repair affinity table group g force", "ADMIN REPAIR AFFINITY TABLE GROUP"},
+		{"show affinity table groups", "SHOW AFFINITY TABLE GROUPS"},
+		{"show affinity table groups like 'g%'", "SHOW AFFINITY TABLE GROUPS"},
+		{"show affinity table group status g where single_region = 'NO'", "SHOW AFFINITY TABLE GROUP STATUS"},
+		{"show create affinity table group g", "SHOW CREATE AFFINITY TABLE GROUP"},
+		{"create table t1 (a int) affinity table group = g partition by hash (a) partitions 4", "AFFINITY TABLE GROUP"},
+		{"create table t1 (a int) /*T![affinity_table_group] AFFINITY TABLE GROUP = `g` */ partition by hash (a) partitions 4", "AFFINITY TABLE GROUP"},
+		{"create temporary table t1 (a int) affinity table group 'g'", "AFFINITY TABLE GROUP"},
+		{"alter table t affinity table group = g", "AFFINITY TABLE GROUP"},
+		{"alter table t /*T![affinity_table_group] AFFINITY TABLE GROUP = `g` */", "AFFINITY TABLE GROUP"},
+		{"alter table t comment = 'x' affinity table group = g", "AFFINITY TABLE GROUP"},
+	}
+	for _, c := range cases {
+		err := tk.ExecToErr(c.sql)
+		require.EqualError(t, err, plannererrors.ErrNotSupportedYet.GenWithStackByArgs(c.name).Error(), c.sql)
+	}
+	// Rejected statements leave no table behind and no option applied.
+	tk.MustQuery("show tables like 't1'").Check(testkit.Rows())
+	tk.MustQuery("select table_comment from information_schema.tables where table_schema = 'test' and table_name = 't'").Check(testkit.Rows("c"))
+}
+
 func TestAnalyzeSetRate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

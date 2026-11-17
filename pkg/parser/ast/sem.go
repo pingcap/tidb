@@ -120,6 +120,12 @@ const (
 	RenameUserCommand = "RENAME USER"
 	// AdminRepairTableCommand represents ADMIN REPAIR TABLE statement
 	AdminRepairTableCommand = "ADMIN REPAIR TABLE"
+	// AdminRepairAffinityTableGroupCommand represents ADMIN REPAIR AFFINITY TABLE GROUP statement
+	AdminRepairAffinityTableGroupCommand = "ADMIN REPAIR AFFINITY TABLE GROUP"
+	// CreateAffinityTableGroupCommand represents CREATE AFFINITY TABLE GROUP statement
+	CreateAffinityTableGroupCommand = "CREATE AFFINITY TABLE GROUP"
+	// DropAffinityTableGroupCommand represents DROP AFFINITY TABLE GROUP statement
+	DropAffinityTableGroupCommand = "DROP AFFINITY TABLE GROUP"
 	// TruncateTableCommand represents TRUNCATE TABLE statement
 	TruncateTableCommand = "TRUNCATE TABLE"
 	// UnlockTablesCommand represents UNLOCK TABLES statement
@@ -292,6 +298,12 @@ const (
 	ShowAffinityCommand = "SHOW AFFINITY"
 	// ShowStorageClassTransitionsCommand represents SHOW STORAGE_CLASS TRANSITIONS statement.
 	ShowStorageClassTransitionsCommand = "SHOW STORAGE_CLASS TRANSITIONS"
+	// ShowAffinityTableGroupsCommand represents SHOW AFFINITY TABLE GROUPS statement
+	ShowAffinityTableGroupsCommand = "SHOW AFFINITY TABLE GROUPS"
+	// ShowAffinityTableGroupStatusCommand represents SHOW AFFINITY TABLE GROUP STATUS statement
+	ShowAffinityTableGroupStatusCommand = "SHOW AFFINITY TABLE GROUP STATUS"
+	// ShowCreateAffinityTableGroupCommand represents SHOW CREATE AFFINITY TABLE GROUP statement
+	ShowCreateAffinityTableGroupCommand = "SHOW CREATE AFFINITY TABLE GROUP"
 )
 
 // Admin Commands
@@ -740,6 +752,21 @@ func (n *RepairTableStmt) SEMCommand() string {
 }
 
 // SEMCommand returns the command string for the statement.
+func (n *RepairAffinityTableGroupStmt) SEMCommand() string {
+	return AdminRepairAffinityTableGroupCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *CreateAffinityTableGroupStmt) SEMCommand() string {
+	return CreateAffinityTableGroupCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *DropAffinityTableGroupStmt) SEMCommand() string {
+	return DropAffinityTableGroupCommand
+}
+
+// SEMCommand returns the command string for the statement.
 func (n *TruncateTableStmt) SEMCommand() string {
 	return TruncateTableCommand
 }
@@ -948,6 +975,12 @@ func (n *ShowStmt) SEMCommand() string {
 		return ShowAffinityCommand
 	case ShowStorageClassTransitions:
 		return ShowStorageClassTransitionsCommand
+	case ShowAffinityTableGroups:
+		return ShowAffinityTableGroupsCommand
+	case ShowAffinityTableGroupStatus:
+		return ShowAffinityTableGroupStatusCommand
+	case ShowCreateAffinityTableGroup:
+		return ShowCreateAffinityTableGroupCommand
 	default:
 		return UnknownCommand
 	}
