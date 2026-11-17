@@ -1253,6 +1253,7 @@ impl Job {
         match self.type_ {
             ActionType::ACTION_ADD_INDEX
             | ActionType::ACTION_ADD_PRIMARY_KEY
+            | ActionType::ACTION_CREATE_MATERIALIZED_VIEW
             | ActionType::ACTION_REORGANIZE_PARTITION
             | ActionType::ACTION_REMOVE_PARTITIONING
             | ActionType::ACTION_ALTER_TABLE_PARTITIONING => true,
@@ -1287,6 +1288,10 @@ impl Job {
                     | SchemaState::WRITE_ONLY
             ),
             ActionType::ACTION_MODIFY_COLUMN => self.schema_state != SchemaState::PUBLIC,
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW => matches!(
+                self.schema_state,
+                SchemaState::NONE | SchemaState::WRITE_REORGANIZATION
+            ),
             ActionType::ACTION_ADD_TABLE_PARTITION => matches!(
                 self.schema_state,
                 SchemaState::NONE | SchemaState::REPLICA_ONLY
@@ -1295,6 +1300,9 @@ impl Job {
             | ActionType::ACTION_DROP_SCHEMA
             | ActionType::ACTION_DROP_TABLE
             | ActionType::ACTION_DROP_SEQUENCE
+            | ActionType::ACTION_DROP_MATERIALIZED_VIEW
+            | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG
+            | ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW
             | ActionType::ACTION_DROP_FOREIGN_KEY
             | ActionType::ACTION_DROP_TABLE_PARTITION => self.schema_state == SchemaState::PUBLIC,
             ActionType::ACTION_TRUNCATE_TABLE_PARTITION => matches!(
@@ -1303,6 +1311,7 @@ impl Job {
             ),
             ActionType::ACTION_REBASE_AUTO_ID
             | ActionType::ACTION_SHARD_ROW_ID
+            | ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER
             | ActionType::ACTION_TRUNCATE_TABLE
             | ActionType::ACTION_ADD_FOREIGN_KEY
             | ActionType::ACTION_RENAME_TABLE

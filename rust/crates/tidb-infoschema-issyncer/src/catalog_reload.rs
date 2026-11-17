@@ -511,6 +511,9 @@ fn apply_schema_diff<S: MetaSnapshot>(
         | ActionType::ACTION_TRUNCATE_TABLE
         | ActionType::ACTION_DROP_TABLE
         | ActionType::ACTION_DROP_TABLE_PARTITION
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW
         | ActionType::ACTION_RECOVER_TABLE
         | ActionType::ACTION_REORGANIZE_PARTITION
         | ActionType::ACTION_REMOVE_PARTITIONING
@@ -545,6 +548,9 @@ fn apply_schema_diff<S: MetaSnapshot>(
         // and never reaches here. `-1` is the "every table" ID the validator
         // matches against any transaction.
         ActionType::ACTION_FLASHBACK_CLUSTER => Ok(Ok(vec![-1])),
+        ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER => {
+            mview_refresh_out_of_place_cutover(snapshot, catalog, diff)
+        }
         ActionType::ACTION_REFRESH_META => refresh_meta(snapshot, catalog, diff),
         // Go `applyDefaultAction` (`builder.go:471-478`): the diff's own
         // table, then every `AffectedOption` replayed with the same action.
@@ -566,6 +572,41 @@ fn apply_schema_diff<S: MetaSnapshot>(
             Ok(Ok(ids))
         }
     }
+}
+
+/// Go master `applyMViewRefreshOutOfPlaceCutover`: the old materialized
+/// view is dropped, and the shadow table, which already exists under its own
+/// name, is dropped and recreated with the metadata the cutover wrote.
+fn mview_refresh_out_of_place_cutover<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &mut SessionExtendedInfoSchema,
+    diff: &SchemaDiff,
+) -> AppliedDiff {
+    let version = diff.version;
+    if catalog.schema_by_id(diff.schema_id).is_none() {
+        return Ok(Err(missing(version, format!("unknown database {}", diff.schema_id))));
+    }
+    let (old_table_id, new_table_id) = (diff.old_table_id, diff.table_id);
+    let mut ids = Vec::new();
+    for dropped in [Some(old_table_id), (new_table_id != old_table_id).then_some(new_table_id)].into_iter().flatten() {
+        if table_id_is_valid(dropped) {
+            match drop_table(catalog, version, diff.schema_id, dropped)? {
+                Ok(more) => ids.extend(more),
+                Err(reason) => return Ok(Err(reason)),
+            }
+        }
+    }
+    if table_id_is_valid(new_table_id) {
+        match create_table(snapshot, catalog, version, diff.schema_id, new_table_id, diff.action_type)? {
+            Ok(created) => ids.extend(created),
+            Err(reason) => return Ok(Err(reason)),
+        }
+    }
+    match apply_affected_opts(snapshot, catalog, diff, diff.action_type, "nil affected option in schema diff")? {
+        Ok(more) => ids.extend(more),
+        Err(reason) => return Ok(Err(reason)),
+    }
+    Ok(Ok(ids))
 }
 
 /// Go `appendAffectedIDs` (`builder.go:688-696`): the table's ID and, for a
@@ -628,10 +669,16 @@ fn table_ids<S: MetaSnapshot>(
         // A `CREATE TABLE` with foreign keys reaches public in two steps and
         // its second diff sets `OldTableID` (`schema_version.go:257-259`), so
         // the write-only copy is dropped before the public one is added.
-        ActionType::ACTION_CREATE_TABLE => (diff.old_table_id, diff.table_id),
+        ActionType::ACTION_CREATE_TABLE
+        | ActionType::ACTION_CREATE_MATERIALIZED_VIEW
+        | ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG
+        | ActionType::ACTION_CREATE_MATERIALIZED_VIEW_SHADOW => (diff.old_table_id, diff.table_id),
         ActionType::ACTION_DROP_TABLE
         | ActionType::ACTION_DROP_VIEW
-        | ActionType::ACTION_DROP_SEQUENCE => {
+        | ActionType::ACTION_DROP_SEQUENCE
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW => {
             let old = diff.table_id;
             // BR's refreshMeta drops outright: no `ON DELETE CASCADE` to serve.
             if diff.is_refresh_meta {
@@ -648,7 +695,8 @@ fn table_ids<S: MetaSnapshot>(
         | ActionType::ACTION_CREATE_VIEW
         | ActionType::ACTION_EXCHANGE_TABLE_PARTITION
         | ActionType::ACTION_ALTER_TABLE_PARTITIONING
-        | ActionType::ACTION_REMOVE_PARTITIONING => (diff.old_table_id, diff.table_id),
+        | ActionType::ACTION_REMOVE_PARTITIONING
+        | ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER => (diff.old_table_id, diff.table_id),
         _ => (diff.table_id, diff.table_id),
     })
 }

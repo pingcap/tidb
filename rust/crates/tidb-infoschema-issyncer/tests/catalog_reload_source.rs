@@ -1678,3 +1678,114 @@ fn test_load_from_ts_for_cross_ks() {
     assert!(cached.table_info_by_name("mysql","t100").is_none());
     assert!(cached.table_info_by_name("mysql","t1").is_some());
 }
+
+/// Go master `ApplyDiff`: the materialized view, log and shadow drops share
+/// the `DROP TABLE` path (`applyDropTableOrPartition`, which replays no
+/// `AffectedOpts`), and `getTableIDs` keeps a table the store still holds in
+/// a non-none state.
+#[test]
+fn materialized_view_drop_diffs_drop_like_drop_table() {
+    for action in [
+        ActionType::ACTION_DROP_MATERIALIZED_VIEW,
+        ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG,
+        ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW,
+    ] {
+        let (mut snapshot, catalog) = started_cluster();
+        snapshot.put(key::table_kv_key(3, 77), go_table_in_state(77, "Rows", "rows", 2));
+        snapshot.commit_diff(101, &diff_json(101, action, 3, 77));
+        let kept = diffs_reload(
+            reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
+            "write-only mview drop step",
+        );
+        let (_, table) = kept.table_info_by_name("campaign", "rows").expect("table kept");
+        assert_eq!(table.read().state, tidb_model::schema_state::SchemaState::WRITE_ONLY, "{action}");
+
+        // An affected option is not replayed: table 78 stays loaded although
+        // the store no longer holds it.
+        snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
+        snapshot.commit_diff(102, &diff_json(102, ActionType::ACTION_CREATE_TABLE, 3, 78));
+        let kept = diffs_reload(
+            reload_cluster_catalog(&mut snapshot, &kept, None).expect("reload runs"),
+            "create table 78",
+        );
+        snapshot.remove(&key::table_kv_key(3, 77));
+        snapshot.remove(&key::table_kv_key(3, 78));
+        snapshot.commit_diff(
+            103,
+            &format!(
+                r#"{{"version":103,"type":{},"schema_id":3,"table_id":77,"old_table_id":0,"old_schema_id":0,"regenerate_schema_map":false,"affected_options":[{{"schema_id":3,"table_id":78,"old_table_id":0,"old_schema_id":0}}]}}"#,
+                action.0
+            ),
+        );
+        let gone = diffs_reload(
+            reload_cluster_catalog(&mut snapshot, &kept, None).expect("reload runs"),
+            "final mview drop step",
+        );
+        let ids: Vec<i64> = tables(&gone.stored_schemas()[0].read()).iter().map(|t| t.id).collect();
+        assert_eq!(ids, vec![78], "{action}");
+    }
+}
+
+/// Go master `getTableIDs`: the materialized view, log and shadow creates are
+/// `CREATE TABLE`'s case, dropping `OldTableID` and adding `TableID`.
+#[test]
+fn materialized_view_create_diffs_create_like_create_table() {
+    for action in [
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW,
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG,
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW_SHADOW,
+    ] {
+        let (mut snapshot, catalog) = started_cluster();
+        snapshot.remove(&key::table_kv_key(3, 77));
+        snapshot.put(key::table_kv_key(3, 90), go_table(90, "MV", "mv"));
+        snapshot.commit_diff(
+            101,
+            &format!(
+                r#"{{"version":101,"type":{},"schema_id":3,"table_id":90,"old_table_id":77,"old_schema_id":0,"regenerate_schema_map":false,"affected_options":null}}"#,
+                action.0
+            ),
+        );
+        let next = diffs_reload(
+            reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
+            "create mview",
+        );
+        let ids: Vec<i64> = tables(&next.stored_schemas()[0].read()).iter().map(|t| t.id).collect();
+        assert_eq!(ids, vec![90], "{action}");
+    }
+}
+
+/// Go master `applyMViewRefreshOutOfPlaceCutover`: the old materialized view
+/// is dropped, the shadow table is dropped under its shadow name and created
+/// again from the metadata the cutover wrote, answering the old ID, the
+/// shadow's dropped ID and its created ID.
+#[test]
+fn an_mview_refresh_cutover_diff_replaces_the_view_with_its_shadow() {
+    let (mut snapshot, catalog) = started_cluster();
+    snapshot.put(key::table_kv_key(3, 90), go_table(90, "Shadow", "shadow"));
+    snapshot.commit_diff(101, &diff_json(101, ActionType::ACTION_CREATE_MATERIALIZED_VIEW_SHADOW, 3, 90));
+    let with_shadow = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
+        "create shadow",
+    );
+    assert_eq!(tables(&with_shadow.stored_schemas()[0].read()).len(), 2);
+
+    snapshot.remove(&key::table_kv_key(3, 77));
+    snapshot.put(key::table_kv_key(3, 90), go_table(90, "Rows", "rows"));
+    snapshot.commit_diff(
+        102,
+        &format!(
+            r#"{{"version":102,"type":{},"schema_id":3,"table_id":90,"old_table_id":77,"old_schema_id":0,"regenerate_schema_map":false,"affected_options":null}}"#,
+            ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER.0
+        ),
+    );
+    let reloaded = reload_cluster_catalog(&mut snapshot, &with_shadow, None).expect("reload runs");
+    let ReloadedCatalog::Diffs { catalog: next, changes, .. } = reloaded else {
+        panic!("expected an incremental diff reload, got {reloaded:?}");
+    };
+    assert_eq!(changes.phy_tbl_ids, vec![77, 90, 90]);
+    let ids: Vec<i64> = tables(&next.stored_schemas()[0].read()).iter().map(|t| t.id).collect();
+    assert_eq!(ids, vec![90]);
+    let (_, table) = next.table_info_by_name("campaign", "rows").expect("the view's name serves the shadow");
+    assert_eq!(table.read().id, 90);
+    assert!(next.table_info_by_name("campaign", "shadow").is_none());
+}

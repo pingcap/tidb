@@ -76,6 +76,11 @@ const BDR_ACTION_ENTRIES: &[(DDLBDRType, &[ActionType])] = &[
         &[
             ActionType::ACTION_CREATE_SCHEMA,
             ActionType::ACTION_CREATE_TABLE,
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG,
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW,
+            ActionType::ACTION_ALTER_MATERIALIZED_VIEW_REFRESH,
+            ActionType::ACTION_ALTER_MATERIALIZED_VIEW_ATTRIBUTES,
+            ActionType::ACTION_ALTER_MATERIALIZED_VIEW_LOG_PURGE,
             ActionType::ACTION_ADD_COLUMN,
             ActionType::ACTION_ADD_INDEX,
             ActionType::ACTION_DROP_INDEX,
@@ -99,6 +104,9 @@ const BDR_ACTION_ENTRIES: &[(DDLBDRType, &[ActionType])] = &[
         &[
             ActionType::ACTION_DROP_SCHEMA,
             ActionType::ACTION_DROP_TABLE,
+            ActionType::ACTION_DROP_MATERIALIZED_VIEW,
+            ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG,
+            ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW,
             ActionType::ACTION_DROP_COLUMN,
             ActionType::ACTION_ADD_FOREIGN_KEY,
             ActionType::ACTION_DROP_FOREIGN_KEY,
@@ -142,6 +150,8 @@ const BDR_ACTION_ENTRIES: &[(DDLBDRType, &[ActionType])] = &[
             ActionType::ACTION_ALTER_TABLE_PARTITIONING,
             ActionType::ACTION_REMOVE_PARTITIONING,
             ActionType::ACTION_ADD_COLUMNAR_INDEX,
+            ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER,
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW_SHADOW,
             ActionType::ACTION_MODIFY_ENGINE_ATTRIBUTE,
             ActionType::ACTION_ALTER_TABLE_MODE,
             ActionType::ACTION_REFRESH_META,
@@ -282,4 +292,39 @@ mod tests {
             crate::go_runtime::GoTimeLocation::Local
         );
     }
+
+    /// Go master's materialized-view actions (85-94): name, BDR class,
+    /// `MayNeedReorg` and `IsRollbackable` at None, DeleteOnly, WriteOnly,
+    /// WriteReorganization, DeleteReorganization and Public, as captured
+    /// from master `eca4674a6f`.
+    #[test]
+    fn materialized_view_actions_follow_go_master() {
+        use crate::schema_state::SchemaState;
+        let states = [
+            SchemaState::NONE,
+            SchemaState::DELETE_ONLY,
+            SchemaState::WRITE_ONLY,
+            SchemaState::WRITE_REORGANIZATION,
+            SchemaState::DELETE_REORGANIZATION,
+            SchemaState::PUBLIC,
+        ];
+        let role_by_action = ACTION_BDR_MAP.read();
+        for line in include_str!("testdata/mview_actions_go.txt").lines() {
+            let fields: Vec<&str> = line.split('|').collect();
+            let action = ActionType(fields[0].parse().unwrap());
+            assert_eq!(action.to_string(), fields[1], "{line}");
+            assert_eq!(role_by_action.get(&action).map(ToString::to_string).as_deref(), Some(fields[2]), "{line}");
+            let mut job = crate::job::Job { type_: action, ..Default::default() };
+            assert_eq!(job.may_need_reorg().to_string(), fields[3], "{line}");
+            let rollbackable: String = states
+                .iter()
+                .map(|state| {
+                    job.schema_state = *state;
+                    if job.is_rollbackable() { '1' } else { '0' }
+                })
+                .collect();
+            assert_eq!(rollbackable, fields[4], "{line}");
+        }
+    }
+
 }

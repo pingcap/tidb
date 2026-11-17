@@ -207,6 +207,26 @@ impl ActionType {
     pub const ACTION_DROP_MASKING_POLICY: ActionType = ActionType(83);
     /// Go `ActionAlterTableSetRegionSplitPolicy`.
     pub const ACTION_ALTER_TABLE_SET_REGION_SPLIT_POLICY: ActionType = ActionType(84);
+    /// Go master `ActionCreateMaterializedViewLog`.
+    pub const ACTION_CREATE_MATERIALIZED_VIEW_LOG: ActionType = ActionType(85);
+    /// Go master `ActionCreateMaterializedView`.
+    pub const ACTION_CREATE_MATERIALIZED_VIEW: ActionType = ActionType(86);
+    /// Go master `ActionDropMaterializedViewLog`.
+    pub const ACTION_DROP_MATERIALIZED_VIEW_LOG: ActionType = ActionType(87);
+    /// Go master `ActionDropMaterializedView`.
+    pub const ACTION_DROP_MATERIALIZED_VIEW: ActionType = ActionType(88);
+    /// Go master `ActionAlterMaterializedViewRefresh`.
+    pub const ACTION_ALTER_MATERIALIZED_VIEW_REFRESH: ActionType = ActionType(89);
+    /// Go master `ActionAlterMaterializedViewLogPurge`.
+    pub const ACTION_ALTER_MATERIALIZED_VIEW_LOG_PURGE: ActionType = ActionType(90);
+    /// Go master `ActionAlterMaterializedViewAttributes`.
+    pub const ACTION_ALTER_MATERIALIZED_VIEW_ATTRIBUTES: ActionType = ActionType(91);
+    /// Go master `ActionMViewRefreshOutOfPlaceCutover`.
+    pub const ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER: ActionType = ActionType(92);
+    /// Go master `ActionCreateMaterializedViewShadow`.
+    pub const ACTION_CREATE_MATERIALIZED_VIEW_SHADOW: ActionType = ActionType(93);
+    /// Go master `ActionDropMaterializedViewShadow`.
+    pub const ACTION_DROP_MATERIALIZED_VIEW_SHADOW: ActionType = ActionType(94);
 }
 
 /// Go `ActionMap`: the display name of each DDL action.
@@ -410,6 +430,19 @@ pub const ACTION_MAP: &[(ActionType, &str)] = &[
         ActionType::ACTION_ALTER_TABLE_SET_REGION_SPLIT_POLICY,
         "alter table set region split policy",
     ),
+    (ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG, "create materialized view log"),
+    (ActionType::ACTION_CREATE_MATERIALIZED_VIEW, "create materialized view"),
+    (ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG, "drop materialized view log"),
+    (ActionType::ACTION_DROP_MATERIALIZED_VIEW, "drop materialized view"),
+    (ActionType::ACTION_ALTER_MATERIALIZED_VIEW_REFRESH, "alter materialized view refresh"),
+    (ActionType::ACTION_ALTER_MATERIALIZED_VIEW_LOG_PURGE, "alter materialized view log purge"),
+    (ActionType::ACTION_ALTER_MATERIALIZED_VIEW_ATTRIBUTES, "alter materialized view attributes"),
+    (
+        ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER,
+        "refresh materialized view complete out-of-place cutover",
+    ),
+    (ActionType::ACTION_CREATE_MATERIALIZED_VIEW_SHADOW, "create materialized view shadow table"),
+    (ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW, "drop materialized view shadow table"),
     (
         ActionType::DEPRECATEDACTION_ALTER_TABLE_ALTER_PARTITION,
         "alter partition",
@@ -519,8 +552,18 @@ mod tests {
             ActionType::ACTION_ALTER_MASKING_POLICY,
             ActionType::ACTION_DROP_MASKING_POLICY,
             ActionType::ACTION_ALTER_TABLE_SET_REGION_SPLIT_POLICY,
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG,
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW,
+            ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG,
+            ActionType::ACTION_DROP_MATERIALIZED_VIEW,
+            ActionType::ACTION_ALTER_MATERIALIZED_VIEW_REFRESH,
+            ActionType::ACTION_ALTER_MATERIALIZED_VIEW_LOG_PURGE,
+            ActionType::ACTION_ALTER_MATERIALIZED_VIEW_ATTRIBUTES,
+            ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER,
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW_SHADOW,
+            ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW,
         ];
-        assert_eq!(declared.len(), 84);
+        assert_eq!(declared.len(), 94);
         assert!(declared
             .iter()
             .all(|action| !(200..256).contains(&u16::from(action.0))));

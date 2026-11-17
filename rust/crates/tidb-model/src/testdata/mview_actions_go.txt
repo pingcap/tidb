@@ -1,0 +1,10 @@
+85|create materialized view log|safe DDL|false|111111
+86|create materialized view|safe DDL|true|100100
+87|drop materialized view log|unsafe DDL|false|000001
+88|drop materialized view|unsafe DDL|false|000001
+89|alter materialized view refresh|safe DDL|false|111111
+90|alter materialized view log purge|safe DDL|false|111111
+91|alter materialized view attributes|safe DDL|false|111111
+92|refresh materialized view complete out-of-place cutover|unsafe DDL|false|100000
+93|create materialized view shadow table|unsafe DDL|false|111111
+94|drop materialized view shadow table|unsafe DDL|false|000001
