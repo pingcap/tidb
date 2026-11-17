@@ -616,6 +616,14 @@ pub(crate) fn propagate_type(expr: &mut Expression, eval_type: EvalType) {
 }
 
 impl Expression {
+    /// Go `Expression.Hash64(h)`: the structural plan-key hash of each kind
+    /// (`Column.Hash64`, `Constant.Hash64`, `ScalarFunction.Hash64`, ...), as
+    /// the 64-bit digest a caller's hasher absorbs.
+    #[must_use]
+    pub fn hash64(&self) -> u64 {
+        crate::column::expression_hash64(self)
+    }
+
     /// Go's `expr.(*ScalarFunction)` assertion.
     #[must_use]
     pub fn into_scalar_function(self) -> Option<ScalarFunction> {

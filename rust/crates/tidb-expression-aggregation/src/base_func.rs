@@ -126,7 +126,34 @@ pub struct BaseFuncDesc {
     pub ret_type: FieldType,
 }
 
+/// Feeds a [`std::hash::Hash`] value's bytes into Go's `base.Hasher`, as Go's
+/// `FieldType.Hash64(h)` writes the field type's fields into `h`.
+struct IntoHasher<'a>(&'a mut dyn tidb_planner_cascades_base::Hasher);
+
+impl std::hash::Hasher for IntoHasher<'_> {
+    fn write(&mut self, bytes: &[u8]) {
+        self.0.hash_bytes(bytes);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0.sum64()
+    }
+}
+
 impl BaseFuncDesc {
+    /// Go `baseFuncDesc.Hash64(h)` (`base_func.go:51`): the name, the
+    /// arguments and the return type. `RetTp` is never nil here (see the
+    /// crate's narrowings), so its flag is always `NotNilFlag`.
+    pub fn hash64(&self, h: &mut dyn tidb_planner_cascades_base::Hasher) {
+        h.hash_string(&self.name);
+        h.hash_int(self.args.len() as i64);
+        for arg in &self.args {
+            h.hash_uint64(arg.hash64());
+        }
+        h.hash_byte(tidb_planner_cascades_base::NOT_NIL_FLAG);
+        std::hash::Hash::hash(&self.ret_type, &mut IntoHasher(h));
+    }
+
     /// Go `baseFuncDesc.MemoryUsage` (`base_func.go:541`).
     #[must_use]
     pub fn memory_usage(&self) -> i64 {

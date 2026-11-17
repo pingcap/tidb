@@ -25,6 +25,7 @@
 //! | --- | --- | --- | --- |
 //! | `base_func.go` | `baseFuncDesc` | 34 | [`BaseFuncDesc`] |
 //! | `base_func.go` | `newBaseFuncDesc` | 44 | [`BaseFuncDesc::new`] |
+//! | `base_func.go` | `baseFuncDesc.Hash64` | 51 | [`BaseFuncDesc::hash64`] |
 //! | `base_func.go` | `baseFuncDesc.Equals` | 66 | [`BaseFuncDesc::equals`] |
 //! | `base_func.go` | `baseFuncDesc.equal` | 88 | [`BaseFuncDesc::equal`] |
 //! | `base_func.go` | `baseFuncDesc.clone` | 100 | `#[derive(Clone)]` |
@@ -54,6 +55,7 @@
 //! | `descriptor.go` | `AggFuncDesc` | 33 | [`AggFuncDesc`] |
 //! | `descriptor.go` | `NewAggFuncDesc` | 47 | [`AggFuncDesc::new`] |
 //! | `descriptor.go` | `NewAggFuncDescForWindowFunc` | 56 | [`AggFuncDesc::new_agg_func_desc_for_window_func`] |
+//! | `descriptor.go` | `AggFuncDesc.Hash64` | 64 | [`AggFuncDesc::hash64`] |
 //! | `descriptor.go` | `AggFuncDesc.Equals` | 75 | [`AggFuncDesc::equals`] |
 //! | `descriptor.go` | `AggFuncDesc.Equal` | 122 | [`AggFuncDesc::equal`] |
 //! | `descriptor.go` | `AggFuncDesc.Clone` | 138 | `#[derive(Clone)]` |
@@ -155,11 +157,13 @@
 //!   not reproduced. This also makes `NewAggFuncDescForWindowFunc`'s
 //!   `desc.RetTp == nil` safety check (`descriptor.go:57`) unreachable, and
 //!   [`AggFuncDesc::new_agg_func_desc_for_window_func`] documents it as such.
-//! - **`Hash64` is not ported.** Go's `base.Hasher` lives in
-//!   `pkg/planner/cascades/base` and hashes through `Expression.Hash64`,
-//!   which this crate does not have (only `HashCode`). The identity that
-//!   `TestAggFuncDesc` pins is reproduced through [`AggFuncDesc::equals`]
-//!   instead, which discriminates on exactly the same six fields.
+//! - **`Hash64` absorbs each argument's own digest.** Go's
+//!   `baseFuncDesc.Hash64(h)` lets every argument write its fields into `h`
+//!   (`Expression.Hash64(h)`); here [`BaseFuncDesc::hash64`] feeds `h` each
+//!   argument's [`Expression::hash64`](tidb_expr::expression::Expression::hash64)
+//!   digest, and the return type's fields through its `Hash`. Equal
+//!   descriptors hash equal and each field Go hashes changes the hash, which
+//!   is what Go's cascades memo relies on.
 //! - **`StringWithCtx` takes no redact argument** (`descriptor.go:98`,
 //!   `base_func.go:110`): every Go caller (`AggFuncToPBExpr`'s errors, the
 //!   plan stringer, `FormatWindowFuncDescs`) passes `errors.RedactLogDisable`,

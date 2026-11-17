@@ -43,6 +43,12 @@ pub struct ByItems {
 }
 
 impl ByItems {
+    /// Go `ByItems.Hash64(h)` (`planner/util/byitem.go:34`).
+    pub fn hash64(&self, h: &mut dyn tidb_planner_cascades_base::Hasher) {
+        h.hash_uint64(self.expr.hash64());
+        h.hash_bool(self.desc);
+    }
+
     /// Go `ByItems.MemoryUsage`.
     #[must_use]
     pub fn memory_usage(&self) -> i64 {
@@ -84,6 +90,19 @@ pub struct AggFuncDesc {
 }
 
 impl AggFuncDesc {
+    /// Go `AggFuncDesc.Hash64(h)` (`descriptor.go:64`): the base signature,
+    /// the mode, `DISTINCT` and the `ORDER BY` items (`GroupingID` is not
+    /// hashed, as in Go).
+    pub fn hash64(&self, h: &mut dyn tidb_planner_cascades_base::Hasher) {
+        self.base.hash64(h);
+        h.hash_int(self.mode as i64);
+        h.hash_bool(self.has_distinct);
+        h.hash_int(self.order_by_items.len() as i64);
+        for item in &self.order_by_items {
+            item.hash64(h);
+        }
+    }
+
     /// Go `AggFuncDesc.MemoryUsage` (`descriptor.go:389`).
     #[must_use]
     pub fn memory_usage(&self) -> i64 {

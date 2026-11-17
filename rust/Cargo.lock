@@ -7174,6 +7174,7 @@ dependencies = [
  "tidb-kv",
  "tidb-mysql",
  "tidb-parser-types",
+ "tidb-planner-cascades-base",
  "tidb-proto",
  "tidb-size",
 ]

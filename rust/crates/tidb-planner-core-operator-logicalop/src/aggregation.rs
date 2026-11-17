@@ -667,13 +667,7 @@ impl LogicalAggregation {
         hasher.hash_uint64(schema_producer::schema_hash64(schema));
         hasher.hash_int(self.agg_funcs.len() as i64);
         for func in &self.agg_funcs {
-            hasher.hash_string(func.name());
-            hasher.hash_bool(func.has_distinct);
-            hasher.hash_int(func.args().len() as i64);
-            for arg in func.args() {
-                let mut arg = arg.clone();
-                hasher.hash_bytes(arg.hash_code());
-            }
+            func.hash64(&mut hasher);
         }
         hasher.hash_int(self.group_by_items.len() as i64);
         for item in &self.group_by_items {

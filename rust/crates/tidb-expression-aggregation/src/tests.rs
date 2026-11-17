@@ -248,9 +248,54 @@ fn type_infer_4_avg_sum_rejects_a_non_sum_name() {
 }
 
 // ---------------------------------------------------------------------
-// Go aggregation_test.go::TestAggFuncDesc (identity), expressed through
-// `Equals` because `Hash64` is not ported -- see the module header.
+// Go aggregation_test.go::TestAggFuncDesc: `Hash64` and `Equals` each
+// discriminate every field.
 // ---------------------------------------------------------------------
+
+fn hash_of(desc: &AggFuncDesc) -> u64 {
+    use tidb_planner_cascades_base::Hasher as _;
+    let mut hasher = tidb_planner_cascades_base::new_hash_equaler();
+    desc.hash64(&mut hasher);
+    hasher.sum64()
+}
+
+#[test]
+fn agg_func_desc_hash64_discriminates_every_field() {
+    let column = col(0, FieldTypeCode::LongLong);
+    let first = desc(names::SUM, vec![column.clone()]);
+    let mut second = desc(names::SUM, vec![column.clone()]);
+    assert_eq!(hash_of(&first), hash_of(&second));
+
+    second.has_distinct = true;
+    assert_ne!(hash_of(&first), hash_of(&second));
+    second.has_distinct = false;
+
+    second.mode = AggFunctionMode::Final;
+    assert_ne!(hash_of(&first), hash_of(&second));
+    second.mode = AggFunctionMode::Complete;
+
+    second.base.name = "whatever".to_owned();
+    assert_ne!(hash_of(&first), hash_of(&second));
+    second.base.name = names::SUM.to_owned();
+
+    second.base.args = Vec::new();
+    assert_ne!(hash_of(&first), hash_of(&second));
+    second.base.args = vec![col(1, FieldTypeCode::LongLong)];
+    assert_ne!(hash_of(&first), hash_of(&second));
+    second.base.args = vec![column.clone()];
+
+    second.base.ret_type = FieldType::new(FieldTypeCode::NewDecimal);
+    assert_ne!(hash_of(&first), hash_of(&second));
+    second.base.ret_type = first.base.ret_type.clone();
+    assert_eq!(hash_of(&first), hash_of(&second));
+
+    second.order_by_items = vec![ByItems::new(column.clone(), true)];
+    assert_ne!(hash_of(&first), hash_of(&second));
+    // `Desc` is part of an ORDER BY item's hash.
+    let mut ascending = second.clone();
+    ascending.order_by_items = vec![ByItems::new(column, false)];
+    assert_ne!(hash_of(&ascending), hash_of(&second));
+}
 
 #[test]
 fn agg_func_desc_identity_discriminates_every_field() {

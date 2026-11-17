@@ -28,6 +28,7 @@ tidb-chunk = { path = "../tidb-chunk" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-proto = { path = "../tidb-proto" }
+tidb-planner-cascades-base = { path = "../tidb-planner-cascades-base" }
 
 [dev-dependencies]
 tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
