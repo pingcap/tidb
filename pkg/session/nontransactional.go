@@ -77,9 +77,9 @@ func (j job) String(redacted string) string {
 // HandleNonTransactionalDML is the entry point for a non-transactional DML statement
 func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se sessionapi.Session) (sqlexec.RecordSet, error) {
 	sessVars := se.GetSessionVars()
-	if sessVars.ReadStaleness != 0 {
-		return nil, errors.New("can't do non-transactional DML when tidb_read_staleness is set")
-	}
+	originalReadStaleness := se.GetSessionVars().ReadStaleness
+	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
+	sessVars.ReadStaleness = 0
 	// NT-DML should not use the bulk DML mode.
 	originalBulkDMLEnabled := sessVars.BulkDMLEnabled
 	sessVars.BulkDMLEnabled = false
@@ -89,6 +89,7 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 	stmtType := fmt.Sprintf("NTDML-%s", ast.GetStmtLabel(stmt.DMLStmt))
 	ctx = stmtctx.WithStmtLabel(ctx, stmtType)
 	defer func() {
+		sessVars.ReadStaleness = originalReadStaleness
 		sessVars.BulkDMLEnabled = originalBulkDMLEnabled
 		sessVars.InNonTransactionalDML = originalInNonTransactionalDML
 	}()
@@ -470,6 +471,7 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se s
 	defer func() {
 		se.GetSessionVars().MaxExecutionTime = originalMaxExecutionTime
 	}()
+	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
 	rss, err := se.Execute(ctx, selectSQL)
 	se.GetSessionVars().SelectLimit = originalSelectLimit
 
