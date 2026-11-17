@@ -413,6 +413,20 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 			tk.MustExec("admin check table t_self_fk")
 		})
 	}
+
+	t.Run("ODKU without IGNORE still checks foreign keys", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@foreign_key_checks=1")
+		tk.MustExec("create table t_odku_fk (id int primary key clustered, pid int, foreign key(pid) references t_odku_fk(id))")
+		t.Cleanup(func() {
+			tk.MustExec("drop table t_odku_fk")
+		})
+		err := tk.ExecToErr(
+			"insert into t_odku_fk values (1, 99) on duplicate key update pid=values(pid)")
+		require.True(t, plannererrors.ErrNoReferencedRow2.Equal(err), "%v", err)
+		tk.MustQuery("select * from t_odku_fk").Check(testkit.Rows())
+	})
 }
 
 func TestForeignKeyCheckAndLock(t *testing.T) {
