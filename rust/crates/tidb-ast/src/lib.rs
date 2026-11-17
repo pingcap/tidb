@@ -66,6 +66,8 @@ mod load_data;
 mod masking;
 #[path = "stmt/misc.rs"]
 mod misc;
+#[path = "stmt/mview.rs"]
+mod mview;
 mod model;
 #[path = "stmt/placement.rs"]
 mod placement;
@@ -137,6 +139,16 @@ pub use misc::{
     TraceStmt,
 };
 pub use model::*;
+pub use mview::{
+    AlterMaterializedViewAction, AlterMaterializedViewLogAction, AlterMaterializedViewLogStmt,
+    AlterMaterializedViewStmt, CancelMaterializedViewJobStmt, CancelMaterializedViewJobType,
+    CompareMaterializedViewStmt, CreateMaterializedViewLogStmt, CreateMaterializedViewStmt,
+    DropMaterializedViewLogStmt, DropMaterializedViewStmt, MLogAccumulationAlertClause,
+    MLogPurgeClause, MViewRefreshClause, MViewRefreshMethod, PurgeMaterializedViewLogStmt,
+    RefreshMaterializedViewImplementStmt, RefreshMaterializedViewMode,
+    RefreshMaterializedViewObserveType, RefreshMaterializedViewStmt,
+    CANCEL_MATERIALIZED_VIEW_REFRESH_JOB_COMMAND,
+};
 use tidb_parser_opcode::Op;
 pub use placement::{
     AlterPlacementPolicyStmt, CreatePlacementPolicyStmt, DropPlacementPolicyStmt, PlacementOption,

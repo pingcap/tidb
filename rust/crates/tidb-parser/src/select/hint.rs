@@ -65,6 +65,7 @@ impl Parser {
             offset: self.peek().end_offset,
             near_offset: self.peek().offset,
             terror: None,
+            message_follows_near: false,
         }
     }
 

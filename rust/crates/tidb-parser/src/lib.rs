@@ -39,6 +39,7 @@ mod flush;
 mod load_data;
 mod masking;
 mod misc;
+mod mview;
 mod placement;
 mod prec;
 mod privilege;
@@ -114,6 +115,9 @@ pub struct ParseError {
     /// grammar action. This is that Go definition (class and code); `None` is
     /// the ordinary 1064 syntax error.
     pub terror: Option<&'static tidb_terror::TerrorError>,
+    /// Go `HandParser.error`: a grammar action's own diagnostic, which Go
+    /// writes right after the `near "..."` excerpt.
+    pub message_follows_near: bool,
 }
 
 impl ParseError {
@@ -167,8 +171,11 @@ impl ParseError {
         while !sql.is_char_boundary(near_end) {
             near_end -= 1;
         }
+        // Go's `Scanner.Errorf(format)` writes a grammar action's message
+        // right after the excerpt: `near "..."msg `.
+        let message = if self.message_follows_near { self.message.as_str() } else { "" };
         format!(
-            "line {line} column {column} near \"{}\" ",
+            "line {line} column {column} near \"{}\"{message} ",
             &sql[near_offset..near_end]
         )
     }
@@ -471,6 +478,7 @@ fn parse_one_with_parser_grammar(sql: &str, p: &mut Parser) -> PResult<Stmt> {
             offset: p.peek().end_offset,
             near_offset: p.peek().offset,
             terror: Some(&crate::parser_errors::ERR_SYNTAX),
+            message_follows_near: false,
         });
     }
     Ok(stmt)
@@ -857,6 +865,7 @@ fn parentheses_depth_error(toks: &[Token]) -> Option<ParseError> {
                     offset: token.end_offset,
                     near_offset: token.offset,
                     terror: None,
+                    message_follows_near: false,
                 });
             }
         } else if token.kind == TokenKind::Op && token.text == ")" && depth > 0 {
@@ -881,6 +890,7 @@ fn recursive_ast_depth_error(toks: &[Token]) -> Option<ParseError> {
                     offset: token.end_offset,
                     near_offset: token.offset,
                     terror: None,
+                    message_follows_near: false,
                 });
             }
         } else {
@@ -895,6 +905,7 @@ fn recursive_ast_depth_error(toks: &[Token]) -> Option<ParseError> {
                     offset: token.end_offset,
                     near_offset: token.offset,
                     terror: None,
+                    message_follows_near: false,
                 });
             }
         } else if token.kind == TokenKind::Keyword
@@ -961,6 +972,7 @@ fn ast_depth_error(p: &Parser) -> ParseError {
         offset: p.peek().end_offset,
         near_offset: p.peek().offset,
         terror: None,
+        message_follows_near: false,
     }
 }
 
@@ -1179,6 +1191,7 @@ impl Parser {
                             offset,
                             near_offset: offset,
                             terror: Some(&tidb_charset::charset_errors::ERR_INVALID_CHARACTER_STRING),
+                            message_follows_near: false,
                         };
                         self.scanner_error = Some((offset, error));
                     }
@@ -1444,6 +1457,7 @@ impl Parser {
             offset: self.peek().end_offset,
             near_offset: self.peek().offset,
             terror: None,
+            message_follows_near: false,
         }
     }
 
@@ -1457,6 +1471,16 @@ impl Parser {
             offset: self.peek().end_offset,
             near_offset: self.source.len(),
             terror: None,
+            message_follows_near: false,
+        }
+    }
+
+    /// Go yacc's `yylex.AppendError(yylex.Errorf(msg))` in a grammar action:
+    /// the syntax error at the current token, with `msg` after its excerpt.
+    fn err_action(&self, msg: &str) -> ParseError {
+        ParseError {
+            message_follows_near: true,
+            ..self.err_here(msg)
         }
     }
 
@@ -1465,6 +1489,7 @@ impl Parser {
     fn err_coded(&self, terror: &'static tidb_terror::TerrorError, msg: &str) -> ParseError {
         ParseError {
             terror: Some(terror),
+            message_follows_near: false,
             ..self.err_here(msg)
         }
     }
@@ -1560,6 +1585,7 @@ impl Parser {
                 offset: unexpected.end_offset,
                 near_offset: unexpected.offset,
                 terror: None,
+                message_follows_near: false,
             })
         }
     }
@@ -1575,6 +1601,7 @@ impl Parser {
                 offset: unexpected.end_offset,
                 near_offset: unexpected.offset,
                 terror: None,
+                message_follows_near: false,
             })
         }
     }

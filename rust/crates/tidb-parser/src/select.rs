@@ -1102,6 +1102,7 @@ impl Parser {
                     offset: start.saturating_add(1).min(self.source.len()),
                     near_offset: start,
                     terror: None,
+                    message_follows_near: false,
                 });
             }
             _ => {}

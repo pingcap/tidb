@@ -444,6 +444,27 @@ pub fn build_show_schema(s: &ShowStmt, is_view: bool, is_sequence: bool) -> (Sch
                 untyped(&[&field])
             }
         }
+        T::MaterializedViews => typed(&[("mview_id", LongLong), ("mview_name", Varchar)]),
+        T::MaterializedViewLogs => typed(&[
+            ("mlog_id", LongLong),
+            ("mlog_name", Varchar),
+            ("base_table_id", LongLong),
+            ("base_table_name", Varchar),
+        ]),
+        T::MaterializedViewRemainLogs => typed(&[
+            ("mview_id", LongLong),
+            ("mview_name", Varchar),
+            ("mlog_id", LongLong),
+            ("mlog_name", Varchar),
+            ("remain_logs", LongLong),
+        ]),
+        T::MaterializedViewLogWaitPurge => typed(&[
+            ("mlog_id", LongLong),
+            ("mlog_name", Varchar),
+            ("base_table_id", LongLong),
+            ("base_table_name", Varchar),
+            ("wait_purge", LongLong),
+        ]),
         T::TableStatus => typed(&[
             ("Name", Varchar),
             ("Engine", Varchar),
@@ -495,6 +516,13 @@ pub fn build_show_schema(s: &ShowStmt, is_view: bool, is_sequence: bool) -> (Sch
         T::CreateView => {
             untyped(&["View", "Create View", "character_set_client", "collation_connection"])
         }
+        T::CreateMaterializedView => untyped(&[
+            "Materialized View",
+            "Create Materialized View",
+            "character_set_client",
+            "collation_connection",
+        ]),
+        T::CreateMaterializedViewLog => untyped(&["Materialized View Log", "Create Materialized View Log"]),
         T::CreateDatabase => untyped(&["Database", "Create Database"]),
         T::Grants => match &s.user {
             Some(user) => untyped(&[&format!("Grants for {}", user_identity_string(user))]),

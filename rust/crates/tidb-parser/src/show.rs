@@ -258,6 +258,7 @@ impl Parser {
                 self.expect_kw("TABLES")?;
                 self.show_with_database_name_opt(ShowStmtType::OpenTables).map(Some)
             }
+            "MATERIALIZED" if self.is_word_at(0, "MATERIALIZED") => self.parse_show_materialized_view().map(Some),
             "TABLE" if self.keyword_or_ident_is_at(1, "STATUS") => {
                 self.bump();
                 self.bump();
@@ -346,6 +347,40 @@ impl Parser {
         Ok(AdminStmt::Show(Box::new(show)))
     }
 
+
+    /// Go master `SHOW MATERIALIZED VIEWS`, `SHOW MATERIALIZED VIEW LOGS`
+    /// (each with `ShowDatabaseNameOpt ShowLikeOrWhereOpt`), `SHOW
+    /// MATERIALIZED VIEW TableName REMAIN_LOGS` and `SHOW MATERIALIZED VIEW
+    /// LOG ON TableName WAIT_PURGE`.
+    fn parse_show_materialized_view(&mut self) -> PResult<AdminStmt> {
+        self.bump(); // MATERIALIZED
+        if self.is_word_at(0, "VIEWS") {
+            self.bump();
+            return self.show_with_database_name_opt(ShowStmtType::MaterializedViews);
+        }
+        self.expect_kw("VIEW")?;
+        if self.is_kw("LOGS") {
+            self.bump();
+            return self.show_with_database_name_opt(ShowStmtType::MaterializedViewLogs);
+        }
+        let (tp, suffix) = if self.is_kw("LOG") && self.is_kw_at(1, "ON") {
+            self.bump();
+            self.bump();
+            (ShowStmtType::MaterializedViewLogWaitPurge, "wait_purge")
+        } else {
+            (ShowStmtType::MaterializedViewRemainLogs, "remain_logs")
+        };
+        let table = self.parse_table_name()?;
+        // Go: the trailing word is an `identifier` the action checks once
+        // the parser has read past it.
+        let word = self.parse_name_or_keyword()?;
+        if !word.eq_ignore_ascii_case(suffix) {
+            return Err(self.err_action(&format!("syntax error: expected {}", suffix.to_ascii_uppercase())));
+        }
+        let mut show = show_stmt(tp);
+        show.table = Some(table);
+        Ok(AdminStmt::Show(Box::new(show)))
+    }
 
     /// Go `"SHOW" "OPEN" "TABLES" ShowDatabaseNameOpt ShowLikeOrWhereOpt`.
     fn parse_show_open_tables(&mut self) -> PResult<Option<AdminStmt>> {
@@ -687,6 +722,20 @@ impl Parser {
             self.expect_token_literal("GROUP")?;
             let mut show = show_stmt(ShowStmtType::CreateResourceGroup);
             show.resource_group_name = self.parse_any_token_name();
+            show
+        } else if self.is_word_at(0, "MATERIALIZED") && self.is_kw_at(1, "VIEW") {
+            // Go master `SHOW CREATE MATERIALIZED VIEW [LOG ON] TableName`.
+            self.bump();
+            self.bump();
+            let tp = if self.is_kw("LOG") && self.is_kw_at(1, "ON") {
+                self.bump();
+                self.bump();
+                ShowStmtType::CreateMaterializedViewLog
+            } else {
+                ShowStmtType::CreateMaterializedView
+            };
+            let mut show = show_stmt(tp);
+            show.table = Some(self.parse_table_name()?);
             show
         } else if self.is_kw("DATABASE") || self.is_kw("SCHEMA") {
             self.bump();

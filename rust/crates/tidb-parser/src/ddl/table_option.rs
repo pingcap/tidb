@@ -385,7 +385,7 @@ impl Parser {
         Ok(option)
     }
 
-    pub(super) fn parse_table_option_integer(&mut self, keyword: &str) -> PResult<String> {
+    pub(crate) fn parse_table_option_integer(&mut self, keyword: &str) -> PResult<String> {
         let token = self.peek().clone();
         if token.kind != TokenKind::IntLit {
             return Err(self.err_here(&format!("expected an integer after {keyword}")));

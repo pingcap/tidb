@@ -179,6 +179,16 @@ pub enum AdminStmt {
     Traffic(Box<TrafficStmt>),
     /// `REFRESH STATS` for table, database, or global targets.
     RefreshStats(Box<RefreshStatsStmt>),
+    /// Go master `PURGE MATERIALIZED VIEW LOG ON t`.
+    PurgeMaterializedViewLog(Box<crate::PurgeMaterializedViewLogStmt>),
+    /// Go master `CANCEL MATERIALIZED VIEW {REFRESH | LOG PURGE} JOB id`.
+    CancelMaterializedViewJob(Box<crate::CancelMaterializedViewJobStmt>),
+    /// Go master `REFRESH MATERIALIZED VIEW`.
+    RefreshMaterializedView(Box<crate::RefreshMaterializedViewStmt>),
+    /// Go master internal `IMPLEMENT FOR REFRESH MATERIALIZED VIEW`.
+    RefreshMaterializedViewImplement(Box<crate::RefreshMaterializedViewImplementStmt>),
+    /// Go master `COMPARE MATERIALIZED VIEW`.
+    CompareMaterializedView(Box<crate::CompareMaterializedViewStmt>),
     /// `ADMIN CHECK TABLE` or `ADMIN CHECK INDEX`.
     AdminCheck(Box<AdminCheckStmt>),
     /// `ADMIN CHECKSUM TABLE table [, table ...]`.
@@ -355,6 +365,11 @@ impl AdminStmt {
             Self::AnalyzeIncremental(analyze) => analyze.restore_into(out),
             Self::Traffic(traffic) => traffic.restore_into(out),
             Self::RefreshStats(refresh) => refresh.restore_into(out),
+            Self::PurgeMaterializedViewLog(statement) => statement.restore_into(out),
+            Self::CancelMaterializedViewJob(statement) => statement.restore_into(out),
+            Self::RefreshMaterializedView(statement) => statement.restore_into(out),
+            Self::RefreshMaterializedViewImplement(statement) => statement.restore_into(out),
+            Self::CompareMaterializedView(statement) => statement.restore_into(out),
             Self::AdminCheck(check) => check.restore_into(out),
             Self::AdminChecksum(checksum) => checksum.restore_into(out),
             Self::AdminRecoverIndex(recover) => recover.restore_into(out),
@@ -728,6 +743,31 @@ impl crate::Visitable for AdminStmt {
                     return false;
                 }
                 let _ = field_0;
+            }
+            Self::PurgeMaterializedViewLog(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+            }
+            Self::CancelMaterializedViewJob(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+            }
+            Self::RefreshMaterializedView(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+            }
+            Self::RefreshMaterializedViewImplement(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+            }
+            Self::CompareMaterializedView(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
             }
             Self::RefreshStats(field_0) => {
                 if !crate::Visitable::accept(field_0.as_mut(), visitor) {

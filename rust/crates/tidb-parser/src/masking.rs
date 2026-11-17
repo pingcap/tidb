@@ -162,6 +162,7 @@ impl Parser {
                     offset: token.offset,
                     near_offset: token.offset,
                     terror: None,
+                    message_follows_near: false,
                 });
             }
             if !self.is_op(",") {

@@ -30,6 +30,10 @@ pub enum ShowStmtType {
     Engines,
     Databases,
     Tables,
+    MaterializedViews,
+    MaterializedViewLogs,
+    MaterializedViewRemainLogs,
+    MaterializedViewLogWaitPurge,
     TableStatus,
     Columns,
     Warnings,
@@ -39,6 +43,8 @@ pub enum ShowStmtType {
     Collation,
     CreateTable,
     CreateView,
+    CreateMaterializedView,
+    CreateMaterializedViewLog,
     CreateUser,
     CreateSequence,
     CreatePlacementPolicy,
@@ -252,6 +258,24 @@ impl ShowStmt {
                 out.push_str("CREATE VIEW ");
                 self.restore_table(out);
             }
+            T::CreateMaterializedView => {
+                out.push_str("CREATE MATERIALIZED VIEW ");
+                self.restore_table(out);
+            }
+            T::CreateMaterializedViewLog => {
+                out.push_str("CREATE MATERIALIZED VIEW LOG ON ");
+                self.restore_table(out);
+            }
+            T::MaterializedViewRemainLogs => {
+                out.push_str("MATERIALIZED VIEW ");
+                self.restore_table(out);
+                out.push_str(" REMAIN_LOGS");
+            }
+            T::MaterializedViewLogWaitPurge => {
+                out.push_str("MATERIALIZED VIEW LOG ON ");
+                self.restore_table(out);
+                out.push_str(" WAIT_PURGE");
+            }
             T::CreateDatabase => {
                 out.push_str("CREATE DATABASE ");
                 if self.if_not_exists {
@@ -404,6 +428,14 @@ impl ShowStmt {
                     T::Tables => {
                         full(out);
                         out.push_str("TABLES");
+                        self.restore_database_name_opt(out);
+                    }
+                    T::MaterializedViews => {
+                        out.push_str("MATERIALIZED VIEWS");
+                        self.restore_database_name_opt(out);
+                    }
+                    T::MaterializedViewLogs => {
+                        out.push_str("MATERIALIZED VIEW LOGS");
                         self.restore_database_name_opt(out);
                     }
                     T::OpenTables => {

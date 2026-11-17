@@ -334,6 +334,14 @@ impl Parser {
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(
                 self.parse_resource_group_source_statement()?,
             )))
+        } else if self.is_materialized_view_ddl_statement() {
+            Ok(Stmt::Ddl(tidb_ast::NodeBox::new(
+                self.parse_materialized_view_ddl_statement()?,
+            )))
+        } else if self.is_materialized_view_misc_statement() {
+            Ok(Stmt::Admin(tidb_ast::NodeBox::new(
+                self.parse_materialized_view_misc_statement()?,
+            )))
         } else if self.is_create_masking_policy_source_statement() {
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(
                 self.parse_create_masking_policy_source_statement()?,
@@ -738,6 +746,7 @@ impl Parser {
                 offset: target.end_offset,
                 near_offset: target.offset,
                 terror: None,
+                message_follows_near: false,
             })
         } else {
             Err(self.err_here("unsupported statement in this phase"))

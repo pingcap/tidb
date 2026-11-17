@@ -171,6 +171,18 @@ fn admin_plan_has_result_schema(admin: &tidb_ast::AdminStmt) -> bool {
         AdminStmt::Traffic(traffic) => {
             matches!(traffic.as_ref(), tidb_ast::TrafficStmt::ShowJobs)
         }
+        // Go master: `buildPurgeMaterializedViewLog`, `buildSimple` for the
+        // cancel, and `buildRefreshMaterializedViewImplement`'s DML plan set
+        // none; `buildRefreshMaterializedView` sets one for DRY RUN and WITH
+        // PROFILE; `buildCompareMaterializedView` sets one unless the result
+        // goes to an OUTPUT table.
+        AdminStmt::PurgeMaterializedViewLog(_)
+        | AdminStmt::CancelMaterializedViewJob(_)
+        | AdminStmt::RefreshMaterializedViewImplement(_) => false,
+        AdminStmt::RefreshMaterializedView(refresh) => {
+            refresh.observe_type != tidb_ast::RefreshMaterializedViewObserveType::None
+        }
+        AdminStmt::CompareMaterializedView(compare) => compare.output_table.is_none(),
     }
 }
 

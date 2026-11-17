@@ -53,6 +53,7 @@ fn expression_shape_error(sql: &str) -> tidb_parser::ParseError {
         offset: sql.len(),
         near_offset: sql.len(),
         terror: None,
+        message_follows_near: false,
     }
 }
 

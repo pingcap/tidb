@@ -755,6 +755,27 @@ impl Parser {
         Ok(values)
     }
 
+    /// Go `CreateViewSelectOpt`: the view query with its source text.
+    pub(crate) fn parse_create_view_select(&mut self) -> PResult<tidb_ast::NodeBox<tidb_ast::QueryStmt>> {
+        let query_start = self.peek().offset;
+        // Go `parseCreateViewStmt`: `parseSubquery` then `maybeParseUnion`,
+        // the path a statement-level query takes, so a parenthesized body
+        // keeps its braces on the query itself (`IsInBraces`) and folds a
+        // following `ORDER BY`/`LIMIT` the same way.
+        let query = if self.is_kw("WITH") {
+            self.parse_with_select()?
+        } else {
+            self.parse_select_or_setopr()?
+        };
+        let query_end = self.peek().offset;
+        let mut query = tidb_ast::NodeBox::new(query);
+        if query_end > query_start {
+            let (encoding, text) = self.source_text(self.source[query_start..query_end].trim());
+            query.set_text(encoding, text);
+        }
+        Ok(query)
+    }
+
     /// Parses Go's core `CREATE VIEW` production:
     ///
     /// `CREATE [OR REPLACE] [ALGORITHM = {UNDEFINED|MERGE|TEMPTABLE}]`
@@ -832,22 +853,7 @@ impl Parser {
             self.expect_op(")")?;
         }
         self.expect_kw("AS")?;
-        let query_start = self.peek().offset;
-        // Go `parseCreateViewStmt`: `parseSubquery` then `maybeParseUnion`,
-        // the path a statement-level query takes, so a parenthesized body
-        // keeps its braces on the query itself (`IsInBraces`) and folds a
-        // following `ORDER BY`/`LIMIT` the same way.
-        let query = if self.is_kw("WITH") {
-            self.parse_with_select()?
-        } else {
-            self.parse_select_or_setopr()?
-        };
-        let query_end = self.peek().offset;
-        let mut query = tidb_ast::NodeBox::new(query);
-        if query_end > query_start {
-            let (encoding, text) = self.source_text(self.source[query_start..query_end].trim());
-            query.set_text(encoding, text);
-        }
+        let query = self.parse_create_view_select()?;
         // Go `parseCreateViewStmt`: `WITH [LOCAL] [CASCADED] CHECK OPTION`;
         // CASCADED is the default, and only LOCAL changes it.
         let check_option = if self.is_kw("WITH") {

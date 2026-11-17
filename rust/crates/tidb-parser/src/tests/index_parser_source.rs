@@ -163,16 +163,17 @@ fn go_parser_alter_foreign_key_and_reference_rows_match() {
     ], 7);
 }
 
-/// This branch's parser has none of Go master's materialized-view grammar or
-/// AUTO index pre-split, and its lexer does not tokenize the words those add:
-/// the statements are 1064 and the words are identifiers (oracle-captured).
+/// This branch's parser has no AUTO index pre-split, and its lexer does not
+/// tokenize the words Go master adds: they are identifiers, as master's
+/// unreserved keywords are. The materialized view statements follow Go
+/// master's grammar (`tests::mview`), which needs the column list.
 #[test]
 fn go_master_only_syntax_is_rejected_and_its_words_are_identifiers() {
     assert_source_cases(
         &[
             ("create materialized view mv as select 1", false, ""),
             ("create materialized view log on t", false, ""),
-            ("drop materialized view mv", false, ""),
+            ("drop materialized view mv", true, "DROP MATERIALIZED VIEW `mv`"),
             ("create table pk (a int primary key) pre_split_regions = auto", false, ""),
             ("create table pk2 (a int, primary key (a) pre_split_regions = auto)", false, ""),
             ("ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = AUTO", false, ""),

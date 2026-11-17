@@ -64,6 +64,12 @@ impl DdlStmt {
         match self {
             Self::CreateTable(_) => "CREATE TABLE",
             Self::CreateView(_) => "CREATE VIEW",
+            Self::CreateMaterializedView(_) => "CREATE MATERIALIZED VIEW",
+            Self::CreateMaterializedViewLog(_) => "CREATE MATERIALIZED VIEW LOG",
+            Self::AlterMaterializedView(_) => "ALTER MATERIALIZED VIEW",
+            Self::AlterMaterializedViewLog(_) => "ALTER MATERIALIZED VIEW LOG",
+            Self::DropMaterializedView(_) => "DROP MATERIALIZED VIEW",
+            Self::DropMaterializedViewLog(_) => "DROP MATERIALIZED VIEW LOG",
             Self::AlterView(_) => "ALTER VIEW",
             Self::CreateIndex(_) => "CREATE INDEX",
             Self::DropIndex(_) => "DROP INDEX",
@@ -134,6 +140,12 @@ impl crate::ShowStmtType {
             ShowStmtType::TableNextRowId => "SHOW TABLE NEXT_ROW_ID",
             ShowStmtType::CreateTable => "SHOW CREATE TABLE",
             ShowStmtType::CreateView => "SHOW CREATE VIEW",
+            ShowStmtType::CreateMaterializedView => "SHOW CREATE MATERIALIZED VIEW",
+            ShowStmtType::CreateMaterializedViewLog => "SHOW CREATE MATERIALIZED VIEW LOG",
+            ShowStmtType::MaterializedViews => "SHOW MATERIALIZED VIEWS",
+            ShowStmtType::MaterializedViewLogs => "SHOW MATERIALIZED VIEW LOGS",
+            ShowStmtType::MaterializedViewRemainLogs => "SHOW MATERIALIZED VIEW REMAIN_LOGS",
+            ShowStmtType::MaterializedViewLogWaitPurge => "SHOW MATERIALIZED VIEW LOG WAIT_PURGE",
             ShowStmtType::CreateSequence => "SHOW CREATE SEQUENCE",
             ShowStmtType::CreateDatabase => "SHOW CREATE DATABASE",
             ShowStmtType::CreateProcedure => "SHOW CREATE PROCEDURE",
@@ -220,6 +232,16 @@ impl AdminStmt {
                 ServerControlStmt::Help(_) => "HELP",
             },
             Self::CancelDistributionJob(_) => "CANCEL DISTRIBUTION JOB",
+            Self::PurgeMaterializedViewLog(_) => "PURGE MATERIALIZED VIEW LOG",
+            Self::CancelMaterializedViewJob(cancel) => match cancel.tp {
+                crate::CancelMaterializedViewJobType::Refresh => "CANCEL MATERIALIZED VIEW REFRESH JOB",
+                crate::CancelMaterializedViewJobType::LogPurge => "CANCEL MATERIALIZED VIEW LOG PURGE JOB",
+            },
+            // Go: the internal statement answers the user-facing command.
+            Self::RefreshMaterializedView(_) | Self::RefreshMaterializedViewImplement(_) => {
+                "REFRESH MATERIALIZED VIEW"
+            }
+            Self::CompareMaterializedView(_) => "COMPARE MATERIALIZED VIEW",
             Self::CalibrateResource(_) => "CALIBRATE RESOURCE",
             Self::AddQueryWatch(_) => "ADD QUERY WATCH",
             Self::DropQueryWatch(_) => "DROP QUERY WATCH",

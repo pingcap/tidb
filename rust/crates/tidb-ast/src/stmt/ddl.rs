@@ -249,6 +249,18 @@ pub enum DdlStmt {
     AlterResourceGroup(Box<crate::AlterResourceGroupStmt>),
     /// A `CREATE [OR REPLACE] MASKING POLICY` statement.
     CreateMaskingPolicy(Box<crate::CreateMaskingPolicyStmt>),
+    /// A Go master `CREATE MATERIALIZED VIEW` statement.
+    CreateMaterializedView(Box<crate::CreateMaterializedViewStmt>),
+    /// A Go master `CREATE MATERIALIZED VIEW LOG` statement.
+    CreateMaterializedViewLog(Box<crate::CreateMaterializedViewLogStmt>),
+    /// A Go master `ALTER MATERIALIZED VIEW` statement.
+    AlterMaterializedView(Box<crate::AlterMaterializedViewStmt>),
+    /// A Go master `ALTER MATERIALIZED VIEW LOG` statement.
+    AlterMaterializedViewLog(Box<crate::AlterMaterializedViewLogStmt>),
+    /// A Go master `DROP MATERIALIZED VIEW` statement.
+    DropMaterializedView(Box<crate::DropMaterializedViewStmt>),
+    /// A Go master `DROP MATERIALIZED VIEW LOG` statement.
+    DropMaterializedViewLog(Box<crate::DropMaterializedViewLogStmt>),
     /// A `TRUNCATE [TABLE] name` statement.
     TruncateTable(Box<Vec<String>>),
     /// A `CREATE SEQUENCE` statement.
@@ -432,6 +444,12 @@ impl DdlStmt {
             Self::CreateResourceGroup(statement) => statement.restore_into(out),
             Self::AlterResourceGroup(statement) => statement.restore_into(out),
             Self::CreateMaskingPolicy(statement) => statement.restore_into(out),
+            Self::CreateMaterializedView(statement) => statement.restore_into(out),
+            Self::CreateMaterializedViewLog(statement) => statement.restore_into(out),
+            Self::AlterMaterializedView(statement) => statement.restore_into(out),
+            Self::AlterMaterializedViewLog(statement) => statement.restore_into(out),
+            Self::DropMaterializedView(statement) => statement.restore_into(out),
+            Self::DropMaterializedViewLog(statement) => statement.restore_into(out),
             Self::TruncateTable(name) => {
                 out.push_str("TRUNCATE TABLE ");
                 push_name_path(out, name);
@@ -820,6 +838,36 @@ impl crate::Visitable for DdlStmt {
                     return false;
                 }
                 let _ = field_0;
+            }
+            Self::CreateMaterializedView(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+            }
+            Self::CreateMaterializedViewLog(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+            }
+            Self::AlterMaterializedView(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+            }
+            Self::AlterMaterializedViewLog(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+            }
+            Self::DropMaterializedView(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+            }
+            Self::DropMaterializedViewLog(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
             }
             Self::TruncateTable(field_0) => {
                 let _ = field_0;
