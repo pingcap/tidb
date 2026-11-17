@@ -112,6 +112,18 @@ pub trait SessionVars: Any + Send + Sync {
     /// Go `StmtCtx.FTSFunctionIsUsed = true`, set where `FTS_MATCH_WORD()`
     /// is built.
     fn set_stmt_fts_function_is_used(&self) {}
+    /// Go `SessionVars.ConnectionInfo`.
+    fn connection_info(&self) -> Option<Arc<tidb_variable::connection_info::ConnectionInfo>> {
+        None
+    }
+    /// Go `SessionVars.GlobalVarsAccessor.GetGlobalSysVar(name)`; a session
+    /// without the accessor cannot answer.
+    fn get_global_sys_var(&self, name: &str) -> Result<String, crate::ExprOptError> {
+        let _ = name;
+        Err(crate::ExprOptError::from_eval(tidb_exprctx::EvalError::Unsupported(
+            "validate_password globals require a session",
+        )))
+    }
 }
 
 /// boundary: Go `pkg/sessionctx/variable.SessionVarsProvider` — anything that

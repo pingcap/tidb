@@ -745,6 +745,8 @@ struct StmtSessionVars {
     sequence_state: SequenceState,
     stmt_safe_ts: Arc<std::sync::OnceLock<u64>>,
     fts_function_is_used: Arc<AtomicBool>,
+    connection_info: Option<Arc<tidb_variable::connection_info::ConnectionInfo>>,
+    global_sysvars: Option<Arc<dyn GlobalSysvarAccessor>>,
 }
 
 /// Go `SessionVars.User` of a session that matched the account
@@ -852,6 +854,18 @@ impl tidb_expropt::SessionVars for StmtSessionVars {
 
     fn set_stmt_fts_function_is_used(&self) {
         self.fts_function_is_used.store(true, Ordering::Relaxed);
+    }
+
+    fn connection_info(&self) -> Option<Arc<tidb_variable::connection_info::ConnectionInfo>> {
+        self.connection_info.clone()
+    }
+
+    fn get_global_sys_var(&self, name: &str) -> Result<String, tidb_expropt::ExprOptError> {
+        self.global_sysvars.as_ref().and_then(|accessor| accessor.get_global_sysvar(name)).ok_or_else(|| {
+            tidb_expropt::ExprOptError::from_eval(tidb_exprctx::EvalError::Unsupported(
+                "validate_password globals require a session",
+            ))
+        })
     }
 }
 
@@ -6694,6 +6708,8 @@ impl StmtContext {
             sequence_state: Arc::clone(&self.sequence_state),
             stmt_safe_ts: Arc::clone(&self.stmt_safe_ts),
             fts_function_is_used: Arc::clone(&self.fts_function_is_used),
+            connection_info: self.connection_info.clone(),
+            global_sysvars: self.global_sysvars.clone(),
         }
     }
 
@@ -7524,11 +7540,6 @@ impl Columns for StmtContext {
     fn like_default_escape(&self) -> u8 {
         self.like_default_escape
     }
-
-    fn connection_info(&self) -> Option<Arc<tidb_variable::connection_info::ConnectionInfo>> {
-        self.connection_info.clone()
-    }
-
 
     fn connection_id(&self) -> Option<u64> {
         self.connection_id

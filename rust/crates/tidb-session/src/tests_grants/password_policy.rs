@@ -118,6 +118,23 @@ fn validate_password_enforces_account_writes_and_scores_sql_values() {
     );
 }
 
+/// Go's `builtinValidatePasswordStrengthSig`: `evalInt` scores a password
+/// under four characters 0 before reading the globals, while `vecEvalInt`
+/// has no such shortcut and scores it by the policies (captured from Go; NULL renders as NULL here:
+/// a column of 'abc', 'abcd', NULL scores 25, 25, NULL; the constant 'abc'
+/// scores 0).
+#[test]
+fn validate_password_strength_short_password_row_and_vectorized() {
+    let mut session = session_with_privileges();
+    session.run("SET GLOBAL validate_password.enable = ON").unwrap();
+    session.run("CREATE TABLE test.pw (a VARCHAR(10))").unwrap();
+    session.run("INSERT INTO test.pw VALUES ('abc'), ('abcd'), (NULL)").unwrap();
+    let mut rows = row_text(session.run("SELECT a, VALIDATE_PASSWORD_STRENGTH(a) FROM test.pw"));
+    rows.sort();
+    assert_eq!(rows, vec![vec!["NULL", "NULL"], vec!["abc", "25"], vec!["abcd", "25"]]);
+    assert_eq!(scalar_text(&mut session, "SELECT VALIDATE_PASSWORD_STRENGTH('abc')").as_deref(), Some("0"));
+}
+
 /// `FAILED_LOGIN_ATTEMPTS` / `PASSWORD_LOCK_TIME` storage, exactly as Go's
 /// `mysql.user.user_attributes -> '$.Password_locking'` holds it.
 ///

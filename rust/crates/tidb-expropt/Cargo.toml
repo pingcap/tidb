@@ -16,6 +16,7 @@ tidb-kv = { path = "../tidb-kv" }
 tidb-infoschema-context = { path = "../tidb-infoschema-context" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-ast = { path = "../tidb-ast" }
+tidb-variable = { path = "../tidb-variable" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }

@@ -7227,6 +7227,7 @@ dependencies = [
  "tidb-sqlescape",
  "tidb-sqlexec",
  "tidb-sqlkiller",
+ "tidb-variable",
 ]
 
 [[package]]

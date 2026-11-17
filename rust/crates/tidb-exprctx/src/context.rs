@@ -605,13 +605,6 @@ pub trait Columns {
         None
     }
 
-    /// Go `SessionVars.ConnectionInfo`.
-    fn connection_info(
-        &self,
-    ) -> Option<std::sync::Arc<tidb_variable::connection_info::ConnectionInfo>> {
-        None
-    }
-
     /// Go `SessionVars.ConnectionID`, which `CONNECTION_ID()` reports as an
     /// unsigned `LongLong`. Go treats a missing `SessionVars` as an error
     /// rather than NULL (`builtinConnectionIDSig.evalInt`), but that case is
