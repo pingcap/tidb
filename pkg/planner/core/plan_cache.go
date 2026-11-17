@@ -160,6 +160,8 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// are checked against stmt.VisitInfos, so collect them again.
 		// A build error, e.g. a column dropped after PREPARE, is returned as is,
 		// the same as when the statement is planned.
+		// NOTE: Building the plan here duplicates the build in generateNewPlan
+		// when the plan cache misses; see collectVisitInfos.
 		visitInfos, err := collectVisitInfos(ctx, sctx, is, nodeW)
 		if err != nil {
 			return err
@@ -381,11 +383,23 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 // the privileges it requires. Warnings raised while building are discarded,
 // and no executor runs (e.g. uncorrelated subqueries are not evaluated),
 // since the statement is built again to generate its plan.
+//
+// TODO: This implementation is suboptimal because every schema change (even on
+// an unrelated table) triggers an extra logical plan build here, and a subsequent
+// plan cache miss in generateNewPlan will immediately build the plan a second time.
+// Ideally, visitInfos should be collected once during normal planning and attached
+// to the cached plan entry instead of doing a separate throwaway build here.
 func collectVisitInfos(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, nodeW *resolve.NodeW) ([]visitInfo, error) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	warnings := stmtCtx.GetWarnings()
 	defer stmtCtx.SetWarnings(warnings)
-	builder, savedBlockNames := NewPlanBuilder(PlanBuilderOptNoExecution{}).Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	if stmtNode, ok := nodeW.Node.(ast.StmtNode); ok {
+		originHints := hint.CollectHint(stmtNode)
+		defer hint.BindHint(stmtNode, originHints)
+	}
+	hintProcessor := hint.NewQBHintHandler(stmtCtx)
+	nodeW.Node.Accept(hintProcessor)
+	builder, savedBlockNames := NewPlanBuilder(PlanBuilderOptNoExecution{}).Init(sctx.GetPlanCtx(), is, hintProcessor)
 	defer sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&savedBlockNames)
 	if _, err := builder.Build(ctx, nodeW); err != nil {
 		return nil, err
