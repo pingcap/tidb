@@ -512,9 +512,18 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if err := ensureMVRefreshSchemaVersion(kctx, e.Ctx()); err != nil {
 		return err
 	}
-	currentTbl, ok := domain.GetDomain(e.Ctx()).InfoSchema().TableByID(context.Background(), tblInfo.ID)
+	currentIS := domain.GetDomain(e.Ctx()).InfoSchema()
+	currentTbl, ok := currentIS.TableByID(context.Background(), tblInfo.ID)
 	if !ok {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(schemaName, tblInfo.Name)
+	}
+	if refreshMode == ast.RefreshMaterializedViewModeCompleteOutOfPlace {
+		// A resumed MLog DDL can hold the DDL scheduling claim while waiting
+		// for this lock. Reject its intermediate schema before submitting any
+		// shadow/cutover DDL, which would otherwise form a circular wait.
+		if err := checkMVRefreshOutOfPlaceMLogSchema(kctx, currentIS, schemaName, currentTbl.Meta()); err != nil {
+			return err
+		}
 	}
 	if refreshMode == ast.RefreshMaterializedViewModeCompleteInPlace {
 		if baseInfo := currentTbl.Meta().MaterializedViewBase; baseInfo != nil && baseInfo.MLogID != 0 {
@@ -1879,6 +1888,30 @@ func acquireMVRefreshAdvisoryLock(
 		return lockName, errors.Trace(err)
 	}
 	return lockName, nil
+}
+
+func checkMVRefreshOutOfPlaceMLogSchema(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+	schemaName ast.CIStr,
+	mviewInfo *model.TableInfo,
+) error {
+	baseInfo := mviewInfo.MaterializedViewBase
+	if baseInfo == nil || baseInfo.MLogID == 0 {
+		return nil
+	}
+	mlog, ok := is.TableByID(ctx, baseInfo.MLogID)
+	if !ok {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(schemaName, model.MaterializedViewLogTableName(mviewInfo.Name))
+	}
+	for _, col := range mlog.Meta().Columns {
+		if col.State != model.StatePublic {
+			return exeerrors.ErrMVAdvisoryLockConflict.FastGenByArgs(fmt.Sprintf(
+				"cannot refresh materialized view %s.%s complete OUT OF PLACE: materialized view log schema change is in progress, please retry later",
+				schemaName.O, mviewInfo.Name.O))
+		}
+	}
+	return nil
 }
 
 func releaseMVRefreshAdvisoryLockFully(refreshSctx sessionctx.Context, lockName string) int {
