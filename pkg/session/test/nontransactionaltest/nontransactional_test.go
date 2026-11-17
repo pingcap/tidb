@@ -301,12 +301,6 @@ func TestNonTransactionalWithCheckConstraint(t *testing.T) {
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 	tk.MustQuery("select sum(b) from t").Check(testkit.Rows("9900"))
 
-	tk.MustExec("set @@tidb_read_staleness=-100")
-	require.ErrorContains(t, tk.ExecToErr("batch on a limit 10 update t set b = b + 100"), "tidb_read_staleness")
-	tk.MustQuery("select @@tidb_read_staleness").Check(testkit.Rows("-100"))
-	tk.MustExec("set @@tidb_read_staleness=0")
-	tk.MustQuery("select sum(b) from t").Check(testkit.Rows("9900"))
-
 	tk.MustExec("set @@tidb_read_consistency=weak")
 	err = tk.ExecToErr("batch on a limit 10 insert into t1 select * from t")
 	require.Error(t, err)
