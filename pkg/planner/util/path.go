@@ -50,6 +50,8 @@ type AccessPath struct {
 	IdxCols        []*expression.Column
 	IdxColLens     []int
 	// ConstCols indicates whether the column is constant under the given conditions for all index columns.
+	// A column is also marked when an access condition restricts it to a single value only at execution
+	// time, i.e. `index_col = correlated_col`. See markConstCol.
 	ConstCols []bool
 	Ranges    []*ranger.Range
 	// CountAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
@@ -118,6 +120,11 @@ type AccessPath struct {
 	IndexMergeIsIntersection bool
 	// IndexMergeAccessMVIndex indicates whether this IndexMerge path accesses a MVIndex.
 	IndexMergeAccessMVIndex bool
+	// IndexMergeMVCoveredConds are the JSON predicates (MEMBER OF, JSON_CONTAINS, JSON_OVERLAPS) on a MVIndex
+	// array column that a single-MVIndex IndexMerge path turned into exact index ranges. Every row this path
+	// returns satisfies them, so a parent Selection that holds them (because they can't be pushed down to
+	// TiKV) doesn't need to evaluate them again.
+	IndexMergeMVCoveredConds []expression.Expression
 
 	StoreType kv.StoreType
 
@@ -187,6 +194,8 @@ func (path *AccessPath) Clone() *AccessPath {
 		IndexFilters:                 CloneExprs(path.IndexFilters),
 		TableFilters:                 CloneExprs(path.TableFilters),
 		IndexMergeIsIntersection:     path.IndexMergeIsIntersection,
+		IndexMergeAccessMVIndex:      path.IndexMergeAccessMVIndex,
+		IndexMergeMVCoveredConds:     CloneExprs(path.IndexMergeMVCoveredConds),
 		PartialIndexPaths:            nil,
 		StoreType:                    path.StoreType,
 		IsDNFCond:                    path.IsDNFCond,
@@ -243,10 +252,14 @@ func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
 // It also supports a trailing range predicate (LT/GT/LE/GE) with a correlated column on the last
 // access column, e.g. `idx_col_1 = cor_col AND idx_col_2 < cor_col`.
 // It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
+// Each equality it moves also marks the matched index column in AccessPath.ConstCols, so that the
+// order the remaining index columns provide can be recognized. See markConstCol for the reasoning.
 func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
 	used := make([]bool, len(path.TableFilters))
 	usedCnt := 0
+	reserved := make([]bool, len(path.TableFilters))
+	reserveSuffix := false
 	for i := eqOrInCount; i < len(path.IdxCols); i++ {
 		matched := false
 		for j, filter := range path.TableFilters {
@@ -271,9 +284,14 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			ctx.GetExprCtx().SetSkipPlanCache("Correlated subquery is not cached currently")
 			matched = true
 			access[i-eqOrInCount] = filter
+			// A runtime TIMESTAMP bound may be calendar-invalid. Range fallback can
+			// discard this column and the remaining suffix, so keep their predicates.
+			reserveSuffix = reserveSuffix || path.IdxCols[i].RetType.GetType() == mysql.TypeTimestamp
+			reserved[j] = reserveSuffix
 			if path.IdxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
 				usedCnt++
+				path.markConstCol(i)
 			}
 			break
 		}
@@ -294,7 +312,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 					access = access[:i-eqOrInCount+1]
 					remained = make([]expression.Expression, 0, len(path.TableFilters)-usedCnt)
 					for k, ok := range used {
-						if !ok {
+						if !ok || reserved[k] {
 							remained = append(remained, path.TableFilters[k]) // nozero
 						}
 					}
@@ -307,11 +325,34 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 	}
 	remained = make([]expression.Expression, 0, len(used)-usedCnt)
 	for i, ok := range used {
-		if !ok {
+		if !ok || reserved[i] {
 			remained = append(remained, path.TableFilters[i]) // nozero
 		}
 	}
 	return access, remained
+}
+
+// markConstCol records that path.IdxCols[idx] is restricted to a single value by an access
+// condition, so callers that reason about index order (matchProperty) may skip over it.
+//
+// The ranger cannot build a range for `index_col = correlated_col` at plan time, so such a
+// column is neither point-ranged in path.Ranges nor marked in ConstCols by
+// DetachCondAndBuildRangeForIndex. The range is instead rebuilt per execution of the inner
+// subtree in ResolveCorrelatedColumns/rebuildIndexRanges. The equality restricts surviving
+// rows to a single value on this column, even when range fallback requires a residual
+// filter. Hence the index columns
+// after it stay sorted, exactly as they would be for a literal equality, and an ORDER BY on
+// them can be satisfied by the scan order instead of a sort.
+//
+// Only full-length columns may be marked: on a prefix column the stored value is truncated, so
+// an equality does not pin the column to one value.
+func (path *AccessPath) markConstCol(idx int) {
+	if path.ConstCols == nil {
+		path.ConstCols = make([]bool, len(path.IdxCols))
+	}
+	if idx < len(path.ConstCols) {
+		path.ConstCols[idx] = true
+	}
 }
 
 // isColEqConstant checks if the expression is eq function that one side is column and the other side is constant.

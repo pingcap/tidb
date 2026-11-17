@@ -229,27 +229,45 @@ local RUPanel = graphPanel.new(
     'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m]))',
     legendFormat="total",
   )
-);
-
-local RUMaxPanel = graphPanel.new(
-  title="RU Max(Max Cost During 20s Period)",
-  datasource=myDS,
-  legend_rightSide=true,
-  legend_current=true,
-  legend_alignAsTable=true,
-  legend_values=true,
-  format="short",
-  description="The max request unit cost for resource groups during in a period(20s).",
-  logBase1Y=10,
 ).addTarget(
   prometheus.target(
-    'sum(resource_manager_resource_unit_read_request_unit_max_per_sec{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}) by (resource_group)',
-    legendFormat="{{resource_group}}-read",
+    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap", resource_group=~"$resource_group"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="ap-{{resource_group}}",
+    hide=true,
   )
 ).addTarget(
   prometheus.target(
-    'sum(resource_manager_resource_unit_write_request_unit_max_per_sec{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}) by (resource_group)',
-    legendFormat="{{resource_group}}-write",
+    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap"}[1m]))',
+    legendFormat="ap-total",
+    hide=true,
+  )
+);
+
+// Each sample is the busiest second in a 60-second window ending about 30
+// seconds before it. The value is a plain gauge without a timestamp. Only the resource
+// manager leader publishes samples, so the maximum across instances joins
+// leadership changes into one series.
+local RUPeakSelector = '{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}';
+local RUPeakRange = 'resource_manager_resource_unit_peak_per_second_rolling_60s' + RUPeakSelector + '[$__interval]';
+local RUMaxPanel = graphPanel.new(
+  title="Peak RU/s",
+  datasource=myDS,
+  format="short",
+  interval="1m",
+  nullPointMode="null",
+  min=0,
+  legend_values=true,
+  legend_max=true,
+  legend_current=true,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  description="Maximum combined read and write RU/s of one natural second in a 60-second rolling window ending about 30 seconds before the point, summed over clients. Under normal reporting a peak is visible for about a minute and a scrape interval of at most 60 seconds does not miss it; data that arrives late, is retried, or follows a leader change is visible only from its arrival until the window ends and can be missed. A peak may span two adjacent points at a 1-minute step; the two ends of a queried range can be off by up to about 60 seconds. Compare with RU, which shows average consumption rates. RU is attributed to the second in which the client settles it, so a long request concentrates its RU in its settlement second; covers the foreground RU that TiDB confirms by second; excludes TiFlash and background task RU, SQL CPU RU and RUv2.",
+).addTarget(
+  prometheus.target(
+    'max by (keyspace_name, resource_group) (max_over_time(' + RUPeakRange + '))',
+    legendFormat="{{keyspace_name}}-{{resource_group}}",
+    interval="1m",
+    intervalFactor=1,
   )
 );
 
@@ -276,6 +294,18 @@ local RUPerQueryPanel = graphPanel.new(
     '(sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m]))) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m]))',
     legendFormat="total",
   )
+).addTarget(
+  prometheus.target(
+    '(sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap", resource_group=~"$resource_group"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap", resource_group=~"$resource_group"}[1m])) by (resource_group)) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="ap-{{resource_group}}",
+    hide=true,
+  )
+).addTarget(
+  prometheus.target(
+    '(sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap"}[1m]))) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m]))',
+    legendFormat="ap-total",
+    hide=true,
+  )
 );
 
 local RRUPanel = graphPanel.new(
@@ -300,6 +330,18 @@ local RRUPanel = graphPanel.new(
   prometheus.target(
     'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m]))',
     legendFormat="total",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="ap-{{resource_group}}",
+    hide=true,
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap"}[1m]))',
+    legendFormat="ap-total",
+    hide=true,
   )
 );
 
@@ -326,6 +368,18 @@ local RRUPerQueryPanel = graphPanel.new(
     'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m])) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m]))',
     legendFormat="total",
   )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap", resource_group=~"$resource_group"}[1m])) by (resource_group) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="ap-{{resource_group}}",
+    hide=true,
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap"}[1m])) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m]))',
+    legendFormat="ap-total",
+    hide=true,
+  )
 );
 
 local WRUPanel = graphPanel.new(
@@ -351,6 +405,18 @@ local WRUPanel = graphPanel.new(
     'sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m]))',
     legendFormat="total",
   )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="ap-{{resource_group}}",
+    hide=true,
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap"}[1m]))',
+    legendFormat="ap-total",
+    hide=true,
+  )
 );
 
 local WRUPerQueryPanel = graphPanel.new(
@@ -375,6 +441,18 @@ local WRUPerQueryPanel = graphPanel.new(
   prometheus.target(
     'sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m])) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m]))',
     legendFormat="total",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap", resource_group=~"$resource_group"}[1m])) by (resource_group) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="ap-{{resource_group}}",
+    hide=true,
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap"}[1m])) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m]))',
+    legendFormat="ap-total",
+    hide=true,
   )
 );
 
@@ -763,6 +841,95 @@ local TokenRequestCountPanel = graphPanel.new(
   prometheus.target(
     'sum(rate(resource_manager_client_token_request_resource_group{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group)',
     legendFormat="{{instance}}-{{resource_group}}",
+  )
+);
+
+//*  ==============Panel (Paging Pre-charge)==================
+//*  Row Title: Paging Pre-charge
+//*  Description: The metrics about resource control paging pre-charge
+//*  Panels: 3
+//*  ==============Panel (Paging Pre-charge)==================
+
+local pagingPrechargeRow = row.new(collapse=true, title="Paging Pre-charge");
+
+local PagingRequestCountPanel = graphPanel.new(
+  title="Cop Read Pre-charge Coverage",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="short",
+  description="Rate of read coprocessor RPCs split by whether they carried a positive PredictedReadBytes hint and triggered request-side read-byte pre-charge.",
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_client_request_cop_read_precharge_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}-precharged",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_client_request_cop_read_no_precharge_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}-no-precharge",
+  )
+);
+
+local PagingBytesPanel = graphPanel.new(
+  title="Paging Bytes",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="Bps",
+  description="Bytes rate over pre-charged coprocessor reads: predicted pre-charge basis and actual bytes read.",
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_client_request_paging_precharge_bytes_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}-precharge-predicted",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_client_request_paging_actual_bytes_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}-precharge-actual",
+  )
+);
+
+local PagingPredictionResidualBytesPanel = graphPanel.new(
+  title="Paging Prediction Residual Bytes",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=true,
+  legend_max=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="bytes",
+  description="Quantiles of signed prediction residual (actual - predicted read bytes) for pre-charged coprocessor RPCs. Positive = under-prediction (extra debit), negative = over-prediction (refund).",
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(resource_manager_client_request_paging_prediction_residual_bytes_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group, le))',
+    legendFormat="{{instance}}-{{resource_group}}-99",
+  )
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.9, sum(rate(resource_manager_client_request_paging_prediction_residual_bytes_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group, le))',
+    legendFormat="{{instance}}-{{resource_group}}-90",
+  )
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.5, sum(rate(resource_manager_client_request_paging_prediction_residual_bytes_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group, le))',
+    legendFormat="{{instance}}-{{resource_group}}-50",
+  )
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.1, sum(rate(resource_manager_client_request_paging_prediction_residual_bytes_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group, le))',
+    legendFormat="{{instance}}-{{resource_group}}-10",
+  )
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.01, sum(rate(resource_manager_client_request_paging_prediction_residual_bytes_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group, le))',
+    legendFormat="{{instance}}-{{resource_group}}-01",
   )
 );
 
@@ -1191,7 +1358,7 @@ local FailedQueryOPMPanel = graphPanel.new(
   description="The number of failed queries per minute",
 ).addTarget(
   prometheus.target(
-    'sum(increase(tidb_server_execute_error_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance",resource_group=~"$resource_group"}[1m])) by (type, instance,resource_group)',
+    'sum(increase(tidb_server_execute_error_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance",resource_group=~"$resource_group"}[1m])) by (type, instance,resource_group)',
     legendFormat="{{type}}-{{instance}}-{{resource_group}}",
   )
 );
@@ -1210,6 +1377,12 @@ local rowPos = { x: 0, y: 0, w: rowW, h: rowH };
 local leftPanelPos = { x: 0, y: 0, w: panelW, h: panelH };
 local rightPanelPos = { x: panelW, y: 0, w: panelW, h: panelH };
 local fullPanelPos = { x: 0, y: 0, w: rowW, h: panelH };
+local pagingLeftPanelPos = { x: 0, y: panelH, w: panelW, h: panelH };
+local pagingRightPanelPos = { x: panelW, y: panelH, w: panelW, h: panelH };
+local pagingPanelRow = pagingPrechargeRow/* Paging Pre-charge */
+  .addPanel(PagingRequestCountPanel, gridPos=fullPanelPos)
+  .addPanel(PagingBytesPanel, gridPos=pagingLeftPanelPos)
+  .addPanel(PagingPredictionResidualBytesPanel, gridPos=pagingRightPanelPos);
 
 TiDBResourceControlDash
 .addPanel(
@@ -1247,7 +1420,17 @@ TiDBResourceControlDash
   .addPanel(TokenRequestCountPanel, gridPos=rightPanelPos)
   ,
   gridPos=rowPos
-).addPanel(
+){
+  // Keep the paging row IDs at 50-53 so generating the dashboard does not
+  // renumber the existing Runaway and later panels.
+  panels+::: [
+    pagingPanelRow {
+      gridPos: rowPos,
+      id: 50,
+      panels: std.mapWithIndex(function(i, panel) panel { id: 51 + i }, pagingPanelRow.panels),
+    },
+  ],
+}.addPanel(
   runawayRow/* Runaway */
   .addPanel(QueryMaxDurationPanel, gridPos=leftPanelPos)
   .addPanel(RunawayEventPanel, gridPos=rightPanelPos)

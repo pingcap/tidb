@@ -51,6 +51,7 @@ import (
 
 	/*yy:token "'%c'" */
 	hintStringLit
+
 	/* SET_VAR-only decimal/float literal. Integer values still use hintIntLit. */
 	hintNumericLit
 
@@ -130,6 +131,7 @@ import (
 	hintLeading               "LEADING"
 	hintSemiJoinRewrite       "SEMI_JOIN_REWRITE"
 	hintNoDecorrelate         "NO_DECORRELATE"
+	hintTiFlashLMFilter       "TIFLASH_LM_FILTER"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -737,6 +739,7 @@ SupportedIndexLevelOptimizerHintName:
 |	"NO_ORDER_INDEX"
 |	"INDEX_LOOKUP_PUSHDOWN"
 |	"NO_INDEX_LOOKUP_PUSHDOWN"
+|	"TIFLASH_LM_FILTER"
 
 SubqueryOptimizerHintName:
 	"SEMIJOIN"
@@ -852,6 +855,7 @@ Identifier:
 |	"LEADING"
 |	"SEMI_JOIN_REWRITE"
 |	"NO_DECORRELATE"
+|	"TIFLASH_LM_FILTER"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"

@@ -76,11 +76,21 @@ type StaticInfo struct {
 
 	// JSONServerID is `serverID` for json marshal/unmarshal ONLY.
 	JSONServerID uint64 `json:"server_id"`
+	// DisableRPC marks that this process should not be selected as a TiDB
+	// RPC target, such as standalone BR. Missing/false means the node can serve
+	// TiDB-type RPC requests, which keeps compatibility with older server info.
+	DisableRPC bool `json:"disable_rpc,omitempty"`
 }
 
 // IsAssumed checks if the StaticInfo is assumed to be in a keyspace other than its own.
 func (i *StaticInfo) IsAssumed() bool {
 	return i.AssumedKeyspace != ""
+}
+
+// IsDisableRPC reports whether this process must not be selected as a TiDB
+// RPC target. Older server info omits the field, so those nodes stay eligible.
+func (i *StaticInfo) IsDisableRPC() bool {
+	return i.DisableRPC
 }
 
 // DynamicInfo represents the dynamic information of the server.
@@ -133,6 +143,18 @@ func (info *ServerInfo) Marshal() ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	return infoBuf, nil
+}
+
+// String implements fmt.Stringer.
+func (info *ServerInfo) String() string {
+	if info == nil {
+		return "<nil>"
+	}
+	infoBuf, err := info.Marshal()
+	if err != nil {
+		return "<failed to marshal server info: " + err.Error() + ">"
+	}
+	return string(infoBuf)
 }
 
 // Unmarshal `ServerInfo` from bytes.

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -172,6 +173,18 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeCreateTable(x)
 	case *ast.CreateViewStmt:
 		err = e.executeCreateView(ctx, x)
+	case *ast.CreateMaterializedViewStmt:
+		err = e.ddlExecutor.CreateMaterializedView(e.Ctx(), x)
+	case *ast.CreateMaterializedViewLogStmt:
+		err = e.ddlExecutor.CreateMaterializedViewLog(e.Ctx(), x)
+	case *ast.AlterMaterializedViewStmt:
+		err = e.ddlExecutor.AlterMaterializedView(e.Ctx(), x)
+	case *ast.AlterMaterializedViewLogStmt:
+		err = e.ddlExecutor.AlterMaterializedViewLog(e.Ctx(), x)
+	case *ast.DropMaterializedViewStmt:
+		err = e.ddlExecutor.DropMaterializedView(e.Ctx(), x)
+	case *ast.DropMaterializedViewLogStmt:
+		err = e.ddlExecutor.DropMaterializedViewLog(e.Ctx(), x)
 	case *ast.DropIndexStmt:
 		err = e.executeDropIndex(x)
 	case *ast.DropDatabaseStmt:
@@ -215,6 +228,8 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeDropSequence(x)
 	case *ast.AlterSequenceStmt:
 		err = e.executeAlterSequence(x)
+	case *ast.CreateMaskingPolicyStmt:
+		err = e.executeCreateMaskingPolicy(x)
 	case *ast.CreatePlacementPolicyStmt:
 		err = e.executeCreatePlacementPolicy(x)
 	case *ast.DropPlacementPolicyStmt:
@@ -436,7 +451,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	var tblInfo *model.TableInfo
 	// Let check table first. Related isssue #46296.
 	if s.Table != nil {
-		job, tblInfo, err = e.getRecoverTableByTableName(s.Table)
+		job, tblInfo, err = e.getRecoverTableByTableName(s.Table, false)
 	} else {
 		job, tblInfo, err = e.getRecoverTableByJobID(s, dom)
 	}
@@ -517,16 +532,32 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Do
 
 // GetDropOrTruncateTableInfoFromJobs gets the dropped/truncated table information from DDL jobs,
 // it will use the recover snapshot of DDL job to get the dropped/truncated table information.
-func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, dom *domain.Domain, fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
+// extraJobTypes lets callers inspect additional candidates to explicitly reject unsupported objects.
+func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, dom *domain.Domain, fn func(*model.Job, *model.TableInfo) (bool, error), extraJobTypes ...model.ActionType) (bool, error) {
 	getTable := func(startTS uint64, schemaID int64, tableID int64) (*model.TableInfo, error) {
 		snapMeta := dom.GetSnapshotMeta(startTS)
 		tbl, err := snapMeta.GetTable(schemaID, tableID)
 		return tbl, err
 	}
-	return ddl.GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, getTable, fn)
+	return ddl.GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, getTable, fn, extraJobTypes...)
 }
 
-func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.Job, *model.TableInfo, error) {
+func checkFlashbackTableMaterializedView(tblInfo *model.TableInfo) error {
+	var objectType string
+	switch {
+	case tblInfo.MaterializedView != nil:
+		objectType = "materialized view table"
+	case tblInfo.MaterializedViewLog != nil:
+		objectType = "materialized view log table"
+	case tblInfo.MaterializedViewShadow != nil:
+		objectType = "materialized view shadow table"
+	default:
+		return nil
+	}
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FLASHBACK TABLE on " + objectType)
+}
+
+func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName, forFlashback bool) (*model.Job, *model.TableInfo, error) {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return nil, nil, err
@@ -538,13 +569,26 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	if schemaName == "" {
 		return nil, nil, errors.Trace(plannererrors.ErrNoDB)
 	}
+	dom := domain.GetDomain(e.Ctx())
+	if forFlashback {
+		is := dom.InfoSchema()
+		if schema, ok := is.SchemaByName(ast.NewCIStr(schemaName)); ok {
+			currentTable, err := is.TableByName(context.Background(), schema.Name, tableName.Name)
+			if err != nil {
+				if !infoschema.ErrTableNotExists.Equal(err) {
+					return nil, nil, err
+				}
+			} else if err := checkFlashbackTableMaterializedView(currentTable.Meta()); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
 	gcSafePoint, err := gcutil.GetGCSafePoint(e.Ctx())
 	if err != nil {
 		return nil, nil, err
 	}
 	var jobInfo *model.Job
 	var tableInfo *model.TableInfo
-	dom := domain.GetDomain(e.Ctx())
 	handleJobAndTableInfo := func(job *model.Job, tblInfo *model.TableInfo) (bool, error) {
 		if tblInfo.Name.L != tableName.Name.L {
 			return false, nil
@@ -554,14 +598,25 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 			return false, nil
 		}
 		if schema.Name.L == schemaName {
+			if forFlashback {
+				if err := checkFlashbackTableMaterializedView(tblInfo); err != nil {
+					return false, err
+				}
+			}
 			tableInfo = tblInfo
 			jobInfo = job
 			return true, nil
 		}
 		return false, nil
 	}
+	var extraJobTypes []model.ActionType
+	if forFlashback {
+		// Inspect MV drops in history order so they cannot be skipped in favor of
+		// an older ordinary table with the same name. The callback rejects them.
+		extraJobTypes = []model.ActionType{model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog, model.ActionDropMaterializedViewShadow}
+	}
 	fn := func(jobs []*model.Job) (bool, error) {
-		return GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
+		return GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo, extraJobTypes...)
 	}
 	err = ddl.IterHistoryDDLJobs(txn, fn)
 	if err != nil {
@@ -601,12 +656,21 @@ func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error
 }
 
 func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
-	job, tblInfo, err := e.getRecoverTableByTableName(s.Table)
+	job, tblInfo, err := e.getRecoverTableByTableName(s.Table, true)
 	if err != nil {
 		return err
 	}
 	if len(s.NewName) != 0 {
+		oldTableName := tblInfo.Name
+		tblInfo = tblInfo.Clone()
 		tblInfo.Name = ast.NewCIStr(s.NewName)
+		oldSchemaName := ast.NewCIStr(job.SchemaName)
+		for _, fk := range tblInfo.ForeignKeys {
+			if fk.Version >= model.FKVersion1 &&
+				fk.RefSchema.L == oldSchemaName.L && fk.RefTable.L == oldTableName.L {
+				fk.RefTable = tblInfo.Name
+			}
+		}
 	}
 	// Check the table ID was not exists.
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
@@ -699,6 +763,35 @@ func (e *DDLExec) getRecoverDBByName(schemaName ast.CIStr) (recoverSchemaInfo *m
 			if schemaInfo.Name.L != schemaName.L {
 				continue
 			}
+			if job.BinlogInfo == nil || job.BinlogInfo.SchemaVersion <= 0 {
+				return false, errors.New("flashback database: dropped database has no final schema version")
+			}
+			currentMeta := dom.GetSnapshotMeta(txn.StartTS())
+			diff, err := currentMeta.GetSchemaDiff(job.BinlogInfo.SchemaVersion)
+			if err != nil {
+				return false, err
+			}
+			if diff == nil || diff.Version != job.BinlogInfo.SchemaVersion || diff.Type != model.ActionDropSchema || diff.SchemaID != job.SchemaID {
+				return false, errors.New("flashback database: final drop schema diff is missing or inconsistent")
+			}
+			commitTS, err := meta.GetSchemaDiffCommitTS(currentMeta, dom.Store(), diff.Version, txn.StartTS())
+			if err != nil {
+				return false, errors.Annotate(err, "flashback database: cannot determine drop commit timestamp")
+			}
+			if commitTS <= job.StartTS {
+				return false, errors.New("flashback database: invalid drop commit timestamp")
+			}
+			// The job's submission snapshot can precede the last refresh/purge.
+			// Recover both metadata and maintenance state immediately before the
+			// transaction that removed the database and its maintenance records.
+			snapshotTS = commitTS - 1
+			schemaInfo, err = dom.GetSnapshotMeta(snapshotTS).GetDatabase(job.SchemaID)
+			if err != nil {
+				return false, err
+			}
+			if schemaInfo == nil || schemaInfo.Name.L != schemaName.L {
+				return false, errors.New("flashback database: schema metadata missing before drop commit")
+			}
 			recoverSchemaInfo = &model.RecoverSchemaInfo{
 				DBInfo:              schemaInfo,
 				LoadTablesOnExecute: true,
@@ -778,6 +871,10 @@ func (e *DDLExec) executeAlterSequence(s *ast.AlterSequenceStmt) error {
 
 func (e *DDLExec) executeCreatePlacementPolicy(s *ast.CreatePlacementPolicyStmt) error {
 	return e.ddlExecutor.CreatePlacementPolicy(e.Ctx(), s)
+}
+
+func (e *DDLExec) executeCreateMaskingPolicy(s *ast.CreateMaskingPolicyStmt) error {
+	return e.ddlExecutor.CreateMaskingPolicy(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeDropPlacementPolicy(s *ast.DropPlacementPolicyStmt) error {

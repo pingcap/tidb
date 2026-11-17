@@ -5,7 +5,6 @@ package iter_test
 import (
 	"context"
 	"errors"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,13 +21,13 @@ func TestParTrans(t *testing.T) {
 		case <-time.After(100 * time.Millisecond):
 		}
 		return i + 100, nil
-	}, iter.WithChunkSize(128), iter.WithConcurrency(64))
+	}, iter.WithBufferSize(128), iter.WithConcurrency(64))
 	cx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 	r := iter.CollectAll(cx, mapped)
 	require.NoError(t, r.Err)
 	require.Len(t, r.Item, 200)
-	require.Equal(t, r.Item, iter.CollectAll(cx, iter.OfRange(100, 300)).Item)
+	require.ElementsMatch(t, iter.CollectAll(cx, iter.OfRange(100, 300)).Item, r.Item)
 }
 
 func TestFilter(t *testing.T) {
@@ -95,18 +94,32 @@ func TestSome(t *testing.T) {
 func TestErrorDuringTransforming(t *testing.T) {
 	req := require.New(t)
 	items := iter.OfRange(1, 20)
-	running := new(atomic.Int32)
 	items = iter.Transform(items, func(ctx context.Context, i int) (int, error) {
 		if i == 10 {
 			return 0, errors.New("meow")
 		}
-		running.Add(1)
 		return i, nil
-	}, iter.WithChunkSize(16), iter.WithConcurrency(8))
+	}, iter.WithBufferSize(16), iter.WithConcurrency(8))
 
 	coll := iter.CollectAll(context.TODO(), items)
-	req.Greater(running.Load(), int32(8))
-	// Should be melted down.
-	req.Less(running.Load(), int32(16))
 	req.ErrorContains(coll.Err, "meow")
+}
+
+func TestErrorBeforeTransforming(t *testing.T) {
+	req := require.New(t)
+	items := iter.Transform(iter.Fail[int](errors.New("meow")), func(context.Context, int) (int, error) {
+		return 0, nil
+	}, iter.WithBufferSize(1))
+
+	resultCh := make(chan iter.IterResult[[]int], 1)
+	go func() {
+		resultCh <- iter.CollectAll(context.Background(), items)
+	}()
+
+	select {
+	case coll := <-resultCh:
+		req.ErrorContains(coll.Err, "meow")
+	case <-time.After(time.Second):
+		req.Fail("Transform blocked while propagating upstream error")
+	}
 }

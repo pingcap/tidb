@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -231,6 +233,19 @@ var allTestCase = []testCancelJob{
 func cancelSuccess(rs *testkit.Result) bool {
 	return strings.Contains(rs.Rows()[0][1].(string), "success")
 }
+
+func requiresStarterForFullText(tc testCancelJob) bool {
+	if strings.Contains(strings.ToLower(tc.sql), "fulltext") {
+		return true
+	}
+	for _, prepareSQL := range tc.prepareSQL {
+		if strings.Contains(strings.ToLower(prepareSQL), "fulltext") {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCancelVariousJobs(t *testing.T) {
 	var enterCnt, exitCnt atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", func(job *model.Job) { enterCnt.Add(1) })
@@ -318,46 +333,64 @@ func TestCancelVariousJobs(t *testing.T) {
 	waitDDLWorkerExited()
 	for j, tc := range allTestCase {
 		t.Logf("running test case %d: %s", j, tc.sql)
-		i.Store(int64(j))
-		msg := fmt.Sprintf("sql: %s, state: %s", tc.sql, tc.cancelState)
-		if tc.onJobBefore {
-			resetHook()
-			for _, prepareSQL := range tc.prepareSQL {
-				tk.MustExec(prepareSQL)
+		runCase := func() {
+			i.Store(int64(j))
+			msg := fmt.Sprintf("sql: %s, state: %s", tc.sql, tc.cancelState)
+			if tc.onJobBefore {
+				resetHook()
+				for _, prepareSQL := range tc.prepareSQL {
+					tk.MustExec(prepareSQL)
+				}
+				waitDDLWorkerExited()
+				canceled.Store(false)
+				cancelWhenReorgNotStart.Store(true)
+				registerHook(true)
+				if tc.expectCancelled {
+					tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
+				} else {
+					tk.MustExec(tc.sql)
+				}
+				waitDDLWorkerExited()
+				if canceled.Load() {
+					require.Equal(t, tc.expectCancelled, cancelResult.Load(), msg)
+				}
 			}
-			waitDDLWorkerExited()
-			canceled.Store(false)
-			cancelWhenReorgNotStart.Store(true)
-			registerHook(true)
-			if tc.expectCancelled {
-				tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
-			} else {
-				tk.MustExec(tc.sql)
-			}
-			waitDDLWorkerExited()
-			if canceled.Load() {
-				require.Equal(t, tc.expectCancelled, cancelResult.Load(), msg)
+			if tc.onJobUpdate {
+				resetHook()
+				for _, prepareSQL := range tc.prepareSQL {
+					tk.MustExec(prepareSQL)
+				}
+				waitDDLWorkerExited()
+				canceled.Store(false)
+				cancelWhenReorgNotStart.Store(false)
+				registerHook(false)
+				if tc.expectCancelled {
+					tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
+				} else {
+					tk.MustExec(tc.sql)
+				}
+				waitDDLWorkerExited()
+				if canceled.Load() {
+					require.Equal(t, tc.expectCancelled, cancelResult.Load(), msg)
+				}
 			}
 		}
-		if tc.onJobUpdate {
-			resetHook()
-			for _, prepareSQL := range tc.prepareSQL {
-				tk.MustExec(prepareSQL)
-			}
-			waitDDLWorkerExited()
-			canceled.Store(false)
-			cancelWhenReorgNotStart.Store(false)
-			registerHook(false)
-			if tc.expectCancelled {
-				tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
-			} else {
-				tk.MustExec(tc.sql)
-			}
-			waitDDLWorkerExited()
-			if canceled.Load() {
-				require.Equal(t, tc.expectCancelled, cancelResult.Load(), msg)
-			}
+		if !requiresStarterForFullText(tc) {
+			runCase()
+			continue
 		}
+		if kerneltype.IsClassic() {
+			t.Logf("skip starter-only FULLTEXT test case %d in classic: %s", j, tc.sql)
+			continue
+		}
+		originalMode := deploymode.Get()
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		func() {
+			defer func() {
+				require.NoError(t, deploymode.Set(originalMode))
+			}()
+			runCase()
+		}()
 	}
 }
 

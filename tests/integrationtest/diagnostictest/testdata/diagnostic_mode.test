@@ -1,0 +1,21 @@
+# TestDiagnosticModeDisallowsSwitchMDL
+-- error 1836
+set global tidb_enable_metadata_lock = OFF;
+
+# System table SELECTs are available; ordinary SELECTs and side effects are not.
+select count(*) from information_schema.tables;
+select count(*) from mysql.user;
+select count(*) from performance_schema.setup_actors;
+use mysql;
+select count(*) from user;
+use test;
+-- error 1836
+select 1;
+-- error 1836
+select * from test.t;
+-- error 1836
+select * from mysql.user join test.t;
+-- error 1836
+select * from mysql.user for update;
+-- error 1836
+select @x := 1 from mysql.user;

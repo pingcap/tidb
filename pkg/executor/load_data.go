@@ -30,6 +30,9 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -40,6 +43,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -180,11 +184,11 @@ func NewLoadDataWorker(
 	plan *plannercore.LoadData,
 	tbl table.Table,
 ) (w *LoadDataWorker, err error) {
-	importPlan, err := importer.NewPlanFromLoadDataPlan(userSctx, plan)
+	importPlan, err := NewPlanFromLoadDataPlan(userSctx, plan)
 	if err != nil {
 		return nil, err
 	}
-	astArgs := importer.ASTArgsFromPlan(plan)
+	astArgs := ASTArgsFromPlan(plan)
 	controller, err := importer.NewLoadDataController(importPlan, tbl, astArgs)
 	if err != nil {
 		return nil, err
@@ -360,6 +364,7 @@ func createInsertValues(e *LoadDataWorker) (insertVal *InsertValues, err error) 
 	if len(insertColumns) > 0 {
 		ret.initEvalBuffer()
 	}
+	ret.initEmbedTextGeneratedCols()
 	ret.collectRuntimeStatsEnabled()
 	return ret, nil
 }
@@ -378,8 +383,9 @@ type encodeWorker struct {
 
 // commitTask is used for passing data from processStream goroutine to commitWork goroutine.
 type commitTask struct {
-	cnt  uint64
-	rows [][]types.Datum
+	cnt      uint64
+	rowCount uint64
+	rows     [][]types.Datum
 }
 
 // processStream always tries to build a parser from channel and process it. When
@@ -453,8 +459,9 @@ func (w *encodeWorker) processOneStream(
 			}
 			goto TrySendTask
 		case outCh <- commitTask{
-			cnt:  w.curBatchCnt,
-			rows: w.rows,
+			cnt:      w.curBatchCnt,
+			rowCount: w.rowCount,
+			rows:     w.rows,
 		}:
 		}
 		// reset rows buffer, will reallocate buffer but NOT reuse
@@ -649,7 +656,7 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 // commitOneTask insert Data from LoadDataWorker.rows, then commit the modification
 // like a statement.
 func (w *commitWorker) commitOneTask(ctx context.Context, task commitTask) error {
-	err := w.checkAndInsertOneBatch(ctx, task.rows, task.cnt)
+	err := w.checkAndInsertOneBatch(ctx, task.rows, task.cnt, task.rowCount)
 	if err != nil {
 		logutil.Logger(ctx).Error("commit error CheckAndInsert", zap.Error(err))
 		return err
@@ -660,7 +667,7 @@ func (w *commitWorker) commitOneTask(ctx context.Context, task commitTask) error
 	return nil
 }
 
-func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]types.Datum, cnt uint64) error {
+func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]types.Datum, cnt uint64, endRowCount uint64) error {
 	if w.stats != nil && w.stats.BasicRuntimeStats != nil {
 		// Since this method will not call by executor Next,
 		// so we need record the basic executor runtime stats by ourselves.
@@ -674,6 +681,10 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 		return err
 	}
 	w.Ctx().GetSessionVars().StmtCtx.AddRecordRows(cnt)
+	rows, err = w.fillEmbedTextValuesWithRowCount(ctx, rows[0:cnt], endRowCount)
+	if err != nil {
+		return err
+	}
 
 	// LOAD DATA LOW_PRIORITY should lower both read and write priority of its KV operations
 	// (unique/PK conflict checks + 2PC requests).
@@ -687,20 +698,20 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 
 	switch w.controller.OnDuplicate {
 	case ast.OnDuplicateKeyHandlingReplace:
-		return w.batchCheckAndInsert(ctx, rows[0:cnt], w.addRecordLD, true)
+		return w.batchCheckAndInsert(ctx, rows, w.addRecordLD, true)
 	case ast.OnDuplicateKeyHandlingIgnore:
-		return w.batchCheckAndInsert(ctx, rows[0:cnt], w.addRecordLD, false)
+		return w.batchCheckAndInsert(ctx, rows, w.addRecordLD, false)
 	case ast.OnDuplicateKeyHandlingError:
 		txn, err := w.Ctx().Txn(true)
 		if err != nil {
 			return err
 		}
 		dupKeyCheck := optimizeDupKeyCheckForNormalInsert(w.Ctx().GetSessionVars(), txn)
-		for i, row := range rows[0:cnt] {
+		for i, row := range rows {
 			sizeHintStep := int(w.Ctx().GetSessionVars().ShardAllocateStep)
 			if sizeHintStep > 0 && i%sizeHintStep == 0 {
 				sizeHint := sizeHintStep
-				remain := len(rows[0:cnt]) - i
+				remain := len(rows) - i
 				if sizeHint > remain {
 					sizeHint = remain
 				}
@@ -767,7 +778,8 @@ func (e *LoadDataWorker) TestLoadLocal(parser mydump.Parser) error {
 	err = committer.checkAndInsertOneBatch(
 		ctx,
 		encoder.rows,
-		encoder.curBatchCnt)
+		encoder.curBatchCnt,
+		encoder.rowCount)
 	if err != nil {
 		return err
 	}
@@ -826,4 +838,78 @@ type loadDataVarKeyType int
 // String defines a Stringer function for debugging and pretty printing.
 func (loadDataVarKeyType) String() string {
 	return "load_data_var"
+}
+
+// NewPlanFromLoadDataPlan creates a import plan from LOAD DATA.
+func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.LoadData) (*importer.Plan, error) {
+	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
+	logger := log.L().With(zap.String("table", fullTableName))
+	charset := plan.Charset
+	if charset == nil {
+		// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-character-set
+		d, err2 := userSctx.GetSessionVars().GetSessionOrGlobalSystemVar(
+			context.Background(), vardef.CharsetDatabase)
+		if err2 != nil {
+			logger.Error("LOAD DATA get charset failed", zap.Error(err2))
+		} else {
+			charset = &d
+		}
+	}
+	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode() &&
+		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
+
+	var ignoreLines uint64
+	if plan.IgnoreLines != nil {
+		ignoreLines = *plan.IgnoreLines
+	}
+
+	var (
+		nullDef              []string
+		nullValueOptEnclosed = false
+	)
+
+	lineFieldsInfo := importdef.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo)
+	// todo: move null defined into importdef.LineFieldsInfo
+	// in load data, there maybe multiple null def, but in SELECT ... INTO OUTFILE there's only one
+	if plan.FieldsInfo != nil && plan.FieldsInfo.DefinedNullBy != nil {
+		nullDef = append(nullDef, *plan.FieldsInfo.DefinedNullBy)
+		nullValueOptEnclosed = plan.FieldsInfo.NullValueOptEnclosed
+	} else if len(lineFieldsInfo.FieldsEnclosedBy) != 0 {
+		nullDef = append(nullDef, "NULL")
+	}
+	if len(lineFieldsInfo.FieldsEscapedBy) != 0 {
+		nullDef = append(nullDef, string([]byte{lineFieldsInfo.FieldsEscapedBy[0], 'N'}))
+	}
+
+	return &importer.Plan{
+		DBName: plan.Table.Schema.L,
+		DBID:   plan.Table.DBInfo.ID,
+
+		Path:                 plan.Path,
+		Format:               importer.DataFormatDelimitedData,
+		Restrictive:          restrictive,
+		FieldNullDef:         nullDef,
+		NullValueOptEnclosed: nullValueOptEnclosed,
+		LineFieldsInfo:       lineFieldsInfo,
+		IgnoreLines:          ignoreLines,
+
+		SQLMode:          userSctx.GetSessionVars().SQLMode,
+		Charset:          charset,
+		ImportantSysVars: importer.GetImportantSysVars(userSctx),
+
+		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
+		DataSourceType:         importer.DataSourceTypeFile,
+	}, nil
+}
+
+// ASTArgsFromPlan creates ASTArgs from plan.
+func ASTArgsFromPlan(plan *plannercore.LoadData) *importer.ASTArgs {
+	return &importer.ASTArgs{
+		FileLocRef:         plan.FileLocRef,
+		ColumnsAndUserVars: plan.ColumnsAndUserVars,
+		ColumnAssignments:  plan.ColumnAssignments,
+		OnDuplicate:        plan.OnDuplicate,
+		FieldsInfo:         plan.FieldsInfo,
+		LinesInfo:          plan.LinesInfo,
+	}
 }

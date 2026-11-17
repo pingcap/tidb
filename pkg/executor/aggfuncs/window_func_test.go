@@ -94,7 +94,7 @@ func testWindowAggMemFunc(t *testing.T, p windowMemTest) {
 	finalPr, memDelta := finalFunc.AllocPartialResult()
 	require.Equal(t, p.allocMemDelta, memDelta)
 
-	updateMemDeltas, err := p.updateMemDeltaGens(srcChk, p.windowTest.dataType)
+	updateMemDeltas, err := p.updateMemDeltaGens(updateMemDeltaGensParams{srcChk: srcChk, keyType: p.windowTest.dataType, valType: nil})
 	require.NoError(t, err)
 
 	i := 0

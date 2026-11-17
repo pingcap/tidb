@@ -42,6 +42,7 @@ const (
 		Execute_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Show_view_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Operate_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Alter_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Index_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -107,6 +108,7 @@ const (
 		Lock_tables_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Show_view_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Operate_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Alter_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Execute_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -122,7 +124,7 @@ const (
 		Table_name	CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		Grantor		CHAR(77),
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References'),
+		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Operate View','Trigger','References'),
 		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name),
 		KEY i_user (User));`
@@ -373,6 +375,7 @@ const (
 		topn BIGINT(64) NOT NULL DEFAULT -1,
 		column_choice enum('DEFAULT','ALL','PREDICATE','LIST') NOT NULL DEFAULT 'DEFAULT',
 		column_ids TEXT(19372),
+		ndv_rate DOUBLE NOT NULL DEFAULT -1,
 		PRIMARY KEY (table_id) CLUSTERED
 	);`
 	// CreateStatsHistoryTable stores the historical stats.
@@ -507,6 +510,7 @@ const (
 		status_update_time timestamp NULL DEFAULT NULL,
 		state text,
 		created_time timestamp NOT NULL,
+		scan_index_id bigint DEFAULT NULL,
 		primary key(job_id, scan_id),
 		key(created_time));`
 
@@ -717,6 +721,9 @@ const (
 		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		filter_strings TEXT NOT NULL,
 		filter_hash VARCHAR(64) NOT NULL,
+		source_filter_strings MEDIUMTEXT NOT NULL DEFAULT '',
+		route_strings MEDIUMTEXT NOT NULL DEFAULT '',
+		route_hash VARCHAR(64) NOT NULL DEFAULT '',
 		start_ts BIGINT UNSIGNED NOT NULL,
 		restored_ts BIGINT UNSIGNED NOT NULL,
 		upstream_cluster_id BIGINT UNSIGNED,
@@ -725,8 +732,9 @@ const (
 		cmd TEXT,
 		task_start_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
 		last_heartbeat_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
-		UNIQUE KEY unique_registration_params (
+		UNIQUE KEY unique_registration_params_v2 (
 			filter_hash,
+			route_hash,
 			start_ts,
 			restored_ts,
 			upstream_cluster_id,
@@ -794,24 +802,111 @@ const (
 
 	// CreateTiDBMaskingPolicyTable is a table to store masking policy metadata.
 	CreateTiDBMaskingPolicyTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_masking_policy (
-		policy_id BIGINT PRIMARY KEY,
-		schema_name VARCHAR(64) NOT NULL,
-		table_name VARCHAR(64) NOT NULL,
-		table_id BIGINT NOT NULL,
-		column_id BIGINT NOT NULL,
-		column_name VARCHAR(64) NOT NULL,
+		policy_id BIGINT(64) NOT NULL AUTO_INCREMENT,
 		policy_name VARCHAR(64) NOT NULL,
-		masking_type VARCHAR(32) NOT NULL DEFAULT 'CUSTOM',
+		db_name VARCHAR(64) NOT NULL,
+		table_name VARCHAR(64) NOT NULL,
+		table_id BIGINT(64) NOT NULL,
+		column_name VARCHAR(64) NOT NULL,
+		column_id BIGINT(64) NOT NULL,
 		expression TEXT NOT NULL,
+		status VARCHAR(16) NOT NULL,
+		masking_type VARCHAR(32) NOT NULL,
 		restrict_on VARCHAR(256) NOT NULL DEFAULT 'NONE',
-		status ENUM('ENABLED', 'DISABLED') DEFAULT 'ENABLED',
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		created_by VARCHAR(128),
-		updated_by VARCHAR(128),
-		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		UNIQUE KEY uk_table_policy (table_id, policy_name),
-		UNIQUE KEY uk_table_column (table_id, column_id),
-		KEY idx_schema_table (schema_name, table_name));`
+		created_at DATETIME(6) NOT NULL,
+		updated_at DATETIME(6) NOT NULL,
+		created_by VARCHAR(288) NOT NULL DEFAULT '',
+		PRIMARY KEY(policy_id),
+		UNIQUE KEY uk_table_policy(table_id, policy_name),
+		UNIQUE KEY uk_table_column(table_id, column_id)
+		);`
+
+	// CreateTiDBMViewRefreshInfoTable is a table to store current refresh scheduling info for each materialized view.
+	CreateTiDBMViewRefreshInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_info (
+		MVIEW_ID bigint NOT NULL,
+		LAST_SUCCESS_READ_TSO bigint unsigned DEFAULT NULL,
+		LAST_SUCCESS_REFRESH_END_UNIX_SECONDS bigint DEFAULT NULL,
+		NEXT_REFRESH_UNIX_SECONDS bigint DEFAULT NULL,
+		PRIMARY KEY(MVIEW_ID))`
+
+	// CreateTiDBMViewFastRefreshSourceInfoTable stores the input log identities registered by each materialized view.
+	CreateTiDBMViewFastRefreshSourceInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_fast_refresh_source_info (
+		MVIEW_ID bigint NOT NULL,
+		MLOG_ID bigint NOT NULL,
+		PRIMARY KEY(MVIEW_ID, MLOG_ID) CLUSTERED,
+		KEY idx_mlog (MLOG_ID, MVIEW_ID))`
+
+	// CreateTiDBMLogPurgeInfoTable is a table to store current purge scheduling info for each materialized view log.
+	CreateTiDBMLogPurgeInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_info (
+		MLOG_ID bigint NOT NULL,
+		NEXT_PURGE_UNIX_SECONDS bigint DEFAULT NULL,
+		LAST_PURGED_TSO bigint unsigned DEFAULT NULL,
+		PRIMARY KEY(MLOG_ID))`
+
+	// CreateTiDBMViewRefreshHistTable is a table to store materialized view refresh history.
+	CreateTiDBMViewRefreshHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_hist (
+		REFRESH_JOB_ID bigint unsigned NOT NULL,
+		MVIEW_ID bigint NOT NULL,
+		MVIEW_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		MVIEW_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		REFRESH_METHOD varchar(32) NOT NULL,
+		REFRESH_START_TIME datetime(6) DEFAULT NULL,
+		REFRESH_END_TIME datetime(6) DEFAULT NULL,
+		REFRESH_DURATION_SEC decimal(18,6) DEFAULT NULL,
+		REFRESH_SCHEDULE_DURATION_SEC decimal(18,6) DEFAULT NULL,
+		REFRESH_STATUS varchar(16) DEFAULT NULL,
+		REFRESH_ROWS bigint DEFAULT NULL,
+		REFRESH_READ_TSO bigint unsigned DEFAULT NULL,
+		REFRESH_COMMIT_TSO bigint unsigned DEFAULT NULL,
+		REFRESH_FAILED_REASON text DEFAULT NULL,
+		CANCEL_REQUEST_TIME datetime(6) DEFAULT NULL,
+		CANCEL_REQUESTED_BY varchar(512) DEFAULT NULL,
+		LAST_HEARTBEAT_TIME datetime(6) DEFAULT NULL,
+		PRIMARY KEY(REFRESH_JOB_ID),
+		KEY idx_mview_start_time (MVIEW_ID, REFRESH_START_TIME),
+		KEY idx_mview_name_start_time (MVIEW_SCHEMA, MVIEW_NAME, REFRESH_START_TIME),
+		KEY idx_mview_name_commit_tso (MVIEW_SCHEMA, MVIEW_NAME, REFRESH_COMMIT_TSO),
+		KEY idx_mview_status_start_time (MVIEW_ID, REFRESH_STATUS, REFRESH_START_TIME),
+		KEY idx_refresh_duration_sec (REFRESH_DURATION_SEC),
+		KEY idx_refresh_schedule_duration_sec (REFRESH_SCHEDULE_DURATION_SEC),
+		KEY idx_refresh_start_time (REFRESH_START_TIME),
+		KEY idx_refresh_status_start_time (REFRESH_STATUS, REFRESH_START_TIME))`
+
+	// CreateTiDBMViewRefreshAlertTable is a table to store the current refresh alert level for each materialized view.
+	CreateTiDBMViewRefreshAlertTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_alert (
+		MVIEW_ID bigint NOT NULL,
+		MVIEW_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		MVIEW_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		ALERT_LEVEL varchar(16) DEFAULT NULL,
+		REFRESH_FAILED varchar(3) DEFAULT NULL,
+		LAST_SUCCESS_SNAPSHOT_TIME datetime(6) DEFAULT NULL,
+		UPDATE_TIME datetime(6) DEFAULT NULL,
+		PRIMARY KEY(MVIEW_ID))`
+
+	// CreateTiDBMLogPurgeHistTable is a table to store materialized view log purge history.
+	CreateTiDBMLogPurgeHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_hist (
+		PURGE_JOB_ID bigint unsigned NOT NULL,
+		MLOG_ID bigint NOT NULL,
+		BASE_TABLE_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		BASE_TABLE_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		PURGE_METHOD varchar(32) NOT NULL,
+		PURGE_START_TIME datetime(6) DEFAULT NULL,
+		PURGE_END_TIME datetime(6) DEFAULT NULL,
+		PURGE_DURATION_SEC decimal(18,6) DEFAULT NULL,
+		PURGE_ROWS bigint NOT NULL,
+		PURGE_STATUS varchar(16) DEFAULT NULL,
+		PURGE_CUTOFF_TSO bigint unsigned DEFAULT NULL,
+		PURGE_FAILED_REASON text DEFAULT NULL,
+		CANCEL_REQUEST_TIME datetime(6) DEFAULT NULL,
+		CANCEL_REQUESTED_BY varchar(512) DEFAULT NULL,
+		LAST_HEARTBEAT_TIME datetime(6) DEFAULT NULL,
+		PRIMARY KEY(PURGE_JOB_ID),
+		KEY idx_mlog_start_time (MLOG_ID, PURGE_START_TIME),
+		KEY idx_table_name_start_time (BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_START_TIME),
+		KEY idx_mlog_status_start_time (MLOG_ID, PURGE_STATUS, PURGE_START_TIME),
+		KEY idx_purge_duration_sec (PURGE_DURATION_SEC),
+		KEY idx_purge_start_time (PURGE_START_TIME),
+		KEY idx_purge_status_start_time (PURGE_STATUS, PURGE_START_TIME))`
 )
 
 // all below are related to DDL or DXF tables
@@ -901,8 +996,6 @@ const (
 		summary json,
 		key idx_task_key(task_key),
 		key idx_state_update_time(state_update_time))`
-	// NotifierTableName is `tidb_ddl_notifier`.
-	NotifierTableName = "tidb_ddl_notifier"
 	// CreateTiDBDDLNotifierTable is the CREATE TABLE SQL of `tidb_ddl_notifier`.
 	CreateTiDBDDLNotifierTable = `CREATE TABLE mysql.tidb_ddl_notifier (
 		ddl_job_id BIGINT,
@@ -910,4 +1003,244 @@ const (
 		schema_change LONGBLOB COMMENT 'SchemaChangeEvent at rest',
 		processed_by_flag BIGINT UNSIGNED DEFAULT 0 COMMENT 'flag to mark which subscriber has processed the event',
 		PRIMARY KEY(ddl_job_id, sub_job_id))`
+	// CreateTiDBStorageClassTransitionHistoryTable is the CREATE TABLE SQL of
+	// `tidb_storage_class_transition_history`.
+	CreateTiDBStorageClassTransitionHistoryTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_storage_class_transition_history (
+		table_schema VARCHAR(64) NOT NULL,
+		table_name VARCHAR(64) NOT NULL,
+		table_id BIGINT NOT NULL,
+		partition_name VARCHAR(64) DEFAULT NULL,
+		partition_id BIGINT DEFAULT NULL,
+		direction VARCHAR(16) NOT NULL,
+		state VARCHAR(16) NOT NULL,
+		total_replicas BIGINT UNSIGNED DEFAULT NULL,
+		completed_replicas BIGINT UNSIGNED DEFAULT NULL,
+		schema_version BIGINT NOT NULL,
+		start_ts BIGINT UNSIGNED NOT NULL,
+		start_time DATETIME(6) NOT NULL,
+		finish_time DATETIME(6) DEFAULT NULL,
+		duration BIGINT UNSIGNED DEFAULT NULL COMMENT 'seconds',
+		physical_targets LONGBLOB NOT NULL COMMENT 'internal physical table and partition targets',
+		PRIMARY KEY (table_id, start_ts, direction),
+		KEY idx_state_table_id (state, table_id),
+		KEY idx_finish_time_table_id (finish_time, table_id))`
 )
+
+// Canonical names shared by bootstrap definitions and system-object classification.
+const (
+	// UserTableName is the name of mysql.user.
+	UserTableName = "user"
+	// PasswordHistoryTableName is the name of mysql.password_history.
+	PasswordHistoryTableName = "password_history"
+	// GlobalPrivTableName is the name of mysql.global_priv.
+	GlobalPrivTableName = "global_priv"
+	// DBTableName is the name of mysql.db.
+	DBTableName = "db"
+	// TablesPrivTableName is the name of mysql.tables_priv.
+	TablesPrivTableName = "tables_priv"
+	// ColumnsPrivTableName is the name of mysql.columns_priv.
+	ColumnsPrivTableName = "columns_priv"
+	// GlobalVariablesTableName is the name of mysql.global_variables.
+	GlobalVariablesTableName = "global_variables"
+	// TiDBTableName is the name of mysql.tidb.
+	TiDBTableName = "tidb"
+	// HelpTopicTableName is the name of mysql.help_topic.
+	HelpTopicTableName = "help_topic"
+	// StatsMetaTableName is the name of mysql.stats_meta.
+	StatsMetaTableName = "stats_meta"
+	// StatsHistogramsTableName is the name of mysql.stats_histograms.
+	StatsHistogramsTableName = "stats_histograms"
+	// StatsBucketsTableName is the name of mysql.stats_buckets.
+	StatsBucketsTableName = "stats_buckets"
+	// GCDeleteRangeTableName is the name of mysql.gc_delete_range.
+	GCDeleteRangeTableName = "gc_delete_range"
+	// GCDeleteRangeDoneTableName is the name of mysql.gc_delete_range_done.
+	GCDeleteRangeDoneTableName = "gc_delete_range_done"
+	// StatsFeedbackTableName is the name of mysql.stats_feedback.
+	StatsFeedbackTableName = "stats_feedback"
+	// RoleEdgesTableName is the name of mysql.role_edges.
+	RoleEdgesTableName = "role_edges"
+	// DefaultRolesTableName is the name of mysql.default_roles.
+	DefaultRolesTableName = "default_roles"
+	// BindInfoTableName is the name of mysql.bind_info.
+	BindInfoTableName = "bind_info"
+	// StatsTopNTableName is the name of mysql.stats_top_n.
+	StatsTopNTableName = "stats_top_n"
+	// ExprPushdownBlacklistTableName is the name of mysql.expr_pushdown_blacklist.
+	ExprPushdownBlacklistTableName = "expr_pushdown_blacklist"
+	// OptRuleBlacklistTableName is the name of mysql.opt_rule_blacklist.
+	OptRuleBlacklistTableName = "opt_rule_blacklist"
+	// StatsExtendedTableName is the name of mysql.stats_extended.
+	StatsExtendedTableName = "stats_extended"
+	// StatsFMSketchTableName is the name of mysql.stats_fm_sketch.
+	StatsFMSketchTableName = "stats_fm_sketch"
+	// GlobalGrantsTableName is the name of mysql.global_grants.
+	GlobalGrantsTableName = "global_grants"
+	// CapturePlanBaselinesBlacklistTableName is the name of mysql.capture_plan_baselines_blacklist.
+	CapturePlanBaselinesBlacklistTableName = "capture_plan_baselines_blacklist"
+	// ColumnStatsUsageTableName is the name of mysql.column_stats_usage.
+	ColumnStatsUsageTableName = "column_stats_usage"
+	// TableCacheMetaTableName is the name of mysql.table_cache_meta.
+	TableCacheMetaTableName = "table_cache_meta"
+	// AnalyzeOptionsTableName is the name of mysql.analyze_options.
+	AnalyzeOptionsTableName = "analyze_options"
+	// StatsHistoryTableName is the name of mysql.stats_history.
+	StatsHistoryTableName = "stats_history"
+	// StatsMetaHistoryTableName is the name of mysql.stats_meta_history.
+	StatsMetaHistoryTableName = "stats_meta_history"
+	// AnalyzeJobsTableName is the name of mysql.analyze_jobs.
+	AnalyzeJobsTableName = "analyze_jobs"
+	// AdvisoryLocksTableName is the name of mysql.advisory_locks.
+	AdvisoryLocksTableName = "advisory_locks"
+	// PlanReplayerStatusTableName is the name of mysql.plan_replayer_status.
+	PlanReplayerStatusTableName = "plan_replayer_status"
+	// PlanReplayerTaskTableName is the name of mysql.plan_replayer_task.
+	PlanReplayerTaskTableName = "plan_replayer_task"
+	// StatsTableLockedTableName is the name of mysql.stats_table_locked.
+	StatsTableLockedTableName = "stats_table_locked"
+	// TiDBTTLTableStatusTableName is the name of mysql.tidb_ttl_table_status.
+	TiDBTTLTableStatusTableName = "tidb_ttl_table_status"
+	// TiDBTTLTaskTableName is the name of mysql.tidb_ttl_task.
+	TiDBTTLTaskTableName = "tidb_ttl_task"
+	// TiDBTTLJobHistoryTableName is the name of mysql.tidb_ttl_job_history.
+	TiDBTTLJobHistoryTableName = "tidb_ttl_job_history"
+	// TiDBGlobalTaskTableName is the name of mysql.tidb_global_task.
+	TiDBGlobalTaskTableName = "tidb_global_task"
+	// TiDBGlobalTaskHistoryTableName is the name of mysql.tidb_global_task_history.
+	TiDBGlobalTaskHistoryTableName = "tidb_global_task_history"
+	// TiDBImportJobsTableName is the name of mysql.tidb_import_jobs.
+	TiDBImportJobsTableName = "tidb_import_jobs"
+	// TiDBRunawayWatchTableName is the name of mysql.tidb_runaway_watch.
+	TiDBRunawayWatchTableName = "tidb_runaway_watch"
+	// TiDBRunawayQueriesTableName is the name of mysql.tidb_runaway_queries.
+	TiDBRunawayQueriesTableName = "tidb_runaway_queries"
+	// TiDBTimersTableName is the name of mysql.tidb_timers.
+	TiDBTimersTableName = "tidb_timers"
+	// TiDBRunawayWatchDoneTableName is the name of mysql.tidb_runaway_watch_done.
+	TiDBRunawayWatchDoneTableName = "tidb_runaway_watch_done"
+	// DistFrameworkMetaTableName is the name of mysql.dist_framework_meta.
+	DistFrameworkMetaTableName = "dist_framework_meta"
+	// RequestUnitByGroupTableName is the name of mysql.request_unit_by_group.
+	RequestUnitByGroupTableName = "request_unit_by_group"
+	// TiDBPITRIDMapTableName is the name of mysql.tidb_pitr_id_map.
+	TiDBPITRIDMapTableName = "tidb_pitr_id_map"
+	// TiDBRestoreRegistryTableName is the name of mysql.tidb_restore_registry.
+	TiDBRestoreRegistryTableName = "tidb_restore_registry"
+	// IndexAdvisorResultsTableName is the name of mysql.index_advisor_results.
+	IndexAdvisorResultsTableName = "index_advisor_results"
+	// TiDBKernelOptionsTableName is the name of mysql.tidb_kernel_options.
+	TiDBKernelOptionsTableName = "tidb_kernel_options"
+	// TiDBWorkloadValuesTableName is the name of mysql.tidb_workload_values.
+	TiDBWorkloadValuesTableName = "tidb_workload_values"
+	// TiDBMaskingPolicyTableName is the name of mysql.tidb_masking_policy.
+	TiDBMaskingPolicyTableName = "tidb_masking_policy"
+	// TiDBMViewRefreshInfoTableName is the name of mysql.tidb_mview_refresh_info.
+	TiDBMViewRefreshInfoTableName = "tidb_mview_refresh_info"
+	// TiDBMViewFastRefreshSourceInfoTableName is the name of mysql.tidb_mview_fast_refresh_source_info.
+	TiDBMViewFastRefreshSourceInfoTableName = "tidb_mview_fast_refresh_source_info"
+	// TiDBMLogPurgeInfoTableName is the name of mysql.tidb_mlog_purge_info.
+	TiDBMLogPurgeInfoTableName = "tidb_mlog_purge_info"
+	// TiDBMViewRefreshHistTableName is the name of mysql.tidb_mview_refresh_hist.
+	TiDBMViewRefreshHistTableName = "tidb_mview_refresh_hist"
+	// TiDBMViewRefreshAlertTableName is the name of mysql.tidb_mview_refresh_alert.
+	TiDBMViewRefreshAlertTableName = "tidb_mview_refresh_alert"
+	// TiDBMLogPurgeHistTableName is the name of mysql.tidb_mlog_purge_hist.
+	TiDBMLogPurgeHistTableName = "tidb_mlog_purge_hist"
+	// TiDBStorageClassTransitionHistoryTableName is the name of mysql.tidb_storage_class_transition_history.
+	TiDBStorageClassTransitionHistoryTableName = "tidb_storage_class_transition_history"
+	// TiDBDDLJobTableName is the name of mysql.tidb_ddl_job.
+	TiDBDDLJobTableName = "tidb_ddl_job"
+	// TiDBDDLReorgTableName is the name of mysql.tidb_ddl_reorg.
+	TiDBDDLReorgTableName = "tidb_ddl_reorg"
+	// TiDBDDLHistoryTableName is the name of mysql.tidb_ddl_history.
+	TiDBDDLHistoryTableName = "tidb_ddl_history"
+	// TiDBMDLInfoTableName is the name of mysql.tidb_mdl_info.
+	TiDBMDLInfoTableName = "tidb_mdl_info"
+	// TiDBBackgroundSubtaskTableName is the name of mysql.tidb_background_subtask.
+	TiDBBackgroundSubtaskTableName = "tidb_background_subtask"
+	// TiDBBackgroundSubtaskHistoryTableName is the name of mysql.tidb_background_subtask_history.
+	TiDBBackgroundSubtaskHistoryTableName = "tidb_background_subtask_history"
+	// TiDBDDLNotifierTableName is the name of mysql.tidb_ddl_notifier.
+	TiDBDDLNotifierTableName = "tidb_ddl_notifier"
+)
+
+// builtinMySQLTableNames identifies built-in tables independently of their IDs.
+var builtinMySQLTableNames = map[string]struct{}{
+	UserTableName:                              {},
+	PasswordHistoryTableName:                   {},
+	GlobalPrivTableName:                        {},
+	DBTableName:                                {},
+	TablesPrivTableName:                        {},
+	ColumnsPrivTableName:                       {},
+	GlobalVariablesTableName:                   {},
+	TiDBTableName:                              {},
+	HelpTopicTableName:                         {},
+	StatsMetaTableName:                         {},
+	StatsHistogramsTableName:                   {},
+	StatsBucketsTableName:                      {},
+	GCDeleteRangeTableName:                     {},
+	GCDeleteRangeDoneTableName:                 {},
+	StatsFeedbackTableName:                     {},
+	RoleEdgesTableName:                         {},
+	DefaultRolesTableName:                      {},
+	BindInfoTableName:                          {},
+	StatsTopNTableName:                         {},
+	ExprPushdownBlacklistTableName:             {},
+	OptRuleBlacklistTableName:                  {},
+	StatsExtendedTableName:                     {},
+	StatsFMSketchTableName:                     {},
+	GlobalGrantsTableName:                      {},
+	CapturePlanBaselinesBlacklistTableName:     {},
+	ColumnStatsUsageTableName:                  {},
+	TableCacheMetaTableName:                    {},
+	AnalyzeOptionsTableName:                    {},
+	StatsHistoryTableName:                      {},
+	StatsMetaHistoryTableName:                  {},
+	AnalyzeJobsTableName:                       {},
+	AdvisoryLocksTableName:                     {},
+	PlanReplayerStatusTableName:                {},
+	PlanReplayerTaskTableName:                  {},
+	StatsTableLockedTableName:                  {},
+	TiDBTTLTableStatusTableName:                {},
+	TiDBTTLTaskTableName:                       {},
+	TiDBTTLJobHistoryTableName:                 {},
+	TiDBGlobalTaskTableName:                    {},
+	TiDBGlobalTaskHistoryTableName:             {},
+	TiDBImportJobsTableName:                    {},
+	TiDBRunawayWatchTableName:                  {},
+	TiDBRunawayQueriesTableName:                {},
+	TiDBTimersTableName:                        {},
+	TiDBRunawayWatchDoneTableName:              {},
+	DistFrameworkMetaTableName:                 {},
+	RequestUnitByGroupTableName:                {},
+	TiDBPITRIDMapTableName:                     {},
+	TiDBRestoreRegistryTableName:               {},
+	IndexAdvisorResultsTableName:               {},
+	TiDBKernelOptionsTableName:                 {},
+	TiDBWorkloadValuesTableName:                {},
+	TiDBMaskingPolicyTableName:                 {},
+	TiDBMViewRefreshInfoTableName:              {},
+	TiDBMViewFastRefreshSourceInfoTableName:    {},
+	TiDBMLogPurgeInfoTableName:                 {},
+	TiDBMViewRefreshHistTableName:              {},
+	TiDBMViewRefreshAlertTableName:             {},
+	TiDBMLogPurgeHistTableName:                 {},
+	TiDBStorageClassTransitionHistoryTableName: {},
+	TiDBDDLJobTableName:                        {},
+	TiDBDDLReorgTableName:                      {},
+	TiDBDDLHistoryTableName:                    {},
+	TiDBMDLInfoTableName:                       {},
+	TiDBBackgroundSubtaskTableName:             {},
+	TiDBBackgroundSubtaskHistoryTableName:      {},
+	TiDBDDLNotifierTableName:                   {},
+}
+
+// IsBuiltinSystemTable reports whether lower-case schema and table names identify
+// a built-in mysql table, independently of its persisted object ID.
+func IsBuiltinSystemTable(schemaLowerName, tableLowerName string) bool {
+	if !IsSystemDB(schemaLowerName) {
+		return false
+	}
+	_, ok := builtinMySQLTableNames[tableLowerName]
+	return ok
+}

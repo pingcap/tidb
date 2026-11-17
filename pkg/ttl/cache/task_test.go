@@ -40,6 +40,16 @@ func newTaskGetter(ctx context.Context, t *testing.T, tk *testkit.TestKit) *task
 	}
 }
 
+func newTTLTaskTestKit(t *testing.T) *testkit.TestKit {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.TTLJobManager().Stop()
+	require.NoError(t, dom.TTLJobManager().WaitStopped(context.Background(), time.Minute))
+
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().TimeZone = time.Local
+	return tk
+}
+
 func (tg *taskGetter) mustGetTestTask() *cache.TTLTask {
 	sql, args := cache.SelectFromTTLTaskWithJobID("test-job")
 	rs, err := tg.tk.Session().ExecuteInternal(tg.ctx, sql, args...)
@@ -53,9 +63,7 @@ func (tg *taskGetter) mustGetTestTask() *cache.TTLTask {
 }
 
 func TestRowToTTLTask(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.Session().GetSessionVars().TimeZone = time.Local
+	tk := newTTLTaskTestKit(t)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 	tg := newTaskGetter(ctx, t, tk)
@@ -102,12 +110,16 @@ func TestRowToTTLTask(t *testing.T) {
 	task = tg.mustGetTestTask()
 	require.Equal(t, []types.Datum{types.NewDatum(1)}, task.ScanRangeStart)
 	require.Equal(t, []types.Datum{types.NewDatum(2)}, task.ScanRangeEnd)
+
+	scanIndexID := int64(42)
+	tk.MustExec("UPDATE mysql.tidb_ttl_task SET scan_index_id = ? WHERE job_id = 'test-job'", scanIndexID)
+	task = tg.mustGetTestTask()
+	require.NotNil(t, task.ScanIndexID)
+	require.Equal(t, scanIndexID, *task.ScanIndexID)
 }
 
 func TestInsertIntoTTLTask(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.Session().GetSessionVars().TimeZone = time.Local
+	tk := newTTLTaskTestKit(t)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 	tg := newTaskGetter(ctx, t, tk)

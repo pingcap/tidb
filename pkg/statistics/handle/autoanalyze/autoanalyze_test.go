@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -80,6 +81,37 @@ func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 	_, err = tk.Exec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=OFF")
 	require.Error(t, err)
 	require.Equal(t, "tidb_enable_auto_analyze_priority_queue has been deprecated and TiDB will always use priority queue to schedule auto analyze", err.Error())
+}
+
+func TestShouldSkipAutoAnalyzeTableNotReadyMV(t *testing.T) {
+	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
+		Name: ast.NewCIStr("mv_not_ready"),
+		MaterializedView: &model.MaterializedViewInfo{
+			InitBuildState: model.MViewInitBuildBuilding,
+		},
+	}))
+	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
+		Name: ast.NewCIStr("mv_deferred"),
+		MaterializedView: &model.MaterializedViewInfo{
+			InitBuildState: model.MViewInitBuildDeferred,
+		},
+	}))
+	require.False(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
+		Name: ast.NewCIStr("mv_ready"),
+		MaterializedView: &model.MaterializedViewInfo{
+			InitBuildState: model.MViewInitBuildReady,
+		},
+	}))
+	require.False(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
+		Name: ast.NewCIStr("normal_table"),
+	}))
+	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
+		View: &model.ViewInfo{},
+	}))
+	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
+		MaterializedViewLog: &model.MaterializedViewLogInfo{},
+	}))
+	require.False(t, autoanalyze.ShouldSkipAutoAnalyzeTable(nil))
 }
 
 func TestAutoAnalyzeLockedTable(t *testing.T) {

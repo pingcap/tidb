@@ -247,6 +247,17 @@ type MyDecimal struct {
 	wordBuf [maxWordBufLen]int32
 }
 
+// Clone generate a new decimal with same values
+func (d *MyDecimal) Clone() *MyDecimal {
+	newDec := new(MyDecimal)
+	newDec.digitsInt = d.digitsInt
+	newDec.digitsFrac = d.digitsFrac
+	newDec.resultFrac = d.resultFrac
+	newDec.negative = d.negative
+	copy(newDec.wordBuf[:], d.wordBuf[:])
+	return newDec
+}
+
 // IsNegative returns whether a decimal is negative.
 func (d *MyDecimal) IsNegative() bool {
 	return d.negative

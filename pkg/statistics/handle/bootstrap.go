@@ -53,13 +53,17 @@ const (
 	initStatsPercentageInterval = float64(33)
 )
 
-func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) int64 {
+func (*Handle) initStatsMeta4Chunk(snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) int64 {
 	var (
 		physicalID    int64
 		maxPhysicalID int64
 	)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID = row.GetInt64(1)
+		if _, found := snapshotTableInfoGetter.TableItemByID(physicalID); !found {
+			// The table corresponding to this physical ID has been dropped but the stats meta has not yet been garbage collected.
+			continue
+		}
 		maxPhysicalID = max(physicalID, maxPhysicalID)
 		newHistColl := *statistics.NewHistColl(physicalID, row.GetInt64(3), row.GetInt64(2), 4, 4)
 		// During the initialization phase, we need to initialize LastAnalyzeVersion with the snapshot,
@@ -99,8 +103,8 @@ func genInitStatsMetaSQL(tableIDs ...int64) string {
 	return selectPrefix + whereClausePrefix + inListStr + whereClauseSuffix
 }
 
-func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (statstypes.StatsCache, int64, error) {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, snapshotTableInfoGetter *util.SnapshotTableInfoGetter, tableIDs ...int64) (statstypes.StatsCache, int64, error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	sql := genInitStatsMetaSQL(tableIDs...)
 	rc, err := util.Exec(sctx, sql)
 	if err != nil {
@@ -122,7 +126,7 @@ func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, tab
 		if req.NumRows() == 0 {
 			break
 		}
-		chunkMax := h.initStatsMeta4Chunk(cache, iter)
+		chunkMax := h.initStatsMeta4Chunk(snapshotTableInfoGetter, cache, iter)
 		maxPhysicalID = max(maxPhysicalID, chunkMax)
 	}
 	return cache, maxPhysicalID, nil
@@ -177,7 +181,7 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 	}
 }
 
-func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, isCacheFull bool) {
+func (*Handle) initStatsHistograms4Chunk(snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, isCacheFull bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("panic when initStatsHistograms4Chunk", zap.Any("r", r),
@@ -204,7 +208,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			}
 			table = table.CopyAs(statistics.BothMapsWritable)
 			// Fetch table info only once per table instead of once per row
-			tblInfo, ok = h.TableInfoByIDForInitStats(is, tblID)
+			tblInfo, ok = snapshotTableInfoGetter.TableInfoByID(tblID)
 			if !ok {
 				// Table not found - likely dropped but stats metadata not yet garbage collected. Skip loading stats for this table.
 				statslogutil.StatsSampleLogger().Warn("table info not found during stats initialization, skipping", zap.Int64("physicalID", table.PhysicalID))
@@ -383,7 +387,7 @@ func (h *Handle) initStatsHistogramsLite(ctx context.Context, sctx sessionctx.Co
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -402,24 +406,24 @@ func (h *Handle) initStatsHistogramsLite(ctx context.Context, sctx sessionctx.Co
 	return nil
 }
 
-func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
+func (h *Handle) initStatsHistogramsByPaging(snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
 	return h.Pool.SPool().WithSession(func(se *syssession.Session) error {
 		return se.WithSessionContext(func(sctx sessionctx.Context) error {
-			return h.initStatsHistogramsByPagingWithSCtx(sctx, is, cache, task, totalMemory)
+			return h.initStatsHistogramsByPagingWithSCtx(sctx, snapshotTableInfoGetter, cache, task, totalMemory)
 		})
 	})
 }
 
 // initStatsHistogramsByPagingWithSCtx contains the core business logic for initStatsHistogramsByPaging.
 // This method preserves git blame history by keeping the original logic intact.
-func (h *Handle) initStatsHistogramsByPagingWithSCtx(sctx sessionctx.Context, is infoschema.InfoSchema, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
+func (h *Handle) initStatsHistogramsByPagingWithSCtx(sctx sessionctx.Context, snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
 	sql := genInitStatsHistogramsSQL(newGenHistSQLOptionsForPaging([2]int64{task.StartTid, task.EndTid}))
 	rc, err := util.Exec(sctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -430,7 +434,7 @@ func (h *Handle) initStatsHistogramsByPagingWithSCtx(sctx sessionctx.Context, is
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsHistograms4Chunk(is, cache, iter, isFullCache(cache, totalMemory))
+		h.initStatsHistograms4Chunk(snapshotTableInfoGetter, cache, iter, isFullCache(cache, totalMemory))
 		// The same table may continue in the next chunk. Drain LFU async admission/rejection
 		// before the next chunk reads or mutates it again.
 		cache.WaitForAsyncUpdates()
@@ -508,12 +512,12 @@ func (t tableListStrategy) generateAndSendTasks(worker *initstats.RangeWorker) {
 	}
 }
 
-func (h *Handle) initStatsHistogramsConcurrently(is infoschema.InfoSchema, cache statstypes.StatsCache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
+func (h *Handle) initStatsHistogramsConcurrently(snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache statstypes.StatsCache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
 	totalTaskCnt := strategy.calculateTotalTaskCnt()
 	ls := initstats.NewRangeWorker(
 		"histogram",
 		func(task initstats.Task) error {
-			return h.initStatsHistogramsByPaging(is, cache, task, totalMemory)
+			return h.initStatsHistogramsByPaging(snapshotTableInfoGetter, cache, task, totalMemory)
 		},
 		concurrency,
 		totalTaskCnt,
@@ -593,7 +597,6 @@ func genInitStatsTopNSQLForIndexes(isPaging bool, tableRange [2]int64) string {
 func getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (map[int64]struct{}, error) {
 	// Query to find table_ids that have buckets in the given range
 	// Keep the USE_INDEX(tbl) hint for upgraded clusters; see genInitStatsHistogramsSQL.
-	// TODO: Figure out if HIGH_PRIORITY is working as intended here.
 	sql := "select /*+ USE_INDEX(stats_buckets, tbl) */ HIGH_PRIORITY distinct table_id from mysql.stats_buckets" +
 		" where is_index = 1" +
 		" and table_id >= " + strconv.FormatInt(tableRange[0], 10) +
@@ -605,7 +608,7 @@ func getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (
 	}
 	defer terror.Call(rc.Close)
 
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	tablesWithBuckets := make(map[int64]struct{})
@@ -650,7 +653,7 @@ func (h *Handle) initStatsTopNByPagingWithSCtx(sctx sessionctx.Context, cache st
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -783,7 +786,7 @@ func (h *Handle) initStatsBucketsByPagingWithSCtx(sctx sessionctx.Context, cache
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -836,15 +839,15 @@ func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, total
 // 3. TopN, Bucket, FMSketch are not loaded.
 // And to work with auto analyze's needs, we need to read all the tables' stats meta into memory.
 // The sync/async load of the stats or other process haven't done a full initialization of the table.ColAndIdxExistenceMap. So we need to it here.
-func (h *Handle) InitStatsLite(ctx context.Context, tableIDs ...int64) error {
+func (h *Handle) InitStatsLite(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) error {
 	return h.Pool.SPool().WithForceBlockGCSession(ctx, func(se *syssession.Session) error {
 		return se.WithSessionContext(func(sctx sessionctx.Context) error {
-			return h.initStatsLiteWithSession(ctx, sctx, tableIDs...)
+			return h.initStatsLiteWithSession(ctx, sctx, is, tableIDs...)
 		})
 	})
 }
 
-func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (err error) {
+func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, tableIDs ...int64) (err error) {
 	defer func() {
 		_, err1 := util.Exec(sctx, "commit")
 		if err == nil && err1 != nil {
@@ -857,7 +860,8 @@ func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.C
 	}
 	failpoint.Inject("beforeInitStatsLite", func() {})
 	start := time.Now()
-	cache, _, err := h.initStatsMeta(ctx, sctx, tableIDs...)
+	snapshotTableInfoGetter := util.NewSnapshotTableInfoGetter(is)
+	cache, _, err := h.initStatsMeta(ctx, sctx, snapshotTableInfoGetter, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -926,7 +930,8 @@ func (h *Handle) initStatsWithSession(ctx context.Context, sctx sessionctx.Conte
 	failpoint.Inject("beforeInitStats", func() {})
 
 	start := time.Now()
-	cache, maxTableID, err := h.initStatsMeta(ctx, sctx, tableIDs...)
+	snapshotTableInfoGetter := util.NewSnapshotTableInfoGetter(is)
+	cache, maxTableID, err := h.initStatsMeta(ctx, sctx, snapshotTableInfoGetter, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -939,7 +944,7 @@ func (h *Handle) initStatsWithSession(ctx context.Context, sctx sessionctx.Conte
 	concurrency := initstats.GetConcurrency()
 	strategy := newLoadStrategy(maxTableID, tableIDs)
 	start = time.Now()
-	err = h.initStatsHistogramsConcurrently(is, cache, totalMemory, concurrency, strategy)
+	err = h.initStatsHistogramsConcurrently(snapshotTableInfoGetter, cache, totalMemory, concurrency, strategy)
 	if err != nil {
 		return errors.Trace(err)
 	}

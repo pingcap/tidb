@@ -274,15 +274,16 @@ func randValue(tk *testkit.TestKit, tbl, col, dtype, rtype string) string {
 			return fmt.Sprintf("'%v'", rand.Intn(4294967295))
 		}
 	case "float":
+		// Avoid generating negative zero after rounding, which cannot be pushed down.
 		switch rtype {
 		case "valid":
-			return fmt.Sprintf("%v%.4fE%v", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(38))
+			return fmt.Sprintf("%v0.%04dE%v", []string{"+", "-"}[rand.Intn(2)], rand.Intn(9999)+1, rand.Intn(38))
 		case "out-of-range":
-			return fmt.Sprintf("%v%.4fE%v", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(100)+38)
+			return fmt.Sprintf("%v0.%04dE%v", []string{"+", "-"}[rand.Intn(2)], rand.Intn(9999)+1, rand.Intn(100)+38)
 		case "invalid":
 			return "'invalid-float'"
 		case "str":
-			return fmt.Sprintf("'%v%.4fE%v'", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(38))
+			return fmt.Sprintf("'%v0.%04dE%v'", []string{"+", "-"}[rand.Intn(2)], rand.Intn(9999)+1, rand.Intn(38))
 		}
 	case "decimal": // (10,2)
 		switch rtype {
@@ -462,8 +463,15 @@ func TestPrepareOverMaxPreparedStmtCount(t *testing.T) {
 
 	// test change global limit and make it affected in test session.
 	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("-1"))
-	tk.MustExec("set @@global.max_prepared_stmt_count = 2")
-	tk.MustQuery("select @@global.max_prepared_stmt_count").Check(testkit.Rows("2"))
+	// Earlier tests in this process can leave sessions open, so the process-wide
+	// prepared-statement count may already be at least 2.
+	limit := readGaugeInt(metrics.PreparedStmtGauge) + 1
+	if limit < 2 {
+		limit = 2
+	}
+	limitStr := strconv.Itoa(limit)
+	tk.MustExec("set @@global.max_prepared_stmt_count = " + limitStr)
+	tk.MustQuery("select @@global.max_prepared_stmt_count").Check(testkit.Rows(limitStr))
 
 	// test close session to give up all prepared stmt
 	tk.MustExec(`prepare stmt2 from "select 1"`)
@@ -474,10 +482,10 @@ func TestPrepareOverMaxPreparedStmtCount(t *testing.T) {
 
 	// test meet max limit.
 	tk.RefreshSession()
-	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("2"))
+	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows(limitStr))
 	for i := 1; ; i++ {
 		prePrepared = readGaugeInt(metrics.PreparedStmtGauge)
-		if prePrepared >= 2 {
+		if prePrepared >= limit {
 			tk.MustGetErrCode(`prepare stmt`+strconv.Itoa(i)+` from "select 1"`, errno.ErrMaxPreparedStmtCountReached)
 			break
 		}
@@ -1382,6 +1390,34 @@ func TestCachedTable(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
+func TestPlanCacheWithUnrelatedSchemaChange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ddl := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	ddl.MustExec("use test")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (1, 10), (2, 20)")
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("prepare stmt from 'select * from t where a < ?'")
+	tk.MustExec("set @a = 2")
+
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1 10"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1 10"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	ddl.MustExec("create table unrelated (a int)")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1 10"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	ddl.MustExec("alter table t add index idx_a (a)")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1 10"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1 10"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
 func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("MDL is always enabled and read only in nextgen")
@@ -1706,4 +1742,24 @@ func TestHashPartitionAndPlanCache(t *testing.T) {
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	explain = tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 	require.Equal(t, "Point_Get_1", explain.Rows()[0][0])
+}
+
+func TestBatchPointGetPlanCacheMixedInList(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (k1 int, k2 int, v int, unique key uk(k1, k2))")
+	tk.MustExec("insert into t values (1, 2, 100), (3, 2, 200), (1, 4, 300)")
+	// The first IN-list row has a literal where the second row has a parameter
+	// marker (and vice versa). The batch-point-get plan-cache range rebuild used
+	// to dereference a nil index-column type for such a column and panic on the
+	// second (cache-hit) execution.
+	tk.MustExec("prepare st from 'select v from t where (k1, k2) in ((1, ?), (?, 2))'")
+	tk.MustExec("set @a = 2, @b = 3")
+	tk.MustQuery("execute st using @a, @b").Sort().Check(testkit.Rows("100", "200"))
+	// Re-execute with new values to hit the plan cache and exercise the rebuild.
+	tk.MustExec("set @a = 4, @b = 3")
+	tk.MustQuery("execute st using @a, @b").Sort().Check(testkit.Rows("200", "300"))
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 }

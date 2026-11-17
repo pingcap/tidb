@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -43,8 +44,10 @@ import (
 
 func TestHandle(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 
-	ctx := util.WithInternalSourceType(context.Background(), "handle_test")
+	ctx, cancel := context.WithTimeout(util.WithInternalSourceType(context.Background(), "handle_test"), 10*time.Second)
+	defer cancel()
 
 	store := testkit.CreateMockStore(t)
 	gtk := testkit.NewTestKit(t, store)
@@ -55,31 +58,38 @@ func TestHandle(t *testing.T) {
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
 
-	// no scheduler registered
-	task, err := handle.SubmitTask(ctx, "1", proto.TaskTypeExample, store.GetKeyspace(), 2, "", 0, proto.EmptyMeta)
-	require.NoError(t, err)
-	waitedTaskBase, err := handle.WaitTask(ctx, task.ID, func(task *proto.TaskBase) bool {
-		return task.IsDone()
-	})
-	require.NoError(t, err)
-	require.Equal(t, proto.TaskStateFailed, waitedTaskBase.State)
-	waitedTask, err := mgr.GetTaskByIDWithHistory(ctx, task.ID)
-	require.NoError(t, err)
-	require.ErrorContains(t, waitedTask.Error, "unknown task type")
+	func() {
+		require.NoError(t, mgr.InitMeta(ctx, ":4000", handle.GetTargetScope()))
+		sch := scheduler.NewManager(ctx, store, mgr, ":4000", proto.NodeResourceForTest)
+		sch.Start()
+		defer sch.Stop()
 
-	task, err = mgr.GetTaskByID(ctx, task.ID)
-	require.NoError(t, err)
-	require.Equal(t, "1", task.Key)
-	require.Equal(t, proto.TaskTypeExample, task.Type)
-	// no scheduler registered.
-	require.Equal(t, proto.TaskStateFailed, task.State)
-	require.Equal(t, proto.StepInit, task.Step)
-	require.Equal(t, 2, task.RequiredSlots)
-	require.Equal(t, proto.EmptyMeta, task.Meta)
+		// no scheduler registered
+		task, err := handle.SubmitTask(ctx, "1", proto.TaskTypeExample, store.GetKeyspace(), 2, "", 0, proto.EmptyMeta)
+		require.NoError(t, err)
+		waitedTaskBase, err := handle.WaitTask(ctx, task.ID, func(task *proto.TaskBase) bool {
+			return task.IsDone()
+		})
+		require.NoError(t, err)
+		require.Equal(t, proto.TaskStateFailed, waitedTaskBase.State)
+		waitedTask, err := mgr.GetTaskByIDWithHistory(ctx, task.ID)
+		require.NoError(t, err)
+		require.ErrorContains(t, waitedTask.Error, "unknown task type")
+
+		task, err = mgr.GetTaskByID(ctx, task.ID)
+		require.NoError(t, err)
+		require.Equal(t, "1", task.Key)
+		require.Equal(t, proto.TaskTypeExample, task.Type)
+		// no scheduler registered.
+		require.Equal(t, proto.TaskStateFailed, task.State)
+		require.Equal(t, proto.StepInit, task.Step)
+		require.Equal(t, 2, task.RequiredSlots)
+		require.Equal(t, proto.EmptyMeta, task.Meta)
+	}()
 
 	require.NoError(t, handle.CancelTask(ctx, "1"))
 
-	task, err = handle.SubmitTask(ctx, "2", proto.TaskTypeExample, store.GetKeyspace(), 2, "", 0, proto.EmptyMeta)
+	task, err := handle.SubmitTask(ctx, "2", proto.TaskTypeExample, store.GetKeyspace(), 2, "", 0, proto.EmptyMeta)
 	require.NoError(t, err)
 	require.Equal(t, "2", task.Key)
 

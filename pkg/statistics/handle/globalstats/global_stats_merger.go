@@ -1,0 +1,627 @@
+// Copyright 2023 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package globalstats
+
+import (
+	"context"
+	stderrors "errors"
+	"fmt"
+	"time"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/statistics"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+)
+
+type mergeItem[T any] struct {
+	item T
+	idx  int
+}
+
+// partitionItemID identifies a column or index of one partition, like model.TableItemID.
+// One merge handles only columns or only indexes, so it needs no IsIndex field.
+type partitionItemID struct {
+	histID      int64
+	partitionID int64
+}
+
+// statsWrapper holds the histograms and TopNs of one column or index in all partitions.
+type statsWrapper struct {
+	AllHg   []*statistics.Histogram
+	AllTopN []*statistics.TopN
+	// missedNotNull is the non-NULL rows of the partitions whose TopN and
+	// histogram are empty. Only their sketches count these rows.
+	missedNotNull int64
+}
+
+func newStatsWrapper(hg []*statistics.Histogram, topN []*statistics.TopN) *statsWrapper {
+	return &statsWrapper{
+		AllHg:   hg,
+		AllTopN: topN,
+	}
+}
+
+// toSQLIndex is used to convert bool to int64.
+func toSQLIndex(isIndex bool) int {
+	var index = int(0)
+	if isIndex {
+		index = 1
+	}
+	return index
+}
+
+// globalStatsMerger is used to merge partition stats to global stats.
+// it divides the merge task into two parts.
+// - IOWorker: load stats from storage. it will load fmsketch, cmsketch, histogram and topn. and send them to cpuWorker.
+// - CPUWorker: merge the stats from IOWorker and generate global stats.
+//
+// ┌────────────────────────┐        ┌───────────────────────┐
+// │                        │        │                       │
+// │                        │        │                       │
+// │                        │        │                       │
+// │    IOWorker            │        │   CPUWorker           │
+// │                        │  ────► │                       │
+// │                        │        │                       │
+// │                        │        │                       │
+// │                        │        │                       │
+// └────────────────────────┘        └───────────────────────┘
+type globalStatsMerger struct {
+	is                  infoschema.InfoSchema
+	statsHandle         statstypes.StatsHandle
+	globalStats         *GlobalStats
+	cmsketch            chan mergeItem[*statistics.CMSketch]
+	fmsketch            chan mergeItem[*statistics.FMSketch]
+	histogramAndTopn    chan mergeItem[*statsWrapper]
+	PartitionDefinition map[int64]model.PartitionDefinition
+	tableInfo           map[int64]*model.TableInfo
+	// key is partition id and histID
+	skipPartition map[partitionItemID]struct{}
+	// sketchNotNull saves NotNullRows of each partition's sketch, for the histIDs that
+	// have a sampled sketch. A partition needs it if its TopN and histogram are empty,
+	// but those load after the sketch is gone.
+	sketchNotNull map[partitionItemID]int64
+	// sampledNDV is, for each histID, whether a partition sketch was sampled.
+	// dealFMSketch saves it because sampledGlobalNDV runs after the mergers are gone.
+	sampledNDV []bool
+	// ioWorker meet error, it will close this channel to notify cpuWorker.
+	ioWorkerExitWhenErrChan chan struct{}
+	// cpuWorker exit, it will close this channel to notify ioWorker.
+	cpuWorkerExitChan         chan struct{}
+	globalTableInfo           *model.TableInfo
+	histIDs                   []int64
+	globalStatsNDV            []int64
+	partitionIDs              []int64
+	partitionNum              int
+	skipMissingPartitionStats bool
+}
+
+func newGlobalStatsMerger(
+	statsHandle statstypes.StatsHandle,
+	globalTableInfo *model.TableInfo,
+	histIDs []int64,
+	is infoschema.InfoSchema) *globalStatsMerger {
+	partitionNum := len(globalTableInfo.Partition.Definitions)
+	return &globalStatsMerger{
+		statsHandle:             statsHandle,
+		cmsketch:                make(chan mergeItem[*statistics.CMSketch], 5),
+		fmsketch:                make(chan mergeItem[*statistics.FMSketch], 5),
+		histogramAndTopn:        make(chan mergeItem[*statsWrapper]),
+		PartitionDefinition:     make(map[int64]model.PartitionDefinition),
+		tableInfo:               make(map[int64]*model.TableInfo),
+		partitionIDs:            make([]int64, 0, partitionNum),
+		ioWorkerExitWhenErrChan: make(chan struct{}),
+		cpuWorkerExitChan:       make(chan struct{}),
+		skipPartition:           make(map[partitionItemID]struct{}),
+		sketchNotNull:           make(map[partitionItemID]int64),
+		globalTableInfo:         globalTableInfo,
+		histIDs:                 histIDs,
+		is:                      is,
+		partitionNum:            partitionNum,
+	}
+}
+
+func (a *globalStatsMerger) prepare(sctx sessionctx.Context, isIndex bool) (err error) {
+	if len(a.histIDs) == 0 {
+		for _, col := range a.globalTableInfo.Columns {
+			// The virtual generated column stats can not be merged to the global stats.
+			if col.IsVirtualGenerated() {
+				continue
+			}
+			a.histIDs = append(a.histIDs, col.ID)
+		}
+	}
+	a.globalStats = newGlobalStats(len(a.histIDs))
+	a.globalStatsNDV = make([]int64, 0, a.globalStats.Num)
+	a.sampledNDV = make([]bool, 0, a.globalStats.Num)
+	statslogutil.StatsLogger().Info("global stats prepare: fetching per-partition meta",
+		zap.String("table", a.globalTableInfo.Name.L),
+		zap.Int64("tableID", a.globalTableInfo.ID),
+		zap.Bool("isIndex", isIndex),
+		zap.Int("partitions", a.partitionNum),
+		zap.Int("histIDs", len(a.histIDs)),
+		zap.String("reads", "mysql.stats_meta, mysql.stats_histograms"))
+	// get all partition stats
+	for _, def := range a.globalTableInfo.Partition.Definitions {
+		partitionID := def.ID
+		a.partitionIDs = append(a.partitionIDs, partitionID)
+		a.PartitionDefinition[partitionID] = def
+		partitionTable, ok := a.statsHandle.TableInfoByID(a.is, partitionID)
+		if !ok {
+			return errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", partitionID)
+		}
+		tableInfo := partitionTable.Meta()
+		a.tableInfo[partitionID] = tableInfo
+		realtimeCount, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(
+			util.StatsCtx,
+			sctx,
+			partitionID,
+		)
+		if err != nil {
+			return err
+		}
+		if !isNull {
+			// In a partition, we will only update globalStats.Count once.
+			a.globalStats.Count += realtimeCount
+			a.globalStats.ModifyCount += modifyCount
+		}
+		err1 := skipPartition(sctx, partitionID, isIndex)
+		if err1 != nil {
+			// no idx so idx = 0
+			err := a.dealWithSkipPartition(partitionID, isIndex, 0, err1)
+			if err != nil {
+				return err
+			}
+			if types.ErrPartitionStatsMissing.Equal(err1) {
+				continue
+			}
+		}
+		for idx, hist := range a.histIDs {
+			err1 := skipColumnPartition(sctx, partitionID, isIndex, hist)
+			if err1 != nil {
+				err := a.dealWithSkipPartition(partitionID, isIndex, idx, err1)
+				if err != nil {
+					return err
+				}
+				if types.ErrPartitionStatsMissing.Equal(err1) {
+					break
+				}
+			}
+		}
+	}
+	statslogutil.StatsLogger().Info("global stats prepare: done",
+		zap.String("table", a.globalTableInfo.Name.L),
+		zap.Int64("tableID", a.globalTableInfo.ID),
+		zap.Bool("isIndex", isIndex),
+		zap.Int("partitions", len(a.partitionIDs)),
+		zap.Int("skippedHistPartitionPairs", len(a.skipPartition)),
+		zap.Int("missing", len(a.globalStats.MissingPartitionStats)),
+		zap.Int64("realtimeCount", a.globalStats.Count),
+		zap.Int64("modifyCount", a.globalStats.ModifyCount))
+	return nil
+}
+
+func (a *globalStatsMerger) dealWithSkipPartition(partitionID int64, isIndex bool, idx int, err error) error {
+	switch {
+	case types.ErrPartitionStatsMissing.Equal(err):
+		return a.dealErrPartitionStatsMissing(partitionID)
+	case types.ErrPartitionColumnStatsMissing.Equal(err):
+		return a.dealErrPartitionColumnStatsMissing(isIndex, partitionID, idx)
+	default:
+		return err
+	}
+}
+
+func (a *globalStatsMerger) dealErrPartitionStatsMissing(partitionID int64) error {
+	missingPart := fmt.Sprintf("partition `%s`", a.PartitionDefinition[partitionID].Name.L)
+	a.globalStats.MissingPartitionStats = append(a.globalStats.MissingPartitionStats, missingPart)
+	for _, histID := range a.histIDs {
+		a.skipPartition[partitionItemID{
+			histID:      histID,
+			partitionID: partitionID,
+		}] = struct{}{}
+	}
+	return nil
+}
+
+func (a *globalStatsMerger) dealErrPartitionColumnStatsMissing(isIndex bool, partitionID int64, idx int) error {
+	var missingPart string
+	if isIndex {
+		missingPart = fmt.Sprintf("partition `%s` index `%s`", a.PartitionDefinition[partitionID].Name.L, a.tableInfo[partitionID].FindIndexNameByID(a.histIDs[idx]))
+	} else {
+		missingPart = fmt.Sprintf("partition `%s` column `%s`", a.PartitionDefinition[partitionID].Name.L, a.tableInfo[partitionID].FindColumnNameByID(a.histIDs[idx]))
+	}
+	if !a.skipMissingPartitionStats {
+		return types.ErrPartitionColumnStatsMissing.GenWithStackByArgs(fmt.Sprintf("table `%s` %s", a.tableInfo[partitionID].Name.L, missingPart))
+	}
+	a.globalStats.MissingPartitionStats = append(a.globalStats.MissingPartitionStats, missingPart)
+	a.skipPartition[partitionItemID{
+		histID:      a.histIDs[idx],
+		partitionID: partitionID,
+	}] = struct{}{}
+	return nil
+}
+
+func (a *globalStatsMerger) ioWorker(sctx sessionctx.Context, isIndex bool) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			statslogutil.StatsLogger().Warn("ioWorker panic", zap.Stack("stack"), zap.Any("error", r))
+			close(a.ioWorkerExitWhenErrChan)
+			err = errors.New(fmt.Sprint(r))
+		}
+	}()
+	err = a.loadFmsketch(sctx, isIndex)
+	if err != nil {
+		close(a.ioWorkerExitWhenErrChan)
+		return err
+	}
+	close(a.fmsketch)
+	err = a.loadCMsketch(sctx, isIndex)
+	if err != nil {
+		close(a.ioWorkerExitWhenErrChan)
+		return err
+	}
+	close(a.cmsketch)
+	failpoint.Inject("PanicSameTime", func(val failpoint.Value) {
+		if val, _ := val.(bool); val {
+			time.Sleep(1 * time.Second)
+			panic("test for PanicSameTime")
+		}
+	})
+	err = a.loadHistogramAndTopN(sctx, a.globalTableInfo, isIndex)
+	if err != nil {
+		close(a.ioWorkerExitWhenErrChan)
+		return err
+	}
+	close(a.histogramAndTopn)
+	return nil
+}
+
+func (a *globalStatsMerger) cpuWorker(stmtCtx *stmtctx.StatementContext, killer *sqlkiller.SQLKiller, opts map[ast.AnalyzeOptionType]uint64, isIndex bool) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			statslogutil.StatsLogger().Warn("cpuWorker panic", zap.Stack("stack"), zap.Any("error", r))
+			err = errors.New(fmt.Sprint(r))
+		}
+		close(a.cpuWorkerExitChan)
+	}()
+	a.dealFMSketch()
+	select {
+	case <-a.ioWorkerExitWhenErrChan:
+		return nil
+	default:
+	}
+	err = a.dealCMSketch()
+	if err != nil {
+		statslogutil.StatsLogger().Warn("dealCMSketch failed", zap.Error(err))
+		return err
+	}
+	failpoint.Inject("PanicSameTime", func(val failpoint.Value) {
+		if val, _ := val.(bool); val {
+			time.Sleep(1 * time.Second)
+			panic("test for PanicSameTime")
+		}
+	})
+	err = a.dealHistogramAndTopN(stmtCtx, killer, opts, isIndex)
+	if err != nil {
+		statslogutil.StatsLogger().Warn("dealHistogramAndTopN failed", zap.Error(err))
+		return err
+	}
+	return nil
+}
+
+// Result returns the global stats.
+func (a *globalStatsMerger) Result() *GlobalStats {
+	return a.globalStats
+}
+
+// MergePartitionStats2GlobalStats merges partition stats to global stats.
+func (a *globalStatsMerger) MergePartitionStats2GlobalStats(
+	sctx sessionctx.Context,
+	opts map[ast.AnalyzeOptionType]uint64,
+	isIndex bool,
+) error {
+	a.skipMissingPartitionStats = sctx.GetSessionVars().SkipMissingPartitionStats
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	// Capture the caller's SQLKiller here. Inside CallWithSCtx the
+	// passed-in sctx is a pooled stats session whose lifecycle is
+	// independent of the user's query, so its killer wouldn't reflect
+	// user-initiated KILL / connection close.
+	killer := &sctx.GetSessionVars().SQLKiller
+	return util.CallWithSCtx(a.statsHandle.SPool(),
+		func(sctx sessionctx.Context) error {
+			err := a.prepare(sctx, isIndex)
+			if err != nil {
+				return err
+			}
+			ctx := context.Background()
+			metawg, _ := errgroup.WithContext(ctx)
+			mergeWg, _ := errgroup.WithContext(ctx)
+			metawg.Go(func() error {
+				return a.ioWorker(sctx, isIndex)
+			})
+			mergeWg.Go(func() error {
+				return a.cpuWorker(stmtCtx, killer, opts, isIndex)
+			})
+			err = metawg.Wait()
+			if err != nil {
+				if err1 := mergeWg.Wait(); err1 != nil {
+					err = stderrors.Join(err, err1)
+				}
+				return err
+			}
+			return mergeWg.Wait()
+		},
+	)
+}
+
+func (a *globalStatsMerger) loadFmsketch(sctx sessionctx.Context, isIndex bool) error {
+	statslogutil.StatsLogger().Info("global stats load: fmsketch",
+		zap.String("table", a.globalTableInfo.Name.L),
+		zap.Int64("tableID", a.globalTableInfo.ID),
+		zap.Bool("isIndex", isIndex),
+		zap.Int("histIDs", a.globalStats.Num),
+		zap.Int("partitions", len(a.partitionIDs)),
+		zap.String("reads", "mysql.stats_fm_sketch"))
+	// Only the limit of a sampled NDV reads NotNullRows. notNull holds the values of
+	// one histID, so that a merge of full-input sketches keeps none of them.
+	notNull := make(map[int64]int64, len(a.partitionIDs))
+	for i := range a.globalStats.Num {
+		clear(notNull)
+		sampled := false
+		// load fmsketch from tikv
+		for _, partitionID := range a.partitionIDs {
+			_, ok := a.skipPartition[partitionItemID{
+				histID:      a.histIDs[i],
+				partitionID: partitionID,
+			}]
+			if ok {
+				continue
+			}
+			fmsketch, err := storage.FMSketchFromStorage(sctx, partitionID, int64(toSQLIndex(isIndex)), a.histIDs[i])
+			if err != nil {
+				return err
+			}
+			notNull[partitionID] = fmsketch.NotNullRows()
+			sampled = sampled || fmsketch.Sampled()
+			select {
+			case a.fmsketch <- mergeItem[*statistics.FMSketch]{
+				fmsketch, i,
+			}:
+			case <-a.cpuWorkerExitChan:
+				statslogutil.StatsLogger().Warn("ioWorker detects CPUWorker has exited")
+				return nil
+			}
+		}
+		if sampled {
+			for partitionID, rows := range notNull {
+				a.sketchNotNull[partitionItemID{histID: a.histIDs[i], partitionID: partitionID}] = rows
+			}
+		}
+	}
+	return nil
+}
+
+func (a *globalStatsMerger) loadCMsketch(sctx sessionctx.Context, isIndex bool) error {
+	failpoint.Inject("PanicInIOWorker", nil)
+	statslogutil.StatsLogger().Info("global stats load: cmsketch",
+		zap.String("table", a.globalTableInfo.Name.L),
+		zap.Int64("tableID", a.globalTableInfo.ID),
+		zap.Bool("isIndex", isIndex),
+		zap.Int("histIDs", a.globalStats.Num),
+		zap.Int("partitions", len(a.partitionIDs)),
+		zap.String("reads", "mysql.stats_histograms"))
+	for i := range a.globalStats.Num {
+		for _, partitionID := range a.partitionIDs {
+			_, ok := a.skipPartition[partitionItemID{
+				histID:      a.histIDs[i],
+				partitionID: partitionID,
+			}]
+			if ok {
+				continue
+			}
+			cmsketch, err := storage.CMSketchFromStorage(sctx, partitionID, toSQLIndex(isIndex), a.histIDs[i])
+			if err != nil {
+				return err
+			}
+			select {
+			case a.cmsketch <- mergeItem[*statistics.CMSketch]{
+				cmsketch, i,
+			}:
+			case <-a.cpuWorkerExitChan:
+				statslogutil.StatsLogger().Warn("ioWorker detects CPUWorker has exited")
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
+func (a *globalStatsMerger) loadHistogramAndTopN(sctx sessionctx.Context, tableInfo *model.TableInfo, isIndex bool) error {
+	failpoint.Inject("ErrorSameTime", func(val failpoint.Value) {
+		if val, _ := val.(bool); val {
+			time.Sleep(1 * time.Second)
+			failpoint.Return(errors.New("ErrorSameTime returned error"))
+		}
+	})
+	statslogutil.StatsLogger().Info("global stats load: histogram + topN",
+		zap.String("table", a.globalTableInfo.Name.L),
+		zap.Int64("tableID", a.globalTableInfo.ID),
+		zap.Bool("isIndex", isIndex),
+		zap.Int("histIDs", a.globalStats.Num),
+		zap.Int("partitions", len(a.partitionIDs)),
+		zap.String("reads", "mysql.stats_histograms, mysql.stats_buckets, mysql.stats_top_n"))
+	for i := range a.globalStats.Num {
+		hists := make([]*statistics.Histogram, 0, a.partitionNum)
+		topn := make([]*statistics.TopN, 0, a.partitionNum)
+		var missedNotNull int64
+		for _, partitionID := range a.partitionIDs {
+			_, ok := a.skipPartition[partitionItemID{
+				histID:      a.histIDs[i],
+				partitionID: partitionID,
+			}]
+			if ok {
+				continue
+			}
+			h, err := storage.LoadHistogram(sctx, partitionID, toSQLIndex(isIndex), a.histIDs[i], tableInfo)
+			if err != nil {
+				return err
+			}
+			t, err := storage.TopNFromStorage(sctx, partitionID, toSQLIndex(isIndex), a.histIDs[i])
+			if err != nil {
+				return err
+			}
+			hists = append(hists, h)
+			topn = append(topn, t)
+			if topNHistNotNull(h, t) == 0 {
+				missedNotNull += a.sketchNotNull[partitionItemID{histID: a.histIDs[i], partitionID: partitionID}]
+			}
+		}
+		// This only happens when there are no records for the histogram and TopN in the system tables.
+		// It may be due to the DDL event not having been processed yet (resulting in no histogram), and the table being empty (resulting in no TopNs).
+		if len(hists) == 0 && len(topn) == 0 {
+			continue
+		}
+		wrapper := newStatsWrapper(hists, topn)
+		wrapper.missedNotNull = missedNotNull
+		select {
+		case a.histogramAndTopn <- mergeItem[*statsWrapper]{
+			wrapper, i,
+		}:
+		case <-a.cpuWorkerExitChan:
+			statslogutil.StatsLogger().Warn("ioWorker detects CPUWorker has exited")
+			return nil
+		}
+	}
+
+	return nil
+}
+
+func (a *globalStatsMerger) dealFMSketch() {
+	failpoint.Inject("PanicInCPUWorker", nil)
+	ndvMergers := make([]statistics.PartitionNDVMerger, a.globalStats.Num)
+	for {
+		select {
+		case fms, ok := <-a.fmsketch:
+			if !ok {
+				for i := range ndvMergers {
+					ndv := min(ndvMergers[i].NDV(), a.globalStats.Count)
+					a.globalStatsNDV = append(a.globalStatsNDV, ndv)
+					a.sampledNDV = append(a.sampledNDV, ndvMergers[i].Sampled())
+				}
+				return
+			}
+			ndvMergers[fms.idx].Merge(fms.item)
+		case <-a.ioWorkerExitWhenErrChan:
+			return
+		}
+	}
+}
+
+func (a *globalStatsMerger) dealCMSketch() error {
+	failpoint.Inject("dealCMSketchErr", func(val failpoint.Value) {
+		if val, _ := val.(bool); val {
+			failpoint.Return(errors.New("dealCMSketch returned error"))
+		}
+	})
+	for {
+		select {
+		case cms, ok := <-a.cmsketch:
+			if !ok {
+				return nil
+			}
+			if a.globalStats.Cms[cms.idx] == nil {
+				a.globalStats.Cms[cms.idx] = cms.item
+			} else {
+				err := a.globalStats.Cms[cms.idx].MergeCMSketch(cms.item)
+				if err != nil {
+					return err
+				}
+			}
+		case <-a.ioWorkerExitWhenErrChan:
+			return nil
+		}
+	}
+}
+
+func (a *globalStatsMerger) dealHistogramAndTopN(stmtCtx *stmtctx.StatementContext, killer *sqlkiller.SQLKiller, opts map[ast.AnalyzeOptionType]uint64, isIndex bool) (err error) {
+	failpoint.Inject("dealHistogramAndTopNErr", func(val failpoint.Value) {
+		if val, _ := val.(bool); val {
+			failpoint.Return(errors.New("dealHistogramAndTopNErr returned error"))
+		}
+	})
+	failpoint.Inject("ErrorSameTime", func(val failpoint.Value) {
+		if val, _ := val.(bool); val {
+			time.Sleep(1 * time.Second)
+			failpoint.Return(errors.New("ErrorSameTime returned error"))
+		}
+	})
+	for {
+		select {
+		case item, ok := <-a.histogramAndTopn:
+			if !ok {
+				return nil
+			}
+			var err error
+			// Combined TopN + histogram merge.
+			wrapper := item.item
+			globalHg := &(a.globalStats.Hg[item.idx])
+			a.globalStats.TopN[item.idx], *globalHg, err = statistics.MergePartTopNAndHistToGlobal(
+				stmtCtx, killer,
+				wrapper.AllTopN, wrapper.AllHg,
+				uint32(opts[ast.AnalyzeOptNumTopN]),
+				int64(opts[ast.AnalyzeOptNumBuckets]),
+				isIndex,
+			)
+			if err != nil {
+				return err
+			}
+
+			// MergePartTopNAndHistToGlobal already leaves bucket NDV = 0; here
+			// we just set the table-level NDV.
+			if *globalHg != nil {
+				ndv := a.globalStatsNDV[item.idx]
+				if statistics.UniqueByLocalIndex(a.globalTableInfo, isIndex, a.histIDs[item.idx]) {
+					ndv = uniqueGlobalNDV(wrapper.AllHg, a.globalStats.Count)
+				} else if a.sampledNDV[item.idx] {
+					ndv = sampledGlobalNDV(ndv, *globalHg, a.globalStats.TopN[item.idx], wrapper.missedNotNull, a.globalStats.Count)
+				}
+				(*globalHg).NDV = ndv
+			}
+		case <-a.ioWorkerExitWhenErrChan:
+			return nil
+		}
+	}
+}
+
+func skipPartition(sctx sessionctx.Context, partitionID int64, isIndex bool) error {
+	return storage.CheckSkipPartition(sctx, partitionID, toSQLIndex(isIndex))
+}
+
+func skipColumnPartition(sctx sessionctx.Context, partitionID int64, isIndex bool, histsID int64) error {
+	return storage.CheckSkipColumnPartiion(sctx, partitionID, toSQLIndex(isIndex), histsID)
+}

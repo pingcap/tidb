@@ -50,6 +50,10 @@ func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
 	return mebd.pdAddrs, nil
 }
 
+func (mebd *mockEtcdBackend) GetPDAddrs() ([]string, error) {
+	return mebd.pdAddrs, nil
+}
+
 func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
 
 func (mebd *mockEtcdBackend) StartGCWorker() error { return nil }
@@ -101,6 +105,15 @@ func TestPartialIndex(t *testing.T) {
 	tk.MustGetDBError("create table t2 (a int, b int, primary key(b) where a = 1);",
 		dbterror.ErrUnsupportedAddPartialIndex)
 	tk.MustExec("drop table t;")
+
+	// Test ALTER TABLE cannot silently discard a partial primary key condition.
+	tk.MustExec("create table t3 (a int not null);")
+	tk.MustGetDBError("alter table t3 add primary key(a) where a > 0;",
+		dbterror.ErrUnsupportedAddPartialIndex)
+
+	// A partial unique index is not an implicit primary key, even when every index column is NOT NULL.
+	tk.MustExec("create table t4 (a int not null, unique index uk(a) where a > 0);")
+	tk.MustExec("alter table t4 alter index uk invisible;")
 
 	checkColumnTypes := func(columnTypes []string, literals []string, shouldAllowed bool) {
 		for _, columnType := range columnTypes {

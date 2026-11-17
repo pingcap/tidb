@@ -15,6 +15,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
@@ -216,4 +217,29 @@ func EncodeTxnMetaKey(key []byte, field []byte, ts uint64) []byte {
 	k := tablecodec.EncodeMetaKey(key, field)
 	txnKey := codec.EncodeBytes(nil, k)
 	return codec.EncodeUintDesc(txnKey, ts)
+}
+
+// IsMetaAutoIDKey reports whether key is a txn meta key whose field is one of
+// the auto-ID counter types: auto-increment (IID), auto-table-id (TID),
+// auto-random (TARID), or sequence (SID).
+//
+// These keys hold a single int64 counter that always fits in the WriteCF
+// shortValue payload — they have no DefaultCF cross-reference, so per-CF
+// deduplication by TS is safe for them.
+func IsMetaAutoIDKey(key []byte) bool {
+	if len(key) < 8 {
+		return false
+	}
+	_, metaKeyBytes, err := codec.DecodeBytes(key[:len(key)-8], nil)
+	if err != nil {
+		return false
+	}
+	_, field, err := tablecodec.DecodeMetaKey(metaKeyBytes)
+	if err != nil {
+		return false
+	}
+	return meta.IsAutoIncrementIDKey(field) ||
+		meta.IsAutoTableIDKey(field) ||
+		meta.IsAutoRandomTableIDKey(field) ||
+		meta.IsSequenceKey(field)
 }

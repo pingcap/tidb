@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -67,6 +68,9 @@ func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Reque
 		return resp
 	}
 	y.Assert(len(ranges) >= 1)
+	if kerneltype.IsNextGen() {
+		dbReader.ScanDetail = &kvrpcpb.ScanDetailV2{}
+	}
 	if analyzeReq.Tp == tipb.AnalyzeType_TypeIndex {
 		resp, err = handleAnalyzeIndexReq(dbReader, ranges, analyzeReq, req.StartTs)
 	} else if analyzeReq.Tp == tipb.AnalyzeType_TypeCommonHandle {
@@ -82,6 +86,9 @@ func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Reque
 		resp = &coprocessor.Response{
 			OtherError: err.Error(),
 		}
+	}
+	if dbReader.ScanDetail != nil {
+		resp.ExecDetailsV2 = &kvrpcpb.ExecDetailsV2{ScanDetailV2: dbReader.ScanDetail}
 	}
 	return resp
 }
@@ -480,20 +487,22 @@ func (e *analyzeColumnsExec) Fields() []*resolve.ResultField {
 func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	e.req = req
-	err := e.reader.Scan(e.seekKey, e.endKey, math.MaxInt64, e.startTS, e)
-	if err != nil {
-		return err
-	}
-	if req.NumRows() < req.Capacity() {
+	for {
+		err := e.reader.Scan(e.seekKey, e.endKey, math.MaxInt64, e.startTS, e)
+		if err != nil {
+			return err
+		}
+		if req.NumRows() == req.Capacity() {
+			return nil
+		}
 		if e.curRan == len(e.ranges)-1 {
 			e.seekKey = e.endKey
-		} else {
-			e.curRan++
-			e.seekKey = e.ranges[e.curRan].StartKey
-			e.endKey = e.ranges[e.curRan].EndKey
+			return nil
 		}
+		e.curRan++
+		e.seekKey = e.ranges[e.curRan].StartKey
+		e.endKey = e.ranges[e.curRan].EndKey
 	}
-	return nil
 }
 
 func (e *analyzeColumnsExec) Process(key, value []byte, _ uint64) error {

@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "configtypes",
+    srcs = ["types.go"],
+    importpath = "github.com/pingcap/tidb/pkg/config/configtypes",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_docker_go_units//:go-units",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "configtypes_test",
+    timeout = "short",
+    srcs = ["types_test.go"],
+    embed = [":configtypes"],
+    flaky = False,
+    shard_count = 2,
+    deps = [
+        "@com_github_burntsushi_toml//:toml",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -9,8 +9,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/repo"
 	crrconfig "github.com/pingcap/tidb/br/pkg/stream/crr/config"
 	"github.com/pingcap/tidb/br/pkg/task"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/spf13/pflag"
 )
@@ -19,6 +21,7 @@ const (
 	flagTableConcurrency                 = "table-concurrency"
 	flagRestoredTS                       = "restored-ts"
 	flagUpstreamClusterID                = "upstream-cluster-id"
+	flagChecksumTS                       = "checksum-ts"
 	flagStorePatterns                    = "stores"
 	flagTaskName                         = "task-name"
 	flagUpstreamStorage                  = "upstream-storage"
@@ -237,8 +240,8 @@ type CRRCheckpointConfig struct {
 func DefineFlagsForCRRCheckpointConfig(flags *pflag.FlagSet) {
 	crrconfig.DefineFlags(flags)
 	flags.String(flagUpstreamStorage, "", "The upstream log backup storage URI.")
-	flags.String(flagDownstreamStorage, "", "The downstream replicated storage URI. Optional when the upstream storage can confirm object sync directly, such as AWS S3.")
-	flags.Bool(flagCheckSyncedFromDownstreamStorage, false, "Check object sync by file existence on downstream storage. Only when this flag is enabled will BR use --downstream-storage to confirm replication success.")
+	flags.String(flagDownstreamStorage, "", "The downstream replicated log backup storage URI.")
+	flags.Bool(flagCheckSyncedFromDownstreamStorage, false, "Check object sync by file existence on downstream storage.")
 }
 
 func (cfg *CRRCheckpointConfig) ParseFromFlags(flags *pflag.FlagSet) error {
@@ -270,18 +273,22 @@ func (cfg *CRRCheckpointConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if cfg.UpstreamStorage == "" {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "missing required flag --%s", flagUpstreamStorage)
 	}
+	if cfg.DownstreamStorage == "" {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "missing required flag --%s", flagDownstreamStorage)
+	}
 	return nil
 }
 
 type ChecksumWithRewriteRulesConfig struct {
 	task.Config
+	Layout   repo.Layout
+	BackupID repo.BackupID
 }
 
 func DefineFlagsForChecksumTableConfig(f *pflag.FlagSet) {
 	f.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
 		"including tableInfo/checksum and stats.")
 	f.Uint64(flagRestoredTS, 0, "The point time to checksum")
-	f.Uint64(flagUpstreamClusterID, 0, "")
 }
 
 func DefineFlagsForChecksumUpstreamTableConfig(f *pflag.FlagSet) {
@@ -293,8 +300,9 @@ func DefineFlagsForChecksumUpstreamTableConfig(f *pflag.FlagSet) {
 func DefineFlagsForChecksumPitrTableConfig(f *pflag.FlagSet) {
 	f.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
 		"including tableInfo/checksum and stats.")
-	f.Uint64(flagRestoredTS, 0, "The point time to checksum")
+	f.Uint64(flagRestoredTS, 0, "The restore point time")
 	f.Uint64(flagUpstreamClusterID, 0, "The upstream cluster id of used pitr id map")
+	f.Uint64(flagChecksumTS, 0, "The checksum time (use current pd tso if not specified)")
 }
 
 func (cfg *ChecksumWithRewriteRulesConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
@@ -302,11 +310,27 @@ func (cfg *ChecksumWithRewriteRulesConfig) ParseFromFlags(flags *pflag.FlagSet) 
 	if err != nil {
 		return
 	}
+	cfg.Layout, err = taskrepo.ParseSnapshotStorageLayoutFlag(flags)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.BackupID, err = taskrepo.ParseSnapshotBackupIDFlag(flags)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := taskrepo.ValidateSnapshotRestoreStorage(
+		cfg.Layout,
+		cfg.BackupID,
+	); err != nil {
+		return errors.Trace(err)
+	}
 	return cfg.Config.ParseFromFlags(flags)
 }
 
 type ChecksumWithPitrIdMapConfig struct {
 	task.RestoreConfig
+
+	ChecksumTS uint64 `json:"checksum-ts" toml:"checksum-ts"`
 }
 
 func (cfg *ChecksumWithPitrIdMapConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
@@ -319,6 +343,10 @@ func (cfg *ChecksumWithPitrIdMapConfig) ParseFromFlags(flags *pflag.FlagSet) (er
 		return errors.Trace(err)
 	}
 	cfg.UpstreamClusterID, err = flags.GetUint64(flagUpstreamClusterID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.ChecksumTS, err = flags.GetUint64(flagChecksumTS)
 	if err != nil {
 		return errors.Trace(err)
 	}

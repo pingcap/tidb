@@ -1,0 +1,88 @@
+[
+  {
+    "Name": "TestTiFlashFTSMatchWordPushDown",
+    "Cases": [
+      {
+        "SQL": "select * from fts_t where fts_match_word('hello', title)",
+        "RedactLog": false,
+        "Plan": [
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan mpp[tiflash] table:fts_t, index:ft_title(title) keep order:false, stats:pseudo, ftsIndex:hello IN test.fts_t.title"
+        ]
+      },
+      {
+        "SQL": "select * from fts_t where fts_match_word('hello', title) and id > 1",
+        "RedactLog": false,
+        "Plan": [
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableRangeScan mpp[tiflash] table:fts_t, index:ft_title(title) range:(1,+inf], keep order:false, stats:pseudo, ftsIndex:hello IN test.fts_t.title"
+        ]
+      },
+      {
+        "SQL": "select * from fts_t where fts_match_word('hello', title) order by fts_match_word('hello', title) desc limit 10",
+        "RedactLog": false,
+        "Plan": [
+          "TopN root  _FTS_SCORE:desc, offset:0, count:10",
+          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN mpp[tiflash]  _FTS_SCORE:desc, offset:0, count:10",
+          "      └─TableFullScan mpp[tiflash] table:fts_t, index:ft_title(title) keep order:false, stats:pseudo, ftsIndex:top10 hello IN test.fts_t.title->_FTS_SCORE"
+        ]
+      },
+      {
+        "SQL": "select id, fts_match_word('hello', title) as score from fts_t where fts_match_word('hello', title) order by score desc limit 10",
+        "RedactLog": false,
+        "Plan": [
+          "TopN root  _FTS_SCORE:desc, offset:0, count:10",
+          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN mpp[tiflash]  _FTS_SCORE:desc, offset:0, count:10",
+          "      └─TableFullScan mpp[tiflash] table:fts_t, index:ft_title(title) keep order:false, stats:pseudo, ftsIndex:top10 hello IN test.fts_t.title->_FTS_SCORE"
+        ]
+      },
+      {
+        "SQL": "select * from fts_t where fts_match_word('hello', title) order by fts_match_word('hello', title) desc, id limit 10",
+        "RedactLog": false,
+        "Plan": [
+          "TopN root  _FTS_SCORE:desc, test.fts_t.id, offset:0, count:10",
+          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN mpp[tiflash]  _FTS_SCORE:desc, test.fts_t.id, offset:0, count:10",
+          "      └─TableFullScan mpp[tiflash] table:fts_t, index:ft_title(title) keep order:false, stats:pseudo, ftsIndex:hello IN test.fts_t.title->_FTS_SCORE"
+        ]
+      },
+      {
+        "SQL": "select fts_match_word('hello', title) from fts_t where fts_match_word('hello', title)",
+        "RedactLog": false,
+        "Plan": [
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan mpp[tiflash] table:fts_t, index:ft_title(title) keep order:false, stats:pseudo, ftsIndex:hello IN test.fts_t.title->_FTS_SCORE"
+        ]
+      },
+      {
+        "SQL": "select fts_match_word('hello', title), id from fts_t where fts_match_word('hello', title) order by fts_match_word('hello', title) desc limit 10",
+        "RedactLog": false,
+        "Plan": [
+          "Projection root  _FTS_SCORE->Column, test.fts_t.id",
+          "└─TopN root  _FTS_SCORE:desc, offset:0, count:10",
+          "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN mpp[tiflash]  _FTS_SCORE:desc, offset:0, count:10",
+          "        └─TableFullScan mpp[tiflash] table:fts_t, index:ft_title(title) keep order:false, stats:pseudo, ftsIndex:top10 hello IN test.fts_t.title->_FTS_SCORE"
+        ]
+      },
+      {
+        "SQL": "select * from fts_t where fts_match_word('hello', title)",
+        "RedactLog": true,
+        "Plan": [
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan mpp[tiflash] table:fts_t, index:ft_title(title) keep order:false, stats:pseudo, ftsIndex:? IN test.fts_t.title"
+        ]
+      }
+    ]
+  }
+]

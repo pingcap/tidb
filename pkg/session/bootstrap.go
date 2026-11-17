@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -62,10 +63,6 @@ var bootstrapOwnerKey = "/tidb/distributeDDLOwnerLock/"
 // bootstrap initiates system DB for a store.
 func bootstrap(s sessionapi.Session) {
 	startTime := time.Now()
-	err := InitMDLVariableForBootstrap(s.GetStore())
-	if err != nil {
-		logutil.BgLogger().Fatal("init metadata lock failed during bootstrap", zap.Error(err))
-	}
 	dom := domain.GetDomain(s)
 	bootLogger := logutil.SampleLoggerFactory(30*time.Second, 1)()
 	for {
@@ -76,7 +73,9 @@ func bootstrap(s sessionapi.Session) {
 		}
 		// For rolling upgrade, we can't do upgrade only in the owner.
 		if b {
-			upgrade(s)
+			// Bootstrap initialization has already persisted and enabled MDL
+			// before the domain started, so no legacy MDL migration is needed.
+			upgradeWithMDLMigration(s, skipLegacyMDLMigration)
 			logutil.BgLogger().Info("upgrade successful in bootstrap",
 				zap.Duration("take time", time.Since(startTime)))
 			return
@@ -84,6 +83,9 @@ func bootstrap(s sessionapi.Session) {
 		// To reduce conflict when multiple TiDB-server start at the same time.
 		// Actually only one server need to do the bootstrap. So we chose DDL owner to do this.
 		if dom.DDL().OwnerManager().IsOwner() {
+			if err := initLegacyECDSASessionToken(s.GetStore(), true); err != nil {
+				logutil.BgLogger().Fatal("disable legacy ECDSA session tokens during bootstrap failed", zap.Error(err))
+			}
 			doDDLWorks(s)
 			doDMLWorks(s)
 			runBootstrapSQLFile = true
@@ -277,76 +279,92 @@ var (
 	// actually share the same definition. next-gen uses inner versions to
 	// structure those tables, but for classic, a flat slice is enough in theory.
 	systemTablesOfBaseNextGenVersion = []TableBasicInfo{
-		{ID: metadef.UserTableID, Name: "user", SQL: metadef.CreateUserTable},
-		{ID: metadef.PasswordHistoryTableID, Name: "password_history", SQL: metadef.CreatePasswordHistoryTable},
-		{ID: metadef.GlobalPrivTableID, Name: "global_priv", SQL: metadef.CreateGlobalPrivTable},
-		{ID: metadef.DBTableID, Name: "db", SQL: metadef.CreateDBTable},
-		{ID: metadef.TablesPrivTableID, Name: "tables_priv", SQL: metadef.CreateTablesPrivTable},
-		{ID: metadef.ColumnsPrivTableID, Name: "columns_priv", SQL: metadef.CreateColumnsPrivTable},
-		{ID: metadef.GlobalVariablesTableID, Name: "global_variables", SQL: metadef.CreateGlobalVariablesTable},
-		{ID: metadef.TiDBTableID, Name: "tidb", SQL: metadef.CreateTiDBTable},
-		{ID: metadef.HelpTopicTableID, Name: "help_topic", SQL: metadef.CreateHelpTopicTable},
-		{ID: metadef.StatsMetaTableID, Name: "stats_meta", SQL: metadef.CreateStatsMetaTable},
-		{ID: metadef.StatsHistogramsTableID, Name: "stats_histograms", SQL: metadef.CreateStatsHistogramsTable},
-		{ID: metadef.StatsBucketsTableID, Name: "stats_buckets", SQL: metadef.CreateStatsBucketsTable},
-		{ID: metadef.GCDeleteRangeTableID, Name: "gc_delete_range", SQL: metadef.CreateGCDeleteRangeTable},
-		{ID: metadef.GCDeleteRangeDoneTableID, Name: "gc_delete_range_done", SQL: metadef.CreateGCDeleteRangeDoneTable},
-		{ID: metadef.StatsFeedbackTableID, Name: "stats_feedback", SQL: metadef.CreateStatsFeedbackTable},
-		{ID: metadef.RoleEdgesTableID, Name: "role_edges", SQL: metadef.CreateRoleEdgesTable},
-		{ID: metadef.DefaultRolesTableID, Name: "default_roles", SQL: metadef.CreateDefaultRolesTable},
-		{ID: metadef.BindInfoTableID, Name: "bind_info", SQL: metadef.CreateBindInfoTable},
-		{ID: metadef.StatsTopNTableID, Name: "stats_top_n", SQL: metadef.CreateStatsTopNTable},
-		{ID: metadef.ExprPushdownBlacklistTableID, Name: "expr_pushdown_blacklist", SQL: metadef.CreateExprPushdownBlacklistTable},
-		{ID: metadef.OptRuleBlacklistTableID, Name: "opt_rule_blacklist", SQL: metadef.CreateOptRuleBlacklistTable},
-		{ID: metadef.StatsExtendedTableID, Name: "stats_extended", SQL: metadef.CreateStatsExtendedTable},
-		{ID: metadef.StatsFMSketchTableID, Name: "stats_fm_sketch", SQL: metadef.CreateStatsFMSketchTable},
-		{ID: metadef.GlobalGrantsTableID, Name: "global_grants", SQL: metadef.CreateGlobalGrantsTable},
-		{ID: metadef.CapturePlanBaselinesBlacklistTableID, Name: "capture_plan_baselines_blacklist", SQL: metadef.CreateCapturePlanBaselinesBlacklistTable},
-		{ID: metadef.ColumnStatsUsageTableID, Name: "column_stats_usage", SQL: metadef.CreateColumnStatsUsageTable},
-		{ID: metadef.TableCacheMetaTableID, Name: "table_cache_meta", SQL: metadef.CreateTableCacheMetaTable},
-		{ID: metadef.AnalyzeOptionsTableID, Name: "analyze_options", SQL: metadef.CreateAnalyzeOptionsTable},
-		{ID: metadef.StatsHistoryTableID, Name: "stats_history", SQL: metadef.CreateStatsHistoryTable},
-		{ID: metadef.StatsMetaHistoryTableID, Name: "stats_meta_history", SQL: metadef.CreateStatsMetaHistoryTable},
-		{ID: metadef.AnalyzeJobsTableID, Name: "analyze_jobs", SQL: metadef.CreateAnalyzeJobsTable},
-		{ID: metadef.AdvisoryLocksTableID, Name: "advisory_locks", SQL: metadef.CreateAdvisoryLocksTable},
-		{ID: metadef.PlanReplayerStatusTableID, Name: "plan_replayer_status", SQL: metadef.CreatePlanReplayerStatusTable},
-		{ID: metadef.PlanReplayerTaskTableID, Name: "plan_replayer_task", SQL: metadef.CreatePlanReplayerTaskTable},
-		{ID: metadef.StatsTableLockedTableID, Name: "stats_table_locked", SQL: metadef.CreateStatsTableLockedTable},
-		{ID: metadef.TiDBTTLTableStatusTableID, Name: "tidb_ttl_table_status", SQL: metadef.CreateTiDBTTLTableStatusTable},
-		{ID: metadef.TiDBTTLTaskTableID, Name: "tidb_ttl_task", SQL: metadef.CreateTiDBTTLTaskTable},
-		{ID: metadef.TiDBTTLJobHistoryTableID, Name: "tidb_ttl_job_history", SQL: metadef.CreateTiDBTTLJobHistoryTable},
-		{ID: metadef.TiDBGlobalTaskTableID, Name: "tidb_global_task", SQL: metadef.CreateTiDBGlobalTaskTable},
-		{ID: metadef.TiDBGlobalTaskHistoryTableID, Name: "tidb_global_task_history", SQL: metadef.CreateTiDBGlobalTaskHistoryTable},
-		{ID: metadef.TiDBImportJobsTableID, Name: "tidb_import_jobs", SQL: metadef.CreateTiDBImportJobsTable},
-		{ID: metadef.TiDBRunawayWatchTableID, Name: "tidb_runaway_watch", SQL: metadef.CreateTiDBRunawayWatchTable},
-		{ID: metadef.TiDBRunawayQueriesTableID, Name: "tidb_runaway_queries", SQL: metadef.CreateTiDBRunawayQueriesTable},
-		{ID: metadef.TiDBTimersTableID, Name: "tidb_timers", SQL: metadef.CreateTiDBTimersTable},
-		{ID: metadef.TiDBRunawayWatchDoneTableID, Name: "tidb_runaway_watch_done", SQL: metadef.CreateTiDBRunawayWatchDoneTable},
-		{ID: metadef.DistFrameworkMetaTableID, Name: "dist_framework_meta", SQL: metadef.CreateDistFrameworkMetaTable},
-		{ID: metadef.RequestUnitByGroupTableID, Name: "request_unit_by_group", SQL: metadef.CreateRequestUnitByGroupTable},
-		{ID: metadef.TiDBPITRIDMapTableID, Name: "tidb_pitr_id_map", SQL: metadef.CreateTiDBPITRIDMapTable},
-		{ID: metadef.TiDBRestoreRegistryTableID, Name: "tidb_restore_registry", SQL: metadef.CreateTiDBRestoreRegistryTable},
-		{ID: metadef.IndexAdvisorResultsTableID, Name: "index_advisor_results", SQL: metadef.CreateIndexAdvisorResultsTable},
-		{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: metadef.CreateTiDBKernelOptionsTable},
-		{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: metadef.CreateTiDBWorkloadValuesTable},
+		{ID: metadef.UserTableID, Name: metadef.UserTableName, SQL: metadef.CreateUserTable},
+		{ID: metadef.PasswordHistoryTableID, Name: metadef.PasswordHistoryTableName, SQL: metadef.CreatePasswordHistoryTable},
+		{ID: metadef.GlobalPrivTableID, Name: metadef.GlobalPrivTableName, SQL: metadef.CreateGlobalPrivTable},
+		{ID: metadef.DBTableID, Name: metadef.DBTableName, SQL: metadef.CreateDBTable},
+		{ID: metadef.TablesPrivTableID, Name: metadef.TablesPrivTableName, SQL: metadef.CreateTablesPrivTable},
+		{ID: metadef.ColumnsPrivTableID, Name: metadef.ColumnsPrivTableName, SQL: metadef.CreateColumnsPrivTable},
+		{ID: metadef.GlobalVariablesTableID, Name: metadef.GlobalVariablesTableName, SQL: metadef.CreateGlobalVariablesTable},
+		{ID: metadef.TiDBTableID, Name: metadef.TiDBTableName, SQL: metadef.CreateTiDBTable},
+		{ID: metadef.HelpTopicTableID, Name: metadef.HelpTopicTableName, SQL: metadef.CreateHelpTopicTable},
+		{ID: metadef.StatsMetaTableID, Name: metadef.StatsMetaTableName, SQL: metadef.CreateStatsMetaTable},
+		{ID: metadef.StatsHistogramsTableID, Name: metadef.StatsHistogramsTableName, SQL: metadef.CreateStatsHistogramsTable},
+		{ID: metadef.StatsBucketsTableID, Name: metadef.StatsBucketsTableName, SQL: metadef.CreateStatsBucketsTable},
+		{ID: metadef.GCDeleteRangeTableID, Name: metadef.GCDeleteRangeTableName, SQL: metadef.CreateGCDeleteRangeTable},
+		{ID: metadef.GCDeleteRangeDoneTableID, Name: metadef.GCDeleteRangeDoneTableName, SQL: metadef.CreateGCDeleteRangeDoneTable},
+		{ID: metadef.StatsFeedbackTableID, Name: metadef.StatsFeedbackTableName, SQL: metadef.CreateStatsFeedbackTable},
+		{ID: metadef.RoleEdgesTableID, Name: metadef.RoleEdgesTableName, SQL: metadef.CreateRoleEdgesTable},
+		{ID: metadef.DefaultRolesTableID, Name: metadef.DefaultRolesTableName, SQL: metadef.CreateDefaultRolesTable},
+		{ID: metadef.BindInfoTableID, Name: metadef.BindInfoTableName, SQL: metadef.CreateBindInfoTable},
+		{ID: metadef.StatsTopNTableID, Name: metadef.StatsTopNTableName, SQL: metadef.CreateStatsTopNTable},
+		{ID: metadef.ExprPushdownBlacklistTableID, Name: metadef.ExprPushdownBlacklistTableName, SQL: metadef.CreateExprPushdownBlacklistTable},
+		{ID: metadef.OptRuleBlacklistTableID, Name: metadef.OptRuleBlacklistTableName, SQL: metadef.CreateOptRuleBlacklistTable},
+		{ID: metadef.StatsExtendedTableID, Name: metadef.StatsExtendedTableName, SQL: metadef.CreateStatsExtendedTable},
+		{ID: metadef.StatsFMSketchTableID, Name: metadef.StatsFMSketchTableName, SQL: metadef.CreateStatsFMSketchTable},
+		{ID: metadef.GlobalGrantsTableID, Name: metadef.GlobalGrantsTableName, SQL: metadef.CreateGlobalGrantsTable},
+		{ID: metadef.CapturePlanBaselinesBlacklistTableID, Name: metadef.CapturePlanBaselinesBlacklistTableName, SQL: metadef.CreateCapturePlanBaselinesBlacklistTable},
+		{ID: metadef.ColumnStatsUsageTableID, Name: metadef.ColumnStatsUsageTableName, SQL: metadef.CreateColumnStatsUsageTable},
+		{ID: metadef.TableCacheMetaTableID, Name: metadef.TableCacheMetaTableName, SQL: metadef.CreateTableCacheMetaTable},
+		{ID: metadef.AnalyzeOptionsTableID, Name: metadef.AnalyzeOptionsTableName, SQL: metadef.CreateAnalyzeOptionsTable},
+		{ID: metadef.StatsHistoryTableID, Name: metadef.StatsHistoryTableName, SQL: metadef.CreateStatsHistoryTable},
+		{ID: metadef.StatsMetaHistoryTableID, Name: metadef.StatsMetaHistoryTableName, SQL: metadef.CreateStatsMetaHistoryTable},
+		{ID: metadef.AnalyzeJobsTableID, Name: metadef.AnalyzeJobsTableName, SQL: metadef.CreateAnalyzeJobsTable},
+		{ID: metadef.AdvisoryLocksTableID, Name: metadef.AdvisoryLocksTableName, SQL: metadef.CreateAdvisoryLocksTable},
+		{ID: metadef.PlanReplayerStatusTableID, Name: metadef.PlanReplayerStatusTableName, SQL: metadef.CreatePlanReplayerStatusTable},
+		{ID: metadef.PlanReplayerTaskTableID, Name: metadef.PlanReplayerTaskTableName, SQL: metadef.CreatePlanReplayerTaskTable},
+		{ID: metadef.StatsTableLockedTableID, Name: metadef.StatsTableLockedTableName, SQL: metadef.CreateStatsTableLockedTable},
+		{ID: metadef.TiDBTTLTableStatusTableID, Name: metadef.TiDBTTLTableStatusTableName, SQL: metadef.CreateTiDBTTLTableStatusTable},
+		{ID: metadef.TiDBTTLTaskTableID, Name: metadef.TiDBTTLTaskTableName, SQL: metadef.CreateTiDBTTLTaskTable},
+		{ID: metadef.TiDBTTLJobHistoryTableID, Name: metadef.TiDBTTLJobHistoryTableName, SQL: metadef.CreateTiDBTTLJobHistoryTable},
+		{ID: metadef.TiDBGlobalTaskTableID, Name: metadef.TiDBGlobalTaskTableName, SQL: metadef.CreateTiDBGlobalTaskTable},
+		{ID: metadef.TiDBGlobalTaskHistoryTableID, Name: metadef.TiDBGlobalTaskHistoryTableName, SQL: metadef.CreateTiDBGlobalTaskHistoryTable},
+		{ID: metadef.TiDBImportJobsTableID, Name: metadef.TiDBImportJobsTableName, SQL: metadef.CreateTiDBImportJobsTable},
+		{ID: metadef.TiDBRunawayWatchTableID, Name: metadef.TiDBRunawayWatchTableName, SQL: metadef.CreateTiDBRunawayWatchTable},
+		{ID: metadef.TiDBRunawayQueriesTableID, Name: metadef.TiDBRunawayQueriesTableName, SQL: metadef.CreateTiDBRunawayQueriesTable},
+		{ID: metadef.TiDBTimersTableID, Name: metadef.TiDBTimersTableName, SQL: metadef.CreateTiDBTimersTable},
+		{ID: metadef.TiDBRunawayWatchDoneTableID, Name: metadef.TiDBRunawayWatchDoneTableName, SQL: metadef.CreateTiDBRunawayWatchDoneTable},
+		{ID: metadef.DistFrameworkMetaTableID, Name: metadef.DistFrameworkMetaTableName, SQL: metadef.CreateDistFrameworkMetaTable},
+		{ID: metadef.RequestUnitByGroupTableID, Name: metadef.RequestUnitByGroupTableName, SQL: metadef.CreateRequestUnitByGroupTable},
+		{ID: metadef.TiDBPITRIDMapTableID, Name: metadef.TiDBPITRIDMapTableName, SQL: metadef.CreateTiDBPITRIDMapTable},
+		{ID: metadef.TiDBRestoreRegistryTableID, Name: metadef.TiDBRestoreRegistryTableName, SQL: metadef.CreateTiDBRestoreRegistryTable},
+		{ID: metadef.IndexAdvisorResultsTableID, Name: metadef.IndexAdvisorResultsTableName, SQL: metadef.CreateIndexAdvisorResultsTable},
+		{ID: metadef.TiDBKernelOptionsTableID, Name: metadef.TiDBKernelOptionsTableName, SQL: metadef.CreateTiDBKernelOptionsTable},
+		{ID: metadef.TiDBWorkloadValuesTableID, Name: metadef.TiDBWorkloadValuesTableName, SQL: metadef.CreateTiDBWorkloadValuesTable},
 	}
 	// systemTablesOfMaskingPolicyNextGenVersion contains system tables introduced in
 	// the masking-policy bootstrap version.
 	systemTablesOfMaskingPolicyNextGenVersion = []TableBasicInfo{
-		{ID: metadef.TiDBMaskingPolicyTableID, Name: "tidb_masking_policy", SQL: metadef.CreateTiDBMaskingPolicyTable},
+		{ID: metadef.TiDBMaskingPolicyTableID, Name: metadef.TiDBMaskingPolicyTableName, SQL: metadef.CreateTiDBMaskingPolicyTable},
+	}
+	// systemTablesOfMaterializedViewNextGenVersion contains system tables introduced for materialized view maintenance.
+	systemTablesOfMaterializedViewNextGenVersion = []TableBasicInfo{
+		{ID: metadef.TiDBMViewRefreshInfoTableID, Name: metadef.TiDBMViewRefreshInfoTableName, SQL: metadef.CreateTiDBMViewRefreshInfoTable},
+		{ID: metadef.TiDBMLogPurgeInfoTableID, Name: metadef.TiDBMLogPurgeInfoTableName, SQL: metadef.CreateTiDBMLogPurgeInfoTable},
+		{ID: metadef.TiDBMViewRefreshHistTableID, Name: metadef.TiDBMViewRefreshHistTableName, SQL: metadef.CreateTiDBMViewRefreshHistTable},
+		{ID: metadef.TiDBMViewRefreshAlertTableID, Name: metadef.TiDBMViewRefreshAlertTableName, SQL: metadef.CreateTiDBMViewRefreshAlertTable},
+		{ID: metadef.TiDBMLogPurgeHistTableID, Name: metadef.TiDBMLogPurgeHistTableName, SQL: metadef.CreateTiDBMLogPurgeHistTable},
+	}
+	// systemTablesOfMaterializedViewRefreshSourceNextGenVersion contains the MV input-log baseline table.
+	systemTablesOfMaterializedViewRefreshSourceNextGenVersion = []TableBasicInfo{
+		{ID: metadef.TiDBMViewFastRefreshSourceInfoTableID, Name: metadef.TiDBMViewFastRefreshSourceInfoTableName, SQL: metadef.CreateTiDBMViewFastRefreshSourceInfoTable},
+	}
+	// systemTablesOfStorageClassTransitionNextGenVersion contains the durable
+	// operation table used by the NextGen storage-class transition poller.
+	systemTablesOfStorageClassTransitionNextGenVersion = []TableBasicInfo{
+		{ID: metadef.TiDBStorageClassTransitionHistoryTableID, Name: metadef.TiDBStorageClassTransitionHistoryTableName, SQL: metadef.CreateTiDBStorageClassTransitionHistoryTable},
 	}
 )
 
 type versionedBootstrapSchema struct {
-	ver       meta.NextGenBootTableVersion
-	databases []DatabaseBasicInfo
+	ver         meta.NextGenBootTableVersion
+	databases   []DatabaseBasicInfo
+	nextGenOnly bool
 }
 
-// definitions of all system tables, shared by classic and next-gen kernel.
-// the version is used in next-gen, in order to create system tables directly
-// through meta kv, without going through DDL, so we can create them with
-// reversed ID range.
-// for classic kernel, only the inner Tables field is used.
+// definitions of bootstrap system tables. NextGen uses the versions to create
+// the tables directly through meta KV with reserved IDs. Classic uses the table
+// definitions except entries marked nextGenOnly.
 var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	{ver: meta.BaseNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfBaseNextGenVersion},
@@ -354,6 +372,15 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	}},
 	{ver: meta.MaskingPolicyNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaskingPolicyNextGenVersion},
+	}},
+	{ver: meta.StorageClassTransitionNextGenBootTableVersion, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfStorageClassTransitionNextGenVersion},
+	}, nextGenOnly: true},
+	{ver: meta.MaterializedViewNextGenBootTableVersion, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaterializedViewNextGenVersion},
+	}},
+	{ver: meta.MaterializedViewRefreshSourceNextGenBootTableVersion, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaterializedViewRefreshSourceNextGenVersion},
 	}},
 }
 
@@ -400,6 +427,9 @@ func doDDLWorks(s sessionapi.Session) {
 			mustExecute(s, "CREATE DATABASE IF NOT EXISTS %n", db.Name)
 		}
 		for _, verBoot := range versionedBootstrapSchemas {
+			if verBoot.nextGenOnly {
+				continue
+			}
 			for _, dbInfo := range verBoot.databases {
 				for _, tblInfo := range dbInfo.Tables {
 					mustExecute(s, tblInfo.SQL)
@@ -415,6 +445,10 @@ func doDDLWorks(s sessionapi.Session) {
 	mustExecute(s, metadef.CreateSchemaUnusedIndexesView)
 	// Create a test database.
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
+	// Only mark stats requests as background here; the effective background CPU cap is controlled
+	// by bg-cpu-throttle-threshold and fg-cpu-throttle-threshold.
+	mustExecute(s, "ALTER RESOURCE GROUP %n BACKGROUND=(TASK_TYPES=%?)",
+		resourcegroup.DefaultResourceGroupName, kv.InternalTxnStats)
 }
 
 func checkSystemTableConstraint(tblInfo *model.TableInfo) error {
@@ -481,14 +515,14 @@ func doDMLWorks(s sessionapi.Session) {
 			logutil.BgLogger().Fatal("failed to read current user. unable to secure bootstrap.", zap.Error(err))
 		}
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user (Host,User,authentication_string,plugin,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,
-			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
+			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Operate_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
 		    Shutdown_priv,Reload_priv,FILE_priv,Config_priv,Create_Tablespace_Priv,User_attributes,Token_issuer) VALUES
-		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`, u.Username)
+		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`, u.Username)
 	} else {
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user (Host,User,authentication_string,plugin,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,
-			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
+			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Operate_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
 		    Shutdown_priv,Reload_priv,FILE_priv,Config_priv,Create_Tablespace_Priv,User_attributes,Token_issuer) VALUES
-		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`)
+		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`)
 	}
 
 	// For GLOBAL scoped system variables, insert the initial value

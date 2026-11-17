@@ -41,7 +41,7 @@ import (
 )
 
 var (
-	maxConcurrentTask       = flag.Int("max-concurrent-task", proto.MaxConcurrentTask, "max concurrent task")
+	maxConcurrentTask       = flag.Int("max-concurrent-task", proto.GetMaxConcurrentTask(), "max concurrent task")
 	waitDuration            = flag.Duration("task-wait-duration", 2*time.Minute, "task wait duration")
 	schedulerInterval       = flag.Duration("scheduler-interval", scheduler.CheckTaskFinishedInterval, "scheduler interval")
 	taskExecutorMgrInterval = flag.Duration("task-executor-mgr-interval", taskexecutor.TaskCheckInterval, "task executor mgr interval")
@@ -65,43 +65,43 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 	}()
 	schIntervalBak := scheduler.CheckTaskFinishedInterval
 	exeMgrIntervalBak := taskexecutor.TaskCheckInterval
-	bak := proto.MaxConcurrentTask
+	restoreMaxConcurrentTask := proto.SetMaxConcurrentTaskForTest(*maxConcurrentTask)
 	b.Cleanup(func() {
-		proto.MaxConcurrentTask = bak
+		restoreMaxConcurrentTask()
 		scheduler.CheckTaskFinishedInterval = schIntervalBak
 		taskexecutor.TaskCheckInterval = exeMgrIntervalBak
 	})
-	proto.MaxConcurrentTask = *maxConcurrentTask
 	scheduler.CheckTaskFinishedInterval = *schedulerInterval
 	taskexecutor.TaskCheckInterval = *taskExecutorMgrInterval
 
-	b.Logf("max concurrent task: %d", proto.MaxConcurrentTask)
+	maxConcurrentTaskValue := proto.GetMaxConcurrentTask()
+	b.Logf("max concurrent task: %d", maxConcurrentTaskValue)
 	b.Logf("taks wait duration: %s", *waitDuration)
 	b.Logf("task meta size: %d", *taskMetaSize)
 	b.Logf("scheduler interval: %s", scheduler.CheckTaskFinishedInterval)
 	b.Logf("task executor mgr interval: %s", taskexecutor.TaskCheckInterval)
 
 	prepareForBenchTest(b)
-	c := testutil.NewTestDXFContext(b, 1, 2*proto.MaxConcurrentTask, false)
+	c := testutil.NewTestDXFContext(b, 1, 2*maxConcurrentTaskValue, false)
 
 	registerTaskTypeForBench(c)
 
 	if *noTask {
 		time.Sleep(*waitDuration)
 	} else {
-		// in this test, we will start 4*proto.MaxConcurrentTask tasks, but only
-		// proto.MaxConcurrentTask will be scheduled at the same time, for other
+		// in this test, we will start 4*maxConcurrentTaskValue tasks, but only
+		// maxConcurrentTaskValue will be scheduled at the same time, for other
 		// tasks will be in queue only to check the performance of querying them.
-		for i := range 4 * proto.MaxConcurrentTask {
+		for i := range 4 * maxConcurrentTaskValue {
 			taskKey := fmt.Sprintf("task-%03d", i)
 			taskMeta := make([]byte, *taskMetaSize)
 			_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, c.Store.GetKeyspace(), 1, "", 0, taskMeta)
 			require.NoError(c.T, err)
 		}
 		// task has 2 steps, each step has 1 subtask，wait in serial to reduce WaitTask check overhead.
-		// only wait first proto.MaxConcurrentTask and exit
+		// only wait first maxConcurrentTaskValue and exit
 		time.Sleep(2 * *waitDuration)
-		for i := range proto.MaxConcurrentTask {
+		for i := range maxConcurrentTaskValue {
 			taskKey := fmt.Sprintf("task-%03d", i)
 			testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)
 		}

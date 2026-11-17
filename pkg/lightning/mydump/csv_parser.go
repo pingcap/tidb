@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -50,12 +49,11 @@ type CSVParser struct {
 	blockParser
 	cfg *config.CSVConfig
 
-	comma          []byte
-	quote          []byte
-	newLine        []byte
-	startingBy     []byte
-	escapedBy      string
-	unescapeRegexp *regexp.Regexp
+	comma      []byte
+	quote      []byte
+	newLine    []byte
+	startingBy []byte
+	escapedBy  string
 
 	charsetConvertor *CharsetConvertor
 	// These variables are used with IndexAnyByte to search a byte slice for the
@@ -103,7 +101,7 @@ type field struct {
 func NewCSVParser(
 	ctx context.Context,
 	cfg *config.CSVConfig,
-	reader ReadSeekCloser,
+	reader io.ReadSeekCloser,
 	blockBufSize int64,
 	ioWorkers *worker.Pool,
 	shouldParseHeader bool,
@@ -144,7 +142,6 @@ func NewCSVParser(
 	}
 
 	escFlavor := escapeFlavorNone
-	var r *regexp.Regexp
 	if len(cfg.FieldsEscapedBy) > 0 {
 		escFlavor = escapeFlavorMySQL
 		quoteStopSet = append(quoteStopSet, cfg.FieldsEscapedBy[0])
@@ -153,14 +150,13 @@ func NewCSVParser(
 		if !cfg.NotNull && slices.Contains(cfg.FieldNullDefinedBy, cfg.FieldsEscapedBy+`N`) {
 			escFlavor = escapeFlavorMySQLWithNull
 		}
-		r, err = regexp.Compile(`(?s)` + regexp.QuoteMeta(cfg.FieldsEscapedBy) + `.`)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 	}
 	metrics, _ := metric.FromContext(ctx)
 	return &CSVParser{
-		blockParser:       makeBlockParser(reader, blockBufSize, ioWorkers, metrics, log.Wrap(logutil.Logger(ctx))),
+		blockParser: makeBlockParser(
+			reader, blockBufSize, ioWorkers, metrics, log.Wrap(logutil.Logger(ctx)),
+			int64(LargestEntryLimit),
+		),
 		cfg:               cfg,
 		charsetConvertor:  charsetConvertor,
 		comma:             []byte(fieldTerminator),
@@ -168,7 +164,6 @@ func NewCSVParser(
 		newLine:           []byte(lineTerminator),
 		startingBy:        []byte(cfg.LinesStartingBy),
 		escapedBy:         cfg.FieldsEscapedBy,
-		unescapeRegexp:    r,
 		escFlavor:         escFlavor,
 		quoteByteSet:      makeByteSet(quoteStopSet),
 		unquoteByteSet:    makeByteSet(unquoteStopSet),
@@ -210,7 +205,7 @@ func (parser *CSVParser) unescapeString(input field) (unescaped string, isNull b
 		return input.content, true, nil
 	}
 	if len(parser.escapedBy) > 0 {
-		unescaped = unescape(unescaped, "", parser.escFlavor, parser.escapedBy[0], parser.unescapeRegexp)
+		unescaped = unescape(unescaped, "", parser.escFlavor, parser.escapedBy[0])
 	}
 	if !(len(parser.quote) > 0 && parser.quotedNullIsText && input.quoted) {
 		// this branch represents "quote is not configured" or "quoted null is null" or "this field has no quote"
@@ -399,8 +394,8 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 	var buf []byte
 	for {
 		buf = append(buf, parser.buf...)
-		if parser.checkRowLen && parser.pos-parser.rowStartPos+int64(len(buf)) > int64(LargestEntryLimit) {
-			return buf, 0, errors.New("size of row cannot exceed the max value of txn-entry-size-limit")
+		if err := parser.rowLenExceedsLimit(parser.pos - parser.rowStartPos + int64(len(buf))); err != nil {
+			return buf, 0, err
 		}
 		parser.buf = nil
 		if err := parser.readBlock(); err != nil || len(parser.buf) == 0 {

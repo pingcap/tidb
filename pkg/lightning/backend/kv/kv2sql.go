@@ -54,7 +54,7 @@ func (t *TableKVDecoder) DecodeHandleFromIndex(indexInfo *model.IndexInfo, key, 
 
 // DecodeRawRowData decodes raw row data into a datum slice and a (columnID:columnValue) map.
 func (t *TableKVDecoder) DecodeRawRowData(h kv.Handle, value []byte) ([]types.Datum, map[int64]types.Datum, error) {
-	return tables.DecodeRawRowData(t.se.GetExprCtx(), t.tbl.Meta(), h, t.tbl.Cols(), value)
+	return tables.DecodeRawRowData(t.se.GetExprCtx(), t.tbl, h, t.tbl.Cols(), value)
 }
 
 // DecodeRawRowDataAsStr decodes raw row data into a string.
@@ -133,9 +133,9 @@ func NewTableKVDecoder(
 	if err != nil {
 		return nil, err
 	}
+	se.exprCtx.setNewCollationEnabled(tbl.UseNewCollate())
 
-	cols := tbl.Cols()
-	genCols, err := CollectGeneratedColumns(se, tbl.Meta(), cols)
+	genCols, err := CollectGeneratedColumns(se, tbl)
 	if err != nil {
 		return nil, err
 	}

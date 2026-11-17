@@ -79,6 +79,11 @@ var (
 	ErrPasswordExpireAnonymousUser    = dbterror.ClassExecutor.NewStd(mysql.ErrPasswordExpireAnonymousUser)
 	ErrMustChangePassword             = dbterror.ClassExecutor.NewStd(mysql.ErrMustChangePassword)
 
+	// Dual-password (MySQL 8.0 RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD) errors.
+	ErrSecondPasswordCannotBeEmpty            = dbterror.ClassExecutor.NewStd(mysql.ErrSecondPasswordCannotBeEmpty)
+	ErrPasswordCannotBeRetainedOnPluginChange = dbterror.ClassExecutor.NewStd(mysql.ErrPasswordCannotBeRetainedOnPluginChange)
+	ErrCurrentPasswordCannotBeRetained        = dbterror.ClassExecutor.NewStd(mysql.ErrCurrentPasswordCannotBeRetained)
+
 	ErrWrongStringLength            = dbterror.ClassDDL.NewStd(mysql.ErrWrongStringLength)
 	ErrUnsupportedFlashbackTmpTable = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Recover/flashback table is not supported on temporary tables", nil))
 	ErrTruncateWrongInsertValue     = dbterror.ClassTable.NewStdErr(mysql.ErrTruncatedWrongValue, parser_mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", nil))
@@ -104,6 +109,9 @@ var (
 	ErrLoadDataInvalidOperation       = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataInvalidOperation)
 	ErrLoadDataLocalUnsupportedOption = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataLocalUnsupportedOption)
 	ErrLoadDataPreCheckFailed         = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataPreCheckFailed)
+
+	ErrMVAdvisoryLockConflict      = dbterror.ClassExecutor.NewStd(mysql.ErrMVAdvisoryLockConflict)
+	ErrMVRefreshLogBaselineChanged = dbterror.ClassExecutor.NewStd(mysql.ErrMVRefreshLogBaselineChanged)
 
 	ErrMaxKeysReadExceeded = dbterror.ClassExecutor.NewStd(mysql.ErrMaxKeysReadExceeded)
 )

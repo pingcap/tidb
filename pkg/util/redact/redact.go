@@ -27,6 +27,9 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -238,6 +241,9 @@ func (t TaskInfoRedacted) String() string {
 	}
 
 	infoCopy := *t.Info
+	// Encryption keys and KMS credentials must never enter diagnostic output,
+	// regardless of whether general log redaction is enabled.
+	infoCopy.SecurityConfig = nil
 
 	if t.Info.Storage != nil {
 		// Create a copy of StorageBackend to modify
@@ -249,15 +255,23 @@ func (t TaskInfoRedacted) String() string {
 			if backend.S3 != nil {
 				// Copy S3 config and redact sensitive fields
 				s3Copy := *backend.S3
+				s3Copy.Endpoint = ast.RedactURL(s3Copy.Endpoint)
 				s3Copy.AccessKey = "[REDACTED]"
 				s3Copy.SecretAccessKey = "[REDACTED]"
 				s3Copy.SseKmsKeyId = "[REDACTED]"
+				if s3Copy.SessionToken != "" {
+					s3Copy.SessionToken = "[REDACTED]"
+				}
+				if s3Copy.SseKmsEncryptionContext != "" {
+					s3Copy.SseKmsEncryptionContext = "[REDACTED]"
+				}
 				storageCopy.Backend = &backup.StorageBackend_S3{S3: &s3Copy}
 			}
 
 		case *backup.StorageBackend_Gcs:
 			if backend.Gcs != nil {
 				gcsCopy := *backend.Gcs
+				gcsCopy.Endpoint = ast.RedactURL(gcsCopy.Endpoint)
 				gcsCopy.CredentialsBlob = "[REDACTED]"
 				storageCopy.Backend = &backup.StorageBackend_Gcs{Gcs: &gcsCopy}
 			}
@@ -265,6 +279,7 @@ func (t TaskInfoRedacted) String() string {
 		case *backup.StorageBackend_AzureBlobStorage:
 			if backend.AzureBlobStorage != nil {
 				azCopy := *backend.AzureBlobStorage
+				azCopy.Endpoint = ast.RedactURL(azCopy.Endpoint)
 				azCopy.SharedKey = "[REDACTED]"
 				azCopy.AccessSig = "[REDACTED]"
 				azCopy.EncryptionKey = &backup.AzureCustomerKey{EncryptionKey: "[REDACTED]"}
@@ -279,4 +294,101 @@ func (t TaskInfoRedacted) String() string {
 	}
 
 	return proto.CompactTextString(&infoCopy)
+}
+
+var redactedKey = []byte("?")
+
+// LockInfo returns a fmt.Stringer of the lock info. The keys in the lock info (primary lock, key, secondaries and
+// the keys of nested shared locks) are replaced by '?' if redact log is enabled. The String() method is evaluated
+// lazily, so it is cheap to pass it to a logger whose level is not enabled.
+func LockInfo(lock *kvrpcpb.LockInfo) fmt.Stringer {
+	return lockInfoRedacted{lock: lock}
+}
+
+// LockInfoWithMode is like LockInfo, but also masks keys when mode is ON or MARKER.
+// Process-global redaction still applies when mode is OFF or empty. All enabled modes
+// replace key bytes with '?', and formatting remains lazy.
+func LockInfoWithMode(lock *kvrpcpb.LockInfo, mode string) fmt.Stringer {
+	return lockInfoRedacted{
+		lock:        lock,
+		forceRedact: mode == errors.RedactLogEnable || mode == errors.RedactLogMarker,
+	}
+}
+
+type lockInfoRedacted struct {
+	lock        *kvrpcpb.LockInfo
+	forceRedact bool
+}
+
+// String implements fmt.Stringer.
+func (l lockInfoRedacted) String() string {
+	if l.lock == nil || !(l.forceRedact || NeedRedact()) {
+		return l.lock.String()
+	}
+	lockCopy := proto.Clone(l.lock).(*kvrpcpb.LockInfo)
+	redactLockInfoKeys(lockCopy)
+	return lockCopy.String()
+}
+
+func redactLockInfoKeys(lock *kvrpcpb.LockInfo) {
+	if lock == nil {
+		return
+	}
+	if len(lock.PrimaryLock) > 0 {
+		lock.PrimaryLock = redactedKey
+	}
+	if len(lock.Key) > 0 {
+		lock.Key = redactedKey
+	}
+	for i := range lock.Secondaries {
+		lock.Secondaries[i] = redactedKey
+	}
+	for _, shared := range lock.SharedLockInfos {
+		redactLockInfoKeys(shared)
+	}
+}
+
+// RegionError formats a region error without modifying it. When redaction is enabled,
+// keys and the top-level message are masked while internal diagnostic metadata,
+// including nested reasons and messages, is preserved.
+func RegionError(regionErr *errorpb.Error) string {
+	if regionErr == nil || !NeedRedact() {
+		return regionErr.String()
+	}
+	redacted := proto.Clone(regionErr).(*errorpb.Error)
+	maskKey := func(key []byte) []byte {
+		if len(key) == 0 {
+			return key
+		}
+		return redactedKey
+	}
+	if redacted.Message != "" {
+		redacted.Message = "?"
+	}
+	if e := redacted.KeyNotInRegion; e != nil {
+		e.Key = maskKey(e.Key)
+		e.StartKey = maskKey(e.StartKey)
+		e.EndKey = maskKey(e.EndKey)
+	}
+	if e := redacted.EpochNotMatch; e != nil {
+		for _, region := range e.CurrentRegions {
+			if region == nil {
+				continue
+			}
+			region.StartKey = maskKey(region.StartKey)
+			region.EndKey = maskKey(region.EndKey)
+			if meta := region.EncryptionMeta; meta != nil {
+				meta.Iv = maskKey(meta.Iv)
+			}
+		}
+	}
+	if e := redacted.BucketVersionNotMatch; e != nil {
+		for i := range e.Keys {
+			e.Keys[i] = maskKey(e.Keys[i])
+		}
+	}
+	if result := redacted.String(); result != "" {
+		return result
+	}
+	return "?"
 }

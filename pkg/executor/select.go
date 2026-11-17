@@ -305,30 +305,31 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return doLockKeys(ctx, e.Ctx(), lockCtx, e.keys...)
 }
 
-// checkMaxExecutionTimeExceeded validates whether the current statement already hit the
-// max_execution_time limit. Centralized here so different executors share the same behaviour.
-func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
+// getMaxExecutionDeadline derives the deadline from ProcessInfo's effective timeout.
+func getMaxExecutionDeadline(sctx sessionctx.Context) (time.Time, bool) {
 	if sctx == nil {
-		return nil
+		return time.Time{}, false
 	}
-
-	sessVars := sctx.GetSessionVars()
-	if sessVars == nil {
-		return nil
-	}
-
-	maxExecTimeMS := sessVars.GetMaxExecutionTime()
-	if maxExecTimeMS == 0 {
-		return nil
-	}
-
 	processInfo := sctx.ShowProcess()
-	if processInfo == nil || processInfo.Time.IsZero() {
+	if processInfo == nil || processInfo.Time.IsZero() || processInfo.MaxExecutionTime == 0 {
+		return time.Time{}, false
+	}
+	return processInfo.Time.Add(time.Duration(processInfo.MaxExecutionTime) * time.Millisecond), true
+}
+
+// checkMaxExecutionTimeExceeded returns an error if the statement deadline has passed.
+func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
+	deadline, ok := getMaxExecutionDeadline(sctx)
+	if !ok {
 		return nil
 	}
-
-	elapsed := time.Since(processInfo.Time)
-	if elapsed >= time.Duration(maxExecTimeMS)*time.Millisecond {
+	if !time.Now().Before(deadline) {
+		sessVars := sctx.GetSessionVars()
+		if sessVars != nil && sessVars.SQLKiller.GetKillSignal() != 0 {
+			if err := sessVars.SQLKiller.HandleSignal(); err != nil {
+				return err
+			}
+		}
 		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
 	}
 
@@ -345,14 +346,10 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int, inShar
 	lockCtx.Killed = &seVars.SQLKiller.Signal
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
 	lockCtx.InShareMode = inSharedMode
+	lockCtx.AllowSharedLockUpgrade = seVars.EnableSharedLockUpgrade
 
-	// Set max_execution_time deadline for SELECT statements
-	maxExectionTime := seVars.GetMaxExecutionTime()
-	if maxExectionTime > 0 {
-		if processInfo := sctx.ShowProcess(); processInfo != nil {
-			maxExecTimeMs := time.Duration(maxExectionTime) * time.Millisecond
-			lockCtx.MaxExecutionDeadline = processInfo.Time.Add(maxExecTimeMs)
-		}
+	if deadline, ok := getMaxExecutionDeadline(sctx); ok {
+		lockCtx.MaxExecutionDeadline = deadline
 	}
 
 	lockCtx.ResourceGroupTagger = func(req *kvrpcpb.PessimisticLockRequest) []byte {
@@ -466,6 +463,10 @@ type LimitExec struct {
 	columnIdxsUsedByChild []int
 	columnSwapHelper      *chunk.ColumnSwapHelper
 
+	// The Limit owns the statement-local controller lifecycle. Reaching LIMIT or
+	// EOF stops admission; Open resets it after all prior workers have exited.
+	adaptiveLimitController *exec.AdaptiveLimitController
+
 	// Log the close time when opentracing is enabled.
 	span opentracing.Span
 }
@@ -473,6 +474,11 @@ type LimitExec struct {
 // Next implements the Executor Next interface.
 func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
+	defer func() {
+		if e.adaptiveLimitController != nil && e.cursor >= e.end {
+			e.adaptiveLimitController.Stop()
+		}
+	}()
 	if e.cursor >= e.end {
 		return nil
 	}
@@ -486,6 +492,9 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		batchSize := uint64(e.childResult.NumRows())
 		// no more data.
 		if batchSize == 0 {
+			if e.adaptiveLimitController != nil {
+				e.adaptiveLimitController.Stop()
+			}
 			return nil
 		}
 		if newCursor := e.cursor + batchSize; newCursor >= e.begin {
@@ -517,6 +526,9 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	batchSize := uint64(e.childResult.NumRows())
 	// no more data.
 	if batchSize == 0 {
+		if e.adaptiveLimitController != nil {
+			e.adaptiveLimitController.Stop()
+		}
 		return nil
 	}
 	if e.cursor+batchSize > e.end {
@@ -538,6 +550,9 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Open implements the Executor Open interface.
 func (e *LimitExec) Open(ctx context.Context) error {
+	if e.adaptiveLimitController != nil {
+		e.adaptiveLimitController.Reset()
+	}
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
@@ -557,6 +572,9 @@ func (e *LimitExec) open(ctx context.Context) error {
 // Close implements the Executor Close interface.
 func (e *LimitExec) Close() error {
 	start := time.Now()
+	if e.adaptiveLimitController != nil {
+		e.adaptiveLimitController.Stop()
+	}
 
 	e.childResult = nil
 	err := e.BaseExecutor.Close()
@@ -932,6 +950,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		}
 	}()
 	vars := ctx.GetSessionVars()
+	// Scalar subquery plans belong to the statement being planned. Clear the
+	// registry before plan selection, including fast and cached plans that can
+	// bypass the reset in buildLogicalPlan.
+	vars.MapScalarSubQ = nil
 	for name, val := range vars.StmtCtx.SetVarHintRestore {
 		err := vars.SetSystemVar(name, val)
 		if err != nil {
@@ -982,6 +1004,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.MatchSQLBindingCache = nil
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
+	sc.EnableTiKVShortCircuitExpression = vars.EnableTiKVShortCircuitExpression
 
 	vars.MemTracker.Detach()
 	vars.MemTracker.UnbindActions()

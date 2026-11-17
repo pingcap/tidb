@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 type StoreWithKS struct {
@@ -38,13 +39,18 @@ func (s *StoreWithKS) GetKeyspace() string {
 }
 
 func TestImportTaskExecutor(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	ctx := context.Background()
+	param := taskexecutor.NewParamForTest(nil, nil, nil, ":4000")
+	param.TaskRuntime = newMockRuntime(ctrl, &StoreWithKS{}, nil)
 	executor := NewImportExecutor(
 		ctx,
 		&proto.Task{
 			TaskBase: proto.TaskBase{ID: 1},
 		},
-		taskexecutor.NewParamForTest(nil, nil, nil, ":4000", &StoreWithKS{}),
+		param,
 	).(*importExecutor)
 
 	require.NotNil(t, executor.BaseTaskExecutor.Extension)
@@ -54,6 +60,7 @@ func TestImportTaskExecutor(t *testing.T) {
 	for _, step := range []proto.Step{
 		proto.ImportStepImport,
 		proto.ImportStepEncodeAndSort,
+		proto.ImportStepQuery,
 		proto.ImportStepMergeSort,
 		proto.ImportStepWriteAndIngest,
 		proto.ImportStepPostProcess,
@@ -63,11 +70,46 @@ func TestImportTaskExecutor(t *testing.T) {
 		exe, err := executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: step}, Meta: taskMeta})
 		require.NoError(t, err)
 		require.NotNil(t, exe)
+		switch step {
+		case proto.ImportStepImport, proto.ImportStepEncodeAndSort, proto.ImportStepQuery:
+			stepExecutor, ok := exe.(*importStepExecutor)
+			require.True(t, ok)
+			require.Same(t, param.TaskRuntime, stepExecutor.queryRuntime)
+		}
 	}
 	_, err := executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: proto.StepInit}, Meta: taskMeta})
 	require.Error(t, err)
 	_, err = executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepImport}, Meta: []byte("")})
 	require.Error(t, err)
+}
+
+func TestImportTaskExecutorUsesTaskRuntimeStoreWithoutExtraLookup(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	ctx := context.Background()
+	taskStore := &StoreWithKS{ks: "task_ks"}
+	param := taskexecutor.NewParamForTest(nil, nil, nil, ":4000")
+	param.TaskRuntime = newMockRuntime(ctrl, taskStore, nil)
+	executor := NewImportExecutor(
+		ctx,
+		&proto.Task{
+			TaskBase: proto.TaskBase{ID: 2},
+		},
+		param,
+	).(*importExecutor)
+
+	taskMeta := []byte(`{"Plan":{"TableInfo":{}}}`)
+	stepExecutor, err := executor.GetStepExecutor(&proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:       2,
+			Step:     proto.ImportStepImport,
+			Keyspace: "another_ks",
+		},
+		Meta: taskMeta,
+	})
+	require.NoError(t, err)
+	require.Same(t, taskStore, stepExecutor.(*importStepExecutor).store)
 }
 
 func TestGetOnDupForKVGroup(t *testing.T) {

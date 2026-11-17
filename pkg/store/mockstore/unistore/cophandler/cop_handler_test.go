@@ -636,6 +636,7 @@ func (*mockExchSenderChildExec) getIntermediateFieldTypes() []*types.FieldType {
 func (*mockExchSenderChildExec) takeIntermediateResults() []*chunk.Chunk       { return nil }
 func (*mockExchSenderChildExec) getFieldTypes() []*types.FieldType             { return nil }
 func (*mockExchSenderChildExec) buildSummary() *tipb.ExecutorExecutionSummary  { return nil }
+func (*mockExchSenderChildExec) scanDetail() *kvrpcpb.ScanDetailV2             { return &kvrpcpb.ScanDetailV2{} }
 
 func TestExchSenderExecNextReturnsWhenCtxCanceledBeforeTunnelConnected(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

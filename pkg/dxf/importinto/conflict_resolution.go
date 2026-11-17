@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
@@ -40,7 +41,7 @@ type conflictResolutionStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 	task     *proto.TaskBase
 	store    tidbkv.Storage
-	taskMeta *TaskMeta
+	taskMeta *taskinfo.TaskMeta
 	logger   *zap.Logger
 
 	tableImporter *importer.TableImporter
@@ -55,7 +56,7 @@ var _ execute.Collector = &conflictResolutionStepExecutor{}
 func NewConflictResolutionStepExecutor(
 	task *proto.TaskBase,
 	store tidbkv.Storage,
-	taskMeta *TaskMeta,
+	taskMeta *taskinfo.TaskMeta,
 	logger *zap.Logger,
 ) execute.StepExecutor {
 	return &conflictResolutionStepExecutor{
@@ -131,6 +132,10 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 		task.End(zapcore.ErrorLevel, err)
 	}()
 
+	targetIdx, err := getKVGroupIndexInfo(e.tableImporter, kvGroup)
+	if err != nil {
+		return err
+	}
 	encoders, err := createEncoders(concurrency, e.tableImporter)
 	if err != nil {
 		return err
@@ -138,11 +143,17 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 	pairCh := globalsort.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
+	deleterChs, needDispatch := createConflictHandlerChannels(pairCh, concurrency, targetIdx)
 	for i := range concurrency {
 		encoder := encoders[i]
 		deleter := conflictedkv.NewDeleter(e.tableImporter.Table, e.logger, e.store, kvGroup, encoder, e, e.GetMeterRecorder())
 		eg.Go(func() error {
-			return deleter.Run(egCtx, pairCh)
+			return deleter.Run(egCtx, deleterChs[i])
+		})
+	}
+	if needDispatch {
+		eg.Go(func() error {
+			return dispatchMVIndexKVPairs(egCtx, e.store, pairCh, deleterChs, targetIdx)
 		})
 	}
 

@@ -200,7 +200,7 @@ func initUnfinishedPathsFromExpr(
 
 		// case 2: try to use the previous logic to handle mv index
 		if isMVIndexPath(path) {
-			accessFilters, remainingFilters, tp := collectFilters4MVIndex(ds.SCtx(), cnfItems, idxCols)
+			accessFilters, remainingFilters, tp := collectFilters4MVIndex(ds.SCtx(), cnfItems, idxCols, path.Index)
 			if len(accessFilters) > 0 && (tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
 				ret[i].initedWithValidRange = true
 				ret[i].usableFilters = accessFilters
@@ -212,21 +212,29 @@ func initUnfinishedPathsFromExpr(
 		// case 3: use the new logic if the previous logic didn't succeed to collect access filters that can build a
 		// valid range directly.
 		ret[i].idxColHasUsableFilter = make([]bool, len(idxCols))
-		ret[i].needKeepFilter = true
+		// If every CNF item in this OR branch is collected as an access filter, the original OR branch does not need
+		// to be rechecked by a Selection, which means we don't need to set the `needKeepFilter` flag if we found that
+		// `collectedCNFItems` does not contain false after the loop.
+		collectedCNFItems := make([]bool, len(cnfItems))
 		for j, col := range idxCols {
-			for _, cnfItem := range cnfItems {
+			for k, cnfItem := range cnfItems {
+				if collectedCNFItems[k] {
+					continue
+				}
 				if ok, tp := checkAccessFilter4IdxCol(ds.SCtx(), cnfItem, col); ok &&
 					// Since we only handle the OR list nested in the AND list, and only generate IndexMerge OR path,
 					// we disable the multiValuesANDOnMVColTp case here.
-					(tp == eqOnNonMVColTp || tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
+					(tp == eqOrInOnNonMVColTp || tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
 					ret[i].usableFilters = append(ret[i].usableFilters, cnfItem)
 					ret[i].idxColHasUsableFilter[j] = true
+					collectedCNFItems[k] = true
 					// Once we find one valid access filter for this column, we directly go to the next column without
 					// looking into other filters.
 					break
 				}
 			}
 		}
+		ret[i].needKeepFilter = ret[i].needKeepFilter || slices.Contains(collectedCNFItems, false)
 	}
 
 	validCnt := 0
@@ -370,6 +378,7 @@ func buildIntoAccessPath(
 					ds.SCtx(),
 					unfinishedPath.usableFilters,
 					idxCols,
+					unfinishedPath.path.Index,
 				)
 				if len(accessFilters) == 0 {
 					continue

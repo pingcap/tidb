@@ -93,6 +93,7 @@ func (p *PhysicalIndexLookUpReader) Clone(newCtx base.PlanContext) (base.Physica
 	if cloned.TablePlan, err = p.TablePlan.Clone(newCtx); err != nil {
 		return nil, err
 	}
+	cloned.PlanPartInfo = p.PlanPartInfo.Clone()
 	if p.ExtraHandleCol != nil {
 		cloned.ExtraHandleCol = p.ExtraHandleCol.Clone().(*expression.Column)
 	}

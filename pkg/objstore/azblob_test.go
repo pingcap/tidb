@@ -513,3 +513,33 @@ func TestCopyObject(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, srcReader, reader)
 }
+
+func TestAzblobConcurrentUpload(t *testing.T) {
+	ctx := context.Background()
+	options := &backuppb.AzureBlobStorage{Bucket: "test", Prefix: "concurrent/"}
+	builder := &sharedKeyAzuriteClientBuilder{}
+	skip, err := createContainer(ctx, builder, options.Bucket)
+	if skip || err != nil {
+		t.Skip("azurite is not running, skip test")
+	}
+
+	azblobStorage, err := newAzureBlobStorageWithClientBuilder(ctx, options, builder)
+	require.NoError(t, err)
+
+	data := make([]byte, 20*1024*1024)
+	_, err = rand.Read(data)
+	require.NoError(t, err)
+
+	w, err := azblobStorage.Create(ctx, "concurrent.bin", &storeapi.WriterOption{
+		Concurrency: 4,
+		PartSize:    4 * 1024 * 1024,
+	})
+	require.NoError(t, err)
+	_, err = w.Write(ctx, data)
+	require.NoError(t, err)
+	require.NoError(t, w.Close(ctx))
+
+	got, err := azblobStorage.ReadFile(ctx, "concurrent.bin")
+	require.NoError(t, err)
+	require.Equal(t, data, got)
+}

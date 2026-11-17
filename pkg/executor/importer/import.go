@@ -35,6 +35,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
@@ -45,6 +46,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	litlog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -56,7 +58,6 @@ import (
 	pformat "github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -65,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -191,6 +193,7 @@ var (
 	}
 
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
+		diskQuotaOption:       {},
 		threadOption:          {},
 		disablePrecheckOption: {},
 	}
@@ -259,8 +262,9 @@ type LoadDataReaderInfo struct {
 
 // Plan describes the plan of LOAD DATA and IMPORT INTO.
 type Plan struct {
-	DBName string
-	DBID   int64
+	QuerySource *QuerySource `json:",omitempty"`
+	DBName      string
+	DBID        int64
 	// TableInfo is the table info we used during import, we might change it
 	// if add index by SQL is enabled(it's disabled now).
 	TableInfo *model.TableInfo
@@ -294,7 +298,7 @@ type Plan struct {
 	NullValueOptEnclosed bool
 	// LinesStartingBy is not used in IMPORT INTO
 	// FieldsOptEnclosed is not used in either IMPORT INTO or LOAD DATA
-	plannercore.LineFieldsInfo
+	importdef.LineFieldsInfo
 	IgnoreLines uint64
 
 	DiskQuota             config.ByteSize
@@ -335,6 +339,12 @@ type Plan struct {
 	ManualRecovery bool
 	// the keyspace name when submitting this job, only for import-into
 	Keyspace string
+	// UseNewCollate captures whether the new collation implementation was enabled
+	// in the submitting keyspace. Import execution may happen in another keyspace,
+	// so key and expression encoding must use this captured value instead of the
+	// executor process default. Nil means old metadata and should fall back to the
+	// caller-provided default.
+	UseNewCollate *bool `json:"use_new_collate,omitempty"`
 }
 
 // GetOnDupKeyMode returns the conflict handling mode.
@@ -347,6 +357,21 @@ func (p *Plan) GetOnDupKeyMode() OnDupKeyMode {
 		return OnDupKeyModeError
 	}
 	return p.OnDupKey
+}
+
+// GetUseNewCollateOrDefault returns the captured new-collation mode, or
+// defaultVal for import metadata generated before the field existed.
+func (p *Plan) GetUseNewCollateOrDefault(defaultVal bool) bool {
+	if p.UseNewCollate == nil {
+		return defaultVal
+	}
+	return *p.UseNewCollate
+}
+
+// setUseNewCollate stores the new-collation mode captured from the submitting
+// keyspace.
+func (p *Plan) setUseNewCollate(useNewCollate bool) {
+	p.UseNewCollate = &useNewCollate
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -435,7 +460,8 @@ type LoadDataController struct {
 	ExecuteNodesCnt int
 }
 
-func getImportantSysVars(sctx sessionctx.Context) map[string]string {
+// GetImportantSysVars returns the system variables that affect data encoding.
+func GetImportantSysVars(sctx sessionctx.Context) map[string]string {
 	res := map[string]string{}
 	for k, defVal := range common.DefaultImportantVariables {
 		if val, ok := sctx.GetSessionVars().GetSystemVar(k); ok {
@@ -454,74 +480,14 @@ func getImportantSysVars(sctx sessionctx.Context) map[string]string {
 	return res
 }
 
-// NewPlanFromLoadDataPlan creates a import plan from LOAD DATA.
-func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.LoadData) (*Plan, error) {
-	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
-	logger := log.L().With(zap.String("table", fullTableName))
-	charset := plan.Charset
-	if charset == nil {
-		// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-character-set
-		d, err2 := userSctx.GetSessionVars().GetSessionOrGlobalSystemVar(
-			context.Background(), vardef.CharsetDatabase)
-		if err2 != nil {
-			logger.Error("LOAD DATA get charset failed", zap.Error(err2))
-		} else {
-			charset = &d
-		}
+// NewImportPlanFromInput prepares an import plan from resolved input.
+func NewImportPlanFromInput(ctx context.Context, userSctx sessionctx.Context, input *Input) (*Plan, error) {
+	if input == nil || input.TableInfo == nil {
+		return nil, errors.New("import preparation requires target table metadata")
 	}
-	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode() &&
-		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
-
-	var ignoreLines uint64
-	if plan.IgnoreLines != nil {
-		ignoreLines = *plan.IgnoreLines
-	}
-
-	var (
-		nullDef              []string
-		nullValueOptEnclosed = false
-	)
-
-	lineFieldsInfo := plannercore.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo)
-	// todo: move null defined into plannercore.LineFieldsInfo
-	// in load data, there maybe multiple null def, but in SELECT ... INTO OUTFILE there's only one
-	if plan.FieldsInfo != nil && plan.FieldsInfo.DefinedNullBy != nil {
-		nullDef = append(nullDef, *plan.FieldsInfo.DefinedNullBy)
-		nullValueOptEnclosed = plan.FieldsInfo.NullValueOptEnclosed
-	} else if len(lineFieldsInfo.FieldsEnclosedBy) != 0 {
-		nullDef = append(nullDef, "NULL")
-	}
-	if len(lineFieldsInfo.FieldsEscapedBy) != 0 {
-		nullDef = append(nullDef, string([]byte{lineFieldsInfo.FieldsEscapedBy[0], 'N'}))
-	}
-
-	return &Plan{
-		DBName: plan.Table.Schema.L,
-		DBID:   plan.Table.DBInfo.ID,
-
-		Path:                 plan.Path,
-		Format:               DataFormatDelimitedData,
-		Restrictive:          restrictive,
-		FieldNullDef:         nullDef,
-		NullValueOptEnclosed: nullValueOptEnclosed,
-		LineFieldsInfo:       lineFieldsInfo,
-		IgnoreLines:          ignoreLines,
-
-		SQLMode:          userSctx.GetSessionVars().SQLMode,
-		Charset:          charset,
-		ImportantSysVars: getImportantSysVars(userSctx),
-
-		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
-		DataSourceType:         DataSourceTypeFile,
-	}, nil
-}
-
-// NewImportPlan creates a new import into plan.
-func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
-	failpoint.InjectCall("NewImportPlan", plan)
 	var format string
-	if plan.Format != nil {
-		format = strings.ToLower(*plan.Format)
+	if input.Format != nil {
+		format = strings.ToLower(*input.Format)
 	} else {
 		format = DataFormatAuto
 	}
@@ -532,12 +498,12 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 	// like +08:00.
 	location := userSctx.GetSessionVars().Location()
 	p := &Plan{
-		TableInfo:        tbl.Meta(),
-		DesiredTableInfo: tbl.Meta(),
-		DBName:           plan.Table.Schema.L,
-		DBID:             plan.Table.DBInfo.ID,
+		TableInfo:        input.TableInfo,
+		DesiredTableInfo: input.TableInfo,
+		DBName:           input.DBName,
+		DBID:             input.DBID,
 
-		Path:           plan.Path,
+		Path:           input.Path,
 		Format:         format,
 		Restrictive:    restrictive,
 		FieldNullDef:   defaultFieldNullDef,
@@ -545,26 +511,27 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 
 		LocationID:       timeutil.ZoneName(location),
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
-		ImportantSysVars: getImportantSysVars(userSctx),
+		ImportantSysVars: GetImportantSysVars(userSctx),
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
 		InImportInto:           true,
-		DataSourceType:         getDataSourceType(plan),
+		DataSourceType:         input.DataSourceType,
 		User:                   userSctx.GetSessionVars().User.String(),
 		Keyspace:               userSctx.GetStore().GetKeyspace(),
 	}
-	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
+	p.setUseNewCollate(collate.NewCollationEnabled())
+	if err := p.initOptions(ctx, userSctx, input.Options); err != nil {
 		return nil, err
 	}
-	if err := p.initParameters(plan); err != nil {
+	if err := p.initParameters(input); err != nil {
 		return nil, err
 	}
 	return p, nil
 }
 
-func newDefaultLineFieldsInfo() plannercore.LineFieldsInfo {
+func newDefaultLineFieldsInfo() importdef.LineFieldsInfo {
 	// those are the default values for lightning CSV format too
-	return plannercore.LineFieldsInfo{
+	return importdef.LineFieldsInfo{
 		FieldsTerminatedBy: `,`,
 		FieldsEnclosedBy:   `"`,
 		FieldsEscapedBy:    `\`,
@@ -572,29 +539,6 @@ func newDefaultLineFieldsInfo() plannercore.LineFieldsInfo {
 		// csv_parser will determine it automatically(either '\r' or '\n' or '\r\n')
 		// But user cannot set this to empty explicitly.
 		LinesTerminatedBy: ``,
-	}
-}
-
-// ASTArgsFromPlan creates ASTArgs from plan.
-func ASTArgsFromPlan(plan *plannercore.LoadData) *ASTArgs {
-	return &ASTArgs{
-		FileLocRef:         plan.FileLocRef,
-		ColumnsAndUserVars: plan.ColumnsAndUserVars,
-		ColumnAssignments:  plan.ColumnAssignments,
-		OnDuplicate:        plan.OnDuplicate,
-		FieldsInfo:         plan.FieldsInfo,
-		LinesInfo:          plan.LinesInfo,
-	}
-}
-
-// ASTArgsFromImportPlan creates ASTArgs from plan.
-func ASTArgsFromImportPlan(plan *plannercore.ImportInto) *ASTArgs {
-	// FileLocRef are not used in ImportIntoStmt, OnDuplicate not used now.
-	return &ASTArgs{
-		FileLocRef:         ast.FileLocServerOrRemote,
-		ColumnsAndUserVars: plan.ColumnsAndUserVars,
-		ColumnAssignments:  plan.ColumnAssignments,
-		OnDuplicate:        ast.OnDuplicateKeyHandlingReplace,
 	}
 }
 
@@ -742,14 +686,14 @@ func getDefMaxEngineSize() config.ByteSize {
 	return config.ByteSize(defaultMaxEngineSize)
 }
 
-func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
+func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, options []*ImportOption) error {
 	targetNodeCPUCnt, err := GetTargetNodeCPUCnt(ctx, p.DataSourceType, p.Path)
 	if err != nil {
 		return err
 	}
 	p.initDefaultOptions(ctx, targetNodeCPUCnt, seCtx.GetStore())
 
-	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
+	specifiedOptions := map[string]*ImportOption{}
 	for _, opt := range options {
 		hasValue, ok := supportedOptions[opt.Name]
 		if !ok {
@@ -769,9 +713,6 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 
 	if kerneltype.IsNextGen() && sem.IsEnabled() {
-		if p.DataSourceType == DataSourceTypeQuery {
-			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from select")
-		}
 		// we put the check here, not in planner, to make sure the cloud_storage_uri
 		// won't change in between.
 		if p.IsLocalSort() {
@@ -809,7 +750,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		}
 	}
 
-	optAsString := func(opt *plannercore.LoadDataOpt) (string, error) {
+	optAsString := func(opt *ImportOption) (string, error) {
 		if opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeVarString {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
@@ -819,7 +760,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		}
 		return val, nil
 	}
-	optAsInt64 := func(opt *plannercore.LoadDataOpt) (int64, error) {
+	optAsInt64 := func(opt *ImportOption) (int64, error) {
 		// current parser takes integer and bool as mysql.TypeLonglong
 		if opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetFlag()) {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
@@ -1044,14 +985,14 @@ func isSupportedCloudStorageBackend(backend *backuppb.StorageBackend) bool {
 	return backend != nil && (backend.GetS3() != nil || backend.GetGcs() != nil || backend.GetAzureBlobStorage() != nil)
 }
 
-func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
+func (p *Plan) initParameters(input *Input) error {
 	redactURL := ast.RedactURL(p.Path)
 	var columnsAndVars, setClause string
 	var sb strings.Builder
 	formatCtx := pformat.NewRestoreCtx(pformat.DefaultRestoreFlags, &sb)
-	if len(plan.ColumnsAndUserVars) > 0 {
+	if len(input.ColumnsAndUserVars) > 0 {
 		sb.WriteString("(")
-		for i, col := range plan.ColumnsAndUserVars {
+		for i, col := range input.ColumnsAndUserVars {
 			if i > 0 {
 				sb.WriteString(", ")
 			}
@@ -1060,9 +1001,9 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 		sb.WriteString(")")
 		columnsAndVars = sb.String()
 	}
-	if len(plan.ColumnAssignments) > 0 {
+	if len(input.ColumnAssignments) > 0 {
 		sb.Reset()
-		for i, assign := range plan.ColumnAssignments {
+		for i, assign := range input.ColumnAssignments {
 			if i > 0 {
 				sb.WriteString(", ")
 			}
@@ -1070,15 +1011,10 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 		}
 		setClause = sb.String()
 	}
-	optionMap := make(map[string]any, len(plan.Options))
-	for _, opt := range plan.Options {
+	optionMap := make(map[string]any, len(input.Options))
+	for _, opt := range input.Options {
 		if opt.Value != nil {
-			// The option attached to the import statement here are all
-			// parameters entered by the user. TiDB will process the
-			// parameters entered by the user as constant. so we can
-			// directly convert it to constant.
-			cons := opt.Value.(*expression.Constant)
-			val := fmt.Sprintf("%v", cons.Value.GetValue())
+			val := fmt.Sprintf("%v", opt.Value.Value.GetValue())
 			if opt.Name == cloudStorageURIOption {
 				val = ast.RedactURL(val)
 			}
@@ -1213,7 +1149,7 @@ func (e *LoadDataController) GetFieldCount() int {
 // GenerateCSVConfig generates a CSV config for parser from LoadDataWorker.
 func generateCSVConfig(
 	fieldNullDef []string,
-	lineFieldsInfo plannercore.LineFieldsInfo,
+	lineFieldsInfo importdef.LineFieldsInfo,
 	inImportInto bool,
 	nullValueOptEnclosed bool,
 ) *config.CSVConfig {
@@ -1244,30 +1180,140 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 }
 
 // InitDataStore initializes the data store.
-func (e *LoadDataController) InitDataStore(ctx context.Context) error {
-	u, err2 := objstore.ParseRawURL(e.Path)
-	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
-			err2.Error())
-	}
-
-	if objstore.IsLocal(u) {
-		u.Path = filepath.Dir(e.Path)
-	} else {
-		u.Path = ""
-	}
-	s, err := initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
-	if err != nil {
-		return err
-	}
-	e.dataStore = s
-
+func (e *LoadDataController) InitDataStore(ctx context.Context) (err error) {
 	if e.IsGlobalSort() {
 		store, err3 := GetSortStore(ctx, e.Plan.CloudStorageURI)
 		if err3 != nil {
 			return err3
 		}
 		e.globalSortStore = store
+		defer func() {
+			if err != nil {
+				store.Close()
+				e.globalSortStore = nil
+			}
+		}()
+	}
+
+	if e.Path == "" {
+		return nil
+	}
+
+	u, _, err2 := e.parseDataSourcePath()
+	if err2 != nil {
+		return err2
+	}
+
+	s, err := initExternalStore(ctx, u, importdef.ImportIntoDataSource)
+	if err != nil {
+		return err
+	}
+	e.dataStore = s
+
+	return nil
+}
+
+// parseDataSourcePath parses e.Path and returns the URL of the storage holding
+// the data source, together with the file name or glob pattern to look for in
+// that storage.
+//
+// For local path, the returned URL points to the parent directory and the file
+// name is the base name, so that importing from server disk is confined to the
+// requested file or pattern. For remote storage, the file name is the object
+// path without the leading slash.
+func (e *LoadDataController) parseDataSourcePath() (*url.URL, string, error) {
+	u, err := objstore.ParseRawURL(e.Path)
+	if err != nil {
+		return nil, "", exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(importdef.ImportIntoDataSource,
+			err.Error())
+	}
+
+	var fileNameKey string
+	if objstore.IsLocal(u) {
+		u.Path = filepath.Dir(e.Path)
+		fileNameKey = filepath.Base(e.Path)
+	} else {
+		fileNameKey = strings.Trim(u.Path, "/")
+		u.Path = ""
+	}
+	return u, fileNameKey, nil
+}
+
+// checkDataSourceGlob checks that the file name or glob pattern of the data
+// source is well-formed.
+func checkDataSourceGlob(fileNameKey string) error {
+	// matching an empty name is enough to detect a malformed pattern.
+	if _, err := filepath.Match(stringutil.EscapeGlobQuestionMark(fileNameKey), ""); err != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(importdef.ImportIntoDataSource,
+			"Glob pattern error: "+err.Error())
+	}
+	return nil
+}
+
+// CheckDataSourceAccess checks whether the data source can be accessed without
+// discovering all matching files. It is used before submitting a task whose
+// full file discovery runs asynchronously.
+//
+// It is only called by CheckRequirementsBeforeInitDataFiles, i.e. on the
+// NextGen async-prepare path, where the import uses global sort and the data
+// source is on cloud storage (import from server disk is rejected when SEM is
+// enabled). Credentials of such a data source normally grant access to the
+// whole directory rather than to individual files, so probing a single object
+// is a good enough access check: matching, empty-file validation and size
+// limits are still done by the asynchronous prepare.
+func (e *LoadDataController) CheckDataSourceAccess(ctx context.Context) error {
+	u, fileNameKey, err := e.parseDataSourcePath()
+	if err != nil {
+		return err
+	}
+	// Check malformed glob patterns before probing the store.
+	if err = checkDataSourceGlob(fileNameKey); err != nil {
+		return err
+	}
+
+	sourceStore, err := initExternalStore(ctx, u, importdef.ImportIntoDataSource)
+	if err != nil {
+		return err
+	}
+	defer sourceStore.Close()
+
+	idx := strings.IndexAny(fileNameKey, "*[")
+	if idx == -1 {
+		reader, err := sourceStore.Open(ctx, fileNameKey, nil)
+		if err != nil {
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(
+				errors.GetErrStackMsg(err), "Please check the file location is correct")
+		}
+		terror.Log(reader.Close())
+		return nil
+	}
+
+	commonPrefix := ""
+	if !objstore.IsLocal(u) {
+		commonPrefix = fileNameKey[:idx]
+	}
+	// Keep the default page size: a page can contain entries that are not
+	// openable files, such as s3's empty directory items, and a smaller page
+	// size would make us issue one list request per skipped entry before
+	// finding one.
+	err = sourceStore.WalkDir(ctx, &storeapi.WalkOption{
+		ObjPrefix:  commonPrefix,
+		SkipSubDir: true,
+	}, func(remotePath string, _ int64) error {
+		reader, err := sourceStore.Open(ctx, remotePath, nil)
+		if err != nil {
+			return err
+		}
+		terror.Log(reader.Close())
+		// Stop after the first object. File matching and complete discovery are
+		// intentionally deferred to asynchronous prepare. The object opened here
+		// does not have to match the pattern: credentials of a cloud data source
+		// normally cover the whole directory, so any object in it is readable.
+		return io.EOF
+	})
+	if err != nil && errors.Cause(err) != io.EOF {
+		return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(
+			errors.GetErrStackMsg(err), "failed to access data source")
 	}
 	return nil
 }
@@ -1305,7 +1351,15 @@ func initExternalStore(ctx context.Context, u *url.URL, target string) (storeapi
 	return s, nil
 }
 
-func estimateCompressionRatio(
+// estimateFormatSizeExpansionRatio estimates how much larger the decoded row
+// data can be than the source file's physical bytes because of the file format.
+//
+// Row-oriented formats use 1.0 because their file size is already a reasonable
+// proxy for decoded data size. Parquet needs a separate estimate: its columnar
+// layout and internal compression can make the physical file much smaller than
+// the row data TiDB will import. The returned ratio is always at least 1.0, so
+// size planning never treats decoded data as smaller than the source file.
+func estimateFormatSizeExpansionRatio(
 	ctx context.Context,
 	filePath string,
 	fileSize int64,
@@ -1324,13 +1378,23 @@ func estimateCompressionRatio(
 	if err != nil {
 		return 1.0, err
 	}
-	// No row in the file, use 2.0 as default compression ratio.
+	// If there is no row data to sample, keep the historical default estimate.
 	if rowSize == 0 || rows == 0 {
 		return 2.0, nil
 	}
 
-	compressionRatio := (rowSize * float64(rows)) / float64(fileSize)
-	return compressionRatio, nil
+	ratio := (rowSize * float64(rows)) / float64(fileSize)
+	// Small parquet files or inefficient internal compression can make the
+	// sampled decoded row size smaller than the physical file size. Keep size
+	// planning conservative by normalizing the format expansion to 1.0.
+	if ratio < 1.0 {
+		logutil.BgLogger().Info("estimated size expansion ratio is less than 1.0, normalized to 1.0",
+			zap.String("filePath", filePath), zap.Int64("rows", rows),
+			zap.Float64("rowSize", rowSize), zap.Int64("fileSize", fileSize),
+			zap.Float64("estimatedRatio", ratio))
+		ratio = 1.0
+	}
+	return ratio, nil
 }
 
 // maxSampledCompressedFiles indicates the max number of files we used to sample
@@ -1422,13 +1486,11 @@ func (r *compressionEstimator) estimate(
 // InitDataFiles initializes the data store and files.
 // it will call InitDataStore internally.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
-	u, err2 := objstore.ParseRawURL(e.Path)
+	u, fileNameKey, err2 := e.parseDataSourcePath()
 	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
-			err2.Error())
+		return err2
 	}
 
-	var fileNameKey string
 	if objstore.IsLocal(u) {
 		// LOAD DATA don't support server file.
 		if !e.InImportInto {
@@ -1436,32 +1498,26 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 
 		if !filepath.IsAbs(e.Path) {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(importdef.ImportIntoDataSource,
 				"file location should be absolute path when import from server disk")
 		}
 		// we add this check for security, we don't want user import any sensitive system files,
 		// most of which is readable text file and don't have a suffix, such as /etc/passwd
 		if !slices.Contains(supportedSuffixForServerDisk, strings.ToLower(filepath.Ext(e.Path))) {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(importdef.ImportIntoDataSource,
 				"the file suffix is not supported when import from server disk")
 		}
 		dir := filepath.Dir(e.Path)
 		_, err := os.Stat(dir)
 		if err != nil {
 			// permission denied / file not exist error, etc.
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(importdef.ImportIntoDataSource,
 				err.Error())
 		}
-
-		fileNameKey = filepath.Base(e.Path)
-	} else {
-		fileNameKey = strings.Trim(u.Path, "/")
 	}
 	// try to find pattern error in advance
-	_, err2 = filepath.Match(stringutil.EscapeGlobQuestionMark(fileNameKey), "")
-	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
-			"Glob pattern error: "+err2.Error())
+	if err2 = checkDataSourceGlob(fileNameKey); err2 != nil {
+		return err2
 	}
 
 	if err2 = e.InitDataStore(ctx); err2 != nil {
@@ -1471,9 +1527,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	s := e.dataStore
 	var (
 		sourceType mydump.SourceType
-		// sizeExpansionRatio is the estimated size expansion for parquet format.
-		// For non-parquet format, it's always 1.0.
-		sizeExpansionRatio = 1.0
+		// formatExpansionRatio adjusts file-size estimates for formats whose
+		// physical bytes are not a good proxy for decoded row data. It is
+		// currently greater than 1.0 only for parquet.
+		formatExpansionRatio = 1.0
 	)
 	dataFiles := []*mydump.SourceFileMeta{}
 	isAutoDetectingFormat := e.Format == DataFormatAuto
@@ -1494,7 +1551,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 		e.detectAndUpdateFormat(fileNameKey)
 		sourceType = e.getSourceType()
-		compressionRatio, err := estimateCompressionRatio(ctx, fileNameKey, size, sourceType, s)
+		formatExpansionRatio, err := estimateFormatSizeExpansionRatio(ctx, fileNameKey, size, sourceType, s)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1507,7 +1564,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			ParquetMeta: parquetfile.FileMeta{Loc: e.location},
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
-		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
+		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * formatExpansionRatio)
 		dataFiles = append(dataFiles, &fileMeta)
 	} else {
 		var commonPrefix string
@@ -1550,7 +1607,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				once.Do(func() {
 					e.detectAndUpdateFormat(path)
 					sourceType = e.getSourceType()
-					sizeExpansionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
+					formatExpansionRatio, err2 = estimateFormatSizeExpansionRatio(ctx, path, size, sourceType, s)
 				})
 				if err2 != nil {
 					return nil, err2
@@ -1563,8 +1620,12 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Type:        sourceType,
 					ParquetMeta: parquetfile.FileMeta{Loc: e.location},
 				}
-				fileMeta.RealSize = int64(ce.estimate(ctx, fileMeta, s) * float64(fileMeta.FileSize))
-				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * sizeExpansionRatio)
+				// Compression sampling can be below 1.0 for small files or
+				// inefficient compression. Keep RealSize at least the physical
+				// file size before applying the format expansion estimate.
+				compressionExpansionRatio := max(ce.estimate(ctx, fileMeta, s), 1.0)
+				fileMeta.RealSize = int64(compressionExpansionRatio * float64(fileMeta.FileSize))
+				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * formatExpansionRatio)
 				return &fileMeta, nil
 			}); err != nil {
 			return err
@@ -1716,12 +1777,15 @@ func newLoadDataParser(
 	dataStore storeapi.Storage,
 	dataFileInfo LoadDataReaderInfo,
 ) (parser mydump.Parser, err error) {
-	reader, err2 := dataFileInfo.Opener(ctx)
-	if err2 != nil {
-		return nil, err2
+	var reader io.ReadSeekCloser
+	if format != DataFormatParquet {
+		reader, err = dataFileInfo.Opener(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	defer func() {
-		if err != nil {
+		if err != nil && reader != nil {
 			if err3 := reader.Close(); err3 != nil && logger != nil {
 				logger.Warn("failed to close reader", zap.Error(err3))
 			}
@@ -1756,8 +1820,9 @@ func newLoadDataParser(
 		parser, err = parquetfile.NewParser(
 			ctx,
 			dataStore,
-			reader,
+			dataFileInfo.Opener,
 			dataFileInfo.Remote.Path,
+			dataFileInfo.Remote.FileSize,
 			dataFileInfo.Remote.ParquetMeta,
 		)
 	default:
@@ -1836,6 +1901,20 @@ func (p *Plan) IsLocalSort() bool {
 // IsGlobalSort returns true if we sort data on global storage.
 func (p *Plan) IsGlobalSort() bool {
 	return !p.IsLocalSort()
+}
+
+// ShouldUseAsyncPrepare returns whether IMPORT INTO should use
+// DXF prepare-mode asynchronous prepare. Starter imports are usually small, and
+// their maximum size is controlled by starter-params.max-import-data-size, so
+// synchronous prepare is fast and provides more responsive validation feedback.
+// Nextgen only supports global sort for IMPORT INTO in production, but local
+// sort can still be exercised in tests, so keep the IsGlobalSort check.
+// Query imports have no source files to discover during asynchronous prepare.
+func ShouldUseAsyncPrepare(plan *Plan) bool {
+	failpoint.Inject("mockDisableAsyncPrepare", func() {
+		failpoint.Return(false)
+	})
+	return plan != nil && plan.QuerySource == nil && kerneltype.IsNextGen() && !deploymode.IsStarter() && plan.IsGlobalSort()
 }
 
 // CheckNonCSVFormatOptions non CSV format should not specify CSV only options,
@@ -1925,7 +2004,11 @@ func createColAssignSimpleExprs(
 
 // CreateColAssignSimpleExprs creates the column assignment expressions using `expression.BuildContext`.
 func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildContext) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
-	return createColAssignSimpleExprs(e.ColumnAssignments, ctx, &e.colAssignMu)
+	return createColAssignSimpleExprs(
+		e.ColumnAssignments,
+		ctx,
+		&e.colAssignMu,
+	)
 }
 
 func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string) ingestctrl.BackendConfig {
@@ -1964,13 +2047,6 @@ func (e *LoadDataController) FullTableName() string {
 	return common.UniqueTable(e.DBName, e.Table.Meta().Name.O)
 }
 
-func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
-	if p.SelectPlan != nil {
-		return DataSourceTypeQuery
-	}
-	return DataSourceTypeFile
-}
-
 // GetTargetNodeCPUCnt get cpu count of target node where the import into job will be executed.
 // target node is current node if it's server-disk import, import from query or disttask is disabled,
 // else it's the node managed by disttask.
@@ -1982,7 +2058,7 @@ func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path st
 
 	u, err2 := objstore.ParseRawURL(path)
 	if err2 != nil {
-		return 0, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+		return 0, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(importdef.ImportIntoDataSource,
 			err2.Error())
 	}
 

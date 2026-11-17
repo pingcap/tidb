@@ -325,6 +325,15 @@ func TestTLSVerify(t *testing.T) {
 	// Success: when using a secure connection, the value of "require_secure_transport" can change to "ON"
 	err = cli.RunTestEnableSecureTransport(t, connOverrider)
 	require.NoError(t, err)
+	err = cli.RunReloadTLS(t, connOverrider, false)
+	require.NoError(t, err)
+
+	// issue:69870 A TLS connection without a client certificate should still succeed after
+	// enabling require_secure_transport and reloading the server TLS config.
+	err = cli.RunTestTLSConnection(t, func(config *mysql.Config) {
+		config.TLSConfig = "skip-verify"
+	})
+	require.NoError(t, err)
 
 	// This connection will now fail since the client is not configured to use TLS.
 	err = cli.RunTestTLSConnection(t, nil)
@@ -406,9 +415,13 @@ func TestTLSBasic(t *testing.T) {
 	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
+	runErrCh := make(chan error, 1)
 	go func() {
-		err := server.Run(nil)
-		require.NoError(t, err)
+		runErrCh <- server.Run(nil)
+	}()
+	defer func() {
+		server.Close()
+		require.NoError(t, <-runErrCh)
 	}()
 	<-tidbserver.RunInGoTestChan
 	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
@@ -433,8 +446,6 @@ func TestTLSBasic(t *testing.T) {
 	require.True(t, hasKey)
 	require.Equal(t, serverCert.NotAfter.Format("Jan _2 15:04:05 2006 MST"), stats["Ssl_server_not_after"])
 	require.Equal(t, serverCert.NotBefore.Format("Jan _2 15:04:05 2006 MST"), stats["Ssl_server_not_before"])
-
-	server.Close()
 }
 
 func TestErrorNoRollback(t *testing.T) {
@@ -640,6 +651,7 @@ func TestStatusAPIWithTLS(t *testing.T) {
 	tidbserver.RunInGoTestChan = make(chan struct{})
 	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
 
 	go func() {
 		err := server.Run(nil)
@@ -698,6 +710,7 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 	tidbserver.RunInGoTestChan = make(chan struct{})
 	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
 
 	go func() {
 		err := server.Run(nil)

@@ -41,6 +41,9 @@ type PreparedStatement interface {
 	// AppendParam appends parameter to the statement.
 	AppendParam(paramID int, data []byte) error
 
+	// CheckLongDataSize checks whether the statement has accumulated too much data through COM_STMT_SEND_LONG_DATA.
+	CheckLongDataSize() error
+
 	// NumParams returns number of parameters.
 	NumParams() int
 
@@ -61,6 +64,9 @@ type PreparedStatement interface {
 
 	// Reset removes all bound parameters and opened resultSet/rowContainer.
 	Reset() error
+
+	// CloseCursor releases cursor resources without clearing bound parameters.
+	CloseCursor() error
 
 	// Close closes the statement.
 	Close() error

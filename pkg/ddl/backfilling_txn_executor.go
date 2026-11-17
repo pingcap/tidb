@@ -74,9 +74,11 @@ type txnBackfillExecutor struct {
 	workers []*backfillWorker
 	wg      sync.WaitGroup
 
-	taskCh   chan *reorgBackfillTask
-	resultCh chan *backfillResult
-	closed   bool
+	taskCh       chan *reorgBackfillTask
+	resultCh     chan *backfillResult
+	resultCtx    context.Context
+	cancelResult context.CancelFunc
+	closed       bool
 }
 
 func newTxnBackfillExecutor(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
@@ -87,6 +89,7 @@ func newTxnBackfillExecutor(ctx context.Context, info *reorgInfo, sessPool *sess
 		return nil, err
 	}
 	workerCnt := info.ReorgMeta.GetConcurrency()
+	resultCtx, cancelResult := context.WithCancel(ctx)
 	return &txnBackfillExecutor{
 		ctx:          ctx,
 		reorgInfo:    info,
@@ -98,6 +101,8 @@ func newTxnBackfillExecutor(ctx context.Context, info *reorgInfo, sessPool *sess
 		workers:      make([]*backfillWorker, 0, workerCnt),
 		taskCh:       make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultCh:     make(chan *backfillResult, backfillTaskChanSize),
+		resultCtx:    resultCtx,
+		cancelResult: cancelResult,
 	}, nil
 }
 
@@ -152,8 +157,13 @@ func newDefaultReorgDistSQLCtx(kvClient kv.Client, warnHandler contextutil.WarnA
 	var execDetails execdetails.SyncExecDetails
 	var cpuUsages ppcpuusage.SQLCPUUsages
 	return &distsqlctx.DistSQLContext{
-		WarnHandler:                          warnHandler,
-		Client:                               kvClient,
+		WarnHandler: warnHandler,
+		Client:      kvClient,
+		// Reorg scans are single-pass bulk reads over the whole table/index range: the blocks
+		// they touch are never re-read by the reorg, so caching them brings no benefit and can
+		// evict the working set that concurrent foreground traffic relies on. Skip filling the
+		// block cache for all reorg coprocessor scans.
+		NotFillCache:                         true,
 		EnableChunkRPC:                       true,
 		EnabledRateLimitAction:               vardef.DefTiDBEnableRateLimitAction,
 		KVVars:                               tikvstore.NewVariables(&sqlKiller.Signal),
@@ -221,6 +231,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	sv := sessCtx.GetSessionVars() //nolint:forbidigo
 	rowEncoder := sv.RowEncoder.Enable
 	sqlMode := sv.SQLMode
+	divPrecisionIncrement := sv.DivPrecisionIncrement
 	var timezone *time.Location
 	if sv.TimeZone != nil {
 		// Copy the content of timezone instead of pointer because it may be changed.
@@ -234,6 +245,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		uv := usedSessCtx.GetSessionVars() //nolint:forbidigo
 		uv.RowEncoder.Enable = rowEncoder
 		uv.SQLMode = sqlMode
+		uv.DivPrecisionIncrement = divPrecisionIncrement
 		uv.TimeZone = timezone
 		uv.StmtCtx.SetTypeFlags(typeFlags)
 		uv.StmtCtx.SetErrLevels(errLevels)
@@ -273,7 +285,7 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 			if err != nil {
 				return err
 			}
-			runner = newBackfillWorker(b.ctx, idxWorker)
+			runner = newBackfillWorker(b.ctx, b.resultCtx, idxWorker)
 			worker = idxWorker
 		case typeAddIndexMergeTmpWorker:
 			backfillCtx, err := newBackfillCtx(i, reorgInfo, job.SchemaName, b.tbl, jc, metrics.LblMergeTmpIdxRate, false)
@@ -284,28 +296,28 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 			if err != nil {
 				return err
 			}
-			runner = newBackfillWorker(b.ctx, tmpIdxWorker)
+			runner = newBackfillWorker(b.ctx, b.resultCtx, tmpIdxWorker)
 			worker = tmpIdxWorker
 		case typeUpdateColumnWorker:
 			updateWorker, err := newUpdateColumnWorker(i, b.tbl, b.decodeColMap, reorgInfo, jc)
 			if err != nil {
 				return err
 			}
-			runner = newBackfillWorker(b.ctx, updateWorker)
+			runner = newBackfillWorker(b.ctx, b.resultCtx, updateWorker)
 			worker = updateWorker
 		case typeCleanUpIndexWorker:
 			idxWorker, err := newCleanUpIndexWorker(i, b.tbl, b.decodeColMap, reorgInfo, jc)
 			if err != nil {
 				return err
 			}
-			runner = newBackfillWorker(b.ctx, idxWorker)
+			runner = newBackfillWorker(b.ctx, b.resultCtx, idxWorker)
 			worker = idxWorker
 		case typeReorgPartitionWorker:
 			partWorker, err := newReorgPartitionWorker(i, b.tbl, b.decodeColMap, reorgInfo, jc)
 			if err != nil {
 				return err
 			}
-			runner = newBackfillWorker(b.ctx, partWorker)
+			runner = newBackfillWorker(b.ctx, b.resultCtx, partWorker)
 			worker = partWorker
 		default:
 			return errors.New("unknown backfill type")
@@ -333,9 +345,11 @@ func (b *txnBackfillExecutor) close(force bool) {
 	b.closed = true
 	close(b.taskCh)
 	if force {
+		b.cancelResult()
 		closeBackfillWorkers(b.workers)
 	}
 	b.wg.Wait()
+	b.cancelResult()
 	close(b.resultCh)
 }
 

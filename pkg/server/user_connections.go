@@ -36,59 +36,51 @@ func calculateConnectionLimit(globalLimit uint32, userLimit uint32) uint32 {
 	return globalLimit
 }
 
-// increaseUserConnectionsCount increases the count of connections when user login the database.
+// increaseUserConnectionsCount increases the count of connections when user login the database
+// and returns a release function bound to the account that acquired the quota.
 // Note: increaseUserConnectionsCount() is called when create connections only, and not in 'changeUser'(COM_CHANGE_USER).
 // In mysql, 'COM_CHANGE_USER' will only reset the session state (such as permissions, default database, etc.),
 // but will not change the ownership of the number of connections.
-func (cc *clientConn) increaseUserConnectionsCount() error {
+func (cc *clientConn) increaseUserConnectionsCount() (func(), error) {
 	var (
 		user       = cc.ctx.GetSessionVars().User
 		targetUser = user.String()
 		globaLimit = vardef.MaxUserConnectionsValue.Load()
+		server     = cc.server
 	)
 
 	// check the number of connections again.
 	pm := privilege.GetPrivilegeManager(cc.ctx.Session)
 	userLimit, err := pm.GetUserResources(user.AuthUsername, user.AuthHostname)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	limit := calculateConnectionLimit(globaLimit, uint32(userLimit))
 
-	cc.server.userResLock.Lock()
-	defer cc.server.userResLock.Unlock()
-	ur, ok := cc.server.userResource[targetUser]
+	server.userResLock.Lock()
+	defer server.userResLock.Unlock()
+	ur, ok := server.userResource[targetUser]
 	if !ok {
-		// if not exist in userResource,
-		userHost := &userResourceLimits{
-			connections: 1,
-		}
-		cc.server.userResource[targetUser] = userHost
-		return nil
-	}
-
-	// check the global variables `MAX_USER_CONNECTIONS` and the max_user_conections in mysql.user
-	// with current count of active connection.
-	if limit > 0 && ur.connections >= int(limit) {
-		return servererr.ErrTooManyUserConnections.GenWithStackByArgs(targetUser)
+		ur = &userResourceLimits{}
+		server.userResource[targetUser] = ur
+	} else if limit > 0 && ur.connections >= int(limit) {
+		// Check the global MAX_USER_CONNECTIONS and the user's limit against the active count.
+		return nil, servererr.ErrTooManyUserConnections.GenWithStackByArgs(targetUser)
 	}
 
 	ur.connections++
-	return nil
+	return func() { server.decreaseUserConnectionCount(targetUser) }, nil
 }
 
 // decreaseUserConnectionCount decreases the count of connections when user logout the database.
-func (cc *clientConn) decreaseUserConnectionCount() {
-	user := cc.ctx.GetSessionVars().User
-	targetUser := user.String()
-
-	cc.server.userResLock.Lock()
-	defer cc.server.userResLock.Unlock()
-	ur, ok := cc.server.userResource[targetUser]
+func (s *Server) decreaseUserConnectionCount(targetUser string) {
+	s.userResLock.Lock()
+	defer s.userResLock.Unlock()
+	ur, ok := s.userResource[targetUser]
 	if ok && ur.connections > 0 {
 		ur.connections--
 		if ur.connections <= 0 {
-			delete(cc.server.userResource, targetUser)
+			delete(s.userResource, targetUser)
 		}
 	}
 }

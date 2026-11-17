@@ -27,9 +27,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/etcd"
@@ -54,8 +56,40 @@ type Syncer struct {
 	reporter        MinStartTSReporter
 	info            atomic.Pointer[ServerInfo]
 	serverInfoPath  string
+	endpointClaim   *statusEndpointClaim
 	session         *concurrency.Session
 	topologySession *concurrency.Session
+}
+
+// serverInfoKeyPath returns the etcd key path for the given server ID under
+// ServerInformationPath.
+func serverInfoKeyPath(id string) string {
+	return fmt.Sprintf("%s/%s", ServerInformationPath, id)
+}
+
+type syncerOptions struct {
+	skipStatusEndpointClaim bool
+	disableRPC              bool
+}
+
+// SyncerOption configures a Syncer during construction.
+type SyncerOption func(*syncerOptions)
+
+// WithoutStatusEndpointClaim prevents the Syncer from claiming the configured status endpoint.
+// It is intended only for the non-serving Domain created while initializing global variables.
+// A serving primary TiDB Domain must keep the default endpoint-claim behavior.
+func WithoutStatusEndpointClaim() SyncerOption {
+	return func(options *syncerOptions) {
+		options.skipStatusEndpointClaim = true
+	}
+}
+
+// WithDisableRPC marks the published server info as ineligible for TiDB RPC.
+// Domain passes it when the domain is started as standalone BR.
+func WithDisableRPC() SyncerOption {
+	return func(options *syncerOptions) {
+		options.disableRPC = true
+	}
 }
 
 // NewSyncer creates a new Syncer instance.
@@ -64,8 +98,9 @@ func NewSyncer(
 	serverIDGetter func() uint64,
 	etcdCli *clientv3.Client,
 	reporter MinStartTSReporter,
+	options ...SyncerOption,
 ) *Syncer {
-	return newSyncer(uuid, serverIDGetter, etcdCli, reporter, "")
+	return newSyncer(uuid, serverIDGetter, etcdCli, reporter, "", options...)
 }
 
 // NewCrossKSSyncer creates a new Syncer instance for cross keyspace scenarios.
@@ -85,13 +120,21 @@ func newSyncer(
 	etcdCli *clientv3.Client,
 	reporter MinStartTSReporter,
 	assumedKS string,
+	options ...SyncerOption,
 ) *Syncer {
+	args := &syncerOptions{}
+	for _, option := range options {
+		option(args)
+	}
+	info := getServerInfo(uuid, serverIDGetter, assumedKS, args.disableRPC)
+	claimEnabled := config.GetGlobalConfig().Status.ReportStatus && !args.skipStatusEndpointClaim
 	is := &Syncer{
 		etcdCli:        etcdCli,
 		reporter:       reporter,
-		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, uuid),
+		serverInfoPath: serverInfoKeyPath(uuid),
+		endpointClaim:  newStatusEndpointClaim(etcdCli, info, claimEnabled),
 	}
-	is.info.Store(getServerInfo(uuid, serverIDGetter, assumedKS))
+	is.info.Store(info)
 	return is
 }
 
@@ -100,17 +143,50 @@ func (s *Syncer) NewSessionAndStoreServerInfo(ctx context.Context) error {
 	if s.etcdCli == nil {
 		return nil
 	}
+	s.cleanupStaleServerAndOwnerInfo(ctx)
 	logPrefix := fmt.Sprintf("[Info-syncer] %s", s.serverInfoPath)
 	session, err := tidbutil.NewSession(ctx, logPrefix, s.etcdCli, tidbutil.NewSessionDefaultRetryCnt, util.SessionTTL)
 	if err != nil {
 		return err
 	}
 	s.session = session
-	return s.StoreServerInfo(ctx)
+
+	// Endpoint claim attempts are best-effort; conflicts and operation errors must not block server info registration.
+	s.endpointClaim.tryAcquireAndReport(ctx, session.Lease())
+
+	storeErr := s.StoreServerInfo(ctx)
+	if storeErr == nil {
+		return nil
+	}
+
+	// Release any endpoint claim that may have been created by this failed registration.
+	s.cleanupFailedRegistration(session)
+	return storeErr
+}
+
+func (s *Syncer) cleanupFailedRegistration(session *concurrency.Session) {
+	lease := session.Lease()
+	session.Orphan()
+
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), KeyOpDefaultTimeout)
+	defer cancel()
+	if err := s.endpointClaim.remove(cleanupCtx, lease); err != nil {
+		fields := s.endpointClaim.cleanupFields(lease)
+		logutil.BgLogger().Warn("failed to remove advertised status endpoint claim",
+			append(fields, zap.Error(err))...)
+	}
+	if _, err := s.etcdCli.Revoke(cleanupCtx, lease); err != nil {
+		fields := s.endpointClaim.cleanupFields(lease)
+		logutil.BgLogger().Warn("failed to revoke server info lease",
+			append(fields, zap.Error(err))...)
+	}
 }
 
 // StoreServerInfo stores self server static information to etcd.
 func (s *Syncer) StoreServerInfo(ctx context.Context) error {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	if s.etcdCli == nil {
 		return nil
 	}
@@ -135,7 +211,7 @@ func (s *Syncer) GetServerInfoByID(ctx context.Context, id string) (*ServerInfo,
 	if s.etcdCli == nil || id == localInfo.ID {
 		return localInfo, nil
 	}
-	key := fmt.Sprintf("%s/%s", ServerInformationPath, id)
+	key := serverInfoKeyPath(id)
 	infoMap, err := getInfo(ctx, s.etcdCli, key, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout)
 	if err != nil {
 		return nil, err
@@ -149,6 +225,9 @@ func (s *Syncer) GetServerInfoByID(ctx context.Context, id string) (*ServerInfo,
 
 // UpdateServerLabel updates the labels of the local server information in etcd.
 func (s *Syncer) UpdateServerLabel(ctx context.Context, labels map[string]string) error {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	// when etcdCli is nil, the server infos are generated from the latest config, no need to update.
 	if s.etcdCli == nil {
 		return nil
@@ -205,7 +284,7 @@ func (s *Syncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, 
 	allInfo := make(map[string]*ServerInfo)
 	if s.etcdCli == nil {
 		info := s.info.Load()
-		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter, "")
+		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter, "", info.DisableRPC)
 		return allInfo, nil
 	}
 	allInfo, err := getInfo(ctx, s.etcdCli, ServerInformationPath, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout, clientv3.WithPrefix())
@@ -228,14 +307,82 @@ func (s *Syncer) Restart(ctx context.Context) error {
 	return s.NewSessionAndStoreServerInfo(ctx)
 }
 
+// cleanupStaleServerAndOwnerInfo removes stale server info and corresponding
+// DDL owner election key left behind by a previous instance of this server
+// that shared the same IP+Port but exited without proper cleanup (e.g. OOM,
+// kill -9). This is best-effort: any error is logged and startup continues.
+func (s *Syncer) cleanupStaleServerAndOwnerInfo(ctx context.Context) {
+	info := s.info.Load()
+	allInfo, err := getInfo(ctx, s.etcdCli, ServerInformationPath, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout, clientv3.WithPrefix())
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get all server info for stale cleanup", zap.Error(err))
+		return
+	}
+
+	for id, si := range allInfo {
+		if id == info.ID {
+			continue
+		}
+		if si.IP != info.IP || si.Port != info.Port {
+			continue
+		}
+		logutil.BgLogger().Info("found stale server info with same IP+Port, cleaning up",
+			zap.String("staleID", id),
+			zap.String("ip", si.IP),
+			zap.Uint("port", si.Port))
+
+		// Delete the stale DDL owner election key whose value matches the stale UUID.
+		owner.DeleteOwnerKeyByID(ctx, s.etcdCli, util.DDLOwnerKey, id)
+
+		// Delete the stale server info.
+		staleInfoPath := serverInfoKeyPath(id)
+		if err := etcd.DeleteKeyFromEtcd(staleInfoPath, s.etcdCli, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout); err != nil {
+			logutil.BgLogger().Warn("failed to delete stale server info", zap.String("path", staleInfoPath), zap.Error(err))
+		}
+	}
+}
+
 // RemoveServerInfo remove self server static information from etcd.
 func (s *Syncer) RemoveServerInfo() {
 	if s.etcdCli == nil {
 		return
 	}
+	if s.session != nil {
+		lease := s.session.Lease()
+		ctx, cancel := context.WithTimeout(context.Background(), KeyOpDefaultTimeout)
+		if err := s.endpointClaim.remove(ctx, lease); err != nil {
+			fields := s.endpointClaim.cleanupFields(lease)
+			logutil.BgLogger().Error("failed to remove advertised status endpoint claim",
+				append(fields, zap.Error(err))...)
+		}
+		cancel()
+	}
+	if diagnosticmode.Enabled() {
+		return
+	}
 	err := etcd.DeleteKeyFromEtcd(s.serverInfoPath, s.etcdCli, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout)
 	if err != nil {
 		logutil.BgLogger().Error("remove server info failed", zap.Error(err))
+	}
+}
+
+// RevokeSession stops refreshing the current server-info session and revokes its lease.
+// The caller must stop ServerInfoSyncLoop first so it cannot recreate the session.
+func (s *Syncer) RevokeSession() {
+	if s.etcdCli == nil || s.session == nil {
+		return
+	}
+	session := s.session
+	lease := session.Lease()
+	session.Orphan()
+
+	ctx, cancel := context.WithTimeout(context.Background(), KeyOpDefaultTimeout)
+	defer cancel()
+	if _, err := s.etcdCli.Revoke(ctx, lease); err != nil {
+		logutil.BgLogger().Warn("revoke server info lease failed",
+			zap.Int64("lease", int64(lease)),
+			zap.Stringer("serverInfo", s.GetLocalServerInfo()),
+			zap.Error(err))
 	}
 }
 
@@ -254,6 +401,10 @@ func (s *Syncer) ServerInfoSyncLoop(store tidbkv.Storage, exitCh chan struct{}) 
 		case <-ticker.C:
 			s.reporter.ReportMinStartTS(store, s.session)
 		case <-s.Done():
+			// Recheck exitCh because select does not prioritize it when both channels are ready.
+			if isExitRequested(exitCh) {
+				return
+			}
 			logutil.BgLogger().Info("server info syncer need to restart")
 			if err := s.Restart(context.Background()); err != nil {
 				logutil.BgLogger().Error("server info syncer restart failed", zap.Error(err))
@@ -263,6 +414,15 @@ func (s *Syncer) ServerInfoSyncLoop(store tidbkv.Storage, exitCh chan struct{}) 
 		case <-exitCh:
 			return
 		}
+	}
+}
+
+func isExitRequested(exitCh <-chan struct{}) bool {
+	select {
+	case <-exitCh:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -284,6 +444,9 @@ func (s *Syncer) NewTopologySessionAndStoreServerInfo(ctx context.Context) error
 
 // StoreTopologyInfo stores the topology of tidb to etcd.
 func (s *Syncer) StoreTopologyInfo(ctx context.Context) error {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	if s.etcdCli == nil {
 		return nil
 	}
@@ -306,6 +469,9 @@ func (s *Syncer) StoreTopologyInfo(ctx context.Context) error {
 
 // refreshTopology refreshes etcd topology with ttl stored in "/topology/tidb/ip:port/ttl".
 func (s *Syncer) updateTopologyAliveness(ctx context.Context) error {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	if s.etcdCli == nil {
 		return nil
 	}
@@ -342,6 +508,9 @@ func (s *Syncer) GetAllTiDBTopology(ctx context.Context) ([]*TopologyInfo, error
 
 // RemoveTopologyInfo remove self server topology information from etcd.
 func (s *Syncer) RemoveTopologyInfo() {
+	if diagnosticmode.Enabled() {
+		return
+	}
 	if s.etcdCli == nil {
 		return
 	}
@@ -435,7 +604,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 }
 
 // getServerInfo gets self tidb server information.
-func getServerInfo(id string, serverIDGetter func() uint64, assumedKS string) *ServerInfo {
+func getServerInfo(id string, serverIDGetter func() uint64, assumedKS string, disableRPC bool) *ServerInfo {
 	cfg := config.GetGlobalConfig()
 	info := &ServerInfo{
 		StaticInfo: StaticInfo{
@@ -448,6 +617,7 @@ func getServerInfo(id string, serverIDGetter func() uint64, assumedKS string) *S
 			Keyspace:        config.GetGlobalKeyspaceName(),
 			AssumedKeyspace: assumedKS,
 			ServerIDGetter:  serverIDGetter,
+			DisableRPC:      disableRPC,
 		},
 		DynamicInfo: DynamicInfo{
 			Labels: maps.Clone(cfg.Labels),

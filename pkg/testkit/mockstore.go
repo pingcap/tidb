@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -74,14 +75,13 @@ func WithCascades(on bool) TestOption {
 	}
 }
 
-// RunTestUnderCascades run the basic test body among two different planner mode.
+// RunTestUnderCascades runs the basic test body with the cascades planner disabled.
 func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit, cascades, caller string), opts ...mockstore.MockTiKVStoreOption) {
 	options := []struct {
 		name string
 		opt  TestOption
 	}{
 		{"off", WithCascades(false)},
-		{"on", WithCascades(true)},
 	}
 	// get func name
 	pc, _, _, ok := runtime.Caller(1)
@@ -100,14 +100,13 @@ func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit,
 	}
 }
 
-// RunTestUnderCascadesWithDomain run the basic test body among two different planner mode.
+// RunTestUnderCascadesWithDomain runs the basic test body with the cascades planner disabled.
 func RunTestUnderCascadesWithDomain(t *testing.T, testFunc func(t *testing.T, tk *TestKit, domain *domain.Domain, cascades, caller string), opts ...mockstore.MockTiKVStoreOption) {
 	options := []struct {
 		name string
 		opt  TestOption
 	}{
 		{"off", WithCascades(false)},
-		{"on", WithCascades(true)},
 	}
 	// get func name
 	pc, _, _, ok := runtime.Caller(1)
@@ -126,14 +125,13 @@ func RunTestUnderCascadesWithDomain(t *testing.T, testFunc func(t *testing.T, tk
 	}
 }
 
-// RunTestUnderCascadesAndDomainWithSchemaLease runs the basic test body among two different planner modes. It can be used to set schema lease and store options.
+// RunTestUnderCascadesAndDomainWithSchemaLease runs the basic test body with the cascades planner disabled. It can be used to set schema lease and store options.
 func RunTestUnderCascadesAndDomainWithSchemaLease(t *testing.T, lease time.Duration, opts []mockstore.MockTiKVStoreOption, testFunc func(t *testing.T, tk *TestKit, domain *domain.Domain, cascades, caller string)) {
 	options := []struct {
 		name string
 		opt  TestOption
 	}{
 		{"off", WithCascades(false)},
-		{"on", WithCascades(true)},
 	}
 	// get func name
 	pc, _, _, ok := runtime.Caller(1)
@@ -229,7 +227,6 @@ func tryMakeImageOnce(t testing.TB) (retry bool, err error) {
 	vardef.SetSchemaLease(500 * time.Millisecond)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
-	domain.DisableDumpHistoricalStats4Test()
 	dom, err := session.BootstrapSession(store)
 	if err != nil {
 		return false, err
@@ -363,14 +360,14 @@ func CreateMockStoreAndDomainForKS(t testing.TB, ks string, opts ...mockstore.Mo
 	})
 
 	sysKSOpt := mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
-		Id:   uint32(0xFFFFFF) - 1,
-		Name: keyspace.System,
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: uint32(0xFFFFFF) - 1},
+		Name:     keyspace.System,
 	})
 	ksOpt := sysKSOpt
 	if ks != keyspace.System {
 		ksOpt = mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
-			Id:   uint32(keyspaceIDAlloc.Add(1)),
-			Name: ks,
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: uint32(keyspaceIDAlloc.Add(1))},
+			Name:     ks,
 		})
 	}
 
@@ -386,8 +383,18 @@ func bootstrap4DistExecution(t testing.TB, store kv.Storage, lease time.Duration
 	vardef.SetSchemaLease(lease)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
-	domain.DisableDumpHistoricalStats4Test()
-	dom, err := session.BootstrapSession4DistExecution(store)
+
+	// Multi-domain tests intentionally keep multiple live domains for one mock
+	// store. Skip the temporary global-init domain so it cannot reuse and close
+	// an active test domain.
+	const skipInitGlobalVarFromSystemDB = "github.com/pingcap/tidb/pkg/session/skipInitGlobalVarFromSystemDB"
+	dom, err := func() (*domain.Domain, error) {
+		require.NoError(t, failpoint.Enable(skipInitGlobalVarFromSystemDB, `return(true)`))
+		defer func() {
+			require.NoError(t, failpoint.Disable(skipInitGlobalVarFromSystemDB))
+		}()
+		return session.BootstrapSession4DistExecution(store)
+	}()
 	require.NoError(t, err)
 
 	dom.SetStatsUpdating(true)
@@ -398,7 +405,6 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 	vardef.SetSchemaLease(lease)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
-	domain.DisableDumpHistoricalStats4Test()
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 

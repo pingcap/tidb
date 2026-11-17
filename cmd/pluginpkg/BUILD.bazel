@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
     name = "pluginpkg_lib",
@@ -12,4 +12,12 @@ go_binary(
     name = "pluginpkg",
     embed = [":pluginpkg_lib"],
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "pluginpkg_test",
+    timeout = "short",
+    srcs = ["pluginpkg_test.go"],
+    embed = [":pluginpkg_lib"],
+    flaky = True,
 )

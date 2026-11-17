@@ -89,6 +89,7 @@ var (
 	mIncIDPrefix           = "IID"
 	mRandomIDPrefix        = "TARID"
 	mBootstrapKey          = []byte("BootstrapKey")
+	mStarterBootstrapKey   = []byte("StarterBootstrapKey")
 	mSchemaDiffPrefix      = "Diff"
 	mPolicies              = []byte("Policies")
 	mPolicyPrefix          = "Policy"
@@ -113,6 +114,8 @@ var (
 	mIngestMaxInflightKey          = []byte("IngestMaxInflight")
 	mIngestMaxPerSecKey            = []byte("IngestMaxReqPerSec")
 	mDXFScheduleTuneKey            = []byte("DXFScheduleTune")
+
+	mLegacyECDSASessionTokenDisabled = []byte("LegacyECDSASessionTokenDisabled")
 
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
@@ -158,6 +161,8 @@ var (
 	ErrMaskingPolicyExists = dbterror.ClassMeta.NewStd(errno.ErrMaskingPolicyExists)
 	// ErrMaskingPolicyNotExists is the error for masking policy not exists.
 	ErrMaskingPolicyNotExists = dbterror.ClassMeta.NewStd(errno.ErrMaskingPolicyNotExists)
+	// ErrMaskingPolicyExprInvalidColumn is the error for masking policy expression referencing non-target column.
+	ErrMaskingPolicyExprInvalidColumn = dbterror.ClassMeta.NewStd(errno.ErrMaskingPolicyExprInvalidColumn)
 	// ErrResourceGroupExists is the error for resource group exists.
 	ErrResourceGroupExists = dbterror.ClassMeta.NewStd(errno.ErrResourceGroupExists)
 	// ErrResourceGroupNotExists is the error for resource group not exists.
@@ -187,6 +192,13 @@ const (
 	BaseNextGenBootTableVersion NextGenBootTableVersion = 1
 	// MaskingPolicyNextGenBootTableVersion adds mysql.tidb_masking_policy.
 	MaskingPolicyNextGenBootTableVersion NextGenBootTableVersion = 2
+	// StorageClassTransitionNextGenBootTableVersion adds
+	// mysql.tidb_storage_class_transition_history.
+	StorageClassTransitionNextGenBootTableVersion NextGenBootTableVersion = 3
+	// MaterializedViewNextGenBootTableVersion adds materialized view maintenance metadata tables.
+	MaterializedViewNextGenBootTableVersion NextGenBootTableVersion = 4
+	// MaterializedViewRefreshSourceNextGenBootTableVersion adds mysql.tidb_mview_fast_refresh_source_info.
+	MaterializedViewRefreshSourceNextGenBootTableVersion NextGenBootTableVersion = 5
 )
 
 // DDLTableVersion is to display ddl related table versions
@@ -926,6 +938,29 @@ func (m *Mutator) CreateSysDatabaseByID(name string, id int64) error {
 
 // GetSystemDBID gets the system DB ID. return (0, nil) indicates that the system DB does not exist.
 func (m *Mutator) GetSystemDBID() (int64, error) {
+	if kerneltype.IsNextGen() {
+		db, err := m.GetDatabase(metadef.SystemDatabaseID)
+		if err != nil {
+			return 0, err
+		}
+		if db != nil && db.Name.L == mysql.SystemDB {
+			return db.ID, nil
+		}
+		// Existing Starter tier cluster are bootstrapped with legacy ID.
+		// Since MySQL database is created early, we bound the check to the first
+		// ten database IDs.
+		for id := int64(1); id <= 10; id++ {
+			db, err := m.GetDatabase(id)
+			if err != nil {
+				return 0, err
+			}
+			if db != nil && db.Name.L == mysql.SystemDB {
+				return db.ID, nil
+			}
+		}
+		return 0, nil
+	}
+
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return 0, err
@@ -1197,6 +1232,7 @@ func splitRangeInt64Max(n int64) [][]string {
 
 // IterAllTables iterates all the table at once, in order to avoid oom. It can use at most 15 concurrency to iterate.
 // This function is optimized for 'many databases' scenario. Only 1 concurrency can work for 'many tables in one database' scenario.
+// It calls fn from the worker goroutines, but never concurrently.
 func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -1748,6 +1784,41 @@ func (m *Mutator) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) 
 	return tableInfo, errors.Trace(err)
 }
 
+// GetTables gets table metadata in input order, returning nil for missing table IDs.
+func (m *Mutator) GetTables(ctx context.Context, dbID int64, tableIDs []int64) ([]*model.TableInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(tableIDs) == 0 {
+		return nil, nil
+	}
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+	fields := make([][]byte, len(tableIDs))
+	for i, id := range tableIDs {
+		fields[i] = m.tableKey(id)
+	}
+	values, err := m.txn.HGetBatch(ctx, dbKey, fields)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tables := make([]*model.TableInfo, len(values))
+	for i, value := range values {
+		if value == nil {
+			continue
+		}
+		tbl := &model.TableInfo{}
+		if err := json.Unmarshal(value, tbl); err != nil {
+			return nil, errors.Trace(err)
+		}
+		tbl.DBID = dbID
+		tables[i] = tbl
+	}
+	return tables, nil
+}
+
 // CheckTableExists checks if the table is existed with dbID and tableID.
 func (m *Mutator) CheckTableExists(dbID int64, tableID int64) (bool, error) {
 	// Check if db exists.
@@ -2007,7 +2078,7 @@ func IsJobMatch(job []byte, schemaNames, tableNames set.StringSet) (match bool, 
 		return
 	}
 	if (schemaNames.Count() == 0 || schemaNames.Exist(schemaName)) &&
-		tableNames.Count() == 0 || tableNames.Exist(tableName) {
+		(tableNames.Count() == 0 || tableNames.Exist(tableName)) {
 		match = true
 	}
 	return
@@ -2059,6 +2130,45 @@ func (m *Mutator) GetBootstrapVersion() (int64, error) {
 func (m *Mutator) FinishBootstrap(version int64) error {
 	err := m.txn.Set(mBootstrapKey, []byte(strconv.FormatInt(version, 10)))
 	return errors.Trace(err)
+}
+
+// GetLegacyECDSASessionTokenDisabled reports whether legacy ECDSA session tokens
+// have been permanently disabled. A missing key preserves upgrade compatibility.
+func (m *Mutator) GetLegacyECDSASessionTokenDisabled() (bool, error) {
+	value, err := m.txn.GetInt64(mLegacyECDSASessionTokenDisabled)
+	return value == 1, errors.Trace(err)
+}
+
+// SetLegacyECDSASessionTokenDisabled permanently disables legacy ECDSA session
+// tokens. The transition is one-way and repeated writes are safe.
+func (m *Mutator) SetLegacyECDSASessionTokenDisabled() error {
+	return errors.Trace(m.txn.Set(mLegacyECDSASessionTokenDisabled, []byte("1")))
+}
+
+// GetStarterBootstrapVersion returns the completed starter bootstrap version.
+func (m *Mutator) GetStarterBootstrapVersion() (int64, error) {
+	value, err := m.txn.GetInt64(mStarterBootstrapKey)
+	return value, errors.Trace(err)
+}
+
+// FinishStarterBootstrap records the completed starter bootstrap version.
+func (m *Mutator) FinishStarterBootstrap(version int64) error {
+	err := m.txn.Set(mStarterBootstrapKey, []byte(strconv.FormatInt(version, 10)))
+	return errors.Trace(err)
+}
+
+// IsLegacyNextGen implements Reader.
+func (m *Mutator) IsLegacyNextGen() (bool, error) {
+	if kerneltype.IsClassic() {
+		return false, nil
+	}
+	// Initial system-schema bootstrap precedes schema loading, so checking for
+	// the reserved mysql database distinguishes native and Classic layouts.
+	db, err := m.GetDatabase(metadef.SystemDatabaseID)
+	if err != nil {
+		return false, err
+	}
+	return db == nil, nil
 }
 
 // ElementKeyType is a key type of the element.
@@ -2192,6 +2302,23 @@ func (m *Mutator) SetRUStats(stats *RUStats) error {
 
 	err = m.txn.Set(mRequestUnitStats, data)
 	return errors.Trace(err)
+}
+
+// GetSchemaDiffCommitTS returns the commit timestamp of an existing schema diff.
+// The diff key is written in the same transaction as the schema metadata changes.
+func GetSchemaDiffCommitTS(m Reader, store kv.Storage, version int64, startTS uint64) (uint64, error) {
+	tikvStore, ok := store.(helper.Storage)
+	if !ok {
+		return 0, errors.New("cannot get store from domain")
+	}
+	resp, err := helper.NewHelper(tikvStore).GetMvccByEncodedKeyWithTS(m.EncodeSchemaDiffKey(version), startTS)
+	if err != nil {
+		return 0, err
+	}
+	if resp == nil || resp.Info == nil || len(resp.Info.Writes) == 0 {
+		return 0, errors.New("There is no Write MVCC info for the schema version")
+	}
+	return resp.Info.Writes[0].CommitTs, nil
 }
 
 // GetOldestSchemaVersion gets the oldest schema version at the GC safe point.

@@ -282,6 +282,40 @@ func TestParseExecArgs(t *testing.T) {
 	}
 }
 
+func TestParseExecArgsMalformedLengthEncodedParam(t *testing.T) {
+	tests := []struct {
+		name        string
+		paramValues []byte
+	}{
+		{
+			name:        "truncated length-encoded uint64 header",
+			paramValues: []byte{0xfe},
+		},
+		{
+			name: "overflowing length-encoded uint64",
+			// length = 1<<63, which previously could slip past `pos + int(length)` checks and panic on slicing.
+			paramValues: []byte{0xfe, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NotPanics(t, func() {
+				args := expression.Args2Expressions4Test(1)
+				err := decodeAndParse(
+					types.DefaultStmtNoWarningContext,
+					args,
+					[][]byte{nil},
+					[]byte{0x0},
+					[]byte{mysql.TypeVarString, 0},
+					tt.paramValues,
+					nil,
+				)
+				require.Truef(t, terror.ErrorEqual(err, mysql.ErrMalformPacket), "err %v", err)
+			})
+		})
+	}
+}
+
 func TestParseExecArgsAndEncode(t *testing.T) {
 	dt := expression.Args2Expressions4Test(1)
 	err := decodeAndParse(types.DefaultStmtNoWarningContext,

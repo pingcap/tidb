@@ -366,8 +366,8 @@ func TestIndexMergeJSONMemberOf2FlakyPart(t *testing.T) {
 		))
 		tk.MustQuery("explain format = 'plan_tree' select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));").Check(testkit.Rows(
 			"IndexMerge root  type: union",
-			"├─IndexRangeScan(Build) cop[tikv] table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array)) range:[1 2,1 2], keep order:false, stats:partial[d:unInitialized]",
-			"└─TableRowIDScan(Probe) cop[tikv] table:t keep order:false, stats:partial[d:unInitialized]",
+			"├─IndexRangeScan(Build) cop[tikv] table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array)) range:[1 2,1 2], keep order:false",
+			"└─TableRowIDScan(Probe) cop[tikv] table:t keep order:false",
 		))
 	})
 }
@@ -551,8 +551,8 @@ FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
 		tk.MustExec(`analyze table t_issue56915 all columns;`)
 		tk.MustQuery("explain format = 'plan_tree' select /* issue:56915 */ * from t_issue56915 where a = 1 and 6 member of (j);").Check(testkit.Rows(
 			"IndexMerge root  type: union",
-			"├─IndexRangeScan(Build) cop[tikv] table:t_issue56915, index:mvi(cast(`j` as signed array), a, b) range:[6 1,6 1], keep order:false, stats:partial[j:unInitialized]",
-			"└─TableRowIDScan(Probe) cop[tikv] table:t_issue56915 keep order:false, stats:partial[j:unInitialized]",
+			"├─IndexRangeScan(Build) cop[tikv] table:t_issue56915, index:mvi(cast(`j` as signed array), a, b) range:[6 1,6 1], keep order:false",
+			"└─TableRowIDScan(Probe) cop[tikv] table:t_issue56915 keep order:false",
 		))
 
 		// issue:63290

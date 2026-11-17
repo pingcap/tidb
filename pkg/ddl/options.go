@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -36,6 +37,7 @@ type Options struct {
 	Lease             time.Duration
 	SchemaLoader      SchemaLoader
 	EventPublishStore notifier.Store
+	ExtWorkloadMgr    extworkload.Manager
 }
 
 // WithEtcdClient specifies the `clientv3.Client` of DDL used to request the etcd service
@@ -84,5 +86,12 @@ func WithSchemaLoader(loader SchemaLoader) Option {
 func WithEventPublishStore(store notifier.Store) Option {
 	return func(options *Options) {
 		options.EventPublishStore = store
+	}
+}
+
+// WithExternalWorkloadManager specifies the manager used to coordinate external background workloads.
+func WithExternalWorkloadManager(manager extworkload.Manager) Option {
+	return func(options *Options) {
+		options.ExtWorkloadMgr = manager
 	}
 }

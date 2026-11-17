@@ -115,6 +115,10 @@ type RootTask struct {
 
 	// Warnings passed through different task copy attached with more upper operator specific Warnings. (not concurrent safe)
 	Warnings SimpleWarnings
+
+	// IdxMergeMVCoveredConds are conditions that the IndexMergeReader at the bottom of this task enforces exactly
+	// through MVIndex ranges. See util.AccessPath.IndexMergeMVCoveredConds.
+	IdxMergeMVCoveredConds []expression.Expression
 }
 
 // GetPlan returns the root task's plan.
@@ -133,7 +137,8 @@ func (t *RootTask) Copy() base.Task {
 		p: t.p,
 
 		// when copying, just copy it out.
-		IndexJoinInfo: t.IndexJoinInfo,
+		IndexJoinInfo:          t.IndexJoinInfo,
+		IdxMergeMVCoveredConds: t.IdxMergeMVCoveredConds,
 	}
 	// since *t will reuse the same warnings slice, we need to copy it out.
 	// because different task instance should have different warning slice.
@@ -392,6 +397,8 @@ type CopTask struct {
 	IdxMergePartPlans      []base.PhysicalPlan
 	IdxMergeIsIntersection bool
 	IdxMergeAccessMVIndex  bool
+	// IdxMergeMVCoveredConds comes from util.AccessPath.IndexMergeMVCoveredConds.
+	IdxMergeMVCoveredConds []expression.Expression
 	// IdxMergeMatchWithAdvisorySortItems indicates the IndexMerge property matching
 	// used advisory sort items (i.e. no SortItems but SortItemsHints was set).
 	IdxMergeMatchWithAdvisorySortItems bool
@@ -468,7 +475,7 @@ func (t *CopTask) MemoryUsage() (sum int64) {
 	}
 
 	sum = size.SizeOfInterface*(2+int64(cap(t.IdxMergePartPlans)+cap(t.RootTaskConds))) + size.SizeOfBool*3 + size.SizeOfUint64 +
-		size.SizeOfPointer*(3+int64(cap(t.CommonHandleCols)+cap(t.TblCols))) + size.SizeOfSlice*4 + t.PhysPlanPartInfo.MemoryUsage()
+		size.SizeOfPointer*(4+int64(cap(t.CommonHandleCols)+cap(t.TblCols))) + size.SizeOfSlice*4 + t.PhysPlanPartInfo.MemoryUsage()
 	if t.IndexPlan != nil {
 		sum += t.IndexPlan.MemoryUsage()
 	}
@@ -493,6 +500,9 @@ func (t *CopTask) MemoryUsage() (sum int64) {
 	}
 	for _, expr := range t.RootTaskConds {
 		sum += expr.MemoryUsage()
+	}
+	if t.PartialOrderMatchResult != nil {
+		sum += t.PartialOrderMatchResult.MemoryUsage()
 	}
 	return
 }
@@ -545,6 +555,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		}.Init(ctx, t.IdxMergePartPlans[0].QueryBlockOffset())
 		p.PlanPartInfo = t.PhysPlanPartInfo
 		newTask.SetPlan(p)
+		newTask.IdxMergeMVCoveredConds = t.IdxMergeMVCoveredConds
 		if t.NeedExtraProj {
 			schema := t.OriginSchema
 			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.IdxMergePartPlans[0].QueryBlockOffset(), nil)

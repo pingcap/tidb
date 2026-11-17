@@ -496,3 +496,32 @@ Projection	root		planner__core__expression_rewriter.t1.a
       └─TableReader	root		data:HashAgg
         └─HashAgg	cop[tikv]		group by:planner__core__expression_rewriter.t1.a, 
           └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop view if exists v_or_case_collation_ppd;
+drop table if exists t_or_case_collation_a;
+drop table if exists t_or_case_collation_b;
+set names utf8mb4 collate utf8mb4_general_ci;
+create table t_or_case_collation_a (
+is_reimburse varchar(10) character set utf8mb4 collate utf8mb4_general_ci
+);
+create table t_or_case_collation_b (
+travel_type varchar(10) character set utf8mb4 collate utf8mb4_general_ci
+);
+insert into t_or_case_collation_a values ('Y'), ('N'), (null);
+insert into t_or_case_collation_b values ('P'), ('B');
+create view v_or_case_collation_ppd as
+select is_reimburse from t_or_case_collation_a
+union all
+select case when travel_type = _utf8mb4'P' then _utf8mb4'N' else _utf8mb4'Y' end as is_reimburse
+from t_or_case_collation_b;
+set names utf8mb4 collate utf8mb4_0900_ai_ci;
+select count(*), sum(is_reimburse is null), sum(is_reimburse = 'Y')
+from v_or_case_collation_ppd
+where is_reimburse = 'Y' or is_reimburse is null;
+count(*)	sum(is_reimburse is null)	sum(is_reimburse = 'Y')
+3	1	2
+select count(*)
+from v_or_case_collation_ppd
+where is_reimburse is not null or is_reimburse = 'Y';
+count(*)
+4
+set names default;
