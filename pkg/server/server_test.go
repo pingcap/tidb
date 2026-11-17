@@ -18,10 +18,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"net"
 	"path/filepath"
 	"testing"
-
-	"net"
 
 	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/parser/auth"
