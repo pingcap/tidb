@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
@@ -201,11 +201,14 @@ func CaptureQuerySource(sctx sessionctx.Context, sql string) (*QuerySource, erro
 	ids := slices.Sorted(maps.Keys(vars.StmtCtx.RelatedTableIDs))
 	tables := make([]SourceTable, 0, len(ids))
 	for _, id := range ids {
+		if err := checkQuerySourceTableID(id); err != nil {
+			return nil, err
+		}
 		tbl, ok := is.TableByID(context.Background(), id)
 		if !ok {
 			return nil, errors.Errorf("source table %d not found in the info schema", id)
 		}
-		if err := checkQuerySourceTable(tbl); err != nil {
+		if err := checkQuerySourceTableInfo(tbl.Meta()); err != nil {
 			return nil, err
 		}
 		tblInfo := tbl.Meta()
@@ -233,6 +236,11 @@ func CaptureQuerySource(sctx sessionctx.Context, sql string) (*QuerySource, erro
 func newQuerySourceAtSnapshot(
 	ctx context.Context, sctx sessionctx.Context, readTS uint64, dbID int64, tableIDs []int64,
 ) (*QuerySource, error) {
+	for _, id := range tableIDs {
+		if err := checkQuerySourceTableID(id); err != nil {
+			return nil, err
+		}
+	}
 	snapshot := sctx.GetStore().GetSnapshot(tidbkv.NewVersion(readTS))
 	m := meta.NewReader(snapshot)
 	schemaVersion, err := m.GetSchemaVersion()
@@ -313,13 +321,13 @@ func storeQueryStates(sctx sessionctx.Context) (*sessionstates.SessionStates, er
 	return states, nil
 }
 
-// checkQuerySourceTable rejects a source table that a worker cannot read the
-// same way as the submitter, including temporary tables, sequences, and virtual tables.
-func checkQuerySourceTable(tbl table.Table) error {
-	if tbl.Type().IsVirtualTable() {
+// checkQuerySourceTableID rejects memory system tables, including cluster tables,
+// whose runtime data cannot be reconstructed at the import snapshot.
+func checkQuerySourceTableID(id int64) error {
+	if autoid.IsMemSchemaID(id) {
 		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("virtual source tables in IMPORT INTO FROM SELECT")
 	}
-	return checkQuerySourceTableInfo(tbl.Meta())
+	return nil
 }
 
 func checkQuerySourceTableInfo(tblInfo *model.TableInfo) error {

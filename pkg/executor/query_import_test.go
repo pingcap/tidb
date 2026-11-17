@@ -22,7 +22,6 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -144,27 +143,15 @@ func TestPrepareQueryImport(t *testing.T) {
 		require.ErrorContains(t, err, "target table is not empty")
 	})
 
-	t.Run("caller supplies view dependencies", func(t *testing.T) {
-		tk.MustExec("create view src_view as select a, b from src")
-		latest := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
-		view, err := latest.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("src_view"))
-		require.NoError(t, err)
-		for _, complete := range []bool{true, false} {
-			req := *request
-			req.SQL = "import into test.dst from (select * from test.src_view) with disable_precheck"
-			req.SourceTableIDs = []int64{view.Meta().ID}
-			if complete {
-				req.SourceTableIDs = append(req.SourceTableIDs, srcTbl.Meta().ID)
-			}
-			plan, err := importer.PrepareQueryImport(ctx, newQueryImportSession(t, store).Session(), &req)
+	t.Run("rejects memory system tables before metadata reads", func(t *testing.T) {
+		for _, name := range []string{"tables", "cluster_processlist"} {
+			tbl, err := is.TableByName(ctx, ast.NewCIStr("information_schema"), ast.NewCIStr(name))
 			require.NoError(t, err)
-			worker := newWorkerSession(t, store)
-			if complete {
-				require.Equal(t, []string{"[1 1]"}, runImportQuery(t, worker, plan.QuerySource, req.SQL))
-			} else {
-				err := executor.RunImportQuery(ctx, worker, plan.QuerySource, req.SQL, importQueryMemQuota, make(chan importer.QueryChunk, 1))
-				require.Error(t, err, "missing dependencies must fail during execution")
-			}
+			req := *request
+			req.SQL = "import into test.dst from (select * from information_schema." + name + ") with disable_precheck"
+			req.SourceTableIDs = []int64{tbl.Meta().ID}
+			_, err = importer.PrepareQueryImport(ctx, newQueryImportSession(t, store).Session(), &req)
+			require.ErrorContains(t, err, "virtual source tables in IMPORT INTO FROM SELECT")
 		}
 	})
 

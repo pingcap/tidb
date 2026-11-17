@@ -37,9 +37,7 @@ type QueryImportRequest struct {
 	DBName string
 	DBID   int64
 	Table  table.Table
-	// SourceTableIDs must include every referenced view and its transitive table
-	// dependencies, as well as directly referenced tables, all in DBID. The caller
-	// resolves these dependencies; missing entries surface when the worker plans the SELECT.
+	// SourceTableIDs must include all table IDs involved in the query.
 	SourceTableIDs []int64
 }
 
