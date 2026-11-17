@@ -711,7 +711,6 @@ fn optional_eval_props(
         dynamic: dynamic_privilege.clone(),
     });
     props.add(Arc::new(tidb_expropt::PrivilegeCheckerProvider::new(move || Arc::clone(&checker))));
-    add_session_vars_props(&mut props, StmtSessionVars::default());
     if let Some(exec) = sql_executor {
         props.add(Arc::new(tidb_expropt::SqlExecutorPropProvider::new(move || Ok(Arc::clone(&exec)))));
     }
@@ -719,50 +718,47 @@ fn optional_eval_props(
 }
 
 /// Go `variable.SessionVars` as a statement's builtins read it through
-/// `SessionVarsPropReader` and `CurrentUserPropReader`: the session's user
-/// and active roles, as the statement starts (a statement cannot change
-/// them).
-#[derive(Clone, Default)]
+/// `SessionVarsPropReader` and `CurrentUserPropReader`: the fields Go's
+/// builtins read, taken from the statement context when a builtin asks (Go's
+/// providers call `sctx.GetSessionVars()` then), and the statement's
+/// last-insert-id cell, which `LAST_INSERT_ID(expr)` writes.
+#[derive(Clone)]
 struct StmtSessionVars {
     user: Option<Arc<tidb_parser::auth::UserIdentity>>,
     active_roles: Vec<Arc<tidb_parser::auth::RoleIdentity>>,
+    connection_id: u64,
+    last_found_rows: u64,
+    prev_affected_rows: i64,
+    prev_last_insert_id: u64,
+    last_insert_id: Arc<Mutex<Option<u64>>>,
+    resource_group_name: String,
 }
 
-impl StmtSessionVars {
-    /// Go `SessionVars.User` and `ActiveRoles` of a session that matched
-    /// the account `current_user` from the login `login_user` (each
-    /// `user@host`), with `active_roles` active.
-    fn new(
-        current_user: Option<&str>,
-        login_user: Option<&str>,
-        auth_plugin: &str,
-        active_roles: Option<&[(String, String)]>,
-    ) -> Self {
-        let split = |identity: &str| {
-            let (user, host) = identity.rsplit_once('@').unwrap_or((identity, ""));
-            (user.to_owned(), host.to_owned())
-        };
-        let user = login_user.or(current_user).map(|login| {
-            let (auth_username, auth_hostname) = current_user.map(split).unwrap_or_default();
-            let (username, hostname) = split(login);
-            Arc::new(tidb_parser::auth::UserIdentity {
-                username,
-                hostname,
-                current_user: false,
-                auth_username,
-                auth_hostname,
-                auth_plugin: auth_plugin.to_owned(),
-            })
-        });
-        let active_roles = active_roles
-            .unwrap_or_default()
-            .iter()
-            .map(|(username, hostname)| {
-                Arc::new(tidb_parser::auth::RoleIdentity { username: username.clone(), hostname: hostname.clone() })
-            })
-            .collect();
-        Self { user, active_roles }
-    }
+/// Go `SessionVars.User` of a session that matched the account
+/// `current_user` from the login `login_user` (each `user@host`; the login
+/// defaults to the account, and an unmatched login has empty
+/// `AuthUsername` / `AuthHostname`); `None` when neither is known.
+fn session_user(
+    current_user: Option<&str>,
+    login_user: Option<&str>,
+    auth_plugin: &str,
+) -> Option<Arc<tidb_parser::auth::UserIdentity>> {
+    let split = |identity: &str| {
+        let (user, host) = identity.rsplit_once('@').unwrap_or((identity, ""));
+        (user.to_owned(), host.to_owned())
+    };
+    login_user.or(current_user).map(|login| {
+        let (auth_username, auth_hostname) = current_user.map(split).unwrap_or_default();
+        let (username, hostname) = split(login);
+        Arc::new(tidb_parser::auth::UserIdentity {
+            username,
+            hostname,
+            current_user: false,
+            auth_username,
+            auth_hostname,
+            auth_plugin: auth_plugin.to_owned(),
+        })
+    })
 }
 
 impl tidb_expropt::SessionVars for StmtSessionVars {
@@ -773,20 +769,39 @@ impl tidb_expropt::SessionVars for StmtSessionVars {
     fn active_roles(&self) -> Vec<Arc<tidb_parser::auth::RoleIdentity>> {
         self.active_roles.clone()
     }
+
+    fn connection_id(&self) -> u64 {
+        self.connection_id
+    }
+
+    fn last_found_rows(&self) -> u64 {
+        self.last_found_rows
+    }
+
+    fn prev_affected_rows(&self) -> i64 {
+        self.prev_affected_rows
+    }
+
+    fn prev_last_insert_id(&self) -> u64 {
+        self.prev_last_insert_id
+    }
+
+    /// Writes the same `StmtCtx.LastInsertID` an allocating INSERT writes,
+    /// unconditionally: the last such call of a statement wins, unlike the
+    /// INSERT's first-wins publication.
+    fn set_last_insert_id(&self, id: u64) {
+        *self.last_insert_id.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(id);
+    }
+
+    fn hint_resource_group_name(&self) -> String {
+        self.resource_group_name.clone()
+    }
 }
 
 impl tidb_expropt::SessionVarsProvider for StmtSessionVars {
     fn get_session_vars(&self) -> Arc<dyn tidb_expropt::SessionVars> {
         Arc::new(self.clone())
     }
-}
-
-/// Go `sessionexpr`'s `expropt.NewSessionVarsProvider(sctx)` and
-/// `currentUserProp(sctx)` over the same session variables.
-fn add_session_vars_props(props: &mut tidb_expropt::OptionalEvalPropProviders, vars: StmtSessionVars) {
-    let user_and_roles = (vars.user.clone(), vars.active_roles.clone());
-    props.add(Arc::new(tidb_expropt::CurrentUserPropProvider::new(move || user_and_roles.clone())));
-    props.add(Arc::new(tidb_expropt::new_session_vars_provider(Arc::new(vars))));
 }
 
 /// Go `kv.Storage.GetMinSafeTS(txnScope)`.
@@ -1831,20 +1846,6 @@ impl StmtContextData {
                 self.set_sql_mode_bits(m::ModeStrictTransTables | m::ModeStrictAllTables, false);
             }
         }
-    }
-}
-
-impl StmtContextData {
-    /// Reinstalls Go `sessionexpr`'s session-vars and current-user providers
-    /// over the statement's user, authentication plugin and active roles.
-    fn install_session_vars_props(&mut self) {
-        let vars = StmtSessionVars::new(
-            self.current_user.as_deref(),
-            self.login_user.as_deref(),
-            &self.auth_plugin,
-            self.active_roles.as_deref().map(Vec::as_slice),
-        );
-        add_session_vars_props(&mut self.optional_props, vars);
     }
 }
 
@@ -2986,7 +2987,6 @@ context_configuration! {
     pub fn with_connection_info(mut self, info: Option<Arc<tidb_variable::connection_info::ConnectionInfo>>, plugin: String) -> Self {
         self.connection_info = info;
         self.auth_plugin = plugin;
-        self.install_session_vars_props();
         self
     }
 
@@ -3000,7 +3000,6 @@ context_configuration! {
     pub fn with_user(mut self, current_user: Option<String>, login_user: Option<String>) -> Self {
         self.current_user = current_user;
         self.login_user = login_user;
-        self.install_session_vars_props();
         self
     }
 
@@ -3012,12 +3011,10 @@ context_configuration! {
         self
     }
 
-    /// Attaches Go's typed `SessionVars.ActiveRoles` authority, which the
-    /// builtins read through Go's session-vars and current-user providers.
+    /// Attaches Go's typed `SessionVars.ActiveRoles` authority.
     #[must_use]
     pub fn with_active_roles(mut self, active_roles: Option<Arc<Vec<(String, String)>>>) -> Self {
         self.active_roles = active_roles;
-        self.install_session_vars_props();
         self
     }
 
@@ -6579,6 +6576,27 @@ impl StmtContext {
         self.append_warning(code, message);
     }
 
+    /// Go `sctx.GetSessionVars()` as the statement's builtins see it.
+    fn session_vars(&self) -> StmtSessionVars {
+        StmtSessionVars {
+            user: session_user(self.current_user.as_deref(), self.login_user.as_deref(), &self.auth_plugin),
+            active_roles: self
+                .active_roles
+                .iter()
+                .flat_map(|roles| roles.iter())
+                .map(|(username, hostname)| {
+                    Arc::new(tidb_parser::auth::RoleIdentity { username: username.clone(), hostname: hostname.clone() })
+                })
+                .collect(),
+            connection_id: self.connection_id.unwrap_or(0),
+            last_found_rows: self.last_found_rows.unwrap_or(0),
+            prev_affected_rows: self.prev_row_count,
+            prev_last_insert_id: self.prev_last_insert_id,
+            last_insert_id: Arc::clone(&self.last_insert_id),
+            resource_group_name: self.resource_group_name.clone(),
+        }
+    }
+
     /// Go `SessionVars.SetLastInsertID`: publishes the id `LAST_INSERT_ID()`
     /// reports after this statement. The first publication of a statement
     /// wins, as Go's statement-scoped `e.lastInsertID` does.
@@ -7437,9 +7455,6 @@ impl Columns for StmtContext {
         self.connection_info.clone()
     }
 
-    fn current_resource_group(&self) -> Option<String> {
-        Some(self.resource_group_name.clone())
-    }
 
     fn connection_id(&self) -> Option<u64> {
         self.connection_id
@@ -7480,15 +7495,27 @@ impl Columns for StmtContext {
         Ok(self.advisory_locks.release_all())
     }
 
-    fn found_rows(&self) -> Option<u64> {
-        self.last_found_rows
-    }
 
+    /// Go `sessionexpr`'s providers: the session-vars and current-user ones
+    /// answer the statement's state as it is when a builtin reads them (Go's
+    /// call `sctx.GetSessionVars()` then); the others were installed as the
+    /// statement context was built.
     fn get_optional_prop_provider(
         &self,
         key: tidb_exprctx::OptionalEvalPropKey,
     ) -> Option<Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
-        self.optional_props.get(key)
+        match key {
+            tidb_exprctx::OptionalEvalPropKey::SessionVars => {
+                Some(Arc::new(tidb_expropt::new_session_vars_provider(Arc::new(self.session_vars()))))
+            }
+            tidb_exprctx::OptionalEvalPropKey::CurrentUser => {
+                let vars = self.session_vars();
+                Some(Arc::new(tidb_expropt::CurrentUserPropProvider::new(move || {
+                    (vars.user.clone(), vars.active_roles.clone())
+                })))
+            }
+            _ => self.optional_props.get(key),
+        }
     }
 
     fn get_stmt_min_safe_ts(&self) -> u64 {
@@ -7724,24 +7751,8 @@ impl Columns for StmtContext {
         StmtContext::date_modes(self)
     }
 
-    fn row_count(&self) -> Option<i64> {
-        Some(self.prev_row_count)
-    }
 
-    fn last_insert_id(&self) -> Option<u64> {
-        Some(self.prev_last_insert_id)
-    }
 
-    /// Go `SessionVars.SetLastInsertID`, which `LAST_INSERT_ID(expr)` calls:
-    /// it writes the same `StmtCtx.LastInsertID` an allocating INSERT writes,
-    /// unconditionally -- the last such call of a statement wins, unlike the
-    /// insert path's single first-row publication.
-    fn set_last_insert_id(&self, value: u64) {
-        *self
-            .last_insert_id
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(value);
-    }
 
     fn sequence_nextval(&self, path: &[String]) -> Result<Datum, tidb_exprctx::EvalError> {
         let sequence = self.resolve_sequence(path)?;

@@ -817,15 +817,18 @@ mod deferred_function_tests {
     /// side effect when the generic folder is called with a session context.
     #[test]
     fn last_insert_id_argument_folds_and_publishes_during_construction() {
-        struct RecordingColumns(std::cell::Cell<Option<u64>>);
+        struct RecordingColumns(crate::test_identity::TestSession);
 
         impl Columns for RecordingColumns {
             fn get(&self, _path: &[String]) -> Option<Datum> {
                 None
             }
 
-            fn set_last_insert_id(&self, value: u64) {
-                self.0.set(Some(value));
+            fn get_optional_prop_provider(
+                &self,
+                key: tidb_exprctx::OptionalEvalPropKey,
+            ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+                self.0.props().get(key)
             }
         }
 
@@ -839,11 +842,11 @@ mod deferred_function_tests {
                 int_type,
             ))],
         ).unwrap();
-        let context = RecordingColumns(std::cell::Cell::new(None));
+        let context = RecordingColumns(crate::test_identity::TestSession::default());
         fold_constant_in_mode(&mut expr, &context, ConstantFoldMode::Normal);
 
         assert!(matches!(expr, Expression::Constant(_)));
-        assert_eq!(context.0.get(), Some(42));
+        assert_eq!(*context.0.last_insert_id.lock().unwrap(), Some(42));
     }
 
     /// Go's information builtins carry `CurrentDB`, `CurrentUserPropReader`,

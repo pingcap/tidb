@@ -504,7 +504,7 @@ fn test_vectorized_builtin_json_func() {
 #[derive(Default)]
 struct InformationContext {
     database_reads: std::cell::Cell<usize>,
-    insert_ids: std::cell::RefCell<Vec<u64>>,
+    session: crate::test_identity::TestSession,
 }
 
 impl Columns for InformationContext {
@@ -515,8 +515,11 @@ impl Columns for InformationContext {
         self.database_reads.set(self.database_reads.get() + 1);
         Some("test".into())
     }
-    fn set_last_insert_id(&self, value: u64) {
-        self.insert_ids.borrow_mut().push(value);
+    fn get_optional_prop_provider(
+        &self,
+        key: tidb_exprctx::OptionalEvalPropKey,
+    ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+        self.session.props().get(key)
     }
 }
 
@@ -539,7 +542,7 @@ fn test_vectorized_builtin_info_func() {
     .unwrap();
     let mut result = Column::default();
     eval_into(&expression, EvalType::Int, &ctx, &input, &mut result).unwrap();
-    assert_eq!(*ctx.insert_ids.borrow(), [9]);
+    assert_eq!(*ctx.session.last_insert_id_calls.lock().unwrap(), [9]);
     assert_eq!(result.get_int64(0), 3);
     assert!(result.is_null(1));
     let database = crate::new_function::new_function_base(
@@ -884,7 +887,7 @@ fn test_vectorized_builtin_info_benchmark() {
     .unwrap();
     let mut result = Column::default();
     eval_into(&expression, EvalType::Int, &ctx, &input, &mut result).unwrap();
-    assert_eq!(*ctx.insert_ids.borrow(), [9, 9, 9]);
+    assert_eq!(*ctx.session.last_insert_id_calls.lock().unwrap(), [9, 9, 9]);
     for i in 0..3 {
         assert_eq!(result.get_int64(i), 0);
         assert!(!result.is_null(i));

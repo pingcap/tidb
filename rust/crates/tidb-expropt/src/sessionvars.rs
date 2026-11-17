@@ -31,6 +31,19 @@ pub trait SessionVars: Any + Send + Sync {
     fn user(&self) -> Option<Arc<tidb_parser::auth::UserIdentity>>;
     /// Go `SessionVars.ActiveRoles`.
     fn active_roles(&self) -> Vec<Arc<tidb_parser::auth::RoleIdentity>>;
+    /// Go `SessionVars.ConnectionID`; 0 for a session with no connection.
+    fn connection_id(&self) -> u64;
+    /// Go `SessionVars.LastFoundRows`: the rows the previous query found.
+    fn last_found_rows(&self) -> u64;
+    /// Go `SessionVars.StmtCtx.PrevAffectedRows`.
+    fn prev_affected_rows(&self) -> i64;
+    /// Go `SessionVars.StmtCtx.PrevLastInsertID`.
+    fn prev_last_insert_id(&self) -> u64;
+    /// Go `SessionVars.SetLastInsertID`, which `LAST_INSERT_ID(expr)` calls.
+    fn set_last_insert_id(&self, id: u64);
+    /// Go `getHintResourceGroupName(vars)`: the statement's resource group,
+    /// a `RESOURCE_GROUP()` hint's first.
+    fn hint_resource_group_name(&self) -> String;
 }
 
 /// boundary: Go `pkg/sessionctx/variable.SessionVarsProvider` — anything that

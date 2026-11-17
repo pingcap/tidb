@@ -482,14 +482,20 @@ mod vector_result_type_tests {
 
 #[cfg(test)]
 mod info_source_tests {
-    use std::cell::Cell;
 
     use super::*;
     use crate::Columns;
 
-    struct LastInsertColumns {
-        previous: u64,
-        published: Cell<Option<u64>>,
+    struct LastInsertColumns(crate::test_identity::TestSession);
+
+    impl LastInsertColumns {
+        fn new(previous: u64) -> Self {
+            Self(crate::test_identity::TestSession { prev_last_insert_id: previous, ..Default::default() })
+        }
+
+        fn published(&self) -> Option<u64> {
+            *self.0.last_insert_id.lock().unwrap()
+        }
     }
 
     impl Columns for LastInsertColumns {
@@ -497,12 +503,11 @@ mod info_source_tests {
             None
         }
 
-        fn last_insert_id(&self) -> Option<u64> {
-            Some(self.previous)
-        }
-
-        fn set_last_insert_id(&self, value: u64) {
-            self.published.set(Some(value));
+        fn get_optional_prop_provider(
+            &self,
+            key: tidb_exprctx::OptionalEvalPropKey,
+        ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+            self.0.props().get(key)
         }
     }
 
@@ -533,17 +538,14 @@ mod info_source_tests {
             (1, vec![], 1, None),
             (u64::MAX, vec![], u64::MAX, None),
         ] {
-            let ctx = LastInsertColumns {
-                previous,
-                published: Cell::new(None),
-            };
+            let ctx = LastInsertColumns::new(previous);
             assert_eq!(
                 crate::tests::eval_builtin_func("LAST_INSERT_ID", &args, &ctx)
                     .expect("LAST_INSERT_ID must be dispatched")
                     .expect("source row must evaluate"),
                 Datum::UInt(expected)
             );
-            assert_eq!(ctx.published.get(), published);
+            assert_eq!(ctx.published(), published);
         }
     }
 }

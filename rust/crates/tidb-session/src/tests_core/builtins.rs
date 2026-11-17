@@ -974,11 +974,10 @@ fn like_between_case_and_builtins() {
         [["bob@%", "bob@10.0.0.1", "bob@10.0.0.1", "bob@10.0.0.1"]]
     );
 
-    // CONNECTION_ID() is NULL until a front end attaches one (Go itself
-    // errors here rather than reporting NULL, but that path is
-    // unreachable in practice -- see `Columns::connection_id`'s doc); once
-    // set, the same value keeps reporting on later statements.
-    // A session on the store has its testkit connection ID, as Go's does.
+    // CONNECTION_ID() is Go's `SessionVars.ConnectionID` (0 for a session
+    // without one); a session on the store has its testkit connection ID,
+    // as Go's does, and a front end's value keeps reporting on later
+    // statements.
     session.set_connection_id(42);
     assert_eq!(row_text(session.run("SELECT CONNECTION_ID()")), [["42"]]);
     assert_eq!(row_text(session.run("SELECT CONNECTION_ID()")), [["42"]]);

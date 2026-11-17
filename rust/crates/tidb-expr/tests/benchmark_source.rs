@@ -14,8 +14,6 @@
 
 //! Source-contract cases from `pkg/expression/builtin_info.go::builtinBenchmarkSig`.
 
-use std::cell::Cell;
-
 use tidb_datatype::Datum;
 use tidb_expr::rewriter::rewrite_expr;
 use tidb_exprctx::Columns;
@@ -44,10 +42,53 @@ fn eval_built(sql_expr: &str, ctx: &impl Columns) -> Result<Datum, EvalError> {
     expression.eval(ctx, chunk.get_row(0))
 }
 
+/// Go `SessionVars` whose `SetLastInsertID` counts its calls.
+#[derive(Clone, Default)]
+struct CountingVars(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl tidb_expropt::SessionVars for CountingVars {
+    fn user(&self) -> Option<std::sync::Arc<tidb_parser::auth::UserIdentity>> {
+        None
+    }
+    fn active_roles(&self) -> Vec<std::sync::Arc<tidb_parser::auth::RoleIdentity>> {
+        Vec::new()
+    }
+    fn connection_id(&self) -> u64 {
+        0
+    }
+    fn last_found_rows(&self) -> u64 {
+        0
+    }
+    fn prev_affected_rows(&self) -> i64 {
+        0
+    }
+    fn prev_last_insert_id(&self) -> u64 {
+        0
+    }
+    fn set_last_insert_id(&self, _: u64) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    fn hint_resource_group_name(&self) -> String {
+        String::new()
+    }
+}
+
+impl tidb_expropt::SessionVarsProvider for CountingVars {
+    fn get_session_vars(&self) -> std::sync::Arc<dyn tidb_expropt::SessionVars> {
+        std::sync::Arc::new(self.clone())
+    }
+}
+
 #[derive(Default)]
 struct CountingContext {
-    last_insert_writes: Cell<usize>,
+    last_insert_writes: CountingVars,
     division_is_error: bool,
+}
+
+impl CountingContext {
+    fn writes(&self) -> usize {
+        self.last_insert_writes.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 impl Columns for CountingContext {
@@ -63,9 +104,14 @@ impl Columns for CountingContext {
         }
     }
 
-    fn set_last_insert_id(&self, _value: u64) {
-        self.last_insert_writes
-            .set(self.last_insert_writes.get() + 1);
+    fn get_optional_prop_provider(
+        &self,
+        key: tidb_exprctx::OptionalEvalPropKey,
+    ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+        (key == tidb_exprctx::OptionalEvalPropKey::SessionVars).then(|| {
+            std::sync::Arc::new(tidb_expropt::new_session_vars_provider(std::sync::Arc::new(self.last_insert_writes.clone())))
+                as std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>
+        })
     }
 }
 
@@ -76,14 +122,14 @@ fn benchmark_repeats_the_expression_and_returns_zero() {
         eval_built("benchmark(3, last_insert_id(7))", &ctx),
         Ok(Datum::Int(0))
     );
-    assert_eq!(ctx.last_insert_writes.get(), 3);
+    assert_eq!(ctx.writes(), 3);
 
     assert_eq!(
         eval_built("benchmark(last_insert_id(2), null)", &ctx),
         Ok(Datum::Int(0))
     );
     assert_eq!(
-        ctx.last_insert_writes.get(),
+        ctx.writes(),
         4,
         "the loop count is evaluated once"
     );

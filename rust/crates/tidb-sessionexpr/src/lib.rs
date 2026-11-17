@@ -177,8 +177,6 @@ pub trait SessionVarsAccessor: SessionVarsSnapshot + ExproptSessionVars {
     fn alloc_plan_column_id(&self) -> i64;
     /// Go `SessionVars.PlanColumnID.Load()`.
     fn last_plan_column_id(&self) -> i64;
-    /// Go `SessionVars.ConnectionID`.
-    fn connection_id(&self) -> u64;
     /// Go's assignment `GetSessionVars().GroupConcatMaxLen = val`, which this
     /// package performs only from `SetGroupConcatMaxLenForTest`.
     fn set_group_concat_max_len_for_test(&self, val: u64);
@@ -1238,6 +1236,28 @@ mod tests {
         fn active_roles(&self) -> Vec<Arc<RoleIdentity>> {
             self.active_roles.lock().unwrap().clone()
         }
+
+        fn connection_id(&self) -> u64 {
+            self.connection_id.load(Ordering::SeqCst)
+        }
+
+        fn last_found_rows(&self) -> u64 {
+            0
+        }
+
+        fn prev_affected_rows(&self) -> i64 {
+            0
+        }
+
+        fn prev_last_insert_id(&self) -> u64 {
+            0
+        }
+
+        fn set_last_insert_id(&self, _: u64) {}
+
+        fn hint_resource_group_name(&self) -> String {
+            String::new()
+        }
     }
 
     impl SessionVarsAccessor for MockSessionVars {
@@ -1283,10 +1303,6 @@ mod tests {
 
         fn last_plan_column_id(&self) -> i64 {
             self.plan_column_id.load(Ordering::SeqCst)
-        }
-
-        fn connection_id(&self) -> u64 {
-            self.connection_id.load(Ordering::SeqCst)
         }
 
         fn set_group_concat_max_len_for_test(&self, val: u64) {

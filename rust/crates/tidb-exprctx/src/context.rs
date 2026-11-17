@@ -634,13 +634,6 @@ pub trait Columns {
         None
     }
 
-    /// Go `StmtCtx.ResourceGroupName`, with any statement resource-group
-    /// hint already resolved by the session. `CURRENT_RESOURCE_GROUP()`
-    /// returns this effective name.
-    fn current_resource_group(&self) -> Option<String> {
-        None
-    }
-
     /// Go `SessionVars.ConnectionID`, which `CONNECTION_ID()` reports as an
     /// unsigned `LongLong`. Go treats a missing `SessionVars` as an error
     /// rather than NULL (`builtinConnectionIDSig.evalInt`), but that case is
@@ -688,13 +681,6 @@ pub trait Columns {
     /// Releases every advisory-lock reference held by this session.
     fn release_all_advisory_locks(&self) -> Result<usize, EvalError> {
         Err(EvalError::Unsupported("advisory locks require a session"))
-    }
-
-    /// Go `SessionVars.LastFoundRows`, published when the preceding result
-    /// set was completely drained. Statements without a result set do not
-    /// replace it.
-    fn found_rows(&self) -> Option<u64> {
-        None
     }
 
     /// Go `TIDB_CURRENT_TSO()`: the active transaction's start timestamp, or
@@ -931,21 +917,6 @@ pub trait Columns {
     /// Assigns a user variable through the resolver's interior mutability.
     fn set_uservar(&self, name: &str, value: Datum) {
         let _ = (name, value);
-    }
-
-    /// The affected-row count published by the preceding statement.
-    fn row_count(&self) -> Option<i64> {
-        None
-    }
-
-    /// The session's last automatically generated unsigned identifier.
-    fn last_insert_id(&self) -> Option<u64> {
-        None
-    }
-
-    /// Records `LAST_INSERT_ID(expr)` for the next statement boundary.
-    fn set_last_insert_id(&self, value: u64) {
-        let _ = value;
     }
 
     /// TiDB's session `time_zone`. The default is the exact fixed zone the

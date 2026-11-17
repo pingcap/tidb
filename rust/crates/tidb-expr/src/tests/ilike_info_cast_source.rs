@@ -237,16 +237,17 @@ impl Columns for InfoSession {
         &self,
         key: tidb_exprctx::OptionalEvalPropKey,
     ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
-        crate::test_identity::identity_props(self.current_user.as_deref(), self.login_user.as_deref(), &[]).get(key)
+        crate::test_identity::TestSession {
+            current_user: self.current_user.clone(),
+            login_user: self.login_user.clone(),
+            last_found_rows: self.found_rows.unwrap_or(0),
+            resource_group_name: self.current_resource_group.clone().unwrap_or_default(),
+            ..crate::test_identity::TestSession::default()
+        }
+        .props()
+        .get(key)
     }
 
-    fn current_resource_group(&self) -> Option<String> {
-        self.current_resource_group.clone()
-    }
-
-    fn found_rows(&self) -> Option<u64> {
-        self.found_rows
-    }
 }
 
 fn eval_zero_arg(name: &str, ctx: &InfoSession) -> Datum {
@@ -331,9 +332,22 @@ fn test_current_resource_group() {
         eval_zero_arg("current_resource_group", &ctx),
         Datum::new_string_datum(b"rg1".to_vec())
     );
-    assert_eq!(
-        eval_zero_arg("current_resource_group", &InfoSession::default()),
-        Datum::Null
+    // Go reads `getHintResourceGroupName(vars)`, a string; a context with no
+    // session variables fails at `GetSessionVars`.
+    let error = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "current_resource_group",
+        FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+        vec![],
+    )
+    .unwrap()
+    .into_scalar_function()
+    .unwrap()
+    .eval(&crate::NoColumns, tidb_chunk::row::Row::empty())
+    .unwrap_err();
+    assert!(
+        matches!(error, crate::EvalError::Raw(ref message) if message == "optional property: 'OptPropSessionVars' not exists in EvalContext"),
+        "{error:?}"
     );
 }
 
@@ -353,10 +367,7 @@ fn test_current_resource_group_ast_path() {
         crate::eval_in(&expression, &ctx),
         Ok(Datum::new_string_datum(b"rg_ast".to_vec()))
     );
-    assert_eq!(
-        crate::eval_in(&expression, &InfoSession::default()),
-        Ok(Datum::Null)
-    );
+    assert!(crate::eval_in(&expression, &crate::NoColumns).is_err());
 }
 
 // ---------------------------------------------------------------------------

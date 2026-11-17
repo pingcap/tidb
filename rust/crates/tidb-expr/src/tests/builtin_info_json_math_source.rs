@@ -144,7 +144,7 @@ struct InfoColumns {
     version: Option<String>,
     tidb_info: Option<String>,
     last_insert_id: Option<u64>,
-    published_last_insert_id: std::cell::Cell<Option<u64>>,
+    published_last_insert_id: std::sync::Arc<std::sync::Mutex<Option<u64>>>,
     row_count: Option<i64>,
 }
 
@@ -157,7 +157,17 @@ impl Columns for InfoColumns {
         &self,
         key: tidb_exprctx::OptionalEvalPropKey,
     ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
-        crate::test_identity::identity_props(self.current_user.as_deref(), None, &self.roles).get(key)
+        crate::test_identity::TestSession {
+            current_user: self.current_user.clone(),
+            roles: self.roles.iter().map(|(user, host)| ((*user).to_owned(), (*host).to_owned())).collect(),
+            connection_id: self.connection_id.unwrap_or(0),
+            prev_affected_rows: self.row_count.unwrap_or(0),
+            prev_last_insert_id: self.last_insert_id.unwrap_or(0),
+            last_insert_id: std::sync::Arc::clone(&self.published_last_insert_id),
+            ..crate::test_identity::TestSession::default()
+        }
+        .props()
+        .get(key)
     }
 
     fn connection_id(&self) -> Option<u64> {
@@ -178,17 +188,6 @@ impl Columns for InfoColumns {
         self.tidb_info.clone().unwrap_or_else(get_tidb_info)
     }
 
-    fn last_insert_id(&self) -> Option<u64> {
-        self.last_insert_id
-    }
-
-    fn set_last_insert_id(&self, value: u64) {
-        self.published_last_insert_id.set(Some(value));
-    }
-
-    fn row_count(&self) -> Option<i64> {
-        self.row_count
-    }
 }
 
 fn eval_info(name: &str, result_type: FieldType, ctx: &InfoColumns) -> Datum {
@@ -379,7 +378,6 @@ fn last_insert_id() {
     ] {
         let ctx = InfoColumns {
             last_insert_id: Some(previous),
-            published_last_insert_id: std::cell::Cell::new(None),
             ..InfoColumns::default()
         };
         assert_eq!(
@@ -388,7 +386,7 @@ fn last_insert_id() {
                 .expect("source row must evaluate"),
             Datum::UInt(expected)
         );
-        assert_eq!(ctx.published_last_insert_id.get(), published);
+        assert_eq!(*ctx.published_last_insert_id.lock().unwrap(), published);
     }
 }
 

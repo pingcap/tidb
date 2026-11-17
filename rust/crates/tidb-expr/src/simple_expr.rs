@@ -1317,81 +1317,52 @@ mod tests {
 
     /// Go `builtinRowCountSig`/`builtinLastInsertIDSig`/
     /// `builtinLastInsertIDWithIDSig` (builtin_info.go:913/482/508):
-    /// ROW_COUNT() answers the preceding statement's affected-row count
-    /// (never NULL; the default context counts 0), LAST_INSERT_ID() answers
-    /// the previous statement's generated id (NULL when the context has
-    /// none), and LAST_INSERT_ID(expr) records the integer and returns it.
+    /// ROW_COUNT() answers the preceding statement's affected-row count and
+    /// LAST_INSERT_ID() the previous statement's generated id, each 0 when
+    /// none was published (Go reads `StmtCtx.PrevAffectedRows` /
+    /// `PrevLastInsertID`, plain integers); LAST_INSERT_ID(expr) records the
+    /// integer through `SessionVars.SetLastInsertID` and returns it.
     #[test]
     fn info_functions_read_and_record_session_counts() {
         use tidb_exprctx::context::Columns;
         use crate::expression::Constant;
 
-        struct CountingContext {
-            row_count: Option<i64>,
-            last_insert_id: Option<u64>,
-            recorded: std::cell::RefCell<Vec<u64>>,
-        }
-        impl Default for CountingContext {
-            fn default() -> Self {
-                Self {
-                    row_count: None,
-                    last_insert_id: None,
-                    recorded: std::cell::RefCell::new(Vec::new()),
-                }
-            }
-        }
+        struct CountingContext(crate::test_identity::TestSession);
         impl Columns for CountingContext {
             fn get(&self, _path: &[String]) -> Option<crate::Datum> {
                 None
             }
-            fn row_count(&self) -> Option<i64> {
-                self.row_count
-            }
-            fn last_insert_id(&self) -> Option<u64> {
-                self.last_insert_id
-            }
-            fn set_last_insert_id(&self, value: u64) {
-                self.recorded.borrow_mut().push(value);
+            fn get_optional_prop_provider(
+                &self,
+                key: tidb_exprctx::OptionalEvalPropKey,
+            ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+                self.0.props().get(key)
             }
         }
+        let session = |prev_affected_rows, prev_last_insert_id| {
+            CountingContext(crate::test_identity::TestSession {
+                prev_affected_rows,
+                prev_last_insert_id,
+                ..Default::default()
+            })
+        };
 
         let row_count_type = FieldType::new(FieldTypeCode::LongLong);
         let empty_args: Vec<Expression> = Vec::new();
+        let chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
+        let row = chunk.get_row(0);
 
-        // ROW_COUNT(): the context's count, or NULL when the context has
-        // none (the trait default).
+        // ROW_COUNT().
         let node = crate::new_function::new_function_base(
             &crate::NoColumns,
             "row_count",
             row_count_type.clone(),
             empty_args.clone(),
         ).unwrap();
-        let chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
-        let row = chunk.get_row(0);
-        let value = node
-            .eval(
-                &CountingContext {
-                    row_count: Some(7),
-                    last_insert_id: None,
-                    recorded: std::cell::RefCell::new(Vec::new()),
-                },
-                row,
-            )
-            .unwrap();
-        assert_eq!(value, crate::Datum::Int(7));
-        let value = node
-            .eval(
-                &CountingContext {
-                    row_count: None,
-                    last_insert_id: None,
-                    recorded: std::cell::RefCell::new(Vec::new()),
-                },
-                row,
-            )
-            .unwrap();
-        assert_eq!(value, crate::Datum::Null);
+        assert_eq!(node.eval(&session(7, 0), row).unwrap(), crate::Datum::Int(7));
+        assert_eq!(node.eval(&session(0, 0), row).unwrap(), crate::Datum::Int(0));
 
-        // LAST_INSERT_ID(): the context's generated id, or NULL when unset.
+        // LAST_INSERT_ID().
         let last_insert_id_type = FieldType::new(FieldTypeCode::LongLong);
         let node = crate::new_function::new_function_base(
             &crate::NoColumns,
@@ -1399,28 +1370,8 @@ mod tests {
             last_insert_id_type.clone(),
             empty_args,
         ).unwrap();
-        let value = node
-            .eval(
-                &CountingContext {
-                    row_count: None,
-                    last_insert_id: Some(5),
-                    recorded: std::cell::RefCell::new(Vec::new()),
-                },
-                row,
-            )
-            .unwrap();
-        assert_eq!(value, crate::Datum::UInt(5));
-        let value = node
-            .eval(
-                &CountingContext {
-                    row_count: None,
-                    last_insert_id: None,
-                    recorded: std::cell::RefCell::new(Vec::new()),
-                },
-                row,
-            )
-            .unwrap();
-        assert_eq!(value, crate::Datum::Null);
+        assert_eq!(node.eval(&session(0, 5), row).unwrap(), crate::Datum::UInt(5));
+        assert_eq!(node.eval(&session(0, 0), row).unwrap(), crate::Datum::UInt(0));
 
         // LAST_INSERT_ID(expr): records the integer for the next statement
         // boundary and returns it.
@@ -1434,14 +1385,10 @@ mod tests {
             last_insert_id_type,
             vec![argument],
         ).unwrap();
-        let context = CountingContext {
-            row_count: None,
-            last_insert_id: None,
-            recorded: std::cell::RefCell::new(Vec::new()),
-        };
+        let context = session(0, 0);
         let value = node.eval(&context, row).unwrap();
         assert_eq!(value, crate::Datum::UInt(42));
-        assert_eq!(context.recorded.borrow().as_slice(), &[42]);
+        assert_eq!(context.0.last_insert_id_calls.lock().unwrap().as_slice(), &[42]);
     }
 
     /// Go `builtinFormatBytesSig`/`builtinFormatNanoTimeSig`

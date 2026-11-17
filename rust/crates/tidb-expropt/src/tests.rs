@@ -163,6 +163,28 @@ impl SessionVars for MockSessionVars {
     fn active_roles(&self) -> Vec<Arc<RoleIdentity>> {
         Vec::new()
     }
+
+    fn connection_id(&self) -> u64 {
+        0
+    }
+
+    fn last_found_rows(&self) -> u64 {
+        0
+    }
+
+    fn prev_affected_rows(&self) -> i64 {
+        0
+    }
+
+    fn prev_last_insert_id(&self) -> u64 {
+        0
+    }
+
+    fn set_last_insert_id(&self, _: u64) {}
+
+    fn hint_resource_group_name(&self) -> String {
+        String::new()
+    }
 }
 
 struct MockSessionContext {

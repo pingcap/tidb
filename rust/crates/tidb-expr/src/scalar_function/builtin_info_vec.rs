@@ -61,10 +61,15 @@ pub(super) fn eval(
         return Ok(());
     }
     if function.pb_code() == ScalarFuncSig::LastInsertIdWithId {
+        // Go `builtinLastInsertIDWithIDSig.vecEvalInt`: `GetSessionVars`
+        // first, then one write of the last non-NULL argument.
+        let vars = tidb_expropt::SessionVarsPropReader
+            .get_session_vars(ctx)
+            .map_err(crate::builtin_ext::misc::opt_prop_error)?;
         vec_eval::eval_into(&function.args[0], EvalType::Int, ctx, input, result)?;
         for i in (0..input.num_rows()).rev() {
             if !result.is_null(i) {
-                ctx.set_last_insert_id(result.get_uint64(i));
+                vars.set_last_insert_id(result.get_uint64(i));
                 break;
             }
         }

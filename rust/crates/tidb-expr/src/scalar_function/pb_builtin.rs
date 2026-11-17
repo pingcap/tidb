@@ -354,15 +354,14 @@ fn aes_iv_row(
 /// Go `builtinLastInsertIDSig.evalInt`: the session's previous last insert
 /// id, in the unsigned domain.
 fn last_insert_id_values(_: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    Ok(match ctx.last_insert_id() {
-        Some(id) => Datum::UInt(id),
-        None => Datum::Null,
-    })
+    let vars = tidb_expropt::SessionVarsPropReader.get_session_vars(ctx).map_err(crate::builtin_ext::misc::opt_prop_error)?;
+    Ok(Datum::UInt(vars.prev_last_insert_id()))
 }
 
 /// Go `builtinLastInsertIDWithIDSig.evalInt`: records the argument as the
 /// session's last insert id and returns it; NULL for a NULL argument.
 fn last_insert_id_with_id_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    let vars = tidb_expropt::SessionVarsPropReader.get_session_vars(ctx).map_err(crate::builtin_ext::misc::opt_prop_error)?;
     if values[0].is_null() {
         return Ok(Datum::Null);
     }
@@ -372,7 +371,7 @@ fn last_insert_id_with_id_method(function: &ScalarFunction, values: &[Datum], ct
         Datum::UInt(u) => u,
         _ => return Err(EvalError::Unsupported("LAST_INSERT_ID argument")),
     };
-    ctx.set_last_insert_id(recorded);
+    vars.set_last_insert_id(recorded);
     Ok(Datum::Int(recorded as i64))
 }
 

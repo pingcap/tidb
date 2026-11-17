@@ -47,6 +47,31 @@ macro_rules! session_values {
     )*};
 }
 
+/// Go `SessionVarsPropReader.GetSessionVars`.
+fn session_vars(ctx: &dyn Columns) -> Result<std::sync::Arc<dyn tidb_expropt::SessionVars>, EvalError> {
+    tidb_expropt::SessionVarsPropReader.get_session_vars(ctx).map_err(crate::builtin_ext::misc::opt_prop_error)
+}
+
+/// Go `builtinCurrentResourceGroupSig.evalString`.
+pub(crate) fn current_resource_group(_: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    Ok(Datum::new_string_datum(session_vars(ctx)?.hint_resource_group_name().into_bytes()))
+}
+
+/// Go `builtinConnectionIDSig.evalInt`: `SessionVars.ConnectionID`.
+pub(crate) fn connection_id(_: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    Ok(Datum::UInt(session_vars(ctx)?.connection_id()))
+}
+
+/// Go `builtinFoundRowsSig.evalInt`: `SessionVars.LastFoundRows`.
+pub(crate) fn found_rows(_: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    Ok(Datum::UInt(session_vars(ctx)?.last_found_rows()))
+}
+
+/// Go `builtinRowCountSig.evalInt`: `SessionVars.StmtCtx.PrevAffectedRows`.
+pub(crate) fn row_count(_: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    Ok(Datum::Int(session_vars(ctx)?.prev_affected_rows()))
+}
+
 /// Go's error for an identity builtin evaluated with no session user.
 fn missing_session_variable() -> EvalError {
     EvalError::Raw("Missing session variable when eval builtin".to_owned())
@@ -96,14 +121,6 @@ session_values! {
     version => |ctx| ctx.sysvar(None, "version").unwrap_or(Datum::Null);
     /// Go `builtinTiDBVersionSig`.
     tidb_version => |ctx| Datum::new_string_datum(ctx.tidb_info().into_bytes());
-    /// Go `builtinCurrentResourceGroupSig`.
-    current_resource_group => |ctx| string_or_null(ctx.current_resource_group());
-    /// Go `builtinConnectionIDSig`.
-    connection_id => |ctx| ctx.connection_id().map_or(Datum::Null, Datum::UInt);
-    /// Go `builtinFoundRowsSig`.
-    found_rows => |ctx| ctx.found_rows().map_or(Datum::Null, Datum::UInt);
-    /// Go `builtinRowCountSig`.
-    row_count => |ctx| ctx.row_count().map_or(Datum::Null, Datum::Int);
     /// Go `builtinTiDBIsDDLOwnerSig.evalInt`: 1 or 0, never NULL.
     tidb_is_ddl_owner => |ctx| Datum::Int(i64::from(ctx.ddl_owner_info()?));
     /// Go `builtinReleaseAllLocksSig`.
