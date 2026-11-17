@@ -637,7 +637,7 @@ func (e *ImportIntoExec) prepareQuery(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return e.controller.SetQuerySource(ctx, query)
+	return e.controller.InitQuerySource(ctx, query)
 }
 
 // fillQueryInfo preserves the affected-row response of IMPORT FROM SELECT.

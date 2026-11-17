@@ -91,7 +91,7 @@ func PrepareQueryImport(ctx context.Context, sctx sessionctx.Context, req *Query
 	if err != nil {
 		return nil, err
 	}
-	if err := controller.SetQuerySource(ctx, query); err != nil {
+	if err := controller.InitQuerySource(ctx, query); err != nil {
 		return nil, err
 	}
 	if err := controller.CheckRequirements(ctx, sctx); err != nil {
@@ -103,8 +103,9 @@ func PrepareQueryImport(ctx context.Context, sctx sessionctx.Context, req *Query
 	return plan, nil
 }
 
-// SetQuerySource makes the SELECT the source of the import, run by a DXF worker.
-func (e *LoadDataController) SetQuerySource(ctx context.Context, query *QuerySource) error {
+// InitQuerySource sets the query source and initializes the node and thread
+// limits for running it on a DXF worker.
+func (e *LoadDataController) InitQuerySource(ctx context.Context, query *QuerySource) error {
 	e.Plan.QuerySource = query
 	// TODO: split I/O-bound single-table queries into range subtasks, and remove
 	// this cap, which also keeps the later steps on one node.
