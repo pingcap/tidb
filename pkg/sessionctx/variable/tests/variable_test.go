@@ -755,20 +755,18 @@ func TestOrderByDependency(t *testing.T) {
 	// Some other exceptions:
 	// - tidb_snapshot and tidb_read_staleness can not be set at the same time. It doesn't affect dependency.
 	vars := map[string]string{
-		vardef.TimeZone:                                "+08:00",
-		vardef.TiDBTxnReadTS:                           "2020-01-02 03:04:05",
-		vardef.TiDBSkipIsolationLevelCheck:             "1",
-		vardef.TxnIsolation:                            "SERIALIZABLE",
-		vardef.TransactionIsolation:                    "SERIALIZABLE",
-		"unknown":                                      "1",
-		vardef.TxReadOnly:                              "1",
-		vardef.SQLAutoIsNull:                           "1",
-		vardef.TiDBEnableNoopFuncs:                     "1",
-		vardef.TiDBEnforceMPPExecution:                 "1",
-		vardef.TiDBAllowMPPExecution:                   "1",
-		vardef.TiDBEnableLocalTxn:                      "1",
-		vardef.TiDBEnablePlanReplayerContinuousCapture: "1",
-		vardef.TiDBEnableHistoricalStats:               "1",
+		vardef.TimeZone:                    "+08:00",
+		vardef.TiDBTxnReadTS:               "2020-01-02 03:04:05",
+		vardef.TiDBSkipIsolationLevelCheck: "1",
+		vardef.TxnIsolation:                "SERIALIZABLE",
+		vardef.TransactionIsolation:        "SERIALIZABLE",
+		"unknown":                          "1",
+		vardef.TxReadOnly:                  "1",
+		vardef.SQLAutoIsNull:               "1",
+		vardef.TiDBEnableNoopFuncs:         "1",
+		vardef.TiDBEnforceMPPExecution:     "1",
+		vardef.TiDBAllowMPPExecution:       "1",
+		vardef.TiDBEnableLocalTxn:          "1",
 	}
 	names := variable.OrderByDependency(vars)
 	require.Less(t, slices.Index(names, vardef.TimeZone), slices.Index(names, vardef.TiDBTxnReadTS))
@@ -777,7 +775,5 @@ func TestOrderByDependency(t *testing.T) {
 	require.Greater(t, slices.Index(names, vardef.TxReadOnly), slices.Index(names, vardef.TiDBEnableNoopFuncs))
 	require.Greater(t, slices.Index(names, vardef.SQLAutoIsNull), slices.Index(names, vardef.TiDBEnableNoopFuncs))
 	require.Greater(t, slices.Index(names, vardef.TiDBEnforceMPPExecution), slices.Index(names, vardef.TiDBAllowMPPExecution))
-	// Depended variables below are global variables, so actually it doesn't matter.
-	require.Greater(t, slices.Index(names, vardef.TiDBEnablePlanReplayerContinuousCapture), slices.Index(names, vardef.TiDBEnableHistoricalStats))
 	require.Contains(t, names, "unknown")
 }

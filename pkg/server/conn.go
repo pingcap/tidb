@@ -1886,7 +1886,8 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	}
 
 	warns := sc.GetWarnings()
-	parserWarns := warns[len(prevWarns):]
+	// Execution retries can reset and reuse this statement context's warning buffer.
+	parserWarns := append([]contextutil.SQLWarn(nil), warns[len(prevWarns):]...)
 
 	var pointPlans []base.Plan
 	sessVars.InMultiStmts = len(stmts) > 1
@@ -2234,6 +2235,7 @@ func (cc *clientConn) handleStmt(
 	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	cc.audit(context.Background(), plugin.Starting)
+	retrySafety := stmtRetrySafe
 
 	// if stmt is load data stmt, store the channel that reads from the conn
 	// into the ctx for executor to use
@@ -2244,6 +2246,8 @@ func (cc *clientConn) handleStmt(
 			if err != nil {
 				return stmtRetryUnsafe, err
 			}
+			// ExecuteStmt can request a one-shot client file stream, even if it fails.
+			retrySafety = stmtRetryUnsafe
 		}
 	}
 
@@ -2272,7 +2276,7 @@ func (cc *clientConn) handleStmt(
 		if sv := cc.ctx.GetSessionVars(); sv != nil && sv.StmtCtx != nil {
 			sv.StmtCtx.DetachMemDiskTracker()
 		}
-		return stmtRetrySafe, err
+		return retrySafety, err
 	}
 
 	status := cc.ctx.Status()
@@ -2737,13 +2741,16 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	cc.user = newUser
 	cc.dbname = newDBName
 	err := cc.openSession()
+	cc.moveResourceGroupCounter(oldResourceGroup)
 	restoreOldSession := func() {
+		newResourceGroup := cc.currentResourceGroupName()
 		if newCtx := cc.getCtx(); newCtx != nil && newCtx != oldCtx {
 			if err := newCtx.Close(); err != nil {
 				logutil.Logger(ctx).Debug("close new context failed", zap.Error(err))
 			}
 		}
 		cc.SetCtx(oldCtx)
+		cc.moveResourceGroupCounter(newResourceGroup)
 		cc.user = oldUser
 		cc.dbname = oldDBName
 		cc.authPlugin = oldAuthPlugin
@@ -2757,19 +2764,30 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		AuthPlugin: pluginName,
 		Capability: cc.capability,
 	}
-	if fakeResp.AuthPlugin != "" {
-		failpoint.Inject("ChangeUserAuthSwitch", func(val failpoint.Value) {
-			restoreOldSession()
-			failpoint.Return(errors.Errorf("%v", val))
-		})
-		newpass, err := cc.checkAuthPlugin(ctx, fakeResp)
-		if err != nil {
-			restoreOldSession()
-			return err
-		}
-		if len(newpass) > 0 {
-			fakeResp.Auth = newpass
-		}
+	failpoint.Inject("ChangeUserAuthSwitch", func(val failpoint.Value) {
+		restoreOldSession()
+		failpoint.Return(errors.Errorf("%v", val))
+	})
+	// Check the account's plugin even if the client omits it, so auth_socket
+	// always validates the transport and uses the Unix peer's OS credentials.
+	newpass, err := cc.checkAuthPlugin(ctx, fakeResp)
+	if err != nil {
+		restoreOldSession()
+		return err
+	}
+	if newpass != nil {
+		fakeResp.Auth = newpass
+	}
+	// SHA-2 and SM3 need full authentication even when no plugin switch occurs.
+	switch fakeResp.AuthPlugin {
+	case mysql.AuthCachingSha2Password:
+		fakeResp.Auth, err = cc.authSha(ctx, *fakeResp)
+	case mysql.AuthTiDBSM3Password:
+		fakeResp.Auth, err = cc.authSM3(ctx, *fakeResp)
+	}
+	if err != nil {
+		restoreOldSession()
+		return err
 	}
 	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin, fakeResp.ZstdLevel); err != nil {
 		restoreOldSession()
@@ -2780,7 +2798,6 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 			logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
 		}
 	}
-	cc.moveResourceGroupCounter(oldResourceGroup)
 	return cc.handleCommonConnectionReset(ctx)
 }
 

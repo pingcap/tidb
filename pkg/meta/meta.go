@@ -115,6 +115,8 @@ var (
 	mIngestMaxPerSecKey            = []byte("IngestMaxReqPerSec")
 	mDXFScheduleTuneKey            = []byte("DXFScheduleTune")
 
+	mLegacyECDSASessionTokenDisabled = []byte("LegacyECDSASessionTokenDisabled")
+
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
 	defaultGroupID = int64(1)
@@ -195,6 +197,8 @@ const (
 	StorageClassTransitionNextGenBootTableVersion NextGenBootTableVersion = 3
 	// MaterializedViewNextGenBootTableVersion adds materialized view maintenance metadata tables.
 	MaterializedViewNextGenBootTableVersion NextGenBootTableVersion = 4
+	// MaterializedViewRefreshSourceNextGenBootTableVersion adds mysql.tidb_mview_fast_refresh_source_info.
+	MaterializedViewRefreshSourceNextGenBootTableVersion NextGenBootTableVersion = 5
 )
 
 // DDLTableVersion is to display ddl related table versions
@@ -1757,6 +1761,41 @@ func (m *Mutator) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) 
 	return tableInfo, errors.Trace(err)
 }
 
+// GetTables gets table metadata in input order, returning nil for missing table IDs.
+func (m *Mutator) GetTables(ctx context.Context, dbID int64, tableIDs []int64) ([]*model.TableInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(tableIDs) == 0 {
+		return nil, nil
+	}
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+	fields := make([][]byte, len(tableIDs))
+	for i, id := range tableIDs {
+		fields[i] = m.tableKey(id)
+	}
+	values, err := m.txn.HGetBatch(ctx, dbKey, fields)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tables := make([]*model.TableInfo, len(values))
+	for i, value := range values {
+		if value == nil {
+			continue
+		}
+		tbl := &model.TableInfo{}
+		if err := json.Unmarshal(value, tbl); err != nil {
+			return nil, errors.Trace(err)
+		}
+		tbl.DBID = dbID
+		tables[i] = tbl
+	}
+	return tables, nil
+}
+
 // CheckTableExists checks if the table is existed with dbID and tableID.
 func (m *Mutator) CheckTableExists(dbID int64, tableID int64) (bool, error) {
 	// Check if db exists.
@@ -2016,7 +2055,7 @@ func IsJobMatch(job []byte, schemaNames, tableNames set.StringSet) (match bool, 
 		return
 	}
 	if (schemaNames.Count() == 0 || schemaNames.Exist(schemaName)) &&
-		tableNames.Count() == 0 || tableNames.Exist(tableName) {
+		(tableNames.Count() == 0 || tableNames.Exist(tableName)) {
 		match = true
 	}
 	return
@@ -2068,6 +2107,19 @@ func (m *Mutator) GetBootstrapVersion() (int64, error) {
 func (m *Mutator) FinishBootstrap(version int64) error {
 	err := m.txn.Set(mBootstrapKey, []byte(strconv.FormatInt(version, 10)))
 	return errors.Trace(err)
+}
+
+// GetLegacyECDSASessionTokenDisabled reports whether legacy ECDSA session tokens
+// have been permanently disabled. A missing key preserves upgrade compatibility.
+func (m *Mutator) GetLegacyECDSASessionTokenDisabled() (bool, error) {
+	value, err := m.txn.GetInt64(mLegacyECDSASessionTokenDisabled)
+	return value == 1, errors.Trace(err)
+}
+
+// SetLegacyECDSASessionTokenDisabled permanently disables legacy ECDSA session
+// tokens. The transition is one-way and repeated writes are safe.
+func (m *Mutator) SetLegacyECDSASessionTokenDisabled() error {
+	return errors.Trace(m.txn.Set(mLegacyECDSASessionTokenDisabled, []byte("1")))
 }
 
 // GetStarterBootstrapVersion returns the completed starter bootstrap version.

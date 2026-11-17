@@ -16,7 +16,6 @@ package domain
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net"
 	"path/filepath"
@@ -36,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -470,7 +468,7 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 			zap.Error(err))
 		return false
 	}
-	file, fileName, err := replayer.GeneratePlanReplayerFile(w.ctx, storage, task.IsCapture, task.IsContinuesCapture, vardef.EnableHistoricalStatsForCapture.Load())
+	file, fileName, err := replayer.GeneratePlanReplayerFile(w.ctx, storage, task.IsCapture, task.IsContinuesCapture)
 	if err != nil {
 		logutil.BgLogger().Warn("generate task file failed", zap.String("category", "plan-replayer-capture"),
 			zap.String("sqlDigest", taskKey.SQLDigest),
@@ -519,7 +517,7 @@ func (h *planReplayerTaskDumpHandle) DrainTask() *PlanReplayerDumpTask {
 
 func checkUnHandledReplayerTask(ctx context.Context, sctx sessionctx.Context, task replayer.PlanReplayerTaskKey) (bool, error) {
 	exec := sctx.GetSQLExecutor()
-	rs, err := exec.ExecuteInternal(ctx, fmt.Sprintf("select * from mysql.plan_replayer_status where sql_digest = '%v' and plan_digest = '%v' and fail_reason is null", task.SQLDigest, task.PlanDigest))
+	rs, err := exec.ExecuteInternal(ctx, "select * from mysql.plan_replayer_status where sql_digest = %? and plan_digest = %? and fail_reason is null", task.SQLDigest, task.PlanDigest)
 	if err != nil {
 		return false, err
 	}
@@ -540,8 +538,8 @@ func checkUnHandledReplayerTask(ctx context.Context, sctx sessionctx.Context, ta
 // CheckPlanReplayerTaskExists checks whether plan replayer capture task exists already
 func CheckPlanReplayerTaskExists(ctx context.Context, sctx sessionctx.Context, sqlDigest, planDigest string) (bool, error) {
 	exec := sctx.GetSQLExecutor()
-	rs, err := exec.ExecuteInternal(ctx, fmt.Sprintf("select * from mysql.plan_replayer_task where sql_digest = '%v' and plan_digest = '%v'",
-		sqlDigest, planDigest))
+	rs, err := exec.ExecuteInternal(ctx, "select * from mysql.plan_replayer_task where sql_digest = %? and plan_digest = %?",
+		sqlDigest, planDigest)
 	if err != nil {
 		return false, err
 	}
@@ -576,14 +574,13 @@ type PlanReplayerDumpTask struct {
 	TblStats map[int64]any
 
 	// variables used to dump the plan
-	StartTS           uint64
-	SessionBindings   [][]*bindinfo.Binding
-	EncodedPlan       string
-	SessionVars       *variable.SessionVars
-	ExecStmts         []ast.StmtNode
-	Analyze           bool
-	HistoricalStatsTS uint64
-	DebugTrace        []any
+	StartTS         uint64
+	SessionBindings [][]*bindinfo.Binding
+	EncodedPlan     string
+	SessionVars     *variable.SessionVars
+	ExecStmts       []ast.StmtNode
+	Analyze         bool
+	DebugTrace      []any
 
 	FileName     string
 	PresignedURL string

@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -850,4 +852,146 @@ func TestMVServiceMaybeGCMVHistoryReportsMetrics(t *testing.T) {
 			return !svc.historyGCRunning.Load()
 		}, testEventuallyWait, testEventuallyTick)
 	})
+}
+
+func TestServerHelperMLogAnalyzeControls(t *testing.T) {
+	oldEnabled := vardef.RunAutoAnalyze.Load()
+	t.Cleanup(func() { vardef.RunAutoAnalyze.Store(oldEnabled) })
+	restoreTime := InstallMockTimeModuleForTest(NewMockTimeModule(time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC)))
+	t.Cleanup(restoreTime)
+	for _, tt := range []struct {
+		name    string
+		enabled bool
+		start   string
+		end     string
+		allowed bool
+	}{
+		{name: "disabled", start: "00:00 +0000", end: "23:59 +0000"},
+		{name: "outside window", enabled: true, start: "13:00 +0000", end: "14:00 +0000"},
+		{name: "inside window", enabled: true, start: "11:00 +0000", end: "13:00 +0000", allowed: true},
+		{name: "overnight inside", enabled: true, start: "11:00 +0000", end: "01:00 +0000", allowed: true},
+		{name: "overnight outside", enabled: true, start: "23:00 +0000", end: "01:00 +0000"},
+		{name: "offset inside", enabled: true, start: "19:00 +0800", end: "21:00 +0800", allowed: true},
+		{name: "invalid window", enabled: true, start: "invalid", end: "13:00 +0000"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			vardef.RunAutoAnalyze.Store(tt.enabled)
+			for _, phase := range []string{"scan", "execute"} {
+				t.Run(phase, func(t *testing.T) {
+					helper, se := newMLogAnalyzeHelperForTest(t)
+					se.restrictedRows[testSQLAutoAnalyzeParameters] = []chunk.Row{
+						chunk.MutRowFromValues(vardef.TiDBAutoAnalyzeStartTime, tt.start).ToRow(),
+						chunk.MutRowFromValues(vardef.TiDBAutoAnalyzeEndTime, tt.end).ToRow(),
+					}
+					pool := recordingSessionPool{se: se}
+					if phase == "scan" {
+						tasks, err := helper.LoadAllTiDBMVLogAnalyzeTasks(context.Background(), pool)
+						require.NoError(t, err)
+						require.Equal(t, tt.allowed, len(tasks) == 1)
+					} else {
+						require.NoError(t, helper.AnalyzeMVLog(context.Background(), pool, 201))
+						require.Equal(t, tt.allowed, containsAnalyzeSQL(se.executedRestrictedSQL))
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestMVServiceMLogAnalyzeScanSubmitsTasks(t *testing.T) {
+	installMockTimeForTest(t)
+	helper := &mockMVServiceHelper{
+		fetchAnalyzeTasks: map[int64]*mlogAnalyzeTask{
+			101: {schemaName: "test", mlogName: "$mlog$t"},
+		},
+	}
+	cfg := DefaultMVServiceConfig()
+	cfg.ServerConsistentHashReplicas = 1
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+	setTaskOwnersForTest(svc, map[int64]uint32{101: 5})
+	svc.mlogAnalyzeExecutor.Run()
+	t.Cleanup(func() {
+		svc.mlogAnalyzeExecutor.Close()
+	})
+
+	now := mvsNow()
+	svc.maybeScanMLogAnalyze(now)
+	require.Eventually(t, func() bool {
+		return helper.analyzeMLogCalls.Load() == 1 && svc.metrics.mvLogAnalyzeTaskCount.Load() == 0
+	}, testEventuallyWait, testEventuallyTick)
+	require.Equal(t, int64(101), helper.lastAnalyzeID.Load())
+	require.Equal(t, int64(0), svc.metrics.mvLogAnalyzeTaskCount.Load())
+	require.Equal(t, now.Add(mlogAnalyzeScanInterval).UnixMilli(), svc.nextMLogAnalyzeScanMillis.Load())
+	require.Equal(t, 1, helper.fetchDurationCount(mvFetchTypeMLogAnalyze, mvDurationResultSuccess))
+
+	svc.maybeScanMLogAnalyze(now.Add(mlogAnalyzeScanInterval - time.Second))
+	require.Equal(t, int32(1), helper.fetchAnalyzeTaskCalls.Load())
+}
+
+func TestMVServiceMLogAnalyzeScanFailureWaitsUntilNextInterval(t *testing.T) {
+	installMockTimeForTest(t)
+	helper := &mockMVServiceHelper{
+		fetchAnalyzeTasksErr: errors.New("mock mlog analyze scan failed"),
+	}
+	cfg := DefaultMVServiceConfig()
+	cfg.ServerConsistentHashReplicas = 1
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+
+	now := mvsNow()
+	svc.maybeScanMLogAnalyze(now)
+	require.Eventually(t, func() bool {
+		return !svc.mlogAnalyzeScanRunning.Load()
+	}, testEventuallyWait, testEventuallyTick)
+	require.Equal(t, int32(1), helper.fetchAnalyzeTaskCalls.Load())
+	require.Equal(t, int32(0), helper.analyzeMLogCalls.Load())
+	require.Equal(t, now.Add(mlogAnalyzeScanInterval).UnixMilli(), svc.nextMLogAnalyzeScanMillis.Load())
+	require.Equal(t, 1, helper.fetchDurationCount(mvFetchTypeMLogAnalyze, mvDurationResultFailed))
+
+	svc.maybeScanMLogAnalyze(now.Add(mlogAnalyzeScanInterval - time.Second))
+	require.Equal(t, int32(1), helper.fetchAnalyzeTaskCalls.Load())
+}
+
+func TestMVServiceMLogAnalyzeTaskDedupAndNoImmediateRetry(t *testing.T) {
+	installMockTimeForTest(t)
+	entered := make(chan struct{}, 1)
+	block := make(chan struct{})
+	helper := &mockMVServiceHelper{
+		analyzeMLogErr:     errors.New("analyze failed"),
+		analyzeMLogEntered: entered,
+		blockAnalyzeMLog:   block,
+	}
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+	svc.mlogAnalyzeExecutor.Run()
+	t.Cleanup(func() {
+		close(block)
+		svc.mlogAnalyzeExecutor.Close()
+	})
+
+	svc.analyzeMVLog([]int64{101, 101})
+	require.Eventually(t, func() bool {
+		return helper.analyzeMLogCalls.Load() == 1
+	}, testEventuallyWait, testEventuallyTick)
+	<-entered
+	require.Equal(t, int64(1), svc.metrics.mvLogAnalyzeTaskCount.Load())
+	require.Equal(t, int64(0), svc.mlogAnalyzeExecutor.metrics.counters.failedCount.Load())
+
+	block <- struct{}{}
+	require.Eventually(t, func() bool {
+		return svc.metrics.mvLogAnalyzeTaskCount.Load() == 0
+	}, testEventuallyWait, testEventuallyTick)
+	require.Equal(t, int32(1), helper.analyzeMLogCalls.Load())
+	require.Equal(t, int64(1), svc.mlogAnalyzeExecutor.metrics.counters.failedCount.Load())
+}
+
+func TestMVServiceMLogAnalyzeSubmitRejectedCleansDedupState(t *testing.T) {
+	installMockTimeForTest(t)
+	helper := &mockMVServiceHelper{}
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+	require.True(t, svc.mlogAnalyzeExecutor.Close())
+
+	svc.analyzeMVLog([]int64{101})
+
+	require.Equal(t, int64(0), svc.metrics.mvLogAnalyzeTaskCount.Load())
+	require.Equal(t, int32(0), helper.analyzeMLogCalls.Load())
+	require.Equal(t, int64(1), svc.mlogAnalyzeExecutor.metrics.counters.rejectedCount.Load())
 }
