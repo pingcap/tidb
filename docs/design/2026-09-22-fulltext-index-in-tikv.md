@@ -75,26 +75,32 @@ SELECT id FROM articles WHERE MATCH(body) AGAINST('分布式数据库' IN BOOLEA
   analyzer. A `MATCH` on a column without such an index analyzes with the
   session's `innodb_ft_*` variables, and its plan is not cached, since the
   plan cache key does not hold them.
-- Key columns ahead of the tokenized column confine a search to one value of
-  them, the multi-tenant shape:
+- The column list means what it means in MySQL: the columns that are
+  tokenized and searched. One column is supported; a list of several, which
+  MySQL searches together as one document, is refused rather than read as
+  anything else (see "Several tokenized columns" below).
+- Key columns confine a search to one value of each, the multi-tenant shape.
+  They are named apart from the column list, by `KEY_COLUMNS`:
 
   ```sql
   CREATE TABLE docs (id INT PRIMARY KEY, tenant_id BIGINT, body TEXT,
-                     FULLTEXT INDEX idx_body (tenant_id, body));
+                     FULLTEXT INDEX idx_body (body) KEY_COLUMNS (tenant_id));
   SELECT id FROM docs WHERE tenant_id = 42
     AND MATCH(body) AGAINST('+distributed' IN BOOLEAN MODE);
   ```
 
-  The last column of a `FULLTEXT` index is the one tokenized; every column
-  before it is an ordinary key column, encoded ahead of the term in each
-  entry as one whole value, whatever its type: a `VARCHAR` tenant holds its
-  collation sort key, exactly as in an ordinary index, and is never analyzed. The index answers a search only when the query pins every key
-  column to one value (an equality, or `IS NULL`), and then serves those
-  equalities itself. This differs from MySQL, where every column of a
-  multi-column `FULLTEXT` index is text searched by `MATCH(a, b)`; that
-  shape is out of scope here. An application that ports MySQL's
-  multi-tenant idiom, putting the tenant column inside the `MATCH` and its
-  value in the search string, rewrites it to the equality the index serves:
+  `SHOW CREATE TABLE` prints the clause inside a TiDB comment,
+  `FULLTEXT INDEX idx_body(body) WITH PARSER STANDARD /*T![fts_key]
+  KEY_COLUMNS(tenant_id) */`, so MySQL, and a TiDB too old to know the
+  clause, read the definition as a plain `FULLTEXT(body)`. A key column is
+  never analyzed: it is encoded ahead of the term in each entry as one
+  whole value, whatever its type, and a `VARCHAR` tenant holds its
+  collation sort key, exactly as in an ordinary index. The index answers a
+  search only when the query pins every key column to one value (an
+  equality, or `IS NULL`), and then serves those equalities itself. An
+  application that ports MySQL's multi-tenant idiom, putting the tenant
+  column inside the `MATCH` and its value in the search string, rewrites it
+  to the equality the index serves:
 
   ```sql
   -- MySQL idiom: the tenant value is searched as text.
@@ -219,7 +225,8 @@ VISIBLE` behave without special cases. The sites that must check it:
   the ordinary rules;
 - the mutation checker and `ADMIN CHECK` route as described under the write path;
 - `SHOW CREATE TABLE` and BR's index-repair SQL render
-  `FULLTEXT INDEX ... WITH PARSER`.
+  `FULLTEXT INDEX ... WITH PARSER`, with the tokenized column in the column
+  list and the key columns in `KEY_COLUMNS`.
 
 DDL flow on the classic kernel:
 
@@ -227,11 +234,18 @@ DDL flow on the classic kernel:
   on the next-gen kernel, as today. On the classic kernel the statement reaches
   the DDL executor as a FULLTEXT index and takes the ordinary KV `ADD INDEX`
   path (`ActionAddIndex`, ordinary reorg backfill) with the marker set.
+- `KEY_COLUMNS` is turned into key parts ahead of the tokenized column where
+  every caller enters the DDL layer (`NormalizeTiKVFullTextIndex`, called
+  for `CREATE TABLE`, `CREATE INDEX` / `ALTER TABLE ... ADD`, and the DM
+  schema tracker), so the stored `IndexInfo` keeps the encoding order, key
+  columns then the tokenized column, and DDL job arguments carry only that
+  form. The clause is refused on any other index.
 - The analyzer snapshot is captured from the session in the executor and
   carried in `model.IndexArg` (new `json:"tikv_fulltext,omitempty"` field),
   because the owner builds the `IndexInfo` without the user's session.
-- Refused: partial `WHERE`, `GLOBAL`, prefix length, `DESC`, a binary or
-  non-string tokenized column, an expression key part, `MULTILINGUAL` parser,
+- Refused: more than one column in the column list, partial `WHERE`,
+  `GLOBAL`, prefix length, `DESC`, a binary or non-string tokenized column,
+  an expression key part, a column named twice, `MULTILINGUAL` parser,
   and a local temporary table, whose rows never reach TiKV, where the index
   is read (error 1796, as MySQL refuses one on an InnoDB temporary table).
   Every `FULLTEXT` index over one column must be built with the same parser
@@ -394,7 +408,7 @@ structure and is what MySQL's InnoDB FTS does too.
   conditions stay as table filters too. This lets `FULLTEXT(body)` on a
   table with `PRIMARY KEY (tenant_id, id) CLUSTERED` serve both global and
   tenant-scoped exact searches without storing the tenant twice, while
-  `FULLTEXT(tenant_id, body)` remains the choice for prefix searches within
+  `FULLTEXT(body) KEY_COLUMNS(tenant_id)` remains the choice for prefix searches within
   a tenant, for search dimensions outside the primary key, and for
   tenant-first locality.
 - **The path competes on cost with every other path.** Reading the index
@@ -626,6 +640,33 @@ structure and is what MySQL's InnoDB FTS does too.
     record range it is given, and is tested against the scan for inserts,
     deletes, updates in and out of a match, updates of other columns, and
     rows moving between partitions.
+- **Several tokenized columns**, `FULLTEXT(title, body)` searched by
+  `MATCH(title, body)`. Designed, not built; refused until it is.
+  - Meaning, as in MySQL: every listed column is tokenized, and `MATCH` names
+    exactly the index's columns. The columns combine into one document: a
+    row's tokens are those of all its columns, and the boolean query is
+    evaluated once over them, so `+mysql +guide` matches a row with `mysql`
+    in `title` and `guide` in `body`. Per term, the postings are the union
+    of the term's occurrences in every column. Evaluating the query per
+    column and combining the results instead would need every column to
+    match the whole query (AND) or miss rows like the one above (OR), and
+    is expressible in SQL anyway, with one `MATCH` per column.
+  - Positions continue across columns with a gap, so a phrase never spans
+    the end of one column and the start of the next (InnoDB's behaviour to
+    be confirmed before release). A NULL column contributes no tokens. The
+    document length is the total over the columns. Changing any of them
+    rewrites all of the row's entries, as today.
+  - Storage stays one posting list per term, under the same key. Putting a
+    column ID in the key would let a subset of the columns be searched,
+    which MySQL does not allow, at the price of merging one list per column
+    for every term read.
+- **Key columns by position**, the last column tokenized and the ones before
+  it key columns, as earlier drafts had it. Rejected: it gives
+  `FULLTEXT(title, body)` a meaning other than MySQL's, silently turning a
+  ported index into one keyed by `title`, and leaves no way to name several
+  tokenized columns. **Key columns by type** (string columns tokenized, the
+  rest key columns) was rejected too: a string tenant identifier would be
+  tokenized.
 - **Document length for scoring kept elsewhere than in every entry.**
   - One extra posting list per index under a reserved term, holding one
     entry per row with its length, read in handle order alongside the term
@@ -649,7 +690,8 @@ structure and is what MySQL's InnoDB FTS does too.
   otherwise estimated. Skipping low-scoring rows early needs a per-term
   upper bound on the score, a per-term statistic rather than a per-entry one.
   Scores will not equal InnoDB's, which uses a TF-IDF variant.
-- `MATCH` over several columns: the entry layout tokenizes one column.
+- `MATCH` over several columns, designed but not built: see "Several
+  tokenized columns" under Investigation & Alternatives.
 - Several values of a key column in one search (`tenant_id IN (...)`), which
   needs a merge of one posting scan per value.
 - Posting-length statistics for terms the planning probe cannot count
