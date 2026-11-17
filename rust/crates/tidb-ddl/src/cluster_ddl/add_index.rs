@@ -549,6 +549,19 @@ pub(crate) fn create_index_with_info<S: MetaSnapshot>(
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
     let stored = stored.read();
+    // Go master `CheckIndexOperationMaterializedViewConstraints` in
+    // `CreatePrimaryKey`, `createColumnarIndex` and `createIndex`.
+    let (op, unique) = if index.primary {
+        ("ALTER TABLE ADD PRIMARY KEY", true)
+    } else if columnar.is_some() {
+        ("CREATE INDEX", false)
+    } else if index.unique {
+        ("CREATE UNIQUE INDEX", true)
+    } else {
+        ("CREATE INDEX", false)
+    };
+    super::materialized_view::check_index_operation_materialized_view_constraints(&stored, op, unique)
+        .map_err(DdlPlanError::from_mysql_error)?;
     if let Some(spec) = columnar {
         return create_columnar_index(schema_id, schema, &stored, spec, *if_not_exists, context)
             .map(Some);

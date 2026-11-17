@@ -1041,6 +1041,13 @@ pub(crate) fn alter_table_job<S: MetaSnapshot>(
     let (schema, table) = split_name(&alter.name, default_schema, "table")?;
     let (_, stored) = locate_table(&catalog, &schema, &table)?;
     refuse_non_base_table(&stored.read(), &schema, &table)?;
+    super::materialized_view::check_alter_table_materialized_view_constraints(
+        &catalog,
+        &stored.read(),
+        &alter.actions,
+        "ALTER TABLE",
+    )
+    .map_err(DdlPlanError::from_mysql_error)?;
     check_alter_table_spec_refusals(alter)?;
     tidb_ddl_build::storage_class::check_storage_class_conflict_in_alter_table_specs(
         alter.actions.iter().flat_map(|action| match action {

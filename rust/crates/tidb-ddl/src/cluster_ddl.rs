@@ -5591,6 +5591,11 @@ fn check_exchange_tables(
             ),
         ));
     }
+    materialized_view::check_exchange_partition_materialized_view_constraints(partitioned, "partitioned table")
+        .and_then(|()| {
+            materialized_view::check_exchange_partition_materialized_view_constraints(standalone, "non-partitioned table")
+        })
+        .map_err(DdlPlanError::from_mysql_error)?;
     if standalone.temp_table_type != tidb_model::TempTableType::NONE {
         return Err(exchange_refusal(
             &tidb_dbterror::ERR_PARTITION_EXCHANGE_TEMP_TABLE,

@@ -76,6 +76,11 @@ pub(crate) fn add_column_with_info<S: MetaSnapshot>(
     job.table_id = stored.id;
     job.schema_name = schema.go_to_lower().into();
     job.table_name = stored.name.lowercase().to_owned().into();
+    let involving =
+        super::materialized_view::materialized_view_log_involving_schema_info(catalog, &schema.go_to_lower(), &stored);
+    if !involving.is_empty() {
+        job.involving_schema_info = GoSharedSlice::from_vec(involving);
+    }
     let args = GoShared::new(tidb_model::TableColumnArgs {
         col: Some(GoShared::new(added)),
         pos: Some(GoShared::new(tidb_ast::JobColumnPosition::from_statement(
@@ -311,6 +316,7 @@ pub(super) fn on_add_column(
         }
     };
     if next == SchemaState::PUBLIC {
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/onAddColumnStateWriteReorg", &mut ());
         // Go `LocateOffsetToMove` then `MoveColumnInfo`.
         let offset = usize::try_from(column.read().offset).unwrap_or(0);
         let destination = locate_offset_to_move(offset, &position, &info)?;

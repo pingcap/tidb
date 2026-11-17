@@ -91,6 +91,8 @@ pub(crate) fn drop_index_by_name<S: MetaSnapshot>(
                 .gen_with_stack(format!("index {} doesn't exist", (index_name))),
         ));
     };
+    super::materialized_view::check_index_operation_materialized_view_constraints(&stored, "DROP INDEX", false)
+        .map_err(DdlPlanError::from_mysql_error)?;
     let index = index.read().clone_like_go();
     crate::foreign_key_build::check_index_needed_in_foreign_key(&catalog, schema, &stored, &index)
         .map_err(DdlPlanError::Admission)?;

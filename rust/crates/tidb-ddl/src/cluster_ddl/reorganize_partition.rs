@@ -124,6 +124,15 @@ pub(crate) fn reorganize_partitions_job<S: MetaSnapshot>(
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let (database_id, stored) = locate_table(&catalog, schema, table)?;
     let stored = stored.read();
+    let mv_op = match action {
+        tidb_ast::AlterPartitionAction::Repartition(_) => Some("ALTER TABLE ... PARTITION BY"),
+        tidb_ast::AlterPartitionAction::RemovePartitioning => Some("ALTER TABLE ... REMOVE PARTITIONING"),
+        _ => None,
+    };
+    if let Some(op) = mv_op {
+        super::materialized_view::check_base_table_materialized_view_dependency_constraints(&stored, op)
+            .map_err(DdlPlanError::from_mysql_error)?;
+    }
     let kv = tidb_ddl_build::partition_ddl::PartitionedTable::new(&stored)
         .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error)))?;
     let ctx = context.metabuild_context();

@@ -156,6 +156,8 @@ pub(crate) fn alter_index_visibility<S: MetaSnapshot>(
                 return Ok(already_satisfied(detail));
             }
         }
+        super::materialized_view::check_index_operation_materialized_view_constraints(&stored, "ALTER INDEX", false)
+            .map_err(DdlPlanError::from_mysql_error)?;
         (
             ActionType::ACTION_ALTER_INDEX_VISIBILITY,
             schema,

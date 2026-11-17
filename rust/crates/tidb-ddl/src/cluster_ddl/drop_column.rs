@@ -84,6 +84,37 @@ struct DropColumnTarget {
     args: GoShared<tidb_model::TableColumnArgs>,
 }
 
+/// Go master `checkDropColumnWithMLogBaseConstraint`: a base table's column
+/// its materialized view log tracks cannot be dropped.
+fn check_drop_column_with_mlog_base_constraint(
+    txn: &mut JobTxn<'_>,
+    schema_id: i64,
+    info: &TableInfo,
+    column: &str,
+) -> Result<(), DdlPlanError> {
+    let mlog_id = info.materialized_view_base.as_ref().map_or(0, |base| base.read().mlog_id);
+    if mlog_id == 0 {
+        return Ok(());
+    }
+    let unsupported = |message: String| {
+        DdlPlanError::from(tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL.gen_with_stack_by_args(&[message.into()]))
+    };
+    let meta = txn.meta();
+    let log = match meta.table(schema_id, mlog_id) {
+        Ok(Some(mlog)) => mlog.materialized_view_log.clone(),
+        _ => None,
+    };
+    let Some(log) = log else {
+        return Err(unsupported("ALTER TABLE on base table with invalid materialized view log metadata".to_owned()));
+    };
+    if log.read().columns.iter().any(|tracked| tracked.lowercase() == column) {
+        return Err(unsupported(format!(
+            "ALTER TABLE on base table column {column} referenced by materialized view log"
+        )));
+    }
+    Ok(())
+}
+
 /// Go `checkDropColumn`. `Ok(Err((if_exists, error)))` when the column is
 /// not there (the job is cancelled).
 fn check_drop_column_in_owner(
@@ -117,6 +148,10 @@ fn check_drop_column_in_owner(
             ),
         )));
     };
+    if column.read().state == SchemaState::PUBLIC {
+        check_drop_column_with_mlog_base_constraint(txn, active.job.schema_id, &info, name.lowercase())
+            .map_err(|error| cancel_ddl_job(active, error))?;
+    }
     is_droppable_column(&info, name.original(), info.columns.len())
         .map_err(|error| cancel_ddl_job(active, error))?;
     // Go `checkDropColumnWithForeignKeyConstraintInOwner` cancels the job.

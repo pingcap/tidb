@@ -58,13 +58,16 @@ pub(super) fn build_multi_schema_job(
     let mut info = MultiSchemaInfo::default();
     let mut names = MultiSchemaNames::default();
     let mut sub_jobs = Vec::with_capacity(specs.len());
-    let mut involving = Vec::new();
+    // Go master `appendToSubJobs`: each sub-job's involving objects.
+    let mut sub_involving = Vec::new();
+    let mut foreign_key_refs = Vec::new();
     for spec in specs {
         names.fill(&spec)?;
+        append_involving_schema_info(&mut sub_involving, spec.job.involving_schema_info.snapshot());
         if let JobArgsValue::AddForeignKey(Some(args)) = &spec.args {
             if let Some(fk) = &args.read().fk_info {
                 let fk = fk.read();
-                involving.push(tidb_model::InvolvingSchemaInfo {
+                foreign_key_refs.push(tidb_model::InvolvingSchemaInfo {
                     database: fk.ref_schema.lowercase().to_owned().into(),
                     table: fk.ref_table.lowercase().to_owned().into(),
                     mode: tidb_model::InvolvingSchemaInfoMode::SHARED,
@@ -79,6 +82,7 @@ pub(super) fn build_multi_schema_job(
             .map(|meta| meta.read().reorg_type)
             .unwrap_or_default();
         let mut sub = SubJob::default();
+        sub.involving_schema_info = spec.job.involving_schema_info.clone();
         sub.type_ = spec.job.type_;
         sub.job_args = GoAny::new(spec.args);
         sub.raw_args = spec.job.raw_args.clone();
@@ -114,14 +118,27 @@ pub(super) fn build_multi_schema_job(
     job.table_id = stored.id;
     job.schema_name = schema.go_to_lower().into();
     job.table_name = stored.name.lowercase().to_owned().into();
+    // Go master `multiSchemaChange`: the sub-jobs' objects, a log's base
+    // table, the referenced tables of added foreign keys, then the table.
+    let mut involving = Vec::new();
+    append_involving_schema_info(&mut involving, sub_involving.clone());
+    append_involving_schema_info(
+        &mut involving,
+        super::materialized_view::materialized_view_log_base_involving_schema_info(catalog, &schema.go_to_lower(), &stored),
+    );
+    append_involving_schema_info(&mut involving, foreign_key_refs);
     if !involving.is_empty() {
-        involving.push(tidb_model::InvolvingSchemaInfo {
-            database: schema.go_to_lower().into(),
-            table: stored.name.lowercase().to_owned().into(),
-            ..tidb_model::InvolvingSchemaInfo::default()
-        });
+        append_involving_schema_info(
+            &mut involving,
+            vec![tidb_model::InvolvingSchemaInfo {
+                database: schema.go_to_lower().into(),
+                table: stored.name.lowercase().to_owned().into(),
+                ..tidb_model::InvolvingSchemaInfo::default()
+            }],
+        );
         job.involving_schema_info = GoSharedSlice::from_vec(involving);
     }
+    info.involving_schema_info = GoSharedSlice::from_vec(sub_involving);
     job.multi_schema_info = Some(GoShared::new(info));
     // Go `initJobReorgMetaFromVariables` and `AddSystemVars`.
     job.reorg_meta = Some(GoShared::new(
@@ -151,6 +168,32 @@ pub(super) fn build_multi_schema_job(
         ))),
         id_allocated: true,
     })
+}
+
+/// Go `appendInvolvingSchemaInfo`: adds each object not already listed; a
+/// listed shared object that is involved exclusively becomes exclusive.
+fn append_involving_schema_info(
+    dst: &mut Vec<tidb_model::InvolvingSchemaInfo>,
+    src: Vec<tidb_model::InvolvingSchemaInfo>,
+) {
+    for info in src {
+        let found = dst.iter_mut().find(|existing| {
+            existing.database == info.database
+                && existing.table == info.table
+                && existing.policy == info.policy
+                && existing.resource_group == info.resource_group
+        });
+        match found {
+            Some(existing) => {
+                if existing.mode == tidb_model::InvolvingSchemaInfoMode::SHARED
+                    && info.mode == tidb_model::InvolvingSchemaInfoMode::EXCLUSIVE
+                {
+                    existing.mode = tidb_model::InvolvingSchemaInfoMode::EXCLUSIVE;
+                }
+            }
+            None => dst.push(info),
+        }
+    }
 }
 
 /// Go `MultiSchemaInfo`'s name lists, filled by `fillMultiSchemaInfo`.

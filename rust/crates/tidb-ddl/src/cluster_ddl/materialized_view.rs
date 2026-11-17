@@ -16,6 +16,7 @@
 //! job steps.
 
 use super::*;
+use tidb_ast::AlterTableAction;
 
 /// Go `isValidMaterializedViewLogBaseTable`.
 pub(crate) fn is_valid_materialized_view_log_base_table(schema_lower_name: &str, table: &TableInfo) -> bool {
@@ -79,6 +80,259 @@ pub(crate) fn check_table_materialized_view_constraints(table: &TableInfo, op: &
         }
     }
     Ok(())
+}
+
+/// Go master `buildMaterializedViewLogBaseInvolvingSchemaInfo`: a log's
+/// base table, named in the log's schema.
+pub(crate) fn materialized_view_log_base_involving_schema_info(
+    catalog: &SessionExtendedInfoSchema,
+    schema_name: &str,
+    mlog: &TableInfo,
+) -> Vec<tidb_model::InvolvingSchemaInfo> {
+    let Some(log) = &mlog.materialized_view_log else {
+        return Vec::new();
+    };
+    let base_id = log.read().base_table_id;
+    catalog
+        .table_info_by_id(base_id)
+        .map(|base| {
+            vec![tidb_model::InvolvingSchemaInfo {
+                database: schema_name.to_owned().into(),
+                table: base.read().name.lowercase().to_owned().into(),
+                ..tidb_model::InvolvingSchemaInfo::default()
+            }]
+        })
+        .unwrap_or_default()
+}
+
+/// Go master `buildMaterializedViewLogInvolvingSchemaInfo`: a log and its
+/// base table.
+pub(crate) fn materialized_view_log_involving_schema_info(
+    catalog: &SessionExtendedInfoSchema,
+    schema_name: &str,
+    mlog: &TableInfo,
+) -> Vec<tidb_model::InvolvingSchemaInfo> {
+    if mlog.materialized_view_log.is_none() {
+        return Vec::new();
+    }
+    let mut involving = vec![tidb_model::InvolvingSchemaInfo {
+        database: schema_name.to_owned().into(),
+        table: mlog.name.lowercase().to_owned().into(),
+        ..tidb_model::InvolvingSchemaInfo::default()
+    }];
+    involving.extend(materialized_view_log_base_involving_schema_info(catalog, schema_name, mlog));
+    involving
+}
+
+/// Go master `checkBaseTableMaterializedViewDependencyConstraints`.
+pub(crate) fn check_base_table_materialized_view_dependency_constraints(
+    table: &TableInfo,
+    op: &str,
+) -> Result<(), tidb_terror::MysqlError> {
+    let Some(base) = &table.materialized_view_base else {
+        return Ok(());
+    };
+    let base = base.read();
+    if !base.mview_ids.is_empty() {
+        return Err(unsupported(format!("{op} with materialized view dependencies")));
+    }
+    if base.mlog_id != 0 {
+        return Err(unsupported(format!("{op} with materialized view log")));
+    }
+    Ok(())
+}
+
+/// Go master `CheckIndexOperationMaterializedViewConstraints`.
+pub(crate) fn check_index_operation_materialized_view_constraints(
+    table: &TableInfo,
+    op: &str,
+    unique: bool,
+) -> Result<(), tidb_terror::MysqlError> {
+    if table.materialized_view_log.is_some() {
+        return Err(unsupported(format!("{op} on materialized view log table")));
+    }
+    if unique && table.materialized_view.is_some() {
+        return Err(unsupported(format!("{op} on materialized view table")));
+    }
+    check_protected_materialized_view_shadow_constraint(table, op)
+}
+
+/// Go master `checkExchangePartitionMaterializedViewConstraints`.
+pub(crate) fn check_exchange_partition_materialized_view_constraints(
+    table: &TableInfo,
+    role: &str,
+) -> Result<(), tidb_terror::MysqlError> {
+    if table.materialized_view_log.is_some() {
+        return Err(unsupported(format!("EXCHANGE PARTITION on {role} with materialized view log")));
+    }
+    if table.materialized_view.is_some() {
+        return Err(unsupported(format!("EXCHANGE PARTITION on {role} materialized view table")));
+    }
+    if table.materialized_view_shadow.is_some() {
+        return Err(unsupported(format!("EXCHANGE PARTITION on {role} materialized view shadow table")));
+    }
+    check_base_table_materialized_view_dependency_constraints(table, &format!("EXCHANGE PARTITION on {role}"))
+}
+
+/// Go master `isAlterTiFlashReplica`.
+fn is_alter_tiflash_replica(actions: &[AlterTableAction]) -> bool {
+    matches!(actions, [AlterTableAction::SetTiFlashReplica { .. }])
+}
+
+/// Go master `isAlterTableOnlyExchangePartition`.
+fn is_alter_table_only_exchange_partition(actions: &[AlterTableAction]) -> bool {
+    matches!(actions, [AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Exchange { .. })])
+}
+
+/// Go master `isAlterTableOnlyAddColumnsAtEnd` over resolved specs
+/// (`resolve_alter_table_spec` splits a parenthesized ADD COLUMN).
+fn is_alter_table_only_add_columns_at_end(actions: &[AlterTableAction]) -> bool {
+    !actions.is_empty()
+        && actions.iter().all(|action| {
+            matches!(action, AlterTableAction::AddColumn { position: tidb_ast::ColumnPosition::Default, .. })
+        })
+}
+
+/// Go master `isAlterTableOnlyIndexOperations`.
+fn is_alter_table_only_index_operations(actions: &[AlterTableAction]) -> bool {
+    use tidb_ast::IndexConstraintKind as Kind;
+    !actions.is_empty()
+        && actions.iter().all(|action| match action {
+            AlterTableAction::DropIndex { .. }
+            | AlterTableAction::DropPrimaryKey(_)
+            | AlterTableAction::RenameIndex(_)
+            | AlterTableAction::AlterIndexVisibility(_) => true,
+            AlterTableAction::AddIndexConstraint(constraint) => matches!(
+                constraint.kind,
+                Kind::Key | Kind::Index | Kind::Unique | Kind::UniqueKey | Kind::UniqueIndex
+            ),
+            _ => false,
+        })
+}
+
+/// Go master `hasAlterTableAddUniqueIndexOperation`.
+fn has_alter_table_add_unique_index_operation(actions: &[AlterTableAction]) -> Option<&'static str> {
+    use tidb_ast::IndexConstraintKind as Kind;
+    actions.iter().find_map(|action| match action {
+        AlterTableAction::AddIndexConstraint(constraint) => match constraint.kind {
+            Kind::Unique | Kind::UniqueKey | Kind::UniqueIndex => Some("ALTER TABLE ADD UNIQUE INDEX"),
+            Kind::PrimaryKey => Some("ALTER TABLE ADD PRIMARY KEY"),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+/// Go master `checkAlterTableOnlyNonRenamingModifyOrChangeColumns`.
+fn check_alter_table_only_non_renaming_modify_or_change_columns(
+    actions: &[AlterTableAction],
+    op: &str,
+) -> Result<(), tidb_terror::MysqlError> {
+    let no_reorg_only =
+        || unsupported(format!("{op} on base table with materialized view dependencies only supports no-reorg compatible type changes"));
+    if actions.is_empty() {
+        return Err(no_reorg_only());
+    }
+    for action in actions {
+        match action {
+            AlterTableAction::ModifyColumn { .. } => {}
+            AlterTableAction::ChangeColumn { old_name, column, .. } => {
+                let old = old_name.last().map(|name| name.go_to_lower()).unwrap_or_default();
+                if old != column.name.go_to_lower() {
+                    return Err(unsupported(
+                        "CHANGE COLUMN on base table with materialized view dependencies does not support renaming".to_owned(),
+                    ));
+                }
+            }
+            _ => return Err(no_reorg_only()),
+        }
+    }
+    Ok(())
+}
+
+/// Go master `collectAlterTableSpecAffectedColumns`, for the specs that
+/// reach it (MODIFY and CHANGE COLUMN are skipped before).
+fn collect_alter_table_spec_affected_columns(action: &AlterTableAction) -> Vec<String> {
+    match action {
+        AlterTableAction::DropColumn { name, .. } => vec![name.go_to_lower()],
+        AlterTableAction::RenameColumn(rename) => vec![rename.from.go_to_lower(), rename.to.go_to_lower()],
+        AlterTableAction::AlterColumnDefault(alter) => {
+            alter.name.last().map(|name| vec![name.go_to_lower()]).unwrap_or_default()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Go master `checkAlterTableBaseTableMLogColumnConstraints`.
+fn check_alter_table_base_table_mlog_column_constraints(
+    catalog: &SessionExtendedInfoSchema,
+    table: &TableInfo,
+    actions: &[AlterTableAction],
+    op: &str,
+) -> Result<(), tidb_terror::MysqlError> {
+    let mlog_id = table.materialized_view_base.as_ref().map_or(0, |base| base.read().mlog_id);
+    if mlog_id == 0 {
+        return Ok(());
+    }
+    let mlog = catalog.table_info_by_id(mlog_id);
+    let Some(log) = mlog.as_ref().and_then(|mlog| mlog.read().materialized_view_log.clone()) else {
+        return Err(unsupported(format!("{op} on base table with invalid materialized view log metadata")));
+    };
+    let tracked: Vec<String> = log.read().columns.iter().map(|column| column.lowercase().to_owned()).collect();
+    for action in actions {
+        // Go `NeedToOverwriteColCharset`: CONVERT TO CHARACTER SET.
+        if matches!(action, AlterTableAction::ConvertCharacterSet { .. }) && !tracked.is_empty() {
+            return Err(unsupported(format!("{op} on base table columns referenced by materialized view log")));
+        }
+        if matches!(action, AlterTableAction::ModifyColumn { .. } | AlterTableAction::ChangeColumn { .. }) {
+            continue;
+        }
+        if let Some(column) = collect_alter_table_spec_affected_columns(action).into_iter().find(|column| tracked.contains(column)) {
+            return Err(unsupported(format!(
+                "{op} on base table column {column} referenced by materialized view log"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Go master `checkAlterTableMaterializedViewConstraints` for a statement
+/// outside materialized view maintenance.
+pub(crate) fn check_alter_table_materialized_view_constraints(
+    catalog: &SessionExtendedInfoSchema,
+    table: &TableInfo,
+    actions: &[AlterTableAction],
+    op: &str,
+) -> Result<(), tidb_terror::MysqlError> {
+    if is_alter_table_only_exchange_partition(actions) {
+        return Ok(());
+    }
+    if table.materialized_view_log.is_some() {
+        if is_alter_tiflash_replica(actions) {
+            return Ok(());
+        }
+        return Err(unsupported(format!("{op} on materialized view log table")));
+    }
+    if table.materialized_view.is_some() {
+        if let Some(op) = has_alter_table_add_unique_index_operation(actions) {
+            return Err(unsupported(format!("{op} on materialized view table")));
+        }
+        if is_alter_tiflash_replica(actions) || is_alter_table_only_index_operations(actions) {
+            return Ok(());
+        }
+        return Err(unsupported(format!("{op} on materialized view table")));
+    }
+    check_protected_materialized_view_shadow_constraint(table, op)?;
+    if table.materialized_view_base.as_ref().is_some_and(|base| !base.read().mview_ids.is_empty()) {
+        if is_alter_tiflash_replica(actions)
+            || is_alter_table_only_index_operations(actions)
+            || is_alter_table_only_add_columns_at_end(actions)
+        {
+            return Ok(());
+        }
+        check_alter_table_only_non_renaming_modify_or_change_columns(actions, op)?;
+    }
+    check_alter_table_base_table_mlog_column_constraints(catalog, table, actions, op)
 }
 
 /// Go master `checkDropMaterializedViewLogHasNoDependentMVs`: a log that

@@ -204,3 +204,71 @@ fn alter_materialized_view_log_add_column_answers_as_go_master() {
         ]
     );
 }
+
+/// Go master `TestMLogOnlineDDLAddColumn`'s drop race: a base DROP COLUMN
+/// that its executor admits while the log's ADD COLUMN of that column is
+/// paused at write-reorganization waits for it (the log job involves the
+/// base table) and is then cancelled by the owner's
+/// `checkDropColumnWithMLogBaseConstraint`.
+#[test]
+fn base_drop_column_waits_for_and_is_refused_after_the_log_adds_it() {
+    let (stack, mut session) = replay_go_master(
+        r#"["set tidb_mview_enable = ON", "OK"]
+["create database e29", "OK"]
+["use e29", "OK"]
+["create table t_drop_race (id int primary key, tracked int, added int)", "OK"]
+["create materialized view log on t_drop_race (id)", "OK"]"#,
+    );
+    let (paused_tx, paused_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = std::sync::Mutex::new(Some(release_rx));
+    let paused_tx = std::sync::Mutex::new(paused_tx);
+    let _pause = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/onAddColumnStateWriteReorg",
+        move |_: &mut dyn std::any::Any| {
+            if let Some(release) = release_rx.lock().unwrap().take() {
+                paused_tx.lock().unwrap().send(()).unwrap();
+                release.recv().unwrap();
+            }
+        },
+    );
+    let mut adder = stack.factory.open_session(session_context(2133)).unwrap();
+    assert_eq!(answer(&mut adder, "use e29"), "OK");
+    let add = std::thread::spawn(move || answer(&mut adder, "alter materialized view log on t_drop_race add column (added)"));
+    paused_rx.recv_timeout(std::time::Duration::from_secs(30)).expect("the log's ADD COLUMN reaches write-reorganization");
+
+    let mut dropper = stack.factory.open_session(session_context(2134)).unwrap();
+    assert_eq!(answer(&mut dropper, "use e29"), "OK");
+    let (dropped_tx, dropped_rx) = std::sync::mpsc::channel();
+    let drop = std::thread::spawn(move || {
+        dropped_tx.send(answer(&mut dropper, "alter table t_drop_race drop column added")).unwrap();
+    });
+    assert!(
+        dropped_rx.recv_timeout(std::time::Duration::from_millis(500)).is_err(),
+        "the base DROP COLUMN finished before the log's ADD COLUMN"
+    );
+    release_tx.send(()).unwrap();
+    assert_eq!(add.join().unwrap(), "OK");
+    let dropped = dropped_rx.recv_timeout(std::time::Duration::from_secs(30)).expect("the base DROP COLUMN finishes");
+    drop.join().unwrap();
+    assert_eq!(
+        dropped,
+        "ERR 8200 Unsupported ALTER TABLE on base table column added referenced by materialized view log"
+    );
+    assert_eq!(
+        answer(
+            &mut session,
+            "select column_name from information_schema.columns where table_schema = 'e29' and table_name = '$mlog$t_drop_race' order by ordinal_position"
+        ),
+        r#"RS:[["id"],["added"],["_MLOG$_DML_TYPE"],["_MLOG$_OLD_NEW"]]"#
+    );
+}
+
+/// Go master's ALTER TABLE / CREATE / DROP / ALTER INDEX, PARTITION BY and
+/// EXCHANGE PARTITION refusals on a materialized view log and on its base
+/// table (`checkAlterTableMaterializedViewConstraints` and friends) against
+/// a Go master node's answers (`testdata/mview_guards_go.jsonl`).
+#[test]
+fn alter_table_on_a_log_and_its_base_answers_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/mview_guards_go.jsonl"));
+}
