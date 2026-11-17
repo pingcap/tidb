@@ -33,6 +33,8 @@ use super::backfilling::{write_physical_table_record, BackfillExecutor, BatchSte
 
 #[path = "backfilling_ingest.rs"]
 pub(crate) mod ingest;
+#[path = "backfilling_operators.rs"]
+pub mod operators;
 #[path = "backfilling_dist.rs"]
 pub(crate) mod dist;
 

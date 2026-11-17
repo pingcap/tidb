@@ -230,6 +230,7 @@ impl KvTableBackfill for TableCommon {
         let decoder = reorg_row_decoder(self, decode_context)?;
         let mut rows: Vec<(Vec<u8>, TableHandle, Vec<tidb_datatype::Datum>)> = Vec::new();
         let mut task_done = false;
+        let mut read_bytes = 0u64;
         {
             let mut iter = store.iter(
                 Some(&Key::from_bytes(start.to_vec())),
@@ -248,6 +249,7 @@ impl KvTableBackfill for TableCommon {
                     task_done = true;
                     break;
                 }
+                read_bytes += (key.len() + iter.value().len()) as u64;
                 let (handle, row) = decoder.decode_record(&key, iter.value())?;
                 rows.push((key, handle, row));
                 iter.next()?;
@@ -265,6 +267,7 @@ impl KvTableBackfill for TableCommon {
         let batch = ReorgBatch {
             next_key,
             done: task_done,
+            read_bytes,
             ..ReorgBatch::default()
         };
         Ok((rows, batch))
@@ -832,30 +835,46 @@ pub struct IndexKV {
     /// Go `KvPair.RowID`, the encoded table handle.
     pub row_id:Vec<u8>,
 }
-/// Go `IndexRecordChunk` and `IndexWriteResult` at the local ingest boundary.
-pub struct IngestBatch {
+/// Go `IndexRecordChunk.Chunk`: the rows one batch of a table scan task
+/// read, with the batch's end key and decode warnings.
+pub struct IngestRows {
     /// Go row count, end key and decode warnings.
     pub batch:ReorgBatch,
-    /// Encoded index entries, without transactional locks or writes.
-    pub entries:Vec<IndexKV>,
+    /// The decoded rows: record key, handle and column values.
+    pub rows:Vec<(Vec<u8>,TableHandle,Vec<tidb_datatype::Datum>)>,
 }
-/// Go `tableScanWorker.scanRecords` and `writeChunk` using the same row decoder
-/// and index codecs as table writes. Callers hold one read snapshot per task.
-pub fn write_chunk(
+impl IngestRows {
+    /// Go `Chunk.NumRows`.
+    #[must_use]
+    pub fn num_rows(&self)->usize{self.rows.len()}
+}
+/// Go `tableScanWorker.scanRecords`' `fetchTableScanResult`: at most
+/// `batch_count` rows of `[start, end)`, decoded with the same row decoder
+/// as table writes. Callers hold one read snapshot per task.
+pub fn fetch_ingest_rows(
     table:&mut TableCommon,
     store:&mut dyn tidb_kv::storage::TableStorage,
-    index_ids:&[i64],physical_id:i64,start:&[u8],end:&[u8],batch_count:usize,
+    start:&[u8],end:&[u8],batch_count:usize,
     decode_context:&RowDecodeContext,
-)->Result<IngestBatch,KvTableError>{
+)->Result<IngestRows,KvTableError>{
     let (rows,mut batch)=table.fetch_reorg_rows(store,start,end,batch_count,decode_context)?;
-    let zone=decode_context.zone();
+    batch.scanned=rows.len() as u64;
+    Ok(IngestRows{batch,rows})
+}
+/// Go `writeChunk`: the index KVs of `rows` for each index of `index_ids`,
+/// with the same index codecs as table writes. A partial index takes the rows
+/// its condition holds for.
+pub fn encode_index_kvs(
+    table:&TableCommon,
+    index_ids:&[i64],physical_id:i64,
+    rows:&[(Vec<u8>,TableHandle,Vec<tidb_datatype::Datum>)],
+    zone:&tidb_datatype::SessionTimeZone,
+)->Result<Vec<IndexKV>,KvTableError>{
     let indexes=index_ids.iter().map(|id|table.indexes().iter().find(|i|i.read().id==*id).cloned().ok_or_else(||KvTableError::Decode(format!("index {id} is not on the table")))).collect::<Result<Vec<_>,_>>()?;
     let mut entries=Vec::new();
-    for (_,handle,row) in &rows {
+    for (_,handle,row) in rows {
         let row_id=match handle{TableHandle::Int(value)=>{let mut bytes=Vec::new();tidb_codec::encode_int(&mut bytes,*value);bytes},TableHandle::Common(bytes)=>bytes.clone()};
         for index in &indexes {
-            // Go `writeChunk`: a partial index takes the rows its condition
-            // holds for; every row still counts.
             if !table.index_condition_holds(index,row,zone)? {
                 continue;
             }
@@ -864,7 +883,6 @@ pub fn write_chunk(
                 entries.push(IndexKV{index_id:index.read().id,key:entry.key,value,row_id:row_id.clone()});
             }
         }
-        batch.added+=1;batch.scanned+=1;
     }
-    Ok(IngestBatch{batch,entries})
+    Ok(entries)
 }

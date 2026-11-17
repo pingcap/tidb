@@ -61,8 +61,23 @@ impl<T> SimpleDataChannel<T> {
         self.channel.clone()
     }
 
-    pub(crate) fn receiver(&self) -> Receiver<T> {
+    /// Go `Channel()` on the receiving side.
+    pub fn receiver(&self) -> Receiver<T> {
         self.channel.receiver()
+    }
+
+    /// Go's `select { case <-ctx.Done(): case ch <- value: }`: whether
+    /// `value` was sent before `context` ended or the channel closed.
+    pub fn send_or_done(&self, value: T, context: &crate::Context) -> bool {
+        let Some(sender) = self.channel.sender() else {
+            return false;
+        };
+        let [own, parent] = context.done();
+        crossbeam_channel::select! {
+            send(sender, value) -> sent => sent.is_ok(),
+            recv(own) -> _ => false,
+            recv(parent) -> _ => false,
+        }
     }
 
     /// Sends one value through Go `Channel()`.

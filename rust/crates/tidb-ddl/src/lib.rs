@@ -62,6 +62,7 @@ pub mod etcd_ops;
 pub mod schema_sync;
 pub mod worker;
 pub mod pre_split;
+pub mod testutil;
 mod index_presplit;
 
 pub use worker::{ClusterDdl, RealClusterDdl};

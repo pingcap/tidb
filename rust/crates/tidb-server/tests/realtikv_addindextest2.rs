@@ -18,7 +18,7 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Once};
 
-type Pipe = Arc<tidb_ddl::real_tikv_ddl::IngestPipelineWorkers>;
+type Pipe = Arc<operator::AsyncPipeline>;
 
 /// Go `TestAlterJobOnDXF`.
 #[test]
@@ -49,7 +49,8 @@ fn test_alter_job_on_dxf() {
         tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/afterPipeLineClose", move |pipe| {
             let pipe = pipe.downcast_ref::<Pipe>().unwrap();
             let (reader, writer) = pipe.get_reader_and_writer();
-            *pipe_sizes.lock().unwrap() = Some((reader.get_worker_pool_size(), writer.get_worker_pool_size()));
+            *pipe_sizes.lock().unwrap() =
+                Some((reader.unwrap().worker_pool_size(), writer.unwrap().worker_pool_size()));
         })
     };
     let finished_subtasks = Arc::new(Mutex::new(Vec::<i64>::new()));

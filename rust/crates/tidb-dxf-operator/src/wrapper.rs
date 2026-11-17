@@ -70,7 +70,7 @@ impl<T: TaskMayPanic<OperatorError>> Operator for SimpleDataSource<T> {
             for input in inputs {
                 if !target.send_or_cancel(input, &cancelled) {
                     target.try_finish();
-                    return Err(OperatorError("context canceled".to_owned()));
+                    return Err(OperatorError::canceled());
                 }
             }
             target.finish();
@@ -92,7 +92,7 @@ impl<T: TaskMayPanic<OperatorError>> Operator for SimpleDataSource<T> {
         match handle {
             Some(handle) => handle
                 .join()
-                .unwrap_or_else(|_| Err(OperatorError("source panic".to_owned()))),
+                .unwrap_or_else(|_| Err(OperatorError::new("source panic"))),
             None => Ok(()),
         }
     }
@@ -144,7 +144,7 @@ impl<R: Send + 'static> Operator for SimpleSink<R> {
         let drainer = Arc::clone(&self.drainer);
         let handle = std::thread::spawn(move || loop {
             select! {
-                recv(cancelled) -> _ => return Err(OperatorError("context canceled".to_owned())),
+                recv(cancelled) -> _ => return Err(OperatorError::canceled()),
                 recv(receiver) -> value => match value {
                     Ok(value) => drainer(value),
                     Err(_) => return Ok(()),
@@ -167,7 +167,7 @@ impl<R: Send + 'static> Operator for SimpleSink<R> {
         match handle {
             Some(handle) => handle
                 .join()
-                .unwrap_or_else(|_| Err(OperatorError("sink panic".to_owned()))),
+                .unwrap_or_else(|_| Err(OperatorError::new("sink panic"))),
             None => Ok(()),
         }
     }

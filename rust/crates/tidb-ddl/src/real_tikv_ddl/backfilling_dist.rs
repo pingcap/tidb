@@ -79,7 +79,7 @@ fn get_tbl_info<S: StoreClient>(
     )
     .map_err(|e| Arc::new(e) as Error)
 }
-fn reorg_for_task(meta: &BackfillTaskMeta, table: tidb_model::TableInfo) -> AddIndexReorg {
+pub(super) fn reorg_for_task(meta: &BackfillTaskMeta, table: tidb_model::TableInfo) -> AddIndexReorg {
     let physical_ids = table.get_partition_info().map_or_else(
         || vec![table.id],
         |p| {
@@ -689,7 +689,7 @@ struct ReadIndexStepExecutor<S: StoreClient> {
     table: tidb_model::TableInfo,
     meta: RwLock<BackfillTaskMeta>,
     backend: Mutex<Option<Arc<tidb_ingestor_ingestctrl::local::Backend>>>,
-    curr_pipe: Mutex<Option<Arc<super::ingest::IngestPipelineWorkers>>>,
+    curr_pipe: Mutex<Option<Arc<operator::AsyncPipeline>>>,
     summary: Arc<SubtaskSummary>,
 }
 impl<S: StoreClient> ReadIndexStepExecutor<S> {
@@ -799,28 +799,44 @@ impl<S: StoreClient> StepExecutor for ReadIndexStepExecutor<S> {
                 })
                 .collect::<Vec<_>>();
             let engines = bc.register(&reorg.index_ids, &uniques, &self.table)?;
-            let backfiller = (self.ddl.backfiller)();
+            // Go `workerpool.NewContext(ctx)` over the subtask's context.
+            let wctx = Arc::new(operator::Context::with_parent(ctx.done()));
+            let scan = Arc::new(super::operators::ScanContext {
+                opener: Arc::clone(&self.ddl.opener),
+                timeout: self.ddl.timeout,
+                backfiller: (self.ddl.backfiller)().shared(),
+                reorg: Arc::new(reorg.clone()),
+                physical_id: sm.physical_table_id,
+                warnings: Arc::default(),
+            });
+            // Go `buildLocalStorePipeline`.
+            let pipe = super::operators::new_add_index_ingest_pipeline(
+                &wctx,
+                scan,
+                Arc::clone(&bc),
+                engines,
+                meta.job.id,
+                sm.row_start.clone(),
+                sm.row_end.clone(),
+                meta.job.reorg_meta.clone(),
+                meta.estimate_row_size,
+                reorg.concurrency,
+                Arc::new(DistTaskRowCntCollector { summary: Arc::clone(&self.summary) }),
+            );
+            *self.curr_pipe.lock().unwrap() = Some(Arc::clone(&pipe));
             let check = || ctx.err().map_or(Ok(()), |e| Err(e.to_string()));
             let stopped = AtomicBool::new(false);
-            let mut warnings = Vec::new();
             let result = super::ingest::execute_and_close_pipeline(
-                &self.ddl.opener,
-                self.ddl.timeout,
-                backfiller.as_ref(),
-                &reorg,
-                sm.physical_table_id,
-                &bc.next_start_key().max(sm.row_start),
-                &sm.row_end,
-                &bc,
-                meta.job.reorg_meta.as_ref(),
-                &engines,
+                &wctx,
+                &pipe,
+                None,
+                None,
+                meta.estimate_row_size,
                 &check,
                 &stopped,
-                &mut warnings,
-                Some(&self.curr_pipe),
-                meta.estimate_row_size,
-                None,
             );
+            self.curr_pipe.lock().unwrap().take();
+            wctx.cancel();
             match result {
                 Ok(()) => {
                     bc.finish_and_unregister_engines(
@@ -837,9 +853,6 @@ impl<S: StoreClient> StepExecutor for ReadIndexStepExecutor<S> {
                 }
             }
         })();
-        self.summary
-            .row_cnt
-            .store(bc.total_key_count(), Ordering::SeqCst);
         bc.close();
         result
     }
@@ -881,7 +894,7 @@ impl<S: StoreClient> StepExecutor for ReadIndexStepExecutor<S> {
             .is_some_and(|meta| meta.read().use_cloud_storage);
         let avg_row_size = meta.estimate_row_size;
         drop(meta);
-        pipe.tune(new.cpu.capacity() as usize, avg_row_size, global_sort)
+        super::ingest::tune_pipeline(&pipe, new.cpu.capacity() as usize, avg_row_size, global_sort, true)
             .map_err(|error| Box::new(std::io::Error::other(error)) as tidb_dxf_execute::Error)
     }
 }
@@ -974,6 +987,25 @@ fn pipeline_error(error: super::ingest::PipelineError) -> tidb_dxf_execute::Erro
             Box::new(tidb_terror::MysqlError::sql_error(e.code, e.message).with_identity_opt(e.identity))
         }
         super::ingest::PipelineError::Interrupted => Box::new(tidb_gocontext::CtxError::Canceled),
+        super::ingest::PipelineError::Operator(e) => Box::new(e),
+    }
+}
+
+/// Go `distTaskRowCntCollector`: the subtask's realtime summary.
+struct DistTaskRowCntCollector {
+    summary: Arc<SubtaskSummary>,
+}
+
+impl tidb_dxf_execute::Collector for DistTaskRowCntCollector {
+    /// Go `distTaskRowCntCollector.Accepted`.
+    fn accepted(&self, bytes: i64) {
+        self.summary.read_bytes.fetch_add(bytes, Ordering::SeqCst);
+    }
+
+    /// Go `distTaskRowCntCollector.Processed`.
+    fn processed(&self, bytes: i64, rows: i64) {
+        self.summary.processed.fetch_add(bytes, Ordering::SeqCst);
+        self.summary.row_cnt.fetch_add(rows, Ordering::SeqCst);
     }
 }
 

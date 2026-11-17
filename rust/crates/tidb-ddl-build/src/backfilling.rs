@@ -25,6 +25,9 @@ pub struct ReorgBatch {
     pub scanned: u64,
     /// Entries written.
     pub added: u64,
+    /// The bytes of the records the batch read (keys and values), Go's
+    /// `UnpackedBytesReceivedKVTotal` for the scan's collector.
+    pub read_bytes: u64,
     /// Row keys the batch locks (Go `txn.LockKeys` in the backfill), for the
     /// caller to commit as lock-only mutations with the batch.
     pub locks: Vec<Vec<u8>>,

@@ -23,6 +23,9 @@ tidb-dxf-taskexecutor = { path = "../tidb-dxf-taskexecutor" }
 tidb-dxf-scheduler = { path = "../tidb-dxf-scheduler" }
 tidb-dxf-storage = { path = "../tidb-dxf-storage" }
 tidb-dxf-handle = { path = "../tidb-dxf-handle" }
+tidb-dxf-operator = { path = "../tidb-dxf-operator" }
+tidb-resourcemanager-pool-workerpool = { path = "../tidb-resourcemanager-pool-workerpool" }
+tidb-resourcemanager-util = { path = "../tidb-resourcemanager-util" }
 tidb-gocontext = { path = "../tidb-gocontext" }
 
 hex = "0.4"
