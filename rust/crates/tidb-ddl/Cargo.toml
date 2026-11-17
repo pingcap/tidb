@@ -15,6 +15,12 @@ workspace = true
 tidb-ddl-util = { path = "../tidb-ddl-util" }
 tidb-ddl-ingest = { path = "../tidb-ddl-ingest" }
 tidb-ingestor-ingestctrl = { path = "../tidb-ingestor-ingestctrl" }
+tidb-ingestor-globalsort = { path = "../tidb-ingestor-globalsort" }
+tidb-ingestor-simplesst = { path = "../tidb-ingestor-simplesst" }
+tidb-ingestor-engineapi = { path = "../tidb-ingestor-engineapi" }
+tidb-objstore = { path = "../tidb-objstore" }
+tidb-dxf-metering = { path = "../tidb-dxf-metering" }
+tidb-objstore-recording = { path = "../tidb-objstore-recording" }
 tidb-ingestor-errdef = { path = "../tidb-ingestor-errdef" }
 tidb-lightning-common = { path = "../tidb-lightning-common" }
 tidb-dxf = { path = "../tidb-dxf" }
@@ -30,6 +36,7 @@ tidb-gocontext = { path = "../tidb-gocontext" }
 
 hex = "0.4"
 crossbeam-channel = "0.5"
+uuid = { version = "1", features = ["v4"] }
 tidb-cpuprofile = { path = "../tidb-cpuprofile" }
 tidb-keyspace = { path = "../tidb-keyspace" }
 tidb-topsql = { path = "../tidb-topsql" }

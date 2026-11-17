@@ -48,6 +48,16 @@ pub enum Error {
     Storage(tidb_objstore::Error),
     /// A Go `*errors.Error`, such as `ErrFoundDuplicateKeys`.
     Terror(tidb_terror::TerrorError),
+    /// Go `ErrFoundDuplicateKeys.FastGenByArgs(key, value)`: the error with
+    /// its two `[]byte` arguments, which Go reads back with `tErr.Args()`.
+    FoundDuplicateKeys {
+        /// The duplicated key.
+        key: Vec<u8>,
+        /// One of its values.
+        value: Vec<u8>,
+        /// The generated `ErrFoundDuplicateKeys`.
+        error: tidb_terror::TerrorError,
+    },
     /// Any other Go error text.
     Other(String),
 }
@@ -82,7 +92,7 @@ impl std::fmt::Display for Error {
             Self::Eof => f.write_str("EOF"),
             Self::UnexpectedEof(text) | Self::Other(text) => f.write_str(text),
             Self::Storage(e) => e.fmt(f),
-            Self::Terror(e) => e.fmt(f),
+            Self::Terror(e) | Self::FoundDuplicateKeys { error: e, .. } => e.fmt(f),
         }
     }
 }
@@ -90,7 +100,7 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Terror(e) => Some(e),
+            Self::Terror(e) | Self::FoundDuplicateKeys { error: e, .. } => Some(e),
             _ => None,
         }
     }
@@ -104,6 +114,20 @@ impl From<tidb_objstore::Error> for Error {
 
 /// The package's result.
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Go `tErr.Args()` of an `ErrFoundDuplicateKeys` anywhere in `error`'s
+/// chain: the duplicated key and its value.
+#[must_use]
+pub fn duplicate_key_and_value<'a>(error: &'a (dyn std::error::Error + 'static)) -> Option<(&'a [u8], &'a [u8])> {
+    let mut cause = Some(error);
+    while let Some(error) = cause {
+        if let Some(Error::FoundDuplicateKeys { key, value, .. }) = error.downcast_ref::<Error>() {
+            return Some((key, value));
+        }
+        cause = error.source();
+    }
+    None
+}
 
 /// Go `io.ErrUnexpectedEOF`'s text.
 pub(crate) const UNEXPECTED_EOF: &str = "unexpected EOF";

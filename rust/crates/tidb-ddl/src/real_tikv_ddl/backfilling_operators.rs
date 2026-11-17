@@ -736,8 +736,32 @@ impl<S: StoreClient + 'static> Worker<IndexRecordChunk, IndexWriteResult, Operat
         Ok(())
     }
 
+    /// Go `indexIngestWorker.Close`: an external writer flushes its last
+    /// files, and its duplicate key is the index's key-exists error.
     fn close(&mut self) -> Result<(), OperatorError> {
-        Ok(())
+        let mut gerr = None;
+        for (position, writer) in self.writers.iter_mut().enumerate() {
+            if let Err(error) = writer.close() {
+                let index_id = self.scan.reorg.index_ids[position];
+                let index = self
+                    .scan
+                    .reorg
+                    .table
+                    .indices
+                    .iter_deref()
+                    .find(|index| index.read().id == index_id)
+                    .expect("a registered index");
+                gerr = Some(tidb_ddl_ingest::util::try_convert_to_key_exists_err(
+                    error,
+                    &index.read(),
+                    &self.scan.reorg.table,
+                ));
+            }
+        }
+        match gerr {
+            Some(error) => Err(operator_error(PipelineError::Ingest(error))),
+            None => Ok(()),
+        }
     }
 }
 
@@ -794,6 +818,171 @@ impl<S: StoreClient + 'static> IndexIngestWorker<S> {
             }
         }
         Ok(kv_bytes)
+    }
+}
+
+/// Go `*simplesst.Writer` as an `ingest.Writer`: the sorted KV files of one
+/// index in external storage.
+struct ExternalWriter {
+    writer: tidb_ingestor_simplesst::Writer,
+    ctx: tidb_gocontext::Context,
+}
+
+fn external_writer_error(error: tidb_ingestor_simplesst::Error) -> tidb_ddl_ingest::Error {
+    tidb_ddl_ingest::Error::Backend(tidb_ingestor_ingestctrl::Error::Source(Arc::new(error)))
+}
+
+impl tidb_ddl_ingest::engine::IngestWriter for ExternalWriter {
+    fn write_row(&mut self, key: &[u8], value: &[u8], _handle: &[u8]) -> tidb_ddl_ingest::Result<()> {
+        self.writer.write_row(&self.ctx, key, value).map_err(external_writer_error)
+    }
+
+    fn written_bytes(&self) -> i64 {
+        self.writer.written_bytes()
+    }
+
+    fn close(&mut self) -> tidb_ddl_ingest::Result<()> {
+        self.writer.close(&self.ctx).map_err(external_writer_error)
+    }
+}
+
+/// Go `WriteExternalStoreOperator`: writes each chunk's index records to
+/// external storage, one sorted writer per index.
+pub struct WriteExternalStoreOperator {
+    inner: AsyncOperator<IndexRecordChunk, IndexWriteResult>,
+    total_count: Arc<AtomicI64>,
+}
+
+impl WriteExternalStoreOperator {
+    /// Go `NewWriteExternalStoreOperator`: each worker's writers put their
+    /// files under `<task ID>/<subtask ID>`, and `on_close` gets each
+    /// writer's summary.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub fn new<S: StoreClient + 'static>(
+        ctx: Arc<Context>,
+        scan: Arc<ScanContext<S>>,
+        task_id: i64,
+        subtask_id: i64,
+        store: Arc<dyn tidb_objstore::storeapi::Storage>,
+        concurrency: usize,
+        on_close: tidb_ingestor_simplesst::OnWriterCloseFunc,
+        memory_quota: u64,
+        collector: Arc<dyn Collector>,
+    ) -> Self {
+        let mut on_duplicate_key = tidb_ingestor_engineapi::OnDuplicateKey::Error;
+        tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/ignoreReadIndexDupKey", |_| {
+            on_duplicate_key = tidb_ingestor_engineapi::OnDuplicateKey::Ignore;
+        });
+        let total_count = Arc::new(AtomicI64::new(0));
+        let block_size =
+            tidb_ingestor_simplesst::get_adjusted_block_size(memory_quota, tidb_ingestor_simplesst::DEFAULT_BLOCK_SIZE);
+        let pool = {
+            let ctx = Arc::clone(&ctx);
+            let total_count = Arc::clone(&total_count);
+            WorkerPool::new(
+                "WriteExternalStoreOperator".to_owned(),
+                tidb_resourcemanager_util::Component::Ddl,
+                concurrency as isize,
+                move || {
+                    let prefix = format!("{task_id}/{subtask_id}");
+                    let writers = (0..scan.reorg.index_ids.len())
+                        .map(|offset| {
+                            // Rust applies the keyspace codec at ingest (register
+                            // row E30), so the writer gets no `TiKVCodec`.
+                            let writer = tidb_ingestor_simplesst::WriterBuilder::new()
+                                .set_on_close_func(Arc::clone(&on_close))
+                                .set_memory_size_limit(memory_quota)
+                                .set_block_size(block_size)
+                                .set_group_offset(offset as i64)
+                                .set_on_dup(on_duplicate_key)
+                                .build(Arc::clone(&store), &prefix, &uuid::Uuid::new_v4().to_string());
+                            Box::new(ExternalWriter { writer, ctx: tidb_gocontext::Context::background() })
+                                as Box<dyn tidb_ddl_ingest::engine::IngestWriter>
+                        })
+                        .collect();
+                    // Go `initIndexConditionCheckers`.
+                    let encoder = match scan.backfiller.ingest_chunk_encoder(&scan.reorg) {
+                        Ok(encoder) => encoder,
+                        Err(error) => {
+                            ctx.on_error(operator_error(PipelineError::Sql(error)));
+                            return None;
+                        }
+                    };
+                    Some(Box::new(CountingWorker {
+                        inner: IndexIngestWorker {
+                            scan: Arc::clone(&scan),
+                            writers,
+                            encoder,
+                            collector: Arc::clone(&collector),
+                        },
+                        total_count: Arc::clone(&total_count),
+                    }) as Box<dyn Worker<IndexRecordChunk, IndexWriteResult, OperatorError>>)
+                },
+                Vec::new(),
+            )
+        };
+        Self { inner: AsyncOperator::new(ctx, pool), total_count }
+    }
+}
+
+/// Go `indexIngestWorker.totalCount`, which only the global-sort writers
+/// keep.
+struct CountingWorker<S: StoreClient> {
+    inner: IndexIngestWorker<S>,
+    total_count: Arc<AtomicI64>,
+}
+
+impl<S: StoreClient + 'static> Worker<IndexRecordChunk, IndexWriteResult, OperatorError> for CountingWorker<S> {
+    fn handle_task(
+        &mut self,
+        chunk: IndexRecordChunk,
+        send: &mut dyn FnMut(IndexWriteResult),
+    ) -> Result<(), OperatorError> {
+        let scanned = chunk.table_scan_row_count;
+        self.inner.handle_task(chunk, send)?;
+        self.total_count.fetch_add(scanned, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), OperatorError> {
+        self.inner.close()
+    }
+}
+
+impl WithSource<IndexRecordChunk> for WriteExternalStoreOperator {
+    fn set_source(&self, channel: SimpleDataChannel<IndexRecordChunk>) {
+        self.inner.set_source(channel);
+    }
+}
+
+impl WithSink<IndexWriteResult> for WriteExternalStoreOperator {
+    fn set_sink(&self, channel: SimpleDataChannel<IndexWriteResult>) {
+        self.inner.set_sink(channel);
+    }
+}
+
+impl Operator for WriteExternalStoreOperator {
+    fn open(&self) -> Result<(), OperatorError> {
+        self.inner.open()
+    }
+
+    /// Go `WriteExternalStoreOperator.Close`.
+    fn close(&self) -> Result<(), OperatorError> {
+        let result = self.inner.close();
+        tidb_logutil::bg_logger().info(
+            "write external storage operator total count",
+            &[tidb_log::Field::new("count", tidb_log::Value::I64(self.total_count.load(Ordering::SeqCst)))],
+        );
+        result
+    }
+
+    fn operator_string(&self) -> String {
+        self.inner.operator_string()
+    }
+
+    fn tunable(&self) -> Option<&dyn TunableOperator> {
+        Some(&self.inner)
     }
 }
 
@@ -957,4 +1146,78 @@ pub fn new_add_index_ingest_pipeline<S: StoreClient + 'static>(
         ],
     );
     Arc::new(AsyncPipeline::new(vec![src_op, scan_op, ingest_op, sink_op]))
+}
+
+/// Go `NewWriteIndexToExternalStoragePipeline`: the source, scan, external
+/// write and sink operators of a global-sort read over `[start_key,
+/// end_key)`, writing under `<task ID>/<subtask ID>` of `ext_store`.
+#[allow(clippy::too_many_arguments)]
+pub fn new_write_index_to_external_storage_pipeline<S: StoreClient + 'static>(
+    ctx: &Arc<Context>,
+    scan: Arc<ScanContext<S>>,
+    ext_store: Arc<dyn tidb_objstore::storeapi::Storage>,
+    task_id: i64,
+    subtask_id: i64,
+    start_key: Vec<u8>,
+    end_key: Vec<u8>,
+    on_close: tidb_ingestor_simplesst::OnWriterCloseFunc,
+    reorg_meta: Option<tidb_model::GoShared<tidb_model::DDLReorgMeta>>,
+    avg_row_size: usize,
+    concurrency: usize,
+    resource: &tidb_dxf::StepResource,
+    collector: Arc<dyn Collector>,
+) -> Arc<AsyncPipeline> {
+    let use_cloud_storage = reorg_meta.as_ref().is_some_and(|meta| meta.read().use_cloud_storage);
+    let (reader_cnt, writer_cnt) = expected_ingest_worker_cnt(concurrency, avg_row_size, use_cloud_storage);
+    let mem_cap = resource.mem.capacity();
+    let mut mem_size_per_index =
+        (mem_cap / (writer_cnt.max(1) * 2 * scan.reorg.index_ids.len().max(1)) as i64).max(0) as u64;
+    if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockWriterMemSizeInKB") {
+        mem_size_per_index = value.int() as u64 * 1024;
+    }
+    let hint_batch_size = scan.reorg.batch_size;
+    let src_op = Arc::new(TableScanTaskSource::new(
+        Arc::clone(ctx),
+        scan.backfiller.region_store(),
+        scan.physical_id,
+        start_key,
+        end_key,
+        None,
+    ));
+    let scan_op = Arc::new(TableScanOperator::new(
+        Arc::clone(ctx),
+        Arc::clone(&scan),
+        reader_cnt,
+        hint_batch_size,
+        reorg_meta,
+        None,
+        Arc::clone(&collector),
+    ));
+    let write_op = Arc::new(WriteExternalStoreOperator::new(
+        Arc::clone(ctx),
+        scan,
+        task_id,
+        subtask_id,
+        ext_store,
+        writer_cnt,
+        on_close,
+        mem_size_per_index,
+        collector,
+    ));
+    let sink_op = Arc::new(IndexWriteResultSink::new(Arc::clone(ctx), None));
+    compose(src_op.as_ref(), scan_op.as_ref());
+    compose(scan_op.as_ref(), write_op.as_ref());
+    compose(write_op.as_ref(), sink_op.as_ref());
+    tidb_logutil::bg_logger().info(
+        "build add index cloud storage operators",
+        &[
+            tidb_log::Field::new("taskID", tidb_log::Value::I64(task_id)),
+            tidb_log::Field::new("memCap", tidb_log::Value::I64(mem_cap)),
+            tidb_log::Field::new("memSizePerIdx", tidb_log::Value::I64(mem_size_per_index as i64)),
+            tidb_log::Field::new("avgRowSize", tidb_log::Value::I64(avg_row_size as i64)),
+            tidb_log::Field::new("reader", tidb_log::Value::I64(reader_cnt as i64)),
+            tidb_log::Field::new("writer", tidb_log::Value::I64(writer_cnt as i64)),
+        ],
+    );
+    Arc::new(AsyncPipeline::new(vec![src_op, scan_op, write_op, sink_op]))
 }

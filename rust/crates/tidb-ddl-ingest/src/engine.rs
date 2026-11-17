@@ -152,6 +152,11 @@ pub trait IngestWriter: Send {
     fn write_row(&mut self, key: &[u8], value: &[u8], handle: &[u8]) -> Result<()>;
     /// Go `Writer.WrittenBytes`.
     fn written_bytes(&self) -> i64;
+    /// Go `(*simplesst.Writer).Close`: only an external writer flushes and
+    /// reports its files when it closes.
+    fn close(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 impl IngestEngine for EngineInfo {
     fn flush(&self) -> Result<()> {

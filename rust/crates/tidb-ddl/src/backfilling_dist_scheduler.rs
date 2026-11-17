@@ -23,6 +23,16 @@ pub fn calculate_region_batch(
         average.min(4000)
     }
 }
+/// Go `skipMergeSort`: the read step's files overlap little enough for the
+/// ingest step to read them directly.
+#[must_use]
+pub fn skip_merge_sort(stats: &[tidb_ingestor_simplesst::MultipleFilesStat], concurrency: i64) -> bool {
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/forceMergeSort").is_some() {
+        return false;
+    }
+    tidb_ingestor_simplesst::get_max_overlapping_total(stats)
+        <= tidb_ingestor_simplesst::get_adjusted_merge_sort_overlap_threshold(concurrency)
+}
 /// Go `LitBackfillScheduler`'s task-invariant mode.
 #[derive(Default)]
 pub struct LitBackfillScheduler {

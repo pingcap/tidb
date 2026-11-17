@@ -369,6 +369,18 @@ struct SubJobStep {
 }
 
 /// Go `runOneJobStep` on a sub-job's proxy job.
+/// Go `updateParentJobFromProxy`: what a proxy job's step found that belongs
+/// to the parent rather than the sub-job. `ToProxyJob` gives each proxy a
+/// copy of the parent's `ReorgMeta`, and `FromProxyJob` does not copy
+/// `UseCloudStorage` back, so later proxies would revert to local sort.
+fn update_parent_job_from_proxy(parent: &tidb_model::Job, proxy: &tidb_model::Job) {
+    if let (Some(parent_meta), Some(proxy_meta)) = (&parent.reorg_meta, &proxy.reorg_meta) {
+        if proxy_meta.read().use_cloud_storage {
+            parent_meta.write().use_cloud_storage = true;
+        }
+    }
+}
+
 fn run_sub_job_step(
     txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
@@ -579,6 +591,7 @@ pub(super) fn on_multi_schema_change(
                     outcomes,
                     row_ids,
                 );
+                update_parent_job_from_proxy(&active.job, &proxy.job);
                 if step.reorg.is_some() {
                     return Ok(step);
                 }
@@ -633,6 +646,7 @@ pub(super) fn on_multi_schema_change(
                 outcomes,
                 row_ids,
             );
+            update_parent_job_from_proxy(&active.job, &proxy.job);
             if step.reorg.is_some() {
                 return Ok(step);
             }
@@ -695,6 +709,7 @@ pub(super) fn on_multi_schema_change(
                 outcomes,
                 row_ids,
             );
+            update_parent_job_from_proxy(&active.job, &proxy.job);
             if step.reorg.is_some() {
                 // Go `onMultiSchemaChange` keeps this loop and its metadata
                 // transaction alive while runOneJobStep waits for reorg.
@@ -793,6 +808,7 @@ pub(super) fn on_multi_schema_change(
             outcomes,
             row_ids,
         );
+        update_parent_job_from_proxy(&active.job, &proxy.job);
         if step.reorg.is_some() {
             return Ok(step);
         }

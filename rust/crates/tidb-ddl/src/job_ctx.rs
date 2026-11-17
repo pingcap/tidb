@@ -40,6 +40,8 @@ pub(crate) struct ReorgContext {
     tp: String,
     /// Go `resourceGroupName`.
     resource_group_name: String,
+    /// Go `cloudStorageURI`: the URI `loadCloudStorageURI` read for the job.
+    pub(crate) cloud_storage_uri: String,
     /// Go `analyzeDone`: the running ANALYZE's report, an error or none.
     pub(crate) analyze_done: Option<mpsc::Receiver<Option<String>>>,
     /// Go `analyzeStartTime`.

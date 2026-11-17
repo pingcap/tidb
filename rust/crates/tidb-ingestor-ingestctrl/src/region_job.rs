@@ -529,8 +529,13 @@ pub(crate) fn engine_error(e: tidb_ingestor_engineapi::Error) -> Error {
     if let Some(t) = e.downcast_ref::<tidb_terror::TerrorError>() {
         return Error::Ingest(t.clone());
     }
-    if let Some(tidb_ingestor_simplesst::Error::Terror(t)) = e.downcast_ref::<tidb_ingestor_simplesst::Error>() {
-        return Error::Ingest(t.clone());
+    match e.downcast_ref::<tidb_ingestor_simplesst::Error>() {
+        Some(tidb_ingestor_simplesst::Error::Terror(t)) => return Error::Ingest(t.clone()),
+        // Go keeps `ErrFoundDuplicateKeys`'s key and value arguments.
+        Some(dup @ tidb_ingestor_simplesst::Error::FoundDuplicateKeys { .. }) => {
+            return Error::Source(std::sync::Arc::new(dup.clone()));
+        }
+        _ => {}
     }
     Error::Other(e.to_string())
 }

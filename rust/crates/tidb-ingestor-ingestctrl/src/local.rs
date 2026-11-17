@@ -93,23 +93,11 @@ impl Backend {
         &self,
         ctx: &Context,
         id: [u8; 16],
-        mut region_split_size: u64,
-        mut region_split_keys: usize,
+        region_split_size: u64,
+        region_split_keys: usize,
     ) -> Result<()> {
-        let split_conf = self.importer.all_stores(ctx).and_then(|stores| {
-            get_region_split_size_keys(&stores, |host| self.importer.split_conf_from_store(ctx, host))
-        });
-        match split_conf {
-            Ok((kv_region_split_size, kv_region_split_keys)) => {
-                region_split_size = region_split_size.max(kv_region_split_size.max(0) as u64);
-                region_split_keys = region_split_keys.max(kv_region_split_keys.max(0) as usize);
-            }
-            Err(error) => tidb_log::warn(
-                "fail to get region split keys and size",
-                &[tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))],
-            ),
-        }
-
+        let (region_split_size, region_split_keys) =
+            self.adjust_region_split_size_keys(ctx, region_split_size, region_split_keys);
         let engine_uuid = uuid::Uuid::from_bytes(id).to_string();
         if let Some(external) = self.engine_mgr.get_external_engine(id) {
             let mut external = external.lock().unwrap();
@@ -126,6 +114,47 @@ impl Backend {
         });
         engine.set_importing(false);
         result
+    }
+
+    /// Go `IngestExternalEngine`: an external engine created by
+    /// `globalsort.NewExternalEngine` written and ingested into TiKV.
+    ///
+    /// # Errors
+    /// The engine's data failed to split, write or ingest.
+    pub fn ingest_external_engine(
+        &self,
+        ctx: &Context,
+        e: &mut tidb_ingestor_globalsort::Engine,
+        region_split_size: u64,
+        region_split_keys: usize,
+    ) -> Result<()> {
+        let (region_split_size, region_split_keys) =
+            self.adjust_region_split_size_keys(ctx, region_split_size, region_split_keys);
+        self.import_engine_inner(ctx, "external", e, region_split_size, region_split_keys)
+    }
+
+    /// Go `adjustRegionSplitSizeKeys`: the given region split size and keys,
+    /// raised to TiKV's configured ones when those are larger.
+    fn adjust_region_split_size_keys(
+        &self,
+        ctx: &Context,
+        mut region_split_size: u64,
+        mut region_split_keys: usize,
+    ) -> (u64, usize) {
+        let split_conf = self.importer.all_stores(ctx).and_then(|stores| {
+            get_region_split_size_keys(&stores, |host| self.importer.split_conf_from_store(ctx, host))
+        });
+        match split_conf {
+            Ok((kv_region_split_size, kv_region_split_keys)) => {
+                region_split_size = region_split_size.max(kv_region_split_size.max(0) as u64);
+                region_split_keys = region_split_keys.max(kv_region_split_keys.max(0) as usize);
+            }
+            Err(error) => tidb_log::warn(
+                "fail to get region split keys and size",
+                &[tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))],
+            ),
+        }
+        (region_split_size, region_split_keys)
     }
 
     /// Go `Backend.ImportEngine` once the engine is chosen.

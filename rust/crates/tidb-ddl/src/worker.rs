@@ -1620,6 +1620,7 @@ where
         crate::real_tikv_ddl::add_index_reorg::dist::register_backfill_task(Arc::new(
             crate::real_tikv_ddl::add_index_reorg::dist::BackfillDdl {
                 opener:opener.clone(),timeout,etcd:notifier.clone(),
+                server_info:Arc::clone(&server_info) as Arc<dyn tidb_dxf_scheduler::ServerInfoSource>,
                 backfiller:Arc::new({let scheduler=Arc::downgrade(&scheduler);move || {
                     let scheduler=scheduler.upgrade().expect("DDL owns backfill task factories");
                     Arc::new(KvTableIndexBackfiller::new(&scheduler.row_ids,&scheduler.session_pool)
