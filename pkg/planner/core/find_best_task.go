@@ -2963,11 +2963,18 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 					// IndexLookUp merges index-side rows before fetching table rows, so
 					// its sort keys must name the actual index columns. IndexReader instead
 					// merges output rows and must retain the columns in its output schema.
-					resolved, ok := col.ResolveIndicesByVirtualExpr(ds.SCtx().GetExprCtx().GetEvalCtx(), is.Schema())
-					if !ok {
+					matched := false
+					evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
+					for _, indexCol := range is.Schema().Columns {
+						if col.EqualByExprAndID(evalCtx, indexCol) {
+							col = indexCol
+							matched = true
+							break
+						}
+					}
+					if !matched {
 						return base.InvalidTask, nil
 					}
-					col = is.Schema().Columns[resolved.(*expression.Column).Index]
 				}
 				byItems = append(byItems, &util.ByItems{
 					Expr: col,
