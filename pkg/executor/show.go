@@ -125,8 +125,6 @@ type ShowExec struct {
 
 	ImportJobID       *int64
 	DistributionJobID *int64
-
-	StatsHealthyTablePrivilege bool
 }
 
 var systemSessionStateVarNames = []string{

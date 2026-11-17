@@ -4181,7 +4181,6 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, mysql.SystemDB, "", "", err)
 		if show.Tp == ast.ShowStatsHealthy {
-			b.configureStatsHealthyTablePrivilege(p)
 			if extractor := newShowBaseExtractor(*show); extractor.Extract() {
 				p.Extractor = extractor
 				buildPattern = false

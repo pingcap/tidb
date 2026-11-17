@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statsStorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/types"
@@ -528,11 +527,6 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, partitionName, colName string,
 }
 
 func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
-	var checker privilege.Manager
-	if e.StatsHealthyTablePrivilege {
-		checker = privilege.GetPrivilegeManager(e.Ctx())
-	}
-	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemaNames()
@@ -560,9 +554,6 @@ func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
 		tableNames, err := do.InfoSchema().SchemaSimpleTableInfos(ctx, db)
 		terror.Log(err)
 		for _, nameInfo := range tableNames {
-			if checker != nil && !checker.RequestVerification(activeRoles, db.L, nameInfo.Name.L, "", mysql.SelectPriv) {
-				continue
-			}
 			tblID := nameInfo.ID
 			partitionedTable, ok := partitionedTables[tblID]
 			// Partitioned table:

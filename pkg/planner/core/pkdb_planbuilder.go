@@ -17,8 +17,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/temptable"
@@ -477,20 +475,4 @@ func (b *PlanBuilder) buildCTASSelectPlan(ctx context.Context, stmt *ast.CreateT
 	default:
 		return nil, errors.New("unsupported select stmt type: " + reflect.TypeOf(selectStmt).String())
 	}
-}
-
-// configureStatsHealthyTablePrivilege defers business-table authorization to the executor.
-// SHOW plans are rebuilt for each execution.
-func (b *PlanBuilder) configureStatsHealthyTablePrivilege(p *logicalop.LogicalShow) {
-	if !variable.EnablePKDBPrivilege.Load() {
-		return
-	}
-	checker := privilege.GetPrivilegeManager(b.ctx)
-	if checker == nil || checker.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, mysql.SystemDB, "", "", mysql.SelectPriv) {
-		return
-	}
-	p.StatsHealthyTablePrivilege = true
-	b.visitInfo = b.visitInfo[:len(b.visitInfo)-1]
-	// Emit the fixed warning here even if a constant predicate eliminates the SHOW executor.
-	b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("SHOW STATS_HEALTHY only displays tables with database-level or table-level SELECT privileges, including active roles; column-level SELECT is insufficient."))
 }

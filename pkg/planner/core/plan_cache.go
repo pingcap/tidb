@@ -274,20 +274,6 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	// SHOW STATS_HEALTHY must rebuild its privilege mode on every execution,
-	// even when fix control 49736 forces plan caching.
-	if show, ok := stmt.PreparedAst.Stmt.(*ast.ShowStmt); ok && show.Tp == ast.ShowStatsHealthy {
-		// Stored functions may have enabled the shared tracker in a preceding statement.
-		if useCache, cacheType, unqualified, force, alwaysWarn := stmtCtx.PlanCacheTracker.Save(); useCache {
-			stmtCtx.PlanCacheTracker.Restore(false, cacheType, unqualified, force, alwaysWarn)
-			defer stmtCtx.PlanCacheTracker.Restore(useCache, cacheType, unqualified, force, alwaysWarn)
-		}
-		if cacheEnabled {
-			cacheEnabled = false
-			missReason = contextutil.PlanCacheFallbackUnsupportedStatementType
-		}
-	}
-
 	if stmt.StmtCacheable && cacheEnabled {
 		fix70751Enabled := fixcontrol.GetBoolWithDefault(
 			sessVars.GetOptimizerFixControlMap(), fixcontrol.Fix70751, false,

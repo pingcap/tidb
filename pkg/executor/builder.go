@@ -951,7 +951,6 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) exec.Executor {
 		ImportJobID:           v.ImportJobID,
 		DistributionJobID:     v.DistributionJobID,
 	}
-	e.StatsHealthyTablePrivilege = v.StatsHealthyTablePrivilege
 	if e.Tp == ast.ShowMasterStatus || e.Tp == ast.ShowBinlogStatus {
 		// show master status need start ts.
 		if _, err := e.Ctx().Txn(true); err != nil {
