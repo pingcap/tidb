@@ -156,6 +156,10 @@ impl SqlExecutor for MockSqlExecutor {
 
 struct MockSessionVars;
 impl SessionVars for MockSessionVars {
+    fn user(&self) -> Option<Arc<UserIdentity>> {
+        None
+    }
+
     fn active_roles(&self) -> Vec<Arc<RoleIdentity>> {
         Vec::new()
     }

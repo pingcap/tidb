@@ -627,34 +627,10 @@ pub trait Columns {
         None
     }
 
-    /// Go `SessionVars.User`, in the two spellings its builtins report:
-    /// `CURRENT_USER()` is the matched grant identity (`String()`) and
-    /// `USER()` is the login identity (`LoginString()`). `None` is a session
-    /// with no authenticated user at all.
     /// Go `SessionVars.ConnectionInfo`.
     fn connection_info(
         &self,
     ) -> Option<std::sync::Arc<tidb_variable::connection_info::ConnectionInfo>> {
-        None
-    }
-    /// Go `SessionVars.User.AuthPlugin`.
-    fn auth_plugin(&self) -> String {
-        String::new()
-    }
-    fn current_user(&self) -> Option<String> {
-        None
-    }
-
-    /// The login identity `USER()`/`SESSION_USER()` report.
-    fn login_user(&self) -> Option<String> {
-        None
-    }
-
-    /// Go `SessionVars.ActiveRoles` rendered the way `CURRENT_ROLE()` prints
-    /// it: the backtick-quoted role identities joined by bare commas, or the
-    /// literal `NONE` when no role is active. `None` is a resolver with no
-    /// session at all, which reports NULL like `CURRENT_USER()` does.
-    fn current_role(&self) -> Option<String> {
         None
     }
 

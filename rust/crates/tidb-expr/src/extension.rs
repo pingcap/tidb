@@ -225,13 +225,12 @@ fn eval_extension_func(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_
         return Err(EvalError::Unsupported("an extension signature is built by extensionFuncClass"));
     };
     check_privileges(ctx, def)?;
-    // Go `extensionFnContext.ActiveRoles`: `b.vars.ActiveRoles`, the vars
-    // `SessionVarsPropReader` read.
+    // Go `extensionFnContext`'s `vars`, which `SessionVarsPropReader` read:
+    // its `User` and `ActiveRoles`.
     let vars = tidb_expropt::SessionVarsPropReader
         .get_session_vars(ctx)
         .map_err(crate::builtin_ext::misc::opt_prop_error)?;
-    let active_roles = vars.active_roles();
-    let fn_ctx = ExtensionFnContext { ctx, args: &function.args, active_roles };
+    let fn_ctx = ExtensionFnContext { ctx, args: &function.args, user: vars.user(), active_roles: vars.active_roles() };
     match def.eval_tp {
         EvalType::String => {
             let eval = def.eval_string_func.as_ref().expect("newExtensionFuncClass checked EvalStringFunc");
@@ -251,6 +250,7 @@ fn eval_extension_func(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_
 struct ExtensionFnContext<'a> {
     ctx: &'a dyn Columns,
     args: &'a [Expression],
+    user: Option<std::sync::Arc<UserIdentity>>,
     active_roles: Vec<std::sync::Arc<RoleIdentity>>,
 }
 
@@ -262,28 +262,9 @@ impl FunctionContext for ExtensionFnContext<'_> {
         self.ctx.connection_info()
     }
 
-    /// Go `vars.User`, which this port's session keeps as its login and
-    /// matched identities.
+    /// Go `extensionFnContext.User`: `b.vars.User`.
     fn user(&self) -> Option<UserIdentity> {
-        let login = self.ctx.login_user()?;
-        let (username, hostname) = login.rsplit_once('@').unwrap_or((login.as_str(), ""));
-        let (auth_username, auth_hostname) = self
-            .ctx
-            .current_user()
-            .and_then(|identity| {
-                identity
-                    .rsplit_once('@')
-                    .map(|(user, host)| (user.to_owned(), host.to_owned()))
-            })
-            .unwrap_or_default();
-        Some(UserIdentity {
-            username: username.to_owned(),
-            hostname: hostname.to_owned(),
-            current_user: false,
-            auth_username,
-            auth_hostname,
-            auth_plugin: self.ctx.auth_plugin(),
-        })
+        self.user.as_deref().cloned()
     }
 
     fn active_roles(&self) -> Vec<RoleIdentity> {

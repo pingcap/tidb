@@ -76,7 +76,7 @@ pub(super) fn eval(
         return Ok(());
     }
     if function.func_name.lowercase() == "validate_password_strength" {
-        let user = crypto::password_validation_user(ctx);
+        let user = crypto::password_validation_user(ctx)?;
         let buffer = vec_eval::argument(&function.args[0], EvalType::String, ctx, input)?;
         result.resize_int64(input.num_rows(), false);
         result.merge_nulls(&[&buffer]);

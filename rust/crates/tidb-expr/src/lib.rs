@@ -34,6 +34,8 @@ pub(crate) mod builtin;
 pub mod builtin_arithmetic;
 #[cfg(test)]
 mod builtin_cast_semantics;
+#[cfg(test)]
+mod test_identity;
 mod chunk_executor;
 pub mod builtin_compare;
 mod builtin_cast;

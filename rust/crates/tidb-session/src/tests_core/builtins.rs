@@ -956,13 +956,14 @@ fn like_between_case_and_builtins() {
     fresh.run("DROP DATABASE test").unwrap();
     assert_eq!(row_text(fresh.run("SELECT DATABASE()")), [["NULL"]]);
 
-    // A session with no authenticated user answers NULL for the identity
-    // builtins, which is what Go does for a session without one; a front
-    // end that authenticates sets it (see the server's client test).
-    assert_eq!(
-        row_text(session.run("SELECT CURRENT_USER(), USER()")),
-        [["NULL", "NULL"]]
-    );
+    // A session with no authenticated user has no `SessionVars.User`: Go's
+    // identity builtins error (`builtinCurrentUserSig` / `builtinUserSig`,
+    // "Missing session variable when eval builtin"), and `CURRENT_ROLE()`
+    // answers NONE (Go's oracle: ERR, then NONE). A front end that
+    // authenticates sets the user (see the server's client test).
+    let error = session.run("SELECT CURRENT_USER(), USER()").unwrap_err().to_mysql_error();
+    assert_eq!((error.code, error.message.as_str()), (1105, "Missing session variable when eval builtin"));
+    assert_eq!(row_text(session.run("SELECT CURRENT_ROLE()")), [["NONE"]]);
     session.set_user("bob@%".to_owned(), "bob@10.0.0.1".to_owned());
     // Only CURRENT_USER is bound to `currentUserFunctionClass`
     // (`pkg/expression/builtin.go:823`) and so reports the matched grant

@@ -47,6 +47,44 @@ macro_rules! session_values {
     )*};
 }
 
+/// Go's error for an identity builtin evaluated with no session user.
+fn missing_session_variable() -> EvalError {
+    EvalError::Raw("Missing session variable when eval builtin".to_owned())
+}
+
+/// Go `builtinCurrentUserSig.evalString`: the matched account,
+/// `UserIdentity.String`.
+pub(crate) fn current_user(_: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    let user = tidb_expropt::CurrentUserPropReader
+        .current_user(ctx)
+        .map_err(crate::builtin_ext::misc::opt_prop_error)?
+        .ok_or_else(missing_session_variable)?;
+    Ok(Datum::new_string_datum(user.to_string().into_bytes()))
+}
+
+/// Go `builtinUserSig.evalString`: the login, `UserIdentity.LoginString`.
+pub(crate) fn user(_: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    let user = tidb_expropt::CurrentUserPropReader
+        .current_user(ctx)
+        .map_err(crate::builtin_ext::misc::opt_prop_error)?
+        .ok_or_else(missing_session_variable)?;
+    Ok(Datum::new_string_datum(user.login_string().into_bytes()))
+}
+
+/// Go `builtinCurrentRoleSig.evalString`: the active roles' `String`s
+/// sorted and joined by commas, or `NONE`.
+pub(crate) fn current_role(_: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    let roles = tidb_expropt::CurrentUserPropReader
+        .active_roles(ctx)
+        .map_err(crate::builtin_ext::misc::opt_prop_error)?;
+    if roles.is_empty() {
+        return Ok(Datum::new_string_datum(b"NONE".to_vec()));
+    }
+    let mut sorted: Vec<String> = roles.iter().map(ToString::to_string).collect();
+    sorted.sort_unstable();
+    Ok(Datum::new_string_datum(sorted.join(",").into_bytes()))
+}
+
 fn string_or_null(value: Option<String>) -> Datum {
     value.map_or(Datum::Null, |value| Datum::new_string_datum(value.into_bytes()))
 }
@@ -58,14 +96,8 @@ session_values! {
     version => |ctx| ctx.sysvar(None, "version").unwrap_or(Datum::Null);
     /// Go `builtinTiDBVersionSig`.
     tidb_version => |ctx| Datum::new_string_datum(ctx.tidb_info().into_bytes());
-    /// Go `builtinCurrentUserSig`: the matched grant identity.
-    current_user => |ctx| string_or_null(ctx.current_user());
-    /// Go `builtinCurrentRoleSig`: the session's active roles.
-    current_role => |ctx| string_or_null(ctx.current_role());
     /// Go `builtinCurrentResourceGroupSig`.
     current_resource_group => |ctx| string_or_null(ctx.current_resource_group());
-    /// Go `builtinUserSig`: the authenticated identity.
-    user => |ctx| string_or_null(ctx.login_user());
     /// Go `builtinConnectionIDSig`.
     connection_id => |ctx| ctx.connection_id().map_or(Datum::Null, Datum::UInt);
     /// Go `builtinFoundRowsSig`.

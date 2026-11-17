@@ -487,23 +487,22 @@ pub(crate) fn validate_password_strength(value: &Datum, ctx: &dyn Columns) -> Re
     if !(validation.eq_ignore_ascii_case("ON") || validation == "1") {
         return Ok(Datum::Int(0));
     }
-    let user = password_validation_user(ctx);
+    let user = password_validation_user(ctx)?;
     validate_password_strength_with_user(value, ctx, user.as_ref())
 }
 
 /// Go `builtinValidatePasswordStrengthSig.CurrentUser`: one identity per batch.
-pub(crate) fn password_validation_user(ctx: &dyn Columns) -> Option<tidb_password_validation::PasswordUser> {
+pub(crate) fn password_validation_user(
+    ctx: &dyn Columns,
+) -> Result<Option<tidb_password_validation::PasswordUser>, EvalError> {
     use tidb_password_validation::PasswordUser;
-    let current_user = ctx.current_user();
-    let login_user = ctx.login_user();
-    current_user.as_deref().map(|current| PasswordUser {
-        auth_username: identity_username(current).into(),
-        username: login_user
-            .as_deref()
-            .map(identity_username)
-            .unwrap_or_else(|| identity_username(current))
-            .into(),
-    })
+    let user = tidb_expropt::CurrentUserPropReader
+        .current_user(ctx)
+        .map_err(crate::builtin_ext::misc::opt_prop_error)?;
+    Ok(user.map(|user| PasswordUser {
+        auth_username: user.auth_username.clone().into(),
+        username: user.username.clone().into(),
+    }))
 }
 
 /// Go `builtinValidatePasswordStrengthSig.vecEvalInt` reads this global once.
@@ -776,12 +775,11 @@ mod tests {
             None
         }
 
-        fn current_user(&self) -> Option<String> {
-            self.current_user.clone()
-        }
-
-        fn login_user(&self) -> Option<String> {
-            self.login_user.clone()
+        fn get_optional_prop_provider(
+            &self,
+            key: tidb_exprctx::OptionalEvalPropKey,
+        ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+            crate::test_identity::identity_props(self.current_user.as_deref(), self.login_user.as_deref(), &[]).get(key)
         }
 
         fn sysvar(&self, scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {

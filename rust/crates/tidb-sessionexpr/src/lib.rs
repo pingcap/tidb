@@ -165,8 +165,6 @@ pub trait SessionVarsAccessor: SessionVarsSnapshot + ExproptSessionVars {
     fn warn_handler(&self) -> Arc<dyn WarnHandler + Send + Sync>;
     /// Go `SessionVars.CurrentDB`.
     fn current_db(&self) -> String;
-    /// Go `SessionVars.User`.
-    fn user(&self) -> Option<Arc<UserIdentity>>;
     /// Go `SessionVars.PlanCacheParams.AllParamValues()`.
     fn all_param_values(&self) -> Vec<Datum>;
     /// Go `SessionVars.UserVars`.
@@ -1233,6 +1231,10 @@ mod tests {
     }
 
     impl ExproptSessionVars for MockSessionVars {
+        fn user(&self) -> Option<Arc<UserIdentity>> {
+            self.user.lock().unwrap().clone()
+        }
+
         fn active_roles(&self) -> Vec<Arc<RoleIdentity>> {
             self.active_roles.lock().unwrap().clone()
         }
@@ -1257,10 +1259,6 @@ mod tests {
 
         fn current_db(&self) -> String {
             self.current_db.lock().unwrap().clone()
-        }
-
-        fn user(&self) -> Option<Arc<UserIdentity>> {
-            self.user.lock().unwrap().clone()
         }
 
         fn all_param_values(&self) -> Vec<Datum> {

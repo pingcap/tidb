@@ -73,6 +73,27 @@ fn test_tidb_encode_key() {
     assert!(err.contains("SELECT command denied"), "{err}");
     let err = error_text(&mut tk2, "select tidb_encode_index_key('test', 't', 'i1', 1);");
     assert!(err.contains("SELECT command denied"), "{err}");
+    // Go `tk2.Session().Auth(&auth.UserIdentity{Username: "alice", Hostname:
+    // "localhost"}, ...)`: alice logs in from localhost and matches the
+    // account 'alice'@'%'. The denial names the matched account
+    // (`sv.User.AuthUsername` / `AuthHostname`), and the identity builtins
+    // answer as Go's do (captured from Go: `alice@%`, `alice@localhost`,
+    // `NONE`).
+    let mut from_localhost = Session::with_catalog(tk.shared_catalog());
+    from_localhost.set_user("alice@%".to_owned(), "alice@localhost".to_owned());
+    from_localhost.attach_privileges(registry.clone());
+    assert_eq!(
+        error_text(&mut from_localhost, "select tidb_encode_record_key('test', 't1(p1)', 1);"),
+        "SELECT command denied to user 'alice'@'%' for table 't1(p1)'"
+    );
+    assert_eq!(
+        error_text(&mut from_localhost, "select tidb_encode_index_key('test', 't', 'i', 1, 1);"),
+        "SELECT command denied to user 'alice'@'%' for table 't'"
+    );
+    assert_eq!(
+        row_text(from_localhost.run("select current_user(), user(), current_role()")),
+        [["alice@%", "alice@localhost", "NONE"]]
+    );
     tk.run("grant select on test.t1 to 'alice'@'%';").unwrap();
     assert_eq!(
         one(&mut tk2, "select tidb_encode_record_key('test', 't1(p1)', 1);"),

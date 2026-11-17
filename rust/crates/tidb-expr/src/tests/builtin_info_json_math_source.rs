@@ -139,7 +139,7 @@ fn math_call(name: &str, vals: &[Datum]) -> Result<Datum, EvalError> {
 #[derive(Default)]
 struct InfoColumns {
     current_user: Option<String>,
-    current_role: Option<String>,
+    roles: Vec<(&'static str, &'static str)>,
     connection_id: Option<u64>,
     version: Option<String>,
     tidb_info: Option<String>,
@@ -153,12 +153,11 @@ impl Columns for InfoColumns {
         None
     }
 
-    fn current_user(&self) -> Option<String> {
-        self.current_user.clone()
-    }
-
-    fn current_role(&self) -> Option<String> {
-        self.current_role.clone()
+    fn get_optional_prop_provider(
+        &self,
+        key: tidb_exprctx::OptionalEvalPropKey,
+    ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+        crate::test_identity::identity_props(self.current_user.as_deref(), None, &self.roles).get(key)
     }
 
     fn connection_id(&self) -> Option<u64> {
@@ -213,9 +212,16 @@ fn current_user() {
         eval_info("current_user", text_ft(), &ctx),
         Datum::new_string_datum(b"root@localhost".to_vec())
     );
-    assert_eq!(
-        eval_info("current_user", text_ft(), &InfoColumns::default()),
-        Datum::Null
+    // Go `builtinCurrentUserSig.evalString` of a session with no user.
+    let error = crate::new_function::new_function_base(&crate::NoColumns, "current_user", text_ft(), vec![])
+        .unwrap()
+        .into_scalar_function()
+        .unwrap()
+        .eval(&InfoColumns::default(), tidb_chunk::row::Row::empty())
+        .unwrap_err();
+    assert!(
+        matches!(error, crate::EvalError::Raw(ref message) if message == "Missing session variable when eval builtin"),
+        "{error:?}"
     );
 }
 
@@ -223,11 +229,11 @@ fn current_user() {
 #[test]
 fn current_role() {
     for (roles, expected) in [
-        ("NONE", "NONE"),
-        ("`r_1`@`%`,`r_2`@`localhost`", "`r_1`@`%`,`r_2`@`localhost`"),
+        (vec![], "NONE"),
+        (vec![("r_2", "localhost"), ("r_1", "%")], "`r_1`@`%`,`r_2`@`localhost`"),
     ] {
         let ctx = InfoColumns {
-            current_role: Some(roles.to_owned()),
+            roles,
             ..InfoColumns::default()
         };
         assert_eq!(
@@ -472,7 +478,6 @@ fn format_nano_time() {
 #[test]
 fn vectorized_builtin_info_func() {
     let ctx = InfoColumns {
-        current_role: Some("NONE".to_owned()),
         connection_id: Some(1),
         version: Some(runtime_versions().server_version),
         tidb_info: Some(get_tidb_info()),

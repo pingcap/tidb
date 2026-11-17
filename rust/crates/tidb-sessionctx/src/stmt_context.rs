@@ -711,7 +711,7 @@ fn optional_eval_props(
         dynamic: dynamic_privilege.clone(),
     });
     props.add(Arc::new(tidb_expropt::PrivilegeCheckerProvider::new(move || Arc::clone(&checker))));
-    props.add(session_vars_prop_provider(None));
+    add_session_vars_props(&mut props, StmtSessionVars::default());
     if let Some(exec) = sql_executor {
         props.add(Arc::new(tidb_expropt::SqlExecutorPropProvider::new(move || Ok(Arc::clone(&exec)))));
     }
@@ -719,31 +719,74 @@ fn optional_eval_props(
 }
 
 /// Go `variable.SessionVars` as a statement's builtins read it through
-/// `SessionVarsPropReader`: the session's fields they read, as the
-/// statement starts.
+/// `SessionVarsPropReader` and `CurrentUserPropReader`: the session's user
+/// and active roles, as the statement starts (a statement cannot change
+/// them).
+#[derive(Clone, Default)]
 struct StmtSessionVars {
-    active_roles: Option<Arc<Vec<(String, String)>>>,
+    user: Option<Arc<tidb_parser::auth::UserIdentity>>,
+    active_roles: Vec<Arc<tidb_parser::auth::RoleIdentity>>,
+}
+
+impl StmtSessionVars {
+    /// Go `SessionVars.User` and `ActiveRoles` of a session that matched
+    /// the account `current_user` from the login `login_user` (each
+    /// `user@host`), with `active_roles` active.
+    fn new(
+        current_user: Option<&str>,
+        login_user: Option<&str>,
+        auth_plugin: &str,
+        active_roles: Option<&[(String, String)]>,
+    ) -> Self {
+        let split = |identity: &str| {
+            let (user, host) = identity.rsplit_once('@').unwrap_or((identity, ""));
+            (user.to_owned(), host.to_owned())
+        };
+        let user = login_user.or(current_user).map(|login| {
+            let (auth_username, auth_hostname) = current_user.map(split).unwrap_or_default();
+            let (username, hostname) = split(login);
+            Arc::new(tidb_parser::auth::UserIdentity {
+                username,
+                hostname,
+                current_user: false,
+                auth_username,
+                auth_hostname,
+                auth_plugin: auth_plugin.to_owned(),
+            })
+        });
+        let active_roles = active_roles
+            .unwrap_or_default()
+            .iter()
+            .map(|(username, hostname)| {
+                Arc::new(tidb_parser::auth::RoleIdentity { username: username.clone(), hostname: hostname.clone() })
+            })
+            .collect();
+        Self { user, active_roles }
+    }
 }
 
 impl tidb_expropt::SessionVars for StmtSessionVars {
+    fn user(&self) -> Option<Arc<tidb_parser::auth::UserIdentity>> {
+        self.user.clone()
+    }
+
     fn active_roles(&self) -> Vec<Arc<tidb_parser::auth::RoleIdentity>> {
-        self.active_roles.iter().flat_map(|roles| roles.iter()).map(|(username, hostname)| {
-            Arc::new(tidb_parser::auth::RoleIdentity { username: username.clone(), hostname: hostname.clone() })
-        }).collect()
+        self.active_roles.clone()
     }
 }
 
 impl tidb_expropt::SessionVarsProvider for StmtSessionVars {
     fn get_session_vars(&self) -> Arc<dyn tidb_expropt::SessionVars> {
-        Arc::new(StmtSessionVars { active_roles: self.active_roles.clone() })
+        Arc::new(self.clone())
     }
 }
 
-/// Go `sessionexpr`'s `expropt.NewSessionVarsProvider(sctx)`.
-fn session_vars_prop_provider(
-    active_roles: Option<Arc<Vec<(String, String)>>>,
-) -> Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider> {
-    Arc::new(tidb_expropt::new_session_vars_provider(Arc::new(StmtSessionVars { active_roles })))
+/// Go `sessionexpr`'s `expropt.NewSessionVarsProvider(sctx)` and
+/// `currentUserProp(sctx)` over the same session variables.
+fn add_session_vars_props(props: &mut tidb_expropt::OptionalEvalPropProviders, vars: StmtSessionVars) {
+    let user_and_roles = (vars.user.clone(), vars.active_roles.clone());
+    props.add(Arc::new(tidb_expropt::CurrentUserPropProvider::new(move || user_and_roles.clone())));
+    props.add(Arc::new(tidb_expropt::new_session_vars_provider(Arc::new(vars))));
 }
 
 /// Go `kv.Storage.GetMinSafeTS(txnScope)`.
@@ -1788,6 +1831,20 @@ impl StmtContextData {
                 self.set_sql_mode_bits(m::ModeStrictTransTables | m::ModeStrictAllTables, false);
             }
         }
+    }
+}
+
+impl StmtContextData {
+    /// Reinstalls Go `sessionexpr`'s session-vars and current-user providers
+    /// over the statement's user, authentication plugin and active roles.
+    fn install_session_vars_props(&mut self) {
+        let vars = StmtSessionVars::new(
+            self.current_user.as_deref(),
+            self.login_user.as_deref(),
+            &self.auth_plugin,
+            self.active_roles.as_deref().map(Vec::as_slice),
+        );
+        add_session_vars_props(&mut self.optional_props, vars);
     }
 }
 
@@ -2929,6 +2986,7 @@ context_configuration! {
     pub fn with_connection_info(mut self, info: Option<Arc<tidb_variable::connection_info::ConnectionInfo>>, plugin: String) -> Self {
         self.connection_info = info;
         self.auth_plugin = plugin;
+        self.install_session_vars_props();
         self
     }
 
@@ -2942,8 +3000,10 @@ context_configuration! {
     pub fn with_user(mut self, current_user: Option<String>, login_user: Option<String>) -> Self {
         self.current_user = current_user;
         self.login_user = login_user;
+        self.install_session_vars_props();
         self
     }
+
 
     /// Attaches the live GLOBAL-variable reader used by expression builtins.
     #[must_use]
@@ -2952,13 +3012,12 @@ context_configuration! {
         self
     }
 
-    /// Attaches Go's typed `SessionVars.ActiveRoles` authority, and installs
-    /// Go `sessionexpr`'s session-vars provider over it for the builtins that
-    /// read it (`SessionVarsPropReader`).
+    /// Attaches Go's typed `SessionVars.ActiveRoles` authority, which the
+    /// builtins read through Go's session-vars and current-user providers.
     #[must_use]
     pub fn with_active_roles(mut self, active_roles: Option<Arc<Vec<(String, String)>>>) -> Self {
-        self.optional_props.add(session_vars_prop_provider(active_roles.clone()));
         self.active_roles = active_roles;
+        self.install_session_vars_props();
         self
     }
 
@@ -7376,29 +7435,6 @@ impl Columns for StmtContext {
 
     fn connection_info(&self) -> Option<Arc<tidb_variable::connection_info::ConnectionInfo>> {
         self.connection_info.clone()
-    }
-    fn auth_plugin(&self) -> String {
-        self.auth_plugin.clone()
-    }
-    fn current_user(&self) -> Option<String> {
-        self.current_user.clone()
-    }
-
-    fn login_user(&self) -> Option<String> {
-        self.login_user.clone()
-    }
-
-    fn current_role(&self) -> Option<String> {
-        let roles = self.active_roles.as_ref()?;
-        if roles.is_empty() {
-            return Some("NONE".to_owned());
-        }
-        let mut rendered = roles
-            .iter()
-            .map(|(role, host)| format!("`{role}`@`{host}`"))
-            .collect::<Vec<_>>();
-        rendered.sort_unstable();
-        Some(rendered.join(","))
     }
 
     fn current_resource_group(&self) -> Option<String> {

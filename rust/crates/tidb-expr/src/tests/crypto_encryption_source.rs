@@ -75,12 +75,11 @@ impl Columns for PasswordGlobals {
         None
     }
 
-    fn current_user(&self) -> Option<String> {
-        self.current_user.clone()
-    }
-
-    fn login_user(&self) -> Option<String> {
-        self.login_user.clone()
+    fn get_optional_prop_provider(
+        &self,
+        key: tidb_exprctx::OptionalEvalPropKey,
+    ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+        crate::test_identity::identity_props(self.current_user.as_deref(), self.login_user.as_deref(), &[]).get(key)
     }
 
     fn sysvar(&self, scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {

@@ -137,8 +137,9 @@ pub(crate) fn tidb_encode_key(values: &[Datum], index: bool, ctx: &dyn crate::Co
         // Go `ErrTableaccessDenied.FastGenByArgs("SELECT",
         // sv.User.AuthUsername, sv.User.AuthHostname, tblName)`.
         Err(tidb_exprctx::EncodeKeyError::SpecificAccessDenied) => {
-            let login = ctx.login_user().unwrap_or_default();
-            let (user, host) = login.rsplit_once('@').unwrap_or((&login, ""));
+            let user = tidb_expropt::SessionVarsPropReader.get_session_vars(ctx).map_err(opt_prop_error)?.user();
+            let (user, host) =
+                user.as_deref().map_or(("", ""), |user| (user.auth_username.as_str(), user.auth_hostname.as_str()));
             Err(EvalError::Conversion(tidb_plannererrors::ERR_TABLEACCESS_DENIED.gen_with_stack_by_args(&[
                 "SELECT".into(),
                 user.to_owned().into(),

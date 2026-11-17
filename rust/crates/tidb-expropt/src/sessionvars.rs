@@ -26,6 +26,9 @@ use tidb_exprctx::{
 /// bundle, which the session owns above this crate. The trait is the part of
 /// it that builtins read through [`SessionVarsPropReader`].
 pub trait SessionVars: Any + Send + Sync {
+    /// Go `SessionVars.User`: the login and the account it matched; `None`
+    /// is a session with no user (an internal one).
+    fn user(&self) -> Option<Arc<tidb_parser::auth::UserIdentity>>;
     /// Go `SessionVars.ActiveRoles`.
     fn active_roles(&self) -> Vec<Arc<tidb_parser::auth::RoleIdentity>>;
 }
