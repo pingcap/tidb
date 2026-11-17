@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -664,6 +665,59 @@ func TestRestoreSystemSchemasUpgradeOperateViewPrivilege(t *testing.T) {
 		Check(testkit.Rows("Y"))
 	tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM mysql.bind_info WHERE original_sql='%s' AND last_used_date IS NULL", bindSQL)).
 		Check(testkit.Rows("1"))
+}
+
+func TestRestoreSystemSchemasRejectsNullInUpgradedNullableColumn(t *testing.T) {
+	cluster := mc
+	ctx := context.Background()
+	g := gluetidb.New()
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	require.NoError(t, client.InitConnections(g, cluster.Storage))
+	defer client.Close()
+	client.SetWithSysTable(true)
+
+	tk := testkit.NewTestKit(t, cluster.Storage)
+	const (
+		nullUserName = "br_restore_null_tablespace"
+		userName     = "br_restore_tablespace"
+	)
+	cleanup := func() {
+		tk.MustExec("DROP DATABASE IF EXISTS __TiDB_BR_Temporary_mysql")
+		tk.MustExec(fmt.Sprintf("DELETE FROM mysql.user WHERE User IN ('%s', '%s')", nullUserName, userName))
+	}
+	cleanup()
+	defer cleanup()
+
+	tk.MustExec("CREATE DATABASE __TiDB_BR_Temporary_mysql")
+	tk.MustExec("CREATE TABLE __TiDB_BR_Temporary_mysql.user LIKE mysql.user")
+	tk.MustExec("ALTER TABLE __TiDB_BR_Temporary_mysql.user MODIFY COLUMN Create_tablespace_priv ENUM('N','Y') DEFAULT 'N'")
+	tk.MustExec(fmt.Sprintf("INSERT INTO __TiDB_BR_Temporary_mysql.user (Host, User, authentication_string, plugin, Create_tablespace_priv) VALUES ('%%', '%s', '', 'mysql_native_password', NULL)", nullUserName))
+
+	restoreUserTable := func() error {
+		info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
+		require.NoError(t, err)
+		tmpSysDB, ok := info.SchemaByName(utils.TemporaryDBName(mysql.SystemDB))
+		require.True(t, ok)
+		ti, err := restore.GetTableSchema(cluster.Domain, tmpSysDB.Name, ast.NewCIStr("user"))
+		require.NoError(t, err)
+		client.SetDatabases(map[string]*metautil.Database{
+			tmpSysDB.Name.O: {
+				Info:   tmpSysDB,
+				Tables: []*metautil.Table{{DB: tmpSysDB, Info: ti}},
+			},
+		})
+		return client.RestoreSystemSchemas(ctx, filter.CaseInsensitive(filter.NewSchemasFilter(mysql.SystemDB)), false)
+	}
+
+	err := restoreUserTable()
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err), "%v", err)
+	require.Contains(t, strings.ToLower(err.Error()), "create_tablespace_priv")
+	tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM mysql.user WHERE User='%s'", nullUserName)).Check(testkit.Rows("0"))
+
+	tk.MustExec(fmt.Sprintf("UPDATE __TiDB_BR_Temporary_mysql.user SET User='%s', Create_tablespace_priv='Y' WHERE User='%s'", userName, nullUserName))
+	require.NoError(t, restoreUserTable())
+	tk.MustQuery(fmt.Sprintf("SELECT Create_tablespace_priv FROM mysql.user WHERE User='%s' AND Host='%%'", userName)).
+		Check(testkit.Rows("Y"))
 }
 
 // NOTICE: Once there is a new system table, BR needs to ensure that it is correctly classified:
