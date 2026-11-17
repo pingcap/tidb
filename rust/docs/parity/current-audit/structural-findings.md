@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**9 unresolved: 6 open, 3 partial.**
+**8 unresolved: 5 open, 3 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -39,7 +39,6 @@ unresolved until it is restated against its Go owner or closed.
 | --- | --- | --- | --- |
 | S01 | open | Builtins reach session state through hand-built hooks (a method on `tidb_exprctx::Columns`, a field on `StmtContext`, a method on the executor's builder trait, a session implementation) instead of Go's optional eval-property providers: Go's `session.go` builds `sessionexpr.NewExprContext`, which installs the KV-store, infoschema, privilege-checker, session-vars, SQL-executor, sequence, advisory-lock and DDL-owner providers that builtins read (`builtinTiDBMVCCInfoSig` embeds `KVStorePropReader` / `PrivilegeCheckerPropReader`). `tidb-sessionexpr` and `tidb-expropt` port them, but the live session never builds that context. A consequence: `StmtContext` computes the PROCESS privilege for every statement, where Go asks the privilege checker only when `TIDB_DECODE_SQL_DIGESTS` is built or evaluated | `pkg/expression/sessionexpr`, `pkg/expression/expropt`, `pkg/session/session.go` |
 | S02 | open | `TableCommon` keeps the public columns and the non-public (adding or changing) columns as two lists, and an index's `column_offsets` index whichever list it was loaded against (public for a public index, public then non-public for a non-public one). Go's `TableCommon.Columns` is every `tblInfo.Columns` entry in metadata order, `Cols()` / `VisibleCols()` / `WritableCols()` / `DeletableCols()` are slices derived from it, and `IndexColumn.Offset` always indexes `tblInfo.Columns`; the two bases caused the MODIFY COLUMN mutation-checker panic | `pkg/table/tables/tables.go` (`TableCommon`, `initTableCommon`) |
-| S04 | open | Only the distributed (DXF) reorganization runs as Go's `runReorgJob` does (`DistReorgSlot`: `reorgFn` on its own thread, each step waiting on `doneCh` until the progress tick); the local backfill still runs inside the step against a cooperative deadline (`BackfillExecutor::deadline`). Go runs every `reorgFn` asynchronously under the job's `reorgCtx` | `pkg/ddl/reorg.go` (`runReorgJob`, `reorgCtx`) |
 
 ### Domain and process services
 

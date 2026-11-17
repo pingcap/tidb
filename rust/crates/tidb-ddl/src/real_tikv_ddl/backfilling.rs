@@ -21,7 +21,7 @@
 //! order.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -60,8 +60,6 @@ pub(super) enum BatchStep {
 pub(super) enum TableRecordOutcome {
     /// Every task is done; the handle is past `end`.
     Done,
-    /// The step's time ran out; the handle names where to resume.
-    Progress,
     /// The job was cancelled or paused.
     Interrupted,
     /// A batch failed.
@@ -96,8 +94,6 @@ pub(super) struct BackfillExecutor<'a> {
     /// Go `reorgInfo.UpdateReorgMeta(nextKey, sessPool)`; a failure is only
     /// logged.
     pub update_reorg_meta: &'a (dyn Fn(&[u8]) + Sync),
-    /// When this step stops and hands the job back (`ErrWaitReorgTimeout`).
-    pub deadline: Instant,
 }
 
 /// Go `reorgBackfillTask`.
@@ -113,8 +109,8 @@ struct BackfillResult {
     added_count: u64,
     next_key: Vec<u8>,
     warnings: Vec<(u16, String, i64)>,
-    /// Whether the task's range is exhausted; a task the deadline stopped
-    /// part way is not.
+    /// Whether the task's range is exhausted; a task stopped part way (the
+    /// job stopped being runnable) is not.
     done: bool,
     err: Option<TableRecordOutcome>,
 }
@@ -300,8 +296,8 @@ pub(super) fn load_table_ranges(
 }
 
 /// Go `backfillWorker.handleBackfillTask`: the task's batches, each in its
-/// own transaction, until its range is exhausted, the job stops being
-/// runnable, or the step's deadline passes.
+/// own transaction, until its range is exhausted or the job stops being
+/// runnable.
 fn handle_backfill_task(
     exec: &BackfillExecutor<'_>,
     task: ReorgBackfillTask,
@@ -318,9 +314,6 @@ fn handle_backfill_task(
     };
     let mut start = task.start_key;
     loop {
-        if Instant::now() >= exec.deadline {
-            stop.store(true, Ordering::SeqCst);
-        }
         if stop.load(Ordering::SeqCst) {
             return result;
         }
@@ -377,7 +370,7 @@ pub(super) fn write_physical_table_record(
     exec: &BackfillExecutor<'_>,
     start_key: &[u8],
     end_key: &[u8],
-    total: &mut i64,
+    total: &AtomicI64,
     warnings: &mut Vec<(u16, String, i64)>,
 ) -> Result<(TableRecordOutcome, Vec<u8>), ClusterDdlError> {
     // Go `txnBackfillExecutor.expectedWorkerSize`.
@@ -552,13 +545,13 @@ pub(super) fn write_physical_table_record(
                 Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
             };
             cnt += 1;
-            *total += result.added_count as i64;
+            total.fetch_add(result.added_count as i64, Ordering::SeqCst);
             merge_warnings(warnings, result.warnings);
             if let Some(err) = result.err {
                 tidb_ddl_logutil::ddl_logger().warn(
                     "backfill worker failed",
                     &[
-                        tidb_log::Field::new("total added count", tidb_log::Value::I64(*total)),
+                        tidb_log::Field::new("total added count", tidb_log::Value::I64(total.load(Ordering::SeqCst))),
                         hex_field("start key", start_key),
                         hex_field("result next key", &result.next_key),
                     ],
@@ -585,19 +578,21 @@ pub(super) fn write_physical_table_record(
     let next_key = partial.remove(&keeper.current).unwrap_or(keeper.next_key);
     match failure {
         Some(TableRecordOutcome::Failed(error)) => Ok((TableRecordOutcome::Failed(error), next_key)),
+        // A stopped task (the job stopped being runnable) hands the job back
+        // with the handle where the tasks stopped.
         Some(_) => {
             (exec.update_reorg_meta)(&next_key);
             Ok((TableRecordOutcome::Interrupted, next_key))
         }
         None if stop.load(Ordering::SeqCst) || !all_done || next_key.as_slice() < end_key => {
             (exec.update_reorg_meta)(&next_key);
-            Ok((TableRecordOutcome::Progress, next_key))
+            Ok((TableRecordOutcome::Interrupted, next_key))
         }
         None => {
             info(
                 "backfill workers successfully processed",
                 vec![
-                    tidb_log::Field::new("total added count", tidb_log::Value::I64(*total)),
+                    tidb_log::Field::new("total added count", tidb_log::Value::I64(total.load(Ordering::SeqCst))),
                     hex_field("start key", start_key),
                 ],
             );
@@ -715,13 +710,12 @@ mod tests {
             backfill_data: &backfill,
             range_end_key: &range_end,
             update_reorg_meta: &update,
-            deadline: Instant::now() + Duration::from_secs(60),
         };
-        let (mut total, mut warnings) = (0, Vec::new());
-        let (outcome, next) = write_physical_table_record(&exec, b"a", b"z", &mut total, &mut warnings).unwrap();
+        let (total, mut warnings) = (AtomicI64::new(0), Vec::new());
+        let (outcome, next) = write_physical_table_record(&exec, b"a", b"z", &total, &mut warnings).unwrap();
         assert!(matches!(outcome, TableRecordOutcome::Done));
         assert_eq!(next, b"z");
-        assert_eq!(total, 4);
+        assert_eq!(total.load(Ordering::SeqCst), 4);
         let mut ranges = ran.lock().unwrap().clone();
         ranges.sort();
         assert_eq!(
@@ -745,7 +739,7 @@ mod tests {
 
         let failing = BackfillExecutor { shrink_end_key: true, concurrency: 1, ..exec };
         ran.lock().unwrap().clear();
-        let (outcome, next) = write_physical_table_record(&failing, b"a", b"z", &mut total, &mut warnings).unwrap();
+        let (outcome, next) = write_physical_table_record(&failing, b"a", b"z", &total, &mut warnings).unwrap();
         assert!(matches!(outcome, TableRecordOutcome::Failed(_)));
         // The handle stays past the tasks done before the failed one.
         assert_eq!(next, b"f");
@@ -814,52 +808,15 @@ mod tests {
             backfill_data: &backfill,
             range_end_key: &range_end,
             update_reorg_meta: &update,
-            deadline: Instant::now() + Duration::from_secs(60),
         };
-        let (mut total, mut warnings) = (0, Vec::new());
-        let (outcome, next) = write_physical_table_record(&exec, b"a", b"m", &mut total, &mut warnings).unwrap();
+        let (total, mut warnings) = (AtomicI64::new(0), Vec::new());
+        let (outcome, next) = write_physical_table_record(&exec, b"a", b"m", &total, &mut warnings).unwrap();
         assert!(matches!(outcome, TableRecordOutcome::Done));
         assert_eq!(next, b"m");
-        assert_eq!(total, 12);
+        assert_eq!(total.load(Ordering::SeqCst), 12);
         let seen = seen.lock().unwrap().clone();
         assert_eq!(seen[0], 128);
         assert_eq!(*seen.last().unwrap(), 7);
         assert!(peak_late.load(Ordering::SeqCst) > 1, "the workers grew to the job's concurrency");
-    }
-
-    /// A step whose time runs out mid-task hands the job back with the
-    /// handle where that task stopped (Go's `ErrWaitReorgTimeout` with the
-    /// reorg meta last updated), so the next step resumes there.
-    #[test]
-    fn a_deadline_mid_task_resumes_where_the_task_stopped() {
-        let backfill = |start: &[u8], _end: &[u8], _batch: usize| {
-            std::thread::sleep(Duration::from_millis(80));
-            let mut next = start.to_vec();
-            next.push(b'5');
-            Ok(BatchStep::Advanced { next_key: next, done: false, added: 2, batch_warnings: Vec::new() })
-        };
-        let range_end = |_: &[u8], end: &[u8]| Ok(end.to_vec());
-        let updates = Mutex::new(Vec::new());
-        let update = |key: &[u8]| updates.lock().unwrap().push(key.to_vec());
-        let exec = BackfillExecutor {
-            job_id: 7,
-            job_query: "",
-            region_store: None,
-            physical_id: 1,
-            concurrency: 2,
-            batch_size: 128,
-            reload_config: &|| None,
-            shrink_end_key: true,
-            backfill_data: &backfill,
-            range_end_key: &range_end,
-            update_reorg_meta: &update,
-            deadline: Instant::now() + Duration::from_millis(40),
-        };
-        let (mut total, mut warnings) = (0, Vec::new());
-        let (outcome, next) = write_physical_table_record(&exec, b"a", b"z", &mut total, &mut warnings).unwrap();
-        assert!(matches!(outcome, TableRecordOutcome::Progress));
-        assert_eq!(next, b"a5");
-        assert_eq!(total, 2);
-        assert_eq!(updates.lock().unwrap().last().unwrap(), b"a5");
     }
 }

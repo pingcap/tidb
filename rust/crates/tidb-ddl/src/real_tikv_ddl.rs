@@ -400,6 +400,20 @@ impl SchemaVersionNotifier for tidb_pd_client::EtcdClient {
 ///
 /// [`ClusterTableStorage`]: tidb_store_driver_txn::cluster_storage::ClusterTableStorage
 pub trait IndexBackfiller: Sync {
+    /// The worker's backfiller as Go's asynchronous `reorgFn` holds it (the
+    /// closure captures the worker and its `ddlCtx`).
+    fn shared(&self) -> Arc<dyn IndexBackfiller + Send>;
+
+    /// Go `isReorgRunnable`'s owner half for a local reorganization: the
+    /// worker is not closed (`ddlCtx.ctx`) and this node owns DDL
+    /// (`ddlCtx.isOwner`).
+    ///
+    /// # Errors
+    /// The worker stopped or lost the ownership.
+    fn check_owner(&self) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Go `w.sessPool`: the worker's sessions, which a RECOVER step reaches
     /// GC through. `None` for a worker without one.
     fn session_pool(&self) -> Option<Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>> {
@@ -981,11 +995,11 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
         tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen()), job_w.clone(), worker,
     );
     schema_state.info_cache = schema_sync.info_cache();
-    let dist_reorg = add_index_reorg::DistReorgSlot::default();
+    let reorg_slot = add_index_reorg::ReorgSlot::default();
     loop {
         let result = transit_one_job_step_and_wait_sync(
             &opener, &mut job_w, &mut schema_state, timeout, job_done, notifier,
-            backfiller, check_constraint_validator, schema_sync, check_owner, wait_retry, &dist_reorg,
+            backfiller, check_constraint_validator, schema_sync, check_owner, wait_retry, &reorg_slot,
         );
         match result {
             Ok(()) if job_w.job.as_ref().unwrap().read().in_final_state() => {
@@ -1025,7 +1039,7 @@ fn transit_one_job_step_and_wait_sync<S: StoreClient>(
     schema_sync: &dyn DdlSchemaSync,
     check_owner: &(dyn Fn() -> Result<(), String> + Sync),
     wait_retry: &dyn Fn(Duration) -> Result<(), String>,
-    dist_reorg: &add_index_reorg::DistReorgSlot,
+    reorg_slot: &add_index_reorg::ReorgSlot,
 ) -> Result<(), ClusterDdlError> {
     let ddl_job_id = job_w.job.as_ref().unwrap().read().id;
     let mut step_committed = false;
@@ -1034,7 +1048,7 @@ fn transit_one_job_step_and_wait_sync<S: StoreClient>(
         // reorganization ran cancels the step context the reorganization
         // still holds.
         if job_w.job.as_ref().unwrap().read().is_rollingback() {
-            dist_reorg.cancel_step();
+            reorg_slot.cancel_step();
         }
         schema_state.mdl_enabled =
             tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen());
@@ -1067,7 +1081,7 @@ fn transit_one_job_step_and_wait_sync<S: StoreClient>(
                     backfiller,
                     &reorg,
                     check_owner,
-                    dist_reorg,
+                    reorg_slot,
                 )?;
                 schema_state.reorg.push(outcome);
             }

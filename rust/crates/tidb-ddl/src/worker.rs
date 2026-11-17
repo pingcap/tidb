@@ -1166,7 +1166,8 @@ where
                                 let backfiller =
                                     KvTableIndexBackfiller::new(&row_ids, &session_pool)
                                         .with_region_store(region_store)
-                                        .with_start_mode(start_mode);
+                                        .with_start_mode(start_mode)
+                                        .with_owner(Arc::clone(&owner), Arc::clone(&stop));
                                 // Go `getJobRunCtx`: the job context carries
                                 // the submitter's done signal, when this node
                                 // has one.
@@ -4137,6 +4138,7 @@ impl tidb_autoid::AutoIdStore for DdlTransactionAutoIdStore {
     }
 }
 
+#[derive(Clone)]
 struct KvTableIndexBackfiller {
     /// The node's row-ID allocators, for the reorg handle's row.
     row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -4146,6 +4148,10 @@ struct KvTableIndexBackfiller {
     region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
     /// Go `jobCtx.oldDDLCtx.startMode`.
     start_mode: crate::StartMode,
+    /// Go `ddlCtx.ownerManager` and `ddlCtx.ctx`: whether this node still
+    /// owns DDL, and whether its worker was stopped; `None` for a worker
+    /// that always owns it.
+    owner: Option<(Arc<dyn tidb_owner::Manager>, Arc<AtomicBool>)>,
 }
 
 impl KvTableIndexBackfiller {
@@ -4158,7 +4164,13 @@ impl KvTableIndexBackfiller {
             session_pool: Arc::clone(session_pool),
             region_store: None,
             start_mode: crate::StartMode::Normal,
+            owner: None,
         }
+    }
+
+    fn with_owner(mut self, owner: Arc<dyn tidb_owner::Manager>, stop: Arc<AtomicBool>) -> Self {
+        self.owner = Some((owner, stop));
+        self
     }
 
     fn with_start_mode(mut self, start_mode: crate::StartMode) -> Self {
@@ -4173,6 +4185,19 @@ impl KvTableIndexBackfiller {
 }
 
 impl IndexBackfiller for KvTableIndexBackfiller {
+    fn shared(&self) -> Arc<dyn IndexBackfiller + Send> {
+        Arc::new(self.clone())
+    }
+
+    fn check_owner(&self) -> Result<(), String> {
+        match &self.owner {
+            Some((owner, stop)) if stop.load(Ordering::Acquire) || !owner.is_owner() => {
+                Err("DDL worker stopped or ownership lost".to_owned())
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn session_pool(&self) -> Option<Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>> {
         Some(Arc::clone(&self.session_pool))
     }

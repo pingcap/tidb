@@ -19,7 +19,7 @@
 //! optimistic transaction that locks the rows it indexed, and is retried on a
 //! write conflict like Go's `kv.RunInNewTxn(..., retryable=true, ...)`.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use tidb_model::JobState;
 use tidb_txnkv::transaction::BufferMutation;
 
@@ -46,7 +46,7 @@ pub(super) fn run_add_index_reorg<S>(
     backfiller: &dyn IndexBackfiller,
     reorg: &AddIndexReorg,
     check_owner: &(dyn Fn() -> Result<(), String> + Sync),
-    dist_reorg: &DistReorgSlot,
+    reorg_slot: &ReorgSlot,
 ) -> Result<ReorgOutcome, ClusterDdlError>
 where
     S: StoreClient,
@@ -66,7 +66,7 @@ where
         ReorgStageRequest::Run(handle) => {
             // Go `jobCtx.initStepCtx`: a step a reorg timeout ended leaves
             // its context to the next.
-            let step_cancelled = dist_reorg.step_ctx();
+            let step_cancelled = reorg_slot.step_ctx();
             std::thread::scope(|scope| {
                 let (stop_checking_job_cancelled, stopped) = std::sync::mpsc::channel::<()>();
                 let step_cancelled = &step_cancelled;
@@ -87,9 +87,8 @@ where
                     &sess_pool,
                     reorg,
                     handle,
-                    check_owner,
                     step_cancelled,
-                    dist_reorg,
+                    reorg_slot,
                     &mut warnings,
                 );
                 drop(stop_checking_job_cancelled);
@@ -495,26 +494,31 @@ fn reorg_runnable(
     Ok(true)
 }
 
-/// Go `reorgCtx` of a distributed reorganization: `reorgFn`
-/// (`executeDistTask`) runs on its own thread, and each job step waits on
-/// its `doneCh` until the progress tick (`ErrWaitReorgTimeout`).
-struct DistReorgCtx {
+/// Go `reorgCtx`: the reorganization's `reorgFn` (a local backfill or merge,
+/// or `executeDistTask`) runs on its own thread, and each job step waits on
+/// its `doneCh` until the progress tick (`ErrWaitReorgTimeout`), recording
+/// the rows and warnings so far.
+struct ReorgCtx {
     /// Go `jobContext.stepCtx`, which outlives the steps a reorg timeout
     /// ends.
     step_cancelled: Arc<AtomicBool>,
     /// Go `reorgCtx.doneCh`.
     done: crossbeam_channel::Receiver<Result<ReorgResult, ClusterDdlError>>,
+    /// Go `reorgCtx.rowCount`.
+    row_count: Arc<AtomicI64>,
+    /// Go `reorgCtx.mu.warnings`.
+    warnings: Arc<Mutex<Vec<(u16, String, i64)>>>,
 }
 
-/// The distributed reorganization of one owner run of a job (Go
-/// `reorgContexts`, keyed by the job). When the run ends, its step context
-/// is cancelled, as Go's worker context is: the reorganization then pauses
-/// or cancels its task as the job's state says, or just stops.
+/// The reorganization of one owner run of a job (Go `reorgContexts`, keyed
+/// by the job). When the run ends, its step context is cancelled, as Go's
+/// worker context is: the reorganization then pauses or cancels its task as
+/// the job's state says, or just stops.
 #[derive(Default)]
-pub(crate) struct DistReorgSlot(std::sync::Mutex<Option<DistReorgCtx>>);
+pub(crate) struct ReorgSlot(Mutex<Option<ReorgCtx>>);
 
-impl DistReorgSlot {
-    fn lock(&self) -> std::sync::MutexGuard<'_, Option<DistReorgCtx>> {
+impl ReorgSlot {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Option<ReorgCtx>> {
         self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
@@ -534,61 +538,57 @@ impl DistReorgSlot {
         }
     }
 
-    /// Go `runReorgJob` over `executeDistTask`: the reorganization starts on
-    /// its own thread unless it already runs, and this step waits for it at
-    /// most one progress interval.
-    fn run<S: StoreClient>(
+    /// Go `runReorgJob`: `reorg_fn` starts on its own thread unless the job's
+    /// reorganization already runs, and this step waits for it at most one
+    /// progress interval; a step the interval ends records the rows
+    /// (`rc.getRowCount`) and the warnings so far (`mergeWarningsIntoJob`).
+    fn run(
         &self,
-        opener: &Arc<RealOptimisticTransactionOpener<S>>,
-        timeout: Duration,
-        sess_pool: &Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
-        reorg: &AddIndexReorg,
-        job: &tidb_model::Job,
         step_cancelled: &Arc<AtomicBool>,
+        row_count: i64,
+        warnings: &mut Vec<(u16, String, i64)>,
+        reorg_fn: impl FnOnce(Arc<AtomicI64>, Arc<Mutex<Vec<(u16, String, i64)>>>) -> Result<ReorgResult, ClusterDdlError>
+            + Send
+            + 'static,
     ) -> Result<ReorgResult, ClusterDdlError> {
-        let done = {
+        let (done, rows, reorg_warnings) = {
             let mut slot = self.lock();
             let ctx = slot.get_or_insert_with(|| {
                 let (done_tx, done) = crossbeam_channel::bounded(1);
-                let ctx = DistReorgCtx { step_cancelled: Arc::clone(step_cancelled), done };
-                let (opener, sess_pool, reorg, job, step_cancelled) =
-                    (Arc::clone(opener), Arc::clone(sess_pool), reorg.clone(), job.clone(), Arc::clone(step_cancelled));
+                let rows = Arc::new(AtomicI64::new(row_count));
+                let reorg_warnings = Arc::new(Mutex::new(Vec::new()));
+                let (thread_rows, thread_warnings) = (Arc::clone(&rows), Arc::clone(&reorg_warnings));
                 std::thread::spawn(tidb_cpuprofile::labels::inherit(move || {
-                    // Go `isReorgRunnable(stepCtx, true)`: a distributed
-                    // reorganization does not check the ownership.
-                    let result = dist::execute_dist_task(
-                        &opener,
-                        timeout,
-                        sess_pool.as_ref(),
-                        &reorg,
-                        &job,
-                        &|| Ok(()),
-                        &step_cancelled,
-                    );
-                    let _ = done_tx.send(result);
+                    let _ = done_tx.send(reorg_fn(thread_rows, thread_warnings));
                 }));
-                ctx
+                ReorgCtx { step_cancelled: Arc::clone(step_cancelled), done, row_count: rows, warnings: reorg_warnings }
             });
-            ctx.done.clone()
+            (ctx.done.clone(), Arc::clone(&ctx.row_count), Arc::clone(&ctx.warnings))
+        };
+        let take_warnings = |warnings: &mut Vec<(u16, String, i64)>| {
+            let part = std::mem::take(&mut *reorg_warnings.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+            super::backfilling::merge_warnings(warnings, part);
         };
         match done.recv_timeout(update_progress_interval()) {
             Ok(result) => {
                 self.lock().take();
+                take_warnings(warnings);
                 result
             }
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
                 tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/onRunReorgJobTimeout", &mut ());
-                Ok(ReorgResult::Progress(reorg.row_count))
+                take_warnings(warnings);
+                Ok(ReorgResult::Progress(rows.load(Ordering::SeqCst)))
             }
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                 self.lock().take();
-                Err(ClusterDdlError::backfill_message("the distributed reorganization ended without a result".to_owned()))
+                Err(ClusterDdlError::backfill_message("the reorganization ended without a result".to_owned()))
             }
         }
     }
 }
 
-impl Drop for DistReorgSlot {
+impl Drop for ReorgSlot {
     fn drop(&mut self) {
         self.cancel_step();
     }
@@ -662,16 +662,14 @@ fn run_reorg<S>(
     sess_pool_arc: &Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
     reorg: &AddIndexReorg,
     handle: &ReorgHandle,
-    check_owner: &(dyn Fn() -> Result<(), String> + Sync),
     step_cancelled_arc: &Arc<AtomicBool>,
-    dist_reorg: &DistReorgSlot,
+    reorg_slot: &ReorgSlot,
     warnings: &mut Vec<(u16, String, i64)>,
 ) -> Result<ReorgResult, ClusterDdlError>
 where
     S: StoreClient,
 {
     let sess_pool = sess_pool_arc.as_ref();
-    let step_cancelled = step_cancelled_arc.as_ref();
     // Go `addTableIndex`: an ingest job with a distributed reorg runs both
     // its read step and its temp-index merge as a DXF task; a local ingest
     // reads through the backend and merges as the transactional path does.
@@ -691,9 +689,66 @@ where
     } else {
         None
     };
-    if let Some(job) = ingest_job.as_ref().filter(|job| job.reorg_meta.as_ref().is_some_and(|m| m.read().is_dist_reorg)) {
-        return dist_reorg.run(opener, timeout, sess_pool_arc, reorg, job, step_cancelled_arc);
+    let (opener, sess_pool, reorg, step_cancelled) =
+        (Arc::clone(opener), Arc::clone(sess_pool_arc), reorg.clone(), Arc::clone(step_cancelled_arc));
+    if let Some(job) = ingest_job.clone().filter(|job| job.reorg_meta.as_ref().is_some_and(|m| m.read().is_dist_reorg)) {
+        let row_count = reorg.row_count;
+        return reorg_slot.run(step_cancelled_arc, row_count, warnings, move |_, _| {
+            // Go `isReorgRunnable(stepCtx, true)`: a distributed
+            // reorganization does not check the ownership.
+            dist::execute_dist_task(&opener, timeout, sess_pool.as_ref(), &reorg, &job, &|| Ok(()), &step_cancelled)
+        });
     }
+    // Go's local `reorgFn` (the txn backfill, the local ingest, the temp
+    // index merge) on the job's `reorgCtx`; `isReorgRunnable(ctx, false)`
+    // checks the worker's ownership.
+    let (backfiller, handle, row_count) = (backfiller.shared(), handle.clone(), reorg.row_count);
+    reorg_slot.run(step_cancelled_arc, row_count, warnings, move |total, warnings| {
+        let check_owner = || backfiller.check_owner();
+        run_local_reorg(
+            &opener,
+            timeout,
+            backfiller.as_ref(),
+            &sess_pool,
+            &reorg,
+            &handle,
+            ingest_job,
+            &check_owner,
+            &step_cancelled,
+            &total,
+            &warnings,
+        )
+    })
+}
+
+/// Go's local `reorgFn` from `handle` on: every physical table's backfill or
+/// temp-index merge, `total` and `warnings` counting as it goes.
+#[allow(clippy::too_many_arguments)]
+fn run_local_reorg<S>(
+    opener: &Arc<RealOptimisticTransactionOpener<S>>,
+    timeout: Duration,
+    backfiller: &dyn IndexBackfiller,
+    sess_pool_arc: &Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
+    reorg: &AddIndexReorg,
+    handle: &ReorgHandle,
+    ingest_job: Option<tidb_model::Job>,
+    check_owner: &(dyn Fn() -> Result<(), String> + Sync),
+    step_cancelled: &AtomicBool,
+    total: &AtomicI64,
+    shared_warnings: &Mutex<Vec<(u16, String, i64)>>,
+) -> Result<ReorgResult, ClusterDdlError>
+where
+    S: StoreClient,
+{
+    let sess_pool = sess_pool_arc.as_ref();
+    let mut step_warnings = Vec::new();
+    let warnings = &mut step_warnings;
+    let flush_warnings = |warnings: &mut Vec<(u16, String, i64)>| {
+        super::backfilling::merge_warnings(
+            &mut shared_warnings.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
+            std::mem::take(warnings),
+        );
+    };
     let ingest_job = ingest_job.filter(|_| !reorg.merging);
     let element_type = reorg_element(reorg).map_or(INDEX_ELEMENT_KEY, |(_, kind)| kind);
     let first_partition = reorg
@@ -706,8 +761,6 @@ where
         .iter()
         .position(|id| *id == handle.element_id)
         .unwrap_or(0);
-    let started = std::time::Instant::now();
-    let mut total: i64 = reorg.row_count;
     let mut current = handle.clone();
     for (partition_offset, physical_id) in
         reorg.physical_ids.iter().enumerate().skip(first_partition)
@@ -741,7 +794,7 @@ where
                 Ok(Some((start, end))) => items.push((None, start, end)),
                 // Go `getTableRange` of an empty table: no start, no end.
                 Ok(None) => items.push((None, Vec::new(), Vec::new())),
-                Err(error) => return Ok(sql_failure(&error, total)),
+                Err(error) => return Ok(sql_failure(&error, total.load(Ordering::SeqCst))),
             }
         }
         if !resuming {
@@ -787,9 +840,11 @@ where
             if let Some(job)=&ingest_job {
                 let pool=backfiller.session_pool().ok_or_else(||ClusterDdlError::backfill_message("ingest requires the DDL session pool"))?;
                 update_reorg_meta(sess_pool,reorg,&handle);
-                match ingest::add_index_with_local_ingest(opener,timeout,backfiller,pool,reorg,job,&handle,check_owner,step_cancelled,warnings)? {
-                    ReorgResult::Done(rows)=>{total+=rows;continue;},
-                    ReorgResult::Failed{code,message,rows,identity}=>return Ok(ReorgResult::Failed{code,message,rows:total+rows,identity}),
+                let result = ingest::add_index_with_local_ingest(opener,timeout,backfiller,pool,reorg,job,&handle,check_owner,step_cancelled,warnings);
+                flush_warnings(warnings);
+                match result? {
+                    ReorgResult::Done(rows)=>{total.fetch_add(rows,Ordering::SeqCst);continue;},
+                    ReorgResult::Failed{code,message,rows,identity}=>return Ok(ReorgResult::Failed{code,message,rows:total.load(Ordering::SeqCst)+rows,identity}),
                     other=>return Ok(other),
                 }
             }
@@ -882,24 +937,15 @@ where
                 backfill_data: &backfill_data,
                 range_end_key: &range_end_key,
                 update_reorg_meta: &update_reorg_meta,
-                deadline: started + update_progress_interval(),
             };
-            let (outcome, next_key) = write_physical_table_record(
-                &exec,
-                &current.start_key,
-                &current.end_key,
-                &mut total,
-                warnings,
-            )?;
+            let written = write_physical_table_record(&exec, &current.start_key, &current.end_key, total, warnings);
+            flush_warnings(warnings);
+            let (outcome, next_key) = written?;
             current.start_key = next_key;
             match outcome {
                 TableRecordOutcome::Done => {}
-                TableRecordOutcome::Progress => {
-                    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/onRunReorgJobTimeout", &mut ());
-                    return Ok(ReorgResult::Progress(total));
-                }
                 TableRecordOutcome::Interrupted => return Ok(ReorgResult::Interrupted),
-                TableRecordOutcome::Failed(error) => return Ok(sql_failure(&error, total)),
+                TableRecordOutcome::Failed(error) => return Ok(sql_failure(&error, total.load(Ordering::SeqCst))),
             }
         }
     }
@@ -908,7 +954,7 @@ where
         // reaches `afterUpdatePartitionReorgInfo`.
         after_update_partition_reorg_info(sess_pool, reorg)?;
     }
-    Ok(ReorgResult::Done(total))
+    Ok(ReorgResult::Done(total.load(Ordering::SeqCst)))
 }
 
 /// Go `failpoint.InjectCall("afterUpdatePartitionReorgInfo", reorgInfo.Job)`;
@@ -1107,5 +1153,44 @@ mod tests {
         step_cancelled.store(true, Ordering::SeqCst);
         assert!(!reorg_runnable(&step_cancelled, &check_owner).unwrap());
         assert_eq!(owner_asked.load(Ordering::SeqCst), 1);
+    }
+
+    /// Go `runReorgJob`: the reorganization starts once on its own thread;
+    /// each step waits one progress interval and, while it still runs,
+    /// answers its rows so far (`ErrWaitReorgTimeout`) with its warnings
+    /// moved to the job; a later step answers its result.
+    #[test]
+    fn a_reorganization_outlives_the_steps_that_wait_for_it() {
+        let _interval =
+            tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/ddl/updateProgressIntervalInMs", "return(1000)");
+        let slot = ReorgSlot::default();
+        let step_cancelled = slot.step_ctx();
+        let started = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (finish, finished) = crossbeam_channel::bounded::<()>(0);
+        let reorg_fn = {
+            let started = Arc::clone(&started);
+            move |rows: Arc<AtomicI64>, warnings: Arc<Mutex<Vec<(u16, String, i64)>>>| {
+                started.fetch_add(1, Ordering::SeqCst);
+                rows.fetch_add(7, Ordering::SeqCst);
+                warnings.lock().unwrap().push((1366, "bad value".to_owned(), 2));
+                let _ = finished.recv();
+                rows.fetch_add(3, Ordering::SeqCst);
+                Ok(ReorgResult::Done(rows.load(Ordering::SeqCst)))
+            }
+        };
+        let mut warnings = Vec::new();
+        let first = slot.run(&step_cancelled, 10, &mut warnings, reorg_fn.clone()).unwrap();
+        assert!(matches!(first, ReorgResult::Progress(17)), "{first:?}");
+        assert_eq!(warnings, [(1366, "bad value".to_owned(), 2)]);
+        // The next step joins the running reorganization: no second start.
+        let finish_later = finish.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(10));
+            let _ = finish_later.send(());
+        });
+        let second = slot.run(&step_cancelled, 17, &mut warnings, reorg_fn).unwrap();
+        assert!(matches!(second, ReorgResult::Done(20)), "{second:?}");
+        assert_eq!(started.load(Ordering::SeqCst), 1);
+        assert!(slot.lock().is_none(), "a finished reorganization leaves the slot");
     }
 }
