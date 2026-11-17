@@ -552,7 +552,6 @@ batch on a limit 10 dry run delete /*+ USE_INDEX(t) */ from t;
 split statement examples
 DELETE /*+ USE_INDEX(`t` )*/ FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 9
 set @@tidb_max_chunk_size=35;
-set @@tidb_read_staleness=-100;
 drop table if exists t, t1;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, unique key(a));
@@ -656,6 +655,13 @@ insert into t values (96, 192);
 insert into t values (97, 194);
 insert into t values (98, 196);
 insert into t values (99, 198);
+set @@tidb_read_staleness=-100;
+batch on a limit 10 insert into t1 select * from t;
+Error 1105 (HY000): can't do non-transactional DML when tidb_read_staleness is set
+select @@tidb_read_staleness;
+@@tidb_read_staleness
+-100
+set @@tidb_read_staleness=0;
 batch on a limit 10 insert into t1 select * from t;
 number of jobs	job status
 10	all succeeded
@@ -768,7 +774,6 @@ number of jobs	job status
 batch on a limit 10 delete from t;
 number of jobs	job status
 10	all succeeded
-set @@tidb_read_staleness=0;
 select * from t;
 a	b
 select * from t1 order by a;
