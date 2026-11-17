@@ -129,7 +129,8 @@ type WriterOption struct {
 	Concurrency int
 	PartSize    int64
 	// DirectIO bypasses the OS page cache for local streaming writes. Other
-	// backends ignore it. Unsupported local filesystems return an error.
+	// backends ignore it. If opening with direct I/O fails, local storage logs a
+	// warning and falls back to buffered I/O.
 	DirectIO bool
 }
 

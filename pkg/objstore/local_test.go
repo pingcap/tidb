@@ -23,13 +23,18 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestLocalDirectIO(t *testing.T) {
@@ -42,8 +47,6 @@ func TestLocalDirectIO(t *testing.T) {
 				t.Run(fmt.Sprintf("part%d/size%d/chunk%d", partSize, size, chunkSize), func(t *testing.T) {
 					w, err := store.Create(ctx, "nested/data", &storeapi.WriterOption{DirectIO: true, PartSize: partSize})
 					require.NoError(t, err)
-					_, buffered := w.(*flushStorageWriter)
-					require.False(t, buffered, "DirectIO must select the direct writer")
 					data := make([]byte, size)
 					for i := range data {
 						data[i] = byte(i%251 + 1)
@@ -58,6 +61,10 @@ func TestLocalDirectIO(t *testing.T) {
 						clear(chunk)
 					}
 					require.NoError(t, w.Close(ctx))
+					if direct, ok := w.(*localDirectWriter); ok {
+						_, err := direct.file.Stat()
+						require.ErrorIs(t, err, os.ErrClosed)
+					}
 					got, err := store.ReadFile(ctx, "nested/data")
 					require.NoError(t, err)
 					require.Equal(t, expected, got)
@@ -92,13 +99,79 @@ func TestLocalDirectIO(t *testing.T) {
 	}
 }
 
+func TestLocalDirectIOFallback(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	for _, openErr := range []error{syscall.EINVAL, syscall.EOPNOTSUPP, errors.New("Failed to set F_NOCACHE: operation not supported")} {
+		t.Run(openErr.Error(), func(t *testing.T) {
+			core, logs := observer.New(zap.WarnLevel)
+			t.Cleanup(log.ReplaceGlobals(zap.New(core), &log.ZapProperties{}))
+			const secret = "secret-access-key=do-not-log"
+			const failpointName = "github.com/pingcap/tidb/pkg/objstore/openLocalDirectIO"
+			require.NoError(t, failpoint.EnableCall(failpointName, func(openFile *func(string, int, os.FileMode) (*os.File, error)) {
+				*openFile = func(name string, _ int, _ os.FileMode) (*os.File, error) {
+					if errno, ok := openErr.(syscall.Errno); ok {
+						return nil, &os.PathError{Op: "open", Path: name, Err: errno}
+					}
+					return nil, openErr
+				}
+			}))
+			t.Cleanup(func() { require.NoError(t, failpoint.Disable(failpointName)) })
+
+			name := "nested/" + secret
+			require.NoError(t, store.WriteFile(ctx, name, bytes.Repeat([]byte("old data"), 10000)))
+			w, err := store.Create(ctx, name, &storeapi.WriterOption{DirectIO: true, PartSize: 4097})
+			require.NoError(t, err)
+			require.IsType(t, &flushStorageWriter{}, w)
+			data := bytes.Repeat([]byte("buffered fallback\n"), 1000)
+			for offset := 0; offset < len(data); offset += 3000 {
+				chunk := data[offset:min(offset+3000, len(data))]
+				n, err := w.Write(ctx, chunk)
+				require.NoError(t, err)
+				require.Equal(t, len(chunk), n)
+			}
+			require.NoError(t, w.Close(ctx))
+			got, err := store.ReadFile(ctx, name)
+			require.NoError(t, err)
+			require.Equal(t, data, got)
+			require.Equal(t, 1, logs.Len())
+			require.Contains(t, logs.All()[0].Message, "falling back to buffered I/O")
+			require.NotContains(t, fmt.Sprint(logs.All()), secret)
+
+			for _, compression := range []compressedio.CompressType{compressedio.Gzip, compressedio.Snappy, compressedio.Zstd} {
+				compressed := WithCompression(store, compression, compressedio.DecompressConfig{})
+				w, err := compressed.Create(ctx, "compressed", &storeapi.WriterOption{DirectIO: true})
+				require.NoError(t, err)
+				n, err := w.Write(ctx, data)
+				require.NoError(t, err)
+				require.Equal(t, len(data), n)
+				require.NoError(t, w.Close(ctx))
+				got, err := compressed.ReadFile(ctx, "compressed")
+				require.NoError(t, err)
+				require.Equal(t, data, got)
+			}
+
+			// The buffered retry must still propagate real file-creation errors.
+			w, err = store.Create(ctx, "nested", &storeapi.WriterOption{DirectIO: true})
+			require.Error(t, err)
+			require.Nil(t, w)
+		})
+	}
+}
+
 func TestLocalDirectIOErrors(t *testing.T) {
 	ctx := context.Background()
 	filename := filepath.Join(t.TempDir(), "data")
 	for _, stage := range []string{"write", "close", "truncate", "buffered-close"} {
 		t.Run(stage, func(t *testing.T) {
-			w, err := newLocalDirectWriter(filename, 4096)
+			writer, err := newLocalDirectWriter(filename, 4096)
 			require.NoError(t, err)
+			w, ok := writer.(*localDirectWriter)
+			if !ok {
+				require.NoError(t, writer.Close(ctx))
+				t.Skip("filesystem does not support direct I/O")
+			}
 			require.NoError(t, w.file.Close())
 			// A real read-only descriptor makes writes or truncation fail while
 			// still allowing us to verify that the writer releases it on error.

@@ -17,10 +17,16 @@ package objstore
 import (
 	"context"
 	"io"
+	"math"
 	"os"
 
+	"github.com/docker/go-units"
 	"github.com/ncw/directio"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"go.uber.org/zap"
 )
 
 // localDirectWriter always copies into aligned memory. bufio.Writer cannot be
@@ -34,20 +40,28 @@ type localDirectWriter struct {
 	closed bool
 }
 
-func newLocalDirectWriter(filename string, partSize int64) (*localDirectWriter, error) {
+func newLocalDirectWriter(filename string, partSize int64) (objectio.Writer, error) {
 	const blockSize = int64(directio.BlockSize)
-	maxInt := int64(int(^uint(0) >> 1))
 	// Reserve space for both rounding and AlignedBlock's alignment allocation.
-	if partSize > maxInt-int64(directio.AlignSize)-(blockSize-1) {
+	if partSize > math.MaxInt-int64(directio.AlignSize)-(blockSize-1) {
 		return nil, errors.New("local direct I/O part size is too large")
 	}
-	bufferSize := int64(1 << 20)
+	bufferSize := int64(units.MiB)
 	if partSize > 0 {
 		bufferSize = (partSize + blockSize - 1) / blockSize * blockSize
 	}
-	file, err := directio.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
+	openFile := directio.OpenFile
+	failpoint.InjectCall("openLocalDirectIO", &openFile)
+	file, err := openFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
 	if err != nil {
-		return nil, errors.Trace(err)
+		// Some platforms do not preserve errno when enabling direct I/O fails.
+		// Retry a normal open, which still reports genuine file-creation errors.
+		if pathErr, ok := err.(*os.PathError); ok {
+			// A local filename can contain sensitive user-supplied information.
+			err = pathErr.Err
+		}
+		log.Warn("failed to open local file with direct I/O, falling back to buffered I/O", zap.Error(err))
+		return newLocalBufferedWriter(filename, partSize)
 	}
 	return &localDirectWriter{file: file, buf: directio.AlignedBlock(int(bufferSize))}, nil
 }
@@ -101,7 +115,8 @@ func (w *localDirectWriter) Close(_ context.Context) (err error) {
 	}
 	defer func() {
 		if !w.closed {
-			if closeErr := w.file.Close(); err == nil {
+			closeErr := w.file.Close()
+			if err == nil {
 				err = errors.Trace(closeErr)
 			}
 		}
