@@ -252,6 +252,49 @@ func TestAggInDisk(t *testing.T) {
 	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t group by c1;").Check(testkit.Rows())
 }
 
+func TestHashAggUniqueLimitThreshold(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_hashagg_unique_limit")
+	tk.MustExec("create table t_hashagg_unique_limit(a int)")
+
+	var insertSQL strings.Builder
+	insertSQL.WriteString("insert into t_hashagg_unique_limit values ")
+	for i := 0; i < 200; i++ {
+		if i > 0 {
+			insertSQL.WriteString(",")
+		}
+		insertSQL.WriteString(fmt.Sprintf("(%d)", i%20))
+	}
+	tk.MustExec(insertSQL.String())
+
+	tk.MustExec("set @@tidb_hashagg_partial_concurrency = 4")
+	tk.MustExec("set @@tidb_hashagg_final_concurrency = 4")
+
+	sql := "explain analyze select /*+ HASH_AGG() */ distinct a from t_hashagg_unique_limit limit 3"
+	hasParallelWorkerStat := func(rows [][]any) bool {
+		for _, row := range rows {
+			line := fmt.Sprintf("%v", row)
+			if strings.Contains(line, "HashAgg") && strings.Contains(line, "partial_worker") {
+				return true
+			}
+		}
+		return false
+	}
+
+	tk.MustExec("set @@tidb_hashagg_unique_limit_threshold = 0")
+	require.True(t, hasParallelWorkerStat(tk.MustQuery(sql).Rows()))
+
+	tk.MustExec("set @@tidb_hashagg_unique_limit_threshold = 2")
+	require.True(t, hasParallelWorkerStat(tk.MustQuery(sql).Rows()))
+
+	tk.MustExec("set @@tidb_hashagg_unique_limit_threshold = 3")
+	require.False(t, hasParallelWorkerStat(tk.MustQuery(sql).Rows()))
+
+	require.Len(t, tk.MustQuery("select /*+ HASH_AGG() */ distinct a from t_hashagg_unique_limit limit 3").Rows(), 3)
+}
+
 func TestRandomPanicConsume(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
