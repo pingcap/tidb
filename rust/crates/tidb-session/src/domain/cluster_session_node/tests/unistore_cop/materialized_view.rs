@@ -272,3 +272,96 @@ fn base_drop_column_waits_for_and_is_refused_after_the_log_adds_it() {
 fn alter_table_on_a_log_and_its_base_answers_as_go_master() {
     replay_go_master(include_str!("../../../../../testdata/mview_guards_go.jsonl"));
 }
+
+/// MODIFY / CHANGE COLUMN of a base table with a materialized view log
+/// against a Go master node's answers
+/// (`testdata/mview_modify_column_go.jsonl`): a tracked column's no-reorg
+/// change retypes the log's column (keeping the log's own key flags), and
+/// Go's refusals (renaming, NULL to NOT NULL, a reorganizing change of a
+/// tracked column) in Go's order.
+#[test]
+fn modify_column_of_a_logged_base_answers_as_go_master() {
+    let (stack, _session) = replay_go_master(include_str!("../../../../../testdata/mview_modify_column_go.jsonl"));
+    let (_, mlog) = stack.factory.catalog_snapshot().table_info_by_name("e29", "$mlog$t").unwrap();
+    let columns: Vec<String> = mlog
+        .read()
+        .columns
+        .iter_deref()
+        .map(|column| {
+            let column = column.read();
+            format!(
+                "{} {} {} {} {} {} {}",
+                column.name.original(),
+                column.field_type.code().mysql_type(),
+                column.field_type.flags(),
+                column.field_type.flen(),
+                column.field_type.decimal(),
+                column.field_type.charset_name(),
+                column.field_type.collation_name()
+            )
+        })
+        .collect();
+    // Go's `/schema/e29/$mlog$t`.
+    assert_eq!(
+        columns,
+        [
+            "a 8 0 20 0 binary binary",
+            "c 252 0 65535 0 utf8mb4 utf8mb4_bin",
+            "n 8 0 20 0 binary binary",
+            "_MLOG$_DML_TYPE 15 4097 1 0 utf8mb4 utf8mb4_bin",
+            "_MLOG$_OLD_NEW 1 4097 4 0 binary binary",
+        ]
+    );
+}
+
+/// Go master `buildInvolvingSchemaInfoForMaterializedViewBaseModifyColumn`:
+/// a MODIFY COLUMN of a logged base table involves the log, so a DROP
+/// MATERIALIZED VIEW LOG waits until the change, which rewrites the log's
+/// column, has finished.
+#[test]
+fn drop_log_waits_for_a_base_modify_column() {
+    let (stack, mut session) = replay_go_master(
+        r#"["set tidb_mview_enable = ON", "OK"]
+["create database e29", "OK"]
+["use e29", "OK"]
+["create table t (id int primary key, a int)", "OK"]
+["create materialized view log on t (a)", "OK"]"#,
+    );
+    let (paused_tx, paused_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = std::sync::Mutex::new(Some(release_rx));
+    let paused_tx = std::sync::Mutex::new(paused_tx);
+    let _pause = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep",
+        move |job: &mut dyn std::any::Any| {
+            let job = job.downcast_mut::<tidb_model::Job>().expect("the step's job");
+            if job.type_ != tidb_model::ActionType::ACTION_MODIFY_COLUMN {
+                return;
+            }
+            if let Some(release) = release_rx.lock().unwrap().take() {
+                paused_tx.lock().unwrap().send(()).unwrap();
+                release.recv().unwrap();
+            }
+        },
+    );
+    let mut modifier = stack.factory.open_session(session_context(2135)).unwrap();
+    assert_eq!(answer(&mut modifier, "use e29"), "OK");
+    let modify = std::thread::spawn(move || answer(&mut modifier, "alter table t modify column a bigint"));
+    paused_rx.recv_timeout(std::time::Duration::from_secs(30)).expect("the MODIFY COLUMN job starts");
+
+    let mut dropper = stack.factory.open_session(session_context(2136)).unwrap();
+    assert_eq!(answer(&mut dropper, "use e29"), "OK");
+    let (dropped_tx, dropped_rx) = std::sync::mpsc::channel();
+    let drop = std::thread::spawn(move || {
+        dropped_tx.send(answer(&mut dropper, "drop materialized view log on t")).unwrap();
+    });
+    assert!(
+        dropped_rx.recv_timeout(std::time::Duration::from_millis(500)).is_err(),
+        "the DROP MATERIALIZED VIEW LOG finished before the base MODIFY COLUMN"
+    );
+    release_tx.send(()).unwrap();
+    assert_eq!(modify.join().unwrap(), "OK");
+    assert_eq!(dropped_rx.recv_timeout(std::time::Duration::from_secs(30)).expect("the drop finishes"), "OK");
+    drop.join().unwrap();
+    assert_eq!(answer(&mut session, "show tables"), r#"RS:[["t"]]"#);
+}

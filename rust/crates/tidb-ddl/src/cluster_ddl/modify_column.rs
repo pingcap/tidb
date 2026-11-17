@@ -90,6 +90,8 @@ pub(crate) fn modify_column_with_info<S: MetaSnapshot>(
             original_col_name,
             column,
             position,
+            // Go master: the spec's `op` for the materialized view checks.
+            if rename_from.is_some() { "CHANGE COLUMN" } else { "MODIFY COLUMN" },
             context,
             has_null,
         ) {
@@ -137,6 +139,14 @@ pub(crate) fn modify_column_with_info<S: MetaSnapshot>(
     job.table_name = stored.name.lowercase().to_owned().into();
     // Go `NeedReorg: mayNeedChangeColData`.
     job.need_reorg = need_reorg;
+    let involving = super::materialized_view::involving_schema_info_for_materialized_view_base_modify_column(
+        catalog,
+        &schema.go_to_lower(),
+        &stored,
+    );
+    if !involving.is_empty() {
+        job.involving_schema_info = GoSharedSlice::from_vec(involving);
+    }
     let vars = job_context.ddl_reorg_vars();
     job.session_vars = Some(GoShared::new(std::collections::BTreeMap::from([
         (
@@ -259,6 +269,7 @@ fn get_modifiable_column_job(
     original_col_name: &str,
     column: &tidb_ast::ColumnDef,
     position: &tidb_ast::ColumnPosition,
+    op: &str,
     context: &DdlStatementContext,
     has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
 ) -> Result<ModifiableColumn, DdlPlanError> {
@@ -354,6 +365,15 @@ fn get_modifiable_column_job(
         &new_col.field_type,
         is_column_with_index(col.name.lowercase(), stored),
     );
+    super::materialized_view::validate_materialized_view_base_modify_column(
+        catalog,
+        stored,
+        &col,
+        &new_col,
+        op,
+        may_need_change_col_data,
+    )
+    .map_err(driver_refusal)?;
     if may_need_change_col_data {
         is_generated_related_column(stored, &new_col, &col)?;
         if is_columnar_index_column(stored, &col) {
@@ -1491,6 +1511,24 @@ fn plan_modify_column_step(
         check_column_already_exists(&target.info, &args, &new)
             .map_err(|error| cancel_ddl_job(active, error))?;
     }
+    // Go master: a base table's dependents are rechecked before a no-reorg
+    // sub-job's last reversible point.
+    if target.info.materialized_view_base.is_some()
+        && active.job.multi_schema_info.as_ref().is_some_and(|info| info.read().revertible)
+        && matches!(args.modify_column_type, modify_type::NO_REORG | modify_type::NO_REORG_WITH_CHECK)
+    {
+        let mut load = load_related_table_from_meta(txn, catalog);
+        if let Err(error) = super::materialized_view::build_materialized_view_related_table_info_for_modify_column(
+            &mut load,
+            "MODIFY COLUMN",
+            &target.info,
+            &old,
+            &new,
+        ) {
+            active.job.state = JobState::ROLLINGBACK;
+            return Err(DdlPlanError::from_mysql_error(error));
+        }
+    }
 
     match args.modify_column_type {
         modify_type::PRECHECK => {
@@ -1966,6 +2004,42 @@ fn adjust_foreign_key_children(
     Ok(children)
 }
 
+/// Go master `buildMaterializedViewRelatedTableInfoForModifyColumn`'s
+/// `loadTable` in a job step: the table found by id in the latest catalog,
+/// read back from the step's meta (`getTableInfo`).
+fn load_related_table_from_meta<'t, 'a>(
+    txn: &'t mut JobTxn<'a>,
+    catalog: &'t SessionExtendedInfoSchema,
+) -> impl FnMut(i64, &str) -> Result<(i64, TableInfo), tidb_terror::MysqlError> + use<'t, 'a> {
+    move |table_id, description| {
+        let invalid = |what: &str| {
+            tidb_terror::MysqlError::from_terror(
+                &tidb_dbterror::ERR_INVALID_DDL_JOB
+                    .gen_with_stack_by_args(&[format!("modify column: {description} {what} not found").into()]),
+            )
+        };
+        if catalog.table_info_by_id(table_id).is_none() {
+            return Err(invalid("table"));
+        }
+        let schema_id = catalog
+            .schema_name_by_table_id(table_id)
+            .and_then(|schema| catalog.schema_by_name(&schema))
+            .map(|schema| schema.read().id)
+            .ok_or_else(|| invalid("schema"))?;
+        let meta = txn.meta();
+        match meta.table(schema_id, table_id) {
+            Ok(Some(info)) => Ok((schema_id, info)),
+            Ok(None) => Err(tidb_terror::MysqlError::from_terror(
+                &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.gen_with_stack_by_args(&[
+                    format!("(Schema ID {schema_id})").into(),
+                    format!("(Table ID {table_id})").into(),
+                ]),
+            )),
+            Err(error) => Err(tidb_terror::MysqlError::unknown(job_meta_error(&meta, error).to_string())),
+        }
+    }
+}
+
 /// Go `finishModifyColumnWithoutReorg`.
 fn finish_modify_column_without_reorg(
     txn: &mut JobTxn<'_>,
@@ -1996,7 +2070,24 @@ fn finish_modify_column_without_reorg(
         active.job.state = JobState::ROLLINGBACK;
         return Err(error);
     }
-    let children = adjust_foreign_key_children(catalog, active, &mut target.info, new, &old)?;
+    let mut children = adjust_foreign_key_children(catalog, active, &mut target.info, new, &old)?;
+    let mv_related = {
+        let mut load = load_related_table_from_meta(txn, catalog);
+        super::materialized_view::build_materialized_view_related_table_info_for_modify_column(
+            &mut load,
+            "MODIFY COLUMN",
+            &target.info,
+            &old,
+            new,
+        )
+    };
+    match mv_related {
+        Ok(related) => children.extend(related),
+        Err(error) => {
+            active.job.state = JobState::ROLLINGBACK;
+            return Err(DdlPlanError::from_mysql_error(error));
+        }
+    }
     if let Err(error) = check_table_info_valid(&target.info) {
         // Go: the NOT NULL change was already in the definition.
         active.job.state = JobState::ROLLINGBACK;

@@ -124,6 +124,290 @@ pub(crate) fn materialized_view_log_involving_schema_info(
     involving
 }
 
+/// Go master `isNullToNotNullChange`.
+fn is_null_to_not_null_change(old: &tidb_model::ColumnInfo, new: &tidb_model::ColumnInfo) -> bool {
+    !old.field_type.has_flag(FieldTypeFlags::NOT_NULL) && new.field_type.has_flag(FieldTypeFlags::NOT_NULL)
+}
+
+/// Go master `isColumnCommentOnlyChange`: `reflect.DeepEqual` of the two
+/// columns once the comments agree, compared through their stored form.
+fn is_column_comment_only_change(old: &tidb_model::ColumnInfo, new: &tidb_model::ColumnInfo) -> bool {
+    let mut new = new.clone_like_go();
+    new.comment = old.comment.clone();
+    serde_json::to_value(old).ok() == serde_json::to_value(&new).ok()
+}
+
+/// Go master `fieldTypeForMVRelatedColumn`: the base column's new type with
+/// the related column's own key flags.
+fn field_type_for_mv_related_column(
+    old_related: &tidb_model::ColumnInfo,
+    base_new: &tidb_model::ColumnInfo,
+) -> tidb_datatype::FieldType {
+    let key_flags = old_related.field_type.flags()
+        & (FieldTypeFlags::PRI_KEY | FieldTypeFlags::UNIQUE_KEY | FieldTypeFlags::MULTIPLE_KEY);
+    let mut field_type = base_new.field_type.clone();
+    field_type.del_flag(
+        FieldTypeFlags::PRI_KEY
+            | FieldTypeFlags::UNIQUE_KEY
+            | FieldTypeFlags::MULTIPLE_KEY
+            | FieldTypeFlags::AUTO_INCREMENT
+            | FieldTypeFlags::ON_UPDATE_NOW
+            | FieldTypeFlags::PREVENT_NULL_INSERT
+            | FieldTypeFlags::GENERATED_COLUMN,
+    );
+    field_type.add_flags(key_flags);
+    field_type
+}
+
+fn invalid_ddl_job(message: impl Into<String>) -> tidb_terror::MysqlError {
+    tidb_terror::MysqlError::from_terror(&tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[message.into().into()]))
+}
+
+/// Go master `validateMaterializedViewLogInfoForModifyColumn`.
+fn validate_materialized_view_log_info_for_modify_column(
+    base: &TableInfo,
+    mlog: &TableInfo,
+) -> Result<(), tidb_terror::MysqlError> {
+    if mlog.materialized_view_log.as_ref().is_none_or(|log| log.read().base_table_id != base.id) {
+        return Err(invalid_ddl_job("modify column: invalid materialized view log metadata"));
+    }
+    Ok(())
+}
+
+/// Go master `trackedMaterializedViewLogColumnForModifyColumn`: the log's
+/// column, when the log tracks the base column.
+fn tracked_materialized_view_log_column_for_modify_column(
+    mlog: &TableInfo,
+    column: &str,
+) -> Result<Option<GoShared<tidb_model::ColumnInfo>>, tidb_terror::MysqlError> {
+    let tracked = mlog
+        .materialized_view_log
+        .as_ref()
+        .is_some_and(|log| log.read().columns.iter().any(|tracked| tracked.lowercase() == column));
+    if !tracked {
+        return Ok(None);
+    }
+    tidb_model::column::find_column_info(&mlog.columns, column)
+        .map(Some)
+        .ok_or_else(|| invalid_ddl_job("modify column: materialized view log column not found"))
+}
+
+/// Go master `validateMaterializedViewLogColumnTypeForModifyColumn`.
+fn validate_materialized_view_log_column_type_for_modify_column(
+    op: &str,
+    mlog: &TableInfo,
+    mlog_column: &tidb_model::ColumnInfo,
+    new: &tidb_model::ColumnInfo,
+) -> Result<tidb_datatype::FieldType, tidb_terror::MysqlError> {
+    let field_type = field_type_for_mv_related_column(mlog_column, new);
+    let indexed = mlog.indices.iter_deref().any(|index| {
+        index.read().columns.iter_deref().any(|part| part.read().name.lowercase() == mlog_column.name.lowercase())
+    });
+    if !tidb_ddl_build::modify_column_type::no_reorg_data_strict(&mlog_column.field_type, &field_type, indexed) {
+        return Err(unsupported(format!(
+            "{op} on base table with materialized view log only supports no-reorg compatible type changes"
+        )));
+    }
+    Ok(field_type)
+}
+
+/// Go master `buildMaterializedViewRelatedTableInfoForModifyColumn`: the
+/// tables a base column's change rewrites, each loaded once by `load`
+/// (its schema id and a copy of its info): the log, when it tracks the
+/// column, retyped from the column's new type.
+pub(crate) fn build_materialized_view_related_table_info_for_modify_column(
+    load: &mut dyn FnMut(i64, &str) -> Result<(i64, TableInfo), tidb_terror::MysqlError>,
+    op: &str,
+    base: &TableInfo,
+    old: &tidb_model::ColumnInfo,
+    new: &tidb_model::ColumnInfo,
+) -> Result<Vec<(i64, TableInfo)>, tidb_terror::MysqlError> {
+    let Some(base_info) = &base.materialized_view_base else {
+        return Ok(Vec::new());
+    };
+    if is_column_comment_only_change(old, new) {
+        return Ok(Vec::new());
+    }
+    let (mlog_id, has_mviews) = {
+        let base_info = base_info.read();
+        (base_info.mlog_id, !base_info.mview_ids.is_empty())
+    };
+    if has_mviews {
+        // Go then retypes each dependent materialized view's direct output
+        // columns from its definition (`analyzeMVColumnUsage`), which this
+        // node does not port yet.
+        return Err(unsupported(format!(
+            "{op} on base table with materialized view dependencies on this node"
+        )));
+    }
+    let mut related = Vec::new();
+    if mlog_id != 0 {
+        let (schema_id, mlog) = load(mlog_id, "materialized view log")?;
+        validate_materialized_view_log_info_for_modify_column(base, &mlog)?;
+        if let Some(mlog_column) = tracked_materialized_view_log_column_for_modify_column(&mlog, old.name.lowercase())? {
+            if is_null_to_not_null_change(old, new) {
+                return Err(unsupported(format!(
+                    "{op} on base table with materialized view log does not support changing tracked columns from NULL to NOT NULL"
+                )));
+            }
+            let field_type =
+                validate_materialized_view_log_column_type_for_modify_column(op, &mlog, &mlog_column.read(), new)?;
+            if mlog_column.read().field_type != field_type {
+                mlog_column.write().field_type = field_type;
+                related.push((schema_id, mlog));
+            }
+        }
+    }
+    Ok(related)
+}
+
+/// The `loadTable` of [`build_materialized_view_related_table_info_for_modify_column`]
+/// over the latest catalog (Go's preflight, which must not mutate it).
+pub(crate) fn load_related_table_from_catalog(
+    catalog: &SessionExtendedInfoSchema,
+) -> impl FnMut(i64, &str) -> Result<(i64, TableInfo), tidb_terror::MysqlError> + '_ {
+    move |table_id, description| {
+        let info = catalog
+            .table_info_by_id(table_id)
+            .ok_or_else(|| invalid_ddl_job(format!("modify column: {description} table not found")))?;
+        let schema_id = catalog
+            .schema_name_by_table_id(table_id)
+            .and_then(|schema| catalog.schema_by_name(&schema))
+            .map(|schema| schema.read().id)
+            .ok_or_else(|| invalid_ddl_job(format!("modify column: {description} schema not found")))?;
+        let info = info.read().clone_like_go();
+        Ok((schema_id, info))
+    }
+}
+
+/// Go master `validateMaterializedViewBaseModifyColumn`.
+pub(crate) fn validate_materialized_view_base_modify_column(
+    catalog: &SessionExtendedInfoSchema,
+    base: &TableInfo,
+    old: &tidb_model::ColumnInfo,
+    new: &tidb_model::ColumnInfo,
+    op: &str,
+    may_need_change_col_data: bool,
+) -> Result<(), tidb_terror::MysqlError> {
+    let Some(base_info) = &base.materialized_view_base else {
+        return Ok(());
+    };
+    let (mlog_id, has_dependent_mv) = {
+        let base_info = base_info.read();
+        (base_info.mlog_id, !base_info.mview_ids.is_empty())
+    };
+    let has_mlog = mlog_id != 0;
+    if !has_dependent_mv && !has_mlog || is_column_comment_only_change(old, new) {
+        return Ok(());
+    }
+    let mut tracked = false;
+    if has_mlog {
+        let mlog = catalog
+            .table_info_by_id(mlog_id)
+            .ok_or_else(|| invalid_ddl_job("modify column: materialized view log table not found"))?;
+        let mlog = mlog.read();
+        validate_materialized_view_log_info_for_modify_column(base, &mlog)?;
+        tracked = tracked_materialized_view_log_column_for_modify_column(&mlog, old.name.lowercase())?.is_some();
+    }
+    if old.name.lowercase() != new.name.lowercase() {
+        if has_dependent_mv || tracked {
+            return Err(unsupported(
+                "CHANGE COLUMN on base table with materialized view dependencies does not support renaming".to_owned(),
+            ));
+        }
+        return Ok(());
+    }
+    if tracked && is_null_to_not_null_change(old, new) {
+        return Err(unsupported(format!(
+            "{op} on base table with materialized view log does not support changing tracked columns from NULL to NOT NULL"
+        )));
+    }
+    if may_need_change_col_data {
+        if has_dependent_mv {
+            return Err(unsupported(format!(
+                "{op} on base table with materialized view dependencies only supports no-reorg compatible type changes"
+            )));
+        }
+        if tracked {
+            return Err(unsupported(format!(
+                "{op} on base table with materialized view log only supports no-reorg compatible type changes for tracked columns"
+            )));
+        }
+        return Ok(());
+    }
+    build_materialized_view_related_table_info_for_modify_column(
+        &mut load_related_table_from_catalog(catalog),
+        op,
+        base,
+        old,
+        new,
+    )
+    .map(|_| ())
+}
+
+/// Go master `buildInvolvingSchemaInfoForMaterializedViewBaseModifyColumn`:
+/// the base table, its log and (recursively) its dependent materialized
+/// views with theirs.
+pub(crate) fn involving_schema_info_for_materialized_view_base_modify_column(
+    catalog: &SessionExtendedInfoSchema,
+    schema_name: &str,
+    base: &TableInfo,
+) -> Vec<tidb_model::InvolvingSchemaInfo> {
+    let has_dependents = base
+        .materialized_view_base
+        .as_ref()
+        .is_some_and(|info| info.read().mlog_id != 0 || !info.read().mview_ids.is_empty());
+    if !has_dependents {
+        return Vec::new();
+    }
+    let mut involving: Vec<tidb_model::InvolvingSchemaInfo> = Vec::new();
+    fn add(involving: &mut Vec<tidb_model::InvolvingSchemaInfo>, database: &str, table: &str) -> bool {
+        if database.is_empty()
+            || table.is_empty()
+            || involving.iter().any(|info| info.database == database && info.table == table)
+        {
+            return false;
+        }
+        involving.push(tidb_model::InvolvingSchemaInfo {
+            database: database.to_owned().into(),
+            table: table.to_owned().into(),
+            ..tidb_model::InvolvingSchemaInfo::default()
+        });
+        true
+    }
+    fn add_dependencies(
+        catalog: &SessionExtendedInfoSchema,
+        involving: &mut Vec<tidb_model::InvolvingSchemaInfo>,
+        database: &str,
+        info: &TableInfo,
+    ) {
+        if !add(involving, database, info.name.lowercase()) {
+            return;
+        }
+        let Some(base_info) = &info.materialized_view_base else {
+            return;
+        };
+        let (mlog_id, mview_ids) = {
+            let base_info = base_info.read();
+            (base_info.mlog_id, base_info.mview_ids.iter().copied().collect::<Vec<i64>>())
+        };
+        let schema_of = |id: i64| catalog.schema_name_by_table_id(id).map(|schema| schema.go_to_lower());
+        if mlog_id != 0 {
+            if let (Some(mlog), Some(schema)) = (catalog.table_info_by_id(mlog_id), schema_of(mlog_id)) {
+                add(involving, &schema, mlog.read().name.lowercase());
+            }
+        }
+        for mview_id in mview_ids {
+            if let (Some(mview), Some(schema)) = (catalog.table_info_by_id(mview_id), schema_of(mview_id)) {
+                let mview = mview.read().clone_like_go();
+                add_dependencies(catalog, involving, &schema, &mview);
+            }
+        }
+    }
+    add_dependencies(catalog, &mut involving, schema_name, base);
+    involving
+}
+
 /// Go master `checkBaseTableMaterializedViewDependencyConstraints`.
 pub(crate) fn check_base_table_materialized_view_dependency_constraints(
     table: &TableInfo,
