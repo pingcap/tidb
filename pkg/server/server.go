@@ -163,7 +163,9 @@ type Server struct {
 // NewTestServer creates a new Server for test.
 func NewTestServer(cfg *config.Config) *Server {
 	return &Server{
-		cfg: cfg,
+		cfg:            cfg,
+		health:         uatomic.NewBool(false),
+		inShutdownMode: uatomic.NewBool(false),
 	}
 }
 

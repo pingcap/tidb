@@ -49,7 +49,7 @@ func IsReadOnly(node Node, checkGlobalVars bool) bool {
 	case *DoStmt, *ShowStmt:
 		return true
 	case *RecommendIndexStmt:
-		return st.Action == RecommendIndexActionRun || st.Action == RecommendIndexActionReturn
+		return st.Action == RecommendIndexActionReturn
 	case *SetOprStmt:
 		for _, sel := range node.(*SetOprStmt).SelectList.Selects {
 			if !IsReadOnly(sel, checkGlobalVars) {
