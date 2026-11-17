@@ -354,6 +354,13 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 			rows:         []string{"1 Parent 7 7 parent"},
 		},
 		{
+			name:         "ignore duplicate moves prechecked self reference",
+			values:       "(1, 1), (1, 1)",
+			update:       "id=2, pid=2",
+			affectedRows: 3,
+			rows:         []string{"2 2"},
+		},
+		{
 			name:     "ignore insert missing other parent",
 			values:   "(1, 2)",
 			warnings: 1,

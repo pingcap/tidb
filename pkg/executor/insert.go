@@ -327,7 +327,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 					continue
 				}
 			}
-			err := e.addRecord(ctx, newRows[i], addRecordDupKeyCheck)
+			err := e.addRecordAfterFKPrecheck(ctx, newRows[i], addRecordDupKeyCheck)
 			if err != nil {
 				return err
 			}
