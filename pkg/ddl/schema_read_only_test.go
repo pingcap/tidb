@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -40,6 +41,199 @@ import (
 )
 
 func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
+
+	t.Run("ImportModeTransition", func(t *testing.T) {
+		if !kerneltype.IsClassic() {
+			t.Skip("physical import uses table mode in classic kernel")
+		}
+		enableReadOnlyDDLFp(t)
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		admin := testkit.NewTestKit(t, store)
+		worker := testkit.NewTestKit(t, store)
+		admin.MustExec("create database ro")
+		admin.MustExec("create database other")
+		admin.MustExec("create table ro.t(id int primary key)")
+		db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("ro"))
+		require.True(t, ok)
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), db.Name, ast.NewCIStr("t"))
+		require.NoError(t, err)
+		// This is the durable boundary between task submission and background ingestion.
+		require.NoError(t, ddl.AlterTableMode(dom.DDLExecutor(), worker.Session(), model.TableModeImport, db.ID, tbl.Meta().ID))
+		resume := make(chan struct{})
+		release := sync.OnceFunc(func() { close(resume) })
+		done := make(chan error, 1)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-resume
+			// Both normal completion and cleanup use this internal DDL, without a user bypass.
+			done <- ddl.AlterTableMode(dom.DDLExecutor(), worker.Session(), model.TableModeNormal, db.ID, tbl.Meta().ID)
+		}()
+		defer func() { release(); wg.Wait() }()
+		admin.MustGetErrCode("alter database ro read only = 1", 8258)
+		db, ok = dom.InfoSchema().SchemaByName(db.Name)
+		require.True(t, ok)
+		require.False(t, db.ReadOnly, "a rejected transition must not publish the read-only flag")
+		admin.MustExec("alter database other read only = 1")
+		release()
+		require.NoError(t, <-done)
+		admin.MustQuery("select * from ro.t").Check(testkit.Rows())
+		admin.MustExec("alter database ro read only = 1")
+	})
+	t.Run("SequenceWriteDraining", func(t *testing.T) {
+		for _, sql := range []string{"select nextval(ro.s)", "select setval(ro.s, 100)"} {
+			t.Run(sql, func(t *testing.T) {
+				enableReadOnlyDDLFp(t)
+				store := testkit.CreateMockStore(t)
+				writer := testkit.NewTestKit(t, store)
+				alter := testkit.NewTestKit(t, store)
+				alter.MustExec("create database ro")
+				alter.MustExec("create sequence ro.s nocache")
+				checked := make(chan struct{})
+				resume := make(chan struct{})
+				release := sync.OnceFunc(func() { close(resume) })
+				var paused atomic.Bool
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/expression/sessionexpr/afterSequenceReadOnlyCheck", func() {
+					if paused.CompareAndSwap(false, true) {
+						close(checked)
+						<-resume
+					}
+				})
+				var wg sync.WaitGroup
+				defer func() { release(); wg.Wait() }()
+				writeDone := make(chan error, 1)
+				alterDone := make(chan error, 1)
+				wg.Add(1)
+				go func() { defer wg.Done(); writeDone <- writer.QueryToErr(sql) }()
+				select {
+				case <-checked:
+				case <-time.After(5 * time.Second):
+					t.Fatal("sequence write did not pass the read-only check")
+				}
+				waiting := make(chan struct{}, 1)
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkUncommittedTxns", func(ids map[int64]struct{}) {
+					if len(ids) > 0 {
+						select {
+						case waiting <- struct{}{}:
+						default:
+						}
+					}
+				})
+				wg.Add(1)
+				go func() { defer wg.Done(); alterDone <- alter.ExecToErr("alter database ro read only = 1") }()
+				select {
+				case <-waiting:
+				case err := <-alterDone:
+					t.Fatalf("transition finished before independent sequence allocation: %v", err)
+				case <-time.After(5 * time.Second):
+					t.Fatal("transition did not wait for the sequence write")
+				}
+				select {
+				case err := <-alterDone:
+					t.Fatalf("transition finished while the sequence write was paused: %v", err)
+				default:
+				}
+				release()
+				require.NoError(t, <-writeDone)
+				require.NoError(t, <-alterDone)
+				require.ErrorContains(t, writer.QueryToErr(sql), "[schema:3989]")
+				alter.MustExec("alter database ro read only = 0")
+				want := "2"
+				if strings.Contains(sql, "setval") {
+					want = "101"
+				}
+				alter.MustQuery("select nextval(ro.s)").Check(testkit.Rows(want))
+			})
+		}
+	})
+	t.Run("SequenceParallelProjection", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("create database ro")
+		tk.MustExec("create sequence ro.s")
+		tk.MustExec("set tidb_max_chunk_size = 32")
+		tk.MustExec("set tidb_projection_concurrency = 4")
+		// Constant inputs need no KV reader to activate a transaction before evaluation.
+		inputs := make([]string, 128)
+		for i := range inputs {
+			inputs[i] = fmt.Sprintf("select %d as n", i)
+		}
+		rows := tk.MustQuery("select nextval(ro.s) from (" + strings.Join(inputs, " union all ") + ") d").Rows()
+		require.Len(t, rows, len(inputs))
+		tk.MustQuery("select nextval(ro.s)").Check(testkit.Rows("129"))
+	})
+	t.Run("SequenceLateActivation", func(t *testing.T) {
+		enableReadOnlyDDLFp(t)
+		store := testkit.CreateMockStore(t)
+		writer := testkit.NewTestKit(t, store)
+		alter := testkit.NewTestKit(t, store)
+		alter.MustExec("create database ro")
+		alter.MustExec("create sequence ro.s nocache")
+		started := make(chan struct{})
+		resume := make(chan struct{})
+		release := sync.OnceFunc(func() { close(resume) })
+		var once sync.Once
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/sessiontxn/isolation/beforeActivateTxnForSchemaReadOnly", func(ctx sessionctx.Context) {
+			if ctx == writer.Session() {
+				once.Do(func() { close(started); <-resume })
+			}
+		})
+		done := make(chan error, 1)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() { defer wg.Done(); done <- writer.QueryToErr("select nextval(ro.s)") }()
+		defer func() { release(); wg.Wait() }()
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("sequence operation did not activate its registered session transaction")
+		}
+		alter.MustExec("alter database ro read only = 1")
+		release()
+		require.ErrorContains(t, <-done, "read only")
+		alter.MustExec("alter database ro read only = 0")
+		alter.MustQuery("select nextval(ro.s)").Check(testkit.Rows("1"))
+	})
+	for _, name := range []string{"CTEOnlyOF", "DerivedReadSource"} {
+		t.Run("LockQueryBlockTargets/"+name, func(t *testing.T) {
+			enableReadOnlyDDLFp(t)
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("create database ro")
+			tk.MustExec("create database rw")
+			tk.MustExec("create table ro.t(id int primary key)")
+			tk.MustExec("create table rw.t(id int primary key)")
+			tk.MustExec("insert into ro.t values (1)")
+			tk.MustExec("insert into rw.t values (1)")
+			tk.MustExec("alter database ro read only = 1")
+			tk.MustExec("begin pessimistic")
+			defer tk.MustExec("rollback")
+			if name == "CTEOnlyOF" {
+				tk.MustGetErrCode("with c as (select 1 as k) select t.id from ro.t as t cross join c for update of c", 3989)
+			} else {
+				tk.MustQuery("select n.id from rw.t n join (select id from ro.t) d on n.id = d.id for update").Check(testkit.Rows("1"))
+				tk.MustQuery("select * from (select id from ro.t) d for update").Check(testkit.Rows("1"))
+				tk.MustGetErrCode("select n.id from rw.t n join (select id from ro.t for update) d on n.id = d.id for update", 3989)
+				tk.MustGetErrCode("select n.id from ro.t n join (select id from rw.t) d on n.id = d.id for update", 3989)
+			}
+		})
+	}
+	t.Run("PrecheckReadRetry", func(t *testing.T) {
+		enableReadOnlyDDLFp(t)
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("create database ro")
+		var reads atomic.Int32
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterSchemaReadOnlyPrecheckRead", func(job *model.Job, err *error) {
+			if job.SchemaName == "ro" && job.Type == model.ActionCreateTable && reads.Add(1) == 1 {
+				*err = errors.New("temporary schema precheck read failure")
+			}
+		})
+		tk.MustExec("create table ro.t(id int)")
+		require.GreaterOrEqual(t, reads.Load(), int32(2))
+		tk.MustQuery("show tables from ro").Check(testkit.Rows("t"))
+	})
 	t.Run("PreparedWriterPrivilege", func(t *testing.T) {
 		for _, cache := range []bool{false, true} {
 			for _, role := range []bool{false, true} {

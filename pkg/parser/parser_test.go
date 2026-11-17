@@ -3132,7 +3132,6 @@ func TestDDL(t *testing.T) {
 		{"ALTER SCHEMA S READ ONLY=off", false, ""},
 		{"ALTER SCHEMA S READ ONLY=-1", false, ""},
 		{"ALTER SCHEMA S READ-ONLY=0", false, ""},
-		{"ALTER SCHEMA S READ-ONLY=0", false, ""},
 		{"ALTER SCHEMA S READ ONLY=0 READ ONLY=0", false, ""},
 		{"ALTER SCHEMA S READ ONLY=1 READ ONLY=0", false, ""},
 		{"ALTER SCHEMA S READ ONLY=default READ ONLY=1", false, ""},

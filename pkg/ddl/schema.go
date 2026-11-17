@@ -184,6 +184,7 @@ func checkSchemaReadOnlyBeforeJob(jobCtx *jobContext, job *model.Job) error {
 			continue // Let the operation report its normal missing-schema error.
 		}
 		db, err := jobCtx.metaMut.GetDatabase(db.ID)
+		failpoint.InjectCall("afterSchemaReadOnlyPrecheckRead", job, &err)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -239,6 +240,21 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 
 	switch job.SchemaState {
 	case model.StateNone:
+		// Table mode outlives the import submission transaction. Check it while
+		// this database-wide job excludes mode changes, before publishing ReadOnly;
+		// otherwise ingestion can continue and its mode-restoration DDL is blocked.
+		err = jobCtx.metaMut.IterTables(dbInfo.ID, func(tblInfo *model.TableInfo) error {
+			if tblInfo.Mode == model.TableModeImport {
+				return infoschema.ErrProtectedTableMode.FastGenByArgs(tblInfo.Name, tblInfo.Mode)
+			}
+			return nil
+		})
+		if err != nil {
+			if infoschema.ErrProtectedTableMode.Equal(err) {
+				job.State = model.JobStateCancelled
+			}
+			return ver, errors.Trace(err)
+		}
 		// Rollback can skip StateNone only because all mutations follow this assignment.
 		job.SchemaState = model.StatePendingReadOnly
 		dbInfo.ReadOnly = args.ReadOnly

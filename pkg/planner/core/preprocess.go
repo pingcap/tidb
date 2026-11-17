@@ -480,14 +480,13 @@ func (p *preprocessor) extractSchema(in ast.Node) []ast.CIStr {
 		if node.LockInfo != nil {
 			if logicalop.IsSelectForUpdateLockType(node.LockInfo.LockType) ||
 				(logicalop.IsSelectForShareLockType(node.LockInfo.LockType) && p.sctx.GetSessionVars().SharedLockPromotion) {
-				if len(node.LockInfo.Tables) == 0 {
-					dbNames = append(dbNames, getAllDBNames(node.From)...)
-				} else {
-					for _, target := range node.LockInfo.Tables {
-						if tbl := p.resolveCtx.GetTableName(target); tbl != nil && tbl.DBInfo != nil {
-							dbNames = append(dbNames, tbl.DBInfo.Name)
-						}
-					}
+				allTables := func(*ast.TableName, *resolve.TableNameW) bool { return true }
+				dbNames = append(dbNames, p.schemasForMatchingTables(node.LockInfo.Tables, allTables)...)
+				if len(dbNames) == 0 {
+					// No OF clause, or only CTE targets: the executor locks all
+					// direct tables in this query block. Inner SELECTs check their
+					// own locks; their read sources are not outer lock targets.
+					dbNames = append(dbNames, p.schemasForMatchingTables(p.resolveUpdatableTables(node.From), allTables)...)
 				}
 			}
 		}

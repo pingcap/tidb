@@ -580,3 +580,29 @@ alter materialized view mv attributes='mview_alert_warning=5,mview_alert_overdue
 alter database ro_mv read only = 0;
 drop database ro_mv;
 use test;
+
+# Locking checks follow the current query block, including the CTE-only OF fallback.
+create database ro_lock;
+create database rw_lock;
+create table ro_lock.t(id int primary key);
+create table rw_lock.t(id int primary key);
+insert into ro_lock.t values(1);
+insert into rw_lock.t values(1);
+alter database ro_lock read only = 1;
+begin pessimistic;
+-- error 3989
+with c as (select 1 as k) select t.id from ro_lock.t t cross join c for update of c;
+select n.id from rw_lock.t n join (select id from ro_lock.t) d on n.id=d.id for update;
+select * from (select id from ro_lock.t) d for update;
+prepare derived_lock from 'select n.id from rw_lock.t n join (select id from ro_lock.t) d on n.id=d.id for update';
+execute derived_lock;
+execute derived_lock;
+deallocate prepare derived_lock;
+-- error 3989
+select n.id from rw_lock.t n join (select id from ro_lock.t for update) d on n.id=d.id for update;
+-- error 3989
+select n.id from ro_lock.t n join (select id from rw_lock.t) d on n.id=d.id for update;
+rollback;
+alter database ro_lock read only = 0;
+drop database ro_lock;
+drop database rw_lock;

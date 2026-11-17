@@ -26,6 +26,7 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/mathutil",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tikv_client_go_v2//oracle",
         "@org_uber_go_zap//:zap",
     ],

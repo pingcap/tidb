@@ -567,3 +567,35 @@ Error 3989 (HY000): Schema 'ro_mv' is in read only mode.
 alter database ro_mv read only = 0;
 drop database ro_mv;
 use test;
+create database ro_lock;
+create database rw_lock;
+create table ro_lock.t(id int primary key);
+create table rw_lock.t(id int primary key);
+insert into ro_lock.t values(1);
+insert into rw_lock.t values(1);
+alter database ro_lock read only = 1;
+begin pessimistic;
+with c as (select 1 as k) select t.id from ro_lock.t t cross join c for update of c;
+Error 3989 (HY000): Schema 'ro_lock' is in read only mode.
+select n.id from rw_lock.t n join (select id from ro_lock.t) d on n.id=d.id for update;
+id
+1
+select * from (select id from ro_lock.t) d for update;
+id
+1
+prepare derived_lock from 'select n.id from rw_lock.t n join (select id from ro_lock.t) d on n.id=d.id for update';
+execute derived_lock;
+id
+1
+execute derived_lock;
+id
+1
+deallocate prepare derived_lock;
+select n.id from rw_lock.t n join (select id from ro_lock.t for update) d on n.id=d.id for update;
+Error 3989 (HY000): Schema 'ro_lock' is in read only mode.
+select n.id from ro_lock.t n join (select id from rw_lock.t) d on n.id=d.id for update;
+Error 3989 (HY000): Schema 'ro_lock' is in read only mode.
+rollback;
+alter database ro_lock read only = 0;
+drop database ro_lock;
+drop database rw_lock;

@@ -17,8 +17,10 @@ package sessionexpr
 import (
 	"context"
 	"math"
+	"sync"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
@@ -391,10 +393,11 @@ func sqlExecutorProp(sctx sessionctx.Context) expropt.SQLExecutorPropProvider {
 }
 
 type sequenceOperator struct {
-	sctx sessionctx.Context
-	db   string
-	name string
-	tbl  util.SequenceTable
+	sctx  sessionctx.Context
+	db    string
+	name  string
+	tbl   util.SequenceTable
+	txnMu *sync.Mutex
 }
 
 func (s *sequenceOperator) GetSequenceID() int64 {
@@ -416,20 +419,33 @@ func (s *sequenceOperator) SetSequenceVal(newVal int64) (int64, bool, error) {
 }
 
 func (s *sequenceOperator) checkReadOnly() error {
+	// Sequence allocation uses an independent metadata transaction. Publish its
+	// access and activate the session transaction so read-only draining can wait
+	// for it, then recheck the flag in case publication preceded activation.
+	// Parallel projections share this provider; session transaction activation
+	// itself must remain serial even when no KV reader has activated it yet.
+	s.txnMu.Lock()
+	defer s.txnMu.Unlock()
+	s.sctx.GetSessionVars().GetRelatedTableForReadOnly().Store(s.GetSequenceID(), ast.NewCIStr(s.db))
+	if _, err := s.sctx.Txn(true); err != nil {
+		return err
+	}
 	is := s.sctx.GetLatestISWithoutSessExt()
 	if db, ok := is.SchemaByName(ast.NewCIStr(s.db)); ok && db.ReadOnly && !privilege.HasExplicitReplicaWriterAdmin(s.sctx) {
 		return dbterror.ErrSchemaInReadOnlyMode.GenWithStackByArgs(db.Name.O)
 	}
+	failpoint.InjectCall("afterSequenceReadOnlyCheck")
 	return nil
 }
 
 func sequenceOperatorProp(sctx sessionctx.Context) expropt.SequenceOperatorProvider {
+	var txnMu sync.Mutex
 	return func(db, name string) (expropt.SequenceOperator, error) {
 		sequence, err := util.GetSequenceByName(sctx.GetInfoSchema(), ast.NewCIStr(db), ast.NewCIStr(name))
 		if err != nil {
 			return nil, err
 		}
-		return &sequenceOperator{sctx, db, name, sequence}, nil
+		return &sequenceOperator{sctx: sctx, db: db, name: name, tbl: sequence, txnMu: &txnMu}, nil
 	}
 }
 
