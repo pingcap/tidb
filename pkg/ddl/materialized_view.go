@@ -63,6 +63,7 @@ const (
 	alterMaterializedScheduleInfoUpdateLockWaitTimeoutSec = int64(10)
 	mviewCutoverPurgeLockWaitTimeoutSec                   = int64(5)
 	mviewCutoverPurgeLockTimeout                          = time.Minute
+	mviewShadowTableRetention                             = 7 * 24 * time.Hour
 )
 
 var errMViewCutoverPurgeLockTimeout = errors.NewNoStackError("refresh materialized view complete OUT OF PLACE cutover: timed out waiting for materialized view log purge; retry refresh")
@@ -553,7 +554,12 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 
 	mlogName := model.MaterializedViewLogTableName(baseTableInfo.Name)
 	if _, err = is.TableByName(e.ctx, schemaName, mlogName); err == nil {
-		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: mlogName})
+		err = infoschema.ErrTableExists.FastGenByArgs(ast.Ident{Schema: schemaName, Name: mlogName})
+		if s.IfNotExists {
+			sessionVars.StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
 	} else if !infoschema.ErrTableNotExists.Equal(err) {
 		return err
 	}
@@ -589,6 +595,11 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	jobW := NewJobWrapperWithArgs(job, &model.CreateMaterializedViewLogArgs{TableInfo: mlogTableInfo}, false)
 	if err := e.DoDDLJobWrapper(ctx, jobW); err != nil {
+		// A concurrent creator may have won after the existence precheck.
+		if s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
+			sessionVars.StmtCtx.AppendNote(err)
+			return nil
+		}
 		return errors.Trace(err)
 	}
 	var scatterScope string
@@ -615,6 +626,10 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	schema, ok := is.SchemaByName(schemaName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+	if s.IfNotExists && is.TableExists(schemaName, s.ViewName.Name) {
+		sessionVars.StmtCtx.AppendNote(infoschema.ErrTableExists.FastGenByArgs(ast.Ident{Schema: schemaName, Name: s.ViewName.Name}))
+		return nil
 	}
 	if _, err := validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, s.ViewName.Name.L, &s.Comment, dbterror.ErrTooLongTableComment); err != nil {
 		return errors.Trace(err)
@@ -836,6 +851,11 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		MLogTableIDs: []int64{mlogTableInfo.ID},
 	}, false)
 	if err := e.DoDDLJobWrapper(ctx, jobW); err != nil {
+		// A concurrent creator may have won after the existence precheck.
+		if s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
+			sessionVars.StmtCtx.AppendNote(err)
+			return nil
+		}
 		return errors.Trace(err)
 	}
 
@@ -2053,6 +2073,20 @@ func (e *executor) CreateMaterializedViewShadowTable(
 		scatterScope = val
 	}
 	return errors.Trace(e.createTableWithInfoPost(ctx, shadowTableInfo, schemaID, scatterScope))
+}
+
+func isMaterializedViewShadowTableExpired(name string, now time.Time) bool {
+	// Generated shadow names are __mv_shadow_<mviewID>_<UnixNano>.
+	suffix, ok := strings.CutPrefix(name, mviewutil.ShadowTablePrefix)
+	if !ok {
+		return false
+	}
+	_, timestamp, ok := strings.Cut(suffix, "_")
+	if !ok {
+		return false
+	}
+	createdNano, err := strconv.ParseInt(timestamp, 10, 64)
+	return err == nil && createdNano > 0 && createdNano <= now.Add(-mviewShadowTableRetention).UnixNano()
 }
 
 // DropMaterializedViewShadowTable submits the protected shadow-table cleanup job.

@@ -3067,50 +3067,83 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverWithUnsignedBuildReadTS
 }
 
 func TestMaterializedViewRefreshCompleteOutOfPlaceBuildFailureCleansShadow(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
-	tk := newMViewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int not null, b int not null)")
-	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
-	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
-	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
-	mviewIDRows := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv'").Rows()
-	require.Len(t, mviewIDRows, 1)
-	mviewID, err := strconv.ParseInt(fmt.Sprintf("%v", mviewIDRows[0][0]), 10, 64)
-	require.NoError(t, err)
-	tk.MustExec("insert into t values (2, 8)")
+	for _, tc := range []struct {
+		name               string
+		injectFailure      func(*testing.T)
+		wantErr            string
+		checkFailedHistory bool
+	}{
+		{
+			name: "error_after_load",
+			injectFailure: func(t *testing.T) {
+				testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewOutOfPlaceBuildErrorAfterLoadShadow", `return("mock out-of-place shadow load failure")`)
+			},
+			wantErr:            "mock out-of-place shadow load failure",
+			checkFailedHistory: true,
+		},
+		{
+			name: "panic_after_create",
+			injectFailure: func(t *testing.T) {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceAfterCreateShadow", func() {
+					panic("mock shadow build panic")
+				})
+			},
+			wantErr: "mock shadow build panic",
+		},
+		{
+			name: "panic_after_load",
+			injectFailure: func(t *testing.T) {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceAfterBuildDataLoad", func(uint64) {
+					panic("mock shadow build panic")
+				})
+			},
+			wantErr: "mock shadow build panic",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, _ := testkit.CreateMockStoreAndDomain(t)
+			tk := newMViewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t (a int not null, b int not null)")
+			tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+			tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+			tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
+			mviewIDRows := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv'").Rows()
+			require.Len(t, mviewIDRows, 1)
+			mviewID, err := strconv.ParseInt(fmt.Sprintf("%v", mviewIDRows[0][0]), 10, 64)
+			require.NoError(t, err)
+			tk.MustExec("insert into t values (2, 8)")
+			tc.injectFailure(t)
 
-	const buildFailpoint = "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewOutOfPlaceBuildErrorAfterLoadShadow"
-	require.NoError(t, failpoint.Enable(buildFailpoint, `return("mock out-of-place shadow load failure")`))
-	defer func() {
-		require.NoError(t, failpoint.Disable(buildFailpoint))
-	}()
-
-	err = tk.ExecToErr("refresh materialized view mv complete out of place")
-	require.Error(t, err)
-	require.ErrorContains(t, err, "mock out-of-place shadow load failure")
-	tk.MustQuery(fmt.Sprintf(
-		"select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
-		mviewID,
-	)).Check(testkit.Rows("failed complete out of place manual 1 1"))
-	tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Check(testkit.Rows())
-	rows := tk.MustQuery("select job_id from mysql.tidb_ddl_history order by job_id desc limit 20").Rows()
-	var cleanupJobID string
-	for _, row := range rows {
-		id, parseErr := strconv.ParseInt(fmt.Sprint(row[0]), 10, 64)
-		if parseErr != nil {
-			continue
-		}
-		job, jobErr := ddl.GetHistoryJobByID(tk.Session(), id)
-		if jobErr == nil && job != nil && job.Type == model.ActionDropMaterializedViewShadow {
-			cleanupJobID = fmt.Sprint(id)
-			break
-		}
+			err = tk.ExecToErr("refresh materialized view mv complete out of place")
+			require.Error(t, err)
+			require.ErrorContains(t, err, tc.wantErr)
+			if tc.checkFailedHistory {
+				tk.MustQuery(fmt.Sprintf(
+					"select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+					mviewID,
+				)).Check(testkit.Rows("failed complete out of place manual 1 1"))
+			}
+			tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Check(testkit.Rows())
+			rows := tk.MustQuery("select job_id from mysql.tidb_ddl_history order by job_id desc limit 20").Rows()
+			var cleanupJobID string
+			for _, row := range rows {
+				id, parseErr := strconv.ParseInt(fmt.Sprint(row[0]), 10, 64)
+				if parseErr != nil {
+					continue
+				}
+				job, jobErr := ddl.GetHistoryJobByID(tk.Session(), id)
+				if jobErr == nil && job != nil && job.Type == model.ActionDropMaterializedViewShadow {
+					cleanupJobID = fmt.Sprint(id)
+					break
+				}
+			}
+			require.NotEmpty(t, cleanupJobID)
+			tk.MustQuery("select ((select count(*) from mysql.gc_delete_range where job_id=" + cleanupJobID + ") + (select count(*) from mysql.gc_delete_range_done where job_id=" + cleanupJobID + ")) > 0").Check(testkit.Rows("1"))
+			// Out-of-place build failure should not modify old MV serving table.
+			tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+		})
 	}
-	require.NotEmpty(t, cleanupJobID)
-	tk.MustQuery("select ((select count(*) from mysql.gc_delete_range where job_id=" + cleanupJobID + ") + (select count(*) from mysql.gc_delete_range_done where job_id=" + cleanupJobID + ")) > 0").Check(testkit.Rows("1"))
-	// Out-of-place build failure should not modify old MV serving table.
-	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 }
 
 func TestMaterializedViewRefreshCompleteFailureKeepsRefreshInfoReadTSO(t *testing.T) {

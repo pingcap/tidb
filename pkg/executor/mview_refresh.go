@@ -67,7 +67,6 @@ var errMVRefreshAdvisoryLockConflict = errors.NewNoStackError("materialized view
 
 const (
 	mvRefreshAdvisoryLockTimeoutSec = int64(1)
-	mvRefreshShadowTablePrefix      = "__mv_shadow_"
 	mvRefreshImportIntoStoreName    = "TiKV"
 )
 
@@ -1492,7 +1491,7 @@ func applyRefreshExecutionSessionVars(
 }
 
 func buildMVRefreshShadowTableName(mviewID int64) string {
-	return fmt.Sprintf("%s%d_%d", mvRefreshShadowTablePrefix, mviewID, time.Now().UnixNano())
+	return fmt.Sprintf("%s%d_%d", mviewutil.ShadowTablePrefix, mviewID, time.Now().UnixNano())
 }
 
 func buildMVRefreshOutOfPlaceShadowTableInfo(
