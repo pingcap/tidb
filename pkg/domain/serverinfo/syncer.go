@@ -134,7 +134,9 @@ func (s *Syncer) NewSessionAndStoreServerInfo(ctx context.Context) error {
 	if s.etcdCli == nil {
 		return nil
 	}
-	s.cleanupStaleServerAndOwnerInfo(ctx)
+	if !diagnosticmode.Enabled() {
+		s.cleanupStaleServerAndOwnerInfo(ctx)
+	}
 	logPrefix := fmt.Sprintf("[Info-syncer] %s", s.serverInfoPath)
 	session, err := tidbutil.NewSession(ctx, logPrefix, s.etcdCli, tidbutil.NewSessionDefaultRetryCnt, util.SessionTTL)
 	if err != nil {
