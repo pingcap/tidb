@@ -4255,6 +4255,34 @@ func InitMDLVariable(store kv.Storage) error {
 	return err
 }
 
+// initLegacyECDSASessionToken loads the one-way compatibility gate. Only the
+// owner of a fresh bootstrap may persist it without checking cluster versions.
+func initLegacyECDSASessionToken(store kv.Storage, bootstrap bool) error {
+	if kerneltype.IsNextGen() {
+		return nil
+	}
+	disabled := false
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		if bootstrap {
+			disabled = true
+			return m.SetLegacyECDSASessionTokenDisabled()
+		}
+		var err error
+		disabled, err = m.GetLegacyECDSASessionTokenDisabled()
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	if disabled {
+		// Publish only after persistence succeeds, and never undo an observed gate.
+		vardef.SetLegacyECDSASessionTokenDisabled(true)
+	}
+	return nil
+}
+
 // BootstrapSession bootstrap session and domain.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	return bootstrapSessionImpl(context.Background(), store, createSessions)
@@ -4278,6 +4306,10 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // such as system time zone
 // - start domain and other routines.
 func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
+	// Load before any bootstrap, upgrade, normal, or diagnostic domain can start.
+	if err := initLegacyECDSASessionToken(store, false); err != nil {
+		return nil, err
+	}
 	if diagnosticmode.Enabled() {
 		return bootstrapSessionImplDiagnostic(ctx, store)
 	}
@@ -4320,6 +4352,10 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	}
 	if ver < currentBootstrapVersion {
 		runInBootstrapSession(store, ver)
+		// Another node may have completed fresh bootstrap while this node waited.
+		if err = initLegacyECDSASessionToken(store, false); err != nil {
+			return nil, err
+		}
 	} else {
 		logutil.BgLogger().Info("cluster already bootstrapped", zap.Int64("version", ver))
 		err = InitMDLVariable(store)
