@@ -673,6 +673,15 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set global tidb_enable_historical_stats = 0")
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
 
+	tk.MustQuery("select @@tidb_enable_async_merge_global_stats").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_async_merge_global_stats = 0")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 tidb_enable_async_merge_global_stats is deprecated and will be removed in a future release."))
+	tk.MustQuery("select @@global.tidb_enable_async_merge_global_stats").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_enable_async_merge_global_stats = 1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 tidb_enable_async_merge_global_stats is deprecated and will be removed in a future release."))
+	tk.MustQuery("select @@session.tidb_enable_async_merge_global_stats").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_async_merge_global_stats = default")
+
 	// test for tidb_enable_column_tracking
 	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_column_tracking = 0")

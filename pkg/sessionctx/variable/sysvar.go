@@ -2969,6 +2969,10 @@ var defaultSysVars = []*SysVar{
 			s.EnableAsyncMergeGlobalStats = TiDBOptOn(val)
 			return nil
 		},
+		Validation: func(vars *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs(TiDBEnableAsyncMergeGlobalStats))
+			return normalizedValue, nil
+		},
 	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptPrefixIndexSingleScan, Value: BoolToOnOff(DefTiDBOptPrefixIndexSingleScan), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.OptPrefixIndexSingleScan = TiDBOptOn(val)
