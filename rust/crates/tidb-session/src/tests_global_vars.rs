@@ -3115,3 +3115,42 @@ fn low_resolution_tso_update_interval_reaches_the_store_oracle() {
         ]
     );
 }
+
+/// Go master's materialized view variables (`sysvar.go`): their catalog rows,
+/// bootstrap values, type checks and `Validation` closures, replayed against
+/// the statements a fresh Go master node answered (`mview_sysvars_go.txt`,
+/// rendered as its pymysql client printed them).
+#[test]
+fn materialized_view_sysvars_answer_as_go_master() {
+    let registry = tidb_privilege::PrivilegeRegistry::default();
+    let mut session = authenticated_session(&registry, "root", "%");
+    let fixture = include_str!("../testdata/mview_sysvars_go.txt");
+    let mut lines = fixture.lines().filter(|line| !line.starts_with('#'));
+    let mut mismatches = Vec::new();
+    while let Some(sql) = lines.next() {
+        let sql = sql.strip_prefix("> ").expect("a statement line");
+        let expected = lines.next().expect("an answer line");
+        let got = match session.run(sql) {
+            Ok(StmtResult::Rows(rows)) => format!(
+                "RS:{}",
+                rows.iter()
+                    .map(|row| row
+                        .iter()
+                        .map(|value| if value.is_null() { "None".to_owned() } else { cell_text(value) })
+                        .collect::<Vec<_>>()
+                        .join("|"))
+                    .collect::<Vec<_>>()
+                    .join(";")
+            ),
+            Ok(_) => "OK".to_owned(),
+            Err(error) => {
+                let error = error.to_mysql_error();
+                format!("ERR {} {}", error.code, error.message)
+            }
+        };
+        if got != expected {
+            mismatches.push(format!("{sql}\n  go:   {expected}\n  rust: {got}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}

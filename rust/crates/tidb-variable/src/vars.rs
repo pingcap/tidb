@@ -282,6 +282,9 @@ pub struct SessionVars {
     /// Go's typed `SessionVars.EnableWindowFunction`, maintained by the
     /// `tidb_enable_window_function` sysvar's `SetSession` hook.
     enable_window_function: bool,
+    /// Go's typed `SessionVars.EnableMView`, maintained by the
+    /// `tidb_mview_enable` sysvar's `SetSession` hook.
+    enable_mview: bool,
     /// Go's typed `SessionVars.EnableRedactLog`, written by both the
     /// `SetSession` and the `SetGlobal` hook of `tidb_redact_log`.
     enable_redact_log: String,
@@ -637,6 +640,7 @@ impl Default for SessionVars {
             enable_prepared_plan_cache: tidb_vardef::defaults::DEF_TIDB_ENABLE_PREP_PLAN_CACHE,
             shared_lock_promotion: tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_PROMOTION,
             enable_window_function: tidb_vardef::defaults::DEF_ENABLE_WINDOW_FUNCTION,
+            enable_mview: tidb_vardef::defaults::DEF_TIDB_MVIEW_ENABLE,
             enable_redact_log: tidb_vardef::defaults::DEF_TIDB_REDACT_LOG.to_owned(),
             ti_flash_max_bytes_before_ext_join:
                 tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_JOIN,
@@ -879,6 +883,7 @@ impl SessionVars {
         let enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&systems);
         let shared_lock_promotion = Self::shared_lock_promotion_from_systems(&systems);
         let enable_window_function = Self::enable_window_function_from_systems(&systems);
+        let enable_mview = Self::enable_mview_from_systems(&systems);
         let enable_redact_log = systems
             .get(tidb_vardef::tidb_vars::TIDB_REDACT_LOG)
             .map_or(tidb_vardef::defaults::DEF_TIDB_REDACT_LOG, String::as_str)
@@ -915,6 +920,7 @@ impl SessionVars {
         self.enable_prepared_plan_cache = enable_prepared_plan_cache;
         self.shared_lock_promotion = shared_lock_promotion;
         self.enable_window_function = enable_window_function;
+        self.enable_mview = enable_mview;
         self.enable_redact_log = enable_redact_log;
         self.ti_flash_max_bytes_before_ext_join = ti_flash_max_bytes_before_ext_join;
         self.ti_flash_max_bytes_before_ext_agg = ti_flash_max_bytes_before_ext_agg;
@@ -1013,6 +1019,14 @@ impl SessionVars {
                 tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_PROMOTION,
                 |value| value == "ON",
             )
+    }
+
+    fn enable_mview_from_systems(systems: &HashMap<String, String>) -> bool {
+        systems
+            .get(tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE)
+            .map_or(tidb_vardef::defaults::DEF_TIDB_MVIEW_ENABLE, |value| {
+                value.eq_ignore_ascii_case("ON") || value == "1"
+            })
     }
 
     fn enable_window_function_from_systems(systems: &HashMap<String, String>) -> bool {
@@ -1215,6 +1229,13 @@ impl SessionVars {
     #[must_use]
     pub const fn enable_window_function(&self) -> bool {
         self.enable_window_function
+    }
+
+    /// Go `SessionVars.EnableMView`, updated by the normalized
+    /// `tidb_mview_enable` bool sysvar.
+    #[must_use]
+    pub const fn enable_mview(&self) -> bool {
+        self.enable_mview
     }
 
     /// Go `SessionVars.EnableRedactLog`.
@@ -1613,6 +1634,7 @@ impl SessionVars {
         let mut restores_multi_statement_mode = false;
         let mut restores_prepared_plan_cache = false;
         let mut restores_shared_lock_promotion = false;
+        let mut restores_mview_enable = false;
         let mut restores_window_function = false;
         let mut restores_ti_flash_max_bytes_before_ext_join = false;
         let mut restores_ti_flash_max_bytes_before_ext_agg = false;
@@ -1638,6 +1660,7 @@ impl SessionVars {
             restores_shared_lock_promotion |=
                 key == tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_PROMOTION;
             restores_window_function |= key == tidb_vardef::tidb_vars::TIDB_ENABLE_WINDOW_FUNCTION;
+            restores_mview_enable |= key == tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE;
             restores_ti_flash_max_bytes_before_ext_join |=
                 key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN;
             restores_ti_flash_max_bytes_before_ext_agg |=
@@ -1702,6 +1725,9 @@ impl SessionVars {
         }
         if restores_window_function {
             self.enable_window_function = Self::enable_window_function_from_systems(&self.systems);
+        }
+        if restores_mview_enable {
+            self.enable_mview = Self::enable_mview_from_systems(&self.systems);
         }
         if restores_ti_flash_max_bytes_before_ext_join {
             self.ti_flash_max_bytes_before_ext_join =
@@ -2061,6 +2087,9 @@ impl SessionVars {
         }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_WINDOW_FUNCTION {
             self.enable_window_function = value == "ON";
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE {
+            self.enable_mview = value == "ON";
         }
         if key == tidb_vardef::tidb_vars::TIDB_REDACT_LOG {
             self.enable_redact_log.clone_from(&value);

@@ -36,6 +36,7 @@ mod gc;
 mod innodb;
 mod logging;
 mod memory_limits;
+mod mview;
 mod mysql_compat_inert;
 mod observability;
 mod optimizer;
@@ -59,6 +60,7 @@ const SLICES: &[&[SysVarDef]] = &[
     &innodb::ENTRIES,
     &logging::ENTRIES,
     &memory_limits::ENTRIES,
+    &mview::ENTRIES,
     &mysql_compat_inert::ENTRIES,
     &observability::ENTRIES,
     &optimizer::ENTRIES,
@@ -82,6 +84,7 @@ const TOTAL: usize = concurrency::ENTRIES.len()
     + innodb::ENTRIES.len()
     + logging::ENTRIES.len()
     + memory_limits::ENTRIES.len()
+    + mview::ENTRIES.len()
     + mysql_compat_inert::ENTRIES.len()
     + observability::ENTRIES.len()
     + optimizer::ENTRIES.len()
@@ -295,6 +298,13 @@ mod registry_tests {
 
         let rust: std::collections::BTreeSet<String> =
             SYS_VARS.iter().map(|def| def.name.to_owned()).collect();
+        // Go master's materialized view variables, ported from Go master
+        // with the rest of its materialized views (E29); this branch's Go
+        // has none of them.
+        let master_mview: std::collections::BTreeSet<String> =
+            mview::ENTRIES.iter().map(|def| def.name.to_owned()).collect();
+        assert!(master_mview.is_disjoint(&go), "a materialized view variable reached this branch's Go");
+        let rust: std::collections::BTreeSet<String> = rust.difference(&master_mview).cloned().collect();
         let rust_only: Vec<_> = rust.difference(&go).collect();
         let go_only: Vec<_> = go.difference(&rust).collect();
         assert!(

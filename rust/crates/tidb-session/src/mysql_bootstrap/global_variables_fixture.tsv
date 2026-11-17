@@ -531,8 +531,25 @@ tidb_memory_usage_alarm_ratio	0.7
 tidb_merge_join_concurrency	1
 tidb_merge_partition_stats_concurrency	1
 tidb_min_paging_size	128
+tidb_mlog_auto_analyze_ratio	10
+tidb_mlog_log_slow_purge	OFF
+tidb_mlog_purge_batch_size	10000
+tidb_mlog_purge_delete_tiflash_threads	0
+tidb_mlog_purge_hist_time	168
+tidb_mlog_purge_min_rate	2000
+tidb_mlog_purge_rate_budget_ratio	0.5
 tidb_mpp_store_fail_ttl	0s
 tidb_multi_statement_mode	OFF
+tidb_mview_enable	OFF
+tidb_mview_maintain_import_disk_quota	
+tidb_mview_maintain_import_threads	0
+tidb_mview_maintain_isolation_read_engines	tikv,tiflash,tidb
+tidb_mview_maintain_mem_quota	2147483648
+tidb_mview_refresh_hist_time	168
+tidb_mview_task_max	0
+tidb_mview_task_refresh_ratio	0.6
+tidb_mview_task_threshold_cpu	0.8
+tidb_mview_task_threshold_memory	0.8
 tidb_non_prepared_plan_cache_size	100
 tidb_nontransactional_ignore_error	OFF
 tidb_opt_advanced_join_hint	ON

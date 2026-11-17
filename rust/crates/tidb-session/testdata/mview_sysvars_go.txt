@@ -1,0 +1,113 @@
+# Go master eca4674a6f, fresh unistore node, one session (pymysql). It
+# first turns off master's default-on tidb_redact_log, under which warning
+# arguments print as '?'.
+> set global tidb_redact_log = OFF
+OK
+> select variable_name, variable_scope, default_value, min_value, max_value, possible_values, is_noop from information_schema.variables_info where variable_name like 'tidb_mview%' or variable_name like 'tidb_mlog%' order by variable_name
+RS:tidb_mlog_auto_analyze_ratio|GLOBAL|10|0|18446744073709551615|None|NO;tidb_mlog_log_slow_purge|GLOBAL|OFF|None|None|None|NO;tidb_mlog_purge_batch_size|SESSION,GLOBAL|10000|1|1000000|None|NO;tidb_mlog_purge_delete_tiflash_threads|SESSION,GLOBAL|0|0|256|None|NO;tidb_mlog_purge_hist_time|GLOBAL|168|1|8760|None|NO;tidb_mlog_purge_min_rate|SESSION,GLOBAL|2000|0|2147483647|None|NO;tidb_mlog_purge_rate_budget_ratio|SESSION,GLOBAL|0.5|0|1|None|NO;tidb_mview_enable|SESSION,GLOBAL|OFF|None|None|None|NO;tidb_mview_maintain_import_disk_quota|SESSION,GLOBAL||None|None|None|NO;tidb_mview_maintain_import_threads|SESSION,GLOBAL|0|0|256|None|NO;tidb_mview_maintain_isolation_read_engines|SESSION,GLOBAL|tikv,tiflash,tidb|None|None|None|NO;tidb_mview_maintain_mem_quota|SESSION,GLOBAL|2147483648|-1|9223372036854775807|None|NO;tidb_mview_refresh_hist_time|GLOBAL|168|1|8760|None|NO;tidb_mview_task_max|GLOBAL|0|0|256|None|NO;tidb_mview_task_refresh_ratio|GLOBAL|0.6|0|1|None|NO;tidb_mview_task_threshold_cpu|GLOBAL|0.8|0|1|None|NO;tidb_mview_task_threshold_memory|GLOBAL|0.8|0|1|None|NO
+> select variable_name, variable_value from mysql.global_variables where variable_name like 'tidb_mview%' or variable_name like 'tidb_mlog%' order by 1
+RS:tidb_mlog_auto_analyze_ratio|10;tidb_mlog_log_slow_purge|OFF;tidb_mlog_purge_batch_size|10000;tidb_mlog_purge_delete_tiflash_threads|0;tidb_mlog_purge_hist_time|168;tidb_mlog_purge_min_rate|2000;tidb_mlog_purge_rate_budget_ratio|0.5;tidb_mview_enable|OFF;tidb_mview_maintain_import_disk_quota|;tidb_mview_maintain_import_threads|0;tidb_mview_maintain_isolation_read_engines|tikv,tiflash,tidb;tidb_mview_maintain_mem_quota|2147483648;tidb_mview_refresh_hist_time|168;tidb_mview_task_max|0;tidb_mview_task_refresh_ratio|0.6;tidb_mview_task_threshold_cpu|0.8;tidb_mview_task_threshold_memory|0.8
+> show session variables where variable_name like 'tidb_mview%' or variable_name like 'tidb_mlog%'
+RS:tidb_mlog_auto_analyze_ratio|10;tidb_mlog_log_slow_purge|OFF;tidb_mlog_purge_batch_size|10000;tidb_mlog_purge_delete_tiflash_threads|0;tidb_mlog_purge_hist_time|168;tidb_mlog_purge_min_rate|2000;tidb_mlog_purge_rate_budget_ratio|0.5;tidb_mview_enable|OFF;tidb_mview_maintain_import_disk_quota|;tidb_mview_maintain_import_threads|0;tidb_mview_maintain_isolation_read_engines|tikv,tiflash,tidb;tidb_mview_maintain_mem_quota|2147483648;tidb_mview_refresh_hist_time|168;tidb_mview_task_max|0;tidb_mview_task_refresh_ratio|0.6;tidb_mview_task_threshold_cpu|0.8;tidb_mview_task_threshold_memory|0.8
+> set tidb_mlog_purge_batch_size=0
+OK
+> show warnings
+RS:Warning|1292|Truncated incorrect tidb_mlog_purge_batch_size value: '0'
+> select @@tidb_mlog_purge_batch_size
+RS:1
+> set tidb_mlog_purge_min_rate=0
+ERR 1231 Variable 'tidb_mlog_purge_min_rate' can't be set to the value of '0'
+> set tidb_mlog_purge_min_rate=5
+OK
+> select @@tidb_mlog_purge_min_rate
+RS:5
+> set tidb_mlog_purge_rate_budget_ratio=0
+ERR 1231 Variable 'tidb_mlog_purge_rate_budget_ratio' can't be set to the value of '0'
+> set tidb_mlog_purge_rate_budget_ratio=1.5
+ERR 1231 Variable 'tidb_mlog_purge_rate_budget_ratio' can't be set to the value of '1.5'
+> set tidb_mlog_purge_rate_budget_ratio=0.25
+OK
+> select @@tidb_mlog_purge_rate_budget_ratio
+RS:0.25
+> set tidb_mlog_purge_delete_tiflash_threads=-1
+ERR 1231 Variable 'tidb_mlog_purge_delete_tiflash_threads' can't be set to the value of '-1'
+> set tidb_mlog_purge_delete_tiflash_threads=300
+OK
+> show warnings
+RS:Warning|1292|Truncated incorrect tidb_mlog_purge_delete_tiflash_threads value: '300'
+> select @@tidb_mlog_purge_delete_tiflash_threads
+RS:256
+> set global tidb_mview_task_refresh_ratio=1
+ERR 1231 Variable 'tidb_mview_task_refresh_ratio' can't be set to the value of '1'
+> set global tidb_mview_task_refresh_ratio=0
+ERR 1231 Variable 'tidb_mview_task_refresh_ratio' can't be set to the value of '0'
+> set global tidb_mview_task_refresh_ratio=0.3
+OK
+> select @@global.tidb_mview_task_refresh_ratio
+RS:0.3
+> set global tidb_mview_task_threshold_cpu=2
+OK
+> show warnings
+RS:Warning|1292|Truncated incorrect tidb_mview_task_threshold_cpu value: '2'
+> select @@global.tidb_mview_task_threshold_cpu
+RS:1
+> set global tidb_mlog_auto_analyze_ratio=0
+ERR 1105 the value of tidb_mlog_auto_analyze_ratio should be greater than or equal to 0.000010
+> set global tidb_mlog_auto_analyze_ratio=20
+OK
+> select @@global.tidb_mlog_auto_analyze_ratio
+RS:20
+> set tidb_mview_maintain_mem_quota=100
+OK
+> show warnings
+RS:Warning|1292|Truncated incorrect tidb_mview_maintain_mem_quota value: '100'
+> select @@tidb_mview_maintain_mem_quota
+RS:128
+> set tidb_mview_maintain_mem_quota=-2
+OK
+> show warnings
+RS:Warning|1292|Truncated incorrect tidb_mview_maintain_mem_quota value: '-2'
+> select @@tidb_mview_maintain_mem_quota
+RS:-1
+> set tidb_mview_maintain_isolation_read_engines='TiKV, TIFLASH'
+OK
+> select @@tidb_mview_maintain_isolation_read_engines
+RS:tikv,tiflash
+> set tidb_mview_maintain_isolation_read_engines='foo'
+ERR 1231 Variable 'tidb_mview_maintain_isolation_read_engines' can't be set to the value of 'foo'
+> set tidb_mview_maintain_isolation_read_engines='tikv,'
+ERR 1231 Variable 'tidb_mview_maintain_isolation_read_engines' can't be set to the value of 'tikv,'
+> set tidb_mview_maintain_import_disk_quota='10GiB'
+OK
+> select @@tidb_mview_maintain_import_disk_quota
+RS:10GiB
+> set tidb_mview_maintain_import_disk_quota='abc'
+ERR 1231 Variable 'tidb_mview_maintain_import_disk_quota' can't be set to the value of 'abc'
+> set tidb_mview_maintain_import_disk_quota='0'
+ERR 1231 Variable 'tidb_mview_maintain_import_disk_quota' can't be set to the value of '0'
+> set tidb_mview_maintain_import_disk_quota=''
+OK
+> select @@tidb_mview_maintain_import_disk_quota
+RS:
+> set global tidb_mlog_log_slow_purge=on
+OK
+> select @@global.tidb_mlog_log_slow_purge
+RS:1
+> set tidb_mlog_log_slow_purge=on
+ERR 1229 Variable 'tidb_mlog_log_slow_purge' is a GLOBAL variable and should be set with SET GLOBAL
+> set global tidb_mview_refresh_hist_time=0
+OK
+> show warnings
+RS:Warning|1292|Truncated incorrect tidb_mview_refresh_hist_time value: '0'
+> select @@global.tidb_mview_refresh_hist_time
+RS:1
+> set tidb_mview_enable=1
+OK
+> select @@tidb_mview_enable
+RS:1
+> set global tidb_mview_task_max=257
+OK
+> show warnings
+RS:Warning|1292|Truncated incorrect tidb_mview_task_max value: '257'
+> select @@global.tidb_mview_task_max
+RS:256

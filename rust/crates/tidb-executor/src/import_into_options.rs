@@ -130,62 +130,8 @@ pub(crate) fn as_int(option: &LoadDataOption) -> Result<i64, DriverError> {
     }
 }
 
-/// `units.RAMInBytes`: `^(\d+(\.\d+)*) ?([kKmMgGtTpP])?[iI]?[bB]?$`, binary
-/// multiples, fractions truncated.
-pub(crate) fn ram_in_bytes(text: &str) -> Option<i64> {
-    let number_end = {
-        let bytes = text.as_bytes();
-        let mut end = 0;
-        while end < bytes.len() && bytes[end].is_ascii_digit() {
-            end += 1;
-        }
-        if end == 0 {
-            return None;
-        }
-        // `(\.\d+)*`: any number of dot-digit groups.
-        loop {
-            if end < bytes.len() && bytes[end] == b'.' {
-                let mut next = end + 1;
-                while next < bytes.len() && bytes[next].is_ascii_digit() {
-                    next += 1;
-                }
-                if next == end + 1 {
-                    break;
-                }
-                end = next;
-            } else {
-                break;
-            }
-        }
-        end
-    };
-    let mut rest = &text[number_end..];
-    rest = rest.strip_prefix(' ').unwrap_or(rest);
-    let mut multiplier = 1.0_f64;
-    if let Some(unit) = rest.chars().next() {
-        let power = match unit.to_ascii_lowercase() {
-            'k' => Some(1),
-            'm' => Some(2),
-            'g' => Some(3),
-            't' => Some(4),
-            'p' => Some(5),
-            _ => None,
-        };
-        if let Some(power) = power {
-            multiplier = 1024_f64.powi(power);
-            rest = &rest[unit.len_utf8()..];
-        }
-    }
-    rest = rest.strip_prefix(['i', 'I']).unwrap_or(rest);
-    rest = rest.strip_prefix(['b', 'B']).unwrap_or(rest);
-    if !rest.is_empty() {
-        return None;
-    }
-    // The number text is `\d+(\.\d+)*`, which `ParseFloat` rejects once it has
-    // a second fractional group.
-    let number: f64 = text[..number_end].parse().ok()?;
-    Some((number * multiplier) as i64)
-}
+/// Go `units.RAMInBytes`.
+pub(crate) use tidb_variable::varsutil::ram_in_bytes;
 
 /// `objstore.ParseBackend` + `isSupportedCloudStorageBackend`: only the S3,
 /// GCS and Azure families are cloud storage backends.

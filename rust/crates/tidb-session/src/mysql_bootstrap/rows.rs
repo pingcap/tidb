@@ -141,6 +141,10 @@ pub fn seed(
 /// them (a `pkg/session` test does not import it); and the test-mode
 /// `GlobalSystemVariableInitialValue` arms are left out, so
 /// `tidb_mem_oom_action` is `CANCEL` and `tidb_enable_auto_analyze` is `ON`.
+///
+/// Go master's materialized view variables (`tidb_mview_*`, `tidb_mlog_*`)
+/// are added with the values a fresh Go master `eca4674a6f` node seeds
+/// (`tidb-session/testdata/mview_sysvars_go.txt`).
 const GLOBAL_VARIABLES_FIXTURE: &str = include_str!("global_variables_fixture.tsv");
 
 /// The `mysql.global_variables` rows a bootstrapped cluster holds, as

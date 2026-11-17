@@ -1163,6 +1163,89 @@ pub fn normalize_isolation_read_engines_value(normalized: &str) -> Result<String
 }
 
 impl SysVarDef {
+    /// The `Validation` closures of Go master's materialized view variables
+    /// (`sysvar.go`); `None` for every other variable.
+    fn validate_mview_var(&self, validated: Validated, original: &str) -> Result<Option<Validated>, ValidationError> {
+        use tidb_vardef::tidb_vars as v;
+        let parse_float = |text: &str| tidb_goruntime::go_strconv::parse_float64(text).ok();
+        let checked = match self.name {
+            v::TIDB_MLOG_PURGE_MIN_RATE => {
+                let rate = validated.value.parse::<u64>().map_err(|_| ValidationError::WrongType)?;
+                if rate == 0 {
+                    return Err(ValidationError::WrongValue);
+                }
+                validated
+            }
+            v::TIDB_MLOG_PURGE_RATE_BUDGET_RATIO => {
+                // Go parses the ORIGINAL text: a value the type check clamped
+                // to 1 is still refused.
+                match parse_float(original) {
+                    Some(ratio) if ratio > 0.0 && ratio <= 1.0 => validated,
+                    _ => return Err(ValidationError::WrongValue),
+                }
+            }
+            v::TIDB_MLOG_PURGE_DELETE_TIFLASH_THREADS => match original.parse::<i64>() {
+                Ok(threads) if threads >= 0 => validated,
+                _ => return Err(ValidationError::WrongValue),
+            },
+            v::TIDB_MVIEW_TASK_REFRESH_RATIO => {
+                let ratio = parse_float(&validated.value).ok_or(ValidationError::WrongType)?;
+                if ratio.is_nan() || ratio <= 0.0 || ratio >= 1.0 {
+                    return Err(ValidationError::WrongValue);
+                }
+                validated
+            }
+            // Go `validateFloatNotNaN`.
+            v::TIDB_MVIEW_TASK_THRESHOLD_CPU | v::TIDB_MVIEW_TASK_THRESHOLD_MEMORY => {
+                if parse_float(&validated.value).ok_or(ValidationError::WrongType)?.is_nan() {
+                    return Err(ValidationError::WrongValue);
+                }
+                validated
+            }
+            // Go master `validateAutoAnalyzeRatio`.
+            v::TIDB_MLOG_AUTO_ANALYZE_RATIO => {
+                let ratio = parse_float(&validated.value).ok_or(ValidationError::WrongType)?;
+                const MIN_RATIO: f64 = 0.00001;
+                const TOLERANCE: f64 = 1e-9;
+                if ratio.is_nan() || (ratio < MIN_RATIO && (ratio - MIN_RATIO).abs() > TOLERANCE) {
+                    return Err(ValidationError::Refused(format!(
+                        "the value of {} should be greater than or equal to {MIN_RATIO:.6}",
+                        self.name
+                    )));
+                }
+                validated
+            }
+            // A positive quota below 128 bytes is raised to 128 with
+            // `ErrTruncatedWrongValue`.
+            v::TIDB_MVIEW_MAINTAIN_MEM_QUOTA => {
+                let quota = validated
+                    .value
+                    .parse::<i64>()
+                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_MVIEW_MAINTAIN_MEM_QUOTA);
+                if quota > 0 && quota < 128 {
+                    Validated { value: "128".to_owned(), truncated: true }
+                } else {
+                    validated
+                }
+            }
+            v::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES => Validated {
+                value: normalize_isolation_read_engines_value(&validated.value)
+                    .map_err(|()| ValidationError::WrongValue)?,
+                truncated: validated.truncated,
+            },
+            v::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA => {
+                if !validated.value.is_empty()
+                    && !crate::varsutil::ram_in_bytes(&validated.value).is_some_and(|bytes| bytes > 0)
+                {
+                    return Err(ValidationError::WrongValue);
+                }
+                validated
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some(checked))
+    }
+
     /// Go `SysVar.ValidateFromType`: the type-directed value check, returning
     /// the normalized value.
     ///
@@ -1723,6 +1806,10 @@ impl SysVarDef {
                     truncated: validated.truncated,
                 })
                 .map_err(ValidationError::Refused);
+        }
+        // Go master's materialized view variables' `Validation` closures.
+        if let Some(validated) = self.validate_mview_var(validated.clone(), original)? {
+            return Ok(validated);
         }
         // Go's `tidb_isolation_read_engines` validation: comma-split engines
         // trim, canonicalize case-insensitively to tikv/tiflash/tidb, and an

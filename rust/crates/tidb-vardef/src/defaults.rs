@@ -823,6 +823,42 @@ pub const DEF_TIFLASH_PRE_AGG_MODE: &str = "force_preagg";
 pub const DEF_TIDB_ENABLE_LAZY_CURSOR_FETCH: bool = false;
 /// Go `DefOptEnableProjectionPushDown` (= `true`).
 pub const DEF_OPT_ENABLE_PROJECTION_PUSH_DOWN: bool = true;
+/// Go `DefMLogAutoAnalyzeRatio`.
+pub const DEF_MLOG_AUTO_ANALYZE_RATIO: f64 = 10.0;
+/// Go `DefTiDBMViewTaskMax`.
+pub const DEF_TIDB_MVIEW_TASK_MAX: i64 = 0;
+/// Go `DefTiDBMViewTaskRefreshRatio`.
+pub const DEF_TIDB_MVIEW_TASK_REFRESH_RATIO: f64 = 0.6;
+/// Go `DefTiDBMViewTaskThresholdCPU`.
+pub const DEF_TIDB_MVIEW_TASK_THRESHOLD_CPU: f64 = 0.8;
+/// Go `DefTiDBMViewTaskThresholdMemory`.
+pub const DEF_TIDB_MVIEW_TASK_THRESHOLD_MEMORY: f64 = 0.8;
+/// Go `DefTiDBMViewRefreshHistTime`.
+pub const DEF_TIDB_MVIEW_REFRESH_HIST_TIME: i64 = 168;
+/// Go `DefTiDBMLogPurgeHistTime`.
+pub const DEF_TIDB_MLOG_PURGE_HIST_TIME: i64 = 168;
+/// Go `DefTiDBMViewMaintainMemQuota` (2 GiB).
+pub const DEF_TIDB_MVIEW_MAINTAIN_MEM_QUOTA: i64 = 2 << 30;
+/// Go `DefTiDBMLogPurgeBatchSize`.
+pub const DEF_TIDB_MLOG_PURGE_BATCH_SIZE: i64 = 10000;
+/// Go `DefTiDBMLogPurgeMinRate`.
+pub const DEF_TIDB_MLOG_PURGE_MIN_RATE: i64 = 2000;
+/// Go `DefTiDBMLogPurgeRateBudgetRatio`.
+pub const DEF_TIDB_MLOG_PURGE_RATE_BUDGET_RATIO: f64 = 0.5;
+/// Go `DefTiDBMLogPurgeDeleteTiFlashThreads`.
+pub const DEF_TIDB_MLOG_PURGE_DELETE_TIFLASH_THREADS: i64 = 0;
+/// Go `DefTiDBMLogLogSlowPurge`.
+pub const DEF_TIDB_MLOG_LOG_SLOW_PURGE: bool = false;
+/// Go `DefTiDBMViewMaintainImportThreads`.
+pub const DEF_TIDB_MVIEW_MAINTAIN_IMPORT_THREADS: i64 = 0;
+/// Go `DefTiDBMViewMaintainImportDiskQuota`.
+pub const DEF_TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA: &str = "";
+/// Go `DefTiDBMLogPurgeBatchMaxSize`.
+pub const DEF_TIDB_MLOG_PURGE_BATCH_MAX_SIZE: u64 = 1_000_000;
+/// Go `DefTiDBMLogPurgeBatchMinSize`.
+pub const DEF_TIDB_MLOG_PURGE_BATCH_MIN_SIZE: i64 = 1;
+/// Go `DefTiDBMViewEnable`.
+pub const DEF_TIDB_MVIEW_ENABLE: bool = false;
 /// Go `DefTiDBEnableSharedLockPromotion` (= `false`).
 pub const DEF_TIDB_ENABLE_SHARED_LOCK_PROMOTION: bool = false;
 /// Go `DefTiDBTSOClientRPCMode` (= `TSOClientRPCModeDefault`).

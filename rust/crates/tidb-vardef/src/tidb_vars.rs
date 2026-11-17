@@ -113,6 +113,40 @@ pub const TIDB_BATCH_COMMIT: &str = "tidb_batch_commit";
 /// User could change it to a smaller one to avoid breaking the transaction size limitation.
 /// Go `TiDBDMLBatchSize`.
 pub const TIDB_DML_BATCH_SIZE: &str = "tidb_dml_batch_size";
+/// Go `TiDBMLogAutoAnalyzeRatio`: automatic analysis of materialized view logs.
+pub const TIDB_MLOG_AUTO_ANALYZE_RATIO: &str = "tidb_mlog_auto_analyze_ratio";
+/// Go `TiDBMLogPurgeBatchSize`: the delete batches of PURGE MATERIALIZED VIEW LOG.
+pub const TIDB_MLOG_PURGE_BATCH_SIZE: &str = "tidb_mlog_purge_batch_size";
+/// Go `TiDBMLogPurgeMinRate`: the minimum target delete rate of the adaptive MLog purge throttling.
+pub const TIDB_MLOG_PURGE_MIN_RATE: &str = "tidb_mlog_purge_min_rate";
+/// Go `TiDBMLogPurgeRateBudgetRatio`: the share of the scheduling window purge may spend deleting.
+pub const TIDB_MLOG_PURGE_RATE_BUDGET_RATIO: &str = "tidb_mlog_purge_rate_budget_ratio";
+/// Go `TiDBMLogPurgeDeleteTiFlashThreads`: the TiFlash threads of MLog purge DELETE statements.
+pub const TIDB_MLOG_PURGE_DELETE_TIFLASH_THREADS: &str = "tidb_mlog_purge_delete_tiflash_threads";
+/// Go `TiDBMLogLogSlowPurge`: whether MLog purge statements reach the slow query log.
+pub const TIDB_MLOG_LOG_SLOW_PURGE: &str = "tidb_mlog_log_slow_purge";
+/// Go `TiDBMViewTaskMax`: the MV background task concurrency; 0 uses GOMAXPROCS.
+pub const TIDB_MVIEW_TASK_MAX: &str = "tidb_mview_task_max";
+/// Go `TiDBMViewTaskRefreshRatio`: the refresh share of the MV task concurrency.
+pub const TIDB_MVIEW_TASK_REFRESH_RATIO: &str = "tidb_mview_task_refresh_ratio";
+/// Go `TiDBMViewTaskThresholdCPU`: the CPU usage threshold of task backpressure.
+pub const TIDB_MVIEW_TASK_THRESHOLD_CPU: &str = "tidb_mview_task_threshold_cpu";
+/// Go `TiDBMViewTaskThresholdMemory`: the memory usage threshold of task backpressure.
+pub const TIDB_MVIEW_TASK_THRESHOLD_MEMORY: &str = "tidb_mview_task_threshold_memory";
+/// Go `TiDBMViewRefreshHistTime`: the refresh history retention, in hours.
+pub const TIDB_MVIEW_REFRESH_HIST_TIME: &str = "tidb_mview_refresh_hist_time";
+/// Go `TiDBMLogPurgeHistTime`: the purge history retention, in hours.
+pub const TIDB_MLOG_PURGE_HIST_TIME: &str = "tidb_mlog_purge_hist_time";
+/// Go `TiDBMViewMaintainMemQuota`: the memory quota of MV maintenance sessions.
+pub const TIDB_MVIEW_MAINTAIN_MEM_QUOTA: &str = "tidb_mview_maintain_mem_quota";
+/// Go `TiDBMViewMaintainIsolationReadEngines`: the isolation read engines of MV maintenance sessions.
+pub const TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES: &str = "tidb_mview_maintain_isolation_read_engines";
+/// Go `TiDBMViewMaintainImportThreads`: the threads of the MV initial build's IMPORT INTO.
+pub const TIDB_MVIEW_MAINTAIN_IMPORT_THREADS: &str = "tidb_mview_maintain_import_threads";
+/// Go `TiDBMViewMaintainImportDiskQuota`: the disk quota of the MV initial build's IMPORT INTO.
+pub const TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA: &str = "tidb_mview_maintain_import_disk_quota";
+/// Go `TiDBMViewEnable`: whether materialized view DDL is enabled.
+pub const TIDB_MVIEW_ENABLE: &str = "tidb_mview_enable";
 /// MaxConfigurableConcurrency is the maximum number of "threads" (goroutines) that can be specified
 /// Go `MaxConfigurableConcurrency`.
 pub const MAX_CONFIGURABLE_CONCURRENCY: u64 = 256;
