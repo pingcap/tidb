@@ -96,9 +96,55 @@ func TestMVAlterEventConstructors(t *testing.T) {
 	require.Same(t, mlogTbl, alterMLogPurge.GetAlterMaterializedViewLogPurgeInfo())
 	require.Same(t, oldMLogTbl, alterMLogPurge.inner.OldTableInfo)
 
-	cutover := NewMViewRefreshOutOfPlaceCutoverEvent(mvTbl, oldMVTbl)
+	cutover := NewMViewRefreshOutOfPlaceCutoverEvent(mvTbl, oldMVTbl, mlogTbl, oldMLogTbl)
 	require.Equal(t, model.ActionMViewRefreshOutOfPlaceCutover, cutover.GetType())
 	newTableInfo, oldTableInfo := cutover.GetMViewRefreshOutOfPlaceCutoverInfo()
 	require.Same(t, mvTbl, newTableInfo)
 	require.Same(t, oldMVTbl, oldTableInfo)
+	newMLogInfo, oldMLogInfo := cutover.GetMViewRefreshOutOfPlaceCutoverMLogInfo()
+	require.Same(t, mlogTbl, newMLogInfo)
+	require.Same(t, oldMLogTbl, oldMLogInfo)
+	encoded, err := cutover.MarshalJSON()
+	require.NoError(t, err)
+	var decoded SchemaChangeEvent
+	require.NoError(t, decoded.UnmarshalJSON(encoded))
+	newMLogInfo, oldMLogInfo = decoded.GetMViewRefreshOutOfPlaceCutoverMLogInfo()
+	require.Equal(t, mlogTbl, newMLogInfo)
+	require.Equal(t, oldMLogTbl, oldMLogInfo)
+	withoutLog := NewMViewRefreshOutOfPlaceCutoverEvent(mvTbl, oldMVTbl, nil, nil)
+	newMLogInfo, oldMLogInfo = withoutLog.GetMViewRefreshOutOfPlaceCutoverMLogInfo()
+	require.Nil(t, newMLogInfo)
+	require.Nil(t, oldMLogInfo)
+}
+
+func TestDropSchemaEventMiniTableInfo(t *testing.T) {
+	table := &model.TableInfo{
+		ID:   101,
+		Name: ast.NewCIStr("partitioned"),
+		Partition: &model.PartitionInfo{
+			Definitions: []model.PartitionDefinition{
+				{ID: 201, Name: ast.NewCIStr("p0")},
+				{ID: 202, Name: ast.NewCIStr("p1")},
+			},
+		},
+	}
+
+	miniTable := NewMiniTableInfoForSchemaEvent(table)
+	require.Equal(t, &MiniTableInfoForSchemaEvent{
+		ID:   101,
+		Name: ast.NewCIStr("partitioned"),
+		Partitions: []*MiniPartitionInfoForSchemaEvent{
+			{ID: 201, Name: ast.NewCIStr("p0")},
+			{ID: 202, Name: ast.NewCIStr("p1")},
+		},
+	}, miniTable)
+
+	event := NewDropSchemaEvent(
+		&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")},
+		[]*MiniTableInfoForSchemaEvent{miniTable},
+	)
+	miniDBInfo := event.GetDropSchemaInfo()
+	require.Equal(t, int64(1), miniDBInfo.ID)
+	require.Equal(t, ast.NewCIStr("test"), miniDBInfo.Name)
+	require.Equal(t, []*MiniTableInfoForSchemaEvent{miniTable}, miniDBInfo.Tables)
 }

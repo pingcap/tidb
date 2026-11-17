@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -52,11 +54,164 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+func TestInitLegacyECDSASessionToken(t *testing.T) {
+	original := vardef.IsLegacyECDSASessionTokenDisabled()
+	t.Cleanup(func() { vardef.SetLegacyECDSASessionTokenDisabled(original) })
+	t.Run("fresh bootstrap", func(t *testing.T) {
+		if kerneltype.IsClassic() {
+			vardef.SetLegacyECDSASessionTokenDisabled(false)
+		}
+		store, dom := CreateStoreAndBootstrap(t)
+		defer func() { require.NoError(t, store.Close()) }()
+		defer dom.Close()
+		require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
+		version, err := store.CurrentVersion(kv.GlobalTxnScope)
+		require.NoError(t, err)
+		disabled, err := meta.NewReader(store.GetSnapshot(version)).GetLegacyECDSASessionTokenDisabled()
+		require.NoError(t, err)
+		require.Equal(t, kerneltype.IsClassic(), disabled)
+	})
+	if kerneltype.IsNextGen() {
+		require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
+		// A nil embedded store proves NextGen bypasses metadata entirely.
+		require.NoError(t, initLegacyECDSASessionToken(&legacySessionTokenStorage{}, false))
+		require.NoError(t, initLegacyECDSASessionToken(&legacySessionTokenStorage{}, true))
+		return
+	}
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	vardef.SetLegacyECDSASessionTokenDisabled(false)
+	// Existing clusters without the metadata key retain upgrade compatibility.
+	require.NoError(t, initLegacyECDSASessionToken(store, false))
+	require.False(t, vardef.IsLegacyECDSASessionTokenDisabled())
+
+	injectedErr := errors.New("legacy session token metadata failure")
+	failingStore := &legacySessionTokenStorage{
+		Storage:      store,
+		commitErr:    injectedErr,
+		beforeCommit: func() { require.False(t, vardef.IsLegacyECDSASessionTokenDisabled()) },
+	}
+	require.ErrorIs(t, initLegacyECDSASessionToken(failingStore, true), injectedErr)
+	require.False(t, vardef.IsLegacyECDSASessionTokenDisabled())
+	require.NoError(t, initLegacyECDSASessionToken(store, false))
+	require.False(t, vardef.IsLegacyECDSASessionTokenDisabled())
+
+	failingStore.commitErr = nil
+	failingStore.readErr = injectedErr
+	require.ErrorIs(t, initLegacyECDSASessionToken(failingStore, false), injectedErr)
+	require.False(t, vardef.IsLegacyECDSASessionTokenDisabled())
+	// Startup must propagate metadata read failures before initializing a domain.
+	_, err = BootstrapSession(failingStore)
+	require.ErrorIs(t, err, injectedErr)
+
+	// Fresh bootstrap commits the transition before publishing it in memory.
+	failingStore.readErr = nil
+	require.NoError(t, initLegacyECDSASessionToken(failingStore, true))
+	require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
+	vardef.SetLegacyECDSASessionTokenDisabled(false)
+	require.NoError(t, initLegacyECDSASessionToken(store, false))
+	require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
+	require.NoError(t, initLegacyECDSASessionToken(store, true))
+
+	// A missing flag from another store must never undo an observed transition.
+	emptyStore, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, emptyStore.Close()) })
+	require.NoError(t, initLegacyECDSASessionToken(emptyStore, false))
+	require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
+}
+
+type legacySessionTokenStorage struct {
+	kv.Storage
+	readErr      error
+	commitErr    error
+	beforeCommit func()
+}
+
+func (s *legacySessionTokenStorage) Begin(opts ...tikv.TxnOption) (kv.Transaction, error) {
+	txn, err := s.Storage.Begin(opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &legacySessionTokenTransaction{Transaction: txn, readErr: s.readErr, commitErr: s.commitErr, beforeCommit: s.beforeCommit}, nil
+}
+
+type legacySessionTokenTransaction struct {
+	kv.Transaction
+	readErr      error
+	commitErr    error
+	beforeCommit func()
+}
+
+func (t *legacySessionTokenTransaction) Get(ctx context.Context, key kv.Key, opts ...kv.GetOption) (kv.ValueEntry, error) {
+	if t.readErr != nil {
+		return kv.ValueEntry{}, t.readErr
+	}
+	return t.Transaction.Get(ctx, key, opts...)
+}
+
+func (t *legacySessionTokenTransaction) Commit(ctx context.Context) error {
+	if t.beforeCommit != nil {
+		t.beforeCommit()
+	}
+	if t.commitErr != nil {
+		if err := t.Transaction.Rollback(); err != nil {
+			return err
+		}
+		return t.commitErr
+	}
+	return t.Transaction.Commit(ctx)
+}
+
 func TestGetStartMode(t *testing.T) {
 	require.Equal(t, ddl.Normal, getStartMode(currentBootstrapVersion))
 	require.Equal(t, ddl.Normal, getStartMode(currentBootstrapVersion+1))
 	require.Equal(t, ddl.Upgrade, getStartMode(currentBootstrapVersion-1))
 	require.Equal(t, ddl.Bootstrap, getStartMode(0))
+}
+
+func TestMDLInitializationPolicies(t *testing.T) {
+	original := vardef.IsMDLEnabled()
+	t.Cleanup(func() { vardef.SetEnableMDL(original) })
+	for _, initializer := range []struct {
+		name   string
+		policy mdlInitPolicy
+	}{
+		{"normal", mdlInitEnableOnNull},
+		{"bootstrap", mdlInitForceEnable},
+		{"upgrade", mdlInitKeepDisabledOnNull},
+		{"BR", mdlInitKeepDisabledOnNull},
+	} {
+		for _, state := range []string{"missing", "enabled", "disabled"} {
+			t.Run(initializer.name+"/"+state, func(t *testing.T) {
+				store, err := mockstore.NewMockStore()
+				require.NoError(t, err)
+				defer func() { require.NoError(t, store.Close()) }()
+				if state != "missing" {
+					txn, err := store.Begin()
+					require.NoError(t, err)
+					require.NoError(t, meta.NewMutator(txn).SetMetadataLock(state == "enabled"))
+					require.NoError(t, txn.Commit(context.Background()))
+				}
+				expectedEnabled := state == "enabled" || initializer.name == "bootstrap" ||
+					(state == "missing" && initializer.name == "normal")
+				vardef.SetEnableMDL(!expectedEnabled)
+				_, err = initMDLVariable(store, initializer.policy)
+				require.NoError(t, err)
+				// Next-gen always reports MDL enabled, independently of persisted metadata.
+				require.Equal(t, expectedEnabled || kerneltype.IsNextGen(), vardef.IsMDLEnabled())
+				txn, err := store.Begin()
+				require.NoError(t, err)
+				enabled, missing, err := meta.NewMutator(txn).GetMetadataLock()
+				require.NoError(t, err)
+				require.NoError(t, txn.Rollback())
+				require.Equal(t, expectedEnabled, enabled)
+				require.Equal(t, state == "missing" && !expectedEnabled, missing)
+			})
+		}
+	}
 }
 
 func TestNormalizeStmtCancellationError(t *testing.T) {
@@ -364,4 +519,107 @@ func TestMemArbitratorSession(t *testing.T) {
 		buildMemArbitratorDigestID(normalizedSQL, "db1"),
 		buildMemArbitratorDigestID(normalizedSQL, "db2"))
 	require.Equal(t, memory.InvalidDigestID, buildMemArbitratorDigestID("", "db1"))
+}
+
+func TestAttachStatsCollectorForInternalSession(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+	se, err := CreateSessionWithDomain(store, dom)
+	require.NoError(t, err)
+	defer se.Close()
+	require.Nil(t, se.statsCollector)
+	restore := se.AttachStatsCollectorForInternalSession()
+	require.NotNil(t, se.statsCollector)
+	statsCollector, idxUsageCollector := se.statsCollector, se.idxUsageCollector
+	restoreNested := se.AttachStatsCollectorForInternalSession()
+	restoreNested()
+	require.Same(t, statsCollector, se.statsCollector)
+	require.Equal(t, idxUsageCollector, se.idxUsageCollector)
+	restore()
+	require.Nil(t, se.statsCollector)
+	require.Nil(t, se.idxUsageCollector)
+	// A session without an attached domain has no collectors to restore.
+	(&session{}).AttachStatsCollectorForInternalSession()()
+}
+
+func TestAdvisoryLockWithoutProcessInfo(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	se, err := createSession(store)
+	require.NoError(t, err)
+	defer func() {
+		se.Close()
+		require.Zero(t, se.advisoryLockOwnerID.Load())
+	}()
+	require.Nil(t, se.ShowProcess())
+	lockName := t.Name()
+	require.Zero(t, se.IsUsedAdvisoryLock(lockName))
+	require.NoError(t, se.GetAdvisoryLock(lockName, 1))
+	ownerID := se.IsUsedAdvisoryLock(lockName)
+	require.NotZero(t, ownerID)
+
+	// Executing SQL must not change the owner of later locks on this session.
+	se.SetConnectionID(12345)
+	se.SetProcessInfo("select 1", time.Now(), mysql.ComQuery, 0)
+	require.NoError(t, se.GetAdvisoryLock(lockName+"-second", 1))
+	require.Equal(t, ownerID, se.IsUsedAdvisoryLock(lockName+"-second"))
+	require.True(t, se.ReleaseAdvisoryLock(lockName))
+	require.True(t, se.ReleaseAdvisoryLock(lockName+"-second"))
+	require.Zero(t, se.IsUsedAdvisoryLock(lockName))
+}
+
+func TestAdvisoryLockUsesProcessInfoOwner(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	se, err := createSession(store)
+	require.NoError(t, err)
+	defer se.Close()
+	const connID uint64 = 12345
+	se.SetConnectionID(connID)
+	se.SetProcessInfo("select 1", time.Now(), mysql.ComQuery, 0)
+	require.NoError(t, se.GetAdvisoryLock(t.Name(), 1))
+	require.Equal(t, connID, se.IsUsedAdvisoryLock(t.Name()))
+	require.True(t, se.ReleaseAdvisoryLock(t.Name()))
+}
+
+func TestAdvisoryLockSetupFailureReleasesSession(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	resource, err := dom.SysSessionPool().Get()
+	require.NoError(t, err)
+	se := resource.(*session)
+	cleaned := false
+	clean := func() {
+		cleaned = true
+		dom.SysSessionPool().Put(resource)
+	}
+	defer func() {
+		if !cleaned {
+			se.RollbackTxn(context.Background())
+			clean()
+		}
+	}()
+
+	injectedErr := errors.New("advisory lock SET failed")
+	original := variable.GetSysVar(vardef.InnodbLockWaitTimeout)
+	override := *original
+	override.SetSession = func(vars *variable.SessionVars, value string) error {
+		if vars == se.GetSessionVars() {
+			return injectedErr
+		}
+		return original.SetSession(vars, value)
+	}
+	variable.RegisterSysVar(&override)
+	defer variable.RegisterSysVar(original)
+
+	lock := &advisoryLock{session: se, ctx: context.Background(), clean: clean}
+	require.ErrorIs(t, lock.GetLock(t.Name(), 1), injectedErr)
+	require.True(t, cleaned, "failed lock setup must return the borrowed session")
 }

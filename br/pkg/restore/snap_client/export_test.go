@@ -43,19 +43,21 @@ var (
 	RestoreLabelKey   = restoreLabelKey
 	RestoreLabelValue = restoreLabelValue
 
-	GetSSTMetaFromFile            = getSSTMetaFromFile
-	GetKeyRangeByMode             = getKeyRangeByMode
-	GetFileRangeKey               = getFileRangeKey
-	GetSortedPhysicalTables       = getSortedPhysicalTables
-	GetMinUserTableID             = getMinUserTableID
-	NotifyUpdateAllUsersPrivilege = notifyUpdateAllUsersPrivilege
-	GetSchemaVersionFromStatsMeta = getSchemaVersionFromStatsMeta
-	UpdateStatsMetaSchema         = updateStatsMetaSchema
+	GetSSTMetaFromFile             = getSSTMetaFromFile
+	GetKeyRangeByMode              = getKeyRangeByMode
+	GetFileRangeKey                = getFileRangeKey
+	GetSortedPhysicalTables        = getSortedPhysicalTables
+	GetMinUserTableID              = getMinUserTableID
+	NotifyUpdateAllUsersPrivilege  = notifyUpdateAllUsersPrivilege
+	GetSchemaVersionFromStatsMeta  = getSchemaVersionFromStatsMeta
+	UpdateStatsMetaSchema          = updateStatsMetaSchema
+	BuildSystemTableReplaceColumns = buildSystemTableReplaceColumns
 )
 
 func TestMVSystemTablesAreUnrecoverable(t *testing.T) {
 	for _, tableName := range []string{
 		"tidb_mview_refresh_info",
+		"tidb_mview_fast_refresh_source_info",
 		"tidb_mlog_purge_info",
 		"tidb_mview_refresh_hist",
 		"tidb_mview_refresh_alert",
@@ -72,6 +74,10 @@ func MockClient(dbs map[string]*metautil.Database) *SnapClient {
 
 func (rc *SnapClient) SetDomain(dom *domain.Domain) {
 	rc.dom = dom
+}
+
+func (rc *SnapClient) SetDatabases(dbs map[string]*metautil.Database) {
+	rc.databases = dbs
 }
 
 // Mock the call of setSpeedLimit function

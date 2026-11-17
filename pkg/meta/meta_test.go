@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/stretchr/testify/require"
 )
 
@@ -252,6 +253,15 @@ func TestMeta(t *testing.T) {
 
 	m := meta.NewMutator(txn)
 
+	legacyDisabled, err := m.GetLegacyECDSASessionTokenDisabled()
+	require.NoError(t, err)
+	require.False(t, legacyDisabled)
+	require.NoError(t, m.SetLegacyECDSASessionTokenDisabled())
+	require.NoError(t, m.SetLegacyECDSASessionTokenDisabled())
+	legacyDisabled, err = m.GetLegacyECDSASessionTokenDisabled()
+	require.NoError(t, err)
+	require.True(t, legacyDisabled)
+
 	n, err := m.GenGlobalID()
 	require.NoError(t, err)
 	require.Equal(t, int64(1), n)
@@ -358,6 +368,19 @@ func TestMeta(t *testing.T) {
 	}
 	err = m.CreateTableOrView(1, tbInfo2)
 	require.NoError(t, err)
+
+	batchTables, err := m.GetTables(context.Background(), dbInfo.ID, []int64{2, 999, 1, 2})
+	require.NoError(t, err)
+	require.Equal(t, []*model.TableInfo{tbInfo2, nil, tbInfo, tbInfo2}, batchTables)
+	batchTables, err = m.GetTables(context.Background(), dbInfo.ID, nil)
+	require.NoError(t, err)
+	require.Empty(t, batchTables)
+	_, err = m.GetTables(context.Background(), 999, []int64{1})
+	require.True(t, meta.ErrDBNotExists.Equal(err))
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = m.GetTables(canceled, dbInfo.ID, []int64{1})
+	require.ErrorIs(t, err, context.Canceled)
 
 	tblName := &model.TableNameInfo{ID: tbInfo.ID, Name: tbInfo.Name}
 	tblName2 := &model.TableNameInfo{ID: tbInfo2.ID, Name: tbInfo2.Name}
@@ -531,6 +554,19 @@ func TestMeta(t *testing.T) {
 
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
+
+	// A new transaction and a snapshot both observe the durable one-way flag.
+	restartedTxn, err := store.Begin()
+	require.NoError(t, err)
+	legacyDisabled, err = meta.NewMutator(restartedTxn).GetLegacyECDSASessionTokenDisabled()
+	require.NoError(t, err)
+	require.True(t, legacyDisabled)
+	require.NoError(t, restartedTxn.Rollback())
+	version, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	legacyDisabled, err = meta.NewReader(store.GetSnapshot(version)).GetLegacyECDSASessionTokenDisabled()
+	require.NoError(t, err)
+	require.True(t, legacyDisabled)
 
 	// Test for DDLJobHistoryKey.
 	key = meta.DDLJobHistoryKey(m, 888)
@@ -966,6 +1002,37 @@ func TestTableNameExtract(t *testing.T) {
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, `"\"啊"`, meta.Unescape(nameLMatch[1]))
+}
+
+func TestIsJobMatch(t *testing.T) {
+	job := &model.Job{SchemaName: "db1", TableName: "t1"}
+	data, err := job.Encode(true)
+	require.NoError(t, err)
+
+	testCases := []struct {
+		name        string
+		schemaNames []string
+		tableNames  []string
+		wantMatch   bool
+	}{
+		{"no filters", nil, nil, true},
+		{"schema matches", []string{"db1"}, nil, true},
+		{"schema differs", []string{"db2"}, nil, false},
+		{"table matches", nil, []string{"t1"}, true},
+		{"table differs", nil, []string{"t2"}, false},
+		{"both match", []string{"db1"}, []string{"t1"}, true},
+		{"same table in another schema", []string{"db2"}, []string{"t1"}, false},
+		{"same schema with another table", []string{"db1"}, []string{"t2"}, false},
+		{"both differ", []string{"db2"}, []string{"t2"}, false},
+		{"multiple schemas and tables", []string{"db2", "db1"}, []string{"t2", "t1"}, true},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			match, err := meta.IsJobMatch(data, set.NewStringSet(tc.schemaNames...), set.NewStringSet(tc.tableNames...))
+			require.NoError(t, err)
+			require.Equal(t, tc.wantMatch, match)
+		})
+	}
 }
 
 func TestNameExtractFromJob(t *testing.T) {

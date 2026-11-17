@@ -265,9 +265,9 @@ func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job, jobCtx 
 	tbInfo := jobCtx.jobArgs.(*model.CreateTableArgs).TableInfo
 
 	// When create table with foreign key, there are two schema status change:
-	// 1. none -> write-only
-	// 2. write-only -> public
-	// In the second status change write-only -> public, infoschema loader should apply drop old table first, then
+	// 1. none -> delete-only
+	// 2. delete-only -> public
+	// In the second status change delete-only -> public, infoschema loader should apply drop old table first, then
 	// apply create new table. So need to set diff.OldTableID here to make sure it.
 	if tbInfo.State == model.StatePublic && len(tbInfo.ForeignKeys) > 0 {
 		diff.OldTableID = job.TableID
@@ -281,6 +281,12 @@ func SetSchemaDiffForMViewRefreshOutOfPlaceCutover(diff *model.SchemaDiff, jobCt
 	args := jobCtx.jobArgs.(*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs)
 	diff.TableID = args.ShadowTableID
 	diff.OldTableID = args.OldMViewID
+	if args.OldMLogID != 0 {
+		diff.AffectedOpts = append(diff.AffectedOpts, &model.AffectedOption{
+			SchemaID: diff.SchemaID, OldSchemaID: diff.SchemaID,
+			TableID: args.NewMLogID, OldTableID: args.OldMLogID,
+		})
+	}
 }
 
 // SetSchemaDiffForRecoverSchema set SchemaDiff for ActionRecoverSchema.

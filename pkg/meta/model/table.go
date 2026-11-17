@@ -516,7 +516,7 @@ func (t *TableInfo) ClearPlacement() {
 // GetPrimaryKey extract the primary key in a table and return `IndexInfo`
 // The returned primary key could be explicit or implicit.
 // If there is no explicit primary key in table,
-// the first UNIQUE INDEX on NOT NULL columns will be the implicit primary key.
+// the first non-partial UNIQUE INDEX on NOT NULL columns will be the implicit primary key.
 // For more information about implicit primary key, see
 // https://dev.mysql.com/doc/refman/8.0/en/invisible-indexes.html
 func (t *TableInfo) GetPrimaryKey() *IndexInfo {
@@ -531,8 +531,8 @@ func (t *TableInfo) GetPrimaryKey() *IndexInfo {
 		if len(key.Columns) == 0 {
 			continue
 		}
-		// find the first unique key with NOT NULL columns
-		if implicitPK == nil && key.Unique {
+		// find the first non-partial unique key with NOT NULL columns
+		if implicitPK == nil && key.Unique && !key.HasCondition() {
 			// ensure all columns in unique key have NOT NULL flag
 			allColNotNull := true
 			skip := false
@@ -1329,11 +1329,6 @@ func (pi *PartitionInfo) SetOriginalPartitionIDs() {
 // session should not see (may be duplicate errors on insert/update though)
 // For example during truncate or drop partition.
 func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
-	// TODO:
-	// Drop partition:
-	// TODO: Make similar changes as in Truncate Partition:
-	// Add a state blocking read and write in the partitions to be dropped,
-	// to avoid situations like https://github.com/pingcap/tidb/issues/55888
 	// Add partition:
 	// TODO: Add tests!
 	// Exchange Partition:
@@ -1374,7 +1369,7 @@ func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
 	case ActionAddTablePartition:
 		// TODO: Add tests for ADD PARTITION multi-domain with Global Index!
 		if len(pi.AddingDefinitions) > 0 {
-			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			ids := make([]int64, 0, len(pi.AddingDefinitions))
 			for _, def := range pi.AddingDefinitions {
 				ids = append(ids, def.ID)
 			}

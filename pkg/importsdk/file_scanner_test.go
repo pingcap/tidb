@@ -153,7 +153,7 @@ func TestFileScanner(t *testing.T) {
 			cfg,
 		)
 		require.Error(t, err)
-		require.ErrorContains(t, err, "source="+redactedInvalidSourcePath)
+		require.ErrorContains(t, err, "source="+objstore.InvalidURLPlaceholder)
 		require.NotContains(t, err.Error(), "secret-access-key=sk")
 	})
 

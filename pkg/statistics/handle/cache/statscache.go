@@ -33,6 +33,7 @@ import (
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
@@ -119,7 +120,12 @@ func newCacheOfBatchUpdate(batchSize int, op func(toUpdate []*statistics.Table, 
 }
 
 // Update reads stats meta from store and updates the stats map.
-func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error {
+func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) (err error) {
+	// loadStatsWorker does not restart after a panic, so return the panic as an error.
+	// The worker then logs the error and tries again at the next tick.
+	defer tidbutil.Recover(tidbmetrics.LabelStats, "StatsCacheImpl.Update", func() {
+		err = errors.New("panic in StatsCacheImpl.Update")
+	}, false)
 	onlyForAnalyzedTables := len(tableAndPartitionIDs) > 0
 	start := time.Now()
 	defer func() {
@@ -130,7 +136,6 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 	var (
 		skipMoveForwardStatsCache bool
 		rows                      []chunk.Row
-		err                       error
 	)
 	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		query := "SELECT"

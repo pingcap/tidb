@@ -142,6 +142,7 @@ type CheckpointMetadataForLogRestore struct {
 	GcRatio                  string `json:"gc-ratio"`
 	RocksDBMaxBackgroundJobs string `json:"rocksdb-max-background-jobs,omitempty"`
 	SnapshotRestoreDataSize  uint64 `json:"snapshot-restore-data-size,omitempty"`
+	RouteFingerprint         string `json:"route-fingerprint,omitempty"`
 	// tiflash recorder items with snapshot restore records
 	TiFlashItems map[int64]model.TiFlashReplicaInfo `json:"tiflash-recorder,omitempty"`
 }

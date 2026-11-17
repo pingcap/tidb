@@ -1502,9 +1502,6 @@ type SessionVars struct {
 	// EnableMView indicates whether to enable materialized view DDL.
 	EnableMView bool
 
-	// EnableHistoricalStats indicates whether to enable historical statistics.
-	EnableHistoricalStats bool
-
 	// EnableIndexMergeJoin indicates whether to enable index merge join.
 	EnableIndexMergeJoin bool
 
@@ -1715,9 +1712,6 @@ type SessionVars struct {
 
 	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
 	AnalyzePartitionConcurrency int
-
-	// EnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
-	EnableAsyncMergeGlobalStats bool
 
 	// EnableExternalTSRead indicates whether to enable read through external ts
 	EnableExternalTSRead bool
@@ -2959,15 +2953,15 @@ func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) any {
 }
 
 // PrepareDedupCacheKey builds the lookup key for the prepare dedup cache.
-// Including charset, collation, currentDB and sqlMode ensures that the cached
+// Including connection/client charsets, collation, currentDB and sqlMode ensures that the cached
 // PlanCacheStmt is only reused when the session context that affects parsing,
 // name-resolution and cacheability decisions is identical. sqlMode is included
 // because flags like PIPES_AS_CONCAT and ANSI_QUOTES change AST shape, and
 // IsASTCacheable (which computes StmtCacheable) runs on that AST.
-func PrepareDedupCacheKey(sql, charset, collation, currentDB string, sqlMode mysql.SQLMode) string {
+func PrepareDedupCacheKey(sql, charset, collation, currentDB, clientCharset string, sqlMode mysql.SQLMode) string {
 	var modeBuf [8]byte
 	binary.LittleEndian.PutUint64(modeBuf[:], uint64(sqlMode))
-	return sql + "\x00" + charset + "\x00" + collation + "\x00" + currentDB + "\x00" + string(modeBuf[:])
+	return sql + "\x00" + charset + "\x00" + collation + "\x00" + currentDB + "\x00" + clientCharset + "\x00" + string(modeBuf[:])
 }
 
 // GetPrepareStmtDedupCache returns the cached PrepareStmtCacheEntry for the given key,
@@ -3078,6 +3072,41 @@ func (s *SessionVars) GetSessionStatesSystemVar(name string) (string, bool, erro
 		return val, true, nil
 	}
 	return "", false, nil
+}
+
+// getSnapshotTSState preserves the effective timestamp, which can differ from
+// the cached string after changing time_zone or setting tx_read_ts.
+func getSnapshotTSState(s *SessionVars) (string, bool, error) {
+	if s.SnapshotTS == 0 {
+		return "", false, nil
+	}
+	// Preserve the client's spelling when it still denotes the effective timestamp.
+	if value, ok := s.systems[vardef.TiDBSnapshot]; ok {
+		if ts, err := parseTSFromNumberOrTime(s, value); err == nil && ts == s.SnapshotTS {
+			return value, true, nil
+		}
+	}
+	return strconv.FormatUint(s.SnapshotTS, 10), true, nil
+}
+
+// getTxnReadTSState must not replay a timestamp that has been consumed or cleared
+// by tidb_snapshot. Keep the existing datetime syntax for session-state compatibility.
+func getTxnReadTSState(s *SessionVars) (string, bool, error) {
+	ts := s.TxnReadTS.PeakTxnReadTS()
+	if ts == 0 {
+		return "", false, nil
+	}
+	value := oracle.GetTimeFromTS(ts).In(s.Location()).Format("2006-01-02 15:04:05.000")
+	// A timezone change can make the local time ambiguous during a DST rollback.
+	// Refuse migration if the datetime cannot represent the exact timestamp.
+	restoredTS, err := parseTSFromNumberOrTime(s, value)
+	if err != nil {
+		return "", false, err
+	}
+	if restoredTS != ts {
+		return "", false, sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("tx_read_ts cannot be represented in the session time zone")
+	}
+	return value, true, nil
 }
 
 // GetGlobalSystemVar gets a global system variable.

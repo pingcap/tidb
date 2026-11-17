@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -47,12 +48,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/mock"
-	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
+	pderr "github.com/tikv/pd/client/errs"
+	"go.uber.org/atomic"
 )
 
 func TestDoneTaskKeeper(t *testing.T) {
@@ -102,6 +103,30 @@ func TestBackfillRetryableErrors(t *testing.T) {
 	t.Run("confirmed insufficient local-sort disk is not retryable", func(t *testing.T) {
 		err := dbterror.ErrIngestCheckEnvFailed.FastGenByArgs("mock insufficient local sort disk space")
 		require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
+	})
+
+	t.Run("PD TSO stream errors are retryable", func(t *testing.T) {
+		errs := []error{
+			pderr.ErrClientCreateTSOStream.FastGenByArgs(pderr.RetryTimeoutErr),
+			pderr.ErrClientTSOStreamClosed.GenWithStackByArgs(),
+		}
+		for _, err := range errs {
+			require.True(t, isRetryableError(err, false))
+			require.True(t, isRetryableError(errors.Annotate(err, "wrapped"), false))
+			require.True(t, (&backfillDistExecutor{}).IsRetryableError(err))
+
+			// The local ingest path checks for duplicate keys before classifying
+			// the reorg error. PD errors must retain their identity across it.
+			convertedErr := ingest.TryConvertToKeyExistsErr(err, &model.IndexInfo{}, &model.TableInfo{})
+			require.ErrorIs(t, convertedErr, err)
+			require.True(t, isRetryableJobError(convertedErr, 0))
+			require.False(t, isRetryableJobError(convertedErr, vardef.GetDDLErrorCountLimit()-1))
+		}
+	})
+
+	t.Run("unrelated PD errors are not made retryable", func(t *testing.T) {
+		err := pderr.ErrClientProtoUnmarshal.FastGenByArgs("invalid response")
+		require.False(t, isRetryableError(err, false))
 	})
 }
 
@@ -245,7 +270,7 @@ func TestPickBackfillType(t *testing.T) {
 	})
 }
 
-func TestInitForReorgIndexesRequiresGlobalSortWithSEM(t *testing.T) {
+func TestInitForReorgIndexesRequiresGlobalSort(t *testing.T) {
 	if !kerneltype.IsNextGen() {
 		t.Skip("global sort is only enforced on the NextGen kernel")
 	}
@@ -257,36 +282,36 @@ func TestInitForReorgIndexesRequiresGlobalSortWithSEM(t *testing.T) {
 		ingest.LitInitialized = oldLitInitialized
 	})
 
-	for _, semVer := range []string{sem.V1, sem.V2} {
-		t.Run(semVer, func(t *testing.T) {
-			defer sem.SwitchToSEMForTest(t, semVer)()
-
-			newJob := func(isFastReorg bool) *model.Job {
-				return &model.Job{
-					ID: 1,
-					ReorgMeta: &model.DDLReorgMeta{
-						IsFastReorg: isFastReorg,
-						IsDistReorg: isFastReorg,
-					},
-				}
-			}
-			w := &worker{workCtx: context.Background(), ddlCtx: &ddlCtx{}}
-
-			// local sort is rejected
-			vardef.CloudStorageURI.Store("")
-			err := initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}})
-			require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
-			require.ErrorContains(t, err, "add index or modify column with local sort")
-
-			// jobs without fast reorg don't sort locally, so they are still allowed
-			require.NoError(t, initForReorgIndexes(w, newJob(false), []*model.IndexInfo{{}}))
-
-			// global sort is allowed
-			ingest.LitInitialized = true
-			vardef.CloudStorageURI.Store("s3://bucket")
-			require.NoError(t, initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}}))
-		})
+	newJob := func(isFastReorg bool) *model.Job {
+		return &model.Job{
+			ID: 1,
+			ReorgMeta: &model.DDLReorgMeta{
+				IsFastReorg: isFastReorg,
+				IsDistReorg: isFastReorg,
+			},
+		}
 	}
+	w := &worker{workCtx: context.Background(), ddlCtx: &ddlCtx{}}
+
+	// Without the lightning/ingest env the backfill falls back to txn-merge,
+	// which does not sort locally, so the job is allowed even without cloud
+	// storage.
+	ingest.LitInitialized = false
+	vardef.CloudStorageURI.Store("")
+	require.NoError(t, initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}}))
+
+	// local sort is rejected on NextGen when the ingest environment is available.
+	ingest.LitInitialized = true
+	err := initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}})
+	require.ErrorIs(t, err, dbterror.ErrNotSupportedYet)
+	require.ErrorContains(t, err, "add index or modify column with local sort")
+
+	// jobs without fast reorg don't sort locally, so they are still allowed
+	require.NoError(t, initForReorgIndexes(w, newJob(false), []*model.IndexInfo{{}}))
+
+	// global sort is allowed
+	vardef.CloudStorageURI.Store("s3://bucket")
+	require.NoError(t, initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}}))
 }
 
 func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {
@@ -854,4 +879,50 @@ func TestMergeTempIndexResultSinkReportsWrittenBytes(t *testing.T) {
 
 	require.Equal(t, 5, collector.addCount)
 	require.Equal(t, int64(200), collector.writtenBytes)
+}
+
+type ingestCountingBackendCtx struct {
+	ingest.BackendCtx
+	ingestCalls atomic.Int32
+}
+
+func (b *ingestCountingBackendCtx) Ingest(context.Context) error {
+	b.ingestCalls.Inc()
+	return nil
+}
+
+func (*ingestCountingBackendCtx) TotalKeyCount() int {
+	return 0
+}
+
+func TestIndexWriteResultSinkCloseAfterCancel(t *testing.T) {
+	// When the context is canceled and the source channel is closed before the
+	// sink selects, both cases are ready and Go picks one at random, so repeat.
+	for range 50 {
+		wctx := workerpool.NewContext(context.Background())
+		bc := &ingestCountingBackendCtx{}
+		sink := newIndexWriteResultSink(wctx, bc, nil, nil, &execute.TestCollector{})
+		src := operator.NewSimpleDataChannel(make(chan IndexWriteResult))
+		sink.SetSource(src)
+		wctx.Cancel()
+		close(src.Channel())
+
+		require.NoError(t, sink.Open())
+		require.ErrorIs(t, sink.Close(), context.Canceled)
+		require.Zero(t, bc.ingestCalls.Load())
+	}
+}
+
+func TestIndexWriteResultSinkFlushesOnSourceFinish(t *testing.T) {
+	wctx := workerpool.NewContext(context.Background())
+	defer wctx.Cancel()
+	bc := &ingestCountingBackendCtx{}
+	sink := newIndexWriteResultSink(wctx, bc, nil, nil, &execute.TestCollector{})
+	src := operator.NewSimpleDataChannel(make(chan IndexWriteResult))
+	sink.SetSource(src)
+	close(src.Channel())
+
+	require.NoError(t, sink.Open())
+	require.NoError(t, sink.Close())
+	require.Equal(t, int32(1), bc.ingestCalls.Load())
 }

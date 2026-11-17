@@ -96,6 +96,7 @@ func InitMetrics() {
 	InitGCWorkerMetrics()
 	InitLogBackupMetrics()
 	InitMetaMetrics()
+	InitMVMetrics()
 	InitOwnerMetrics()
 	InitRawKVMetrics()
 	InitResourceManagerMetrics()
@@ -184,6 +185,10 @@ func RegisterMetrics() {
 	prometheus.MustRegister(LoadSchemaCounter)
 	prometheus.MustRegister(LoadSchemaDuration)
 	prometheus.MustRegister(MetaHistogram)
+	prometheus.MustRegister(MVServiceTaskStatusGaugeVec)
+	prometheus.MustRegister(MVServiceOperationDurationHistogramVec)
+	prometheus.MustRegister(MVServiceRunEventCounterVec)
+	prometheus.MustRegister(MVServiceRefreshScheduleDurationHistogram)
 	prometheus.MustRegister(NewSessionHistogram)
 	prometheus.MustRegister(OwnerHandleSyncerHistogram)
 	prometheus.MustRegister(PanicCounter)
@@ -305,7 +310,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(EMACPUUsageGauge)
 	prometheus.MustRegister(PoolConcurrencyCounter)
 
-	prometheus.MustRegister(HistoricalStatsCounter)
 	prometheus.MustRegister(PlanReplayerTaskCounter)
 	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
 

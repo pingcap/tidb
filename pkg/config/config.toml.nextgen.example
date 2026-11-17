@@ -60,6 +60,10 @@ compatible-kill-query = false
 # The health check will fail immediately but the server will not start shutting down until the time has elapsed.
 graceful-wait-before-shutdown = 0
 
+# During shutdown, wait up to N seconds for running statements and open transactions to finish before killing
+# the remaining connections. Connections that are idle between statements are closed without waiting.
+graceful-close-connections-timeout = 15
+
 # treat-old-version-utf8-as-utf8mb4 use for upgrade compatibility. Set to true will treat old version table/column UTF8 charset as UTF8MB4.
 treat-old-version-utf8-as-utf8mb4 = true
 

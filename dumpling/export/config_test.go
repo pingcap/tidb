@@ -3,10 +3,18 @@
 package export
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
+	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -17,11 +25,107 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGetDriverConfigTLSCipherSuites(t *testing.T) {
+	for _, configured := range []bool{false, true} {
+		t.Run(fmt.Sprintf("configured=%t", configured), func(t *testing.T) {
+			conf := DefaultConfig()
+			if configured {
+				conf.Security.TLS = &tls.Config{MinVersion: tls.VersionTLS12, ServerName: "mysql.example"}
+			}
+			driverCfg := conf.GetDriverConfig("")
+			require.Equal(t, !configured, driverCfg.AllowFallbackToPlaintext)
+			require.Equal(t, !configured, driverCfg.TLS.InsecureSkipVerify)
+			require.Equal(t, uint16(tls.VersionTLS12), driverCfg.TLS.MinVersion)
+			for _, suite := range []uint16{
+				tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_RSA_WITH_AES_128_CBC_SHA,
+				tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			} {
+				require.Contains(t, driverCfg.TLS.CipherSuites, suite)
+			}
+			if configured {
+				require.Nil(t, conf.Security.TLS.CipherSuites)
+				require.Equal(t, "mysql.example", driverCfg.TLS.ServerName)
+				require.NotSame(t, conf.Security.TLS, driverCfg.TLS)
+			}
+		})
+	}
+
+	// An explicit cipher policy, including an empty list, must not be widened.
+	for _, suites := range [][]uint16{{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256}, {}} {
+		conf := DefaultConfig()
+		conf.Security.TLS = &tls.Config{MinVersion: tls.VersionTLS12, CipherSuites: suites}
+		require.Equal(t, suites, conf.GetDriverConfig("").TLS.CipherSuites)
+	}
+}
+
+func TestGetDriverConfigTLSHandshake(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		DNSNames:     []string{"localhost"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	for _, withCA := range []bool{false, true} {
+		for _, suite := range []uint16{
+			tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_RSA_WITH_AES_128_CBC_SHA,
+			tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		} {
+			t.Run(fmt.Sprintf("CA=%t/%s", withCA, tls.CipherSuiteName(suite)), func(t *testing.T) {
+				conf := DefaultConfig()
+				if withCA {
+					conf.Security.SSLCABytes = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+				}
+				require.NoError(t, buildTLSConfig(conf))
+				listener, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
+					Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}},
+					MinVersion:   tls.VersionTLS12,
+					MaxVersion:   tls.VersionTLS12,
+					CipherSuites: []uint16{suite},
+				})
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, listener.Close()) })
+				serverErr := make(chan error, 1)
+				go func() {
+					conn, err := listener.Accept()
+					if err != nil {
+						serverErr <- err
+						return
+					}
+					defer conn.Close()
+					if err = conn.SetDeadline(time.Now().Add(5 * time.Second)); err == nil {
+						err = conn.(*tls.Conn).Handshake()
+					}
+					serverErr <- err
+				}()
+				client, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", listener.Addr().String(), conf.GetDriverConfig("").TLS)
+				require.NoError(t, err)
+				defer client.Close()
+				require.Equal(t, suite, client.ConnectionState().CipherSuite)
+				require.NoError(t, <-serverErr)
+			})
+		}
+	}
+}
+
 func TestCreateExternalStorage(t *testing.T) {
 	mockConfig := defaultConfigForTest(t)
 	loc, err := mockConfig.createExternalStorage(tcontext.Background())
 	require.NoError(t, err)
 	require.Regexp(t, "^file:", loc.URI())
+	loc.Close()
 }
 
 func TestMatchMysqlBugVersion(t *testing.T) {
@@ -330,7 +434,7 @@ func TestOutputFilenameTemplateWithRowsValidation(t *testing.T) {
 			"--rows", "10",
 			"--output-filename-template", "{{.DB}}.{{.Table}}",
 		)
-		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F")
+		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r, --filesize/-F, or --dump-service")
 	})
 
 	t.Run("accept template with index when rows and output template are both specified", func(t *testing.T) {
@@ -346,7 +450,7 @@ func TestOutputFilenameTemplateWithRowsValidation(t *testing.T) {
 			"--rows", "10",
 			"--output-filename-template", "{{if .Index}}{{end}}{{.DB}}.{{.Table}}",
 		)
-		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F")
+		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r, --filesize/-F, or --dump-service")
 	})
 
 	t.Run("reject template when index is only conditionally rendered", func(t *testing.T) {
@@ -354,7 +458,7 @@ func TestOutputFilenameTemplateWithRowsValidation(t *testing.T) {
 			"--rows", "10",
 			"--output-filename-template", "{{if lt .Index 2}}{{.Index}}{{end}}{{.DB}}.{{.Table}}",
 		)
-		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F")
+		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r, --filesize/-F, or --dump-service")
 	})
 
 	t.Run("accept template when standalone index exists outside conditionals", func(t *testing.T) {
@@ -378,7 +482,7 @@ func TestOutputFilenameTemplateWithRowsValidation(t *testing.T) {
 			"--filesize", "1MiB",
 			"--output-filename-template", "{{.DB}}.{{.Table}}",
 		)
-		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F")
+		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r, --filesize/-F, or --dump-service")
 	})
 
 	t.Run("accept template with index when filesize and output template are both specified", func(t *testing.T) {
@@ -395,6 +499,71 @@ func TestOutputFilenameTemplateWithRowsValidation(t *testing.T) {
 		)
 		require.NoError(t, err)
 	})
+}
+
+func TestDumpServiceFlags(t *testing.T) {
+	conf := parseConfigFromArgsForTest(t, "--dump-service", "unix:///tmp/dumper.sock", "--threads", "32", "--filetype", "csv", "--filter", "test.*")
+	require.Equal(t, "unix:///tmp/dumper.sock", conf.DumpService)
+	require.Equal(t, 32, conf.Threads)
+	require.NoError(t, validateDumpService(conf))
+	for _, fileSize := range []string{"", "0", "1MiB"} {
+		for _, testCase := range []struct {
+			name     string
+			template string
+			wantErr  bool
+		}{
+			{name: "default template"},
+			{name: "missing index", template: "{{.DB}}.{{.Table}}", wantErr: true},
+			{name: "conditional guard", template: "{{if .Index}}{{end}}{{.DB}}.{{.Table}}", wantErr: true},
+			{name: "conditional index", template: "{{if .Table}}{{.Index}}{{end}}{{.DB}}.{{.Table}}", wantErr: true},
+			{name: "standalone index", template: "{{.DB}}.{{.Table}}.{{.Index}}"},
+		} {
+			t.Run("output template/filesize="+fileSize+"/"+testCase.name, func(t *testing.T) {
+				args := []string{"--dump-service", "unix:///tmp/dumper.sock"}
+				if fileSize != "" {
+					args = append(args, "--filesize", fileSize)
+				}
+				if testCase.template != "" {
+					args = append(args, "--output-filename-template", testCase.template)
+				}
+				_, err := parseConfigFromArgsForTestWithErr(t, args...)
+				if testCase.wantErr {
+					require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks")
+					return
+				}
+				require.NoError(t, err)
+			})
+		}
+	}
+	for _, option := range []string{flagColumnFilter, flagColumnFilterFile} {
+		t.Run(option, func(t *testing.T) {
+			value := `{ matcher = ["test.*"], columns = ["*", "!secret"] }`
+			if option == flagColumnFilterFile {
+				value = writeColumnFilterFileForTest(t, "[[filters]]\nmatcher = [\"test.*\"]\ncolumns = [\"*\", \"!secret\"]\n")
+			}
+			conf := parseConfigFromArgsForTest(t, "--dump-service", "unix:///tmp/dumper.sock", "--"+option, value)
+			columns, indexes, err := conf.columnFilter.applyToColumns("test", "t", []string{"id", "secret", "name"})
+			require.NoError(t, err)
+			require.Equal(t, []string{"id", "name"}, columns)
+			require.Equal(t, []int{0, 2}, indexes)
+		})
+	}
+	invalidConf := DefaultConfig()
+	invalidConf.DumpService = "http://localhost/dumper.sock"
+	require.Error(t, validateDumpService(invalidConf))
+
+	for _, flagName := range dumpServiceIncompatibleFlags {
+		t.Run(flagName, func(t *testing.T) {
+			flags := pflag.NewFlagSet("dumpling", pflag.ContinueOnError)
+			DefaultConfig().DefineFlags(flags)
+			require.NoError(t, flags.Set(flagDumpService, "unix:///tmp/dumper.sock"))
+			flags.Lookup(flagName).Changed = true
+			require.EqualError(t, validateDumpServiceFlags(flags), "--"+flagName+" cannot be combined with --dump-service")
+		})
+	}
+	_, err := parseConfigFromArgsForTestWithErr(t, "--dump-service", "")
+	require.Error(t, err)
+	require.Empty(t, parseConfigFromArgsForTest(t).DumpService)
 }
 
 func parseConfigFromArgsForTest(t *testing.T, args ...string) *Config {
