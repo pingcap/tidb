@@ -42,10 +42,10 @@ import (
 // receiver owns the chunks it gets.
 func RunImportQuery(
 	ctx context.Context, sctx sessionctx.Context,
-	q *importer.QuerySource, importSQL string, memQuota int64,
+	q *importer.QuerySource, importSQL string, columnCnt int, memQuota int64,
 	output chan<- importer.QueryChunk,
 ) (err error) {
-	e, err := buildImportQueryExecutor(ctx, sctx, q, importSQL, memQuota)
+	e, err := buildImportQueryExecutor(ctx, sctx, q, importSQL, columnCnt, memQuota)
 	if err != nil {
 		return err
 	}
@@ -77,17 +77,13 @@ func sendQueryChunks(ctx context.Context, e exec.Executor, output chan<- importe
 			return err
 		}
 		numRows := chk.NumRows()
-		if numRows == 0 && rowID > 0 {
+		if numRows == 0 {
 			return nil
 		}
-		// Even an empty SELECT must expose its schema for target-width validation.
 		select {
 		case output <- importer.QueryChunk{Fields: fields, Chk: chk, RowIDOffset: rowID}:
 		case <-ctx.Done():
 			return context.Cause(ctx)
-		}
-		if numRows == 0 {
-			return nil
 		}
 		rowID += int64(numRows)
 		chk = chunk.Renew(chk, e.MaxChunkSize())
@@ -148,7 +144,7 @@ func prepareImportQuery(
 
 func buildImportQueryExecutor(
 	ctx context.Context, sctx sessionctx.Context,
-	q *importer.QuerySource, importSQL string, memQuota int64,
+	q *importer.QuerySource, importSQL string, columnCnt int, memQuota int64,
 ) (exec.Executor, error) {
 	is, node, err := prepareImportQuery(ctx, sctx, q, importSQL)
 	if err != nil {
@@ -169,6 +165,9 @@ func buildImportQueryExecutor(
 	p, ok := stmt.Plan.(base.PhysicalPlan)
 	if !ok {
 		return nil, errors.New("import query did not produce a physical SELECT plan")
+	}
+	if p.Schema().Len() != columnCnt {
+		return nil, errors.Errorf("import query returns %d columns, but the target expects %d", p.Schema().Len(), columnCnt)
 	}
 	failpoint.InjectCall("afterImportQueryOptimize", p)
 	b := newExecutorBuilder(ctx, sctx, is, nil)
