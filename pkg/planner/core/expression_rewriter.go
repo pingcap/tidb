@@ -1370,12 +1370,31 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		return true
 	}
 
-	// If the leftKey and the rightKey have different collations, don't convert the sub-query to an inner-join
-	// since when converting we will add a distinct-agg upon the right child and this distinct-agg doesn't have the right collation.
-	// To keep it simple, we forbid this converting if they have different collations.
-	// tested by TestCollateSubQuery.
+	// The DISTINCT added by the inner-join rewrite must use the comparison
+	// collation. Compatible keys can be grouped directly; for a scalar string
+	// key with incompatible collations, the RHS is cast to the comparison
+	// collation below.
+	// The compatible-key behavior is tested by TestCollateSubQuery; the
+	// incompatible-key behavior is tested by TestInSubqueryIncompatibleCollationUsesInnerDrivenJoin.
 	lt, rt := lexpr.GetType(er.sctx.GetEvalCtx()), rexpr.GetType(er.sctx.GetEvalCtx())
 	collFlag := collate.CompatibleCollate(lt.GetCollate(), rt.GetCollate())
+	canRewriteCollation := collFlag
+	if !collFlag && lLen == 1 && lt.EvalType() == types.ETString && rt.EvalType() == types.ETString {
+		// DISTINCT must use the same collation as the IN comparison. Cast the
+		// inner key to the comparison collation so the inner-join rewrite
+		// preserves the comparison semantics while deduplicating inner rows.
+		castType := rt.Clone()
+		castCharset, castCollation := checkCondition.CharsetAndCollation()
+		castType.SetCharset(castCharset)
+		castType.SetCollate(castCollation)
+		rexpr = expression.BuildCastFunction(er.sctx, rexpr, castType)
+		checkCondition, err = er.constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
+		if err != nil {
+			er.err = err
+			return true
+		}
+		canRewriteCollation = true
+	}
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
 	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingInSubquery)
 	// When EnableCorrelateSubquery is ON (set by the correlate alternative round),
@@ -1397,7 +1416,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	// When EnableCorrelateSubquery is ON (set by the correlate alternative round), skip the
 	// InnerJoin+Agg rewrite so that a SemiJoin is built instead; the CorrelateSolver rule can
 	// then convert it to a correlated Apply with index lookups.
-	canRewriteToJoinAgg := planCtx.builder.ctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && collFlag
+	canRewriteToJoinAgg := planCtx.builder.ctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && canRewriteCollation
 	if canRewriteToJoinAgg {
 		// Record that the alternative logical plans variable is relevant — toggling it
 		// changes whether we take the InnerJoin+Agg path or the SemiApply path.

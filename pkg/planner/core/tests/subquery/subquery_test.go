@@ -15,6 +15,8 @@
 package subquery
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -45,4 +47,34 @@ func TestCollateSubQuery(t *testing.T) {
 	tk.MustExec(`set collation_connection='latin1_bin';`)
 	tk.MustQuery(`explain format="plan_tree" select * from t use index(ix) where col in (select cast(id as char) from t1);`).
 		Check(samePlan)
+}
+
+func TestInSubqueryIncompatibleCollationUsesInnerDrivenJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table p (id int primary key, uuid char(36) not null, unique key uk_uuid (uuid)) default charset=utf8 collate=utf8_unicode_ci")
+	tk.MustExec("create table m (id int primary key, user_id int not null, p_id int, key idx_user (user_id))")
+	tk.MustExec("create table t (id int primary key, p_uuid varchar(36) not null, unique key uk_p_uuid (p_uuid)) default charset=utf8mb4 collate=utf8mb4_0900_ai_ci")
+	tk.MustExec("create table t_ci (id int primary key, p_uuid varchar(36) not null, unique key uk_p_uuid (p_uuid)) default charset=utf8mb4 collate=utf8mb4_unicode_ci")
+	tk.MustExec("insert into p values (1, '00000001-0000-4000-8000-000000000001'), (2, '00000002-0000-4000-8000-000000000002'), (3, '00000003-0000-4000-8000-000000000003')")
+	tk.MustExec("insert into m values (1, 4242, 1)")
+	tk.MustExec("insert into t values (1, '00000001-0000-4000-8000-000000000001'), (2, '00000002-0000-4000-8000-000000000002'), (3, '00000003-0000-4000-8000-000000000003')")
+	values := make([]string, 1000)
+	for i := range values {
+		id := i + 4
+		values[i] = fmt.Sprintf("(%d, '%036d')", id, id)
+	}
+	tk.MustExec("insert into t values " + strings.Join(values, ","))
+	tk.MustExec("insert into t_ci select * from t")
+	tk.MustExec("analyze table p")
+	tk.MustExec("analyze table m")
+	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t_ci")
+
+	query := `select t.id from %s as t where t.p_uuid in (select p.uuid from p join m on p.id = m.p_id where m.user_id = 4242)`
+	for _, table := range []string{"t", "t_ci"} {
+		tk.MustQuery(fmt.Sprintf(`explain format="plan_tree" `+query, table)).
+			CheckContain("index:uk_p_uuid")
+	}
 }
