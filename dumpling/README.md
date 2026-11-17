@@ -21,6 +21,23 @@ Features
 
 Any questions? Discord, Slack and other contact options can be found [here](https://docs.pingcap.com/tidb/stable/support)
 
+Password input
+--------------
+
+Use `--ask-password` (or `-a`) to enter the database password at a terminal without
+echoing it or putting it in shell history and process arguments:
+
+```bash
+dumpling -h 127.0.0.1 -P 4000 -u backup --ask-password -o ./export
+```
+
+The prompt requires a controlling terminal and fails if none is available, rather
+than reading a password from a pipe. Press Enter to submit (including an empty
+password), or Ctrl-C/Ctrl-D to cancel. The option
+cannot be combined with `--password`/`-p` (including `--password=`) or
+`--dump-service`. Existing `-p <password>` behavior is unchanged; omitting both
+password options continues to use an empty password without prompting.
+
 Building
 --------
 

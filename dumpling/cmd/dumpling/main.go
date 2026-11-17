@@ -59,6 +59,20 @@ func main() {
 		fmt.Printf("\nmeet some unparsed arguments, please check again: %+v\n", pflag.Args())
 		os.Exit(1)
 	}
+	if conf.AskPassword {
+		// Use the controlling terminal so redirected stdin is never consumed.
+		tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "--ask-password requires a controlling terminal")
+			os.Exit(1)
+		}
+		conf.Password, err = readPassword(tty)
+		_ = tty.Close()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
 
 	registry := conf.PromRegistry
 	registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
