@@ -155,15 +155,31 @@ impl Range {
         true
     }
 
-    /// Go `String` (the redaction-free spelling; `Redact` arrives with the
-    /// error-redaction surface its callers live in).
+    /// Go `String`: [`Self::redact`] with redaction off.
     #[must_use]
     pub fn to_display_string(&self) -> String {
-        let low: Vec<String> = self.low_val.iter().map(|d| format_datum(d, true)).collect();
+        self.redact("OFF")
+    }
+
+    /// Go `Redact(redact)`: each bound value through `dealWithRedact` --
+    /// `OFF` prints it, `ON` prints `?`, anything else wraps it in `‹›`;
+    /// infinite bounds always print.
+    #[must_use]
+    pub fn redact(&self, redact: &str) -> String {
+        let deal_with_redact = |input: String| {
+            if input == "-inf" || input == "+inf" || redact == "OFF" {
+                input
+            } else if redact == "ON" {
+                "?".to_owned()
+            } else {
+                format!("‹{input}›")
+            }
+        };
+        let low: Vec<String> = self.low_val.iter().map(|d| deal_with_redact(format_datum(d, true))).collect();
         let high: Vec<String> = self
             .high_val
             .iter()
-            .map(|d| format_datum(d, false))
+            .map(|d| deal_with_redact(format_datum(d, false)))
             .collect();
         let l = if self.low_exclude { "(" } else { "[" };
         let r = if self.high_exclude { ")" } else { "]" };

@@ -3734,6 +3734,8 @@ mod tests_eval_bool;
 #[cfg(test)]
 mod tests_explain;
 #[cfg(test)]
+mod tests_explain_redact;
+#[cfg(test)]
 mod tests_explain_derived;
 #[cfg(test)]
 mod tests_explain_merge_join;

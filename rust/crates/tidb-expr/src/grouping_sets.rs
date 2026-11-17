@@ -195,10 +195,10 @@ impl GroupingSets {
         res
     }
 
-    /// Go `StringWithCtx`.
+    /// Go `StringWithCtx(ctx, redact)`.
     #[must_use]
-    pub fn string_with_ctx(&self, ctx: &dyn crate::Columns) -> String {
-        format!("[{}]", self.iter().map(|gs| gs.string_with_ctx(ctx)).collect::<Vec<_>>().join(","))
+    pub fn string_with_ctx(&self, ctx: &dyn crate::Columns, redact: crate::explain::RedactionMode) -> String {
+        format!("[{}]", self.iter().map(|gs| gs.string_with_ctx(ctx, redact)).collect::<Vec<_>>().join(","))
     }
 
     /// Go `DistinctSize`: [`Self::distinct_size_with_threshold`] at 64.
@@ -284,10 +284,10 @@ impl GroupingSet {
         }
     }
 
-    /// Go `StringWithCtx`.
+    /// Go `StringWithCtx(ctx, redact)`.
     #[must_use]
-    pub fn string_with_ctx(&self, ctx: &dyn crate::Columns) -> String {
-        format!("{{{}}}", self.iter().map(|one| one.string_with_ctx(ctx)).collect::<Vec<_>>().join(","))
+    pub fn string_with_ctx(&self, ctx: &dyn crate::Columns, redact: crate::explain::RedactionMode) -> String {
+        format!("{{{}}}", self.iter().map(|one| one.string_with_ctx(ctx, redact)).collect::<Vec<_>>().join(","))
     }
 
     /// Go `MemoryUsage`.
@@ -315,14 +315,14 @@ impl GroupingExprs {
         FastIntSet::new(self.iter().map(|one| grouping_column(one).unique_id))
     }
 
-    /// Go `StringWithCtx`.
+    /// Go `StringWithCtx(ctx, redact)`.
     #[must_use]
-    pub fn string_with_ctx(&self, ctx: &dyn crate::Columns) -> String {
+    pub fn string_with_ctx(&self, ctx: &dyn crate::Columns, redact: crate::explain::RedactionMode) -> String {
         format!(
             "<{}>",
             self.iter()
                 .map(|one| {
-                    physical_expression_text_with_columns(ctx, one, &[], ExpressionTextStyle::StringWithCtx)
+                    physical_expression_text_with_columns(ctx, one, &[], ExpressionTextStyle::StringWithCtx(redact))
                         .unwrap_or_default()
                 })
                 .collect::<Vec<_>>()
@@ -547,7 +547,7 @@ mod tests {
     fn test_distinct_grouping_sets() {
         let ctx = crate::NoColumns;
         let text = |expr: &Expression| {
-            physical_expression_text_with_columns(&ctx, expr, &[], ExpressionTextStyle::StringWithCtx).unwrap()
+            physical_expression_text_with_columns(&ctx, expr, &[], ExpressionTextStyle::StringWithCtx(crate::explain::RedactionMode::Disabled)).unwrap()
         };
         let (a, b, c, d) = (col(1), col(2), col(3), col(4));
         // case1: non-duplicated case.

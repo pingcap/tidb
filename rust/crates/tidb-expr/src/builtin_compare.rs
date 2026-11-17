@@ -392,7 +392,7 @@ fn skip_plan_cache_for_comparison(ctx: &dyn Columns, constant: &Constant, target
         ctx,
         &Expression::Constant(constant.clone()),
         &[],
-        crate::explain::ExpressionTextStyle::StringWithCtx,
+        crate::explain::ExpressionTextStyle::StringWithCtx(crate::explain::RedactionMode::Disabled),
     )
     .unwrap_or_default();
     ctx.set_skip_plan_cache(&format!("'{text}' may be converted to {target}"));

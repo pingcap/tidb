@@ -159,7 +159,7 @@ pub(crate) fn index_join_path_range_info(
                 access_ctx,
                 access,
                 &[],
-                tidb_expr::explain::ExpressionTextStyle::StringWithCtx,
+                tidb_expr::explain::ExpressionTextStyle::StringWithCtx(tidb_expr::explain::redaction_mode(&ectx.tidb_redact_log())),
             )
             .unwrap_or_default(),
         );

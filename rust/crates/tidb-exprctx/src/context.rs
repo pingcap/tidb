@@ -531,9 +531,11 @@ pub trait Columns {
         false
     }
 
-    /// Go `SessionVars.EnableRedactLog` (`EvalContext.GetTiDBRedactLog`).
+    /// Go `SessionVars.EnableRedactLog` (`EvalContext.GetTiDBRedactLog`);
+    /// a context without a session has Go's default, `OFF`
+    /// (`vardef.DefTiDBRedactLog`, as `exprstatic` starts with).
     fn tidb_redact_log(&self) -> String {
-        String::new()
+        "OFF".to_owned()
     }
 
     /// Go `StmtCtx.FTSFunctionIsUsed`.

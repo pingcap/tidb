@@ -159,7 +159,7 @@ impl BaseGroupConcat4String {
                 ctx,
                 &self.base.args[0],
                 &[],
-                tidb_expr::explain::ExpressionTextStyle::StringWithCtx,
+                tidb_expr::explain::ExpressionTextStyle::StringWithCtx(tidb_expr::explain::RedactionMode::Disabled),
             )
             .unwrap_or_default();
             let error = EvalError::GroupConcatCut(format!("Some rows were cut by GROUPCONCAT({text})"));

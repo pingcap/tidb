@@ -73,7 +73,7 @@ fn expression_string(ctx: &BuildPbContext<'_>, expr: &Expression) -> String {
         ctx.expr_ctx,
         expr,
         &[],
-        tidb_expr::explain::ExpressionTextStyle::StringWithCtx,
+        tidb_expr::explain::ExpressionTextStyle::StringWithCtx(tidb_expr::explain::RedactionMode::Disabled),
     )
     .unwrap_or_default()
 }

@@ -71,9 +71,9 @@ fn expression_text(
     .unwrap_or_default()
 }
 
-/// Go `Expression.StringWithCtx`: the renderer `ExplainExpressionList` uses
-/// for a Projection's own expressions, where a nested string constant prints
-/// bare instead of quoted.
+/// Go `Expression.StringWithCtx(ctx, EnableRedactLog)`: the renderer
+/// `ExplainExpressionList` uses for a Projection's own expressions, where a
+/// nested string constant prints bare instead of quoted.
 fn expression_string_text(
     eval_ctx: &dyn tidb_exprctx::Columns,
     expression: &tidb_expr::expression::Expression,
@@ -82,9 +82,15 @@ fn expression_string_text(
         eval_ctx,
         expression,
         &[],
-        tidb_expr::explain::ExpressionTextStyle::StringWithCtx,
+        tidb_expr::explain::ExpressionTextStyle::StringWithCtx(redact_mode(eval_ctx)),
     )
     .unwrap_or_default()
+}
+
+/// Go `SessionVars.EnableRedactLog` as the operators pass it to
+/// `StringWithCtx`.
+fn redact_mode(eval_ctx: &dyn tidb_exprctx::Columns) -> tidb_expr::explain::RedactionMode {
+    tidb_expr::explain::redaction_mode(&eval_ctx.tidb_redact_log())
 }
 
 /// Go appends `stats:pseudo` only when a scan's `StatsInfo.StatsVersion` is
@@ -226,15 +232,36 @@ fn topn_info(eval_ctx: &dyn tidb_exprctx::Columns, topn: &tidb_planner_core_oper
         }
         text.push_str(&by_items_text(eval_ctx, &topn.by_items));
     }
-    text.push_str(&format!(", offset:{}, count:{}", topn.offset, topn.count));
-    if let Some(prefix_col) = topn.prefix_col {
-        let name = topn
-            .base
-            .base
-            .schema()
-            .and_then(|schema| schema.columns.iter().find(|column| column.unique_id == prefix_col))
-            .map_or_else(|| "?".to_owned(), column_text);
-        text.push_str(&format!(", prefix_col:{name}, prefix_len:{}", topn.prefix_len));
+    let prefix_name = || {
+        topn.prefix_col.map(|prefix_col| {
+            topn.base
+                .base
+                .schema()
+                .and_then(|schema| schema.columns.iter().find(|column| column.unique_id == prefix_col))
+                .map_or_else(|| "?".to_owned(), column_text)
+        })
+    };
+    // Go switches on `EnableRedactLog`; another value prints nothing.
+    match eval_ctx.tidb_redact_log().as_str() {
+        "OFF" => {
+            text.push_str(&format!(", offset:{}, count:{}", topn.offset, topn.count));
+            if let Some(name) = prefix_name() {
+                text.push_str(&format!(", prefix_col:{name}, prefix_len:{}", topn.prefix_len));
+            }
+        }
+        "MARKER" => {
+            text.push_str(&format!(", offset:‹{}›, count:‹{}›", topn.offset, topn.count));
+            if let Some(name) = prefix_name() {
+                text.push_str(&format!(", prefix_col:‹{name}›, prefix_len:‹{}›", topn.prefix_len));
+            }
+        }
+        "ON" => {
+            text.push_str(", offset:?, count:?");
+            if topn.prefix_col.is_some() {
+                text.push_str(", prefix_col:?, prefix_len:?");
+            }
+        }
+        _ => {}
     }
     text
 }
@@ -631,15 +658,22 @@ fn frame_bound_text(
             _ => String::new(),
         }
     } else {
-        bound.num.to_string()
+        // Go switches on `EnableRedactLog`; another value prints nothing.
+        match eval_ctx.tidb_redact_log().as_str() {
+            "OFF" => bound.num.to_string(),
+            "MARKER" => format!("‹{}›", bound.num),
+            "ON" => "?".to_owned(),
+            _ => String::new(),
+        }
     };
     format!("{operand} {direction}")
 }
 
-fn scan_ranges_text(ranges: &tidb_ranger::types::Ranges) -> String {
+/// Go's scans: each range through `Range.Redact(EnableRedactLog)`.
+fn scan_ranges_text(ranges: &tidb_ranger::types::Ranges, redact: &str) -> String {
     ranges
         .iter()
-        .map(tidb_ranger::types::Range::to_display_string)
+        .map(|range| range.redact(redact))
         // Go's EXPLAIN separates multiple intervals with ", " —
         // `range:[-inf,5), (5,+inf]`.
         .collect::<Vec<_>>()
@@ -1027,6 +1061,16 @@ fn dynamic_partition_access(plan: &PhysicalPlan) -> Option<AccessObject> {
             ))
         })
         .or_else(|| plan.children().iter().find_map(dynamic_partition_access))
+}
+
+/// Go `redact.WriteRedact`: `MARKER` wraps the value in `‹›`, `ON` prints
+/// `?`, anything else prints it.
+fn write_redact(value: &str, redact: &str) -> String {
+    match redact {
+        "MARKER" => format!("‹{value}›"),
+        "ON" => "?".to_owned(),
+        _ => value.to_owned(),
+    }
 }
 
 fn point_handle_text(range: &tidb_ranger::types::Range) -> String {
@@ -1462,7 +1506,12 @@ fn physical_operator_own_info(
             format!("{prefix}{info}")
         }
         PhysicalPlan::Sort(sort) => by_items_text(eval_ctx, &sort.by_items),
-        PhysicalPlan::Limit(limit) => limit.explain_info(RedactMode::Disable),
+        PhysicalPlan::Limit(limit) => limit.explain_info(match eval_ctx.tidb_redact_log().as_str() {
+            "OFF" => RedactMode::Disable,
+            "MARKER" => RedactMode::Marker,
+            "ON" => RedactMode::Enable,
+            _ => RedactMode::Other,
+        }),
         // Go `PhysicalTableScan.OperatorInfo`: nothing for a cluster table.
         PhysicalPlan::TableScan(scan)
             if scan.store_type == tidb_kv::store_type::StoreType::TiDb =>
@@ -1482,7 +1531,7 @@ fn physical_operator_own_info(
                 .is_some_and(|kind| kind.plan_type() == "TableRangeScan")
                 && !scan.ranges.is_empty()
             {
-                parts.push(format!("range:{}", scan_ranges_text(&scan.ranges)));
+                parts.push(format!("range:{}", scan_ranges_text(&scan.ranges, &eval_ctx.tidb_redact_log())));
             }
             // Go prints the pushed down filter under `EnableLateMaterialization`
             // for a filtered TiFlash scan; only such a plan carries one.
@@ -1558,7 +1607,7 @@ fn physical_operator_own_info(
             } else if !scan.ranges.is_empty()
                 && !tidb_ranger::types::has_full_range(&scan.ranges, false)
             {
-                parts.push(format!("range:{}", scan_ranges_text(&scan.ranges)));
+                parts.push(format!("range:{}", scan_ranges_text(&scan.ranges, &eval_ctx.tidb_redact_log())));
             }
             parts.push(scan_keep_order_text(scan.keep_order, scan.desc));
             if let Some(stats) = used_stats_suffix_for_scan(
@@ -1617,7 +1666,7 @@ fn physical_operator_own_info(
                 String::new()
             } else {
                 point.ranges.first().map_or_else(String::new, |range| {
-                    format!("handle:{}", point_handle_text(range))
+                    format!("handle:{}", write_redact(&point_handle_text(range), &eval_ctx.tidb_redact_log()))
                 })
             };
             // Go `PointGetPlan.ExplainInfo` renders `lock` for the
@@ -1638,12 +1687,16 @@ fn physical_operator_own_info(
                 .kv_table_by_id(batch.table_id)
                 .is_some_and(|table| !table.common_handle_offsets().is_empty());
             let prefix = if batch.index_id.is_none() && !common_handle {
+                let redact = eval_ctx.tidb_redact_log();
                 let handle_text = |range: &tidb_ranger::types::Range| {
-                    if batch.unsigned_handle {
-                        point_handle_text_unsigned(range)
-                    } else {
-                        point_handle_text(range)
-                    }
+                    write_redact(
+                        &if batch.unsigned_handle {
+                            point_handle_text_unsigned(range)
+                        } else {
+                            point_handle_text(range)
+                        },
+                        &redact,
+                    )
                 };
                 let handles = batch
                     .ranges
@@ -1720,7 +1773,7 @@ fn physical_operator_own_info(
                 ));
                 text.push_str(", ");
             }
-            text.push_str(&expand.grouping_sets.string_with_ctx(eval_ctx));
+            text.push_str(&expand.grouping_sets.string_with_ctx(eval_ctx, redact_mode(eval_ctx)));
             text
         }
         PhysicalPlan::Expand(expand) => format!(
@@ -2203,13 +2256,28 @@ fn cte_definitions(
             ));
             collect_ctes(recursive, &mut ctes);
         }
+        // Go `CTEDefinition.ExplainInfo`: the kind, then the limit as
+        // `EnableRedactLog` says.
+        let mut definition_info = if cte.recur_plan.is_some() {
+            "Recursive CTE".to_owned()
+        } else {
+            "Non-Recursive CTE".to_owned()
+        };
+        {
+            let class = cte.cte.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if class.has_limit {
+                let (offset, count) = (class.limit_beg, class.limit_end - class.limit_beg);
+                match eval_ctx.tidb_redact_log().as_str() {
+                    "MARKER" => definition_info.push_str(&format!(", limit(offset:‹{offset}›, count:‹{count}›)")),
+                    "OFF" => definition_info.push_str(&format!(", limit(offset:{offset}, count:{count})")),
+                    "ON" => definition_info.push_str(", limit(offset:?, count:?)"),
+                    _ => {}
+                }
+            }
+        }
         let mut definition = ExplainOperator::new("CTE", id_for_storage)
             .with_fixed_id(format!("CTE_{}", id_for_storage))
-            .with_operator_info(if cte.recur_plan.is_some() {
-                "Recursive CTE"
-            } else {
-                "Non-Recursive CTE"
-            })
+            .with_operator_info(definition_info)
             .with_children(children);
         definition.estimated_rows = plan
             .stats_info()

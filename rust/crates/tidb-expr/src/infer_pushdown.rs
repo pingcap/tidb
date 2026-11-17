@@ -776,7 +776,7 @@ fn can_expr_push_down_reported(
                     &crate::NoColumns,
                     expr,
                     &[],
-                    crate::explain::ExpressionTextStyle::StringWithCtx,
+                    crate::explain::ExpressionTextStyle::StringWithCtx(crate::explain::RedactionMode::Disabled),
                 )
                 .unwrap_or_default()
             };

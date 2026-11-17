@@ -4737,7 +4737,7 @@ fn try_to_get_mpp_windows(
                     expr_ctx,
                     expr,
                     &[],
-                    tidb_expr::explain::ExpressionTextStyle::StringWithCtx,
+                    tidb_expr::explain::ExpressionTextStyle::StringWithCtx(tidb_expr::explain::RedactionMode::Disabled),
                 )
                 .unwrap_or_default();
                 raise(&format!(

@@ -89,7 +89,7 @@ mod tests {
             let expression = Expression::Constant(constant);
             for (style, expected) in [
                 (ExpressionTextStyle::Explain, explain),
-                (ExpressionTextStyle::StringWithCtx, display),
+                (ExpressionTextStyle::StringWithCtx(tidb_expr::explain::RedactionMode::Disabled), display),
             ] {
                 assert_eq!(
                     physical_expression_text_with_columns(&ctx, &expression, &[], style).as_deref(),

@@ -3377,7 +3377,8 @@ impl StmtContext {
             pessimistic_transaction: false,
             in_transaction: false,
             txn_is_explicit: false,
-            enable_redact_log: String::new(),
+            // Go `vardef.DefTiDBRedactLog`.
+            enable_redact_log: tidb_vardef::defaults::DEF_TIDB_REDACT_LOG.to_owned(),
             fk_cascades: Arc::default(),
             in_handle_foreign_key_trigger: Arc::default(),
             updated_rows: Arc::default(),

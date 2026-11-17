@@ -367,7 +367,7 @@ pub(crate) fn string_with_ctx(expression: &Expression, ctx: &dyn Columns) -> Opt
         ctx,
         expression,
         &[],
-        crate::explain::ExpressionTextStyle::StringWithCtx,
+        crate::explain::ExpressionTextStyle::StringWithCtx(crate::explain::RedactionMode::Disabled),
     )
 }
 
