@@ -9032,7 +9032,13 @@ func TestAffinityTableGroupStatements(t *testing.T) {
 		{"show create affinity table group g", true, "SHOW CREATE AFFINITY TABLE GROUP `g`"},
 		{"show create affinity table group `a``b-c`", true, "SHOW CREATE AFFINITY TABLE GROUP `a``b-c`"},
 
-		// MEMBER_SLOTS is an unreserved keyword.
+		{"create affinity table group g partitions 4 Member_Slots = 8", true, "CREATE AFFINITY TABLE GROUP `g` PARTITIONS 4 MEMBER_SLOTS = 8"},
+		{"create affinity table group g partitions 4 MEMBER_SLOTS 8", true, "CREATE AFFINITY TABLE GROUP `g` PARTITIONS 4 MEMBER_SLOTS = 8"},
+
+		// MEMBER_SLOTS is not a keyword, so names that only accept plain identifiers still parse.
+		{"create role member_slots", true, "CREATE ROLE `member_slots`@`%`"},
+		{"call member_slots()", true, "CALL `member_slots`()"},
+		{"grant member_slots to u", true, "GRANT `member_slots`@`%` TO `u`@`%`"},
 		{"create database member_slots", true, "CREATE DATABASE `member_slots`"},
 		{"create table member_slots.member_slots (member_slots int)", true, "CREATE TABLE `member_slots`.`member_slots` (`member_slots` INT)"},
 		{"select member_slots from member_slots.member_slots", true, "SELECT `member_slots` FROM `member_slots`.`member_slots`"},
@@ -9043,6 +9049,9 @@ func TestAffinityTableGroupStatements(t *testing.T) {
 		{"create affinity table group g partitions 'a'", false, ""},
 		{"create affinity table group g member_slots 4 partitions 4", false, ""},
 		{"create affinity table group g partitions 4 member_slots 4 member_slots 4", false, ""},
+		{"create affinity table group g partitions 4 member_slot = 8", false, ""},
+		{"create affinity table group g partitions 4 slots 8", false, ""},
+		{"create affinity table group g partitions 4 member_slots", false, ""},
 		{"create affinity table group g partitions 4 placement policy p", false, ""},
 		{"create affinity table group g partitions 4 comment 'c'", false, ""},
 		{"create or replace affinity table group g partitions 4", false, ""},

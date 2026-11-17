@@ -569,7 +569,6 @@ var tokenMap = map[string]int{
 	"MEDIUMTEXT":                     mediumtextType,
 	"MEMORY":                         memory,
 	"MEMBER":                         member,
-	"MEMBER_SLOTS":                   memberSlots,
 	"MERGE":                          merge,
 	"METADATA":                       metadata,
 	"MICROSECOND":                    microsecond,
