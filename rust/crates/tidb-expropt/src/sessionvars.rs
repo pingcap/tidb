@@ -24,26 +24,50 @@ use tidb_exprctx::{
 
 /// boundary: Go `pkg/sessionctx/variable.SessionVars` — the session variable
 /// bundle, which the session owns above this crate. The trait is the part of
-/// it that builtins read through [`SessionVarsPropReader`].
+/// it that builtins read and write through [`SessionVarsPropReader`]. Each
+/// method's default is a zero-valued Go `SessionVars` that keeps nothing; a
+/// session implements them all.
 pub trait SessionVars: Any + Send + Sync {
     /// Go `SessionVars.User`: the login and the account it matched; `None`
     /// is a session with no user (an internal one).
-    fn user(&self) -> Option<Arc<tidb_parser::auth::UserIdentity>>;
+    fn user(&self) -> Option<Arc<tidb_parser::auth::UserIdentity>> {
+        None
+    }
     /// Go `SessionVars.ActiveRoles`.
-    fn active_roles(&self) -> Vec<Arc<tidb_parser::auth::RoleIdentity>>;
+    fn active_roles(&self) -> Vec<Arc<tidb_parser::auth::RoleIdentity>> {
+        Vec::new()
+    }
     /// Go `SessionVars.ConnectionID`; 0 for a session with no connection.
-    fn connection_id(&self) -> u64;
+    fn connection_id(&self) -> u64 {
+        0
+    }
     /// Go `SessionVars.LastFoundRows`: the rows the previous query found.
-    fn last_found_rows(&self) -> u64;
+    fn last_found_rows(&self) -> u64 {
+        0
+    }
     /// Go `SessionVars.StmtCtx.PrevAffectedRows`.
-    fn prev_affected_rows(&self) -> i64;
+    fn prev_affected_rows(&self) -> i64 {
+        0
+    }
     /// Go `SessionVars.StmtCtx.PrevLastInsertID`.
-    fn prev_last_insert_id(&self) -> u64;
+    fn prev_last_insert_id(&self) -> u64 {
+        0
+    }
     /// Go `SessionVars.SetLastInsertID`, which `LAST_INSERT_ID(expr)` calls.
-    fn set_last_insert_id(&self, id: u64);
+    fn set_last_insert_id(&self, id: u64) {
+        let _ = id;
+    }
     /// Go `getHintResourceGroupName(vars)`: the statement's resource group,
     /// a `RESOURCE_GROUP()` hint's first.
-    fn hint_resource_group_name(&self) -> String;
+    fn hint_resource_group_name(&self) -> String {
+        String::new()
+    }
+    /// Go `SessionVars.SetUserVarVal` (and `SetStringUserVar`, whose
+    /// collation the datum carries), which `SET @v := expr` calls; the name
+    /// as given (Go's callers lowercase it).
+    fn set_user_var_val(&self, name: &str, value: tidb_datatype::Datum) {
+        let _ = (name, value);
+    }
 }
 
 /// boundary: Go `pkg/sessionctx/variable.SessionVarsProvider` — anything that

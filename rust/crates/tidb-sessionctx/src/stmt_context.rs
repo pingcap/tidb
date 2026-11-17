@@ -732,6 +732,7 @@ struct StmtSessionVars {
     prev_last_insert_id: u64,
     last_insert_id: Arc<Mutex<Option<u64>>>,
     resource_group_name: String,
+    user_vars: Option<tidb_variable::user_vars::UserVars>,
 }
 
 /// Go `SessionVars.User` of a session that matched the account
@@ -795,6 +796,12 @@ impl tidb_expropt::SessionVars for StmtSessionVars {
 
     fn hint_resource_group_name(&self) -> String {
         self.resource_group_name.clone()
+    }
+
+    fn set_user_var_val(&self, name: &str, value: Datum) {
+        if let Some(vars) = self.user_vars.as_ref() {
+            vars.set_user_var_val(name, value);
+        }
     }
 }
 
@@ -6594,6 +6601,7 @@ impl StmtContext {
             prev_last_insert_id: self.prev_last_insert_id,
             last_insert_id: Arc::clone(&self.last_insert_id),
             resource_group_name: self.resource_group_name.clone(),
+            user_vars: self.user_vars.clone(),
         }
     }
 
@@ -7557,14 +7565,6 @@ impl Columns for StmtContext {
     fn get_uservar(&self, name: &str) -> Option<Datum> {
         let vars = self.user_vars.as_ref()?;
         tidb_variable::user_vars::UserVarsReader::get_user_var_val(vars, &tidb_hack::go_to_lower(name))
-    }
-
-    /// Go `SessionVars.SetUserVarVal`. A NULL value never reaches here -- the
-    /// evaluator keeps Go's rule that `@x := NULL` leaves the variable alone.
-    fn set_uservar(&self, name: &str, value: Datum) {
-        if let Some(vars) = self.user_vars.as_ref() {
-            vars.set_user_var_val(&tidb_hack::go_to_lower(name), value);
-        }
     }
 
     fn rand_next(&self) -> Option<f64> {

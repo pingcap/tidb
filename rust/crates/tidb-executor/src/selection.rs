@@ -457,8 +457,39 @@ mod tests {
         FieldType::new(FieldTypeCode::VarString)
     }
 
+
+    /// Go `SessionVars.SetUserVarVal` over a test's variable map.
+    #[derive(Clone, Default)]
+    struct VarMap(std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, Datum>>>);
+
+    impl tidb_expropt::SessionVars for VarMap {
+        fn set_user_var_val(&self, name: &str, value: Datum) {
+            self.0.lock().unwrap().insert(name.to_owned(), value);
+        }
+    }
+
+    impl tidb_expropt::SessionVarsProvider for VarMap {
+        fn get_session_vars(&self) -> std::sync::Arc<dyn tidb_expropt::SessionVars> {
+            std::sync::Arc::new(self.clone())
+        }
+    }
+
+    impl VarMap {
+        fn get(&self, name: &str) -> Option<Datum> {
+            self.0.lock().unwrap().get(name).cloned()
+        }
+
+        /// Go `sessionexpr`'s session-vars provider over the map.
+        fn provider(&self, key: tidb_exprctx::OptionalEvalPropKey) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+            (key == tidb_exprctx::OptionalEvalPropKey::SessionVars).then(|| {
+                std::sync::Arc::new(tidb_expropt::new_session_vars_provider(std::sync::Arc::new(self.clone())))
+                    as std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>
+            })
+        }
+    }
+
     #[derive(Default)]
-    struct UserVariables(RefCell<HashMap<String, Datum>>);
+    struct UserVariables(VarMap);
 
     impl Columns for UserVariables {
         fn get(&self, _: &[String]) -> Option<Datum> {
@@ -466,11 +497,14 @@ mod tests {
         }
 
         fn get_uservar(&self, name: &str) -> Option<Datum> {
-            self.0.borrow().get(&name.to_ascii_lowercase()).cloned()
+            self.0.get(&name.to_ascii_lowercase())
         }
 
-        fn set_uservar(&self, name: &str, value: Datum) {
-            self.0.borrow_mut().insert(name.to_ascii_lowercase(), value);
+        fn get_optional_prop_provider(
+            &self,
+            key: tidb_exprctx::OptionalEvalPropKey,
+        ) -> Option<std::sync::Arc<dyn tidb_exprctx::DynOptionalEvalPropProvider>> {
+            self.0.provider(key)
         }
     }
 

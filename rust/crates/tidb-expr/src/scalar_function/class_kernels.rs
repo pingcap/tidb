@@ -413,15 +413,19 @@ pub(crate) fn getvar(function: &ScalarFunction, ctx: &dyn Columns, _: Row<'_>) -
     uservar_as_kind(kind, ctx.get_uservar(&var).unwrap_or(Datum::Null), ctx)
 }
 
-/// Go `builtinSetVar*Sig`: a NULL value is returned without touching the
-/// variable.
+/// Go `builtinSetVar*Sig`: `GetSessionVars` first, then the value; a NULL
+/// value is returned without touching the variable, any other is stored
+/// under the lowercased name (`SessionVars.SetUserVarVal`).
 pub(crate) fn setvar(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+    let vars = tidb_expropt::SessionVarsPropReader
+        .get_session_vars(ctx)
+        .map_err(crate::builtin_ext::misc::opt_prop_error)?;
     let var = function
         .uservar_name()
         .ok_or(EvalError::Unsupported("SETVAR has no constant variable name"))?;
     let value = function.args[1].eval(ctx, row)?;
     if !value.is_null() {
-        ctx.set_uservar(&var, value.clone());
+        vars.set_user_var_val(&tidb_hack::go_to_lower(&var), value.clone());
     }
     Ok(value)
 }

@@ -914,11 +914,6 @@ pub trait Columns {
         None
     }
 
-    /// Assigns a user variable through the resolver's interior mutability.
-    fn set_uservar(&self, name: &str, value: Datum) {
-        let _ = (name, value);
-    }
-
     /// TiDB's session `time_zone`. The default is the exact fixed zone the
     /// goeval oracle's mock session pins (`UTC+11`), so constant folding
     /// stays byte-comparable with the golden corpus; a real session
