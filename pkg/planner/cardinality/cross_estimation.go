@@ -80,7 +80,9 @@ func AdjustRowCountForTableScanByLimit(sctx planctx.PlanContext,
 func crossEstimateTableRowCount(sctx planctx.PlanContext,
 	dsStatsInfo, dsTableStats *property.StatsInfo, dsStatisticTable *statistics.Table,
 	path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
-	if dsStatisticTable.Pseudo || len(path.TableFilters) == 0 || !sctx.GetSessionVars().EnableCorrelationAdjustment {
+	// Inverted retrieval does not preserve the handle order assumed by the
+	// correlation model. Its composed count still supports uniform estimation.
+	if path.FTSQueryInfo != nil || dsStatisticTable.Pseudo || len(path.TableFilters) == 0 || !sctx.GetSessionVars().EnableCorrelationAdjustment {
 		return 0, false, 0
 	}
 	col, corr := getMostCorrCol4Handle(path.TableFilters, dsStatisticTable, sctx.GetSessionVars().CorrelationThreshold)

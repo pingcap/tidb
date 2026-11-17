@@ -128,9 +128,6 @@ func cloneDataSource(ds *logicalop.DataSource) *logicalop.DataSource {
 	// Independent slices that PPD replaces.
 	clone.AllConds = append([]expression.Expression(nil), ds.AllConds...)
 	clone.PushedDownConds = append([]expression.Expression(nil), ds.PushedDownConds...)
-	if ds.FtsPushDown != nil {
-		clone.FtsPushDown = tidbutil.ProtoV1Clone(ds.FtsPushDown)
-	}
 
 	// Deep-clone AccessPaths so the Join and Apply alternatives have fully
 	// independent path objects. Stats derivation (fillIndexPath, etc.) mutates
@@ -265,17 +262,17 @@ func cloneTopN(tn *logicalop.LogicalTopN) (*logicalop.LogicalTopN, bool) {
 	return &clone, true
 }
 
-// freshAccessPath creates a new AccessPath with only the structural identity
-// fields from the source path (Index, StoreType, handle flags, hint flags).
-// Analysis fields (Ranges, AccessConds, IdxCols, etc.) are left at zero so
-// that fillIndexPath / deriveTablePathStats start from a clean state.
+// freshAccessPath preserves structural identity (Index, StoreType, handle and
+// hint flags), leaving range analysis empty for fillIndexPath/deriveTablePathStats.
+// An already bound inverted query retains its access conditions independently;
+// handle ranges and estimates are rebuilt from the new logical predicates.
 //
 // Index-merge fields (PartialIndexPaths, PartialAlternativeIndexPaths, etc.)
 // are intentionally omitted: AllPossibleAccessPaths contains only individual
 // index paths; index merge paths are synthesized later by generateIndexMergePath
 // which runs as part of DeriveStats after fillIndexPath populates these fresh paths.
 func freshAccessPath(src *util.AccessPath) *util.AccessPath {
-	return &util.AccessPath{
+	path := &util.AccessPath{
 		Index:                 src.Index,
 		StoreType:             src.StoreType,
 		IsIntHandlePath:       src.IsIntHandlePath,
@@ -288,4 +285,9 @@ func freshAccessPath(src *util.AccessPath) *util.AccessPath {
 		IndexLookUpPushDownBy: src.IndexLookUpPushDownBy,
 		NoncacheableReason:    src.NoncacheableReason,
 	}
+	if src.FTSQueryInfo != nil {
+		path.FTSQueryInfo = tidbutil.ProtoV1Clone(src.FTSQueryInfo)
+		path.AccessConds = util.CloneExprs(src.AccessConds)
+	}
+	return path
 }

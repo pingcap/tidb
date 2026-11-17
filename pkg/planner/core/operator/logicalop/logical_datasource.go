@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -66,7 +65,9 @@ type DataSource struct {
 	TableAsName *ast.CIStr `hash64-equals:"true"`
 	// IndexMergeHints are the hint for indexmerge.
 	IndexMergeHints []h.HintedIndex
-	// PushedDownConds are the conditions that will be pushed down to coprocessor.
+	// PushedDownConds are the logical conditions eligible for coprocessor execution.
+	// They include predicates executed by a columnar index; the chosen AccessPath
+	// separates index execution from residual filters without removing logical facts.
 	PushedDownConds []expression.Expression `hash64-equals:"true"`
 	// TiFlashLMFilterColumnIDs are columns forced as TiFlash late-materialization filter columns by hints.
 	TiFlashLMFilterColumnIDs []int64 `hash64-equals:"true"`
@@ -142,10 +143,6 @@ type DataSource struct {
 	// NOTE: This list does not distinguish between the type of predicate or usage. It is used in
 	// index pruning early in the planning phase - which is an approximate heuristic.
 	InterestingColumns []*expression.Column
-
-	// FtsPushDown is the extracted FTS query info, when applicable fts expression is provided
-	// in WHERE and TopN.
-	FtsPushDown *tipb.FTSQueryInfo
 
 	// ftsResolveErr is recorded at the DataSource-local predicate-pushdown
 	// boundary and reported by the final FTS rejection rule.
@@ -333,6 +330,11 @@ func (ds *DataSource) PredicateSimplification() base.LogicalPlan {
 	p := ds.Self().(*DataSource)
 	p.PushedDownConds = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds, true, nil)
 	p.AllConds = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.AllConds, true, nil)
+	if p.FTSQueryInfo() != nil {
+		path := p.PossibleAccessPaths[0]
+		path.AccessConds = ruleutil.ApplyPredicateSimplification(p.SCtx(), path.AccessConds, true, nil)
+		p.ftsResolveErr = p.resolveFTSWherePredicate()
+	}
 	return p
 }
 
@@ -963,19 +965,19 @@ func UsedHypoTiFlashReplicas(ctx *variable.SessionVars, dbName ast.CIStr, tblInf
 
 // hashFTSQuery includes the selected FTS query in the generated DataSource hash.
 func (ds *DataSource) hashFTSQuery(h base2.Hasher) {
-	if ds.FtsPushDown == nil {
+	if ds.FTSQueryInfo() == nil {
 		h.HashByte(base2.NilFlag)
 		return
 	}
 	h.HashByte(base2.NotNilFlag)
-	encoded, err := proto.Marshal(ds.FtsPushDown)
+	encoded, err := proto.Marshal(ds.FTSQueryInfo())
 	if err != nil {
-		h.HashString(ds.FtsPushDown.String())
+		h.HashString(ds.FTSQueryInfo().String())
 	} else {
 		h.HashBytes(encoded)
 	}
 }
 
 func (ds *DataSource) equalFTSQuery(other *DataSource) bool {
-	return proto.Equal(ds.FtsPushDown, other.FtsPushDown)
+	return proto.Equal(ds.FTSQueryInfo(), other.FTSQueryInfo())
 }

@@ -677,20 +677,15 @@ func TestLogicalExpandHash64Equals(t *testing.T) {
 func TestDataSourceHash64EqualsIncludesFTSQuery(t *testing.T) {
 	newDataSource := func(query string) *logicalop.DataSource {
 		alias := ast.NewCIStr("t")
+		queryInfo := &tipb.FTSQueryInfo{
+			QueryType: tipb.FTSQueryType_FTSQueryTypeWithScore,
+			IndexId:   3,
+			QueryFunc: tipb.ScalarFuncSig_FTSMatchWord,
+			MatchExpr: []tipb.Expr{{Tp: tipb.ExprType_ScalarFunc, Sig: tipb.ScalarFuncSig_FTSMatchWord, Val: []byte(query)}},
+		}
 		return &logicalop.DataSource{
-			TableInfo:   &model.TableInfo{ID: 1},
-			TableAsName: &alias,
-			Columns:     []*model.ColumnInfo{{ID: 2}},
-			FtsPushDown: &tipb.FTSQueryInfo{
-				QueryType: tipb.FTSQueryType_FTSQueryTypeWithScore,
-				IndexId:   3,
-				QueryFunc: tipb.ScalarFuncSig_FTSMatchWord,
-				MatchExpr: []tipb.Expr{{
-					Tp:  tipb.ExprType_ScalarFunc,
-					Sig: tipb.ScalarFuncSig_FTSMatchWord,
-					Val: []byte(query),
-				}},
-			},
+			TableInfo: &model.TableInfo{ID: 1}, TableAsName: &alias, Columns: []*model.ColumnInfo{{ID: 2}},
+			PossibleAccessPaths: []*util.AccessPath{{Index: &model.IndexInfo{ID: 3}, FTSQueryInfo: queryInfo}},
 		}
 	}
 
@@ -703,7 +698,7 @@ func TestDataSourceHash64EqualsIncludesFTSQuery(t *testing.T) {
 	require.True(t, left.Equals(right))
 	require.Equal(t, leftHasher.Sum64(), rightHasher.Sum64())
 
-	right.FtsPushDown.MatchExpr[0].Val = []byte("bar")
+	right.FTSQueryInfo().MatchExpr[0].Val = []byte("bar")
 	rightHasher.Reset()
 	right.Hash64(rightHasher)
 	require.False(t, left.Equals(right))

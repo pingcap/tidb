@@ -15,6 +15,7 @@
 package fts
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,11 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -96,6 +102,12 @@ func TestTiFlashFTSIndexWhere(t *testing.T) {
 	testkit.SetTiFlashReplica(t, dom, "test", "t_common")
 	testkit.SetTiFlashReplica(t, dom, "test", "t_rowid")
 
+	plan := strings.Join(testdata.ConvertRowsToStrings(tk.MustQuery(
+		"explain format='brief' select id from t_multi where fts_match_word('foo',a) and b like 'abcd%wxyz' order by fts_match_word('foo',a) desc limit 10",
+	).Rows()), "\n")
+	require.Contains(t, plan, "Selection")
+	require.Contains(t, plan, "abcd")
+	require.NotContains(t, plan, "ftsIndex:top10", "lossy inverted access needs a table recheck")
 	runFTSExplainCases(t, tk, "TestTiFlashFTSIndexWhere")
 
 	tk.MustExec(`prepare fts_exact_parameter from "explain format='brief'
@@ -347,6 +359,156 @@ func TestTiFlashFTSIndexJoin(t *testing.T) {
 	testkit.SetTiFlashReplica(t, dom, "test", "file_chunks")
 
 	runFTSExplainCases(t, tk, "TestTiFlashFTSIndexJoin")
+}
+
+// TestTiFlashFTSPredicateContracts checks that index coverage changes execution,
+// without hiding logical predicates from range, statistics, or FD reasoning.
+func TestTiFlashFTSPredicateContracts(t *testing.T) {
+	setupStarterFTSTest(t)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess"))
+	})
+	store := testkit.CreateMockStoreWithSchemaLease(t, time.Second, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	t.Cleanup(func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	})
+	tk.MustExec("use test")
+	tk.MustExec(`create table t_int(id bigint primary key clustered, body text, tag bigint,
+		fulltext key ft_text(body with (standard)),
+		fulltext key ft_cover(body with (standard), id with (exact), tag with (exact)))`)
+	tk.MustExec(`create table t_common(k1 bigint not null, k2 bigint not null, body text, tag bigint,
+		primary key(k1,k2) clustered,
+		fulltext key ft_text(body with (standard)),
+		fulltext key ft_cover(body with (standard), k1 with (exact), k2 with (exact), tag with (exact)))`)
+	dom := domain.GetDomain(tk.Session())
+	testkit.SetTiFlashReplica(t, dom, "test", "t_int")
+	testkit.SetTiFlashReplica(t, dom, "test", "t_common")
+	for _, tc := range []struct{ table, predicate, expectedRange string }{
+		{"t_int", "id=42", "range:[42,42]"},
+		{"t_common", "k1=42 and k2=7", "range:[42 7,42 7]"},
+	} {
+		t.Run(tc.table+" range", func(t *testing.T) {
+			for _, index := range []string{"ft_text", "ft_cover"} {
+				plan := strings.Join(testdata.ConvertRowsToStrings(tk.MustQuery(
+					"explain format='brief' select body from "+tc.table+" force index("+index+") where fts_match_word('foo',body) and "+tc.predicate,
+				).Rows()), "\n")
+				require.Contains(t, plan, "TableRangeScan", index)
+				require.Contains(t, plan, tc.expectedRange, index)
+			}
+		})
+		t.Run(tc.table+" estimates", func(t *testing.T) {
+			var expected any
+			for _, index := range []string{"ft_text", "ft_cover"} {
+				rows := tk.MustQuery("explain format='brief' select body from " + tc.table + " force index(" + index + ") where fts_match_word('foo',body) and tag=7").Rows()
+				if expected == nil {
+					expected = rows[0][1]
+				} else {
+					require.Equal(t, expected, rows[0][1])
+					require.NotContains(t, strings.Join(testdata.ConvertRowsToStrings(rows), "\n"), "Selection")
+				}
+			}
+		})
+	}
+
+	t.Run("covered predicates still request column statistics", func(t *testing.T) {
+		ctx := context.Background()
+		stmts, err := tk.Session().Parse(ctx, "select body from t_int force index(ft_cover) where fts_match_word('foo',body) and tag=7")
+		require.NoError(t, err)
+		node := resolve.NewNodeW(stmts[0])
+		require.NoError(t, core.Preprocess(ctx, tk.Session(), node,
+			core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()})))
+		plan, err := core.BuildLogicalPlanForTest(ctx, tk.Session(), node, dom.InfoSchema())
+		require.NoError(t, err)
+		logical, _, err := (&core.PPDSolver{}).Optimize(ctx, plan.(base.LogicalPlan))
+		require.NoError(t, err)
+		columns, _, _, _ := rule.CollectColumnStatsUsage(logical)
+		// Both body and tag remain predicate columns even though FTS evaluates them.
+		require.Len(t, columns, 2)
+		for column, fullLoad := range columns {
+			require.Contains(t, []int64{2, 3}, column.ID)
+			require.True(t, fullLoad)
+		}
+		_, _, err = core.RecursiveDeriveStats4Test(logical)
+		require.NoError(t, err)
+		var checkAccessCounts func(base.LogicalPlan)
+		checked := false
+		checkAccessCounts = func(plan base.LogicalPlan) {
+			if ds, ok := plan.(*logicalop.DataSource); ok {
+				require.Len(t, ds.PossibleAccessPaths, 1)
+				path := ds.PossibleAccessPaths[0]
+				require.Empty(t, path.IndexFilters)
+				require.Equal(t, path.CountAfterAccess, path.CountAfterIndex, "a fused inverted query is one access stage")
+				require.Equal(t, ds.StatsInfo().RowCount, path.CountAfterAccess, "all predicates are covered by access")
+				checked = true
+			}
+			for _, child := range plan.Children() {
+				checkAccessCounts(child)
+			}
+		}
+		checkAccessCounts(logical)
+		require.True(t, checked)
+
+	})
+	tk.MustExec("create table t_outer(id bigint primary key)")
+	t.Run("non-null FD permits anti semi join", func(t *testing.T) {
+		for _, index := range []string{"ft_text", "ft_cover"} {
+			plan := strings.Join(testdata.ConvertRowsToStrings(tk.MustQuery(
+				"explain format='brief' select l.id from t_outer l left join (select id,tag from t_int force index("+index+") where fts_match_word('foo',body) and tag=7) r on l.id=r.id where r.tag is null",
+			).Rows()), "\n")
+			require.Contains(t, plan, "anti semi join", index)
+			require.NotContains(t, plan, "left outer join", index)
+		}
+	})
+	t.Run("correlated alternatives retain inverted access", func(t *testing.T) {
+		for _, mode := range []string{"OFF", "ON"} {
+			tk.MustExec("set tidb_opt_enable_alternative_logical_plans=" + mode)
+			plan := strings.Join(testdata.ConvertRowsToStrings(tk.MustQuery(
+				"explain format='brief' select id from t_outer where id<10 and id in (select tag from t_int force index(ft_cover) where fts_match_word('foo',body) and id=42)",
+			).Rows()), "\n")
+			require.Contains(t, plan, "ftsIndex:")
+			require.Contains(t, plan, "42 IN test.t_int.id")
+		}
+		tk.MustExec("set tidb_opt_enable_alternative_logical_plans=OFF")
+	})
+	t.Run("TopK waits for handle range classification", func(t *testing.T) {
+		for _, tc := range []struct {
+			table, index, predicate string
+			bounded                 bool
+		}{
+			{"t_int", "ft_text", "id=42", false},
+			{"t_int", "ft_cover", "id=42", true},
+			{"t_int", "ft_cover", "id>42", false},
+			{"t_common", "ft_text", "k1=42 and k2=7", false},
+			{"t_common", "ft_cover", "k1=42 and k2=7", true},
+		} {
+			plan := strings.Join(testdata.ConvertRowsToStrings(tk.MustQuery(
+				"explain format='brief' select body from "+tc.table+" force index("+tc.index+") where fts_match_word('foo',body) and "+tc.predicate+" order by fts_match_word('foo',body) desc limit 10",
+			).Rows()), "\n")
+			require.Contains(t, plan, "TableRangeScan")
+			require.NotContains(t, plan, "Selection")
+			require.Equal(t, tc.bounded, strings.Contains(plan, "ftsIndex:top10"), plan)
+		}
+	})
+	t.Run("TopK depends on residual execution", func(t *testing.T) {
+		for _, predicate := range []string{"tag=7", "tag=7 and tag>1", "tag>7"} {
+			plan := strings.Join(testdata.ConvertRowsToStrings(tk.MustQuery(
+				"explain format='brief' select id,fts_match_word('foo',body) score from t_int force index(ft_cover) where fts_match_word('foo',body) and "+predicate+" order by score desc limit 10",
+			).Rows()), "\n")
+			if strings.HasPrefix(predicate, "tag=7") {
+				require.Contains(t, plan, "ftsIndex:top10")
+				require.NotContains(t, plan, "Selection")
+			} else {
+				require.NotContains(t, plan, "ftsIndex:top10")
+				require.Contains(t, plan, "Selection")
+			}
+		}
+	})
 }
 
 func setupStarterFTSTest(t *testing.T) {

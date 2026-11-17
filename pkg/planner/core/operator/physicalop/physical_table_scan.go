@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/types"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -81,9 +82,26 @@ func buildInvertedIndexExtra(indexInfo *model.IndexInfo) *ColumnarIndexExtra {
 	}
 }
 
-func buildFullTextIndexExtra(indexInfo *model.IndexInfo, queryInfo *tipb.FTSQueryInfo) *ColumnarIndexExtra {
+func buildFullTextIndexExtra(ctx expression.EvalContext, path *util.AccessPath, handleConds []expression.Expression) *ColumnarIndexExtra {
+	// Logical TopN resolution records only a candidate bound. A handle range
+	// can consume the last TableFilter during stats derivation, but is not
+	// necessarily evaluated inside the inverted engine before its TopK.
+	canPushTopK := len(path.TableFilters) == 0
+	for _, cond := range handleConds {
+		if !slices.ContainsFunc(path.AccessConds, func(access expression.Expression) bool {
+			return access.Equal(ctx, cond)
+		}) {
+			canPushTopK = false
+			break
+		}
+	}
+	queryInfo := tidbutil.ProtoV1Clone(path.FTSQueryInfo)
+	if !canPushTopK {
+		unlimited := ^uint32(0)
+		queryInfo.TopK = &unlimited
+	}
 	return &ColumnarIndexExtra{
-		IndexInfo: indexInfo,
+		IndexInfo: path.Index,
 		QueryInfo: &tipb.ColumnarIndexInfo{
 			IndexType: tipb.ColumnarIndexType_TypeFulltext,
 			Index: &tipb.ColumnarIndexInfo_FtsQueryInfo{
@@ -198,14 +216,14 @@ func GetPhysicalScan4LogicalTableScan(s *logicalop.LogicalTableScan, schema *exp
 	}.Init(s.SCtx(), s.QueryBlockOffset())
 	ts.SetStats(stats)
 	ts.SetSchema(schema.Clone())
-	if ds.FtsPushDown != nil {
-		ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildFullTextIndexExtra(ds.PossibleAccessPaths[0].Index, ds.FtsPushDown))
+	if ds.FTSQueryInfo() != nil {
+		ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildFullTextIndexExtra(ds.SCtx().GetExprCtx().GetEvalCtx(), ds.PossibleAccessPaths[0], s.AccessConds))
 	}
 	return ts
 }
 
 // GetOriginalPhysicalTableScan is to get PhysicalTableScan
-func GetOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool) (*PhysicalTableScan, float64) {
+func GetOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool) (*PhysicalTableScan, float64, error) {
 	ts := PhysicalTableScan{
 		Table:                                    ds.TableInfo,
 		Columns:                                  slices.Clone(ds.Columns),
@@ -225,6 +243,14 @@ func GetOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 		ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema().Clone())
+	if path.FTSQueryInfo != nil {
+		handle, err := ds.BuildHandleRanges()
+		if err != nil {
+			return nil, 0, err
+		}
+		ts.Ranges = handle.Ranges
+		ts.AccessCondition = handle.AccessConds
+	}
 	rowCount := path.CountAfterAccess
 	origRowCount := ds.StatsInfo().RowCount
 	// Add an arbitrary tolerance factor to account for comparison with floating point
@@ -248,10 +274,10 @@ func GetOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 		ts.Desc = prop.SortItems[0].Desc
 		ts.KeepOrder = true
 	}
-	if ds.FtsPushDown != nil {
-		ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildFullTextIndexExtra(path.Index, ds.FtsPushDown))
+	if path.FTSQueryInfo != nil {
+		ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildFullTextIndexExtra(ds.SCtx().GetExprCtx().GetEvalCtx(), path, ts.AccessCondition))
 	}
-	return ts, rowCount
+	return ts, rowCount, nil
 }
 
 // Init initializes PhysicalTableScan.

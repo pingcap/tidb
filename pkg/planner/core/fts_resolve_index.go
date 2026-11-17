@@ -81,8 +81,8 @@ func invalidFTSWhereShapeError() error {
 }
 
 func ftsScoreExprMatchesDataSource(ds *logicalop.DataSource, expr expression.Expression) bool {
-	if ds == nil || ds.FtsPushDown == nil || len(ds.FtsPushDown.MatchExpr) != 1 ||
-		len(ds.PossibleAccessPaths) != 1 || ds.PossibleAccessPaths[0].Index == nil {
+	if ds == nil || ds.FTSQueryInfo() == nil || len(ds.FTSQueryInfo().MatchExpr) != 1 ||
+		len(ds.PossibleAccessPaths) != 1 || ds.PossibleAccessPaths[0].FTSQueryInfo == nil {
 		return false
 	}
 	rebuilt, ok := logicalop.CheckExprCoveredByColumnarFTSAndRebuild(
@@ -94,7 +94,7 @@ func ftsScoreExprMatchesDataSource(ds *logicalop.DataSource, expr expression.Exp
 	candidate, err := expression.FTSQueryExpressionToPB(
 		ds.SCtx().GetExprCtx().GetEvalCtx(), ds.SCtx().GetClient(), rebuilt,
 	)
-	return err == nil && expression.FTSQueryPBMatchesScoringExpr(&ds.FtsPushDown.MatchExpr[0], candidate)
+	return err == nil && expression.FTSQueryPBMatchesScoringExpr(&ds.FTSQueryInfo().MatchExpr[0], candidate)
 }
 
 // FullTextIndexResolverTopN resolves matching ORDER BY FTS_MATCH_WORD() LIMIT
@@ -120,7 +120,7 @@ func (o *FullTextIndexResolverTopN) Optimize(
 }
 
 func (*FullTextIndexResolverTopN) onEnterDataSource(v *FullTextIndexPlanVisitor, ds *logicalop.DataSource) (bool, error) {
-	if ds.FtsPushDown == nil {
+	if ds.FTSQueryInfo() == nil {
 		return false, nil
 	}
 
@@ -155,14 +155,16 @@ func (*FullTextIndexResolverTopN) onEnterDataSource(v *FullTextIndexPlanVisitor,
 	if expression.InterpretFullTextSearchExpr(planTopN.ByItems[0].Expr) == nil {
 		return false, nil
 	}
-	queryInfo := ds.FtsPushDown
+	queryInfo := ds.FTSQueryInfo()
 	if !ftsScoreExprMatchesDataSource(ds, planTopN.ByItems[0].Expr) {
 		return false, plannererrors.ErrWrongUsage.FastGen("'FTS_MATCH_WORD()' in ORDER BY must match the one in WHERE")
 	}
 
 	planTopN.ByItems[0].Expr = ds.Schema().Columns[len(ds.Schema().Columns)-1]
 	queryInfo.QueryType = tipb.FTSQueryType_FTSQueryTypeWithScore
-	if planSelection == nil && len(ds.PushedDownConds) == 0 && planTopN.ByItems[0].Desc && len(planTopN.ByItems) == 1 {
+	if planSelection == nil && planTopN.ByItems[0].Desc && len(planTopN.ByItems) == 1 {
+		// Record the candidate bound. Physical scan construction checks the final
+		// table filters and handle restrictions before applying it to the index.
 		topK := planTopN.Offset + planTopN.Count
 		if topK > uint64(maxFTSTopK) {
 			topK = uint64(maxFTSTopK)
@@ -196,7 +198,7 @@ func (o *FullTextIndexResolverProjection) Optimize(
 }
 
 func (*FullTextIndexResolverProjection) onEnterDataSource(v *FullTextIndexPlanVisitor, ds *logicalop.DataSource) (bool, error) {
-	if ds.FtsPushDown == nil {
+	if ds.FTSQueryInfo() == nil {
 		return false, nil
 	}
 
@@ -230,7 +232,7 @@ func (*FullTextIndexResolverProjection) onEnterDataSource(v *FullTextIndexPlanVi
 		return false, nil
 	}
 
-	queryInfo := ds.FtsPushDown
+	queryInfo := ds.FTSQueryInfo()
 	matchedProjections := make([]int, 0, len(planProjection.Exprs))
 	for i, expr := range planProjection.Exprs {
 		ftsInfo := expression.InterpretFullTextSearchExpr(expr)
@@ -297,7 +299,11 @@ func (o *FullTextIndexResolverRejectRemaining) visit(plan base.LogicalPlan) erro
 		if err := p.FTSResolveError(); err != nil {
 			return err
 		}
-		if containsFullTextSearchFn(p.AllConds) || containsFullTextSearchFn(p.PushedDownConds) {
+		conditions := p.AllConds
+		if p.FTSQueryInfo() != nil {
+			conditions = p.PossibleAccessPaths[0].TableFilters
+		}
+		if containsFullTextSearchFn(conditions) || p.FTSQueryInfo() == nil && containsFullTextSearchFn(p.PushedDownConds) {
 			return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' must be used alone. It cannot be placed inside any other function or expression as a parameter, or used multiple times. A valid example: SELECT * FROM <TABLE> WHERE FTS_MATCH_WORD(...)")
 		}
 	case *logicalop.LogicalApply:

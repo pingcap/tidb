@@ -59,7 +59,8 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─TableFullScan mpp[tiflash] table:fts_t, index:ft_title(title) keep order:false, stats:pseudo, ftsIndex:hello IN test.fts_t.title->_FTS_SCORE"
+          "  └─Projection mpp[tiflash]  _FTS_SCORE->Column",
+          "    └─TableFullScan mpp[tiflash] table:fts_t, index:ft_title(title) keep order:false, stats:pseudo, ftsIndex:hello IN test.fts_t.title->_FTS_SCORE"
         ]
       },
       {

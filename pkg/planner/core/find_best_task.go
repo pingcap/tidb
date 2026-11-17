@@ -1090,7 +1090,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	path.GroupedRanges = nil
 	path.GroupByColIdxs = nil
 
-	if logicalop.IsExactFTSPath(ds, path) {
+	if path.FTSQueryInfo != nil {
 		return property.PropNotMatched
 	}
 	if ds.Table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
@@ -2628,7 +2628,10 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 			effectiveProp = advisoryProp
 		}
 		if partPath.IsTablePath() {
-			scan = convertToPartialTableScan(ds, effectiveProp, partPath, partMatchPropResult, byItems)
+			scan, err = convertToPartialTableScan(ds, effectiveProp, partPath, partMatchPropResult, byItems)
+			if err != nil {
+				return base.InvalidTask, err
+			}
 		} else {
 			var remainingFilters []expression.Expression
 			scan, remainingFilters, err = physicalop.ConvertToPartialIndexScan(ds, cop.PhysPlanPartInfo, effectiveProp, partPath, partMatchPropResult, byItems)
@@ -2732,8 +2735,11 @@ func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool
 	return true
 }
 
-func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, matchProp property.PhysicalPropMatchResult, byItems []*util.ByItems) (tablePlan base.PhysicalPlan) {
-	ts, rowCount := physicalop.GetOriginalPhysicalTableScan(ds, prop, path, matchProp.Matched())
+func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, matchProp property.PhysicalPropMatchResult, byItems []*util.ByItems) (tablePlan base.PhysicalPlan, err error) {
+	ts, rowCount, err := physicalop.GetOriginalPhysicalTableScan(ds, prop, path, matchProp.Matched())
+	if err != nil {
+		return nil, err
+	}
 	overwritePartialTableScanSchema(ds, ts)
 	// remove ineffetive filter condition after overwriting physicalscan schema
 	newFilterConds := make([]expression.Expression, 0, len(path.TableFilters))
@@ -2764,10 +2770,10 @@ func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.Physical
 		}
 		tablePlan = physicalop.PhysicalSelection{Conditions: ts.FilterCondition}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), selectivity*rowCount), ds.QueryBlockOffset())
 		tablePlan.SetChildren(ts)
-		return tablePlan
+		return tablePlan, nil
 	}
 	tablePlan = ts
-	return tablePlan
+	return tablePlan, nil
 }
 
 // overwritePartialTableScanSchema change the schema of partial table scan to handle columns.
@@ -3083,7 +3089,10 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	hasTiFlash := ds.HasTiFlash()
 	mppAllowed := ds.SCtx().GetSessionVars().IsMPPAllowed()
 	hasTiFlashForMPP := hasTiFlash && mppAllowed
-	ts, _ := physicalop.GetOriginalPhysicalTableScan(ds, prop, candidate.path, candidate.matchPropResult.Matched())
+	ts, _, err := physicalop.GetOriginalPhysicalTableScan(ds, prop, candidate.path, candidate.matchPropResult.Matched())
+	if err != nil {
+		return base.InvalidTask, err
+	}
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
 	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
 	isTiFlashPath := hasTiFlash && ts.StoreType == kv.TiFlash

@@ -150,6 +150,14 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		require.NoError(t, err)
 		return clause
 	}
+	resolveFTS := func(ds *DataSource) error {
+		allConds := append([]expression.Expression(nil), ds.AllConds...)
+		pushedConds := append([]expression.Expression(nil), ds.PushedDownConds...)
+		err := ds.resolveFTSWherePredicate()
+		requireExpressionSliceIdentity(t, allConds, ds.AllConds)
+		requireExpressionSliceIdentity(t, pushedConds, ds.PushedDownConds)
+		return err
+	}
 	requireLocalNoOp := func(t *testing.T, ds *DataSource) {
 		t.Helper()
 		allConds := append([]expression.Expression(nil), ds.AllConds...)
@@ -164,7 +172,7 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		planColumnID := ds.SCtx().GetSessionVars().PlanColumnID.Load()
 		warningCount := len(ds.SCtx().GetSessionVars().StmtCtx.GetWarnings())
 
-		require.NoError(t, ds.resolveFTSWherePredicate())
+		require.NoError(t, resolveFTS(ds))
 		requireExpressionSliceIdentity(t, allConds, ds.AllConds)
 		requireExpressionSliceIdentity(t, pushedDownConds, ds.PushedDownConds)
 		require.Len(t, ds.PossibleAccessPaths, len(paths))
@@ -174,7 +182,7 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		}
 		require.Equal(t, columns, ds.Columns)
 		require.Equal(t, schemaColumns, ds.Schema().Columns)
-		require.Nil(t, ds.FtsPushDown)
+		require.Nil(t, ds.FTSQueryInfo())
 		require.Equal(t, planColumnID, ds.SCtx().GetSessionVars().PlanColumnID.Load())
 		require.Len(t, ds.SCtx().GetSessionVars().StmtCtx.GetWarnings(), warningCount)
 	}
@@ -304,15 +312,87 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		return ds, indexInfo, titleInfo, bodyInfo
 	}
 
-	t.Run("bare direct predicate is consumed", func(t *testing.T) {
+	t.Run("covered predicates preserve logical facts", func(t *testing.T) {
+		ds, _, _, _ := newMultiColumnFTSDataSource("", "NGRAM")
+		ds.TblCols = append([]*expression.Column(nil), ds.Schema().Columns...)
+		body := ds.Schema().Columns[1]
+		anchor := expression.NewFunctionInternal(ds.SCtx().GetExprCtx(), ast.FTSMatchWord,
+			types.NewFieldType(mysql.TypeDouble), expression.NewStrConst("foo"), ds.Schema().Columns[0])
+		covered := expression.NewFunctionInternal(ds.SCtx().GetExprCtx(), ast.EQ,
+			types.NewFieldType(mysql.TypeTiny), body, expression.NewStrConst("one"))
+		conditions := []expression.Expression{anchor, covered}
+		ds.AllConds = conditions
+		ds.PushedDownConds = conditions
+		require.NoError(t, resolveFTS(ds))
+		requireExpressionSliceIdentity(t, conditions, ds.AllConds)
+		requireExpressionSliceIdentity(t, conditions, ds.PushedDownConds)
+		requireExpressionSliceIdentity(t, conditions, ds.PossibleAccessPaths[0].AccessConds)
+		require.Empty(t, ds.PossibleAccessPaths[0].TableFilters)
+		fds := ds.ExtractFD()
+		require.True(t, fds.ConstantCols().Has(int(body.UniqueID)))
+		require.True(t, fds.NotNullCols.Has(int(body.UniqueID)))
+	})
+
+	t.Run("repeat binding and cloned coverage preserve residuals", func(t *testing.T) {
+		ds, _, _, _ := newMultiColumnFTSDataSource("", "NGRAM")
+		conditions := append([]expression.Expression(nil), ds.AllConds...)
+		require.NoError(t, resolveFTS(ds))
+		score := ds.Schema().Columns[len(ds.Schema().Columns)-1]
+		query := ds.FTSQueryInfo()
+		clonedPath := ds.PossibleAccessPaths[0].Clone()
+		clonedQuery := clonedPath.FTSQueryInfo
+		require.NotSame(t, query, clonedQuery)
+		require.Equal(t, query, clonedQuery)
+		require.Empty(t, clonedPath.TableFilters)
+		require.NotSame(t, ds.PossibleAccessPaths[0].AccessConds[0], clonedPath.AccessConds[0])
+		// Mimic the condition lists produced by PPD on a cloned logical alternative.
+		ds.PossibleAccessPaths = []*util.AccessPath{clonedPath}
+		ds.AllConds = util.CloneExprs(conditions)
+		ds.PushedDownConds = ds.AllConds
+		topK := uint32(10)
+		ds.FTSQueryInfo().TopK = &topK
+		require.NoError(t, resolveFTS(ds))
+		require.Same(t, clonedQuery, ds.FTSQueryInfo())
+		require.Equal(t, ^uint32(0), query.GetTopK(), "the original path keeps its own candidate bound")
+		require.Equal(t, uint32(10), *ds.FTSQueryInfo().TopK)
+		require.Len(t, ds.Schema().Columns, 4)
+		require.Same(t, score, ds.Schema().Columns[3])
+		residual := expression.NewFunctionInternal(ds.SCtx().GetExprCtx(), ast.GT,
+			types.NewFieldType(mysql.TypeTiny), ds.Schema().Columns[1], expression.NewStrConst("one"))
+		ds.AllConds = append(ds.AllConds, residual)
+		ds.PushedDownConds = ds.AllConds
+		require.NoError(t, resolveFTS(ds))
+		requireExpressionSliceIdentity(t, []expression.Expression{residual}, ds.PossibleAccessPaths[0].TableFilters)
+		// Only physical scan construction decides whether the candidate is safe.
+		require.Equal(t, uint32(10), *ds.FTSQueryInfo().TopK)
+		require.Len(t, ds.Schema().Columns, 4)
+	})
+
+	t.Run("common handle keeps inverted access identity", func(t *testing.T) {
+		ds, path, column := newDataSource()
+		fulltext := path.Index
+		primary := &model.IndexInfo{ID: 22, Name: ast.NewCIStr("PRIMARY"), Primary: true,
+			State: model.StatePublic, Columns: []*model.IndexColumn{{Name: column.Name, Offset: 0}}}
+		ds.TableInfo.IsCommonHandle = true
+		ds.TableInfo.Indices = append(ds.TableInfo.Indices, primary)
+		path.IsIntHandlePath = false
+		path.IsCommonHandlePath = true
+		require.NoError(t, resolveFTS(ds))
+		require.Same(t, primary, ds.TableInfo.GetPrimaryKey())
+		require.Same(t, fulltext, path.Index)
+		require.True(t, path.IsCommonHandlePath)
+		require.Len(t, path.AccessConds, 1)
+	})
+
+	t.Run("bare direct predicate is bound", func(t *testing.T) {
 		ds, ftsPath, _ := newDataSource()
 		planColumnID := ds.SCtx().GetSessionVars().PlanColumnID.Load()
 
-		require.NoError(t, ds.resolveFTSWherePredicate())
-		require.Empty(t, ds.AllConds)
-		require.Empty(t, ds.PushedDownConds)
-		require.NotNil(t, ds.FtsPushDown)
-		require.Equal(t, tipb.FTSQueryType_FTSQueryTypeWithScore, ds.FtsPushDown.QueryType)
+		require.NoError(t, resolveFTS(ds))
+		require.Empty(t, ds.PossibleAccessPaths[0].TableFilters)
+		require.NotNil(t, ds.FTSQueryInfo())
+		require.Equal(t, ds.FTSQueryInfo().IndexId, ftsPath.Index.ID)
+		require.Equal(t, tipb.FTSQueryType_FTSQueryTypeWithScore, ds.FTSQueryInfo().QueryType)
 		require.Equal(t, expression.QueryClause{
 			Version:   expression.FTSQueryClauseVersion,
 			ScoreMode: expression.FtsScoreModeInherit,
@@ -321,12 +401,12 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 				ColID:      11,
 				IndexField: string(ast.FullTextParserTypeStandardV1),
 			}},
-		}, decodeQueryClause(t, ds.FtsPushDown))
-		require.Empty(t, ds.FtsPushDown.QueryText)
-		require.Empty(t, ds.FtsPushDown.QueryTokenizer)
-		require.Empty(t, ds.FtsPushDown.Columns)
-		require.Empty(t, ds.FtsPushDown.ColumnNames)
-		require.Equal(t, ^uint32(0), *ds.FtsPushDown.TopK)
+		}, decodeQueryClause(t, ds.FTSQueryInfo()))
+		require.Empty(t, ds.FTSQueryInfo().QueryText)
+		require.Empty(t, ds.FTSQueryInfo().QueryTokenizer)
+		require.Empty(t, ds.FTSQueryInfo().Columns)
+		require.Empty(t, ds.FTSQueryInfo().ColumnNames)
+		require.Equal(t, ^uint32(0), *ds.FTSQueryInfo().TopK)
 		require.Equal(t, []*util.AccessPath{ftsPath}, ds.PossibleAccessPaths)
 		require.True(t, ftsPath.Forced)
 		require.False(t, ftsPath.ForceKeepOrder)
@@ -347,12 +427,12 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		pathSnapshot := *path
 		planColumnID := ds.SCtx().GetSessionVars().PlanColumnID.Load()
 
-		err := ds.resolveFTSWherePredicate()
+		err := resolveFTS(ds)
 		require.ErrorContains(t, err, "scored pure-negative FTS match expression is not supported")
 		requireExpressionSliceIdentity(t, []expression.Expression{predicate}, ds.AllConds)
 		requireExpressionSliceIdentity(t, []expression.Expression{predicate}, ds.PushedDownConds)
 		require.Equal(t, pathSnapshot, *path)
-		require.Nil(t, ds.FtsPushDown)
+		require.Nil(t, ds.FTSQueryInfo())
 		require.Len(t, ds.Columns, 1)
 		require.Len(t, ds.Schema().Columns, 1)
 		require.Equal(t, planColumnID, ds.SCtx().GetSessionVars().PlanColumnID.Load())
@@ -456,11 +536,10 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		pathSnapshot := *ftsPath
 		pathSnapshot.ForceKeepOrder = false
 
-		require.NoError(t, ds.resolveFTSWherePredicate())
-		require.Empty(t, ds.AllConds)
-		require.Empty(t, ds.PushedDownConds)
-		require.NotNil(t, ds.FtsPushDown)
-		require.Equal(t, indexInfo.ID, ds.FtsPushDown.IndexId)
+		require.NoError(t, resolveFTS(ds))
+		require.Empty(t, ds.PossibleAccessPaths[0].TableFilters)
+		require.NotNil(t, ds.FTSQueryInfo())
+		require.Equal(t, indexInfo.ID, ds.FTSQueryInfo().IndexId)
 		require.Equal(t, expression.QueryClause{
 			Version:   expression.FTSQueryClauseVersion,
 			ScoreMode: expression.FtsScoreModeInherit,
@@ -469,15 +548,17 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 				ColID:      bodyInfo.ID,
 				IndexField: string(ast.FullTextParserTypeNgramV1),
 			}},
-		}, decodeQueryClause(t, ds.FtsPushDown))
-		require.Empty(t, ds.FtsPushDown.QueryText)
-		require.Empty(t, ds.FtsPushDown.QueryTokenizer)
-		require.Empty(t, ds.FtsPushDown.Columns)
-		require.Empty(t, ds.FtsPushDown.ColumnNames)
-		require.Equal(t, tipb.FTSQueryType_FTSQueryTypeWithScore, ds.FtsPushDown.QueryType)
+		}, decodeQueryClause(t, ds.FTSQueryInfo()))
+		require.Empty(t, ds.FTSQueryInfo().QueryText)
+		require.Empty(t, ds.FTSQueryInfo().QueryTokenizer)
+		require.Empty(t, ds.FTSQueryInfo().Columns)
+		require.Empty(t, ds.FTSQueryInfo().ColumnNames)
+		require.Equal(t, tipb.FTSQueryType_FTSQueryTypeWithScore, ds.FTSQueryInfo().QueryType)
 		require.Len(t, ds.PossibleAccessPaths, 1)
 		require.Same(t, ftsPath, ds.PossibleAccessPaths[0])
 		require.Same(t, indexInfo, ftsPath.Index)
+		pathSnapshot.AccessConds = ds.PushedDownConds
+		pathSnapshot.FTSQueryInfo = ds.FTSQueryInfo()
 		require.Equal(t, pathSnapshot, *ftsPath)
 		require.Equal(t, indexSnapshot, indexInfo)
 		require.Equal(t, fullTextInfoSnapshot.IndexFields, indexInfo.FullTextInfo.IndexFields)
@@ -488,12 +569,11 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 	t.Run("match word resolves different analyzers for multiple columns", func(t *testing.T) {
 		ds, indexInfo, titleInfo, bodyInfo := newMultiColumnFTSDataSource("", "NGRAM")
 
-		require.NoError(t, ds.resolveFTSWherePredicate())
-		require.Empty(t, ds.AllConds)
-		require.Empty(t, ds.PushedDownConds)
-		require.NotNil(t, ds.FtsPushDown)
-		require.Equal(t, indexInfo.ID, ds.FtsPushDown.IndexId)
-		require.Equal(t, tipb.ScalarFuncSig_FTSMatchWord, ds.FtsPushDown.QueryFunc)
+		require.NoError(t, resolveFTS(ds))
+		require.Empty(t, ds.PossibleAccessPaths[0].TableFilters)
+		require.NotNil(t, ds.FTSQueryInfo())
+		require.Equal(t, indexInfo.ID, ds.FTSQueryInfo().IndexId)
+		require.Equal(t, tipb.ScalarFuncSig_FTSMatchWord, ds.FTSQueryInfo().QueryFunc)
 		require.Equal(t, expression.QueryClause{
 			Version:   expression.FTSQueryClauseVersion,
 			ScoreMode: expression.FtsScoreModeInherit,
@@ -502,20 +582,20 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 				{ColID: titleInfo.ID, IndexField: string(ast.FullTextParserTypeStandardV1)},
 				{ColID: bodyInfo.ID, IndexField: string(ast.FullTextParserTypeNgramV1)},
 			},
-		}, decodeQueryClause(t, ds.FtsPushDown))
-		require.Empty(t, ds.FtsPushDown.QueryText)
-		require.Empty(t, ds.FtsPushDown.QueryTokenizer)
-		require.Empty(t, ds.FtsPushDown.Columns)
-		require.Empty(t, ds.FtsPushDown.ColumnNames)
+		}, decodeQueryClause(t, ds.FTSQueryInfo()))
+		require.Empty(t, ds.FTSQueryInfo().QueryText)
+		require.Empty(t, ds.FTSQueryInfo().QueryTokenizer)
+		require.Empty(t, ds.FTSQueryInfo().Columns)
+		require.Empty(t, ds.FTSQueryInfo().ColumnNames)
 	})
 
 	t.Run("match word rejects an explicit exact analyzer", func(t *testing.T) {
 		ds, _, _, _ := newMultiColumnFTSDataSource("STANDARD", "EXACT")
 
-		require.ErrorContains(t, ds.resolveFTSWherePredicate(), "does not support fields using the EXACT parser")
+		require.ErrorContains(t, resolveFTS(ds), "does not support fields using the EXACT parser")
 		require.NotEmpty(t, ds.AllConds)
 		require.NotEmpty(t, ds.PushedDownConds)
-		require.Nil(t, ds.FtsPushDown)
+		require.Nil(t, ds.FTSQueryInfo())
 	})
 
 	t.Run("compound full-text query serializes the rebuilt expression tree", func(t *testing.T) {
@@ -546,15 +626,14 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		ds.AllConds = []expression.Expression{compound}
 		ds.PushedDownConds = []expression.Expression{compound}
 
-		require.NoError(t, ds.resolveFTSWherePredicate())
-		require.Empty(t, ds.AllConds)
-		require.Empty(t, ds.PushedDownConds)
-		require.NotNil(t, ds.FtsPushDown)
-		require.Equal(t, indexInfo.ID, ds.FtsPushDown.IndexId)
-		require.Equal(t, tipb.ScalarFuncSig_FTSMatchExpression, ds.FtsPushDown.QueryFunc)
-		require.Len(t, ds.FtsPushDown.MatchExpr, 1)
+		require.NoError(t, resolveFTS(ds))
+		require.Empty(t, ds.PossibleAccessPaths[0].TableFilters)
+		require.NotNil(t, ds.FTSQueryInfo())
+		require.Equal(t, indexInfo.ID, ds.FTSQueryInfo().IndexId)
+		require.Equal(t, tipb.ScalarFuncSig_FTSMatchExpression, ds.FTSQueryInfo().QueryFunc)
+		require.Len(t, ds.FTSQueryInfo().MatchExpr, 1)
 
-		root := ds.FtsPushDown.MatchExpr[0]
+		root := ds.FTSQueryInfo().MatchExpr[0]
 		require.Equal(t, tipb.ScalarFuncSig_LogicalOr, root.Sig)
 		var rootMetadata struct {
 			Version uint `json:"version"`
@@ -624,12 +703,11 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		ds.AllConds = []expression.Expression{anchor, pathFilter, exactFilter}
 		ds.PushedDownConds = []expression.Expression{anchor, pathFilter, exactFilter}
 
-		require.NoError(t, ds.resolveFTSWherePredicate())
-		require.Empty(t, ds.AllConds)
-		require.Empty(t, ds.PushedDownConds)
-		require.Empty(t, ds.PossibleAccessPaths[0].AccessConds)
-		require.Equal(t, indexInfo.ID, ds.FtsPushDown.IndexId)
-		require.Equal(t, tipb.ScalarFuncSig_FTSMatchExpression, ds.FtsPushDown.QueryFunc)
+		require.NoError(t, resolveFTS(ds))
+		require.Empty(t, ds.PossibleAccessPaths[0].TableFilters)
+		require.NotEmpty(t, ds.PossibleAccessPaths[0].AccessConds)
+		require.Equal(t, indexInfo.ID, ds.FTSQueryInfo().IndexId)
+		require.Equal(t, tipb.ScalarFuncSig_FTSMatchExpression, ds.FTSQueryInfo().QueryFunc)
 
 		clauses := make(map[string]expression.QueryClause)
 		queries := make([]string, 0, 4)
@@ -646,7 +724,7 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 				visit(*child)
 			}
 		}
-		visit(ds.FtsPushDown.MatchExpr[0])
+		visit(ds.FTSQueryInfo().MatchExpr[0])
 		require.Equal(t, []string{"foo", "bar", "/path/to/", "document-id"}, queries)
 		require.Len(t, clauses, 4)
 		require.Equal(t, expression.FtsScoreModeInherit, clauses["foo"].ScoreMode)
@@ -668,12 +746,12 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 			ds.SCtx().GetExprCtx().GetEvalCtx(), ds.SCtx().GetClient(), rebuiltAnchor,
 		)
 		require.NoError(t, err)
-		require.True(t, expression.FTSQueryPBMatchesScoringExpr(&ds.FtsPushDown.MatchExpr[0], anchorPB))
+		require.True(t, expression.FTSQueryPBMatchesScoringExpr(&ds.FTSQueryInfo().MatchExpr[0], anchorPB))
 		var filterMetadata struct {
 			Version   uint   `json:"version"`
 			ScoreMode string `json:"score_mode"`
 		}
-		require.NoError(t, json.Unmarshal(ds.FtsPushDown.MatchExpr[0].Children[1].Val, &filterMetadata))
+		require.NoError(t, json.Unmarshal(ds.FTSQueryInfo().MatchExpr[0].Children[1].Val, &filterMetadata))
 		require.Equal(t, expression.FTSQueryClauseVersion, filterMetadata.Version)
 		require.Equal(t, expression.FtsScoreModeFilter, filterMetadata.ScoreMode)
 
@@ -690,7 +768,7 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 			ds.SCtx().GetExprCtx().GetEvalCtx(), ds.SCtx().GetClient(), rebuiltMismatch,
 		)
 		require.NoError(t, err)
-		require.False(t, expression.FTSQueryPBMatchesScoringExpr(&ds.FtsPushDown.MatchExpr[0], mismatchPB))
+		require.False(t, expression.FTSQueryPBMatchesScoringExpr(&ds.FTSQueryInfo().MatchExpr[0], mismatchPB))
 	})
 
 	t.Run("keeps compound absorbed predicates in inherited score mode", func(t *testing.T) {
@@ -714,8 +792,8 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		ds.AllConds = []expression.Expression{anchor, absorbed}
 		ds.PushedDownConds = []expression.Expression{anchor, absorbed}
 
-		require.NoError(t, ds.resolveFTSWherePredicate())
-		root := ds.FtsPushDown.MatchExpr[0]
+		require.NoError(t, resolveFTS(ds))
+		root := ds.FTSQueryInfo().MatchExpr[0]
 		require.Equal(t, tipb.ScalarFuncSig_LogicalAnd, root.Sig)
 		require.Len(t, root.Children, 2)
 		absorbedRoot := root.Children[1]
@@ -745,10 +823,9 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		ds.AllConds = []expression.Expression{anchor, covered, residual}
 		ds.PushedDownConds = []expression.Expression{anchor, covered, residual}
 
-		require.NoError(t, ds.resolveFTSWherePredicate())
-		requireExpressionSliceIdentity(t, []expression.Expression{residual}, ds.AllConds)
-		requireExpressionSliceIdentity(t, []expression.Expression{residual}, ds.PushedDownConds)
-		require.Empty(t, ds.PossibleAccessPaths[0].AccessConds)
+		require.NoError(t, resolveFTS(ds))
+		requireExpressionSliceIdentity(t, []expression.Expression{residual}, ds.PossibleAccessPaths[0].TableFilters)
+		require.NotEmpty(t, ds.PossibleAccessPaths[0].AccessConds)
 	})
 
 	t.Run("keeps lossy ngram LIKE as a residual prefilter", func(t *testing.T) {
@@ -771,15 +848,18 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		require.Equal(t, 2, selected.coveredCondIndexes.Len())
 		require.Equal(t, 1, selected.additionalCoveredConditionCount())
 
-		require.NoError(t, ds.resolveFTSWherePredicate())
-		requireExpressionSliceIdentity(t, []expression.Expression{residual}, ds.AllConds)
-		requireExpressionSliceIdentity(t, []expression.Expression{residual}, ds.PushedDownConds)
+		require.NoError(t, resolveFTS(ds))
+		requireExpressionSliceIdentity(t, []expression.Expression{residual}, ds.PossibleAccessPaths[0].TableFilters)
 
-		root := ds.FtsPushDown.MatchExpr[0]
+		root := ds.FTSQueryInfo().MatchExpr[0]
 		require.Equal(t, tipb.ScalarFuncSig_LogicalAnd, root.Sig)
 		require.Len(t, root.Children, 2)
 		prefilter, err := expression.DecodeFTSQueryClause(*root.Children[1])
 		require.NoError(t, err)
+		require.Len(t, ds.PossibleAccessPaths[0].AccessConds, 2)
+		require.Same(t, anchor, ds.PossibleAccessPaths[0].AccessConds[0])
+		require.True(t, expression.ContainsFullTextSearchFn(ds.PossibleAccessPaths[0].AccessConds[1]))
+		require.False(t, residual.Equal(ds.SCtx().GetExprCtx().GetEvalCtx(), ds.PossibleAccessPaths[0].AccessConds[1]))
 		require.Equal(t, "abcd", prefilter.Query)
 		require.Equal(t, bodyInfo.ID, prefilter.Fields[0].ColID)
 		require.Equal(t, string(ast.FullTextParserTypeNgramV1), prefilter.Fields[0].IndexField)
@@ -817,10 +897,9 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		ds.AllConds = []expression.Expression{anchor, residual}
 		ds.PushedDownConds = []expression.Expression{anchor, residual}
 
-		require.NoError(t, ds.resolveFTSWherePredicate())
-		requireExpressionSliceIdentity(t, []expression.Expression{residual}, ds.AllConds)
-		requireExpressionSliceIdentity(t, []expression.Expression{residual}, ds.PushedDownConds)
-		root := ds.FtsPushDown.MatchExpr[0]
+		require.NoError(t, resolveFTS(ds))
+		requireExpressionSliceIdentity(t, []expression.Expression{residual}, ds.PossibleAccessPaths[0].TableFilters)
+		root := ds.FTSQueryInfo().MatchExpr[0]
 		require.Equal(t, tipb.ScalarFuncSig_LogicalAnd, root.Sig)
 		require.Len(t, root.Children, 2)
 		prefilter := root.Children[1]
@@ -864,19 +943,19 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		ds.AllConds = []expression.Expression{predicate}
 		ds.PushedDownConds = []expression.Expression{predicate}
 
-		require.ErrorContains(t, ds.resolveFTSWherePredicate(), "matching current TiFlash full-text index path")
+		require.ErrorContains(t, resolveFTS(ds), "matching current TiFlash full-text index path")
 		requireExpressionSliceIdentity(t, []expression.Expression{predicate}, ds.AllConds)
 		requireExpressionSliceIdentity(t, []expression.Expression{predicate}, ds.PushedDownConds)
-		require.Nil(t, ds.FtsPushDown)
+		require.Nil(t, ds.FTSQueryInfo())
 	})
 
 	t.Run("match word rejects an implicitly selected exact analyzer", func(t *testing.T) {
 		ds, _, _, _ := newMultiColumnFTSDataSource("", "")
 
-		require.ErrorContains(t, ds.resolveFTSWherePredicate(), "does not support fields using the EXACT parser")
+		require.ErrorContains(t, resolveFTS(ds), "does not support fields using the EXACT parser")
 		require.NotEmpty(t, ds.AllConds)
 		require.NotEmpty(t, ds.PushedDownConds)
-		require.Nil(t, ds.FtsPushDown)
+		require.Nil(t, ds.FTSQueryInfo())
 	})
 
 	t.Run("planner truth wrapper eligibility checks only the direct child", func(t *testing.T) {
@@ -896,8 +975,8 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		ds.SCtx().GetSessionVars().StmtCtx.InExplainStmt = true
 		warningCount := len(ds.SCtx().GetSessionVars().StmtCtx.GetWarnings())
 
-		require.NoError(t, ds.resolveFTSWherePredicate())
-		require.NotNil(t, ds.FtsPushDown)
+		require.NoError(t, resolveFTS(ds))
+		require.NotNil(t, ds.FTSQueryInfo())
 		require.Len(t, ds.SCtx().GetSessionVars().StmtCtx.GetWarnings(), warningCount)
 	})
 
@@ -909,9 +988,9 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		ds.TableInfo.Indices = []*model.IndexInfo{indexA, indexB}
 		ds.PossibleAccessPaths = []*util.AccessPath{pathB, pathA}
 
-		require.NoError(t, ds.resolveFTSWherePredicate())
-		require.Equal(t, indexA.ID, ds.FtsPushDown.IndexId)
-		require.Equal(t, string(ast.FullTextParserTypeStandardV1), decodeQueryClause(t, ds.FtsPushDown).Fields[0].IndexField)
+		require.NoError(t, resolveFTS(ds))
+		require.Equal(t, indexA.ID, ds.FTSQueryInfo().IndexId)
+		require.Equal(t, string(ast.FullTextParserTypeStandardV1), decodeQueryClause(t, ds.FTSQueryInfo()).Fields[0].IndexField)
 		require.Equal(t, []*util.AccessPath{pathA}, ds.PossibleAccessPaths)
 	})
 
@@ -980,11 +1059,10 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		require.NotNil(t, requiredInfo)
 		require.Equal(t, string(ast.FullTextParserTypeMultilingualV1), requiredInfo.Clause.Fields[0].IndexField)
 
-		require.NoError(t, ds.resolveFTSWherePredicate())
-		require.Equal(t, indexB.ID, ds.FtsPushDown.IndexId)
+		require.NoError(t, resolveFTS(ds))
+		require.Equal(t, indexB.ID, ds.FTSQueryInfo().IndexId)
 		require.Equal(t, []*util.AccessPath{pathB}, ds.PossibleAccessPaths)
-		require.Empty(t, ds.AllConds)
-		require.Empty(t, ds.PushedDownConds)
+		require.Empty(t, ds.PossibleAccessPaths[0].TableFilters)
 	})
 
 	t.Run("selector returns metadata winner and complete matched set", func(t *testing.T) {
@@ -1056,7 +1134,7 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		planColumnID := ds.SCtx().GetSessionVars().PlanColumnID.Load()
 		warnings := ds.SCtx().GetSessionVars().StmtCtx.GetWarnings()
 
-		require.ErrorContains(t, ds.resolveFTSWherePredicate(), "cannot be pushed down to TiFlash")
+		require.ErrorContains(t, resolveFTS(ds), "cannot be pushed down to TiFlash")
 		updatedWarnings := ds.SCtx().GetSessionVars().StmtCtx.GetWarnings()
 		require.Len(t, updatedWarnings, len(warnings)+1)
 		require.ErrorContains(t, updatedWarnings[len(warnings)].Err, "TiFlash")
@@ -1064,7 +1142,7 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		requireExpressionSliceIdentity(t, allConds, ds.AllConds)
 		requireExpressionSliceIdentity(t, pushedDownConds, ds.PushedDownConds)
 		require.Equal(t, pathSnapshot, *canonical)
-		require.Nil(t, ds.FtsPushDown)
+		require.Nil(t, ds.FTSQueryInfo())
 		require.Equal(t, planColumnID, ds.SCtx().GetSessionVars().PlanColumnID.Load())
 	})
 
@@ -1092,19 +1170,18 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 			ds.AllConds = []expression.Expression{predicate}
 			ds.PushedDownConds = []expression.Expression{predicate}
 
-			err := ds.resolveFTSWherePredicate()
+			err := resolveFTS(ds)
 			if testCase.errContains != "" {
 				require.ErrorContains(t, err, testCase.errContains)
 			} else {
 				require.NoError(t, err)
 			}
 			if testCase.consumed {
-				require.Empty(t, ds.AllConds)
-				require.Empty(t, ds.PushedDownConds)
-				require.NotNil(t, ds.FtsPushDown)
+				require.Empty(t, ds.PossibleAccessPaths[0].TableFilters)
+				require.NotNil(t, ds.FTSQueryInfo())
 			} else {
 				require.True(t, expression.ContainsFullTextSearchFn(ds.AllConds[0]))
-				require.Nil(t, ds.FtsPushDown)
+				require.Nil(t, ds.FTSQueryInfo())
 			}
 			require.Equal(t, []*util.AccessPath{canonical}, ds.PossibleAccessPaths)
 		})
@@ -1116,10 +1193,10 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 		ds.AllConds = append(ds.AllConds, second)
 		ds.PushedDownConds = append(ds.PushedDownConds, second)
 
-		require.NoError(t, ds.resolveFTSWherePredicate())
+		require.NoError(t, resolveFTS(ds))
 		require.Len(t, ds.AllConds, 2)
 		require.Len(t, ds.PushedDownConds, 2)
-		require.Nil(t, ds.FtsPushDown)
+		require.Nil(t, ds.FTSQueryInfo())
 		require.Equal(t, []*util.AccessPath{canonical}, ds.PossibleAccessPaths)
 		require.Equal(t, []*model.ColumnInfo{columnInfo}, ds.Columns)
 	})
@@ -1135,8 +1212,8 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 
 		require.NoError(t, legal.resolveFTSWherePredicate())
 		require.ErrorContains(t, invalid.resolveFTSWherePredicate(), "matching current TiFlash full-text index path")
-		require.NotNil(t, legal.FtsPushDown)
-		require.Nil(t, invalid.FtsPushDown)
+		require.NotNil(t, legal.FTSQueryInfo())
+		require.Nil(t, invalid.FTSQueryInfo())
 		require.True(t, expression.ContainsFullTextSearchFn(invalid.AllConds[0]))
 		require.Equal(t, []*util.AccessPath{invalidPath}, invalid.PossibleAccessPaths)
 	})
@@ -1148,8 +1225,8 @@ func TestResolveFTSWherePredicateIsDataSourceLocal(t *testing.T) {
 
 		require.NoError(t, legal.resolveFTSWherePredicate())
 		require.ErrorContains(t, conflicting.resolveFTSWherePredicate(), "INDEX_MERGE")
-		require.NotNil(t, legal.FtsPushDown)
-		require.Nil(t, conflicting.FtsPushDown)
+		require.NotNil(t, legal.FTSQueryInfo())
+		require.Nil(t, conflicting.FTSQueryInfo())
 		require.Equal(t, []*util.AccessPath{conflictingPath}, conflicting.PossibleAccessPaths)
 	})
 }

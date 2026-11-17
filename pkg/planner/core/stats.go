@@ -111,7 +111,7 @@ func deriveStats4LogicalIndexScan(lp base.LogicalPlan, selfSchema *expression.Sc
 // The ds.TableStats.RowCount >= ds.stats.RowCount >= ds.stats.CountAfterAccess
 func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, error) {
 	ds := lp.(*logicalop.DataSource)
-	hasFTSPushDown := ds.FtsPushDown != nil
+	hasFTSPushDown := ds.FTSQueryInfo() != nil
 	if ds.StatsInfo() != nil {
 		return ds.StatsInfo(), false, nil
 	}
@@ -131,18 +131,17 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	}
 	ds.CheckPartialIndexes()
 	filledPaths := ds.AllPossibleAccessPaths
-	var ftsHandlePath *util.AccessPath
+	selectivityConds := ds.PushedDownConds
 	if hasFTSPushDown {
-		// The resolver has already selected the only executable FTS path. Derive
-		// normal handle ranges on a scratch table path, which also lets generic
-		// selectivity estimation account for PK and _tidb_rowid predicates.
-		ftsHandlePath = genTiFlashPath(ds.TableInfo)
-		// StatsInfo is not available yet, so defer the normal lower-bound
-		// adjustment until after selectivity has been derived from this path.
-		if err := deriveTablePathStats(ds, ftsHandlePath, ds.PushedDownConds, true); err != nil {
-			return nil, false, err
+		path := ds.PossibleAccessPaths[0]
+		for i, cond := range path.AccessConds {
+			path.AccessConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, cond)
 		}
-		filledPaths = []*util.AccessPath{ftsHandlePath}
+		selectivityConds = ftsSelectivityConds(selectivityConds)
+		// The FTS path's Index/AccessConds describe inverted access, not a
+		// B-tree statistics path. Let selectivity derive ordinary column and
+		// primary-index ranges directly from the logical predicates.
+		filledPaths = nil
 	} else {
 		for _, path := range filledPaths {
 			if path.IsTablePath() {
@@ -155,14 +154,12 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	}
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
 	// when ds.PossibleAccessPaths are pruned.
-	ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, filledPaths))
+	ds.SetStats(deriveStatsByFilter(ds, selectivityConds, filledPaths))
 	if hasFTSPushDown {
-		// Re-derive with the finalized DataSource stats to preserve the normal
-		// handle-path CountAfterAccess adjustment semantics.
-		if err := deriveTablePathStats(ds, ftsHandlePath, ds.PushedDownConds, false); err != nil {
+		path := ds.PossibleAccessPaths[0]
+		if err := deriveFullTextIndexStats(ds, path); err != nil {
 			return nil, false, err
 		}
-		installFTSHandlePathStats(ds.PossibleAccessPaths[0], ftsHandlePath)
 	} else {
 		if err := derivePathStatsAndTryHeuristics(ds); err != nil {
 			return nil, false, err
@@ -181,23 +178,99 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	return ds.StatsInfo(), true, nil
 }
 
-func installFTSHandlePathStats(exactPath, handlePath *util.AccessPath) {
-	*exactPath = util.AccessPath{
-		Index:               exactPath.Index,
-		Ranges:              handlePath.Ranges,
-		CountAfterAccess:    handlePath.CountAfterAccess,
-		MinCountAfterAccess: handlePath.MinCountAfterAccess,
-		MaxCountAfterAccess: handlePath.MaxCountAfterAccess,
-		AccessConds:         handlePath.AccessConds,
-		TableFilters:        handlePath.TableFilters,
-		ConstCols:           handlePath.ConstCols,
-		StoreType:           exactPath.StoreType,
-		IsIntHandlePath:     exactPath.IsIntHandlePath,
-		IsCommonHandlePath:  exactPath.IsCommonHandlePath,
-		Forced:              exactPath.Forced,
-		ForceNoKeepOrder:    exactPath.ForceNoKeepOrder,
-		IsSingleScan:        true,
+// ftsSelectivityConds preserves the existing unknown selectivity of an FTS
+// search, while keeping ordinary SQL predicates visible to the estimator even
+// when the columnar index executes them. It does not alter the logical predicates.
+func ftsSelectivityConds(conds []expression.Expression) []expression.Expression {
+	result := make([]expression.Expression, 0, len(conds))
+	for _, cond := range conds {
+		if !expression.ContainsFullTextSearchFn(cond) {
+			result = append(result, cond)
+		}
 	}
+	return result
+}
+
+// deriveFullTextIndexStats estimates the single access stage: handle bounds
+// and inverted retrieval jointly produce candidates, before scalar rechecks.
+func deriveFullTextIndexStats(ds *logicalop.DataSource, path *util.AccessPath) error {
+	handle, err := ds.BuildHandleRanges()
+	if err != nil {
+		return err
+	}
+	path.Ranges = handle.Ranges
+	handleCount := statistics.RowEstimate{Est: float64(ds.StatisticTable.RealtimeCount)}
+	if ds.TableInfo.IsCommonHandle {
+		primary := ds.TableInfo.GetPrimaryKey()
+		cols, _, _, _ := util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, primary)
+		if len(handle.AccessConds) > 0 {
+			handleCount, err = cardinality.GetRowCountByIndexRanges(ds.SCtx(), ds.TableStats.HistColl, primary.ID, handle.Ranges, cols)
+		}
+		// Correlated access extends the constant prefix. Keep the same
+		// conditional-NDV estimate as ordinary common-handle scans.
+		hasCorrelatedAccess := slices.ContainsFunc(handle.AccessConds, func(cond expression.Expression) bool {
+			return len(expression.ExtractCorColumns(cond)) > 0
+		})
+		if hasCorrelatedAccess {
+			before := handleCount.Est
+			if ds.StatisticTable.Pseudo {
+				handleCount.Est = cardinality.PseudoAvgCountPerValue(ds.StatisticTable)
+			} else {
+				selectivity := before / float64(ds.StatisticTable.RealtimeCount)
+				for i := handle.EqOrInCount; i < len(handle.AccessConds) && i < len(cols); i++ {
+					ndv := max(1, cardinality.EstimateColumnNDV(ds.StatisticTable, cols[i].ID)*selectivity)
+					handleCount.Est /= ndv
+				}
+			}
+			if before > 0 {
+				handleCount.MinEst *= handleCount.Est / before
+				handleCount.MaxEst *= handleCount.Est / before
+			} else {
+				handleCount.MinEst, handleCount.MaxEst = handleCount.Est, handleCount.Est
+			}
+		}
+	} else if len(handle.AccessConds) > 0 || ds.Table.GetPartitionedTable() != nil {
+		if len(handle.AccessConds) > 0 && len(expression.ExtractCorColumns(handle.AccessConds[0])) > 0 {
+			handleCount.Est = 1
+		} else {
+			id := int64(model.ExtraHandleID)
+			if ds.TableInfo.PKIsHandle {
+				id = ds.TableInfo.GetPkColInfo().ID
+			}
+			handleCount, err = cardinality.GetRowCountByColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, id, handle.Ranges, true)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	path.CountAfterAccess = handleCount.Est
+	path.MinCountAfterAccess, path.MaxCountAfterAccess = handleCount.MinEst, handleCount.MaxEst
+	adjustCountAfterAccess(ds, path)
+	// Access predicates can constrain both representations. Estimate their
+	// union once, using the handle estimate only as an intermediate bound.
+	if indexConds := ftsSelectivityConds(path.AccessConds); len(indexConds) > 0 {
+		conds := expression.RemoveDupExprs(append(slices.Clone(handle.AccessConds), indexConds...))
+		count := deriveStatsByFilter(ds, conds, nil).RowCount
+		before := path.CountAfterAccess
+		path.CountAfterAccess = max(ds.StatsInfo().RowCount, min(before, count))
+		if before > 0 {
+			path.MinCountAfterAccess *= path.CountAfterAccess / before
+			path.MaxCountAfterAccess *= path.CountAfterAccess / before
+		}
+	}
+	// The inverted library has no additional selection after access.
+	path.CountAfterIndex = path.CountAfterAccess
+	path.IndexFilters = nil
+	path.TableFilters = nil
+	for _, cond := range handle.RemainedConds {
+		if !slices.ContainsFunc(path.AccessConds, func(indexCond expression.Expression) bool {
+			return indexCond.Equal(ds.SCtx().GetExprCtx().GetEvalCtx(), cond)
+		}) {
+			path.TableFilters = append(path.TableFilters, cond)
+		}
+	}
+	path.IsSingleScan = true
+	return nil
 }
 
 func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression) error {
@@ -584,8 +657,7 @@ func getGeneralAttributesFromPaths(paths []*util.AccessPath, totalRowCount float
 	minSelectivity := 1.0
 	indexForce := false
 	for _, path := range paths {
-		// For table path and index merge path, AccessPath.CountAfterIndex is not set and meaningless,
-		// but we still consider their AccessPath.CountAfterAccess.
+		// Table and index-merge paths have no separate index selection stage.
 		if totalRowCount > 0 {
 			if path.IsTablePath() || path.PartialIndexPaths != nil {
 				minSelectivity = min(minSelectivity, path.CountAfterAccess/totalRowCount)

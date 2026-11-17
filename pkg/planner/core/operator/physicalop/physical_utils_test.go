@@ -21,13 +21,16 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -250,4 +253,74 @@ func TestFlattenTreePushDownPlan(t *testing.T) {
 	require.Equal(t, 2, len(m))
 	require.Equal(t, 6, m[2])
 	require.Equal(t, 5, m[3])
+}
+
+// TestFTSHandleRangeAndTopK checks the physical boundary after range extraction
+// has consumed a handle predicate and left TableFilters empty.
+func TestFTSHandleRangeAndTopK(t *testing.T) {
+	ctx := mock.NewContext()
+	column := &expression.Column{ID: 1, UniqueID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	handleCond := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.EQ,
+		types.NewFieldType(mysql.TypeTiny), column, expression.NewInt64Const(42))
+	searchColumn := &expression.Column{ID: 2, UniqueID: 2, RetType: types.NewFieldType(mysql.TypeVarchar)}
+	search := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.FTSMatchWord,
+		types.NewFieldType(mysql.TypeDouble), expression.NewStrConst("foo"), searchColumn)
+	topK := uint32(10)
+	query := &tipb.FTSQueryInfo{IndexId: 3, TopK: &topK}
+	pkInfo := &model.ColumnInfo{ID: 1, FieldType: *column.RetType.Clone()}
+	pkInfo.AddFlag(mysql.PriKeyFlag)
+	ds := logicalop.DataSource{
+		TableInfo:  &model.TableInfo{ID: 1, PKIsHandle: true, Columns: []*model.ColumnInfo{pkInfo}},
+		TableStats: &property.StatsInfo{RowCount: 100},
+	}.Init(ctx, 0)
+	ds.SetSchema(expression.NewSchema(column, searchColumn))
+	ds.SetStats(&property.StatsInfo{RowCount: 8})
+	for _, tc := range []struct {
+		name                         string
+		handle, covered, tableFilter bool
+		wantTopK                     uint32
+	}{
+		{"search only", false, false, false, 10},
+		{"uncovered handle consumed by range", true, false, false, ^uint32(0)},
+		{"handle also covered by inverted query", true, true, false, 10},
+		{"table recheck", false, false, true, ^uint32(0)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := &util.AccessPath{Index: &model.IndexInfo{ID: 3},
+				CountAfterAccess: 10, CountAfterIndex: 10, StoreType: kv.TiFlash,
+				IsIntHandlePath: true, AccessConds: []expression.Expression{search}, FTSQueryInfo: query,
+			}
+			ds.PushedDownConds = []expression.Expression{search}
+			var handleConds []expression.Expression
+			if tc.handle {
+				handleConds = []expression.Expression{handleCond}
+				ds.PushedDownConds = append(ds.PushedDownConds, handleCond)
+			}
+			if tc.covered {
+				path.AccessConds = append(path.AccessConds, handleCond.Clone())
+			}
+			if tc.tableFilter {
+				path.TableFilters = []expression.Expression{handleCond}
+			}
+			path = path.Clone()
+			scan, _, err := GetOriginalPhysicalTableScan(ds, &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}, path, false)
+			require.NoError(t, err)
+			require.Equal(t, handleConds, scan.AccessCondition)
+			for _, cond := range scan.AccessCondition {
+				require.False(t, expression.ContainsFullTextSearchFn(cond))
+			}
+			require.False(t, path.IsTiFlashSimpleTablePath())
+			require.Equal(t, float64(10), scan.StatsInfo().RowCount)
+			limited, _, err := GetOriginalPhysicalTableScan(ds, &property.PhysicalProperty{ExpectedCnt: 4}, path, false)
+			require.NoError(t, err)
+			require.Equal(t, float64(5), limited.StatsInfo().RowCount, "limit costing must use the access count")
+			require.Equal(t, path.CountAfterAccess, path.CountAfterIndex, "there is no separate index selection stage")
+			require.Equal(t, float64(10), path.CountAfterIndex)
+			require.NotSame(t, query, path.FTSQueryInfo)
+			actual := scan.UsedColumnarIndexes[0].QueryInfo.GetFtsQueryInfo()
+			require.Equal(t, tc.wantTopK, actual.GetTopK())
+			require.NotSame(t, query, actual)
+			require.Equal(t, uint32(10), query.GetTopK(), "costing one path must not change another path's candidate")
+		})
+	}
 }

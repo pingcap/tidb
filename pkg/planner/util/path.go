@@ -24,9 +24,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // IndexLookUpPushDownByType indicates whether to use index lookup push down optimization where it comes.
@@ -54,7 +56,8 @@ type AccessPath struct {
 	// time, i.e. `index_col = correlated_col`. See markConstCol.
 	ConstCols []bool
 	Ranges    []*ranger.Range
-	// CountAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
+	// CountAfterAccess is the row count after range seek or inverted retrieval,
+	// before evaluating IndexFilters and TableFilters.
 	// For index merge path, CountAfterAccess is the row count after partial paths and before we apply table filters.
 	CountAfterAccess float64
 	// MinCountAfterAccess is a lower bound on CountAfterAccess, accounting for risks that could
@@ -74,6 +77,11 @@ type AccessPath struct {
 	EqOrInCondCount int
 	IndexFilters    []expression.Expression
 	TableFilters    []expression.Expression
+	// FTSQueryInfo describes inverted access through Index using AccessConds.
+	// Ranges independently restrict the table's handles. There is no separate
+	// index selection stage, so CountAfterIndex equals CountAfterAccess.
+	// TopK remains a candidate until physical construction checks all filters.
+	FTSQueryInfo *tipb.FTSQueryInfo
 	// PartialIndexPaths store all index access paths.
 	// If there are extra filters, store them in TableFilters.
 	PartialIndexPaths []*AccessPath
@@ -206,6 +214,9 @@ func (path *AccessPath) Clone() *AccessPath {
 		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
 		NoncacheableReason:           path.NoncacheableReason,
 	}
+	if path.FTSQueryInfo != nil {
+		ret.FTSQueryInfo = tidbutil.ProtoV1Clone(path.FTSQueryInfo)
+	}
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
 	}
@@ -248,25 +259,39 @@ func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
 // Each equality it moves also marks the matched index column in AccessPath.ConstCols, so that the
 // order the remaining index columns provide can be recognized. See markConstCol for the reasoning.
 func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
-	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
-	used := make([]bool, len(path.TableFilters))
+	access, remained = SplitCorColAccessCondFromFilters(ctx, path.TableFilters, path.IdxCols, path.IdxColLens, eqOrInCount)
+	for i, cond := range access {
+		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ && path.IdxColLens[eqOrInCount+i] == types.UnspecifiedLength {
+			path.markConstCol(eqOrInCount + i)
+		}
+	}
+	return access, remained
+}
+
+// SplitCorColAccessCondFromFilters extracts a correlated access prefix after
+// the constant prefix. It also serves handle range construction, which has no
+// index AccessPath whose identity or predicate classification should be changed.
+func SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, filters []expression.Expression,
+	idxCols []*expression.Column, idxColLens []int, eqOrInCount int) (access, remained []expression.Expression) {
+	access = make([]expression.Expression, len(idxCols)-eqOrInCount)
+	used := make([]bool, len(filters))
 	usedCnt := 0
-	for i := eqOrInCount; i < len(path.IdxCols); i++ {
+	for i := eqOrInCount; i < len(idxCols); i++ {
 		matched := false
-		for j, filter := range path.TableFilters {
+		for j, filter := range filters {
 			if used[j] {
 				continue
 			}
-			colEqConstant := isColEqConstant(filter, path.IdxCols[i])
+			colEqConstant := isColEqConstant(filter, idxCols[i])
 			if i == eqOrInCount && colEqConstant {
-				// If there is a col-eq-constant condition for path.IdxCols[eqOrInCount], it means that range fallback happens
+				// If there is a col-eq-constant condition for idxCols[eqOrInCount], it means that range fallback happens
 				// in DetachCondAndBuildRangeForIndex. In this case we don't consider adding access conditions. Besides, the IF
 				// branch also ensures that there must be some col-eq-corcol condition in access if len(access) > 0, which is
 				// important. If there is no col-eq-corcol condition in access, we would not rebuild ranges, which brings the
 				// correctness issue.
-				return nil, path.TableFilters
+				return nil, filters
 			}
-			colEqCorCol := isColEqCorCol(filter, path.IdxCols[i])
+			colEqCorCol := isColEqCorCol(filter, idxCols[i])
 			if !colEqConstant && !colEqCorCol {
 				continue
 			}
@@ -275,10 +300,9 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			ctx.GetExprCtx().SetSkipPlanCache("Correlated subquery is not cached currently")
 			matched = true
 			access[i-eqOrInCount] = filter
-			if path.IdxColLens[i] == types.UnspecifiedLength {
+			if idxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
 				usedCnt++
-				path.markConstCol(i)
 			}
 			break
 		}
@@ -286,21 +310,21 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			// Try a range predicate (LT/GT/LE/GE) with a correlated column.
 			// A range predicate terminates the access prefix, so we only
 			// attempt this when no EQ match was found.
-			for j, filter := range path.TableFilters {
+			for j, filter := range filters {
 				if used[j] {
 					continue
 				}
-				if isColRangeCorCol(filter, path.IdxCols[i]) {
+				if isColRangeCorCol(filter, idxCols[i]) {
 					ctx.GetExprCtx().SetSkipPlanCache("Correlated subquery is not cached currently")
 					access[i-eqOrInCount] = filter
 					// Range predicates must also remain as post-scan filters
 					// because the index range is a superset when prefix lengths
 					// are involved, and to be safe we always keep the filter.
 					access = access[:i-eqOrInCount+1]
-					remained = make([]expression.Expression, 0, len(path.TableFilters)-usedCnt)
+					remained = make([]expression.Expression, 0, len(filters)-usedCnt)
 					for k, ok := range used {
 						if !ok {
-							remained = append(remained, path.TableFilters[k]) // nozero
+							remained = append(remained, filters[k]) // nozero
 						}
 					}
 					return access, remained
@@ -313,7 +337,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 	remained = make([]expression.Expression, 0, len(used)-usedCnt)
 	for i, ok := range used {
 		if !ok {
-			remained = append(remained, path.TableFilters[i]) // nozero
+			remained = append(remained, filters[i]) // nozero
 		}
 	}
 	return access, remained

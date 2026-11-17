@@ -16,6 +16,7 @@ package logicalop
 
 import (
 	"math"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -53,10 +55,35 @@ func NewFTSScoreFieldType() *types.FieldType {
 	return ftsScoreFieldType.Clone()
 }
 
-// resolveFTSWherePredicate consumes the one legal predicate owned by this
-// DataSource. Unsupported, unpushed, or multiple bindings remain untouched for
-// the final whole-plan rejection rule.
+// resolveFTSWherePredicate binds the one legal FTS predicate owned by this
+// DataSource, preserving the logical conditions independently of which ones
+// the selected index executes. Unsupported bindings are rejected by the final rule.
 func (ds *DataSource) resolveFTSWherePredicate() error {
+	if ds.FTSQueryInfo() != nil {
+		// Repeated PPD keeps the bound query and score column. Reclassify the
+		// current predicates against its access conditions; new predicates must
+		// not be treated as executed by a query that was bound earlier.
+		path := ds.PossibleAccessPaths[0]
+		path.TableFilters = nil
+		ctx := ds.SCtx().GetExprCtx().GetEvalCtx()
+		for _, cond := range ds.PushedDownConds {
+			if !slices.ContainsFunc(path.AccessConds, func(access expression.Expression) bool {
+				return access.Equal(ctx, cond)
+			}) {
+				path.TableFilters = append(path.TableFilters, cond)
+			}
+		}
+		// AllConds and PushedDownConds may have been simplified independently.
+		// Validate remaining FTS ownership by meaning, not expression identity.
+		for _, cond := range ds.AllConds {
+			if expression.ContainsFullTextSearchFn(cond) && !slices.ContainsFunc(path.AccessConds, func(access expression.Expression) bool {
+				return access.Equal(ctx, cond)
+			}) {
+				return plannererrors.ErrWrongUsage.FastGen("FTS_MATCH_WORD() must be a direct top-level conjunct owned by one data source")
+			}
+		}
+		return nil
+	}
 	ftsCondIndexes := collectFTSConditionIndexes(ds.PushedDownConds)
 	// TODO: we only support single search function in this phase,
 	// we will extend this in the next dev round.
@@ -71,8 +98,7 @@ func (ds *DataSource) resolveFTSWherePredicate() error {
 	if searchExpr == nil {
 		return nil
 	}
-	newAllConds, newPushedDownConds, owned := prepareFTSConditionRemoval(ds, ftsCondIndexes)
-	if !owned {
+	if !ftsConditionsOwned(ds, ftsCondIndexes) {
 		return nil
 	}
 	if !hasPublicFTSIndex(ds.TableInfo) {
@@ -110,13 +136,11 @@ func (ds *DataSource) resolveFTSWherePredicate() error {
 		return plannererrors.ErrWrongUsage.FastGen("failed to rebuild the full-text query expression")
 	}
 	if removableCondIndexes.Len() > ftsCondIndexes.Len() {
-		var allOwned bool
-		newAllConds, newPushedDownConds, allOwned = prepareFTSConditionRemoval(ds, removableCondIndexes)
-		if !allOwned {
+		if !ftsConditionsOwned(ds, removableCondIndexes) {
 			// Keep all rebuilt conditions as safe FTS prefilters, but fall back to
-			// removing only the explicit lossless FTS predicate. Exact rewrites
+			// marking only the explicit lossless FTS predicate as exact. Exact rewrites
 			// are still necessary conditions when their originals remain residual.
-			newAllConds, newPushedDownConds, _ = prepareFTSConditionRemoval(ds, ftsCondIndexes)
+			removableCondIndexes = ftsCondIndexes
 		}
 	}
 	rebuiltExpr := expression.ComposeCNFCondition(ds.SCtx().GetExprCtx(), rebuiltConds...)
@@ -161,11 +185,30 @@ func (ds *DataSource) resolveFTSWherePredicate() error {
 
 	hadForceKeepOrder := selected.path.ForceKeepOrder
 	selected.path.ForceKeepOrder = false
+	// The inverted engine evaluates the whole access query in one stage, so
+	// there is no separate IndexFilters stage. A lossy prefilter contributes
+	// its derived necessary condition to access and keeps the original as a
+	// TableFilter for rechecking, just as a lossy ordinary index range does.
+	selected.path.FTSQueryInfo = queryInfo
+	selected.path.AccessConds = nil
+	selected.path.IndexFilters = nil
+	selected.path.TableFilters = nil
+	rebuiltIndex := 0
+	for i, cond := range ds.PushedDownConds {
+		if selected.coveredCondIndexes.Has(i) {
+			access := rebuiltConds[rebuiltIndex]
+			if removableCondIndexes.Has(i) {
+				access = cond
+			}
+			selected.path.AccessConds = append(selected.path.AccessConds, access)
+			rebuiltIndex++
+		}
+		if !removableCondIndexes.Has(i) {
+			selected.path.TableFilters = append(selected.path.TableFilters, cond)
+		}
+	}
 	ds.PossibleAccessPaths = []*util.AccessPath{selected.path}
 	ds.AllPossibleAccessPaths = ds.PossibleAccessPaths
-	ds.AllConds = newAllConds
-	ds.PushedDownConds = newPushedDownConds
-	ds.FtsPushDown = queryInfo
 	ds.Columns = append(ds.Columns, scoreColumnInfo)
 	ds.Schema().Append(scoreColumn)
 	if hadForceKeepOrder {
@@ -474,13 +517,9 @@ func ftsQueryFunc(expr expression.Expression) tipb.ScalarFuncSig {
 	return tipb.ScalarFuncSig_FTSMatchExpression
 }
 
-func prepareFTSConditionRemoval(ds *DataSource, matchedCondIndexes intset.FastIntSet) (
-	[]expression.Expression,
-	[]expression.Expression,
-	bool,
-) {
+func ftsConditionsOwned(ds *DataSource, matchedCondIndexes intset.FastIntSet) bool {
 	if ds == nil || matchedCondIndexes.IsEmpty() {
-		return nil, nil, false
+		return false
 	}
 	matchedExpressions := make([]expression.Expression, 0, matchedCondIndexes.Len())
 	validIndexes := true
@@ -492,11 +531,10 @@ func prepareFTSConditionRemoval(ds *DataSource, matchedCondIndexes intset.FastIn
 		matchedExpressions = append(matchedExpressions, ds.PushedDownConds[i])
 	})
 	if !validIndexes {
-		return nil, nil, false
+		return false
 	}
 
-	removeMatched := func(conditions []expression.Expression) ([]expression.Expression, []int, bool) {
-		result := make([]expression.Expression, 0, len(conditions))
+	countMatched := func(conditions []expression.Expression) ([]int, bool) {
 		counts := make([]int, len(matchedExpressions))
 		hasExtraFTS := false
 		for _, condition := range conditions {
@@ -514,29 +552,84 @@ func prepareFTSConditionRemoval(ds *DataSource, matchedCondIndexes intset.FastIn
 			if expression.ContainsFullTextSearchFn(condition) {
 				hasExtraFTS = true
 			}
-			result = append(result, condition)
 		}
-		return result, counts, hasExtraFTS
+		return counts, hasExtraFTS
 	}
 
-	newAllConds, allCounts, allHasExtraFTS := removeMatched(ds.AllConds)
-	newPushedDownConds, pushedCounts, pushedHasExtraFTS := removeMatched(ds.PushedDownConds)
+	allCounts, allHasExtraFTS := countMatched(ds.AllConds)
+	pushedCounts, pushedHasExtraFTS := countMatched(ds.PushedDownConds)
 	if allHasExtraFTS || pushedHasExtraFTS {
-		return nil, nil, false
+		return false
 	}
 	for i := range matchedExpressions {
 		if allCounts[i] != 1 || pushedCounts[i] != 1 {
-			return nil, nil, false
+			return false
 		}
 	}
-	return newAllConds, newPushedDownConds, true
+	return true
 }
 
-// IsExactFTSPath reports whether path is the selected exact full-text path for
-// the DataSource. Handle flags do not imply ordering for such a path.
-func IsExactFTSPath(ds *DataSource, path *util.AccessPath) bool {
-	return ds != nil && ds.FtsPushDown != nil && len(ds.PossibleAccessPaths) == 1 &&
-		ds.PossibleAccessPaths[0] == path
+// FTSQueryInfo returns the query bound to this DataSource's selected access
+// path. Query ownership follows the path, including clones and alternatives.
+func (ds *DataSource) FTSQueryInfo() *tipb.FTSQueryInfo {
+	if ds == nil || len(ds.PossibleAccessPaths) != 1 || ds.PossibleAccessPaths[0].FTSQueryInfo == nil {
+		return nil
+	}
+	return ds.PossibleAccessPaths[0].FTSQueryInfo
+}
+
+// BuildHandleRanges derives table ranges from logical predicates, independently
+// of the selected index's access conditions. Its result carries the exact
+// conditions needed for physical range reconstruction, including correlations.
+func (ds *DataSource) BuildHandleRanges() (*ranger.DetachRangeResult, error) {
+	conds := slices.Clone(ds.PushedDownConds)
+	if ds.TableInfo.IsCommonHandle {
+		primary := ds.TableInfo.GetPrimaryKey()
+		if primary == nil {
+			return nil, errors.New("primary index is missing for common handle table")
+		}
+		cols, lengths, _, _ := util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, primary)
+		if len(cols) == 0 {
+			return &ranger.DetachRangeResult{Ranges: ranger.FullNotNullRange(), RemainedConds: conds}, nil
+		}
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.SCtx().GetRangerCtx(), conds, cols, lengths, ds.SCtx().GetSessionVars().RangeMaxSize)
+		if err != nil {
+			return nil, err
+		}
+		if res.EqOrInCount == len(res.AccessConds) {
+			access, remained := util.SplitCorColAccessCondFromFilters(ds.SCtx(), res.RemainedConds, cols, lengths, res.EqOrInCount)
+			res.AccessConds = append(res.AccessConds, access...)
+			res.RemainedConds = remained
+		}
+		return res, nil
+	}
+	var col *expression.Column
+	unsigned := false
+	if ds.TableInfo.PKIsHandle {
+		if info := ds.TableInfo.GetPkColInfo(); info != nil {
+			unsigned = mysql.HasUnsignedFlag(info.GetFlag())
+			col = expression.ColInfo2Col(ds.Schema().Columns, info)
+		}
+	} else {
+		col = ds.Schema().GetExtraHandleColumn()
+	}
+	res := &ranger.DetachRangeResult{Ranges: ranger.FullIntRange(unsigned), RemainedConds: conds}
+	if col == nil {
+		return res, nil
+	}
+	res.AccessConds, res.RemainedConds = ranger.DetachCondsForColumn(ds.SCtx().GetRangerCtx(), conds, col)
+	if len(res.AccessConds) == 0 {
+		access, remained := util.SplitCorColAccessCondFromFilters(ds.SCtx(), res.RemainedConds, []*expression.Column{col}, []int{types.UnspecifiedLength}, 0)
+		if len(access) > 0 && access[0].(*expression.ScalarFunction).FuncName.L == ast.EQ {
+			res.AccessConds, res.RemainedConds = access, remained
+			return res, nil
+		}
+	}
+	var remained []expression.Expression
+	var err error
+	res.Ranges, res.AccessConds, remained, err = ranger.BuildTableRange(res.AccessConds, ds.SCtx().GetRangerCtx(), col.RetType, ds.SCtx().GetSessionVars().RangeMaxSize)
+	res.RemainedConds = append(res.RemainedConds, remained...)
+	return res, err
 }
 
 // CheckExprCoveredByColumnarFTSAndRebuild checks whether expr can be evaluated
