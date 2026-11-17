@@ -467,3 +467,62 @@ fn rollback_create_materialized_view_log(
     write.diff = diff;
     Ok(PersistedDdlActionStep { write, update_raw_args: true, run_error: None, reorg: None })
 }
+
+/// Go master `onAlterMaterializedViewLogPurge`: the log's purge method and
+/// schedule, with a notifier event.
+pub(super) fn on_alter_materialized_view_log_purge(
+    txn: &mut JobTxn<'_>,
+    catalog: &SessionExtendedInfoSchema,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    start_ts: u64,
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    let args = tidb_model::get_alter_materialized_view_log_purge_args(&mut active.job)
+        .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
+        .unwrap_or_default();
+    let args = args.read().clone();
+    // Go `GetTableInfoAndCancelFaultJob`.
+    let mut table = checked_job_table(txn, active, true)?.read().clone_like_go();
+    let Some(log) = table.materialized_view_log.clone() else {
+        return Err(cancel_ddl_job(
+            active,
+            DdlPlanError::from(tidb_dbterror::ERR_WRONG_OBJECT.gen_with_stack_by_args(&[
+                active.job.schema_name.to_string().into(),
+                active.job.table_name.to_string().into(),
+                "MATERIALIZED VIEW LOG".into(),
+            ])),
+        ));
+    };
+    if is_revertible_sub_job(&active.job) {
+        active.job.mark_non_revertible();
+        return Ok(super::add_index::action_step(job_only_write(active.job.id, Vec::new())));
+    }
+    let old_table = table.clone_like_go();
+    {
+        let mut log = log.write();
+        log.purge_method = args.purge_method;
+        log.purge_start_with = args.purge_start_with;
+        log.purge_next = args.purge_next;
+        if args.update_purge_schedule {
+            log.purge_schedule_sql_mode = args.purge_schedule_sql_mode;
+        }
+    }
+    let schema_id = active.job.schema_id;
+    let mut write = super::add_index::update_version_and_table_info(txn, active, schema_id, &table, true, start_ts)?;
+    let schema_version = write.schema_version;
+    let mut mutations = Vec::new();
+    append_schema_change_mutations(
+        txn,
+        catalog,
+        active.job.id,
+        &[(
+            -1,
+            SchemaChangeEvent::alter_materialized_view_log_purge(table.clone_like_go(), old_table),
+        )],
+        &mut mutations,
+        row_ids,
+    )?;
+    active.job.finish_table_job(JobState::DONE, SchemaState::PUBLIC, schema_version, Some(GoShared::new(table)));
+    write.mutations.extend(mutations);
+    Ok(super::add_index::action_step(write))
+}

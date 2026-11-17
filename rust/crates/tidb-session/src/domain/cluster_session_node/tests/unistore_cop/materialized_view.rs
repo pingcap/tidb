@@ -58,7 +58,7 @@ fn answer(session: &mut Session, sql: &str) -> String {
 /// per line) against a node with a DDL owner. Go master's `upgradeToVer316`
 /// creates its materialized view tables; this branch's bootstrap does not, so
 /// the replay creates them first.
-fn replay_go_master(capture: &str) {
+fn replay_go_master(capture: &str) -> (UnistoreClusterStack, Session) {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(2131)).unwrap();
     for table in tidb_metadef::BOOTSTRAP_TABLES.iter().filter(|table| {
@@ -84,6 +84,7 @@ fn replay_go_master(capture: &str) {
         }
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    (stack, session)
 }
 
 /// CREATE MATERIALIZED VIEW LOG against a Go master `eca4674a6f` node's
@@ -101,4 +102,40 @@ fn create_materialized_view_log_answers_as_go_master() {
 #[test]
 fn drop_materialized_view_log_answers_as_go_master() {
     replay_go_master(include_str!("../../../../../testdata/mview_mlog_drop_go.jsonl"));
+}
+
+/// ALTER MATERIALIZED VIEW LOG ... PURGE against a Go master `eca4674a6f`
+/// node's answers (`testdata/mview_mlog_alter_go.jsonl`): the next purge
+/// time Go stores after the job (START WITH near now defers to NEXT, a NULL
+/// schedule stores NULL, a missing row fails after the job), Go's checks in
+/// Go's order, and the log's stored schedule as Go's table JSON keeps it.
+/// Then Go's lock contention: while another transaction holds the purge
+/// info row, the job still runs and the statement warns after waiting 10 s.
+#[test]
+fn alter_materialized_view_log_purge_answers_as_go_master() {
+    let (stack, mut session) = replay_go_master(include_str!("../../../../../testdata/mview_mlog_alter_go.jsonl"));
+    let stored = |stack: &UnistoreClusterStack| {
+        let (_, mlog) = stack.factory.catalog_snapshot().table_info_by_name("e29", "$mlog$t").unwrap();
+        let log = mlog.read().materialized_view_log.clone().expect("a log table");
+        let log = log.read();
+        (log.purge_method.clone(), log.purge_start_with.clone(), log.purge_next.clone(), log.purge_schedule_sql_mode)
+    };
+    // Go's `/schema/e29/$mlog$t` after the capture: the last ALTER ran
+    // under ANSI_QUOTES.
+    assert_eq!(stored(&stack), ("DEFERRED".to_owned(), String::new(), "TIMESTAMP '2040-01-01 00:00:00'".to_owned(), 4));
+
+    let mut holder = stack.factory.open_session(session_context(2132)).unwrap();
+    assert_eq!(answer(&mut holder, "use e29"), "OK");
+    assert_eq!(answer(&mut holder, "begin pessimistic"), "OK");
+    assert_eq!(answer(&mut holder, "select * from mysql.tidb_mlog_purge_info for update").get(..3), Some("RS:"));
+    let started = std::time::Instant::now();
+    assert_eq!(answer(&mut session, "alter materialized view log on t purge next TIMESTAMP '2041-01-01 00:00:00'"), "OK");
+    assert!(started.elapsed() >= std::time::Duration::from_secs(9), "{:?}", started.elapsed());
+    assert_eq!(
+        answer(&mut session, "show warnings"),
+        r#"RS:[["Warning","1105","alter materialized view log purge: metadata updated but failed to update mysql.tidb_mlog_purge_info.NEXT_PURGE_UNIX_SECONDS within 10s due to row lock contention; please retry later if immediate reschedule is needed"]]"#
+    );
+    assert_eq!(answer(&mut holder, "rollback"), "OK");
+    assert_eq!(answer(&mut session, "select NEXT_PURGE_UNIX_SECONDS from mysql.tidb_mlog_purge_info"), r#"RS:[["2208988800"]]"#);
+    assert_eq!(stored(&stack).2, "TIMESTAMP '2041-01-01 00:00:00'");
 }

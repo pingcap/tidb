@@ -229,6 +229,54 @@ pub fn drop_materialized_view_log<E: ExecutorStore>(
     }
 }
 
+/// Go master `executor.AlterMaterializedViewLog`: the checks, then each
+/// action's job; a purge action then stores the log's next purge time
+/// (`alterMaterializedViewLogPurge`).
+pub(super) fn alter_materialized_view_log<S: StoreClient>(
+    executor: &RealClusterDdl<S>,
+    stmt: &tidb_ast::AlterMaterializedViewLogStmt,
+    current_db: &str,
+    context: &dyn DdlSessionContext,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    let catalog = executor.latest_schema();
+    let steps = super::executor_mview::alter_materialized_view_log_steps(&catalog, stmt, current_db, context)
+        .map_err(mysql_query_error)?;
+    let mut last = None;
+    let mut warnings = Vec::new();
+    for step in steps {
+        let super::executor_mview::AlterMaterializedViewLogStep::Purge { job, start_with, next, sql_mode, mlog_id } =
+            step;
+        let report = do_ddl_job_wrapper(executor, context, job)?;
+        // Go keeps the metadata change and the schedule row decoupled: an
+        // error below does not undo the finished job.
+        let (next_unix_seconds, should_update) =
+            tidb_ddl_build::materialized_view::derive_materialized_schedule_next_unix_seconds(
+                &start_with,
+                &next,
+                sql_mode,
+                chrono::Utc::now(),
+            )
+            .map_err(mysql_query_error)?;
+        if should_update {
+            super::executor_mview::best_effort_update_materialized_schedule_info_next_unix_seconds(
+                executor.scheduler.session_pool.as_ref(),
+                &super::executor_mview::MLOG_PURGE_INFO_UPDATE_SPEC,
+                mlog_id,
+                next_unix_seconds,
+                &mut warnings,
+            )
+            .map_err(mysql_query_error)?;
+        }
+        last = Some(report);
+    }
+    let mut report = last.expect("a statement has at least one action");
+    match &mut report {
+        ClusterDdlReport::Applied { warnings: report_warnings, .. }
+        | ClusterDdlReport::AlreadySatisfied { warnings: report_warnings, .. } => report_warnings.extend(warnings),
+    }
+    Ok(report)
+}
+
 /// Go master `executor.CreateMaterializedViewLog` through `DoDDLJobWrapper`:
 /// the report, and the log table's schema and name.
 pub fn submit_create_materialized_view_log<E: ExecutorStore>(

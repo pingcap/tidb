@@ -157,6 +157,62 @@ impl SchemaChangeEvent {
         self.table_info()
     }
 
+    /// Go master `NewAlterMaterializedViewRefreshEvent`: an MV refresh metadata change.
+    pub fn alter_materialized_view_refresh(table: TableInfo, old_table: TableInfo) -> Self {
+        Self::with_table_and_old(ActionType::ACTION_ALTER_MATERIALIZED_VIEW_REFRESH, table, old_table)
+    }
+
+    /// Go master `GetAlterMaterializedViewRefreshInfo`.
+    pub fn get_alter_materialized_view_refresh_info(&self) -> &TableInfo {
+        self.assert_type(ActionType::ACTION_ALTER_MATERIALIZED_VIEW_REFRESH);
+        self.table_info()
+    }
+
+    /// Go master `NewAlterMaterializedViewAttributesEvent`: an MV attributes change.
+    pub fn alter_materialized_view_attributes(table: TableInfo, old_table: TableInfo) -> Self {
+        Self::with_table_and_old(ActionType::ACTION_ALTER_MATERIALIZED_VIEW_ATTRIBUTES, table, old_table)
+    }
+
+    /// Go master `GetAlterMaterializedViewAttributesInfo`.
+    pub fn get_alter_materialized_view_attributes_info(&self) -> &TableInfo {
+        self.assert_type(ActionType::ACTION_ALTER_MATERIALIZED_VIEW_ATTRIBUTES);
+        self.table_info()
+    }
+
+    /// Go master `NewAlterMaterializedViewLogPurgeEvent`: an MLog purge metadata change.
+    pub fn alter_materialized_view_log_purge(table: TableInfo, old_table: TableInfo) -> Self {
+        Self::with_table_and_old(ActionType::ACTION_ALTER_MATERIALIZED_VIEW_LOG_PURGE, table, old_table)
+    }
+
+    /// Go master `GetAlterMaterializedViewLogPurgeInfo`.
+    pub fn get_alter_materialized_view_log_purge_info(&self) -> &TableInfo {
+        self.assert_type(ActionType::ACTION_ALTER_MATERIALIZED_VIEW_LOG_PURGE);
+        self.table_info()
+    }
+
+    /// Go master `NewMViewRefreshOutOfPlaceCutoverEvent`.
+    pub fn mview_refresh_out_of_place_cutover(table: TableInfo, old_table: TableInfo) -> Self {
+        Self::with_table_and_old(ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER, table, old_table)
+    }
+
+    /// Go master `GetMViewRefreshOutOfPlaceCutoverInfo`: the new and old
+    /// materialized view.
+    pub fn get_mview_refresh_out_of_place_cutover_info(&self) -> (&TableInfo, &TableInfo) {
+        self.assert_type(ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER);
+        (self.table_info(), self.old_table_info())
+    }
+
+    fn with_table_and_old(action_type: ActionType, table: TableInfo, old_table: TableInfo) -> Self {
+        Self {
+            inner: JsonSchemaChangeEvent {
+                action_type,
+                table_info: Some(Box::new(table)),
+                old_table_info: Some(Box::new(old_table)),
+                ..JsonSchemaChangeEvent::default()
+            },
+        }
+    }
+
     /// Go `NewTruncateTableEvent`.
     pub fn truncate_table(table: TableInfo, old_table: TableInfo) -> Self {
         Self {

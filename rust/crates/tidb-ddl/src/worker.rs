@@ -345,6 +345,14 @@ pub trait ClusterDdl: Send + Sync {
         context: &crate::cluster_ddl::DdlContext,
     ) -> Result<ClusterDdlReport, SqlQueryError>;
 
+    /// Go master `executor.AlterMaterializedViewLog`.
+    fn alter_materialized_view_log(
+        &self,
+        statement: &tidb_ast::AlterMaterializedViewLogStmt,
+        current_db: &str,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError>;
+
     /// Go `executor.DropSequence`.
     fn drop_sequence(
         &self,
@@ -414,6 +422,9 @@ pub trait ClusterDdl: Send + Sync {
                 }
                 tidb_ast::DdlStmt::DropMaterializedViewLog(statement) => {
                     self.drop_materialized_view_log(statement, current_db, context)
+                }
+                tidb_ast::DdlStmt::AlterMaterializedViewLog(statement) => {
+                    self.alter_materialized_view_log(statement, current_db, context.as_ref())
                 }
                 tidb_ast::DdlStmt::RecoverTable(statement) => self.recover_table(
                     &statement.table,
@@ -3827,6 +3838,15 @@ where
         context: &crate::cluster_ddl::DdlContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         executor::drop_materialized_view_log(self, statement, current_db, context)
+    }
+
+    fn alter_materialized_view_log(
+        &self,
+        statement: &tidb_ast::AlterMaterializedViewLogStmt,
+        current_db: &str,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::alter_materialized_view_log(self, statement, current_db, context)
     }
 
     fn drop_sequence(

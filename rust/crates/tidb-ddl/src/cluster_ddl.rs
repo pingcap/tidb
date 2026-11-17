@@ -2614,6 +2614,7 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_CREATE_SCHEMA
             | ActionType::ACTION_CREATE_TABLE
             | ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG
+            | ActionType::ACTION_ALTER_MATERIALIZED_VIEW_LOG_PURGE
             | ActionType::ACTION_CREATE_TABLES
             | ActionType::ACTION_RECOVER_TABLE
             | ActionType::ACTION_FLASHBACK_CLUSTER
@@ -2792,6 +2793,9 @@ fn dispatch_persisted_action(
         ),
         ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG => {
             materialized_view::on_create_materialized_view_log(txn, catalog, active, start_ts, row_ids)
+        }
+        ActionType::ACTION_ALTER_MATERIALIZED_VIEW_LOG_PURGE => {
+            materialized_view::on_alter_materialized_view_log_purge(txn, catalog, active, start_ts, row_ids)
         }
         ActionType::ACTION_CREATE_TABLES => {
             plan_persisted_create_tables_job_step(txn, catalog, active, start_ts, row_ids)

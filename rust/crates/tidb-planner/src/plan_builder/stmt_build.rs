@@ -1297,31 +1297,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // must exist), then `buildDDL`'s visit infos on the log table
             // (`materializedViewLogNameForBaseTable`) and the base table.
             DdlStmt::CreateMaterializedViewLog(create) => {
-                let (database, table, original) = self.qualified(&create.table);
-                if database.is_empty() {
-                    return Err(PlanError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])));
-                }
-                let written_db = match create.table.as_slice() {
-                    [schema, _] => schema.clone(),
-                    _ => self.source.current_database().to_owned(),
-                };
-                // A view is a table to `TableByName`; the executor refuses it.
-                let base_name = match self.source.find_table(&database, &table) {
-                    Some(base) => base
-                        .table_info
-                        .as_ref()
-                        .map_or_else(|| tidb_ast::CiString::new(original.clone()), |info| info.read().name.clone()),
-                    None if matches!(self.source.try_find_view(&database, &table), Ok(Some(_))) => {
-                        tidb_ast::CiString::new(original.clone())
-                    }
-                    None => {
-                        return Err(PlanError::from(
-                            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                                .gen_with_stack_by_args(&[written_db.into(), original.into()]),
-                        ));
-                    }
-                };
-                let mlog_name = tidb_model::table::materialized_view_log_table_name(&base_name);
+                let (database, table, mlog_name) = self.materialized_view_log_target(&create.table)?;
                 self.visit_info.push(visit(
                     tidb_mysql::CreateViewPriv,
                     &database,
@@ -1333,31 +1309,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // Go master `buildDDL`: DROP on the log table
             // (`materializedViewLogNameForBaseTable`).
             DdlStmt::DropMaterializedViewLog(drop) => {
-                let (database, table, original) = self.qualified(&drop.table);
-                if database.is_empty() {
-                    return Err(PlanError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])));
-                }
-                let written_db = match drop.table.as_slice() {
-                    [schema, _] => schema.clone(),
-                    _ => self.source.current_database().to_owned(),
-                };
-                let base_name = match self.source.find_table(&database, &table) {
-                    Some(base) => base
-                        .table_info
-                        .as_ref()
-                        .map_or_else(|| tidb_ast::CiString::new(original.clone()), |info| info.read().name.clone()),
-                    // Go's preprocessor `handleTableName`: a view is a table.
-                    None if matches!(self.source.try_find_view(&database, &table), Ok(Some(_))) => {
-                        tidb_ast::CiString::new(original.clone())
-                    }
-                    None => {
-                        return Err(PlanError::from(
-                            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                                .gen_with_stack_by_args(&[written_db.into(), original.into()]),
-                        ));
-                    }
-                };
-                let mlog_name = tidb_model::table::materialized_view_log_table_name(&base_name);
+                let (database, table, mlog_name) = self.materialized_view_log_target(&drop.table)?;
                 self.visit_info.push(visit(
                     tidb_mysql::DropPriv,
                     &database,
@@ -1365,11 +1317,66 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     table_denied("DROP MATERIALIZED VIEW LOG", &table),
                 ));
             }
+            // Go master `buildDDL`: ALTER on the log table, and SELECT on the
+            // base table when an action adds columns.
+            DdlStmt::AlterMaterializedViewLog(alter) => {
+                let (database, table, mlog_name) = self.materialized_view_log_target(&alter.table)?;
+                self.visit_info.push(visit(
+                    tidb_mysql::AlterPriv,
+                    &database,
+                    mlog_name.lowercase(),
+                    table_denied("ALTER", mlog_name.lowercase()),
+                ));
+                if alter
+                    .actions
+                    .iter()
+                    .any(|action| matches!(action, tidb_ast::AlterMaterializedViewLogAction::AddColumn(_)))
+                {
+                    self.visit_info.push(visit(tidb_mysql::SelectPriv, &database, &table, table_denied("SELECT", &table)));
+                }
+            }
             _ => {}
         }
         Ok(Plan::Ddl(Box::new(Ddl {
             statement: stmt.clone(),
         })))
+    }
+
+    /// Go master: the preprocessor's `handleTableName` on a materialized
+    /// view log statement's base table (which must exist; a view or a
+    /// sequence counts),
+    /// then `materializedViewLogNameForBaseTable`: the schema, the base
+    /// table's lowercase name and the log table's name.
+    fn materialized_view_log_target(&self, path: &[String]) -> Result<(String, String, tidb_ast::CiString), PlanError> {
+        let (database, table, original) = self.qualified(path);
+        if database.is_empty() {
+            return Err(PlanError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])));
+        }
+        let written_db = match path {
+            [schema, _] => schema.clone(),
+            _ => self.source.current_database().to_owned(),
+        };
+        let base_name = match self.source.find_table(&database, &table) {
+            Some(base) => base
+                .table_info
+                .as_ref()
+                .map_or_else(|| tidb_ast::CiString::new(original.clone()), |info| info.read().name.clone()),
+            None if matches!(self.source.try_find_view(&database, &table), Ok(Some(_))) => {
+                tidb_ast::CiString::new(original.clone())
+            }
+            // Go's `TableByName` finds a sequence too; the executor refuses it.
+            None => match self.source.find_sequence(&database, &table) {
+                Some(sequence) => tidb_ast::CiString::new(sequence.to_owned()),
+                None => {
+                    return Err(PlanError::from(
+                        tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                            .gen_with_stack_by_args(&[written_db.into(), original.into()]),
+                    ));
+                }
+            },
+        };
+        let mlog_name = tidb_model::table::materialized_view_log_table_name(&base_name);
+        Ok((database, table, mlog_name))
     }
 
     /// A referenced table named relative to `owner_db`, as Go's

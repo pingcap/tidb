@@ -322,6 +322,7 @@ pub trait DdlExec {
                 DdlStmt::CreateMaskingPolicy(_)
                     | DdlStmt::CreateMaterializedViewLog(_)
                     | DdlStmt::DropMaterializedViewLog(_)
+                    | DdlStmt::AlterMaterializedViewLog(_)
             ) {
                 self.run_executor_statement(sql, stmt).map_err(map_error)?;
                 return Ok(());
