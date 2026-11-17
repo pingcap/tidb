@@ -215,7 +215,7 @@ pub struct CopPagingState {
     /// which go out after this task's own response.
     batched_children: Vec<(
         prost::bytes::Bytes,
-        Option<tidb_proto::kvrpcpb::ExecDetailsV2>,
+        Option<Box<tidb_proto::kvrpcpb::ExecDetailsV2>>,
         Option<tidb_txnkv::ResponseRuntimeStats>,
     )>,
     /// Go `copIterator.memTracker` (the request's `MemTracker`).
@@ -444,7 +444,7 @@ impl CopPagingState {
     pub(super) fn stage_batched_child(
         &mut self,
         data: prost::bytes::Bytes,
-        exec_details_v2: Option<tidb_proto::kvrpcpb::ExecDetailsV2>,
+        exec_details_v2: Option<Box<tidb_proto::kvrpcpb::ExecDetailsV2>>,
         runtime: Option<tidb_txnkv::ResponseRuntimeStats>,
     ) {
         self.batched_children.push((data, exec_details_v2, runtime));
@@ -454,7 +454,7 @@ impl CopPagingState {
     pub(super) fn accept_batched_child(
         &mut self,
         data: prost::bytes::Bytes,
-        exec_details_v2: Option<tidb_proto::kvrpcpb::ExecDetailsV2>,
+        exec_details_v2: Option<Box<tidb_proto::kvrpcpb::ExecDetailsV2>>,
         runtime: Option<tidb_txnkv::ResponseRuntimeStats>,
     ) -> Result<(), CopPagingError> {
         if self.queued_responses >= self.response_capacity {

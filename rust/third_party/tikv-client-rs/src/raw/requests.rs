@@ -996,12 +996,12 @@ mod test {
         let mut response = kvrpcpb::RawBatchGetResponse {
             pairs: vec![kvrpcpb::KvPair {
                 key: codec.encode_key(b"successful-key"),
-                error: Some(kvrpcpb::KeyError {
+                error: Some(Box::new(kvrpcpb::KeyError {
                     already_exist: Some(kvrpcpb::AlreadyExist {
                         key: codec.encode_key(b"duplicate"),
                     }),
                     ..Default::default()
-                }),
+                })),
                 ..Default::default()
             }],
             ..Default::default()
@@ -1067,7 +1067,7 @@ mod test {
 
         let (start_key, end_key) = codec.encode_region_range(b"start", b"end");
         let mut response = kvrpcpb::RawChecksumResponse {
-            region_error: Some(crate::proto::errorpb::Error {
+            region_error: Some(Box::new(crate::proto::errorpb::Error {
                 key_not_in_region: Some(crate::proto::errorpb::KeyNotInRegion {
                     key: codec.encode_key(b"region-key"),
                     start_key,
@@ -1075,7 +1075,7 @@ mod test {
                     ..Default::default()
                 }),
                 ..Default::default()
-            }),
+            })),
             checksum: 0x0f,
             total_kvs: 2,
             total_bytes: 20,

@@ -451,8 +451,8 @@ impl Process<kvrpcpb::ScanResponse> for PreserveScannerPairErrors {
         let response = input?;
         Ok(ScannerBatchResponse {
             pairs: response.pairs,
-            region_error: response.region_error,
-            error: response.error,
+            region_error: response.region_error.map(|error| *error),
+            error: response.error.map(|error| *error),
         })
     }
 }
@@ -3292,15 +3292,15 @@ mod tests {
             ..Default::default()
         };
         let mut response = kvrpcpb::ScanResponse {
-            error: Some(kvrpcpb::KeyError {
+            error: Some(Box::new(kvrpcpb::KeyError {
                 locked: Some(response_lock.clone()),
                 ..Default::default()
-            }),
+            })),
             pairs: vec![kvrpcpb::KvPair {
-                error: Some(kvrpcpb::KeyError {
+                error: Some(Box::new(kvrpcpb::KeyError {
                     locked: Some(pair_lock),
                     ..Default::default()
-                }),
+                })),
                 ..Default::default()
             }],
             ..Default::default()
@@ -3350,7 +3350,7 @@ mod tests {
         );
 
         let mut flush_response = kvrpcpb::FlushResponse {
-            region_error: Some(region_error.clone()),
+            region_error: Some(Box::new(region_error.clone())),
             errors: vec![kvrpcpb::KeyError {
                 txn_lock_not_found: Some(kvrpcpb::TxnLockNotFound {
                     key: codec.encode_key(b"lock-key"),
@@ -3386,22 +3386,22 @@ mod tests {
             vec![codec.encode_key(b"buffer-key")]
         );
         let mut buffer_batch_get_response = kvrpcpb::BufferBatchGetResponse {
-            region_error: Some(region_error),
-            error: Some(kvrpcpb::KeyError {
+            region_error: Some(Box::new(region_error)),
+            error: Some(Box::new(kvrpcpb::KeyError {
                 txn_lock_not_found: Some(kvrpcpb::TxnLockNotFound {
                     key: codec.encode_key(b"response-lock"),
                 }),
                 ..Default::default()
-            }),
+            })),
             pairs: vec![kvrpcpb::KvPair {
                 key: codec.encode_key(b"pair-key"),
                 value: b"value".to_vec(),
-                error: Some(kvrpcpb::KeyError {
+                error: Some(Box::new(kvrpcpb::KeyError {
                     txn_lock_not_found: Some(kvrpcpb::TxnLockNotFound {
                         key: codec.encode_key(b"pair-lock"),
                     }),
                     ..Default::default()
-                }),
+                })),
                 ..Default::default()
             }],
             ..Default::default()
@@ -3448,7 +3448,7 @@ mod tests {
             17,
         );
         let mut prepare_response = kvrpcpb::PrepareFlashbackToVersionResponse {
-            region_error: Some(region_error.clone()),
+            region_error: Some(Box::new(region_error.clone())),
             ..Default::default()
         };
         prepare_request
@@ -3472,7 +3472,7 @@ mod tests {
             20,
         );
         let mut flashback_response = kvrpcpb::FlashbackToVersionResponse {
-            region_error: Some(region_error),
+            region_error: Some(Box::new(region_error)),
             ..Default::default()
         };
         flashback_request
@@ -3702,7 +3702,7 @@ mod tests {
 
         let wait_request = super::new_get_lock_wait_info_request();
         let mut wait_response = kvrpcpb::GetLockWaitInfoResponse {
-            region_error: Some(make_region_error()),
+            region_error: Some(Box::new(make_region_error())),
             entries: vec![crate::proto::deadlock::WaitForEntry {
                 key: codec.encode_key(b"wait-key"),
                 ..Default::default()
@@ -3712,12 +3712,12 @@ mod tests {
         wait_request
             .decode_response(&mut wait_response, Some(&codec))
             .unwrap();
-        assert_region_error(wait_response.region_error.unwrap());
+        assert_region_error(*wait_response.region_error.unwrap());
         assert_eq!(wait_response.entries[0].key, b"wait-key");
 
         let mvcc_start_request = super::new_mvcc_get_by_start_ts_request(0);
         let mut mvcc_start_response = kvrpcpb::MvccGetByStartTsResponse {
-            region_error: Some(make_region_error()),
+            region_error: Some(Box::new(make_region_error())),
             key: codec.encode_key(b"mvcc-key"),
             info: Some(kvrpcpb::MvccInfo {
                 lock: Some(kvrpcpb::MvccLock {
@@ -3735,7 +3735,7 @@ mod tests {
         mvcc_start_request
             .decode_response(&mut mvcc_start_response, Some(&codec))
             .unwrap();
-        assert_region_error(mvcc_start_response.region_error.unwrap());
+        assert_region_error(*mvcc_start_response.region_error.unwrap());
         assert_eq!(mvcc_start_response.key, b"mvcc-key");
         let mvcc_start_lock = mvcc_start_response.info.unwrap().lock.unwrap();
         assert_eq!(mvcc_start_lock.primary, b"mvcc-primary");
@@ -3746,7 +3746,7 @@ mod tests {
 
         let mvcc_key_request = super::new_mvcc_get_by_key_request(codec.encode_key(b"request-key"));
         let mut mvcc_key_response = kvrpcpb::MvccGetByKeyResponse {
-            region_error: Some(make_region_error()),
+            region_error: Some(Box::new(make_region_error())),
             info: Some(kvrpcpb::MvccInfo {
                 lock: Some(kvrpcpb::MvccLock {
                     primary: codec.encode_key(b"mvcc-by-key-primary"),
@@ -3763,7 +3763,7 @@ mod tests {
         mvcc_key_request
             .decode_response(&mut mvcc_key_response, Some(&codec))
             .unwrap();
-        assert_region_error(mvcc_key_response.region_error.unwrap());
+        assert_region_error(*mvcc_key_response.region_error.unwrap());
         let mvcc_key_lock = mvcc_key_response.info.unwrap().lock.unwrap();
         assert_eq!(mvcc_key_lock.primary, b"mvcc-by-key-primary");
         assert_eq!(
@@ -3773,23 +3773,23 @@ mod tests {
 
         let flashback_request = super::new_flashback_to_version_request(vec![], vec![], 0, 0, 0);
         let mut flashback_response = kvrpcpb::FlashbackToVersionResponse {
-            region_error: Some(make_region_error()),
+            region_error: Some(Box::new(make_region_error())),
             ..Default::default()
         };
         flashback_request
             .decode_response(&mut flashback_response, Some(&codec))
             .unwrap();
-        assert_region_error(flashback_response.region_error.unwrap());
+        assert_region_error(*flashback_response.region_error.unwrap());
 
         let prepare_request = super::new_prepare_flashback_to_version_request(vec![], vec![], 0, 0);
         let mut prepare_response = kvrpcpb::PrepareFlashbackToVersionResponse {
-            region_error: Some(make_region_error()),
+            region_error: Some(Box::new(make_region_error())),
             ..Default::default()
         };
         prepare_request
             .decode_response(&mut prepare_response, Some(&codec))
             .unwrap();
-        assert_region_error(prepare_response.region_error.unwrap());
+        assert_region_error(*prepare_response.region_error.unwrap());
 
         // Compact cursors are TiFlash RowKeyValue cursors and stay physical.
         let response = kvrpcpb::CompactResponse {
@@ -3842,7 +3842,7 @@ mod tests {
                     ..Default::default()
                 },
                 crate::proto::coprocessor::StoreBatchTaskResponse {
-                    region_error: Some(errorpb::Error {
+                    region_error: Some(Box::new(errorpb::Error {
                         key_not_in_region: Some(errorpb::KeyNotInRegion {
                             key: codec.encode_key(b"batch-region-key"),
                             start_key: codec.encode_region_key(b"batch-start"),
@@ -3857,7 +3857,7 @@ mod tests {
                             ..Default::default()
                         }),
                         ..Default::default()
-                    }),
+                    })),
                     ..Default::default()
                 },
             ],
@@ -3902,13 +3902,13 @@ mod tests {
 
         let mut malformed_response = crate::proto::coprocessor::Response {
             batch_responses: vec![crate::proto::coprocessor::StoreBatchTaskResponse {
-                region_error: Some(errorpb::Error {
+                region_error: Some(Box::new(errorpb::Error {
                     bucket_version_not_match: Some(errorpb::BucketVersionNotMatch {
                         keys: vec![codec.encode_region_key(b"valid"), vec![0x01]],
                         ..Default::default()
                     }),
                     ..Default::default()
-                }),
+                })),
                 ..Default::default()
             }],
             ..Default::default()
@@ -3999,14 +3999,14 @@ mod tests {
         let encoded_end = codec.encode_region_key(b"end");
 
         let mut get_response = kvrpcpb::GetResponse {
-            region_error: Some(errorpb::Error {
+            region_error: Some(Box::new(errorpb::Error {
                 key_not_in_region: Some(errorpb::KeyNotInRegion {
                     start_key: encoded_start.clone(),
                     end_key: encoded_end.clone(),
                     ..Default::default()
                 }),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         kvrpcpb::GetRequest::default()
@@ -4021,14 +4021,14 @@ mod tests {
         assert_eq!(decoded.end_key, b"end");
 
         let mut flush_response = kvrpcpb::FlushResponse {
-            region_error: Some(errorpb::Error {
+            region_error: Some(Box::new(errorpb::Error {
                 key_not_in_region: Some(errorpb::KeyNotInRegion {
                     start_key: encoded_start.clone(),
                     end_key: encoded_end.clone(),
                     ..Default::default()
                 }),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         kvrpcpb::FlushRequest::default()
@@ -4043,7 +4043,7 @@ mod tests {
         assert_eq!(decoded.end_key, b"end");
 
         let mut cop_response = crate::proto::coprocessor::Response {
-            region_error: Some(errorpb::Error {
+            region_error: Some(Box::new(errorpb::Error {
                 key_not_in_region: Some(errorpb::KeyNotInRegion {
                     start_key: codec.encode_region_key(b"cop-start"),
                     end_key: codec.encode_region_key(b"cop-end"),
@@ -4057,7 +4057,7 @@ mod tests {
                     }],
                 }),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         crate::proto::coprocessor::Request::default()
@@ -4078,14 +4078,14 @@ mod tests {
 
         let cleanup_request = kvrpcpb::CleanupRequest::default();
         let mut cleanup_response = kvrpcpb::CleanupResponse {
-            error: Some(kvrpcpb::KeyError {
+            error: Some(Box::new(kvrpcpb::KeyError {
                 locked: Some(kvrpcpb::LockInfo {
                     key: codec.encode_key(b"cleanup-locked"),
                     primary_lock: codec.encode_key(b"cleanup-primary"),
                     ..Default::default()
                 }),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         cleanup_request
@@ -4097,14 +4097,14 @@ mod tests {
 
         let gc_request = kvrpcpb::GcRequest::default();
         let mut gc_response = kvrpcpb::GcResponse {
-            error: Some(kvrpcpb::KeyError {
+            error: Some(Box::new(kvrpcpb::KeyError {
                 locked: Some(kvrpcpb::LockInfo {
                     key: codec.encode_key(b"locked"),
                     primary_lock: codec.encode_key(b"primary"),
                     ..Default::default()
                 }),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         gc_request
@@ -4118,7 +4118,7 @@ mod tests {
             super::new_delete_range_request(b"start".to_vec(), b"end".to_vec());
         let (start_key, end_key) = codec.encode_region_range(b"start", b"end");
         let mut delete_range_response = kvrpcpb::DeleteRangeResponse {
-            region_error: Some(errorpb::Error {
+            region_error: Some(Box::new(errorpb::Error {
                 key_not_in_region: Some(errorpb::KeyNotInRegion {
                     key: codec.encode_key(b"region-key"),
                     start_key,
@@ -4126,7 +4126,7 @@ mod tests {
                     ..Default::default()
                 }),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         delete_range_request

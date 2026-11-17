@@ -15,7 +15,7 @@ use tonic::transport::Channel;
 use tonic::IntoRequest;
 use tonic::Request as TonicRequest;
 
-use super::batch::{BatchCommandsDispatcher, BatchCommandsWorker};
+use super::batch::{BatchCommandsDispatcher, BatchCommandsWorker, BatchRequestStageMetrics};
 use super::Request;
 use super::{BatchCommandRequest, BatchCommandResponse};
 use crate::proto::debugpb::debug_client::DebugClient;
@@ -477,6 +477,38 @@ mod tests {
         assert_eq!(defaults.grpc_initial_connection_window_size, None);
         assert!(!defaults.open_tracing_enable);
         assert!(defaults.with_open_tracing(true).open_tracing_enable);
+    }
+
+    /// client-go `connPool.getStoreMetrics`: a store's observers are resolved
+    /// once, shared by every clone of the pool, and replaced when a request
+    /// names another store.
+    #[tokio::test]
+    async fn a_pool_resolves_a_stores_metrics_once() {
+        let client = KvRpcClient::new(
+            vec![TikvClient::new(
+                Channel::from_static("http://127.0.0.1:1").connect_lazy(),
+            )],
+            Duration::from_secs(1),
+        );
+        let request = |store_id| kvrpcpb::GetRequest {
+            context: Some(kvrpcpb::Context {
+                peer: Some(crate::proto::metapb::Peer {
+                    store_id,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let first = client.store_metrics(&request(7));
+        assert!(Arc::ptr_eq(&first, &client.store_metrics(&request(7))));
+        assert!(Arc::ptr_eq(
+            &first,
+            &client.clone().store_metrics(&request(7))
+        ));
+        let other = client.store_metrics(&request(8));
+        assert!(!Arc::ptr_eq(&first, &other));
+        assert_eq!(other.rpc.store_id(), 8);
     }
 
     #[tokio::test]
@@ -1108,14 +1140,14 @@ mod tests {
                     .iter()
                     .map(|_| tikvpb::batch_commands_response::Response {
                         cmd: Some(Cmd::Get(kvrpcpb::GetResponse {
-                            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                            exec_details_v2: Some(Box::new(kvrpcpb::ExecDetailsV2 {
                                 time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
                                     total_rpc_wall_time_ns: 1_000_000,
                                     wait_wall_time_ns: 100_000,
                                     ..Default::default()
                                 }),
                                 ..Default::default()
-                            }),
+                            })),
                             ..Default::default()
                         })),
                     })
@@ -1174,14 +1206,14 @@ mod tests {
                     .iter()
                     .map(|_| tikvpb::batch_commands_response::Response {
                         cmd: Some(Cmd::Get(kvrpcpb::GetResponse {
-                            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                            exec_details_v2: Some(Box::new(kvrpcpb::ExecDetailsV2 {
                                 time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
                                     total_rpc_wall_time_ns: 1_000_000,
                                     wait_wall_time_ns: 100_000,
                                     ..Default::default()
                                 }),
                                 ..Default::default()
-                            }),
+                            })),
                             ..Default::default()
                         })),
                     })
@@ -1473,6 +1505,25 @@ pub struct KvRpcClient {
     event_listener: Arc<RwLock<Option<Arc<dyn ClientEventListener>>>>,
     connection: Arc<RwLock<Option<Arc<ConnectionInfo>>>>,
     open_tracing_enable: bool,
+    /// client-go `connPool.metrics`: the observers of the store the last
+    /// request named, replaced when a request names another store.
+    store_metrics: Arc<arc_swap::ArcSwapOption<StoreMetrics>>,
+}
+
+/// client-go `storeMetrics`: one store's send-request and BatchCommands
+/// request-stage observers, resolved once for the store.
+struct StoreMetrics {
+    rpc: crate::stats::StoreRpcMetrics,
+    batch_stage: Arc<BatchRequestStageMetrics>,
+}
+
+impl StoreMetrics {
+    fn new(store_id: u64) -> Self {
+        Self {
+            rpc: crate::stats::StoreRpcMetrics::new(store_id),
+            batch_stage: Arc::new(BatchRequestStageMetrics::new(store_id)),
+        }
+    }
 }
 
 struct ConnectionInfo {
@@ -1558,6 +1609,7 @@ impl KvRpcClient {
             batch_worker: None,
             event_listener: Arc::new(RwLock::new(None)),
             connection: Arc::new(RwLock::new(None)),
+            store_metrics: Arc::new(arc_swap::ArcSwapOption::empty()),
             open_tracing_enable: false,
         }
     }
@@ -1619,6 +1671,25 @@ impl KvRpcClient {
     /// Source BatchCommands metrics label streams by the cached TiKV target.
     /// Construction can precede cache identity assignment, so read the shared
     /// identity at stream creation time rather than storing a stale copy.
+    /// client-go `connPool.getStoreMetrics`: the observers of the store
+    /// `request` names. The pool is selected by address, so a request may
+    /// name another store than the last one; its observers then replace the
+    /// cached ones.
+    fn store_metrics(&self, request: &dyn Request) -> Arc<StoreMetrics> {
+        let store_id = request
+            .tikv_context()
+            .and_then(|context| context.peer.as_ref())
+            .map_or(0, |peer| peer.store_id);
+        if let Some(metrics) = self.store_metrics.load_full() {
+            if metrics.rpc.store_id() == store_id {
+                return metrics;
+            }
+        }
+        let metrics = Arc::new(StoreMetrics::new(store_id));
+        self.store_metrics.store(Some(Arc::clone(&metrics)));
+        metrics
+    }
+
     pub(crate) fn batch_metric_target(&self) -> String {
         self.connection
             .read()
@@ -1894,6 +1965,7 @@ impl KvRpcClient {
                 )));
             }
         }
+        let store_metrics = self.store_metrics(request);
         let started_at = Instant::now();
         if let Some(request) = request
             .as_any()
@@ -1907,7 +1979,7 @@ impl KvRpcClient {
                     request.dispatch(&self.rpc_clients[index], timeout.unwrap_or(self.timeout)),
                 )
                 .await;
-                crate::stats::observe_tikv_store_rpc(
+                store_metrics.rpc.observe(
                     request,
                     result.as_ref().ok().map(|response| response.as_ref()),
                     started_at.elapsed(),
@@ -1936,7 +2008,7 @@ impl KvRpcClient {
                     GrpcConnectionState::TransientFailure
                 },
             );
-            crate::stats::observe_tikv_store_rpc(
+            store_metrics.rpc.observe(
                 request,
                 result.as_ref().ok().map(|response| response.as_ref()),
                 started_at.elapsed(),
@@ -1955,12 +2027,15 @@ impl KvRpcClient {
                     request.batch_priority(),
                     forwarded_host,
                     deadline,
+                    Arc::clone(&store_metrics.batch_stage),
                 )
                 .await
             {
                 Ok(submission) => submission,
                 Err(error) => {
-                    crate::stats::observe_tikv_store_rpc(request, None, started_at.elapsed());
+                    store_metrics
+                        .rpc
+                        .observe(request, None, started_at.elapsed());
                     return Err(self.wrap_connection_error(error));
                 }
             };
@@ -1987,7 +2062,7 @@ impl KvRpcClient {
             return match response {
                 Ok(response) => {
                     let mut response = BatchCommandResponse::into_any(response);
-                    crate::stats::observe_tikv_store_rpc(
+                    store_metrics.rpc.observe(
                         request,
                         Some(response.as_ref()),
                         started_at.elapsed(),
@@ -1997,7 +2072,9 @@ impl KvRpcClient {
                     Ok(response)
                 }
                 Err(error) => {
-                    crate::stats::observe_tikv_store_rpc(request, None, started_at.elapsed());
+                    store_metrics
+                        .rpc
+                        .observe(request, None, started_at.elapsed());
                     Err(error)
                 }
             };
@@ -2013,7 +2090,7 @@ impl KvRpcClient {
         .await
         .map_err(|error| self.wrap_connection_error(error));
         let transport_succeeded = result.is_ok();
-        crate::stats::observe_tikv_store_rpc(
+        store_metrics.rpc.observe(
             request,
             result.as_ref().ok().map(|response| response.as_ref()),
             started_at.elapsed(),

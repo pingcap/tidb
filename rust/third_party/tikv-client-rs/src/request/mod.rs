@@ -578,7 +578,7 @@ mod test {
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |_: &dyn Any| {
                 Ok(Box::new(kvrpcpb::CommitResponse {
-                    error: Some(kvrpcpb::KeyError::default()),
+                    error: Some(Box::new(kvrpcpb::KeyError::default())),
                     ..Default::default()
                 }) as Box<dyn Any>)
             },

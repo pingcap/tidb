@@ -725,7 +725,7 @@ fn source_go_integration_tests_2pc_test_TestRejectCommitTS() {
                 captured_versions.lock().unwrap().push(request.commit_version);
                 if captured_attempts.fetch_add(1, Ordering::SeqCst) == 0 {
                     return Ok(Box::new(kvrpcpb::CommitResponse {
-                        error: Some(kvrpcpb::KeyError {
+                        error: Some(Box::new(kvrpcpb::KeyError {
                             commit_ts_expired: Some(kvrpcpb::CommitTsExpired {
                                 start_ts: request.start_version,
                                 attempted_commit_ts: request.commit_version,
@@ -733,7 +733,7 @@ fn source_go_integration_tests_2pc_test_TestRejectCommitTS() {
                                 min_commit_ts: request.commit_version + 1,
                             }),
                             ..Default::default()
-                        }),
+                        })),
                         ..Default::default()
                     }) as Box<dyn Any>);
                 }

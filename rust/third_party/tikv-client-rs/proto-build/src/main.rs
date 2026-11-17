@@ -31,6 +31,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ".kvrpcpb.TiFlashSystemTableResponse.data",
     ]);
 
+    // Go's generated messages hold these optional sub-messages as pointers.
+    // Inline, a region error (576 bytes), a key error (824) and the execution
+    // details (680) made every response that carries them over 2 KB -- a
+    // `GetResponse` was 2,120 bytes and the BatchCommands response 2,256 --
+    // and the client moves a response through every layer of a request.
+    for path in [
+        "region_error",
+        "exec_details_v2",
+        ".kvrpcpb.GetResponse.error",
+        ".kvrpcpb.ScanResponse.error",
+        ".kvrpcpb.TxnHeartBeatResponse.error",
+        ".kvrpcpb.CheckTxnStatusResponse.error",
+        ".kvrpcpb.CheckSecondaryLocksResponse.error",
+        ".kvrpcpb.CommitResponse.error",
+        ".kvrpcpb.CleanupResponse.error",
+        ".kvrpcpb.BatchGetResponse.error",
+        ".kvrpcpb.BatchRollbackResponse.error",
+        ".kvrpcpb.ScanLockResponse.error",
+        ".kvrpcpb.ResolveLockResponse.error",
+        ".kvrpcpb.GCResponse.error",
+        ".kvrpcpb.KvPair.error",
+        ".kvrpcpb.BufferBatchGetResponse.error",
+    ] {
+        prost.boxed(path);
+    }
+
     tonic_prost_build::configure()
         .emit_rerun_if_changed(false)
         .build_server(true)

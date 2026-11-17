@@ -83,7 +83,7 @@ pub fn collect_remote_duplicate_rows(
                     return Err(Error::Other(error.to_string()));
                 }
                 if let Some(error) = response.region_error {
-                    return Err(ingest_api_error(error));
+                    return Err(ingest_api_error(*error));
                 }
                 if let Some(error) = response.key_error {
                     return Err(Error::Other(format!(

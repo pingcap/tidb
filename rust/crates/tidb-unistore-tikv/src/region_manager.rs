@@ -579,7 +579,7 @@ impl MockRegionManager {
         let mut state = self.state();
         if let Err(region_error) = state.checked_region(&ctx) {
             return kvrpcpb::SplitRegionResponse {
-                region_error: Some(region_error),
+                region_error: Some(Box::new(region_error)),
                 ..kvrpcpb::SplitRegionResponse::default()
             };
         }

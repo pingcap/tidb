@@ -87,10 +87,10 @@ fn transaction_requests_match_pinned_kvproto_wire() {
 #[test]
 fn transaction_responses_preserve_region_and_key_error_presence() {
     let get = GetResponse {
-        region_error: Some(RegionError {
+        region_error: Some(Box::new(RegionError {
             message: "r".to_owned(),
             ..RegionError::default()
-        }),
+        })),
         not_found: true,
         commit_ts: 17,
         ..GetResponse::default()
@@ -110,10 +110,10 @@ fn transaction_responses_preserve_region_and_key_error_presence() {
     assert_eq!(prewrite.encode_to_vec(), [0x12, 0x03, 0x12, 0x01, b'x']);
 
     let commit = CommitResponse {
-        error: Some(KeyError {
+        error: Some(Box::new(KeyError {
             abort: "a".to_owned(),
             ..KeyError::default()
-        }),
+        })),
         commit_version: 17,
         ..CommitResponse::default()
     };
@@ -244,7 +244,7 @@ fn point_read_responses_preserve_complete_execution_details() {
     for detail in [None, Some(upstream::ExecDetailsV2::default()), Some(detail)] {
         let get = upstream::GetResponse {
             value: b"value".to_vec(),
-            exec_details_v2: detail,
+            exec_details_v2: detail.clone().map(Box::new),
             ..Default::default()
         };
         let wire = get.encode_to_vec();
@@ -254,7 +254,7 @@ fn point_read_responses_preserve_complete_execution_details() {
             get
         );
         let batch = upstream::BatchGetResponse {
-            exec_details_v2: detail,
+            exec_details_v2: detail.map(Box::new),
             ..Default::default()
         };
         let wire = batch.encode_to_vec();

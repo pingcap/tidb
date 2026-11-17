@@ -1455,10 +1455,10 @@ mod tests {
                 assert!(request.is::<kvrpcpb::RawGetRequest>());
                 if observed_attempts.fetch_add(1, Ordering::SeqCst) == 0 {
                     Ok(Box::new(kvrpcpb::RawGetResponse {
-                        region_error: Some(crate::proto::errorpb::Error {
+                        region_error: Some(Box::new(crate::proto::errorpb::Error {
                             region_not_found: Some(Default::default()),
                             ..Default::default()
-                        }),
+                        })),
                         ..Default::default()
                     }) as Box<dyn Any>)
                 } else {
@@ -1493,10 +1493,10 @@ mod tests {
                 assert!(request.is::<kvrpcpb::RawScanRequest>());
                 if observed_attempts.fetch_add(1, Ordering::SeqCst) == 0 {
                     Ok(Box::new(kvrpcpb::RawScanResponse {
-                        region_error: Some(crate::proto::errorpb::Error {
+                        region_error: Some(Box::new(crate::proto::errorpb::Error {
                             region_not_found: Some(Default::default()),
                             ..Default::default()
-                        }),
+                        })),
                         ..Default::default()
                     }) as Box<dyn Any>)
                 } else {

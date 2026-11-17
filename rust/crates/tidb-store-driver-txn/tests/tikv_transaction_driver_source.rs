@@ -509,7 +509,7 @@ fn test_named_keyspace_commit_ts_expired() {
                         None
                     };
                     return Ok(Box::new(kvrpcpb::CommitResponse {
-                        error,
+                        error: error.map(Box::new),
                         ..Default::default()
                     }) as Box<dyn Any>);
                 }

@@ -60,7 +60,7 @@ fn gen_region_error_resp(
         ($($request:ty => $response:ty),* $(,)?) => {
             $(if any.is::<$request>() {
                 let mut response = <$response>::default();
-                response.region_error = Some(e);
+                response.region_error = Some(Box::new(e));
                 return Ok(Box::new(response));
             })*
         };

@@ -245,11 +245,11 @@ impl<PdC: PdClient> RegionLockResolver for BaseRegionLockResolver<PdC> {
                 // `BoRegionMiss` and locates again, as below.
                 let _ = crate::request::plan::handle_region_error(
                     self.store.pd_client(),
-                    region_error.clone(),
+                    (*region_error).clone(),
                     store,
                 )
                 .await;
-                backoff_or(backoff, Error::RegionError(Box::new(region_error))).await?;
+                backoff_or(backoff, Error::RegionError(region_error)).await?;
                 continue;
             }
             if response.error.is_some() {

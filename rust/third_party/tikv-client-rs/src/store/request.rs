@@ -591,7 +591,7 @@ pub(crate) fn exec_details_v2_mut(response: &mut dyn Any) -> Option<&mut kvrpcpb
                 if response.is::<$response>() {
                     return response
                         .downcast_mut::<$response>()
-                        .and_then(|response| response.exec_details_v2.as_mut());
+                        .and_then(|response| response.exec_details_v2.as_deref_mut());
                 }
             )+
         };
@@ -622,7 +622,7 @@ pub(crate) fn exec_details_v2(response: &dyn Any) -> Option<&kvrpcpb::ExecDetail
         ($($response:ty),+ $(,)?) => {
             $(
                 if let Some(response) = response.downcast_ref::<$response>() {
-                    return response.exec_details_v2.as_ref();
+                    return response.exec_details_v2.as_deref();
                 }
             )+
         };
@@ -648,7 +648,7 @@ pub(crate) fn exec_details_v2(response: &dyn Any) -> Option<&kvrpcpb::ExecDetail
         return response
             .first
             .as_ref()
-            .and_then(|response| response.exec_details_v2.as_ref());
+            .and_then(|response| response.exec_details_v2.as_deref());
     }
     None
 }
@@ -659,7 +659,7 @@ pub(crate) fn region_error_ref(response: &dyn Any) -> Option<&crate::proto::erro
         ($($response:ty),+ $(,)?) => {
             $(
                 if let Some(response) = response.downcast_ref::<$response>() {
-                    return response.region_error.as_ref();
+                    return response.region_error.as_deref();
                 }
             )+
         };
@@ -2768,23 +2768,23 @@ mod tests {
             bypass_ru_v2: false,
         };
         let mut first = coprocessor::Response {
-            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+            exec_details_v2: Some(Box::new(kvrpcpb::ExecDetailsV2 {
                 ru_v2: Some(kvrpcpb::Ruv2 {
                     storage_processed_keys_get: 2,
                     ..Default::default()
                 }),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         let mut second = coprocessor::Response {
-            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+            exec_details_v2: Some(Box::new(kvrpcpb::ExecDetailsV2 {
                 ru_v2: Some(kvrpcpb::Ruv2 {
                     storage_processed_keys_get: 3,
                     ..Default::default()
                 }),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
 
@@ -2820,14 +2820,14 @@ mod tests {
             bypass_ru_v2: true,
         };
         let mut bypass_response = coprocessor::Response {
-            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+            exec_details_v2: Some(Box::new(kvrpcpb::ExecDetailsV2 {
                 ru_v2: Some(kvrpcpb::Ruv2 {
                     storage_processed_keys_get: 2,
                     storage_processed_keys_batch_get: 3,
                     ..Default::default()
                 }),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         bypass_stream.update_ru_v2(&mut bypass_response);
@@ -2844,7 +2844,7 @@ mod tests {
     fn source_go_tikvrpc_TestCopStreamResponseRecvBypass() {
         fn response() -> coprocessor::Response {
             coprocessor::Response {
-                exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                exec_details_v2: Some(Box::new(kvrpcpb::ExecDetailsV2 {
                     ru_v2: Some(kvrpcpb::Ruv2 {
                         kv_engine_cache_miss: 1,
                         storage_processed_keys_get: 2,
@@ -2852,7 +2852,7 @@ mod tests {
                         ..Default::default()
                     }),
                     ..Default::default()
-                }),
+                })),
                 ..Default::default()
             }
         }

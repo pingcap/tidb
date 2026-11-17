@@ -184,14 +184,14 @@ impl ResponseInfo {
     pub(crate) fn from_response(response: Response<'_>) -> Self {
         match response {
             Response::Cop(response) => {
-                let details = response.exec_details_v2.as_ref();
+                let details = response.exec_details_v2.as_deref();
                 let mut read_bytes = details
                     .and_then(|details| details.scan_detail_v2.as_ref())
                     .map(scan_read_bytes)
                     .unwrap_or(response.data.len() as u64);
                 let mut kv_cpu_duration = kv_cpu(details, response.exec_details.as_ref());
                 for task in &response.batch_responses {
-                    let task_details = task.exec_details_v2.as_ref();
+                    let task_details = task.exec_details_v2.as_deref();
                     read_bytes = read_bytes.wrapping_add(
                         task_details
                             .and_then(|details| details.scan_detail_v2.as_ref())
@@ -211,7 +211,7 @@ impl ResponseInfo {
                 let Some(response) = response else {
                     return Self::default();
                 };
-                let details = response.exec_details_v2.as_ref();
+                let details = response.exec_details_v2.as_deref();
                 Self {
                     read_bytes: details
                         .and_then(|details| details.scan_detail_v2.as_ref())
@@ -225,10 +225,10 @@ impl ResponseInfo {
                 }
             }
             Response::Get(response) => {
-                Self::from_details(response.exec_details_v2.as_ref(), response.encoded_len())
+                Self::from_details(response.exec_details_v2.as_deref(), response.encoded_len())
             }
             Response::BatchGet(response) => {
-                Self::from_details(response.exec_details_v2.as_ref(), response.encoded_len())
+                Self::from_details(response.exec_details_v2.as_deref(), response.encoded_len())
             }
             Response::Scan(response) => {
                 let response_size = response.encoded_len() as u64;
@@ -495,14 +495,14 @@ mod test {
     #[allow(non_snake_case)]
     fn source_go_internal_resourcecontrol_resource_control_test_TestResponseInfoReadBytes() {
         let response = coprocessor::Response {
-            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+            exec_details_v2: Some(Box::new(kvrpcpb::ExecDetailsV2 {
                 scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
                     total_versions_size: 100,
                     processed_versions_size: 80,
                     ..Default::default()
                 }),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         let info = ResponseInfo::from_response(Response::Cop(&response));
@@ -513,14 +513,14 @@ mod test {
 
         if cfg!(feature = "nextgen") {
             let compatibility = coprocessor::Response {
-                exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                exec_details_v2: Some(Box::new(kvrpcpb::ExecDetailsV2 {
                     scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
                         total_versions_size: 80,
                         processed_versions_size: 100,
                         ..Default::default()
                     }),
                     ..Default::default()
-                }),
+                })),
                 ..Default::default()
             };
             assert_eq!(
@@ -534,7 +534,7 @@ mod test {
     #[allow(non_snake_case)]
     fn source_go_internal_resourcecontrol_resource_control_test_TestResponseInfoBatchedTasks() {
         let response = coprocessor::Response {
-            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+            exec_details_v2: Some(Box::new(kvrpcpb::ExecDetailsV2 {
                 scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
                     processed_versions_size: 80,
                     total_versions_size: 100,
@@ -545,11 +545,11 @@ mod test {
                     ..Default::default()
                 }),
                 ..Default::default()
-            }),
+            })),
             batch_responses: vec![
                 coprocessor::StoreBatchTaskResponse {
                     data: b"data".to_vec().into(),
-                    exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                    exec_details_v2: Some(Box::new(kvrpcpb::ExecDetailsV2 {
                         scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
                             processed_versions_size: 10,
                             total_versions_size: 15,
@@ -560,11 +560,11 @@ mod test {
                             ..Default::default()
                         }),
                         ..Default::default()
-                    }),
+                    })),
                     ..Default::default()
                 },
                 coprocessor::StoreBatchTaskResponse {
-                    exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                    exec_details_v2: Some(Box::new(kvrpcpb::ExecDetailsV2 {
                         scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
                             processed_versions_size: 20,
                             total_versions_size: 25,
@@ -575,7 +575,7 @@ mod test {
                             ..Default::default()
                         }),
                         ..Default::default()
-                    }),
+                    })),
                     ..Default::default()
                 },
                 coprocessor::StoreBatchTaskResponse {
@@ -599,14 +599,14 @@ mod test {
     #[test]
     fn source_uncovered_response_read_bytes_wrap_like_go_uint64() {
         let response = coprocessor::Response {
-            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+            exec_details_v2: Some(Box::new(kvrpcpb::ExecDetailsV2 {
                 scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
                     processed_versions_size: u64::MAX,
                     total_versions_size: u64::MAX,
                     ..Default::default()
                 }),
                 ..Default::default()
-            }),
+            })),
             batch_responses: vec![coprocessor::StoreBatchTaskResponse {
                 data: vec![0].into(),
                 ..Default::default()
@@ -622,21 +622,21 @@ mod test {
     #[test]
     fn source_uncovered_batched_kv_cpu_wraps_like_go_duration() {
         let response = coprocessor::Response {
-            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+            exec_details_v2: Some(Box::new(kvrpcpb::ExecDetailsV2 {
                 time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
                     process_wall_time_ns: u64::MAX,
                     ..Default::default()
                 }),
                 ..Default::default()
-            }),
+            })),
             batch_responses: vec![coprocessor::StoreBatchTaskResponse {
-                exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                exec_details_v2: Some(Box::new(kvrpcpb::ExecDetailsV2 {
                     time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
                         process_wall_time_ns: 1,
                         ..Default::default()
                     }),
                     ..Default::default()
-                }),
+                })),
                 ..Default::default()
             }],
             ..Default::default()
@@ -650,7 +650,7 @@ mod test {
     #[test]
     fn source_response_info_accounts_for_cop_streams() {
         let response = coprocessor::Response {
-            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+            exec_details_v2: Some(Box::new(kvrpcpb::ExecDetailsV2 {
                 scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
                     processed_versions_size: 80,
                     total_versions_size: 100,
@@ -661,7 +661,7 @@ mod test {
                     ..Default::default()
                 }),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         let stream = ResponseInfo::from_response(Response::CopStream(Some(&response)));
@@ -699,11 +699,11 @@ mod test {
         };
         let get = kvrpcpb::GetResponse {
             value: b"value".to_vec(),
-            exec_details_v2: Some(details.clone()),
+            exec_details_v2: Some(Box::new(details.clone())),
             ..Default::default()
         };
         let batch_get = kvrpcpb::BatchGetResponse {
-            exec_details_v2: Some(details),
+            exec_details_v2: Some(Box::new(details)),
             ..Default::default()
         };
         let expected_read_bytes = if cfg!(feature = "nextgen") { 13 } else { 8 };

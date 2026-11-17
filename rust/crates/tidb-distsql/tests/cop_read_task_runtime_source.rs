@@ -71,14 +71,14 @@ fn response(data: &str, start: &str, end: &str, read_bytes: u64) -> CoprocessorR
             start: start.as_bytes().to_vec(),
             end: end.as_bytes().to_vec(),
         }),
-        exec_details_v2: Some(CoprocessorExecDetailsV2 {
+        exec_details_v2: Some(Box::new(CoprocessorExecDetailsV2 {
             scan_detail_v2: Some(CoprocessorScanDetailV2 {
                 processed_versions_size: read_bytes,
                 total_versions_size: read_bytes,
                 ..Default::default()
             }),
             ..Default::default()
-        }),
+        })),
         ..CoprocessorResponse::default()
     }
 }

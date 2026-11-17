@@ -500,10 +500,10 @@ async fn source_batch_get_and_scan_ignore_legacy_pair_errors() -> Result<()> {
                 pairs: vec![kvrpcpb::KvPair {
                     key: request.keys[0].clone(),
                     value: b"batch-value".to_vec(),
-                    error: Some(kvrpcpb::KeyError {
+                    error: Some(Box::new(kvrpcpb::KeyError {
                         abort: "ignored by client-go RawBatchGet".to_owned(),
                         ..Default::default()
-                    }),
+                    })),
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -516,10 +516,10 @@ async fn source_batch_get_and_scan_ignore_legacy_pair_errors() -> Result<()> {
             kvs: vec![kvrpcpb::KvPair {
                 key: request.start_key.clone(),
                 value: b"scan-value".to_vec(),
-                error: Some(kvrpcpb::KeyError {
+                error: Some(Box::new(kvrpcpb::KeyError {
                     abort: "ignored by client-go RawScan".to_owned(),
                     ..Default::default()
-                }),
+                })),
                 ..Default::default()
             }],
             ..Default::default()

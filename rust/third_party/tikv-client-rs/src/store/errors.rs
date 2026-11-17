@@ -48,7 +48,7 @@ macro_rules! has_region_error {
     ($type:ty) => {
         impl HasRegionError for $type {
             fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
-                self.region_error.take().map(|e| e.into())
+                self.region_error.take().map(|e| *e)
             }
 
             fn has_region_error(&self) -> bool {
@@ -104,7 +104,7 @@ macro_rules! region_error_response {
         $(
             impl RegionErrorResponse for $type {
                 fn set_region_error(&mut self, error: crate::proto::errorpb::Error) {
-                    self.region_error = Some(error);
+                    self.region_error = Some(Box::new(error));
                 }
             }
         )+
@@ -152,7 +152,7 @@ region_error_response!(
 
 impl HasRegionError for coprocessor::Response {
     fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
-        self.region_error.take()
+        self.region_error.take().map(|e| *e)
     }
 
     fn has_region_error(&self) -> bool {
@@ -162,7 +162,7 @@ impl HasRegionError for coprocessor::Response {
 
 impl RegionErrorResponse for coprocessor::Response {
     fn set_region_error(&mut self, error: crate::proto::errorpb::Error) {
-        self.region_error = Some(error);
+        self.region_error = Some(Box::new(error));
     }
 }
 
@@ -170,7 +170,7 @@ macro_rules! has_key_error {
     ($type:ty) => {
         impl HasKeyErrors for $type {
             fn key_errors(&mut self) -> Option<Vec<Error>> {
-                self.error.take().map(|e| vec![e.into()])
+                self.error.take().map(|e| vec![(*e).into()])
             }
         }
     };
@@ -227,8 +227,14 @@ impl HasKeyErrors for kvrpcpb::ScanResponse {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
         self.error
             .take()
-            .map(|error| vec![error.into()])
-            .or_else(|| extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take())))
+            .map(|error| vec![(*error).into()])
+            .or_else(|| {
+                extract_errors(
+                    self.pairs
+                        .iter_mut()
+                        .map(|pair| pair.error.take().map(|error| *error)),
+                )
+            })
     }
 }
 
@@ -236,8 +242,14 @@ impl HasKeyErrors for kvrpcpb::BatchGetResponse {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
         self.error
             .take()
-            .map(|error| vec![error.into()])
-            .or_else(|| extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take())))
+            .map(|error| vec![(*error).into()])
+            .or_else(|| {
+                extract_errors(
+                    self.pairs
+                        .iter_mut()
+                        .map(|pair| pair.error.take().map(|error| *error)),
+                )
+            })
     }
 }
 
@@ -267,7 +279,11 @@ impl HasKeyErrors for kvrpcpb::RawChecksumResponse {
 
 impl HasKeyErrors for kvrpcpb::RawBatchScanResponse {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
-        extract_errors(self.kvs.iter_mut().map(|pair| pair.error.take()))
+        extract_errors(
+            self.kvs
+                .iter_mut()
+                .map(|pair| pair.error.take().map(|error| *error)),
+        )
     }
 }
 
@@ -299,8 +315,14 @@ impl HasKeyErrors for kvrpcpb::BufferBatchGetResponse {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
         self.error
             .take()
-            .map(|error| vec![error.into()])
-            .or_else(|| extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take())))
+            .map(|error| vec![(*error).into()])
+            .or_else(|| {
+                extract_errors(
+                    self.pairs
+                        .iter_mut()
+                        .map(|pair| pair.error.take().map(|error| *error)),
+                )
+            })
     }
 }
 
@@ -463,7 +485,7 @@ mod test {
         assert!(resp.key_errors().is_none());
 
         let mut resp: Result<_, Error> = Ok(kvrpcpb::CommitResponse {
-            error: Some(kvrpcpb::KeyError::default()),
+            error: Some(Box::new(kvrpcpb::KeyError::default())),
             ..Default::default()
         });
         assert!(resp.key_errors().is_some());
@@ -475,15 +497,15 @@ mod test {
     #[test]
     fn scan_response_error_precedes_pair_errors() {
         let mut response = kvrpcpb::ScanResponse {
-            error: Some(kvrpcpb::KeyError {
+            error: Some(Box::new(kvrpcpb::KeyError {
                 abort: "response error".to_owned(),
                 ..Default::default()
-            }),
+            })),
             pairs: vec![kvrpcpb::KvPair {
-                error: Some(kvrpcpb::KeyError {
+                error: Some(Box::new(kvrpcpb::KeyError {
                     abort: "pair error".to_owned(),
                     ..Default::default()
-                }),
+                })),
                 ..Default::default()
             }],
             ..Default::default()
@@ -491,5 +513,18 @@ mod test {
 
         assert!(response.key_errors().is_some());
         assert!(response.pairs[0].error.is_some());
+    }
+
+    /// Go's messages hold their region error, key error and execution
+    /// details as pointers. Inline, they made every response that carries
+    /// them over 2 KB, and a request moves its response through each layer.
+    #[test]
+    fn responses_hold_their_large_optional_messages_boxed() {
+        let get = std::mem::size_of::<kvrpcpb::GetResponse>();
+        assert!(get <= 128, "a GetResponse is {get} bytes");
+        let batch = std::mem::size_of::<crate::proto::tikvpb::batch_commands_response::Response>();
+        assert!(batch <= 512, "a BatchCommands response is {batch} bytes");
+        let pair = std::mem::size_of::<kvrpcpb::KvPair>();
+        assert!(pair <= 128, "a KvPair is {pair} bytes");
     }
 }

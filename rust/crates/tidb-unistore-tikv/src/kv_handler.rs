@@ -390,7 +390,7 @@ macro_rules! from_region_error {
         $(impl FromRegionError for $response {
             fn from_region_error(region_error: errorpb::Error) -> Self {
                 Self {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Self::default()
                 }
             }
@@ -487,7 +487,7 @@ impl KvHandler {
                 ..kvrpcpb::GetResponse::default()
             },
             Err(err) => kvrpcpb::GetResponse {
-                error: Some(convert_to_key_error(&err)),
+                error: Some(Box::new(convert_to_key_error(&err))),
                 ..kvrpcpb::GetResponse::default()
             },
         }
@@ -581,7 +581,7 @@ impl KvHandler {
         {
             Ok(()) => kvrpcpb::CommitResponse::default(),
             Err(err) => kvrpcpb::CommitResponse {
-                error: Some(convert_to_key_error(&err)),
+                error: Some(Box::new(convert_to_key_error(&err))),
                 ..kvrpcpb::CommitResponse::default()
             },
         }
@@ -596,7 +596,7 @@ impl KvHandler {
         match self.store.rollback(&req.keys, req.start_version) {
             Ok(()) => kvrpcpb::BatchRollbackResponse::default(),
             Err(err) => kvrpcpb::BatchRollbackResponse {
-                error: Some(convert_to_key_error(&err)),
+                error: Some(Box::new(convert_to_key_error(&err))),
                 ..kvrpcpb::BatchRollbackResponse::default()
             },
         }
@@ -876,7 +876,7 @@ impl KvHandler {
                 ..kvrpcpb::TxnHeartBeatResponse::default()
             },
             Err(err) => kvrpcpb::TxnHeartBeatResponse {
-                error: Some(convert_to_key_error(&err)),
+                error: Some(Box::new(convert_to_key_error(&err))),
                 ..kvrpcpb::TxnHeartBeatResponse::default()
             },
         }
@@ -911,7 +911,7 @@ impl KvHandler {
                 }
             }
             Err(err) => kvrpcpb::CheckTxnStatusResponse {
-                error: Some(convert_to_key_error(&err)),
+                error: Some(Box::new(convert_to_key_error(&err))),
                 ..kvrpcpb::CheckTxnStatusResponse::default()
             },
         }
@@ -933,7 +933,7 @@ impl KvHandler {
                 ..kvrpcpb::CheckSecondaryLocksResponse::default()
             },
             Err(err) => kvrpcpb::CheckSecondaryLocksResponse {
-                error: Some(convert_to_key_error(&err)),
+                error: Some(Box::new(convert_to_key_error(&err))),
                 ..kvrpcpb::CheckSecondaryLocksResponse::default()
             },
         }
@@ -968,7 +968,7 @@ impl KvHandler {
         match result {
             Ok(()) => kvrpcpb::ResolveLockResponse::default(),
             Err(err) => kvrpcpb::ResolveLockResponse {
-                error: Some(convert_to_key_error(&err)),
+                error: Some(Box::new(convert_to_key_error(&err))),
                 ..kvrpcpb::ResolveLockResponse::default()
             },
         }
@@ -988,7 +988,7 @@ impl KvHandler {
                 ..kvrpcpb::CleanupResponse::default()
             },
             Err(err) => kvrpcpb::CleanupResponse {
-                error: Some(convert_to_key_error(&err)),
+                error: Some(Box::new(convert_to_key_error(&err))),
                 ..kvrpcpb::CleanupResponse::default()
             },
         }
@@ -1410,7 +1410,7 @@ fn pair_to_proto(pair: tidb_unistore_dbreader::KvPair) -> kvrpcpb::KvPair {
     kvrpcpb::KvPair {
         key: pair.key,
         value: pair.value,
-        error: pair.error.map(|err| convert_to_key_error(&err)),
+        error: pair.error.map(|err| Box::new(convert_to_key_error(&err))),
         commit_ts: pair.commit_ts,
         ..kvrpcpb::KvPair::default()
     }

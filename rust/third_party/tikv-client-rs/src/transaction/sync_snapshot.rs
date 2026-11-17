@@ -492,13 +492,13 @@ mod tests {
                     return Ok(Box::new(kvrpcpb::ScanResponse {
                         pairs: vec![
                             kvrpcpb::KvPair {
-                                error: Some(kvrpcpb::KeyError {
+                                error: Some(Box::new(kvrpcpb::KeyError {
                                     locked: Some(kvrpcpb::LockInfo {
                                         key: b"a".to_vec(),
                                         ..Default::default()
                                     }),
                                     ..Default::default()
-                                }),
+                                })),
                                 ..Default::default()
                             },
                             kvrpcpb::KvPair {

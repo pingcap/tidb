@@ -709,7 +709,7 @@ impl<KvC: KvConnect + Clone + Send + Sync + 'static> StoreHealthFeedbackRequeste
                 )
             })?;
         if let Some(region_error) = response.region_error {
-            return Err(crate::Error::RegionError(Box::new(region_error)));
+            return Err(crate::Error::RegionError(region_error));
         }
         Ok(())
     }

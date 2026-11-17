@@ -172,14 +172,14 @@ tokio::task_local! {
 /// This is the native async counterpart of client-go's
 /// `ContextWithTraceExecDetails`: every physical RPC awaited by `future`
 /// reports its reconstructed historical span tree to `handler`.
-pub async fn with_trace_exec_details<F>(
+pub fn with_trace_exec_details<F>(
     handler: ExecutionDetailsTraceHandler,
     future: F,
-) -> F::Output
+) -> impl Future<Output = F::Output>
 where
     F: Future,
 {
-    EXECUTION_DETAILS_TRACE_HANDLER.scope(handler, future).await
+    EXECUTION_DETAILS_TRACE_HANDLER.scope(handler, future)
 }
 
 pub(crate) fn current_execution_details_trace_handler() -> Option<ExecutionDetailsTraceHandler> {
@@ -377,19 +377,20 @@ static NEXT_CLIENT_SPAN_ID: AtomicU64 = AtomicU64::new(1);
 /// inside the scope. Spans the client opens in tasks it spawns for this
 /// operation inherit the scope. Outside a scope nothing is recorded; each
 /// would-be span costs one task-local lookup.
-pub async fn with_client_spans<F>(handler: ClientSpanHandler, future: F) -> F::Output
+pub fn with_client_spans<F>(
+    handler: ClientSpanHandler,
+    future: F,
+) -> impl Future<Output = F::Output>
 where
     F: Future,
 {
-    CLIENT_SPAN_SCOPE
-        .scope(
-            ClientSpanScope::Ctx(ClientSpanContext {
-                handler,
-                parent: None,
-            }),
-            future,
-        )
-        .await
+    CLIENT_SPAN_SCOPE.scope(
+        ClientSpanScope::Ctx(ClientSpanContext {
+            handler,
+            parent: None,
+        }),
+        future,
+    )
 }
 
 /// The context the current task's client-go code reports under, if any.
@@ -403,17 +404,18 @@ pub fn current_client_span_context() -> Option<ClientSpanContext> {
 /// Run `future` under a context captured by [`current_client_span_context`],
 /// typically in a task spawned for the operation that owned it. `None` runs
 /// `future` unchanged.
-pub async fn with_client_span_context<F>(context: Option<ClientSpanContext>, future: F) -> F::Output
+pub fn with_client_span_context<F>(
+    context: Option<ClientSpanContext>,
+    future: F,
+) -> impl Future<Output = F::Output>
 where
     F: Future,
 {
     match context {
-        Some(context) => {
-            CLIENT_SPAN_SCOPE
-                .scope(ClientSpanScope::Ctx(context), future)
-                .await
-        }
-        None => future.await,
+        Some(context) => futures::future::Either::Left(
+            CLIENT_SPAN_SCOPE.scope(ClientSpanScope::Ctx(context), future),
+        ),
+        None => futures::future::Either::Right(future),
     }
 }
 
@@ -442,13 +444,19 @@ pub(crate) fn client_span_scope_present() -> bool {
 /// Run `future` as client-go code that uses `bo.GetCtx()`: everything it
 /// reports goes under the Backoffer's current ctx, which can change while
 /// it runs. Without any scope in the task an untraced slot changes nothing.
-pub(crate) async fn with_bo_span_slot<F: Future>(slot: BoSpanSlot, future: F) -> F::Output {
-    if !slot.is_traced() && !client_span_scope_present() {
-        return future.await;
-    }
-    CLIENT_SPAN_SCOPE
-        .scope(ClientSpanScope::Bo(slot), future)
-        .await
+pub(crate) fn with_bo_span_slot<F: Future>(
+    slot: BoSpanSlot,
+    future: F,
+) -> impl Future<Output = F::Output> {
+    Traced::new(
+        &CLIENT_SPAN_SCOPE,
+        move || {
+            let scope = (slot.is_traced() || client_span_scope_present())
+                .then(|| ClientSpanScope::Bo(slot));
+            (scope, None::<()>)
+        },
+        future,
+    )
 }
 
 /// Capture the current scope for a future about to be spawned. A Backoffer
@@ -463,11 +471,11 @@ where
             ClientSpanScope::Ctx(context) => ClientSpanScope::Ctx(context.clone()),
         })
         .ok();
-    async move {
-        match scope {
-            Some(scope) => CLIENT_SPAN_SCOPE.scope(scope, future).await,
-            None => future.await,
-        }
+    // An `Either`, not an `async` block: the spawned task holds `future`
+    // once, where the block would hold it as a capture and as its awaitee.
+    match scope {
+        Some(scope) => futures::future::Either::Left(CLIENT_SPAN_SCOPE.scope(scope, future)),
+        None => futures::future::Either::Right(future),
     }
 }
 
@@ -505,10 +513,8 @@ impl ClientSpan {
     }
 
     /// Run `future` with this span as its ctx span.
-    pub(crate) async fn scope<F: Future>(&self, future: F) -> F::Output {
-        CLIENT_SPAN_SCOPE
-            .scope(ClientSpanScope::Ctx(self.context()), future)
-            .await
+    pub(crate) fn scope<F: Future>(&self, future: F) -> impl Future<Output = F::Output> {
+        CLIENT_SPAN_SCOPE.scope(ClientSpanScope::Ctx(self.context()), future)
     }
 }
 
@@ -534,33 +540,47 @@ pub(crate) fn start_bo_client_span(name: &'static str) -> Option<ClientSpan> {
 
 /// A client-go span that becomes the ctx span of the work it encloses:
 /// `span1 := StartSpan(name, ChildOf(ctx span)); ctx = ContextWithSpan(ctx, span1)`.
-pub(crate) async fn client_span<F: Future>(name: &'static str, future: F) -> F::Output {
-    client_span_named(|| Cow::Borrowed(name), future).await
+pub(crate) fn client_span<F: Future>(
+    name: &'static str,
+    future: F,
+) -> impl Future<Output = F::Output> {
+    client_span_named(move || Cow::Borrowed(name), future)
 }
 
 /// [`client_span`] with a name built only when spans are reported.
-pub(crate) async fn client_span_named<F: Future>(
+pub(crate) fn client_span_named<F: Future>(
     name: impl FnOnce() -> Cow<'static, str>,
     future: F,
-) -> F::Output {
-    let Some(context) = current_client_span_context() else {
-        return future.await;
-    };
-    let span = ClientSpan::start(&context, name());
-    let output = span.scope(future).await;
-    drop(span);
-    output
+) -> impl Future<Output = F::Output> {
+    Traced::new(
+        &CLIENT_SPAN_SCOPE,
+        move || match current_client_span_context() {
+            None => (None, None),
+            Some(context) => {
+                let span = ClientSpan::start(&context, name());
+                (Some(ClientSpanScope::Ctx(span.context())), Some(span))
+            }
+        },
+        future,
+    )
 }
 
 /// A client-go span whose derived ctx is discarded, so work it encloses still
 /// reports to the enclosing ctx (`tikvSnapshot.get`, `pdclient.GetTSAsync`,
 /// and the region-cache loads whose derived ctx reaches only PD calls).
-pub(crate) async fn detached_client_span<F: Future>(name: &'static str, future: F) -> F::Output {
-    let span = current_client_span_context()
-        .map(|context| ClientSpan::start(&context, Cow::Borrowed(name)));
-    let output = future.await;
-    drop(span);
-    output
+pub(crate) fn detached_client_span<F: Future>(
+    name: &'static str,
+    future: F,
+) -> impl Future<Output = F::Output> {
+    Traced::new(
+        &CLIENT_SPAN_SCOPE,
+        move || {
+            let span = current_client_span_context()
+                .map(|context| ClientSpan::start(&context, Cow::Borrowed(name)));
+            (None, span)
+        },
+        future,
+    )
 }
 
 /// client-go `logutil.Eventf(ctx, ...)`: a log event on the current ctx span.
@@ -606,26 +626,142 @@ impl SendReqSpan {
     }
 }
 
+impl TracedGuard for SendReqSpan {
+    fn complete(self) {
+        self.finish();
+    }
+}
+
+/// What ends with a [`Traced`] future: completed when the future completes,
+/// only dropped when the future is dropped first.
+trait TracedGuard {
+    fn complete(self);
+}
+
+impl TracedGuard for () {
+    fn complete(self) {}
+}
+
+impl TracedGuard for ClientSpan {
+    fn complete(self) {}
+}
+
+/// The future of a tracing wrapper. When it is first polled, `setup` makes
+/// the choice the wrapper's `async fn` body used to make: an optional value
+/// of `key` to run `future` under, and an optional guard that ends with it.
+///
+/// An `async fn` wrapper keeps its argument future beside the scoped future
+/// it awaits, so each wrapper layer held the wrapped future again. Under its
+/// spans the commit future reached 1.25 MB. This future holds `future` once.
+///
+/// Like [`tokio::task::futures::TaskLocalFuture`], it sets the scope on every
+/// poll and drops `future` inside the scope when `future` completes. A
+/// future dropped before it completes is dropped outside the scope, and no
+/// destructor here reads the tracing task-locals.
+#[pin_project::pin_project]
+struct Traced<F, S, T: 'static, G> {
+    // Dropped first, as the awaited future of the wrapper's `async fn` was.
+    #[pin]
+    future: Option<F>,
+    key: &'static tokio::task::LocalKey<T>,
+    setup: Option<S>,
+    scope: Option<T>,
+    guard: Option<G>,
+}
+
+impl<F, S, T, G> Traced<F, S, T, G>
+where
+    F: Future,
+    S: FnOnce() -> (Option<T>, Option<G>),
+    T: Clone + 'static,
+    G: TracedGuard,
+{
+    fn new(key: &'static tokio::task::LocalKey<T>, setup: S, future: F) -> Self {
+        Self {
+            future: Some(future),
+            key,
+            setup: Some(setup),
+            scope: None,
+            guard: None,
+        }
+    }
+}
+
+impl<F, S, T, G> Future for Traced<F, S, T, G>
+where
+    F: Future,
+    S: FnOnce() -> (Option<T>, Option<G>),
+    T: Clone + 'static,
+    G: TracedGuard,
+{
+    type Output = F::Output;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let this = self.project();
+        if let Some(setup) = this.setup.take() {
+            (*this.scope, *this.guard) = setup();
+        }
+        let future = this.future;
+        let poll = match this.scope.as_ref() {
+            Some(value) => this
+                .key
+                .sync_scope(value.clone(), || poll_until_dropped(future, cx)),
+            None => poll_until_dropped(future, cx),
+        };
+        if poll.is_ready() {
+            if let Some(guard) = this.guard.take() {
+                guard.complete();
+            }
+        }
+        poll
+    }
+}
+
+/// Polls `future`, dropping it in place once it completes, as
+/// `TaskLocalFuture` does inside its scope.
+fn poll_until_dropped<F: Future>(
+    mut future: std::pin::Pin<&mut Option<F>>,
+    cx: &mut std::task::Context<'_>,
+) -> std::task::Poll<F::Output> {
+    let output = std::task::ready!(future
+        .as_mut()
+        .as_pin_mut()
+        .expect("a traced future is not polled after it completes")
+        .poll(cx));
+    future.set(None);
+    std::task::Poll::Ready(output)
+}
+
 /// client-go `RegionRequestSender.SendReqCtx(bo, ...)`: `future` is one
 /// region request on the Backoffer `slot`, reporting under a
 /// `regionRequest.SendReqCtx` span that `bo.SetCtx`s itself. When `open` is
 /// false no span opens until a re-send (client-go's callback `SendReqAsync`
 /// opens none).
-pub(crate) async fn send_req_ctx<F: Future>(slot: BoSpanSlot, open: bool, future: F) -> F::Output {
-    if !slot.is_traced() {
-        return with_bo_span_slot(slot, future).await;
-    }
-    let span = if open {
-        slot.start_span("regionRequest.SendReqCtx")
-    } else {
-        None
-    };
-    let cell = SendReqSpan(Arc::new(std::sync::Mutex::new((slot.clone(), span))));
-    let output = SEND_REQ_SPAN
-        .scope(cell.clone(), with_bo_span_slot(slot, future))
-        .await;
-    cell.finish();
-    output
+pub(crate) fn send_req_ctx<F: Future>(
+    slot: BoSpanSlot,
+    open: bool,
+    future: F,
+) -> impl Future<Output = F::Output> {
+    let request_slot = slot.clone();
+    Traced::new(
+        &SEND_REQ_SPAN,
+        move || {
+            if !slot.is_traced() {
+                return (None, None);
+            }
+            let span = if open {
+                slot.start_span("regionRequest.SendReqCtx")
+            } else {
+                None
+            };
+            let cell = SendReqSpan(Arc::new(std::sync::Mutex::new((slot, span))));
+            (Some(cell.clone()), Some(cell))
+        },
+        with_bo_span_slot(request_slot, future),
+    )
 }
 
 /// The region request's `SendReqCtx` returned to its caller loop, which is
@@ -643,13 +779,15 @@ pub(crate) fn restart_send_req_span() {
 /// client-go's callback BatchGet sends a region's first attempt with
 /// `SendReqAsync`, which opens no `SendReqCtx` and logs no send event, over
 /// `rpcClient.SendRequestAsync`; its retries go through `sendReqState.next`.
-pub(crate) async fn with_async_first_send<F: Future>(future: F) -> F::Output {
-    if !client_spans_enabled() {
-        return future.await;
-    }
-    ASYNC_FIRST_SEND
-        .scope(Arc::new(AtomicBool::new(true)), future)
-        .await
+pub(crate) fn with_async_first_send<F: Future>(future: F) -> impl Future<Output = F::Output> {
+    Traced::new(
+        &ASYNC_FIRST_SEND,
+        || {
+            let first = client_spans_enabled().then(|| Arc::new(AtomicBool::new(true)));
+            (first, None::<()>)
+        },
+        future,
+    )
 }
 
 /// Whether this physical send is the first attempt of a callback BatchGet
@@ -661,11 +799,14 @@ pub(crate) fn take_async_first_send() -> bool {
 }
 
 /// Run one physical RPC as `RPCClient.SendRequestAsync` when `asynchronous`.
-pub(crate) async fn with_rpc_send_async<F: Future>(asynchronous: bool, future: F) -> F::Output {
+pub(crate) fn with_rpc_send_async<F: Future>(
+    asynchronous: bool,
+    future: F,
+) -> impl Future<Output = F::Output> {
     if !asynchronous {
-        return future.await;
+        return futures::future::Either::Right(future);
     }
-    RPC_SEND_ASYNC.scope(true, future).await
+    futures::future::Either::Left(RPC_SEND_ASYNC.scope(true, future))
 }
 
 pub(crate) fn rpc_send_async() -> bool {
@@ -991,11 +1132,11 @@ tokio::task_local! {
 /// This is Rust's task-local counterpart to passing client-go's
 /// `context.Context` through a request. Request plans capture the context so
 /// it survives region fan-out into independently spawned tasks.
-pub async fn with_trace_context<F>(context: TraceContext, future: F) -> F::Output
+pub fn with_trace_context<F>(context: TraceContext, future: F) -> impl Future<Output = F::Output>
 where
     F: Future,
 {
-    ACTIVE_TRACE_CONTEXT.scope(context, future).await
+    ACTIVE_TRACE_CONTEXT.scope(context, future)
 }
 
 /// [`with_trace_context`] for synchronous code: `run` and everything it
@@ -1064,11 +1205,11 @@ pub fn set_grpc_trace_metadata_injector(injector: Option<GrpcTraceMetadataInject
         injector.unwrap_or_else(|| Arc::new(no_op_grpc_trace_injector));
 }
 
-pub(crate) async fn with_grpc_open_tracing<F>(enabled: bool, future: F) -> F::Output
+pub(crate) fn with_grpc_open_tracing<F>(enabled: bool, future: F) -> impl Future<Output = F::Output>
 where
     F: Future,
 {
-    GRPC_OPEN_TRACING_ENABLED.scope(enabled, future).await
+    GRPC_OPEN_TRACING_ENABLED.scope(enabled, future)
 }
 
 pub(crate) fn inject_current_grpc_trace_metadata(metadata: &mut tonic::metadata::MetadataMap) {
@@ -1181,6 +1322,21 @@ mod tests {
         set_category_enabled_handler(None);
         set_trace_control_extractor(None);
         set_grpc_trace_metadata_injector(None);
+    }
+
+    /// A spawned task's inherited client-span scope holds the task's future
+    /// once.
+    #[test]
+    fn inherited_client_spans_hold_their_future_once() {
+        let buffer = [0u8; 4096];
+        let future = async move {
+            std::future::ready(()).await;
+            buffer.len()
+        };
+        let inner = std::mem::size_of_val(&future);
+        let inherited = inherit_client_spans(future);
+        let size = std::mem::size_of_val(&inherited);
+        assert!(size < inner + 256, "{size} bytes for a {inner}-byte future");
     }
 
     #[test]
@@ -1594,13 +1750,13 @@ mod tests {
         let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
         let sink = observed.clone();
         let response = kvrpcpb::GetResponse {
-            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+            exec_details_v2: Some(Box::new(kvrpcpb::ExecDetailsV2 {
                 time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
                     total_rpc_wall_time_ns: 1_000_000,
                     ..Default::default()
                 }),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         let start = Instant::now();
@@ -1951,13 +2107,13 @@ mod client_span_tests {
                 && counter.fetch_add(1, AtomicOrdering::SeqCst) == 0
             {
                 return Box::new(kvrpcpb::GetResponse {
-                    region_error: Some(crate::proto::errorpb::Error {
+                    region_error: Some(Box::new(crate::proto::errorpb::Error {
                         not_leader: Some(crate::proto::errorpb::NotLeader {
                             region_id: 1,
                             leader: None,
                         }),
                         ..Default::default()
-                    }),
+                    })),
                     ..Default::default()
                 });
             }
@@ -1987,7 +2143,7 @@ mod client_span_tests {
                 && counter.fetch_add(1, AtomicOrdering::SeqCst) == 0
             {
                 return Box::new(kvrpcpb::GetResponse {
-                    error: Some(kvrpcpb::KeyError {
+                    error: Some(Box::new(kvrpcpb::KeyError {
                         locked: Some(kvrpcpb::LockInfo {
                             primary_lock: vec![5],
                             lock_version: 2,
@@ -1998,7 +2154,7 @@ mod client_span_tests {
                             ..Default::default()
                         }),
                         ..Default::default()
-                    }),
+                    })),
                     ..Default::default()
                 });
             }

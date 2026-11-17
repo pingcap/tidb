@@ -2467,13 +2467,13 @@ mod tests {
                     assert!(request.downcast_ref::<kvrpcpb::GetRequest>().is_some());
                     if not_leader_first && gets.fetch_add(1, Ordering::SeqCst) == 0 {
                         return Ok(Box::new(kvrpcpb::GetResponse {
-                            region_error: Some(errorpb::Error {
+                            region_error: Some(Box::new(errorpb::Error {
                                 not_leader: Some(errorpb::NotLeader {
                                     region_id: 1,
                                     leader: None,
                                 }),
                                 ..Default::default()
-                            }),
+                            })),
                             ..Default::default()
                         }) as Box<dyn Any>);
                     }

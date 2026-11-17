@@ -193,10 +193,10 @@ fn assert_response_error(response: CoprocessorResponse, expected: &str) {
 fn raw_response_decode_classifies_errors_before_coordinator_mutation() {
     assert_response_error(
         CoprocessorResponse {
-            region_error: Some(RegionError {
+            region_error: Some(Box::new(RegionError {
                 message: "not leader".to_owned(),
                 ..RegionError::default()
-            }),
+            })),
             ..CoprocessorResponse::default()
         },
         "region_error",
@@ -234,10 +234,10 @@ fn raw_response_decode_classifies_errors_before_coordinator_mutation() {
     assert_eq!(decoded.response_ref().batch_responses.len(), 1);
     assert_response_error(
         CoprocessorResponse {
-            region_error: Some(RegionError {
+            region_error: Some(Box::new(RegionError {
                 message: "top-level wins".to_owned(),
                 ..RegionError::default()
-            }),
+            })),
             batch_responses: vec![StoreBatchTaskResponse::default()],
             ..CoprocessorResponse::default()
         },

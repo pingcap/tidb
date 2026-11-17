@@ -1304,7 +1304,7 @@ mod send_req_tests {
 
     fn region_error(error: errorpb::Error) -> coprocessor::Response {
         coprocessor::Response {
-            region_error: Some(error),
+            region_error: Some(Box::new(error)),
             ..Default::default()
         }
     }

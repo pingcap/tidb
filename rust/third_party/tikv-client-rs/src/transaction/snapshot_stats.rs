@@ -1173,17 +1173,17 @@ fn observe_snapshot_read_sli(response: &dyn Any) {
         if let Some(response) = response.downcast_ref::<kvrpcpb::GetResponse>() {
             (
                 response.value.len() as u64,
-                response.exec_details_v2.as_ref(),
+                response.exec_details_v2.as_deref(),
             )
         } else if let Some(response) = response.downcast_ref::<kvrpcpb::BatchGetResponse>() {
             (
                 response.pairs.len() as u64,
-                response.exec_details_v2.as_ref(),
+                response.exec_details_v2.as_deref(),
             )
         } else if let Some(response) = response.downcast_ref::<kvrpcpb::BufferBatchGetResponse>() {
             (
                 response.pairs.len() as u64,
-                response.exec_details_v2.as_ref(),
+                response.exec_details_v2.as_deref(),
             )
         } else {
             return;
@@ -1219,7 +1219,7 @@ fn snapshot_point_response<'a>(
         } else {
             0
         };
-        Some((response.exec_details_v2.as_ref(), payload_bytes))
+        Some((response.exec_details_v2.as_deref(), payload_bytes))
     } else if let Some(response) = response.downcast_ref::<kvrpcpb::BatchGetResponse>() {
         if response.region_error.is_some() {
             return None;
@@ -1235,7 +1235,7 @@ fn snapshot_point_response<'a>(
         } else {
             0
         };
-        Some((response.exec_details_v2.as_ref(), payload_bytes))
+        Some((response.exec_details_v2.as_deref(), payload_bytes))
     } else if let Some(response) = response.downcast_ref::<kvrpcpb::BufferBatchGetResponse>() {
         if response.region_error.is_some() {
             return None;
@@ -1251,7 +1251,7 @@ fn snapshot_point_response<'a>(
         } else {
             0
         };
-        Some((response.exec_details_v2.as_ref(), payload_bytes))
+        Some((response.exec_details_v2.as_deref(), payload_bytes))
     } else {
         None
     }
@@ -1411,10 +1411,10 @@ mod tests {
 
         let get_error = kvrpcpb::GetResponse {
             value: b"ignored".to_vec(),
-            error: Some(kvrpcpb::KeyError {
+            error: Some(Box::new(kvrpcpb::KeyError {
                 abort: "x".to_owned(),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         assert_eq!(
@@ -1422,7 +1422,7 @@ mod tests {
             0
         );
         let get_region_error = kvrpcpb::GetResponse {
-            region_error: Some(crate::proto::errorpb::Error::default()),
+            region_error: Some(Box::new(crate::proto::errorpb::Error::default())),
             ..Default::default()
         };
         assert!(snapshot_point_response(&get_request, &get_region_error).is_none());
@@ -1438,10 +1438,10 @@ mod tests {
                 kvrpcpb::KvPair {
                     key: b"b".to_vec(),
                     value: b"ignored".to_vec(),
-                    error: Some(kvrpcpb::KeyError {
+                    error: Some(Box::new(kvrpcpb::KeyError {
                         abort: "pair".to_owned(),
                         ..Default::default()
-                    }),
+                    })),
                     ..Default::default()
                 },
             ],

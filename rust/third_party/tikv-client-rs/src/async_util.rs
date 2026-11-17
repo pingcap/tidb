@@ -21,25 +21,24 @@ pub fn background_rpc_cancellation() -> Option<Cancellation> {
 
 /// Runs background work under its owner's cancellation scope, like Go's
 /// store or TTL-manager context. Nested async calls retain the same scope.
-pub async fn with_background_rpc_context<T>(
+///
+/// A plain function, not an `async fn`: the returned future holds `future`
+/// once, where an `async fn` would hold it as an argument and as the scope
+/// it awaits.
+pub fn with_background_rpc_context<T>(
     cancellation: Cancellation,
     future: impl std::future::Future<Output = T>,
-) -> T {
-    BACKGROUND_RPC_CANCELLATION
-        .scope(cancellation, future)
-        .await
+) -> impl std::future::Future<Output = T> {
+    BACKGROUND_RPC_CANCELLATION.scope(cancellation, future)
 }
 
 // Capture before spawning: Tokio task locals are not inherited by child tasks.
 pub(crate) fn inherit_background_rpc_context<T>(
     future: impl std::future::Future<Output = T>,
 ) -> impl std::future::Future<Output = T> {
-    let owner = background_rpc_cancellation();
-    async move {
-        match owner {
-            Some(owner) => with_background_rpc_context(owner, future).await,
-            None => future.await,
-        }
+    match background_rpc_cancellation() {
+        Some(owner) => futures::future::Either::Left(with_background_rpc_context(owner, future)),
+        None => futures::future::Either::Right(future),
     }
 }
 
@@ -430,6 +429,34 @@ mod tests {
         tokio::time::timeout(Duration::from_millis(100), cancellation.cancelled())
             .await
             .expect("a cancellation before waiter registration must not be lost");
+    }
+
+    /// A future whose state keeps a 4 KiB buffer across an await.
+    fn large_future() -> impl std::future::Future<Output = usize> {
+        let buffer = [0u8; 4096];
+        async move {
+            tokio::task::yield_now().await;
+            buffer.len()
+        }
+    }
+
+    /// The background-context wrappers hold their future once, so a task
+    /// spawned under them is about its own size, not a multiple of it.
+    #[tokio::test]
+    async fn background_context_wrappers_hold_their_future_once() {
+        let inner = std::mem::size_of_val(&large_future());
+        let scoped = std::mem::size_of_val(&with_background_rpc_context(
+            Cancellation::default(),
+            large_future(),
+        ));
+        assert!(scoped < inner + 256, "scoped: {scoped}");
+        let outside = std::mem::size_of_val(&inherit_background_rpc_context(large_future()));
+        assert!(outside < inner + 256, "outside a scope: {outside}");
+        let inside = with_background_rpc_context(Cancellation::default(), async {
+            std::mem::size_of_val(&inherit_background_rpc_context(large_future()))
+        })
+        .await;
+        assert!(inside < inner + 256, "inside a scope: {inside}");
     }
 
     #[derive(Default)]

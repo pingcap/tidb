@@ -240,7 +240,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::GetResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -269,7 +269,7 @@ impl RpcClient {
                     ..Default::default()
                 },
                 Err(error) => kvrpcpb::GetResponse {
-                    error: Some(key_error(error)),
+                    error: Some(Box::new(key_error(error))),
                     ..Default::default()
                 },
             },
@@ -284,7 +284,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::ScanResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -344,7 +344,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::PrewriteResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -422,10 +422,10 @@ impl RpcClient {
     ) -> Result<kvrpcpb::PessimisticLockResponse> {
         if failpoint_string("rpcPessimisticLockResult").as_deref() == Some("notLeader") {
             return Ok(kvrpcpb::PessimisticLockResponse {
-                region_error: Some(errorpb::Error {
+                region_error: Some(Box::new(errorpb::Error {
                     not_leader: Some(errorpb::NotLeader::default()),
                     ..Default::default()
-                }),
+                })),
                 ..Default::default()
             });
         }
@@ -436,7 +436,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::PessimisticLockResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -524,7 +524,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::PessimisticRollbackResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -562,7 +562,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::CommitResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -575,7 +575,7 @@ impl RpcClient {
             self.engine
                 .commit(&request.keys, request.start_version, request.commit_version)
         {
-            response.error = Some(key_error(error));
+            response.error = Some(Box::new(key_error(error)));
         }
         if failpoint_bool("rpcCommitTimeout") {
             return Err(Error::StringError("result undetermined".to_owned()));
@@ -594,7 +594,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::CleanupResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -611,7 +611,7 @@ impl RpcClient {
             if let MockError::AlreadyCommitted { commit_ts } = error {
                 response.commit_version = commit_ts;
             } else {
-                response.error = Some(key_error(error));
+                response.error = Some(Box::new(key_error(error)));
             }
         }
         Ok(response)
@@ -628,7 +628,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::CheckTxnStatusResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -644,12 +644,12 @@ impl RpcClient {
             {
                 if lock.primary != request.primary_key {
                     return Ok(kvrpcpb::CheckTxnStatusResponse {
-                        error: Some(kvrpcpb::KeyError {
+                        error: Some(Box::new(kvrpcpb::KeyError {
                             primary_mismatch: Some(kvrpcpb::PrimaryMismatch {
                                 lock_info: Some(proto_lock_info(lock)),
                             }),
                             ..Default::default()
-                        }),
+                        })),
                         ..Default::default()
                     });
                 }
@@ -676,7 +676,7 @@ impl RpcClient {
                     ..Default::default()
                 },
                 Err(error) => kvrpcpb::CheckTxnStatusResponse {
-                    error: Some(key_error(error)),
+                    error: Some(Box::new(key_error(error))),
                     ..Default::default()
                 },
             },
@@ -694,7 +694,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::TxnHeartBeatResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -714,7 +714,7 @@ impl RpcClient {
                     ..Default::default()
                 },
                 Err(error) => kvrpcpb::TxnHeartBeatResponse {
-                    error: Some(key_error(error)),
+                    error: Some(Box::new(key_error(error))),
                     ..Default::default()
                 },
             },
@@ -732,7 +732,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::CheckSecondaryLocksResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -754,7 +754,7 @@ impl RpcClient {
                     ..Default::default()
                 },
                 Err(error) => kvrpcpb::CheckSecondaryLocksResponse {
-                    error: Some(key_error(error)),
+                    error: Some(Box::new(key_error(error))),
                     ..Default::default()
                 },
             },
@@ -772,7 +772,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::BatchGetResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -813,7 +813,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::BatchRollbackResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -828,7 +828,7 @@ impl RpcClient {
             match self.engine.rollback(&request.keys, request.start_version) {
                 Ok(()) => kvrpcpb::BatchRollbackResponse::default(),
                 Err(error) => kvrpcpb::BatchRollbackResponse {
-                    error: Some(key_error(error)),
+                    error: Some(Box::new(key_error(error))),
                     ..Default::default()
                 },
             },
@@ -846,7 +846,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::ScanLockResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -862,7 +862,7 @@ impl RpcClient {
                     ..Default::default()
                 },
                 Err(error) => kvrpcpb::ScanLockResponse {
-                    error: Some(key_error(error)),
+                    error: Some(Box::new(key_error(error))),
                     ..Default::default()
                 },
             },
@@ -880,7 +880,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::ResolveLockResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -907,7 +907,7 @@ impl RpcClient {
         Ok(match result {
             Ok(()) => kvrpcpb::ResolveLockResponse::default(),
             Err(error) => kvrpcpb::ResolveLockResponse {
-                error: Some(key_error(error)),
+                error: Some(Box::new(key_error(error))),
                 ..Default::default()
             },
         })
@@ -921,7 +921,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::GcResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -934,7 +934,7 @@ impl RpcClient {
             ) {
                 Ok(()) => kvrpcpb::GcResponse::default(),
                 Err(error) => kvrpcpb::GcResponse {
-                    error: Some(key_error(error)),
+                    error: Some(Box::new(key_error(error))),
                     ..Default::default()
                 },
             },
@@ -952,7 +952,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::DeleteRangeResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -977,7 +977,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::RawGetResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -1001,7 +1001,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::RawBatchGetResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -1034,7 +1034,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::RawPutResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -1055,7 +1055,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::RawBatchPutResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -1081,7 +1081,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::RawDeleteResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -1101,7 +1101,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::RawBatchDeleteResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -1121,7 +1121,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::RawDeleteRangeResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -1151,7 +1151,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::RawScanResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -1202,7 +1202,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::RawCasResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -1239,7 +1239,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::RawChecksumResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -1281,7 +1281,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::MvccGetByKeyResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -1307,7 +1307,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::MvccGetByStartTsResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -1331,7 +1331,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(kvrpcpb::SplitRegionResponse {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -1405,7 +1405,7 @@ impl RpcClient {
             Ok(session) => session,
             Err(region_error) => {
                 return Ok(coprocessor::Response {
-                    region_error: Some(region_error),
+                    region_error: Some(Box::new(region_error)),
                     ..Default::default()
                 })
             }
@@ -1459,7 +1459,7 @@ impl RpcClient {
             Err(region_error) => {
                 return Ok(CoprocessorStreamResponse::from_first(Some(
                     coprocessor::Response {
-                        region_error: Some(region_error),
+                        region_error: Some(Box::new(region_error)),
                         ..Default::default()
                     },
                 )))
@@ -1775,7 +1775,7 @@ fn key_error(error: MockError) -> kvrpcpb::KeyError {
 fn proto_pair(pair: unistore::Pair) -> kvrpcpb::KvPair {
     if let Some(error) = pair.error {
         kvrpcpb::KvPair {
-            error: Some(key_error(error)),
+            error: Some(Box::new(key_error(error))),
             ..Default::default()
         }
     } else {
@@ -1937,29 +1937,29 @@ fn prewrite_failpoint_response(
             != kvrpcpb::DiskFullOpt::AllowedOnAlmostFull as i32
     {
         return Some(kvrpcpb::PrewriteResponse {
-            region_error: Some(errorpb::Error {
+            region_error: Some(Box::new(errorpb::Error {
                 disk_full: Some(errorpb::DiskFull {
                     store_id: vec![1, 10],
                     reason: "disk almost full".to_owned(),
                 }),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         });
     }
     match failpoint_string("rpcPrewriteResult").as_deref() {
         Some("notLeader") => Some(kvrpcpb::PrewriteResponse {
-            region_error: Some(errorpb::Error {
+            region_error: Some(Box::new(errorpb::Error {
                 not_leader: Some(errorpb::NotLeader::default()),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         }),
         Some("undeterminedResult") => Some(kvrpcpb::PrewriteResponse {
-            region_error: Some(errorpb::Error {
+            region_error: Some(Box::new(errorpb::Error {
                 undetermined_result: Some(errorpb::UndeterminedResult::default()),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         }),
         Some("writeConflict") => Some(kvrpcpb::PrewriteResponse {
@@ -1991,13 +1991,13 @@ fn commit_failpoint_response(
             != kvrpcpb::DiskFullOpt::AllowedOnAlmostFull as i32
     {
         return Ok(Some(kvrpcpb::CommitResponse {
-            region_error: Some(errorpb::Error {
+            region_error: Some(Box::new(errorpb::Error {
                 disk_full: Some(errorpb::DiskFull {
                     store_id: vec![1, 10],
                     reason: "disk almost full".to_owned(),
                 }),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         }));
     }
@@ -2008,21 +2008,21 @@ fn commit_failpoint_response(
             )))
         }
         Some("notLeader") => Some(kvrpcpb::CommitResponse {
-            region_error: Some(errorpb::Error {
+            region_error: Some(Box::new(errorpb::Error {
                 not_leader: Some(errorpb::NotLeader::default()),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         }),
         Some("keyError") => Some(kvrpcpb::CommitResponse {
-            error: Some(kvrpcpb::KeyError::default()),
+            error: Some(Box::new(kvrpcpb::KeyError::default())),
             ..Default::default()
         }),
         Some("undeterminedResult") => Some(kvrpcpb::CommitResponse {
-            region_error: Some(errorpb::Error {
+            region_error: Some(Box::new(errorpb::Error {
                 undetermined_result: Some(errorpb::UndeterminedResult::default()),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         }),
         _ => None,

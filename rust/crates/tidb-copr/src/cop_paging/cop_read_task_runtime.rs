@@ -196,6 +196,7 @@ impl CopReadTaskResponse {
         matches!(self.error.as_ref(), Some(CopReadResponseError::Region))
             .then(|| self.response.region_error.as_ref())
             .flatten()
+            .map(|error| &**error)
     }
 
     /// Returns the `other_error` message of the already-decoded response.

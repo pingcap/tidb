@@ -570,14 +570,14 @@ fn gen_resp_with_mpp_exec(
         .filter_map(|exec| exec.scan_row_cnt())
         .map(|row_cnt| row_cnt as u64)
         .sum();
-    resp.exec_details_v2 = Some(tidb_proto::kvrpcpb::ExecDetailsV2 {
+    resp.exec_details_v2 = Some(Box::new(tidb_proto::kvrpcpb::ExecDetailsV2 {
         time_detail: Some(time_detail),
         scan_detail_v2: Some(tidb_proto::kvrpcpb::ScanDetailV2 {
             processed_versions,
             ..tidb_proto::kvrpcpb::ScanDetailV2::default()
         }),
         ..tidb_proto::kvrpcpb::ExecDetailsV2::default()
-    });
+    }));
     resp.data = sel_resp.encode_to_vec().into();
     resp
 }

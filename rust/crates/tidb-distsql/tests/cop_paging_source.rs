@@ -139,14 +139,14 @@ fn response_read_bytes_matches_classic_and_next_generation_tables() {
         (1_048_576, 512 * 1024, 1_048_576, 1_048_576),
     ] {
         let response = CoprocessorResponse {
-            exec_details_v2: Some(CoprocessorExecDetailsV2 {
+            exec_details_v2: Some(Box::new(CoprocessorExecDetailsV2 {
                 scan_detail_v2: Some(CoprocessorScanDetailV2 {
                     processed_versions_size: processed,
                     total_versions_size: total,
                     ..Default::default()
                 }),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         assert_eq!(
@@ -187,10 +187,10 @@ fn response_process_time_prefers_nanoseconds_and_falls_back_to_milliseconds() {
         ..Default::default()
     };
     let legacy = CoprocessorResponse {
-        exec_details_v2: Some(CoprocessorExecDetailsV2 {
+        exec_details_v2: Some(Box::new(CoprocessorExecDetailsV2 {
             time_detail: Some(legacy_time.clone()),
             ..Default::default()
-        }),
+        })),
         ..Default::default()
     };
     assert_eq!(
@@ -198,14 +198,14 @@ fn response_process_time_prefers_nanoseconds_and_falls_back_to_milliseconds() {
         Some(7_000_000)
     );
     let v2 = CoprocessorResponse {
-        exec_details_v2: Some(CoprocessorExecDetailsV2 {
+        exec_details_v2: Some(Box::new(CoprocessorExecDetailsV2 {
             time_detail: Some(legacy_time),
             time_detail_v2: Some(CoprocessorTimeDetailV2 {
                 process_wall_time_ns: 8_765_432,
                 ..Default::default()
             }),
             ..Default::default()
-        }),
+        })),
         ..Default::default()
     };
     assert_eq!(
@@ -232,7 +232,7 @@ fn response_process_time_prefers_nanoseconds_and_falls_back_to_milliseconds() {
     // time-detail projections are both absent.
     let mixed = CoprocessorResponse {
         exec_details: response_legacy_time.exec_details.clone(),
-        exec_details_v2: Some(CoprocessorExecDetailsV2::default()),
+        exec_details_v2: Some(Box::new(CoprocessorExecDetailsV2::default())),
         ..Default::default()
     };
     assert_eq!(coprocessor_response_process_time_nanos(&mixed), None);
@@ -250,13 +250,13 @@ fn decoded_response_reuses_go_lock_and_process_time_fields() {
             key: b"lock-key".to_vec(),
             ..Default::default()
         }),
-        exec_details_v2: Some(CoprocessorExecDetailsV2 {
+        exec_details_v2: Some(Box::new(CoprocessorExecDetailsV2 {
             time_detail_v2: Some(CoprocessorTimeDetailV2 {
                 process_wall_time_ns: 123_456,
                 ..Default::default()
             }),
             ..Default::default()
-        }),
+        })),
         ..Default::default()
     };
     let decoded = decode_tikv_unary_response(response.encode_to_vec().as_slice()).unwrap();
@@ -286,14 +286,14 @@ fn successful_page_updates_ema_grows_size_and_feeds_response_channel() {
     let response = CoprocessorResponse {
         data: b"select-response".to_vec().into(),
         range: Some(split("a", "b")),
-        exec_details_v2: Some(CoprocessorExecDetailsV2 {
+        exec_details_v2: Some(Box::new(CoprocessorExecDetailsV2 {
             scan_detail_v2: Some(CoprocessorScanDetailV2 {
                 processed_versions_size: 1_000_000,
                 total_versions_size: 2_000_000,
                 ..Default::default()
             }),
             ..Default::default()
-        }),
+        })),
         ..Default::default()
     };
     let outcome = state

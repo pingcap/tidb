@@ -3651,20 +3651,20 @@ mod tests {
                 assert!(request.is::<kvrpcpb::CheckTxnStatusRequest>());
                 let response = match dispatched.fetch_add(1, Ordering::SeqCst) {
                     0 | 2 => kvrpcpb::CheckTxnStatusResponse {
-                        error: Some(kvrpcpb::KeyError {
+                        error: Some(Box::new(kvrpcpb::KeyError {
                             txn_not_found: Some(Default::default()),
                             ..Default::default()
-                        }),
+                        })),
                         ..Default::default()
                     },
                     1 => kvrpcpb::CheckTxnStatusResponse {
-                        region_error: Some(crate::proto::errorpb::Error {
+                        region_error: Some(Box::new(crate::proto::errorpb::Error {
                             server_is_busy: Some(crate::proto::errorpb::ServerIsBusy {
                                 reason: "injected status retry".into(),
                                 ..Default::default()
                             }),
                             ..Default::default()
-                        }),
+                        })),
                         ..Default::default()
                     },
                     _ => kvrpcpb::CheckTxnStatusResponse {
@@ -3954,10 +3954,10 @@ mod tests {
         let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |_: &dyn Any| {
                 Ok(Box::new(kvrpcpb::ResolveLockResponse {
-                    error: Some(kvrpcpb::KeyError {
+                    error: Some(Box::new(kvrpcpb::KeyError {
                         abort: "resolve abort for the log test".to_owned(),
                         ..Default::default()
-                    }),
+                    })),
                     ..Default::default()
                 }) as Box<dyn Any>)
             },
@@ -4030,10 +4030,10 @@ mod tests {
                         // StaleCommand is source-retryable. Do not use an
                         // empty error as a test retry sentinel: client-go
                         // invalidates and returns unknown region errors.
-                        region_error: Some(errorpb::Error {
+                        region_error: Some(Box::new(errorpb::Error {
                             stale_command: Some(Default::default()),
                             ..Default::default()
-                        }),
+                        })),
                         ..Default::default()
                     };
                     Ok(Box::new(resp) as Box<dyn Any>)
@@ -5281,12 +5281,12 @@ mod tests {
                     .is_some()
                 {
                     return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
-                        error: Some(kvrpcpb::KeyError {
+                        error: Some(Box::new(kvrpcpb::KeyError {
                             primary_mismatch: Some(kvrpcpb::PrimaryMismatch {
                                 lock_info: Some(kvrpcpb::LockInfo::default()),
                             }),
                             ..Default::default()
-                        }),
+                        })),
                         ..Default::default()
                     }) as Box<dyn Any>);
                 }
@@ -5372,13 +5372,13 @@ mod ownership_regressions {
                 if pessimistic {
                     assert!(request.is::<kvrpcpb::PessimisticRollbackRequest>());
                     Ok(Box::new(kvrpcpb::PessimisticRollbackResponse {
-                        region_error,
+                        region_error: region_error.map(Box::new),
                         ..Default::default()
                     }) as Box<dyn Any>)
                 } else {
                     assert!(request.is::<kvrpcpb::ResolveLockRequest>());
                     Ok(Box::new(kvrpcpb::ResolveLockResponse {
-                        region_error,
+                        region_error: region_error.map(Box::new),
                         ..Default::default()
                     }) as Box<dyn Any>)
                 }
@@ -5458,10 +5458,12 @@ mod ownership_regressions {
                         let _ = sent.send(());
                     }
                     Ok(Box::new(kvrpcpb::ResolveLockResponse {
-                        region_error: first.then(|| crate::proto::errorpb::Error {
-                            not_leader: Some(Default::default()),
-                            ..Default::default()
-                        }),
+                        region_error: first
+                            .then(|| crate::proto::errorpb::Error {
+                                not_leader: Some(Default::default()),
+                                ..Default::default()
+                            })
+                            .map(Box::new),
                         ..Default::default()
                     }) as Box<dyn Any>)
                 },
@@ -5571,10 +5573,10 @@ mod ownership_regressions {
                 }
                 assert!(request.is::<kvrpcpb::ResolveLockRequest>());
                 Ok(Box::new(kvrpcpb::ResolveLockResponse {
-                    error: Some(kvrpcpb::KeyError {
+                    error: Some(Box::new(kvrpcpb::KeyError {
                         abort: "cleanup failed".into(),
                         ..Default::default()
-                    }),
+                    })),
                     ..Default::default()
                 }) as Box<dyn Any>)
             },
@@ -5624,14 +5626,18 @@ mod ownership_regressions {
                 let region = usize::from(request.keys[0][0] >= 10);
                 let first = seen[region].fetch_add(1, Ordering::SeqCst) == 0;
                 Ok(Box::new(kvrpcpb::ResolveLockResponse {
-                    region_error: first.then(|| crate::proto::errorpb::Error {
-                        not_leader: Some(Default::default()),
-                        ..Default::default()
-                    }),
-                    error: (fail && !first).then(|| kvrpcpb::KeyError {
-                        abort: "cleanup failed".into(),
-                        ..Default::default()
-                    }),
+                    region_error: first
+                        .then(|| crate::proto::errorpb::Error {
+                            not_leader: Some(Default::default()),
+                            ..Default::default()
+                        })
+                        .map(Box::new),
+                    error: (fail && !first)
+                        .then(|| kvrpcpb::KeyError {
+                            abort: "cleanup failed".into(),
+                            ..Default::default()
+                        })
+                        .map(Box::new),
                     ..Default::default()
                 }) as Box<dyn Any>)
             },
@@ -5685,10 +5691,10 @@ mod ownership_regressions {
                 assert!(request.is::<kvrpcpb::CheckSecondaryLocksRequest>());
                 let response = if seen.fetch_add(1, Ordering::SeqCst) == 0 {
                     kvrpcpb::CheckSecondaryLocksResponse {
-                        region_error: Some(crate::proto::errorpb::Error {
+                        region_error: Some(Box::new(crate::proto::errorpb::Error {
                             region_not_found: Some(Default::default()),
                             ..Default::default()
-                        }),
+                        })),
                         ..Default::default()
                     }
                 } else {
@@ -5737,18 +5743,18 @@ mod ownership_regressions {
                     let region = usize::from(request.keys[0][0] >= 10);
                     let response = if seen[region].fetch_add(1, Ordering::SeqCst) == 0 {
                         kvrpcpb::CheckSecondaryLocksResponse {
-                            region_error: Some(crate::proto::errorpb::Error {
+                            region_error: Some(Box::new(crate::proto::errorpb::Error {
                                 region_not_found: Some(Default::default()),
                                 ..Default::default()
-                            }),
+                            })),
                             ..Default::default()
                         }
                     } else if fail {
                         kvrpcpb::CheckSecondaryLocksResponse {
-                            error: Some(kvrpcpb::KeyError {
+                            error: Some(Box::new(kvrpcpb::KeyError {
                                 abort: "injected terminal error".into(),
                                 ..Default::default()
-                            }),
+                            })),
                             ..Default::default()
                         }
                     } else {

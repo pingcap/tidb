@@ -2218,7 +2218,7 @@ fn test_stale_read_no_backoff() {
             .is_some_and(|ctx| ctx.stale_read && !ctx.is_retry_request) {
             observed.fetch_add(1, Ordering::SeqCst);
             return Box::pin(async { Ok(Box::new(kvrpcpb::GetResponse {
-                region_error: Some(errorpb::Error { data_is_not_ready: Some(errorpb::DataIsNotReady::default()), ..Default::default() }),
+                region_error: Some(Box::new(errorpb::Error { data_is_not_ready: Some(errorpb::DataIsNotReady::default()), ..Default::default() })),
                 ..Default::default()
             }) as Box<dyn std::any::Any>) });
         }

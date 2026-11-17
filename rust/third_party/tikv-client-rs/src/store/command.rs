@@ -6,10 +6,7 @@
 //! modules.
 
 use crate::proto::{coprocessor, kvrpcpb, tikvpb};
-use crate::stats::{
-    increment_batch_stream_request_counter, observe_batch_stream_tail, BatchStreamRequestCounter,
-    BatchStreamTailKind,
-};
+use crate::stats::{BatchStreamMetrics, BatchStreamRequestCounter, BatchStreamTailKind};
 use crate::{Error, Result};
 use std::any::Any;
 use std::collections::HashMap;
@@ -348,41 +345,33 @@ struct BatchPendingResponse {
 /// source counter labels without guessing from a later stream failure.
 #[derive(Clone)]
 pub(crate) struct BatchStreamMetricLabels {
-    pub(crate) target: String,
     pub(crate) connection_index: usize,
-    pub(crate) forwarded: bool,
     pub(crate) progress: Arc<BatchStreamProgress>,
+    /// The owning stream's observers and counters.
+    pub(crate) metrics: Arc<BatchStreamMetrics>,
 }
 
 impl BatchStreamMetricLabels {
     pub(crate) fn new(target: String, connection_index: usize, forwarded: bool) -> Self {
         Self {
-            target,
             connection_index,
-            forwarded,
             progress: Arc::new(BatchStreamProgress::default()),
+            metrics: Arc::new(BatchStreamMetrics::new(
+                &target,
+                connection_index,
+                forwarded,
+            )),
         }
     }
 
     fn increment(&self, counter: BatchStreamRequestCounter) {
-        increment_batch_stream_request_counter(
-            &self.target,
-            self.connection_index,
-            self.forwarded,
-            counter,
-            1,
-        );
+        self.metrics.increment(counter, 1);
     }
 
     fn observe_cancelled_entry_tail(&self, telemetry: &BatchRequestTelemetry) {
         if let Some(duration) = telemetry.cancelled_response_tail() {
-            observe_batch_stream_tail(
-                &self.target,
-                self.connection_index,
-                self.forwarded,
-                BatchStreamTailKind::CancelledEntry,
-                duration,
-            );
+            self.metrics
+                .observe_tail(BatchStreamTailKind::CancelledEntry, duration);
         }
     }
 }
