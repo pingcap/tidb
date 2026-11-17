@@ -336,6 +336,16 @@ table lookup, which handles partitions, batching, memory tracking and limits.
    for the full-text partial is given the table's record range, so every
    changed row is re-checked against the MATCH. This is also what makes it
    safe not to rewrite untouched entries on updates of other columns.
+   - Cost: each statement in a transaction that changed the table analyzes
+     every row the transaction changed in it (in each pruned partition),
+     whatever the search. A statement outside such a transaction pays
+     nothing.
+   - This is stricter than MySQL: InnoDB applies FULLTEXT changes at commit,
+     so its searches see committed data only, even in the writing
+     transaction. Here a search sees the transaction's own changes, as every
+     other predicate does.
+   - Alternatives considered (see Investigation & Alternatives): not using
+     the index in such a transaction, or refusing the search there.
 6. **Residual.** The original `MATCH` stays above as a `Selection`, so
    correctness never depends on the engine being exact. Any other `MATCH`
    that the data source took on but no storage engine can evaluate, such as
@@ -601,6 +611,21 @@ structure and is what MySQL's InnoDB FTS does too.
     simplest searches: exact single words, `+` and optional only, one
     level, STANDARD parser. It would reuse IndexMerge's executor, cost and
     EXPLAIN, at the price of two plan shapes for one feature.
+- **Not using the index in a transaction that changed the table**, to avoid
+  merging the transaction's changes through UnionScan. Not preferred.
+  - Not offering the path there falls back to a scan that analyzes every
+    row of the table: one earlier write in the transaction turns an indexed
+    search into a full scan, a performance cliff that depends on the
+    transaction's history rather than the query.
+  - Refusing the search there instead breaks applications that write and
+    then search in one transaction, which works on MySQL.
+  - Searching committed data only, as InnoDB does, would make MATCH the one
+    predicate in a statement that does not see the transaction's changes,
+    and still needs UnionScan to drop the rows the transaction deleted.
+  - The merge as designed reuses the ordinary UnionScan with one change, the
+    record range it is given, and is tested against the scan for inserts,
+    deletes, updates in and out of a match, updates of other columns, and
+    rows moving between partitions.
 - **Document length for scoring kept elsewhere than in every entry.**
   - One extra posting list per index under a reserved term, holding one
     entry per row with its length, read in handle order alongside the term
