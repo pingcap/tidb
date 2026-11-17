@@ -210,3 +210,20 @@ func TestHintSuite(t *testing.T) {
 		})
 	})
 }
+
+func TestSetVarJoinReorderBlockingPenaltyRatio(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("create table t_part(p_key int, brand varchar(20), container varchar(20))")
+	tk.MustExec("create table t_lineitem(l_key int, quantity int, price decimal(15,2))")
+	tk.MustQuery("select @@tidb_opt_enable_advanced_join_reorder").Check(testkit.Rows("1"))
+
+	const query = `sum(l.price) / 7.0 from t_lineitem l, t_part p
+		where p.p_key = l.l_key and p.brand = 'Brand#44' and p.container = 'WRAP PKG'
+		and l.quantity < (select 0.2 * avg(quantity) from t_lineitem where l_key = p.p_key)`
+	withoutPenalty := tk.MustQuery("explain format='plan_tree' select /*+ SET_VAR(tidb_opt_join_reorder_blocking_penalty_ratio=0) */ " + query).Rows()
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	withPenalty := tk.MustQuery("explain format='plan_tree' select " + query).Rows()
+	require.NotEqual(t, withPenalty, withoutPenalty)
+	tk.MustQuery("select @@tidb_opt_join_reorder_blocking_penalty_ratio").Check(testkit.Rows("1"))
+}

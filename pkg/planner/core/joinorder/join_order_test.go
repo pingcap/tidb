@@ -15,11 +15,14 @@
 package joinorder
 
 import (
+	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,4 +85,32 @@ func TestCloneNodesForGreedyStartIsolation(t *testing.T) {
 	cloned[0].p = logicalop.LogicalTableDual{RowCount: 1}.Init(ctx, 0)
 	require.Nil(t, original[0].p)
 	require.NotNil(t, cloned[0].p)
+}
+
+func TestJoinLeafCost(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	t.Cleanup(func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	})
+
+	vars := ctx.GetSessionVars()
+	vars.ResetRelevantOptVarsAndFixes(true)
+	limit := logicalop.LogicalLimit{Count: 1, Offset: math.MaxUint64}.Init(ctx, 0)
+	limit.SetStats(&property.StatsInfo{RowCount: 1})
+	require.Equal(t, float64(1<<64), LeafCost(limit))
+	topN := logicalop.LogicalTopN{Count: 1, Offset: math.MaxUint64}.Init(ctx, 0)
+	topN.SetStats(&property.StatsInfo{RowCount: 1})
+	require.Equal(t, float64(1<<64), LeafCost(topN))
+	require.NotContains(t, vars.RelevantOptVars, vardef.TiDBOptJoinReorderBlockingPenaltyRatio)
+
+	input := logicalop.LogicalTableDual{}.Init(ctx, 0)
+	input.SetStats(&property.StatsInfo{RowCount: 8_000_000})
+	agg := logicalop.LogicalAggregation{}.Init(ctx, 0)
+	agg.SetChildren(input)
+	agg.SetStats(&property.StatsInfo{RowCount: 10})
+	vars.OptJoinReorderBlockingPenaltyRatio = 0.5
+	require.Equal(t, 500_010.0, LeafCost(agg))
+	require.Contains(t, vars.RelevantOptVars, vardef.TiDBOptJoinReorderBlockingPenaltyRatio)
+	vars.OptJoinReorderBlockingPenaltyRatio = 0
+	require.Equal(t, 10.0, LeafCost(agg))
 }

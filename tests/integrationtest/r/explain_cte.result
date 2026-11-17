@@ -464,7 +464,7 @@ insert into t3 values(1,1234);
 explain format='plan_tree' update t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c set t1.b = 4321;
 id	task	access object	operator info
 Update	root		N/A
-└─HashJoin	root		inner join, equal:[eq(explain_cte.t1.a, explain_cte.t2.c)]
+└─HashJoin	root		inner join, equal:[eq(explain_cte.t2.c, explain_cte.t1.a)]
   ├─HashJoin(Build)	root		inner join, equal:[eq(explain_cte.t3.e, explain_cte.t2.d)]
   │ ├─TableReader(Build)	root		data:Projection
   │ │ └─Projection	cop[tikv]		explain_cte.t3.e

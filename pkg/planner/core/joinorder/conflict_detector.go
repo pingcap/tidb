@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
@@ -205,8 +206,7 @@ type Node struct {
 	// bitSet tracks which base relations (by index) are contained in this node.
 	bitSet intset.FastIntSet
 	p      base.LogicalPlan
-	// cumCost is the cumulative cost (sum of row counts) of this node and all
-	// its descendants. It is used by the enumerator for join ordering.
+	// cumCost combines the costs of join group leaves and estimated rows from intermediate joins.
 	cumCost float64
 	// usedEdges records which edges have already been consumed by joins that
 	// produced this node. An edge must not be applied twice.
@@ -237,12 +237,37 @@ func calcCumCost(p base.LogicalPlan, node1, node2 *Node) float64 {
 	return p.StatsInfo().RowCount + cost1 + cost2
 }
 
-func calcCumCostByChildren(p base.LogicalPlan) float64 {
-	cost := p.StatsInfo().RowCount
-	for _, child := range p.Children() {
-		cost += calcCumCostByChildren(child)
+const (
+	blockingInputCostCapFactor = 1_000
+	minBlockingInputCostCap    = 1_000_000
+)
+
+// LeafCost estimates the cost of a join group leaf after statistics have been derived.
+// A leaf is normally priced by its output rows. Limit and TopN account for skipped rows,
+// while operators that block on their input add a capped fraction of the input rows.
+func LeafCost(p base.LogicalPlan) float64 {
+	rows := p.StatsInfo().RowCount
+	switch op := p.(type) {
+	case *logicalop.LogicalLimit:
+		return math.Max(rows, float64(op.Count)+float64(op.Offset))
+	case *logicalop.LogicalTopN:
+		return math.Max(rows, float64(op.Count)+float64(op.Offset))
+	case *logicalop.LogicalAggregation, *logicalop.LogicalSort, *logicalop.LogicalWindow:
+		vars := p.SCtx().GetSessionVars()
+		vars.RecordRelevantOptVar(vardef.TiDBOptJoinReorderBlockingPenaltyRatio)
+		ratio := vars.OptJoinReorderBlockingPenaltyRatio
+		if ratio == 0 {
+			return rows
+		}
+		var inputRows float64
+		for _, child := range p.Children() {
+			inputRows += child.StatsInfo().RowCount
+		}
+		inputCap := math.Max(minBlockingInputCostCap, blockingInputCostCapFactor*rows)
+		return rows + ratio*math.Min(inputRows, inputCap)
+	default:
+		return rows
 	}
-	return cost
 }
 
 func (n *Node) checkUsedEdges(edgeIdx uint64) bool {
@@ -270,7 +295,7 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 		vertexMap[v.ID()] = &Node{
 			bitSet:  intset.NewFastIntSet(i),
 			p:       v,
-			cumCost: calcCumCostByChildren(v),
+			cumCost: LeafCost(v),
 		}
 		if err := validateCumCost(vertexMap[v.ID()].cumCost); err != nil {
 			return nil, err

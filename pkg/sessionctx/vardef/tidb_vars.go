@@ -432,6 +432,9 @@ const (
 	// When > 0: allow Cartesian Join if cost(cartesian join) * threshold < cost(non cartesian join).
 	TiDBOptCartesianJoinOrderThreshold = "tidb_opt_cartesian_join_order_threshold"
 
+	// TiDBOptJoinReorderBlockingPenaltyRatio controls the input cost added for blocking operators during join reorder.
+	TiDBOptJoinReorderBlockingPenaltyRatio = "tidb_opt_join_reorder_blocking_penalty_ratio"
+
 	// TiDBOptCPUFactor is the CPU cost of processing one expression for one row.
 	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
 	// TiDBOptCopCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
@@ -1705,6 +1708,7 @@ const (
 	DefTiDBEnableTiKVShortCircuitExpression = false
 	DefTiDBOptJoinReorderThreshold          = 0
 	DefTiDBOptEnableAdvancedJoinReorder     = true
+	DefOptJoinReorderBlockingPenaltyRatio   = 1.0
 	DefTiDBOptJoinReorderThroughProj        = false
 	DefTiDBOptJoinReorderThroughSel         = false
 	DefTiDBDDLSlowOprThreshold              = 300

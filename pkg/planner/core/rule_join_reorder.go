@@ -651,22 +651,13 @@ func (s *baseSingleGroupJoinOrderSolver) generateJoinOrderNode(joinNodePlans []b
 		if err != nil {
 			return nil, err
 		}
-		cost := s.baseNodeCumCost(node)
+		cost := joinorder.LeafCost(node)
 		joinGroup = append(joinGroup, &jrNode{
 			p:       node,
 			cumCost: cost,
 		})
 	}
 	return joinGroup, nil
-}
-
-// baseNodeCumCost calculate the cumulative cost of the node in the join group.
-func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode base.LogicalPlan) float64 {
-	cost := groupNode.StatsInfo().RowCount
-	for _, child := range groupNode.Children() {
-		cost += s.baseNodeCumCost(child)
-	}
-	return cost
 }
 
 // checkConnection used to check whether two nodes have equal conditions or not.
