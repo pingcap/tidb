@@ -4,19 +4,13 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**7 unresolved: 5 open, 2 partial.**
+**6 unresolved: 5 open, 1 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
 unresolved until it is restated against its Go owner or closed.
 
 ## Unresolved
-
-### System tables and startup
-
-| ID | Status | Remaining gap | Go owner |
-| --- | --- | --- | --- |
-| B01 | partial | First boot is decided by the bootstrap commit, not by DDL owner election: the node publishes the `mysql` bootstrap while connecting its store (`tidb-server` `cluster_stack.rs`), before the domain and its owner manager exist. A node whose publish loses to another's now waits for the winner, checking the store every 200ms as Go's non-owner does in `bootstrap`, and boots from the winner's tables through the upgrade path (two realtikv nodes booting a fresh cluster together both come up; before, one failed with `bootstrap encode failed: Write conflict`). Go lets only the DDL owner run `doDDLWorks`/`doDMLWorks`. | `pkg/session/bootstrap.go` (`bootstrap`), `pkg/session/session.go` (`runInBootstrapSession`) |
 
 ### DDL
 

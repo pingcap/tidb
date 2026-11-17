@@ -59,6 +59,7 @@ pub mod real_tikv_ddl;
 pub mod tiflash_replica_manager;
 pub mod embedded_store;
 pub mod etcd_ops;
+pub mod owner_mgr;
 pub mod schema_sync;
 pub mod worker;
 pub mod pre_split;

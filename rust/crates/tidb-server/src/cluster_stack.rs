@@ -146,6 +146,16 @@ pub fn cluster_session_stack(
         client.set_etcd_cli_by_namespace(&tidb_keyspace::make_keyspace_etcd_namespace(&tikv_store));
         Arc::new(client)
     });
+    // Go `createStoreDDLOwnerMgrAndDomain`'s `ddl.StartOwnerManager`, before
+    // `BootstrapSession`: the bootstrap and the DDL below campaign the DDL
+    // owner through this one manager, whose ID is the DDL's and the server
+    // info's.
+    let keyspace = tikv_store.get_keyspace().to_owned();
+    tidb_ddl::owner_mgr::start_owner_manager(&keyspace, etcd.clone())
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    let ddl_owner = tidb_ddl::owner_mgr::get_owner_manager(&keyspace)
+        .expect("the DDL owner manager was just started");
+    let owner_manager_guard = OwnerManagerGuard(keyspace);
     // The cluster's regions as `SPLIT`, `SHOW TABLE ... REGIONS`,
     // `TABLESAMPLE REGIONS()` and the pre-split after CREATE TABLE reach them.
     let region_store: Arc<dyn tidb_kv::region_map::RegionStore> =
@@ -201,39 +211,46 @@ pub fn cluster_session_stack(
                 || (mode == tidb_ddl::StartMode::Bootstrap && bootstrap.already_bootstrapped());
             if mode == tidb_ddl::StartMode::Bootstrap && !bootstrap.already_bootstrapped() {
                 let started = std::time::Instant::now();
-                let published = tidb_session::bootstrap_publish::publish_bootstrap_with_splits(
-                    opener,
-                    COPROCESSOR_QUERY_TIMEOUT,
-                );
-                let published = match published {
-                    Ok(published) => Some(published),
-                    // Go `bootstrap`: only one node bootstraps a store; the
-                    // others wait for it, checking `checkBootstrapped` every
-                    // 200ms. A node whose publish lost the race to another
-                    // waits the same way and boots from the winner's tables.
-                    Err(error) => {
-                        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-                        loop {
-                            let state = tidb_domain_core::real_tikv_privileges::read_bootstrap_state_from_cluster(
-                                opener,
-                                COPROCESSOR_QUERY_TIMEOUT,
-                            )
-                            .map_err(|error| error.to_string())?;
-                            if state.already_bootstrapped() {
-                                // Go's next `checkBootstrapped` round finds
-                                // it bootstrapped and runs `upgrade`.
-                                run_upgrade = true;
-                                break None;
-                            }
-                            if std::time::Instant::now() >= deadline {
-                                return Err(error);
-                            }
-                            tidb_logutil::bg_logger()
-                                .info("bootstrap not done yet, waiting for owner to finish", &[]);
-                            std::thread::sleep(std::time::Duration::from_millis(200));
-                        }
+                // Go `runInBootstrapSession`'s `dom.Start`: the bootstrap
+                // domain's DDL campaigns the DDL owner when
+                // `tidb_enable_ddl` is on.
+                let owner = ddl_owner.owner_manager();
+                if config.run_ddl {
+                    owner.campaign_owner(&[])?;
+                }
+                let boot_logger = tidb_logutil::sample_logger_factory(
+                    std::time::Duration::from_secs(30),
+                    1,
+                    Vec::new(),
+                )();
+                // Go `bootstrap`.
+                let published = loop {
+                    let state = tidb_domain_core::real_tikv_privileges::read_bootstrap_state_from_cluster(
+                        opener,
+                        COPROCESSOR_QUERY_TIMEOUT,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    // "For rolling upgrade, we can't do upgrade only in the
+                    // owner": a store another node bootstrapped is upgraded.
+                    if state.already_bootstrapped() {
+                        run_upgrade = true;
+                        break None;
                     }
+                    // "Only one server need to do the bootstrap. So we chose
+                    // DDL owner to do this."
+                    if owner.is_owner() {
+                        break Some(tidb_session::bootstrap_publish::publish_bootstrap_with_splits(
+                            opener,
+                            COPROCESSOR_QUERY_TIMEOUT,
+                        )?);
+                    }
+                    boot_logger.info("bootstrap not done yet, waiting for owner to finish", &[]);
+                    std::thread::sleep(std::time::Duration::from_millis(200));
                 };
+                // Go `runInBootstrapSession`'s `dom.Close`: the bootstrap
+                // domain's DDL breaks its campaign loop; the owner manager
+                // keeps its session for the node's DDL.
+                owner.break_campaign_loop();
                 if let Some((outcome, schema_version, bootstrap_splits)) = published {
                 tidb_session::bootstrap_publish::notify_committed_bootstrap(
                     &outcome,
@@ -379,6 +396,9 @@ pub fn cluster_session_stack(
         None => Arc::new(|| 0),
     };
     let mut info = tidb_session::domain::serverinfo_etcd::get_server_info(config);
+    // Go `GlobalInfoSyncerInit(ctx, do.ddl.GetID(), ...)`: the server info's
+    // ID is the DDL's, which is the owner manager's.
+    ddl_owner.id().clone_into(&mut info.static_info.id);
     if let Some(identity) = &server_identity {
         let identity = Arc::clone(identity);
         info.static_info.server_id_getter = Some(Arc::new(move || identity.id()));
@@ -898,12 +918,25 @@ pub fn cluster_session_stack(
         // Dropped last: once the registration is gone nobody waits on this
         // node, so the acknowledger has nothing left to say.
         leases: vec![
+            // Go `closeDomainAndStorage`'s `ddl.CloseOwnerManager`, right
+            // after `dom.Close`.
+            Box::new(owner_manager_guard),
             Box::new(server_id_keeper),
             Box::new(server_info_runner),
             Box::new(schema_sync_ack),
         ],
         resource_groups: Some((tikv_store_for_shutdown, resource_groups_controller)),
     }, authority))
+}
+
+/// Go `ddl.CloseOwnerManager` for the node's keyspace, when the stack's
+/// leases are released.
+struct OwnerManagerGuard(String);
+
+impl Drop for OwnerManagerGuard {
+    fn drop(&mut self) {
+        tidb_ddl::owner_mgr::close_owner_manager(&self.0);
+    }
 }
 
 /// Renders the boot-time refusals for the node's ready event.
