@@ -171,7 +171,7 @@ impl TableCommon {
                 let idx = reorg.spec.locate_partition_common(
                     reorg_defs.len() as u64,
                     row,
-                    &self.columns,
+                    &self.public_columns,
                     ctx,
                 )?;
                 Ok(Some(reorg_defs[idx].id))

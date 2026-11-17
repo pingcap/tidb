@@ -17,8 +17,10 @@
 //! `AddRecord`, `updateRecord`, and the rows `RemoveRecord` is handed) and
 //! `checkDataForModifyColumn`.
 //!
-//! A write row is the public columns followed by one slot per non-public
-//! column in metadata order. Go's planner scans `WritableCols` for an UPDATE
+//! A write row holds each column at its Go `Offset` in `TableCommon.Columns`
+//! ([`TableCommon::deletable_columns`]); Go's DDL keeps the non-public columns
+//! after the public ones, so a public row is its prefix. Go's planner scans
+//! `WritableCols` for an UPDATE
 //! and `DeletableCols` for a DELETE; this tier's readers produce public rows,
 //! so the slots are filled here from the stored record, the same bytes Go's
 //! scan decodes. Skipping them lost a value another session (one schema
@@ -30,19 +32,22 @@ use std::sync::Arc;
 
 use tidb_datatype::{ConversionFlags, Datum, FieldType, FieldTypeCode, SessionTimeZone};
 
-use super::{TableCommon, KvTableError, NonPublicColumn, TableHandle};
+use super::{is_column_writable, TableCommon, KvTableError, TableHandle};
 use tidb_kv::storage::TableStorage;
 
 impl TableCommon {
-    /// Adds a column a DDL is adding, dropping or changing.
-    pub fn add_nonpublic_column(&mut self, column: NonPublicColumn) {
-        Arc::make_mut(&mut self.nonpublic_columns).push(column);
-    }
-
-    /// The columns only the write path sees.
-    #[must_use]
-    pub fn nonpublic_columns(&self) -> &[NonPublicColumn] {
-        &self.nonpublic_columns
+    /// Appends a column a DDL is adding, dropping or changing to a table
+    /// built from columns: its `ColumnInfo` carries the state (and, for a
+    /// MODIFY COLUMN's changing column, `ChangeStateInfo`), and both
+    /// `TableInfo.Columns` and [`Self::deletable_columns`] list it last, as
+    /// Go's DDL places it.
+    pub fn add_nonpublic_column(&mut self, column: crate::column::Column) {
+        debug_assert_ne!(column.read().state, tidb_model::SchemaState::PUBLIC);
+        let offset = self.columns.len();
+        column.info.write().offset = offset as i64;
+        let shared = column.info.clone();
+        self.update_meta_cloned(|meta| meta.columns.push_handle_go(Some(shared)));
+        self.columns_mut().push(column);
     }
 
     /// Records Go `ColumnInfo.ChangingFieldType` for the public column at
@@ -57,18 +62,6 @@ impl TableCommon {
         if !parts.is_empty() {
             self.changing_index_parts.insert(index_id, parts);
         }
-    }
-
-    /// The column a write row holds at `offset`: a public column, or past
-    /// them a non-public one.
-    #[must_use]
-    pub(crate) fn write_column(&self, offset: usize) -> Option<&crate::column::Column> {
-        self.columns.get(offset).or_else(|| {
-            offset
-                .checked_sub(self.columns.len())
-                .and_then(|position| self.nonpublic_columns.get(position))
-                .map(|column| &column.column)
-        })
     }
 
     /// Go `model.GetIdxChangingFieldType`: the type key part `position` of
@@ -90,7 +83,7 @@ impl TableCommon {
                 return Some(changing.clone());
             }
         }
-        self.write_column(offset).map(|column| column.read().field_type.clone())
+        self.columns.get(offset).map(|column| column.read().field_type.clone())
     }
 
     /// Go `index.castIndexValuesToChangingTypes`: a key part using its
@@ -213,31 +206,46 @@ impl TableCommon {
         flags: ConversionFlags,
         zone: &SessionTimeZone,
     ) -> Result<Option<Vec<Datum>>, KvTableError> {
-        if self.nonpublic_columns.is_empty() {
+        if !self.has_nonpublic_columns() {
             return Ok(None);
         }
-        let mut write_row = row[..row.len().min(self.columns.len())].to_vec();
-        write_row.resize(self.columns.len(), Datum::Null);
-        for column in self.nonpublic_columns.iter() {
-            let value = if !column.is_writable() {
+        let mut write_row = self.public_write_row(row);
+        for (offset, column) in self.nonpublic_columns_with_offsets() {
+            write_row[offset] = if !is_column_writable(column) {
                 Datum::Null
-            } else if let Some(dependency) = column.dependency {
+            } else if let Some(dependency) = dependency_column_offset(column) {
                 Self::cast_into_column(
                     row.get(dependency).cloned().unwrap_or(Datum::Null),
-                    &column.column,
+                    column,
                     ctx,
                     flags,
                     zone,
                 )?
             } else {
                 column
-                    .column
                     .origin_default_value(flags, zone)
                     .map_err(|error| KvTableError::Decode(error.to_string()))?
             };
-            write_row.push(value);
         }
         Ok(Some(write_row))
+    }
+
+    /// A write row over [`Self::deletable_columns`] holding `row`'s public
+    /// values; the non-public slots start NULL.
+    fn public_write_row(&self, row: &[Datum]) -> Vec<Datum> {
+        let public = self.public_columns.len();
+        let mut write_row = row[..row.len().min(public)].to_vec();
+        write_row.resize(self.columns.len(), Datum::Null);
+        write_row
+    }
+
+    /// The columns a DDL holds in a non-public state, with their offsets.
+    fn nonpublic_columns_with_offsets(&self) -> Vec<(usize, &crate::column::Column)> {
+        self.columns
+            .iter()
+            .enumerate()
+            .filter(|(_, column)| column.read().state != tidb_model::SchemaState::PUBLIC)
+            .collect()
     }
 
     /// What the stored record holds for each non-public column, as Go's
@@ -252,11 +260,16 @@ impl TableCommon {
         ctx: Option<&dyn tidb_tblctx::MutateContext>,
         flags: ConversionFlags,
         zone: &SessionTimeZone,
-    ) -> Result<Vec<Datum>, KvTableError> {
-        let types: BTreeMap<i64, FieldType> = self
-            .nonpublic_columns
+    ) -> Result<Vec<(usize, Datum)>, KvTableError> {
+        let columns = Arc::clone(&self.columns);
+        let nonpublic: Vec<(usize, &crate::column::Column)> = columns
             .iter()
-            .map(|column| (column.column.read().id, column.column.read().field_type.clone()))
+            .enumerate()
+            .filter(|(_, column)| column.read().state != tidb_model::SchemaState::PUBLIC)
+            .collect();
+        let types: BTreeMap<i64, FieldType> = nonpublic
+            .iter()
+            .map(|(_, column)| (column.read().id, column.read().field_type.clone()))
             .collect();
         let stored = match self.stored_record(store, handle)? {
             Some((_, entry)) => {
@@ -265,24 +278,25 @@ impl TableCommon {
             }
             None => BTreeMap::new(),
         };
-        let nonpublic = Arc::clone(&self.nonpublic_columns);
         nonpublic
-            .iter()
-            .map(|column| match stored.get(&column.column.read().id) {
-                Some(value) => Ok(value.clone()),
-                None => match column.dependency {
-                    Some(dependency) => Self::cast_into_column(
-                        old.get(dependency).cloned().unwrap_or(Datum::Null),
-                        &column.column,
-                        ctx,
-                        flags,
-                        zone,
-                    ),
-                    None => column
-                        .column
-                        .origin_default_value(flags, zone)
-                        .map_err(|error| KvTableError::Decode(error.to_string())),
-                },
+            .into_iter()
+            .map(|(offset, column)| {
+                let value = match stored.get(&column.read().id) {
+                    Some(value) => Ok(value.clone()),
+                    None => match dependency_column_offset(column) {
+                        Some(dependency) => Self::cast_into_column(
+                            old.get(dependency).cloned().unwrap_or(Datum::Null),
+                            column,
+                            ctx,
+                            flags,
+                            zone,
+                        ),
+                        None => column
+                            .origin_default_value(flags, zone)
+                            .map_err(|error| KvTableError::Decode(error.to_string())),
+                    },
+                };
+                value.map(|value| (offset, value))
             })
             .collect()
     }
@@ -301,24 +315,22 @@ impl TableCommon {
         new: &[Datum],
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<Option<(Vec<Datum>, Vec<Datum>)>, KvTableError> {
-        if self.nonpublic_columns.is_empty() {
+        if !self.has_nonpublic_columns() {
             return Ok(None);
         }
         let flags = ctx.write_conversion_flags();
         let zone = ctx.session_zone();
         let stored = self.stored_nonpublic_values(store, handle, old, Some(ctx), flags, &zone)?;
-        let public = self.columns.len();
-        let mut old_row = old[..old.len().min(public)].to_vec();
-        old_row.resize(public, Datum::Null);
-        let mut new_row = new[..new.len().min(public)].to_vec();
-        new_row.resize(public, Datum::Null);
-        let nonpublic = Arc::clone(&self.nonpublic_columns);
-        for (column, stored) in nonpublic.iter().zip(stored) {
-            let (old_value, new_value) = match (column.is_writable(), column.dependency) {
+        let mut old_row = self.public_write_row(old);
+        let mut new_row = self.public_write_row(new);
+        let columns = Arc::clone(&self.columns);
+        for (offset, stored) in stored {
+            let column = &columns[offset];
+            let (old_value, new_value) = match (is_column_writable(column), dependency_column_offset(column)) {
                 (false, Some(dependency)) => {
                     let value = Self::cast_into_column(
                         old.get(dependency).cloned().unwrap_or(Datum::Null),
-                        &column.column,
+                        column,
                         Some(ctx),
                         flags,
                         &zone,
@@ -330,7 +342,7 @@ impl TableCommon {
                     stored,
                     Self::cast_into_column(
                         new.get(dependency).cloned().unwrap_or(Datum::Null),
-                        &column.column,
+                        column,
                         Some(ctx),
                         flags,
                         &zone,
@@ -338,8 +350,8 @@ impl TableCommon {
                 ),
                 (true, None) => (stored.clone(), stored),
             };
-            old_row.push(old_value);
-            new_row.push(new_value);
+            old_row[offset] = old_value;
+            new_row[offset] = new_value;
         }
         Ok(Some((old_row, new_row)))
     }
@@ -353,23 +365,36 @@ impl TableCommon {
         old: &[Datum],
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<Option<Vec<Datum>>, KvTableError> {
-        if self.nonpublic_columns.is_empty() {
+        if !self.has_nonpublic_columns() {
             return Ok(None);
         }
         let zone = ctx.session_zone();
-        let stored = self.stored_nonpublic_values(store, 
+        let stored = self.stored_nonpublic_values(
+            store,
             handle,
             old,
             Some(ctx),
             ctx.write_conversion_flags(),
             &zone,
         )?;
-        let public = self.columns.len();
-        let mut row = old[..old.len().min(public)].to_vec();
-        row.resize(public, Datum::Null);
-        row.extend(stored);
+        let mut row = self.public_write_row(old);
+        for (offset, value) in stored {
+            row[offset] = value;
+        }
         Ok(Some(row))
     }
+}
+
+/// Go `ChangeStateInfo.DependencyColumnOffset`: for the temporary column a
+/// MODIFY COLUMN writes, the offset of the column whose value it casts.
+fn dependency_column_offset(column: &crate::column::Column) -> Option<usize> {
+    let column = column.read();
+    if column.state == tidb_model::SchemaState::PUBLIC {
+        return None;
+    }
+    let info = column.change_state_info.as_ref()?;
+    let offset = info.read().dependency_column_offset;
+    usize::try_from(offset).ok()
 }
 
 /// A value's text for the VARCHAR -> CHAR comparison (Go `GetString`).
@@ -378,16 +403,5 @@ fn datum_text(value: &Datum) -> Vec<u8> {
         Datum::String(text) => text.bytes().to_vec(),
         Datum::Bytes(bytes) => bytes.clone(),
         other => other.to_bytes().unwrap_or_default(),
-    }
-}
-
-#[cfg(any(test, feature = "test-util"))]
-impl TableCommon {
-    /// A copy sharing this table's storage, for state changes in tests.
-    pub fn clone_for_test_nonpublic(&self) -> TableCommon {
-        let mut copy =
-            TableCommon::new(self.table_id, self.columns.to_vec());
-        copy.nonpublic_columns = Arc::clone(&self.nonpublic_columns);
-        copy
     }
 }

@@ -4351,9 +4351,9 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                         exchange_validation_internal("the modified column is absent".to_owned())
                     })?;
                 let changing = table
-                    .nonpublic_columns()
+                    .deletable_columns()
                     .iter()
-                    .position(|column| column.column.read().id == spec.changing_column_id)
+                    .position(|column| column.read().id == spec.changing_column_id)
                     .ok_or_else(|| {
                         exchange_validation_internal("the changing column is absent".to_owned())
                     })?;

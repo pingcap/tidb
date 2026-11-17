@@ -96,19 +96,15 @@ impl TableCommon {
     /// Uses the expression package's own source-shaped memory accounting.
     pub fn cache_runtime_memory_usage(&self) -> usize {
         let mut bytes = size_of::<Self>() + 4 * (size_of::<Vec<usize>>() + 2 * size_of::<usize>());
-        bytes += vec_bytes(&self.columns) + self.columns.iter().map(column).sum::<usize>();
+        bytes += vec_bytes(&self.public_columns) + self.public_columns.iter().map(column).sum::<usize>();
         bytes += vec_bytes(&self.indexes)
             + self
                 .indexes
                 .iter()
                 .map(|v| vec_bytes(&v.column_offsets))
                 .sum::<usize>();
-        bytes += vec_bytes(&self.nonpublic_columns)
-            + self
-                .nonpublic_columns
-                .iter()
-                .map(|v| column(&v.column))
-                .sum::<usize>();
+        // Go `TableCommon.Columns`; `publicColumns` above is its cache.
+        bytes += vec_bytes(&self.columns) + self.columns.iter().map(column).sum::<usize>();
         bytes += vec_bytes(&self.nonpublic_indexes)
             + self
                 .nonpublic_indexes

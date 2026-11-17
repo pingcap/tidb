@@ -153,7 +153,7 @@ impl TableCommon {
     pub fn set_auto_increment_offset(&mut self, offset: usize) {
         self.auto_increment_offset = Some(offset);
         let unsigned = self
-            .columns
+            .public_columns
             .get(offset)
             .is_some_and(|column| column.read().field_type.is_unsigned());
         self.auto_id.set_unsigned(unsigned);
@@ -198,7 +198,7 @@ impl TableCommon {
         }
         let unsigned = self
             .auto_increment_offset
-            .and_then(|offset| self.columns.get(offset))
+            .and_then(|offset| self.public_columns.get(offset))
             .is_some_and(|column| column.read().field_type.is_unsigned());
         // Go wraps the allocator's `autoid.ErrAutoincReadFailed` into a plain
         // error through its `Error()` text, so the class prefix is part of the
@@ -223,7 +223,7 @@ impl TableCommon {
     #[must_use]
     fn auto_increment_column_name(&self) -> Option<String> {
         self.auto_increment_offset
-            .and_then(|offset| self.columns.get(offset))
+            .and_then(|offset| self.public_columns.get(offset))
             .map(|column| column.read().name.original().to_owned())
     }
 
@@ -256,7 +256,7 @@ impl TableCommon {
         }
         if let Some(spec) = self.auto_random {
             let column = self
-                .columns
+                .public_columns
                 .get(spec.offset)
                 .map(|column| column.read().name.original().to_owned())
                 .unwrap_or_default();
@@ -411,7 +411,7 @@ impl TableCommon {
             id as i64 as f64
         };
         row[offset] = match self
-            .columns
+            .public_columns
             .get(offset)
             .map(|column| column.read().field_type.code())
         {
@@ -455,7 +455,7 @@ impl TableCommon {
         let Some(offset) = self.auto_increment_offset else {
             return;
         };
-        let Some(column) = self.columns.get(offset) else {
+        let Some(column) = self.public_columns.get(offset) else {
             return;
         };
         let code = column.read().field_type.code();
@@ -467,7 +467,7 @@ impl TableCommon {
     }
 
     fn check_auto_increment_fits(&self, offset: usize, allocated: u64) -> Result<(), AutoIdError> {
-        let Some(column) = self.columns.get(offset) else {
+        let Some(column) = self.public_columns.get(offset) else {
             return Ok(());
         };
         let code = column.read().field_type.code();

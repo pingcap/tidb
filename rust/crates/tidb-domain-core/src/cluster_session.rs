@@ -548,10 +548,11 @@ use tidb_table::table_from_meta::kv_index;
                 ..TableInfo::default()
             };
             let loaded = cluster_table(&table, &AutoIdSource::Unavailable).unwrap();
-            let [nonpublic] = loaded.nonpublic_columns() else {
+            let [nonpublic] = &loaded.deletable_columns()[loaded.columns().len()..] else {
                 panic!("the {state:?} column is carried as non-public");
             };
-            assert!(nonpublic.column.generated.is_some());
+            assert_eq!(nonpublic.read().state, state);
+            assert!(nonpublic.generated.is_some());
         }
     }
 
