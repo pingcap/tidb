@@ -5,7 +5,9 @@
 //! `testdata/ingestctrl_conflict_records_go.jsonl` holds the `TableInfo`s
 //! Go's `ddl.MockTableInfo` builds (table ID 108) for the tests' two
 //! `CREATE TABLE` statements, printed by an uncommitted probe in a Go master
-//! worktree.
+//! worktree. Its third line is a `TIMESTAMP` unique index's table, printed
+//! by a probe with the index KV and Go's `GenIndexValueFromIndex` text
+//! under `time.Local` = Asia/Shanghai.
 
 use super::kv_encode::TableKVEncoder;
 use super::{ASTArgs, LoadDataController, Plan};
@@ -89,4 +91,22 @@ fn test_convert_to_err_found_conflict_records_other_error() {
     let (table, _) = build_table(0);
     let other = tidb_lightning_backend::Error::other("other error");
     assert!(tidb_ingestor_ingestctrl::duplicate::convert_to_err_found_conflict_records(&other, &table).is_none());
+}
+
+/// Go `GenIndexValueFromIndex` decodes a `TIMESTAMP` in `time.Local`: the
+/// stored UTC midnight reads as 08:00 in Asia/Shanghai.
+#[test]
+fn test_convert_to_err_found_conflict_records_timestamp_in_local_zone() {
+    // This test runs in its own process (nextest); chrono's `Local` reads TZ.
+    std::env::set_var("TZ", "Asia/Shanghai");
+    let json = include_str!("../../testdata/ingestctrl_conflict_records_go.jsonl").lines().nth(2).unwrap();
+    let meta = tidb_meta::value::parse_table_info(json.as_bytes(), 0).unwrap();
+    let table =
+        tidb_table::table_from_meta::table_from_meta(&meta, &tidb_table::table_from_meta::AutoIdSource::Unavailable).unwrap();
+    let key = hex::decode("74800000000000006c5f6980000000000000010419a5420000000000").unwrap();
+    let value = hex::decode("0000000000000003").unwrap();
+    assert_eq!(
+        convert(&key, &value, &table),
+        "[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table a, index name is 'a.key_t', unique key is '[2020-01-01 08:00:00]', primary key is '3'"
+    );
 }

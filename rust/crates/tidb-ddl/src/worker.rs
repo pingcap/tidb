@@ -4710,10 +4710,6 @@ fn backfill_failure(error: tidb_table::tables::KvTableError) -> LockSqlError {
 }
 
 
-/// Go `newReorgTableMutateContext(newReorgExprCtxWithReorgMeta(job.ReorgMeta))`:
-/// the table context a reorganization batch writes under, the job's SQL
-/// mode and location with no session.
-#[must_use]
 /// The table an ADD INDEX backfill writes through: the indexes being added
 /// as public ones and, outside a column rewrite, a MODIFY COLUMN's changing
 /// columns as ordinary ones.
@@ -4801,6 +4797,10 @@ impl crate::real_tikv_ddl::IngestChunkEncoder for KvTableIngestChunkEncoder {
     }
 }
 
+/// Go `newReorgTableMutateContext(newReorgExprCtxWithReorgMeta(job.ReorgMeta))`:
+/// the table context a reorganization batch writes under, the job's SQL
+/// mode and location with no session.
+#[must_use]
 fn reorg_table_mutate_context(
     vars: &tidb_ddl_build::session_pool::ReorgSessionVars,
 ) -> tidb_tblctx::StaticMutateContext {
