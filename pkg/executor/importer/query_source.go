@@ -173,6 +173,10 @@ func ParseImportQuery(sctx sessionctx.Context, sql string) (*ast.ImportIntoStmt,
 	if !ok {
 		return nil, nil, errors.New("import query requires a SELECT")
 	}
+	// Sequence functions are not captured as source tables by the planner.
+	if hasSequenceFunc(selectNode) {
+		return nil, nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("sequences in IMPORT INTO FROM SELECT")
+	}
 	return stmt, selectNode, nil
 }
 
@@ -181,17 +185,13 @@ func ParseImportQuery(sctx sessionctx.Context, sql string) (*ast.ImportIntoStmt,
 // runs another statement, since it takes the source tables that the planner
 // records in the statement context.
 func CaptureQuerySource(sctx sessionctx.Context, sql string) (*QuerySource, error) {
-	_, node, err := ParseImportQuery(sctx, sql)
+	_, _, err := ParseImportQuery(sctx, sql)
 	if err != nil {
 		return nil, err
 	}
 	vars := sctx.GetSessionVars()
 	if vars.StmtCtx.IsStaleness {
 		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("stale reads in IMPORT INTO FROM SELECT")
-	}
-	// The planner does not resolve the sequences of sequence functions.
-	if hasSequenceFunc(node) {
-		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("sequences in IMPORT INTO FROM SELECT")
 	}
 
 	txnManager := sessiontxn.GetTxnManager(sctx)

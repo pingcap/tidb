@@ -43,12 +43,9 @@ type QueryImportRequest struct {
 
 // BuildQueryImportPlan builds and checks an import plan without planning its SELECT.
 func BuildQueryImportPlan(ctx context.Context, sctx sessionctx.Context, req *QueryImportRequest) (*Plan, error) {
-	stmt, node, err := ParseImportQuery(sctx, req.SQL)
+	stmt, _, err := ParseImportQuery(sctx, req.SQL)
 	if err != nil {
 		return nil, err
-	}
-	if hasSequenceFunc(node) {
-		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("sequences in IMPORT INTO FROM SELECT")
 	}
 	options, err := resolveStmtOptions(sctx, stmt.Options)
 	if err != nil {
