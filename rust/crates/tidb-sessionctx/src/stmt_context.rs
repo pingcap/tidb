@@ -572,9 +572,6 @@ pub struct StmtContextSessionState {
     pub connection_collation: String,
     /// Captured `@@default_collation_for_utf8mb4`.
     pub default_collation_for_utf8mb4: String,
-    /// The session's privilege answer for the sequence builtins; `None` is an
-    /// unrestricted session.
-    pub sequence_privilege: Option<SequencePrivilegeCheck>,
     /// The session's dynamic-privilege answer (Go's `PrivilegeChecker`
     /// property); `None` is an unrestricted session.
     pub dynamic_privilege: Option<DynamicPrivilegeCheck>,
@@ -645,7 +642,6 @@ impl Default for StmtContextSessionState {
             connection_charset: "utf8mb4".to_owned(),
             connection_collation: "utf8mb4_bin".to_owned(),
             default_collation_for_utf8mb4: "utf8mb4_bin".to_owned(),
-            sequence_privilege: None,
             dynamic_privilege: None,
             view_definer_privilege: None,
             session_privilege: None,
@@ -661,11 +657,6 @@ impl Default for StmtContextSessionState {
         }
     }
 }
-
-/// Go `PrivilegeChecker.RequestVerification` as the sequence builtins ask it
-/// while evaluating: `(schema, sequence, insert)` answers whether the session
-/// holds INSERT (`insert`) or SELECT on the sequence.
-pub type SequencePrivilegeCheck = Arc<dyn Fn(&str, &str, bool) -> bool + Send + Sync>;
 
 /// Go `PrivilegeChecker.RequestDynamicVerification(privName, grantable)` as
 /// an extension function asks it while building and evaluating.
@@ -746,6 +737,7 @@ struct StmtSessionVars {
     in_insert_update_or_delete: bool,
     current_tso: CurrentTso,
     current_insert_values: Arc<Mutex<Option<Vec<Datum>>>>,
+    sequence_state: SequenceState,
 }
 
 /// Go `SessionVars.User` of a session that matched the account
@@ -837,6 +829,43 @@ impl tidb_expropt::SessionVars for StmtSessionVars {
         let values = self.current_insert_values.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let values = values.as_ref().filter(|values| !values.is_empty())?;
         Some((values.len(), values.get(offset).cloned()))
+    }
+
+    fn update_sequence_state(&self, sequence_id: i64, value: i64) {
+        self.sequence_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(sequence_id, value);
+    }
+
+    fn sequence_last_value(&self, sequence_id: i64) -> Option<i64> {
+        self.sequence_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&sequence_id).copied()
+    }
+}
+
+/// Go `sessionexpr`'s sequence operator: the sequence `database`.`name` of
+/// the statement's infoschema, read and advanced through the statement.
+struct StmtSequenceOperator {
+    ctx: StmtContext,
+    path: [String; 2],
+}
+
+impl tidb_expropt::SequenceOperator for StmtSequenceOperator {
+    fn get_sequence_id(&self) -> i64 {
+        self.ctx.resolve_sequence(&self.path).map_or(0, |sequence| sequence.get_sequence_id())
+    }
+
+    fn get_sequence_next_val(&self) -> Result<i64, tidb_expropt::ExprOptError> {
+        let sequence = self.ctx.resolve_sequence(&self.path).map_err(tidb_expropt::ExprOptError::from_eval)?;
+        let (database, name) = self.ctx.sequences().key(&self.path);
+        sequence
+            .get_sequence_next_val(&self.ctx, &database, &name)
+            .map_err(|error| tidb_expropt::ExprOptError::from_eval(sequence_error(error)))
+    }
+
+    fn set_sequence_val(&self, new_val: i64) -> Result<(i64, bool), tidb_expropt::ExprOptError> {
+        let sequence = self.ctx.resolve_sequence(&self.path).map_err(tidb_expropt::ExprOptError::from_eval)?;
+        let (database, name) = self.ctx.sequences().key(&self.path);
+        sequence
+            .set_sequence_val(&self.ctx, new_val, &database, &name)
+            .map_err(|error| tidb_expropt::ExprOptError::from_eval(sequence_error(error)))
     }
 }
 
@@ -1180,8 +1209,6 @@ pub struct StmtContextData {
     /// Go `SessionVars.DefaultCollationForUTF8MB4`: the collation a
     /// `_utf8mb4'...'` literal takes (`adjustUTF8MB4Collation`).
     default_collation_for_utf8mb4: String,
-    /// See [`StmtContextSessionState::sequence_privilege`].
-    sequence_privilege: Option<SequencePrivilegeCheck>,
     /// See [`StmtContextSessionState::dynamic_privilege`].
     dynamic_privilege: Option<DynamicPrivilegeCheck>,
     /// See [`StmtContextSessionState::view_definer_privilege`].
@@ -3470,7 +3497,6 @@ impl StmtContext {
             connection_charset: session.connection_charset,
             connection_collation: session.connection_collation,
             default_collation_for_utf8mb4: session.default_collation_for_utf8mb4,
-            sequence_privilege: session.sequence_privilege,
             dynamic_privilege: session.dynamic_privilege,
             view_definer_privilege: session.view_definer_privilege,
             session_privilege: session.session_privilege,
@@ -4980,31 +5006,6 @@ impl StmtContext {
         self.mdl_related_table.as_ref()
     }
 
-    fn check_sequence_privilege(
-        &self,
-        path: &[String],
-        insert: bool,
-    ) -> Result<(), tidb_exprctx::EvalError> {
-        let Some(check) = &self.sequence_privilege else {
-            return Ok(());
-        };
-        let Some((database, sequence)) = self.sequences().schema_and_name(path) else {
-            return Ok(());
-        };
-        if check(database, sequence, insert) {
-            return Ok(());
-        }
-        let (user, host) = self.authenticated_identity().unwrap_or(("", ""));
-        Err(tidb_exprctx::EvalError::Sequence(
-            tidb_exprctx::SequenceEvalError::AccessDenied {
-                privilege: if insert { "INSERT" } else { "SELECT" },
-                user: user.to_owned(),
-                host: host.to_owned(),
-                sequence: sequence.to_owned(),
-            },
-        ))
-    }
-
     /// The connection charset/collation used while building expressions.
     #[must_use]
     pub fn connection_charset_info(&self) -> (&str, &str) {
@@ -5088,9 +5089,6 @@ impl StmtContext {
         self
     }
 
-    /// Validates a sequence name without consuming or otherwise mutating its
-    /// allocator. Go resolves sequence builtins while building the expression
-    /// tree, before an executor can evaluate an earlier projection item.
     /// The sequences this statement reaches: none without an attached
     /// snapshot.
     fn sequences(&self) -> &dyn SequenceSchema {
@@ -5099,6 +5097,9 @@ impl StmtContext {
             .unwrap_or(&tidb_util::misc::NoSequences)
     }
 
+    /// Validates a sequence name without consuming or otherwise mutating its
+    /// allocator. Go resolves sequence builtins while building the expression
+    /// tree, before an executor can evaluate an earlier projection item.
     pub fn validate_sequence_path(&self, path: &[String]) -> Result<(), tidb_exprctx::EvalError> {
         self.resolve_sequence(path).map(|_| ())
     }
@@ -6677,6 +6678,7 @@ impl StmtContext {
             ),
             current_tso: self.current_tso.clone(),
             current_insert_values: Arc::clone(&self.current_insert_values),
+            sequence_state: Arc::clone(&self.sequence_state),
         }
     }
 
@@ -7548,6 +7550,16 @@ impl Columns for StmtContext {
             tidb_exprctx::OptionalEvalPropKey::AdvisoryLock => Some(Arc::new(tidb_expropt::AdvisoryLockPropProvider::new(
                 Arc::new(StmtAdvisoryLocks(self.advisory_locks.clone())),
             ))),
+            tidb_exprctx::OptionalEvalPropKey::SequenceOperator => {
+                let ctx = self.clone();
+                Some(Arc::new(tidb_expropt::SequenceOperatorProvider::new(move |db, name| {
+                    let path = [db.to_owned(), name.to_owned()];
+                    // Go `GetSequenceByName`: a missing sequence, or another
+                    // kind of object, fails here.
+                    ctx.resolve_sequence(&path).map_err(tidb_expropt::ExprOptError::from_eval)?;
+                    Ok(Arc::new(StmtSequenceOperator { ctx: ctx.clone(), path }) as Arc<dyn tidb_expropt::SequenceOperator>)
+                })))
+            }
             _ => self.optional_props.get(key),
         }
     }
@@ -7765,45 +7777,6 @@ impl Columns for StmtContext {
 
 
 
-    fn sequence_nextval(&self, path: &[String]) -> Result<Datum, tidb_exprctx::EvalError> {
-        let sequence = self.resolve_sequence(path)?;
-        self.check_sequence_privilege(path, true)?;
-        let (database, name) = self.sequences().key(path);
-        let value = sequence
-            .get_sequence_next_val(self, &database, &name)
-            .map_err(sequence_error)?;
-        // Go records the value in the SESSION's sequence state, which is what
-        // `LASTVAL` reads back.
-        self.sequence_state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(sequence.get_sequence_id(), value);
-        Ok(Datum::Int(value))
-    }
-
-    fn sequence_lastval(&self, path: &[String]) -> Result<Datum, tidb_exprctx::EvalError> {
-        let sequence = self.resolve_sequence(path)?;
-        self.check_sequence_privilege(path, false)?;
-        Ok(self
-            .sequence_state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&sequence.get_sequence_id())
-            .copied()
-            .map_or(Datum::Null, Datum::Int))
-    }
-
-    fn sequence_setval(&self, path: &[String], value: i64) -> Result<Datum, tidb_exprctx::EvalError> {
-        let sequence = self.resolve_sequence(path)?;
-        self.check_sequence_privilege(path, true)?;
-        // Go `SetSequenceVal`: the reported value is NULL when the stored
-        // counter was already at or past `value` (`alreadySatisfied`).
-        let (database, name) = self.sequences().key(path);
-        let (reported, already_satisfied) = sequence
-            .set_sequence_val(self, value, &database, &name)
-            .map_err(sequence_error)?;
-        Ok(if already_satisfied { Datum::Null } else { Datum::Int(reported) })
-    }
 }
 
 /// A sequence error as its producer raised it.

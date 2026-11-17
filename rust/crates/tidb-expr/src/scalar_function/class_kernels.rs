@@ -154,10 +154,24 @@ unary_values! {
     vec_from_text => |value, ctx| crate::builtin_ext::vec::from_text(value);
     /// Go `builtinLoadFileSig`: a server reads no client file.
     load_file => |value, ctx| { let _ = value; Ok(Datum::Null) };
-    /// Go `builtinNextValSig`: taken outside the statement's transaction.
-    nextval => |path, ctx| ctx.sequence_nextval(&crate::func::sequence_path(path)?);
-    /// Go `builtinLastValSig`.
-    lastval => |path, ctx| ctx.sequence_lastval(&crate::func::sequence_path(path)?);
+    /// Go `builtinNextValSig.evalInt`: taken outside the statement's
+    /// transaction; the session's sequence state records the value.
+    nextval => |path, ctx| {
+        let Some((sequence, vars)) = sequence_operator(path, ctx, tidb_mysql::InsertPriv, "INSERT")? else {
+            return Ok(Datum::Null);
+        };
+        let next_val = sequence.get_sequence_next_val().map_err(crate::builtin_ext::misc::opt_prop_error)?;
+        vars.update_sequence_state(sequence.get_sequence_id(), next_val);
+        Ok(Datum::Int(next_val))
+    };
+    /// Go `builtinLastValSig.evalInt`: NULL until this session's `NEXTVAL`
+    /// or `SETVAL` touched the sequence.
+    lastval => |path, ctx| {
+        let Some((sequence, vars)) = sequence_operator(path, ctx, tidb_mysql::SelectPriv, "SELECT")? else {
+            return Ok(Datum::Null);
+        };
+        Ok(vars.sequence_last_value(sequence.get_sequence_id()).map_or(Datum::Null, Datum::Int))
+    };
     /// Go `builtinGetParamStringSig.evalString`: the plan-cache parameter the
     /// integer selects, as a string; one `ToString` cannot render is NULL.
     getparam => |value, ctx| {
@@ -176,20 +190,63 @@ unary_values! {
     };
 }
 
-/// Go `builtinSetValSig.evalInt`: a NULL value is NULL before the sequence
-/// is touched.
+/// Go `builtinNextValSig` / `builtinLastValSig` / `builtinSetValSig`: the
+/// sequence `path` names (a bare name is in `ctx.CurrentDB()`), from
+/// `GetSequenceOperator`, once `RequestVerification` grants `privilege`
+/// (`name`, for the error) on it. `None` is a NULL name.
+#[allow(clippy::type_complexity)]
+fn sequence_operator(
+    path: &Datum,
+    ctx: &dyn Columns,
+    privilege: tidb_mysql::PrivilegeType,
+    name: &'static str,
+) -> Result<
+    Option<(std::sync::Arc<dyn tidb_expropt::SequenceOperator>, std::sync::Arc<dyn tidb_expropt::SessionVars>)>,
+    EvalError,
+> {
+    if path.is_null() {
+        return Ok(None);
+    }
+    let path = crate::func::sequence_path(path)?;
+    let (db, seq) = match path.as_slice() {
+        [seq] => (ctx.current_database().unwrap_or_default(), seq.clone()),
+        [leading @ .., seq] => (leading.join("."), seq.clone()),
+        [] => (String::new(), String::new()),
+    };
+    let opt_err = crate::builtin_ext::misc::opt_prop_error;
+    // Check the table name is valid.
+    let sequence = tidb_expropt::SequenceOperatorPropReader.get_sequence_operator(ctx, &db, &seq).map_err(opt_err)?;
+    let vars = session_vars(ctx)?;
+    let checker = tidb_expropt::PrivilegeCheckerPropReader.get_privilege_checker(ctx).map_err(opt_err)?;
+    if !checker.request_verification(&db, &seq, "", privilege) {
+        let user = vars.user().unwrap_or_default();
+        return Err(EvalError::Sequence(tidb_exprctx::SequenceEvalError::AccessDenied {
+            privilege: name,
+            user: user.auth_username.clone(),
+            host: user.auth_hostname.clone(),
+            sequence: seq,
+        }));
+    }
+    Ok(Some((sequence, vars)))
+}
+
+/// Go `builtinSetValSig.evalInt`: the sequence and the privilege are
+/// checked before the value; a NULL value is NULL and sets nothing.
 pub(crate) fn setval(values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [path, value] = values else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
-    let path = crate::func::sequence_path(path)?;
+    let Some((sequence, _)) = sequence_operator(path, ctx, tidb_mysql::InsertPriv, "INSERT")? else {
+        return Ok(Datum::Null);
+    };
     if value.is_null() {
         return Ok(Datum::Null);
     }
-    match value.as_int() {
-        Some(value) => ctx.sequence_setval(&path, value),
-        None => Err(EvalError::Unsupported("SETVAL needs an integer value")),
-    }
+    let Some(value) = value.as_int() else {
+        return Err(EvalError::Unsupported("SETVAL needs an integer value"));
+    };
+    let (set_value, is_null) = sequence.set_sequence_val(value).map_err(crate::builtin_ext::misc::opt_prop_error)?;
+    Ok(if is_null { Datum::Null } else { Datum::Int(set_value) })
 }
 
 /// Go `builtinTiDBDecodeSQLDigestsSig`.

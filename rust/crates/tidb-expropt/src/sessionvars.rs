@@ -93,6 +93,16 @@ pub trait SessionVars: Any + Send + Sync {
         let _ = offset;
         None
     }
+    /// Go `SessionVars.SequenceState.UpdateState(sequenceID, value)`.
+    fn update_sequence_state(&self, sequence_id: i64, value: i64) {
+        let _ = (sequence_id, value);
+    }
+    /// Go `SessionVars.SequenceState.GetLastValue(sequenceID)`: the value
+    /// `NEXTVAL` last returned in this session, if any.
+    fn sequence_last_value(&self, sequence_id: i64) -> Option<i64> {
+        let _ = sequence_id;
+        None
+    }
 }
 
 /// boundary: Go `pkg/sessionctx/variable.SessionVarsProvider` — anything that

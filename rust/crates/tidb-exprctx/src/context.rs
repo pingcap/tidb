@@ -278,7 +278,7 @@ pub enum SequenceEvalError {
     /// builtin's own `RequestVerification` refused INSERT or SELECT on the
     /// sequence.
     AccessDenied {
-        /// `INSERT` for `SETVAL`, `SELECT` for `NEXTVAL` / `LASTVAL`.
+        /// `INSERT` for `NEXTVAL` / `SETVAL`, `SELECT` for `LASTVAL`.
         privilege: &'static str,
         /// The authenticated user.
         user: String,
@@ -902,41 +902,6 @@ pub trait Columns {
     fn rand_seeded_next(&self, key: usize, seed: i64) -> Option<f64> {
         let _ = (key, seed);
         None
-    }
-
-    /// Go `sequenceOperator.GetSequenceNextVal`: consumes and returns the next
-    /// value of the sequence `path` names -- `[name]` or `[db, name]`, exactly
-    /// as the SQL spelled it, resolved against the session's current database.
-    ///
-    /// Consuming is NOT transactional: Go allocates in its own meta
-    /// transaction, so a rolled-back statement still spends the value
-    /// (captured). Nothing behind this method undoes it either.
-    ///
-    /// This is THE sequence seam, shared by both evaluators: the row path
-    /// (`eval_func`) hands over the parser's own path, and the chunk path
-    /// (the `nextval` signature) hands over the string constants the rewriter
-    /// substituted for the column reference. Keeping one method means a
-    /// `NEXTVAL` cannot behave differently depending on which evaluator ran.
-    fn sequence_nextval(&self, path: &[String]) -> Result<Datum, EvalError> {
-        let _ = path;
-        Err(EvalError::Unsupported("NEXTVAL requires a session"))
-    }
-
-    /// Go `sequenceOperator.GetSequenceLastVal`: the last value THIS SESSION
-    /// took from the sequence, or `Datum::Null` when it has taken none --
-    /// `LASTVAL` is session state, not the stored counter (captured: `lastval`
-    /// on a sequence this session has not read is `<nil>`).
-    fn sequence_lastval(&self, path: &[String]) -> Result<Datum, EvalError> {
-        let _ = path;
-        Err(EvalError::Unsupported("LASTVAL requires a session"))
-    }
-
-    /// Go `sequenceOperator.SetSequenceVal`: moves the sequence forward.
-    /// `Datum::Null` is Go's `alreadySatisfied` -- a sequence never moves
-    /// backwards, and reports NULL rather than an error when asked to.
-    fn sequence_setval(&self, path: &[String], value: i64) -> Result<Datum, EvalError> {
-        let _ = (path, value);
-        Err(EvalError::Unsupported("SETVAL requires a session"))
     }
 }
 

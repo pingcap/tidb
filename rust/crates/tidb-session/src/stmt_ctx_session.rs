@@ -537,10 +537,6 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::session_privilege_check(self)
     }
 
-    fn sequence_privilege_check(&self) -> Option<tidb_sessionctx::SequencePrivilegeCheck> {
-        Session::sequence_privilege_check(self)
-    }
-
     fn dynamic_privilege_check(&self) -> Option<tidb_sessionctx::DynamicPrivilegeCheck> {
         Session::dynamic_privilege_check(self)
     }

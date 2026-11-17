@@ -142,40 +142,6 @@ impl Session {
         )
     }
 
-    /// An owned [`Self::has_scoped_privilege`] for checks Go makes while
-    /// EVALUATING an expression (`NEXTVAL`/`LASTVAL`/`SETVAL` ask
-    /// `RequestVerification` from the builtin), which run with the session
-    /// out of reach. `None` is an unrestricted session.
-    #[must_use]
-    pub(crate) fn sequence_privilege_check(&self) -> Option<tidb_sessionctx::SequencePrivilegeCheck> {
-        let (registry, user, host) = self.privilege_context()?;
-        let registry = registry.clone();
-        let (user, host) = (user.to_owned(), host.to_owned());
-        let roles = self.active_roles().to_vec();
-        let access_checks = self.extension_access_check_funcs.clone();
-        let auth_plugin = self.auth_plugin_verification.clone();
-        Some(Arc::new(
-            move |database: &str, sequence: &str, insert: bool| {
-                let global_priv = if insert {
-                    tidb_mysql::InsertPriv
-                } else {
-                    tidb_mysql::SelectPriv
-                };
-                scoped_privilege(
-                    &registry,
-                    &user,
-                    &host,
-                    &access_checks,
-                    auth_plugin.as_ref(),
-                    &roles,
-                    database,
-                    sequence,
-                    global_priv,
-                )
-            },
-        ))
-    }
-
     /// An owned [`Self::has_dynamic_privilege`] for the checks Go makes while
     /// building and evaluating an extension function. `None` is an
     /// unrestricted session.
