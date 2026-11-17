@@ -201,14 +201,14 @@ func CaptureQuerySource(sctx sessionctx.Context, sql string) (*QuerySource, erro
 	ids := slices.Sorted(maps.Keys(vars.StmtCtx.RelatedTableIDs))
 	tables := make([]SourceTable, 0, len(ids))
 	for _, id := range ids {
-		if err := checkQuerySourceTableID(id); err != nil {
-			return nil, err
+		if autoid.IsMemSchemaID(id) {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("virtual source tables in IMPORT INTO FROM SELECT")
 		}
 		tbl, ok := is.TableByID(context.Background(), id)
 		if !ok {
 			return nil, errors.Errorf("source table %d not found in the info schema", id)
 		}
-		if err := checkQuerySourceTableInfo(tbl.Meta()); err != nil {
+		if err := checkSourceTable(tbl.Meta()); err != nil {
 			return nil, err
 		}
 		tblInfo := tbl.Meta()
@@ -228,17 +228,15 @@ func CaptureQuerySource(sctx sessionctx.Context, sql string) (*QuerySource, erro
 }
 
 // newQuerySourceAtSnapshot captures a query source without planning it. The
-// caller supplies the source tables, which must be all the tables the SELECT
-// reads, including views and their dependencies; this helper does not expand
-// views. Their definitions are read at readTS. Reading them from the same
+// source table definitions are read at readTS. Reading them from the same
 // snapshot as the data means a lagging info schema cannot make a worker reject
 // the source as changed.
 func newQuerySourceAtSnapshot(
 	ctx context.Context, sctx sessionctx.Context, readTS uint64, dbID int64, tableIDs []int64,
 ) (*QuerySource, error) {
 	for _, id := range tableIDs {
-		if err := checkQuerySourceTableID(id); err != nil {
-			return nil, err
+		if autoid.IsMemSchemaID(id) {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("virtual source tables in IMPORT INTO FROM SELECT")
 		}
 	}
 	snapshot := sctx.GetStore().GetSnapshot(tidbkv.NewVersion(readTS))
@@ -257,7 +255,7 @@ func newQuerySourceAtSnapshot(
 		if tblInfo == nil {
 			return nil, errors.Errorf("source table %d not found at the import query snapshot", id)
 		}
-		if err := checkQuerySourceTableInfo(tblInfo); err != nil {
+		if err := checkSourceTable(tblInfo); err != nil {
 			return nil, err
 		}
 		tables = append(tables, SourceTable{DBID: dbID, ID: id, Revision: tblInfo.Revision})
@@ -321,16 +319,7 @@ func storeQueryStates(sctx sessionctx.Context) (*sessionstates.SessionStates, er
 	return states, nil
 }
 
-// checkQuerySourceTableID rejects memory system tables, including cluster tables,
-// whose runtime data cannot be reconstructed at the import snapshot.
-func checkQuerySourceTableID(id int64) error {
-	if autoid.IsMemSchemaID(id) {
-		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("virtual source tables in IMPORT INTO FROM SELECT")
-	}
-	return nil
-}
-
-func checkQuerySourceTableInfo(tblInfo *model.TableInfo) error {
+func checkSourceTable(tblInfo *model.TableInfo) error {
 	var kind string
 	switch {
 	case tblInfo.TempTableType != model.TempTableNone:
