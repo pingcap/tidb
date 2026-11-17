@@ -19,12 +19,31 @@ import (
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
+// TestReportMPPTaskStatusWithoutMeta guards the case of a ReportTaskStatusRequest
+// whose `meta` field is unset. It unmarshals to a nil req.Meta, which used to
+// panic inside MPPCoordinatorManager.ReportStatus and crash the whole TiDB
+// process. The handler now rejects it with InvalidArgument instead.
+func TestReportMPPTaskStatusWithoutMeta(t *testing.T) {
+	s := &rpcServer{}
+
+	resp, err := s.ReportMPPTaskStatus(context.Background(), &mpp.ReportTaskStatusRequest{})
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+
+	// A nil request is rejected the same way instead of panicking.
+	resp, err = s.ReportMPPTaskStatus(context.Background(), nil)
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+}
 func TestUnsupportedTiKVRPC(t *testing.T) {
 	var srv tikvpb.TikvServer = &rpcServer{}
 	ctx := context.Background()
