@@ -1373,6 +1373,12 @@ func (d Duration) Sub(v Duration) (Duration, error) {
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
 func (d Duration) DurationFormat(layout string) (string, error) {
 	var buf bytes.Buffer
+	// MySQL writes a single '-' at the start of the result for a negative TIME,
+	// the same way Duration.String does. The specifiers below format the
+	// absolute value.
+	if d.Duration < 0 {
+		buf.WriteByte('-')
+	}
 	inPatternMatch := false
 	for _, b := range layout {
 		if inPatternMatch {

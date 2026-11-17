@@ -3448,6 +3448,13 @@ func TestTimeBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("01:00:00 AM"))
 	result = tk.MustQuery("SELECT TIME_FORMAT('24:00:00', '%l %p');")
 	result.Check(testkit.Rows("12 AM"))
+	// issue:73298
+	tk.MustQuery("SELECT TIME_FORMAT('-01:02:03', '%H:%i:%s'), TIME_FORMAT('-01:02:03', '%T'), CAST(TIME '-01:02:03' AS CHAR);").
+		Check(testkit.Rows("-01:02:03 -01:02:03 -01:02:03"))
+	tk.MustQuery("SELECT TIME_FORMAT(TIMEDIFF('2026-01-01 00:00:00', '2026-01-01 01:30:00'), '%H:%i');").
+		Check(testkit.Rows("-01:30"))
+	tk.MustQuery("SELECT TIME_FORMAT(SEC_TO_TIME(-5025), '%H:%i:%s'), TIME_FORMAT(-1, '%H|%T');").
+		Check(testkit.Rows("-01:23:45 -00|00:00:01"))
 
 	// for date_format
 	result = tk.MustQuery(`SELECT DATE_FORMAT('2017-06-15', '%W %M %e %Y %r %y');`)

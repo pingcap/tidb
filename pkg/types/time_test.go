@@ -1057,6 +1057,30 @@ func TestDurationClock(t *testing.T) {
 	}
 }
 
+func TestDurationFormatNegative(t *testing.T) {
+	// issue:73298, MySQL writes one '-' at the start for a negative TIME.
+	tbl := []struct {
+		Input  string
+		Layout string
+		Expect string
+	}{
+		{"-01:02:03", "%H:%i:%s", "-01:02:03"},
+		{"-01:02:03", "%T", "-01:02:03"},
+		{"-01:02:03", "x%H", "-x01"},
+		{"-01:02:03.000004", "%H %f", "-01 000004"},
+		{"-00:00:01", "%H|%T", "-00|00:00:01"},
+		{"01:02:03", "%H:%i:%s", "01:02:03"},
+		{"00:00:00", "%T", "00:00:00"},
+	}
+	for _, tt := range tbl {
+		d, _, err := types.ParseDuration(types.DefaultStmtNoWarningContext, tt.Input, types.MaxFsp)
+		require.NoError(t, err)
+		res, err := d.DurationFormat(tt.Layout)
+		require.NoError(t, err)
+		require.Equal(t, tt.Expect, res, "input %s, layout %s", tt.Input, tt.Layout)
+	}
+}
+
 func TestParseDateFormat(t *testing.T) {
 	tbl := []struct {
 		Input  string
