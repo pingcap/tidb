@@ -1,0 +1,19 @@
+[package]
+name = "tidb-go-url"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go net/url parsing, escaping and query values, for ports of Go code that reads storage URLs (Rust rewrite)."
+
+[dependencies]
+tidb-go-strconv = { path = "../tidb-go-strconv" }
+
+[dev-dependencies]
+hex = "0.4"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

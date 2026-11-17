@@ -95,6 +95,11 @@ pub struct BackupMeta {
     /// 0 means the backup was created before this field existed.
     #[prost(uint32, tag = "26")]
     pub backup_schema_version: u32,
+    /// Canonical restore rename-rule fingerprint associated with a persisted
+    /// PiTR ID map. Empty means the ID map was created without rename rules or by
+    /// a BR version that predates restore rename support.
+    #[prost(string, tag = "27")]
+    pub pitr_id_map_route_fingerprint: ::prost::alloc::string::String,
     /// If in raw kv mode, `start_versions`, `end_versions` and `schemas` will be
     /// ignored, and the backup data's range is represented by raw_ranges.
     #[prost(bool, tag = "8")]
@@ -419,6 +424,24 @@ impl ::prost::Name for IdMap {
     }
 }
 #[allow(clippy::all)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PitrForeignKeyReference {
+    #[prost(string, tag = "1")]
+    pub schema: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub table: ::prost::alloc::string::String,
+}
+impl ::prost::Name for PitrForeignKeyReference {
+    const NAME: &'static str = "PitrForeignKeyReference";
+    const PACKAGE: &'static str = "backup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "backup.PitrForeignKeyReference".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/backup.PitrForeignKeyReference".into()
+    }
+}
+#[allow(clippy::all)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PitrTableMap {
     #[prost(string, tag = "1")]
@@ -430,6 +453,19 @@ pub struct PitrTableMap {
     /// whether this table has been filtered out
     #[prost(bool, tag = "4")]
     pub filtered_out: bool,
+    /// The downstream database identity used when a table is restored to a
+    /// different database than its parent PitrDBMap. Zero/empty values inherit
+    /// the downstream database identity from the parent map.
+    #[prost(int64, tag = "5")]
+    pub downstream_db_id: i64,
+    #[prost(string, tag = "6")]
+    pub downstream_db_name: ::prost::alloc::string::String,
+    #[prost(bool, tag = "7")]
+    pub has_foreign_keys: bool,
+    #[prost(bool, tag = "8")]
+    pub is_view: bool,
+    #[prost(message, repeated, tag = "9")]
+    pub foreign_key_references: ::prost::alloc::vec::Vec<PitrForeignKeyReference>,
 }
 impl ::prost::Name for PitrTableMap {
     const NAME: &'static str = "PitrTableMap";
@@ -457,6 +493,17 @@ pub struct PitrDbMap {
     /// skip restoring the metakv of database in log restore if it is true
     #[prost(bool, tag = "5")]
     pub reused: bool,
+    /// whether an explicit schema-level rename rule matched this source schema, so
+    /// the target schema is restored even when all of its tables are routed to
+    /// another target schema
+    #[prost(bool, tag = "6")]
+    pub schema_routed: bool,
+    /// The upstream source schema name bound to this upstream schema ID. `name`
+    /// holds the effective downstream name once a schema-level route is applied, so
+    /// the source name is persisted separately to keep route resolution stable
+    /// across a log-only restore or a checkpoint resume.
+    #[prost(string, tag = "7")]
+    pub source_name: ::prost::alloc::string::String,
 }
 impl ::prost::Name for PitrDbMap {
     const NAME: &'static str = "PitrDBMap";
@@ -841,6 +888,10 @@ pub struct S3 {
     pub provider: ::prost::alloc::string::String,
     #[prost(string, tag = "17")]
     pub profile: ::prost::alloc::string::String,
+    /// Base64-encoded UTF-8 JSON encryption context for SSE-KMS. Writers pass this
+    /// value through without encoding it again. Empty preserves existing behavior.
+    #[prost(string, tag = "18")]
+    pub sse_kms_encryption_context: ::prost::alloc::string::String,
 }
 impl ::prost::Name for S3 {
     const NAME: &'static str = "S3";

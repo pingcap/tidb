@@ -22,7 +22,8 @@ use tidb_dxf_execute::SubtaskSummary;
 use tidb_dxf_storage::{Result, SessionExecutor, SubtaskError};
 
 /// Go `TaskManager`: the task table as the scheduler reaches it.
-pub trait TaskManager: SessionExecutor {
+/// Like Go's, it embeds `storage.TaskCleanupInfoGetter`.
+pub trait TaskManager: SessionExecutor + tidb_dxf_storage::TaskCleanupInfoGetter {
     /// Go `GetTopUnfinishedTasks`: unfinished tasks in task order, limited
     /// to make sure tasks of low ranking can be scheduled when resources
     /// allow.
@@ -494,6 +495,27 @@ pub trait Cleaner: Send + Sync {
     fn as_batch_cleaner(&self) -> Option<&dyn BatchCleaner> {
         None
     }
+
+    /// Go's `cleaner.(ExpiredFileCleaner)` assertion.
+    fn as_expired_file_cleaner(&self) -> Option<&dyn ExpiredFileCleaner> {
+        None
+    }
+}
+
+/// Go `ExpiredFileCleaner`: an owner-side cleanup of expired files, on top
+/// of a [`Cleaner`]. It must honor `ctx` promptly: `Manager::stop` waits for
+/// a running call once ownership is lost.
+pub trait ExpiredFileCleaner: Cleaner {
+    /// Go `CleanExpiredFiles`.
+    ///
+    /// # Errors
+    /// The cleanup failed.
+    fn clean_expired_files(
+        &self,
+        ctx: &tidb_gocontext::Context,
+        task_info_getter: &dyn tidb_dxf_storage::TaskCleanupInfoGetter,
+        cloud_storage_uri: &str,
+    ) -> std::result::Result<(), Error>;
 }
 
 /// Go `BatchCleaner`: a cleaner the scheduler calls once per pass with a
@@ -585,6 +607,15 @@ pub fn register_cleaner_factory(task_type: tidb_dxf::TaskType, ctor: CleanerFact
 /// Go `getCleanerFactory`.
 pub(crate) fn get_cleaner_factory(task_type: &tidb_dxf::TaskType) -> Option<CleanerFactoryFn> {
     CLEANER_FACTORY_MAP.read().unwrap_or_else(std::sync::PoisonError::into_inner).get(task_type).cloned()
+}
+
+/// Go `getCleanerFactories`: every registered factory with its task type,
+/// in task type order.
+pub(crate) fn get_cleaner_factories() -> Vec<(tidb_dxf::TaskType, CleanerFactoryFn)> {
+    let map = CLEANER_FACTORY_MAP.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut factories: Vec<_> = map.iter().map(|(tp, f)| (tp.clone(), std::sync::Arc::clone(f))).collect();
+    factories.sort_by_key(|f| f.0.to_string());
+    factories
 }
 
 /// Go `ClearCleanerFactory`: only used in test.

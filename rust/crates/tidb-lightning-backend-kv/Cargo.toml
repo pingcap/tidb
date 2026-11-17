@@ -1,0 +1,36 @@
+[package]
+name = "tidb-lightning-backend-kv"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/lightning/backend/kv: Lightning's row-to-KV encoder over the table layer, as IMPORT INTO's physical import uses it (Rust rewrite)."
+
+[dependencies]
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-go-rand = { path = "../tidb-go-rand" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-lightning-backend-encode = { path = "../tidb-lightning-backend-encode" }
+tidb-lightning-common = { path = "../tidb-lightning-common" }
+tidb-lightning-verification = { path = "../tidb-lightning-verification" }
+tidb-model = { path = "../tidb-model" }
+tidb-table = { path = "../tidb-table" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-tblctx = { path = "../tidb-tblctx" }
+tidb-terror = { path = "../tidb-terror" }
+tidb-timeutil = { path = "../tidb-timeutil" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-vardef = { path = "../tidb-vardef" }
+
+[dev-dependencies]
+hex = "0.4"
+serde_json = { workspace = true }
+tidb-meta = { path = "../tidb-meta" }
+tidb-mysql = { path = "../tidb-mysql" }
+
+[lints]
+workspace = true

@@ -30,7 +30,11 @@ tidb-proto = { path = "../tidb-proto" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-failpoint = { path = "../tidb-failpoint" }
 tidb-ingestor-errdef = { path = "../tidb-ingestor-errdef" }
+tidb-ingestor-engineapi = { path = "../tidb-ingestor-engineapi" }
+tidb-ingestor-globalsort = { path = "../tidb-ingestor-globalsort" }
+tidb-ingestor-simplesst = { path = "../tidb-ingestor-simplesst" }
 tidb-terror = { path = "../tidb-terror" }
+hex = "0.4"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
@@ -44,7 +48,9 @@ tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-br = { path = "../tidb-br" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-lightning-backend = { path = "../tidb-lightning-backend" }
 
 [dev-dependencies]
 tempfile.workspace = true
+tidb-objstore = { path = "../tidb-objstore" }
 tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }

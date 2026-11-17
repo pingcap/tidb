@@ -1,0 +1,18 @@
+[package]
+name = "tidb-ingestor-engineapi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/ingestor/engineapi: what the local and external engines share"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+tidb-gocontext = { path = "../tidb-gocontext" }
+
+[dev-dependencies]
+serde_json.workspace = true

@@ -65,6 +65,37 @@ pub struct StaticMutateContext {
     clock: Option<Arc<OnceLock<(i64, u32, i32)>>>,
     /// Go `collate.NewCollationEnabled()`.
     new_collation_enabled: bool,
+    /// Go `litExprContext`'s settings when this is Lightning's context.
+    import: Option<Arc<ImportSettings>>,
+}
+
+/// What Lightning's `newLitExprContext` / `newLitTableMutateContext` set
+/// beyond a default static context.
+struct ImportSettings {
+    /// Go `errLevels[errctx.ErrGroupBadNull]`.
+    bad_null: ErrorLevel,
+    /// Go `RowEncodingConfig` from the session variables.
+    row_encoding: crate::RowEncodingConfig,
+    /// Go `div_precision_increment`.
+    div_precision_increment: u32,
+    /// Go `default_week_format`.
+    default_week_format: i64,
+    /// Go `variable.UserVars`, the variables IMPORT INTO's SET reads.
+    user_vars: Mutex<std::collections::HashMap<String, Datum>>,
+}
+
+/// The system variables Go's `LoadSystemVars` gives Lightning's
+/// expression and table contexts, already validated.
+#[derive(Clone, Debug)]
+pub struct ImportSessionVars {
+    /// `time_zone`, as Go's location.
+    pub zone: SessionTimeZone,
+    /// `tidb_row_format_version` and `tidb_enable_row_level_checksum`.
+    pub row_encoding: crate::RowEncodingConfig,
+    /// `div_precision_increment`.
+    pub div_precision_increment: u32,
+    /// `default_week_format`.
+    pub default_week_format: i64,
 }
 
 impl StaticMutateContext {
@@ -84,7 +115,79 @@ impl StaticMutateContext {
             zone: SessionTimeZone::utc(),
             clock: None,
             new_collation_enabled: tidb_datatype::new_collation_enabled(),
+            import: None,
         }
+    }
+
+    /// Go Lightning's `newLitExprContext(sqlMode, sysVars, timestamp)` with
+    /// `newLitTableMutateContext`: `GetTypeFlagsForImportInto`'s flags, the
+    /// truncate / bad-null / no-default / zero-division levels of the SQL
+    /// mode, the session variables' location, and a clock fixed at
+    /// `timestamp` when it is positive (else the wall clock).
+    #[must_use]
+    pub fn for_import_into(sql_mode: i64, vars: &ImportSessionVars, timestamp: i64) -> Self {
+        let mode = tidb_mysql::SqlMode(sql_mode);
+        let strict = mode.has_strict_mode();
+        let level = |is_warn: bool| if is_warn { ErrorLevel::Warn } else { ErrorLevel::Error };
+        let clock = Arc::new(OnceLock::new());
+        if timestamp > 0 {
+            #[expect(clippy::cast_precision_loss, reason = "Go time.Unix(timestamp, 0)")]
+            let _ = clock.set(resolve_statement_clock(Some(timestamp as f64), &vars.zone));
+        }
+        Self {
+            sql_mode: mode,
+            strict,
+            truncate: level(!strict),
+            division_by_zero: if mode.has_error_for_division_by_zero_mode() {
+                level(!strict)
+            } else {
+                ErrorLevel::Ignore
+            },
+            date_modes: DateModes {
+                no_zero_date: mode.has_no_zero_date_mode(),
+                no_zero_in_date: mode.has_no_zero_in_date_mode(),
+                allow_invalid_dates: mode.has_allow_invalid_dates_mode(),
+            },
+            zone: vars.zone.clone(),
+            clock: Some(clock),
+            import: Some(Arc::new(ImportSettings {
+                bad_null: level(!strict),
+                row_encoding: vars.row_encoding,
+                div_precision_increment: vars.div_precision_increment,
+                default_week_format: vars.default_week_format,
+                user_vars: Mutex::default(),
+            })),
+            ..Self::new()
+        }
+    }
+
+    /// Go `litExprContext.setUserVarVal`.
+    pub fn set_user_var_val(&self, name: &str, value: Datum) {
+        if let Some(import) = &self.import {
+            import
+                .user_vars
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(tidb_mysql::to_lowercase(name), value);
+        }
+    }
+
+    /// Go `litExprContext.unsetUserVar`.
+    pub fn unset_user_var(&self, name: &str) {
+        if let Some(import) = &self.import {
+            import
+                .user_vars
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&tidb_mysql::to_lowercase(name));
+        }
+    }
+
+    /// Go `litExprContext.setNewCollationEnabled`.
+    #[must_use]
+    pub fn with_new_collation(mut self, enabled: bool) -> Self {
+        self.new_collation_enabled = enabled;
+        self
     }
 
     /// Go `newReorgTableMutateContext(newReorgExprCtxWithReorgMeta(meta))`:
@@ -223,6 +326,9 @@ impl Columns for StaticMutateContext {
         if self.reorg {
             return self.reorg_type_flags_with_sql_mode();
         }
+        if self.import.is_some() {
+            return MutateContext::write_conversion_flags(self);
+        }
         ConversionFlags::default()
             .with_ignore_zero_date_err(true)
             .with_ignore_truncate_err(self.truncate == ErrorLevel::Ignore)
@@ -267,6 +373,28 @@ impl Columns for StaticMutateContext {
 
     fn date_modes(&self) -> DateModes {
         self.date_modes
+    }
+
+    fn bad_null_level(&self) -> ErrorLevel {
+        self.import.as_ref().map_or(ErrorLevel::Error, |import| import.bad_null)
+    }
+
+    fn div_precision_increment(&self) -> u32 {
+        self.import.as_ref().map_or(4, |import| import.div_precision_increment)
+    }
+
+    fn default_week_format(&self) -> i64 {
+        self.import.as_ref().map_or(0, |import| import.default_week_format)
+    }
+
+    fn get_uservar(&self, name: &str) -> Option<Datum> {
+        let import = self.import.as_ref()?;
+        import
+            .user_vars
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&tidb_mysql::to_lowercase(name))
+            .cloned()
     }
 }
 
@@ -350,7 +478,9 @@ impl MutateContext for StaticMutateContext {
     }
 
     fn row_encoding_config(&self) -> crate::RowEncodingConfig {
-        crate::RowEncodingConfig::default()
+        self.import
+            .as_ref()
+            .map_or_else(crate::RowEncodingConfig::default, |import| import.row_encoding)
     }
 
     fn statement_memory(&self) -> StatementMemory {

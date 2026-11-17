@@ -5,10 +5,15 @@ use crate::{Error, Result, engine::Engine, local::BackendConfig};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+/// Go `engineManager.externalEngine`'s values; an engine is locked while it
+/// is imported.
+pub type ExternalEngine = Arc<Mutex<Box<dyn tidb_ingestor_engineapi::Engine>>>;
+
 /// Go `engineManager`.
 pub struct EngineManager {
     cfg: BackendConfig,
     engines: Mutex<HashMap<[u8; 16], Arc<Engine>>>,
+    external_engines: Mutex<HashMap<[u8; 16], ExternalEngine>>,
 }
 impl EngineManager {
     /// Go `newEngineManager`.
@@ -17,6 +22,7 @@ impl EngineManager {
         Ok(Self {
             cfg,
             engines: Mutex::new(HashMap::new()),
+            external_engines: Mutex::new(HashMap::new()),
         })
     }
     /// Go `engineManager.openEngine`.
@@ -75,6 +81,54 @@ impl EngineManager {
         }
         self.open_engine(id, 0)?.finish_write()
     }
+    /// Go `engineManager.closeEngine`'s external branch: a global-sort engine
+    /// over the sorted files, committed at `ts`.
+    pub fn close_external_engine(
+        &self,
+        id: [u8; 16],
+        cfg: &tidb_lightning_backend::ExternalEngineConfig,
+        ts: u64,
+    ) {
+        let engine = tidb_ingestor_globalsort::Engine::new(
+            tidb_ingestor_globalsort::EngineConfig {
+                ext_store: Arc::clone(&cfg.ext_store),
+                data_files: cfg.data_files.clone(),
+                stat_files: cfg.stat_files.clone(),
+                start_key: cfg.start_key.clone(),
+                end_key: cfg.end_key.clone(),
+                job_keys: cfg.job_keys.clone(),
+                split_keys: cfg.split_keys.clone(),
+                total_file_size: cfg.total_file_size,
+                total_kv_count: cfg.total_kv_count,
+                check_hotspot: cfg.check_hotspot,
+                mem_capacity: cfg.mem_capacity,
+                on_dup: cfg.on_dup,
+                file_prefix: cfg.file_prefix.clone(),
+            },
+            self.cfg.worker_concurrency,
+            ts,
+        );
+        self.external_engines
+            .lock()
+            .unwrap()
+            .insert(id, Arc::new(Mutex::new(Box::new(engine))));
+    }
+    /// Go `engineManager.getExternalEngine`.
+    pub fn get_external_engine(&self, id: [u8; 16]) -> Option<ExternalEngine> {
+        self.external_engines.lock().unwrap().get(&id).cloned()
+    }
+    /// Go `engineManager.getExternalEngineKVStatistics`: the imported size
+    /// and count.
+    pub fn get_external_engine_kv_statistics(&self, id: [u8; 16]) -> (i64, i64) {
+        self.get_external_engine(id)
+            .map_or((0, 0), |engine| engine.lock().unwrap().imported_statistics())
+    }
+    /// Go `engineManager.getExternalEngineConflictInfo`.
+    pub fn get_external_engine_conflict_info(&self, id: [u8; 16]) -> tidb_ingestor_engineapi::ConflictInfo {
+        self.get_external_engine(id)
+            .map(|engine| engine.lock().unwrap().conflict_info())
+            .unwrap_or_default()
+    }
     /// Go `engineManager.getImportedKVCount`.
     pub fn get_imported_kv_count(&self, id: [u8; 16]) -> u64 {
         self.engine(id)
@@ -97,10 +151,17 @@ impl EngineManager {
     /// Go `engineManager.cleanupEngine`: remove the map entry even on close failure.
     pub fn cleanup_engine(&self, id: [u8; 16]) -> Result<()> {
         let engine = self.engines.lock().unwrap().remove(&id);
-        if let Some(engine) = engine {
-            engine.cleanup()?;
-        }
-        Ok(())
+        let Some(engine) = engine else {
+            if let Some(external) = self.external_engines.lock().unwrap().remove(&id) {
+                return external.lock().unwrap().close().map_err(crate::region_job::engine_error);
+            }
+            tidb_log::warn(
+                "could not find engine in cleanupEngine",
+                &[tidb_log::Field::new("uuid", tidb_log::Value::Str(uuid::Uuid::from_bytes(id).to_string()))],
+            );
+            return Ok(());
+        };
+        engine.cleanup()
     }
     /// Go `engineManager.cleanupAllLocalEngines`, returning diagnostics to the
     /// backend logger while continuing cleanup after a finish-write failure.
@@ -158,6 +219,17 @@ impl EngineManager {
     }
     /// Go `engineManager.close`: retain checkpoint data, otherwise remove engines.
     pub fn close(&self) -> Result<()> {
+        for (id, external) in std::mem::take(&mut *self.external_engines.lock().unwrap()) {
+            if let Err(error) = external.lock().unwrap().close() {
+                tidb_log::warn(
+                    "close external engine failed",
+                    &[
+                        tidb_log::Field::new("id", tidb_log::Value::Str(uuid::Uuid::from_bytes(id).to_string())),
+                        tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+                    ],
+                );
+            }
+        }
         let engines = std::mem::take(&mut *self.engines.lock().unwrap());
         let mut first_error = None;
         for engine in engines.values() {
@@ -207,7 +279,8 @@ mod tests {
             kv_write_batch_size: 1024,
             should_check_write_stall: false,
             checkpoint_enabled: false,
-            pause_pd_scheduler_scope: crate::local::PAUSE_PD_SCHEDULER_SCOPE_GLOBAL,
+            pause_pd_scheduler_scope: crate::local::PAUSE_PD_SCHEDULER_SCOPE_GLOBAL.into(),
+            raft_kv2_switch_mode_duration: std::time::Duration::ZERO,
         }
     }
     /// Go `TestEngineManager`.

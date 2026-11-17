@@ -23,7 +23,7 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{Counter, Gauge, GaugeVec, Opts};
+use prometheus::{Counter, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts};
 use std::sync::LazyLock;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
@@ -60,6 +60,42 @@ pub static MERGE_SORT_WRITE_BYTES: LazyLock<Counter> = LazyLock::new(|| {
     register(Counter::new(
         "tidb_global_sort_merge_sort_write_bytes",
         "Counter of bytes written in merge sort.",
+    ))
+});
+
+/// Go `GlobalSortWriteToCloudStorageDuration` (`pkg/metrics`).
+pub static WRITE_TO_CLOUD_STORAGE_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new("tidb_global_sort_write_to_cloud_storage_duration", "write to cloud storage duration")
+            .buckets(prometheus::exponential_buckets(0.001, 2.0, 20).expect("valid buckets")),
+        &["type"],
+    ))
+});
+
+/// Go `GlobalSortWriteToCloudStorageRate` (`pkg/metrics`).
+pub static WRITE_TO_CLOUD_STORAGE_RATE: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new("tidb_global_sort_write_to_cloud_storage_rate", "write to cloud storage rate")
+            .buckets(prometheus::exponential_buckets(0.05, 2.0, 20).expect("valid buckets")),
+        &["type"],
+    ))
+});
+
+/// Go `GlobalSortReadFromCloudStorageDuration` (`pkg/metrics`).
+pub static READ_FROM_CLOUD_STORAGE_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new("tidb_global_sort_read_from_cloud_storage_duration", "read from cloud storage duration")
+            .buckets(prometheus::exponential_buckets(0.001, 2.0, 20).expect("valid buckets")),
+        &["type"],
+    ))
+});
+
+/// Go `GlobalSortReadFromCloudStorageRate` (`pkg/metrics`).
+pub static READ_FROM_CLOUD_STORAGE_RATE: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new("tidb_global_sort_read_from_cloud_storage_rate", "read from cloud storage rate")
+            .buckets(prometheus::exponential_buckets(0.05, 2.0, 20).expect("valid buckets")),
+        &["type"],
     ))
 });
 

@@ -26,6 +26,7 @@
 
 
 mod cluster_stack;
+mod import_store;
 mod process_shutdown;
 mod auth_exchange;
 pub(crate) use tidb_session::domain::auth_identity;

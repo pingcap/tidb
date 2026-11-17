@@ -10,6 +10,12 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use tidb_gocontext::Context;
 
+/// Go `MinDistSQLScanConcurrency`.
+pub const MIN_DISTSQL_SCAN_CONCURRENCY: usize = 4;
+
+/// Go `DefaultBackoffWeight`: `15 * tikvstore.DefBackOffWeight`.
+pub const DEFAULT_BACKOFF_WEIGHT: i64 = 15 * 2;
+
 /// Go `RemoteChecksum`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RemoteChecksum {

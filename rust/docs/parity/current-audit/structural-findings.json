@@ -2,9 +2,9 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 8,
-    "open": 4,
-    "partial": 4
+    "unresolved": 9,
+    "open": 6,
+    "partial": 3
   },
   "findings": [
     {
@@ -24,14 +24,6 @@
       "go_owner": "`pkg/ddl/backfilling*.go`, `pkg/ddl/ingest`, `pkg/ingestor/ingestctrl`"
     },
     {
-      "id": "E05",
-      "status": "partial",
-      "group": "DML and executor handoff",
-      "finding": "IMPORT INTO still refuses execution. Go's assignment visitor/input-variable checks and the ImportInto planner handoff now run, including target metadata, rewritten options, generated columns, result schema, target privileges, temporary/cached-table rejection and SELECT width/physical optimization (Go TestImportIntoBuildPlan and testkit captures). Importer option/default retention, column mappings, CSV interpretation/skip handling, the SQL dump tokenizer/row/chunk reader and local file/glob discovery helpers are ported and Go-pinned; they are not yet an executable import pipeline. Remaining planner work: URL parse errors, SEM v1/nextgen S3 handling and complete snapshot/privilege pins. Remaining execution work: ImportIntoExec, complete importer plan/session capture and controller integration, compressed/remote discovery and Parquet parsing, chunk processing, prechecks, physical KV encoding/ingest, and DXF task/job lifecycle, cleanup, cancellation and result rows. The in-scope prerequisite ports include pkg/lightning/backend/kv and pkg/ingestor/ingestctrl. No successful local or remote import is claimed.",
-      "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs`",
-      "go_owner": "`pkg/executor/importer`, `pkg/executor/import_into.go`, `pkg/dxf/importinto`, `pkg/planner/core` (`buildImportInto`)"
-    },
-    {
       "id": "E07",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
@@ -46,6 +38,22 @@
       "finding": "`AggFuncDesc` lacks Go's `MemoryUsage` (`descriptor.go`, `base_func.go`: plan-cache memory accounting of aggregate operators), `StringWithCtx` with the redact modes and the `ExplainInfo(ctx)` half of `ExplainAggFunc` (a redacted EXPLAIN of an aggregate's arguments), and `Hash64` (Go's cascades memo); `tidb-expression-aggregation`'s module doc names each, and `Expression` itself lacks the `MemoryUsage` / `StringWithCtx` it would build on",
       "go_owner": "`pkg/expression/aggregation/descriptor.go`, `pkg/expression/aggregation/base_func.go`",
       "rust_evidence": "`rust/crates/tidb-expression-aggregation/src/lib.rs` (module doc)"
+    },
+    {
+      "id": "E29",
+      "status": "open",
+      "group": "Expanded subsystem ownership review",
+      "finding": "Materialized views are not ported. The parser rejects `CREATE MATERIALIZED VIEW` and `CREATE MATERIALIZED VIEW LOG` as syntax errors (1064), where Go master parses them and gates them on `tidb_mview_enable` (8200 when off). The materialized-view DDL and its logs, `REFRESH MATERIALIZED VIEW`, the mview worker and its schedule, the planner's materialized-view rewrite and the executor's delta merge aggregation are absent. IMPORT INTO depends on them in one place: a next-gen IMPORT INTO ... FROM SELECT runs on a DXF worker (`ImportStepQuery`) only during materialized-view maintenance (`InMViewMaintenance`), so this port refuses every next-gen FROM SELECT, as Go does outside maintenance, and `ImportStepQuery` is not ported.",
+      "rust_evidence": "`rust/crates/tidb-parser` (no materialized-view grammar), `rust/crates/tidb-session/src/import_into.rs` (the next-gen FROM SELECT refusal)",
+      "go_owner": "`pkg/ddl/materialized_view.go`, `pkg/ddl/mview_*.go`, `pkg/planner/mview`, `pkg/executor/mviewdeltamergeagg`, `pkg/util/mviewutil`, the parser's materialized-view grammar, `ImportStepQuery` in `pkg/dxf/importinto` (Go master)"
+    },
+    {
+      "id": "E30",
+      "status": "open",
+      "group": "Expanded subsystem ownership review",
+      "finding": "The TiKV key codec (the keyspace prefix) is applied when the ingest writes to TiKV, not when the KV pairs are written to the engine. Go encodes each key as it is written (`openLocalWriter`'s `tikvCodec` for local engines, `WriterBuilder.SetTiKVCodec` for global-sort files) and `doWrite` sends the stored keys as they are; Rust's local engine and global-sort files hold unprefixed keys and `do_write` encodes each one (`ImportClient::encode_key`). Under API V1 the keys are the same; on a keyspace cluster the global-sort files, their split and job keys in the subtask metas, and the conflict collectors' keys differ from Go's, which also keeps `codec.DecodeKey` out of the conflict handlers.",
+      "rust_evidence": "`rust/crates/tidb-ingestor-ingestctrl/src/region_job.rs` (`do_write`), `rust/crates/tidb-ingestor-simplesst/src/writer.rs` (no codec), `rust/crates/tidb-ingestor-ingestctrl/src/engine.rs`",
+      "go_owner": "`pkg/ingestor/ingestctrl/local.go` (`openLocalWriter`), `pkg/ingestor/ingestctrl/job_worker.go` (`doWrite`), `pkg/ingestor/simplesst/writer.go` (`SetTiKVCodec`), `pkg/dxf/importinto/conflictedkv`"
     },
     {
       "id": "S01",
@@ -72,7 +80,7 @@
       "rust_evidence": "`rust/crates/tidb-ddl/src/real_tikv_ddl/add_index_reorg.rs`, `rust/crates/tidb-ddl/src/real_tikv_ddl/backfilling.rs`"
     }
   ],
-  "unresolved": 8,
-  "open": 4,
-  "partial": 4
+  "unresolved": 9,
+  "open": 6,
+  "partial": 3
 }

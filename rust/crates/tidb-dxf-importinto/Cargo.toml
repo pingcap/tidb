@@ -1,0 +1,73 @@
+[package]
+name = "tidb-dxf-importinto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-dxf-metering = { path = "../tidb-dxf-metering" }
+tidb-objstore-recording = { path = "../tidb-objstore-recording" }
+crossbeam-channel = "0.5"
+serde.workspace = true
+serde_json.workspace = true
+tidb-config = { path = "../tidb-config" }
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-config-deploymode = { path = "../tidb-config-deploymode" }
+tidb-keyspace = { path = "../tidb-keyspace" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
+tidb-driver-error = { path = "../tidb-driver-error" }
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-dxf-execute = { path = "../tidb-dxf-execute" }
+tidb-dxf-handle = { path = "../tidb-dxf-handle" }
+tidb-dxf-importinto-conflictedkv = { path = "../tidb-dxf-importinto-conflictedkv" }
+tidb-dxf-importinto-conflictpath = { path = "../tidb-dxf-importinto-conflictpath" }
+tidb-dxf-importinto-conflictrows = { path = "../tidb-dxf-importinto-conflictrows" }
+tidb-dxf-importinto-taskkey = { path = "../tidb-dxf-importinto-taskkey" }
+tidb-dxf-planner = { path = "../tidb-dxf-planner" }
+tidb-dxf-scheduler = { path = "../tidb-dxf-scheduler" }
+tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+tidb-br = { path = "../tidb-br" }
+tidb-dxf-taskexecutor = { path = "../tidb-dxf-taskexecutor" }
+tidb-executor = { path = "../tidb-executor" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-ingestor-ingestctrl = { path = "../tidb-ingestor-ingestctrl" }
+tidb-ingestor-engineapi = { path = "../tidb-ingestor-engineapi" }
+tidb-ingestor-globalsort = { path = "../tidb-ingestor-globalsort" }
+tidb-ingestor-simplesst = { path = "../tidb-ingestor-simplesst" }
+tidb-ingestor-errdef = { path = "../tidb-ingestor-errdef" }
+base64.workspace = true
+hex = "0.4"
+tidb-failpoint = { path = "../tidb-failpoint" }
+uuid = { version = "1", features = ["v4"] }
+tidb-lightning-backend = { path = "../tidb-lightning-backend" }
+tidb-lightning-backend-kv = { path = "../tidb-lightning-backend-kv" }
+tidb-lightning-common = { path = "../tidb-lightning-common" }
+tidb-lightning-verification = { path = "../tidb-lightning-verification" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-log = { path = "../tidb-log" }
+tidb-stringutil = { path = "../tidb-stringutil" }
+tidb-model = { path = "../tidb-model" }
+tidb-lightning-log = { path = "../tidb-lightning-log" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-table = { path = "../tidb-table" }
+tidb-terror = { path = "../tidb-terror" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+crc32fast.workspace = true
+tidb-exeerrors = { path = "../tidb-exeerrors" }
+tidb-vardef = { path = "../tidb-vardef" }
+tidb-objstore = { path = "../tidb-objstore" }
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
+chrono.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

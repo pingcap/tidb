@@ -162,6 +162,25 @@ impl Engine {
         }
         Ok(())
     }
+    /// Go `localWriter.Close`: the writer's buffered rows reach the engine's
+    /// current run; [`Self::flush`] seals the run.
+    pub fn close_writer(&self, writer_id: usize) -> Result<()> {
+        let mut s = self.state.lock().unwrap();
+        if let Some(mut writer) = s.writers.remove(&writer_id) {
+            writer.close()?;
+        }
+        Ok(())
+    }
+
+    /// Whether the engine holds no flushed or buffered rows (Go
+    /// `KVStatistics` reporting zero size).
+    pub fn is_empty(&self) -> Result<bool> {
+        if self.state.lock().unwrap().buffered_bytes > 0 {
+            return Ok(false);
+        }
+        Ok(self.new_iter(&[], &[])?.next_pair()?.is_none())
+    }
+
     /// Go `Engine.Flush`: all acknowledged rows become durable sorted data.
     pub fn flush(&self) -> Result<()> {
         let mut s = self.state.lock().unwrap();
@@ -223,6 +242,11 @@ impl Engine {
         }
         Ok(Some((first, last)))
     }
+    /// The engine's directory, named by its UUID.
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
     /// Go `Engine.GetTS`.
     pub fn get_ts(&self) -> u64 {
         self.ts.load(Ordering::SeqCst)
@@ -735,6 +759,39 @@ impl Engine {
             send((range[0].clone(), range[1].clone()))?;
         }
         Ok(())
+    }
+}
+
+/// Go `Engine` as `common.IngestData`: region jobs read the engine itself.
+impl tidb_ingestor_engineapi::IngestData for Engine {
+    fn get_first_and_last_key(
+        &self,
+        lower: &[u8],
+        upper: &[u8],
+    ) -> std::result::Result<Option<tidb_ingestor_engineapi::Pair>, tidb_ingestor_engineapi::Error> {
+        Engine::get_first_and_last_key(self, lower, upper).map_err(|error| Box::new(error) as _)
+    }
+
+    fn new_iter<'a>(
+        &'a self,
+        lower: &[u8],
+        upper: &[u8],
+    ) -> std::result::Result<Box<dyn tidb_ingestor_engineapi::ForwardIter + 'a>, tidb_ingestor_engineapi::Error> {
+        Ok(Box::new(Engine::new_iter(self, lower, upper).map_err(|error| Box::new(error) as tidb_ingestor_engineapi::Error)?))
+    }
+
+    fn get_ts(&self) -> u64 {
+        Engine::get_ts(self)
+    }
+
+    fn finish(&self, total_bytes: i64, total_count: i64) {
+        Engine::finish(self, total_bytes as u64, total_count as u64);
+    }
+}
+
+impl tidb_ingestor_engineapi::ForwardIter for EngineIterator {
+    fn next_pair(&mut self) -> std::result::Result<Option<tidb_ingestor_engineapi::Pair>, tidb_ingestor_engineapi::Error> {
+        EngineIterator::next_pair(self).map_err(|error| Box::new(error) as _)
     }
 }
 

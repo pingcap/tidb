@@ -1,0 +1,35 @@
+[package]
+name = "tidb-ingestor-simplesst"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/ingestor/simplesst: global sort's sorted KV and stat files, readers and merge iterators"
+
+[lints]
+workspace = true
+
+[dependencies]
+base64.workspace = true
+hex = "0.4"
+serde.workspace = true
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
+tidb-go-rand = { path = "../tidb-go-rand" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-goruntime = { path = "../tidb-goruntime" }
+tidb-ingestor-engineapi = { path = "../tidb-ingestor-engineapi" }
+tidb-lightning-backend = { path = "../tidb-lightning-backend" }
+tidb-lightning-common = { path = "../tidb-lightning-common" }
+tidb-lightning-log = { path = "../tidb-lightning-log" }
+tidb-lightning-membuf = { path = "../tidb-lightning-membuf" }
+tidb-lightning-verification = { path = "../tidb-lightning-verification" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-metrics = { path = "../tidb-metrics" }
+tidb-objstore = { path = "../tidb-objstore" }
+tidb-terror = { path = "../tidb-terror" }
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true

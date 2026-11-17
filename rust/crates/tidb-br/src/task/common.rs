@@ -31,6 +31,8 @@ pub struct TLSConfig {
 /// Go `task.Config`, fields consumed by `executorBuilder.buildBRIE`.
 /// Deliberately no Debug: Storage and CipherInfo can contain credentials.
 pub struct Config {
+    /// Go's embedded `objstore.BackendOptions`.
+    pub backend_options: tidb_objstore::BackendOptions,
     /// Go `Storage` (private task input, never SHOW output).
     pub storage: String,
     /// Go `PD`.
@@ -58,6 +60,14 @@ pub struct Config {
 /// Go `DefaultConfig`'s SQL-builder fields. Values from `TestDefault`.
 pub fn default_config() -> Config {
     Config {
+        // Go `S3BackendOptions.ParseFromFlags` always sets ForcePathStyle.
+        backend_options: tidb_objstore::BackendOptions {
+            s3: tidb_objstore_s3like::S3BackendOptions {
+                force_path_style: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
         storage: String::new(),
         pd: vec!["127.0.0.1:2379".into()],
         tls: TLSConfig::default(),
@@ -72,6 +82,36 @@ pub fn default_config() -> Config {
         },
         filter_str: vec!["*.*".into()],
         table_filter: tidb_table_filter::case_insensitive(tidb_table_filter::all()),
+    }
+}
+
+/// Go `ApplyTiDBRuntimeConfig`: a BRIE statement inside TiDB reaches the
+/// cluster through TiDB's own PD addresses (blank entries dropped) and, when
+/// any is set, its cluster TLS files.
+pub fn apply_tidb_runtime_config(cfg: &mut Config) {
+    let tidb_cfg = tidb_config::config_tree::config::get_global_config();
+    if !tidb_cfg.path.is_empty() {
+        let pds: Vec<String> = tidb_cfg
+            .path
+            .split(',')
+            .map(str::trim)
+            .filter(|pd| !pd.is_empty())
+            .map(str::to_owned)
+            .collect();
+        if !pds.is_empty() {
+            cfg.pd = pds;
+        }
+    }
+    let security = &tidb_cfg.security;
+    if !security.cluster_ssl_ca.is_empty()
+        || !security.cluster_ssl_cert.is_empty()
+        || !security.cluster_ssl_key.is_empty()
+    {
+        cfg.tls = TLSConfig {
+            ca: security.cluster_ssl_ca.clone(),
+            cert: security.cluster_ssl_cert.clone(),
+            key: security.cluster_ssl_key.clone(),
+        };
     }
 }
 
@@ -126,6 +166,14 @@ mod tests {
     #[test]
     fn test_default() {
         let cfg = default_config();
+        let backend = tidb_objstore::BackendOptions {
+            s3: tidb_objstore_s3like::S3BackendOptions {
+                force_path_style: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(cfg.backend_options == backend);
         assert_eq!(cfg.pd, ["127.0.0.1:2379"]);
         assert!(!cfg.checksum);
         assert!(cfg.send_creds);

@@ -4,8 +4,12 @@ use crate::region_job::ImportClient;
 use tidb_proto::import_sstpb as sst;
 use crate::{Error, Result, engine::Engine};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tidb_gocontext::Context;
+
+fn str_field(key: &'static str, value: &str) -> tidb_log::Field {
+    tidb_log::Field::new(key, tidb_log::Value::Str(value.to_owned()))
+}
 
 /// Go `BackendConfig`, local-sort settings used by DDL.
 #[derive(Clone)]
@@ -32,7 +36,10 @@ pub struct BackendConfig {
     pub checkpoint_enabled: bool,
     /// Go `PausePDSchedulerScope` (`config.PausePDSchedulerScopeTable` or
     /// `PausePDSchedulerScopeGlobal`).
-    pub pause_pd_scheduler_scope: &'static str,
+    pub pause_pd_scheduler_scope: String,
+    /// Go `RaftKV2SwitchModeDuration`: when non-zero, the engine's key range
+    /// is switched to import mode this often while it is ingested.
+    pub raft_kv2_switch_mode_duration: std::time::Duration,
 }
 /// Go `MaxWriteAndIngestRetryTimes`: the max retry times for write and
 /// ingest.
@@ -53,6 +60,7 @@ pub struct Backend {
     engine_mgr: crate::engine_mgr::EngineManager,
     importer: Arc<dyn ImportClient>,
     write_limiter: crate::localhelper::StoreWriteLimiter,
+    collector: Mutex<Option<crate::region_job::Collector>>,
 }
 impl Backend {
     /// Go `NewBackend`.
@@ -64,15 +72,23 @@ impl Backend {
             engine_mgr,
             importer,
             write_limiter: crate::localhelper::StoreWriteLimiter::new(0),
+            collector: Mutex::new(None),
         })
+    }
+
+    /// Go `SetCollector`: told the bytes and pairs of every written job of
+    /// an external engine.
+    pub fn set_collector(&self, collector: Option<crate::region_job::Collector>) {
+        *self.collector.lock().unwrap() = collector;
     }
     /// Go `Backend.OpenEngine` and `engineManager.OpenEngine`.
     pub fn open_engine(&self, id: [u8; 16], ts: u64) -> Result<Arc<Engine>> {
         self.engine_mgr.open_engine(id, ts)
     }
 
-    /// Go `Backend.ImportEngine`: import each sorted range using TiKV's SST
-    /// write and ingest RPCs, never transactional key writes.
+    /// Go `Backend.ImportEngine`: the external engine of `id`, or its local
+    /// engine, written and ingested into TiKV through SST write and ingest
+    /// RPCs, never transactional key writes.
     pub fn import_engine(
         &self,
         ctx: &Context,
@@ -93,25 +109,43 @@ impl Backend {
                 &[tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))],
             ),
         }
+
+        let engine_uuid = uuid::Uuid::from_bytes(id).to_string();
+        if let Some(external) = self.engine_mgr.get_external_engine(id) {
+            let mut external = external.lock().unwrap();
+            return self.import_engine_inner(ctx, &engine_uuid, external.as_mut(), region_split_size, region_split_keys);
+        }
         // skip if engine not exist. See the comment of `CloseEngine` for more detail.
         let Ok(engine) = self.engine(id) else {
             return Ok(());
         };
-        let (lf_total_size, _) = engine.kv_statistics()?;
+        // Go `lockEngine(engineUUID, importMutexStateImport)`.
+        engine.set_importing(true);
+        let result = LocalEngine::new(Arc::clone(&engine), region_split_size, region_split_keys).and_then(|mut local| {
+            self.import_engine_inner(ctx, &engine_uuid, &mut local, region_split_size, region_split_keys)
+        });
+        engine.set_importing(false);
+        result
+    }
+
+    /// Go `Backend.ImportEngine` once the engine is chosen.
+    fn import_engine_inner(
+        &self,
+        ctx: &Context,
+        engine_uuid: &str,
+        e: &mut dyn tidb_ingestor_engineapi::Engine,
+        region_split_size: u64,
+        region_split_keys: usize,
+    ) -> Result<()> {
+        let (lf_total_size, lf_length) = e.kv_statistics();
         if lf_total_size == 0 {
             // engine is empty, this is likes because it's a index engine but the table contains no index
-            tidb_log::info(
-                "engine contains no kv, skip import",
-                &[tidb_log::Field::new("engine", tidb_log::Value::Str(uuid::Uuid::from_bytes(id).to_string()))],
-            );
+            tidb_log::info("engine contains no kv, skip import", &[str_field("engine", engine_uuid)]);
             return Ok(());
         }
         // split sorted file into range about regionSplitSize per file
-        let split_keys = engine.get_region_split_keys(region_split_size, region_split_keys as u64)?;
-        let (start_key, end_key) = (
-            split_keys.first().cloned().unwrap_or_default(),
-            split_keys.last().cloned().unwrap_or_default(),
-        );
+        let split_keys = get_region_split_keys(e, region_split_size, region_split_keys)?;
+        let (start_key, end_key) = (split_keys[0].clone(), split_keys[split_keys.len() - 1].clone());
 
         let mut force_split_threshold = FORCE_PARTITION_REGION_THRESHOLD;
         tidb_failpoint::inject_call(
@@ -123,64 +157,100 @@ impl Backend {
         let _remove_table_split_range = (tidb_config_kerneltype::is_classic()
             && !start_key.is_empty()
             && !end_key.is_empty()
-            && split_keys.len().saturating_sub(1) >= force_split_threshold)
+            && split_keys.len() - 1 >= force_split_threshold)
             .then(|| -> Result<ForceTableSplitRange<'_>> {
                 let stores = self.importer.all_stores(ctx)?;
                 Ok(self.force_table_split_range(&start_key, &end_key, &stores))
             })
             .transpose()?;
 
+        let encode = |key: &[u8]| {
+            if key.is_empty() {
+                Vec::new()
+            } else {
+                let mut encoded = Vec::new();
+                tidb_codec::encode_bytes(&mut encoded, key);
+                encoded
+            }
+        };
         let _paused = if self.cfg.pause_pd_scheduler_scope == PAUSE_PD_SCHEDULER_SCOPE_TABLE {
-            let encode = |key: &[u8]| {
-                if key.is_empty() {
-                    Vec::new()
-                } else {
-                    let mut encoded = Vec::new();
-                    tidb_codec::encode_bytes(&mut encoded, key);
-                    encoded
-                }
-            };
+            tidb_log::info("pause pd scheduler of table scope", &[]);
             let pd_http = self
                 .importer
                 .pd_http_client()
                 .ok_or_else(|| Error::Other("pd http client is not available".into()))?;
             Some(
-                tidb_br::pdutil::pause_schedulers_by_key_range(
-                    pd_http,
-                    &encode(&start_key),
-                    &encode(&end_key),
-                )
-                .map_err(Error::Other)?,
+                tidb_br::pdutil::pause_schedulers_by_key_range(pd_http, &encode(&start_key), &encode(&end_key))
+                    .map_err(Error::Other)?,
             )
         } else {
             None
         };
 
+        // Go `switchModeBySplitKeys`: the range stays in import mode until
+        // the import ends.
+        let (switch_ctx, stop_switch) = Context::with_cancel(ctx);
+        let switching = (!self.cfg.raft_kv2_switch_mode_duration.is_zero()).then(|| {
+            tidb_log::info("switch import mode of ranges", &[]);
+            crate::tikv_mode::switch_mode_periodically(
+                &switch_ctx,
+                Arc::clone(&self.importer),
+                sst::Range { start: encode(&start_key), end: encode(&end_key) },
+                self.cfg.raft_kv2_switch_mode_duration,
+            )
+        });
+
+        tidb_log::info(
+            "start import engine",
+            &[
+                str_field("uuid", engine_uuid),
+                tidb_log::Field::new("region ranges", tidb_log::Value::I64(split_keys.len() as i64 - 1)),
+                tidb_log::Field::new("count", tidb_log::Value::I64(lf_length)),
+                tidb_log::Field::new("size", tidb_log::Value::I64(lf_total_size)),
+            ],
+        );
         tidb_failpoint::inject_call(
             "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/ReadyForImportEngine",
             &mut (),
         );
-        engine.set_importing(true);
-        let result = self.do_import(ctx, &engine, &split_keys, region_split_size, region_split_keys);
-        engine.set_importing(false);
-        result
+        let result = self.do_import(ctx, e, &split_keys, region_split_size, region_split_keys);
+        stop_switch.cancel();
+        if let Some(switching) = switching {
+            let _ = switching.join();
+        }
+        result?;
+        let (imported_size, imported_length) = e.imported_statistics();
+        verify_imported_statistics(e, imported_length)?;
+        tidb_log::info(
+            "import engine success",
+            &[
+                str_field("uuid", engine_uuid),
+                tidb_log::Field::new("size", tidb_log::Value::I64(lf_total_size)),
+                tidb_log::Field::new("kvs", tidb_log::Value::I64(lf_length)),
+                tidb_log::Field::new("importedSize", tidb_log::Value::I64(imported_size)),
+                tidb_log::Field::new("importedCount", tidb_log::Value::I64(imported_length)),
+            ],
+        );
+        Ok(())
     }
 
-    /// Go `Backend.doImport` after `prepareAndSendJob`'s split and scatter.
+    /// Go `Backend.doImport` and `prepareAndSendJob`: the regions split and
+    /// scattered at `split_keys` when the engine needs more than one, then
+    /// the region jobs of every loaded range.
     fn do_import(
         &self,
         ctx: &Context,
-        engine: &Arc<Engine>,
+        engine: &mut dyn tidb_ingestor_engineapi::Engine,
         split_keys: &[Vec<u8>],
         region_split_size: u64,
         region_split_keys: usize,
     ) -> Result<()> {
-        let (lf_total_size, lf_length) = engine.kv_statistics()?;
+        let (lf_total_size, lf_length) = engine.kv_statistics();
         // if all the kv can fit in one region, skip split regions. TiDB will split one region for
         // the table when table is created.
         let need_split = split_keys.len() > 2
-            || lf_total_size > region_split_size
-            || lf_length > region_split_keys as u64
+            || lf_total_size > region_split_size as i64
+            || lf_length > region_split_keys as i64
             || tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/forceSplitRegion")
                 .is_some();
         if need_split {
@@ -214,7 +284,8 @@ impl Backend {
                 return Err(error);
             }
         }
-        crate::region_job::do_import_with_write_limiter(
+        let collector = self.collector.lock().unwrap().clone();
+        crate::region_job::do_import(
             ctx,
             engine,
             self.importer.as_ref(),
@@ -222,6 +293,7 @@ impl Backend {
             region_split_size,
             region_split_keys,
             &self.write_limiter,
+            collector.as_ref(),
         )
     }
 
@@ -297,6 +369,7 @@ impl Backend {
             max_per_sec,
         )
     }
+
     /// Go `DupeController.CollectRemoteDuplicateRows` for an index key range.
     pub fn collect_remote_duplicate_rows(
         &self,
@@ -352,10 +425,166 @@ impl Backend {
         self.engine_mgr.flush_all_engines()
     }
     /// Go `engineManager.rLockEngine`.
-    fn engine(&self, id: [u8; 16]) -> Result<Arc<Engine>> {
+    pub(crate) fn engine(&self, id: [u8; 16]) -> Result<Arc<Engine>> {
         self.engine_mgr.engine(id)
     }
+    /// The import client the backend writes and allocates TSOs through.
+    pub(crate) fn importer(&self) -> &dyn ImportClient {
+        self.importer.as_ref()
+    }
+    /// Go `Backend.GetImportedKVCount`.
+    pub fn get_imported_kv_count(&self, id: [u8; 16]) -> i64 {
+        self.engine_mgr.get_imported_kv_count(id) as i64
+    }
+    /// Go `Backend.GetExternalEngineKVStatistics`.
+    pub fn get_external_engine_kv_statistics(&self, id: [u8; 16]) -> (i64, i64) {
+        self.engine_mgr.get_external_engine_kv_statistics(id)
+    }
+    /// Go `Backend.GetExternalEngineConflictInfo`.
+    pub fn get_external_engine_conflict_info(&self, id: [u8; 16]) -> tidb_ingestor_engineapi::ConflictInfo {
+        self.engine_mgr.get_external_engine_conflict_info(id)
+    }
+    /// Go `engineManager.closeEngine`'s external branch: the global-sort
+    /// engine over `cfg`'s sorted files, at `ts` or a TS allocated now.
+    pub fn close_external_engine(
+        &self,
+        id: [u8; 16],
+        cfg: &tidb_lightning_backend::ExternalEngineConfig,
+        ts: u64,
+    ) -> Result<()> {
+        let ts = if ts == 0 { self.importer.get_ts()? } else { ts };
+        self.engine_mgr.close_external_engine(id, cfg, ts);
+        Ok(())
+    }
 }
+/// Go's local `Engine` as `engineapi.Engine`, with the region split size and
+/// key count `ImportEngine` sets on it (`localEngine.regionSplitSize`,
+/// `regionSplitKeyCnt`). Its ingest data is the engine itself.
+pub(crate) struct LocalEngine {
+    id: String,
+    engine: Arc<Engine>,
+    region_split_size: u64,
+    region_split_keys: usize,
+    /// Go `TotalSize` and `Length`, read from the closed engine's sorted
+    /// runs once, so a read failure fails the import instead of reading as
+    /// an empty engine.
+    kv_statistics: (i64, i64),
+}
+
+impl LocalEngine {
+    /// The engine under its UUID, with `ImportEngine`'s region split size
+    /// and key count.
+    pub(crate) fn new(engine: Arc<Engine>, region_split_size: u64, region_split_keys: usize) -> Result<Self> {
+        let id = engine.path().file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+        let (size, count) = engine.kv_statistics()?;
+        Ok(Self { id, engine, region_split_size, region_split_keys, kv_statistics: (size as i64, count as i64) })
+    }
+}
+
+fn engine_api_error(error: Error) -> tidb_ingestor_engineapi::Error {
+    Box::new(error)
+}
+
+impl tidb_ingestor_engineapi::Engine for LocalEngine {
+    fn id(&self) -> String {
+        self.id.clone()
+    }
+
+    /// Go `Engine.LoadIngestData`: one range of the engine per batch.
+    fn load_ingest_data(
+        &mut self,
+        ctx: &Context,
+        out: &mut dyn FnMut(tidb_ingestor_engineapi::DataAndRanges) -> std::result::Result<(), tidb_ingestor_engineapi::Error>,
+    ) -> std::result::Result<(), tidb_ingestor_engineapi::Error> {
+        let data: Arc<dyn tidb_ingestor_engineapi::IngestData> = self.engine.clone();
+        self.engine
+            .load_ingest_data(ctx, |(start, end)| {
+                out(tidb_ingestor_engineapi::DataAndRanges {
+                    data: Arc::clone(&data),
+                    sorted_ranges: vec![tidb_ingestor_engineapi::Range { start, end }],
+                })
+                .map_err(crate::region_job::engine_error)
+            })
+            .map_err(engine_api_error)
+    }
+
+    fn kv_statistics(&self) -> (i64, i64) {
+        self.kv_statistics
+    }
+
+    fn imported_statistics(&self) -> (i64, i64) {
+        let (size, count) = self.engine.imported_statistics();
+        (size as i64, count as i64)
+    }
+
+    fn conflict_info(&self) -> tidb_ingestor_engineapi::ConflictInfo {
+        tidb_ingestor_engineapi::ConflictInfo::default()
+    }
+
+    fn get_key_range(&self) -> std::result::Result<(Vec<u8>, Vec<u8>), tidb_ingestor_engineapi::Error> {
+        Ok(self.engine.get_key_range().map_err(engine_api_error)?.unwrap_or_default())
+    }
+
+    fn get_region_split_keys(&self) -> std::result::Result<Vec<Vec<u8>>, tidb_ingestor_engineapi::Error> {
+        self.engine
+            .get_region_split_keys(self.region_split_size, self.region_split_keys as u64)
+            .map_err(engine_api_error)
+    }
+
+    fn close(&mut self) -> std::result::Result<(), tidb_ingestor_engineapi::Error> {
+        Ok(())
+    }
+}
+
+/// Go `getRegionSplitKeys`: the engine's start and end keys when it fits in
+/// one region, its region split keys otherwise.
+fn get_region_split_keys(
+    engine: &dyn tidb_ingestor_engineapi::Engine,
+    size_limit: u64,
+    keys_limit: usize,
+) -> Result<Vec<Vec<u8>>> {
+    let (start_key, end_key) = engine.get_key_range().map_err(crate::region_job::engine_error)?;
+    if start_key.is_empty() {
+        return Err(Error::Other("could not find first pair".into()));
+    }
+    let (engine_file_total_size, engine_file_length) = engine.kv_statistics();
+    if engine_file_total_size <= size_limit as i64 && engine_file_length <= keys_limit as i64 {
+        return Ok(vec![start_key, end_key]);
+    }
+    let keys = engine.get_region_split_keys().map_err(crate::region_job::engine_error);
+    tidb_log::info(
+        "split engine key ranges",
+        &[
+            str_field("engine", &engine.id()),
+            tidb_log::Field::new("totalSize", tidb_log::Value::I64(engine_file_total_size)),
+            tidb_log::Field::new("totalCount", tidb_log::Value::I64(engine_file_length)),
+            tidb_log::Field::new("len(keys)", tidb_log::Value::I64(keys.as_ref().map_or(0, |keys| keys.len() as i64))),
+        ],
+    );
+    keys
+}
+
+/// Go `verifyImportedStatistics`: an external engine must have imported
+/// every pair it loaded.
+fn verify_imported_statistics(engine: &dyn tidb_ingestor_engineapi::Engine, imported_kv_count: i64) -> Result<()> {
+    let any: &dyn std::any::Any = engine;
+    if let Some(ext_engine) = any.downcast_ref::<tidb_ingestor_globalsort::Engine>() {
+        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/skipOnDuplicateKeyCheck").is_some() {
+            return Ok(());
+        }
+        // Verify the imported statistics after import.
+        // For external engine, use the total number of KVs loaded in LoadIngestData
+        // (i.e., len(e.memKVsAndBuffers.kvs) across all batches) as the expected count.
+        let expected_kv_count = ext_engine.get_total_loaded_kvs_count();
+        if imported_kv_count != expected_kv_count {
+            return Err(Error::Other(format!(
+                "imported length mismatch, expected {expected_kv_count}, got {imported_kv_count}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 impl crate::disk_quota::DiskUsage for Backend {
     /// Go `Backend.EngineFileSizes`.
     fn engine_file_sizes(&self) -> Vec<crate::disk_quota::EngineFileSize> {
@@ -848,4 +1077,190 @@ fn call_on_stores(stores: &[(u64, String)], message: &str, call: impl Fn(u64) ->
         fields.push(tidb_log::Field::new("error", tidb_log::Value::Str(error)));
     }
     tidb_log::info(message, &fields);
+}
+#[cfg(test)]
+mod external_tests {
+    use super::*;
+    use std::sync::Mutex as StdMutex;
+    use tidb_ingestor_engineapi::OnDuplicateKey;
+    use tidb_proto::{import_sstpb as sst, metapb};
+
+    /// A write's region and pairs.
+    type Write = (u64, Vec<(String, String)>);
+
+    /// Two regions split at `key-00060`; records each write's region and
+    /// pairs.
+    #[derive(Default)]
+    struct TwoRegions {
+        writes: StdMutex<Vec<Write>>,
+    }
+
+    impl ImportClient for TwoRegions {
+        fn get_region(&self, key: &[u8]) -> Result<crate::region_job::RegionInfo> {
+            let peer = metapb::Peer { id: 1, store_id: 1, ..Default::default() };
+            let (id, start, end) =
+                if key < b"key-00060".as_slice() { (1, vec![], b"key-00060".to_vec()) } else { (2, b"key-00060".to_vec(), vec![]) };
+            Ok(crate::region_job::RegionInfo {
+                leader: Some(peer),
+                region: metapb::Region { id, start_key: start, end_key: end, peers: vec![peer], ..Default::default() },
+            })
+        }
+        fn invalidate_region(&self, _: &crate::region_job::RegionInfo) {}
+        fn write(&self, _: u64, requests: Vec<sst::WriteRequest>) -> Result<sst::WriteResponse> {
+            let mut metas = Vec::new();
+            let mut pairs = Vec::new();
+            for r in requests {
+                match r.chunk {
+                    Some(sst::write_request::Chunk::Meta(m)) => metas.push(m),
+                    Some(sst::write_request::Chunk::Batch(b)) => {
+                        assert_eq!(b.commit_ts, 42);
+                        pairs.extend(b.pairs.into_iter().map(|p| {
+                            (String::from_utf8(p.key).unwrap(), String::from_utf8(p.value).unwrap())
+                        }));
+                    }
+                    None => {}
+                }
+            }
+            self.writes.lock().unwrap().push((metas[0].region_id, pairs));
+            Ok(sst::WriteResponse { metas, ..Default::default() })
+        }
+        fn multi_ingest(&self, _: u64, _: sst::MultiIngestRequest) -> Result<sst::IngestResponse> {
+            Ok(sst::IngestResponse::default())
+        }
+        fn ingest(&self, _: u64, _: sst::IngestRequest) -> Result<sst::IngestResponse> {
+            unreachable!()
+        }
+        fn duplicate_detect(
+            &self,
+            _: u64,
+            _: sst::DuplicateDetectRequest,
+            _: &mut (dyn FnMut(sst::DuplicateDetectResponse) -> Result<()> + Send),
+        ) -> Result<()> {
+            Ok(())
+        }
+        fn api_version(&self) -> i32 {
+            0
+        }
+        fn encode_key(&self, key: &[u8]) -> Vec<u8> {
+            key.to_vec()
+        }
+    }
+
+    impl crate::localhelper::SplitClient for TwoRegions {
+        fn split_keys_and_scatter(&self, _: &Context, _: &[Vec<u8>]) -> Result<Vec<u64>> {
+            Ok(Vec::new())
+        }
+        fn wait_regions_scattered(&self, _: &Context, _: &[u64]) -> Result<usize> {
+            Ok(0)
+        }
+    }
+
+    /// Go `ImportEngine` of an external engine (`CloseEngine` with an
+    /// external config): sorted files from 3 overlapping writers, split into
+    /// range jobs, are written region by region with duplicates removed, and
+    /// the imported count is verified against the loaded one.
+    #[test]
+    fn import_engine_writes_an_external_engine_region_by_region() {
+        let ctx = Context::background();
+        let dir = tempfile::tempdir().unwrap();
+        let store: Arc<dyn tidb_objstore::storeapi::Storage> =
+            Arc::new(tidb_objstore::LocalStorage::new(dir.path().to_str().unwrap()).unwrap());
+        let meta = Arc::new(StdMutex::new(tidb_ingestor_globalsort::SortedKVMeta::default()));
+        let mut want = std::collections::BTreeMap::<String, Vec<String>>::new();
+        for w in 0..3 {
+            let sink = Arc::clone(&meta);
+            let mut writer = tidb_ingestor_simplesst::WriterBuilder::new()
+                .set_prop_size_distance(64)
+                .set_prop_keys_distance(3)
+                .set_memory_size_limit(512)
+                .set_block_size(256)
+                .set_on_close_func(Arc::new(move |s: &tidb_ingestor_simplesst::WriterSummary| {
+                    sink.lock().unwrap().merge_summary(s)
+                }))
+                .build(Arc::clone(&store), "1/2", &format!("w{w}"));
+            for i in 0..90 {
+                let (k, v) = (format!("key-{:05}", (i * 11 + w * 5) % 120), format!("v-{w}-{i}"));
+                writer.write_row(&ctx, k.as_bytes(), v.as_bytes()).unwrap();
+                want.entry(k).or_default().push(v);
+            }
+            writer.close(&ctx).unwrap();
+        }
+        let meta = meta.lock().unwrap().clone();
+        let mut splitter = tidb_ingestor_globalsort::RangeSplitter::new(
+            &ctx,
+            meta.stats().to_vec(),
+            Arc::clone(&store),
+            i64::MAX,
+            i64::MAX,
+            100,
+            9,
+            i64::MAX,
+            i64::MAX,
+        )
+        .unwrap();
+        let group = splitter.split_one_ranges_group().unwrap();
+        splitter.close().unwrap();
+        assert!(group.end_key_of_group.is_empty());
+        let mut job_keys = vec![meta.start_key.clone()];
+        job_keys.extend(group.interior_range_job_keys);
+        job_keys.push(meta.end_key.clone());
+        let client = Arc::new(TwoRegions::default());
+        let backend = Backend::new(
+            BackendConfig {
+                local_store_dir: dir.path().join("sort"),
+                resource_group_name: String::new(),
+                task_type: String::new(),
+                worker_concurrency: 3,
+                mem_table_size: 1024,
+                local_writer_mem_cache_size: 1024,
+                dupe_detect_enabled: false,
+                kv_write_batch_size: 16 * 1024,
+                should_check_write_stall: false,
+                checkpoint_enabled: false,
+                pause_pd_scheduler_scope: String::new(),
+                raft_kv2_switch_mode_duration: std::time::Duration::ZERO,
+            },
+            client.clone(),
+        )
+        .unwrap();
+        let id = *uuid::Uuid::new_v4().as_bytes();
+        backend
+            .close_external_engine(
+                id,
+                &tidb_lightning_backend::ExternalEngineConfig {
+                    ext_store: Arc::clone(&store),
+                    data_files: group.data_files,
+                    stat_files: group.stat_files,
+                    start_key: meta.start_key.clone(),
+                    end_key: meta.end_key.clone(),
+                    job_keys: job_keys.clone(),
+                    split_keys: job_keys,
+                    total_file_size: 100,
+                    total_kv_count: 0,
+                    check_hotspot: false,
+                    mem_capacity: 1 << 30,
+                    on_dup: OnDuplicateKey::Remove,
+                    file_prefix: "1/3".into(),
+                },
+                42,
+            )
+            .unwrap();
+        backend.import_engine(&ctx, id, 96 << 20, 7).unwrap();
+        let unique: Vec<(String, String)> =
+            want.into_iter().filter(|(_, v)| v.len() == 1).map(|(k, mut v)| (k, v.remove(0))).collect();
+        let writes = client.writes.lock().unwrap();
+        let mut written = Vec::new();
+        for (region, pairs) in writes.iter() {
+            assert!(pairs.len() <= 7, "split keys limit");
+            for (k, _) in pairs {
+                assert_eq!(*region, if k.as_str() < "key-00060" { 1 } else { 2 }, "{k} in region {region}");
+            }
+            written.extend(pairs.iter().cloned());
+        }
+        written.sort();
+        assert_eq!(written, unique);
+        assert_eq!(backend.get_external_engine_kv_statistics(id).1, unique.len() as i64);
+        backend.cleanup_engine(id).unwrap();
+        assert_eq!(backend.get_external_engine_kv_statistics(id), (0, 0));
+    }
 }

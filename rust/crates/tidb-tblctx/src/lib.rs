@@ -23,7 +23,7 @@ use tidb_datatype::ConversionFlags;
 mod static_mutate;
 pub mod temporary_table;
 
-pub use static_mutate::{resolve_statement_clock, StaticMutateContext};
+pub use static_mutate::{resolve_statement_clock, ImportSessionVars, StaticMutateContext};
 
 /// Go `tblctx.RowEncodingConfig`: how a write encodes its row values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

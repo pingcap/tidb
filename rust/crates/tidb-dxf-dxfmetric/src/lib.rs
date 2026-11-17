@@ -48,6 +48,8 @@ pub const EVENT_TOO_MANY_IDX: &str = "too-many-idx";
 pub const EVENT_MERGE_SORT: &str = "merge-sort";
 /// Go `EventCleanupFailed`.
 pub const EVENT_CLEANUP_FAILED: &str = "cleanup-failed";
+/// Go `EventExpiredFileCleanupFailed`.
+pub const EVENT_EXPIRED_FILE_CLEANUP_FAILED: &str = "expired-file-cleanup-failed";
 /// Go `EventMeterWriteFailed`.
 pub const EVENT_METER_WRITE_FAILED: &str = "meter-write-failed";
 

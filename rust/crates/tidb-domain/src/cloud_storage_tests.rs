@@ -2,7 +2,7 @@
 use crate::global_sysvars::GlobalSysvars;
 use tidb_vardef::tidb_vars::TIDB_CLOUD_STORAGE_URI;
 
-/// Go `TestSetTiDBCloudStorageURI` (`variable/tests/session_test.go`).
+/// Go master `TestSetTiDBCloudStorageURI` (`variable/tests/session_test.go`).
 #[test]
 fn test_set_tidb_cloud_storage_uri() {
     struct Restore(String);
@@ -18,7 +18,9 @@ fn test_set_tidb_cloud_storage_uri() {
     assert_eq!(globals.get(TIDB_CLOUD_STORAGE_URI).unwrap(), "");
     let noop = "noop://blackhole?access-key=hello&secret-access-key=world";
     globals.set(TIDB_CLOUD_STORAGE_URI, noop.into()).unwrap();
-    assert_eq!(globals.get(TIDB_CLOUD_STORAGE_URI).unwrap(), noop);
+    // Go master: unknown schemes drop the query on read; the stored value
+    // keeps it.
+    assert_eq!(globals.get(TIDB_CLOUD_STORAGE_URI).unwrap(), "noop://blackhole");
     assert_eq!(*tidb_vardef::CLOUD_STORAGE_URI.read().unwrap(), noop);
     for (scheme, requests) in [("s3", 4), ("ks3", 3)] {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

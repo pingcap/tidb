@@ -1085,6 +1085,10 @@ pub struct RegionHeartbeatRequest {
     /// It's counted on size of user key & value (excluding metadata fields), before compression, and latest versions only.
     #[prost(uint64, tag = "19")]
     pub approximate_columnar_kv_size: u64,
+    /// Approximate size of row-based key-value pairs stored in the IA tier for billing.
+    /// It is a subset of approximate_kv_size and follows the same size accounting rules.
+    #[prost(uint64, tag = "22")]
+    pub approximate_ia_kv_size: u64,
     /// BucketMeta is the bucket version and keys of this region if TiKV enabled the bucket feature
     #[prost(message, optional, tag = "20")]
     pub bucket_meta: ::core::option::Option<super::metapb::BucketMeta>,
@@ -2796,6 +2800,40 @@ impl ::prost::Name for GcState {
         "/pdpb.GCState".into()
     }
 }
+/// GCStateChange describes a change to a keyspace's effective GC state.
+/// GCState values sent by WatchGCStates omit gc_barriers because barriers are
+/// internal inputs used by PD to calculate effective safe points; the stream
+/// reports only changes to the resulting effective state.
+#[allow(clippy::all)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GcStateChange {
+    #[prost(oneof = "gc_state_change::Change", tags = "1, 2")]
+    pub change: ::core::option::Option<gc_state_change::Change>,
+}
+/// Nested message and enum types in `GCStateChange`.
+pub mod gc_state_change {
+    #[allow(clippy::all)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Change {
+        /// Insert or replace the complete GC state of this keyspace.
+        #[prost(message, tag = "1")]
+        Upsert(super::GcState),
+        /// Remove this keyspace from the client's materialized GC-state view.
+        /// This does not necessarily mean the keyspace metadata was physically deleted.
+        #[prost(message, tag = "2")]
+        Removed(super::KeyspaceScope),
+    }
+}
+impl ::prost::Name for GcStateChange {
+    const NAME: &'static str = "GCStateChange";
+    const PACKAGE: &'static str = "pdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "pdpb.GCStateChange".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/pdpb.GCStateChange".into()
+    }
+}
 /// GlobalGCBarriersInfo carries presence independently from the barrier list.
 #[allow(clippy::all)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2874,6 +2912,50 @@ impl ::prost::Name for GetAllKeyspacesGcStatesResponse {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/pdpb.GetAllKeyspacesGCStatesResponse".into()
+    }
+}
+#[allow(clippy::all)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct WatchGcStatesRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<RequestHeader>,
+    /// If false, when the stream is established, the server first sends the current
+    /// GC states of all keyspaces.
+    #[prost(bool, tag = "2")]
+    pub skip_loading_initial: bool,
+}
+impl ::prost::Name for WatchGcStatesRequest {
+    const NAME: &'static str = "WatchGCStatesRequest";
+    const PACKAGE: &'static str = "pdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "pdpb.WatchGCStatesRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/pdpb.WatchGCStatesRequest".into()
+    }
+}
+#[allow(clippy::all)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WatchGcStatesResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<ResponseHeader>,
+    /// Clients apply changes in order within this response and across successive
+    /// responses on the stream. A client must not observe an older state for a
+    /// keyspace after a newer update. After disconnection, the client reconnects
+    /// and reloads the initial state. The stream omits GC barrier details and does
+    /// not emit changes for barrier-only updates. If a barrier update changes an
+    /// effective GC state, the resulting state change is emitted.
+    #[prost(message, repeated, tag = "2")]
+    pub changes: ::prost::alloc::vec::Vec<GcStateChange>,
+}
+impl ::prost::Name for WatchGcStatesResponse {
+    const NAME: &'static str = "WatchGCStatesResponse";
+    const PACKAGE: &'static str = "pdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "pdpb.WatchGCStatesResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/pdpb.WatchGCStatesResponse".into()
     }
 }
 #[allow(clippy::all)]
@@ -4728,6 +4810,27 @@ pub mod pd_client {
                 .insert(GrpcMethod::new("pdpb.PD", "GetAllKeyspacesGCStates"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn watch_gc_states(
+            &mut self,
+            request: impl tonic::IntoRequest<super::WatchGcStatesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<tonic::codec::Streaming<super::WatchGcStatesResponse>>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/pdpb.PD/WatchGCStates");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("pdpb.PD", "WatchGCStates"));
+            self.inner.server_streaming(req, path, codec).await
+        }
         pub async fn sync_regions(
             &mut self,
             request: impl tonic::IntoStreamingRequest<Message = super::SyncRegionRequest>,
@@ -5372,6 +5475,19 @@ pub mod pd_server {
             request: tonic::Request<super::GetAllKeyspacesGcStatesRequest>,
         ) -> std::result::Result<
             tonic::Response<super::GetAllKeyspacesGcStatesResponse>,
+            tonic::Status,
+        >;
+        /// Server streaming response type for the WatchGCStates method.
+        type WatchGCStatesStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::WatchGcStatesResponse, tonic::Status>,
+            >
+            + std::marker::Send
+            + 'static;
+        async fn watch_gc_states(
+            &self,
+            request: tonic::Request<super::WatchGcStatesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<Self::WatchGCStatesStream>,
             tonic::Status,
         >;
         /// Server streaming response type for the SyncRegions method.
@@ -7384,6 +7500,52 @@ pub mod pd_server {
                                 max_encoding_message_size,
                             );
                         let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/pdpb.PD/WatchGCStates" => {
+                    #[allow(non_camel_case_types)]
+                    struct WatchGCStatesSvc<T: Pd>(pub Arc<T>);
+                    impl<
+                        T: Pd,
+                    > tonic::server::ServerStreamingService<super::WatchGcStatesRequest>
+                    for WatchGCStatesSvc<T> {
+                        type Response = super::WatchGcStatesResponse;
+                        type ResponseStream = T::WatchGCStatesStream;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::WatchGcStatesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Pd>::watch_gc_states(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = WatchGCStatesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.server_streaming(method, req).await;
                         Ok(res)
                     };
                     Box::pin(fut)

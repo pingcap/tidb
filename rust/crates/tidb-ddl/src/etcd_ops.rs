@@ -96,6 +96,13 @@ impl EtcdOps for EtcdClientOps {
             .map_err(|error| error.to_string())
     }
 
+    fn get_key_lease(&self, key: &str) -> Result<Option<i64>, String> {
+        self.client
+            .get_prefix_metadata(key.as_bytes())
+            .map(|entries| entries.into_iter().find(|entry| entry.key == key.as_bytes()).map(|entry| entry.lease))
+            .map_err(|error| error.to_string())
+    }
+
     fn get_prefix(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
         self.client
             .get_prefix(prefix.as_bytes())

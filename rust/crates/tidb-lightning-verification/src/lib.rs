@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use tidb_log::{Field, Value};
 
 /// Native representation of the Go `common.KvPair` dependency.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct KvPair {
     /// Go `KvPair.Key`.
     pub key: Vec<u8>,
@@ -199,17 +200,18 @@ impl std::fmt::Display for KvChecksum {
 pub const DATA_KV_GROUP_ID: i64 = -1;
 
 /// Go `KVGroupChecksum`: one [`KvChecksum`] per data or index KV group.
-pub struct KvGroupChecksum<'a> {
+#[derive(Clone, Default)]
+pub struct KvGroupChecksum {
     m: HashMap<i64, KvChecksum>,
-    keyspace: &'a [u8],
+    keyspace: Vec<u8>,
 }
 
-impl<'a> KvGroupChecksum<'a> {
+impl KvGroupChecksum {
     /// Go `NewKVGroupChecksumWithKeyspace`.
-    pub fn with_keyspace(keyspace: &'a [u8]) -> Self {
+    pub fn with_keyspace(keyspace: &[u8]) -> Self {
         let mut m = HashMap::with_capacity(8);
         m.insert(DATA_KV_GROUP_ID, KvChecksum::with_keyspace(keyspace));
-        Self { m, keyspace }
+        Self { m, keyspace: keyspace.to_vec() }
     }
 
     /// Go `NewKVGroupChecksumForAdd`. It cannot be used with
@@ -217,7 +219,7 @@ impl<'a> KvGroupChecksum<'a> {
     pub fn new_kv_group_checksum_for_add() -> Self {
         let mut m = HashMap::with_capacity(8);
         m.insert(DATA_KV_GROUP_ID, KvChecksum::new());
-        Self { m, keyspace: &[] }
+        Self { m, keyspace: Vec::new() }
     }
 
     /// Go `KVGroupChecksum.UpdateOneDataKV`. It does not re-check that the
@@ -247,7 +249,7 @@ impl<'a> KvGroupChecksum<'a> {
     fn get_or_create_one_group(&mut self, id: i64) -> &mut KvChecksum {
         self.m
             .entry(id)
-            .or_insert_with(|| KvChecksum::with_keyspace(self.keyspace))
+            .or_insert_with(|| KvChecksum::with_keyspace(&self.keyspace))
     }
 
     /// Go `KVGroupChecksum.AddRawGroup`.

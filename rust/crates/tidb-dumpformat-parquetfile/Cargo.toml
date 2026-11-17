@@ -1,0 +1,24 @@
+[package]
+name = "tidb-dumpformat-parquetfile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/dumpformat/parquetfile: the Parquet reader IMPORT INTO parses data files with (Rust rewrite)."
+
+[dependencies]
+bytes = "1"
+chrono.workspace = true
+parquet = { version = "58", default-features = false, features = ["snap", "flate2", "flate2-rust_backened", "zstd", "lz4", "brotli"] }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-objstore = { path = "../tidb-objstore" }
+tidb-timeutil = { path = "../tidb-timeutil" }
+
+[dev-dependencies]
+base64.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

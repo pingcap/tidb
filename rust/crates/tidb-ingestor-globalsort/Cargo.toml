@@ -1,0 +1,36 @@
+[package]
+name = "tidb-ingestor-globalsort"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/ingestor/globalsort: merge sort, range splitting and the external engine over object storage"
+
+[lints]
+workspace = true
+
+[dependencies]
+crossbeam-channel = "0.5"
+hex = "0.4"
+serde.workspace = true
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
+tidb-dxf-execute = { path = "../tidb-dxf-execute" }
+tidb-failpoint = { path = "../tidb-failpoint" }
+tidb-go-strconv = { path = "../tidb-go-strconv" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-goruntime = { path = "../tidb-goruntime" }
+tidb-ingestor-engineapi = { path = "../tidb-ingestor-engineapi" }
+tidb-ingestor-errdef = { path = "../tidb-ingestor-errdef" }
+tidb-ingestor-simplesst = { path = "../tidb-ingestor-simplesst" }
+tidb-lightning-log = { path = "../tidb-lightning-log" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-mathutil = { path = "../tidb-mathutil" }
+tidb-metrics = { path = "../tidb-metrics" }
+tidb-objstore = { path = "../tidb-objstore" }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true

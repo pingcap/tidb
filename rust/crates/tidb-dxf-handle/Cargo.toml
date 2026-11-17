@@ -37,3 +37,9 @@ tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-stringutil = { path = "../tidb-stringutil" }
 tidb-vardef = { path = "../tidb-vardef" }
+tidb-objstore = { path = "../tidb-objstore" }
+tidb-objstore-recording = { path = "../tidb-objstore-recording" }
+tidb-sem-compat = { path = "../tidb-sem-compat" }
+
+[dev-dependencies]
+tidb-sem = { path = "../tidb-sem" }

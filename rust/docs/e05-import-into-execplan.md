@@ -68,7 +68,9 @@ The planner visitor uses `tidb_ast::Visitor`/`Visitable` and the existing `tidb-
 
 The planner visitor is a tested preparation increment, not a completed importer or Go package. Physical import is blocked on missing prerequisite owners outside this task's named scope:
 
-- `pkg/lightning/backend/kv`: `NewBaseKVEncoder`, required at `pkg/executor/importer/kv_encode.go:76`.
+- `pkg/lightning/backend/kv`: `NewBaseKVEncoder`, required at `pkg/executor/importer/kv_encode.go:76`. Ported as `tidb-lightning-backend-kv` (with `tidb-lightning-backend-encode` and `tidb-go-rand` for the AUTO_RANDOM / SHARD_ROW_ID_BITS shards). `testdata/encode_go.jsonl` comes from an uncommitted Go master probe (`GOTOOLCHAIN=go1.27.3 go test ./zzprobe/e05kv -run TestEncodeCapture`): 25 tables, 59 rows, compared on KV bytes, row ids, error text and allocator bases. The capture exposed two table-layer differences that also affect ordinary writes, both now fixed: the row value omitted Go `canSkip`'s NULL-without-default columns, and `AddRecord` set index entries before the record. `kv2sql.go` comes with conflict resolution.
+- `pkg/objstore` storage layer (needed to read IMPORT INTO sources): ported in `tidb-objstore` (`storeapi`, `objectio`, `compressedio`, `compress.go`, `local.go`, `memstore.go`, `noop.go`, `hdfs.go`, `storage.go`, and the S3/GCS/Azure storages over `opendal`). Go's local, memstore and compress tests are ported; `s3_storage_round_trip` passes against MinIO (`bitnamilegacy/minio` in Colima, since MinIO's own images and downloads are archived).
+- `pkg/lightning/mydump` for IMPORT INTO: the CSV and SQL parsers now read a storage reader in Go's `blockParser` blocks (they held the whole file before), the CSV parser reads headers (`ReadColumns`, `shouldParseHeader`) and reports `ReadUntilTerminator`'s position; `OpenReader`/`NewReaderOpener`, `ToStorageCompressType`, `SourceFileMeta`/`FileInfo`/`MDTableMeta`, `ParallelProcess`, `EstimateRealSizeForFile`/`SampleFileCompressRatio` and `region.go` (`MakeTableRegions`, `MakeSourceFileRegion`, `SplitLargeCSV`, `AllocateEngineIDs`, `CalculateBatchSize`) are ported with Go's region tests. Lightning's directory loader (`MDLoader`, routing rules, schema/view import) is not, as IMPORT INTO lists its own files. Parquet row counts fail until `pkg/dumpformat/parquetfile` is ported.
 - `pkg/ingestor/ingestctrl`: `NewBackend`, required at `pkg/executor/importer/table_import.go:227`; Rust has only `tidb-ingestor-errdef`, not the engine or ingestion lifecycle.
 - `pkg/lightning/mydump` SQL parser and `pkg/dumpformat/parquetfile` reader: Rust's mydump crate supplies CSV only. `pkg/executor/importer/import.go:newLoadDataParser` selects all three formats.
 
@@ -211,3 +213,345 @@ final capture comparison includes those regressions. One intermediate build
 saw the new local helper before its metadata dependency was rebuilt; the final
 check and test run rebuild both from the completed source. Full crate suites
 and successful import execution are still outstanding.
+
+### Source URL increment (2026-11-15)
+
+Go `buildImportInto` begins, for a file source, with `url.Parse(ld.Path)`: an
+error answers `ErrLoadDataInvalidURI` with `ImportIntoDataSource` and the
+error text; `objstore.IsLocal` decides `importFromServer`; SEM v1 refuses a
+server-disk source; and a next-generation kernel under SEM runs
+`checkNextGenS3PathWithSem` for an S3-like source and rewrites the path with
+the keyspace as `external-id`. The Rust builder classified the scheme with a
+hand-written split (`import_into::import_from_server`) and had none of the
+other checks.
+
+- [x] `plan_builder/import_into.rs::check_import_source_path` and
+  `check_next_gen_s3_path_with_sem` follow Go, over `tidb-go-url` (Go 1.25
+  `net/url`) and `tidb-objstore` (`IsLocal`, `IsS3Like`,
+  `NormalizeQueryParameterKey`, the `s3like` query keys), all added for E07's
+  destination URL in the same change. `import_from_server` is gone.
+- [x] The checks run before option rewriting and the assignment checks, in
+  Go's order.
+- [ ] The importer's local discovery (`importer/local.rs`) still reserializes
+  the URI by hand; it moves to the parsed URL with the controller's
+  `InitDataStore`.
+
+Deliberate difference: the URL quoted in Go's parse error is redacted with
+`tidb_ast::redact_url` before it reaches the client (root `AGENTS.md` rule 7).
+
+Evidence: `plan_builder::import_into::tests::test_process_next_gen_s3_path`
+ports Go `TestProcessNextGenS3Path`. Session regression
+`tests_core::dml::import_into_source_url_is_checked_like_go` covers the 8158
+parse error (also with credentials in the URL) and SEM v1's 8132 refusal for
+four server-disk spellings; with the two planner files restored to the
+original source it fails (recorded below). The next-generation stamping runs
+only in a next-generation kernel build and was not executed here.
+
+    cargo nextest run -p tidb-planner -p tidb-session -E 'test(import_into) | test(test_process_next_gen_s3_path)'
+
+Baseline: with `tidb-planner/src/import_into.rs` and
+`plan_builder/import_into.rs` restored from the original source, the session
+regression failed at its first assertion (code 1105 instead of 8158); with the
+change restored, all ten targeted tests passed.
+
+Changed-crate suites: see the E07 plan's destination URL increment (one shared
+run, 6377/6386 passed; the 9 failures reproduce on the unchanged tip).
+
+### Go master baseline (2026-11-15)
+
+Go master's `buildImportInto` adds Starter handling: a Starter deployment
+requires an explicit non-empty external ID (`checkStarterS3Path`, answering
+ErrLoadDataInvalidURI), `checkNextGenS3PathWithSem` skips the external-ID
+check there, and only non-Starter deployments stamp the keyspace. Ported
+with master's `TestProcessNextGenS3Path` Starter cases (`checkStarterS3Path`
+reads no mode, so its cases run in every build). Master still quotes
+`url.Parse`'s error in ErrLoadDataInvalidURI; that URL goes through master's
+`RedactURL`, which turns an unparseable URL into `(invalid URL)`.
+
+## Closing E05: the stacked PR plan (2026-11-16)
+
+The user asked for full Go parity before the row is deleted, with the final
+acceptance on a TiUP playground (PD + TiKV) plus MinIO for S3. MinIO's own
+images and binaries are archived (HTTP 410); `bitnamilegacy/minio` runs in
+Colima as container `tidb-e05-minio` on `127.0.0.1:19000`
+(`minioadmin`/`minioadmin`, bucket `e05`).
+
+Opened so far (each stacked on the previous, from `dbsid/tidb`):
+
+- #39 kvproto refresh, #35 storage URLs/redaction, #40 Lightning KV encoder
+  (`tidb-lightning-backend-kv`), #41 `pkg/objstore` storage layer, #44
+  streaming mydump parsers and `region.go`.
+
+Remaining, in order:
+
+1. Done: `pkg/dumpformat/parquetfile` as `tidb-dumpformat-parquetfile` over the
+   `parquet` crate, pinned by an 18-record Go capture (`zzprobe/e05pq`);
+   mydump's Parquet row count reads it.
+2. Partly done (the PR after #45): `pkg/lightning/backend` as
+   `tidb-lightning-backend` (`Backend`/`EngineWriter`, `EngineManager`,
+   opened/closed engines with Go's 3 import retries, `MakeUUID`), and
+   `ingestctrl`'s `be::Backend` impl with a local writer, `GetTS`, and the
+   imported KV count. With it, `importer`'s `kv_encode.go`,
+   `chunk_process.go`, `engine_process.go` and the engine half of
+   `table_import.go`, pinned by an 8-case Go capture of
+   `NewFileChunkProcessor(...).Process` (`zzprobe/e05imp`): KV pairs per
+   writer, group checksums, and the encode error text. Still open from this
+   step: `checksum.go`, `tikv_mode.go`, and the scheduler pause hooks.
+   The original scope of this step: `pkg/lightning/backend` (`backend.go` engine manager, `MakeUUID`) and the
+   `ingestctrl` pieces IMPORT INTO needs beyond ADD INDEX's: local writer
+   with flush status, `CloseEngine`, `checksum.go` (remote checksum),
+   `tikv_mode.go`, and the import-mode / PD scheduler pause hooks. Region
+   split/scatter stays under D02 unless Go-visible.
+3. Partly done (the PR after the chunk-processing PR): the rest of
+   `import.go` (`NewImportPlanFromInput` over the statement's validated
+   options with the session snapshot, `initParameters`, the plan's Go JSON
+   for task metadata, `InitDataStore`, `InitDataFiles` over `objstore` with
+   compression and Parquet size estimates, `CheckDataSourceAccess`,
+   `GetSortStore`), `PopulateChunks` and subtask sizing, `job.go`
+   (`mysql.tidb_import_jobs`), `precheck.go`, and `table_import.go`'s
+   `NewTableImporter`, `prepareSortDir`, `adjustDiskQuota`, `VerifyChecksum`,
+   `RemoteChecksumTableBySQL` and `RebaseAllocatorBases` behind session and
+   allocator traits. Pinned by a 15-statement Go capture (`zzprobe/e05plan`)
+   and the ported `job_test.go` / `precheck_test.go`. Still open from this
+   step: `sampler.go` and `CalResourceParams` (next-gen only),
+   `query_source.go`, `ImportSelectedRows`, and the disk quota loop.
+   The original scope: `pkg/executor/importer`: the rest of `import.go` (plan capture, options,
+   `InitDataStore`, `InitDataFiles`, `GetParser`, `CheckRequirements`),
+   `kv_encode.go`, `chunk_process.go`, `engine_process.go`,
+   `table_import.go`, `job.go` (`mysql.tidb_import_jobs`), `precheck.go`,
+   `sampler.go`, `query_source.go`.
+4. Partly done (the PR after #47): `pkg/dxf/importinto` as
+   `tidb-dxf-importinto` (`proto.go`, `job.go`, `planner.go`, `scheduler.go`,
+   `task_executor.go` for local sort, `RuntimeInfo`), the server's
+   `ImportStore` over TiKV (import client, keyspace, allocator rebase, PD
+   store count, KV emptiness check), and `pkg/executor/import_into.go`'s
+   file path: `ImportIntoExec` (standalone and DETACHED),
+   `ImportIntoActionExec` (CANCEL IMPORT JOB), SHOW IMPORT JOB(S) and SHOW
+   IMPORT GROUP(S). Pinned by the SHOW/CANCEL capture `zzprobe/e05show` as a
+   unistore session test, and by a live run (below). Still open from this
+   step: `encode_and_sort_operator.go`, `subtask_executor.go`'s global sort
+   half, `clean_up.go`, conflict collection/resolution, IMPORT FROM SELECT,
+   TiKV import mode and the PD scheduler pause.
+5. Done (the PR after #48): IMPORT INTO ... FROM SELECT on the classic
+   kernel (`importFromSelect`, `sendQueryChunks`, `ImportSelectedRows`,
+   `FlushTableStats`), `validateStatementInTxn`, TiKV import mode
+   (`tikv_mode.go`, the scheduler's `OnTick` / `switchTiKV2NormalMode`, the
+   Raft-KV2 `switchModeBySplitKeys`), PD's scheduler pause on the engine's
+   range (`pdutil.PauseSchedulersByKeyRange`, also for ADD INDEX's ingest),
+   and the task's etcd registration (`br/pkg/utils/register.go`). A
+   next-gen FROM SELECT returns Go's "outside materialized view
+   maintenance" error: Go only runs it (`ImportStepQuery`) during
+   materialized-view maintenance, and materialized views are not ported.
+6. Done (the PR after #49): `pkg/ingestor/simplesst` as
+   `tidb-ingestor-simplesst` (sorted KV and stat file codecs, `Writer`,
+   `OneFileWriter`, `KVReader`/`StatsReader` with the concurrent hotspot
+   reader, `MergeKVIter`, `MergePropIter`, `GetReadRangeFromProps`,
+   `GetAllFileNames`), `engineapi`'s `Range`/`ConflictInfo`/`OnDuplicateKey`
+   as `tidb-ingestor-engineapi`, and Go `math/rand`'s `Intn` for the
+   partition prefixes. Pinned by a 24-case Go capture (`zzprobe/e05sst`):
+   every file's bytes, the writer summaries, and what the readers return,
+   for both writers, the 4 duplicate actions, and 0, 1 and 60 rows.
+7. Done (the PR after the simplesst PR): `pkg/ingestor/globalsort` as
+   `tidb-ingestor-globalsort` (`SortedKVMeta`, `DivideMergeSortDataFiles`,
+   `CalRangeSize`, `RangeSplitter`, `MergeOverlappingFiles`, `readAllData`,
+   the external `Engine` and `MemoryIngestData`, `CleanUpFiles`),
+   `engineapi`'s `Engine`/`IngestData`, and `ingestctrl`'s
+   `IngestExternalEngine` with `verifyImportedStatistics`. Pinned by a Go
+   capture (`zzprobe/e05gs`) of the pure functions and of 3 overlapping
+   writers' files through every split, merge and engine load, for each
+   duplicate action. Go sorts a loaded batch with an unstable parallel sort,
+   so which duplicate an error names and the order of a key's recorded
+   duplicates vary between Go runs; the test compares those loosely.
+8. Done (the PR after the globalsort PR): the DXF global-sort steps.
+   `proto.go`'s step metas with `BaseExternalMeta`'s two encodings
+   (subtask meta without the external fields, external file with only
+   them), `planner.go`'s merge-sort, write-and-ingest, collect-conflicts and
+   conflict-resolution specs and `writeExternalPlanMeta`, the scheduler's
+   step transitions, `task_executor.go`'s encode-and-sort path
+   (`encodeAndSortOperator`, `IndexRouteWriter`), merge-sort and
+   write-and-ingest executors, `normalizeSubtaskErr`, `clean_up.go`'s
+   `ImportCleaner` (task meta redaction, table mode, sort file cleanup), and
+   `GetRegionSplitSizeKeys` over TiKV's `/config`. IMPORT INTO with a
+   `cloud_storage_uri` now runs. Pinned by a Go capture of every step meta's
+   encodings (`zzprobe/e05dxf`) and by a live MinIO run against Go (below).
+   `on_duplicate_key='capture'` was refused until step 9.
+   Next-gen async prepare (`PreparedMeta`) is not ported.
+9. Done (the PR after the DXF global-sort PR): conflict collection and
+   resolution. `conflictedkv` (`tidb-dxf-importinto-conflictedkv`: the
+   data and index KV handlers, `LazyRefreshedSnapshot`, `KeyFilter` and
+   `BoundedKeySet`, `Collector` and `Deleter`), `conflictpath`, and the
+   collect-conflicts and conflict-resolution step executors with the MV
+   index dispatch. `tables.DecodeRawRowData` in `tidb-table`, and `BatchGet`
+   on the narrowed `kv_storage::Transaction`. `on_duplicate_key='capture'`
+   with global sort now imports. Pinned by ports of Go's conflictedkv tests
+   over Go-created table schemas and by a live run against Go (below).
+   `conflictrows` came with step 10.
+10. Done (the PR after the conflicts PR): the next-gen parts.
+    - Async prepare: `ShouldUseAsyncPrepare`, prepare mode on submit,
+      `OnPrepare` (job not cancelled, `preparing` step, files, size check,
+      resource parameters, the job's prepared info, chunks) writing
+      `PreparedMeta` to the sort store, and `generateImportSpecs` reading it
+      back. The session skips the file listing and runs
+      `CheckRequirementsBeforeInitDataFiles` for it.
+    - `CalResourceParams` and `sampler.go` (the index KV size ratio), also
+      run on the session path of a next-gen import.
+    - A next-gen user keyspace submits the task to the DXF service after the
+      job, as Go does.
+    - `conflictrows` (`tidb-dxf-importinto-conflictrows`), the scheduler's
+      `ExpiredFileCleaner` and `expiredFileCleanLoop` (next-gen only),
+      `GetTaskCleanupInfoByIDs`, and `handle.GetCloudStorageURI` moved into
+      `tidb-dxf-handle` with its SEM rule.
+    Pinned by a Go capture of the sampler's sizes and `PreparedMeta`'s
+    encodings (`zzprobe/e05ng`), and by ports of Go's conflictrows,
+    `TestRunExpiredFileClean` and `TestGetCloudStorageURI` tests. No
+    next-gen cluster was available: the tests also run with the `nextgen`
+    kernel feature, but no next-gen import ran live.
+11. Done (the last E05 PR): the E05 row is deleted from the structural
+    findings register (Markdown and JSON). Materialized views, which Go's
+    next-gen IMPORT INTO ... FROM SELECT (`ImportStepQuery`) needs, are a
+    new open row, E27; they were out of scope for E05.
+
+### Live acceptance of on_duplicate_key='capture' (2026-11-16)
+
+Same playgrounds and MinIO. `/tmp/e05-data/capture.sh` (not committed)
+imports with `cloud_storage_uri` and `on_duplicate_key='capture'` into
+tables with a primary key, a unique and a plain index: a duplicate primary
+key, a duplicate unique key, both in one file, a 20000-row file with 2000
+duplicate primary keys and 2857 duplicate unique keys (also into a table
+clustered on `(name, id)` with a unique `id`, and with `__force_merge_step`
+and `__max_engine_size='100KB'`, which records conflicts in the merge
+step), and a duplicate with `on_duplicate_key='error'`. It compares the
+result message ("8571 conflicted rows."), the imported rows, the per-step
+subtask counts, the data and `ADMIN CHECK TABLE`, the number of conflict
+row files and their sorted content. Go and Rust give the same output. The
+collected checksums have the same size and KV count in every case and the
+same sum where the table IDs are the same; the post-process checksum
+passed after subtracting them.
+
+### Live acceptance of global sort (2026-11-16)
+
+Same playgrounds and MinIO. `/tmp/e05-data/gsort.sh` (not committed)
+imports with `cloud_storage_uri` into tables with a primary key, a unique
+and a plain index: 400000 rows from S3 CSV with `thread=4` (encode, then
+write-and-ingest, the merge sort skipped), the same with
+`__force_merge_step` and `__max_engine_size='2MB'` (3 encode, 3 merge-sort
+and 3 ingest subtasks), Parquet into a clustered table, a glob `WITH
+DETACHED`, a duplicate primary key and a duplicate unique key (both 8167
+`ErrLoadDataDuplicateKeyConflict`, the job failed in `global-sorting`), and
+`on_duplicate_key` with local sort (8166). It checks the data and `ADMIN
+CHECK TABLE`, the step subtask counts, that the sort prefix is empty after
+cleanup, and that task history keeps no statement or credential. Go and
+Rust give the same output, except `on_duplicate_key='capture'`, which Go
+imports ("2 conflicted rows.") and this port refuses for now. Tasks this
+port moved to history before `ImportCleaner` existed still hold the
+statement and the S3 keys; Go's never do.
+
+### Live acceptance of FROM SELECT and the TiKV hooks (2026-11-16)
+
+Same playgrounds as below. `/tmp/e05-data/select.sh` (not committed)
+imports from a 3000-row indexed table: all columns, a column list, an
+expression with `thread=2`, an aggregate, an empty SELECT, a non-empty
+target (8173), duplicate keys (checksum mismatch, and the same 8223 index
+inconsistency Go leaves), DETACHED (8166), and an explicit transaction
+("cannot run IMPORT INTO in explicit transaction", also through EXECUTE),
+then checks the data, `ADMIN CHECK TABLE` and the AUTO_INCREMENT rebase.
+Go and Rust match except which duplicate row survives in the duplicate-key
+case: its source is `SELECT ... UNION ALL SELECT ...`, and this port's
+UNION ALL returns its children in either order (Go's returned them in
+order in 6 of 6 runs), so the first row differs. With an ordered source
+both keep the first row.
+
+`/tmp/e05-data/modes.sh` (not committed) imports 400000 rows from S3 as a
+DXF task and watches the cluster: the etcd key
+`/tidb/brie/import/import-into/<task>` exists with a lease while the task
+runs and is gone after; PD's audit log shows 2 `SetRegionLabelRule` and 2
+`PatchRegionLabelRules` (one pause per engine); TiKV logs `switch mode`
+Import then Normal. Go and Rust give the same output.
+
+### Live acceptance of the file path (2026-11-16)
+
+A TiUP nightly playground (1 PD, 1 TiKV) per server: Go master
+`eca4674a6f` (go1.27.3) as the playground's tidb-server, and this tree's
+debug `tidb-server --store tikv` on its own playground. The same script
+(`/tmp/e05-data/accept.sh`, not committed) imports 2000 rows into indexed
+tables from local CSV with a header, gzip CSV, SQL, Parquet, a CSV glob, S3
+(MinIO) CSV, an S3 glob, S3 Parquet with a column list and `SET`, and S3
+gzip CSV `WITH DETACHED`; then checks count/sum/min/max and `ADMIN CHECK
+TABLE`, the non-empty-target precheck (8173), `SHOW IMPORT JOBS`, the
+AUTO_INCREMENT rebase, and CANCEL of a finished job (8171). With table IDs
+masked the two outputs are identical. A header row imported without
+`skip_rows` fails the job with Go's client error and stored job error, and
+CANCEL of a DETACHED job leaves it `cancelled|cancelled by user`.
+
+Found by the live run, each with a regression test:
+- `ImportStore::keyspace` built `'x'` + 3 bytes from API V1's
+  `NULL_KEYSPACE_ID`, so every local checksum had 4 extra bytes per KV.
+- `ErrChecksumMismatch` and the chunk encode error became 1105 MySQL errors,
+  which `common.IsRetryableError` retries (Go's `*mysql.MySQLError` rule), so
+  the subtask looped forever. Go returns `*errors.Error` / plain errors here,
+  which it does not retry.
+- The emptiness precheck ran SQL against a table in Import mode (8258); Go
+  `CheckImportIntoTableIsEmpty` scans the record prefix at a snapshot.
+- IMPORT INTO from files was routed as a write ("a write statement
+  unexpectedly produced rows"); Go gives it the `importIntoSchemaNames`
+  result schema.
+- The client error and the stored job error kept every RFC prefix; Go keeps
+  the error chain, so DXF stores `[outer RFC]` + `GetErrStackMsg` and the
+  scheduler fails the job with `task.Error.Error()`.
+
+Environment notes: the Rust server reads the macOS system HTTP proxy
+(reqwest), Go's `net/http` does not; the Rust run needs
+`NO_PROXY=127.0.0.1` to reach PD's HTTP API and MinIO. The Go playground has
+`tidb_redact_log=ON` by default, which redacts the encode error's value.
+
+## Takeover: merging the stack onto hparser-integration (2026-11-17)
+
+The user asked us to take over the stack (#39–#56) and fix its remaining
+issues ourselves. The stack's 19 commits are merged in one merge commit onto
+`hparser-integration` (branch `e05-takeover`), keeping dbsid's authorship.
+
+- [x] Conflicts with `hparser-integration`'s Go-shaped ingest: the
+  `ingestctrl` pipeline (`doImport`, region jobs, store balancer, write
+  limiter) is the base; the stack's additions are ported onto it.
+- [x] Review #1/#2 (one import path): `Backend::import_engine` is Go's
+  `ImportEngine` for both engine kinds. `CloseEngine` with an
+  `ExternalEngineConfig` (Go `backend.ExternalEngineConfig`, now on
+  `be::EngineConfig`) puts a global-sort engine in the engine manager's
+  `externalEngine` map; `region_job::do_import` runs over Go's
+  `engineapi.Engine` / `IngestData`, so the external engine's batches go
+  through the same region-job pipeline; `verifyImportedStatistics` asserts
+  the engine type as Go does. The stack's `ingest_external_engine`,
+  `import_range`, `JobData` and its second PD-pause port (`pdutil.rs`) are
+  gone; `tidb_br::pdutil` takes Go's `pdhttp.Client` seam
+  (`LabelRuleClient`).
+- [x] Review #3: `be::Error` keeps its cause (Go's error chain), the writers
+  pass theirs, and `normalize_subtask_err` matches `ErrFoundDuplicateKeys`
+  by identity only (the text match is gone).
+- [x] Review #4: `EngineWriter::append_rows` takes Go's `encode.Rows`
+  (`Rows::Pairs` / `Rows::Grouped`); the index route writer gets the pairs
+  grouped by index, as Go's `kv.GroupedPairs`, instead of decoding each key.
+- [x] Review #5: the encode-and-sort step starts all `concurrency` chunk
+  workers, each with its own writers, as Go's worker pool does.
+- [x] #53: the conflict handlers receive from one MPMC channel (Go's
+  channel), not a mutexed receiver.
+- [x] #55: `getTaskMgrForAccessingImportJob` (the task runtime's sessions
+  for a user-keyspace task); IMPORT INTO's metering (`NewObjStoreWithRecording`
+  per step, the ingest collector's cluster write bytes, the conflict
+  handlers' traffic recorder).
+- [x] Register: E05 removed; materialized views recorded as E29 (#56 had
+  E27, already taken); the TiKV key codec's placement (applied at ingest,
+  Go applies it at write) recorded as E30.
+- [x] kvproto: the stack's refresh to Go master's pin (9192d38c8b67)
+  regenerated with this branch's boxing config, and upstreamed to
+  ngaut/client-rust (2570a38, c9d3154).
+- [x] Verification: gate 608 (suites and replay; the one failure was
+  `test_set_tidb_cloud_storage_uri` pinning the older Go read of an unknown
+  scheme, now Go master's), the realtikv add-index suites (87/87), the
+  vendored client (1812/1812), and a live acceptance against Go's
+  tidb-server on a TiUP playground with MinIO (`tidb-wt/tools/e05-accept`):
+  local CSV, gzip CSV, SQL and Parquet; S3 CSV and Parquet with local and
+  global sort; a global-sort duplicate gives 8167; the not-empty precheck
+  and the header-row encode error match. Two reference differences: the
+  nightly Go binary predates Go master's `RedactURL` of `endpoint`, and
+  table IDs differ by one, so checksums of the same KVs differ.
+- [ ] Go's realtikv `importintotest` suites are not ported.

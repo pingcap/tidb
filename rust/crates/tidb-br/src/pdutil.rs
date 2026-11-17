@@ -33,6 +33,32 @@ struct KeyRangeRule {
     end_key_hex: String,
 }
 
+/// The calls Go's `PauseSchedulersByKeyRange` makes on its `pdhttp.Client`.
+pub trait LabelRuleClient: Send + Sync {
+    /// Go `pdhttp.Client.SetRegionLabelRule`.
+    ///
+    /// # Errors
+    ///
+    /// PD's error.
+    fn set_region_label_rule(&self, rule: &pd_http::LabelRule) -> Result<(), String>;
+    /// Go `pdhttp.Client.PatchRegionLabelRules`.
+    ///
+    /// # Errors
+    ///
+    /// PD's error.
+    fn patch_region_label_rules(&self, patch: &pd_http::LabelRulePatch) -> Result<(), String>;
+}
+
+impl LabelRuleClient for pd_http::Client {
+    fn set_region_label_rule(&self, rule: &pd_http::LabelRule) -> Result<(), String> {
+        block_on_pd_http(pd_http::Client::set_region_label_rule(self, rule))
+    }
+
+    fn patch_region_label_rules(&self, patch: &pd_http::LabelRulePatch) -> Result<(), String> {
+        block_on_pd_http(pd_http::Client::patch_region_label_rules(self, patch))
+    }
+}
+
 /// What [`pause_schedulers_by_key_range`] hands back: Go's `done` channel
 /// together with the caller's `cancel`. Dropping it cancels the refresh loop
 /// and waits for the rule's removal (Go `cancel(); <-done`).
@@ -57,7 +83,7 @@ impl Drop for PausedSchedulers {
 ///
 /// PD's error setting the label rule.
 pub fn pause_schedulers_by_key_range(
-    pd_http_cli: pd_http::Client,
+    pd_http_cli: std::sync::Arc<dyn LabelRuleClient>,
     start_key: &[u8],
     end_key: &[u8],
 ) -> Result<PausedSchedulers, String> {
@@ -75,7 +101,7 @@ pub fn pause_schedulers_by_key_range(
 
 /// Go `pauseSchedulerByKeyRangeWithTTL`.
 fn pause_scheduler_by_key_range_with_ttl(
-    pd_http_cli: pd_http::Client,
+    pd_http_cli: std::sync::Arc<dyn LabelRuleClient>,
     key_range: &[(&[u8], &[u8])],
     ttl: Duration,
 ) -> Result<PausedSchedulers, String> {
@@ -103,14 +129,14 @@ fn pause_scheduler_by_key_range_with_ttl(
         // Data should be a list of KeyRangeRule when rule type is key-range.
         data: serde_json::to_value(encoded_key_range_rule).map_err(|error| error.to_string())?,
     };
-    block_on_pd_http(pd_http_cli.set_region_label_rule(&rule))?;
+    pd_http_cli.set_region_label_rule(&rule)?;
 
     let (cancel, cancelled) = crossbeam_channel::bounded::<()>(0);
     let done = std::thread::spawn(move || {
         loop {
             crossbeam_channel::select! {
                 recv(crossbeam_channel::after(ttl / 3)) -> _ => {
-                    if let Err(error) = block_on_pd_http(pd_http_cli.set_region_label_rule(&rule)) {
+                    if let Err(error) = pd_http_cli.set_region_label_rule(&rule) {
                         tidb_log::warn(
                             "pause scheduler by key range failed, ignore it and wait next time pause",
                             &[Field::new("error", Value::Str(error))],
@@ -126,7 +152,7 @@ fn pause_scheduler_by_key_range_with_ttl(
             set_rules: Vec::new(),
             delete_rules: vec![rule.id.clone()],
         };
-        if let Err(error) = block_on_pd_http(pd_http_cli.patch_region_label_rules(&delete_rule)) {
+        if let Err(error) = pd_http_cli.patch_region_label_rules(&delete_rule) {
             tidb_log::warn(
                 "failed to delete region label rule, the rule will be removed after ttl expires",
                 &[
@@ -231,7 +257,7 @@ mod tests {
         let start_key = [0u8, 0, 0, 0];
         let end_key = [0xffu8, 0xff, 0xff, 0xff];
         let paused =
-            pause_scheduler_by_key_range_with_ttl(pd_http_cli, &[(&start_key, &end_key)], ttl).unwrap();
+            pause_scheduler_by_key_range_with_ttl(Arc::new(pd_http_cli), &[(&start_key, &end_key)], ttl).unwrap();
         std::thread::sleep(ttl * 3);
         drop(paused);
         let state = label_expires.lock().unwrap();

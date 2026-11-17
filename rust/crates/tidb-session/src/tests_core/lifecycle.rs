@@ -520,6 +520,12 @@ fn update_and_delete_through_the_session() {
             .unwrap(),
         StmtKind::Query
     );
+    // Go `buildImportInto`: an import from files answers the job row, FROM
+    // SELECT answers an OK packet.
+    for sql in ["IMPORT INTO t FROM '/a.csv'", "IMPORT INTO t FROM 's3://b/a.csv' WITH DETACHED"] {
+        assert_eq!(session.statement_kind(sql).unwrap(), StmtKind::Query, "{sql}");
+    }
+    assert_eq!(session.statement_kind("IMPORT INTO t FROM SELECT * FROM s").unwrap(), StmtKind::Write);
 }
 
 /// The wire answers an `Admin`-bucket statement with an OK packet exactly when

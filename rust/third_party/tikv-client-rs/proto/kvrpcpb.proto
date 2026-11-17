@@ -854,9 +854,16 @@ message MvccGetByStartTsResponse {
 
 // Helper messages.
 
+// Client-provided process/product identity for auditing, not authentication or
+// authorization. TiDB includes embedded BR; standalone BR uses RequestOriginBR.
+// Audit unknown values without mapping them to a known origin or rejecting
+// requests solely because of their origin in the initial rollout.
 enum RequestOrigin {
   RequestOriginUnknown = 0;
   RequestOriginTiDB = 1;
+  RequestOriginTiCDC = 2;
+  RequestOriginBR = 3;
+  RequestOriginTiFlash = 4;
 }
 
 // Miscellaneous metadata attached to most requests.
@@ -929,11 +936,7 @@ message Context {
   // Some information used for resource control.
   ResourceControlContext resource_control_context = 28;
 
-  // The declared origin of the request. TiDB server requests set this to TIDB.
-  // This field is client-provided metadata; consumers should rely on it only when
-  // the caller is authenticated/authorized by the transport or deployment boundary.
-  // UNKNOWN means the origin is unset or not recognized by this protocol version.
-  // Other components should add dedicated enum variants when they need origin-specific behavior.
+  // Declared process/product origin; see RequestOrigin.
   RequestOrigin request_origin = 29;
 
   // The keyspace that the request is sent to.
@@ -974,9 +977,12 @@ message Context {
   // This field is set by client-go based on an extractor function provided by TiDB.
   uint64 trace_control_flags = 37;
 
-  // TODO(slock): tidb should send requests with a feature flag to indicate whether it
-  // supports shared locks, so that tikv can fail the requests from old tidb versions
-  // when needed.
+  // Transaction protocol version declared for this request; see TxnProtocolVersion.
+  // Missing or zero means legacy. Any nonzero value promises structured
+  // IncompatibleRequest handling. BatchCommands declares this per inner request.
+  // This is a compatibility declaration, not a binary version or authorization.
+  // Keep uint32 so future version values remain representable.
+  uint32 txn_protocol_version = 39;
 }
 
 message ResourceControlContext {
@@ -1053,6 +1059,20 @@ enum APIVersion {
   V3 = 3;
 }
 
+// Transaction protocol version registry. Each version includes all earlier
+// semantics. Keep values stable; new versions require joint review by TiKV,
+// TiDB and relevant client owners. This registry sets neither client defaults
+// nor the store's admission range.
+enum TxnProtocolVersion {
+  // No promise to handle IncompatibleRequest.
+  TXN_VER_LEGACY = 0;
+  // Handles IncompatibleRequest according to its error contract.
+  TXN_VER_SUPPORT_INCOMPATIBLE_ERROR_HANDLING = 1;
+  // Also supports shared wrapper parsing and expansion, nested lock information
+  // preservation, and shared-lock pagination and resolve semantics.
+  TXN_VER_SUPPORT_SHARED_LOCK = 2;
+}
+
 message SourceStmt {
   uint64 start_ts = 1;
   uint64 connection_id = 2;
@@ -1081,9 +1101,8 @@ message LockInfo {
   // When lock_type is SharedLock, this describes transactions holding the shared lock.
   // Important: when lock_type is SharedLock, all shared locks must use shared_lock_infos;
   // DO NOT read from the wrapper LockInfo.
-  // TODO(slock): tidb should send requests with a feature flag to indicate whether it
-  // supports shared locks, so that tikv can fail the requests from old tidb versions
-  // when needed.
+  // Before returning a shared lock wrapper, the server must check the caller's
+  // txn_protocol_version and return IncompatibleRequest if support is insufficient.
   repeated LockInfo shared_lock_infos = 12;
 
   // Reserved for file based transaction.
@@ -1913,6 +1932,20 @@ message HealthFeedback {
   // The slow_score calculated in raftstore module. Due to some limitations of slow score, this would
   // be replaced by `SlowTrend` in the future.
   int32 slow_score = 3;
+  // The resource groups that the store currently blames for its own overload, if it reports them
+  // at all. A store that does not support reporting them leaves this field unset, which is why
+  // this is a message rather than a bare repeated field: an unset field and an empty list have
+  // to mean different things to the client.
+  NoisyGroups noisy_groups = 4;
+}
+
+// NoisyGroups is the set of resource groups a store holds responsible for its own overload, as
+// judged by that store alone at the time the feedback was generated.
+//
+// An empty `names` is a positive statement that the store currently blames nobody, so a client can
+// treat each message as replacing whatever it previously knew about that store.
+message NoisyGroups {
+  repeated string names = 1;
 }
 
 message BroadcastTxnStatusRequest {

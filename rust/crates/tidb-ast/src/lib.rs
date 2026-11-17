@@ -176,7 +176,7 @@ pub use user::{
     CreateUserCommentOrAttribute, CreateUserCredential, CreateUserPasswordOption, CreateUserSpec,
     UserSpec,
 };
-pub use util::{back_quote, push_name_path, redact_url};
+pub use util::{back_quote, push_name_path, redact_url, INVALID_URL_PLACEHOLDER, REDACTED_VALUE};
 pub use visitor::{Visitable, Visitor};
 
 /// Parser payload for an optional `BINARY` modifier.

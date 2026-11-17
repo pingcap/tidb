@@ -1344,6 +1344,7 @@ pub mod ddl_service;
 pub mod domain_services;
 pub mod stored_state_service;
 pub mod analyze_service;
+mod import_into;
 mod load_data;
 pub mod stats_statement_service;
 mod dispatch;

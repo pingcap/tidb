@@ -281,6 +281,7 @@ fn source_go_resource_group_controller_model_test_TestUpdateDeltaConsumptionIgno
         tikv_r_u_v2: 900.0,
         tidb_r_u_v2: 1000.0,
         tiflash_r_u_v2: 1100.0,
+        ru_by_second: None,
     };
     let now = Consumption {
         r_r_u: 7.0,
@@ -296,6 +297,7 @@ fn source_go_resource_group_controller_model_test_TestUpdateDeltaConsumptionIgno
         tikv_r_u_v2: 890.0,
         tidb_r_u_v2: 990.0,
         tiflash_r_u_v2: 1090.0,
+        ru_by_second: None,
     };
     let delta = update_delta_consumption(&mut last, &now);
     assert_eq!(delta, Consumption::default());

@@ -155,6 +155,16 @@ impl SessionExecutor for MockTaskManager {
     }
 }
 
+impl tidb_dxf_storage::TaskCleanupInfoGetter for MockTaskManager {
+    fn get_task_cleanup_info_by_ids(
+        &self,
+        _ctx: &tidb_gocontext::Context,
+        _: &[i64],
+    ) -> Result<std::collections::BTreeMap<i64, tidb_dxf_storage::TaskCleanupInfo>> {
+        self.answer("GetTaskCleanupInfoByIDs")
+    }
+}
+
 impl TaskManager for MockTaskManager {
     fn get_top_unfinished_tasks(&self, _ctx: &tidb_gocontext::Context) -> Result<Vec<TaskBase>> {
         self.answer("GetTopUnfinishedTasks")

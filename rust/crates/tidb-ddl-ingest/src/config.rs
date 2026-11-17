@@ -32,7 +32,8 @@ pub fn gen_config(
         kv_write_batch_size: 16 << 10,
         should_check_write_stall: true,
         checkpoint_enabled: true,
-        pause_pd_scheduler_scope: tidb_ingestor_ingestctrl::local::PAUSE_PD_SCHEDULER_SCOPE_TABLE,
+        pause_pd_scheduler_scope: tidb_ingestor_ingestctrl::local::PAUSE_PD_SCHEDULER_SCOPE_TABLE.into(),
+        raft_kv2_switch_mode_duration: std::time::Duration::ZERO,
     };
     adjust_import_memory(mem_root, &mut cfg);
     cfg

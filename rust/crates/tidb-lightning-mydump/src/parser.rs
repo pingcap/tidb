@@ -21,6 +21,9 @@ pub trait Parser {
     fn set_columns(&mut self, columns: Vec<String>);
     /// Go's concrete parser type assertion in `HandleSkipNRows`.
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+    /// Go `Parser.ScannedPos`: the position in the underlying (compressed)
+    /// file.
+    fn scanned_pos(&mut self) -> Result<i64, CsvError>;
 }
 
 /// Go `parsedef.Row`.
@@ -59,11 +62,12 @@ enum Token {
     Unquoted,
 }
 
-/// Go `ChunkParser`, over the same decompressed in-memory source as `CsvParser`.
+/// Go `ChunkParser`: the SQL dump parser.
 pub struct ChunkParser {
-    source: Vec<u8>,
-    available: usize,
-    block_size: usize,
+    reader: crate::BlockReader,
+    /// The unparsed bytes, starting at file offset `base`.
+    buf: Vec<u8>,
+    base: usize,
     last_chunk: bool,
     pos: usize,
     columns: Vec<String>,
@@ -72,22 +76,24 @@ pub struct ChunkParser {
 }
 
 impl ChunkParser {
-    /// Go `NewChunkParser` with the default Lightning read block size.
+    /// Go `NewChunkParser` over a whole in-memory file with the default
+    /// read block size.
     pub fn new(source: Vec<u8>, no_backslash_escapes: bool) -> Self {
-        Self::with_block_size(source, no_backslash_escapes, 64 * 1024)
+        Self::with_block_size(source, no_backslash_escapes, crate::READ_BLOCK_SIZE)
     }
 
-    /// Go `NewChunkParser`; the supplied read size is scaled by `BufferSizeScale`.
-    pub fn with_block_size(
-        source: Vec<u8>,
-        no_backslash_escapes: bool,
-        read_block_size: usize,
-    ) -> Self {
+    /// [`Self::new`] with a read block size.
+    pub fn with_block_size(source: Vec<u8>, no_backslash_escapes: bool, read_block_size: usize) -> Self {
+        Self::from_reader(Box::new(std::io::Cursor::new(source)), no_backslash_escapes, read_block_size)
+    }
+
+    /// Go `NewChunkParser`: the read size is scaled by `BufferSizeScale`.
+    pub fn from_reader(reader: Box<dyn crate::ReadSeek>, no_backslash_escapes: bool, read_block_size: usize) -> Self {
         assert!(read_block_size > 0);
         Self {
-            source,
-            available: 0,
-            block_size: read_block_size * 5,
+            reader: crate::BlockReader::new(reader, read_block_size * crate::BUFFER_SIZE_SCALE),
+            buf: Vec::new(),
+            base: 0,
             last_chunk: false,
             pos: 0,
             columns: Vec::new(),
@@ -105,9 +111,18 @@ impl ChunkParser {
         if pos < 0 {
             return Err(CsvError::Other("negative seek position".to_owned()));
         }
+        self.reader.seek(pos)?;
+        self.buf.clear();
+        self.base = pos as usize;
+        self.last_chunk = false;
         self.pos = pos as usize;
         self.last_row.row_id = row_id;
         Ok(())
+    }
+
+    /// Go `blockParser.ScannedPos`.
+    pub fn scanned_pos(&mut self) -> Result<i64, CsvError> {
+        self.reader.scanned_pos()
     }
     /// Go `blockParser.SetRowID`.
     pub fn set_row_id(&mut self, row_id: i64) {
@@ -133,15 +148,19 @@ impl ChunkParser {
                 Ok(token) => return Ok(token),
                 Err(LexError::Parse(error)) => return Err(error),
                 Err(LexError::NeedMore(start)) => {
-                    self.pos = start;
-                    let remaining = self.source.len().saturating_sub(self.available);
-                    self.last_chunk = remaining < self.block_size;
-                    self.available += remaining.min(self.block_size);
-                    if self.pos == 0
-                        && self.available >= 3
-                        && self.source.starts_with(b"\xef\xbb\xbf")
-                    {
+                    // Go `readBlock`: keep the unparsed remainder, append the
+                    // next block; the block at position 0 loses its BOM.
+                    self.buf.drain(..start);
+                    self.base += start;
+                    self.pos = self.base;
+                    let (block, last) = self.reader.read_block()?;
+                    self.last_chunk = last;
+                    if self.base == 0 && self.buf.is_empty() && block.starts_with(b"\xef\xbb\xbf") {
+                        self.buf.extend_from_slice(&block[3..]);
+                        self.base = 3;
                         self.pos = 3;
+                    } else {
+                        self.buf.extend_from_slice(&block);
                     }
                 }
             }
@@ -150,8 +169,8 @@ impl ChunkParser {
 
     /// Go `ChunkParser.lex`; token precedence and longest matches follow `parser.rl`.
     fn lex_buffer(&mut self) -> Result<(Token, Vec<u8>), LexError> {
-        let s = &self.source[..self.available];
-        let mut i = self.pos;
+        let s = &self.buf[..];
+        let mut i = self.pos - self.base;
         loop {
             if i >= s.len() {
                 if !self.last_chunk {
@@ -361,7 +380,7 @@ impl ChunkParser {
                 }
             }
         };
-        self.pos = i;
+        self.pos = self.base + i;
         Ok((tok, s[start..i].to_vec()))
     }
 
@@ -503,6 +522,9 @@ impl Parser for ChunkParser {
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
+    fn scanned_pos(&mut self) -> Result<i64, CsvError> {
+        Self::scanned_pos(self)
+    }
 }
 
 impl Parser for crate::CsvParser {
@@ -516,13 +538,7 @@ impl Parser for crate::CsvParser {
         (self.pos, self.last_row.row_id)
     }
     fn set_pos(&mut self, pos: i64, row_id: i64) -> Result<(), CsvError> {
-        if pos < 0 {
-            return Err(CsvError::Other("negative seek position".to_owned()));
-        }
-        self.source_offset = pos as usize;
-        self.pos = pos;
-        self.last_row.row_id = row_id;
-        Ok(())
+        Self::set_pos(self, pos, row_id)
     }
     fn set_row_id(&mut self, row_id: i64) {
         self.last_row.row_id = row_id;
@@ -535,6 +551,9 @@ impl Parser for crate::CsvParser {
     }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+    fn scanned_pos(&mut self) -> Result<i64, CsvError> {
+        Self::scanned_pos(self)
     }
 }
 

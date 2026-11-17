@@ -407,6 +407,14 @@ where
         self.snapshot_get(key, call).map(|result| result.value)
     }
 
+    fn batch_get(
+        &mut self,
+        keys: &[Vec<u8>],
+        call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, OptimisticCoordinatorError> {
+        self.snapshot_batch_get(keys, call)
+    }
+
     fn scan(
         &mut self,
         start: &[u8],

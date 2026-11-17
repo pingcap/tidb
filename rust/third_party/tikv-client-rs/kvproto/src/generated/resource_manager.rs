@@ -377,7 +377,7 @@ impl ::prost::Name for GrantedRawResourceTokenBucket {
     }
 }
 #[allow(clippy::all)]
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Consumption {
     #[prost(double, tag = "1")]
     pub r_r_u: f64,
@@ -408,6 +408,12 @@ pub struct Consumption {
     /// tiflash_r_u_v2 equals tiflash RRU + tiflash WRU.
     #[prost(double, tag = "13")]
     pub tiflash_r_u_v2: f64,
+    /// Optional per-second RU for observation; never used for token allocation or
+    /// billing. Nil means the request carries no timeline, not zero: the client does
+    /// not support it or left it out to fit the RPC size limit. Its interval differs
+    /// from the scalar deltas.
+    #[prost(message, optional, tag = "14")]
+    pub ru_by_second: ::core::option::Option<RuConsumptionBySecond>,
 }
 impl ::prost::Name for Consumption {
     const NAME: &'static str = "Consumption";
@@ -417,6 +423,66 @@ impl ::prost::Name for Consumption {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/resource_manager.Consumption".into()
+    }
+}
+#[allow(clippy::all)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RuConsumptionBySecond {
+    /// UTC Unix second of the first second covered by this report. Bucket offsets
+    /// are relative to it; the first bucket is not necessarily at start. A client
+    /// never changes a second it has reported, so a retry may replay it; the outer
+    /// client_unique_id identifies the client. Buckets are sparse: a second not
+    /// listed is zero, and the sparse encoding keeps idle groups from inflating
+    /// every request.
+    #[prost(int64, tag = "1")]
+    pub start_unix_sec: i64,
+    #[prost(message, repeated, tag = "2")]
+    pub buckets: ::prost::alloc::vec::Vec<RuConsumptionBucket>,
+    /// The first second after the seconds this report covers. Seconds in
+    /// \[start_unix_sec, end_unix_sec) that are not listed are reported as zero. A
+    /// successful response acknowledges the whole report up to its watermark,
+    /// including seconds the receiver ignores because they fall outside the
+    /// window it can still summarize. A retry may replay earlier seconds, and the
+    /// receiver deduplicates them per client, keyspace, resource group and
+    /// second. Only foreground consumption carries this field; requests
+    /// flagged background or TiFlash do not. A report whose interval is empty or
+    /// reversed, including one without a watermark (zero), reports nothing.
+    #[prost(int64, tag = "3")]
+    pub end_unix_sec: i64,
+}
+impl ::prost::Name for RuConsumptionBySecond {
+    const NAME: &'static str = "RUConsumptionBySecond";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.RUConsumptionBySecond".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.RUConsumptionBySecond".into()
+    }
+}
+#[allow(clippy::all)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct RuConsumptionBucket {
+    /// Signed settlement values; refunds must not be clamped to zero.
+    #[prost(double, tag = "1")]
+    pub rru: f64,
+    #[prost(double, tag = "2")]
+    pub wru: f64,
+    /// Second offset from start_unix_sec; 0-based. Offsets are strictly increasing
+    /// and less than end_unix_sec - start_unix_sec; otherwise the receiver drops the
+    /// whole report. Only non-zero seconds are listed, and an empty bucket list is
+    /// valid.
+    #[prost(uint32, tag = "3")]
+    pub offset: u32,
+}
+impl ::prost::Name for RuConsumptionBucket {
+    const NAME: &'static str = "RUConsumptionBucket";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.RUConsumptionBucket".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.RUConsumptionBucket".into()
     }
 }
 #[allow(clippy::all)]

@@ -970,6 +970,38 @@ impl Drop for DmlSourceCursor<'_> {
     }
 }
 
+/// Go `ImportIntoExec`'s `selectExec`, built from the planned SELECT of an
+/// `IMPORT INTO ... FROM SELECT` and read chunk by chunk
+/// (`sendQueryChunks`). Dropping it closes the executor.
+pub struct ImportSelectSource {
+    cursor: DmlSourceCursor<'static>,
+}
+
+impl ImportSelectSource {
+    /// Builds and opens the executor of `physical` (Go
+    /// `executorBuilder.build(plan.SelectPlan)` and `exec.Open`).
+    ///
+    /// # Errors
+    /// The executor could not be built or opened.
+    pub fn open(
+        physical: &mut tidb_planner_core_operator_physicalop::PhysicalPlan,
+        catalog: &SessionExtendedInfoSchema,
+        ctx: &crate::StmtContext,
+    ) -> Result<Self, DriverError> {
+        let exec = physical_builder::build_dml_source(physical, catalog, ctx)?;
+        let cursor = DmlSourceCursor::open(exec, ctx.statement_memory(), None, ctx.chunk_allocator())?;
+        Ok(Self { cursor })
+    }
+
+    /// Go `exec.Next`: the next chunk's rows, or `None` once drained.
+    ///
+    /// # Errors
+    /// The executor failed.
+    pub fn next_chunk(&mut self) -> Result<Option<Vec<Vec<Datum>>>, DriverError> {
+        Ok(self.cursor.next_chunk()?.map(|(rows, _)| rows))
+    }
+}
+
 /// Go `dmlChildChunkTargetBytes`: the bytes a write executor's child chunk is
 /// sized to start at.
 const DML_CHILD_CHUNK_TARGET_BYTES: i64 = 256 * 1024;

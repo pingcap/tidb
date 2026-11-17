@@ -13,8 +13,17 @@
 // limitations under the License.
 
 //! Go `pkg/lightning/common`. Ported so far: `storage.go` and
-//! `storage_unix.go`, which the DXF node resource reads; the package's other
-//! files come with their callers.
+//! `storage_unix.go`, which the DXF node resource reads, and the parts of
+//! `errors.go` and `util.go` the KV encoder reads; the package's other files
+//! come with their callers.
+
+pub mod errors;
+mod util;
+pub use util::{
+    encode_int_row_id, escape_identifier, get_auto_random_column, skip_read_row_count, table_has_auto_id,
+    table_has_auto_row_id, unique_table, write_mysql_identifier, DEFAULT_IMPORTANT_VARIABLES,
+    DEFAULT_IMPORT_VARIABLES_TIDB,
+};
 
 mod storage;
 

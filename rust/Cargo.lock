@@ -46,6 +46,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
 dependencies = [
  "cfg-if",
+ "const-random",
  "getrandom 0.3.4",
  "once_cell",
  "serde",
@@ -69,6 +70,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc890384c8602f339876ded803c97ad529f3842aba97f6392b3dba0dd171769b"
 dependencies = [
  "equator",
+]
+
+[[package]]
+name = "alloc-no-stdlib"
+version = "2.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc7bb162ec39d46ab1ca8c77bf72e890535becd1751bb45f64c597edb4c8c6b3"
+
+[[package]]
+name = "alloc-stdlib"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e76a019e91224d279006ff972f1e984179a6e9feb050adba6ce8274aef23195"
+dependencies = [
+ "alloc-no-stdlib",
 ]
 
 [[package]]
@@ -871,6 +887,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
+name = "brotli"
+version = "8.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cc91aac060a7a1e25823bdccbfb6af1875b88f17c6daac97894eed8207166b3"
+dependencies = [
+ "alloc-no-stdlib",
+ "alloc-stdlib",
+ "brotli-decompressor",
+]
+
+[[package]]
+name = "brotli-decompressor"
+version = "5.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a32acac15fe1967bc3986b2a6347dffc965602354ea6f450ad07e8bfd253583"
+dependencies = [
+ "alloc-no-stdlib",
+ "alloc-stdlib",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -881,6 +918,12 @@ name = "bytecount"
 version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "175812e0be2bccb6abe50bb8d566126198344f707e304f45c648fd8f2cc0365e"
+
+[[package]]
+name = "byteorder"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "bytes"
@@ -1873,6 +1916,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "half"
+version = "2.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ea2d84b969582b4b1864a92dc5d27cd2b77b622a8d79306834f1be5ba20d84b"
+dependencies = [
+ "cfg-if",
+ "crunchy",
+ "num-traits",
+ "zerocopy",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2303,6 +2358,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "integer-encoding"
+version = "3.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bb03732005da905c88227371639bf1ad885cc712789c011c31c5fb3ab3ccf02"
+
+[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2580,6 +2641,15 @@ name = "lru-slab"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
+
+[[package]]
+name = "lz4_flex"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a027efd2ad3c4dbb4123b5c018e3efbe7f6236da7c7612f122dad030f5d2de5"
+dependencies = [
+ "twox-hash",
+]
 
 [[package]]
 name = "matchit"
@@ -2959,6 +3029,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ordered-float"
+version = "3.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1e1c390732d15f1d48471625cd92d154e66db2c56645e29a9cd26f4699f72dc"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "ordered-multimap"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3002,6 +3081,37 @@ dependencies = [
  "smallvec",
  "windows-link",
 ]
+
+[[package]]
+name = "parquet"
+version = "58.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b967e8aa77dbc32719087ff91f0f100948a0a7e4c88609bd91b0ccf47e594d7e"
+dependencies = [
+ "ahash",
+ "brotli",
+ "bytes",
+ "chrono",
+ "flate2",
+ "half",
+ "hashbrown 0.17.1",
+ "lz4_flex",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "paste",
+ "seq-macro",
+ "snap",
+ "thrift",
+ "twox-hash",
+ "zstd",
+]
+
+[[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pbkdf2"
@@ -4207,6 +4317,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
+name = "seq-macro"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bc711410fbe7399f390ca1c3b60ad0f53f80e95c5eb935e52268a0e2cd49acc"
+
+[[package]]
 name = "serde"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4790,6 +4906,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "thrift"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f650151e44bb59950b3adf32de0064813d1148f34f4884b7f5b539f29596859"
+dependencies = [
+ "byteorder",
+ "integer-encoding",
+ "ordered-float",
+ "uuid",
+]
+
+[[package]]
 name = "tidb-allocator-stats"
 version = "0.0.0"
 dependencies = [
@@ -4807,6 +4935,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tidb-charset",
+ "tidb-go-url",
  "tidb-goruntime",
  "tidb-lexer",
  "tidb-mysql",
@@ -4943,12 +5072,15 @@ dependencies = [
  "tempfile",
  "tidb-ast",
  "tidb-codec",
+ "tidb-config",
  "tidb-encrypt",
  "tidb-failpoint",
  "tidb-gocontext",
  "tidb-goruntime",
  "tidb-log",
  "tidb-model",
+ "tidb-objstore",
+ "tidb-objstore-s3like",
  "tidb-proto",
  "tidb-redact",
  "tidb-stats-util",
@@ -6011,6 +6143,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-dumpformat-parquetfile"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "chrono",
+ "parquet",
+ "serde_json",
+ "tidb-datatype",
+ "tidb-gocontext",
+ "tidb-objstore",
+ "tidb-timeutil",
+]
+
+[[package]]
 name = "tidb-dxf"
 version = "0.0.0"
 dependencies = [
@@ -6094,12 +6241,141 @@ dependencies = [
  "tidb-meta",
  "tidb-meta-tidbvar",
  "tidb-metrics",
+ "tidb-objstore",
+ "tidb-objstore-recording",
  "tidb-owner",
+ "tidb-sem",
+ "tidb-sem-compat",
  "tidb-sqlescape",
  "tidb-sqlexec",
  "tidb-stringutil",
  "tidb-txnkv",
  "tidb-vardef",
+]
+
+[[package]]
+name = "tidb-dxf-importinto"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "crc32fast",
+ "crossbeam-channel",
+ "hex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tidb-ast",
+ "tidb-br",
+ "tidb-config",
+ "tidb-config-configtypes",
+ "tidb-config-deploymode",
+ "tidb-config-kerneltype",
+ "tidb-datatype",
+ "tidb-domain-serverinfo",
+ "tidb-driver-error",
+ "tidb-dxf",
+ "tidb-dxf-execute",
+ "tidb-dxf-handle",
+ "tidb-dxf-importinto-conflictedkv",
+ "tidb-dxf-importinto-conflictpath",
+ "tidb-dxf-importinto-conflictrows",
+ "tidb-dxf-importinto-taskkey",
+ "tidb-dxf-metering",
+ "tidb-dxf-planner",
+ "tidb-dxf-scheduler",
+ "tidb-dxf-storage",
+ "tidb-dxf-taskexecutor",
+ "tidb-executor",
+ "tidb-exeerrors",
+ "tidb-failpoint",
+ "tidb-gocontext",
+ "tidb-ingestor-engineapi",
+ "tidb-ingestor-errdef",
+ "tidb-ingestor-globalsort",
+ "tidb-ingestor-ingestctrl",
+ "tidb-ingestor-simplesst",
+ "tidb-keyspace",
+ "tidb-lightning-backend",
+ "tidb-lightning-backend-kv",
+ "tidb-lightning-common",
+ "tidb-lightning-log",
+ "tidb-lightning-verification",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-model",
+ "tidb-objstore",
+ "tidb-objstore-recording",
+ "tidb-parser",
+ "tidb-sqlescape",
+ "tidb-sqlexec",
+ "tidb-stringutil",
+ "tidb-table",
+ "tidb-tablecodec",
+ "tidb-terror",
+ "tidb-txnkv",
+ "tidb-vardef",
+ "uuid",
+]
+
+[[package]]
+name = "tidb-dxf-importinto-conflictedkv"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "tempfile",
+ "tidb-ast",
+ "tidb-backoff",
+ "tidb-config-configtypes",
+ "tidb-datatype",
+ "tidb-dxf-execute",
+ "tidb-dxf-handle",
+ "tidb-dxf-metering",
+ "tidb-executor",
+ "tidb-failpoint",
+ "tidb-gocontext",
+ "tidb-ingestor-globalsort",
+ "tidb-ingestor-simplesst",
+ "tidb-lightning-backend-encode",
+ "tidb-lightning-backend-kv",
+ "tidb-lightning-common",
+ "tidb-lightning-verification",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-meta",
+ "tidb-model",
+ "tidb-objstore",
+ "tidb-parser",
+ "tidb-redact",
+ "tidb-table",
+ "tidb-tablecodec",
+ "tidb-txnkv",
+ "tikv-client",
+]
+
+[[package]]
+name = "tidb-dxf-importinto-conflictpath"
+version = "0.0.0"
+dependencies = [
+ "uuid",
+]
+
+[[package]]
+name = "tidb-dxf-importinto-conflictrows"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tidb-dxf",
+ "tidb-dxf-importinto-conflictpath",
+ "tidb-dxf-storage",
+ "tidb-executor",
+ "tidb-gocontext",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-objstore",
 ]
 
 [[package]]
@@ -6373,6 +6649,7 @@ dependencies = [
  "flate2",
  "futures",
  "hashbrown 0.15.5",
+ "hex",
  "hyper-util",
  "prost 0.14.4",
  "reqwest 0.13.4",
@@ -6390,11 +6667,13 @@ dependencies = [
  "tidb-bindinfo",
  "tidb-br",
  "tidb-breakpoint",
+ "tidb-cdcutil",
  "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
  "tidb-config",
  "tidb-config-configtypes",
+ "tidb-config-deploymode",
  "tidb-config-kerneltype",
  "tidb-context",
  "tidb-copr",
@@ -6414,6 +6693,11 @@ dependencies = [
  "tidb-domain-infosync",
  "tidb-domain-serverinfo",
  "tidb-driver-error",
+ "tidb-dumpformat-parquetfile",
+ "tidb-dxf-execute",
+ "tidb-dxf-handle",
+ "tidb-dxf-scheduler",
+ "tidb-dxf-storage",
  "tidb-errno",
  "tidb-execdetails",
  "tidb-executor-aggfuncs",
@@ -6435,7 +6719,9 @@ dependencies = [
  "tidb-fixcontrol",
  "tidb-format",
  "tidb-globalconn",
+ "tidb-go-rand",
  "tidb-go-strconv",
+ "tidb-go-url",
  "tidb-gocontext",
  "tidb-goruntime",
  "tidb-hack",
@@ -6443,13 +6729,20 @@ dependencies = [
  "tidb-infoschema",
  "tidb-infoschema-issyncer",
  "tidb-infoschema-perfschema",
+ "tidb-ingestor-ingestctrl",
+ "tidb-ingestor-simplesst",
  "tidb-intest",
  "tidb-keydecoder",
  "tidb-keyspace",
  "tidb-kv",
  "tidb-kvcache",
  "tidb-lexer",
+ "tidb-lightning-backend",
+ "tidb-lightning-backend-encode",
+ "tidb-lightning-backend-kv",
+ "tidb-lightning-common",
  "tidb-lightning-mydump",
+ "tidb-lightning-verification",
  "tidb-lock",
  "tidb-log",
  "tidb-logutil",
@@ -6462,6 +6755,7 @@ dependencies = [
  "tidb-model",
  "tidb-murmur3",
  "tidb-mysql",
+ "tidb-objstore",
  "tidb-parser",
  "tidb-parser-types",
  "tidb-password-validation",
@@ -7081,6 +7375,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-go-rand"
+version = "0.0.0"
+
+[[package]]
 name = "tidb-go-regexp"
 version = "0.0.0"
 dependencies = [
@@ -7099,6 +7397,16 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "tidb-timeutil",
+]
+
+[[package]]
+name = "tidb-go-url"
+version = "0.0.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "tidb-go-strconv",
 ]
 
 [[package]]
@@ -7247,10 +7555,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-ingestor-engineapi"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tidb-gocontext",
+]
+
+[[package]]
 name = "tidb-ingestor-errdef"
 version = "0.0.0"
 dependencies = [
  "tidb-terror",
+]
+
+[[package]]
+name = "tidb-ingestor-globalsort"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "hex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tidb-config-configtypes",
+ "tidb-dxf-execute",
+ "tidb-failpoint",
+ "tidb-go-strconv",
+ "tidb-gocontext",
+ "tidb-goruntime",
+ "tidb-ingestor-engineapi",
+ "tidb-ingestor-errdef",
+ "tidb-ingestor-simplesst",
+ "tidb-lightning-log",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-mathutil",
+ "tidb-metrics",
+ "tidb-objstore",
+ "uuid",
 ]
 
 [[package]]
@@ -7259,6 +7603,7 @@ version = "0.0.0"
 dependencies = [
  "crossbeam-channel",
  "flate2",
+ "hex",
  "prost 0.14.4",
  "serde",
  "serde_json",
@@ -7271,13 +7616,18 @@ dependencies = [
  "tidb-extsort",
  "tidb-failpoint",
  "tidb-gocontext",
+ "tidb-ingestor-engineapi",
  "tidb-ingestor-errdef",
+ "tidb-ingestor-globalsort",
+ "tidb-ingestor-simplesst",
+ "tidb-lightning-backend",
  "tidb-lightning-common",
  "tidb-lightning-importdef",
  "tidb-lightning-verification",
  "tidb-log",
  "tidb-meta",
  "tidb-model",
+ "tidb-objstore",
  "tidb-pd-client",
  "tidb-proto",
  "tidb-ranger",
@@ -7290,6 +7640,32 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "uuid",
+]
+
+[[package]]
+name = "tidb-ingestor-simplesst"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "hex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tidb-config-configtypes",
+ "tidb-go-rand",
+ "tidb-gocontext",
+ "tidb-goruntime",
+ "tidb-ingestor-engineapi",
+ "tidb-lightning-backend",
+ "tidb-lightning-common",
+ "tidb-lightning-log",
+ "tidb-lightning-membuf",
+ "tidb-lightning-verification",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-metrics",
+ "tidb-objstore",
+ "tidb-terror",
 ]
 
 [[package]]
@@ -7374,14 +7750,64 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-lightning-backend"
+version = "0.0.0"
+dependencies = [
+ "tidb-gocontext",
+ "tidb-ingestor-engineapi",
+ "tidb-lightning-verification",
+ "tidb-objstore",
+ "uuid",
+]
+
+[[package]]
+name = "tidb-lightning-backend-encode"
+version = "0.0.0"
+dependencies = [
+ "tidb-datatype",
+ "tidb-lightning-verification",
+ "tidb-model",
+]
+
+[[package]]
+name = "tidb-lightning-backend-kv"
+version = "0.0.0"
+dependencies = [
+ "hex",
+ "serde_json",
+ "tidb-chunk",
+ "tidb-datatype",
+ "tidb-expr",
+ "tidb-exprctx",
+ "tidb-go-rand",
+ "tidb-kv",
+ "tidb-lightning-backend-encode",
+ "tidb-lightning-common",
+ "tidb-lightning-verification",
+ "tidb-meta",
+ "tidb-model",
+ "tidb-mysql",
+ "tidb-table",
+ "tidb-tablecodec",
+ "tidb-tblctx",
+ "tidb-terror",
+ "tidb-timeutil",
+ "tidb-txnkv",
+ "tidb-vardef",
+]
+
+[[package]]
 name = "tidb-lightning-common"
 version = "0.0.0"
 dependencies = [
  "rustix 1.1.4",
  "tempfile",
+ "tidb-codec",
+ "tidb-datatype",
  "tidb-errno",
  "tidb-gocontext",
  "tidb-ingestor-errdef",
+ "tidb-model",
  "tidb-terror",
  "tonic",
 ]
@@ -7451,9 +7877,16 @@ version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
  "encoding_rs",
+ "flate2",
+ "serde",
  "serde_json",
+ "tempfile",
  "tidb-charset",
  "tidb-datatype",
+ "tidb-dumpformat-parquetfile",
+ "tidb-failpoint",
+ "tidb-gocontext",
+ "tidb-objstore",
 ]
 
 [[package]]
@@ -7721,8 +8154,43 @@ name = "tidb-nocopy"
 version = "0.0.0"
 
 [[package]]
+name = "tidb-objstore"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "flate2",
+ "opendal",
+ "prost 0.14.4",
+ "rustix 1.1.4",
+ "sha2 0.10.9",
+ "snap",
+ "tempfile",
+ "tidb-ast",
+ "tidb-aws-sdk",
+ "tidb-failpoint",
+ "tidb-go-url",
+ "tidb-gocontext",
+ "tidb-objstore-recording",
+ "tidb-objstore-s3like",
+ "tidb-proto",
+ "tokio",
+ "uuid",
+ "zstd",
+]
+
+[[package]]
 name = "tidb-objstore-recording"
 version = "0.0.0"
+
+[[package]]
+name = "tidb-objstore-s3like"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "serde_json",
+ "tidb-go-url",
+ "tidb-proto",
+]
 
 [[package]]
 name = "tidb-oss-sdk"
@@ -7911,6 +8379,7 @@ dependencies = [
  "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
+ "tidb-config",
  "tidb-config-configtypes",
  "tidb-config-deploymode",
  "tidb-config-kerneltype",
@@ -7927,6 +8396,7 @@ dependencies = [
  "tidb-filter",
  "tidb-fixcontrol",
  "tidb-go-regexp",
+ "tidb-go-url",
  "tidb-hack",
  "tidb-hint",
  "tidb-infoschema",
@@ -7938,6 +8408,8 @@ dependencies = [
  "tidb-metadef",
  "tidb-model",
  "tidb-mysql",
+ "tidb-objstore",
+ "tidb-objstore-s3like",
  "tidb-paging",
  "tidb-parser",
  "tidb-parser-types",
@@ -7965,6 +8437,7 @@ dependencies = [
  "tidb-proto",
  "tidb-ranger",
  "tidb-resolve",
+ "tidb-sem",
  "tidb-sem-compat",
  "tidb-sem-v2",
  "tidb-sessionctx",
@@ -8800,6 +9273,7 @@ dependencies = [
  "tidb-dxf",
  "tidb-dxf-dxfmetric",
  "tidb-dxf-handle",
+ "tidb-dxf-importinto",
  "tidb-dxf-importinto-jobhistory",
  "tidb-dxf-storage",
  "tidb-dxf-taskexecutor",
@@ -8827,6 +9301,7 @@ dependencies = [
  "tidb-ingestor-ingestctrl",
  "tidb-keyspace",
  "tidb-kv",
+ "tidb-lightning-backend-kv",
  "tidb-log",
  "tidb-logutil",
  "tidb-memory",
@@ -9003,6 +9478,7 @@ dependencies = [
  "tidb-config-kerneltype",
  "tidb-context",
  "tidb-copr",
+ "tidb-cpu",
  "tidb-cpuprofile",
  "tidb-datatype",
  "tidb-dbterror",
@@ -9033,6 +9509,7 @@ dependencies = [
  "tidb-dxf-example",
  "tidb-dxf-execute",
  "tidb-dxf-handle",
+ "tidb-dxf-importinto",
  "tidb-dxf-importinto-jobhistory",
  "tidb-dxf-importinto-taskkey",
  "tidb-dxf-mock",
@@ -9080,6 +9557,7 @@ dependencies = [
  "tidb-metrics",
  "tidb-model",
  "tidb-mysql",
+ "tidb-objstore",
  "tidb-owner",
  "tidb-param",
  "tidb-parser",
@@ -9183,6 +9661,7 @@ dependencies = [
  "tikv-client",
  "tokio",
  "toml",
+ "uuid",
  "x509-parser",
 ]
 
@@ -11288,6 +11767,12 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "twox-hash"
+version = "2.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86a801b3cea342a06d468c8710662aa29e5e05e4f5c0d62f00bbb7f2ad7941c2"
 
 [[package]]
 name = "typeid"

@@ -1,7 +1,7 @@
 // Copyright 2026 PingCAP, Inc. Licensed under Apache-2.0.
 //! Go `pkg/ingestor/ingestctrl/region_job.go`: peer writes and leader ingest.
 use crate::{
-    Error, Result, engine::Engine, local::BackendConfig, rate_limiter::IngestLimiter,
+    Error, Result, local::BackendConfig, rate_limiter::IngestLimiter,
     rate_limiter_param,
 };
 use std::collections::HashMap;
@@ -103,14 +103,25 @@ pub trait ImportClient: Send + Sync + crate::localhelper::SplitClient {
     ) -> Result<()> {
         Ok(())
     }
-    /// Go `Backend.pdHTTPCli`.
-    fn pd_http_client(&self) -> Option<tikv_client::pd_http::Client> {
+    /// Go `Backend.pdHTTPCli`, as `PauseSchedulersByKeyRange` calls it.
+    fn pd_http_client(&self) -> Option<std::sync::Arc<dyn tidb_br::pdutil::LabelRuleClient>> {
         None
     }
     /// Go `tikvCodec.GetAPIVersion`.
     fn api_version(&self) -> i32;
     /// Go `tikvCodec.EncodeKey`, before the import protocol's memcomparable encoding.
     fn encode_key(&self, key: &[u8]) -> Vec<u8>;
+    /// Go `pdHTTPCli.GetStores`: each store's address and Go `StoreState`
+    /// value (Up 0, Offline 1, Tombstone 2).
+    fn get_stores(&self) -> Result<Vec<(String, i64)>> {
+        Err(Error::Other("this import client has no PD HTTP client".into()))
+    }
+    /// Go `tikv.SwitchMode`: `ImportSST.SwitchMode` on the store at
+    /// `address` over a new connection.
+    fn switch_mode(&self, address: &str, request: sst::SwitchModeRequest) -> Result<()> {
+        let _ = (address, request);
+        Err(Error::Other("this import client cannot switch TiKV mode".into()))
+    }
 }
 /// Go `importClientFactory`, over the connected store's PD client and runtime.
 pub struct RemoteImportClient<S: tikv_client::PdClient> {
@@ -151,7 +162,18 @@ impl<S: tikv_client::PdClient> RemoteImportClient<S> {
             .find(|s| s.id == store_id)
             .ok_or_else(|| Error::Other(format!("store {store_id} not found")))?
             .address;
-        let endpoint = tidb_pd_client::secure_endpoint(&address, &self.security)
+        let client = self.connect(&address)?;
+        self.clients
+            .lock()
+            .unwrap()
+            .insert(store_id, client.clone());
+        Ok(client)
+    }
+}
+impl<S: tikv_client::PdClient> RemoteImportClient<S> {
+    /// An ImportSST client of the store at `address`.
+    fn connect(&self, address: &str) -> Result<sst::import_sst_client::ImportSstClient<tonic::transport::Channel>> {
+        let endpoint = tidb_pd_client::secure_endpoint(address, &self.security)
             .map_err(|e| Error::Source(std::sync::Arc::new(e)))?
             .connect_timeout(Duration::from_secs(30))
             .timeout(Duration::from_secs(600));
@@ -159,13 +181,7 @@ impl<S: tikv_client::PdClient> RemoteImportClient<S> {
             .store
             .block_on(endpoint.connect())
             .map_err(|e| Error::Source(std::sync::Arc::new(e)))?;
-        let client = sst::import_sst_client::ImportSstClient::new(channel)
-            .max_decoding_message_size(usize::MAX);
-        self.clients
-            .lock()
-            .unwrap()
-            .insert(store_id, client.clone());
-        Ok(client)
+        Ok(sst::import_sst_client::ImportSstClient::new(channel).max_decoding_message_size(usize::MAX))
     }
 }
 impl<S: tikv_client::PdClient> crate::localhelper::SplitClient for RemoteImportClient<S> {
@@ -200,6 +216,28 @@ impl<S: tikv_client::PdClient> crate::localhelper::SplitClient for RemoteImportC
     }
 }
 impl<S: tikv_client::PdClient> ImportClient for RemoteImportClient<S> {
+    /// Go `pdHTTPCli.GetStores`: each store's address and state.
+    fn get_stores(&self) -> Result<Vec<(String, i64)>> {
+        let pd = self
+            .store
+            .pd_http_client()
+            .ok_or_else(|| Error::Other("pd http client is not available".into()))?;
+        let stores = self
+            .store
+            .block_on(async move { pd.get_stores().await })
+            .map_err(|e| Error::Other(e.to_string()))?;
+        Ok(stores.stores.into_iter().map(|s| (s.store.address, s.store.state)).collect())
+    }
+    /// Go `tikv.SwitchMode` over a new connection to the store.
+    fn switch_mode(&self, address: &str, request: sst::SwitchModeRequest) -> Result<()> {
+        let mut client = self.connect(address)?;
+        match self.store.block_on(async move { client.switch_mode(request).await }) {
+            Ok(_) => Ok(()),
+            // Go `ignoreUnimplementedError`: a TiFlash store.
+            Err(status) if status.code() == tonic::Code::Unimplemented => Ok(()),
+            Err(status) => Err(Error::Other(status.to_string())),
+        }
+    }
     /// Go `pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())`.
     fn all_stores(&self, ctx: &Context) -> Result<Vec<metapb::Store>> {
         if let Some(error) = ctx.err() {
@@ -275,8 +313,10 @@ impl<S: tikv_client::PdClient> ImportClient for RemoteImportClient<S> {
             .map_err(|e| Error::Other(e.to_string()))
     }
     /// Go `Backend.pdHTTPCli`.
-    fn pd_http_client(&self) -> Option<tikv_client::pd_http::Client> {
-        self.store.pd_http_client()
+    fn pd_http_client(&self) -> Option<std::sync::Arc<dyn tidb_br::pdutil::LabelRuleClient>> {
+        self.store
+            .pd_http_client()
+            .map(|client| std::sync::Arc::new(client) as std::sync::Arc<dyn tidb_br::pdutil::LabelRuleClient>)
     }
     fn get_ts(&self) -> Result<u64> {
         self.store
@@ -479,34 +519,39 @@ pub fn new_write_request(
         chunk: Some(sst::write_request::Chunk::Meta(meta)),
     }
 }
-/// Go `Backend.doImport`, bounded by the region's range and split thresholds.
+/// An engine error as a backend error: the backend's own error as it was, a
+/// Go `*errors.Error` kept as one.
+pub(crate) fn engine_error(e: tidb_ingestor_engineapi::Error) -> Error {
+    let e = match e.downcast::<Error>() {
+        Ok(e) => return *e,
+        Err(e) => e,
+    };
+    if let Some(t) = e.downcast_ref::<tidb_terror::TerrorError>() {
+        return Error::Ingest(t.clone());
+    }
+    if let Some(tidb_ingestor_simplesst::Error::Terror(t)) = e.downcast_ref::<tidb_ingestor_simplesst::Error>() {
+        return Error::Ingest(t.clone());
+    }
+    Error::Other(e.to_string())
+}
+
+/// Go `execute.Collector.Processed`: the bytes and pairs written.
+pub type Collector = std::sync::Arc<dyn Fn(i64, i64) + Send + Sync>;
+
+/// Go `Backend.doImport` after `prepareAndSendJob`'s split and scatter: the
+/// region jobs of every range `engine` loads (`generateAndSendJob`), run by
+/// the job workers through the store balancer, the dispatcher and the
+/// retryer, over the backend's per-store write limiter.
+#[allow(clippy::too_many_arguments)]
 pub fn do_import(
     ctx: &Context,
-    engine: &Engine,
-    client: &dyn ImportClient,
-    cfg: &BackendConfig,
-    split_size: u64,
-    split_keys: usize,
-) -> Result<()> {
-    do_import_with_write_limiter(
-        ctx,
-        engine,
-        client,
-        cfg,
-        split_size,
-        split_keys,
-        &crate::localhelper::StoreWriteLimiter::new(0),
-    )
-}
-/// Go `Backend.doImport`, retaining the backend's live per-store write limiter.
-pub fn do_import_with_write_limiter(
-    ctx: &Context,
-    engine: &Engine,
+    engine: &mut dyn tidb_ingestor_engineapi::Engine,
     client: &dyn ImportClient,
     cfg: &BackendConfig,
     split_size: u64,
     split_keys: usize,
     write_limiter: &crate::localhelper::StoreWriteLimiter,
+    collector: Option<&Collector>,
 ) -> Result<()> {
     let (ctx, cancel) = Context::with_cancel(ctx);
     let limiter = IngestLimiter::new(
@@ -514,9 +559,6 @@ pub fn do_import_with_write_limiter(
         rate_limiter_param::get_max_ingest_concurrency() as usize,
         rate_limiter_param::get_max_ingest_per_sec(),
     );
-    if engine.get_first_and_last_key(&[], &[])?.is_none() {
-        return Ok(());
-    }
     let tracker = JobTracker::default();
     let generating = tracker.acquire();
     let errors = Mutex::new(None);
@@ -530,11 +572,12 @@ pub fn do_import_with_write_limiter(
     let retryer = RegionJobRetryer::new(&ctx, to_jobs.clone());
     let balancer = StoreBalancer::default();
     let write = |ctx: &Context, job: &mut RegionJob<'_>| {
-        let mut iter = engine.new_iter(&job.key_range.0, &job.key_range.1)?;
+        let data = job.ingest_data.clone().expect("a region job has its ingest data");
+        let mut iter = data.new_iter(&job.key_range.0, &job.key_range.1).map_err(engine_error)?;
         let mut pairs = Vec::new();
         let mut bytes = 0;
         let mut remaining = None;
-        while let Some((key, value)) = iter.next_pair()? {
+        while let Some((key, value)) = iter.next_pair().map_err(engine_error)? {
             if !pairs.is_empty() && (bytes >= split_size || pairs.len() >= split_keys) {
                 remaining = Some(key);
                 break;
@@ -559,8 +602,9 @@ pub fn do_import_with_write_limiter(
             cfg,
             region,
             &pairs,
-            engine.get_ts(),
+            data.get_ts(),
             write_limiter,
+            collector,
         )
         .inspect_err(|_| client.invalidate_region(region))?;
         result.remaining_start_key = remaining;
@@ -593,10 +637,10 @@ pub fn do_import_with_write_limiter(
         Ok(())
     };
     let after = |peers: &[metapb::Peer]| balancer.release_store_load(peers);
-    let regenerate = |ctx: &Context, job: &RegionJob<'_>| {
+    let regenerate = |ctx: &Context, job: &RegionJob<'static>| {
         generate_region_jobs(
             ctx,
-            engine,
+            job.ingest_data.as_ref().expect("a region job has its ingest data"),
             client,
             &job.key_range,
             split_size,
@@ -637,7 +681,7 @@ pub fn do_import_with_write_limiter(
                 if let Err(error) = result { fail(error);return; }
             });
         }
-        let generated = engine.load_ingest_data(&ctx, |range| {
+        let generated = engine.load_ingest_data(&ctx, &mut |batch| {
             tidb_failpoint::inject(
                 "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeGenerateJob",
                 |_| {},
@@ -659,11 +703,34 @@ pub fn do_import_with_write_limiter(
                 send_region_jobs(&ctx, &tracker, vec![dummy], &to_jobs);
                 ctx.sleep(Duration::from_secs(5));
             }
-            let jobs =
-                generate_region_jobs(&ctx, engine, client, &range, split_size, split_keys as u64)?;
-            send_region_jobs(&ctx, &tracker, jobs, &to_jobs);
+            // Go `generateJobForRange`: nothing to ingest in the batch.
+            let ranges = &batch.sorted_ranges;
+            let (start_of_all, end_of_all) = (&ranges[0].start, &ranges[ranges.len() - 1].end);
+            if batch.data.get_first_and_last_key(start_of_all, end_of_all)?.is_none() {
+                tidb_log::warn(
+                    "There is no pairs in range",
+                    &[
+                        tidb_log::Field::new("startOfAllRanges", tidb_log::Value::Str(hex::encode(start_of_all))),
+                        tidb_log::Field::new("endOfAllRanges", tidb_log::Value::Str(hex::encode(end_of_all))),
+                    ],
+                );
+                return Ok(());
+            }
+            let data: std::sync::Arc<dyn tidb_ingestor_engineapi::IngestData> = batch.data;
+            for range in ranges {
+                let jobs = generate_region_jobs(
+                    &ctx,
+                    &data,
+                    client,
+                    &(range.start.clone(), range.end.clone()),
+                    split_size,
+                    split_keys as u64,
+                )?;
+                send_region_jobs(&ctx, &tracker, jobs, &to_jobs);
+            }
             Ok(())
         });
+        let generated = generated.map_err(engine_error);
         if let Err(error) = generated {
             fail(error);
         }
@@ -703,7 +770,7 @@ fn send_region_jobs<'a>(
 /// both initial jobs and a stale region's remaining range.
 fn generate_region_jobs<'a>(
     ctx: &Context,
-    engine: &'a Engine,
+    data: &std::sync::Arc<dyn tidb_ingestor_engineapi::IngestData + 'a>,
     client: &dyn ImportClient,
     range: &(Vec<u8>, Vec<u8>),
     size: u64,
@@ -742,7 +809,7 @@ fn generate_region_jobs<'a>(
         }
         jobs.push(RegionJob::new(
             region,
-            Some(engine),
+            Some(std::sync::Arc::clone(data)),
             start,
             end.clone(),
             size,
@@ -764,6 +831,7 @@ fn do_write(
     pairs: &[sst::Pair],
     ts: u64,
     write_limiter: &crate::localhelper::StoreWriteLimiter,
+    collector: Option<&Collector>,
 ) -> Result<TiKVWriteResult> {
     if ts == 0 {
         return Err(Error::Other("data commitTS is 0".into()));
@@ -839,6 +907,15 @@ fn do_write(
         }
         if peer.id == leader.id {
             metas = response.metas;
+        }
+    }
+    // Go `local.collector.Processed` after each batch reached every peer.
+    if let Some(collector) = collector {
+        for request in &requests {
+            if let Some(sst::write_request::Chunk::Batch(batch)) = &request.chunk {
+                let size: usize = batch.pairs.iter().map(|pair| pair.key.len() + pair.value.len()).sum();
+                collector(size as i64, batch.pairs.len() as i64);
+            }
         }
     }
     if metas.is_empty() {
@@ -1067,7 +1144,29 @@ fn get_ingest_failed_msg(error: &errorpb::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::Engine;
     use std::sync::atomic::{AtomicBool, Ordering};
+    /// Go `doImport` over a local engine, as `ImportEngine` hands it.
+    fn do_import(
+        ctx: &Context,
+        engine: &std::sync::Arc<Engine>,
+        client: &dyn ImportClient,
+        cfg: &BackendConfig,
+        split_size: u64,
+        split_keys: usize,
+    ) -> Result<()> {
+        let mut local = crate::local::LocalEngine::new(std::sync::Arc::clone(engine), split_size, split_keys)?;
+        super::do_import(
+            ctx,
+            &mut local,
+            client,
+            cfg,
+            split_size,
+            split_keys,
+            &crate::localhelper::StoreWriteLimiter::new(0),
+            None,
+        )
+    }
     /// Go `region_job_test.go:TestNewWriteRequest`.
     #[test]
     fn test_new_write_request() {
@@ -1336,7 +1435,7 @@ mod tests {
     #[test]
     fn test_partial_write_ingest_busy() {
         let dir = tempfile::tempdir().unwrap();
-        let engine = Engine::open(dir.path().join("engine"), 42, false, 1024).unwrap();
+        let engine = std::sync::Arc::new(Engine::open(dir.path().join("engine"), 42, false, 1024).unwrap());
         engine
             .append_rows(
                 0,
@@ -1364,7 +1463,8 @@ mod tests {
             kv_write_batch_size: 16 * 1024,
             should_check_write_stall: false,
             checkpoint_enabled: false,
-            pause_pd_scheduler_scope: crate::local::PAUSE_PD_SCHEDULER_SCOPE_GLOBAL,
+            pause_pd_scheduler_scope: crate::local::PAUSE_PD_SCHEDULER_SCOPE_GLOBAL.into(),
+            raft_kv2_switch_mode_duration: Duration::ZERO,
         };
         do_import(&Context::background(), &engine, &client, &cfg, 1, 960000).unwrap();
         assert_eq!(*client.writes.lock().unwrap(), [1, 2, 3, 1, 2, 3]);
@@ -1383,7 +1483,8 @@ mod tests {
             kv_write_batch_size: 16 * 1024,
             should_check_write_stall: false,
             checkpoint_enabled: false,
-            pause_pd_scheduler_scope: crate::local::PAUSE_PD_SCHEDULER_SCOPE_GLOBAL,
+            pause_pd_scheduler_scope: crate::local::PAUSE_PD_SCHEDULER_SCOPE_GLOBAL.into(),
+            raft_kv2_switch_mode_duration: std::time::Duration::ZERO,
         }
     }
     /// Go `TestNotLeaderErrorNeedUpdatePeers`: write and busy-check the new peers
@@ -1391,7 +1492,7 @@ mod tests {
     #[test]
     fn test_not_leader_error_need_update_peers() {
         let dir = tempfile::tempdir().unwrap();
-        let engine = Engine::open(dir.path().join("engine"), 42, false, 1024).unwrap();
+        let engine = std::sync::Arc::new(Engine::open(dir.path().join("engine"), 42, false, 1024).unwrap());
         engine
             .append_rows(0, &[(b"a".to_vec(), b"a".to_vec(), vec![])])
             .unwrap();
@@ -1423,7 +1524,7 @@ mod tests {
     #[test]
     fn test_partial_write_ingest_error_wont_panic() {
         let dir = tempfile::tempdir().unwrap();
-        let engine = Engine::open(dir.path().join("engine"), 42, false, 1024).unwrap();
+        let engine = std::sync::Arc::new(Engine::open(dir.path().join("engine"), 42, false, 1024).unwrap());
         engine
             .append_rows(
                 0,
@@ -1492,7 +1593,7 @@ mod tests {
             "return()",
         );
         let dir = tempfile::tempdir().unwrap();
-        let engine = Engine::open(dir.path().join("engine"), 42, false, 1024).unwrap();
+        let engine = std::sync::Arc::new(Engine::open(dir.path().join("engine"), 42, false, 1024).unwrap());
         for key in [b'a', b'b', b'c'] {
             engine
                 .append_rows(0, &[(vec![key], vec![key], vec![])])
@@ -1536,7 +1637,7 @@ mod tests {
             "return()",
         );
         let dir = tempfile::tempdir().unwrap();
-        let engine = Engine::open(dir.path().join("engine"), 42, false, 1024).unwrap();
+        let engine = std::sync::Arc::new(Engine::open(dir.path().join("engine"), 42, false, 1024).unwrap());
         engine
             .append_rows(0, &[(b"a".to_vec(), b"a".to_vec(), vec![])])
             .unwrap();
@@ -1597,6 +1698,7 @@ mod tests {
                 }],
                 42,
                 &write_limiter,
+                None,
             )
             .unwrap();
             let mut job = RegionJob::new(region.clone(), None, vec![start], vec![end], 0, 0);
@@ -1636,7 +1738,7 @@ mod tests {
     #[test]
     fn test_do_import() {
         let dir = tempfile::tempdir().unwrap();
-        let engine = Engine::open(dir.path().join("engine"), 42, false, 1024).unwrap();
+        let engine = std::sync::Arc::new(Engine::open(dir.path().join("engine"), 42, false, 1024).unwrap());
         let rows: Vec<_> = ["a", "b", "b2", "c", "c2"]
             .map(|key| (key.as_bytes().to_vec(), key.as_bytes().to_vec(), vec![]))
             .into();
@@ -1832,42 +1934,6 @@ mod tests {
     }
 }
 
-impl<S: tikv_client::PdClient> crate::tikv_mode::ModeClient for RemoteImportClient<S> {
-    /// Go `pd.Client.GetAllStores` for mode switching.
-    fn stores(&self, ctx: &Context) -> Result<Vec<metapb::Store>> {
-        if let Some(error) = ctx.err() {
-            return Err(Error::Other(error.to_string()));
-        }
-        let pd = self.store.store().pd_client();
-        self.store
-            .block_on(async move { pd.get_all_stores().await })
-            .map_err(|error| Error::Other(error.to_string()))
-    }
-    /// Go `tikv.SwitchMode`, ignoring Unimplemented for TiFlash as Go does.
-    fn switch_mode(
-        &self,
-        ctx: &Context,
-        store_id: u64,
-        mode: sst::SwitchMode,
-        ranges: &[sst::Range],
-    ) -> Result<()> {
-        if let Some(error) = ctx.err() {
-            return Err(Error::Other(error.to_string()));
-        }
-        let mut client = self.client(store_id)?;
-        let result = self
-            .store
-            .block_on(client.switch_mode(sst::SwitchModeRequest {
-                mode: mode as i32,
-                ranges: ranges.to_vec(),
-            }));
-        match result {
-            Ok(_) => Ok(()),
-            Err(error) if error.code() == tonic::Code::Unimplemented => Ok(()),
-            Err(error) => Err(Error::Other(error.to_string())),
-        }
-    }
-}
 
 /// Go `tikvWriteResult`.
 #[derive(Default, Clone)]
@@ -1893,8 +1959,8 @@ pub struct RegionJob<'a> {
     pub stage: JobStage,
     /// Go `writeResult`.
     pub write_result: Option<TiKVWriteResult>,
-    /// Go `ingestData` (local Engine).
-    pub ingest_data: Option<&'a Engine>,
+    /// Go `ingestData`.
+    pub ingest_data: Option<std::sync::Arc<dyn tidb_ingestor_engineapi::IngestData + 'a>>,
     /// Go `regionSplitSize`.
     pub region_split_size: u64,
     /// Go `regionSplitKeys`.
@@ -1911,7 +1977,7 @@ impl<'a> RegionJob<'a> {
     /// Go `newRegionJob`.
     pub fn new(
         region: RegionInfo,
-        data: Option<&'a Engine>,
+        data: Option<std::sync::Arc<dyn tidb_ingestor_engineapi::IngestData + 'a>>,
         start: Vec<u8>,
         end: Vec<u8>,
         size: u64,
@@ -1938,8 +2004,8 @@ impl<'a> RegionJob<'a> {
             JobStage::RegionScanned => self.write_result = None,
             JobStage::NeedRescan => self.region = None,
             JobStage::Ingested => {
-                if let (Some(data), Some(result)) = (self.ingest_data, self.write_result.as_ref()) {
-                    data.finish(result.total_bytes, result.count);
+                if let (Some(data), Some(result)) = (&self.ingest_data, self.write_result.as_ref()) {
+                    data.finish(result.total_bytes as i64, result.count as i64);
                 }
             }
             JobStage::Wrote => {}
@@ -1949,7 +2015,7 @@ impl<'a> RegionJob<'a> {
 /// Go `newRegionJobs`. RegionInfo already contains decoded logical bounds.
 pub fn new_region_jobs<'a>(
     regions: &[RegionInfo],
-    data: Option<&'a Engine>,
+    data: Option<std::sync::Arc<dyn tidb_ingestor_engineapi::IngestData + 'a>>,
     ranges: &[(Vec<u8>, Vec<u8>)],
     size: u64,
     keys: u64,
@@ -1966,7 +2032,7 @@ pub fn new_region_jobs<'a>(
                 range.1.clone().min(region.region.end_key.clone())
             };
             if crate::localhelper::before_end(&start, &end) {
-                jobs.push(RegionJob::new(region.clone(), data, start, end, size, keys));
+                jobs.push(RegionJob::new(region.clone(), data.clone(), start, end, size, keys));
             }
         }
     }

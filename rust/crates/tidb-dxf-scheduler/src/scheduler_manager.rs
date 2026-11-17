@@ -28,7 +28,7 @@ use tidb_gocontext::{CancelFunc, Context};
 use tidb_log::{Field, Value};
 
 use crate::balancer::Balancer;
-use crate::interface::{get_cleaner_factory, get_scheduler_factory, BatchCleaner, Cleaner, Error, Param};
+use crate::interface::{get_cleaner_factories, get_cleaner_factory, get_scheduler_factory, BatchCleaner, Cleaner, Error, Param};
 use crate::scheduler::{on_task_finished, plain, BaseScheduler, ServerInfoSource};
 use crate::{NodeManager, Scheduler, SlotManager, TaskManager};
 
@@ -39,6 +39,9 @@ pub static CHECK_TASK_RUNNING_INTERVAL: RwLock<Duration> = RwLock::new(Duration:
 const DEFAULT_HISTORY_SUBTASK_TABLE_GC_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 /// Go `DefaultCleanUpInterval`: the interval of task cleanup.
 pub static DEFAULT_CLEAN_UP_INTERVAL: RwLock<Duration> = RwLock::new(Duration::from_secs(10 * 60));
+/// Go `DefaultExpiredFileCleanInterval`: the interval of the expired file
+/// cleanup.
+pub static DEFAULT_EXPIRED_FILE_CLEAN_INTERVAL: RwLock<Duration> = RwLock::new(Duration::from_secs(3 * 60 * 60));
 /// Go `defaultCollectMetricsInterval`: metric scraping mostly happens every
 /// 15s, so collecting more often is meaningless.
 const DEFAULT_COLLECT_METRICS_INTERVAL: Duration = Duration::from_secs(15);
@@ -198,6 +201,9 @@ impl Manager {
         self.spawn("schedule", |sm| sm.schedule_task_loop());
         self.spawn("gc", |sm| sm.gc_subtask_history_table_loop());
         self.spawn("cleanup", |sm| sm.clean_task_loop());
+        if tidb_config_kerneltype::is_next_gen() {
+            self.spawn("expired-file-cleanup", |sm| sm.expired_file_clean_loop());
+        }
         self.spawn("collect", |sm| sm.collect_loop());
         self.spawn("live-nodes", |sm| {
             let ticker = crossbeam_channel::tick(crate::nodes::nodes_check_interval());
@@ -490,6 +496,50 @@ impl Manager {
                 }
                 recv(finish) -> _ => self.drain_clean_task_batches(),
                 recv(ticker) -> _ => self.drain_clean_task_batches(),
+            }
+        }
+    }
+
+    /// Go `expiredFileCleanLoop`.
+    fn expired_file_clean_loop(self: &Arc<Self>) {
+        self.logger.info("expired file cleanup loop start", &[]);
+        self.run_expired_file_clean();
+        let ticker = crossbeam_channel::tick(read(&DEFAULT_EXPIRED_FILE_CLEAN_INTERVAL));
+        let done = self.ctx.done();
+        loop {
+            crossbeam_channel::select! {
+                recv(done) -> _ => break,
+                recv(ticker) -> _ => self.run_expired_file_clean(),
+            }
+        }
+        self.logger.info("expired file cleanup loop exits", &[]);
+    }
+
+    /// Go `runExpiredFileClean`: every cleaner that cleans expired files,
+    /// over the cluster's cloud storage URI. A next-gen deployment uses one
+    /// URI for every task's global sort, so the current global setting
+    /// covers every task's files.
+    pub(crate) fn run_expired_file_clean(&self) {
+        let cloud_storage_uri = tidb_dxf_handle::get_cloud_storage_uri(tidb_dxf_handle::cluster_id());
+        if cloud_storage_uri.is_empty() {
+            return;
+        }
+        for (task_type, factory) in get_cleaner_factories() {
+            let cleaner = factory();
+            let Some(cleaner) = cleaner.as_expired_file_cleaner() else { continue };
+            let getter: &dyn tidb_dxf_storage::TaskCleanupInfoGetter = self.task_mgr.as_ref();
+            if let Err(err) = cleaner.clean_expired_files(&self.ctx, getter, &cloud_storage_uri) {
+                if self.ctx.err().is_some() {
+                    return;
+                }
+                // The cleanup is owner-wide, not of one task.
+                tidb_dxf_dxfmetric::SCHEDULE_EVENT_COUNTER
+                    .with_label_values(&["-", tidb_dxf_dxfmetric::EVENT_EXPIRED_FILE_CLEANUP_FAILED])
+                    .inc();
+                self.logger.warn(
+                    "expired file cleanup failed",
+                    &[str_field("task-type", task_type.to_string()), str_field("error", err.to_string())],
+                );
             }
         }
     }

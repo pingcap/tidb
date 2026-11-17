@@ -636,3 +636,135 @@ fn test_fast_respond_no_need_resource_task_when_schedulers_reach_limit() {
     }
     restore();
 }
+
+/// Go `mock.MockExpiredFileCleaner`: records its calls and returns `err`,
+/// running `before` first.
+struct ExpiredCleaner {
+    calls: Mutex<Vec<String>>,
+    err: Option<Error>,
+    before: Option<Box<dyn Fn() + Send + Sync>>,
+}
+
+impl ExpiredCleaner {
+    fn new(err: Option<Error>) -> Arc<Self> {
+        Arc::new(Self { calls: Mutex::new(Vec::new()), err, before: None })
+    }
+}
+
+impl Cleaner for ExpiredCleaner {
+    fn clean(&self, _: &Context, _: &mut Task) -> Result<(), Error> {
+        Ok(())
+    }
+    fn as_expired_file_cleaner(&self) -> Option<&dyn crate::ExpiredFileCleaner> {
+        Some(self)
+    }
+}
+
+impl crate::ExpiredFileCleaner for ExpiredCleaner {
+    fn clean_expired_files(
+        &self,
+        _: &Context,
+        _: &dyn tidb_dxf_storage::TaskCleanupInfoGetter,
+        uri: &str,
+    ) -> Result<(), Error> {
+        if let Some(f) = &self.before {
+            f();
+        }
+        self.calls.lock().unwrap().push(uri.to_owned());
+        self.err.clone().map_or(Ok(()), Err)
+    }
+}
+
+fn set_cloud_storage_uri(uri: &str) {
+    *tidb_vardef::CLOUD_STORAGE_URI.write().unwrap() = uri.to_owned();
+}
+
+/// Go `TestRunExpiredFileClean/runs capable cleaners`: a cleaner without
+/// expired-file cleanup is not called.
+#[test]
+fn run_expired_file_clean_runs_capable_cleaners() {
+    clear_cleaner_factory();
+    set_cloud_storage_uri("s3://bucket");
+    let mgr = new_manager(&Context::background(), Arc::new(MockTaskManager::default()));
+    let cleaner = ExpiredCleaner::new(None);
+    let plain_cleaner = Arc::new(BatchCleanerCallRecorder::default());
+    let c = Arc::clone(&cleaner);
+    register_cleaner_factory(IMPORT_INTO, Arc::new(move || Arc::clone(&c) as Arc<dyn Cleaner>));
+    let p = Arc::clone(&plain_cleaner);
+    register_cleaner_factory(TASK_TYPE_EXAMPLE, Arc::new(move || Arc::clone(&p) as Arc<dyn Cleaner>));
+    mgr.run_expired_file_clean();
+    assert_eq!(*cleaner.calls.lock().unwrap(), ["s3://bucket/dxf/"]);
+    assert!(plain_cleaner.calls.lock().unwrap().is_empty());
+    clear_cleaner_factory();
+}
+
+/// Go `TestRunExpiredFileClean/errors are isolated and retried`: a failed
+/// cleaner does not stop the others, and each failure is counted.
+#[test]
+fn run_expired_file_clean_isolates_errors() {
+    clear_cleaner_factory();
+    set_cloud_storage_uri("s3://bucket");
+    let mgr = new_manager(&Context::background(), Arc::new(MockTaskManager::default()));
+    let failed = ExpiredCleaner::new(Some(plain("cleanup failed")));
+    let succeeded = ExpiredCleaner::new(None);
+    let (f, s) = (Arc::clone(&failed), Arc::clone(&succeeded));
+    register_cleaner_factory(IMPORT_INTO, Arc::new(move || Arc::clone(&f) as Arc<dyn Cleaner>));
+    register_cleaner_factory(TASK_TYPE_EXAMPLE, Arc::new(move || Arc::clone(&s) as Arc<dyn Cleaner>));
+    let counter = tidb_dxf_dxfmetric::SCHEDULE_EVENT_COUNTER
+        .with_label_values(&["-", tidb_dxf_dxfmetric::EVENT_EXPIRED_FILE_CLEANUP_FAILED]);
+    let before = counter.get();
+    mgr.run_expired_file_clean();
+    mgr.run_expired_file_clean();
+    assert_eq!(counter.get(), before + 2.0);
+    assert_eq!(failed.calls.lock().unwrap().len(), 2);
+    assert_eq!(succeeded.calls.lock().unwrap().len(), 2);
+    clear_cleaner_factory();
+}
+
+/// Go `TestRunExpiredFileClean/empty URI skips factories`.
+#[test]
+fn run_expired_file_clean_skips_without_uri() {
+    clear_cleaner_factory();
+    set_cloud_storage_uri("");
+    let called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let c = Arc::clone(&called);
+    register_cleaner_factory(
+        IMPORT_INTO,
+        Arc::new(move || {
+            c.store(true, std::sync::atomic::Ordering::SeqCst);
+            ExpiredCleaner::new(None) as Arc<dyn Cleaner>
+        }),
+    );
+    new_manager(&Context::background(), Arc::new(MockTaskManager::default())).run_expired_file_clean();
+    assert!(!called.load(std::sync::atomic::Ordering::SeqCst));
+    clear_cleaner_factory();
+}
+
+/// Go `TestRunExpiredFileClean/manager cancellation stops the current
+/// sweep regardless of cleaner error`.
+#[test]
+fn run_expired_file_clean_stops_on_cancel() {
+    clear_cleaner_factory();
+    set_cloud_storage_uri("s3://bucket");
+    let mgr = new_manager(&Context::background(), Arc::new(MockTaskManager::default()));
+    let m = Arc::clone(&mgr);
+    let cleaner = Arc::new(ExpiredCleaner {
+        calls: Mutex::new(Vec::new()),
+        err: Some(plain("storage cancellation error")),
+        before: Some(Box::new(move || m.cancel())),
+    });
+    let constructor_calls = Arc::new(Mutex::new(0));
+    for tp in [IMPORT_INTO, TASK_TYPE_EXAMPLE] {
+        let (c, n) = (Arc::clone(&cleaner), Arc::clone(&constructor_calls));
+        register_cleaner_factory(
+            tp,
+            Arc::new(move || {
+                *n.lock().unwrap() += 1;
+                Arc::clone(&c) as Arc<dyn Cleaner>
+            }),
+        );
+    }
+    mgr.run_expired_file_clean();
+    assert_eq!(*constructor_calls.lock().unwrap(), 1);
+    clear_cleaner_factory();
+}

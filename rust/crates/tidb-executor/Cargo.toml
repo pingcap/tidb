@@ -19,6 +19,7 @@ test-util = [
 ]
 
 [dependencies]
+tidb-objstore = { path = "../tidb-objstore" }
 tidb-br = { path = "../tidb-br" }
 tidb-sem = { path = "../tidb-sem" }
 tidb-table-filter = { path = "../tidb-table-filter" }
@@ -70,6 +71,22 @@ tidb-rowcodec = { path = "../tidb-rowcodec" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-parser-types = { path = "../tidb-parser-types" }
 tidb-lightning-mydump = { path = "../tidb-lightning-mydump" }
+tidb-lightning-backend = { path = "../tidb-lightning-backend" }
+tidb-lightning-backend-encode = { path = "../tidb-lightning-backend-encode" }
+tidb-lightning-backend-kv = { path = "../tidb-lightning-backend-kv" }
+tidb-lightning-common = { path = "../tidb-lightning-common" }
+tidb-lightning-verification = { path = "../tidb-lightning-verification" }
+tidb-ingestor-ingestctrl = { path = "../tidb-ingestor-ingestctrl" }
+tidb-ingestor-simplesst = { path = "../tidb-ingestor-simplesst" }
+tidb-dumpformat-parquetfile = { path = "../tidb-dumpformat-parquetfile" }
+tidb-dxf-execute = { path = "../tidb-dxf-execute" }
+tidb-dxf-handle = { path = "../tidb-dxf-handle" }
+tidb-dxf-scheduler = { path = "../tidb-dxf-scheduler" }
+tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+tidb-go-rand = { path = "../tidb-go-rand" }
+tidb-cdcutil = { path = "../tidb-cdcutil" }
+tidb-go-url = { path = "../tidb-go-url" }
+tidb-config-deploymode = { path = "../tidb-config-deploymode" }
 tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-domain-affinity = { path = "../tidb-domain-affinity" }
@@ -210,6 +227,7 @@ tidb-vardef = { path = "../tidb-vardef" }
 tracing = "0.1"
 
 [dev-dependencies]
+hex = "0.4"
 tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
 tidb-metabuild = { path = "../tidb-metabuild" }
 tidb-session = { path = "../tidb-session" }

@@ -1555,10 +1555,14 @@ fn import_into_refusal_preserves_file_targets_and_options() {
                 "{sql}"
             );
             let error = result.expect_err("partial import execution must be withdrawn");
+            // Without a TiKV store to ingest into, the import stops after
+            // reading the file list, before any job is created.
             let expected = if sql.contains("SET v=CONCAT(v") {
                 "COLUMN reference is not supported in IMPORT INTO column assignment, index 0"
+            } else if sql.contains(".missing") {
+                "the file suffix is not supported when import from server disk"
             } else {
-                "IMPORT INTO is not supported yet"
+                "IMPORT INTO needs a TiKV store, and this instance has none"
             };
             assert!(error.to_string().contains(expected), "{sql}: {error}");
             session.run("INSERT INTO t VALUES (3, 'ordinary')").unwrap();
@@ -1592,10 +1596,12 @@ fn import_into_refusal_preserves_select_targets_and_transaction() {
         let result = session.run(sql);
         assert!(row_text(session.run("SELECT * FROM t")).is_empty(), "{sql}");
         assert_eq!(row_text(session.run("SHOW CREATE TABLE t")), schema);
+        // Go `importFromSelect` ingests through a local backend into TiKV;
+        // without one the import stops before reading the SELECT.
         assert!(result
             .expect_err("private INSERT SELECT rewrite must be withdrawn")
             .to_string()
-            .contains("IMPORT INTO is not supported yet"));
+            .contains("IMPORT INTO needs a TiKV store, and this instance has none"));
         assert_eq!(
             row_text(session.run("SELECT * FROM source ORDER BY id")),
             [["1", "alpha"], ["2", "beta"]]
@@ -1605,7 +1611,12 @@ fn import_into_refusal_preserves_select_targets_and_transaction() {
         session
             .run("INSERT INTO source VALUES (3, 'pending')")
             .unwrap();
-        assert!(session.run(sql).is_err());
+        // Go `validateStatementInTxn`.
+        assert_eq!(
+            session.run(sql).expect_err("IMPORT INTO in a transaction").to_string(),
+            "cannot run IMPORT INTO in explicit transaction",
+            "{sql}"
+        );
         session.run("ROLLBACK").unwrap();
         assert_eq!(
             row_text(session.run("SELECT * FROM source ORDER BY id")),
@@ -1640,6 +1651,58 @@ fn test_import_into_build_plan() {
         assert_eq!(error.code, 1136, "{sql}: {error:?}");
         assert_eq!(error.message, "Column count doesn't match value count at row 1");
     }
+}
+
+/// Go `buildImportInto`'s source URL checks: `url.Parse` errors become
+/// `ErrLoadDataInvalidURI` (with the quoted URL's credentials redacted),
+/// and SEM v1 refuses a server-disk source before any option is checked.
+#[test]
+fn import_into_source_url_is_checked_like_go() {
+    let mut session = Session::new();
+    session.run("create table t (a int)").unwrap();
+    let error = session.run("IMPORT INTO t FROM '1invalid:'").unwrap_err().to_mysql_error();
+    assert_eq!(error.code, 8158);
+    assert!(
+        error.message.starts_with(
+            r#"The URI of data source is invalid. Reason: parse "1invalid:": first path segment in URL cannot contain colon. Please provide a valid URI"#
+        ),
+        "{}",
+        error.message
+    );
+    let error = session
+        .run("IMPORT INTO t FROM 's3://bad bucket/a.csv?access-key=AKSECRET&secret-access-key=SKSECRET'")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 8158);
+    assert!(error.message.contains(r#"invalid character " " in host name"#), "{}", error.message);
+    assert!(!error.message.contains("AKSECRET") && !error.message.contains("SKSECRET"));
+
+    tidb_sem::enable();
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            tidb_sem::disable();
+        }
+    }
+    let _reset = Reset;
+    for source in ["/tmp/a.csv", "local:///tmp/a.csv", "FILE:///tmp/a.csv", "a.csv"] {
+        let error = session
+            .run(&format!("IMPORT INTO t FROM '{source}' WITH thread=1"))
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(error.code, 8132, "{source}");
+        assert_eq!(
+            error.message,
+            "Feature 'IMPORT INTO from server disk' is not supported when security enhanced mode is enabled"
+        );
+    }
+    // SEM v1 lets a remote source through to the data store, which this
+    // endpoint refuses.
+    let error = session
+        .run("IMPORT INTO t FROM 's3://bucket/a.csv?endpoint=http://127.0.0.1:1&access-key=a&secret-access-key=b'")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_ne!(error.code, 8132, "{}", error.message);
 }
 
 /// Go testkit `zzprobe/e05.TestImportIntoPlannerHandoff`, captured with

@@ -1,0 +1,129 @@
+{"in":"{}","out":"e30=","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context requires sse=aws:kms or sse=aws:kms:dsse: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{}","out":"","provider":"","sse":""}
+{"in":"{}","out":"e30=","provider":"minio","sse":"aws:kms"}
+{"in":"{}","out":"e30=","provider":"minio","sse":""}
+{"in":" { } ","out":"e30=","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context requires sse=aws:kms or sse=aws:kms:dsse: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":" { } ","out":"","provider":"","sse":""}
+{"in":" { } ","out":"e30=","provider":"minio","sse":"aws:kms"}
+{"in":" { } ","out":"e30=","provider":"minio","sse":""}
+{"in":"{\"a\":\"b\"}","out":"eyJhIjoiYiJ9","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context requires sse=aws:kms or sse=aws:kms:dsse: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"b\"}","out":"","provider":"","sse":""}
+{"in":"{\"a\":\"b\"}","out":"eyJhIjoiYiJ9","provider":"minio","sse":"aws:kms"}
+{"in":"{\"a\":\"b\"}","out":"eyJhIjoiYiJ9","provider":"minio","sse":""}
+{"in":"{\"b\":\"1\",\"a\":\"2\"}","out":"eyJhIjoiMiIsImIiOiIxIn0=","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context requires sse=aws:kms or sse=aws:kms:dsse: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"b\":\"1\",\"a\":\"2\"}","out":"","provider":"","sse":""}
+{"in":"{\"b\":\"1\",\"a\":\"2\"}","out":"eyJhIjoiMiIsImIiOiIxIn0=","provider":"minio","sse":"aws:kms"}
+{"in":"{\"b\":\"1\",\"a\":\"2\"}","out":"eyJhIjoiMiIsImIiOiIxIn0=","provider":"minio","sse":""}
+{"in":"{\"kk\":\"¾\",\"tenant\":\"租户😀\",\"value\":\"a+b / = \u0026 ?\"}","out":"eyJrayI6IsK+IiwidGVuYW50Ijoi56ef5oi38J+YgCIsInZhbHVlIjoiYStiIC8gPSBcdTAwMjYgPyJ9","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context requires sse=aws:kms or sse=aws:kms:dsse: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"kk\":\"¾\",\"tenant\":\"租户😀\",\"value\":\"a+b / = \u0026 ?\"}","out":"","provider":"","sse":""}
+{"in":"{\"kk\":\"¾\",\"tenant\":\"租户😀\",\"value\":\"a+b / = \u0026 ?\"}","out":"eyJrayI6IsK+IiwidGVuYW50Ijoi56ef5oi38J+YgCIsInZhbHVlIjoiYStiIC8gPSBcdTAwMjYgPyJ9","provider":"minio","sse":"aws:kms"}
+{"in":"{\"kk\":\"¾\",\"tenant\":\"租户😀\",\"value\":\"a+b / = \u0026 ?\"}","out":"eyJrayI6IsK+IiwidGVuYW50Ijoi56ef5oi38J+YgCIsInZhbHVlIjoiYStiIC8gPSBcdTAwMjYgPyJ9","provider":"minio","sse":""}
+{"in":"{\"h\":\"\u003c\u003e\u0026\\u2028\\u2029\"}","out":"eyJoIjoiXHUwMDNjXHUwMDNlXHUwMDI2XHUyMDI4XHUyMDI5In0=","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context requires sse=aws:kms or sse=aws:kms:dsse: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"h\":\"\u003c\u003e\u0026\\u2028\\u2029\"}","out":"","provider":"","sse":""}
+{"in":"{\"h\":\"\u003c\u003e\u0026\\u2028\\u2029\"}","out":"eyJoIjoiXHUwMDNjXHUwMDNlXHUwMDI2XHUyMDI4XHUyMDI5In0=","provider":"minio","sse":"aws:kms"}
+{"in":"{\"h\":\"\u003c\u003e\u0026\\u2028\\u2029\"}","out":"eyJoIjoiXHUwMDNjXHUwMDNlXHUwMDI2XHUyMDI4XHUyMDI5In0=","provider":"minio","sse":""}
+{"in":"{\"e\":\"\\\"\\\\\\/\\b\\f\\n\\r\\t\\u0001\\u001f\"}","out":"eyJlIjoiXCJcXC9cYlxmXG5cclx0XHUwMDAxXHUwMDFmIn0=","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context requires sse=aws:kms or sse=aws:kms:dsse: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"e\":\"\\\"\\\\\\/\\b\\f\\n\\r\\t\\u0001\\u001f\"}","out":"","provider":"","sse":""}
+{"in":"{\"e\":\"\\\"\\\\\\/\\b\\f\\n\\r\\t\\u0001\\u001f\"}","out":"eyJlIjoiXCJcXC9cYlxmXG5cclx0XHUwMDAxXHUwMDFmIn0=","provider":"minio","sse":"aws:kms"}
+{"in":"{\"e\":\"\\\"\\\\\\/\\b\\f\\n\\r\\t\\u0001\\u001f\"}","out":"eyJlIjoiXCJcXC9cYlxmXG5cclx0XHUwMDAxXHUwMDFmIn0=","provider":"minio","sse":""}
+{"in":"{\"s\":\"\\ud83d\\ude00\"}","out":"eyJzIjoi8J+YgCJ9","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context requires sse=aws:kms or sse=aws:kms:dsse: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"s\":\"\\ud83d\\ude00\"}","out":"","provider":"","sse":""}
+{"in":"{\"s\":\"\\ud83d\\ude00\"}","out":"eyJzIjoi8J+YgCJ9","provider":"minio","sse":"aws:kms"}
+{"in":"{\"s\":\"\\ud83d\\ude00\"}","out":"eyJzIjoi8J+YgCJ9","provider":"minio","sse":""}
+{"in":"{\"s\":\"\\ud83d\"}","out":"eyJzIjoi77+9In0=","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context requires sse=aws:kms or sse=aws:kms:dsse: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"s\":\"\\ud83d\"}","out":"","provider":"","sse":""}
+{"in":"{\"s\":\"\\ud83d\"}","out":"eyJzIjoi77+9In0=","provider":"minio","sse":"aws:kms"}
+{"in":"{\"s\":\"\\ud83d\"}","out":"eyJzIjoi77+9In0=","provider":"minio","sse":""}
+{"in":"{\"s\":\"\\ude00\"}","out":"eyJzIjoi77+9In0=","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context requires sse=aws:kms or sse=aws:kms:dsse: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"s\":\"\\ude00\"}","out":"","provider":"","sse":""}
+{"in":"{\"s\":\"\\ude00\"}","out":"eyJzIjoi77+9In0=","provider":"minio","sse":"aws:kms"}
+{"in":"{\"s\":\"\\ude00\"}","out":"eyJzIjoi77+9In0=","provider":"minio","sse":""}
+{"in":"{\"s\":\"\\ud83dx\"}","out":"eyJzIjoi77+9eCJ9","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context requires sse=aws:kms or sse=aws:kms:dsse: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"s\":\"\\ud83dx\"}","out":"","provider":"","sse":""}
+{"in":"{\"s\":\"\\ud83dx\"}","out":"eyJzIjoi77+9eCJ9","provider":"minio","sse":"aws:kms"}
+{"in":"{\"s\":\"\\ud83dx\"}","out":"eyJzIjoi77+9eCJ9","provider":"minio","sse":""}
+{"in":"{\"s\":\"\\ud83d\\u0041\"}","out":"eyJzIjoi77+9QSJ9","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context requires sse=aws:kms or sse=aws:kms:dsse: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"s\":\"\\ud83d\\u0041\"}","out":"","provider":"","sse":""}
+{"in":"{\"s\":\"\\ud83d\\u0041\"}","out":"eyJzIjoi77+9QSJ9","provider":"minio","sse":"aws:kms"}
+{"in":"{\"s\":\"\\ud83d\\u0041\"}","out":"eyJzIjoi77+9QSJ9","provider":"minio","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"\\u0041\":\"x\",\"A\":\"y\"}","out":"","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"\\u0041\":\"x\",\"A\":\"y\"}","out":"","provider":"","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"\\u0041\":\"x\",\"A\":\"y\"}","out":"","provider":"minio","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"\\u0041\":\"x\",\"A\":\"y\"}","out":"","provider":"minio","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"x\",\"a\":\"y\"}","out":"","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"x\",\"a\":\"y\"}","out":"","provider":"","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"x\",\"a\":\"y\"}","out":"","provider":"minio","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"x\",\"a\":\"y\"}","out":"","provider":"minio","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":null}","out":"","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":null}","out":"","provider":"","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":null}","out":"","provider":"minio","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":null}","out":"","provider":"minio","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":1}","out":"","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":1}","out":"","provider":"","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":1}","out":"","provider":"minio","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":1}","out":"","provider":"minio","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":{\"b\":\"c\"}}","out":"","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":{\"b\":\"c\"}}","out":"","provider":"","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":{\"b\":\"c\"}}","out":"","provider":"minio","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":{\"b\":\"c\"}}","out":"","provider":"minio","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"[\"a\"]","out":"","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"[\"a\"]","out":"","provider":"","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"[\"a\"]","out":"","provider":"minio","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"[\"a\"]","out":"","provider":"minio","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"\"a\"","out":"","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"\"a\"","out":"","provider":"","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"\"a\"","out":"","provider":"minio","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"\"a\"","out":"","provider":"minio","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"b\"} x","out":"","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"b\"} x","out":"","provider":"","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"b\"} x","out":"","provider":"minio","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"b\"} x","out":"","provider":"minio","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"b\",}","out":"","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"b\",}","out":"","provider":"","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"b\",}","out":"","provider":"minio","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"b\",}","out":"","provider":"minio","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\" \"b\"}","out":"","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\" \"b\"}","out":"","provider":"","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\" \"b\"}","out":"","provider":"minio","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\" \"b\"}","out":"","provider":"minio","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"\\x\"}","out":"","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"\\x\"}","out":"","provider":"","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"\\x\"}","out":"","provider":"minio","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"\\x\"}","out":"","provider":"minio","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"\\u12\"}","out":"","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"\\u12\"}","out":"","provider":"","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"\\u12\"}","out":"","provider":"minio","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"\\u12\"}","out":"","provider":"minio","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"\t\"}","out":"","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"\t\"}","out":"","provider":"","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"\t\"}","out":"","provider":"minio","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"\t\"}","out":"","provider":"minio","sse":""}
+{"in":"{\"a\":\"b\"}\n","out":"eyJhIjoiYiJ9","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context requires sse=aws:kms or sse=aws:kms:dsse: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"b\"}\n","out":"","provider":"","sse":""}
+{"in":"{\"a\":\"b\"}\n","out":"eyJhIjoiYiJ9","provider":"minio","sse":"aws:kms"}
+{"in":"{\"a\":\"b\"}\n","out":"eyJhIjoiYiJ9","provider":"minio","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"b\"}{}","out":"","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"b\"}{}","out":"","provider":"","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"b\"}{}","out":"","provider":"minio","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"b\"}{}","out":"","provider":"minio","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"�","out":"","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"�","out":"","provider":"","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"�","out":"","provider":"minio","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"�","out":"","provider":"minio","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"\\'\"}","out":"","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"\\'\"}","out":"","provider":"","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"\\'\"}","out":"","provider":"minio","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"\\'\"}","out":"","provider":"minio","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{,}","out":"","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{,}","out":"","provider":"","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{,}","out":"","provider":"minio","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{,}","out":"","provider":"minio","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"b\",,\"c\":\"d\"}","out":"","provider":"","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"b\",,\"c\":\"d\"}","out":"","provider":"","sse":""}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"b\",,\"c\":\"d\"}","out":"","provider":"minio","sse":"aws:kms"}
+{"err":"sse-kms-context must be a UTF-8 JSON object with unique keys and string values: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","in":"{\"a\":\"b\",,\"c\":\"d\"}","out":"","provider":"minio","sse":""}
+{"endpoint":"https://h:9000/","out":"https://h:9000"}
+{"endpoint":"h:9000","err":"host not found in endpoint","out":""}
+{"endpoint":"https://","err":"host not found in endpoint","out":""}
+{"endpoint":"http://u:p@h/%zz","err":"invalid S3 endpoint URL: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config","out":""}
+{"endpoint":"https://h/","out":"https://h"}
