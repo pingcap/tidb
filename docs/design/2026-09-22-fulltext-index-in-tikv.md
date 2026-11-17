@@ -131,7 +131,8 @@ machinery.
 ```
 key   = t{tableID}_i{indexID} + memcomparable(key column values...) + memcomparable(term bytes) + handle
 value = 0x00                      TailLen = 0 (extensible v0 index-value layout)
-        0x01                      payload kind: positions, version 1
+        0x02                      payload kind: document length and positions
+        uvarint(dl)               document length in tokens, the same in every entry of the row
         uvarint(n) + n × uvarint(delta position)
 ```
 
@@ -155,7 +156,15 @@ Why this shape:
   values, because no coprocessor request is issued against this index
   (see the write path and planner sections).
 - Positions are token-stream ordinals from the analyzer, delta-encoded. A term's
-  frequency is `n`, available for scoring later without a layout change.
+  frequency is `n`.
+- The document length `dl` is the number of tokens the document analyzes to.
+  With the term frequency it is what a relevance score such as BM25 needs from
+  each posting, so scoring can be added without a layout change and without
+  reading or analyzing the documents a search finds. It costs 1-3 bytes per
+  entry. It cannot go stale: the write path deletes and rewrites all of a
+  row's entries whenever its document changes. Kind `0x01`, positions without
+  the length, was a pre-release layout; its values are refused rather than
+  misread.
 - A NULL or empty document writes no entries.
 
 Sizing: a 1 MB NGRAM document writes about one entry per distinct bigram with a
@@ -592,11 +601,29 @@ structure and is what MySQL's InnoDB FTS does too.
     simplest searches: exact single words, `+` and optional only, one
     level, STANDARD parser. It would reuse IndexMerge's executor, cost and
     EXPLAIN, at the price of two plan shapes for one feature.
+- **Document length for scoring kept elsewhere than in every entry.**
+  - One extra posting list per index under a reserved term, holding one
+    entry per row with its length, read in handle order alongside the term
+    lists: one entry per row instead of a few bytes per entry, but an extra
+    list read for every scored search, a reserved term the analyzer must
+    never produce, and one more write per row.
+  - Recomputing the length from the row at scoring time: analyzes every
+    document a search finds, the cost the index exists to avoid. Rejected.
+  - Not storing it until scoring is designed: adding it later would need a
+    second value layout and an index rebuild before existing indexes could
+    score. Rejected; the length is stored from the first release.
 
 ## Unresolved Questions
 
-- Relevance scoring and `ORDER BY MATCH(...) LIMIT n`: the term frequency is
-  in the value, but ranking and early termination are not designed.
+- Relevance scoring and `ORDER BY MATCH(...) LIMIT n`: the term frequency and
+  the document length are in the value, which is what BM25 needs per posting,
+  but ranking and early termination are not designed. The table-wide inputs
+  are open: the row count `N` and average length `avgdl` would come from
+  statistics, and a term's document frequency `df` is exact for the lists a
+  search reads (optional terms beside a required one are not read today) and
+  otherwise estimated. Skipping low-scoring rows early needs a per-term
+  upper bound on the score, a per-term statistic rather than a per-entry one.
+  Scores will not equal InnoDB's, which uses a TF-IDF variant.
 - `MATCH` over several columns: the entry layout tokenizes one column.
 - Several values of a key column in one search (`tenant_id IN (...)`), which
   needs a merge of one posting scan per value.
