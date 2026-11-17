@@ -133,6 +133,32 @@ func TestBindingCacheDigestSnapshot(t *testing.T) {
 		require.Equal(t, []string{b2.SQLDigest}, remaining)
 	})
 
+	t.Run("snapshots survive batch removal", func(t *testing.T) {
+		digests := newDigestBiMap()
+		for _, digest := range []string{"a", "b", "c", "d"} {
+			digests.Add(noDBDigest, digest)
+		}
+		digests.Add("other", "e")
+		digests.Add("other", "f")
+		before := digests.NoDBDigest2SQLDigest(noDBDigest)
+		other := digests.NoDBDigest2SQLDigest("other")
+		digests.Del("b", "b", "d", "e", "missing")
+		require.Equal(t, []string{"a", "c"}, digests.NoDBDigest2SQLDigest(noDBDigest))
+		require.Equal(t, []string{"f"}, digests.NoDBDigest2SQLDigest("other"))
+		require.ElementsMatch(t, []string{"a", "c", "f"}, digests.All())
+		for _, digest := range []string{"b", "d", "e"} {
+			require.Empty(t, digests.SQLDigest2NoDBDigest(digest))
+		}
+		remaining := digests.NoDBDigest2SQLDigest(noDBDigest)
+		digests.Del("a", "c", "f")
+		require.Nil(t, digests.NoDBDigest2SQLDigest(noDBDigest))
+		require.Nil(t, digests.NoDBDigest2SQLDigest("other"))
+		require.Empty(t, digests.All())
+		require.Equal(t, []string{"a", "b", "c", "d"}, before)
+		require.Equal(t, []string{"e", "f"}, other)
+		require.Equal(t, []string{"a", "c"}, remaining)
+	})
+
 	t.Run("delete during iteration", func(t *testing.T) {
 		cache := newBindingCache(context.Background(), 1000000000).(*bindingCache)
 		defer cache.Close()

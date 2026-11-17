@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -56,6 +57,69 @@ func TestBindingCache(t *testing.T) {
 	tk.MustExec("drop global binding for select * from t;")
 	require.Nil(t, dom.BindingHandle().LoadFromStorageToCache(false, false))
 	require.Equal(t, 1, len(dom.BindingHandle().GetAllBindings()))
+
+	t.Run("bulk removal allocations", func(t *testing.T) {
+		const count = 10000
+		tk := testkit.NewTestKit(t, store)
+		cache := bindinfo.NewBindingCacheUpdater(&mockSessionPool{tk.Session()})
+		defer cache.Close()
+		rows := make([]string, 0, count)
+		for i := range count {
+			digest := fmt.Sprintf("bulk-binding-%d", i)
+			require.NoError(t, cache.SetBinding(digest, &bindinfo.Binding{
+				BindSQL:   fmt.Sprintf("SELECT * FROM tenant_%d.t", i),
+				SQLDigest: digest,
+			}))
+			rows = append(rows, fmt.Sprintf("('select * from t', 'select * from t', 'test', 'deleted', now(), now(), '', '', 'manual', '%s', '')", digest))
+		}
+		tk.MustExec("INSERT INTO mysql.bind_info (original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest) VALUES " + strings.Join(rows, ","))
+
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		require.NoError(t, cache.LoadFromStorageToCache(true, false))
+		runtime.ReadMemStats(&after)
+		allocated := after.TotalAlloc - before.TotalAlloc
+		t.Logf("allocated %d bytes loading %d deleted bindings", allocated, count)
+		// Allow storage-loading overhead, but reject copying the shrinking
+		// bucket for every removal (about 800 MB for this bucket).
+		require.Less(t, allocated, uint64(count*32768))
+		for i := range count {
+			require.Nil(t, cache.GetBinding(fmt.Sprintf("bulk-binding-%d", i)))
+		}
+		require.Len(t, cache.GetAllBindings(), 1)
+		tk.MustExec("DELETE FROM mysql.bind_info WHERE sql_digest LIKE 'bulk-binding-%'")
+	})
+
+	binding := dom.BindingHandle().GetAllBindings()[0]
+	for _, test := range []struct {
+		name     string
+		statuses []string
+		times    []string
+		removed  bool
+	}{
+		{"recreated at same time", []string{"deleted", "enabled"}, []string{"2030-01-01 00:00:01", "2030-01-01 00:00:01"}, false},
+		{"live record before equal deletion", []string{"enabled", "deleted"}, []string{"2030-01-01 00:00:01", "2030-01-01 00:00:01"}, false},
+		{"latest deletion", []string{"enabled", "deleted"}, []string{"2030-01-01 00:00:01", "2030-01-01 00:00:02"}, true},
+		{"latest recreation", []string{"deleted", "enabled"}, []string{"2030-01-01 00:00:01", "2030-01-01 00:00:02"}, false},
+		{"outdated deletion", []string{"deleted"}, []string{"2000-01-01 00:00:00"}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			cache := bindinfo.NewBindingCacheUpdater(&mockSessionPool{tk.Session()})
+			defer cache.Close()
+			require.NoError(t, cache.SetBinding(binding.SQLDigest, binding))
+			tk.MustExec("DELETE FROM mysql.bind_info WHERE sql_digest = ?", binding.SQLDigest)
+			for i, status := range test.statuses {
+				tk.MustExec(`INSERT INTO mysql.bind_info
+					(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					binding.OriginalSQL, binding.BindSQL, binding.Db, status, fmt.Sprintf("2000-01-01 00:00:%02d", i), test.times[i],
+					binding.Charset, binding.Collation, binding.Source, binding.SQLDigest, fmt.Sprintf("%064x", i))
+			}
+			require.NoError(t, cache.LoadFromStorageToCache(true, false))
+			require.Equal(t, test.removed, cache.GetBinding(binding.SQLDigest) == nil)
+		})
+	}
 }
 
 // TestConcurrentBindingCacheReloadAndMatch mirrors the hot-binding repro:
@@ -133,12 +197,14 @@ func TestConcurrentBindingCacheReloadAndMatch(t *testing.T) {
 		})
 	}
 
-	wg.Go(func() {
-		<-start
-		for ctx.Err() == nil {
-			setErr(bindHandle.LoadFromStorageToCache(false, false))
-		}
-	})
+	for range 2 {
+		wg.Go(func() {
+			<-start
+			for ctx.Err() == nil {
+				setErr(bindHandle.LoadFromStorageToCache(false, false))
+			}
+		})
+	}
 
 	runMatchWorker := func(worker *testkit.TestKit, lookup hotBindingLookup) func() {
 		return func() {
