@@ -375,6 +375,9 @@ replace (
 	cloud.google.com/go/storage => cloud.google.com/go/storage v1.39.1
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
+	// etcd server v3.5 still calls UnaryServerInterceptor, which otelgrpc v0.61 removed.
+	// grpc v1.83 and prometheus v0.311 select v0.61 through cloud.google.com/go/auth.
+	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc => go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.60.0
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
