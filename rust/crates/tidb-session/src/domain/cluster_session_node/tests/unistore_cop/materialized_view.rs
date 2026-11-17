@@ -54,16 +54,13 @@ fn answer(session: &mut Session, sql: &str) -> String {
     format!("RS:{}", serde_json::to_string(&cells).unwrap())
 }
 
-/// CREATE MATERIALIZED VIEW LOG against a Go master `eca4674a6f` node's
-/// answers (`testdata/mview_mlog_ddl_go.jsonl`): the log table Go builds
-/// (`SHOW CREATE TABLE`), its purge schedule row, the log rows the base
-/// table's DML then writes, and Go's refusals in Go's order.
-#[test]
-fn create_materialized_view_log_answers_as_go_master() {
+/// Replays a Go master `eca4674a6f` node's capture (one `[sql, answer]`
+/// per line) against a node with a DDL owner. Go master's `upgradeToVer316`
+/// creates its materialized view tables; this branch's bootstrap does not, so
+/// the replay creates them first.
+fn replay_go_master(capture: &str) {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(2131)).unwrap();
-    // Go master's `upgradeToVer316` creates its materialized view tables;
-    // this port's bootstrap does not (it is this branch's bootstrap).
     for table in tidb_metadef::BOOTSTRAP_TABLES.iter().filter(|table| {
         matches!(
             table.name,
@@ -73,7 +70,7 @@ fn create_materialized_view_log_answers_as_go_master() {
         assert_eq!(answer(&mut session, table.create_sql), "OK", "{}", table.name);
     }
     let mut mismatches = Vec::new();
-    for line in include_str!("../../../../../testdata/mview_mlog_ddl_go.jsonl").lines() {
+    for line in capture.lines() {
         let (sql, go): (String, String) = serde_json::from_str(line).expect("a captured statement");
         let rust = answer(&mut session, &sql);
         // The capture script's JSON spacing is Python's.
@@ -87,4 +84,21 @@ fn create_materialized_view_log_answers_as_go_master() {
         }
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+/// CREATE MATERIALIZED VIEW LOG against a Go master `eca4674a6f` node's
+/// answers (`testdata/mview_mlog_ddl_go.jsonl`): the log table Go builds
+/// (`SHOW CREATE TABLE`), its purge schedule row, the log rows the base
+/// table's DML then writes, and Go's refusals in Go's order.
+#[test]
+fn create_materialized_view_log_answers_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/mview_mlog_ddl_go.jsonl"));
+}
+
+/// DROP MATERIALIZED VIEW LOG, and Go master's refusal of DROP / TRUNCATE /
+/// RENAME TABLE on a log and on its base table, against a Go master node's
+/// answers (`testdata/mview_mlog_drop_go.jsonl`).
+#[test]
+fn drop_materialized_view_log_answers_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/mview_mlog_drop_go.jsonl"));
 }

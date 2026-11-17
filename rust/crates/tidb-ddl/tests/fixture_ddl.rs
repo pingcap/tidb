@@ -462,6 +462,15 @@ impl ClusterDdl for FixtureDdl<'_> {
         tidb_ddl::executor::create_masking_policy(self, stmt, current_db, context)
     }
 
+    fn drop_materialized_view_log(
+        &self,
+        statement: &tidb_ast::DropMaterializedViewLogStmt,
+        current_db: &str,
+        context: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        tidb_ddl::executor::drop_materialized_view_log(self, statement, current_db, context)
+    }
+
     fn create_materialized_view_log(
         &self,
         stmt: &tidb_ast::CreateMaterializedViewLogStmt,

@@ -529,6 +529,37 @@ fn apply_schema_diff<S: MetaSnapshot>(
                     ids.push(affected.read().old_table_id);
                 }
             }
+            // Go master: a materialized view drop rewrote its related tables
+            // in the same transaction, so each affected option with a schema
+            // is reloaded (as a `ModifyTableComment` diff) rather than taken
+            // for a bundle ID.
+            if matches!(
+                diff.action_type,
+                ActionType::ACTION_DROP_MATERIALIZED_VIEW
+                    | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG
+                    | ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW
+            ) {
+                for affected in diff.affected_options.iter_handles() {
+                    let affected = affected.expect("nil affected option in schema diff");
+                    let affected = affected.read();
+                    if affected.schema_id == 0 && affected.old_schema_id == 0 {
+                        continue;
+                    }
+                    let reload = SchemaDiff {
+                        version: diff.version,
+                        action_type: ActionType::ACTION_MODIFY_TABLE_COMMENT,
+                        schema_id: affected.schema_id,
+                        table_id: affected.table_id,
+                        old_schema_id: affected.old_schema_id,
+                        old_table_id: affected.old_table_id,
+                        ..SchemaDiff::default()
+                    };
+                    match apply_table_update(snapshot, catalog, &reload)? {
+                        Ok(more) => ids.extend(more),
+                        Err(reason) => return Ok(Err(reason)),
+                    }
+                }
+            }
             Ok(Ok(ids))
         }
         // Go `applyCreateTables` (`builder.go:117-119`): every created table

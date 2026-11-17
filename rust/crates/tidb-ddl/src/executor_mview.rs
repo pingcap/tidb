@@ -148,3 +148,87 @@ pub(crate) fn create_materialized_view_log_job(
         schema_name,
     ))
 }
+
+/// Go master `getMaterializedViewSchema`: the statement's schema, the
+/// current database for an unqualified name.
+fn materialized_view_schema(
+    catalog: &SessionExtendedInfoSchema,
+    path: &[String],
+    current_db: &str,
+) -> Result<(String, String), MysqlError> {
+    let (schema, table) = match path {
+        [schema, table] => (schema.clone(), table.clone()),
+        [table] => {
+            if current_db.is_empty() {
+                return Err(MysqlError::from_terror(&tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])));
+            }
+            (current_db.to_owned(), table.clone())
+        }
+        _ => return Err(MysqlError::unknown("invalid materialized view table name".to_owned())),
+    };
+    if catalog.schema_by_name(&schema).is_none() {
+        return Err(MysqlError::from_terror(
+            &tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS.gen_with_stack_by_args(&[schema.into()]),
+        ));
+    }
+    Ok((schema, table))
+}
+
+/// What Go master's `executor.DropMaterializedViewLog` does before
+/// `dropTableObject`: the log table to drop, or `None` for a missing log
+/// under IF EXISTS, after its note.
+pub(crate) fn drop_materialized_view_log_target(
+    catalog: &SessionExtendedInfoSchema,
+    stmt: &tidb_ast::DropMaterializedViewLogStmt,
+    current_db: &str,
+    context: &dyn DdlSessionContext,
+) -> Result<Option<(String, String)>, MysqlError> {
+    let (schema, table) = materialized_view_schema(catalog, &stmt.table, current_db)?;
+    let Some((_, base)) = catalog.table_info_by_name(&schema, &table) else {
+        return Err(MysqlError::from_terror(
+            &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                .gen_with_stack_by_args(&[schema.clone().into(), table.clone().into()]),
+        ));
+    };
+    let base = base.read().clone();
+    if !crate::cluster_ddl::materialized_view::is_valid_materialized_view_log_base_table(
+        &tidb_hack::go_to_lower(&schema),
+        &base,
+    ) {
+        return Err(MysqlError::from_terror(&tidb_dbterror::ERR_WRONG_OBJECT.gen_with_stack_by_args(&[
+            schema.clone().into(),
+            table.clone().into(),
+            "BASE TABLE".into(),
+        ])));
+    }
+    let mlog_name = tidb_model::table::materialized_view_log_table_name(&base.name).original().to_owned();
+    let Some((_, mlog)) = catalog.table_info_by_name(&schema, &mlog_name) else {
+        if stmt.if_exists {
+            let note = tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
+                .gen_with_stack_by_args(&[format!("{schema}.{table}").into()]);
+            let note = MysqlError::from_terror(&note);
+            context.append_note_parts(note.code, &note.message);
+            return Ok(None);
+        }
+        return Err(MysqlError::from_terror(
+            &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                .gen_with_stack_by_args(&[schema.clone().into(), mlog_name.into()]),
+        ));
+    };
+    let mlog = mlog.read().clone();
+    let log = mlog.materialized_view_log.as_ref().map(|log| log.read().clone());
+    if log.as_ref().is_none_or(|log| log.base_table_id != base.id) {
+        return Err(MysqlError::from_terror(&tidb_dbterror::ERR_WRONG_OBJECT.gen_with_stack_by_args(&[
+            schema.clone().into(),
+            mlog_name.into(),
+            "MATERIALIZED VIEW LOG".into(),
+        ])));
+    }
+    if log.is_some_and(|log| !log.dependent_mview_ids.is_empty()) {
+        return Err(MysqlError::unknown(format!(
+            "cannot drop materialized view log on {schema}.{}: dependent materialized views exist",
+            table
+        )));
+    }
+    Ok(Some((schema, mlog_name)))
+}

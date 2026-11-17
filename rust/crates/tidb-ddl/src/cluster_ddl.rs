@@ -2624,6 +2624,7 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_DROP_TABLE
             | ActionType::ACTION_DROP_VIEW
             | ActionType::ACTION_DROP_SEQUENCE
+            | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG
             | ActionType::ACTION_ADD_INDEX
             | ActionType::ACTION_ADD_PRIMARY_KEY
             | ActionType::ACTION_ADD_COLUMNAR_INDEX
@@ -2915,7 +2916,8 @@ fn dispatch_persisted_action(
         }
         ActionType::ACTION_DROP_TABLE
         | ActionType::ACTION_DROP_VIEW
-        | ActionType::ACTION_DROP_SEQUENCE => {
+        | ActionType::ACTION_DROP_SEQUENCE
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG => {
             plan_persisted_drop_table_job_step(txn, catalog, active, row_ids)
         }
         ActionType::ACTION_ADD_COLUMNAR_INDEX => {
@@ -4248,6 +4250,13 @@ fn plan_persisted_drop_table_job_step(
         .expect("checked_job_table checked the database");
 
     let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
+    // Go master: a DROP TABLE of a table with materialized view metadata is
+    // refused, as the executor refuses it.
+    if table.state == SchemaState::PUBLIC && active.job.type_ == ActionType::ACTION_DROP_TABLE {
+        if let Err(error) = materialized_view::check_table_materialized_view_constraints(&table, "DROP TABLE") {
+            return Err(cancel_ddl_job(active, DdlPlanError::from_mysql_error(error)));
+        }
+    }
     if table.state == SchemaState::PUBLIC && active.job.type_ == ActionType::ACTION_DROP_TABLE {
         // Go `checkDropTableHasForeignKeyReferredInOwner`.
         let args = tidb_model::get_drop_table_args(&mut active.job)
@@ -4290,12 +4299,24 @@ fn plan_persisted_drop_table_job_step(
             ));
         }
     }
+    if table.state == SchemaState::PUBLIC
+        && matches!(active.job.type_, ActionType::ACTION_DROP_TABLE | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG)
+    {
+        materialized_view::check_drop_materialized_view_log_has_no_dependent_mvs(txn, active, &table)?;
+    }
     match table.state {
         SchemaState::PUBLIC => table.state = SchemaState::WRITE_ONLY,
         SchemaState::WRITE_ONLY => table.state = SchemaState::DELETE_ONLY,
         SchemaState::DELETE_ONLY => table.state = SchemaState::NONE,
         _ => {}
     }
+    // Go master `updateMaterializedViewBaseInfoOnDrop`: the base tables
+    // forget the dropped log, in the same version.
+    let extra_tables = if table.state == SchemaState::NONE {
+        materialized_view::update_materialized_view_base_info_on_drop_log(txn, active, &table)?
+    } else {
+        Vec::new()
+    };
     // Go `updateVersionAndTableInfo` on every state change, then, as the
     // table reaches none, `DropTableOrView` with `GetAutoIDAccessors(...)
     // .Del()` (`DropSequence` for a sequence, which also drops its value).
@@ -4303,18 +4324,20 @@ fn plan_persisted_drop_table_job_step(
     let action_type = active.job.type_;
     let meta = txn.meta();
     let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
-    let (schema_version, diff) = update_schema_version(
-        &meta,
-        active,
-        SchemaDiff {
-            action_type,
-            schema_id: database_id,
-            table_id: table.id,
-            old_table_id: table.id,
-            ..SchemaDiff::default()
-        },
-    )?;
+    let mut diff = SchemaDiff {
+        action_type,
+        schema_id: database_id,
+        table_id: table.id,
+        old_table_id: table.id,
+        ..SchemaDiff::default()
+    };
+    let infos: Vec<(i64, i64)> = extra_tables.iter().map(|(schema, extra)| (*schema, extra.id)).collect();
+    materialized_view::set_schema_diff_for_multi_infos(&mut diff, &infos);
+    let (schema_version, diff) = update_schema_version(&meta, active, diff)?;
     meta.update_table(database_id, &mut table).map_err(meta_error)?;
+    for (extra_schema, mut extra) in extra_tables {
+        meta.update_table(extra_schema, &mut extra).map_err(meta_error)?;
+    }
     if table.state == SchemaState::NONE {
         if table.is_sequence() {
             meta.drop_sequence(database_id, table.id).map_err(meta_error)?;
@@ -4338,6 +4361,10 @@ fn plan_persisted_drop_table_job_step(
         }
         // Go `onDropTableOrView`'s `deleteTableAffinityGroupsInPD`.
         affinity_groups.delete_table_affinity_groups_in_pd(&table, None);
+        // Go master: a dropped log's purge schedule row goes with it.
+        if table.materialized_view_log.is_some() {
+            materialized_view::delete_materialized_view_log_purge_info(txn, table.id)?;
+        }
         // Go `onDropTableOrView`'s `dropMaskingPoliciesOnTable`.
         masking_policy::drop_masking_policies_on_table(txn, table.id)?;
         let old_partition_ids = add_index::partition_ids(&table);
@@ -4643,7 +4670,8 @@ fn plan_cancel_persisted_ddl_job(
         }
         ActionType::ACTION_DROP_TABLE
         | ActionType::ACTION_DROP_VIEW
-        | ActionType::ACTION_DROP_SEQUENCE => {
+        | ActionType::ACTION_DROP_SEQUENCE
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG => {
             let table = checked_job_table(txn, active, false)?;
             let table = table.read();
             table.state == SchemaState::PUBLIC

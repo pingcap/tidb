@@ -95,6 +95,9 @@ fn check_renamable(
         return Ok(());
     };
     let table = table.read();
+    // Go master `checkTableMaterializedViewConstraints`.
+    super::materialized_view::check_table_materialized_view_constraints(&table, "RENAME TABLE")
+        .map_err(DdlPlanError::from_mysql_error)?;
     if table.table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE {
         return Err(coded_refusal(
             &tidb_dbterror::ERR_OPT_ON_CACHE_TABLE,

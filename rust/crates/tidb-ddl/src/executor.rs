@@ -183,6 +183,52 @@ pub(super) fn create_materialized_view_log<S: StoreClient>(
     Ok(report)
 }
 
+/// Go master `executor.DropMaterializedViewLog`: the log's checks, then
+/// `dropTableObject` of the log table (`materializedViewLogObject`).
+pub fn drop_materialized_view_log<E: ExecutorStore>(
+    executor: &E,
+    stmt: &tidb_ast::DropMaterializedViewLogStmt,
+    current_db: &str,
+    context: &DdlContext,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    let catalog = executor.latest_schema();
+    let Some((schema, mlog)) =
+        super::executor_mview::drop_materialized_view_log_target(&catalog, stmt, current_db, context.as_ref())
+            .map_err(mysql_query_error)?
+    else {
+        return Ok(ClusterDdlReport::AlreadySatisfied {
+            detail: "the materialized view log does not exist".into(),
+            warnings: Vec::new(),
+        });
+    };
+    let result = executor.with_meta(context.as_ref(), |snapshot, start_ts, upgrading| {
+        crate::cluster_ddl::drop_object::drop_materialized_view_log(
+            snapshot,
+            &schema,
+            &mlog,
+            context.as_ref(),
+            start_ts,
+            upgrading,
+        )
+    });
+    match result {
+        Err(error)
+            if stmt.if_exists
+                && error.code
+                    == tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS.to_sql_error().code =>
+        {
+            Ok(ClusterDdlReport::AlreadySatisfied {
+                detail: "the materialized view log does not exist".into(),
+                warnings: vec![crate::real_tikv_ddl::ddl_note(
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
+                        .gen_with_stack_by_args(&[format!("{schema}.{mlog}").into()]),
+                )],
+            })
+        }
+        other => other,
+    }
+}
+
 /// Go master `executor.CreateMaterializedViewLog` through `DoDDLJobWrapper`:
 /// the report, and the log table's schema and name.
 pub fn submit_create_materialized_view_log<E: ExecutorStore>(

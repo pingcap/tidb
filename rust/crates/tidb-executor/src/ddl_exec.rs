@@ -317,7 +317,12 @@ pub trait DdlExec {
         // run in `executor.AlterTable`) and Go master's
         // `executor.CreateMaterializedViewLog`.
         if let Stmt::Ddl(ddl) = stmt {
-            if matches!(&**ddl, DdlStmt::CreateMaskingPolicy(_) | DdlStmt::CreateMaterializedViewLog(_)) {
+            if matches!(
+                &**ddl,
+                DdlStmt::CreateMaskingPolicy(_)
+                    | DdlStmt::CreateMaterializedViewLog(_)
+                    | DdlStmt::DropMaterializedViewLog(_)
+            ) {
                 self.run_executor_statement(sql, stmt).map_err(map_error)?;
                 return Ok(());
             }

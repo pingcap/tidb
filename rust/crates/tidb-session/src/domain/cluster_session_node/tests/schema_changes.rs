@@ -244,6 +244,15 @@ impl ClusterDdl for ReportDdl {
         unreachable!("these tests create no materialized view log")
     }
 
+    fn drop_materialized_view_log(
+        &self,
+        _: &tidb_ast::DropMaterializedViewLogStmt,
+        _: &str,
+        _: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        unreachable!("these tests drop no materialized view log")
+    }
+
     fn create_view(
         &self,
         _: &str,
@@ -700,6 +709,15 @@ impl ClusterDdl for UndeterminedDdl {
         _: &dyn tidb_ddl_build::session_context::DdlSessionContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         unreachable!("these tests create no materialized view log")
+    }
+
+    fn drop_materialized_view_log(
+        &self,
+        _: &tidb_ast::DropMaterializedViewLogStmt,
+        _: &str,
+        _: &tidb_ddl::cluster_ddl::DdlContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        unreachable!("these tests drop no materialized view log")
     }
 
     fn create_view(

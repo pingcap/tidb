@@ -1330,6 +1330,41 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 ));
                 self.visit_info.push(visit(tidb_mysql::SelectPriv, &database, &table, table_denied("SELECT", &table)));
             }
+            // Go master `buildDDL`: DROP on the log table
+            // (`materializedViewLogNameForBaseTable`).
+            DdlStmt::DropMaterializedViewLog(drop) => {
+                let (database, table, original) = self.qualified(&drop.table);
+                if database.is_empty() {
+                    return Err(PlanError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])));
+                }
+                let written_db = match drop.table.as_slice() {
+                    [schema, _] => schema.clone(),
+                    _ => self.source.current_database().to_owned(),
+                };
+                let base_name = match self.source.find_table(&database, &table) {
+                    Some(base) => base
+                        .table_info
+                        .as_ref()
+                        .map_or_else(|| tidb_ast::CiString::new(original.clone()), |info| info.read().name.clone()),
+                    // Go's preprocessor `handleTableName`: a view is a table.
+                    None if matches!(self.source.try_find_view(&database, &table), Ok(Some(_))) => {
+                        tidb_ast::CiString::new(original.clone())
+                    }
+                    None => {
+                        return Err(PlanError::from(
+                            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                                .gen_with_stack_by_args(&[written_db.into(), original.into()]),
+                        ));
+                    }
+                };
+                let mlog_name = tidb_model::table::materialized_view_log_table_name(&base_name);
+                self.visit_info.push(visit(
+                    tidb_mysql::DropPriv,
+                    &database,
+                    mlog_name.lowercase(),
+                    table_denied("DROP MATERIALIZED VIEW LOG", &table),
+                ));
+            }
             _ => {}
         }
         Ok(Plan::Ddl(Box::new(Ddl {

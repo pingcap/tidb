@@ -1680,9 +1680,10 @@ fn test_load_from_ts_for_cross_ks() {
 }
 
 /// Go master `ApplyDiff`: the materialized view, log and shadow drops share
-/// the `DROP TABLE` path (`applyDropTableOrPartition`, which replays no
-/// `AffectedOpts`), and `getTableIDs` keeps a table the store still holds in
-/// a non-none state.
+/// the `DROP TABLE` path (`applyDropTableOrPartition`), and `getTableIDs`
+/// keeps a table the store still holds in a non-none state; each affected
+/// option with a schema is a table the drop rewrote, reloaded from the store,
+/// and one without a schema is a bundle ID.
 #[test]
 fn materialized_view_drop_diffs_drop_like_drop_table() {
     for action in [
@@ -1700,8 +1701,8 @@ fn materialized_view_drop_diffs_drop_like_drop_table() {
         let (_, table) = kept.table_info_by_name("campaign", "rows").expect("table kept");
         assert_eq!(table.read().state, tidb_model::schema_state::SchemaState::WRITE_ONLY, "{action}");
 
-        // An affected option is not replayed: table 78 stays loaded although
-        // the store no longer holds it.
+        // The affected table 78 (the drop rewrote it) is reloaded; the
+        // schema-less option 79 is a bundle ID.
         snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
         snapshot.commit_diff(102, &diff_json(102, ActionType::ACTION_CREATE_TABLE, 3, 78));
         let kept = diffs_reload(
@@ -1709,20 +1710,23 @@ fn materialized_view_drop_diffs_drop_like_drop_table() {
             "create table 78",
         );
         snapshot.remove(&key::table_kv_key(3, 77));
-        snapshot.remove(&key::table_kv_key(3, 78));
+        snapshot.put(key::table_kv_key(3, 78), go_table_with_extra_column(78, "Notes", "notes", 3, "note"));
         snapshot.commit_diff(
             103,
             &format!(
-                r#"{{"version":103,"type":{},"schema_id":3,"table_id":77,"old_table_id":0,"old_schema_id":0,"regenerate_schema_map":false,"affected_options":[{{"schema_id":3,"table_id":78,"old_table_id":0,"old_schema_id":0}}]}}"#,
+                r#"{{"version":103,"type":{},"schema_id":3,"table_id":77,"old_table_id":0,"old_schema_id":0,"regenerate_schema_map":false,"affected_options":[{{"schema_id":3,"table_id":78,"old_table_id":78,"old_schema_id":3}},{{"schema_id":0,"table_id":79,"old_table_id":79,"old_schema_id":0}}]}}"#,
                 action.0
             ),
         );
-        let gone = diffs_reload(
-            reload_cluster_catalog(&mut snapshot, &kept, None).expect("reload runs"),
-            "final mview drop step",
-        );
+        let reloaded = reload_cluster_catalog(&mut snapshot, &kept, None).expect("reload runs");
+        let ReloadedCatalog::Diffs { catalog: gone, changes, .. } = reloaded else {
+            panic!("expected an incremental diff reload, got {reloaded:?}");
+        };
         let ids: Vec<i64> = tables(&gone.stored_schemas()[0].read()).iter().map(|t| t.id).collect();
         assert_eq!(ids, vec![78], "{action}");
+        let (_, notes) = gone.table_info_by_name("campaign", "notes").expect("table 78 reloaded");
+        assert_eq!(notes.read().cols().len(), 3, "{action}");
+        assert_eq!(changes.phy_tbl_ids, vec![77, 78, 78], "{action}");
     }
 }
 

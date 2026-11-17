@@ -41,6 +41,76 @@ pub(crate) fn err_unsupported_materialized_view_on_partition_table(op: &str) -> 
     )
 }
 
+fn unsupported(message: String) -> tidb_terror::MysqlError {
+    tidb_terror::MysqlError::from_terror(&tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL.gen_with_stack_by_args(&[message.into()]))
+}
+
+/// Go master `checkProtectedMaterializedViewShadowConstraint` for a statement
+/// outside materialized view maintenance (`allowInternalMViewShadowBypass`
+/// needs `InMViewMaintenance`, which no session of this port sets).
+pub(crate) fn check_protected_materialized_view_shadow_constraint(
+    table: &TableInfo,
+    op: &str,
+) -> Result<(), tidb_terror::MysqlError> {
+    if table.materialized_view_shadow.is_some() {
+        return Err(unsupported(format!("{op} on materialized view shadow table")));
+    }
+    Ok(())
+}
+
+/// Go master `checkTableMaterializedViewConstraints`: DROP / TRUNCATE /
+/// RENAME TABLE refuse a log, a materialized view, a shadow table, and a base
+/// table with dependents.
+pub(crate) fn check_table_materialized_view_constraints(table: &TableInfo, op: &str) -> Result<(), tidb_terror::MysqlError> {
+    if table.materialized_view_log.is_some() {
+        return Err(unsupported(format!("{op} on materialized view log table")));
+    }
+    if table.materialized_view.is_some() {
+        return Err(unsupported(format!("{op} on materialized view table")));
+    }
+    check_protected_materialized_view_shadow_constraint(table, op)?;
+    if let Some(base) = &table.materialized_view_base {
+        let base = base.read();
+        if !base.mview_ids.is_empty() {
+            return Err(unsupported(format!("{op} on base table with materialized view dependencies")));
+        }
+        if base.mlog_id != 0 {
+            return Err(unsupported(format!("{op} on base table with materialized view log")));
+        }
+    }
+    Ok(())
+}
+
+/// Go master `checkDropMaterializedViewLogHasNoDependentMVs`: a log that
+/// materialized views read cancels the drop.
+pub(crate) fn check_drop_materialized_view_log_has_no_dependent_mvs(
+    txn: &mut JobTxn<'_>,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    dropping: &TableInfo,
+) -> Result<(), DdlPlanError> {
+    let Some(log) = &dropping.materialized_view_log else {
+        return Ok(());
+    };
+    let (base_table_id, has_dependents) = {
+        let log = log.read();
+        (log.base_table_id, !log.dependent_mview_ids.is_empty())
+    };
+    if !has_dependents {
+        return Ok(());
+    }
+    let base = match get_table_info(txn, base_table_id, active.job.schema_id) {
+        Ok(base) => base,
+        Err(error) if is_not_exists(&error) => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let message = format!(
+        "cannot drop materialized view log on {}.{}: dependent materialized views exist",
+        active.job.schema_name,
+        base.name.original()
+    );
+    Err(cancel_ddl_job(active, DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown(message))))
+}
+
 /// Go `getTableInfo` over the job's mutator: the table, or Go's
 /// database / table not-exists error.
 fn get_table_info(txn: &mut JobTxn<'_>, table_id: i64, schema_id: i64) -> Result<TableInfo, DdlPlanError> {
@@ -149,7 +219,7 @@ fn upsert_create_materialized_view_log_purge_info(txn: &JobTxn<'_>, mlog: &Table
 }
 
 /// Go `deleteMaterializedViewLogPurgeInfos`: a missing table deletes nothing.
-fn delete_materialized_view_log_purge_info(txn: &JobTxn<'_>, mlog_id: i64) -> Result<(), DdlPlanError> {
+pub(crate) fn delete_materialized_view_log_purge_info(txn: &JobTxn<'_>, mlog_id: i64) -> Result<(), DdlPlanError> {
     let sql = format!("DELETE FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID IN ({mlog_id})");
     match execute_job_sql(txn, &sql) {
         Err(error) if error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS) => Ok(()),
@@ -159,7 +229,7 @@ fn delete_materialized_view_log_purge_info(txn: &JobTxn<'_>, mlog_id: i64) -> Re
 
 /// Go `updateMaterializedViewBaseInfoOnDrop` for a dropped MV log: its base
 /// table forgets it (and its `MaterializedViewBase` once nothing remains).
-fn update_materialized_view_base_info_on_drop_log(
+pub(crate) fn update_materialized_view_base_info_on_drop_log(
     txn: &mut JobTxn<'_>,
     active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     dropping: &TableInfo,

@@ -106,6 +106,12 @@ pub fn drop_table<S: MetaSnapshot>(
     // Go `dropTableObject` asks the mode of every object it finds,
     // before it tells a table from a view or a sequence.
     super::rename_table::check_table_mode_is_normal(&stored)?;
+    // Go master `checkTableMaterializedViewConstraints`, for a base table
+    // before its cache status.
+    if stored.is_base_table() {
+        super::materialized_view::check_table_materialized_view_constraints(&stored, "DROP TABLE")
+            .map_err(DdlPlanError::from_mysql_error)?;
+    }
     if !check_cluster_drop_object(schema, table, &stored, false)? {
         return missing();
     }
@@ -118,6 +124,48 @@ pub fn drop_table<S: MetaSnapshot>(
         schema,
         &stored,
         &identifiers,
+        (start_ts, upgrading),
+    )
+}
+
+/// Go master `executor.dropTableObject` for a materialized view log
+/// (`materializedViewLogObject`): its job, `None` when the log is missing.
+#[allow(clippy::too_many_arguments)]
+pub fn drop_materialized_view_log<S: MetaSnapshot>(
+    snapshot: &mut S,
+    schema: &str,
+    mlog: &str,
+    job_context: &dyn DdlSessionContext,
+    start_ts: u64,
+    upgrading: bool,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_info_schema(snapshot)?;
+    let missing = || {
+        Err(DdlPlanError::from(
+            tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
+                .gen_with_stack_by_args(&[format!("{schema}.{mlog}").into()]),
+        ))
+    };
+    let Some(database) = find_database(&catalog, schema) else {
+        return missing();
+    };
+    let Some(stored) = find_table(&catalog, &database.read(), mlog) else {
+        return missing();
+    };
+    let stored = stored.read();
+    super::rename_table::check_table_mode_is_normal(&stored)?;
+    if !check_cluster_drop_object(schema, mlog, &stored, false)? {
+        return missing();
+    }
+    let db_id = database.read().id;
+    drop_table_like(
+        snapshot,
+        job_context,
+        ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG,
+        db_id,
+        schema,
+        &stored,
+        &[(schema.to_owned(), mlog.to_owned())],
         (start_ts, upgrading),
     )
 }
@@ -270,6 +318,8 @@ fn drop_table_like<S: MetaSnapshot>(
     identifiers: &[(String, String)],
     (start_ts, upgrading): (u64, bool),
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    // Go `dropTableObject`: only a table object reads `ForeignKeyChecks`.
+    let fk_check = action != ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG && job_context.foreign_key_checks();
     let mut job = job_for(job_context, action, schema_id, schema);
     job.table_id = table.id;
     job.table_name = table.name.lowercase().to_owned().into();
@@ -282,7 +332,7 @@ fn drop_table_like<S: MetaSnapshot>(
                 name: CiString::new(name.clone()),
             })
             .collect(),
-        fk_check: job_context.foreign_key_checks(),
+        fk_check,
         ..tidb_model::DropTableArgs::default()
     });
     submission(

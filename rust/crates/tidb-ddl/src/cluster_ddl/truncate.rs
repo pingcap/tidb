@@ -43,6 +43,9 @@ pub fn truncate_table_by_name<S: MetaSnapshot>(
             ]),
         ));
     }
+    // Go master `checkTableMaterializedViewConstraints`.
+    super::materialized_view::check_table_materialized_view_constraints(&stored, "TRUNCATE TABLE")
+        .map_err(DdlPlanError::from_mysql_error)?;
     // Go `TruncateTable` checks under the session's `foreign_key_checks`
     // alone; only the owner's re-check follows `tidb_enable_foreign_key`.
     let fk_check = job_context.foreign_key_checks();
@@ -123,6 +126,10 @@ pub(super) fn on_truncate_table(
                 ),
             ),
         ));
+    }
+    // Go master `onTruncateTable`: the executor's check, again in the owner.
+    if let Err(error) = super::materialized_view::check_table_materialized_view_constraints(&stored, "TRUNCATE TABLE") {
+        return Err(cancel_ddl_job(active, DdlPlanError::from_mysql_error(error)));
     }
     // Go `checkTruncateTableHasForeignKeyReferredInOwner`.
     let fk_check = args.read().fk_check.get();
