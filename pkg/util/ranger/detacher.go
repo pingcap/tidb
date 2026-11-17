@@ -388,6 +388,11 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	if err != nil {
 		return nil, err
 	}
+	if len(ranges) == 0 {
+		// Range construction can discover a contradiction after access conditions
+		// have been merged and folded. There are no equality prefixes to count.
+		return res, nil
+	}
 	if len(remainedConds) > 0 {
 		filterConds = removeConditions(d.sctx.ExprCtx.GetEvalCtx(), filterConds, remainedConds)
 		newConditions = append(newConditions, remainedConds...)
