@@ -1308,11 +1308,19 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 		// This applies to more than integer columns. Unsigned decimal/real also uses the
 		// CAST path which treats negative inputs as uint64 (e.g. -1 -> 1844...),
 		// diverging from assignment semantics.
+		//
+		// Unsigned numeric sources also stay uncast so a signed target receives the
+		// original unsigned value and table.CastValue can perform the range check.
 		isUnsignedNumericTarget := mysql.HasUnsignedFlag(castToTP.GetFlag()) &&
 			(castToTP.EvalType() == types.ETInt ||
 				castToTP.EvalType() == types.ETDecimal ||
 				castToTP.EvalType() == types.ETReal)
-		if !isUnsignedNumericTarget {
+		exprType := expr.GetType(ctx.GetExprCtx().GetEvalCtx())
+		isUnsignedNumericSource := mysql.HasUnsignedFlag(exprType.GetFlag()) &&
+			(exprType.EvalType() == types.ETInt ||
+				exprType.EvalType() == types.ETDecimal ||
+				exprType.EvalType() == types.ETReal)
+		if !isUnsignedNumericTarget && !isUnsignedNumericSource {
 			expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
 		}
 		if allAssignmentsAreConstant {

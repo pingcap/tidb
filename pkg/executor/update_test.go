@@ -39,6 +39,40 @@ func TestPessimisticUpdatePKLazyCheck(t *testing.T) {
 	testUpdatePKLazyCheck(t, tk, vardef.ClusteredIndexDefModeIntOnly)
 }
 
+func TestPointUpdateUnsignedValueRangeCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, i int, b bigint, k int unique key)")
+	tk.MustExec("insert into t values (1, 0, 0, 10), (2, 0, 0, 20)")
+	require.EqualError(t,
+		tk.ExecToErr("update t set i = 18446744073709551516 where id >= 2"),
+		"[types:1264]Out of range value for column 'i' at row 1")
+
+	for _, tt := range []struct {
+		sql string
+		err string
+	}{
+		{
+			"update t set i = 18446744073709551516 where id = 1",
+			"[types:1264]Out of range value for column 'i' at row 1",
+		},
+		{
+			"update t set b = 9223372036854775808 where k = 20",
+			"[types:1264]Out of range value for column 'b' at row 1",
+		},
+	} {
+		require.EqualError(t, tk.ExecToErr(tt.sql), tt.err)
+	}
+
+	tk.MustExec("update t set i = 123 where id = 1")
+	tk.MustQuery("select i from t where id = 1").Check(testkit.Rows("123"))
+	tk.MustExec("update t set b = 123 where k = 20")
+	tk.MustQuery("select b from t where k = 20").Check(testkit.Rows("123"))
+	tk.MustExec("update t set i = -123 where id = 1")
+	tk.MustQuery("select i from t where id = 1").Check(testkit.Rows("-123"))
+}
+
 func testUpdatePKLazyCheck(t *testing.T, tk *testkit.TestKit, clusteredIndex vardef.ClusteredIndexDefMode) {
 	tk.Session().GetSessionVars().EnableClusteredIndex = clusteredIndex
 	tk.MustExec(`drop table if exists upk`)
