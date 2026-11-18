@@ -38,20 +38,23 @@ func TestReadPasswordTerminal(t *testing.T) {
 		password string
 		signal   os.Signal
 		wantErr  bool
+		wantExit bool
 	}{
-		{name: "literal bytes", input: " secret\t密码\xff \r", password: " secret\t密码\xff "},
-		{name: "long", input: strings.Repeat("x", 5000) + "\r", password: strings.Repeat("x", 5000)},
+		{name: "spaces tab and unicode", input: " secret\t密码 \r", password: " secret\t密码 "},
 		{name: "empty", input: "\r"},
-		{name: "Ctrl-C", input: "secret\x03", wantErr: true},
-		{name: "Ctrl-D", input: "\x04", wantErr: true},
-		{name: "SIGINT", signal: syscall.SIGINT, wantErr: true},
-		{name: "SIGTERM", signal: syscall.SIGTERM, wantErr: true},
-		{name: "SIGHUP", signal: syscall.SIGHUP, wantErr: true},
-		{name: "SIGQUIT", signal: syscall.SIGQUIT, wantErr: true},
+		{name: "backspace", input: "ab\x7fz\r", password: "az"},
+		{name: "clear line", input: "secret\x15replacement\r", password: "replacement"},
+		{name: "Ctrl-C", input: "secret\x03", wantErr: true, wantExit: true},
+		{name: "Ctrl-D before Enter", input: "\x04\r"},
+		{name: "Ctrl-D after text", input: "secret\x04\r", password: "secret"},
+		{name: "SIGINT", signal: syscall.SIGINT, wantErr: true, wantExit: true},
+		{name: "SIGTERM", signal: syscall.SIGTERM, wantErr: true, wantExit: true},
+		{name: "SIGHUP", signal: syscall.SIGHUP, wantErr: true, wantExit: true},
+		{name: "SIGQUIT", signal: syscall.SIGQUIT, wantErr: true, wantExit: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			master, tty := openPasswordPTY(t)
-			state := passwordTerminalState(t, tty)
+			state := passwordTerminalState(t, master)
 			cmd := exec.Command(os.Args[0], "-test.run=^TestReadPasswordTerminalProcess$")
 			cmd.Env = append(os.Environ(),
 				// The helper must run even when its parent is filtered or sharded by Bazel.
@@ -60,6 +63,8 @@ func TestReadPasswordTerminal(t *testing.T) {
 				"DUMPLING_PASSWORD_TEST_EXPECTED="+testCase.password,
 				fmt.Sprintf("DUMPLING_PASSWORD_TEST_ERROR=%t", testCase.wantErr))
 			cmd.ExtraFiles = []*os.File{tty}
+			// Canonical terminal input delivers Ctrl-C to the foreground process group.
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 3}
 			cmd.Stdin = strings.NewReader("stdin-marker")
 			var output bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &output, &output
@@ -70,6 +75,9 @@ func TestReadPasswordTerminal(t *testing.T) {
 
 			prompt := readPasswordPTY(t, master, len("Enter password: "))
 			require.Equal(t, "Enter password: ", string(prompt))
+			require.Eventually(t, func() bool {
+				return passwordTerminalState(t, master).Lflag&unix.ECHO == 0
+			}, 10*time.Second, time.Millisecond, "password input must disable echo")
 			if testCase.signal != nil {
 				require.NoError(t, cmd.Process.Signal(testCase.signal))
 			} else {
@@ -85,15 +93,22 @@ func TestReadPasswordTerminal(t *testing.T) {
 					t.Fatal("timed out writing password terminal")
 				}
 			}
+			// A controlling terminal can wait for output to drain while its session exits.
+			newline := readPasswordPTY(t, master, 2)
+			require.Equal(t, "\r\n", string(newline), "input must not be echoed")
 			select {
 			case err := <-done:
-				require.NoError(t, err, "%s", output.String())
+				if testCase.wantExit {
+					require.Error(t, err, "%s", output.String())
+					require.Equal(t, 1, cmd.ProcessState.ExitCode(), "%s", output.String())
+					require.Contains(t, output.String(), "password prompt interrupted")
+				} else {
+					require.NoError(t, err, "%s", output.String())
+				}
 			case <-time.After(10 * time.Second):
 				t.Fatal("password prompt did not finish")
 			}
-			newline := readPasswordPTY(t, master, 2)
-			require.Equal(t, "\r\n", string(newline), "input must not be echoed")
-			restored := passwordTerminalState(t, tty)
+			restored := passwordTerminalState(t, master)
 			require.Equal(t, state, restored)
 		})
 	}

@@ -32,9 +32,11 @@ dumpling -h 127.0.0.1 -P 4000 -u backup --ask-password -o ./export
 ```
 
 The prompt requires a controlling terminal and fails if none is available, rather
-than reading a password from a pipe. Press Enter to submit (including an empty
-password), or Ctrl-C/Ctrl-D to cancel. The option
-cannot be combined with `--password`/`-p` (including `--password=`) or
+than reading a password from a pipe. Input uses the terminal's standard line
+editing and platform-dependent line length limit. Press Enter to submit
+(including an empty password), or Ctrl-C to cancel. Terminal settings are
+restored on completion and on INT/TERM/HUP/QUIT. The option cannot be combined
+with `--password`/`-p` (including `--password=`) or
 `--dump-service`. Existing `-p <password>` behavior is unchanged; omitting both
 password options continues to use an empty password without prompting.
 

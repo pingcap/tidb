@@ -15,14 +15,12 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"syscall"
-	"unicode/utf8"
 
+	"github.com/pingcap/tidb/pkg/util"
 	"golang.org/x/term"
 )
 
@@ -31,79 +29,45 @@ func readPassword(tty *os.File) (password string, err error) {
 	if !term.IsTerminal(fd) {
 		return "", fmt.Errorf("--ask-password requires a terminal")
 	}
+	state, err := term.GetState(fd)
+	if err != nil {
+		return "", fmt.Errorf("save password terminal: %w", err)
+	}
 	interrupts := make(chan os.Signal, 1)
 	signal.Notify(interrupts, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	defer signal.Stop(interrupts)
-	state, err := term.MakeRaw(fd)
-	if err != nil {
-		return "", fmt.Errorf("prepare password terminal: %w", err)
-	}
+	done := make(chan struct{})
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
+		select {
+		case <-interrupts:
+			// ReadPassword cannot cancel its blocking read. Restore the terminal
+			// and exit instead of returning with a reader still running.
+			if err := term.Restore(fd, state); err != nil {
+				fmt.Fprintf(os.Stderr, "restore password terminal: %v\n", err)
+			}
+			_, _ = fmt.Fprintln(tty)
+			fmt.Fprintln(os.Stderr, "password prompt interrupted")
+			os.Exit(1)
+		case <-done:
+		}
+	})
 	defer func() {
+		close(done)
+		wg.Wait()
 		if restoreErr := term.Restore(fd, state); restoreErr != nil {
 			password = ""
 			err = fmt.Errorf("restore password terminal: %w", restoreErr)
 		}
+		_, _ = fmt.Fprintln(tty)
 	}()
-	defer func() { _, _ = fmt.Fprint(tty, "\r\n") }()
 	if _, err := fmt.Fprint(tty, "Enter password: "); err != nil {
 		return "", fmt.Errorf("write password prompt: %w", err)
 	}
-
-	type passwordResult struct {
-		password string
-		err      error
+	input, err := term.ReadPassword(fd)
+	defer clear(input)
+	if err != nil {
+		return "", fmt.Errorf("read password from terminal: %w", err)
 	}
-	result := make(chan passwordResult, 1)
-	// Only this goroutine's caller changes terminal modes, so cancellation can
-	// restore them even while input is blocked. The CLI closes tty on return.
-	go func() {
-		password, err := readPasswordLine(tty)
-		result <- passwordResult{password: password, err: err}
-	}()
-	select {
-	case res := <-result:
-		if res.err != nil {
-			return "", fmt.Errorf("read password from terminal: %w", res.err)
-		}
-		return res.password, nil
-	case <-interrupts:
-		return "", fmt.Errorf("password prompt interrupted")
-	}
-}
-
-// readPasswordLine retains password bytes without a line editor's character
-// filtering or length limit. In raw mode it also handles Enter and cancellation.
-func readPasswordLine(input io.Reader) (string, error) {
-	const (
-		ctrlC = '\x03'
-		ctrlD = '\x04'
-		ctrlU = '\x15'
-		del   = '\x7f'
-	)
-	reader := bufio.NewReader(input)
-	var password []byte
-	defer func() { clear(password) }()
-	for {
-		b, err := reader.ReadByte()
-		if err != nil {
-			return "", err
-		}
-		switch b {
-		case '\r', '\n':
-			return string(password), nil
-		case ctrlC:
-			return "", fmt.Errorf("password prompt interrupted")
-		case ctrlD:
-			return "", io.EOF
-		case '\b', del:
-			_, size := utf8.DecodeLastRune(password)
-			clear(password[len(password)-size:])
-			password = password[:len(password)-size]
-		case ctrlU:
-			clear(password)
-			password = password[:0]
-		default:
-			password = append(password, b)
-		}
-	}
+	return string(input), nil
 }
