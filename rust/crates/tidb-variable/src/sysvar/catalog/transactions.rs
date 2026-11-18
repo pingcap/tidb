@@ -36,6 +36,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "lock_wait_timeout",
@@ -49,6 +50,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_batch_commit",
@@ -62,6 +64,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_committer_concurrency",
@@ -75,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 10000,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_constraint_check_in_place",
@@ -88,6 +92,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_constraint_check_in_place_pessimistic",
@@ -101,6 +106,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_current_ts",
@@ -114,6 +120,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 9223372036854775807,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_disable_txn_auto_retry",
@@ -127,6 +134,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: Some(super::super::validation::tidb_disable_txn_auto_retry),
     },
     SysVarDef {
         name: "tidb_enable_1pc",
@@ -140,6 +148,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_enable_external_ts_read",
@@ -153,6 +162,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_enable_local_txn",
@@ -166,6 +176,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     // Compatibility surface only: the live Rust DML path does not yet run
     // Go's table mutation consistency checker when this is enabled.
@@ -181,6 +192,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_enable_row_level_checksum",
@@ -194,6 +206,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_enable_shared_lock_promotion",
@@ -207,6 +220,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_enable_tso_follower_proxy",
@@ -220,6 +234,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_external_ts",
@@ -233,6 +248,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_foreign_key_check_in_shared_lock",
@@ -246,6 +262,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: Some(super::super::validation::tidb_foreign_key_check_in_shared_lock),
     },
     SysVarDef {
         name: "tidb_guarantee_linearizability",
@@ -259,6 +276,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_idle_transaction_timeout",
@@ -272,6 +290,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 31536000,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_isolation_read_engines",
@@ -285,6 +304,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: Some(super::super::validation::tidb_isolation_read_engines),
     },
     SysVarDef {
         name: "tidb_last_txn_info",
@@ -298,6 +318,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_lock_unchanged_keys",
@@ -311,6 +332,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_low_resolution_tso",
@@ -324,6 +346,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_low_resolution_tso_update_interval",
@@ -337,6 +360,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 60000,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_nontransactional_ignore_error",
@@ -350,6 +374,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_pessimistic_txn_fair_locking",
@@ -363,6 +388,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: Some(super::super::validation::tidb_pessimistic_txn_fair_locking),
     },
     SysVarDef {
         name: "tidb_rc_read_check_ts",
@@ -376,6 +402,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_rc_write_check_ts",
@@ -389,6 +416,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_read_consistency",
@@ -402,6 +430,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: Some(super::super::validation::tidb_read_consistency),
     },
     SysVarDef {
         name: "tidb_read_staleness",
@@ -415,6 +444,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: Some(super::super::validation::tidb_read_staleness),
     },
     SysVarDef {
         name: "tidb_retry_limit",
@@ -428,6 +458,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 9223372036854775807,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_skip_isolation_level_check",
@@ -441,6 +472,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_snapshot",
@@ -454,6 +486,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: Some(super::super::validation::tidb_snapshot),
     },
     SysVarDef {
         name: "tidb_tso_client_batch_max_wait_time",
@@ -467,6 +500,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 10,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_tso_client_rpc_mode",
@@ -480,6 +514,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &["DEFAULT", "PARALLEL", "PARALLEL-FAST"],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_txn_assertion_level",
@@ -493,6 +528,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &["OFF", "FAST", "STRICT"],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_txn_commit_batch_size",
@@ -506,6 +542,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 1073741824,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_txn_entry_size_limit",
@@ -519,6 +556,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 125829120,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_txn_mode",
@@ -532,6 +570,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &["pessimistic", "optimistic"],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "transaction_alloc_block_size",
@@ -545,6 +584,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "transaction_allow_batching",
@@ -558,6 +598,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "transaction_isolation",
@@ -576,6 +617,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
             "SERIALIZABLE",
         ],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "transaction_prealloc_size",
@@ -589,6 +631,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "transaction_write_set_extraction",
@@ -602,6 +645,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tx_isolation",
@@ -620,6 +664,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
             "SERIALIZABLE",
         ],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tx_isolation_one_shot",
@@ -633,6 +678,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: Some(super::super::validation::tx_isolation_one_shot),
     },
     SysVarDef {
         name: "tx_read_ts",
@@ -646,6 +692,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "unique_checks",
@@ -659,5 +706,6 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
 ];

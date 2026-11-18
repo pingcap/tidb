@@ -36,6 +36,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_mpp_store_fail_ttl",
@@ -49,6 +50,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: Some(super::super::validation::tidb_mpp_store_fail_ttl),
     },
     SysVarDef {
         name: "tidb_ttl_delete_batch_size",
@@ -62,6 +64,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         max_value: 10240,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_ttl_delete_rate_limit",
@@ -75,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         max_value: 9223372036854775807,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_ttl_delete_worker_count",
@@ -88,6 +92,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         max_value: 256,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_ttl_job_enable",
@@ -101,6 +106,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_ttl_job_schedule_window_end_time",
@@ -114,6 +120,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_ttl_job_schedule_window_start_time",
@@ -127,6 +134,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_ttl_running_tasks",
@@ -140,6 +148,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         max_value: 256,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_ttl_scan_batch_size",
@@ -153,6 +162,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         max_value: 10240,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_ttl_scan_worker_count",
@@ -166,5 +176,6 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         max_value: 256,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
 ];
