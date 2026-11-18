@@ -623,6 +623,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                             valid,
                         )
                     },
+                    |conditions| super::join::propagate_constant(self.ctx, conditions),
                 );
                 if let Some(conds) = &split.dual_conditions {
                     if let Some(dual) =
@@ -675,6 +676,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                             valid,
                         )
                     },
+                    |conditions| super::join::propagate_constant(self.ctx, conditions),
                 );
                 if let Some(conds) = &split.dual_conditions {
                     if let Some(dual) =
@@ -1504,9 +1506,10 @@ impl PushDownTopN<'_> {
             | LogicalJoinType::LeftOuterSemi
             | LogicalJoinType::AntiLeftOuterSemi => Some(0usize),
             LogicalJoinType::RightOuter => Some(1usize),
-            LogicalJoinType::Inner | LogicalJoinType::Semi | LogicalJoinType::AntiSemi => {
-                None
-            }
+            LogicalJoinType::Inner
+            | LogicalJoinType::Semi
+            | LogicalJoinType::AntiSemi
+            | LogicalJoinType::FullOuter => None,
         };
         let Some(outer_idx) = outer_idx else {
             self.stash.push(match topn {

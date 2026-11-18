@@ -71,6 +71,8 @@ pub const fn index_join_outer_sides(join_type: LogicalJoinType) -> &'static [usi
         | LogicalJoinType::AntiLeftOuterSemi
         | LogicalJoinType::LeftOuter => &[0],
         LogicalJoinType::RightOuter => &[1],
+        // Go master: a full outer join enumerates root hash joins only.
+        LogicalJoinType::FullOuter => &[],
     }
 }
 
@@ -305,6 +307,10 @@ pub(crate) fn get_hash_joins(
         LogicalJoinType::LeftOuter => vec![shape(1, false), shape(1, true)],
         LogicalJoinType::RightOuter => vec![shape(0, true), shape(0, false)],
         LogicalJoinType::Inner => vec![shape(1, false), shape(0, false)],
+        // Go master: "For full outer join in the root phase, always use the
+        // regular hash join probe path. Build side is still chosen by cost /
+        // hints."
+        LogicalJoinType::FullOuter => vec![shape(1, false), shape(0, false)],
     };
     shapes
         .into_iter()
@@ -426,6 +432,11 @@ pub fn exhaust_join(
     // candidate forwards `IndexJoinProp` through one child so the eventual
     // data source can return `IndexJoinInfo`; a NAAJ's null-aware hash build
     // and probe reads `na_eq_conditions` directly off the original operator.
+    // Go master: "Non-MPP full outer join keeps the phase-1 restriction:
+    // root HashJoin v1 only."
+    if join.join_type == LogicalJoinType::FullOuter {
+        return hash_join_candidates(join, prop, use_hash_join_v2, hash_force);
+    }
     if prop.index_join_prop.is_some() || join.has_na_keys {
         return hash_join_candidates(join, prop, use_hash_join_v2, hash_force);
     }

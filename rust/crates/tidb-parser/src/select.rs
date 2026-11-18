@@ -1262,6 +1262,9 @@ impl Parser {
     /// owned value can then go straight into the AST. Other names keep their
     /// token text until the parser commits to consuming the alias.
     fn implicit_alias_at(&self, n: usize) -> Option<Cow<'_, str>> {
+        if self.is_full_outer_join_at(n) {
+            return None;
+        }
         let token = self.peek_n(n);
         let text = match token.kind {
             TokenKind::Ident => Cow::Borrowed(token.text.as_str()),

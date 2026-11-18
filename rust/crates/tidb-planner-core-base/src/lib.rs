@@ -508,6 +508,8 @@ pub enum LogicalJoinType {
     LeftOuterSemi,
     /// `AntiLeftOuterSemiJoin`.
     AntiLeftOuterSemi,
+    /// Go master `FullOuterJoin`.
+    FullOuter,
 }
 
 /// Go `base.PossiblePropertiesInfo` (`plan_base.go:383`).

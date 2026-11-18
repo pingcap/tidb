@@ -347,7 +347,7 @@ impl Parser {
         }
         let (on, using) = self.parse_join_cond()?;
         if on.is_none() && using.is_empty() {
-            if matches!(tp, JoinType::Left | JoinType::Right) {
+            if matches!(tp, JoinType::Left | JoinType::Right | JoinType::Full) {
                 return Err(self.err_here("LEFT/RIGHT JOIN requires ON or USING"));
             }
             if !straight {
@@ -611,6 +611,7 @@ impl Parser {
             || self.is_kw_at(after_alias, "CROSS")
             || self.is_kw_at(after_alias, "LEFT")
             || self.is_kw_at(after_alias, "RIGHT")
+            || self.is_full_outer_join_at(after_alias)
             || self.is_kw_at(after_alias, "NATURAL")
             || self.is_kw_at(after_alias, "STRAIGHT_JOIN"))
         {
@@ -632,6 +633,13 @@ impl Parser {
         }
     }
 
+    /// Go master's lexer: `FULL` followed by `OUTER JOIN` is the
+    /// `fullJoinType` token, not an identifier (`FULL JOIN` alone keeps
+    /// MySQL's meaning, `FULL` as an alias).
+    pub(crate) fn is_full_outer_join_at(&self, n: usize) -> bool {
+        self.is_kw_at(n, "FULL") && self.is_kw_at(n + 1, "OUTER") && self.is_kw_at(n + 2, "JOIN")
+    }
+
     /// Returns the join type and straight flag if the current position starts a
     /// join clause, without consuming tokens.
     fn peek_join_kind(&self) -> Option<(JoinType, bool)> {
@@ -643,13 +651,15 @@ impl Parser {
             Some((JoinType::Left, false))
         } else if self.is_kw("RIGHT") {
             Some((JoinType::Right, false))
+        } else if self.is_full_outer_join_at(0) {
+            Some((JoinType::Full, false))
         } else {
             None
         }
     }
 
     /// Consumes a join-kind prefix: `JOIN`, `INNER JOIN`, `CROSS JOIN`,
-    /// `STRAIGHT_JOIN`, or `{LEFT|RIGHT} [OUTER] JOIN`.
+    /// `STRAIGHT_JOIN`, `{LEFT|RIGHT} [OUTER] JOIN`, or `FULL OUTER JOIN`.
     fn consume_join_kind(&mut self) {
         if self.is_kw("STRAIGHT_JOIN") {
             self.advance();
@@ -657,7 +667,7 @@ impl Parser {
         }
         if self.is_kw("INNER") || self.is_kw("CROSS") {
             self.advance();
-        } else if self.is_kw("LEFT") || self.is_kw("RIGHT") {
+        } else if self.is_kw("LEFT") || self.is_kw("RIGHT") || self.is_full_outer_join_at(0) {
             self.advance();
             if self.is_kw("OUTER") {
                 self.advance();

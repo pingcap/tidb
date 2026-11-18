@@ -21,7 +21,7 @@
 //! planner consumption, and session lifecycle remain external.
 
 /// Source-owned system-variable names verified as SET_VAR-hint updatable.
-pub const HINT_UPDATABLE_VARIABLES: [&str; 128] = [
+pub const HINT_UPDATABLE_VARIABLES: [&str; 129] = [
     "tidb_opt_agg_push_down",
     "tidb_opt_derive_topn",
     "tidb_opt_broadcast_cartesian_join",
@@ -140,6 +140,7 @@ pub const HINT_UPDATABLE_VARIABLES: [&str; 128] = [
     "tidb_opt_objective",
     "mpp_exchange_compression_mode",
     "tidb_allow_fallback_to_tikv",
+    "tidb_enable_full_outer_join",
     "tiflash_fastscan",
     "tiflash_fine_grained_shuffle_batch_size",
     "tiflash_fine_grained_shuffle_stream_count",

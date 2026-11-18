@@ -50,7 +50,8 @@ fn candidate_predicates(plan: &LogicalPlan) -> Vec<Expression> {
         LogicalJoinType::Semi
         | LogicalJoinType::AntiSemi
         | LogicalJoinType::LeftOuterSemi
-        | LogicalJoinType::AntiLeftOuterSemi => Vec::new(),
+        | LogicalJoinType::AntiLeftOuterSemi
+        | LogicalJoinType::FullOuter => Vec::new(),
     }
 }
 

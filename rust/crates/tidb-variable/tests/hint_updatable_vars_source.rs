@@ -24,7 +24,9 @@ fn hint_updatable_registry_preserves_source_membership() {
     // Source: pkg/sessionctx/variable/setvar_affect.go:17-149 and
     // pkg/sessionctx/variable/sysvar_test.go:138-164
     // (TestTiDBMaxKeysRead checks the registry-backed marker).
-    assert_eq!(HINT_UPDATABLE_VARIABLES.len(), 128);
+    // 128 from this branch's Go, plus Go master's
+    // `tidb_enable_full_outer_join` (ported with FULL OUTER JOIN).
+    assert_eq!(HINT_UPDATABLE_VARIABLES.len(), 129);
     for name in HINT_UPDATABLE_VARIABLES {
         assert!(is_hint_updatable_verified(name), "{name}");
     }

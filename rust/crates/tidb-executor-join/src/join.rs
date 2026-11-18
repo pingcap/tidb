@@ -203,6 +203,9 @@ pub enum JoinKind {
     /// `0`, no match at all is `1`, and a match that could only be confirmed
     /// or refused through a NULL comparison is `NULL`.
     AntiLeftOuterSemi,
+    /// Go master `FullOuterJoin`: every row of both sides survives, padded
+    /// with NULLs on the side it matched nothing in.
+    Full,
 }
 
 /// The hash path's live state; absent until the first `next()`, and never
@@ -1783,7 +1786,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             | JoinKind::LeftOuterSemi
             | JoinKind::AntiSemi
             | JoinKind::AntiLeftOuterSemi => return true,
-            JoinKind::Inner => {}
+            // A full outer join preserves both sides; its probe side is the
+            // streamed one.
+            JoinKind::Inner | JoinKind::Full => {}
         }
         self.hash_build_is_left
             .map_or(self.kind != JoinKind::Right, |build_is_left| !build_is_left)
@@ -1805,6 +1810,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     | JoinKind::AntiLeftOuterSemi,
                 true,
             ) | (JoinKind::Right, false)
+                | (JoinKind::Full, _)
         )
     }
 
@@ -1955,6 +1961,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             }
             matched = true;
             match self.kind {
+                JoinKind::Full => unreachable!("a full outer join takes the hash join's preserved-build path"),
                 JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
                     self.append_joined_parts(req, outer_row, inner_row);
                 }
@@ -1977,6 +1984,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         }
         if !matched {
             match self.kind {
+                JoinKind::Full => unreachable!("a full outer join takes the hash join's preserved-build path"),
                 JoinKind::Left | JoinKind::Right => {
                     self.append(req, &self.padded_row(outer_row));
                 }
@@ -2161,6 +2169,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         has_null: bool,
     ) {
         match self.kind {
+            JoinKind::Full => unreachable!("a full outer join takes the hash join's preserved-build path"),
             JoinKind::Left | JoinKind::Right | JoinKind::AntiSemi => {
                 self.output.unmatched(req, outer_left, outer_row, 0);
             }
@@ -2258,6 +2267,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                 // emits (or suppresses) on its FIRST accepted
                                 // pair and `inners.ReachEnd()`s the group.
                                 match self.kind {
+                                    JoinKind::Full => unreachable!("a full outer join takes the hash join's preserved-build path"),
                                     JoinKind::Semi => {
                                         self.output.preserved(req, outer_row);
                                         *inner_ptr = None;
@@ -3426,6 +3436,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                 }
                             }
                             match kind {
+                                JoinKind::Full => unreachable!("a full outer join takes the hash join's preserved-build path"),
                                 JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
                                     output_layout.chunks(
                                         &mut output,
@@ -3476,6 +3487,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             }
             if !matched && !builds_preserved {
                 match kind {
+                    JoinKind::Full => unreachable!("a full outer join takes the hash join's preserved-build path"),
                     JoinKind::Left | JoinKind::Right => output_layout.unmatched(
                         &mut output,
                         probe_is_left,
@@ -3967,7 +3979,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 JoinKind::Inner => true,
                 JoinKind::Semi => !build_is_left,
                 JoinKind::Left | JoinKind::Right => self.hash_builds_preserved_side(),
-                JoinKind::AntiSemi | JoinKind::LeftOuterSemi | JoinKind::AntiLeftOuterSemi => false,
+                // Go master: the probe side of a full outer join is preserved
+                // too.
+                JoinKind::AntiSemi
+                | JoinKind::LeftOuterSemi
+                | JoinKind::AntiLeftOuterSemi
+                | JoinKind::Full => false,
             };
         self.parallel_probe = None;
         self.hash = Some(HashState {
@@ -4049,6 +4066,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             JoinKind::Inner
                 | JoinKind::Left
                 | JoinKind::Right
+                | JoinKind::Full
                 | JoinKind::Semi
                 | JoinKind::LeftOuterSemi
                 | JoinKind::AntiSemi
@@ -4126,7 +4144,42 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 None => Vec::new(),
             };
             if self.hash_builds_preserved_side() || !self.residual_conditions.is_empty() {
-                if self.hash_builds_preserved_side() {
+                if self.kind == JoinKind::Full {
+                    // Go master `joinMatchedProbeSideRow2ChunkForFullJoin`:
+                    // the build joiner matches the probe row against its
+                    // candidates under the other conditions, marking each
+                    // matched build row; a probe row with no match is the
+                    // probe joiner's miss.
+                    let probe_is_left = !self.hash_build_is_left();
+                    let mut matched = false;
+                    for ptr in candidates {
+                        let build_row = {
+                            let HashState {
+                                table,
+                                build_buf,
+                                build_types,
+                                ..
+                            } = self.hash.as_mut().expect("hash state exists");
+                            table
+                                .row(ptr, build_buf, build_types)
+                                .map_err(|error| ExecError::SpillFailed(error.to_string()))?
+                        };
+                        let joined: Vec<Datum> = if probe_is_left {
+                            probe_row.iter().chain(&build_row).cloned().collect()
+                        } else {
+                            build_row.iter().chain(&probe_row).cloned().collect()
+                        };
+                        if self.matches(&joined)? {
+                            self.append(req, &joined);
+                            matched = true;
+                            let hash = self.hash.as_mut().expect("hash state exists in this arm");
+                            hash.table.mark_matched(ptr);
+                        }
+                    }
+                    if !matched {
+                        self.append(req, &self.output.padded(probe_is_left, &probe_row));
+                    }
+                } else if self.hash_builds_preserved_side() {
                     for ptr in candidates {
                         let build_row = {
                             let HashState {
@@ -4171,6 +4224,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                         }
                         matched = true;
                         match self.kind {
+                            JoinKind::Full => unreachable!("a full outer join takes the hash join's preserved-build path"),
                             JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
                                 self.append(req, &joined);
                             }
@@ -4193,6 +4247,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                     }
                     if !matched {
                         match self.kind {
+                            JoinKind::Full => unreachable!("a full outer join takes the hash join's preserved-build path"),
                             JoinKind::Left | JoinKind::Right => {
                                 self.append(req, &self.padded_row(&probe_row));
                             }
@@ -4223,6 +4278,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                             .with_row(ptr, build_buf, |build_row| {
                                 matched = true;
                                 match self.kind {
+                                    JoinKind::Full => unreachable!("a full outer join takes the hash join's preserved-build path"),
                                     JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
                                         self.output.datum_chunk(
                                             req,
@@ -4257,6 +4313,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 }
                 if !matched {
                     match self.kind {
+                        JoinKind::Full => unreachable!("a full outer join takes the hash join's preserved-build path"),
                         JoinKind::Left | JoinKind::Right => {
                             self.append(req, &self.padded_row(&probe_row));
                         }
@@ -4642,7 +4699,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 // retain the guarded row path below because their RowPtr
                 // indexes are logical rows, not direct physical indexes.
                 let batch_result =
-                    if matches!(kind, JoinKind::Inner | JoinKind::Left | JoinKind::Right)
+                    if matches!(kind, JoinKind::Inner | JoinKind::Left | JoinKind::Right | JoinKind::Full)
                         && req.sel().is_none()
                         && !hash.table.already_spilled()
                     {
@@ -4748,7 +4805,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                                 return Ok(false);
                             }
                             match kind {
-                                JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
+                                JoinKind::Inner | JoinKind::Left | JoinKind::Right | JoinKind::Full => {
                                     self.output.chunks(req, probe_is_left, probe_row, build_row);
                                 }
                                 JoinKind::Semi if !builds_preserved => {
@@ -4784,6 +4841,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 }
             }
             if hash.probe_candidate_idx == hash.probe_candidates.len() {
+                // Go master `FullJoinProbeJoiner.OnMissMatch`: a probe row
+                // that matched nothing (or failed the probe filter, or holds
+                // a NULL key) survives padded on the build side.
+                if !hash.probe_matched && kind == JoinKind::Full {
+                    self.output.unmatched(req, probe_is_left, probe_row, hash.build_types.len());
+                }
                 if !hash.probe_matched && !builds_preserved {
                     match kind {
                         JoinKind::Left | JoinKind::Right => self.output.unmatched(
@@ -4801,7 +4864,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                             self.output.preserved(req, probe_row);
                             req.append_datum(self.output.width(), &Datum::Int(1));
                         }
-                        JoinKind::Inner | JoinKind::Semi => {}
+                        JoinKind::Inner | JoinKind::Semi | JoinKind::Full => {}
                     }
                 }
                 hash.probe_candidates.clear();
@@ -4947,7 +5010,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             hash.unmatched_build_scan = hash.table.next_ptr(ptr);
             let matched = hash.table.is_matched(ptr);
             let emit = match kind {
-                JoinKind::Left | JoinKind::Right | JoinKind::AntiSemi => !matched,
+                JoinKind::Left | JoinKind::Right | JoinKind::AntiSemi | JoinKind::Full => !matched,
                 JoinKind::Semi => matched,
                 JoinKind::LeftOuterSemi | JoinKind::AntiLeftOuterSemi => true,
                 JoinKind::Inner => false,
@@ -4960,7 +5023,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             // a datum vector per row.
             hash.table
                 .with_row(ptr, &mut hash.build_buf, |row| match kind {
-                    JoinKind::Left | JoinKind::Right => {
+                    // Go master `handleUnmatchedRowsFromHashTable`'s
+                    // `FullJoinBuildJoiner.OnMissMatch`.
+                    JoinKind::Left | JoinKind::Right | JoinKind::Full => {
                         output.unmatched(req, build_is_left, row, probe_width);
                     }
                     JoinKind::LeftOuterSemi => {

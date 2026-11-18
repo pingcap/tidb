@@ -859,6 +859,8 @@ pub const DEF_TIDB_MLOG_PURGE_BATCH_MAX_SIZE: u64 = 1_000_000;
 pub const DEF_TIDB_MLOG_PURGE_BATCH_MIN_SIZE: i64 = 1;
 /// Go `DefTiDBMViewEnable`.
 pub const DEF_TIDB_MVIEW_ENABLE: bool = false;
+/// Go master `DefTiDBEnableFullOuterJoin`.
+pub const DEF_TIDB_ENABLE_FULL_OUTER_JOIN: bool = false;
 /// Go `DefTiDBEnableSharedLockPromotion` (= `false`).
 pub const DEF_TIDB_ENABLE_SHARED_LOCK_PROMOTION: bool = false;
 /// Go `DefTiDBTSOClientRPCMode` (= `TSOClientRPCModeDefault`).

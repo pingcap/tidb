@@ -147,6 +147,8 @@ pub const TIDB_MVIEW_MAINTAIN_IMPORT_THREADS: &str = "tidb_mview_maintain_import
 pub const TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA: &str = "tidb_mview_maintain_import_disk_quota";
 /// Go `TiDBMViewEnable`: whether materialized view DDL is enabled.
 pub const TIDB_MVIEW_ENABLE: &str = "tidb_mview_enable";
+/// Go master `TiDBEnableFullOuterJoin`: whether FULL OUTER JOIN is enabled.
+pub const TIDB_ENABLE_FULL_OUTER_JOIN: &str = "tidb_enable_full_outer_join";
 /// MaxConfigurableConcurrency is the maximum number of "threads" (goroutines) that can be specified
 /// Go `MaxConfigurableConcurrency`.
 pub const MAX_CONFIGURABLE_CONCURRENCY: u64 = 256;

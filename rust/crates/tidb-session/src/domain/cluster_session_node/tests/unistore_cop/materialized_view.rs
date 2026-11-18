@@ -1155,3 +1155,28 @@ fn materialized_view_show_privileges_as_go_master() {
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
+
+/// Go master's FULL OUTER JOIN (`874bb79fa2f` parser and sysvar,
+/// `052084c3034` planner, `65c2a6cd2db` V1 hash join executor), which
+/// DELTA APPLY and COMPARE build on: Go master's
+/// `executor/jointest/full_outer_join.test` statements, plus the gate, the
+/// `FULL JOIN` alias reading, the refused forms, outer-join simplification
+/// under WHERE, one-sided ON filters, chained joins, the merge-join hint
+/// warning, both build sides, the optimized hash join version, view restore
+/// and empty sides. Replayed from a Go master node
+/// (`testdata/full_outer_join_go.jsonl`).
+#[test]
+fn full_outer_join_answers_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/full_outer_join_go.jsonl"));
+}
+
+/// Go master's FULL OUTER JOIN plans (`EXPLAIN FORMAT='brief'`,
+/// `testdata/full_outer_join_explain_go.jsonl`): a root hash join on its
+/// own; WHERE predicates null-rejecting one side, the other or both reduce
+/// it to a left, right or inner join (`simplifyFullOuterJoin`); other
+/// filters stay above it; side ON conditions stay inside it; its estimate
+/// floors at both children.
+#[test]
+fn full_outer_join_plans_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/full_outer_join_explain_go.jsonl"));
+}

@@ -721,6 +721,25 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         };
 
         let is_lateral = contains_lateral_table_source(right_node);
+        // Go master: "Current FULL OUTER JOIN limitations: 1)
+        // NATURAL/USING/full-join-without-ON are still out of scope. 2) FULL
+        // OUTER JOIN is enabled in volcano path only. 3) LATERAL is rejected
+        // before the LogicalApply path can consume the join type and silently
+        // turn it into an inner apply."
+        if join_node.tp == JoinType::Full {
+            let not_supported = |what: &str| {
+                PlanError::from(tidb_plannererrors::ERR_NOT_SUPPORTED_YET.gen_with_stack_by_args(&[what.to_owned().into()]))
+            };
+            if !self.enable_full_outer_join {
+                return Err(not_supported("FULL OUTER JOIN"));
+            }
+            if self.enable_cascades_planner {
+                return Err(not_supported("FULL OUTER JOIN with cascades planner"));
+            }
+            if join_node.natural || !join_node.using.is_empty() || join_node.on.is_none() || is_lateral {
+                return Err(not_supported("FULL OUTER JOIN"));
+            }
+        }
 
         self.opt_flag |= flags::PREDICATE_PUSH_DOWN | flags::JOIN_KEY_TYPE_CAST;
         // "Don't enable join reorder for LATERAL (similar to StraightJoin).
@@ -822,6 +841,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 join_plan.join_type = LogicalJoinType::RightOuter;
                 tidb_planner_util::null_misc::reset_not_null_flag(&mut schema, 0, left_len);
             }
+            // Go master: "The rule EliminateOuterJoin does not remove full
+            // outer joins, but null-rejected predicates may simplify a full
+            // outer join into a one-sided outer join or an inner join."
+            JoinType::Full => {
+                self.opt_flag |= flags::ELIMINATE_OUTER_JOIN;
+                join_plan.join_type = LogicalJoinType::FullOuter;
+                tidb_planner_util::null_misc::reset_not_null_flag(&mut schema, 0, schema_len);
+            }
             JoinType::Cross => join_plan.join_type = LogicalJoinType::Inner,
         }
         join_plan.base.base.set_schema(Some(schema));
@@ -846,6 +873,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if matches!(join_node.tp, JoinType::Left | JoinType::Right) {
             let full_len = full_schema.columns.len();
             tidb_planner_util::null_misc::reset_not_null_flag(&mut full_schema, l_full_len, full_len);
+        } else if join_node.tp == JoinType::Full {
+            let full_len = full_schema.columns.len();
+            tidb_planner_util::null_misc::reset_not_null_flag(&mut full_schema, 0, full_len);
         }
         join_plan.full_schema = Some(full_schema);
         join_plan.full_names = l_full_names
@@ -965,6 +995,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
             // Comma syntax and an explicit `INNER JOIN` are the same node.
             JoinType::Cross => LogicalJoinType::Inner,
+            // `buildJoin` refuses a LATERAL full outer join first.
+            JoinType::Full => unreachable!("FULL OUTER JOIN with LATERAL is refused before the apply"),
         };
 
         let outer_schema = match find_join_full_schema(&left_plan) {
@@ -1141,6 +1173,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             JoinType::Right => {
                 let len = lsc.columns.len();
                 tidb_planner_util::null_misc::reset_not_null_flag(&mut lsc, 0, len);
+            }
+            JoinType::Full => {
+                let (left_len, right_len) = (lsc.columns.len(), rsc.columns.len());
+                tidb_planner_util::null_misc::reset_not_null_flag(&mut lsc, 0, left_len);
+                tidb_planner_util::null_misc::reset_not_null_flag(&mut rsc, 0, right_len);
             }
             JoinType::Cross => {}
         }

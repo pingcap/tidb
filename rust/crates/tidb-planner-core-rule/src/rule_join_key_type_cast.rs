@@ -133,7 +133,8 @@ fn rewrite_join(ctx: &RuleContext<'_>, plan: &mut LogicalPlan) -> Result<bool, P
         | LogicalJoinType::LeftOuterSemi
         | LogicalJoinType::AntiLeftOuterSemi => Some(0),
         LogicalJoinType::RightOuter => Some(1),
-        LogicalJoinType::Inner | LogicalJoinType::Semi => None,
+        // Go master's switch has no full outer join arm: no preserved side.
+        LogicalJoinType::Inner | LogicalJoinType::Semi | LogicalJoinType::FullOuter => None,
     };
     let query_block_offset = join.base.base.query_block_offset();
     let (left, right) = join.base.children_mut().split_at_mut(1);

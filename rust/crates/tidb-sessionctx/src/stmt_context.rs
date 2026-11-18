@@ -1643,6 +1643,9 @@ pub struct StmtContextData {
     /// Go `SessionVars.EnableCascadesPlanner`
     /// (`@@tidb_enable_cascades_planner`, default `OFF`).
     enable_cascades_planner: bool,
+    /// Go master `SessionVars.EnableFullOuterJoin`
+    /// (`@@tidb_enable_full_outer_join`, default `OFF`).
+    enable_full_outer_join: bool,
     /// Go `SessionVars.EnableINLJoinInnerMultiPattern`
     /// (`@@tidb_enable_inl_join_inner_multi_pattern`, default `ON`).
     enable_inl_join_inner_multi_pattern: bool,
@@ -2554,6 +2557,13 @@ context_configuration! {
     #[must_use]
     pub fn with_distinct_agg_push_down(mut self, allow: bool) -> Self {
         self.allow_distinct_agg_push_down = allow;
+        self
+    }
+
+    /// Sets `@@tidb_enable_full_outer_join` for this statement.
+    #[must_use]
+    pub fn with_full_outer_join(mut self, enable: bool) -> Self {
+        self.enable_full_outer_join = enable;
         self
     }
 
@@ -3703,6 +3713,7 @@ impl StmtContext {
             allow_projection_push_down: true,
             allow_distinct_agg_push_down: false,
             enable_cascades_planner: false,
+            enable_full_outer_join: false,
             enable_inl_join_inner_multi_pattern: true,
             enable_hash_join: true,
             enable_null_aware_anti_join: true,
@@ -5258,6 +5269,12 @@ impl StmtContext {
     #[must_use]
     pub fn allow_distinct_agg_push_down(&self) -> bool {
         self.allow_distinct_agg_push_down
+    }
+
+    /// Go master `SessionVars.EnableFullOuterJoin`.
+    #[must_use]
+    pub fn enable_full_outer_join(&self) -> bool {
+        self.enable_full_outer_join
     }
 
     /// Go `SessionVars.EnableCascadesPlanner`.

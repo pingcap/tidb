@@ -1813,6 +1813,7 @@ fn join_kind(join_type: LogicalJoinType) -> Result<JoinKind, DriverError> {
         LogicalJoinType::AntiSemi => Ok(JoinKind::AntiSemi),
         LogicalJoinType::LeftOuterSemi => Ok(JoinKind::LeftOuterSemi),
         LogicalJoinType::AntiLeftOuterSemi => Ok(JoinKind::AntiLeftOuterSemi),
+        LogicalJoinType::FullOuter => Ok(JoinKind::Full),
     }
 }
 
@@ -1825,6 +1826,9 @@ fn joiner_type(join_type: LogicalJoinType) -> JoinerType {
         LogicalJoinType::AntiSemi => JoinerType::AntiSemiJoin,
         LogicalJoinType::LeftOuterSemi => JoinerType::LeftOuterSemiJoin,
         LogicalJoinType::AntiLeftOuterSemi => JoinerType::AntiLeftOuterSemiJoin,
+        // Go master `NewJoiner`: a full outer join's hash join builds its two
+        // joiners as a left and a right outer join.
+        LogicalJoinType::FullOuter => panic!("unsupported join type in func NewJoiner()"),
     }
 }
 
@@ -3217,14 +3221,18 @@ fn build_join_over_children(
     // ON predicates on a preserved side control matching, not whether that
     // row exists. Go installs these as OuterFilter and emits failed rows
     // through the joiner's unmatched path.
+    // A full outer join preserves both sides (Go master keeps both side
+    // filters inside the hash join: `FullOuterJoinBuildFilter` /
+    // `FullOuterJoinProbeFilter`).
     let preserve_left = matches!(
         join_type,
         LogicalJoinType::LeftOuter
             | LogicalJoinType::LeftOuterSemi
             | LogicalJoinType::AntiSemi
             | LogicalJoinType::AntiLeftOuterSemi
+            | LogicalJoinType::FullOuter
     );
-    let preserve_right = join_type == LogicalJoinType::RightOuter;
+    let preserve_right = matches!(join_type, LogicalJoinType::RightOuter | LogicalJoinType::FullOuter);
     let left = filtered_join_child(
         plan,
         left,
@@ -3315,19 +3323,26 @@ fn build_join_over_children(
     Ok(executor)
 }
 
-/// Go `PhysicalHashJoin.CanUseHashJoinV2`: capability, not query size or workload.
+/// Go `PhysicalHashJoin.CanUseHashJoinV2`: capability, not query size or
+/// workload. Go master's switch leaves a full outer join on V1.
 fn can_use_hash_join_v2(join: &tidb_planner_core_operator_physicalop::PhysicalHashJoin) -> bool {
-    !join.left_join_keys.is_empty()
-        && join.na_equal_conditions.is_empty()
-        && !join.is_null_eq.iter().any(|&null_eq| null_eq)
-        && (matches!(
-            join.join_type,
-            LogicalJoinType::Inner
-                | LogicalJoinType::LeftOuter
-                | LogicalJoinType::RightOuter
-                | LogicalJoinType::Semi
-                | LogicalJoinType::AntiSemi
-        ) || tidb_executor_join_joinversion::use_hash_join_v2_for_non_ga_join())
+    if !is_ga_for_hash_join_v2(join) && !tidb_executor_join_joinversion::use_hash_join_v2_for_non_ga_join() {
+        return false;
+    }
+    match join.join_type {
+        LogicalJoinType::LeftOuter
+        | LogicalJoinType::RightOuter
+        | LogicalJoinType::Inner
+        | LogicalJoinType::LeftOuterSemi
+        | LogicalJoinType::Semi
+        | LogicalJoinType::AntiSemi
+        | LogicalJoinType::AntiLeftOuterSemi => {
+            join.na_equal_conditions.is_empty()
+                && !join.left_join_keys.is_empty()
+                && !join.is_null_eq.iter().any(|&null_eq| null_eq)
+        }
+        LogicalJoinType::FullOuter => false,
+    }
 }
 
 /// Go `physicalop.IsGAForHashJoinV2`.
@@ -3367,6 +3382,13 @@ fn build_hash_join_from_child_execs(
         right,
         ctx,
     )?;
+    // Go master `buildHashJoinFromChildExecs`.
+    if join.join_type == LogicalJoinType::FullOuter && join.use_outer_to_build {
+        return Err(DriverError::Mysql(
+            tidb_terror::MysqlError::from_terror(&tidb_exeerrors::ERR_BUILD_EXECUTOR)
+                .annotate("full outer join only supports UseOuterToBuild=false"),
+        ));
+    }
     let build_child_idx = if join.use_outer_to_build {
         1usize
             .checked_sub(join.inner_child_idx)

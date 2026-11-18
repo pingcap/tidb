@@ -1325,6 +1325,9 @@ fn join_type_table_index(join_type: tidb_planner_core_base::LogicalJoinType) -> 
         LogicalJoinType::RightOuter => 2,
         LogicalJoinType::Semi | LogicalJoinType::LeftOuterSemi => 3,
         LogicalJoinType::AntiSemi | LogicalJoinType::AntiLeftOuterSemi => 4,
+        // Go master `joinTypeConvertTable` has no full outer join entry:
+        // `extractJoinGroup` keeps such a join a single group.
+        LogicalJoinType::FullOuter => unreachable!("a full outer join is never reordered"),
     }
 }
 

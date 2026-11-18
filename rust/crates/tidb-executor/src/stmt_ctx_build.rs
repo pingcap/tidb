@@ -110,6 +110,7 @@ pub struct StatementVarSnapshot {
     allow_projection_push_down: bool,
     allow_distinct_agg_push_down: bool,
     enable_cascades_planner: bool,
+    enable_full_outer_join: bool,
     enable_inl_join_inner_multi_pattern: bool,
     enable_hash_join: bool,
     enable_null_aware_anti_join: bool,
@@ -1167,6 +1168,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             allow_projection_push_down: on("tidb_opt_projection_push_down"),
             allow_distinct_agg_push_down: on(tidb_vardef::tidb_vars::TIDB_OPT_DISTINCT_AGG_PUSH_DOWN),
             enable_cascades_planner: on(tidb_vardef::tidb_vars::TIDB_ENABLE_CASCADES_PLANNER),
+            enable_full_outer_join: self.session_vars().enable_full_outer_join(),
             enable_inl_join_inner_multi_pattern: not_off(
                 tidb_vardef::tidb_vars::TIDB_ENABLE_INL_JOIN_INNER_MULTI_PATTERN,
             ),
@@ -1491,6 +1493,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         let allow_projection_push_down = snapshot.allow_projection_push_down;
         let allow_distinct_agg_push_down = snapshot.allow_distinct_agg_push_down;
         let enable_cascades_planner = snapshot.enable_cascades_planner;
+        let enable_full_outer_join = snapshot.enable_full_outer_join;
         let enable_inl_join_inner_multi_pattern = snapshot.enable_inl_join_inner_multi_pattern;
         let enable_hash_join = snapshot.enable_hash_join;
         let enable_null_aware_anti_join = snapshot.enable_null_aware_anti_join;
@@ -1687,6 +1690,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_projection_push_down(allow_projection_push_down)
                     .with_distinct_agg_push_down(allow_distinct_agg_push_down)
                     .with_cascades_planner(enable_cascades_planner)
+                .with_full_outer_join(enable_full_outer_join)
                     .with_inl_join_inner_multi_pattern(enable_inl_join_inner_multi_pattern)
                     .with_enable_hash_join(enable_hash_join)
                     .with_enable_null_aware_anti_join(enable_null_aware_anti_join)
@@ -2108,6 +2112,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_projection_push_down(allow_projection_push_down)
                 .with_distinct_agg_push_down(allow_distinct_agg_push_down)
                 .with_cascades_planner(enable_cascades_planner)
+                .with_full_outer_join(enable_full_outer_join)
                 .with_inl_join_inner_multi_pattern(enable_inl_join_inner_multi_pattern)
                 .with_enable_hash_join(enable_hash_join)
                 .with_enable_null_aware_anti_join(enable_null_aware_anti_join)

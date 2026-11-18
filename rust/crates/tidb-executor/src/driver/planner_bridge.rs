@@ -2664,6 +2664,8 @@ impl QueryBuilderParts<'_> {
             builder = builder.with_session_ctx(session_ctx);
         }
         builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
+        builder.enable_full_outer_join = ctx.enable_full_outer_join();
+        builder.enable_cascades_planner = ctx.enable_cascades_planner();
         builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
         builder.only_full_group_by = ctx.only_full_group_by();
         builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
@@ -3057,6 +3059,8 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         .with_default_evaluator(&defaults)
         .with_mpp_warning_sink(ctx);
     builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
+    builder.enable_full_outer_join = ctx.enable_full_outer_join();
+    builder.enable_cascades_planner = ctx.enable_cascades_planner();
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
@@ -3800,6 +3804,8 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     let prune_fallback = dynamic_prune_fallback(catalog, ctx);
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone());
     builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
+    builder.enable_full_outer_join = ctx.enable_full_outer_join();
+    builder.enable_cascades_planner = ctx.enable_cascades_planner();
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();

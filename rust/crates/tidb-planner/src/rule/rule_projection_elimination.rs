@@ -236,7 +236,10 @@ fn apply_schema(plan: &LogicalPlan, join_type: LogicalJoinType) -> Option<Schema
             );
             Some(schema)
         }
-        LogicalJoinType::Inner | LogicalJoinType::LeftOuter | LogicalJoinType::RightOuter => {
+        LogicalJoinType::Inner
+        | LogicalJoinType::LeftOuter
+        | LogicalJoinType::RightOuter
+        | LogicalJoinType::FullOuter => {
             let mut schema = merge_schema(left_schema, plan.children()[1].schema())?;
             let total = schema.len();
             match join_type {
@@ -253,6 +256,9 @@ fn apply_schema(plan: &LogicalPlan, join_type: LogicalJoinType) -> Option<Schema
                         .expect("apply join schema nil-derefs the left schema for outer joins")
                         .len();
                     tidb_planner_util::null_misc::reset_not_null_flag(&mut schema, 0, left_len);
+                }
+                LogicalJoinType::FullOuter => {
+                    tidb_planner_util::null_misc::reset_not_null_flag(&mut schema, 0, total);
                 }
                 _ => {}
             }

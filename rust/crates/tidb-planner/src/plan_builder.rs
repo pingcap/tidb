@@ -696,6 +696,10 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `b.ctx.GetSessionVars().EnablePipelinedWindowExec`
     /// (`handleDefaultFrame`, `:7276`). Go's variable defaults to ON.
     pub enable_pipelined_window_exec: bool,
+    /// Go master `b.ctx.GetSessionVars().EnableFullOuterJoin`.
+    pub enable_full_outer_join: bool,
+    /// Go `b.ctx.GetSessionVars().GetEnableCascadesPlanner()`.
+    pub enable_cascades_planner: bool,
     /// Go `inStraightJoin`.
     pub in_straight_join: bool,
     /// Go `handleHelper`.
@@ -1699,6 +1703,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             current_block_expand: None,
             window_specs: BTreeMap::new(),
             enable_pipelined_window_exec: true,
+            enable_full_outer_join: false,
+            enable_cascades_planner: false,
             in_straight_join: false,
             handle_helper: HandleColHelper::new(),
             subquery_evaluator: None,

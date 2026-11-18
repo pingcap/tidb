@@ -1,0 +1,29 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+//! Go master's join variables beyond this branch's Go (`sysvar.go`'s
+//! `TiDBEnableFullOuterJoin`, from Go master `874bb79fa2f`), ported with
+//! the FULL OUTER JOIN materialized views build on.
+
+use super::super::{SysVarDef, TypeFlag};
+
+pub(super) static ENTRIES: [SysVarDef; 1] = [
+    SysVarDef {
+        name: "tidb_enable_full_outer_join",
+        global_config_name: "",
+        scope: 3,
+        value: "OFF",
+        var_type: TypeFlag::Bool,
+        read_only: false,
+        allow_auto_value: false,
+        min_value: 0,
+        max_value: 0,
+        possible_values: &[],
+        auto_convert_negative_bool: false,
+    },
+];

@@ -371,6 +371,7 @@ impl Join {
         match self.tp {
             JoinType::Left => out.push_str(" LEFT"),
             JoinType::Right => out.push_str(" RIGHT"),
+            JoinType::Full => out.push_str(" FULL OUTER"),
             JoinType::Cross => {}
         }
         if self.straight {
@@ -512,6 +513,8 @@ pub enum JoinType {
     Left,
     /// `RIGHT [OUTER] JOIN`.
     Right,
+    /// `FULL OUTER JOIN` (Go master `FullJoin`).
+    Full,
 }
 
 // BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
@@ -710,6 +713,7 @@ impl crate::Visitable for JoinType {
             Self::Cross => {}
             Self::Left => {}
             Self::Right => {}
+            Self::Full => {}
         }
         visitor.leave(self)
     }

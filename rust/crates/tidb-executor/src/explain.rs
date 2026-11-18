@@ -272,6 +272,7 @@ fn join_type_text(join_type: tidb_planner_core_base::LogicalJoinType) -> &'stati
         LogicalJoinType::Inner => "inner join",
         LogicalJoinType::LeftOuter => "left outer join",
         LogicalJoinType::RightOuter => "right outer join",
+        LogicalJoinType::FullOuter => "full outer join",
         LogicalJoinType::Semi => "semi join",
         LogicalJoinType::AntiSemi => "anti semi join",
         LogicalJoinType::LeftOuterSemi => "left outer semi join",

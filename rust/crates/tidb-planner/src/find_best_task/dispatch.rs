@@ -1101,6 +1101,25 @@ fn exhaust_physical_plans(
                     probe,
                 )
             });
+            // Go master: "Since full outer join does not support merge join,
+            // report the merge-join hint here while leaving index-join-family
+            // hints to that path."
+            if op.join_type == tidb_planner_core_base::LogicalJoinType::FullOuter
+                && !hash_hints.forced
+                && op.prefer_any(&[join_hint_flags::MERGE_JOIN])
+            {
+                if let Some(sink) = ctx.mpp_warning_sink {
+                    let tables = op.hint_info.as_ref().map(|hints| {
+                        hints.canonical.as_ref().map(|canonical| canonical.read().unwrap().sort_merge_join.clone())
+                    });
+                    let tables = tables.flatten().unwrap_or_default();
+                    sink.set_hint_warning(&format!(
+                        "Optimizer Hint {} or {} is inapplicable",
+                        tidb_hint::restore_2_join_hint("merge_join", &tables),
+                        tidb_hint::restore_2_join_hint("tidb_smj", &tables),
+                    ));
+                }
+            }
             let all_join_candidates = crate::find_best_task::exhaust_join(
                 &reduced,
                 prop,

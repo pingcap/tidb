@@ -238,6 +238,7 @@ impl LogicalJoin {
             LogicalJoinType::AntiSemi => "anti semi join",
             LogicalJoinType::LeftOuterSemi => "left outer semi join",
             LogicalJoinType::AntiLeftOuterSemi => "anti left outer semi join",
+            LogicalJoinType::FullOuter => "full outer join",
         }
     }
 
@@ -606,6 +607,12 @@ impl LogicalJoin {
                 }
                 right_cond.push(expr.clone());
             }
+            // Go master: "Keep constant predicates as join filters on both
+            // sides."
+            LogicalJoinType::FullOuter => {
+                left_cond.push(expr.clone());
+                right_cond.push(expr.clone());
+            }
         }
     }
 
@@ -628,8 +635,15 @@ impl LogicalJoin {
     ) {
         if !matches!(
             join.join_type,
-            LogicalJoinType::LeftOuter | LogicalJoinType::RightOuter | LogicalJoinType::Inner
+            LogicalJoinType::LeftOuter
+                | LogicalJoinType::RightOuter
+                | LogicalJoinType::FullOuter
+                | LogicalJoinType::Inner
         ) {
+            return;
+        }
+        if join.join_type == LogicalJoinType::FullOuter {
+            join.join_type = Self::simplify_full_outer_join(predicates, left_schema, right_schema, builder);
             return;
         }
         if join.join_type == LogicalJoinType::Inner {
@@ -712,6 +726,7 @@ impl LogicalJoin {
             bool,
             Option<&dyn Fn(&Expression) -> bool>,
         ) -> (Vec<Expression>, Vec<Expression>),
+        propagate: impl Fn(Vec<Expression>) -> Vec<Expression>,
     ) -> JoinPredicatePushDown {
         let classifier = self.clone();
         // Go's leading `switch p.JoinType`: for everything but the semi/inner
@@ -723,7 +738,7 @@ impl LogicalJoin {
             | LogicalJoinType::AntiSemi
             | LogicalJoinType::Semi
             | LogicalJoinType::Inner => {}
-            LogicalJoinType::LeftOuter | LogicalJoinType::RightOuter => {
+            LogicalJoinType::LeftOuter | LogicalJoinType::RightOuter | LogicalJoinType::FullOuter => {
                 let other = std::mem::take(&mut self.other_conditions);
                 self.other_conditions = simplify(other, false, None);
             }
@@ -838,6 +853,16 @@ impl LogicalJoin {
                 result.ret.extend(split.other);
                 result.ret.extend(split.left);
             }
+            // Go master: "Both children are preserved sides for full outer
+            // join. Keep filters above the join and avoid turning one-side ON
+            // conditions into child selections."
+            LogicalJoinType::FullOuter => {
+                let predicates = propagate(extract_filters_from_dn_fs(predicates));
+                if !predicates.is_empty() {
+                    result.dual_conditions = Some(predicates.clone());
+                }
+                result.ret = predicates;
+            }
             LogicalJoinType::Semi | LogicalJoinType::Inner => {
                 let valid = |expr: &Expression| {
                     classifier.is_valid_constant_propagation_expression(
@@ -933,6 +958,41 @@ impl LogicalJoin {
         result.right_cond =
             tidb_planner_core_constraint::delete_true_exprs_by_schema(right_schema, result.right_cond);
         result
+    }
+
+    /// Go master `simplifyFullOuterJoin`: a predicate null-rejecting the
+    /// left side drops the unmatched-right rows (a left outer join), one
+    /// null-rejecting the right drops the unmatched-left rows (a right outer
+    /// join), both make it an inner join.
+    fn simplify_full_outer_join(
+        predicates: &[Expression],
+        left_schema: &Schema,
+        right_schema: &Schema,
+        builder: &dyn tidb_expr::expr_util::builder::FunctionBuilder,
+    ) -> LogicalJoinType {
+        let ids = |schema: &Schema| schema.columns.iter().map(|column| column.unique_id).collect::<Vec<i64>>();
+        let (left_ids, right_ids) = (ids(left_schema), ids(right_schema));
+        let (mut left_null_rejected, mut right_null_rejected) = (false, false);
+        for predicate in predicates {
+            // Go `util.IsNullRejected` normalizes every NOT down first.
+            let normalized = push_down_not(predicate, builder);
+            if !left_null_rejected && is_null_rejected(&left_ids, &normalized) {
+                left_null_rejected = true;
+            }
+            if !right_null_rejected && is_null_rejected(&right_ids, &normalized) {
+                right_null_rejected = true;
+            }
+            if left_null_rejected && right_null_rejected {
+                return LogicalJoinType::Inner;
+            }
+        }
+        if left_null_rejected {
+            return LogicalJoinType::LeftOuter;
+        }
+        if right_null_rejected {
+            return LogicalJoinType::RightOuter;
+        }
+        LogicalJoinType::FullOuter
     }
 
     fn take_all_conditions(&mut self) -> Vec<Expression> {
@@ -1048,6 +1108,8 @@ impl LogicalJoin {
                     self_schema.pk_or_uk = left.pk_or_uk.clone();
                 }
             }
+            // Go master: a full outer join keeps only the base propagation.
+            LogicalJoinType::FullOuter => {}
             LogicalJoinType::Inner | LogicalJoinType::LeftOuter | LogicalJoinType::RightOuter => {
                 if self.equal_conditions.is_empty() {
                     return;
@@ -1082,12 +1144,12 @@ impl LogicalJoin {
         self.left_properties = left.orders.clone();
         self.right_properties = right.orders.clone();
         let mut orders = Vec::new();
-        if !matches!(self.join_type, LogicalJoinType::RightOuter) {
+        if !matches!(self.join_type, LogicalJoinType::RightOuter | LogicalJoinType::FullOuter) {
             orders.extend(left.orders.iter().cloned());
         }
         if !matches!(
             self.join_type,
-            LogicalJoinType::LeftOuter | LogicalJoinType::LeftOuterSemi
+            LogicalJoinType::LeftOuter | LogicalJoinType::LeftOuterSemi | LogicalJoinType::FullOuter
         ) {
             orders.extend(right.orders.iter().cloned());
         }
@@ -1169,11 +1231,15 @@ impl LogicalJoin {
                 }
                 StatsInfo::new(left.row_count(), ndvs)
             }
-            LogicalJoinType::Inner | LogicalJoinType::LeftOuter | LogicalJoinType::RightOuter => {
+            LogicalJoinType::Inner
+            | LogicalJoinType::LeftOuter
+            | LogicalJoinType::RightOuter
+            | LogicalJoinType::FullOuter => {
                 let mut count = equal_cond_out_cnt;
                 match self.join_type {
                     LogicalJoinType::LeftOuter => count = count.max(left.row_count()),
                     LogicalJoinType::RightOuter => count = count.max(right.row_count()),
+                    LogicalJoinType::FullOuter => count = count.max(left.row_count()).max(right.row_count()),
                     _ => {}
                 }
                 let ndvs = left
@@ -1425,6 +1491,17 @@ impl LogicalJoin {
 /// Go `LogicalJoin.outerJoinPropConst`'s `expression.PropConstForOuterJoin`
 /// call, with its statement side effect.
 #[must_use]
+/// Go `expression.PropagateConstant(ctx, nil, conditions...)` under the
+/// rule context.
+#[must_use]
+pub fn propagate_constant(ctx: &super::plan_context::RuleContext<'_>, conditions: Vec<Expression>) -> Vec<Expression> {
+    let outcome = tidb_expr::constant_propagation::propagate_constant(ctx.builder, ctx.use_plan_cache, conditions, None);
+    if let (Some(marker), Some(reason)) = (ctx.plan_cache_marker, outcome.skip_plan_cache_reason) {
+        marker.set_skip_plan_cache(reason);
+    }
+    outcome.conditions
+}
+
 pub fn propagate_constant_for_outer_join(
     ctx: &super::plan_context::RuleContext<'_>,
     join_conditions: Vec<Expression>,
