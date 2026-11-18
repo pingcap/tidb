@@ -250,6 +250,7 @@ func writeRepairIngestIndexSQLFile(
 }
 
 // RepairIndexes rebuilds recorded indexes and their foreign keys using checkpointed DDL.
+// Callers must ensure dom.InfoSchema() already reflects the restored schema before calling.
 // A nil checkpoint manager disables checkpoints; a nil recorder resumes persisted SQLs.
 // When addIndexSQLStorage is set, it drops the indexes and exports SQL instead of rebuilding them.
 func RepairIndexes(
@@ -260,9 +261,6 @@ func RepairIndexes(
 	g glue.Glue,
 	addIndexSQLStorage storeapi.Storage,
 ) error {
-	if err := dom.Reload(); err != nil {
-		return errors.Trace(err)
-	}
 	sqls, fkSqls, fromCheckpoint, err := generateRepairIngestIndexSQLs(ctx, dom, ingestRecorder, checkpointMetaManager)
 	if err != nil {
 		return errors.Trace(err)
