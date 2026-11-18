@@ -1224,3 +1224,198 @@ func TestSharedLockDataLockWaitsFromStorageWaitTable(t *testing.T) {
 	require.NoError(t, insertErr)
 	tk1.MustQuery("select * from child").Check(testkit.Rows("1 1"))
 }
+
+// lostSharedReadReply drops a successful response below the region request sender,
+// so the reader must retry the same already-applied lock RPC.
+type lostSharedReadReply struct {
+	tikv.Client
+	startTS     uint64
+	key         []byte
+	firstReadTS atomic.Uint64
+	replayTS    atomic.Uint64
+}
+
+func (c *lostSharedReadReply) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
+	if err != nil || resp == nil || req.Type != tikvrpc.CmdPessimisticLock {
+		return resp, err
+	}
+	lock := req.PessimisticLock()
+	if lock.StartVersion != c.startTS || len(lock.Mutations) != 1 ||
+		lock.Mutations[0].Op != kvrpcpb.Op_SharedPessimisticLock || !bytes.Equal(lock.Mutations[0].Key, c.key) {
+		return resp, nil
+	}
+	if r, ok := resp.Resp.(*kvrpcpb.PessimisticLockResponse); ok && r.RegionError == nil && len(r.Errors) == 0 {
+		if c.firstReadTS.CompareAndSwap(0, lock.ForUpdateTs) {
+			return nil, errors.New("test: shared lock response lost after apply")
+		}
+		c.replayTS.Store(lock.ForUpdateTs)
+	}
+	return resp, nil
+}
+
+func TestClassicSelectForShare(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV || kerneltype.IsNextGen() {
+		t.Skip("requires Classic TiKV shared primary support")
+	}
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	reader, peer, writer := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
+	for _, tk := range []*testkit.TestKit{reader, peer, writer} {
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_enable_select_for_share = on")
+	}
+	reader.MustExec("create table shared_read (id int primary key, u int not null, v int, unique key uk(u))")
+	reader.MustExec("insert into shared_read values (1,11,101),(2,22,202)")
+	writer.MustExec("set innodb_lock_wait_timeout = 1")
+
+	t.Run("shared holders across executors", func(t *testing.T) {
+		for _, tc := range []struct {
+			query string
+			rows  [][]any
+		}{
+			{"select v from shared_read where id=1 for share", testkit.Rows("101")},
+			{"select v from shared_read where u=11 lock in share mode", testkit.Rows("101")},
+			{"select v from shared_read where id in (1,2) for share", testkit.Rows("101", "202")},
+			{"select v from shared_read ignore index(uk) where u=11 for share", testkit.Rows("101")},
+		} {
+			reader.MustExec("begin pessimistic")
+			peer.MustExec("begin pessimistic")
+			reader.MustQuery(tc.query).Sort().Check(tc.rows)
+			peer.MustQuery(tc.query).Sort().Check(tc.rows)
+			writer.MustExec("begin pessimistic")
+			writer.MustGetErrCode("select v from shared_read where id=1 for update nowait", errno.ErrLockAcquireFailAndNoWaitSet)
+			reader.MustExec("commit")
+			writer.MustGetErrCode("select v from shared_read where id=1 for update nowait", errno.ErrLockAcquireFailAndNoWaitSet)
+			peer.MustExec("rollback")
+			writer.MustQuery("select v from shared_read where id=1 for update nowait").Check(testkit.Rows("101"))
+			writer.MustExec("commit")
+		}
+	})
+
+	t.Run("missing keys match FOR UPDATE on the same access path", func(t *testing.T) {
+		for _, level := range []string{"REPEATABLE-READ", "READ-COMMITTED"} {
+			reader.MustExec("set transaction_isolation='" + level + "'")
+			for _, tc := range []struct{ hint, plan string }{{"", "Point_Get"}, {"ignore index(uk)", "TableFullScan"}} {
+				var updateBlocked bool
+				for _, clause := range []string{"for update", "for share"} {
+					reader.MustExec("begin pessimistic")
+					q := "select id from shared_read " + tc.hint + " where u=7 " + clause
+					require.Contains(t, fmt.Sprint(reader.MustQuery("explain format='brief' "+q).Rows()), tc.plan)
+					reader.MustQuery(q).Check(testkit.Rows())
+					insert := "insert into shared_read values (7,7,77)"
+					_, err := writer.Exec(insert)
+					blocked := err != nil
+					if blocked {
+						var sqlErr *terror.Error
+						require.ErrorAs(t, err, &sqlErr)
+						require.EqualValues(t, errno.ErrLockWaitTimeout, terror.ToSQLError(sqlErr).Code)
+					}
+					if clause == "for update" {
+						updateBlocked = blocked
+					} else {
+						require.Equal(t, updateBlocked, blocked, "%s, %s", level, tc.plan)
+					}
+					if level == "READ-COMMITTED" {
+						require.False(t, blocked)
+					}
+					reader.MustExec("rollback")
+					if blocked {
+						writer.MustExec(insert)
+					}
+					writer.MustExec("delete from shared_read where id=7")
+				}
+			}
+		}
+	})
+
+	t.Run("lost successful RC point read reply", func(t *testing.T) {
+		reader.MustExec("set transaction_isolation='READ-COMMITTED'")
+		reader.MustExec("begin pessimistic")
+		txn, err := reader.Session().Txn(true)
+		require.NoError(t, err)
+		id := external.GetTableByName(t, reader, "test", "shared_read").Meta().ID
+		st := store.(interface {
+			GetTiKVClient() tikv.Client
+			SetTiKVClient(tikv.Client)
+		})
+		orig := st.GetTiKVClient()
+		drop := &lostSharedReadReply{Client: orig, startTS: txn.StartTS(), key: tablecodec.EncodeRowKeyWithHandle(id, kv.IntHandle(1))}
+		st.SetTiKVClient(drop)
+		t.Cleanup(func() { st.SetTiKVClient(orig) })
+		reader.MustQuery("select v from shared_read where id=1 for share").Check(testkit.Rows("101"))
+		require.NotZero(t, drop.firstReadTS.Load())
+		require.Equal(t, drop.firstReadTS.Load(), drop.replayTS.Load())
+		reader.MustExec("commit")
+	})
+
+	t.Run("upgrade wakes while ordinary writer stays blocked", func(t *testing.T) {
+		reader.MustExec("begin pessimistic")
+		peer.MustExec("begin pessimistic")
+		reader.MustQuery("select v from shared_read where id=1 for share").Check(testkit.Rows("101"))
+		peer.MustQuery("select v from shared_read where id=1 for share").Check(testkit.Rows("101"))
+		txn, err := reader.Session().Txn(false)
+		require.NoError(t, err)
+		key := tablecodec.EncodeRowKeyWithHandle(external.GetTableByName(t, reader, "test", "shared_read").Meta().ID, kv.IntHandle(1))
+
+		upgraded := make(chan error, 1)
+		go func() { upgraded <- reader.ExecToErr("update shared_read set v=111 where id=1") }()
+		requireStorageLockWait(t, store, txn.StartTS(), key)
+		writer.MustExec("set innodb_lock_wait_timeout = 10")
+		writer.MustExec("begin pessimistic")
+		writerTxn, err := writer.Session().Txn(true)
+		require.NoError(t, err)
+		wrote := make(chan error, 1)
+		go func() { wrote <- writer.ExecToErr("update shared_read set v=222 where id=1") }()
+		requireStorageLockWait(t, store, writerTxn.StartTS(), key)
+
+		peer.MustExec("rollback")
+		require.NoError(t, <-upgraded)
+		requireTxnLockAcquiring(t, writer)
+		reader.MustExec("rollback")
+		require.NoError(t, <-wrote)
+		writer.MustExec("rollback")
+	})
+
+	t.Run("two distinct upgraders abort the second transaction", func(t *testing.T) {
+		reader.MustExec("begin pessimistic")
+		peer.MustExec("begin pessimistic")
+		reader.MustQuery("select v from shared_read where id=1 for share").Check(testkit.Rows("101"))
+		peer.MustQuery("select v from shared_read where id=1 for share").Check(testkit.Rows("101"))
+		peer.MustExec("insert into shared_read values (3,33,303)")
+		txn, err := reader.Session().Txn(false)
+		require.NoError(t, err)
+		key := tablecodec.EncodeRowKeyWithHandle(external.GetTableByName(t, reader, "test", "shared_read").Meta().ID, kv.IntHandle(1))
+		first := make(chan error, 1)
+		go func() { first <- reader.ExecToErr("update shared_read set v=111 where id=1") }()
+		requireStorageLockWait(t, store, txn.StartTS(), key)
+		peer.MustGetErrCode("update shared_read set v=222 where id=1", errno.ErrLockDeadlock)
+		peer.MustExec("commit")
+		require.NoError(t, <-first)
+		reader.MustExec("rollback")
+		writer.MustQuery("select v from shared_read where id=3").Check(testkit.Rows())
+	})
+
+	t.Run("NOWAIT preserves partial upgrades", func(t *testing.T) {
+		reader.MustExec("begin pessimistic")
+		peer.MustExec("begin pessimistic")
+		reader.MustQuery("select id from shared_read where id in (1,2) for share").Sort().Check(testkit.Rows("1", "2"))
+		peer.MustQuery("select id from shared_read where id=2 for share").Check(testkit.Rows("2"))
+		reader.MustGetErrCode("select id from shared_read where id in (1,2) for update nowait", errno.ErrLockAcquireFailAndNoWaitSet)
+
+		peer.MustExec("rollback")
+		writer.MustExec("begin pessimistic")
+		writer.MustGetErrCode("select id from shared_read where id=1 for share nowait", errno.ErrLockAcquireFailAndNoWaitSet)
+		writer.MustQuery("select id from shared_read where id=2 for share nowait").Check(testkit.Rows("2"))
+		writer.MustExec("rollback")
+		reader.MustExec("commit")
+	})
+
+	t.Run("upgrade survives disabling new shared reads", func(t *testing.T) {
+		reader.MustExec("begin pessimistic")
+		reader.MustQuery("select v from shared_read where id=1 for share").Check(testkit.Rows("101"))
+		reader.MustExec("set tidb_enable_select_for_share = off")
+		reader.MustExec("update shared_read set v=102 where id=1")
+		reader.MustExec("commit")
+		writer.MustQuery("select v from shared_read where id=1").Check(testkit.Rows("102"))
+	})
+}
