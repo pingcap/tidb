@@ -554,13 +554,17 @@ func TestRecommendIndex(t *testing.T) {
 	RunTest(t, table, false, false)
 
 	p := parser.New()
-	for _, sql := range []string{
-		`recommend index run for 'select * from t where a=1'`,
-		`recommend index return result for 'select * from t where a=1'`,
+	for _, tc := range []struct {
+		sql      string
+		readOnly bool
+	}{
+		{`recommend index run`, false},
+		{`recommend index run for 'select * from t where a=1'`, false},
+		{`recommend index return result for 'select * from t where a=1'`, true},
 	} {
-		stmt, err := p.ParseOneStmt(sql, "", "")
-		require.NoError(t, err)
-		require.True(t, ast.IsReadOnly(stmt, true), sql)
+		stmt, err := p.ParseOneStmt(tc.sql, "", "")
+		require.NoError(t, err, tc.sql)
+		require.Equal(t, tc.readOnly, ast.IsReadOnly(stmt, true), tc.sql)
 	}
 }
 
