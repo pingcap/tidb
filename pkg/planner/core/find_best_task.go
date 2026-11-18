@@ -2447,7 +2447,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			if ds.PreferStoreType&h.PreferTiKV != 0 && path.StoreType == kv.TiFlash {
 				continue
 			}
-			idxMergeTask, err := convertToIndexMergeScan(ds, prop, candidate)
+			idxMergeTask, err := convertToIndexMergeScan(ds, prop, candidate, accessesCommitTS)
 			if err != nil {
 				return nil, err
 			}
@@ -2597,7 +2597,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		if ds.SampleInfo != nil {
 			continue
 		}
-		idxTask, err := convertToIndexScan(ds, prop, candidate)
+		idxTask, err := convertToIndexScan(ds, prop, candidate, accessesCommitTS)
 		if err != nil {
 			return nil, err
 		}
@@ -2614,8 +2614,9 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 }
 
 // convertToIndexMergeScan builds the index merge scan for intersection or union cases.
-func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidate *candidatePath) (task base.Task, err error) {
-	if accessesExtraCommitTSColumn(ds) {
+func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidate *candidatePath,
+	accessesCommitTS bool) (task base.Task, err error) {
+	if accessesCommitTS {
 		return base.InvalidTask, nil
 	}
 	if prop.IsFlashProp() || prop.TaskTp == property.CopSingleReadTaskType {
@@ -2856,8 +2857,8 @@ func overwritePartialTableScanSchema(ds *logicalop.DataSource, ts *physicalop.Ph
 
 // convertToIndexScan converts the DataSource to index scan with idx.
 func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty,
-	candidate *candidatePath) (task base.Task, err error) {
-	if candidate.path.IsSingleScan && accessesExtraCommitTSColumn(ds) {
+	candidate *candidatePath, accessesCommitTS bool) (task base.Task, err error) {
+	if candidate.path.IsSingleScan && accessesCommitTS {
 		return base.InvalidTask, nil
 	}
 	if candidate.path.Index.MVIndex {
