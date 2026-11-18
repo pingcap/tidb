@@ -224,6 +224,43 @@ func TestKeepingJoinKeys(t *testing.T) {
 }
 
 func TestJoinRegression(t *testing.T) {
+	t.Run("AntiSemiJoinLimit", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table d (n int primary key)")
+		tk.MustExec("insert into d values (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)")
+		tk.MustExec("create table t (id bigint primary key, state varchar(20) not null, key idx_state (state))")
+		tk.MustExec("create table s (id bigint auto_increment primary key, t_id bigint not null, unique key uk_t_id (t_id))")
+		tk.MustExec(`insert into t select x, case when x > 99000 then 'pending' when x % 5 = 0 then 'cancelled' else 'done' end
+			from (select a.n*10000+b.n*1000+c.n*100+e.n*10+f.n+1 as x from d a, d b, d c, d e, d f) v`)
+		tk.MustExec("insert into s (t_id) select id from t where state = 'cancelled'")
+		tk.MustExec("analyze table t")
+		tk.MustExec("analyze table s")
+		query := "select 1 from t where t.state = 'pending' and not exists (select 1 from s where s.t_id = t.id) limit 1"
+		plan := fmt.Sprint(tk.MustQuery("explain format = 'plan_tree' " + query).Rows())
+		require.Contains(t, plan, "IndexJoin", plan)
+		tk.MustQuery(query).Check(testkit.Rows("1"))
+
+		mergeQuery := strings.Replace(query, "select 1", "select /*+ MERGE_JOIN(t, s@sel_2) */ 1", 1)
+		innerRows := func(sql string) float64 {
+			rows := tk.MustQuery("explain " + sql).Rows()
+			require.Contains(t, fmt.Sprint(rows), "MergeJoin")
+			for _, row := range rows {
+				if strings.Contains(fmt.Sprint(row[0]), "IndexFullScan") && strings.Contains(fmt.Sprint(row), "uk_t_id") {
+					count, err := strconv.ParseFloat(fmt.Sprint(row[1]), 64)
+					require.NoError(t, err)
+					return count
+				}
+			}
+			t.Fatalf("inner index scan missing from plan: %v", rows)
+			return 0
+		}
+		fullInnerRows := innerRows(strings.TrimSuffix(mergeQuery, " limit 1"))
+		require.Greater(t, fullInnerRows, float64(10000))
+		require.Equal(t, fullInnerRows, innerRows(mergeQuery))
+		require.Less(t, innerRows(strings.Replace(mergeQuery, "not exists", "exists", 1)), fullInnerRows)
+	})
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
 		tk.MustExec(`CREATE TABLE t0(c0 BLOB);`)
