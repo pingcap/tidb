@@ -77,6 +77,7 @@
 //! alternatives. EXPLAIN derives metadata from the same physical tree.
 
 pub mod mview;
+pub mod util;
 pub mod access_path;
 pub mod import_into;
 pub mod cascades;

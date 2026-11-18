@@ -463,6 +463,10 @@ pub struct SessionVars {
     pub resource_group: String,
     /// Go `SessionVars.InRestrictedSQL`.
     pub restricted_sql: bool,
+    /// Go master `SessionVars.InMViewMaintenance`: the session runs a
+    /// materialized view's maintenance (build, refresh, log purge), whose
+    /// restricted SQL may write the view, its log and its shadow table.
+    pub in_mview_maintenance: bool,
     /// Go `SessionVars.RequestSourceType`: the source the session's requests
     /// carry, the running statement's label (`session.setRequestSource`).
     pub request_source_type: String,
@@ -591,6 +595,7 @@ impl Default for SessionVars {
             last_ddl_info: tidb_sessionstates::LastDDLInfo::default(),
             resource_group: "default".to_owned(),
             restricted_sql: false,
+            in_mview_maintenance: false,
             request_source_type: String::new(),
             tls_connection_state: None,
             compression_algorithm: tidb_mysql::consts::CompressionNone,

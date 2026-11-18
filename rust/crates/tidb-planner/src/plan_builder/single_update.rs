@@ -135,6 +135,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut resolved = Vec::with_capacity(update.assignments.len());
         for assignment in &update.assignments {
             let column = find_field_name(&names, &assignment.col).ok_or_else(|| unknown_column(assignment))?;
+            // Go master `buildUpdateLists`: the assignment's table, by its
+            // visible name.
+            if let Some(info) = &table.table_info {
+                crate::util::check_mview_updatable(&crate::util::MViewSessionVars::of(self.ctx), &info.read(), visible, "UPDATE")?;
+            }
             if extra_handle && column == columns.len() && !allow_write_row_id {
                 return Err(PlanError::internal(WRITE_ROW_ID_REFUSED));
             }

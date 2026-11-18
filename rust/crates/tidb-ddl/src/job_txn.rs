@@ -112,6 +112,16 @@ impl<'a> JobTxn<'a> {
         Some(session.execute(self.start_ts, sql, args))
     }
 
+    /// [`Self::execute`] in materialized view maintenance.
+    pub fn execute_in_mview_maintenance(
+        &self,
+        sql: &str,
+        args: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Option<Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError>> {
+        let session = self.session.as_ref()?;
+        Some(session.execute_in_mview_maintenance(self.start_ts, sql, args))
+    }
+
     /// Go `meta.NewMutator(txn)`.
     pub fn meta(&mut self) -> JobMeta<'_, 'a> {
         tidb_meta::transaction::Mutator::new(self)
@@ -213,6 +223,32 @@ impl StepSession {
             *slot = Some(self.pool.open_step_session(start_ts, &self.buffer)?);
         }
         slot.as_mut().expect("just opened").execute(sql, args)
+    }
+
+    /// [`Self::execute`] in materialized view maintenance (Go master's
+    /// `vars.InMViewMaintenance = true` around `w.sess.Execute`).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::execute`].
+    pub fn execute_in_mview_maintenance(
+        &self,
+        start_ts: u64,
+        sql: &str,
+        args: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
+        let mut slot = self
+            .sql
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if slot.is_none() {
+            *slot = Some(self.pool.open_step_session(start_ts, &self.buffer)?);
+        }
+        let session = slot.as_mut().expect("just opened");
+        let original = session.swap_in_mview_maintenance(true);
+        let result = session.execute(sql, args);
+        session.swap_in_mview_maintenance(original);
+        result
     }
 }
 

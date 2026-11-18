@@ -1518,9 +1518,10 @@ fn run_insert_rows(
     } else {
         tidb_table::tables::mview_log::MLogSourceStmt::Insert
     };
-    let mlog = wrap_table_with_mlog_if_exists(catalog, &database, &table_name, mlog_source)?;
-    let mut updates = UpdateRecords::new(&fk).with_mlog(mlog.as_ref());
-    let mut removals = DeleteRecords::new(&fk).with_mlog(mlog.as_ref());
+    let mlogs = MLogTables::wrap(catalog, [(database.as_str(), table_name.as_str())], mlog_source)?;
+    let mlog = mlogs.get(&database, &table_name);
+    let mut updates = UpdateRecords::new(&fk).with_mlogs(&mlogs);
+    let mut removals = DeleteRecords::new(&fk).with_mlogs(&mlogs);
     let insert_stats = dml.and_then(|dml| dml.insert_stats());
     let _collect_snapshot_stats =
         insert_stats.map(|stats| CollectInsertSnapshotStats::install(ctx, &stats.lock().unwrap()));
@@ -2394,7 +2395,7 @@ fn run_insert_rows(
                 ))
             };
             // Go `mlogTable.AddRecord`: the added row's MV log row.
-            let insert_result = match (insert_result, &mlog) {
+            let insert_result = match (insert_result, mlog) {
                 (Ok(handle), Some(mlog)) => {
                     let mut store = crate::statement_store(ctx);
                     mlog.borrow_mut()
@@ -2787,6 +2788,36 @@ fn written_row_id(value: &Datum, ctx: &crate::StmtContext) -> Option<i64> {
 /// Go `executorBuilder.wrapTableWithMLogIfExists`: the statement's MV log
 /// writer for its target `database`.`name`, when the table's
 /// `MaterializedViewBase` names an MV log.
+/// Go `wrapTableWithMLogIfExists` over every table a statement writes: the
+/// MV log wrapping each written base table that has one.
+#[derive(Default)]
+pub(crate) struct MLogTables(Vec<(String, String, std::cell::RefCell<tidb_table::tables::mview_log::MLogTable>)>);
+
+impl MLogTables {
+    pub(crate) fn wrap<'n>(
+        catalog: &SessionExtendedInfoSchema,
+        targets: impl IntoIterator<Item = (&'n str, &'n str)>,
+        source: tidb_table::tables::mview_log::MLogSourceStmt,
+    ) -> Result<Self, DriverError> {
+        let mut wrapped = Self::default();
+        for (database, name) in targets {
+            if wrapped.get(database, name).is_some() {
+                continue;
+            }
+            if let Some(mlog) = wrap_table_with_mlog_if_exists(catalog, database, name, source)? {
+                wrapped.0.push((tidb_hack::go_to_lower(database), tidb_hack::go_to_lower(name), mlog));
+            }
+        }
+        Ok(wrapped)
+    }
+
+    /// The MV log of the written table `database`.`name`.
+    pub(crate) fn get(&self, database: &str, name: &str) -> Option<&std::cell::RefCell<tidb_table::tables::mview_log::MLogTable>> {
+        let (database, name) = (tidb_hack::go_to_lower(database), tidb_hack::go_to_lower(name));
+        self.0.iter().find(|(d, n, _)| *d == database && *n == name).map(|(_, _, mlog)| mlog)
+    }
+}
+
 pub(crate) fn wrap_table_with_mlog_if_exists(
     catalog: &SessionExtendedInfoSchema,
     database: &str,
@@ -4212,13 +4243,12 @@ fn run_update_with_physical(
     )?);
     fk.borrow().prepare_fk_cascade_context(ctx);
     // Go `buildUpdate`'s `wrapTableWithMLogIfExists`.
-    let mlog = wrap_table_with_mlog_if_exists(
+    let mlogs = MLogTables::wrap(
         catalog,
-        &database,
-        &name,
+        [(database.as_str(), name.as_str())],
         tidb_table::tables::mview_log::MLogSourceStmt::Update,
     )?;
-    let mut records = UpdateRecords::new(&fk).with_mlog(mlog.as_ref());
+    let mut records = UpdateRecords::new(&fk).with_mlogs(&mlogs);
     let writes_stored_columns = set_exprs
         .iter()
         .any(|(offset, _)| Some(*offset) != stored_handle_slot);
@@ -4561,6 +4591,11 @@ pub fn run_delete_stmt_with_physical(
                     format!("delete sequence {} is not supported now", name),
                 )));
             }
+            // Go master `buildDelete`: after the view and sequence refusals.
+            Some(TableEntry::Kv(kv)) => {
+                tidb_planner::util::check_mview_updatable(&tidb_planner::util::MViewSessionVars::of(ctx), &kv.meta().read(), &name, "DELETE")
+                    .map_err(super::planner_error_to_driver)?;
+            }
             _ => {}
         }
     }
@@ -4719,13 +4754,12 @@ fn run_delete_with_physical(
     )?);
     fk.borrow().prepare_fk_cascade_context(ctx);
     // Go `buildDelete`'s `wrapTableWithMLogIfExists`.
-    let mlog = wrap_table_with_mlog_if_exists(
+    let mlogs = MLogTables::wrap(
         catalog,
-        &database,
-        &name,
+        [(database.as_str(), name.as_str())],
         tidb_table::tables::mview_log::MLogSourceStmt::Delete,
     )?;
-    let mut records = DeleteRecords::new(&fk).with_mlog(mlog.as_ref());
+    let mut records = DeleteRecords::new(&fk).with_mlogs(&mlogs);
     // Go's `columnCount` of each deleted row: the child row's cells but the
     // partition id (`ExtraPhysTblID`), less the `_tidb_rowid` handle.
     let row_cells = {

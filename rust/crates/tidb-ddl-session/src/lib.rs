@@ -132,6 +132,12 @@ pub trait SessionContext: Send + Sync + 'static {
     fn set_autocommit(&self, enabled: bool);
     /// Sets `InRestrictedSQL`.
     fn set_restricted_sql(&self, enabled: bool);
+    /// Sets Go master `SessionVars.InMViewMaintenance`, answering the value
+    /// it replaces (a session that runs no materialized view maintenance
+    /// keeps none).
+    fn swap_in_mview_maintenance(&self, _enabled: bool) -> bool {
+        false
+    }
     /// Copies the session location to the statement context.
     fn set_statement_timezone_to_session_location(&self);
     /// Sets `DiskFullOpt_AllowedOnAlmostFull`.

@@ -309,7 +309,13 @@ pub(crate) fn run_multi_update(
         catalog,
     )?);
     fk.borrow().prepare_fk_cascade_context(ctx);
-    let mut records = UpdateRecords::new(&fk);
+    // Go `buildUpdate`'s `wrapTableWithMLogIfExists`, per target table.
+    let mlogs = super::dml::MLogTables::wrap(
+        catalog,
+        tables.iter().map(|table| (table.database.as_str(), table.table.as_str())),
+        tidb_table::tables::mview_log::MLogSourceStmt::Update,
+    )?;
+    let mut records = UpdateRecords::new(&fk).with_mlogs(&mlogs);
     let mut matched_rows = 0u64;
     // Go `updateRows`' `rowsColMultiply`.
     let mut rows_col_multiply = 0i64;
@@ -642,7 +648,13 @@ pub(crate) fn run_multi_delete(
         catalog,
     )?);
     fk.borrow().prepare_fk_cascade_context(ctx);
-    let mut records = super::dml::delete_record::DeleteRecords::new(&fk);
+    // Go `buildDelete`'s `wrapTableWithMLogIfExists`, per target table.
+    let mlogs = super::dml::MLogTables::wrap(
+        catalog,
+        tables.iter().map(|table| (table.database.as_str(), table.table.as_str())),
+        tidb_table::tables::mview_log::MLogSourceStmt::Delete,
+    )?;
+    let mut records = super::dml::delete_record::DeleteRecords::new(&fk).with_mlogs(&mlogs);
     // Go `removeRowsInTblRowMap`'s `rowsColMultiply`.
     let mut rows_col_multiply = 0i64;
     // The rest of Go `DeleteExec.Next`: `removeRowsInTblRowMap`, after the

@@ -68,7 +68,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// heap table alone has: a table with a real handle has no such column,
     /// so the name falls through to the ordinary `ErrUnknownColumn`.
     pub fn resolve_insert_target(&self, insert: &InsertStmt) -> Result<InsertTarget, PlanError> {
-        resolve_insert_target(self.source, insert)
+        resolve_insert_target(self.source, self.ctx, insert)
     }
 
     /// Go `resolveGeneratedColumns`: each generated column's expression
@@ -365,7 +365,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 }
 
 /// Go `getAffectCols`: resolve the INSERT target layout without building a plan.
-pub fn resolve_insert_target(source: &impl TableSource, insert: &InsertStmt) -> Result<InsertTarget, PlanError> {
+pub fn resolve_insert_target(
+    source: &impl TableSource,
+    sv: &impl Columns,
+    insert: &InsertStmt,
+) -> Result<InsertTarget, PlanError> {
     let (database, name) = match insert.table.as_slice() {
         [_] if source.current_database().is_empty() => {
             return Err(PlanError::from(
@@ -382,6 +386,11 @@ pub fn resolve_insert_target(source: &impl TableSource, insert: &InsertStmt) -> 
                 .fast_gen_by_args(&[database.into(), name.into()]),
         )
     })?;
+    // Go master `buildInsert`: after the view and sequence refusals.
+    if let Some(info) = &table.table_info {
+        let op = if insert.replace { "REPLACE" } else { "INSERT" };
+        crate::util::check_mview_updatable(&crate::util::MViewSessionVars::of(sv), &info.read(), name, op)?;
+    }
     let mut columns: Vec<(String, FieldType)> = Vec::new();
     let mut generated = Vec::new();
     for column in table

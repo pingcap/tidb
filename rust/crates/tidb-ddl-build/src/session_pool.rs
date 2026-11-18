@@ -287,6 +287,13 @@ pub trait StepSqlSession: Send {
             .map_err(tidb_store_driver_error::sql_query_error::mysql_error_of)
     }
 
+    /// Sets Go master `SessionVars.InMViewMaintenance`, answering the value
+    /// it replaces (a session that runs no materialized view maintenance
+    /// keeps none).
+    fn swap_in_mview_maintenance(&mut self, _enabled: bool) -> bool {
+        false
+    }
+
     /// Go `Session.Begin`: `sessiontxn.NewTxn`, an optimistic transaction
     /// entered through the session's API, not a statement.
     ///

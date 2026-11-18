@@ -1334,6 +1334,9 @@ pub fn build_create_materialized_view_data(
             Ok(())
         };
         set(&vars)?;
+        // Go master `InitMViewSession`: the build runs in materialized view
+        // maintenance.
+        let original_maintenance = session.swap_in_mview_maintenance(true);
         let built = (|| {
             // Go `sqlescape.MustEscapeSQL("REPLACE INTO %n.%n ", ...)` then
             // the definition, which carries no placeholders.
@@ -1362,6 +1365,7 @@ pub fn build_create_materialized_view_data(
             }
             Ok(read_ts)
         })();
+        session.swap_in_mview_maintenance(original_maintenance);
         let restore: Vec<(String, String)> =
             vars.iter().map(|(name, _)| name.clone()).zip(original).collect();
         let _ = set(&restore);
@@ -1846,7 +1850,8 @@ pub(super) fn on_create_materialized_view(
                     tidb_sqlescape::SqlArg::String(schema_name.as_bytes()),
                     tidb_sqlescape::SqlArg::String(mview.name.original().as_bytes()),
                 ];
-                match txn.execute("SELECT 1 FROM %n.%n LIMIT 1", &check_args) {
+                // Go master `mview_worker.go`: in materialized view maintenance.
+                match txn.execute_in_mview_maintenance("SELECT 1 FROM %n.%n LIMIT 1", &check_args) {
                     Some(Ok(rows)) if !rows.is_empty() => {
                         active.job.state = JobState::ROLLINGBACK;
                         return Err(DdlPlanError::from_mysql_error(invalid_ddl_job(

@@ -1300,6 +1300,11 @@ impl tidb_ddl_session::SessionContext for ClusterStatsSessionContext {
         });
     }
 
+    fn swap_in_mview_maintenance(&self, enabled: bool) -> bool {
+        self.with_session(|session| Ok(std::mem::replace(&mut session.session.vars.in_mview_maintenance, enabled)))
+            .unwrap_or_default()
+    }
+
     /// Go copies `SessionVars.Location()` into the statement context; this
     /// session's statements read the session's zone directly.
     fn set_statement_timezone_to_session_location(&self) {}

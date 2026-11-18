@@ -1646,6 +1646,10 @@ pub struct StmtContextData {
     /// Go master `SessionVars.EnableFullOuterJoin`
     /// (`@@tidb_enable_full_outer_join`, default `OFF`).
     enable_full_outer_join: bool,
+    /// Go master `SessionVars.InMViewMaintenance` and `InRestrictedSQL`, as
+    /// the materialized view guards read them.
+    in_mview_maintenance: bool,
+    in_restricted_sql: bool,
     /// Go `SessionVars.EnableINLJoinInnerMultiPattern`
     /// (`@@tidb_enable_inl_join_inner_multi_pattern`, default `ON`).
     enable_inl_join_inner_multi_pattern: bool,
@@ -2564,6 +2568,15 @@ context_configuration! {
     #[must_use]
     pub fn with_full_outer_join(mut self, enable: bool) -> Self {
         self.enable_full_outer_join = enable;
+        self
+    }
+
+    /// Sets the session's `InMViewMaintenance` and `InRestrictedSQL` for
+    /// this statement.
+    #[must_use]
+    pub fn with_mview_maintenance(mut self, in_mview_maintenance: bool, in_restricted_sql: bool) -> Self {
+        self.in_mview_maintenance = in_mview_maintenance;
+        self.in_restricted_sql = in_restricted_sql;
         self
     }
 
@@ -3714,6 +3727,8 @@ impl StmtContext {
             allow_distinct_agg_push_down: false,
             enable_cascades_planner: false,
             enable_full_outer_join: false,
+            in_mview_maintenance: false,
+            in_restricted_sql: false,
             enable_inl_join_inner_multi_pattern: true,
             enable_hash_join: true,
             enable_null_aware_anti_join: true,
@@ -7534,6 +7549,21 @@ pub fn sql_warn_of(level: WarningLevel, error: &tidb_terror::MysqlError) -> SqlW
 }
 
 impl Columns for StmtContext {
+    fn in_mview_maintenance(&self) -> bool {
+        self.in_mview_maintenance
+    }
+
+    fn in_restricted_sql(&self) -> bool {
+        self.in_restricted_sql
+    }
+
+    fn auth_user(&self) -> Option<(String, String)> {
+        self.current_user.as_deref().map(|identity| {
+            let (user, host) = identity.rsplit_once('@').unwrap_or((identity, ""));
+            (user.to_owned(), host.to_owned())
+        })
+    }
+
     /// Go `shouldRemoveColumnNumbers` (`expression/column.go:456`).
     fn remove_column_numbers(&self) -> bool {
         self.in_explain_stmt && matches!(self.explain_format, Some(crate::explain_format::ExplainFormat::PlanTree))

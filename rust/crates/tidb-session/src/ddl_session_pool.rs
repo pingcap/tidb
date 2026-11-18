@@ -683,6 +683,10 @@ impl tidb_ddl_build::session_pool::StepSqlSession for NodeStepSession {
     fn rollback(&mut self) {
         self.0.rollback();
     }
+
+    fn swap_in_mview_maintenance(&mut self, enabled: bool) -> bool {
+        self.0 .0.with_session(|session| std::mem::replace(&mut session.vars.in_mview_maintenance, enabled))
+    }
 }
 
 impl Drop for NodeStepSession {

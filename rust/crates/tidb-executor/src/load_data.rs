@@ -47,6 +47,8 @@ pub struct LoadDataEnv {
     pub strict_sql_mode: bool,
     /// Go `SessionVars.AllowWriteRowID`.
     pub allow_write_row_id: bool,
+    /// The session's materialized view maintenance state.
+    pub mview_session_vars: tidb_planner::util::MViewSessionVars,
 }
 
 /// One input field's destination (Go `importer.FieldMapping`).
@@ -131,6 +133,13 @@ pub fn build_load_data(
                 .gen_with_stack_by_args(&[(&database).into(), (&name).into()]),
         ));
     };
+    // Go master `buildLoadData`: the plan's guard, before its visit infos.
+    if let TableEntry::Kv(table) = entry {
+        let info = table.meta();
+        let info = info.read();
+        tidb_planner::util::check_mview_updatable(&env.mview_session_vars, &info, info.name.original(), "LOAD")
+            .map_err(crate::driver::planner_error_to_driver)?;
+    }
     check_privileges(&database, &name)?;
     let TableEntry::Kv(table) = entry else {
         return Err(DriverError::from(
@@ -661,6 +670,11 @@ pub trait LoadDataExec: crate::show::exec::ShowExec {
                 .session_vars()
                 .get_system(tidb_vardef::tidb_vars::TIDB_OPT_WRITE_ROW_ID)
                 .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value)),
+            mview_session_vars: tidb_planner::util::MViewSessionVars {
+                in_mview_maintenance: self.session_vars().in_mview_maintenance,
+                in_restricted_sql: self.session_vars().restricted_sql,
+                auth_user: self.privilege_context().map(|(_, user, host)| (user.to_owned(), host.to_owned())),
+            },
         }
     }
 

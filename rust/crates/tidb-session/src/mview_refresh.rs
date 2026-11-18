@@ -114,9 +114,9 @@ pub(crate) fn sys_sql(session: &mut Session, sql: &str, arguments: &[SqlArg<'_>]
 
 /// Go master `refreshInfoSnapshot`.
 #[derive(Clone, Copy, Default)]
-struct RefreshInfoSnapshot {
-    last_success_read_tso: u64,
-    last_success_read_tso_null: bool,
+pub(crate) struct RefreshInfoSnapshot {
+    pub(crate) last_success_read_tso: u64,
+    pub(crate) last_success_read_tso_null: bool,
 }
 
 /// Go master `decodeRefreshInfoSnapshot` (the read TSO column).
@@ -146,7 +146,7 @@ fn lock_refresh_info_row(session: &mut Session, mview_id: i64) -> Result<Refresh
 }
 
 /// Go master `readRefreshInfoSnapshot`.
-fn read_refresh_info_snapshot(session: &mut Session, mview_id: i64) -> Result<RefreshInfoSnapshot, DriverError> {
+pub(crate) fn read_refresh_info_snapshot(session: &mut Session, mview_id: i64) -> Result<RefreshInfoSnapshot, DriverError> {
     let rows = sys_sql(
         session,
         "SELECT LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
@@ -442,7 +442,14 @@ fn refresh_session_vars(
         };
         vars.push((name.to_owned(), value));
     }
-    vars.push((tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE.to_owned(), "ON".to_owned()));
+    vars.extend(init_mview_session_vars(info));
+    vars
+}
+
+/// Go master `ddl.InitMViewSession`'s variables: materialized views on,
+/// and the definition's SQL mode, time zone and division precision.
+pub(crate) fn init_mview_session_vars(info: &tidb_model::table::MaterializedViewInfo) -> Vec<(String, String)> {
+    let mut vars = vec![(tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE.to_owned(), "ON".to_owned())];
     vars.push(("sql_mode".to_owned(), tidb_ddl::cluster_ddl::materialized_view::format_sql_mode(info.definition_sql_mode)));
     let zone = &info.definition_time_zone;
     let zone_name = if zone.offset == 0 {
@@ -456,14 +463,14 @@ fn refresh_session_vars(
     vars
 }
 
-fn set_session_vars(session: &mut Session, vars: &[(String, String)]) -> Result<(), DriverError> {
+pub(crate) fn set_session_vars(session: &mut Session, vars: &[(String, String)]) -> Result<(), DriverError> {
     for (name, value) in vars {
         sys_sql(session, &format!("SET @@SESSION.{name} = %?"), &[SqlArg::String(value.as_bytes())])?;
     }
     Ok(())
 }
 
-fn read_session_vars(session: &mut Session, names: &[String]) -> Result<Vec<String>, DriverError> {
+pub(crate) fn read_session_vars(session: &mut Session, names: &[String]) -> Result<Vec<String>, DriverError> {
     let select = format!("SELECT {}", names.iter().map(|name| format!("@@SESSION.{name}")).collect::<Vec<_>>().join(", "));
     let rows = sys_sql(session, &select, &[])?;
     Ok(rows.first().map(|row| row.iter().map(datum_text).collect()).unwrap_or_default())
@@ -513,7 +520,7 @@ impl Session {
         let refresh_start = chrono::Local::now();
         let (schema, info) = self.resolve_refresh_materialized_view_target(s)?;
         let mview = info.materialized_view.as_ref().expect("resolved as a view").read().clone();
-        self.check_refresh_materialized_view_base_table_select(&mview)?;
+        self.check_refresh_materialized_view_base_table_select(&self.refresh_latest_info_schema(), &mview)?;
         if s.mode == RefreshMaterializedViewMode::CompleteInPlace
             && info.materialized_view_base.as_ref().is_some_and(|base| base.read().mlog_id != 0)
         {
@@ -596,8 +603,19 @@ impl Session {
         &self,
         s: &RefreshMaterializedViewStmt,
     ) -> Result<(String, tidb_model::TableInfo), DriverError> {
-        let catalog = self.refresh_latest_info_schema();
-        let (schema, view) = match s.view_name.as_slice() {
+        self.resolve_mview_statement_target(&self.refresh_latest_info_schema(), &s.view_name, "refresh materialized view")
+    }
+
+    /// Go master `resolveRefreshMaterializedViewTarget` and
+    /// `resolveCompareMaterializedViewTarget` over `catalog`: the view's
+    /// schema and table, `op` prefixing the invalid-SQL error.
+    pub(crate) fn resolve_mview_statement_target(
+        &self,
+        catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+        view_name: &[String],
+        op: &str,
+    ) -> Result<(String, tidb_model::TableInfo), DriverError> {
+        let (schema, view) = match view_name {
             [schema, view] => (schema.clone(), view.clone()),
             [view] => {
                 if self.current_database().is_empty() {
@@ -607,7 +625,7 @@ impl Session {
                 }
                 (self.current_database().to_owned(), view.clone())
             }
-            _ => return Err(plain("refresh materialized view: missing view name")),
+            _ => return Err(plain(format!("{op}: missing view name"))),
         };
         if catalog.schema_by_name(&schema).is_none() {
             return Err(DriverError::Mysql(MysqlError::from_terror(
@@ -627,7 +645,7 @@ impl Session {
             ))));
         };
         if info.sql_content.is_empty() {
-            return Err(plain("refresh materialized view: invalid select sql"));
+            return Err(plain(format!("{op}: invalid select sql")));
         }
         // Go master `checkRefreshMaterializedViewReady`.
         let state = tidb_model::table::MaterializedViewInfo::get_init_build_state(Some(&info));
@@ -637,13 +655,25 @@ impl Session {
         Ok((schema, table))
     }
 
-    /// Go master `checkRefreshMaterializedViewBaseTableSelect` for a user
-    /// statement: SELECT on every base table.
-    fn check_refresh_materialized_view_base_table_select(
+    /// Go master `checkRefreshMaterializedViewBaseTableSelect` over
+    /// `catalog`: a user statement needs SELECT on every base table.
+    pub(crate) fn check_refresh_materialized_view_base_table_select(
         &self,
+        catalog: &tidb_infoschema::SessionExtendedInfoSchema,
         info: &tidb_model::table::MaterializedViewInfo,
     ) -> Result<(), DriverError> {
-        let catalog = self.refresh_latest_info_schema();
+        if self.vars.in_mview_maintenance {
+            if !self.vars.restricted_sql {
+                return Err(DriverError::Mysql(MysqlError::from_terror(
+                    &tidb_plannererrors::ERR_INTERNAL
+                        .gen_with_stack("materialized view maintenance should only run in restricted SQL mode"),
+                )));
+            }
+            return Ok(());
+        }
+        if self.vars.restricted_sql {
+            return Ok(());
+        }
         for &id in info.base_table_ids.iter() {
             let Some(base) = catalog.table_info_by_id(id) else {
                 continue;
@@ -902,6 +932,9 @@ impl Session {
             };
             tidb_failpoint::inject_call(&format!("{FP}refreshMaterializedViewAfterInsertRefreshHistRunning"), &mut ());
             tidb_failpoint::inject(&format!("{FP}pauseRefreshMaterializedViewAfterInsertRefreshHistRunning"), |_| {});
+            // Go master `executeRefreshMaterializedViewDataChanges`: the data
+            // changes run in materialized view maintenance.
+            let original_maintenance = std::mem::replace(&mut refresh.vars.in_mview_maintenance, true);
             // Go master `executeRefreshMaterializedViewCompleteDeltaApply`:
             // the internal `RefreshMaterializedViewImplementStmt` on the refresh
             // session; its OK packet is the statement's.
@@ -956,6 +989,7 @@ impl Session {
                 Some(applied) => applied,
                 None => in_place(),
             };
+            refresh.vars.in_mview_maintenance = original_maintenance;
             let (affected_rows, statement_message, read_tso) = match data {
                 Ok(data) => data,
                 Err(error) => return Err(finalize_failure(&mut hist, refresh, &mut txn_finished, error)),
@@ -1170,6 +1204,8 @@ impl Session {
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         );
         let mut shadow_needs_cleanup = false;
+        // Go master: the build session runs in materialized view maintenance.
+        let original_maintenance = std::mem::replace(&mut build.vars.in_mview_maintenance, true);
         let outcome = (|| {
             set_session_vars(&mut build, &vars)?;
             sys_sql(&mut build, "USE %n", &[SqlArg::String(schema.as_bytes())])?;
@@ -1286,6 +1322,7 @@ impl Session {
             }
             other => other,
         };
+        build.vars.in_mview_maintenance = original_maintenance;
         let _ = set_session_vars(&mut build, &restore);
         outcome
     }

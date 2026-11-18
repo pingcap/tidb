@@ -57,6 +57,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 )
             })?
             .clone();
+        // Go master `buildImportInto`: before the temporary-table refusal.
+        if let Some(info) = &table.table_info {
+            let info = info.read();
+            crate::util::check_mview_updatable(&crate::util::MViewSessionVars::of(self.ctx), &info, info.name.original(), "IMPORT")?;
+        }
         if table.is_temporary() {
             return Err(PlanError::internal(
                 "IMPORT INTO does not support temporary table",

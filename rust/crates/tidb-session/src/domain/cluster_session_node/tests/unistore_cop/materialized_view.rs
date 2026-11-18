@@ -1195,3 +1195,55 @@ fn full_outer_join_plans_as_go_master() {
 fn refresh_materialized_view_complete_delta_apply_answers_as_go_master() {
     replay_go_master(include_str!("../../../../../testdata/mview_refresh_delta_apply_go.jsonl"));
 }
+
+/// Go master `CheckMViewUpdatable`: a user statement's INSERT, REPLACE,
+/// UPDATE, DELETE, IMPORT and locking SELECT refuse a materialized view and
+/// its log (1288, the statement's own target name), while a read, a locking
+/// read of another table and the base table's own writes go on -- a
+/// multi-table UPDATE or DELETE of the base table writing its MV log rows
+/// (`wrapTableWithMLogIfExists` per target).
+#[test]
+fn materialized_view_dml_guard_answers_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/mview_dml_guard_go.jsonl"));
+}
+
+/// Go master's test helper `mustExecRefreshInternal`: `sql` on `session`
+/// as materialized view maintenance's restricted SQL.
+fn exec_refresh_internal(session: &mut Session, sql: &str) -> String {
+    let original = (session.vars.in_mview_maintenance, session.vars.restricted_sql);
+    (session.vars.in_mview_maintenance, session.vars.restricted_sql) = (true, true);
+    let answered = answer(session, sql);
+    (session.vars.in_mview_maintenance, session.vars.restricted_sql) = original;
+    answered
+}
+
+/// Go master `allowMViewMaintenanceBypass` through a session: maintenance's
+/// restricted SQL writes the view and its log; maintenance outside
+/// restricted SQL is an internal error; a user statement is refused.
+#[test]
+fn materialized_view_maintenance_bypass_as_go_master() {
+    let (_stack, _users, mut root) = go_master_mview_stack();
+    for sql in [
+        "use test",
+        "set tidb_mview_enable = ON",
+        "create table t_bypass (a int not null, b int not null)",
+        "insert into t_bypass values (1, 10), (2, 20)",
+        "create materialized view log on t_bypass (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_bypass (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_bypass group by a",
+    ] {
+        assert_eq!(answer(&mut root, sql).get(..2), Some("OK"), "{sql}");
+    }
+    assert!(exec_refresh_internal(&mut root, "update mv_bypass set s = s + 7 where a = 1").starts_with("OK"));
+    assert!(exec_refresh_internal(&mut root, "delete from mv_bypass where a = 2").starts_with("OK"));
+    assert!(exec_refresh_internal(&mut root, "insert into mv_bypass values (3, 30, 1)").starts_with("OK"));
+    assert_eq!(exec_refresh_internal(&mut root, "delete from `$mlog$t_bypass`").get(..2), Some("OK"));
+    assert_eq!(answer(&mut root, "select a, s, cnt from mv_bypass order by a"), r#"RS:[["1","17","1"],["3","30","1"]]"#);
+    root.vars.in_mview_maintenance = true;
+    let refused = answer(&mut root, "insert into mv_bypass values (4, 40, 1)");
+    root.vars.in_mview_maintenance = false;
+    assert_eq!(refused, "ERR 1815 materialized view maintenance should only run in restricted SQL mode");
+    assert_eq!(
+        answer(&mut root, "update mv_bypass set s = 1"),
+        "ERR 1288 The target table mv_bypass of the UPDATE is not updatable"
+    );
+}

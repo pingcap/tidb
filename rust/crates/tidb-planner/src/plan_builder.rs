@@ -3254,6 +3254,74 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
     }
 
+    /// Go master `checkLockClauseTables`' `checkMViewLockTarget`: a locking
+    /// SELECT refuses a materialized view, its log or its shadow table among
+    /// its lock targets -- the `OF` targets it resolves, else every table
+    /// the SELECT itself reads (not a derived table's or a CTE body's).
+    /// An `OF` target that names no table is left to the lock build's
+    /// unknown-table error, which Go raises first.
+    fn check_lock_clause_mview_targets(&self, select: &SelectStmt) -> Result<(), PlanError> {
+        let (Some(_), Some(from)) = (&select.lock, &select.from) else {
+            return Ok(());
+        };
+        let mut refs = Vec::new();
+        update_targets::collect_tables(&from.left, &mut refs);
+        if let Some(right) = &from.right {
+            update_targets::collect_tables(right, &mut refs);
+        }
+        // Each reference with its table (none for a CTE), base name and alias.
+        let resolved: Vec<(Option<tidb_model::GoShared<tidb_model::TableInfo>>, &TableRef)> = refs
+            .into_iter()
+            .map(|table| (self.resolve_ctx.read().table_name(table).and_then(|named| named.table_info.clone()), table))
+            .collect();
+        let check = |info: &Option<tidb_model::GoShared<tidb_model::TableInfo>>, name: &str| match info {
+            Some(info) => crate::util::check_mview_updatable(&crate::util::MViewSessionVars::of(self.ctx), &info.read(), name, "SELECT"),
+            None => Ok(()),
+        };
+        let check_all = || {
+            resolved
+                .iter()
+                .try_for_each(|(info, table)| check(info, table.name.last().map_or("", String::as_str)))
+        };
+        let of = &select.lock.as_ref().expect("a locking SELECT").of;
+        if of.is_empty() {
+            return check_all();
+        }
+        let base_matches = |table: &TableRef, name: &str| table.name.last().is_some_and(|base| tidb_hack::go_to_lower(base) == name);
+        let mut targets = Vec::with_capacity(of.len());
+        for target in of {
+            let (schema, name) = match target.as_slice() {
+                [name] => (None, tidb_hack::go_to_lower(name)),
+                [schema, name] => (Some(tidb_hack::go_to_lower(schema)), tidb_hack::go_to_lower(name)),
+                _ => return Ok(()),
+            };
+            let matched = match &schema {
+                Some(schema) => resolved.iter().find(|(_, table)| {
+                    let database = match table.name.as_slice() {
+                        [database, _] => tidb_hack::go_to_lower(database),
+                        _ => tidb_hack::go_to_lower(self.source.current_database()),
+                    };
+                    database == *schema
+                        && table.alias.as_deref().map_or_else(|| base_matches(table, &name), |alias| tidb_hack::go_to_lower(alias) == name)
+                }),
+                None => resolved
+                    .iter()
+                    .find(|(_, table)| table.alias.as_deref().is_some_and(|alias| tidb_hack::go_to_lower(alias) == name))
+                    .or_else(|| resolved.iter().find(|(_, table)| table.alias.is_none() && base_matches(table, &name)))
+                    .or_else(|| resolved.iter().find(|(_, table)| table.alias.is_some() && base_matches(table, &name))),
+            };
+            let Some((info, _)) = matched else {
+                return Ok(());
+            };
+            targets.push((info, target.last().map_or("", String::as_str)));
+        }
+        targets.iter().try_for_each(|(info, name)| check(info, name))?;
+        if targets.iter().all(|(info, _)| info.is_none()) {
+            return check_all();
+        }
+        Ok(())
+    }
+
     pub fn build_data_source(&mut self, table_ref: &TableRef) -> Result<LogicalPlan, PlanError> {
         if table_ref
             .sample
@@ -3404,6 +3472,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 ));
             }
             return Ok(self.build_mem_table(&db_name, &table, table_ref.alias.as_deref()));
+        }
+        // Go master `buildDataSource`: `CheckMViewReadable` under the
+        // table's visible name.
+        if let Some(info) = &table.table_info {
+            crate::util::check_mview_readable(&crate::util::MViewSessionVars::of(self.ctx), &info.read(), table_ref.alias.as_deref().unwrap_or(&table_name))?;
         }
 
         // Go: under dynamic pruning, a partitioned table without global
@@ -5710,6 +5783,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // `buildTableRefs` (`:420`) is the FROM clause's own entry point; the
         // `None` arm is its `buildTableDual`.
         let mut plan = self.build_table_refs(select.from.as_ref())?;
+        self.check_lock_clause_mview_targets(select)?;
         let (_, source_names) = snapshot_schema_and_names(&plan);
 
         // `:4348` `unfoldWildStar`, then `:4360` `resolveGbyExprs` — GROUP BY

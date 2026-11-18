@@ -178,6 +178,10 @@ impl<S: TableSource, C: tidb_exprctx::Columns> PlanBuilder<'_, S, C> {
                         .fast_gen_by_args(&[database.into(), table.into()]),
                 )
             })?;
+            // Go master `buildDelete`: the target by the name it is written.
+            if let Some(info) = &meta.table_info {
+                crate::util::check_mview_updatable(&crate::util::MViewSessionVars::of(self.ctx), &info.read(), written, "DELETE")?;
+            }
             let target = DeleteTarget {
                 database: meta.db_name.clone(),
                 table: meta.table_name(),

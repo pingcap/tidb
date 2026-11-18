@@ -434,7 +434,11 @@ fn purge_materialized_view_log_data(
     let delete_sql =
         build_purge_materialized_view_log_delete_sql(schema, mlog_name, last_purged_tso, safe_purge_tso, row_id_range, batch_size)?;
     tidb_failpoint::inject_call(&format!("{FP}purgeMaterializedViewLogDeleteSQL"), &mut delete_sql.clone());
-    sys_sql(session, &delete_sql, &[])?;
+    // Go master: the delete runs in materialized view maintenance.
+    let original_maintenance = std::mem::replace(&mut session.vars.in_mview_maintenance, true);
+    let deleted = sys_sql(session, &delete_sql, &[]);
+    session.vars.in_mview_maintenance = original_maintenance;
+    deleted?;
     Ok(i64::try_from(session.affected_rows()).unwrap_or(i64::MAX))
 }
 
@@ -476,13 +480,17 @@ fn read_mlog_purge_pending_row_stats_on_tiflash(
             None => "_tidb_commit_ts <= %?",
         };
         arguments.push(SqlArg::Unsigned(safe_purge_tso));
-        sys_sql(
+        // Go master: the count runs in materialized view maintenance.
+        let original_maintenance = std::mem::replace(&mut session.vars.in_mview_maintenance, true);
+        let counted = sys_sql(
             session,
             &format!(
                 "SELECT /*+ read_from_storage(tiflash[%n.%n]) */ COUNT(*), MIN(_tidb_rowid), MAX(_tidb_rowid) FROM %n.%n WHERE {filter}"
             ),
             &arguments,
-        )
+        );
+        session.vars.in_mview_maintenance = original_maintenance;
+        counted
     })();
     restore_vars(session, &restore);
     let rows = counted?;

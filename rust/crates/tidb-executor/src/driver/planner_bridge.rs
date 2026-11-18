@@ -2996,7 +2996,7 @@ pub(crate) fn insert_target(
         .with_statement_hypo_state(ctx)
         .with_statement_dirty_tables(ctx)
         .with_statement_privilege_verifier(ctx);
-    tidb_planner::plan_builder::insert_values::resolve_insert_target(&source, insert)
+    tidb_planner::plan_builder::insert_values::resolve_insert_target(&source, ctx, insert)
 }
 
 /// The shared DML-source build, following Go's allocation order:

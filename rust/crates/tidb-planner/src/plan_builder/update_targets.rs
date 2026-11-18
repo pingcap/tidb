@@ -130,7 +130,10 @@ impl<S: TableSource, C: tidb_exprctx::Columns> PlanBuilder<'_, S, C> {
             {
                 continue;
             }
-            if self.source.find_table(&database, &original).is_some() {
+            if let Some(found) = self.source.find_table(&database, &original) {
+                if let Some(info) = &found.table_info {
+                    crate::util::check_mview_updatable(&crate::util::MViewSessionVars::of(self.ctx), &info.read(), &name.table.original, "UPDATE")?;
+                }
                 target = Some(UpdateTarget {
                     database,
                     table: original,

@@ -1494,6 +1494,9 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         let allow_distinct_agg_push_down = snapshot.allow_distinct_agg_push_down;
         let enable_cascades_planner = snapshot.enable_cascades_planner;
         let enable_full_outer_join = snapshot.enable_full_outer_join;
+        // Not sysvars: read per statement, never from the generation cache.
+        let (in_mview_maintenance, in_restricted_sql) =
+            (self.session_vars().in_mview_maintenance, self.session_vars().restricted_sql);
         let enable_inl_join_inner_multi_pattern = snapshot.enable_inl_join_inner_multi_pattern;
         let enable_hash_join = snapshot.enable_hash_join;
         let enable_null_aware_anti_join = snapshot.enable_null_aware_anti_join;
@@ -1691,6 +1694,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_distinct_agg_push_down(allow_distinct_agg_push_down)
                     .with_cascades_planner(enable_cascades_planner)
                 .with_full_outer_join(enable_full_outer_join)
+                .with_mview_maintenance(in_mview_maintenance, in_restricted_sql)
                     .with_inl_join_inner_multi_pattern(enable_inl_join_inner_multi_pattern)
                     .with_enable_hash_join(enable_hash_join)
                     .with_enable_null_aware_anti_join(enable_null_aware_anti_join)
@@ -2113,6 +2117,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_distinct_agg_push_down(allow_distinct_agg_push_down)
                 .with_cascades_planner(enable_cascades_planner)
                 .with_full_outer_join(enable_full_outer_join)
+                .with_mview_maintenance(in_mview_maintenance, in_restricted_sql)
                 .with_inl_join_inner_multi_pattern(enable_inl_join_inner_multi_pattern)
                 .with_enable_hash_join(enable_hash_join)
                 .with_enable_null_aware_anti_join(enable_null_aware_anti_join)

@@ -28,18 +28,18 @@ use tidb_datatype::Datum;
 pub(crate) struct DeleteRecords<'a> {
     fk: &'a RefCell<WithForeignKeyTrigger>,
     /// Go's `mlogTable` wrapping the statement's target: its MV log rows.
-    mlog: Option<&'a RefCell<tidb_table::tables::mview_log::MLogTable>>,
+    mlogs: Option<&'a super::MLogTables>,
 }
 
 impl<'a> DeleteRecords<'a> {
     pub(crate) fn new(fk: &'a RefCell<WithForeignKeyTrigger>) -> Self {
-        Self { fk, mlog: None }
+        Self { fk, mlogs: None }
     }
 
     /// Writes the target's MV log rows beside its own (Go
     /// `wrapTableWithMLogIfExists`).
-    pub(crate) fn with_mlog(mut self, mlog: Option<&'a RefCell<tidb_table::tables::mview_log::MLogTable>>) -> Self {
-        self.mlog = mlog;
+    pub(crate) fn with_mlogs(mut self, mlogs: &'a super::MLogTables) -> Self {
+        self.mlogs = Some(mlogs);
         self
     }
 
@@ -71,7 +71,7 @@ impl<'a> DeleteRecords<'a> {
                 kv.with_statement_store(ctx, |table, store| table.delete_row_with_old_context(store, handle, old, ctx))
                     .map_err(|error| kv_read_error("row delete failed", error))?;
                 // Go `mlogTable.RemoveRecord`: the removed row's MV log row.
-                if let Some(mlog) = self.mlog {
+                if let Some(mlog) = self.mlogs.and_then(|mlogs| mlogs.get(database, name)) {
                     let mut store = crate::statement_store(ctx);
                     mlog.borrow_mut()
                         .remove_record(&mut *store, old, ctx)

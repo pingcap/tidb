@@ -498,6 +498,23 @@ pub trait Columns {
     /// Returns the referenced column, matched by its final name segment.
     fn get(&self, path: &[String]) -> Option<Datum>;
 
+    /// Go master `SessionVars.InMViewMaintenance` of the statement's
+    /// session (the planner's materialized view guards read it).
+    fn in_mview_maintenance(&self) -> bool {
+        false
+    }
+
+    /// Go `SessionVars.InRestrictedSQL` of the statement's session.
+    fn in_restricted_sql(&self) -> bool {
+        false
+    }
+
+    /// Go `SessionVars.User`'s `AuthUsername` and `AuthHostname`, when the
+    /// statement has a user.
+    fn auth_user(&self) -> Option<(String, String)> {
+        None
+    }
+
     /// Go `shouldRemoveColumnNumbers` (`expression/column.go:456`): an
     /// `EXPLAIN FORMAT='plan_tree'` statement renders a column with no
     /// `OrigName` as `Column` instead of `Column#<UniqueID>`.

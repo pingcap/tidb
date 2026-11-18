@@ -325,6 +325,20 @@ fn build_fast_point_physical_plan(
     }
     let columns = entry.column_list();
     let visible = table_ref.alias.as_deref().unwrap_or(name);
+    // Go master `tryPointGetPlan` declines a table `CheckMViewReadable`
+    // refuses, and an UPDATE / DELETE target `CheckMViewUpdatable` refuses;
+    // `checkLockClauseTables` refuses a locking read of one in `Preprocess`,
+    // before it. The ordinary planner answers each.
+    {
+        let info = table.meta();
+        let info = info.read();
+        if crate::util::check_mview_readable(&crate::util::MViewSessionVars::of(ctx), &info, visible).is_err()
+            || ((dml_source || select.lock.is_some())
+                && crate::util::check_mview_updatable(&crate::util::MViewSessionVars::of(ctx), &info, visible, "SELECT").is_err())
+        {
+            return Ok(None);
+        }
+    }
     let mut scope = single_table_scope(
         visible,
         table_ref.alias.is_none().then(|| database.to_owned()),

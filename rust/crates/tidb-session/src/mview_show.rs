@@ -425,11 +425,13 @@ impl Session {
             .map(crate::mview_refresh::datum_text)
             .unwrap_or_default();
         sys_sql(&mut sys, "SET @@SESSION.tidb_mview_enable = ON", &[])?;
+        sys.vars.in_mview_maintenance = true;
         let outcome = sys_sql(&mut sys, "BEGIN", &[]).and_then(|_| {
             let start_ts = sys.node_conn().explicit_start_ts().filter(|&ts| ts != 0).ok_or_else(|| plain("invalid transaction start ts"))?;
             body(&mut sys, start_ts)
         });
         let _ = sys_sql(&mut sys, "ROLLBACK", &[]);
+        sys.vars.in_mview_maintenance = false;
         let _ = sys_sql(&mut sys, "SET @@SESSION.tidb_mview_enable = %?", &[SqlArg::String(original.as_bytes())]);
         outcome
     }
