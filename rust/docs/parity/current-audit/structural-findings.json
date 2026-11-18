@@ -2,8 +2,8 @@
   "date": "2026-11-18",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 22,
-    "open": 21,
+    "unresolved": 23,
+    "open": 22,
     "partial": 1
   },
   "findings": [
@@ -182,9 +182,17 @@
       "finding": "Internal HTTP clients use the operating system's proxy settings. hyper-util's `client-proxy-system` is enabled through feature unification (aws-smithy), so a `reqwest` client built without `.no_proxy()` reads the macOS / Windows system proxy. Go's `util.InternalHTTPClient` uses `http.DefaultTransport` (environment variables only) or, with cluster TLS, a bare `http.Transport` with no proxy. Observed on macOS with a system proxy at 127.0.0.1:7897: `SHOW CONFIG WHERE name = 'log.level'` is empty with warning `request http://10.0.0.8:20200/config failed: 502 Bad Gateway`, where Go returns the row. `tidb-br` `conn.rs`, `import_store.rs` and the JSON report client opt out with `.no_proxy()`; `cluster_config.rs`, `metrics_reader.rs`, `tiflash_replica_manager.rs`, `cluster_http.rs` and `node_status.rs` do not. The opt-outs disagree because there is no counterpart of Go's one `util.InternalHTTPClient`: about a dozen call sites each build their own `reqwest` client, and the PD HTTP calls (`/pd/api/v1/...` in `tidb-ddl`, `tidb-domain`, `tidb-domain-infosync`, `tidb-executor`, `tidb-server`) are made ad hoc instead of through one client as Go's `pdhttp.Client` does. [2026-11-18 probes](structural-audit-2026-11-18.md)",
       "rust_evidence": "`rust/crates/tidb-executor/src/cluster_config.rs`, `metrics_reader.rs`, `rust/crates/tidb-ddl/src/tiflash_replica_manager.rs`, `rust/crates/tidb-store-driver-txn/src/cluster_http.rs`, `rust/crates/tidb-server/src/node_status.rs`, `rust/Cargo.lock` (`system-configuration` under `hyper-util`)",
       "go_owner": "`pkg/util/misc.go` (`InternalHTTPClient`, `initInternalClient`), `pkg/executor/memtable_reader.go` (`fetchClusterConfig`)"
+    },
+    {
+      "id": "E37",
+      "status": "open",
+      "group": "Executor and SQL surface",
+      "finding": "`SHOW STATS_HISTOGRAMS` on a partitioned table under dynamic prune mode lists the logical table's `global` rows (every column and global index, `allEvicted`) after `ANALYZE`; Go master lists only the per-partition rows: `fetchShowStatsHistogram` appends `global` through `h.GetPhysicalTableStats(tbl.ID, tbl)`, whose answer is still `Pseudo` (skipped by `appendTableForStatsHistograms`), even 8 s after the ANALYZE. The difference is in which table entries the stats cache holds, not in the analyzed statistics (`mysql.stats_histograms` / `stats_buckets` / `stats_top_n` match row for row). Probe: `tidb-wt/tools/xtake/evicted_wait.sql`, a hash-partitioned table with a global unique and a global non-unique index, `ANALYZE ... WITH 2 BUCKETS, 1 TOPN`, then `SHOW STATS_HISTOGRAMS`.",
+      "rust_evidence": "`rust/crates/tidb-executor/src` SHOW STATS_HISTOGRAMS, the stats cache's table entries (`tidb-stats-handle`)",
+      "go_owner": "`pkg/executor/show_stats.go` (`fetchShowStatsHistogram`, `appendTableForStatsHistograms`), `pkg/statistics/handle/cache` (`GetPhysicalTableStats`)"
     }
   ],
-  "unresolved": 22,
-  "open": 21,
+  "unresolved": 23,
+  "open": 22,
   "partial": 1
 }
