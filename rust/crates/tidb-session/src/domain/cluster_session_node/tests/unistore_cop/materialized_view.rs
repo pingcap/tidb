@@ -84,10 +84,26 @@ fn go_master_mview_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserStore>, S
     (stack, users, session)
 }
 
-fn replay_on(stack: UnistoreClusterStack, mut session: Session, capture: &str) -> (UnistoreClusterStack, Session) {
+fn replay_on(stack: UnistoreClusterStack, session: Session, capture: &str) -> (UnistoreClusterStack, Session) {
+    replay_on_with_ids(stack, session, capture, &[])
+}
+
+/// [`replay_on`] where Go's answers carry table IDs: each `(go_id, schema,
+/// table)` the node's catalog resolves reads as this node's ID.
+fn replay_on_with_ids(
+    stack: UnistoreClusterStack,
+    mut session: Session,
+    capture: &str,
+    ids: &[(i64, &str, &str)],
+) -> (UnistoreClusterStack, Session) {
     let mut mismatches = Vec::new();
     for line in capture.lines() {
-        let (sql, go): (String, String) = serde_json::from_str(line).expect("a captured statement");
+        let (sql, mut go): (String, String) = serde_json::from_str(line).expect("a captured statement");
+        for &(go_id, schema, table) in ids {
+            if let Some((_, info)) = stack.factory.catalog_snapshot().table_info_by_name(schema, table) {
+                go = go.replace(&format!("\"{go_id}\""), &format!("\"{}\"", info.read().id));
+            }
+        }
         let mut rust = answer(&mut session, &sql);
         // A capture taken with `qj_ok.py` records the OK packet's affected
         // rows and info message (`OK <rows> <message>`).
@@ -1069,4 +1085,73 @@ fn cancel_materialized_view_refresh_job_as_go_master() {
         assert_eq!(answer(&mut root, &format!("refresh materialized view mv_refresh_cancel_job {mode}")).get(..2), Some("OK"), "{mode}");
         assert_eq!(answer(&mut root, "select * from mv_refresh_cancel_job order by a"), r#"RS:[["1","15","2"],["2","7","1"]]"#, "{mode}");
     }
+}
+
+/// Go master's materialized view SHOW forms (`testdata/mview_show_go.jsonl`,
+/// IDs mapped by name): the lists with their LIKE extractor and WHERE over
+/// their own columns, SHOW CREATE MATERIALIZED VIEW (LOG), and the
+/// REMAIN_LOGS / WAIT_PURGE counts around refreshes and purges, with Go's
+/// errors for each wrong target.
+#[test]
+fn materialized_view_show_forms_answer_as_go_master() {
+    let (stack, _users, session) = go_master_mview_stack();
+    replay_on_with_ids(
+        stack,
+        session,
+        include_str!("../../../../../testdata/mview_show_go.jsonl"),
+        &[(131, "e29", "t"), (133, "e29", "u"), (135, "e29", "$mlog$t"), (137, "e29", "$mlog$u"), (139, "e29", "mv"), (141, "e29", "amv")],
+    );
+}
+
+/// Go master's privileges on the materialized view SHOW forms, captured with
+/// a second user (`testdata/mview_show_privileges_go.jsonl`, `low: ` lines
+/// run as that user, IDs mapped by name): the lists keep the objects the
+/// user holds any view privilege on, SHOW CREATE MATERIALIZED VIEW needs
+/// SELECT then SHOW VIEW, and the log forms need SHOW VIEW (and SELECT) on
+/// the log.
+#[test]
+fn materialized_view_show_privileges_as_go_master() {
+    let (stack, users, mut root) = go_master_mview_stack();
+    let ids = [("131", "t"), ("133", "u"), ("135", "$mlog$t"), ("137", "$mlog$u"), ("139", "mv"), ("141", "mv2")];
+    let mut low: Option<Session> = None;
+    let mut mismatches = Vec::new();
+    for line in include_str!("../../../../../testdata/mview_show_privileges_go.jsonl").lines() {
+        let (sql, mut go): (String, String) = serde_json::from_str(line).unwrap();
+        for (go_id, table) in ids {
+            if let Some((_, info)) = stack.factory.catalog_snapshot().table_info_by_name("e29", table) {
+                go = go.replace(&format!("\"{go_id}\""), &format!("\"{}\"", info.read().id));
+            }
+        }
+        let rust = match sql.strip_prefix("low: ") {
+            Some(sql) => {
+                let session = low.get_or_insert_with(|| {
+                    let identity = users
+                        .authenticate_native(
+                            "low",
+                            "127.0.0.1",
+                            &super::super::node_fixture::SALT,
+                            &super::super::node_fixture::scramble(b"abc", &super::super::node_fixture::SALT),
+                        )
+                        .expect("low logs in");
+                    let mut session = stack
+                        .factory
+                        .open_session(super::super::node_fixture::session_context_with_identity(2160, identity))
+                        .unwrap();
+                    assert_eq!(answer(&mut session, "use e29"), "OK");
+                    session
+                });
+                answer(session, sql)
+            }
+            None => answer(&mut root, &sql),
+        };
+        let rows = |answer: &str| answer.strip_prefix("RS:").map(|rows| serde_json::from_str::<serde_json::Value>(rows).unwrap());
+        let same = match (rows(&rust), rows(&go)) {
+            (Some(rust), Some(go)) => rust == go,
+            _ => rust == go,
+        };
+        if !same {
+            mismatches.push(format!("{sql}\n  go:   {go}\n  rust: {rust}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }

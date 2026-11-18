@@ -274,7 +274,7 @@ fn acquire_materialized_view_log_purge_lock(
 /// Go master `collectDependentMViewIDsForMLogPurge`: the base table's
 /// public views, and the views a running CREATE MATERIALIZED VIEW is
 /// building over the log.
-fn collect_dependent_mview_ids_for_mlog_purge(
+pub(crate) fn collect_dependent_mview_ids_for_mlog_purge(
     session: &mut Session,
     base_table: &tidb_model::TableInfo,
     mlog_id: i64,
@@ -327,7 +327,7 @@ fn build_in_list(ids: &[i64]) -> String {
 
 /// Go master `calcMaterializedViewLogSafePurgeTSO`: the purge's start TSO,
 /// lowered to the least last-read TSO of the dependent views.
-fn calc_materialized_view_log_safe_purge_tso(
+pub(crate) fn calc_materialized_view_log_safe_purge_tso(
     session: &mut Session,
     base_schema: &str,
     base_table: &str,

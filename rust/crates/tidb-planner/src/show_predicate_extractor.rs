@@ -114,7 +114,10 @@ impl ShowBaseExtractor {
     pub fn explain_info(&self) -> String {
         let key = match self.tp {
             ShowStmtType::Variables | ShowStmtType::Columns => "field",
-            ShowStmtType::Tables | ShowStmtType::TableStatus => "table",
+            ShowStmtType::Tables
+            | ShowStmtType::MaterializedViews
+            | ShowStmtType::MaterializedViewLogs
+            | ShowStmtType::TableStatus => "table",
             ShowStmtType::Databases => "database",
             ShowStmtType::Collation => "collation",
             ShowStmtType::StatsHealthy => "db_name",

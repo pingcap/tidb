@@ -169,6 +169,14 @@ impl tidb_executor::show::exec::ShowExec for Session {
         self.show_import_groups_rows(group_key)
     }
 
+    fn fetch_show_materialized_view(
+        &mut self,
+        contents: &tidb_planner_core_operator_logicalop::ShowContents,
+        extractor: tidb_executor::show::Extractor<'_>,
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        self.show_materialized_view_rows(contents, extractor)
+    }
+
     /// Go `ShowExec.fetchShowTableStatus`: query TABLES on the issuer,
     /// using its transaction timestamp unless tidb_snapshot overrides it.
     fn show_table_status_rows(&mut self, database: &str) -> Result<Vec<Vec<Datum>>, DriverError> {

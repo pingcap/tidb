@@ -116,6 +116,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         });
     }
 
+    /// Go master `materializedViewLogNameForBaseTable`, lowercased: the log
+    /// of the base table as the schema spells it, else of the written name.
+    fn materialized_view_log_name_for_base_table(&self, schema_l: &str, show: &ShowStmt) -> String {
+        let written = show.table.as_ref().map(|table| table.last().cloned().unwrap_or_default()).unwrap_or_default();
+        let base = self
+            .source
+            .find_table(schema_l, &tidb_hack::go_to_lower(&written))
+            .and_then(|table| table.table_info.as_ref().map(|info| info.read().name.clone()))
+            .unwrap_or_else(|| tidb_ast::CiString::new(&written));
+        tidb_model::table::materialized_view_log_table_name(&base).lowercase().to_owned()
+    }
+
     /// Go `buildShow`: a `LogicalShow` with `buildShowSchema`'s columns, under
     /// a selection for LIKE (unless an extractor claimed it) and WHERE, a
     /// limit, a projection when anything was stacked, and a sort for SHOW
@@ -137,9 +149,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let (schema_l, table_l) = table_names(show);
 
         match show.tp {
-            T::Databases | T::Variables | T::Tables | T::Columns | T::TableStatus | T::Collation
-            | T::Affinity => {
-                if matches!(show.tp, T::Tables | T::TableStatus) && show.db_name.is_empty() {
+            T::Databases | T::Variables | T::Tables | T::MaterializedViews | T::MaterializedViewLogs
+            | T::Columns | T::TableStatus | T::Collation | T::Affinity => {
+                if matches!(show.tp, T::Tables | T::TableStatus | T::MaterializedViews | T::MaterializedViewLogs)
+                    && show.db_name.is_empty()
+                {
                     return Err(PlanError::from(
                         tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
                     ));
@@ -200,6 +214,43 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 "",
                 VisitAuthError::SpecificAccessDenied { privilege: "CONFIG" },
             ),
+            // Go master: SHOW VIEW and SELECT on the base table's log.
+            T::CreateMaterializedViewLog => {
+                let mlog = self.materialized_view_log_name_for_base_table(&schema_l, show);
+                for (privilege, command) in [(tidb_mysql::ShowViewPriv, "SHOW VIEW"), (tidb_mysql::SelectPriv, "SELECT")] {
+                    self.append_show_visit(
+                        privilege,
+                        &schema_l,
+                        &mlog,
+                        VisitAuthError::TableAccessDenied { command, table: mlog.clone() },
+                    );
+                }
+            }
+            T::CreateMaterializedView => {
+                for (privilege, command) in [(tidb_mysql::SelectPriv, "SELECT"), (tidb_mysql::ShowViewPriv, "SHOW VIEW")] {
+                    self.append_show_visit(
+                        privilege,
+                        &schema_l,
+                        &table_l,
+                        VisitAuthError::TableAccessDenied { command, table: table_l.clone() },
+                    );
+                }
+            }
+            T::MaterializedViewRemainLogs => self.append_show_visit(
+                tidb_mysql::ShowViewPriv,
+                &schema_l,
+                &table_l,
+                VisitAuthError::TableAccessDenied { command: "SHOW VIEW", table: table_l.clone() },
+            ),
+            T::MaterializedViewLogWaitPurge => {
+                let mlog = self.materialized_view_log_name_for_base_table(&schema_l, show);
+                self.append_show_visit(
+                    tidb_mysql::ShowViewPriv,
+                    &schema_l,
+                    &mlog,
+                    VisitAuthError::TableAccessDenied { command: "SHOW VIEW", table: mlog.clone() },
+                );
+            }
             T::CreateView => {
                 self.append_show_visit(
                     tidb_mysql::SelectPriv,

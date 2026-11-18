@@ -516,5 +516,11 @@ pub fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
             | T::ImportJobs
             | T::ImportGroups
             | T::TableNextRowId
+            | T::MaterializedViews
+            | T::MaterializedViewLogs
+            | T::MaterializedViewRemainLogs
+            | T::MaterializedViewLogWaitPurge
+            | T::CreateMaterializedView
+            | T::CreateMaterializedViewLog
     )
 }

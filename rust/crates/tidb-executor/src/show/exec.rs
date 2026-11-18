@@ -444,6 +444,17 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         Ok(Vec::new())
     }
 
+    /// Go master `ShowExec.fetchAll`'s materialized view arms (SHOW
+    /// MATERIALIZED VIEWS / VIEW LOGS / CREATE MATERIALIZED VIEW (LOG) /
+    /// REMAIN_LOGS / WAIT_PURGE), which read the logs on a system session.
+    fn fetch_show_materialized_view(
+        &mut self,
+        contents: &tidb_planner_core_operator_logicalop::ShowContents,
+        _extractor: crate::show::Extractor<'_>,
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        Err(DriverError::unsupported(format!("SHOW {:?} on this tier", contents.tp)))
+    }
+
     /// Go `ShowExec.fetchShowImportGroups`.
     fn fetch_show_import_groups(&mut self, _group_key: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
         Ok(Vec::new())
@@ -475,6 +486,12 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             // `ShowEvents` / `ShowProfiles` / `ShowFunctionStatus` arms
             // answer nothing; `fetchShowOpenTables` answers the empty set;
             // `fetchShowPlugins` lists an empty `plugin.GetAll()`.
+            T::MaterializedViews
+            | T::MaterializedViewLogs
+            | T::MaterializedViewRemainLogs
+            | T::MaterializedViewLogWaitPurge
+            | T::CreateMaterializedView
+            | T::CreateMaterializedViewLog => self.fetch_show_materialized_view(contents, extractor)?,
             T::ImportJobs => self.fetch_show_import_jobs(contents.import_job_id)?,
             T::ImportGroups => self.fetch_show_import_groups(&contents.import_group_key)?,
             T::ProcedureStatus

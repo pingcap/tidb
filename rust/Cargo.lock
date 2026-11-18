@@ -9666,6 +9666,7 @@ dependencies = [
  "tidb-planner",
  "tidb-planner-cardinality",
  "tidb-planner-core-metrics",
+ "tidb-planner-core-operator-logicalop",
  "tidb-planner-core-operator-physicalop",
  "tidb-planner-extstore",
  "tidb-plannererrors",
