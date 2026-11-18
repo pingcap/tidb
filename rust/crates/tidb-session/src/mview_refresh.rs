@@ -38,6 +38,9 @@ const REFRESH_HIST_STATUS_RUNNING: &str = "running";
 const REFRESH_HIST_STATUS_SUCCESS: &str = "success";
 const REFRESH_HIST_STATUS_FAILED: &str = "failed";
 
+/// Go master `mvRefreshShadowTablePrefix`.
+const MV_REFRESH_SHADOW_TABLE_PREFIX: &str = "__mv_shadow_";
+
 fn plain(message: impl Into<String>) -> DriverError {
     DriverError::Mysql(MysqlError::unknown(message.into()))
 }
@@ -440,20 +443,28 @@ fn validate_refresh_materialized_view_stmt(s: &RefreshMaterializedViewStmt) -> R
 }
 
 impl Session {
-    /// Go master `RefreshMaterializedViewExec.Next` for COMPLETE IN PLACE.
-    pub(crate) fn refresh_materialized_view(&mut self, s: &RefreshMaterializedViewStmt) -> Result<StmtOutput, DriverError> {
+    /// Go master `RefreshMaterializedViewExec.Next` for COMPLETE IN PLACE and
+    /// COMPLETE OUT OF PLACE; `sql` is the statement's text (the cutover
+    /// job's query).
+    pub(crate) fn refresh_materialized_view(
+        &mut self,
+        s: &RefreshMaterializedViewStmt,
+        sql: &str,
+    ) -> Result<StmtOutput, DriverError> {
         let method = validate_refresh_materialized_view_stmt(s)?;
         if s.observe_type != RefreshMaterializedViewObserveType::None {
             return Err(DriverError::unsupported("REFRESH MATERIALIZED VIEW DRY RUN / WITH PROFILE on this node"));
         }
-        if s.mode != RefreshMaterializedViewMode::CompleteInPlace {
+        if !matches!(s.mode, RefreshMaterializedViewMode::CompleteInPlace | RefreshMaterializedViewMode::CompleteOutOfPlace) {
             return Err(DriverError::unsupported(format!("REFRESH MATERIALIZED VIEW {method} on this node")));
         }
         let refresh_start = chrono::Local::now();
         let (schema, info) = self.resolve_refresh_materialized_view_target(s)?;
         let mview = info.materialized_view.as_ref().expect("resolved as a view").read().clone();
         self.check_refresh_materialized_view_base_table_select(&mview)?;
-        if info.materialized_view_base.as_ref().is_some_and(|base| base.read().mlog_id != 0) {
+        if s.mode == RefreshMaterializedViewMode::CompleteInPlace
+            && info.materialized_view_base.as_ref().is_some_and(|base| base.read().mlog_id != 0)
+        {
             return Err(plain(format!(
                 "refresh materialized view complete IN PLACE is not supported for materialized view {schema}.{} with a materialized view log",
                 info.name.original()
@@ -462,7 +473,9 @@ impl Session {
         let name = info.name.original().to_owned();
         let mut refresh_job_id = 0u64;
         let mut hist_inserted = false;
-        let result = self.refresh_complete_in_place(
+        let result = self.refresh_complete(
+            s.mode,
+            sql,
             &schema,
             &info,
             &mview,
@@ -602,11 +615,14 @@ impl Session {
         Ok(())
     }
 
-    /// Go master `executeRefreshMaterializedView`'s path for COMPLETE IN
-    /// PLACE, from the system session to the history row.
+    /// Go master `executeRefreshMaterializedView` for the COMPLETE modes:
+    /// the refresh system session, the advisory lock and its checks, then
+    /// the mode's path to the history row.
     #[allow(clippy::too_many_arguments)]
-    fn refresh_complete_in_place(
+    fn refresh_complete(
         &mut self,
+        mode: RefreshMaterializedViewMode,
+        sql: &str,
         schema: &str,
         info: &tidb_model::TableInfo,
         mview: &tidb_model::table::MaterializedViewInfo,
@@ -638,18 +654,38 @@ impl Session {
                     "another refresh or materialized view log creation is running for materialized view {schema}.{name}, please retry later: materialized view refresh advisory lock conflict"
                 )));
             }
-            let locked = self.recheck_refresh_target_under_lock(schema, &name, mview_id).and_then(|()| {
+            let locked = self.recheck_refresh_target_under_lock(schema, &name, mview_id, mode).and_then(|()| {
+                // Go: CREATE publishes the input logs; a missing
+                // registration is metadata corruption.
+                if read_refresh_source_ids(&mut refresh, mview_id)?.is_empty() {
+                    return Err(plain(format!(
+                        "refresh materialized view: input log records are missing for {schema}.{name}"
+                    )));
+                }
+                if mode == RefreshMaterializedViewMode::CompleteOutOfPlace {
+                    return self.refresh_complete_out_of_place_locked(
+                        &mut refresh,
+                        sql,
+                        schema,
+                        info,
+                        mview,
+                        method,
+                        refresh_start,
+                        refresh_job_id,
+                        hist_inserted,
+                    );
+                }
                 self.refresh_complete_in_place_locked(
-                &mut refresh,
-                schema,
-                &name,
-                mview_id,
-                mview,
-                method,
-                refresh_start,
-                refresh_job_id,
-                hist_inserted,
-            )
+                    &mut refresh,
+                    schema,
+                    &name,
+                    mview_id,
+                    mview,
+                    method,
+                    refresh_start,
+                    refresh_job_id,
+                    hist_inserted,
+                )
             });
             // Go master `releaseMVRefreshAdvisoryLockFully`: the lock is held
             // exactly once.
@@ -684,7 +720,13 @@ impl Session {
     /// gained a log. Go first waits for this node's schema to reach the
     /// store's version (`ensureMVRefreshSchemaVersion`), which this port does
     /// not do.
-    fn recheck_refresh_target_under_lock(&self, schema: &str, name: &str, mview_id: i64) -> Result<(), DriverError> {
+    fn recheck_refresh_target_under_lock(
+        &self,
+        schema: &str,
+        name: &str,
+        mview_id: i64,
+        mode: RefreshMaterializedViewMode,
+    ) -> Result<(), DriverError> {
         let catalog = self.refresh_latest_info_schema();
         let Some(current) = catalog.table_info_by_id(mview_id) else {
             return Err(DriverError::Mysql(MysqlError::from_terror(
@@ -692,7 +734,9 @@ impl Session {
                     .gen_with_stack_by_args(&[schema.to_owned().into(), name.to_owned().into()]),
             )));
         };
-        if current.read().materialized_view_base.as_ref().is_some_and(|base| base.read().mlog_id != 0) {
+        if mode == RefreshMaterializedViewMode::CompleteInPlace
+            && current.read().materialized_view_base.as_ref().is_some_and(|base| base.read().mlog_id != 0)
+        {
             return Err(plain(format!(
                 "refresh materialized view complete IN PLACE is not supported for materialized view {schema}.{name} with a materialized view log"
             )));
@@ -713,11 +757,6 @@ impl Session {
         refresh_job_id: &mut u64,
         hist_inserted: &mut bool,
     ) -> Result<StmtOutput, DriverError> {
-        // Go: CREATE publishes the input logs; a missing registration is
-        // metadata corruption.
-        if read_refresh_source_ids(refresh, mview_id)?.is_empty() {
-            return Err(plain(format!("refresh materialized view: input log records are missing for {schema}.{name}")));
-        }
         sys_sql(refresh, "BEGIN PESSIMISTIC", &[])?;
         let mut txn_finished = false;
         let result = (|| {
@@ -784,33 +823,32 @@ impl Session {
             let data = (|| {
                 let view_args = [SqlArg::String(schema.as_bytes()), SqlArg::String(name.as_bytes())];
                 sys_sql(refresh, "DELETE FROM %n.%n", &view_args)?;
-                let delete_rows = sys_sql(refresh, "SELECT ROW_COUNT()", &[])?
-                    .first()
-                    .and_then(|row| row.first())
-                    .and_then(datum_i64)
-                    .unwrap_or_default()
-                    .max(0);
+                // Go `StmtCtx.AffectedRows()` of each statement.
+                let delete_rows = i64::try_from(refresh.affected_rows()).unwrap_or(i64::MAX);
                 let prefix = tidb_sqlescape::escape_sql_text("INSERT INTO %n.%n ", &view_args)
                     .map_err(|error| plain(error.to_string()))?;
                 sys_sql(refresh, &format!("{prefix}{}", mview.sql_content), &[])?;
+                let insert_rows = i64::try_from(refresh.affected_rows()).unwrap_or(i64::MAX);
                 let read_tso = session_json_u64(refresh, "tidb_last_query_info", "for_update_ts")
                     .ok_or_else(|| plain("refresh materialized view: invalid refresh read tso"))?;
-                let insert_rows = sys_sql(refresh, "SELECT ROW_COUNT()", &[])?
-                    .first()
-                    .and_then(|row| row.first())
-                    .and_then(datum_i64)
-                    .unwrap_or_default()
-                    .max(0);
                 Ok::<_, DriverError>((delete_rows, insert_rows, read_tso))
             })();
             let (delete_rows, insert_rows, read_tso) = match data {
                 Ok(data) => data,
                 Err(error) => return Err(finalize_failure(&mut hist, refresh, &mut txn_finished, error)),
             };
+            if let Some(value) =
+                tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorAfterDataChanges")
+            {
+                let message = value
+                    .as_string()
+                    .map_or_else(|| "mock refresh materialized view error after data changes".to_owned(), str::to_owned);
+                return Err(finalize_failure(&mut hist, refresh, &mut txn_finished, plain(message)));
+            }
             // Go master `resolveMVCompleteRefreshSources` and the source
             // baseline replaced when the logs changed.
             let persisted = (|| {
-                let confirmed = self.resolve_mv_complete_refresh_sources(mview_id)?;
+                let confirmed = refresh_source_log_ids(&self.resolve_mv_complete_refresh_sources(mview_id, read_tso)?);
                 let registered = read_refresh_source_ids(refresh, mview_id)?;
                 if registered != confirmed {
                     replace_refresh_source_ids(refresh, mview_id, &confirmed)?;
@@ -859,28 +897,302 @@ impl Session {
         result
     }
 
-    /// Go master `resolveMVCompleteRefreshSources` over the latest schema:
-    /// the sorted, distinct logs of the view's sources (`RefreshSourceLogIDs`).
-    fn resolve_mv_complete_refresh_sources(&self, mview_id: i64) -> Result<Vec<i64>, DriverError> {
-        let catalog = self.refresh_latest_info_schema();
+    /// Go master `executeRefreshMaterializedView`'s COMPLETE OUT OF PLACE
+    /// branch: the job ID from the store (`allocJobID`), the running history
+    /// row, the shadow build and cutover, then the finalized history row.
+    #[allow(clippy::too_many_arguments)]
+    fn refresh_complete_out_of_place_locked(
+        &mut self,
+        refresh: &mut Session,
+        sql: &str,
+        schema: &str,
+        info: &tidb_model::TableInfo,
+        mview: &tidb_model::table::MaterializedViewInfo,
+        method: &str,
+        refresh_start: chrono::DateTime<chrono::Local>,
+        refresh_job_id: &mut u64,
+        hist_inserted: &mut bool,
+    ) -> Result<StmtOutput, DriverError> {
+        let (mview_id, name) = (info.id, info.name.original().to_owned());
+        let expected = read_refresh_info_snapshot(refresh, mview_id)?;
+        *refresh_job_id = session_current_tso(refresh)
+            .map_err(|error| annotate(&error, "refresh materialized view: failed to allocate refresh job id"))?;
+        let job_id = *refresh_job_id;
+        let mut hist = self.open_refresh_system_session()?;
+        insert_refresh_hist_running(&mut hist, job_id, mview_id, schema, &name, method, &hist_time(refresh_start))?;
+        *hist_inserted = true;
+        let build = self.execute_refresh_materialized_view_complete_out_of_place(refresh, sql, schema, info, mview, expected);
+        let (build_read_tso, inserted) = match build {
+            Ok(build) => build,
+            Err(error) => {
+                // Go `finalizeFailure`.
+                let reason = driver_message(&error);
+                report_mv_refresh_failed(&mut hist, mview.alert_refresh_failed, mview_id, schema, &name);
+                if let Err(hist_error) = finalize_refresh_hist_with_retry(
+                    &mut hist,
+                    job_id,
+                    mview_id,
+                    REFRESH_HIST_STATUS_FAILED,
+                    None,
+                    None,
+                    refresh_start,
+                    chrono::Local::now(),
+                    Some(&reason),
+                ) {
+                    return Err(annotate(
+                        &hist_error,
+                        &format!("refresh materialized view: failed to finalize refresh history after error {reason}"),
+                    ));
+                }
+                return Err(error);
+            }
+        };
+        // Go `finalizeSuccess`.
+        if let Err(error) = finalize_refresh_hist_with_retry(
+            &mut hist,
+            job_id,
+            mview_id,
+            REFRESH_HIST_STATUS_SUCCESS,
+            Some(build_read_tso),
+            None,
+            refresh_start,
+            chrono::Local::now(),
+            None,
+        ) {
+            self.append_warning(
+                tidb_context::WarningLevel::Warning,
+                tidb_errno::errcode::ErrUnknown,
+                format!(
+                    "refresh materialized view: refresh committed but failed to finalize refresh history: {}",
+                    driver_message(&error)
+                ),
+            );
+        }
+        if let Err(error) = delete_refresh_alert_state(&mut hist, mview_id) {
+            self.append_warning(
+                tidb_context::WarningLevel::Warning,
+                tidb_errno::errcode::ErrUnknown,
+                format!("refresh materialized view: refresh committed but failed to delete refresh alert: {}", driver_message(&error)),
+            );
+        }
+        // Go `newMVRefreshStmtResultFromWriteCounts(shadow load rows, 0, 0)`.
+        self.statement_message = format!("Rows inserted: {inserted}  Updated: 0  Deleted: 0");
+        Ok(StmtOutput::Affected(u64::try_from(inserted).unwrap_or_default()))
+    }
+
+    /// Go master `executeRefreshMaterializedViewCompleteOutOfPlace`: the
+    /// shadow table (`CreateMaterializedViewShadowTable`), its build on its own
+    /// system session (Go's TiKV store builds by IMPORT INTO; this port runs
+    /// the INSERT path everywhere, as the initial build does), the build read
+    /// TSO, the sources at that TSO and the cutover job; a failure after the
+    /// shadow table exists drops it (`DropMaterializedViewShadowTable`).
+    /// Answers the build read TSO and the rows loaded.
+    fn execute_refresh_materialized_view_complete_out_of_place(
+        &mut self,
+        refresh: &mut Session,
+        sql: &str,
+        schema: &str,
+        info: &tidb_model::TableInfo,
+        mview: &tidb_model::table::MaterializedViewInfo,
+        expected: RefreshInfoSnapshot,
+    ) -> Result<(u64, i64), DriverError> {
+        use tidb_executor::stmt_ctx_build::ResetContextOfStmt as _;
+        let name = info.name.original().to_owned();
+        // Go `domain.GetDomain(e.Ctx()).InfoSchema()`: the domain's latest.
+        let mut build = self.open_refresh_system_session()?;
+        let current = build.refresh_latest_info_schema().table_info_by_id(info.id).map(|table| table.read().clone());
+        let Some(current) = current else {
+            return Err(DriverError::Mysql(MysqlError::from_terror(
+                &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                    .gen_with_stack_by_args(&[schema.to_owned().into(), name.clone().into()]),
+            )));
+        };
+        if current.materialized_view_base.as_ref().is_some_and(|base| {
+            let base = base.read();
+            base.mlog_id != 0 || !base.mview_ids.is_empty()
+        }) {
+            return Err(plain(format!(
+                "refresh materialized view complete OUT OF PLACE is not supported for materialized view {schema}.{name} with a materialized view log or dependent materialized view"
+            )));
+        }
+        let ddl = self
+            .domain_services()
+            .map(|services| std::sync::Arc::clone(&services.ddl))
+            .ok_or_else(|| DriverError::unsupported("the session has no DDL to refresh out of place with"))?;
+        let vars = refresh_session_vars(self, mview);
+        let names: Vec<String> = vars.iter().map(|(name, _)| name.clone()).collect();
+        let original = read_session_vars(&mut build, &names)?;
+        let restore: Vec<(String, String)> = names.into_iter().zip(original).collect();
+        let shadow_name = format!(
+            "{MV_REFRESH_SHADOW_TABLE_PREFIX}{}_{}",
+            info.id,
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let mut shadow_needs_cleanup = false;
+        let outcome = (|| {
+            set_session_vars(&mut build, &vars)?;
+            sys_sql(&mut build, "USE %n", &[SqlArg::String(schema.as_bytes())])?;
+            // Go `buildMVRefreshOutOfPlaceShadowTableInfo`.
+            let mut shadow = tidb_ddl_build::table_info_build::build_table_info_with_like(
+                schema,
+                &shadow_name,
+                info,
+                tidb_ast::CreateTableTemporary::None,
+                false,
+            )
+            .map_err(|error| DriverError::Mysql(error.to_mysql_error()))?;
+            shadow.materialized_view_shadow = Some(tidb_model::GoShared::new(tidb_model::table::MaterializedViewShadowInfo {
+                source_mview_id: info.id,
+                ..Default::default()
+            }));
+            ddl.create_materialized_view_shadow_table(info.db_id, schema, shadow, &refresh.ddl_statement_context())?;
+            shadow_needs_cleanup = true;
+            // Go `buildMVRefreshOutOfPlaceBuildSQL` (the INSERT path).
+            if mview.sql_content.is_empty() {
+                return Err(plain("refresh materialized view: invalid select sql"));
+            }
+            let prefix = tidb_sqlescape::escape_sql_text(
+                "INSERT INTO %n.%n ",
+                &[SqlArg::String(schema.as_bytes()), SqlArg::String(shadow_name.as_bytes())],
+            )
+            .map_err(|error| plain(error.to_string()))?;
+            sys_sql(&mut build, &format!("{prefix}{}", mview.sql_content), &[])?;
+            // Go `buildSessVars.StmtCtx.AffectedRows()` of the load.
+            let inserted = i64::try_from(build.affected_rows()).unwrap_or(i64::MAX);
+            // Go `getMVRefreshOutOfPlaceBuildReadTSO`.
+            let build_read_tso = sys_sql(
+                &mut build,
+                "SELECT COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(@@tidb_last_query_info, '$.start_ts')) AS UNSIGNED), CAST(0 AS UNSIGNED))",
+                &[],
+            )?
+            .first()
+            .and_then(|row| row.first())
+            .and_then(datum_u64)
+            .ok_or_else(|| plain("refresh materialized view complete OUT OF PLACE: cannot fetch build read tso"))?;
+            if build_read_tso == 0 {
+                return Err(plain("refresh materialized view complete OUT OF PLACE: invalid build read tso"));
+            }
+            if let Some(value) = tidb_failpoint::eval(
+                "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewOutOfPlaceBuildErrorAfterLoadShadow",
+            ) {
+                return Err(plain(value.as_string().map_or_else(
+                    || "mock refresh materialized view out-of-place build error after load shadow".to_owned(),
+                    str::to_owned,
+                )));
+            }
+            let sources = self.resolve_mv_complete_refresh_sources(info.id, build_read_tso)?;
+            // Go `getMVRefreshOutOfPlaceShadowTableID`.
+            // Go `buildSctx.GetLatestInfoSchema()`.
+            let shadow_table_id = build
+                .refresh_latest_info_schema()
+                .table_info_by_name(schema, &shadow_name)
+                .map(|(_, table)| table.read().id)
+                .ok_or_else(|| plain("refresh materialized view complete OUT OF PLACE: cannot resolve shadow table id"))?;
+            if shadow_table_id == 0 {
+                return Err(plain("refresh materialized view complete OUT OF PLACE: invalid shadow table id"));
+            }
+            // A manual refresh keeps the view's schedule
+            // (`deriveRuntimeMaterializedScheduleNextUnixSeconds` is for an
+            // internal one).
+            let args = tidb_model::RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs {
+                old_mview_id: info.id,
+                shadow_table_id,
+                build_read_tso,
+                build_sources: Some(sources),
+                expected_old_mview_revision: Some(info.revision),
+                expected_last_success_read_tso: expected.last_success_read_tso,
+                expected_last_success_read_tso_null: expected.last_success_read_tso_null,
+                next_refresh_unix_seconds: None,
+                should_update_next_refresh_unix_seconds: false,
+            };
+            let context = self.ddl_statement_context().with_ddl_query(sql);
+            ddl.refresh_materialized_view_complete_out_of_place_cutover(
+                info.db_id,
+                schema,
+                &tidb_hack::go_to_lower(&name),
+                args,
+                &context,
+            )?;
+            shadow_needs_cleanup = false;
+            Ok((build_read_tso, inserted))
+        })();
+        let outcome = match outcome {
+            Err(error) if shadow_needs_cleanup => {
+                let query = tidb_sqlescape::escape_sql_text(
+                    "DROP TABLE IF EXISTS %n.%n",
+                    &[SqlArg::String(schema.as_bytes()), SqlArg::String(shadow_name.as_bytes())],
+                )
+                .unwrap_or_default();
+                let context = build.ddl_statement_context().with_ddl_query(query);
+                match ddl.drop_materialized_view_shadow_table(schema, &shadow_name, &context) {
+                    Ok(_) => Err(error),
+                    Err(drop_error) => {
+                        tidb_logutil::bg_logger().warn(
+                            "failed to cleanup shadow table after out-of-place complete refresh error",
+                            &[
+                                tidb_log::Field::new("schema", tidb_log::Value::Str(schema.to_owned())),
+                                tidb_log::Field::new("mview", tidb_log::Value::Str(name.clone())),
+                                tidb_log::Field::new("shadowTable", tidb_log::Value::Str(shadow_name.clone())),
+                                tidb_log::Field::new("error", tidb_log::Value::Str(driver_message(&drop_error))),
+                            ],
+                        );
+                        Err(plain(format!(
+                            "{}: cleanup shadow table {schema}.{shadow_name} failed: {}",
+                            driver_message(&error),
+                            driver_message(&drop_error)
+                        )))
+                    }
+                }
+            }
+            other => other,
+        };
+        let _ = set_session_vars(&mut build, &restore);
+        outcome
+    }
+
+    /// Go master `resolveMVCompleteRefreshSources`: the view's sources and
+    /// their logs in the schema as of `read_tso` (`GetSnapshotInfoSchema`,
+    /// `mviewutil.ResolveRefreshSources`), sorted by table ID.
+    fn resolve_mv_complete_refresh_sources(
+        &self,
+        mview_id: i64,
+        read_tso: u64,
+    ) -> Result<Vec<tidb_model::MViewRefreshSource>, DriverError> {
+        let domain = self
+            .domain_services()
+            .and_then(|services| services.domain.upgrade())
+            .ok_or_else(|| DriverError::unsupported("the session has no domain to read a snapshot schema from"))?;
+        let catalog = crate::domain::cluster_session_node::get_snapshot_info_schema(&domain, read_tso)
+            .map_err(|error| annotate(&error, "refresh materialized view: cannot load computation snapshot schema"))?;
         let mview = catalog
             .table_info_by_id(mview_id)
             .and_then(|table| table.read().materialized_view.clone())
             .ok_or_else(|| plain(format!("refresh materialized view: target {mview_id} is missing from the computation schema")))?;
-        let mut ids = Vec::new();
+        let mut sources = Vec::new();
         for &id in mview.read().base_table_ids.iter() {
             let source = catalog
                 .table_info_by_id(id)
                 .ok_or_else(|| plain(format!("refresh materialized view: source {id} is missing from the computation schema")))?;
-            ids.push(source.read().materialized_view_base.as_ref().map_or(0, |base| base.read().mlog_id));
+            let source = source.read();
+            sources.push(tidb_model::MViewRefreshSource {
+                table_id: source.id,
+                mlog_id: source.materialized_view_base.as_ref().map_or(0, |base| base.read().mlog_id),
+            });
         }
-        if ids.is_empty() {
+        sources.sort_by_key(|source| source.table_id);
+        if sources.is_empty() {
             return Err(plain("refresh materialized view: source set is empty"));
         }
-        ids.sort_unstable();
-        ids.dedup();
-        Ok(ids)
+        Ok(sources)
     }
+}
+
+/// Go master `mviewutil.RefreshSourceLogIDs`: the sorted, distinct log set.
+fn refresh_source_log_ids(sources: &[tidb_model::MViewRefreshSource]) -> Vec<i64> {
+    let mut ids: Vec<i64> = sources.iter().map(|source| source.mlog_id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 /// Go master `allocJobID`: the store's current version, read as a fresh

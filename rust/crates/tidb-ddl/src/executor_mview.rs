@@ -1496,3 +1496,146 @@ pub(crate) fn alter_materialized_view_steps(
     }
     Ok(steps)
 }
+
+/// Go master `executor.CreateMaterializedViewShadowTable` up to
+/// `DoDDLJobWrapper`: the shadow table's create job, named for the refresh
+/// it serves (`REFRESH MATERIALIZED VIEW <schema>.<view> COMPLETE OUT OF
+/// PLACE` as its query) and sharing the source view.
+pub(crate) fn create_materialized_view_shadow_table_job(
+    catalog: &SessionExtendedInfoSchema,
+    schema_id: i64,
+    schema_name: &str,
+    shadow: tidb_model::TableInfo,
+    context: &dyn DdlSessionContext,
+) -> Result<crate::JobWrapper, MysqlError> {
+    let invalid = |message: &str| {
+        MysqlError::from_terror(&tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[message.to_owned().into()]))
+    };
+    let Some(source_mview_id) = shadow.materialized_view_shadow.as_ref().map(|info| info.read().source_mview_id) else {
+        return Err(invalid("create materialized view shadow table: invalid shadow metadata"));
+    };
+    if source_mview_id == 0 {
+        return Err(invalid("create materialized view shadow table: invalid source materialized view id"));
+    }
+    let schema_l = tidb_hack::go_to_lower(schema_name);
+    let involving = |table: &str, mode: tidb_model::InvolvingSchemaInfoMode| tidb_model::InvolvingSchemaInfo {
+        database: schema_l.clone().into(),
+        table: table.to_owned().into(),
+        mode,
+        ..tidb_model::InvolvingSchemaInfo::default()
+    };
+    let mut involving_schemas = vec![involving(shadow.name.lowercase(), tidb_model::InvolvingSchemaInfoMode::EXCLUSIVE)];
+    let mut refresh_target = shadow.name.original().to_owned();
+    if let Some(source) = catalog.table_info_by_id(source_mview_id) {
+        let source = source.read();
+        refresh_target = source.name.original().to_owned();
+        involving_schemas.push(involving(source.name.lowercase(), tidb_model::InvolvingSchemaInfoMode::SHARED));
+    }
+    let mut job = crate::cluster_ddl::session_job(context, ActionType::ACTION_CREATE_MATERIALIZED_VIEW_SHADOW);
+    job.query = tidb_sqlescape::escape_sql_text(
+        "REFRESH MATERIALIZED VIEW %n.%n COMPLETE OUT OF PLACE",
+        &[
+            tidb_sqlescape::SqlArg::String(schema_name.as_bytes()),
+            tidb_sqlescape::SqlArg::String(refresh_target.as_bytes()),
+        ],
+    )
+    .map_err(|error| MysqlError::unknown(error.to_string()))?
+    .into();
+    job.schema_id = schema_id;
+    job.schema_name = schema_l.clone().into();
+    job.table_name = shadow.name.lowercase().to_owned().into();
+    job.involving_schema_info = GoSharedSlice::from_vec(involving_schemas);
+    job.session_vars = Some(GoShared::new(std::collections::BTreeMap::from([(
+        tidb_vardef::tidb_vars::TIDB_SCATTER_REGION.to_owned(),
+        context.ddl_reorg_vars().scatter_region.clone().into(),
+    )])));
+    let args = tidb_model::CreateTableArgs {
+        table_info: tidb_model::GoField::new(Some(GoShared::new(shadow))),
+        fk_check: tidb_model::GoField::new(context.foreign_key_checks()),
+        ..Default::default()
+    };
+    Ok(crate::JobWrapper { job, args: JobArgsValue::CreateTable(Some(GoShared::new(args))), id_allocated: false })
+}
+
+/// Go master `buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo`: the
+/// view, its base table, the shadow table and (when it feeds the view) the
+/// base table's log, all exclusive.
+fn build_mview_refresh_out_of_place_cutover_involving_schema_info(
+    catalog: &SessionExtendedInfoSchema,
+    schema_name: &str,
+    old_mview_id: i64,
+    shadow_table_id: i64,
+) -> Result<Vec<tidb_model::InvolvingSchemaInfo>, MysqlError> {
+    let invalid = |message: &str| {
+        MysqlError::from_terror(&tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[format!(
+            "refresh materialized view complete OUT OF PLACE cutover: {message}"
+        )
+        .into()]))
+    };
+    let old = catalog
+        .table_info_by_id(old_mview_id)
+        .map(|table| table.read().clone())
+        .filter(|table| table.materialized_view.is_some())
+        .ok_or_else(|| invalid("old materialized view not found"))?;
+    let base_ids = old.materialized_view.as_ref().map(|info| info.read().base_table_ids.iter().copied().collect::<Vec<i64>>()).unwrap_or_default();
+    if base_ids.len() != 1 {
+        return Err(invalid("materialized view must reference exactly one base table in Stage-1"));
+    }
+    let base = catalog.table_info_by_id(base_ids[0]).map(|table| table.read().clone()).ok_or_else(|| invalid("base table not found"))?;
+    let mlog_id = base.materialized_view_base.as_ref().map_or(0, |info| info.read().mlog_id);
+    let mut mlog = catalog.table_info_by_id(mlog_id).map(|table| table.read().clone());
+    if mlog_id != 0 && mlog.is_none() {
+        return Err(invalid("materialized view log not found"));
+    }
+    if let Some(log) = &mlog {
+        let valid = log.materialized_view_log.as_ref().is_some_and(|info| info.read().base_table_id == base.id);
+        if !valid {
+            return Err(invalid("materialized view log metadata is invalid"));
+        }
+        let feeds = log
+            .materialized_view_log
+            .as_ref()
+            .is_some_and(|info| info.read().dependent_mview_ids.iter().any(|&id| id == old_mview_id));
+        if !feeds {
+            mlog = None;
+        }
+    }
+    let shadow = catalog.table_info_by_id(shadow_table_id).map(|table| table.read().clone()).ok_or_else(|| invalid("shadow table not found"))?;
+    let schema_l = tidb_hack::go_to_lower(schema_name);
+    let involving = |table: &str| tidb_model::InvolvingSchemaInfo {
+        database: schema_l.clone().into(),
+        table: table.to_owned().into(),
+        ..tidb_model::InvolvingSchemaInfo::default()
+    };
+    let mut infos = vec![involving(old.name.lowercase()), involving(base.name.lowercase()), involving(shadow.name.lowercase())];
+    if let Some(log) = mlog {
+        infos.push(involving(log.name.lowercase()));
+    }
+    Ok(infos)
+}
+
+/// Go master `executor.RefreshMaterializedViewCompleteOutOfPlaceCutover` up
+/// to `doDDLJob2`: the job that swaps the built shadow table in under the
+/// view's name and moves its refresh metadata.
+pub(crate) fn refresh_materialized_view_complete_out_of_place_cutover_job(
+    catalog: &SessionExtendedInfoSchema,
+    schema_id: i64,
+    schema_name: &str,
+    view_name: &str,
+    args: tidb_model::RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs,
+    context: &dyn DdlSessionContext,
+) -> Result<crate::JobWrapper, MysqlError> {
+    let involving =
+        build_mview_refresh_out_of_place_cutover_involving_schema_info(catalog, schema_name, args.old_mview_id, args.shadow_table_id)?;
+    let mut job = crate::cluster_ddl::session_job(context, ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER);
+    job.schema_id = schema_id;
+    job.table_id = args.old_mview_id;
+    job.schema_name = tidb_hack::go_to_lower(schema_name).into();
+    job.table_name = tidb_hack::go_to_lower(view_name).into();
+    job.involving_schema_info = GoSharedSlice::from_vec(involving);
+    Ok(crate::JobWrapper {
+        job,
+        args: JobArgsValue::RefreshMaterializedViewCompleteOutOfPlaceCutover(Some(GoShared::new(args))),
+        id_allocated: false,
+    })
+}

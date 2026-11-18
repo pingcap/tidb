@@ -538,7 +538,11 @@ impl Session {
             }
             Plan::Ddl(_) => self.ddl_exec(stmt),
             // Go master `RefreshMaterializedViewExec`.
-            Plan::RefreshMaterializedView(refresh) => self.refresh_materialized_view(refresh).map(Some),
+            Plan::RefreshMaterializedView(refresh) => {
+                let client = self.vars.build_parser_config().charset_client;
+                let sql = tidb_parser::carry_client_sql(stmt.original_text(), client).into_owned();
+                self.refresh_materialized_view(refresh, &sql).map(Some)
+            }
             Plan::CompactTable(compact) => self.compact_table_tiflash_exec(compact).map(Some),
             // Go `AlterDDLJobExec`: the job's row rewritten, no result set.
             Plan::AlterDdlJob(alter) => {

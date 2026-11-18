@@ -2632,6 +2632,9 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_DROP_SEQUENCE
             | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG
             | ActionType::ACTION_DROP_MATERIALIZED_VIEW
+            | ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW
+            | ActionType::ACTION_CREATE_MATERIALIZED_VIEW_SHADOW
+            | ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER
             | ActionType::ACTION_ADD_INDEX
             | ActionType::ACTION_ADD_PRIMARY_KEY
             | ActionType::ACTION_ADD_COLUMNAR_INDEX
@@ -2797,6 +2800,12 @@ fn dispatch_persisted_action(
         ActionType::ACTION_CREATE_TABLE => create_table::on_create_table(
             txn, catalog, active, start_ts, row_ids,
         ),
+        ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER => {
+            materialized_view::on_refresh_materialized_view_complete_out_of_place_cutover(txn, catalog, active, start_ts, row_ids)
+        }
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW_SHADOW => {
+            materialized_view::on_create_materialized_view_shadow(txn, catalog, active, start_ts)
+        }
         ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG => {
             materialized_view::on_create_materialized_view_log(txn, catalog, active, start_ts, row_ids, sessions)
         }
@@ -2943,7 +2952,8 @@ fn dispatch_persisted_action(
         | ActionType::ACTION_DROP_VIEW
         | ActionType::ACTION_DROP_SEQUENCE
         | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG
-        | ActionType::ACTION_DROP_MATERIALIZED_VIEW => {
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW => {
             plan_persisted_drop_table_job_step(txn, catalog, active, row_ids)
         }
         ActionType::ACTION_ADD_COLUMNAR_INDEX => {
@@ -3172,6 +3182,12 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         active.job.state,
         JobState::DONE | JobState::ROLLBACK_DONE | JobState::CANCELLED
     ) {
+        // Go `transitOneJobStep`'s done branch, after `checkBeforeCommit`.
+        if active.job.state == JobState::DONE
+            && active.job.type_ == ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER
+        {
+            materialized_view::cleanup_mview_out_of_place_cutover_after_commit(&active.job, &session, start_ts);
+        }
         // Go `finishDDLJob`'s `finishRecoverTable` / `finishRecoverSchema` /
         // `finishFlashbackCluster`.
         recover_table::finish_recover(&mut active.job, Some(&schema_state.worker))?;
@@ -4714,7 +4730,8 @@ fn plan_cancel_persisted_ddl_job(
         | ActionType::ACTION_DROP_VIEW
         | ActionType::ACTION_DROP_SEQUENCE
         | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG
-        | ActionType::ACTION_DROP_MATERIALIZED_VIEW => {
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW => {
             let table = checked_job_table(txn, active, false)?;
             let table = table.read();
             table.state == SchemaState::PUBLIC

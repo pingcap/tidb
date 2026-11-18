@@ -87,6 +87,39 @@ pub trait DdlService {
     /// Go `infoschema.GetTiFlashStoreCount(ctx.GetStore())`.
     fn tiflash_store_count(&self) -> Result<u64, String>;
 
+    /// Go master `executor.CreateMaterializedViewShadowTable`.
+    fn create_materialized_view_shadow_table(
+        &self,
+        _schema_id: i64,
+        _schema_name: &str,
+        _shadow: tidb_model::TableInfo,
+        _context: &StmtContext,
+    ) -> Result<ClusterDdlReport, DriverError> {
+        Err(DriverError::unsupported("materialized view complete out-of-place refresh"))
+    }
+
+    /// Go master `executor.DropMaterializedViewShadowTable`.
+    fn drop_materialized_view_shadow_table(
+        &self,
+        _schema_name: &str,
+        _shadow_name: &str,
+        _context: &StmtContext,
+    ) -> Result<ClusterDdlReport, DriverError> {
+        Err(DriverError::unsupported("materialized view complete out-of-place refresh"))
+    }
+
+    /// Go master `executor.RefreshMaterializedViewCompleteOutOfPlaceCutover`.
+    fn refresh_materialized_view_complete_out_of_place_cutover(
+        &self,
+        _schema_id: i64,
+        _schema_name: &str,
+        _view_name: &str,
+        _args: tidb_model::RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs,
+        _context: &StmtContext,
+    ) -> Result<ClusterDdlReport, DriverError> {
+        Err(DriverError::unsupported("materialized view complete out-of-place refresh"))
+    }
+
     /// Go `ddl.CancelJobs` / `PauseJobs` / `ResumeJobs` on a system session
     /// (`CommandDDLJobsExec.Open`'s `GetSysSession`): one error per id,
     /// `None` where the command succeeded.

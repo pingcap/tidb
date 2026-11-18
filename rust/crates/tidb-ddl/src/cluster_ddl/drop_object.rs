@@ -160,6 +160,13 @@ pub fn drop_materialized_view_object<S: MetaSnapshot>(
     if !check_cluster_drop_object(schema, mlog, &stored, false)? {
         return missing();
     }
+    if action == ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW && stored.materialized_view_shadow.is_none() {
+        return Err(DdlPlanError::from(tidb_dbterror::ERR_WRONG_OBJECT.gen_with_stack_by_args(&[
+            schema.to_owned().into(),
+            mlog.to_owned().into(),
+            "MATERIALIZED VIEW SHADOW TABLE".into(),
+        ])));
+    }
     let db_id = database.read().id;
     drop_table_like(
         snapshot,

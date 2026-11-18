@@ -968,6 +968,117 @@ pub(super) fn on_create_materialized_view_log(
     Ok(PersistedDdlActionStep { write, update_raw_args: true, run_error: None, reorg: None })
 }
 
+/// Go master `(*worker).onCreateMaterializedViewShadow`: the protected
+/// shadow table an OUT OF PLACE refresh builds into, created as Go's
+/// `createTable` does, with no table-created event.
+pub(super) fn on_create_materialized_view_shadow(
+    txn: &mut JobTxn<'_>,
+    catalog: &SessionExtendedInfoSchema,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    start_ts: u64,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    let invalid = |active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob, message: &str| {
+        cancel_ddl_job(
+            active,
+            DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[message.to_owned().into()])),
+        )
+    };
+    let args = tidb_model::get_create_table_args(&mut active.job)
+        .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?;
+    let (table_handle, fk_check) = match args {
+        Some(args) => {
+            let args = args.read();
+            (args.table_info.get(), args.fk_check.get())
+        }
+        None => (None, false),
+    };
+    let Some(table_handle) = table_handle else {
+        return Err(invalid(active, "create materialized view shadow table: invalid shadow metadata"));
+    };
+    let mut shadow = table_handle.read().clone();
+    let Some(source_mview_id) = shadow.materialized_view_shadow.as_ref().map(|info| info.read().source_mview_id) else {
+        return Err(invalid(active, "create materialized view shadow table: invalid shadow metadata"));
+    };
+    if shadow.materialized_view.is_some()
+        || shadow.materialized_view_log.is_some()
+        || shadow.view.is_some()
+        || shadow.sequence.is_some()
+    {
+        return Err(invalid(active, "create materialized view shadow table: shadow table must be a protected physical table"));
+    }
+    if source_mview_id == 0 {
+        return Err(invalid(active, "create materialized view shadow table: invalid source materialized view id"));
+    }
+    let schema_id = active.job.schema_id;
+    let source = match get_table_info(txn, source_mview_id, schema_id) {
+        Ok(source) => source,
+        Err(error) if is_not_exists(&error) => return Err(cancel_ddl_job(active, error)),
+        Err(error) => return Err(error),
+    };
+    if source.materialized_view.is_none() {
+        return Err(cancel_ddl_job(
+            active,
+            DdlPlanError::from(tidb_dbterror::ERR_WRONG_OBJECT.gen_with_stack_by_args(&[
+                active.job.schema_name.to_string().into(),
+                source.name.original().to_owned().into(),
+                "MATERIALIZED VIEW".into(),
+            ])),
+        ));
+    }
+    if source.state != SchemaState::PUBLIC {
+        let state = source.state;
+        return Err(cancel_ddl_job(
+            active,
+            DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
+                FormatArg::from("table"),
+                FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
+            ])),
+        ));
+    }
+    let database = job_schema_with_tables(txn, schema_id)?.ok_or_else(|| {
+        cancel_ddl_job(
+            active,
+            DdlPlanError::from(
+                tidb_dbterror::CLASS_SCHEMA
+                    .new_std(tidb_errno::errcode::ErrBadDB)
+                    .generate(format!("Unknown database '(Schema ID {schema_id})'")),
+            ),
+        )
+    })?;
+    let mut placement_bundles = Vec::new();
+    let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
+    create_table::create_table(
+        txn,
+        catalog,
+        &database,
+        active,
+        &mut shadow,
+        fk_check,
+        start_ts,
+        &mut placement_bundles,
+        &mut affinity_groups,
+    )?;
+    let (schema_version, diff) = update_schema_version(
+        &txn.meta(),
+        active,
+        SchemaDiff { action_type: active.job.type_, schema_id, table_id: shadow.id, ..SchemaDiff::default() },
+    )?;
+    *table_handle.write() = shadow.clone_like_go();
+    active.job.finish_table_job(
+        JobState::DONE,
+        SchemaState::PUBLIC,
+        schema_version,
+        Some(GoShared::new(shadow.clone_like_go())),
+    );
+    let mut write = job_only_write(active.job.id, Vec::new());
+    write.schema_version = schema_version;
+    write.diff = diff;
+    write.created_id = Some(shadow.id);
+    write.placement_bundles = placement_bundles;
+    write.affinity_groups = affinity_groups;
+    Ok(PersistedDdlActionStep { write, update_raw_args: true, run_error: None, reorg: None })
+}
+
 /// Go `(*worker).rollbackCreateMaterializedViewLog`.
 fn rollback_create_materialized_view_log(
     txn: &mut JobTxn<'_>,
@@ -2025,4 +2136,442 @@ pub(super) fn on_alter_materialized_view_attributes(
         },
         SchemaChangeEvent::alter_materialized_view_attributes,
     )
+}
+
+/// Go master `replaceMaterializedViewID`: `old` replaced by `new`, deduped
+/// in order; whether `old` was there.
+fn replace_materialized_view_id(ids: &[i64], old: i64, new: i64) -> (Vec<i64>, bool) {
+    let mut replaced = false;
+    let mut result: Vec<i64> = Vec::with_capacity(ids.len());
+    for &id in ids {
+        let id = if id == old {
+            replaced = true;
+            new
+        } else {
+            id
+        };
+        if !result.contains(&id) {
+            result.push(id);
+        }
+    }
+    (result, replaced)
+}
+
+/// Go master `convertMViewRefreshInfoTableNotExistsErrOnOutOfPlaceCutover`.
+fn convert_cutover_refresh_info_table_not_exists(error: tidb_terror::MysqlError) -> DdlPlanError {
+    if error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS) {
+        return DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[
+            "refresh materialized view complete OUT OF PLACE cutover: required system table mysql.tidb_mview_refresh_info does not exist".into(),
+        ]));
+    }
+    DdlPlanError::from_mysql_error(error)
+}
+
+fn job_sql_rows(
+    txn: &JobTxn<'_>,
+    sql: &str,
+    args: &[tidb_sqlescape::SqlArg<'_>],
+) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
+    txn.execute(sql, args).unwrap_or_else(|| {
+        Err(tidb_terror::MysqlError::unknown("a materialized view job step needs the DDL session".to_owned()))
+    })
+}
+
+/// Go master `migrateMViewRefreshInfoForOutOfPlaceCutover`: the view's
+/// refresh-info row moves to the shadow table's ID with the build's read
+/// TSO, after Go's staleness check of `LAST_SUCCESS_READ_TSO`.
+fn migrate_mview_refresh_info_for_out_of_place_cutover(
+    txn: &JobTxn<'_>,
+    args: &tidb_model::RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs,
+) -> Result<(), DdlPlanError> {
+    use tidb_sqlescape::SqlArg;
+    let invalid = |message: &str| {
+        DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[format!(
+            "refresh materialized view complete OUT OF PLACE cutover: {message}"
+        )
+        .into()]))
+    };
+    let rows = job_sql_rows(
+        txn,
+        "SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS, NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
+        &[SqlArg::Signed(args.old_mview_id)],
+    )
+    .map_err(convert_cutover_refresh_info_table_not_exists)?;
+    if rows.is_empty() {
+        return Err(invalid("refresh info row missing in mysql.tidb_mview_refresh_info"));
+    }
+    if rows.len() != 1 {
+        return Err(invalid("inconsistent refresh info row in mysql.tidb_mview_refresh_info"));
+    }
+    let read_tso = &rows[0][1];
+    let stale = if args.expected_last_success_read_tso_null {
+        !read_tso.is_null()
+    } else {
+        let value = match read_tso {
+            tidb_datatype::Datum::UInt(value) => Some(*value),
+            tidb_datatype::Datum::Int(value) => u64::try_from(*value).ok(),
+            _ => None,
+        };
+        value != Some(args.expected_last_success_read_tso)
+    };
+    if stale {
+        return Err(invalid("stale LAST_SUCCESS_READ_TSO detected before cutover"));
+    }
+    let mut sql = "UPDATE mysql.tidb_mview_refresh_info SET MVIEW_ID = %?, LAST_SUCCESS_READ_TSO = %?, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS = %?".to_owned();
+    let mut build_read_tso = args.build_read_tso;
+    if let Some(value) =
+        tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlacePersistReadTSO")
+    {
+        if let Ok(ts) = value.string().parse::<u64>() {
+            build_read_tso = ts;
+        }
+    }
+    let mut params = vec![
+        SqlArg::Signed(args.shadow_table_id),
+        SqlArg::Unsigned(build_read_tso),
+        SqlArg::Signed(chrono::Utc::now().timestamp()),
+    ];
+    if args.should_update_next_refresh_unix_seconds {
+        sql.push_str(", NEXT_REFRESH_UNIX_SECONDS = %?");
+        params.push(args.next_refresh_unix_seconds.map_or(SqlArg::Null, SqlArg::Signed));
+    }
+    sql.push_str(" WHERE MVIEW_ID = %?");
+    params.push(SqlArg::Signed(args.old_mview_id));
+    job_sql_rows(txn, &sql, &params).map(|_| ()).map_err(convert_cutover_refresh_info_table_not_exists)
+}
+
+/// Go master `migrateMViewRefreshSourceInfo`: the view's registered input
+/// logs move to the new view, or are replaced by the build's when they
+/// changed.
+fn migrate_mview_refresh_source_info(
+    txn: &JobTxn<'_>,
+    old_mview_id: i64,
+    new_mview_id: i64,
+    build_sources: &[tidb_model::MViewRefreshSource],
+) -> Result<(), DdlPlanError> {
+    use tidb_sqlescape::SqlArg;
+    let table = tidb_metadef::system_tables_def::TIDB_MVIEW_FAST_REFRESH_SOURCE_INFO_TABLE_NAME;
+    let read = |mview_id: i64| -> Result<Vec<i64>, DdlPlanError> {
+        let rows = job_sql_rows(
+            txn,
+            &format!("SELECT MLOG_ID FROM mysql.{table} WHERE MVIEW_ID = %? ORDER BY MLOG_ID"),
+            &[SqlArg::Signed(mview_id)],
+        )
+        .map_err(DdlPlanError::from_mysql_error)?;
+        Ok(rows
+            .iter()
+            .filter_map(|row| match row.first() {
+                Some(tidb_datatype::Datum::Int(id)) => Some(*id),
+                Some(tidb_datatype::Datum::UInt(id)) => i64::try_from(*id).ok(),
+                _ => None,
+            })
+            .collect())
+    };
+    let invalid = |message: &str| {
+        DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[format!(
+            "refresh materialized view complete OUT OF PLACE cutover: {message}"
+        )
+        .into()]))
+    };
+    let mlog_ids = read(old_mview_id)?;
+    if mlog_ids.is_empty() {
+        return Err(invalid("input log records are missing"));
+    }
+    if !read(new_mview_id)?.is_empty() {
+        return Err(invalid("shadow already has input log records"));
+    }
+    // Go `mviewutil.RefreshSourceLogIDs`: sorted, deduplicated.
+    let mut build_log_ids: Vec<i64> = build_sources.iter().map(|source| source.mlog_id).collect();
+    build_log_ids.sort_unstable();
+    build_log_ids.dedup();
+    if mlog_ids == build_log_ids {
+        return job_sql_rows(
+            txn,
+            &format!("UPDATE mysql.{table} SET MVIEW_ID = %? WHERE MVIEW_ID = %?"),
+            &[SqlArg::Signed(new_mview_id), SqlArg::Signed(old_mview_id)],
+        )
+        .map(|_| ())
+        .map_err(DdlPlanError::from_mysql_error);
+    }
+    job_sql_rows(txn, &format!("DELETE FROM mysql.{table} WHERE MVIEW_ID IN (%?)"), &[SqlArg::Signed(old_mview_id)])
+        .map_err(DdlPlanError::from_mysql_error)?;
+    insert_mview_refresh_source_info(txn, new_mview_id, &build_log_ids)
+}
+
+/// Go master `(*worker).onRefreshMaterializedViewCompleteOutOfPlaceCutover`:
+/// the built shadow table takes the view's name, comment and definition;
+/// the old view is dropped (its keys go to GC); the base table and its log
+/// point at the new view; the refresh rows move with it.
+pub(super) fn on_refresh_materialized_view_complete_out_of_place_cutover(
+    txn: &mut JobTxn<'_>,
+    catalog: &SessionExtendedInfoSchema,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    start_ts: u64,
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    let args = tidb_model::get_refresh_materialized_view_complete_out_of_place_cutover_args(&mut active.job)
+        .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
+        .ok_or_else(|| cancel_ddl_job(active, DdlPlanError::Encode("cutover job has nil args".to_owned())))?;
+    let args = args.read().clone();
+    let invalid = |active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob, message: String| {
+        cancel_ddl_job(active, DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack(message)))
+    };
+    if args.old_mview_id != active.job.table_id {
+        return Err(invalid(active, "refresh materialized view complete OUT OF PLACE cutover: mismatched old materialized view id".into()));
+    }
+    if args.old_mview_id == args.shadow_table_id {
+        return Err(invalid(
+            active,
+            "refresh materialized view complete OUT OF PLACE cutover: shadow table id equals old materialized view id".into(),
+        ));
+    }
+    if args.build_read_tso == 0 {
+        return Err(invalid(active, "refresh materialized view complete OUT OF PLACE cutover: invalid build read tso".into()));
+    }
+    let schema_id = active.job.schema_id;
+    // Go `GetTableInfoAndCancelFaultJob`.
+    let old = match get_table_info(txn, args.old_mview_id, schema_id) {
+        Ok(old) => old,
+        Err(error) if is_not_exists(&error) => return Err(cancel_ddl_job(active, error)),
+        Err(error) => return Err(error),
+    };
+    if old.state != SchemaState::PUBLIC {
+        let message = format!("table {} is not in public, but {}", old.name, old.state);
+        return Err(cancel_ddl_job(active, DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack(message))));
+    }
+    let Some(old_mview) = old.materialized_view.as_ref().map(|info| info.read().clone()) else {
+        return Err(cancel_ddl_job(
+            active,
+            DdlPlanError::from(tidb_dbterror::ERR_WRONG_OBJECT.gen_with_stack_by_args(&[
+                active.job.schema_name.to_string().into(),
+                active.job.table_name.to_string().into(),
+                "MATERIALIZED VIEW".into(),
+            ])),
+        ));
+    };
+    // Go `validateMaterializedViewCompleteOutOfPlaceTarget`.
+    if old.materialized_view_base.as_ref().is_some_and(|info| {
+        let info = info.read();
+        info.mlog_id != 0 || !info.mview_ids.is_empty()
+    }) {
+        let message = format!(
+            "refresh materialized view complete OUT OF PLACE is not supported for materialized view {}.{} with a materialized view log or dependent materialized view",
+            active.job.schema_name,
+            old.name.original()
+        );
+        return Err(cancel_ddl_job(active, DdlPlanError::plain_refusal(message)));
+    }
+    let base_ids: Vec<i64> = old_mview.base_table_ids.iter().copied().collect();
+    if base_ids.len() != 1 {
+        let message = format!(
+            "refresh materialized view complete OUT OF PLACE cutover: materialized view must reference exactly one base table in Stage-1, got {}",
+            base_ids.len()
+        );
+        return Err(cancel_ddl_job(active, DdlPlanError::from(tidb_dbterror::ERR_WRONG_OBJECT.gen_with_stack(message))));
+    }
+    if let Some(expected) = args.expected_old_mview_revision {
+        if old.revision != expected {
+            return Err(invalid(
+                active,
+                format!(
+                    "refresh materialized view complete OUT OF PLACE cutover: stale old materialized view revision detected before cutover, expected {expected} but got {}",
+                    old.revision
+                ),
+            ));
+        }
+    }
+    let shadow = match get_table_info(txn, args.shadow_table_id, schema_id) {
+        Ok(shadow) => shadow,
+        Err(error) if is_not_exists(&error) => return Err(cancel_ddl_job(active, error)),
+        Err(error) => return Err(error),
+    };
+    if shadow.materialized_view.is_some()
+        || shadow.materialized_view_log.is_some()
+        || shadow.view.is_some()
+        || shadow.sequence.is_some()
+    {
+        return Err(invalid(
+            active,
+            "refresh materialized view complete OUT OF PLACE cutover: shadow table is not a protected physical table".into(),
+        ));
+    }
+    let Some(source_mview_id) = shadow.materialized_view_shadow.as_ref().map(|info| info.read().source_mview_id) else {
+        return Err(invalid(active, "refresh materialized view complete OUT OF PLACE cutover: shadow table is missing shadow metadata".into()));
+    };
+    if source_mview_id != args.old_mview_id {
+        return Err(invalid(
+            active,
+            "refresh materialized view complete OUT OF PLACE cutover: shadow table source materialized view id mismatch".into(),
+        ));
+    }
+    if shadow.state != SchemaState::PUBLIC {
+        return Err(invalid(
+            active,
+            format!("refresh materialized view complete OUT OF PLACE cutover: shadow table is not in public, but {}", shadow.state),
+        ));
+    }
+    let mut base = match get_table_info(txn, base_ids[0], schema_id) {
+        Ok(base) => base,
+        Err(error) if is_not_exists(&error) => return Err(cancel_ddl_job(active, error)),
+        Err(error) => return Err(error),
+    };
+    let mut mlog = None;
+    let mlog_id = base.materialized_view_base.as_ref().map_or(0, |info| info.read().mlog_id);
+    if mlog_id != 0 {
+        let mut log = match get_table_info(txn, mlog_id, schema_id) {
+            Ok(log) => log,
+            Err(error) if is_not_exists(&error) => return Err(cancel_ddl_job(active, error)),
+            Err(error) => return Err(error),
+        };
+        let Some(log_info) = log.materialized_view_log.clone().filter(|info| info.read().base_table_id == base.id) else {
+            return Err(cancel_ddl_job(
+                active,
+                DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[
+                    "refresh materialized view complete OUT OF PLACE cutover: materialized view log metadata is invalid".into(),
+                ])),
+            ));
+        };
+        let dependents: Vec<i64> = log_info.read().dependent_mview_ids.iter().copied().collect();
+        let (updated, replaced) = replace_materialized_view_id(&dependents, args.old_mview_id, args.shadow_table_id);
+        if replaced {
+            let mut info = log_info.read().clone();
+            info.dependent_mview_ids = updated.into();
+            log.materialized_view_log = Some(GoShared::new(info));
+            mlog = Some(log);
+        }
+    }
+    // Go `rewriteMaterializedViewBaseForOutOfPlaceCutover`.
+    let base_mviews: Vec<i64> =
+        base.materialized_view_base.as_ref().map(|info| info.read().mview_ids.iter().copied().collect()).unwrap_or_default();
+    let (updated, found) = replace_materialized_view_id(&base_mviews, args.old_mview_id, args.shadow_table_id);
+    if base_mviews.is_empty() || !found {
+        let message = if base_mviews.is_empty() {
+            "refresh materialized view complete OUT OF PLACE cutover: base table materialized view metadata missing"
+        } else {
+            "refresh materialized view complete OUT OF PLACE cutover: old materialized view id is missing in base table metadata"
+        };
+        return Err(cancel_ddl_job(
+            active,
+            DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[message.into()])),
+        ));
+    }
+    if let Some(info) = &base.materialized_view_base {
+        let mut info_value = info.read().clone();
+        info_value.mview_ids = updated.into();
+        base.materialized_view_base = Some(GoShared::new(info_value));
+    }
+    if let Err(error) = migrate_mview_refresh_info_for_out_of_place_cutover(txn, &args) {
+        return Err(cancel_ddl_job(active, error));
+    }
+    if let Err(error) = migrate_mview_refresh_source_info(
+        txn,
+        args.old_mview_id,
+        args.shadow_table_id,
+        args.build_sources.as_deref().unwrap_or_default(),
+    ) {
+        return Err(cancel_ddl_job(active, error));
+    }
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlaceCutoverAfterMigrateRefreshInfoError").is_some() {
+        return Err(DdlPlanError::plain_refusal(
+            "mock refresh materialized view complete OUT OF PLACE cutover error after migrating refresh info",
+        ));
+    }
+    {
+        let meta = txn.meta();
+        meta.drop_table_or_view(schema_id, args.old_mview_id)
+            .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+        meta.auto_ids(schema_id, args.old_mview_id)
+            .delete()
+            .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+    }
+    let mut new_mview = shadow.clone_like_go();
+    new_mview.name = old.name.clone();
+    new_mview.comment = old.comment.clone();
+    new_mview.materialized_view = Some(GoShared::new(old_mview.clone()));
+    new_mview.materialized_view_shadow = None;
+    // Go `repairTableOrViewWithCheck`.
+    for table in std::iter::once(&mut new_mview).chain(std::iter::once(&mut base)).chain(mlog.iter_mut()) {
+        if let Err(error) = check_table_info_valid(table) {
+            return Err(cancel_ddl_job(active, error));
+        }
+        update_table(txn, schema_id, table, start_ts)?;
+    }
+    let mut diff = SchemaDiff {
+        action_type: active.job.type_,
+        schema_id,
+        table_id: args.shadow_table_id,
+        old_table_id: args.old_mview_id,
+        ..SchemaDiff::default()
+    };
+    let mut infos = vec![(schema_id, base.id)];
+    if let Some(log) = &mlog {
+        infos.push((schema_id, log.id));
+    }
+    set_schema_diff_for_multi_infos(&mut diff, &infos);
+    let (schema_version, diff) = update_schema_version(&txn.meta(), active, diff)?;
+    let mut mutations = Vec::new();
+    append_schema_change_mutations(
+        txn,
+        catalog,
+        active.job.id,
+        &[(-1, SchemaChangeEvent::mview_refresh_out_of_place_cutover(new_mview.clone_like_go(), old.clone_like_go()))],
+        &mut mutations,
+        row_ids,
+    )?;
+    active.job.finish_table_job(JobState::DONE, SchemaState::PUBLIC, schema_version, Some(GoShared::new(new_mview.clone_like_go())));
+    let mut write = job_only_write(active.job.id, mutations);
+    write.schema_version = schema_version;
+    write.diff = diff;
+    Ok(PersistedDdlActionStep { write, update_raw_args: true, run_error: None, reorg: None })
+}
+
+/// Go master `(*worker).cleanupMViewOutOfPlaceCutoverAfterCommit`, as a
+/// done cutover job finishes: best effort, each failure only logged -- the
+/// old view's refresh alert row, its affinity group and its TiFlash sync
+/// progress.
+pub(super) fn cleanup_mview_out_of_place_cutover_after_commit(
+    job: &tidb_model::Job,
+    session: &crate::job_txn::StepSession,
+    start_ts: u64,
+) {
+    let warn = |message: &str, fields: Vec<tidb_log::Field>| tidb_ddl_logutil::ddl_logger().warn(message, &fields);
+    let args = match tidb_model::get_refresh_materialized_view_complete_out_of_place_cutover_args(&mut job.clone()) {
+        Ok(Some(args)) => args.read().clone(),
+        Ok(None) => return,
+        Err(error) => {
+            warn(
+                "failed to decode materialized view cutover args for post-commit cleanup",
+                vec![
+                    tidb_log::Field::new("jobID", tidb_log::Value::I64(job.id)),
+                    tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+                ],
+            );
+            return;
+        }
+    };
+    let old = args.old_mview_id;
+    if let Err(error) = session.execute(
+        start_ts,
+        "DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID = %?",
+        &[tidb_sqlescape::SqlArg::Signed(old)],
+    ) {
+        warn(
+            "failed to delete stale materialized view refresh alert after cutover",
+            vec![
+                tidb_log::Field::new("tableID", tidb_log::Value::I64(old)),
+                tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+            ],
+        );
+    }
+    let group = crate::ddl_affinity::get_table_affinity_group_id(old);
+    if let Err(error) = tidb_domain_affinity::delete_groups_with_retry(&[group]) {
+        warn(
+            "failed to delete old materialized view affinity group after cutover",
+            vec![
+                tidb_log::Field::new("tableID", tidb_log::Value::I64(old)),
+                tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+            ],
+        );
+    }
+    tidb_domain_infosync::tiflash_manager::delete_tiflash_table_sync_progress(&TableInfo { id: old, ..TableInfo::default() });
 }

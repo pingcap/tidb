@@ -853,6 +853,12 @@ pub fn build_table_info_with_like(
     info.name = CiString::new(table.to_owned());
     info.auto_inc_id = 0;
     info.foreign_keys = tidb_model::GoSharedPointerSlice::from_handles(Vec::new());
+    // Go master: a copy is a plain table -- no materialized view, log,
+    // shadow or base-table metadata comes with it.
+    info.materialized_view_base = None;
+    info.materialized_view = None;
+    info.materialized_view_shadow = None;
+    info.materialized_view_log = None;
     info.table_cache_status_type = tidb_model::TableCacheStatusType::DISABLE;
     if temporary == tidb_ast::CreateTableTemporary::None {
         if let Some(replica) = &info.tiflash_replica {

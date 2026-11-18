@@ -361,6 +361,39 @@ pub trait ClusterDdl: Send + Sync {
         context: &crate::cluster_ddl::DdlContext,
     ) -> Result<ClusterDdlReport, SqlQueryError>;
 
+    /// Go master `executor.CreateMaterializedViewShadowTable`.
+    fn create_materialized_view_shadow_table(
+        &self,
+        _schema_id: i64,
+        _schema_name: &str,
+        _shadow: tidb_model::TableInfo,
+        _context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        Err(SqlQueryError::unknown("materialized view complete out-of-place refresh is not supported"))
+    }
+
+    /// Go master `executor.DropMaterializedViewShadowTable`.
+    fn drop_materialized_view_shadow_table(
+        &self,
+        _schema_name: &str,
+        _shadow_name: &str,
+        _context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        Err(SqlQueryError::unknown("materialized view complete out-of-place refresh is not supported"))
+    }
+
+    /// Go master `executor.RefreshMaterializedViewCompleteOutOfPlaceCutover`.
+    fn refresh_materialized_view_complete_out_of_place_cutover(
+        &self,
+        _schema_id: i64,
+        _schema_name: &str,
+        _view_name: &str,
+        _args: tidb_model::RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs,
+        _context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        Err(SqlQueryError::unknown("materialized view complete out-of-place refresh is not supported"))
+    }
+
     /// Go master `executor.CreateMaterializedView`.
     fn create_materialized_view(
         &self,
@@ -3917,6 +3950,38 @@ where
         context: &crate::cluster_ddl::DdlContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         executor::drop_materialized_view(self, statement, current_db, context)
+    }
+
+    fn create_materialized_view_shadow_table(
+        &self,
+        schema_id: i64,
+        schema_name: &str,
+        shadow: tidb_model::TableInfo,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::create_materialized_view_shadow_table(self, schema_id, schema_name, shadow, context)
+    }
+
+    fn drop_materialized_view_shadow_table(
+        &self,
+        schema_name: &str,
+        shadow_name: &str,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::drop_materialized_view_shadow_table(self, schema_name, shadow_name, context)
+    }
+
+    fn refresh_materialized_view_complete_out_of_place_cutover(
+        &self,
+        schema_id: i64,
+        schema_name: &str,
+        view_name: &str,
+        args: tidb_model::RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs,
+        context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        executor::refresh_materialized_view_complete_out_of_place_cutover(
+            self, schema_id, schema_name, view_name, args, context,
+        )
     }
 
     fn alter_materialized_view(

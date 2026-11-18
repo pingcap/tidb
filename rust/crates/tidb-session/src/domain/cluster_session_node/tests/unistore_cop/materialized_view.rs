@@ -77,7 +77,12 @@ fn replay_go_master(capture: &str) -> (UnistoreClusterStack, Session) {
     let mut mismatches = Vec::new();
     for line in capture.lines() {
         let (sql, go): (String, String) = serde_json::from_str(line).expect("a captured statement");
-        let rust = answer(&mut session, &sql);
+        let mut rust = answer(&mut session, &sql);
+        // A capture taken with `qj_ok.py` records the OK packet's affected
+        // rows and info message (`OK <rows> <message>`).
+        if rust == "OK" && go.starts_with("OK ") {
+            rust = format!("OK {} {}", session.affected_rows(), session.statement_message()).trim_end().to_owned();
+        }
         // The capture script's JSON spacing is Python's.
         let rows = |answer: &str| answer.strip_prefix("RS:").map(|rows| serde_json::from_str::<serde_json::Value>(rows).unwrap());
         let same = match (rows(&rust), rows(&go)) {
@@ -619,4 +624,94 @@ fn materialized_view_drops_leave_their_ranges_for_gc_as_go_master() {
     assert_eq!(queued(&mut session, "@mv"), r#"RS:[["1"]]"#);
     assert_eq!(answer(&mut session, "drop materialized view log on t"), "OK");
     assert_eq!(queued(&mut session, "@mlog"), r#"RS:[["1"]]"#);
+}
+
+/// REFRESH MATERIALIZED VIEW ... COMPLETE OUT OF PLACE against a Go master
+/// node (`testdata/mview_refresh_out_of_place_go.jsonl`): the view recomputed
+/// into a shadow table that takes its name and ID (the old ID's refresh row
+/// and sources move, its history row stays), the shadow and cutover jobs, a
+/// second refresh, the refusals (a view with a log), and `CREATE TABLE ...
+/// LIKE` a view or a logged base table as a plain table.
+#[test]
+fn refresh_materialized_view_complete_out_of_place_answers_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/mview_refresh_out_of_place_go.jsonl"));
+}
+
+/// Go `ResetContextOfStmt` classifies a statement before `Compile`: an
+/// INSERT or UPDATE that fails in preprocessing (a missing table) leaves
+/// `ROW_COUNT()` at 0, a failed SELECT at -1. Replayed from Go master
+/// (`testdata/row_count_after_failed_statement_go.jsonl`).
+#[test]
+fn row_count_after_a_statement_failing_in_preprocess_answers_as_go() {
+    replay_go_master(include_str!("../../../../../testdata/row_count_after_failed_statement_go.jsonl"));
+}
+
+/// Go master `TestMaterializedViewRefreshRuntime`'s failed attempt, for COMPLETE
+/// IN PLACE (`mockRefreshMaterializedViewErrorAfterDataChanges`) and COMPLETE
+/// OUT OF PLACE (`mockRefreshMaterializedViewOutOfPlaceBuildErrorAfterLoadShadow`):
+/// the view keeps its rows and its success watermark, the history records the
+/// failure, no shadow table is left, the advisory lock is free, and the next
+/// refresh succeeds.
+#[test]
+fn a_failed_complete_refresh_rolls_back_as_go_master() {
+    for (mode, point) in [
+        ("complete in place", "mockRefreshMaterializedViewErrorAfterDataChanges"),
+        ("complete out of place", "mockRefreshMaterializedViewOutOfPlaceBuildErrorAfterLoadShadow"),
+    ] {
+        let (_stack, mut session) = replay_go_master("");
+        let mut run = |sql: &str| answer(&mut session, sql);
+        for sql in [
+            "set tidb_mview_enable = ON",
+            "create database t",
+            "use t",
+            "create table src_runtime (id int primary key, g int not null, v int not null)",
+            "insert into src_runtime values (1,1,10), (3,3,5)",
+            "create materialized view log on src_runtime (id,g,v)",
+            "create materialized view mv_runtime (g,s,cnt) refresh fast as select g,sum(v),count(*) from src_runtime group by g",
+            "insert into src_runtime values (4,4,7)",
+        ] {
+            assert_eq!(run(sql), "OK", "{sql}");
+        }
+        assert_eq!(run(&format!("refresh materialized view mv_runtime {mode}")), "OK", "{mode}");
+        let read = run("select last_success_read_tso from mysql.tidb_mview_refresh_info");
+        assert_eq!(run("insert into src_runtime values (5,8,9)"), "OK");
+        {
+            let _failing =
+                tidb_failpoint::enable_for_test(&format!("github.com/pingcap/tidb/pkg/executor/{point}"), r#"return("runtime failure")"#);
+            let failed = run(&format!("refresh materialized view mv_runtime {mode}"));
+            assert!(failed.starts_with("ERR ") && failed.contains("runtime failure"), "{mode}: {failed}");
+        }
+        assert_eq!(
+            run("select * from mv_runtime order by g"),
+            r#"RS:[["1","10","1"],["3","5","1"],["4","7","1"]]"#,
+            "{mode}"
+        );
+        assert_eq!(run("select last_success_read_tso from mysql.tidb_mview_refresh_info"), read, "{mode}");
+        assert_eq!(
+            run("select refresh_status from mysql.tidb_mview_refresh_hist order by refresh_job_id"),
+            r#"RS:[["success"],["failed"]]"#,
+            "{mode}"
+        );
+        assert_eq!(
+            run("select count(*) from information_schema.tables where table_schema='t' and table_name like '\\_\\_mv\\_shadow\\_%'"),
+            r#"RS:[["0"]]"#,
+            "{mode}"
+        );
+        assert_eq!(
+            run("select is_free_lock(concat('mv_refresh_', (select schema_id from information_schema.ddl_jobs where job_type = 'create materialized view' order by job_id desc limit 1), '_', (select tidb_table_id from information_schema.tables where table_schema='t' and table_name='mv_runtime')))"),
+            r#"RS:[["1"]]"#,
+            "{mode}"
+        );
+        assert_eq!(run(&format!("refresh materialized view mv_runtime {mode}")), "OK", "{mode}");
+        assert_eq!(
+            run("select * from mv_runtime order by g"),
+            r#"RS:[["1","10","1"],["3","5","1"],["4","7","1"],["8","9","1"]]"#,
+            "{mode}"
+        );
+        assert_eq!(
+            run("select refresh_status from mysql.tidb_mview_refresh_hist order by refresh_job_id"),
+            r#"RS:[["success"],["failed"],["success"]]"#,
+            "{mode}"
+        );
+    }
 }

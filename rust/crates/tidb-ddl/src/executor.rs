@@ -323,6 +323,74 @@ pub(super) fn create_materialized_view<S: StoreClient>(
     Ok(report)
 }
 
+/// Go master `executor.CreateMaterializedViewShadowTable`: the shadow
+/// table's job, then `createTableWithInfoPost` for it.
+pub(super) fn create_materialized_view_shadow_table<S: StoreClient>(
+    executor: &RealClusterDdl<S>,
+    schema_id: i64,
+    schema_name: &str,
+    shadow: tidb_model::TableInfo,
+    context: &dyn DdlSessionContext,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    let catalog = executor.latest_schema();
+    let name = shadow.name.original().to_owned();
+    let job = super::executor_mview::create_materialized_view_shadow_table_job(&catalog, schema_id, schema_name, shadow, context)
+        .map_err(mysql_query_error)?;
+    let report = do_ddl_job_wrapper(executor, context, job)?;
+    if matches!(report, ClusterDdlReport::Applied { .. }) {
+        after_create_tables(executor, schema_name, &[name], context)?;
+    }
+    Ok(report)
+}
+
+/// Go master `executor.DropMaterializedViewShadowTable`: `dropTableObject`
+/// of the shadow table (`materializedViewShadowObject`, IF EXISTS). The
+/// caller's context carries Go's query, `DROP TABLE IF EXISTS
+/// <schema>.<shadow>`.
+pub fn drop_materialized_view_shadow_table<E: ExecutorStore>(
+    executor: &E,
+    schema_name: &str,
+    shadow_name: &str,
+    context: &dyn DdlSessionContext,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    let result = executor.with_meta(context, |snapshot, start_ts, upgrading| {
+        crate::cluster_ddl::drop_object::drop_materialized_view_object(
+            snapshot,
+            tidb_model::ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW,
+            schema_name,
+            shadow_name,
+            context,
+            start_ts,
+            upgrading,
+        )
+    });
+    match result {
+        Err(error)
+            if error.code == tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS.to_sql_error().code =>
+        {
+            Ok(drop_missing_note("the shadow table does not exist", &format!("{schema_name}.{shadow_name}")))
+        }
+        other => other,
+    }
+}
+
+/// Go master `executor.RefreshMaterializedViewCompleteOutOfPlaceCutover`.
+pub(super) fn refresh_materialized_view_complete_out_of_place_cutover<S: StoreClient>(
+    executor: &RealClusterDdl<S>,
+    schema_id: i64,
+    schema_name: &str,
+    view_name: &str,
+    args: tidb_model::RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs,
+    context: &dyn DdlSessionContext,
+) -> Result<ClusterDdlReport, SqlQueryError> {
+    let catalog = executor.latest_schema();
+    let job = super::executor_mview::refresh_materialized_view_complete_out_of_place_cutover_job(
+        &catalog, schema_id, schema_name, view_name, args, context,
+    )
+    .map_err(mysql_query_error)?;
+    do_ddl_job_wrapper(executor, context, job)
+}
+
 /// Go `ErrTableDropExists` as the IF EXISTS note of a missing `qualified`.
 fn drop_missing_note(detail: &str, qualified: &str) -> ClusterDdlReport {
     ClusterDdlReport::AlreadySatisfied {

@@ -1868,6 +1868,9 @@ impl<'s> ClusterServerSession<'s> {
         self.session.on_stmt_start(stmt);
         self.begin_statement();
         let compiled = self.compile(sql, stmt);
+        if compiled.is_err() {
+            self.session.record_compile_failure_row_count();
+        }
         // Go `Compile`'s `CountStmtNode` once the plan is built; a query is
         // planned when it is opened, which counts it.
         if matches!(&compiled, Ok(compiled) if !matches!(compiled, CompiledStatement::Query)) {
@@ -3417,6 +3420,42 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
     ) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, tidb_driver_error::DriverError> {
         self.ddl
             .do_ddl_job_wrapper(context, job)
+            .map_err(sql_query_error_to_driver)
+    }
+
+    fn create_materialized_view_shadow_table(
+        &self,
+        schema_id: i64,
+        schema_name: &str,
+        shadow: tidb_model::TableInfo,
+        context: &tidb_sessionctx::StmtContext,
+    ) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, tidb_driver_error::DriverError> {
+        self.ddl
+            .create_materialized_view_shadow_table(schema_id, schema_name, shadow, context)
+            .map_err(sql_query_error_to_driver)
+    }
+
+    fn drop_materialized_view_shadow_table(
+        &self,
+        schema_name: &str,
+        shadow_name: &str,
+        context: &tidb_sessionctx::StmtContext,
+    ) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, tidb_driver_error::DriverError> {
+        self.ddl
+            .drop_materialized_view_shadow_table(schema_name, shadow_name, context)
+            .map_err(sql_query_error_to_driver)
+    }
+
+    fn refresh_materialized_view_complete_out_of_place_cutover(
+        &self,
+        schema_id: i64,
+        schema_name: &str,
+        view_name: &str,
+        args: tidb_model::RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs,
+        context: &tidb_sessionctx::StmtContext,
+    ) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, tidb_driver_error::DriverError> {
+        self.ddl
+            .refresh_materialized_view_complete_out_of_place_cutover(schema_id, schema_name, view_name, args, context)
             .map_err(sql_query_error_to_driver)
     }
 

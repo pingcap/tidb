@@ -600,6 +600,18 @@ impl Session {
     /// without checking it again, and the statement's observation, which
     /// begins after it, the tables it checked
     /// ([`Self::observe_precompiled_privilege_tables`]).
+    /// Go derives the next statement's `PrevAffectedRows` from the bits
+    /// `ResetContextOfStmt` set before `Compile`, so a statement `Compile`
+    /// refuses still counts: -1 after a SELECT, 0 after anything else (a
+    /// failed write affected nothing). [`Self::compile_statement`] has
+    /// classified it.
+    pub(crate) fn record_compile_failure_row_count(&mut self) {
+        if self.vars.in_set_session_states_stmt {
+            return;
+        }
+        self.vars.prev_row_count = if self.statement_kind == crate::classify::StatementKind::Select { -1 } else { 0 };
+    }
+
     pub fn compile_statement(
         &mut self,
         stmt: &tidb_ast::Stmt,
@@ -608,6 +620,10 @@ impl Session {
         if !Self::compiles_as_statement_plan(stmt) {
             return Ok(CompiledExecutor::Other);
         }
+        // Go `ResetContextOfStmt` classifies the statement before `Compile`:
+        // one this build refuses (a missing table's 1146) still sets what
+        // the next `ROW_COUNT()` reads.
+        self.statement_kind = crate::classify::statement_kind_of(stmt);
         // What the build notes is filed by the executor's own compile, which
         // builds the plan again; a DDL job's lowering notes its own.
         let Some((plan, visits, _)) = self.preprocess_and_build(stmt)? else {
