@@ -1143,8 +1143,26 @@ fn gen_merge_temp_plan_for_one_index(
     Err(plain("regions are not continuous"))
 }
 
+/// Go `mergeTempIndexCollector`: both counts take each batch's rows, as
+/// Go's `Processed` adds `rows` to each.
+#[derive(Default)]
+struct MergeTempIndexCollector {
+    add_count: AtomicI64,
+    scan_count: AtomicI64,
+}
+
+impl tidb_dxf_execute::Collector for MergeTempIndexCollector {
+    fn accepted(&self, _: i64) {}
+
+    fn processed(&self, _: i64, rows: i64) {
+        self.add_count.fetch_add(rows, Ordering::SeqCst);
+        self.scan_count.fetch_add(rows, Ordering::SeqCst);
+    }
+}
+
 /// Go `mergeTempIndexExecutor`: each subtask merges one index's temporary
-/// range in batches, as the owner's merge does.
+/// range on Go's operators (`TempIndexScanTaskSource`,
+/// `MergeTempIndexOperator`, `tempIndexResultSink`).
 struct MergeTempIndexStepExecutor<S: StoreClient> {
     info: FrameworkInfoSlot,
     ddl: Arc<BackfillDdl<S>>,
@@ -1179,51 +1197,44 @@ impl<S: StoreClient> StepExecutor for MergeTempIndexStepExecutor<S> {
         }
         let mut reorg = reorg_for_task(&meta, self.table.clone_like_go());
         reorg.merging = true;
-        let backfiller = (self.ddl.backfiller)();
-        let check_owner = || ctx.err().map_or(Ok(()), |e| Err(e.to_string()));
+        // Go `job.ReorgMeta.GetBatchSize()` and `GetResource().CPU.Capacity()`.
+        let batch_cnt = reorg.batch_size;
+        let concurrency = (self.get_resource().cpu.capacity() as usize).max(1);
+        let backfiller = (self.ddl.backfiller)().shared();
+        let region_store = backfiller.region_store();
+        let merge = Arc::new(super::operators::MergeContext {
+            opener: Arc::clone(&self.ddl.opener),
+            timeout: self.ddl.timeout,
+            backfiller,
+            reorg: Arc::new(reorg),
+            physical_id,
+            index_id,
+        });
+        // Go `workerpool.NewContext(ctx)` and `mergeTempIndexCollector`.
+        let wctx = Arc::new(operator::Context::with_parent(ctx.done()));
+        let collector = Arc::new(MergeTempIndexCollector::default());
+        let pipe = super::operators::new_merge_temp_index_pipeline(
+            &wctx,
+            region_store,
+            merge,
+            start,
+            end,
+            concurrency,
+            batch_cnt,
+            Arc::clone(&collector) as Arc<dyn tidb_dxf_execute::Collector>,
+        );
+        let check = || ctx.err().map_or(Ok(()), |e| Err(e.to_string()));
         let stopped = AtomicBool::new(false);
-        let mut next = start;
-        loop {
-            match super::run_batch(
-                &self.ddl.opener,
-                self.ddl.timeout,
-                backfiller.as_ref(),
-                &reorg,
-                physical_id,
-                &next,
-                &end,
-                reorg.batch_size,
-                Some(index_id),
-                &check_owner,
-                &stopped,
-            )
-            .map_err(|e| Box::new(e) as tidb_dxf_execute::Error)?
-            {
-                BatchStep::Advanced { next_key, done, added, .. } => {
-                    self.summary.row_cnt.fetch_add(added as i64, Ordering::SeqCst);
-                    if done {
-                        break;
-                    }
-                    next = next_key;
-                }
-                BatchStep::Interrupted => {
-                    return Err(Box::new(tidb_gocontext::CtxError::Canceled));
-                }
-                BatchStep::Failed(error) => {
-                    // Go hands DXF the `*errors.Error` itself.
-                    return Err(Box::new(
-                        tidb_terror::MysqlError::sql_error(error.code, error.message)
-                            .with_identity_opt(error.identity),
-                    ));
-                }
-            }
-        }
+        super::ingest::execute_and_close_pipeline(&wctx, &pipe, None, None, 0, &check, &stopped)
+            .map_err(pipeline_error)?;
+        let added = collector.add_count.load(Ordering::SeqCst);
+        self.summary.row_cnt.fetch_add(added, Ordering::SeqCst);
         tidb_logutil::bg_logger().info(
             "merge temp index executor finish subtask",
-            &[tidb_log::Field::new(
-                "added",
-                tidb_log::Value::I64(self.summary.row_cnt.load(Ordering::SeqCst)),
-            )],
+            &[
+                tidb_log::Field::new("added", tidb_log::Value::I64(added)),
+                tidb_log::Field::new("scanned", tidb_log::Value::I64(collector.scan_count.load(Ordering::SeqCst))),
+            ],
         );
         Ok(())
     }

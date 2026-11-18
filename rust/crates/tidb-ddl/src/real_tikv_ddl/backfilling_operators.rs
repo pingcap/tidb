@@ -1086,6 +1086,429 @@ impl Operator for IndexWriteResultSink {
     }
 }
 
+/// Go `tempIndexScanTask`: one region range of a temporary index.
+#[derive(Clone, Debug)]
+pub struct TempIndexScanTask {
+    /// Go `ID`.
+    pub id: usize,
+    /// Go `Start`.
+    pub start: Vec<u8>,
+    /// Go `End`.
+    pub end: Vec<u8>,
+}
+
+impl TaskMayPanic<OperatorError> for TempIndexScanTask {
+    /// Go `tempIndexScanTask.RecoverArgs`.
+    fn recover_args(&self) -> (String, String, Option<OperatorError>) {
+        (LBL_ADD_INDEX.to_owned(), "TempIndexScanTask".to_owned(), Some(reorg_panic()))
+    }
+}
+
+/// Go `tempIdxResult`: one merged batch.
+#[derive(Clone, Debug, Default)]
+pub struct TempIdxResult {
+    /// Go `scanCount`.
+    pub scan_count: u64,
+    /// Go `addCount`.
+    pub add_count: u64,
+    /// Go `nextKey`.
+    pub next_key: Vec<u8>,
+    /// Go `done`.
+    pub done: bool,
+}
+
+impl TaskMayPanic<OperatorError> for TempIdxResult {
+    fn recover_args(&self) -> (String, String, Option<OperatorError>) {
+        (LBL_ADD_INDEX.to_owned(), "tempIdxResult".to_owned(), Some(reorg_panic()))
+    }
+}
+
+/// Go `TempIndexScanTaskSource`: produces `TempIndexScanTask`s by splitting
+/// a temporary index range into region ranges.
+pub struct TempIndexScanTaskSource {
+    ctx: Arc<Context>,
+    region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
+    physical_id: i64,
+    start_key: Vec<u8>,
+    end_key: Vec<u8>,
+    sink: Mutex<Option<SimpleDataChannel<TempIndexScanTask>>>,
+    err_group: Mutex<Option<JoinHandle<Result<(), OperatorError>>>>,
+}
+
+impl TempIndexScanTaskSource {
+    /// Go `NewTempIndexScanTaskSource`; `region_store` is Go `store`'s
+    /// region cache.
+    #[must_use]
+    pub fn new(
+        ctx: Arc<Context>,
+        region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
+        physical_id: i64,
+        start_key: Vec<u8>,
+        end_key: Vec<u8>,
+    ) -> Self {
+        Self { ctx, region_store, physical_id, start_key, end_key, sink: Mutex::new(None), err_group: Mutex::new(None) }
+    }
+}
+
+/// Go `TempIndexScanTaskSource.generateTasks`.
+fn generate_temp_index_tasks(
+    ctx: &Context,
+    sink: &SimpleDataChannel<TempIndexScanTask>,
+    region_store: Option<&dyn tidb_kv::region_map::RegionStore>,
+    physical_id: i64,
+    start_key: &[u8],
+    end_key: &[u8],
+) -> Result<(), OperatorError> {
+    let mut task_id_alloc = TaskIdAllocator::default();
+    let mut start_key = start_key.to_vec();
+    loop {
+        let kv_ranges = super::super::backfilling::load_table_ranges(
+            region_store,
+            physical_id,
+            &start_key,
+            end_key,
+            super::super::backfilling::BACKFILL_TASK_CHAN_SIZE,
+        )
+        .map_err(|error| operator_error(PipelineError::Storage(error)))?;
+        let Some(last) = kv_ranges.last() else {
+            break;
+        };
+        let next_start = last.1.clone();
+        for task in get_batch_temp_index_scan_task(physical_id, kv_ranges, &mut task_id_alloc) {
+            if !sink.send_or_done(task, ctx) {
+                return Err(ctx.err().unwrap_or_else(OperatorError::canceled));
+            }
+        }
+        start_key = next_start;
+        if start_key.as_slice() >= end_key {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Go `TempIndexScanTaskSource.getBatchTempIndexScanTask`.
+fn get_batch_temp_index_scan_task(
+    physical_id: i64,
+    kv_ranges: Vec<(Vec<u8>, Vec<u8>)>,
+    task_id_alloc: &mut TaskIdAllocator,
+) -> Vec<TempIndexScanTask> {
+    let prefix = tidb_tablecodec::table_key::gen_table_index_prefix(physical_id);
+    kv_ranges
+        .into_iter()
+        .map(|(start, end)| TempIndexScanTask {
+            id: task_id_alloc.alloc(),
+            start: if start.is_empty() { prefix.clone() } else { start },
+            end: if end.is_empty() {
+                tidb_txnkv::Key::from_bytes(prefix.clone()).prefix_next().as_bytes().to_vec()
+            } else {
+                end
+            },
+        })
+        .collect()
+}
+
+impl WithSink<TempIndexScanTask> for TempIndexScanTaskSource {
+    /// Go `TempIndexScanTaskSource.SetSink`.
+    fn set_sink(&self, sink: SimpleDataChannel<TempIndexScanTask>) {
+        *self.sink.lock().unwrap() = Some(sink);
+    }
+}
+
+impl Operator for TempIndexScanTaskSource {
+    /// Go `TempIndexScanTaskSource.Open`.
+    fn open(&self) -> Result<(), OperatorError> {
+        let ctx = Arc::clone(&self.ctx);
+        let sink = self.sink.lock().unwrap().clone().expect("TempIndexScanTaskSource sink is required");
+        let region_store = self.region_store.clone();
+        let physical_id = self.physical_id;
+        let (start_key, end_key) = (self.start_key.clone(), self.end_key.clone());
+        let handle = std::thread::Builder::new()
+            .name("temp-index-scan-task-source".to_owned())
+            .spawn(tidb_cpuprofile::labels::inherit(move || {
+                // Go `defer src.sink.Finish()`.
+                let result =
+                    generate_temp_index_tasks(&ctx, &sink, region_store.as_deref(), physical_id, &start_key, &end_key);
+                sink.finish();
+                result
+            }))
+            .map_err(|error| OperatorError::new(error.to_string()))?;
+        *self.err_group.lock().unwrap() = Some(handle);
+        Ok(())
+    }
+
+    /// Go `TempIndexScanTaskSource.Close`: the task generation's error.
+    fn close(&self) -> Result<(), OperatorError> {
+        match self.err_group.lock().unwrap().take() {
+            Some(handle) => handle.join().unwrap_or_else(|_| Err(reorg_panic())),
+            None => Ok(()),
+        }
+    }
+
+    fn operator_string(&self) -> String {
+        "TempIndexScanTaskSource".to_owned()
+    }
+}
+
+/// What Go's `mergeTempIndexWorker` reaches through `store`, `ptbl` and
+/// `idxInfo`: the transaction opener, the backfiller that merges a batch,
+/// the reorganization and the index being merged.
+pub struct MergeContext<S: StoreClient> {
+    /// Go `store`.
+    pub opener: Arc<RealOptimisticTransactionOpener<S>>,
+    /// The merge transactions' RPC deadline.
+    pub timeout: Duration,
+    /// The table codecs that merge a batch.
+    pub backfiller: Arc<dyn IndexBackfiller + Send>,
+    /// Go `ptbl.Meta()` and `jobID`.
+    pub reorg: Arc<AddIndexReorg>,
+    /// Go `ptbl.GetPhysicalID()`.
+    pub physical_id: i64,
+    /// Go `idxInfo.ID`.
+    pub index_id: i64,
+}
+
+/// Go `MergeTempIndexOperator`: merges the temporary index records into the
+/// original index.
+pub struct MergeTempIndexOperator {
+    inner: AsyncOperator<TempIndexScanTask, TempIdxResult>,
+    total_count: Arc<AtomicI64>,
+}
+
+impl MergeTempIndexOperator {
+    /// Go `NewMergeTempIndexOperator`.
+    #[must_use]
+    pub fn new<S: StoreClient + 'static>(
+        ctx: Arc<Context>,
+        merge: Arc<MergeContext<S>>,
+        concurrency: usize,
+        batch_size: usize,
+    ) -> Self {
+        let total_count = Arc::new(AtomicI64::new(0));
+        let pool = {
+            let (ctx, total_count) = (Arc::clone(&ctx), Arc::clone(&total_count));
+            WorkerPool::new(
+                "MergeTempIndexOperator".to_owned(),
+                tidb_resourcemanager_util::Component::Ddl,
+                concurrency as isize,
+                move || {
+                    Some(Box::new(MergeTempIndexWorker {
+                        ctx: Arc::clone(&ctx),
+                        merge: Arc::clone(&merge),
+                        batch_cnt: batch_size,
+                        total_count: Arc::clone(&total_count),
+                    }) as Box<dyn Worker<TempIndexScanTask, TempIdxResult, OperatorError>>)
+                },
+                Vec::new(),
+            )
+        };
+        Self { inner: AsyncOperator::new(ctx, pool), total_count }
+    }
+}
+
+impl WithSource<TempIndexScanTask> for MergeTempIndexOperator {
+    fn set_source(&self, channel: SimpleDataChannel<TempIndexScanTask>) {
+        self.inner.set_source(channel);
+    }
+}
+
+impl WithSink<TempIdxResult> for MergeTempIndexOperator {
+    fn set_sink(&self, channel: SimpleDataChannel<TempIdxResult>) {
+        self.inner.set_sink(channel);
+    }
+}
+
+impl Operator for MergeTempIndexOperator {
+    fn open(&self) -> Result<(), OperatorError> {
+        self.inner.open()
+    }
+
+    /// Go `MergeTempIndexOperator.Close`.
+    fn close(&self) -> Result<(), OperatorError> {
+        let result = self.inner.close();
+        tidb_logutil::bg_logger().info(
+            "merge temp index operator total count",
+            &[tidb_log::Field::new("count", tidb_log::Value::I64(self.total_count.load(Ordering::SeqCst)))],
+        );
+        result
+    }
+
+    fn operator_string(&self) -> String {
+        self.inner.operator_string()
+    }
+
+    fn tunable(&self) -> Option<&dyn TunableOperator> {
+        Some(&self.inner)
+    }
+}
+
+/// Go `mergeTempIndexWorker`.
+struct MergeTempIndexWorker<S: StoreClient> {
+    ctx: Arc<Context>,
+    merge: Arc<MergeContext<S>>,
+    batch_cnt: usize,
+    total_count: Arc<AtomicI64>,
+}
+
+impl<S: StoreClient + 'static> Worker<TempIndexScanTask, TempIdxResult, OperatorError> for MergeTempIndexWorker<S> {
+    /// Go `mergeTempIndexWorker.HandleTask`.
+    fn handle_task(
+        &mut self,
+        task: TempIndexScanTask,
+        sender: &mut dyn FnMut(TempIdxResult),
+    ) -> Result<(), OperatorError> {
+        tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/injectPanicForTableScan", |_| {
+            panic!("mock panic");
+        });
+        let mut start = task.start.clone();
+        loop {
+            let result = self.handle_one_range(&start, &task.end)?;
+            let done = result.done;
+            start = result.next_key.clone();
+            sender(result);
+            if done {
+                return Ok(());
+            }
+        }
+    }
+
+    fn close(&mut self) -> Result<(), OperatorError> {
+        Ok(())
+    }
+}
+
+impl<S: StoreClient + 'static> MergeTempIndexWorker<S> {
+    /// Go `mergeTempIndexWorker.handleOneRange`: one batch, retried with
+    /// the batch halved on a retryable transaction error
+    /// (`merge_temp_index_batch`); a failure is the pipeline's
+    /// (`w.ctx.OnError`).
+    fn handle_one_range(&mut self, start: &[u8], end: &[u8]) -> Result<TempIdxResult, OperatorError> {
+        let merge = &self.merge;
+        let check_owner = || self.ctx.err().map_or(Ok(()), |error| Err(error.to_string()));
+        let stopped = AtomicBool::new(false);
+        let step = super::merge_temp_index_batch(
+            &merge.opener,
+            merge.timeout,
+            merge.backfiller.as_ref(),
+            &merge.reorg,
+            merge.physical_id,
+            merge.index_id,
+            start,
+            end,
+            self.batch_cnt,
+            &check_owner,
+            &stopped,
+        );
+        let error = match step {
+            Ok(BatchStep::Advanced { next_key, done, scanned, added, .. }) => {
+                self.total_count.fetch_add(scanned as i64, Ordering::SeqCst);
+                return Ok(TempIdxResult { scan_count: scanned, add_count: added, next_key, done });
+            }
+            Ok(BatchStep::Interrupted) => PipelineError::Interrupted,
+            Ok(BatchStep::Failed(error)) => PipelineError::Sql(error),
+            Err(error) => PipelineError::Storage(error),
+        };
+        let error = operator_error(error);
+        self.ctx.on_error(error.clone());
+        Err(error)
+    }
+}
+
+/// Go `tempIndexResultSink`: collects the merged batches' counts.
+pub struct TempIndexResultSink {
+    ctx: Arc<Context>,
+    collector: Arc<dyn Collector>,
+    source: Mutex<Option<SimpleDataChannel<TempIdxResult>>>,
+    err_group: Mutex<Option<JoinHandle<Result<(), OperatorError>>>>,
+}
+
+impl TempIndexResultSink {
+    /// Go `newTempIndexResultSink`.
+    #[must_use]
+    pub fn new(ctx: Arc<Context>, collector: Arc<dyn Collector>) -> Self {
+        Self { ctx, collector, source: Mutex::new(None), err_group: Mutex::new(None) }
+    }
+}
+
+/// Go `tempIndexResultSink.collectResult`.
+fn collect_temp_index_result(
+    ctx: &Context,
+    collector: &dyn Collector,
+    source: &SimpleDataChannel<TempIdxResult>,
+) -> Result<(), OperatorError> {
+    let receiver = source.receiver();
+    let [own, parent] = ctx.done();
+    loop {
+        crossbeam_channel::select! {
+            recv(own) -> _ => return Err(ctx.err().unwrap_or_else(OperatorError::canceled)),
+            recv(parent) -> _ => return Err(ctx.err().unwrap_or_else(OperatorError::canceled)),
+            recv(receiver) -> result => {
+                let Ok(result) = result else {
+                    return Ok(());
+                };
+                collector.processed(0, result.add_count as i64);
+            }
+        }
+    }
+}
+
+impl WithSource<TempIdxResult> for TempIndexResultSink {
+    fn set_source(&self, source: SimpleDataChannel<TempIdxResult>) {
+        *self.source.lock().unwrap() = Some(source);
+    }
+}
+
+impl Operator for TempIndexResultSink {
+    /// Go `tempIndexResultSink.Open`.
+    fn open(&self) -> Result<(), OperatorError> {
+        let ctx = Arc::clone(&self.ctx);
+        let collector = Arc::clone(&self.collector);
+        let source = self.source.lock().unwrap().clone().expect("tempIndexResultSink source is required");
+        let handle = std::thread::Builder::new()
+            .name("temp-index-result-sink".to_owned())
+            .spawn(tidb_cpuprofile::labels::inherit(move || {
+                collect_temp_index_result(&ctx, collector.as_ref(), &source)
+            }))
+            .map_err(|error| OperatorError::new(error.to_string()))?;
+        *self.err_group.lock().unwrap() = Some(handle);
+        Ok(())
+    }
+
+    /// Go `tempIndexResultSink.Close`.
+    fn close(&self) -> Result<(), OperatorError> {
+        match self.err_group.lock().unwrap().take() {
+            Some(handle) => handle.join().unwrap_or_else(|_| Err(reorg_panic())),
+            None => Ok(()),
+        }
+    }
+
+    fn operator_string(&self) -> String {
+        "tempIndexResultSink".to_owned()
+    }
+}
+
+/// Go `mergeTempIndexExecutor.RunSubtask`'s pipeline: the source, merge and
+/// sink operators over `[start_key, end_key)` of one temporary index.
+#[must_use]
+pub fn new_merge_temp_index_pipeline<S: StoreClient + 'static>(
+    ctx: &Arc<Context>,
+    region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
+    merge: Arc<MergeContext<S>>,
+    start_key: Vec<u8>,
+    end_key: Vec<u8>,
+    concurrency: usize,
+    batch_size: usize,
+    collector: Arc<dyn Collector>,
+) -> Arc<AsyncPipeline> {
+    let physical_id = merge.physical_id;
+    let src_op = Arc::new(TempIndexScanTaskSource::new(Arc::clone(ctx), region_store, physical_id, start_key, end_key));
+    let merge_op = Arc::new(MergeTempIndexOperator::new(Arc::clone(ctx), merge, concurrency, batch_size));
+    let sink_op = Arc::new(TempIndexResultSink::new(Arc::clone(ctx), collector));
+    compose(src_op.as_ref(), merge_op.as_ref());
+    compose(merge_op.as_ref(), sink_op.as_ref());
+    Arc::new(AsyncPipeline::new(vec![src_op, merge_op, sink_op]))
+}
+
 /// Go `NewAddIndexIngestPipeline`: the source, scan, ingest and sink
 /// operators of a local-ingest backfill over `[start_key, end_key)`.
 #[allow(clippy::too_many_arguments)]

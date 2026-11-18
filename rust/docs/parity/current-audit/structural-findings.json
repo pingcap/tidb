@@ -2,9 +2,9 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 4,
+    "unresolved": 3,
     "open": 1,
-    "partial": 3
+    "partial": 2
   },
   "findings": [
     {
@@ -14,14 +14,6 @@
       "finding": "First boot is decided by the bootstrap commit, not by DDL owner election: the node publishes the `mysql` bootstrap while connecting its store (`tidb-server` `cluster_stack.rs`), before the domain and its owner manager exist. A node whose publish loses to another's now waits for the winner, checking the store every 200ms as Go's non-owner does in `bootstrap`, and boots from the winner's tables through the upgrade path (two realtikv nodes booting a fresh cluster together both come up; before, one failed with `bootstrap encode failed: Write conflict`). Go lets only the DDL owner run `doDDLWorks`/`doDMLWorks`.",
       "rust_evidence": "`rust/crates/tidb-server/src/cluster_stack.rs`, `rust/crates/tidb-session/src/bootstrap_publish.rs`",
       "go_owner": "`pkg/session/bootstrap.go` (`bootstrap`), `pkg/session/session.go` (`runInBootstrapSession`)"
-    },
-    {
-      "id": "D02",
-      "status": "partial",
-      "group": "DDL",
-      "finding": "The DXF merge-temp-index step (`backfilling_dist.rs` `MergeTempIndexStepExecutor`) merges each subtask's range in a sequential batch loop over `run_batch`, where Go runs it on the operators: `TempIndexScanTaskSource` (region tasks), `MergeTempIndexOperator` (a worker pool, each worker's `handleOneRange` retrying a retryable transaction error with the batch halved) and `tempIndexResultSink` (`backfilling_merge_temp.go`, `backfilling_operators.go`). The ADD INDEX read step, global sort and IMPORT INTO's conflict records are Go's (PRs ngaut/tidb#66, #67, #68).",
-      "rust_evidence": "`rust/crates/tidb-ddl/src/real_tikv_ddl/backfilling_dist.rs`",
-      "go_owner": "`pkg/ddl/backfilling_merge_temp.go`, `pkg/ddl/backfilling_operators.go`"
     },
     {
       "id": "E29",
@@ -40,7 +32,7 @@
       "rust_evidence": "`rust/crates/tidb-table/src/tables.rs`, `rust/crates/tidb-table/src/tables/nonpublic_columns.rs`, `rust/crates/tidb-table/src/table_from_meta.rs`"
     }
   ],
-  "unresolved": 4,
+  "unresolved": 3,
   "open": 1,
-  "partial": 3
+  "partial": 2
 }

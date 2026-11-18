@@ -47,6 +47,8 @@ pub(super) enum BatchStep {
     Advanced {
         next_key: Vec<u8>,
         done: bool,
+        /// Rows (or temporary entries) the batch scanned.
+        scanned: u64,
         added: u64,
         batch_warnings: Vec<(u16, String, i64)>,
     },
@@ -323,6 +325,7 @@ fn handle_backfill_task(
                 done,
                 added,
                 batch_warnings,
+                ..
             }) => {
                 result.added_count += added;
                 merge_warnings(&mut result.warnings, batch_warnings);
@@ -692,7 +695,7 @@ mod tests {
             if start == b"f" && end == b"j" {
                 return Ok(BatchStep::Failed(LockSqlError::from(tidb_terror::MysqlError::unknown("dup"))));
             }
-            Ok(BatchStep::Advanced { next_key: end.to_vec(), done: true, added: 1, batch_warnings: Vec::new() })
+            Ok(BatchStep::Advanced { next_key: end.to_vec(), done: true, scanned: 1, added: 1, batch_warnings: Vec::new() })
         };
         // Row tasks shrink to the last row (`GetRangeEndKey`).
         let range_end = |_start: &[u8], end: &[u8]| Ok(if end == b"k" { b"j".to_vec() } else { end.to_vec() });
@@ -792,7 +795,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(400));
             running.fetch_sub(1, Ordering::SeqCst);
             seen.lock().unwrap().push(batch);
-            Ok(BatchStep::Advanced { next_key: end.to_vec(), done: true, added: 1, batch_warnings: Vec::new() })
+            Ok(BatchStep::Advanced { next_key: end.to_vec(), done: true, scanned: 1, added: 1, batch_warnings: Vec::new() })
         };
         let range_end = |_: &[u8], end: &[u8]| Ok(end.to_vec());
         let update = |_: &[u8]| {};

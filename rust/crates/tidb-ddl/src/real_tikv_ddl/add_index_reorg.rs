@@ -238,6 +238,29 @@ pub(super) fn reorg_transaction_at<S, T>(
     timeout: Duration,
     source: &tidb_txnkv::RequestSource,
     start_ts: Option<u64>,
+    work: impl FnMut(
+        &mut SnapshotMetaSnapshot,
+        Arc<Mutex<dyn ClusterSnapshot>>,
+        &MutationBuffer,
+        u64,
+    ) -> Result<(T, Vec<BufferMutation>), ClusterDdlError>,
+) -> Result<T, ClusterDdlError>
+where
+    S: StoreClient,
+{
+    run_in_new_txn(opener, timeout, source, start_ts, true, work)
+}
+
+/// Go `kv.RunInNewTxn(ctx, store, retryable, f)`: a commit write conflict
+/// retries the whole transaction only when `retryable`; otherwise it is
+/// the caller's (`ClusterDdlError::ConcurrentSchemaChange`, Go
+/// `kv.IsTxnRetryableError`).
+fn run_in_new_txn<S, T>(
+    opener: &Arc<RealOptimisticTransactionOpener<S>>,
+    timeout: Duration,
+    source: &tidb_txnkv::RequestSource,
+    start_ts: Option<u64>,
+    retryable: bool,
     mut work: impl FnMut(
         &mut SnapshotMetaSnapshot,
         Arc<Mutex<dyn ClusterSnapshot>>,
@@ -303,7 +326,8 @@ where
             Ok(_) => return Ok(value),
             Err(error) => {
                 let cause = classify_session_ddl_commit_error(0, error);
-                if matches!(cause, ClusterDdlError::ConcurrentSchemaChange { .. })
+                if retryable
+                    && matches!(cause, ClusterDdlError::ConcurrentSchemaChange { .. })
                     && attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT
                 {
                     std::thread::sleep(tidb_txnkv::retry_backoff_delay(attempt));
@@ -863,8 +887,21 @@ where
                     other=>return Ok(other),
                 }
             }
-            let backfill_data = |start: &[u8], end: &[u8], batch_size: usize| {
-                run_batch(
+            let backfill_data = |start: &[u8], end: &[u8], batch_size: usize| match index_id {
+                Some(index_id) => merge_temp_index_batch(
+                    opener,
+                    timeout,
+                    backfiller,
+                    reorg,
+                    handle.physical_id,
+                    index_id,
+                    start,
+                    end,
+                    batch_size,
+                    check_owner,
+                    step_cancelled,
+                ),
+                None => run_batch(
                     opener,
                     timeout,
                     backfiller,
@@ -873,10 +910,10 @@ where
                     start,
                     end,
                     batch_size,
-                    index_id,
+                    None,
                     check_owner,
                     step_cancelled,
-                )
+                ),
             };
             // Go `reorgInfo.UpdateConfigFromSysTbl`.
             let reload_config = || {
@@ -1006,7 +1043,11 @@ fn run_batch<S>(
 where
     S: StoreClient,
 {
-    let step = reorg_transaction(opener, timeout, &crate::job_ctx::backfill_request_source(reorg.job_id), |_, snapshot, buffer, _| {
+    // Go's merge workers run each batch in `RunInNewTxn(..., false, ...)`
+    // and retry a conflict themselves (`merge_temp_index_batch`); the other
+    // backfill workers' transactions are retryable.
+    let source = crate::job_ctx::backfill_request_source(reorg.job_id);
+    let step = run_in_new_txn(opener, timeout, &source, None, merge_index.is_none(), |_, snapshot, buffer, _| {
         if !reorg_runnable(step_cancelled, check_owner)? {
             return Ok((BatchStep::Interrupted, Vec::new()));
         }
@@ -1055,6 +1096,7 @@ where
             BatchStep::Advanced {
                 next_key: batch.next_key,
                 done: batch.done,
+                scanned: batch.scanned,
                 added: batch.added,
                 batch_warnings: batch.warnings,
             },
@@ -1070,6 +1112,71 @@ where
         }
     }
     step
+}
+
+/// Go `mergeIndexWorker.BackfillData` and `mergeTempIndexWorker.handleOneRange`:
+/// one batch of the temporary index `index_id` merged in its own
+/// transaction; a retryable transaction error (Go `kv.IsTxnRetryableError`)
+/// retries it with the batch halved after `kv.BackOff`. The halved size
+/// lasts for this batch only (Go restores `batchCnt` on return).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn merge_temp_index_batch<S>(
+    opener: &Arc<RealOptimisticTransactionOpener<S>>,
+    timeout: Duration,
+    backfiller: &dyn IndexBackfiller,
+    reorg: &AddIndexReorg,
+    physical_id: i64,
+    index_id: i64,
+    start: &[u8],
+    end: &[u8],
+    batch_size: usize,
+    check_owner: &(dyn Fn() -> Result<(), String> + Sync),
+    step_cancelled: &AtomicBool,
+) -> Result<BatchStep, ClusterDdlError>
+where
+    S: StoreClient,
+{
+    let mut batch_cnt = batch_size;
+    let mut attempts: u32 = 0;
+    loop {
+        attempts += 1;
+        let step = run_batch(
+            opener,
+            timeout,
+            backfiller,
+            reorg,
+            physical_id,
+            start,
+            end,
+            batch_cnt,
+            Some(index_id),
+            check_owner,
+            step_cancelled,
+        );
+        let detail = match step {
+            Err(ClusterDdlError::ConcurrentSchemaChange { detail, .. }) => detail,
+            other => return other,
+        };
+        // Go `isReorgRunnable` before the retry.
+        if !reorg_runnable(step_cancelled, check_owner)? {
+            return Ok(BatchStep::Interrupted);
+        }
+        if batch_cnt > 1 {
+            batch_cnt /= 2;
+        }
+        let backoff = tidb_txnkv::retry_backoff_delay(attempts);
+        std::thread::sleep(backoff);
+        tidb_ddl_logutil::ddl_logger().warn(
+            "temp index merge worker retry",
+            &[
+                tidb_log::Field::new("jobID", tidb_log::Value::I64(reorg.job_id)),
+                tidb_log::Field::new("batchCnt", tidb_log::Value::I64(batch_cnt as i64)),
+                tidb_log::Field::new("attempts", tidb_log::Value::I64(i64::from(attempts))),
+                tidb_log::Field::new("backoff", tidb_log::Value::Str(format!("{backoff:?}"))),
+                tidb_log::Field::new("error", tidb_log::Value::Str(detail)),
+            ],
+        );
+    }
 }
 
 /// Go `reorgInfo.UpdateReorgMeta`: the handle's own pooled transaction;
