@@ -345,6 +345,15 @@ func TestGreedyOutputRowsAlternativeRound(t *testing.T) {
 		require.False(t, roundRuns(t, "select count(*) from (select k, max(v) as mx from agg_input group by k) x "+
 			"join (select k, max(v) as mx from agg_input group by k) y on x.k = y.k "+
 			"join (select k, max(v) as mx from agg_input group by k) z on y.k = z.k"))
+		// The trial build raises the same join hint conflicts, and its warnings are discarded.
+		hinted := "select /*+ hash_join(x) merge_join(y) */ count(*) from (select k, max(v) as mx from agg_input group by k) x " +
+			"join (select k, max(v) as mx from agg_input group by k) y on x.k = y.k " +
+			"join (select k, max(v) as mx from agg_input group by k) z on y.k = z.k"
+		offPlan := plan("off", hinted)
+		offWarnings := tk.MustQuery("show warnings").Rows()
+		require.NotEmpty(t, offWarnings)
+		require.Equal(t, offPlan, plan("on", hinted))
+		require.Equal(t, offWarnings, tk.MustQuery("show warnings").Rows())
 
 		// A cached plan is only reused under the setting it was built with.
 		tk.MustExec("prepare st from '" + query + "'")

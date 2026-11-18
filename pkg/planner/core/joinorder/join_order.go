@@ -575,11 +575,10 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 // costing this group's inputs by their output rows builds a join order other
 // than p. Only an input costed above its output rows, because LegacyLeafCost
 // also counts the rows below it, can change the order. With two inputs the
-// order only commutes, which the physical optimizer already covers, and groups
-// with LEADING hints are skipped so the trial build does not repeat hint warnings.
+// order only commutes, which the physical optimizer already covers.
 func (j *joinOrderGreedy) armGreedyOutputRowsRound(p base.LogicalPlan) {
 	group := j.group
-	if len(group.vertexes) < 3 || len(group.leadingHints) > 0 ||
+	if len(group.vertexes) < 3 ||
 		!slices.ContainsFunc(group.vertexes, func(v base.LogicalPlan) bool {
 			return LegacyLeafCost(v) > outputRowsLeafCost(v)
 		}) {
@@ -590,7 +589,10 @@ func (j *joinOrderGreedy) armGreedyOutputRowsRound(p base.LogicalPlan) {
 	if !vars.EnableAlternativeLogicalPlans {
 		return
 	}
+	// The trial order is discarded, and so are the warnings its build raises.
+	warnings := slices.Clone(vars.StmtCtx.GetWarnings())
 	alternative, err := j.optimizeByLeafCost(outputRowsLeafCost)
+	vars.StmtCtx.SetWarnings(warnings)
 	if err == nil && joinTreeShape(group, alternative) != joinTreeShape(group, p) {
 		vars.StmtCtx.MarkAlternativeLogicalPlanGreedyReorderByOutputRows()
 	}
