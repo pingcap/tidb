@@ -184,6 +184,35 @@ func TestMVIndexMergePlanTree(t *testing.T) {
 		"  ├─IndexRangeScan(Build) cop[tikv] table:t_mv_idx_only, index:idx(cast(`j` as signed array), a) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) cop[tikv] table:t_mv_idx_only keep order:false, stats:pseudo",
 	))
+
+	t.Run("JSONContainsScalar73120", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t (pk int primary key, a json, index idx ((cast(a->'$.a' as signed array))))")
+		tk.MustExec(`insert into t values
+			(1, '{"a":1}'), (2, '{"a":[1]}'), (3, '{"a":[1,1]}'), (4, '{"a":[2]}')`)
+		tk.MustQuery("select json_contains(cast(1 as json), '[1]')").Check(testkit.Rows("0"))
+		const predicate = "json_contains(a->'$.a', '[1]')"
+		forced := "select pk from t use index(idx) where " + predicate + " order by pk"
+		tk.MustHavePlan(forced, "IndexMerge")
+		tk.MustQuery(forced).Check(testkit.Rows("2", "3"))
+		tk.MustQuery("select pk from t ignore index(idx) where " + predicate + " order by pk").Check(testkit.Rows("2", "3"))
+		tk.MustQuery("select pk from t where " + predicate + " order by pk").Check(testkit.Rows("2", "3"))
+		tk.MustQuery("select pk from t use index(idx) where json_contains(a->'$.a', '1') order by pk").Check(testkit.Rows("1", "2", "3"))
+		tk.MustQuery("select pk from t use index(idx) where json_contains(a->'$.a', '[1,1]') order by pk").Check(testkit.Rows("2", "3"))
+		orQuery := "select /*+ use_index_merge(t, idx, primary) */ pk from t where " + predicate + " or pk=4 order by pk"
+		tk.MustHavePlan(orQuery, "IndexMerge")
+		tk.MustQuery(orQuery).Check(testkit.Rows("2", "3", "4"))
+
+		update := "update t use index(idx) set a=json_set(a, '$.matched', 1) where " + predicate
+		tk.MustHavePlan(update, "IndexMerge")
+		tk.MustExec(update)
+		tk.MustQuery("select pk from t where a->'$.matched'=1 order by pk").Check(testkit.Rows("2", "3"))
+		del := "delete from t use index(idx) where " + predicate
+		tk.MustHavePlan(del, "IndexMerge")
+		tk.MustExec(del)
+		tk.MustQuery("select pk from t order by pk").Check(testkit.Rows("1", "4"))
+	})
 }
 
 func TestIndexMergeReaderMemTracker(t *testing.T) {

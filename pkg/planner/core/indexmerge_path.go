@@ -789,7 +789,7 @@ func generateANDIndexMerge4MVIndex(ds *logicalop.DataSource, normalPathCnt int, 
 			tableFilters,
 			ds.TableStats.HistColl,
 		)
-		if mvIndexRangeCoversJSONPredicates(ds.SCtx(), ds.Table.Meta(), ds.PossibleAccessPaths[idx].Index, partialPaths) {
+		if len(firstPath.TableFilters) == 0 && mvIndexRangeCoversJSONPredicates(ds.SCtx(), ds.Table.Meta(), ds.PossibleAccessPaths[idx].Index, partialPaths) {
 			indexMergePath.IndexMergeMVCoveredConds = collectMVCoveredJSONConds(accessFilters)
 		}
 		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, indexMergePath)
@@ -873,6 +873,11 @@ func buildPartialPathUp4MVIndex(
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths, IndexMergeAccessMVIndex: true}
 	indexMergePath.IndexMergeIsIntersection = isIntersection
 	indexMergePath.TableFilters = remainingFilters
+	for _, path := range partialPaths {
+		if isMVIndexPath(path) {
+			indexMergePath.TableFilters = append(indexMergePath.TableFilters, path.TableFilters...)
+		}
+	}
 	indexMergePath.CountAfterAccess = float64(histColl.RealtimeCount) *
 		cardinality.CalcTotalSelectivityForMVIdxPath(histColl, partialPaths, isIntersection)
 	return indexMergePath
@@ -950,6 +955,7 @@ func buildPartialPaths4MVIndex(
 
 	// extract values related to this vir-col, for example, extract [1, 2] from `json_contains(j, '[1, 2]')`
 	var virColVals []expression.Expression
+	var arrayCandidate bool
 	sf, ok := accessFilters[virColID].(*expression.ScalarFunction)
 	if !ok {
 		return nil, false, false, nil
@@ -963,7 +969,7 @@ func buildPartialPaths4MVIndex(
 		virColVals = append(virColVals, v)
 	case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
 		isIntersection = true
-		virColVals, ok = jsonArrayExpr2Exprs(
+		virColVals, arrayCandidate, ok = jsonArrayExpr2Exprs(
 			sctx.GetExprCtx(),
 			ast.JSONContains,
 			sf.GetArgs()[1],
@@ -985,7 +991,7 @@ func buildPartialPaths4MVIndex(
 			return nil, false, false, nil
 		}
 		var ok bool
-		virColVals, ok = jsonArrayExpr2Exprs(
+		virColVals, _, ok = jsonArrayExpr2Exprs(
 			sctx.GetExprCtx(),
 			ast.JSONOverlaps,
 			sf.GetArgs()[1-jsonPathIdx],
@@ -1021,7 +1027,29 @@ func buildPartialPaths4MVIndex(
 		}
 		partialPaths = append(partialPaths, partialPath)
 	}
+	// CAST(... AS ARRAY) gives a scalar the same key as a one-element array.
+	// Only an intersection of distinct element keys can rule out the scalar.
+	if arrayCandidate && !mvIndexProbesExcludeScalar(sctx.GetSessionVars().StmtCtx.TypeCtx(), partialPaths, virColID) {
+		partialPaths[0].TableFilters = append(partialPaths[0].TableFilters, sf)
+	}
 	return partialPaths, isIntersection, true, nil
+}
+
+func mvIndexProbesExcludeScalar(tc types.Context, paths []*util.AccessPath, colIdx int) bool {
+	var first *types.Datum
+	for _, path := range paths {
+		if len(path.Ranges) != 1 || !rangesRestrictColumnToPoint(tc, path.Ranges, colIdx) {
+			continue
+		}
+		r := path.Ranges[0]
+		point := &r.LowVal[colIdx]
+		if first == nil {
+			first = point
+		} else if cmp, err := point.Compare(tc, first, r.Collators[colIdx]); err == nil && cmp != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // isSafeTypeConversion4MVIndexRange checks whether it is safe to convert valType to mvIndexType when building ranges for MVIndexes.
@@ -1392,7 +1420,7 @@ func checkAccessFilter4IdxCol(
 			if !targetJSONPath.Equal(sctx.GetExprCtx().GetEvalCtx(), sf.GetArgs()[0]) {
 				return false, unspecifiedFilterTp
 			}
-			virColVals, ok = jsonArrayExpr2Exprs(
+			virColVals, _, ok = jsonArrayExpr2Exprs(
 				sctx.GetExprCtx(),
 				ast.JSONContains,
 				sf.GetArgs()[1],
@@ -1413,7 +1441,7 @@ func checkAccessFilter4IdxCol(
 				return false, unspecifiedFilterTp
 			}
 			var ok bool
-			virColVals, ok = jsonArrayExpr2Exprs(
+			virColVals, _, ok = jsonArrayExpr2Exprs(
 				sctx.GetExprCtx(),
 				ast.JSONOverlaps,
 				sf.GetArgs()[1-jsonPathIdx],
@@ -1494,36 +1522,36 @@ func jsonArrayExpr2Exprs(
 	jsonArrayExpr expression.Expression,
 	targetType *types.FieldType,
 	checkForSkipPlanCache bool,
-) ([]expression.Expression, bool) {
+) (values []expression.Expression, isArray, ok bool) {
 	if checkForSkipPlanCache && expression.MaybeOverOptimized4PlanCache(sctx, jsonArrayExpr) {
 		// skip plan cache and try to generate the best plan in this case.
 		sctx.SetSkipPlanCache(jsonFuncName + " function with immutable parameters can affect index selection")
 	}
 	if !expression.IsImmutableFunc(jsonArrayExpr) || jsonArrayExpr.GetType(sctx.GetEvalCtx()).EvalType() != types.ETJson {
-		return nil, false
+		return nil, false, false
 	}
 
 	jsonArray, isNull, err := jsonArrayExpr.EvalJSON(sctx.GetEvalCtx(), chunk.Row{})
 	if isNull || err != nil {
-		return nil, false
+		return nil, false, false
 	}
 	if jsonArray.TypeCode != types.JSONTypeCodeArray {
 		single, ok := jsonValue2Expr(jsonArray, targetType) // '1' -> []expr{1}
 		if ok {
-			return []expression.Expression{single}, true
+			return []expression.Expression{single}, false, true
 		}
-		return nil, false
+		return nil, false, false
 	}
 	elemCnt := jsonArray.GetElemCount()
 	exprs := make([]expression.Expression, 0, elemCnt)
 	for i := range elemCnt { // '[1, 2, 3]' -> []expr{1, 2, 3}
 		expr, ok := jsonValue2Expr(jsonArray.ArrayGetElem(i), targetType)
 		if !ok {
-			return nil, false
+			return nil, false, false
 		}
 		exprs = append(exprs, expr)
 	}
-	return exprs, true
+	return exprs, true, true
 }
 
 func jsonValue2Expr(v types.BinaryJSON, targetType *types.FieldType) (expression.Expression, bool) {

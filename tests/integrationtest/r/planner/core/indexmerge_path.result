@@ -758,7 +758,7 @@ IndexMerge	root		type: union
 ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[1 2,1 2], keep order:false, stats:pseudo
 ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[2 2,2 2], keep order:false, stats:pseudo
 ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[3 2,3 2], keep order:false, stats:pseudo
-└─Selection(Probe)	cop[tikv]		json_contains(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[2]", json BINARY))
+└─Selection(Probe)	cop[tikv]		json_contains(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[2]", json BINARY)), or(eq(planner__core__indexmerge_path.t.c, 1), or(eq(planner__core__indexmerge_path.t.c, 2), eq(planner__core__indexmerge_path.t.c, 3)))
   └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ use_index_merge(t, mvi1) */ * from t where
 (
@@ -1255,13 +1255,13 @@ Limit	root		offset:0, count:10
       └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select * from t where 1 member of (j1) or json_contains(j2, '[5]') order by b limit 10000;
 id	task	access object	operator info
-Projection	root		planner__core__indexmerge_path.t.a, planner__core__indexmerge_path.t.b, planner__core__indexmerge_path.t.c, planner__core__indexmerge_path.t.j1, planner__core__indexmerge_path.t.j2
-└─IndexMerge	root		type: union, limit embedded(offset:0, count:10000)
-  ├─Limit(Build)	cop[tikv]		offset:0, count:10000
-  │ └─IndexRangeScan	cop[tikv]	table:t, index:mvi2(cast(`j1` as unsigned array), b)	range:[1,1], keep order:true, stats:pseudo
-  ├─Limit(Build)	cop[tikv]		offset:0, count:10000
-  │ └─IndexRangeScan	cop[tikv]	table:t, index:mvi4(cast(`j2` as unsigned array), b)	range:[5,5], keep order:true, stats:pseudo
-  └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
+Limit	root		offset:0, count:10000
+└─Projection	root		planner__core__indexmerge_path.t.a, planner__core__indexmerge_path.t.b, planner__core__indexmerge_path.t.c, planner__core__indexmerge_path.t.j1, planner__core__indexmerge_path.t.j2
+  └─IndexMerge	root		type: union
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:mvi2(cast(`j1` as unsigned array), b)	range:[1,1], keep order:true, stats:pseudo
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:mvi4(cast(`j2` as unsigned array), b)	range:[5,5], keep order:true, stats:pseudo
+    └─Selection(Probe)	cop[tikv]		or(json_memberof(cast(1, json BINARY), planner__core__indexmerge_path.t.j1), json_contains(planner__core__indexmerge_path.t.j2, cast("[5]", json BINARY)))
+      └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 INSERT INTO t VALUES (2, 2, 2, '[1,2,3]', '[4,5,6]');
 INSERT INTO t VALUES (5, 1, 5, '[]', '[2]');
 INSERT INTO t VALUES (10, 10, 10, '[1,2,3]', '[4,5,6]');
@@ -1409,7 +1409,8 @@ Projection	root		planner__core__indexmerge_path.t.id
 └─IndexMerge	root		type: intersection
   ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_j_id(cast(`j` as signed array), id)	range:(1 100,1 +inf], keep order:false, stats:pseudo
   ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_j_id(cast(`j` as signed array), id)	range:(2 100,2 +inf], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		json_contains(planner__core__indexmerge_path.t.j, cast("[1, 2]", json BINARY))
+    └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ use_index_merge(t, idx_j_id) */ id from t where json_overlaps(j, '[1, 2]') and id > 100;
 id	task	access object	operator info
 Projection	root		planner__core__indexmerge_path.t.id
