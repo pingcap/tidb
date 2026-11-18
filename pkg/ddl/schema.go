@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 
 	"github.com/pingcap/errors"
@@ -36,10 +37,9 @@ const dropSchemaTTLRestoreRegistrationsLogKey = "drop_schema_ttl_restore_registr
 const (
 	// labelRuleLookupBatchSize is the number of label rule IDs sent to PD in one lookup request.
 	labelRuleLookupBatchSize = 10000
-	// maxPhysicalTablesPerDropSchemaEvent limits how many tables and partitions one drop schema
-	// event describes. An event is stored as a single row, so it must stay well below the
-	// transaction entry size limit even when all the partitions have names of maximum length.
-	maxPhysicalTablesPerDropSchemaEvent = 10000
+	// maxDropSchemaEventSize is the size in bytes of the tables and partitions that one drop
+	// schema event describes, to keep the events small since each one is stored as a single row.
+	maxDropSchemaEventSize = 2 * 1024 * 1024
 )
 
 type dropSchemaTTLTableInfo struct {
@@ -217,6 +217,11 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		ruleIDs, err = existingLabelRuleIDs(jobCtx.stepCtx, ruleIDs)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 		if jobCtx.oldDDLCtx != nil {
 			if err := w.dropSchemaTTLTablesFromExternalWorkload(jobCtx.ctx, job, job.SchemaName, ttlTables); err != nil {
 				return ver, err
@@ -225,11 +230,6 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		dbInfo.State = model.StateWriteOnly
 		err = metaMut.UpdateDatabase(dbInfo)
 		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		ruleIDs, err = existingLabelRuleIDs(jobCtx.stepCtx, ruleIDs)
-		if err != nil {
-			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		failpoint.InjectCall("dropSchemaDeleteLabelRules", ruleIDs)
@@ -328,14 +328,20 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		if len(miniTables) > tooManyTablesThreshold {
 			tablesPerJob = 500
 		}
-		for start, subJobID := 0, int64(0); start < len(miniTables); subJobID++ {
-			end := dropSchemaEventBatchEnd(miniTables, start, tablesPerJob, maxPhysicalTablesPerDropSchemaEvent)
+		maxEventSize := min(maxDropSchemaEventSize, int(kv.TxnEntrySizeLimit.Load()/2))
+		subJobID := int64(0)
+		for start := 0; start < len(miniTables); {
+			end, err := dropSchemaEventBatchEnd(miniTables, start, tablesPerJob, maxEventSize)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 			dropSchemaEvent := notifier.NewDropSchemaEvent(dbInfo, miniTables[start:end])
 			err = asyncNotifyEvent(jobCtx, dropSchemaEvent, job, subJobID, w.sess)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
 			start = end
+			subJobID++
 		}
 		// Finish this job.
 		job.FillFinishedArgs(&model.DropSchemaArgs{
@@ -511,17 +517,23 @@ func existingLabelRuleIDs(ctx context.Context, ruleIDs []string) ([]string, erro
 
 // dropSchemaEventBatchEnd returns the end (exclusive) of the batch of tables starting at
 // start that goes into one drop schema event. A batch has at most maxTables tables and at
-// most maxPhysicalTables tables and partitions in total, but always at least one table.
-func dropSchemaEventBatchEnd(tables []*notifier.MiniTableInfoForSchemaEvent, start, maxTables, maxPhysicalTables int) int {
-	end, physicalTables := start, 0
+// most maxSize bytes of encoded tables, but always at least one table.
+func dropSchemaEventBatchEnd(tables []*notifier.MiniTableInfoForSchemaEvent, start, maxTables, maxSize int) (int, error) {
+	end, size := start, 0
 	for end < len(tables) && end-start < maxTables {
-		physicalTables += 1 + len(tables[end].Partitions)
-		if end > start && physicalTables > maxPhysicalTables {
+		// The size depends on the number of partitions and on the names, which
+		// can take several bytes per character, so measure the encoded table.
+		data, err := json.Marshal(tables[end])
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		size += len(data)
+		if end > start && size > maxSize {
 			break
 		}
 		end++
 	}
-	return end
+	return end, nil
 }
 
 func checkSchemaExistAndCancelNotExistJob(t *meta.Mutator, job *model.Job) (*model.DBInfo, error) {

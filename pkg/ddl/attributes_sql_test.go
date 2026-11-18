@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -402,12 +403,13 @@ PARTITION BY RANGE (c) (
 
 	// Only the label rules that exist should be deleted from PD, since deleting
 	// a rule for every table and partition is slow when there are many of them.
-	var deletedRuleIDs []string
+	var deletedRuleIDs atomic.Pointer[[]string]
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/dropSchemaDeleteLabelRules", func(ruleIDs []string) {
-		deletedRuleIDs = ruleIDs
+		deletedRuleIDs.Store(&ruleIDs)
 	})
 	tk.MustExec("drop database drop_db")
-	require.ElementsMatch(t, []string{"schema/drop_db/t1", "schema/drop_db/t1/p0", "schema/drop_db/t3"}, deletedRuleIDs)
+	require.NotNil(t, deletedRuleIDs.Load())
+	require.ElementsMatch(t, []string{"schema/drop_db/t1", "schema/drop_db/t1/p0", "schema/drop_db/t3"}, *deletedRuleIDs.Load())
 	tk.MustQuery(`select id from information_schema.attributes;`).Check(testkit.Rows("schema/test/t1"))
 }
 

@@ -310,7 +310,7 @@ func TestDropSchemaWithManyPartitions(t *testing.T) {
 	ddlutil.EmulatorGCDisable()
 	originBatchSize := ddl.SetBatchInsertDeleteRangeSize(ddl.DefaultBatchInsertDeleteRangeSize)
 	// The schema change event of all the tables together is larger than this limit,
-	// so the tables must be split into several events by their number of partitions.
+	// so the tables must be split into several events by their size.
 	originLimit := kv.TxnEntrySizeLimit.Load()
 	kv.TxnEntrySizeLimit.Store(600 * 1024)
 	defer func() {
