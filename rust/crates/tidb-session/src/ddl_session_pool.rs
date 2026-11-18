@@ -305,6 +305,15 @@ impl DdlSessionPool for NodeDdlSessionPool {
         self.sess_pool.get().cloned()
     }
 
+    /// Go `session.GetAdvisoryLock`: each lock is an internal session of
+    /// the node's domain, as a user session's are.
+    fn advisory_lock_service(
+        &self,
+    ) -> Option<Arc<dyn tidb_sessionctx::advisory_lock_state::AdvisoryLockService>> {
+        let domain = self.domain.get()?.clone();
+        Some(Arc::new(crate::domain::cluster_session_node::advisory_locks::SessionAdvisoryLockService { domain }))
+    }
+
     /// A fresh statement of a default session.
     fn system_session(&self) -> Box<dyn tidb_ddl_build::session_context::DdlSessionContext> {
         Box::new(StmtContext::for_query())

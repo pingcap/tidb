@@ -512,3 +512,13 @@ fn alter_materialized_view_attributes_are_stored_as_go_master() {
 fn refresh_materialized_view_complete_in_place_answers_as_go_master() {
     replay_go_master(include_str!("../../../../../testdata/mview_refresh_in_place_go.jsonl"));
 }
+
+/// Go master's `onCreateMaterializedViewLog` on a materialized view: the
+/// DDL session takes the view's refresh advisory lock (`mv_refresh_<schema
+/// ID>_<view ID>`) for the job's delivery, so a session holding it (as a
+/// refresh does) cancels the job with Go's message, and the log is created
+/// once it is released. Replayed from a Go master node.
+#[test]
+fn create_materialized_view_log_on_a_view_takes_the_refresh_lock_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/mview_log_on_mview_lock_go.jsonl"));
+}

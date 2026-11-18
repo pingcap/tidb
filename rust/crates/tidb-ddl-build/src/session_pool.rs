@@ -115,6 +115,15 @@ pub trait DdlSessionPool: Send + Sync {
         None
     }
 
+    /// Go `sessionctx.Context.GetAdvisoryLock`'s backend for the DDL
+    /// worker's session (`w.sess`): each lock is an internal session of the
+    /// domain. `None` where no node is bound.
+    fn advisory_lock_service(
+        &self,
+    ) -> Option<std::sync::Arc<dyn tidb_sessionctx::advisory_lock_state::AdvisoryLockService>> {
+        None
+    }
+
     /// A system session's DDL context, for a job no user session submits
     /// (Go's domain takes one from its system session pool).
     fn system_session(&self) -> Box<dyn crate::session_context::DdlSessionContext>;

@@ -2798,7 +2798,7 @@ fn dispatch_persisted_action(
             txn, catalog, active, start_ts, row_ids,
         ),
         ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG => {
-            materialized_view::on_create_materialized_view_log(txn, catalog, active, start_ts, row_ids)
+            materialized_view::on_create_materialized_view_log(txn, catalog, active, start_ts, row_ids, sessions)
         }
         ActionType::ACTION_ALTER_MATERIALIZED_VIEW_LOG_PURGE => {
             materialized_view::on_alter_materialized_view_log_purge(txn, catalog, active, start_ts, row_ids)

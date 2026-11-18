@@ -1016,13 +1016,14 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
         store: Some(Arc::new(StoreSnapshotMeta { opener: Arc::clone(&opener), timeout })),
         region_store: backfiller.region_store(),
         start_mode: backfiller.start_mode(),
+        advisory_locks: Default::default(),
     };
     let mut schema_state = crate::cluster_ddl::DdlJobSchemaState::new(
         tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen()), job_w.clone(), worker,
     );
     schema_state.info_cache = schema_sync.info_cache();
     let reorg_slot = add_index_reorg::ReorgSlot::default();
-    loop {
+    let outcome = (|| loop {
         let result = transit_one_job_step_and_wait_sync(
             &opener, &mut job_w, &mut schema_state, timeout, job_done, notifier,
             backfiller, check_constraint_validator, schema_sync, check_owner, wait_retry, &reorg_slot,
@@ -1047,7 +1048,11 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
         if !refresh_delivered_job(backfiller, &mut job_w, check_owner, wait_retry)? {
             return Ok(PersistedDdlJobOutcome::Finished);
         }
-    }
+    })();
+    // Go `deliveryJob`'s deferred `wk.sess.ReleaseAllAdvisoryLocks()`:
+    // job-scoped locks outlive the steps but not the delivery.
+    schema_state.worker.release_all_advisory_locks();
+    outcome
 }
 
 /// Go `jobScheduler.transitOneJobStepAndWaitSync`: recover the previous

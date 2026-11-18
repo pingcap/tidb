@@ -43,6 +43,46 @@ pub struct DdlStepWorker {
     pub region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
     /// Go `jobCtx.oldDDLCtx.startMode`.
     pub start_mode: crate::StartMode,
+    /// The advisory locks `w.sess` holds for this delivery (Go
+    /// `GetAdvisoryLock`); dropping the worker at the end of the delivery
+    /// releases them (Go `deliveryJob`'s `ReleaseAllAdvisoryLocks`).
+    /// Shared by the worker's clones, as Go's one `*worker` is.
+    pub advisory_locks: Arc<
+        std::sync::Mutex<
+            std::collections::HashMap<String, Box<dyn tidb_sessionctx::advisory_lock_state::AdvisoryLockLease>>,
+        >,
+    >,
+}
+
+impl DdlStepWorker {
+    /// Go `w.sess.GetAdvisoryLock(name, timeout)`: a lock this delivery
+    /// already holds is held again.
+    pub fn get_advisory_lock(
+        &self,
+        name: &str,
+        timeout_secs: u64,
+    ) -> Result<(), tidb_sessionctx::advisory_lock_state::AdvisoryLockError> {
+        let mut locks = self.advisory_locks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if locks.contains_key(name) {
+            return Ok(());
+        }
+        let service = self.sess_pool.advisory_lock_service().ok_or_else(|| {
+            tidb_sessionctx::advisory_lock_state::AdvisoryLockError::Internal(
+                "the DDL session pool has no advisory lock service".to_owned(),
+            )
+        })?;
+        let lease = service.acquire(name, std::time::Duration::from_secs(timeout_secs))?;
+        locks.insert(name.to_owned(), lease);
+        Ok(())
+    }
+
+    /// Go `w.sess.ReleaseAllAdvisoryLocks()`.
+    pub fn release_all_advisory_locks(&self) {
+        let locks = std::mem::take(&mut *self.advisory_locks.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+        for (_, lease) in locks {
+            lease.release();
+        }
+    }
 }
 
 impl std::fmt::Debug for DdlStepWorker {

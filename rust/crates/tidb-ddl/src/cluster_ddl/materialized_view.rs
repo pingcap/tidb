@@ -804,6 +804,7 @@ pub(super) fn on_create_materialized_view_log(
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
+    worker: Option<&DdlStepWorker>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let invalid_args = |active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob| {
         cancel_ddl_job(
@@ -874,15 +875,29 @@ pub(super) fn on_create_materialized_view_log(
         ));
     }
     if base.materialized_view.is_some() {
-        // Go takes the MV's refresh advisory lock in the DDL session here
-        // (`mviewutil.RefreshAdvisoryLockName`), which the DDL step session
-        // of this port does not hold.
-        return Err(cancel_ddl_job(
-            active,
-            DdlPlanError::from(tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL.gen_with_stack_by_args(&[
-                "CREATE MATERIALIZED VIEW LOG on a materialized view".into(),
-            ])),
-        ));
+        // Go: the DDL session holds the view's refresh advisory lock for the
+        // rest of the job's delivery, so no refresh writes the view without
+        // the new log; the scheduler releases it after the delivery.
+        let lock_name = tidb_mviewutil::refresh_advisory_lock_name(schema_id, log_info.base_table_id);
+        let worker = worker.ok_or_else(|| {
+            DdlPlanError::plain_refusal("create materialized view log: the DDL step has no worker session")
+        })?;
+        match worker.get_advisory_lock(&lock_name, 1) {
+            Ok(()) => {}
+            Err(tidb_sessionctx::advisory_lock_state::AdvisoryLockError::Timeout) => {
+                // Do not retry this job while retaining its DDL scheduling
+                // claim: an OOP refresh holds the lock while waiting for its
+                // cutover DDL.
+                return Err(cancel_ddl_job(
+                    active,
+                    DdlPlanError::plain_refusal(format!(
+                        "cannot create materialized view log on {schema_name}.{}: materialized view refresh is running, please retry later",
+                        base.name.original()
+                    )),
+                ));
+            }
+            Err(error) => return Err(DdlPlanError::plain_refusal(error.to_string())),
+        }
     }
 
     // Go `createTable(w, jobCtx, job, ..., &model.CreateTableArgs{TableInfo:
