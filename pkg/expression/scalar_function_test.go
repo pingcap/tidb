@@ -116,6 +116,35 @@ func TestScalarFunction(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestScalarFunctionCloneIsolatesRetType(t *testing.T) {
+	a := &Column{
+		UniqueID: 1,
+		RetType:  types.NewFieldType(mysql.TypeNewDecimal),
+	}
+	a.RetType.SetFlen(10)
+	a.RetType.SetDecimal(0)
+
+	sf, ok := newFunctionWithMockCtx(ast.Plus, a, NewZero()).(*ScalarFunction)
+	require.True(t, ok)
+	origFlen, origDecimal := sf.RetType.GetFlen(), sf.RetType.GetDecimal()
+
+	cloned, ok := sf.Clone().(*ScalarFunction)
+	require.True(t, ok)
+	require.NotSame(t, sf.RetType, cloned.RetType)
+	// The clone's RetType must be the very type its builtin reports, so that a
+	// later in-place change of one is seen by the other.
+	require.Same(t, cloned.Function.rawRetTp(), cloned.RetType)
+	require.NotSame(t, sf.Function.rawRetTp(), cloned.Function.rawRetTp())
+
+	// Mutating the clone, as a REAL cast of a comparison operand does, must not
+	// leak into the original.
+	cloned.RetType.SetDecimal(30)
+	cloned.RetType.SetFlen(48)
+	require.Equal(t, origFlen, sf.RetType.GetFlen())
+	require.Equal(t, origDecimal, sf.RetType.GetDecimal())
+	require.Equal(t, origDecimal, sf.Function.rawRetTp().GetDecimal())
+}
+
 func TestIssue23309(t *testing.T) {
 	a := &Column{
 		UniqueID: 1,

@@ -405,6 +405,11 @@ func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 	return b.tp
 }
 
+// rawRetTp returns the return type as is, unlike getRetTp which normalizes it.
+func (b *baseBuiltinFunc) rawRetTp() *types.FieldType {
+	return b.tp
+}
+
 func (b *baseBuiltinFunc) equal(ctx EvalContext, fun builtinFunc) bool {
 	funArgs := fun.getArgs()
 	if len(funArgs) != len(b.args) {
@@ -423,7 +428,13 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	for _, arg := range from.args {
 		b.args = append(b.args, arg.Clone())
 	}
-	b.tp = from.tp
+	// Do not share the return type: a clone is rewritten independently, and
+	// e.g. a comparison coercing it to REAL must not change the original's scale.
+	if from.tp != nil {
+		b.tp = from.tp.Clone()
+	} else {
+		b.tp = nil
+	}
 	b.pbCode = from.pbCode
 	b.childrenVectorizedOnce = new(sync.Once)
 	if from.ctor != nil {
@@ -550,6 +561,8 @@ type builtinFunc interface {
 	equal(EvalContext, builtinFunc) bool
 	// getRetTp returns the return type of the built-in function.
 	getRetTp() *types.FieldType
+	// rawRetTp returns the return type without normalizing it.
+	rawRetTp() *types.FieldType
 	// setPbCode sets pbCode for signature.
 	setPbCode(tipb.ScalarFuncSig)
 	// PbCode returns PbCode of this signature.

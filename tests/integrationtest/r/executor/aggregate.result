@@ -2059,11 +2059,15 @@ Projection	1.00	root		Column#9, Column#12, Column#15, Column#18
             └─TableFullScan	1000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
 delete from mysql.opt_rule_blacklist where name = "decorrelate";
 admin reload opt_rule_blacklist;
+select nullif(77.15, PI());
+nullif(77.15, PI())
+77.15
+select avg(nullif(77.15, PI()));
+avg(nullif(77.15, PI()))
+77.150000
 select distinct avg(nullif(77.15, PI()));
 avg(nullif(77.15, PI()))
-77.1500000000000000000000000000000000
-Level	Code	Message
-Warning	1265	Data truncated for column '%s' at row %d
+77.150000
 drop table if exists t_a;
 CREATE TABLE `t_a` (
 `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT COMMENT 'id',
