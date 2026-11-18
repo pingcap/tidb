@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -103,6 +104,181 @@ func TestLoadStats(t *testing.T) {
 	topN := idx.TopN
 	require.Greater(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
 	require.True(t, idx.IsFullLoad())
+}
+
+func TestReadColumnDistributionStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_analyze_version=2")
+	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,1),(5,5,1)")
+	testKit.MustExec("analyze table t all columns with 2 topn, 2 buckets")
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+
+	loaded, err := storage.ReadColumnDistributionStats(
+		context.Background(), testKit.Session(), tableInfo.ID, tableInfo.Columns[1])
+	require.NoError(t, err)
+	require.Len(t, loaded.TopN.TopN, 2)
+	require.Equal(t, uint64(1), loaded.TopN.TopN[0].Count)
+	require.Len(t, loaded.Histogram.Buckets, 2)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = storage.ReadColumnDistributionStats(
+		ctx, testKit.Session(), tableInfo.ID, tableInfo.Columns[1])
+	require.ErrorIs(t, err, context.Canceled)
+
+	t.Run("negative NullCount aborts the whole load", func(t *testing.T) {
+		testKit.MustExec(
+			"update mysql.stats_histograms set null_count = -1 where table_id = ? and is_index = 0 and hist_id = ?",
+			tableInfo.ID, tableInfo.Columns[1].ID)
+		t.Cleanup(func() {
+			testKit.MustExec(
+				"update mysql.stats_histograms set null_count = 0 where table_id = ? and is_index = 0 and hist_id = ?",
+				tableInfo.ID, tableInfo.Columns[1].ID)
+		})
+
+		loaded, loadErr := storage.ReadColumnDistributionStats(
+			context.Background(), testKit.Session(), tableInfo.ID, tableInfo.Columns[1])
+		require.ErrorContains(t, loadErr, "negative null count")
+		require.Nil(t, loaded)
+	})
+
+	t.Run("TopN error aborts the whole load", func(t *testing.T) {
+		loadCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		const topNFailpointName = "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeTopNFromStorageWithParams"
+		require.NoError(t, failpoint.EnableCall(topNFailpointName,
+			func(tableID int64, _ bool, _ int64, _ int) {
+				if tableID == tableInfo.ID {
+					cancel()
+				}
+			}))
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable(topNFailpointName))
+		})
+
+		histogramQueried := false
+		const histogramFailpointName = "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeHistogramFromStorageWithParams"
+		require.NoError(t, failpoint.EnableCall(histogramFailpointName,
+			func(tableID int64, _ bool, _ int64) {
+				if tableID == tableInfo.ID {
+					histogramQueried = true
+				}
+			}))
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable(histogramFailpointName))
+		})
+
+		loaded, loadErr := storage.ReadColumnDistributionStats(
+			loadCtx, testKit.Session(), tableInfo.ID, tableInfo.Columns[1])
+		require.ErrorIs(t, loadErr, context.Canceled)
+		require.Nil(t, loaded)
+		require.False(t, histogramQueried)
+	})
+
+	t.Run("Histogram error aborts the whole load", func(t *testing.T) {
+		loadCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		const failpointName = "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeHistogramFromStorageWithParams"
+		require.NoError(t, failpoint.EnableCall(failpointName,
+			func(tableID int64, _ bool, _ int64) {
+				if tableID == tableInfo.ID {
+					cancel()
+				}
+			}))
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable(failpointName))
+		})
+
+		loaded, loadErr := storage.ReadColumnDistributionStats(
+			loadCtx, testKit.Session(), tableInfo.ID, tableInfo.Columns[1])
+		require.ErrorIs(t, loadErr, context.Canceled)
+		require.Nil(t, loaded)
+	})
+}
+
+func TestReadColumnDistributionStatsUsesOneSnapshot(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	writerTK := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	writerTK.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values " +
+		"(1,1),(2,1),(3,1),(4,1),(5,1),(6,1),(7,1),(8,1),(9,1),(10,1)," +
+		"(11,2),(12,2),(13,2),(14,2),(15,2),(16,3),(17,4),(18,5),(19,6),(20,7)")
+	tk.MustExec("analyze table t all columns with 2 topn, 2 buckets")
+
+	tbl, err := dom.InfoSchema().TableByName(
+		context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	colInfo := tblInfo.Columns[1]
+	before, err := storage.ReadColumnDistributionStats(
+		context.Background(), tk.Session(), tblInfo.ID, colInfo)
+	require.NoError(t, err)
+
+	entered := make(chan struct{})
+	resume := make(chan struct{}, 1)
+	blocked := make(chan struct{}, 1)
+	t.Cleanup(func() {
+		select {
+		case resume <- struct{}{}:
+		default:
+		}
+	})
+	const failpointName = "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeTopNFromStorageWithParams"
+	require.NoError(t, failpoint.EnableCall(failpointName,
+		func(tableID int64, _ bool, _ int64, _ int) {
+			if tableID != tblInfo.ID {
+				return
+			}
+			select {
+			case blocked <- struct{}{}:
+				close(entered)
+				<-resume
+			default:
+			}
+		}))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	})
+
+	type loadResult struct {
+		stats *statistics.Column
+		err   error
+	}
+	resultCh := make(chan loadResult, 1)
+	go func() {
+		stats, loadErr := storage.ReadColumnDistributionStats(
+			context.Background(), tk.Session(), tblInfo.ID, colInfo)
+		resultCh <- loadResult{stats: stats, err: loadErr}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("auto pre-split stats loader did not reach TopN loading")
+	}
+
+	// Use another session to replace the statistics while the loader is paused.
+	writerTK.MustExec("update t set b = 9")
+	writerTK.MustExec("analyze table t all columns with 2 topn, 2 buckets")
+	resume <- struct{}{}
+	result := <-resultCh
+	require.NoError(t, result.err)
+	require.Equal(t, before.LastUpdateVersion, result.stats.LastUpdateVersion)
+	require.Equal(t, before.TopN, result.stats.TopN)
+	require.Equal(t, before.Histogram, result.stats.Histogram)
+
+	after, err := storage.ReadColumnDistributionStats(
+		context.Background(), tk.Session(), tblInfo.ID, colInfo)
+	require.NoError(t, err)
+	require.NotEqual(t, before.LastUpdateVersion, after.LastUpdateVersion)
+	require.Equal(t, uint64(20), after.TopN.TopN[0].Count)
 }
 
 func TestColumnStatsIsInvalidSkipsInternalColumnID(t *testing.T) {
