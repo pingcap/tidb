@@ -24,18 +24,17 @@
       {
         "SQL": "SELECT /* issue:65892 */ v_issue65892_lookup.c1, v_issue65892_topn.c1 FROM v_issue65892_lookup JOIN v_issue65892_topn ON v_issue65892_lookup.c0 = v_issue65892_topn.c0 WHERE v_issue65892_lookup.c1 > 44 AND v_issue65892_lookup.c1 < 76 AND v_issue65892_topn.c1 > 44 AND v_issue65892_topn.c1 < 76",
         "Plan": [
-          "Projection root  test.t_issue65892_lookup.payload, test.t_issue65892_topn.payload",
-          "└─IndexJoin root  inner join, inner:TableReader, outer key:test.t_issue65892_topn.id, inner key:test.t_issue65892_lookup.id, equal cond:eq(test.t_issue65892_topn.id, test.t_issue65892_lookup.id)",
-          "  ├─Selection(Build) root  gt(test.t_issue65892_topn.payload, 44), lt(test.t_issue65892_topn.payload, 76)",
-          "  │ └─Projection root  test.t_issue65892_topn.id, test.t_issue65892_topn.payload",
-          "  │   └─TopN root  Column, offset:0, count:2",
-          "  │     └─Projection root  test.t_issue65892_topn.id, test.t_issue65892_topn.payload, test.t_issue65892_topn.sort_key, minus(28, test.t_issue65892_topn.sort_key)->Column",
-          "  │       └─TableReader root  data:TopN",
-          "  │         └─TopN cop[tikv]  minus(28, test.t_issue65892_topn.sort_key), offset:0, count:2",
-          "  │           └─TableFullScan cop[tikv] table:t_issue65892_topn keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) root  data:Selection",
-          "    └─Selection cop[tikv]  gt(test.t_issue65892_lookup.payload, 44), lt(test.t_issue65892_lookup.payload, 76)",
-          "      └─TableRangeScan cop[tikv] table:t_issue65892_lookup range: decided by [test.t_issue65892_topn.id], keep order:false, stats:pseudo"
+          "IndexJoin root  inner join, inner:TableReader, outer key:test.t_issue65892_topn.id, inner key:test.t_issue65892_lookup.id, equal cond:eq(test.t_issue65892_topn.id, test.t_issue65892_lookup.id)",
+          "├─Selection(Build) root  gt(test.t_issue65892_topn.payload, 44), lt(test.t_issue65892_topn.payload, 76)",
+          "│ └─Projection root  test.t_issue65892_topn.id, test.t_issue65892_topn.payload",
+          "│   └─TopN root  Column, offset:0, count:2",
+          "│     └─Projection root  test.t_issue65892_topn.id, test.t_issue65892_topn.payload, test.t_issue65892_topn.sort_key, minus(28, test.t_issue65892_topn.sort_key)->Column",
+          "│       └─TableReader root  data:TopN",
+          "│         └─TopN cop[tikv]  minus(28, test.t_issue65892_topn.sort_key), offset:0, count:2",
+          "│           └─TableFullScan cop[tikv] table:t_issue65892_topn keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  data:Selection",
+          "  └─Selection cop[tikv]  gt(test.t_issue65892_lookup.payload, 44), lt(test.t_issue65892_lookup.payload, 76)",
+          "    └─TableRangeScan cop[tikv] table:t_issue65892_lookup range: decided by [test.t_issue65892_topn.id], keep order:false, stats:pseudo"
         ],
         "Result": [
           "65 70"

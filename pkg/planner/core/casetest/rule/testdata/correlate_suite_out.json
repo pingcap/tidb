@@ -124,7 +124,7 @@
       {
         "SQL": "select * from t1 where a in (select t2.a from t2 inner join t3 on t3.a = t2.b where t3.b > 0)",
         "Plan": [
-          "HashJoin 5203.12 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "HashJoin 5203.12 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
           "├─HashAgg(Build) 4162.50 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
           "│ └─HashJoin 4162.50 root  inner join, equal:[eq(test.t3.a, test.t2.b)]",
           "│   ├─TableReader(Build) 3330.00 root  data:Selection",

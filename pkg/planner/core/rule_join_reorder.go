@@ -326,9 +326,9 @@ type joinTypeWithExtMsg struct {
 }
 
 // Optimize implements the base.LogicalOptRule.<0th> interface.
-func (s *JoinReOrderSolver) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
+func (s *JoinReOrderSolver) Optimize(ctx context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	if p.SCtx().GetSessionVars().TiDBOptEnableAdvancedJoinReorder {
-		p, err := joinorder.Optimize(p)
+		p, err := joinorder.Optimize(ctx, p)
 		return p, false, err
 	}
 	p, err := s.optimizeRecursive(p.SCtx(), p)
@@ -651,7 +651,7 @@ func generateJoinOrderNode(joinNodePlans []base.LogicalPlan) ([]*jrNode, error) 
 		if err != nil {
 			return nil, err
 		}
-		cost := joinorder.LeafCost(node)
+		cost := joinorder.LegacyLeafCost(node)
 		joinGroup = append(joinGroup, &jrNode{
 			p:       node,
 			cumCost: cost,

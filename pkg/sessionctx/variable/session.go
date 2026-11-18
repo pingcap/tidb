@@ -1091,7 +1091,10 @@ type SessionVars struct {
 	// When > 0: allow Cartesian Join if cost(cartesian join) * threshold < cost(non cartesian join).
 	CartesianJoinOrderThreshold float64
 
-	// OptJoinReorderBlockingPenaltyRatio scales the input cost of blocking join reorder leaves.
+	// EnableGreedyJoinReorderAlternative allows a second advanced Greedy join tree.
+	EnableGreedyJoinReorderAlternative bool
+
+	// OptJoinReorderBlockingPenaltyRatio scales blocking input cost in the opt-in Greedy alternative.
 	OptJoinReorderBlockingPenaltyRatio float64
 
 	// cpuFactor is the CPU cost of processing one expression for one row.

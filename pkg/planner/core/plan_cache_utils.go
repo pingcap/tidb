@@ -427,8 +427,11 @@ func newPlanCacheKeyWithMatchedBinding(
 	}
 	// latestSchemaVersion + sqlMode + enableNoBackslashEscapesInLike + timeZoneOffset + isolationReadEngines + selectLimit
 	hashLen += 8 + 8 + 1 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
-	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
-	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 + 8 + 2
+	// Bindings, charset, collation, statement flags, and optimizer switches.
+	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 + 8 + 3
+	if vars.EnableGreedyJoinReorderAlternative {
+		hashLen += 8 // blocking penalty ratio
+	}
 	if len(stmt.limits) > 0 {
 		// '|' + each limit count/offset takes 8 bytes + '|'
 		hashLen += 2 + len(stmt.limits)*2*8
@@ -494,6 +497,10 @@ func newPlanCacheKeyWithMatchedBinding(
 
 	// this variable might affect the plan
 	hash = append(hash, bool2Byte(vars.ForeignKeyChecks))
+	hash = append(hash, bool2Byte(vars.EnableGreedyJoinReorderAlternative))
+	if vars.EnableGreedyJoinReorderAlternative {
+		hash = codec.EncodeUint(hash, math.Float64bits(vars.OptJoinReorderBlockingPenaltyRatio))
+	}
 
 	// "limit ?" can affect the cached plan: "limit 1" and "limit 10000" should use different plans.
 	if len(stmt.limits) > 0 {

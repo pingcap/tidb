@@ -2427,6 +2427,10 @@ var defaultSysVars = []*SysVar{
 		s.CartesianJoinOrderThreshold = tidbOptFloat64(val, vardef.DefOptCartesianJoinOrderThreshold)
 		return nil
 	}},
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBOptEnableGreedyJoinReorderAlternative, Value: vardef.Off, Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableGreedyJoinReorderAlternative = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptJoinReorderBlockingPenaltyRatio, Value: strconv.FormatFloat(vardef.DefOptJoinReorderBlockingPenaltyRatio, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, IsHintUpdatableVerified: true,
 		SetSession: func(s *SessionVars, val string) error {
 			s.OptJoinReorderBlockingPenaltyRatio = tidbOptFloat64(val, vardef.DefOptJoinReorderBlockingPenaltyRatio)

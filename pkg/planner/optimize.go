@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/joinorder"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
@@ -515,6 +516,8 @@ func buildAndOptimizeLogicalPlanRound(
 	bestCost *float64,
 	bestLogicalPlanCtx *logicalPlanBuildCtx,
 	optFlagAdjust func(uint64) uint64,
+	minCostImprovement float64,
+	greedyCandidate *joinorder.GreedyCandidate,
 ) (base.Plan, types.NameSlice, bool, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
@@ -572,7 +575,7 @@ func buildAndOptimizeLogicalPlanRound(
 	if optFlagAdjust != nil {
 		optFlag = optFlagAdjust(optFlag)
 	}
-	finalPlan, cost, err := core.DoOptimize(ctx, sctx, optFlag, logic)
+	finalPlan, cost, err := core.DoOptimizeWithGreedyCandidate(ctx, sctx, optFlag, logic, greedyCandidate)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -597,7 +600,11 @@ func buildAndOptimizeLogicalPlanRound(
 		return p, names, false, nil
 	}
 
-	if *bestPlan == nil || cost < *bestCost {
+	if finalPlan == nil {
+		// The logical round produced an identical Greedy join tree.
+		return p, names, false, nil
+	}
+	if *bestPlan == nil || significantPlanCostImprovement(cost, *bestCost, minCostImprovement) {
 		*bestCost = cost
 		*bestPlan = finalPlan
 		*bestNames = names
@@ -606,6 +613,14 @@ func buildAndOptimizeLogicalPlanRound(
 		}
 	}
 	return p, names, false, nil
+}
+
+// A Greedy alternative must improve estimated physical cost by more than
+// one percent to replace the original candidate in this experiment.
+const greedyMinCostImprovement = 0.01
+
+func significantPlanCostImprovement(cost, bestCost, minRelativeImprovement float64) bool {
+	return cost < bestCost*(1-minRelativeImprovement)
 }
 
 // optimizeCnt is a global variable only used for test.
@@ -787,8 +802,14 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	ast.Walk(node.Node, hintProcessor)
 
 	// build multi logical plan from raw AST.
+	var greedyBaseline *joinorder.GreedyCandidate
+	if _, isSelect := node.Node.(*ast.SelectStmt); isSelect &&
+		sessVars.EnableGreedyJoinReorderAlternative &&
+		sessVars.TiDBOptEnableAdvancedJoinReorder && !sessVars.EnableCascadesPlanner {
+		greedyBaseline = &joinorder.GreedyCandidate{}
+	}
 	var (
-		needRestoreLogicalPlanCtx = sessVars.EnableAlternativeLogicalPlans
+		needRestoreLogicalPlanCtx = sessVars.EnableAlternativeLogicalPlans || greedyBaseline != nil
 		bestCost                  = math.MaxFloat64
 		bestPlan                  base.PhysicalPlan
 		bestNames                 types.NameSlice
@@ -828,6 +849,8 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		&bestCost,
 		&bestLogicalPlanCtx,
 		nil,
+		0,
+		greedyBaseline,
 	)
 	if err != nil {
 		return nil, nil, 0, err
@@ -850,7 +873,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	// scan is the way this feature can turn a good mixed plan into a slow one,
 	// so leave those plans exactly as round 1 built them instead of putting
 	// them up for a cost comparison.
-	if needRestoreLogicalPlanCtx && bestPlan != nil {
+	if sessVars.EnableAlternativeLogicalPlans && bestPlan != nil {
 		hasTiKV, hasTiFlash := physicalop.StorageEngineUsage(bestPlan)
 		if hasTiKV && hasTiFlash && !physicalop.HasSingleScanIndexJoin(bestPlan) {
 			sessVars.StmtCtx.MarkAlternativeLogicalPlanMixedStorageEngines()
@@ -863,7 +886,12 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	// which are not reset by restoreLogicalPlanBuildCtx. Evaluating enabled()
 	// upfront ensures each round's eligibility is determined solely by the
 	// original build's signals.
-	enabledRounds := make([]alternativeRound, 0, len(alternativeRounds))
+	greedyAlternative := greedyBaseline.Alternative()
+	enabledRounds := make([]alternativeRound, 0, 1+len(alternativeRounds))
+	const greedyRoundName = "greedy-join-reorder"
+	if greedyAlternative != nil {
+		enabledRounds = append(enabledRounds, alternativeRound{name: greedyRoundName})
+	}
 	for _, round := range alternativeRounds {
 		if round.enabled(sessVars) {
 			enabledRounds = append(enabledRounds, round)
@@ -872,6 +900,12 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	var lastAltRoundErr error
 	for _, round := range enabledRounds {
 		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
+		var candidate *joinorder.GreedyCandidate
+		var minCostImprovement float64
+		if round.name == greedyRoundName {
+			candidate = greedyAlternative
+			minCostImprovement = greedyMinCostImprovement
+		}
 		failpoint.Inject("failIfAlternativeLogicalPlanRoundTriggered", func(val failpoint.Value) {
 			if testRoundAndSQL, ok := val.(string); ok &&
 				testRoundAndSQL == round.name+":"+node.Node.OriginalText() {
@@ -902,6 +936,8 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 				&bestCost,
 				&bestLogicalPlanCtx,
 				round.adjustFlag,
+				minCostImprovement,
+				candidate,
 			)
 		}()
 		if err != nil {

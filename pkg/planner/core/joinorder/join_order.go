@@ -16,6 +16,7 @@ package joinorder
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"maps"
 	"math"
@@ -229,12 +230,77 @@ func makeSingleGroup(p base.LogicalPlan) *joinGroup {
 	}
 }
 
-// Optimize performs join order optimization on the given plan.
-func Optimize(p base.LogicalPlan) (base.LogicalPlan, error) {
-	return optimizeRecursive(p)
+// GreedyCandidate records the join trees produced by an isolated logical round.
+type GreedyCandidate struct {
+	baseline *GreedyCandidate
+	orders   []string
 }
 
-func optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
+type greedyCandidateKey struct{}
+
+// WithGreedyCandidate configures one logical round of the Greedy experiment.
+func WithGreedyCandidate(ctx context.Context, candidate *GreedyCandidate) context.Context {
+	return context.WithValue(ctx, greedyCandidateKey{}, candidate)
+}
+
+// GreedyCandidateFromContext returns the round's candidate, if any.
+func GreedyCandidateFromContext(ctx context.Context) *GreedyCandidate {
+	candidate, _ := ctx.Value(greedyCandidateKey{}).(*GreedyCandidate)
+	return candidate
+}
+
+// Alternative returns a second round only if the first round visited a Greedy group.
+func (c *GreedyCandidate) Alternative() *GreedyCandidate {
+	if c == nil || len(c.orders) == 0 {
+		return nil
+	}
+	return &GreedyCandidate{baseline: c}
+}
+
+// IsDuplicate reports whether the alternative produced the same ordered join trees.
+func (c *GreedyCandidate) IsDuplicate() bool {
+	return c != nil && c.baseline != nil && slices.Equal(c.orders, c.baseline.orders)
+}
+
+func (c *GreedyCandidate) record(group *joinGroup, plan base.LogicalPlan) {
+	// Indices in the original group are stable across isolated builds, even
+	// when the plan ID allocator has advanced by different amounts.
+	vertices := make(map[int]int, len(group.vertexes))
+	for i, vertex := range group.vertexes {
+		vertices[vertex.ID()] = i
+	}
+	var order strings.Builder
+	var visit func(base.LogicalPlan)
+	visit = func(p base.LogicalPlan) {
+		if vertex, ok := vertices[p.ID()]; ok {
+			fmt.Fprintf(&order, "v%d,", vertex)
+			return
+		}
+		if join, ok := p.(*logicalop.LogicalJoin); ok {
+			fmt.Fprintf(&order, "j%d(", join.JoinType)
+			for _, child := range join.Children() {
+				visit(child)
+			}
+			order.WriteByte(')')
+			return
+		}
+		// Reorder can introduce projections for expression join keys.
+		fmt.Fprintf(&order, "%s(", p.TP())
+		for _, child := range p.Children() {
+			visit(child)
+		}
+		order.WriteByte(')')
+	}
+	visit(plan)
+	c.orders = append(c.orders, order.String())
+}
+
+// Optimize performs join order optimization on the given plan.
+func Optimize(ctx context.Context, p base.LogicalPlan) (base.LogicalPlan, error) {
+	return optimizeRecursive(p, GreedyCandidateFromContext(ctx))
+}
+
+func optimizeRecursive(p base.LogicalPlan, candidate *GreedyCandidate) (base.LogicalPlan, error) {
 	if p == nil {
 		return nil, nil
 	}
@@ -252,7 +318,7 @@ func optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
 	if len(joinGroup.vertexes) == 1 {
 		newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
 		for _, child := range p.Children() {
-			newChild, err := optimizeRecursive(child)
+			newChild, err := optimizeRecursive(child, candidate)
 			if err != nil {
 				return nil, err
 			}
@@ -271,7 +337,7 @@ func optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
 	for i, v := range joinGroup.vertexes {
 		// Make sure the vertexes are all optimized.
 		oldID := v.ID()
-		if joinGroup.vertexes[i], err = optimizeRecursive(v); err != nil {
+		if joinGroup.vertexes[i], err = optimizeRecursive(v, candidate); err != nil {
 			return nil, err
 		}
 		vertexMap[oldID] = joinGroup.vertexes[i]
@@ -279,7 +345,7 @@ func optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
 	if len(vertexMap) > 0 {
 		joinGroup.root = replaceJoinGroupVertexes(joinGroup.root, vertexMap)
 	}
-	if p, err = optimizeForJoinGroup(p.SCtx(), joinGroup); err != nil {
+	if p, err = optimizeForJoinGroup(p.SCtx(), joinGroup, candidate); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -313,16 +379,23 @@ func replaceJoinGroupVertexes(root base.LogicalPlan, vertexMap map[int]base.Logi
 	return root
 }
 
-func optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup) (p base.LogicalPlan, err error) {
+func optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup, candidate *GreedyCandidate) (p base.LogicalPlan, err error) {
 	originalSchema := group.root.Schema()
 
 	// Use DP for any join group under the configured threshold. ConflictDetector
 	// is responsible for validating both inner and non-inner join transitions.
 	useGreedy := len(group.vertexes) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
 	if useGreedy {
+		costLeaf := LegacyLeafCost
+		if candidate != nil && candidate.baseline != nil {
+			costLeaf = LeafCost
+		}
 		joinOrderGreedy := newJoinOrderGreedy(ctx, group)
-		if p, err = joinOrderGreedy.optimize(); err != nil {
+		if p, err = joinOrderGreedy.optimize(costLeaf); err != nil {
 			return nil, err
+		}
+		if candidate != nil {
+			candidate.record(group, p)
 		}
 	} else {
 		joinOrderDP := newJoinOrderDP(ctx, group)
@@ -364,7 +437,7 @@ func (j *joinOrderDP) optimize() (base.LogicalPlan, error) {
 	}
 
 	detector := newConflictDetector(j.ctx)
-	nodes, err := detector.Build(j.group)
+	nodes, err := detector.Build(j.group, LegacyLeafCost)
 	if err != nil {
 		return nil, err
 	}
@@ -557,10 +630,10 @@ func checkConnectionAndMakeJoin(detector *ConflictDetector, leftPlan, rightPlan 
 	return checkResult, newNode, nil
 }
 
-func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
+func (j *joinOrderGreedy) optimize(costLeaf func(base.LogicalPlan) float64) (base.LogicalPlan, error) {
 	group := j.group
 	detector := newConflictDetector(j.ctx)
-	nodes, err := detector.Build(group)
+	nodes, err := detector.Build(group, costLeaf)
 	if err != nil {
 		return nil, err
 	}

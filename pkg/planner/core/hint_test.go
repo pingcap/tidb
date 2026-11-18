@@ -221,9 +221,11 @@ func TestSetVarJoinReorderBlockingPenaltyRatio(t *testing.T) {
 	const query = `sum(l.price) / 7.0 from t_lineitem l, t_part p
 		where p.p_key = l.l_key and p.brand = 'Brand#44' and p.container = 'WRAP PKG'
 		and l.quantity < (select 0.2 * avg(quantity) from t_lineitem where l_key = p.p_key)`
-	withoutPenalty := tk.MustQuery("explain format='plan_tree' select /*+ SET_VAR(tidb_opt_join_reorder_blocking_penalty_ratio=0) */ " + query).Rows()
+	tk.MustQuery("select @@tidb_opt_enable_greedy_join_reorder_alternative").Check(testkit.Rows("0"))
+	withPenaltyHint := tk.MustQuery("explain format='plan_tree' select /*+ SET_VAR(tidb_opt_join_reorder_blocking_penalty_ratio=1) */ " + query).Rows()
 	tk.MustQuery("show warnings").Check(testkit.Rows())
-	withPenalty := tk.MustQuery("explain format='plan_tree' select " + query).Rows()
-	require.NotEqual(t, withPenalty, withoutPenalty)
-	tk.MustQuery("select @@tidb_opt_join_reorder_blocking_penalty_ratio").Check(testkit.Rows("1"))
+	original := tk.MustQuery("explain format='plan_tree' select " + query).Rows()
+	// Changing the ratio does not affect a statement outside the opt-in round.
+	require.Equal(t, original, withPenaltyHint)
+	tk.MustQuery("select @@tidb_opt_join_reorder_blocking_penalty_ratio").Check(testkit.Rows("0"))
 }

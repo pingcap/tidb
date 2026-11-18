@@ -39,7 +39,7 @@ type joinReorderGreedySolver struct {
 //
 // cumulative join cost = CumCount(lhs) + CumCount(rhs) + RowCount(join)
 //
-//	For a leaf of the join group, CumCount is estimated by joinorder.LeafCost.
+//	For a leaf of the join group, CumCount is the sum of its subtree's estimated row counts.
 //
 // TODO: this formula can be changed to real physical cost in future.
 //

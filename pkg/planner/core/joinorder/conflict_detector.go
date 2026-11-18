@@ -242,7 +242,7 @@ const (
 	minBlockingInputCostCap    = 1_000_000
 )
 
-// LeafCost estimates the cost of a join group leaf after statistics have been derived.
+// LeafCost estimates the leaf score for the opt-in Greedy alternative.
 // A leaf is normally priced by its output rows. Limit and TopN account for skipped rows,
 // while operators that block on their input add a capped fraction of the input rows.
 func LeafCost(p base.LogicalPlan) float64 {
@@ -270,6 +270,15 @@ func LeafCost(p base.LogicalPlan) float64 {
 	}
 }
 
+// LegacyLeafCost sums the estimated row counts of a leaf's whole subtree.
+func LegacyLeafCost(p base.LogicalPlan) float64 {
+	cost := p.StatsInfo().RowCount
+	for _, child := range p.Children() {
+		cost += LegacyLeafCost(child)
+	}
+	return cost
+}
+
 func (n *Node) checkUsedEdges(edgeIdx uint64) bool {
 	_, used := n.usedEdges[edgeIdx]
 	return used
@@ -283,7 +292,7 @@ func newConflictDetector(ctx base.PlanContext) *ConflictDetector {
 
 // Build constructs the join graph (edges + conflict rules) from a joinGroup.
 // It returns the list of leaf Nodes (vertexes) of current join group, which will be merged to new join by the enumerator.
-func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
+func (d *ConflictDetector) Build(group *joinGroup, costLeaf func(base.LogicalPlan) float64) ([]*Node, error) {
 	d.groupRoot = group.root
 	d.allInnerJoin = group.allInnerJoin
 
@@ -295,7 +304,7 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 		vertexMap[v.ID()] = &Node{
 			bitSet:  intset.NewFastIntSet(i),
 			p:       v,
-			cumCost: LeafCost(v),
+			cumCost: costLeaf(v),
 		}
 		if err := validateCumCost(vertexMap[v.ID()].cumCost); err != nil {
 			return nil, err

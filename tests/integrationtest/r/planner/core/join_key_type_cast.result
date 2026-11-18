@@ -76,7 +76,7 @@ insert into t_mixed_str values ('1', 'a'), ('2', 'x'), ('1.5', 'a');
 explain format = 'brief' select * from t_mixed_int join t_mixed_str on t_mixed_int.id = t_mixed_str.id and t_mixed_int.name = t_mixed_str.name;
 id	estRows	task	access object	operator info
 Projection	9990.00	root		planner__core__join_key_type_cast.t_mixed_int.id, planner__core__join_key_type_cast.t_mixed_int.name, planner__core__join_key_type_cast.t_mixed_str.id, planner__core__join_key_type_cast.t_mixed_str.name
-└─HashJoin	9990.00	root		inner join, equal:[eq(planner__core__join_key_type_cast.t_mixed_str.name, planner__core__join_key_type_cast.t_mixed_int.name) eq(Column#13, Column#1)]
+└─HashJoin	9990.00	root		inner join, equal:[eq(planner__core__join_key_type_cast.t_mixed_int.name, planner__core__join_key_type_cast.t_mixed_str.name) eq(Column#1, Column#13)]
   ├─Projection(Build)	9990.00	root		planner__core__join_key_type_cast.t_mixed_int.id, planner__core__join_key_type_cast.t_mixed_int.name, planner__core__join_key_type_cast.t_mixed_int.id->Column#1
   │ └─TableReader	9990.00	root		data:Selection
   │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__join_key_type_cast.t_mixed_int.name))
@@ -194,7 +194,7 @@ id	v	id	v
 explain format = 'brief' select /*+ INL_JOIN(t_idx_str) */ * from t_idx_int join t_idx_str on t_idx_int.id = t_idx_str.id;
 id	estRows	task	access object	operator info
 Projection	2.40	root		planner__core__join_key_type_cast.t_idx_int.id, planner__core__join_key_type_cast.t_idx_int.v, planner__core__join_key_type_cast.t_idx_str.id, planner__core__join_key_type_cast.t_idx_str.v
-└─HashJoin	2.40	root		inner join, equal:[eq(Column#12, Column#1)]
+└─HashJoin	2.40	root		inner join, equal:[eq(Column#1, Column#12)]
   ├─Projection(Build)	3.00	root		planner__core__join_key_type_cast.t_idx_int.id, planner__core__join_key_type_cast.t_idx_int.v, planner__core__join_key_type_cast.t_idx_int.id->Column#1
   │ └─TableReader	3.00	root		data:TableFullScan
   │   └─TableFullScan	3.00	cop[tikv]	table:t_idx_int	keep order:false
