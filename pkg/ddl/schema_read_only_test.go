@@ -1044,8 +1044,20 @@ func TestSchemaReadOnlyReviewFixes(t *testing.T) {
 			require.ErrorContains(t, err, "read only mode")
 			tk.MustExec("grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'root'@'%'")
 			require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+			tk.MustExec("set autocommit = 0")
 			tk.MustExec(sql)
+			tk.MustQuery("select @@tidb_current_ts = 0").Check(testkit.Rows("1"))
+			if method == "fast" {
+				tk.MustExec("prepare refresh_stmt from '" + sql + "'")
+				tk.MustExec("execute refresh_stmt")
+				tk.MustQuery("select @@tidb_current_ts = 0").Check(testkit.Rows("1"))
+				tk.MustExec("deallocate prepare refresh_stmt")
+				tk.MustQuery(sql + " with profile")
+				tk.MustQuery("select @@tidb_current_ts = 0").Check(testkit.Rows("1"))
+			}
 			tk.MustQuery("select * from ro.mv order by a").Check(testkit.Rows("1 1", "2 1"))
+			tk.MustExec("rollback")
+			tk.MustExec("set autocommit = 1")
 		})
 	}
 	t.Run("RefreshTransitionDraining", func(t *testing.T) {
@@ -1060,6 +1072,7 @@ func TestSchemaReadOnlyReviewFixes(t *testing.T) {
 		writer.MustExec("create materialized view log on ro.t(a)")
 		writer.MustExec("create materialized view ro.mv(a, cnt) as select a, count(1) from ro.t group by a")
 		writer.MustExec("insert into ro.t values (2)")
+		writer.MustExec("set autocommit = 0")
 		started, resume := make(chan struct{}), make(chan struct{})
 		release := sync.OnceFunc(func() { close(resume) })
 		var once sync.Once
@@ -1086,6 +1099,7 @@ func TestSchemaReadOnlyReviewFixes(t *testing.T) {
 		release()
 		require.Error(t, <-refreshDone)
 		require.NoError(t, <-alterDone)
+		writer.MustQuery("select @@tidb_current_ts = 0").Check(testkit.Rows("1"))
 		writer.MustQuery("select * from ro.mv order by a").Check(testkit.Rows("1 1"))
 	})
 

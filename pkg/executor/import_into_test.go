@@ -30,9 +30,11 @@ import (
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
+	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -67,6 +69,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/atomic"
+	"go.uber.org/mock/gomock"
 )
 
 var (
@@ -854,6 +857,37 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 		userKSTK.MustExec("drop database authorized_import")
 		userKSTK.MustExec("delete from mysql.tidb_import_jobs")
 		sysKSTK.MustExec("delete from mysql.tidb_global_task where id = ?", task.ID)
+	})
+
+	t.Run("cleanup propagates table mode errors", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		runtime := sqlsvrapimock.NewMockKSRuntimeHandle(ctrl)
+		server := sqlsvrapimock.NewMockServer(ctrl)
+		se := mock.NewContext()
+		se.Store = sysKSStore
+		se.BindDomainAndSchValidator(server, nil)
+		pool := tidbutil.NewSessionPool(1, func() (pools.Resource, error) { return se, nil }, nil, nil, nil)
+		defer pool.Close()
+		previous, err := storage.GetTaskManager()
+		require.NoError(t, err)
+		storage.SetTaskManager(storage.NewTaskManager(pool))
+		defer storage.SetTaskManager(previous)
+
+		server.EXPECT().AcquireKSRuntime("ks", "DXF/import-cleaner/42").Return(runtime, nil)
+		target := model.AlterTableModeTarget{
+			SchemaID: 1, SchemaName: ast.NewCIStr("test"),
+			TableID: 2, TableName: ast.NewCIStr("t"), TargetMode: model.TableModeNormal,
+		}
+		cleanupErr := fmt.Errorf("injected table mode cleanup failure")
+		runtime.EXPECT().AlterTableMode(gomock.Any(), target).Return(cleanupErr)
+		runtime.EXPECT().Release()
+		metadata, err := json.Marshal(taskinfo.TaskMeta{Plan: importer.Plan{
+			DBID: 1, DBName: "test", TableInfo: &model.TableInfo{ID: 2, Name: ast.NewCIStr("t")},
+		}})
+		require.NoError(t, err)
+		require.ErrorIs(t, (&importinto.ImportCleaner{}).Clean(ctx, &proto.Task{
+			TaskBase: proto.TaskBase{ID: 42, Keyspace: "ks"}, Meta: metadata,
+		}), cleanupErr)
 	})
 
 	t.Run("submit task in system keyspace", func(t *testing.T) {

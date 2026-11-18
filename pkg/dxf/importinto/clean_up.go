@@ -185,9 +185,9 @@ func cleanTableMode(ctx context.Context, task *proto.Task, taskMeta *taskinfo.Ta
 		return err
 	}
 	if kerneltype.IsNextGen() {
-		runtime, release, err := dxfutil.AcquireTaskRuntime(taskManager, task.Keyspace, dxfutil.GenHolderID("import-cleaner", task.ID))
-		if err != nil {
-			return err
+		runtime, release, runtimeErr := dxfutil.AcquireTaskRuntime(taskManager, task.Keyspace, dxfutil.GenHolderID("import-cleaner", task.ID))
+		if runtimeErr != nil {
+			return runtimeErr
 		}
 		defer release()
 		err = runtime.AlterTableMode(ctx, model.AlterTableModeTarget{

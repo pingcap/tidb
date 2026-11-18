@@ -129,25 +129,36 @@ func BRIECreateTables(
 		sctx.GetSessionVars().ForeignKeyChecks = originForeignKeyChecks
 	}()
 	for db, tablesInDB := range clonedTables {
-		dbName := ast.NewCIStr(db)
-		defer privilege.WithInternalSchemaReadOnlyBypass(sctx, dbName.L)()
-		querys := make([]string, 0, len(tablesInDB))
-		for _, table := range tablesInDB {
-			query, err := showRestoredCreateTable(sctx, dbName, table, brComment)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			querys = append(querys, query)
-		}
-		if err := splitBatchCreateTable(sctx, dbName, tablesInDB, querys, cs...); err != nil {
-			//It is possible to failure when TiDB does not support model.ActionCreateTables.
-			//In this circumstance, BatchCreateTableWithInfo returns errno.ErrInvalidDDLJob,
-			//we fall back to old way that creating table one by one
-			log.Warn("batch create table from tidb failure", zap.Error(err))
+		if err := brieCreateTablesInDatabase(sctx, ast.NewCIStr(db), tablesInDB, brComment, cs...); err != nil {
 			return err
 		}
 	}
 
+	return nil
+}
+
+func brieCreateTablesInDatabase(
+	sctx sessionctx.Context,
+	dbName ast.CIStr,
+	tables []*model.TableInfo,
+	brComment string,
+	cs ...ddl.CreateTableOption,
+) error {
+	defer privilege.WithInternalSchemaReadOnlyBypass(sctx, dbName.L)()
+	querys := make([]string, 0, len(tables))
+	for _, table := range tables {
+		query, err := showRestoredCreateTable(sctx, dbName, table, brComment)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		querys = append(querys, query)
+	}
+	if err := splitBatchCreateTable(sctx, dbName, tables, querys, cs...); err != nil {
+		// If batch creation is unsupported, the caller falls back to creating
+		// tables individually.
+		log.Warn("batch create table from tidb failure", zap.Error(err))
+		return err
+	}
 	return nil
 }
 
