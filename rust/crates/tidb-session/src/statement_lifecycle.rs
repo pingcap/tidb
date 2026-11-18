@@ -995,6 +995,25 @@ impl StatementLifecycle<'_> {
         }
     }
 
+    /// Go `OnStmtErrorForNextAction(StmtErrAfterQuery)`: whether the
+    /// transaction's provider asks the connection to retry a statement that
+    /// failed with `code` before any row reached the client.
+    pub fn retry_after_query_error(&mut self, code: u16) -> bool {
+        let in_txn = self.session.in_transaction();
+        let Some(provider) = self.txn.provider_mut() else {
+            return false;
+        };
+        let mut cx = SessionTxnContext { session: self.session, in_txn, locking_read: false };
+        matches!(
+            provider.on_stmt_error_for_next_action(
+                &mut cx,
+                tidb_sessiontxn::StmtErrorHandlePoint::AfterQuery,
+                SqlQueryError::new(code, *b"HY000", ""),
+            ),
+            Ok(tidb_sessiontxn::StmtErrorAction::RetryReady)
+        )
+    }
+
     /// Go `OnStmtStart`, or `OnStmtRetry` when `retry`, on the session
     /// transaction's provider, if one is entered.
     fn on_provider_stmt_event(&mut self, retry: bool) -> Result<(), SqlQueryError> {

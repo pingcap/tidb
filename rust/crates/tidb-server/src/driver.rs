@@ -134,7 +134,7 @@ pub trait QuerySession {
     /// Go `OnStmtErrorForNextAction(StmtErrAfterQuery)` answering
     /// `StmtActionRetryReady` for a statement that failed before any of its
     /// rows reached the client. Default: never.
-    fn retry_after_query_error(&self, _code: u16) -> bool {
+    fn retry_after_query_error(&mut self, _code: u16) -> bool {
         false
     }
 

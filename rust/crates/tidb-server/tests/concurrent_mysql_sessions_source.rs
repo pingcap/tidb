@@ -1052,7 +1052,7 @@ impl QuerySession for RetrySession {
         }
     }
 
-    fn retry_after_query_error(&self, code: u16) -> bool {
+    fn retry_after_query_error(&mut self, code: u16) -> bool {
         code == 9007
     }
 

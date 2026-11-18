@@ -681,6 +681,11 @@ impl<'s> ClusterServerSession<'s> {
         node.buffer = MutationBuffer::new();
     }
 
+    /// See [`StatementLifecycle::retry_after_query_error`].
+    pub fn retry_after_query_error(&mut self, code: u16) -> bool {
+        self.lifecycle().retry_after_query_error(code)
+    }
+
     pub fn lifecycle(&mut self) -> StatementLifecycle<'_> {
         let hooks = self.commit_hooks();
         let node = &mut *self.node;

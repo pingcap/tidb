@@ -18,6 +18,7 @@ use super::txn_start_ts;
 use crate::{no_idea, retry_ready, StmtErrorAction, StmtErrorHandlePoint, TxnContext, TxnContextProvider};
 use tidb_domain_core::cluster_transactions::OpenClusterTransaction;
 use tidb_kv::cluster_storage::ClusterSnapshot;
+use tidb_store_driver_error::pessimistic_lock_error::ERR_WRITE_CONFLICT;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 /// Go `PessimisticRCTxnContextProvider`: every statement reads at its own
@@ -104,12 +105,20 @@ impl TxnContextProvider for PessimisticRCTxnContextProvider {
     /// `ErrorAction` Go answers for it.
     fn on_stmt_error_for_next_action(
         &mut self,
-        _cx: &mut dyn TxnContext,
+        cx: &mut dyn TxnContext,
         point: StmtErrorHandlePoint,
-        _error: SqlQueryError,
+        error: SqlQueryError,
     ) -> Result<StmtErrorAction, SqlQueryError> {
         match point {
             StmtErrorHandlePoint::AfterPessimisticLock => retry_ready(),
+            // Go `handleAfterQueryError`: a write conflict met by a
+            // statement that read with `RCCheckTS` is retried from the
+            // beginning.
+            StmtErrorHandlePoint::AfterQuery
+                if error.code == ERR_WRITE_CONFLICT && cx.rc_check_ts() =>
+            {
+                retry_ready()
+            }
             StmtErrorHandlePoint::AfterQuery => no_idea(),
         }
     }

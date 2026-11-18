@@ -2778,12 +2778,14 @@ impl Session {
         self.retrying = retrying;
     }
 
-    /// Go `PessimisticRCTxnContextProvider.handleAfterQueryError` (the
-    /// `StmtErrAfterQuery` point): a write conflict met by a statement that
-    /// read with `RCCheckTS` is retried from the beginning.
-    #[must_use]
-    pub fn retry_after_query_error(&self, code: u16) -> bool {
-        self.stmt_rc_check_ts && code == tidb_errno::errcode::ErrWriteConflict
+    /// Go `OnStmtErrorForNextAction(StmtErrAfterQuery)` on the transaction's
+    /// provider, for a statement that failed before any of its rows reached
+    /// the client: whether the connection retries it.
+    pub fn retry_after_query_error(&mut self, code: u16) -> bool {
+        if self.node.is_none() {
+            return false;
+        }
+        self.node_conn().retry_after_query_error(code)
     }
 
     /// Go `SessionVars.UseLowResolutionTSO`: a user connection's

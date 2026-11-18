@@ -100,7 +100,7 @@ impl QuerySession for Session {
         Some(self)
     }
 
-    fn retry_after_query_error(&self, code: u16) -> bool {
+    fn retry_after_query_error(&mut self, code: u16) -> bool {
         Session::retry_after_query_error(self, code)
     }
 
