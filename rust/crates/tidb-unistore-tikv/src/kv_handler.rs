@@ -508,8 +508,13 @@ impl KvHandler {
                 reverse: req.reverse,
             },
         );
+        // Go `kvScanProcessor.Process(key, value, _ uint64)`: the KV scan
+        // answers no commit ts; the coprocessor's scan reads it.
         kvrpcpb::ScanResponse {
-            pairs: pairs.into_iter().map(pair_to_proto).collect(),
+            pairs: pairs
+                .into_iter()
+                .map(|pair| pair_to_proto(tidb_unistore_dbreader::KvPair { commit_ts: 0, ..pair }))
+                .collect(),
             ..kvrpcpb::ScanResponse::default()
         }
     }
@@ -1481,6 +1486,40 @@ mod tests {
         });
         assert!(resp.error.is_none());
         assert_eq!(resp.value, b"v");
+    }
+
+    #[test]
+    fn a_kv_scan_answers_no_commit_ts_as_go() {
+        // Go `kvScanProcessor.Process(key, value, _ uint64)` drops the
+        // version's commit ts the store's scan now carries for the
+        // coprocessor's `_tidb_commit_ts` column.
+        let mut handler = KvHandler::default();
+        let key = b"k".to_vec();
+        handler.kv_prewrite(&kvrpcpb::PrewriteRequest {
+            context: region_ctx(),
+            mutations: vec![put(&key, b"v")],
+            primary_lock: key.clone(),
+            start_version: 10,
+            lock_ttl: 3000,
+            ..kvrpcpb::PrewriteRequest::default()
+        });
+        handler.kv_commit(&kvrpcpb::CommitRequest {
+            context: region_ctx(),
+            keys: vec![key.clone()],
+            start_version: 10,
+            commit_version: 11,
+            ..kvrpcpb::CommitRequest::default()
+        });
+        let resp = handler.kv_scan(&kvrpcpb::ScanRequest {
+            context: region_ctx(),
+            start_key: Vec::new(),
+            limit: 10,
+            version: 12,
+            ..kvrpcpb::ScanRequest::default()
+        });
+        assert_eq!(resp.pairs.len(), 1, "{:?}", resp.pairs);
+        assert_eq!(resp.pairs[0].key, key);
+        assert_eq!(resp.pairs[0].commit_ts, 0);
     }
 
     #[test]

@@ -715,3 +715,14 @@ fn a_failed_complete_refresh_rolls_back_as_go_master() {
         );
     }
 }
+
+/// Go master's `_tidb_commit_ts` pseudo column: refused while
+/// `tidb_mview_enable` is OFF (Go `preprocessor`), and otherwise each row's
+/// commit timestamp (`ChunkDecoder.DecodeToChunk` fills `ExtraCommitTSID`
+/// from the scanned version), readable in a SELECT, a WHERE and a DELETE's
+/// filter, on handle and clustered tables. Replayed from a Go master node
+/// (`testdata/commit_ts_column_go.jsonl`).
+#[test]
+fn commit_ts_column_answers_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/commit_ts_column_go.jsonl"));
+}

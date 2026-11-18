@@ -1789,9 +1789,10 @@ impl Session {
             .then(|| tidb_tracing::start_thread_region("planner.Preprocess"));
         let scan = tidb_bindinfo::binding::scan_statement_tables(&mut stmt);
         drop(preprocess);
-        // Go `preprocessor.Enter`'s `*ast.ColumnName` arm: the commit-TS
-        // pseudo column is not yet usable by SELECT, UPDATE or DELETE.
-        if scan.names_commit_ts {
+        // Go master `preprocessor.Enter`'s `*ast.ColumnName` arm: the
+        // commit-TS pseudo column is usable by SELECT, UPDATE or DELETE only
+        // while `tidb_mview_enable` is on.
+        if scan.names_commit_ts && !self.vars.enable_mview() {
             return Err(DriverError::Mysql(tidb_terror::MysqlError::from_terror(
                 &tidb_plannererrors::ERR_INTERNAL.gen_with_stack(format!(
                     "Usage of column name '{}' is not supported for now",

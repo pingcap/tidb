@@ -1659,7 +1659,10 @@ impl MvccStore {
         let mut scanned = Vec::new();
         let mut scan_cnt: u32 = 0;
         let mut visited: u32 = 0;
-        let mut visit = |key: &[u8], value: &[u8]| -> bool {
+        // Go `dbreader.Scan` hands each processed entry's commit ts to the
+        // scan processor (`Process(key, value, meta.CommitTS())`), which the
+        // `_tidb_commit_ts` column reads (`ChunkDecoder.DecodeToChunk`).
+        let mut visit = |key: &[u8], value: &[u8], commit_ts: u64| -> bool {
             // Go's `dbreader.Scan` counts every PROCESSED entry against the
             // limit -- sampled-out entries included, which is what makes
             // `SampleStep * Limit` visit exactly that many keys and emit
@@ -1676,7 +1679,7 @@ impl MvccStore {
                 }
             }
             scanned.push(KvPair {
-                commit_ts: 0,
+                commit_ts,
                 key: key.to_vec(),
                 value: value.to_vec(),
                 error: None,
@@ -1715,7 +1718,7 @@ impl MvccStore {
                 if value.is_empty() {
                     continue;
                 }
-                if !visit(&key, value) {
+                if !visit(&key, value, meta.commit_ts()) {
                     break;
                 }
             }

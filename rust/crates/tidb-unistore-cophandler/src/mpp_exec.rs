@@ -321,8 +321,9 @@ impl TableRowDecoder {
     }
 
     /// Go `tablecodec.DecodeRowKey` + `ChunkDecoder.DecodeToChunk` (+ the
-    /// physical table id): one row of the requested columns.
-    fn decode_to_row(&self, key: &[u8], value: &[u8]) -> Result<Row, MppExecError> {
+    /// physical table id): one row of the requested columns; `commit_ts` is
+    /// the scanned version's (Go `DecodeToChunk(value, commitTS, ...)`).
+    fn decode_to_row(&self, key: &[u8], value: &[u8], commit_ts: u64) -> Result<Row, MppExecError> {
         let other = |message: String| MppExecError::Other(message);
         // Go `tablecodec.DecodeRowKey`: an int handle answers directly, a
         // common handle carries the clustered primary key's datums.
@@ -353,6 +354,12 @@ impl TableRowDecoder {
             // corresponding column in the value", because the handle may
             // hold a prefix or a collation sort key rather than the data.
             let stored = decoded.get(&column.column_id());
+            // Go `DecodeToChunk`'s `ExtraCommitTSID` arm: the version's
+            // commit ts, NULL when the scan had none.
+            if column.column_id() == tidb_model::column::EXTRA_COMMIT_TS_ID {
+                row.push(if commit_ts > 0 { Datum::UInt(commit_ts) } else { Datum::Null });
+                continue;
+            }
             if self.phys_tbl_id_col_idx == Some(offset) {
                 row.push(Datum::Int(tidb_tablecodec::table_key::decode_table_id(key)));
             } else if let Some(datum) = stored.filter(|datum| !matches!(datum, Datum::Null)) {
@@ -511,7 +518,7 @@ impl<'a> TableScanExec<'a> {
         if let Some(error) = pair_error(pair) {
             return Err(error);
         }
-        let row = self.decoder.decode_to_row(&pair.key, &pair.value)?;
+        let row = self.decoder.decode_to_row(&pair.key, &pair.value, pair.commit_ts)?;
         let key = pair.key.clone();
         self.chk.push(row);
         self.row_cnt += 1;
