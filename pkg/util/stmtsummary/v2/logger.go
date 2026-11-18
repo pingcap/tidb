@@ -20,9 +20,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 	"go.uber.org/zap/buffer"
 	"go.uber.org/zap/zapcore"
@@ -115,7 +117,7 @@ type evictedStmtRecord struct {
 }
 
 func (s *stmtLogStorage) log(r *StmtRecord) {
-	b, err := json.Marshal(r)
+	b, err := marshalStmtRecordWithEvicted(r, false)
 	if err != nil {
 		logutil.BgLogger().Warn("failed to marshal statement summary", zap.Error(err))
 		return
@@ -124,7 +126,37 @@ func (s *stmtLogStorage) log(r *StmtRecord) {
 }
 
 func marshalEvictedStmtRecord(r *StmtRecord) ([]byte, error) {
-	return json.Marshal(evictedStmtRecord{StmtRecord: r, Evicted: true})
+	return marshalStmtRecordWithEvicted(r, true)
+}
+
+func marshalStmtRecordWithEvicted(r *StmtRecord, evicted bool) ([]byte, error) {
+	// Readers can still hold the source record, so redact only an output copy.
+	switch mode := errors.RedactLogEnabled.Load(); mode {
+	case errors.RedactLogEnable:
+		output := *r
+		output.SampleSQL = r.NormalizedSQL
+		r = &output
+	case errors.RedactLogMarker:
+		output := *r
+		output.SampleSQL = redact.String(mode, r.SampleSQL)
+		r = &output
+	}
+
+	if evicted {
+		return json.Marshal(evictedStmtRecord{StmtRecord: r, Evicted: true})
+	}
+	return json.Marshal(r)
+}
+
+type stmtRecordWithAdditionalFields struct {
+	*StmtRecord
+	AdditionalFields map[string]string `json:"additional_fields"`
+}
+
+type evictedStmtRecordWithAdditionalFields struct {
+	*StmtRecord
+	AdditionalFields map[string]string `json:"additional_fields"`
+	Evicted          bool              `json:"evicted"`
 }
 
 type stmtLogEncoder struct{}

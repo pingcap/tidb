@@ -16,7 +16,7 @@
 - `pkg/parser/keywords_test.go` - parser: Tests keywords.
 - `pkg/parser/lexer_test.go` - parser: Tests token ID.
 - `pkg/parser/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/parser/parser_test.go` - parser: Tests simple.
+- `pkg/parser/parser_test.go` - parser: Tests SQL parsing and RECOMMEND INDEX read-only classification.
 - `pkg/parser/reserved_words_test.go` - parser: Tests compare reserved words with MySQL.
 
 ## pkg/parser/ast
@@ -34,7 +34,7 @@
 - `pkg/parser/ast/procedure_test.go` - parser/ast: Tests procedure visitor cover.
 - `pkg/parser/ast/sem_test.go` - parser/ast: Tests show command.
 - `pkg/parser/ast/stats_test.go` - parser/ast: Tests refresh stats stmt.
-- `pkg/parser/ast/util_test.go` - parser/ast: Tests cacheable.
+- `pkg/parser/ast/util_test.go` - parser/ast: Tests read-only classification, including RECOMMEND INDEX RUN and RETURN.
 
 ## pkg/parser/auth
 

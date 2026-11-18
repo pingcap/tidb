@@ -37,6 +37,14 @@ func TestCacheable(t *testing.T) {
 	stmt = &UpdateStmt{}
 	require.False(t, IsReadOnly(stmt, true))
 
+	for _, checkGlobalVars := range []bool{false, true} {
+		stmt = &RecommendIndexStmt{Action: RecommendIndexActionRun}
+		require.False(t, IsReadOnly(stmt, checkGlobalVars))
+
+		stmt = &RecommendIndexStmt{Action: RecommendIndexActionReturn}
+		require.True(t, IsReadOnly(stmt, checkGlobalVars))
+	}
+
 	stmt = &ExplainStmt{}
 	require.True(t, IsReadOnly(stmt, true))
 

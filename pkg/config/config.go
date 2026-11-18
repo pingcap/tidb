@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
@@ -1488,8 +1489,14 @@ func (c *Config) Valid() error {
 		// if two options conflict, we will use the value of EnableTimestamp
 		c.Log.DisableTimestamp = nbUnset
 	}
-	if c.Security.SkipGrantTable && !hasRootPrivilege() {
-		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
+	if c.Security.SkipGrantTable {
+		if diagnosticmode.Enabled() {
+			if c.Socket == "" || (c.Host != "" && c.Port != 0) {
+				return fmt.Errorf("diagnostic mode with skip-grant-table requires a Unix socket and no MySQL TCP listener")
+			}
+		} else if !hasRootPrivilege() {
+			return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
+		}
 	}
 	if !c.Store.Valid() {
 		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, StoreTypeList())
