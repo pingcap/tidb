@@ -1323,6 +1323,7 @@ fn new_time_seeded_rand() -> Arc<MysqlRng> {
 
 mod account;
 mod mlog_purge;
+mod mview_compare;
 mod mview_refresh;
 mod mview_show;
 mod mview_task;

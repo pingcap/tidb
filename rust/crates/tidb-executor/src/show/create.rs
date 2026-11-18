@@ -34,7 +34,7 @@ fn push_column_comment(clause: &mut String, column: &tidb_table::column::Column)
 
 /// Go `stringutil.Escape`: double-quoted under `ANSI_QUOTES`, backtick-quoted
 /// otherwise, with the quote character doubled inside.
-fn escape_name(name: &str, ansi_quotes: bool) -> String {
+pub fn escape_name(name: &str, ansi_quotes: bool) -> String {
     tidb_ddl_build::table_partition::escape_identifier(name, ansi_quotes)
 }
 

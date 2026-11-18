@@ -273,6 +273,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             | AdminStmt::CancelMaterializedViewJob(_) => return self.build_simple(stmt),
             AdminStmt::RefreshMaterializedView(refresh) => return self.build_refresh_materialized_view(refresh),
             AdminStmt::PurgeMaterializedViewLog(purge) => return self.build_purge_materialized_view_log(purge),
+            AdminStmt::CompareMaterializedView(compare) => return self.build_compare_materialized_view(compare),
             AdminStmt::RefreshMaterializedViewImplement(implement) => {
                 return self.build_refresh_materialized_view_implement(implement)
             }
@@ -1453,6 +1454,40 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             ));
         }
         Ok(Plan::PurgeMaterializedViewLog(Box::new(purge.clone())))
+    }
+
+    /// Go master `buildCompareMaterializedView`: a database for the view and
+    /// for its OUTPUT table, OPERATE VIEW on the view, and CREATE and INSERT
+    /// on the OUTPUT table. The preprocessor resolves neither
+    /// (`inCreateOrDropTable`); the executor does.
+    fn build_compare_materialized_view(
+        &mut self,
+        compare: &tidb_ast::CompareMaterializedViewStmt,
+    ) -> Result<Plan, PlanError> {
+        let (database, table, _) = self.qualified(&compare.view_name);
+        if database.is_empty() {
+            return Err(PlanError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])));
+        }
+        self.visit_info.push(visit(tidb_mysql::OperateViewPriv, &database, &table, table_denied("OPERATE VIEW", &table)));
+        if let Some(output) = &compare.output_table {
+            let (output_database, output_table, _) = self.qualified(output);
+            if output_database.is_empty() {
+                return Err(PlanError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])));
+            }
+            self.visit_info.push(visit(
+                tidb_mysql::CreatePriv,
+                &output_database,
+                &output_table,
+                table_denied("CREATE", &output_table),
+            ));
+            self.visit_info.push(visit(
+                tidb_mysql::InsertPriv,
+                &output_database,
+                &output_table,
+                table_denied("INSERT", &output_table),
+            ));
+        }
+        Ok(Plan::CompareMaterializedView(Box::new(compare.clone())))
     }
 
     /// Go master `buildRefreshMaterializedViewImplement` for COMPLETE DELTA

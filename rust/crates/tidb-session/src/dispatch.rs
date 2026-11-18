@@ -553,6 +553,8 @@ impl Session {
             }
             // Go master `PurgeMaterializedViewLogExec`.
             Plan::PurgeMaterializedViewLog(purge) => self.purge_materialized_view_log(purge).map(Some),
+            // Go master `CompareMaterializedViewExec`.
+            Plan::CompareMaterializedView(compare) => self.compare_materialized_view(compare).map(Some),
             // Go master `MViewCompleteDeltaApplyExec`.
             Plan::MViewCompleteDeltaApply(apply) => self.mview_complete_delta_apply(apply).map(Some),
             Plan::CompactTable(compact) => self.compact_table_tiflash_exec(compact).map(Some),
@@ -2567,6 +2569,18 @@ impl Session {
                 || self.vars.txn_read_ts() != 0
                 || self.external_timestamp_read_enabled())
         {
+            // Go master: COMPARE reads its snapshots on its own; only its
+            // OUTPUT table is a write.
+            if let Stmt::Admin(admin) = stmt {
+                if let tidb_ast::AdminStmt::CompareMaterializedView(compare) = admin.as_ref() {
+                    if compare.output_table.is_some() {
+                        return Err(DriverError::unsupported(
+                            "only support read-only statement during read-only staleness transactions",
+                        ));
+                    }
+                    return Ok(());
+                }
+            }
             let locked = matches!(stmt, Stmt::Query(query) if matches!(
                 query.as_ref(),
                 tidb_ast::QueryStmt::Select(select) if select.lock.is_some()

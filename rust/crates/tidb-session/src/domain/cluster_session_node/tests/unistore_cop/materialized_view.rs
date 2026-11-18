@@ -1247,3 +1247,413 @@ fn materialized_view_maintenance_bypass_as_go_master() {
         "ERR 1288 The target table mv_bypass of the UPDATE is not updatable"
     );
 }
+
+/// Go master `nextCompareTimestamp`: the GC safe point moved back, then a
+/// timestamp after every commit so far (AS OF timestamps have no TSO
+/// logical part).
+fn next_compare_timestamp(session: &mut Session) -> String {
+    assert_eq!(
+        answer(
+            session,
+            "INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '20060102-15:04:05 +0000', 'All versions after safe point can be accessed. (DO NOT EDIT)') ON DUPLICATE KEY UPDATE variable_value = '20060102-15:04:05 +0000'"
+        )
+        .get(..2),
+        Some("OK")
+    );
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    let now = answer(session, "select now(6)");
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    serde_json::from_str::<Vec<Vec<String>>>(now.strip_prefix("RS:").expect("now(6) answers rows")).unwrap()[0][0].clone()
+}
+
+/// The single `compare result` row of a COMPARE.
+fn compare_summary(session: &mut Session, sql: &str) -> String {
+    let answered = answer(session, sql);
+    let rows: Vec<Vec<String>> =
+        serde_json::from_str(answered.strip_prefix("RS:").unwrap_or_else(|| panic!("{sql}: {answered}"))).unwrap();
+    assert_eq!(rows.len(), 1, "{sql}: {answered}");
+    rows[0][0].clone()
+}
+
+fn mv_setup(session: &mut Session, statements: &[&str]) {
+    for sql in statements {
+        assert_eq!(answer(session, sql).get(..2), Some("OK"), "{sql}");
+    }
+}
+
+fn log_in(users: &ConfiguredUserStore, user: &str) -> crate::domain::configured_user_store::AuthenticatedIdentity {
+    users
+        .authenticate_native(
+            user,
+            "127.0.0.1",
+            &super::super::node_fixture::SALT,
+            &super::super::node_fixture::scramble(b"abc", &super::super::node_fixture::SALT),
+        )
+        .unwrap_or_else(|_| panic!("{user} logs in"))
+}
+
+/// Go master `testCompareMaterializedViewPrivilegeSkeleton`.
+#[test]
+fn compare_materialized_view_privileges_as_go_master() {
+    let (stack, users, mut root) = go_master_mview_stack();
+    mv_setup(&mut root, &[
+        "use test",
+        "set tidb_mview_enable = ON",
+        "create table t_compare_priv (a int not null, b int not null)",
+        "insert into t_compare_priv values (1, 10), (2, 20)",
+        "create materialized view log on t_compare_priv (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_compare_priv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_priv group by a",
+        "create user 'mv_compare_u'@'%' identified by 'abc'",
+    ]);
+    let mut user = stack.factory.open_session(super::super::node_fixture::session_context_with_identity(2160, log_in(&users, "mv_compare_u"))).unwrap();
+    assert_eq!(answer(&mut user, "set tidb_mview_enable = ON"), "OK");
+    let compare = format!("compare materialized view test.mv_compare_priv as of timestamp '{}'", next_compare_timestamp(&mut root));
+    assert!(answer(&mut user, &compare).contains("OPERATE VIEW command denied"));
+    assert_eq!(answer(&mut root, "grant operate view on test.mv_compare_priv to 'mv_compare_u'@'%'"), "OK");
+    assert!(answer(&mut user, &compare).contains("SELECT command denied"));
+    assert_eq!(answer(&mut root, "grant select on test.t_compare_priv to 'mv_compare_u'@'%'"), "OK");
+    assert!(compare_summary(&mut user, &compare).contains("timestamp"));
+    let output = format!("{compare} output into table test.mv_compare_priv_diff");
+    assert!(answer(&mut user, &output).contains("CREATE command denied"));
+    assert_eq!(answer(&mut root, "grant create on test.* to 'mv_compare_u'@'%'"), "OK");
+    assert!(answer(&mut user, &output).contains("INSERT command denied"));
+    assert_eq!(answer(&mut root, "grant insert on test.* to 'mv_compare_u'@'%'"), "OK");
+    assert_eq!(answer(&mut user, &output).get(..2), Some("OK"));
+    assert_eq!(answer(&mut root, "select count(*) from test.mv_compare_priv_diff"), r#"RS:[["0"]]"#);
+    assert_eq!(answer(&mut root, "drop table mv_compare_priv_diff"), "OK");
+    assert_eq!(answer(&mut root, "create table mv_compare_priv_diff (a int)"), "OK");
+    assert_eq!(answer(&mut user, &output), "ERR 1050 Table 'test.mv_compare_priv_diff' already exists");
+}
+
+/// Go master `testCompareMaterializedViewPrivilegeCheckBeforeSnapshotResolution`:
+/// the current schema's privilege check runs before the snapshot schema,
+/// which has no such database yet, is read.
+#[test]
+fn compare_materialized_view_checks_privileges_before_the_snapshot_as_go_master() {
+    let (stack, users, mut root) = go_master_mview_stack();
+    let compare_ts = next_compare_timestamp(&mut root);
+    mv_setup(&mut root, &[
+        "set tidb_mview_enable = ON",
+        "create database mv_compare_priv_snapshot",
+        "use mv_compare_priv_snapshot",
+        "create table t (a int not null, b int not null)",
+        "insert into t values (1, 10)",
+        "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a",
+        "create user 'mv_compare_snapshot_u'@'%' identified by 'abc'",
+        "grant operate view on mv_compare_priv_snapshot.mv to 'mv_compare_snapshot_u'@'%'",
+    ]);
+    let mut user = stack.factory.open_session(super::super::node_fixture::session_context_with_identity(2161, log_in(&users, "mv_compare_snapshot_u"))).unwrap();
+    let denied = answer(&mut user, &format!("compare materialized view mv_compare_priv_snapshot.mv as of timestamp '{compare_ts}'"));
+    assert!(denied.contains("SELECT command denied"), "{denied}");
+    assert!(!denied.contains("Unknown database"), "{denied}");
+}
+
+/// Go master `testCompareMaterializedViewSummaryAndOutput`: a view edited
+/// by maintenance SQL differs from its definition in one updated, one
+/// deleted and one inserted row.
+#[test]
+fn compare_materialized_view_summary_and_output_as_go_master() {
+    let (_stack, _users, mut root) = go_master_mview_stack();
+    mv_setup(&mut root, &[
+        "use test",
+        "set tidb_mview_enable = ON",
+        "set time_zone = '+08:00'",
+        "create table t_compare_diff (a int not null, b int not null)",
+        "insert into t_compare_diff values (1, 10), (2, 20)",
+        "create materialized view log on t_compare_diff (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_compare_diff (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_diff group by a",
+    ]);
+    let read_tso = answer(
+        &mut root,
+        "select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = (select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_compare_diff')",
+    );
+    let read_tso: u64 = serde_json::from_str::<Vec<Vec<String>>>(read_tso.strip_prefix("RS:").unwrap()).unwrap()[0][0].parse().unwrap();
+    assert!(exec_refresh_internal(&mut root, "update mv_compare_diff set s = s + 7 where a = 1").starts_with("OK"));
+    assert!(exec_refresh_internal(&mut root, "delete from mv_compare_diff where a = 2").starts_with("OK"));
+    assert!(exec_refresh_internal(&mut root, "insert into mv_compare_diff values (3, 30, 1)").starts_with("OK"));
+    assert_eq!(answer(&mut root, "select a, s, cnt from mv_compare_diff order by a"), r#"RS:[["1","17","1"],["3","30","1"]]"#);
+    let compare = format!("compare materialized view test.mv_compare_diff as of timestamp '{}'", next_compare_timestamp(&mut root));
+    // Go `oracle.GetTimeFromTS(tso).In(+08:00).Format("2006-01-02 15:04:05.000000 -07:00")`.
+    let at = chrono::DateTime::from_timestamp_millis((read_tso >> 18) as i64).unwrap().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap());
+    assert_eq!(
+        compare_summary(&mut root, &compare),
+        format!(
+            "There are differences result in 3 rows compared to source base tables at timestamp '{}' (TSO: {read_tso})",
+            at.format("%Y-%m-%d %H:%M:%S%.6f %:z")
+        )
+    );
+    assert_eq!(answer(&mut root, &format!("{compare} output into table test.mv_compare_diff_output")).get(..2), Some("OK"));
+    assert_eq!(
+        answer(&mut root, "select a, s, cnt, _Differ_type_ from test.mv_compare_diff_output order by a"),
+        r#"RS:[["1","17","1","mview_differ"],["2","20","1","mview_vacuum"],["3","30","1","mview_excessive"]]"#
+    );
+}
+
+/// Go master `testCompareMaterializedViewStaleReadOnlyTransaction`: the
+/// summary reads in a read-only staleness transaction, the OUTPUT form is
+/// refused there and leaves the transaction as it was.
+#[test]
+fn compare_materialized_view_in_a_stale_read_only_transaction_as_go_master() {
+    let (stack, _users, mut root) = go_master_mview_stack();
+    mv_setup(&mut root, &[
+        "use test",
+        "set tidb_mview_enable = ON",
+        "create table t_compare_stale (a int not null, b int not null)",
+        "insert into t_compare_stale values (1, 10)",
+        "create materialized view log on t_compare_stale (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_compare_stale (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_stale group by a",
+    ]);
+    let compare_ts = next_compare_timestamp(&mut root);
+    let compare = format!("compare materialized view test.mv_compare_stale as of timestamp '{compare_ts}'");
+    let output = format!("{compare} output into table test.mv_compare_stale_output");
+    let mut observer = stack.factory.open_session(session_context(2162)).unwrap();
+    assert!(answer(&mut observer, "insert into test.t_compare_stale values (2, 20)").starts_with("OK"));
+    assert_eq!(answer(&mut root, &output).get(..2), Some("OK"));
+    assert_eq!(answer(&mut observer, "select count(*) from test.mv_compare_stale_output"), r#"RS:[["0"]]"#);
+    assert_eq!(answer(&mut root, "drop table mv_compare_stale_output"), "OK");
+    for statements in [
+        vec![format!("start transaction read only as of timestamp '{compare_ts}'")],
+        vec![format!("set transaction read only as of timestamp '{compare_ts}'"), "begin".to_owned()],
+    ] {
+        let mut stale = stack.factory.open_session(session_context(2163)).unwrap();
+        mv_setup(&mut stale, &["use test", "set tidb_mview_enable = ON"]);
+        for sql in &statements {
+            assert_eq!(answer(&mut stale, sql), "OK", "{sql}");
+        }
+        assert_eq!(answer(&mut stale, "select a, b from t_compare_stale order by a"), r#"RS:[["1","10"]]"#);
+        compare_summary(&mut stale, &compare);
+        assert_eq!(answer(&mut stale, &output), "ERR 1105 only support read-only statement during read-only staleness transactions");
+        assert_eq!(answer(&mut stale, "select a, b from t_compare_stale order by a"), r#"RS:[["1","10"]]"#);
+        assert_eq!(
+            answer(&mut observer, "select count(*) from information_schema.tables where table_schema = 'test' and table_name = 'mv_compare_stale_output'"),
+            r#"RS:[["0"]]"#
+        );
+        assert_eq!(answer(&mut stale, "rollback"), "OK");
+        assert_eq!(answer(&mut stale, "select a, b from t_compare_stale order by a"), r#"RS:[["1","10"],["2","20"]]"#);
+    }
+}
+
+/// Go master `testCompareMaterializedViewUsesSnapshotMetadataAfterOutOfPlaceCutover`:
+/// the view as of the snapshot is the one compared, and the OUTPUT table
+/// takes no index from the current one.
+#[test]
+fn compare_materialized_view_reads_the_snapshot_view_after_cutover_as_go_master() {
+    let (stack, _users, mut root) = go_master_mview_stack();
+    mv_setup(&mut root, &[
+        "use test",
+        "set tidb_mview_enable = ON",
+        "create table t_compare_oop_snapshot (a int not null, b int not null)",
+        "insert into t_compare_oop_snapshot values (1, 10), (1, 5), (2, 7)",
+        "create materialized view log on t_compare_oop_snapshot (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_compare_oop_snapshot (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_oop_snapshot group by a",
+    ]);
+    let compare_ts = next_compare_timestamp(&mut root);
+    let id = |stack: &UnistoreClusterStack| {
+        stack.factory.catalog_snapshot().table_info_by_name("test", "mv_compare_oop_snapshot").unwrap().1.read().id
+    };
+    let old_id = id(&stack);
+    assert!(answer(&mut root, "insert into t_compare_oop_snapshot values (2, 3), (3, 4)").starts_with("OK"));
+    assert!(answer(&mut root, "refresh materialized view mv_compare_oop_snapshot complete out of place").starts_with("OK"));
+    assert_ne!(id(&stack), old_id);
+    assert_eq!(answer(&mut root, "create index idx_current_s on mv_compare_oop_snapshot (s)"), "OK");
+    let compare = format!("compare materialized view test.mv_compare_oop_snapshot as of timestamp '{compare_ts}'");
+    let summary = compare_summary(&mut root, &compare);
+    assert!(summary.contains("0 rows"), "{summary}");
+    assert_eq!(answer(&mut root, &format!("{compare} output into table test.mv_compare_oop_snapshot_diff")).get(..2), Some("OK"));
+    assert_eq!(answer(&mut root, "show index from mv_compare_oop_snapshot_diff"), "RS:[]");
+}
+
+/// Go master `testCompareMaterializedViewOutputWriterBatchesByTxnSize`: 900
+/// rows of 1.5 KB under a 1 MB transaction limit are written in batches.
+#[test]
+fn compare_materialized_view_output_writes_in_batches_as_go_master() {
+    let (_stack, _users, mut root) = go_master_mview_stack();
+    mv_setup(&mut root, &[
+        "use test",
+        "set tidb_mview_enable = ON",
+        "create table t_compare_output_batch (a int not null, c varchar(1700) not null)",
+        "create index idx_a on t_compare_output_batch (a)",
+    ]);
+    for start in (0..900).step_by(100) {
+        let values: Vec<String> = (start..start + 100).map(|i| format!("({i}, '{i:04}_{}')", "x".repeat(1500))).collect();
+        assert!(answer(&mut root, &format!("insert into t_compare_output_batch values {}", values.join(", "))).starts_with("OK"));
+    }
+    mv_setup(&mut root, &[
+        "create materialized view log on t_compare_output_batch (a, c) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_compare_output_batch (a, mx, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, max(c), count(1) from t_compare_output_batch group by a",
+    ]);
+    assert!(exec_refresh_internal(&mut root, "delete from mv_compare_output_batch").starts_with("OK"));
+    let original = tidb_txnkv::txn_total_size_limit();
+    tidb_txnkv::set_txn_total_size_limit(1024 * 1024);
+    let compare = format!(
+        "compare materialized view test.mv_compare_output_batch as of timestamp '{}' output into table test.mv_compare_output_batch_diff",
+        next_compare_timestamp(&mut root)
+    );
+    let compared = answer(&mut root, &compare);
+    tidb_txnkv::set_txn_total_size_limit(original);
+    assert_eq!(compared.get(..2), Some("OK"), "{compared}");
+    assert_eq!(answer(&mut root, "select count(*) from test.mv_compare_output_batch_diff"), r#"RS:[["900"]]"#);
+}
+
+/// Go master `testCompareMaterializedViewDropsOutputTableOnWriteFailure`.
+#[test]
+fn compare_materialized_view_drops_the_output_table_on_a_write_failure_as_go_master() {
+    let (_stack, _users, mut root) = go_master_mview_stack();
+    mv_setup(&mut root, &[
+        "use test",
+        "set tidb_mview_enable = ON",
+        "create table t_compare_output_cleanup (a int not null, b int not null)",
+        "insert into t_compare_output_cleanup values (1, 10)",
+        "create materialized view log on t_compare_output_cleanup (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_compare_output_cleanup (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_output_cleanup group by a",
+    ]);
+    assert!(exec_refresh_internal(&mut root, "update mv_compare_output_cleanup set s = s + 1 where a = 1").starts_with("OK"));
+    let _flush = tidb_failpoint::enable_for_test(
+        "github.com/pingcap/tidb/pkg/executor/mockCompareMaterializedViewOutputFlushError",
+        r#"return("mock compare output flush error")"#,
+    );
+    let compare = format!(
+        "compare materialized view test.mv_compare_output_cleanup as of timestamp '{}' output into table test.mv_compare_output_cleanup_diff",
+        next_compare_timestamp(&mut root)
+    );
+    let failed = answer(&mut root, &compare);
+    assert!(failed.contains("mock compare output flush error"), "{failed}");
+    assert_eq!(
+        answer(&mut root, "select count(*) from information_schema.tables where table_schema = 'test' and table_name = 'mv_compare_output_cleanup_diff'"),
+        r#"RS:[["0"]]"#
+    );
+}
+
+/// Go master `testCompareMaterializedViewUsesDefinitionTimeZone`: the
+/// definition's `+00:00` decides which rows the recomputed query reads.
+#[test]
+fn compare_materialized_view_recomputes_in_the_definition_time_zone_as_go_master() {
+    let (_stack, _users, mut root) = go_master_mview_stack();
+    mv_setup(&mut root, &[
+        "use test",
+        "set tidb_mview_enable = ON",
+        "set @@session.time_zone = '+00:00'",
+        "create table t_compare_tz (a int not null, ts timestamp not null, b int not null)",
+        "insert into t_compare_tz values (1, '2025-12-31 23:30:00', 20), (1, '2026-01-01 00:30:00', 10)",
+        "create materialized view log on t_compare_tz (a, ts, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_compare_tz (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_tz where ts >= '2026-01-01 00:00:00' group by a",
+    ]);
+    assert_eq!(answer(&mut root, "select a, s, cnt from mv_compare_tz"), r#"RS:[["1","10","1"]]"#);
+    assert_eq!(answer(&mut root, "set @@session.time_zone = '+08:00'"), "OK");
+    let compare = format!("compare materialized view test.mv_compare_tz as of timestamp '{}'", next_compare_timestamp(&mut root));
+    let summary = compare_summary(&mut root, &compare);
+    assert!(summary.contains("0 rows"), "{summary}");
+}
+
+/// Go master `testCompareMaterializedViewOutputTimestampUsesDefinitionTimeZone`:
+/// both images keep their TIMESTAMP instants in the OUTPUT table.
+#[test]
+fn compare_materialized_view_output_keeps_timestamp_instants_as_go_master() {
+    let (_stack, _users, mut root) = go_master_mview_stack();
+    mv_setup(&mut root, &[
+        "use test",
+        "set tidb_mview_enable = ON",
+        "set @@session.time_zone = '+08:00'",
+        "create table t_compare_ts_output (ts timestamp not null, dt datetime not null, v int not null)",
+        "insert into t_compare_ts_output values ('2026-01-01 08:00:00', '2026-01-01 08:00:00', 10), ('2026-01-02 08:00:00', '2026-01-02 08:00:00', 20)",
+        "create materialized view log on t_compare_ts_output (ts, dt, v) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_compare_ts_output (ts, dt, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select ts, dt, sum(v), count(1) from t_compare_ts_output group by ts, dt",
+    ]);
+    assert!(exec_refresh_internal(&mut root, "update mv_compare_ts_output set s = 99 where ts = '2026-01-01 08:00:00'").starts_with("OK"));
+    assert!(exec_refresh_internal(&mut root, "delete from mv_compare_ts_output where ts = '2026-01-02 08:00:00'").starts_with("OK"));
+    assert_eq!(answer(&mut root, "set @@session.time_zone = '+00:00'"), "OK");
+    let compare = format!("compare materialized view test.mv_compare_ts_output as of timestamp '{}'", next_compare_timestamp(&mut root));
+    assert_eq!(answer(&mut root, &format!("{compare} output into table test.mv_compare_ts_output_diff")).get(..2), Some("OK"));
+    assert_eq!(
+        answer(&mut root, "select ts, dt, s, cnt, _Differ_type_ from mv_compare_ts_output_diff order by ts"),
+        r#"RS:[["2026-01-01 00:00:00","2026-01-01 08:00:00","99","1","mview_differ"],["2026-01-02 00:00:00","2026-01-02 08:00:00","20","1","mview_vacuum"]]"#
+    );
+    let _flush = tidb_failpoint::enable_for_test(
+        "github.com/pingcap/tidb/pkg/executor/mockCompareMaterializedViewOutputFlushError",
+        r#"return("mock compare output flush error")"#,
+    );
+    let failed = answer(&mut root, &format!("{compare} output into table test.mv_compare_ts_output_error"));
+    assert!(failed.contains("mock compare output flush error"), "{failed}");
+    assert_eq!(
+        answer(&mut root, "select count(*) from information_schema.tables where table_schema = 'test' and table_name = 'mv_compare_ts_output_error'"),
+        r#"RS:[["0"]]"#
+    );
+}
+
+/// Go master `testCompareMaterializedViewNullableGroupKeyMinMax`: a NULL
+/// group key joins its recomputed row (`IsNullEQ`).
+#[test]
+fn compare_materialized_view_joins_a_null_group_key_as_go_master() {
+    let (_stack, _users, mut root) = go_master_mview_stack();
+    mv_setup(&mut root, &[
+        "use test",
+        "set tidb_mview_enable = ON",
+        "create table t_compare_nullable_minmax (a int, b int)",
+        "create index idx_a_b on t_compare_nullable_minmax (a, b)",
+        "insert into t_compare_nullable_minmax values (null, 1), (null, 3), (1, 5)",
+        "create materialized view log on t_compare_nullable_minmax (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_compare_nullable_minmax (a, cnt, mx, mn) refresh fast next date_add(now(), interval 1 hour) as select a, count(1), max(b), min(b) from t_compare_nullable_minmax group by a",
+    ]);
+    assert!(exec_refresh_internal(&mut root, "update mv_compare_nullable_minmax set mx = 99 where a is null").starts_with("OK"));
+    let compare = format!("compare materialized view test.mv_compare_nullable_minmax as of timestamp '{}'", next_compare_timestamp(&mut root));
+    let summary = compare_summary(&mut root, &compare);
+    assert!(summary.contains("1 rows"), "{summary}");
+    assert_eq!(answer(&mut root, &format!("{compare} output into table test.mv_compare_nullable_minmax_output")).get(..2), Some("OK"));
+    assert_eq!(
+        answer(&mut root, "select a, cnt, mx, mn, _Differ_type_ from test.mv_compare_nullable_minmax_output"),
+        r#"RS:[[null,"2","99","1","mview_differ"]]"#
+    );
+}
+
+/// Go master `testCompareMaterializedViewEmptyInputs`.
+#[test]
+fn compare_materialized_view_of_empty_inputs_as_go_master() {
+    let (_stack, _users, mut root) = go_master_mview_stack();
+    mv_setup(&mut root, &[
+        "use test",
+        "set tidb_mview_enable = ON",
+        "create table t_compare_empty (a int not null, b int not null)",
+        "create materialized view log on t_compare_empty (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_compare_empty (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_empty group by a",
+    ]);
+    let compare = format!("compare materialized view test.mv_compare_empty as of timestamp '{}'", next_compare_timestamp(&mut root));
+    let summary = compare_summary(&mut root, &compare);
+    assert!(summary.starts_with("There are no differences result in 0 rows"), "{summary}");
+    assert_eq!(answer(&mut root, &format!("{compare} output into table test.mv_compare_empty_output")).get(..2), Some("OK"));
+    assert_eq!(answer(&mut root, "select count(*) from test.mv_compare_empty_output"), r#"RS:[["0"]]"#);
+}
+
+/// Go master `testCompareMaterializedViewRejectsReadTSOAfterSnapshot`.
+#[test]
+fn compare_materialized_view_refuses_a_read_tso_after_the_snapshot_as_go_master() {
+    let (_stack, _users, mut root) = go_master_mview_stack();
+    mv_setup(&mut root, &[
+        "use test",
+        "set tidb_mview_enable = ON",
+        "set @@session.time_zone = '+00:00'",
+        "create table t_compare_tso_guard (a int not null, b int not null)",
+        "insert into t_compare_tso_guard values (1, 10)",
+        "create materialized view log on t_compare_tso_guard (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_compare_tso_guard (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_tso_guard group by a",
+    ]);
+    // Go `oracle.GoTimeToTS(time.Now().UTC().Add(time.Hour))`.
+    let future = u64::try_from(chrono::Utc::now().timestamp_millis() + 3_600_000).unwrap() << 18;
+    assert!(answer(
+        &mut root,
+        &format!("update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO = {future} where MVIEW_ID = (select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_compare_tso_guard')")
+    )
+    .starts_with("OK"));
+    let compare = format!("compare materialized view test.mv_compare_tso_guard as of timestamp '{}'", next_compare_timestamp(&mut root));
+    let refused = answer(&mut root, &compare);
+    assert!(refused.contains("LAST_SUCCESS_READ_TSO"), "{refused}");
+}
+
+/// Go master's COMPARE MATERIALIZED VIEW refusals: ErrNoDB, a target that
+/// is no materialized view, no table, no database (also the OUTPUT
+/// table's), an existing OUTPUT table, a NULL AS OF, and a snapshot whose
+/// schema has no such database.
+#[test]
+fn compare_materialized_view_refusals_answer_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/mview_compare_errors_go.jsonl"));
+}

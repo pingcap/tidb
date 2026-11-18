@@ -66,7 +66,8 @@ fn plain(message: impl Into<String>) -> DriverError {
 /// Go master `MarkTouchedRowsByColumn` for one row: whether the current and
 /// recomputed values differ -- NULL-aware, strings compared by bytes (the
 /// binary collator), numbers by value, decimals by `Compare`.
-fn values_differ(old: &Datum, new: &Datum) -> bool {
+#[must_use]
+pub fn values_differ(old: &Datum, new: &Datum) -> bool {
     match (old, new) {
         (Datum::Null, Datum::Null) => false,
         (Datum::Null, _) | (_, Datum::Null) => true,

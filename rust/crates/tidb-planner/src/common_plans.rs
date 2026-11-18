@@ -175,6 +175,8 @@ pub enum Plan {
     RefreshMaterializedView(Box<tidb_ast::RefreshMaterializedViewStmt>),
     /// Go master `PurgeMaterializedViewLog`.
     PurgeMaterializedViewLog(Box<tidb_ast::PurgeMaterializedViewLogStmt>),
+    /// Go master `CompareMaterializedView`.
+    CompareMaterializedView(Box<tidb_ast::CompareMaterializedViewStmt>),
     /// Go master `MViewCompleteDeltaApply`: COMPLETE DELTA APPLY's diff
     /// source and the layout its executor writes the view from. The diff
     /// SELECT is optimized where this tier's executor plans queries.

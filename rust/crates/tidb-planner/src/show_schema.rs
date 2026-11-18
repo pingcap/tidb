@@ -177,6 +177,12 @@ fn build_show_warnings_schema() -> (Schema, Vec<FieldName>) {
 }
 
 /// Go `buildTableRegionsSchema`.
+/// Go master `buildCompareMaterializedView`'s schema when the result is not
+/// written to an OUTPUT table: one `compare result` string.
+pub fn build_compare_materialized_view_schema() -> (Schema, Vec<FieldName>) {
+    fixed_schema("", &[("compare result", FieldTypeCode::String, tidb_mysql::consts::MaxBlobWidth as i64)])
+}
+
 pub fn build_table_regions_schema() -> (Schema, Vec<FieldName>) {
     use FieldTypeCode::{LongLong, Tiny, Varchar};
     fixed_schema(
