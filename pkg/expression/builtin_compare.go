@@ -1451,6 +1451,10 @@ func GetAccurateCmpType(ctx EvalContext, lhs, rhs Expression) types.EvalType {
 		// duration <cmp> duration
 		// compare as duration
 		cmpType = types.ETDuration
+	} else if cmpType == types.ETString && (isDurationAndString(lhsFieldType, rhsFieldType) || isDurationAndString(rhsFieldType, lhsFieldType)) {
+		// duration <cmp> string
+		// compare as duration, the same way date[time] <cmp> string compares as time
+		cmpType = types.ETDuration
 	} else if cmpType == types.ETReal || cmpType == types.ETString {
 		_, isLHSConst := lhs.(*Constant)
 		_, isRHSConst := rhs.(*Constant)
@@ -1483,6 +1487,15 @@ func GetAccurateCmpType(ctx EvalContext, lhs, rhs Expression) types.EvalType {
 		}
 	}
 	return cmpType
+}
+
+// isDurationAndString reports whether a is a TIME and b is a character or text string.
+func isDurationAndString(a, b *types.FieldType) bool {
+	if a.GetType() != mysql.TypeDuration {
+		return false
+	}
+	tp := b.GetType()
+	return types.IsTypeChar(tp) || types.IsTypeVarchar(tp) || types.IsTypeBlob(tp)
 }
 
 // GetCmpFunction get the compare function according to two arguments.

@@ -2951,6 +2951,21 @@ func TestCompareBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`select row(1+3,2,3)<>row(1+3,2,3)`)
 	result.Check(testkit.Rows("0"))
+
+	// issue:73293, a TIME compared with a string compares as TIME
+	tk.MustExec("drop table if exists nc2")
+	tk.MustExec("create table nc2 (id int primary key, c time(1), c0 time, s varchar(40))")
+	tk.MustExec("insert into nc2 values (1, '13:00:00', '13:00:00', '13:00:00'), (2, '14:00:00', '14:00:00', '9:00:00')")
+	tk.MustQuery("select id, c = s, c0 > s, s = c, s < c0 from nc2 order by id").
+		Check(testkit.Rows("1 1 0 1 0", "2 0 1 0 1"))
+	tk.MustQuery("select cast(time'13:00:00' as time(6)) < '2', time'13:00:00' > '9:00:00', '13:00:00.0' = time'13:00:00'").
+		Check(testkit.Rows("0 1 1"))
+	tk.MustQuery("select count(*) from nc2 where c = s").Check(testkit.Rows("1"))
+	tk.MustQuery("select id from nc2 where c0 > s").Check(testkit.Rows("2"))
+	tk.MustQuery("select id, c in (s), c0 between s and '23:00:00', c0 <=> s from nc2 order by id").
+		Check(testkit.Rows("1 1 1 1", "2 0 1 0"))
+	tk.MustQuery("select id, cast(c as time(6)) = cast(s as time(6)), c0 > cast(s as time) from nc2 order by id").
+		Check(testkit.Rows("1 1 0", "2 0 1"))
 }
 
 func TestTimeBuiltin(t *testing.T) {
