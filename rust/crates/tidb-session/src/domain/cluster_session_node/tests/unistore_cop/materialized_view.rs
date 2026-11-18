@@ -584,3 +584,39 @@ fn drop_jobs_carry_fk_check_only_for_a_table_as_go() {
         ]
     );
 }
+
+/// Go master `JobNeedGC` / `insertJobIntoDeleteRangeTable`: DROP
+/// MATERIALIZED VIEW and DROP MATERIALIZED VIEW LOG leave the dropped
+/// table's key range for GC, as DROP TABLE does (`gc_delete_range`, or
+/// `gc_delete_range_done` once deleted). Go's unistore deletes the ranges
+/// asynchronously, so its answers race; the rule is Go's source.
+#[test]
+fn materialized_view_drops_leave_their_ranges_for_gc_as_go_master() {
+    let (_stack, mut session) = replay_go_master("");
+    let queued = |session: &mut Session, key: &str| {
+        answer(
+            session,
+            &format!(
+                "select (select count(*) from mysql.gc_delete_range where start_key = {key}) + (select count(*) from mysql.gc_delete_range_done where start_key = {key})"
+            ),
+        )
+    };
+    for sql in [
+        "set tidb_mview_enable = ON",
+        "create database e29",
+        "use e29",
+        "create table t (id int primary key, g int not null, v int)",
+        "insert into t values (1, 1, 1)",
+        "create materialized view log on t (g, v)",
+        "create materialized view mv (g, c) as select g, count(*) from t group by g",
+        "set @mv = (select lower(concat('74', lpad(hex(tidb_table_id ^ 0x8000000000000000), 16, '0'))) from information_schema.tables where table_schema = 'e29' and table_name = 'mv')",
+        "set @mlog = (select lower(concat('74', lpad(hex(tidb_table_id ^ 0x8000000000000000), 16, '0'))) from information_schema.tables where table_schema = 'e29' and table_name = '$mlog$t')",
+    ] {
+        assert_eq!(answer(&mut session, sql), "OK", "{sql}");
+    }
+    assert_eq!(queued(&mut session, "@mv"), r#"RS:[["0"]]"#);
+    assert_eq!(answer(&mut session, "drop materialized view mv"), "OK");
+    assert_eq!(queued(&mut session, "@mv"), r#"RS:[["1"]]"#);
+    assert_eq!(answer(&mut session, "drop materialized view log on t"), "OK");
+    assert_eq!(queued(&mut session, "@mlog"), r#"RS:[["1"]]"#);
+}

@@ -113,7 +113,16 @@ pub fn job_need_gc(job: &Job) -> bool {
         | ActionType::ACTION_ADD_PRIMARY_KEY
         | ActionType::ACTION_REORGANIZE_PARTITION
         | ActionType::ACTION_REMOVE_PARTITIONING
-        | ActionType::ACTION_ALTER_TABLE_PARTITIONING => true,
+        | ActionType::ACTION_ALTER_TABLE_PARTITIONING
+        // Go master: the materialized view drops and the out-of-place
+        // cutover leave a table's keys behind.
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW
+        | ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER => true,
+        // Go master: CREATE MATERIALIZED VIEW may create a physical table
+        // before the initial build fails; only rollback cleanup needs it.
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW => job.is_rollback_done() && job.table_id != 0,
         ActionType::ACTION_DROP_INDEX => {
             // A columnar index keeps no key range.
             let mut job = job.clone();
@@ -189,7 +198,10 @@ fn insert_job_into_delete_range_table(
                 batch_delete_tables_range(wrapper, job_id, batch, alloc)?;
             }
         }
-        ActionType::ACTION_DROP_TABLE => {
+        ActionType::ACTION_DROP_TABLE
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW => {
             let args = tidb_model::get_finished_drop_table_args(&mut job)
                 .map_err(args_error)?
                 .ok_or_else(|| missing_args(&job))?;
@@ -199,6 +211,18 @@ fn insert_job_into_delete_range_table(
             }
             // The logical table may hold global index regions.
             batch_delete_tables_range(wrapper, job_id, &[job.table_id], alloc)?;
+        }
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW => {
+            if job.is_rollback_done() && job.table_id != 0 {
+                batch_delete_tables_range(wrapper, job_id, &[job.table_id], alloc)?;
+            }
+        }
+        ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER => {
+            let args = tidb_model::get_refresh_materialized_view_complete_out_of_place_cutover_args(&mut job)
+                .map_err(args_error)?
+                .ok_or_else(|| missing_args(&job))?;
+            let old = args.read().old_mview_id;
+            batch_delete_tables_range(wrapper, job_id, &[old], alloc)?;
         }
         ActionType::ACTION_TRUNCATE_TABLE => {
             let args = tidb_model::get_finished_truncate_table_args(&mut job)
