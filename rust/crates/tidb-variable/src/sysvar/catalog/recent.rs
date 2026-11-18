@@ -23,6 +23,7 @@ pub(super) static ENTRIES: [SysVarDef; 2] = [
         max_value: 8,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_enable_connection_event_log",
@@ -36,5 +37,6 @@ pub(super) static ENTRIES: [SysVarDef; 2] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
 ];

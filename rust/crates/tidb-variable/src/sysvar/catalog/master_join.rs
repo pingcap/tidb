@@ -25,5 +25,6 @@ pub(super) static ENTRIES: [SysVarDef; 1] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
 ];

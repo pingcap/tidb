@@ -36,6 +36,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 4294967295,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "default_storage_engine",
@@ -49,6 +50,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "default_tmp_storage_engine",
@@ -62,6 +64,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "group_concat_max_len",
@@ -75,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 18446744073709551615,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "keep_files_on_create",
@@ -88,6 +92,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "rbr_exec_mode",
@@ -101,6 +106,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "sql_auto_is_null",
@@ -114,6 +120,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "sql_big_selects",
@@ -127,6 +134,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "sql_mode",
@@ -140,6 +148,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: Some(super::super::validation::sql_mode),
     },
     SysVarDef {
         name: "sql_notes",
@@ -153,6 +162,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "sql_quote_show_create",
@@ -166,6 +176,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "sql_require_primary_key",
@@ -179,6 +190,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "sql_select_limit",
@@ -192,6 +204,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 18446744073709551615,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "sql_warnings",
@@ -205,6 +218,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "storage_engine",
@@ -218,6 +232,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_cb_pd_metadata_error_rate_threshold_ratio",
@@ -231,6 +246,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 1,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_enable_check_constraint",
@@ -244,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_enable_collect_execution_info",
@@ -257,6 +274,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_enable_fast_create_table",
@@ -270,6 +288,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_enable_new_only_full_group_by_check",
@@ -283,6 +302,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_enable_ts_validation",
@@ -296,6 +316,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_evolve_plan_task_end_time",
@@ -309,6 +330,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_evolve_plan_task_max_time",
@@ -322,6 +344,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 9223372036854775807,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_evolve_plan_task_start_time",
@@ -335,6 +358,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },
     SysVarDef {
         name: "tidb_generate_binary_plan",
@@ -348,4 +372,5 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
+        validation: None,
     },];
