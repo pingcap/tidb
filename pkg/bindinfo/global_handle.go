@@ -187,7 +187,10 @@ func (h *globalBindingHandle) setLastUpdateTime(t types.Time) {
 
 // LoadFromStorageToCache loads bindings from the storage into the cache.
 func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) {
-	h.reloadMu.Lock()
+	if !h.reloadMu.TryLock() {
+		failpoint.InjectCall("bindingCacheReloadContended", h)
+		h.reloadMu.Lock()
+	}
 	defer h.reloadMu.Unlock()
 
 	lastUpdateTime := h.getLastUpdateTime()

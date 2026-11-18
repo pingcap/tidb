@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -68,22 +69,49 @@ func TestBindingCacheReloadDoesNotPublishStaleSnapshot(t *testing.T) {
 	tk.MustExec("create global binding for select * from t using select * from t")
 
 	handle := bindinfo.NewGlobalBindingHandle(dom.SysSessionPool())
+	t.Cleanup(func() { variable.UnregisterStatistics(handle) })
 	require.NoError(t, handle.LoadFromStorageToCache(true))
 	started := make(chan struct{})
+	contended := make(chan struct{})
 	release := make(chan struct{})
 	var first atomic.Bool
-	var releaseOnce sync.Once
-	unblock := func() { releaseOnce.Do(func() { close(release) }) }
-	t.Cleanup(unblock)
+	var contentionOnce sync.Once
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/bindinfo/afterLoadBindingsFromStorage", func(target any) {
 		if target == handle && first.CompareAndSwap(false, true) {
 			close(started)
 			<-release
 		}
 	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/bindinfo/bindingCacheReloadContended", func(target any) {
+		if target == handle {
+			contentionOnce.Do(func() { close(contended) })
+		}
+	})
 
-	firstDone := make(chan error, 1)
-	go func() { firstDone <- handle.LoadFromStorageToCache(false) }()
+	firstDone := make(chan struct{})
+	secondDone := make(chan struct{})
+	firstResult := make(chan error, 1)
+	secondResult := make(chan error, 1)
+	var secondStarted bool
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(func() {
+		unblock()
+		for _, done := range []<-chan struct{}{firstDone, secondDone} {
+			if done == secondDone && !secondStarted {
+				continue
+			}
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Error("reload worker did not exit")
+			}
+		}
+	})
+	go func() {
+		defer close(firstDone)
+		firstResult <- handle.LoadFromStorageToCache(false)
+	}()
 	select {
 	case <-started:
 	case <-time.After(10 * time.Second):
@@ -92,21 +120,19 @@ func TestBindingCacheReloadDoesNotPublishStaleSnapshot(t *testing.T) {
 
 	// Simulate a committed drop while the first reload holds its old snapshot.
 	tk.MustExec("update mysql.bind_info set status = 'deleted', update_time = date_add(update_time, interval 1 second) where source != 'builtin'")
-	secondDone := make(chan error, 1)
-	go func() { secondDone <- handle.LoadFromStorageToCache(false) }()
-	var secondErr error
-	secondFinished := false
+	secondStarted = true
+	go func() {
+		defer close(secondDone)
+		secondResult <- handle.LoadFromStorageToCache(false)
+	}()
 	select {
-	case secondErr = <-secondDone:
-		secondFinished = true
-	case <-time.After(time.Second):
+	case <-contended:
+	case <-time.After(10 * time.Second):
+		t.Fatal("second reload did not contend for the reload lock")
 	}
 	unblock()
-	require.NoError(t, <-firstDone)
-	if !secondFinished {
-		secondErr = <-secondDone
-	}
-	require.NoError(t, secondErr)
+	require.NoError(t, <-firstResult)
+	require.NoError(t, <-secondResult)
 	require.Empty(t, handle.GetAllGlobalBindings())
 }
 
