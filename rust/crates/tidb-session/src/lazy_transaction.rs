@@ -193,6 +193,15 @@ impl LazyClusterTransaction {
         transaction
     }
 
+    /// An autocommit read's implicit transaction: it never takes the SQL
+    /// buffer over (a read stages nothing; a commit is handed the buffer).
+    #[must_use]
+    pub fn new_implicit_read(options: SessionTransactionOptions, buffer: MutationBuffer, opener: TransactionOpener) -> Self {
+        let transaction = Self::new(false, options, buffer, opener);
+        transaction.shared.state().buffer = None;
+        transaction
+    }
+
     /// A snapshot that opens the transaction at its first read and is then
     /// the snapshot `make` builds over it.
     fn lazy_snapshot(

@@ -1007,6 +1007,32 @@ impl<S: StoreClient> SessionTransaction<S> {
         })
     }
 
+    /// [`Self::begin_at`] for an autocommit read's implicit transaction: the
+    /// native transaction is read-only (Go's optimistic `KVTxn` that never
+    /// writes), so ending it sends nothing.
+    pub fn begin_read_only_at(
+        opener: Arc<RealOptimisticTransactionOpener<S>>,
+        start_ts: u64,
+        timeout: Duration,
+        options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        let mut transaction = opener.begin_read_only_at(start_ts)?;
+        options.into().apply(&mut transaction);
+        Ok(Self {
+            opened_at: std::time::Instant::now(),
+            statement_count: std::cell::Cell::new(0),
+            state: Arc::new(Mutex::new(SessionTransactionState::Optimistic(transaction))),
+            start_ts,
+            timeout,
+            pessimistic: false,
+            fair_locking: false,
+            schema_lease_checker: None,
+            commit_ts_upper_bound_check: None,
+            statement_lock_failure: Arc::default(),
+            bound_buffer: Arc::default(),
+        })
+    }
+
     /// [`Self::begin_pessimistic`] at a timestamp already obtained by
     /// [`RealOptimisticTransactionOpener::prepare_read_only_start_ts`].
     pub fn begin_pessimistic_at(

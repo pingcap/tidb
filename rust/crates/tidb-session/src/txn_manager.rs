@@ -108,6 +108,8 @@ pub struct TxnManager {
     /// (Go `txnFuture`) until a read, a lock or the commit activates it,
     /// and committed or rolled back when the statement ends.
     implicit: Option<Box<dyn OpenClusterTransaction>>,
+    /// Whether `implicit` is an autocommit read's (ended without a commit).
+    implicit_read: bool,
     /// Go `LazyTxn` captures this policy when the transaction becomes valid.
     lazy_uniqueness_check_enabled: bool,
     /// Held from `BEGIN` to `COMMIT`/`ROLLBACK`.
@@ -145,6 +147,7 @@ impl TxnManager {
             buffer,
             explicit: None,
             implicit: None,
+            implicit_read: false,
             lazy_uniqueness_check_enabled: false,
             pin: None,
             autocommit_txn_bytes: 0,
@@ -173,6 +176,33 @@ impl TxnManager {
     ) {
         let pending =
             self.transactions.prepare_autocommit_write(resource_group, pessimistic, fair_locking, options.clone());
+        self.implicit_read = false;
+        self.enter_implicit(pessimistic, pending, options, read_ts);
+    }
+
+    /// Go `PrepareTxnCtx` for an autocommit read: the same implicit
+    /// transaction, optimistic, pending on its timestamp future (a
+    /// low-resolution one under `tidb_low_resolution_tso`) until the first
+    /// read activates it. A read-only statement ends it without a commit.
+    pub fn enter_implicit_read(
+        &mut self,
+        low_resolution: bool,
+        resource_group: &str,
+        options: SessionTransactionOptions,
+        read_ts: tidb_domain_core::cluster_transactions::StatementReadTs,
+    ) {
+        let pending = self.transactions.prepare_autocommit_read(resource_group, low_resolution, options.clone());
+        self.implicit_read = true;
+        self.enter_implicit(false, pending, options, read_ts);
+    }
+
+    fn enter_implicit(
+        &mut self,
+        pessimistic: bool,
+        pending: Result<Box<dyn tidb_domain_core::cluster_transactions::PendingClusterTransaction>, String>,
+        options: SessionTransactionOptions,
+        read_ts: tidb_domain_core::cluster_transactions::StatementReadTs,
+    ) {
         let opener: TransactionOpener = Box::new(move |_options| {
             let begin = std::time::Instant::now();
             let transaction = pending.and_then(|pending| pending.wait());
@@ -181,12 +211,17 @@ impl TxnManager {
             read_ts.record(transaction.start_ts());
             Ok(transaction)
         });
-        self.implicit = Some(Box::new(LazyClusterTransaction::new_implicit(pessimistic, options, self.buffer.clone(), opener)));
+        self.implicit = Some(Box::new(if self.implicit_read {
+            LazyClusterTransaction::new_implicit_read(options, self.buffer.clone(), opener)
+        } else {
+            LazyClusterTransaction::new_implicit(pessimistic, options, self.buffer.clone(), opener)
+        }));
     }
 
     /// Go `RollbackTxn` for an autocommit statement that failed or is
     /// replayed: the implicit transaction ends without publishing.
     pub fn rollback_implicit(&mut self) {
+        self.implicit_read = false;
         if let Some(transaction) = self.implicit.take() {
             let _ = transaction.rollback();
         }
@@ -510,7 +545,15 @@ impl TxnManager {
         if self.explicit.is_some() || session.in_transaction() {
             return Ok(());
         }
-        let write_transaction = self.implicit.take();
+        let mut write_transaction = self.implicit.take();
+        // Go commits a read-only transaction by doing nothing that reaches
+        // the store. An autocommit read's implicit transaction is read-only;
+        // whatever a non-DML statement staged publishes as before.
+        if std::mem::take(&mut self.implicit_read) {
+            if let Some(transaction) = write_transaction.take() {
+                let _ = transaction.rollback();
+            }
+        }
         // Go's autocommit `CommitTxn`, which a failed commit has run too.
         session.set_txn_isolation_level_one_shot_state_for_next_txn();
         // Go `doCommitWithRetry` -> `recordOnTransactionExecution`: a

@@ -2,8 +2,8 @@
   "date": "2026-11-18",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 17,
-    "open": 16,
+    "unresolved": 16,
+    "open": 15,
     "partial": 1
   },
   "findings": [
@@ -46,14 +46,6 @@
       "finding": "The test tier still runs beside the store-backed one. `tidb-kv`'s `MemTableStorage` (no transaction, `do_lock_keys` a no-op), `tidb-table`'s `LocalTableAutoIds` / `tidb-autoid` `LocalAutoIdStore`, `LocalSequenceCounter`, `tidb-session`'s `SharedCatalog` and `tidb-executor`'s `run_create_table_on` (a CREATE TABLE without a DDL job, now compiled only under `test` / `test-util`) give the executor's tests a second storage, allocator and DDL implementation: 50 of `tidb-executor`'s test files (364 tests) build their tables with `run_create_table_on` over `MemTableStorage`, while production runs over `tidb-store-driver-txn`'s `ClusterTableStorage`. Go has one path: a test runs on `mockstore` (unistore) through the same `kv.Transaction`, meta allocators and DDL jobs as production, as `tidb-session`'s `Session::new()` already does. The `diagnostics` binary `cluster-session-smoke` (used by `scripts/run-realtikv-session-driver.sh` and `run-realtikv-scan-pushdown.sh`) builds over `LocalTableAutoIds` and no longer compiles; Go has no such binary.",
       "rust_evidence": "`rust/crates/tidb-kv/src/storage.rs` (`MemTableStorage`), `rust/crates/tidb-table/src/table_from_meta.rs` (`LocalTableAutoIds`), `rust/crates/tidb-autoid/src/{lib,sequence}.rs`, `rust/crates/tidb-executor/src/ddl.rs` (`run_create_table_on`, `test-util`), `rust/crates/tidb-executor/tests/`, `rust/crates/tidb-session/src/lib.rs` (`SharedCatalog`), `rust/crates/tidb-server/src/bin/cluster-session-smoke.rs`",
       "go_owner": "`pkg/testkit` (`CreateMockStore`), `pkg/store/mockstore`, `pkg/meta/autoid`, `pkg/ddl`"
-    },
-    {
-      "id": "X12",
-      "status": "open",
-      "group": "Structure: Go's shape before more ports",
-      "finding": "A statement's reads still have two transaction objects. An autocommit statement uses `tidb-domain-core`'s `DeferredSnapshot` and a statement inside a transaction uses `tidb-store-driver-txn`'s `SessionSnapshot`; both implement `ClusterSnapshot`. Their locks now go through one `lock_pessimistic` (Go `KVTxn.LockKeys`) and one `StatementLockFailure` outcome for the statement owner, but the two objects, their for-update timestamps and their lifetimes remain separate. Go has one `LazyTxn` / `KVTxn` and one provider per transaction for both cases (X05).",
-      "rust_evidence": "`rust/crates/tidb-domain-core/src/cluster_transactions.rs` (`DeferredSnapshot`), `rust/crates/tidb-store-driver-txn/src/cluster_table_storage.rs` (`SessionSnapshot`)",
-      "go_owner": "`pkg/session/txn.go` (`LazyTxn`), `pkg/sessiontxn/isolation/base.go`, `pkg/executor/executor.go` (`doLockKeys`)"
     },
     {
       "id": "X13",
@@ -144,7 +136,7 @@
       "go_owner": "`pkg/executor/show_stats.go` (`fetchShowStatsHistogram`, `appendTableForStatsHistograms`), `pkg/statistics/handle/cache` (`GetPhysicalTableStats`)"
     }
   ],
-  "unresolved": 17,
-  "open": 16,
+  "unresolved": 16,
+  "open": 15,
   "partial": 1
 }

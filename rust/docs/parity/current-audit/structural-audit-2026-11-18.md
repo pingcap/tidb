@@ -93,7 +93,6 @@ scripts.
 | --- | --- | --- |
 | X09 | system tables through SQL on an internal session | restricted SQL, and `tidb-syssession`'s `SystemTableView` / `system_row_write` key/value reader-writer; `ddl_reorg_table.rs` and `ddl_delete_range.rs` use both |
 | X11 | one `kv.Transaction` path, tests on `mockstore` | `ClusterTableStorage` in production, and `MemTableStorage` + `LocalTableAutoIds` + `run_create_table_on` under 50 `tidb-executor` test files |
-| X12 | `LazyTxn` / `KVTxn` | `DeferredSnapshot` (autocommit) and `SessionSnapshot` (in a transaction), each a full `ClusterSnapshot` |
 | X13 | each `SysVar`'s closures | `SysVarDef.validation` + about 30 name branches in `set_hooks.rs` + session hooks + `StaticSessionVars` |
 | N09 | `util.InternalHTTPClient`, `pdhttp.Client` | about a dozen separately built `reqwest` clients and ad hoc `/pd/api/v1/...` calls in five crates |
 

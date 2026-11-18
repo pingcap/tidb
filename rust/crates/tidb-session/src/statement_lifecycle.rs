@@ -468,25 +468,7 @@ impl StatementLifecycle<'_> {
             if autocommit_write {
                 self.begin_autocommit_statement_locks(autocommit_pessimistic);
             }
-            if autocommit_write {
-                let vars = self.session.vars();
-                // Go `OnPessimisticStmtStart` (`isolation/base.go:711`):
-                // fair locking follows the session variable; a client
-                // connection is neither internal nor restricted SQL.
-                let fair_locking = vars.pessimistic_transaction_fair_locking();
-                let options = tidb_domain_core::session_transaction::set_options_on_txn_active(vars)
-                    .with_statement_kv_context(self.session.statement_kv_context_cell())
-                    .with_temporary_tables(self.session.temporary_table_ids())
-                    .with_guarantee_linearizability(self.session.guarantee_linearizability())
-                    .with_kill_signal(self.session.kv_kill_signal());
-                self.txn.enter_implicit_write(
-                    autocommit_pessimistic,
-                    fair_locking,
-                    resource_group,
-                    options,
-                    read_ts.clone(),
-                );
-            }
+            self.enter_implicit_transaction(shape, autocommit_write, autocommit_pessimistic, resource_group, read_ts);
             let snapshot = {
                 match self.open_read_snapshot(shape, retry_read_ts, read_ts, resource_group, is_dml)
                 {
@@ -1088,12 +1070,46 @@ impl StatementLifecycle<'_> {
             read_ts.activate_const_start_ts(u64::MAX);
             return Ok(snapshot);
         }
-        Ok(transactions::deferred_snapshot(
-            Arc::clone(self.txn.transactions()),
-            read_ts.clone(),
-            Arc::<str>::from(resource_group),
-            self.session.use_low_resolution_tso(),
+        // Every other statement outside a transaction entered its implicit
+        // one (`enter_implicit_transaction`) before opening its snapshot.
+        Err(SqlQueryError::unknown(
+            "an autocommit statement opened its snapshot without its implicit transaction",
         ))
+    }
+
+    /// Go `PrepareTxnCtx` -> `EnterNewTxn(EnterNewTxnBeforeStmt)` for a
+    /// statement outside any transaction: an autocommit write enters its
+    /// implicit transaction (pessimistic when `decideTxnMode` says so), any
+    /// other statement an implicit optimistic one -- except a stale read,
+    /// which has its own timestamp, and a point get the plan advised to read
+    /// the latest version (`AdviseOptimizeWithPlan`), which needs none.
+    fn enter_implicit_transaction(
+        &mut self,
+        shape: StatementReadShape,
+        autocommit_write: bool,
+        autocommit_pessimistic: bool,
+        resource_group: &str,
+        read_ts: &transactions::StatementReadTs,
+    ) {
+        if self.txn.explicit.is_some() || self.session.historical_read_ts().is_some() {
+            return;
+        }
+        let vars = self.session.vars();
+        let options = tidb_domain_core::session_transaction::set_options_on_txn_active(vars)
+            .with_statement_kv_context(self.session.statement_kv_context_cell())
+            .with_temporary_tables(self.session.temporary_table_ids())
+            .with_guarantee_linearizability(self.session.guarantee_linearizability())
+            .with_kill_signal(self.session.kv_kill_signal());
+        if autocommit_write {
+            // Go `OnPessimisticStmtStart` (`isolation/base.go:711`): fair
+            // locking follows the session variable; a client connection is
+            // neither internal nor restricted SQL.
+            let fair_locking = vars.pessimistic_transaction_fair_locking();
+            self.txn.enter_implicit_write(autocommit_pessimistic, fair_locking, resource_group, options, read_ts.clone());
+        } else if shape != StatementReadShape::AutocommitPointGet {
+            let low_resolution = self.session.use_low_resolution_tso();
+            self.txn.enter_implicit_read(low_resolution, resource_group, options, read_ts.clone());
+        }
     }
 
     pub fn begin_read_statement(
@@ -1133,6 +1149,7 @@ impl StatementLifecycle<'_> {
             autocommit: scope.autocommit,
             resource_group: resource_group.to_owned(),
         };
+        self.enter_implicit_transaction(shape, false, false, resource_group, &statement.read_ts);
         let setup = self
             .open_read_snapshot(shape, None, &statement.read_ts, resource_group, false)
             .and_then(|snapshot| {
@@ -1173,6 +1190,8 @@ impl StatementLifecycle<'_> {
             self.txn.buffer().restore(statement.savepoint);
             finished
         };
+        // Whatever the read did not commit ends with it (Go `RollbackTxn`).
+        self.txn.rollback_implicit();
         self.txn.buffer().release(statement.savepoint);
         self.end_statement_scope(&StatementScope {
             read_ts: statement.read_ts.clone(),

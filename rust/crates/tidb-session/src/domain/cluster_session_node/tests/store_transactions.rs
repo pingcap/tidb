@@ -21,8 +21,6 @@ use std::time::Duration;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions;
-use tidb_store_driver_error::sql_query_error::SqlQueryError;
-use tidb_sessionctx::advisory_lock_state::{AdvisoryLockError, AdvisoryLockLease};
 use tidb_kv::cluster_storage::{ClusterSnapshot, SnapshotPairs};
 use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use tidb_kv::storage::StorageError;
@@ -58,67 +56,6 @@ impl ClusterSnapshot for BatchCountingSnapshot {
     ) -> Result<SnapshotPairs, StorageError> {
         Ok(Vec::new())
     }
-}
-
-struct BatchCountingTransactions {
-    get_calls: Arc<AtomicUsize>,
-    batch_get_calls: Arc<AtomicUsize>,
-}
-
-impl ClusterTransactions for BatchCountingTransactions {
-    fn kv_storage(&self) -> Arc<dyn tidb_txnkv::kv_storage::Storage> {panic!("unexpected mock Store call")}
-    fn prepare_snapshot(
-        &self,
-        _resource_group: &str,
-        _low_resolution: bool,
-    ) -> Result<Box<dyn PendingClusterSnapshot>, String> {
-        panic!("the test opens its snapshot directly")
-    }
-
-    fn open_snapshot(&self, _resource_group: &str) -> Result<Box<dyn ClusterSnapshot>, String> {
-        Ok(Box::new(BatchCountingSnapshot {
-            get_calls: Arc::clone(&self.get_calls),
-            batch_get_calls: Arc::clone(&self.batch_get_calls),
-        }))
-    }
-
-    fn open_max_ts_snapshot(
-        &self,
-        resource_group: &str,
-    ) -> Result<Box<dyn ClusterSnapshot>, String> {
-        self.open_snapshot(resource_group)
-    }
-
-    fn commit(
-        &self,
-        _buffer: &MutationBuffer,
-        _read_ts: Option<u64>,
-        _resource_group: &str,
-        _options: SessionTransactionOptions,
-    ) -> Result<Option<CommittedTxnInfo>, SqlQueryError> {
-        panic!("unused in batch-get forwarding test")
-    }
-
-    fn begin(
-        &self,
-        _pessimistic: bool,
-        _fair_locking: bool,
-        _resource_group: &str,
-        _options: SessionTransactionOptions,
-    ) -> Result<Box<dyn OpenClusterTransaction>, String> {
-        panic!("unused in batch-get forwarding test")
-    }
-
-    fn prepare_autocommit_write(
-        &self,
-        _resource_group: &str,
-        _pessimistic: bool,
-        _fair_locking: bool,
-        _options: SessionTransactionOptions,
-    ) -> Result<Box<dyn PendingClusterTransaction>, String> {
-        panic!("unused in batch-get forwarding test")
-    }
-
 }
 
 #[test]
@@ -261,25 +198,3 @@ fn session_activation_retains_options_after_timestamp_future_failure() {
     }
 }
 
-#[test]
-fn deferred_snapshot_forwards_batch_get_without_point_read_fallback() {
-    let get_calls = Arc::new(AtomicUsize::new(0));
-    let batch_get_calls = Arc::new(AtomicUsize::new(0));
-    let transactions = Arc::new(BatchCountingTransactions {
-        get_calls: Arc::clone(&get_calls),
-        batch_get_calls: Arc::clone(&batch_get_calls),
-    });
-    let mut snapshot = deferred_snapshot(
-        transactions,
-        StatementReadTs::default(),
-        Arc::<str>::from("default"),
-        false,
-    );
-    let keys = vec![Key::from_bytes(b"k1"), Key::from_bytes(b"k2")];
-
-    let pairs = snapshot.batch_get(&keys).expect("batch get succeeds");
-
-    assert_eq!(pairs.len(), 2);
-    assert_eq!(batch_get_calls.load(Ordering::Relaxed), 1);
-    assert_eq!(get_calls.load(Ordering::Relaxed), 0);
-}

@@ -65,19 +65,17 @@ use tidb_store_driver_txn::transaction::StoreClient;
 use tidb_store_driver_txn::cluster_table_storage::{
     commit_staged_buffer, lock_pessimistic_statement_with, mutation_buffer_from_mutations,
     overlay_staged_mutations, stage_mutations, LockKeysOutcome, MaxTsSnapshot,
-    PreparedStatementSnapshot, SessionTransaction, StatementLockFailure, StatementLockFailureSlot,
-    StatementSnapshot,
+    PreparedStatementSnapshot, SessionTransaction, StatementSnapshot,
 };
 use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions;
-use tidb_kv::cluster_storage::{ClusterSnapshot, DuplicateKeyHint, SnapshotPairs};
+use tidb_kv::cluster_storage::{ClusterSnapshot, DuplicateKeyHint};
 use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use tidb_kv::storage::StorageError;
 use tidb_txnkv::driver::transaction_error::{RedactArg, Redaction};
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::SchemaLeaseChecker;
-use tidb_txnkv::Key;
 
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
@@ -313,6 +311,19 @@ pub trait ClusterTransactions: Send + Sync {
         fair_locking: bool,
         options: SessionTransactionOptions,
     ) -> Result<Box<dyn PendingClusterTransaction>, String>;
+
+    /// [`Self::prepare_autocommit_write`] for an autocommit read's implicit
+    /// (optimistic) transaction; `low_resolution` is Go
+    /// `newOracleFuture`'s `UseLowResolutionTSO`.
+    fn prepare_autocommit_read(
+        &self,
+        resource_group: &str,
+        low_resolution: bool,
+        options: SessionTransactionOptions,
+    ) -> Result<Box<dyn PendingClusterTransaction>, String> {
+        let _ = low_resolution;
+        self.prepare_autocommit_write(resource_group, false, false, options)
+    }
 
     /// Publishes one autocommit statement's staged writes as its own
     /// transaction **at `read_ts`**, then empties the buffer. An empty buffer
@@ -743,266 +754,6 @@ impl StatementReadTs {
     }
 }
 
-/// One autocommit statement's read snapshot, prepared after planning and
-/// activated at its FIRST read.
-///
-/// The session driver binds a statement's snapshot before the statement is
-/// planned, because the slot has to be in place before the executor exists.
-/// Opening synchronously at bind time both precedes the plan-shape decision and
-/// serializes PD latency with executor setup. Go instead installs an oracle
-/// future after `AdviseOptimizeWithPlan`: planning chooses ordinary versus
-/// MaxTS first, ordinary TSO work overlaps executor construction, and `Txn()`
-/// waits only if execution needs a snapshot. `prepare_open` is that future;
-/// `with_open` is the wait/activation boundary.
-struct DeferredSnapshot {
-    transactions: Arc<dyn ClusterTransactions>,
-    /// The statement-scoped group every lazy/prefetched open must retain.
-    resource_group: Arc<str>,
-    /// Go `UseLowResolutionTSO` for the statement's start timestamp.
-    low_resolution_tso: bool,
-    /// Where the open publishes the statement's timestamp, so the publication
-    /// can find it after this handle is gone.
-    read_ts: StatementReadTs,
-    /// Behind one `Mutex` because `start_ts` takes `&self` and must answer
-    /// with the timestamp of the same transaction the reads use -- and because
-    /// the declaration below must be settled against the open atomically.
-    state: Mutex<DeferredState>,
-}
-
-/// The statement's read transaction, and the shape it was declared with.
-#[derive(Default)]
-struct DeferredState {
-    read_options: Option<tidb_txnkv::SnapshotReadOptions>,
-    /// The session's statement ctx values, bound to whatever the first read
-    /// opens.
-    kv_context: Option<tidb_txnkv::StatementKvContextCell>,
-    /// An ordinary timestamp request started after planning and not yet waited.
-    prepared: Option<Box<dyn PendingClusterSnapshot>>,
-    /// `None` until the first read waits for the prepared snapshot.
-    opened: Option<Box<dyn ClusterSnapshot>>,
-    /// Whether the statement declared its whole read is one point get on the
-    /// clustered handle, which is what decides WHICH transaction the first
-    /// read opens.
-    ///
-    /// It is a property of the statement, taken once before any read, never of
-    /// a read. Were it re-decided per read, one statement's two reads would
-    /// land on two different latest-committed versions -- and the counters
-    /// would still show a saving. Keeping it beside `opened` under one lock is
-    /// what makes "declared before the first read" checkable rather than
-    /// hoped for.
-    max_ts: bool,
-}
-
-impl fmt::Debug for DeferredSnapshot {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let state = self.state();
-        formatter
-            .debug_struct("DeferredSnapshot")
-            .field("prepared", &state.prepared.is_some())
-            .field("opened", &state.opened.is_some())
-            .field("max_ts", &state.max_ts)
-            .finish()
-    }
-}
-
-impl DeferredSnapshot {
-    fn new(
-        transactions: Arc<dyn ClusterTransactions>,
-        read_ts: StatementReadTs,
-        resource_group: Arc<str>,
-        low_resolution_tso: bool,
-    ) -> Self {
-        Self {
-            transactions,
-            resource_group,
-            low_resolution_tso,
-            read_ts,
-            state: Mutex::new(DeferredState::default()),
-        }
-    }
-
-    /// Opens the statement's snapshot synchronously, from the oracle the
-    /// statement asked for.
-    fn open_now(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
-        if self.low_resolution_tso {
-            return self
-                .transactions
-                .prepare_snapshot(&self.resource_group, true)?
-                .wait();
-        }
-        self.transactions.open_snapshot(&self.resource_group)
-    }
-
-    fn state(&self) -> std::sync::MutexGuard<'_, DeferredState> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-    }
-
-    fn prepare_open(&self) -> Result<(), StorageError> {
-        let mut state = self.state();
-        if state.max_ts || state.prepared.is_some() || state.opened.is_some() {
-            return Ok(());
-        }
-        state.prepared = Some(
-            self.transactions
-                .prepare_snapshot(&self.resource_group, self.low_resolution_tso)
-                .map_err(StorageError::Backend)?,
-        );
-        Ok(())
-    }
-
-    /// Runs `use_snapshot` against the statement's read transaction, opening
-    /// it first if this is the statement's first read.
-    ///
-    /// The open is where the declaration is spent: a declared statement opens
-    /// at `u64::MAX` and pays no PD timestamp, and every later read of the
-    /// same statement goes through the transaction this one opened -- so a
-    /// statement never splits across two timestamps whichever branch it took.
-    fn with_open<T>(
-        &self,
-        use_snapshot: impl FnOnce(&mut dyn ClusterSnapshot) -> Result<T, StorageError>,
-    ) -> Result<T, StorageError> {
-        let mut guard = self.state();
-        self.open_in(&mut guard)?;
-        use_snapshot(guard.opened.as_mut().expect("just opened").as_mut())
-    }
-
-    /// Opens the statement's read transaction when this is its first act.
-    /// `lock` is a locking point read's keys when that read is the first act:
-    /// a pessimistic implicit transaction then locks them with returned
-    /// values before any read (Go `PointGetExecutor.getAndLock`), and the
-    /// statement reads from the lock responses.
-    fn open_in(&self, guard: &mut DeferredState) -> Result<(), StorageError> {
-        if guard.opened.is_none() {
-            // Go `LazyTxn.Wait` times turning the pending transaction valid:
-            // waiting for its timestamp future and creating the transaction.
-            let begin_wait = std::time::Instant::now();
-            let opened = if guard.max_ts {
-                self.transactions.open_max_ts_snapshot(&self.resource_group)
-            } else if let Some(prepared) = guard.prepared.take() {
-                prepared.wait().or_else(|prepared_error| {
-                    self.open_now()
-                        .map_err(|fallback_error| {
-                        format!(
-                            "prepared snapshot failed ({prepared_error}); replacement snapshot failed ({fallback_error})"
-                        )
-                    })
-                })
-            } else {
-                self.open_now()
-            };
-            self.read_ts.record_wait_ts(begin_wait.elapsed());
-            let mut opened = opened.map_err(StorageError::Backend)?;
-            if let Some(options) = &guard.read_options {
-                opened.set_snapshot_read_options(options.clone());
-            }
-            if let Some(context) = &guard.kv_context {
-                opened.set_statement_kv_context(context);
-            }
-            // Recorded at the open, under the same lock, so the timestamp the
-            // statement publishes at is the one its reads are served at and
-            // cannot be a later transaction's.
-            self.read_ts.record(opened.start_ts());
-            guard.opened = Some(opened);
-        }
-        Ok(())
-    }
-}
-
-impl ClusterSnapshot for DeferredSnapshot {
-    fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
-        let mut state = self.state();
-        if let Some(opened) = state.opened.as_mut() {
-            opened.set_snapshot_read_options(options.clone());
-        }
-        state.read_options = Some(options);
-    }
-
-    fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
-        let mut state = self.state();
-        if let Some(opened) = state.opened.as_mut() {
-            opened.set_statement_kv_context(context);
-        }
-        state.kv_context = Some(context.clone());
-    }
-
-    fn prepare(&mut self) -> Result<(), StorageError> {
-        self.prepare_open()
-    }
-
-    fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
-        self.with_open(|snapshot| snapshot.get(key))
-    }
-
-    fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
-        self.with_open(|snapshot| snapshot.batch_get(keys))
-    }
-
-    fn scan(
-        &mut self,
-        start: &Key,
-        end: &Key,
-        limit: Option<usize>,
-    ) -> Result<SnapshotPairs, StorageError> {
-        self.with_open(|snapshot| snapshot.scan(start, end, limit))
-    }
-
-    fn scan_committed(
-        &mut self,
-        start: &Key,
-        end: &Key,
-        limit: Option<usize>,
-    ) -> Result<SnapshotPairs, StorageError> {
-        self.with_open(|snapshot| snapshot.scan_committed(start, end, limit))
-    }
-
-    fn start_ts(&self) -> u64 {
-        // A remote pushdown scan names the timestamp before issuing its
-        // request, so asking IS the statement's first read: opening here is
-        // what keeps the coprocessor request and any local read on one
-        // transaction. `0` on failure is the "no MVCC timestamp" answer the
-        // trait already defines, which refuses the remote scan and leaves the
-        // error to be reported by the read that follows.
-        self.with_open(|snapshot| Ok(snapshot.start_ts()))
-            .unwrap_or(0)
-    }
-
-    /// Takes the declaration, but only while the statement still has no read
-    /// transaction.
-    ///
-    /// A statement that has already read has already spent a timestamp, and
-    /// switching now would put its remaining reads on a second snapshot. That
-    /// is Go's `p.txn != nil` refusal in `AdviseOptimizeWithPlan` -- "the
-    /// startTS has already been used" -- and it is checked under the same lock
-    /// the open takes, so there is no window between the two.
-    fn declare_autocommit_point_get(&mut self) -> bool {
-        let mut state = self.state();
-        if state.opened.is_some() {
-            return false;
-        }
-        // Go chooses the MaxTS constant future before warmup. If a caller ever
-        // reverses those two operations, discard the ordinary future here.
-        state.prepared.take();
-        state.max_ts = true;
-        true
-    }
-}
-
-/// Binds one autocommit statement's snapshot without starting a timestamp.
-///
-/// `read_ts` is the statement's, and outlives the returned handle: whatever
-/// timestamp the statement's first read waits for is written there, and the
-/// statement's publication reads it back after this handle has been dropped.
-pub fn deferred_snapshot(
-    transactions: Arc<dyn ClusterTransactions>,
-    read_ts: StatementReadTs,
-    resource_group: Arc<str>,
-    low_resolution_tso: bool,
-) -> Box<dyn ClusterSnapshot> {
-    Box::new(DeferredSnapshot::new(transactions, read_ts, resource_group, low_resolution_tso))
-}
-
 /// The production transaction tier: real read-only transactions and the
 /// optimistic 2PC, both over the node's one process authority.
 pub struct RealClusterTransactions<S = tikv_client::PdRpcClient>
@@ -1090,6 +841,8 @@ where
     timeout: Duration,
     pessimistic: bool,
     fair_locking: bool,
+    /// An autocommit read's implicit transaction opens read-only.
+    read_only: bool,
     options: SessionTransactionOptions,
 }
 
@@ -1137,6 +890,10 @@ where
                     transaction.set_fair_locking(self.fair_locking);
                     Box::new(transaction) as Box<dyn OpenClusterTransaction>
                 })
+                .map_err(|error| error.to_string())
+        } else if self.read_only {
+            SessionTransaction::begin_read_only_at(self.opener, start_ts, self.timeout, options)
+                .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
                 .map_err(|error| error.to_string())
         } else {
             SessionTransaction::begin_at(self.opener, start_ts, self.timeout, options)
@@ -1317,6 +1074,28 @@ where
             timeout: self.timeout,
             pessimistic,
             fair_locking,
+            read_only: false,
+            options,
+        }))
+    }
+
+    fn prepare_autocommit_read(
+        &self,
+        resource_group: &str,
+        low_resolution: bool,
+        options: SessionTransactionOptions,
+    ) -> Result<Box<dyn PendingClusterTransaction>, String> {
+        let opener = self.opener_for_resource_group(resource_group);
+        let start_ts = opener
+            .prepare_read_only_start_ts(low_resolution)
+            .map_err(|error| error.to_string())?;
+        Ok(Box::new(PendingSessionTransaction {
+            opener,
+            start_ts,
+            timeout: self.timeout,
+            pessimistic: false,
+            fair_locking: false,
+            read_only: true,
             options,
         }))
     }
