@@ -485,6 +485,12 @@ impl MVService {
         }
     }
 
+    /// Go `MVService.ctx`: the context the service runs until.
+    #[must_use]
+    pub fn context(&self) -> Context {
+        self.ctx.clone()
+    }
+
     /// The service's server ownership view.
     #[must_use]
     pub fn server_consistent_hash(&self) -> &ServerConsistentHash {

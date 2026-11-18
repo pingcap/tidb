@@ -54,6 +54,9 @@ pub trait DomainSysSession:
         event: &tidb_ddl_notifier::SchemaChangeEvent,
     ) -> Result<(), String>;
 
+    /// Go master `pkg/mvservice`'s view of this session.
+    fn mv_service_session(&self) -> &dyn tidb_mvservice::MVServiceSessionContext;
+
     /// The session package's own view of this session, which only it
     /// downcasts.
     fn as_any(&self) -> &dyn std::any::Any;

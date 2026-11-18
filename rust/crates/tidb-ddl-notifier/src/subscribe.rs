@@ -171,12 +171,16 @@ pub const TEST_HANDLER_ID: HandlerId = HandlerId(0);
 pub const STATS_META_HANDLER_ID: HandlerId = HandlerId(1);
 /// Go `PriorityQueueHandlerID`.
 pub const PRIORITY_QUEUE_HANDLER_ID: HandlerId = HandlerId(2);
+/// Go master `MVServiceHandlerID`: notifies the materialized view service
+/// of metadata changes.
+pub const MV_SERVICE_HANDLER_ID: HandlerId = HandlerId(3);
 
 impl fmt::Display for HandlerId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             TEST_HANDLER_ID => formatter.write_str("TestHandler"),
             STATS_META_HANDLER_ID => formatter.write_str("StatsMetaHandler"),
+            MV_SERVICE_HANDLER_ID => formatter.write_str("MVServiceHandler"),
             _ => write!(formatter, "HandlerID({})", self.0),
         }
     }

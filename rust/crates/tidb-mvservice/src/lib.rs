@@ -20,8 +20,10 @@
 mod backpressure;
 mod consistenthash;
 mod executor;
+mod metrics_reporter;
 mod server_maintainer;
 mod service;
+mod service_helper;
 mod service_settings;
 mod task_handler;
 mod time_proxy;
@@ -44,6 +46,11 @@ pub use backpressure::{
 };
 pub use consistenthash::ConsistentHash;
 pub use executor::{TaskExecutor, TaskFn};
+pub use metrics_reporter::MetricsReporter;
+pub use service_helper::{
+    latest_server_infos_by_instance, resolve_mv_log_identity_by_id, should_handle_mv_create_event, MVServiceAnalyzer, MVServiceSessionContext, MVServiceSessionPool, ServiceHelper,
+    SystemSessionPool,
+};
 pub use server_maintainer::{int64_key_to_binary_bytes, AvailableKey, ServerConsistentHash, ServerDiscovery, ServerInfo};
 pub use service::{
     classify_refresh_alert_level, snapshot_task_executor_metrics, Helper, MVMetricsReporter, MVService, MViewTask,

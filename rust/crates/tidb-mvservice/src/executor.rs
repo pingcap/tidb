@@ -169,7 +169,8 @@ impl TaskExecutor {
         self.queue_cond.notify_all();
     }
 
-    /// Go `setTimeout`.
+    /// Go `setTimeout` (Go's tests are its only callers).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn set_timeout(&self, timeout: i64) {
         if self.lifecycle_state.load(Ordering::SeqCst) == TASK_EXECUTOR_STATE_CLOSED {
             return;

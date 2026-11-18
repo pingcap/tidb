@@ -1344,6 +1344,9 @@ impl tidb_ddl_session::Transaction for NodeDdlTransaction {
 }
 
 impl tidb_domain_core::sys_session::DomainSysSession for ClusterStatsSessionContext {
+    fn mv_service_session(&self) -> &dyn tidb_mvservice::MVServiceSessionContext {
+        self
+    }
     fn ddl_statement_context(&self)->Result<tidb_sessionctx::StmtContext,String> {
         self.with_session(|session|Ok(session.session.ddl_statement_context())).map_err(|error|error.to_string())
     }

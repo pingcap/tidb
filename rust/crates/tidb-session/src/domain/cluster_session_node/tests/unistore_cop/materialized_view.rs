@@ -1943,3 +1943,183 @@ fn mask_mlog_window_estimates(answer: &str) -> String {
     out.push_str(rest);
     out
 }
+
+/// Polls `sql` until it answers `want` (Go `require.EventuallyWithT`, 20s
+/// at 100ms).
+fn eventually_answers(session: &mut Session, sql: &str, want: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let got = answer(session, sql);
+        if got == want {
+            return;
+        }
+        assert!(std::time::Instant::now() < deadline, "{sql}: {got}, want {want}");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// Go master `TestMaterializedViewServiceAutomaticMaintenance/refresh_and_purge`:
+/// the MV service refreshes a due view FAST and purges a due log on its
+/// own, and the `tidb_mview_task_*` globals reach it.
+#[test]
+fn materialized_view_service_automatic_refresh_and_purge() {
+    let (stack, _users, mut root) = go_master_mview_stack();
+    mv_setup(&mut root, &[
+        "use test",
+        "set tidb_mview_enable = ON",
+        "create table t_mvs (a int primary key, b int not null)",
+        "create materialized view log on t_mvs (a, b) purge next date_add(now(), interval 1 hour)",
+        "insert into t_mvs values (1, 10)",
+        "create materialized view mv_service (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mvs group by a",
+        "insert into t_mvs values (2, 20)",
+    ]);
+    let svc = stack.factory.mv_service();
+    svc.set_task_backpressure_config(tidb_mvservice::TaskBackpressureConfig::default()).unwrap();
+    mv_setup(&mut root, &["set global tidb_mview_task_max=4", "set global tidb_mview_task_refresh_ratio=0.75"]);
+    assert_eq!(svc.get_refresh_task_concurrency_ratio(), 0.75);
+    mv_setup(&mut root, &["set global tidb_mview_task_threshold_cpu=0.75", "set global tidb_mview_task_threshold_memory=0.65"]);
+    assert_eq!(svc.get_task_backpressure_config().cpu_threshold, 0.75);
+    assert_eq!(svc.get_task_backpressure_config().mem_threshold, 0.65);
+    mv_setup(&mut root, &[
+        "set global tidb_mview_task_threshold_cpu=0",
+        "set global tidb_mview_task_threshold_memory=0",
+        "set global tidb_mview_refresh_hist_time=24",
+        "set global tidb_mlog_purge_hist_time=24",
+    ]);
+    let (_, mv) = stack.factory.catalog_snapshot().table_info_by_name("test", "mv_service").unwrap();
+    let mview_id = mv.read().id;
+    mv_setup(&mut root, &[&format!("update mysql.tidb_mview_refresh_info set NEXT_REFRESH_UNIX_SECONDS=0 where MVIEW_ID={mview_id}")]);
+    let _service = stack.factory.start_mv_service().unwrap();
+    eventually_answers(&mut root, "select * from mv_service order by a", r#"RS:[["1","10","1"],["2","20","1"]]"#);
+
+    mv_setup(&mut root, &["update mysql.tidb_mlog_purge_info set NEXT_PURGE_UNIX_SECONDS=0"]);
+    svc.notify_ddl_change();
+    eventually_answers(&mut root, "select count(*) from `$mlog$t_mvs`", r#"RS:[["0"]]"#);
+}
+
+/// Go master `TestMaterializedViewServiceMiscMaintenance/history`: the
+/// service's history GC deletes finished rows past the retention the
+/// `*_hist_time` globals set, keeps a running row with a live heartbeat, and
+/// marks a running row whose heartbeat expired orphaned, in both history
+/// tables.
+#[test]
+fn materialized_view_service_history_gc() {
+    let (stack, _users, mut root) = go_master_mview_stack();
+    mv_setup(&mut root, &["use test", "set tidb_mview_enable = ON"]);
+    let svc = stack.factory.mv_service();
+    // Schedule GC soon, then verify the SQL callbacks replace both retention
+    // settings without delaying that already scheduled run.
+    svc.set_mview_refresh_hist_retention(1_000_000).unwrap();
+    svc.set_mlog_purge_hist_retention(1_000_000).unwrap();
+    mv_setup(&mut root, &["set global tidb_mview_refresh_hist_time=48", "set global tidb_mlog_purge_hist_time=48"]);
+
+    let now = chrono::Local::now();
+    let at = |hours: i64| now - chrono::Duration::hours(hours);
+    // Go `oracle.GoTimeToTS`.
+    let tso = |time: chrono::DateTime<chrono::Local>| (time.timestamp_millis() as u64) << 18;
+    let text = |time: chrono::DateTime<chrono::Local>| format!("'{}'", time.format("%Y-%m-%d %H:%M:%S"));
+    let (old, stale, recent) = (at(49), at(36), at(2));
+    for (table, prefix, object) in [
+        ("mysql.tidb_mview_refresh_hist", "REFRESH", "MVIEW_ID"),
+        ("mysql.tidb_mlog_purge_hist", "PURGE", "MLOG_ID"),
+    ] {
+        let insert = |job: u64, id: i64, status: &str, start: String, heartbeat: &str| {
+            format!(
+                "insert into {table} ({prefix}_JOB_ID, {object}, {prefix}_METHOD, {prefix}_STATUS, {prefix}_START_TIME, LAST_HEARTBEAT_TIME, {prefix}_ROWS) values ({job}, {id}, 'manual', {status}, {start}, {heartbeat}, 0)"
+            )
+        };
+        mv_setup(&mut root, &[
+            &insert(tso(old), 101, "'success'", text(old), "NULL"),
+            &insert(tso(old) + 1, 102, "NULL", text(old), "NULL"),
+            &insert(tso(recent), 103, "'success'", text(recent), "NULL"),
+            &insert(tso(old) + 2, 104, "'running'", text(old), &text(now)),
+            &insert(tso(stale), 105, "'running'", text(stale), "NULL"),
+        ]);
+    }
+    let _service = stack.factory.start_mv_service().unwrap();
+    for (table, prefix, object) in [
+        ("mysql.tidb_mview_refresh_hist", "REFRESH", "MVIEW_ID"),
+        ("mysql.tidb_mlog_purge_hist", "PURGE", "MLOG_ID"),
+    ] {
+        eventually_answers(
+            &mut root,
+            &format!("select {object}, {prefix}_STATUS from {table} order by {object}"),
+            r#"RS:[["103","success"],["104","running"],["105","orphaned"]]"#,
+        );
+        assert_eq!(
+            answer(
+                &mut root,
+                &format!("select {prefix}_END_TIME is not null, {prefix}_DURATION_SEC is not null, {prefix}_FAILED_REASON is not null from {table} where {object}=105")
+            ),
+            r#"RS:[["1","1","1"]]"#
+        );
+    }
+}
+
+/// Go master `TestMaterializedViewServiceMiscMaintenance/freshness_and_accumulation`:
+/// the service's refresh alert scan writes warning / overdue levels from
+/// each view's last successful read, clears a recovered or disabled view's
+/// level while keeping its independent failure flag, removes a deleted
+/// view's row, and counts the MV logs past their accumulation threshold.
+#[test]
+fn materialized_view_service_freshness_and_accumulation() {
+    let (stack, _users, mut root) = go_master_mview_stack();
+    mv_setup(&mut root, &[
+        "use test",
+        "set tidb_mview_enable = ON",
+        "create table t_service_alert (a int primary key, b int not null)",
+        "create materialized view log on t_service_alert (a, b) purge next date_add(now(), interval 1 hour) alert rows 1",
+        "insert into t_service_alert values (1, 10)",
+    ]);
+    let now = chrono::Local::now();
+    // Go `oracle.GoTimeToTS`.
+    let tso = |time: chrono::DateTime<chrono::Local>| (time.timestamp_millis() as u64) << 18;
+    for (name, age_minutes, disabled) in [
+        ("mv_service_warning", 90, false),
+        ("mv_service_overdue", 180, false),
+        ("mv_service_recovered", 0, false),
+        ("mv_service_disabled", 0, true),
+    ] {
+        let schedule = if disabled { "" } else { "next date_add(now(), interval 1 hour)" };
+        mv_setup(&mut root, &[&format!(
+            "create materialized view {name} (a, s, cnt) refresh fast {schedule} attributes='mview_alert_warning=3600,mview_alert_overdue=7200,mview_alert_refresh_failed=yes' as select a, sum(b), count(1) from t_service_alert group by a"
+        )]);
+        let (_, mv) = stack.factory.catalog_snapshot().table_info_by_name("test", name).unwrap();
+        let id = mv.read().id;
+        mv_setup(&mut root, &[&format!(
+            "update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO={} where MVIEW_ID={id}",
+            tso(now - chrono::Duration::minutes(age_minutes))
+        )]);
+        if disabled || age_minutes == 0 {
+            // Clearing a freshness alert must retain the independent failure flag.
+            mv_setup(&mut root, &[&format!(
+                "insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, REFRESH_FAILED) values ({id}, 'test', '{name}', 'overdue', 'yes')"
+            )]);
+        }
+    }
+    mv_setup(&mut root, &[
+        "insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_NAME, ALERT_LEVEL) values (-1, 'deleted', 'warning')",
+        "insert into t_service_alert values (2, 20), (3, 30)",
+    ]);
+
+    let _service = stack.factory.start_mv_service().unwrap();
+    eventually_answers(
+        &mut root,
+        "select MVIEW_NAME, ALERT_LEVEL, REFRESH_FAILED from mysql.tidb_mview_refresh_alert order by MVIEW_NAME",
+        r#"RS:[["mv_service_disabled",null,"yes"],["mv_service_overdue","overdue",null],["mv_service_recovered",null,"yes"],["mv_service_warning","warning",null]]"#,
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        use tidb_metrics::materialized_view as m;
+        let gauges = (
+            m::MV_SERVICE_MV_REFRESH_WARNING_GAUGE.get(),
+            m::MV_SERVICE_MV_REFRESH_OVERDUE_GAUGE.get(),
+            m::MV_SERVICE_MV_LOG_ACCUMULATION_GAUGE.get(),
+        );
+        if gauges == (1.0, 1.0, 1.0) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "{gauges:?}");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}

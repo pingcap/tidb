@@ -23,6 +23,7 @@ pub mod workload_learning;
 pub mod plan_replayer_owner;
 pub mod runaway_owner;
 pub mod ttl_owner;
+pub mod mv_service;
 mod telemetry;
 mod masking_policy;
 pub mod schema_lease;
@@ -792,6 +793,8 @@ pub struct Domain {
     runaway: std::sync::OnceLock<runaway_owner::RunawayRuntime>,
     /// Go `ttlJobManager`.
     ttl_job_manager: std::sync::OnceLock<Arc<tidb_ttl_ttlworker::JobManager>>,
+    /// Go master `mvService`, built on first use.
+    mv_service: std::sync::OnceLock<mv_service::MvServiceState>,
     /// Go `Domain.LoadSigningCertLoop`'s reload thread.
     signing_cert_loop: std::sync::OnceLock<SigningCertLoop>,
     /// Go `Domain.expensiveQueryHandle`, built over the domain's exit
@@ -1163,6 +1166,7 @@ impl Domain {
             extract_task_handle: std::sync::OnceLock::new(),
             runaway: std::sync::OnceLock::new(),
             ttl_job_manager: std::sync::OnceLock::new(),
+            mv_service: std::sync::OnceLock::new(),
             signing_cert_loop: std::sync::OnceLock::new(),
             expensive_query_handle: Arc::new(tidb_expensivequery::Handle::new(
                 expensive_query_exited,

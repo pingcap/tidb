@@ -324,6 +324,7 @@ pub(crate) use tidb_domain_core::sys_session::stats_session_error;
 mod dxf_sessions;
 mod sessions;
 mod ttl_sessions;
+mod mv_service_sessions;
 mod upgrade_session;
 pub use upgrade_session::{run_upgrade, seed_auth_file_accounts};
 pub use login_policy::DomainLoginPolicy;

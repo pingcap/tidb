@@ -137,6 +137,7 @@ tidb-config = { path = "../tidb-config" }
 # same source Go's `setDataForServersInfo` reads through `GetAllServerInfo`.
 tidb-domain = { path = "../tidb-domain" }
 tidb-domain-core = { path = "../tidb-domain-core" }
+tidb-mvservice = { path = "../tidb-mvservice" }
 tidb-gcutil = { path = "../tidb-gcutil" }
 tidb-hint = { path = "../tidb-hint" }
 tidb-ast = { path = "../tidb-ast" }

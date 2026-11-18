@@ -14,9 +14,16 @@ workspace = true
 chrono = { workspace = true }
 crossbeam-channel = "0.5"
 tidb-cpu = { path = "../tidb-cpu" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-ddl-build = { path = "../tidb-ddl-build" }
+tidb-ddl-notifier = { path = "../tidb-ddl-notifier" }
 tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-log = { path = "../tidb-log" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-memory = { path = "../tidb-memory" }
+tidb-metrics = { path = "../tidb-metrics" }
+tidb-model = { path = "../tidb-model" }
 tidb-murmur3 = { path = "../tidb-murmur3" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-timer = { path = "../tidb-timer" }
+tidb-vardef = { path = "../tidb-vardef" }

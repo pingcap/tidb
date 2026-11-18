@@ -31,6 +31,13 @@ pub enum MvsError {
     Canceled,
     /// Go `context.DeadlineExceeded`.
     DeadlineExceeded,
+    /// A statement's MySQL error (Go compares these with `terror.Equal`).
+    Sql {
+        /// The MySQL error number.
+        code: u16,
+        /// The error text.
+        message: String,
+    },
     /// Any other error, by its message.
     Other(String),
 }
@@ -40,7 +47,7 @@ impl std::fmt::Display for MvsError {
         match self {
             Self::Canceled => f.write_str("context canceled"),
             Self::DeadlineExceeded => f.write_str("context deadline exceeded"),
-            Self::Other(message) => f.write_str(message),
+            Self::Sql { message, .. } | Self::Other(message) => f.write_str(message),
         }
     }
 }

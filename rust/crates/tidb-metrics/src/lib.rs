@@ -24,6 +24,7 @@ pub mod domain;
 pub mod executor;
 pub mod gc_worker;
 pub mod globalsort;
+pub mod materialized_view;
 pub mod memory;
 pub mod meta;
 pub mod owner;

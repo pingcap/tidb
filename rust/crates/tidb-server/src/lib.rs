@@ -284,6 +284,7 @@ fn run_node_with_log(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     tidb_metrics::memory::init_dashboard_series();
     tidb_stats_handle_metrics::init_dashboard_series();
     tidb_metrics::globalsort::init_dashboard_series();
+    tidb_metrics::materialized_view::init_dashboard_series();
     tidb_metrics::stmtsummary::init_dashboard_series();
     tidb_topsql_reporter_metrics::init_metrics_vars();
     let _statement_observation_cleanup = start_statement_observation();

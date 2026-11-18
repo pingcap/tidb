@@ -117,6 +117,10 @@ pub fn run_unistore_cluster_session(
     // Go `BootstrapSession`: `dom.StartTTLJobManager()` after the stats
     // collector is attached.
     let ttl_job_manager = factory.start_ttl_job_manager();
+    // Go master `BootstrapSession`'s `dom.StartMVService()` (outside tests).
+    let mv_service = factory
+        .start_mv_service()
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     // Go `BootstrapSession` ends with `dom.InitDistTaskLoop()`; its loop
     // stops with the domain (Go `Domain.Close`), when this guard drops.
     let _dist_task_loop = factory
@@ -214,6 +218,7 @@ pub fn run_unistore_cluster_session(
     let result = node.run().map_err(|error| RunConfiguredNodeError::Node(Box::new(error)));
     // Go `Domain.Close` stops the TTL job manager first.
     drop(ttl_job_manager);
+    drop(mv_service);
     drop(stats_maintenance);
     drop(reloader);
     drop(sysvar_reloader);

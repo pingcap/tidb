@@ -677,6 +677,18 @@ pub struct MaterializedViewLogInfo {
     pub purge_schedule_sql_mode: i64,
 }
 
+impl MaterializedViewLogInfo {
+    /// Go master `EffectiveLogAccumulationAlertRows`: the configured alert
+    /// threshold when enabled.
+    #[must_use]
+    pub fn effective_log_accumulation_alert_rows(&self) -> (u64, bool) {
+        match self.log_accumulation_alert_rows {
+            Some(rows) if rows != 0 => (rows, true),
+            _ => (0, false),
+        }
+    }
+}
+
 impl_go_json_merge_object!(MaterializedViewLogInfo, destination, map, key, {
     if go_json_field_matches(&key, "base_table_id") {
         map.next_value_seed(NullNoopSeed(&mut destination.base_table_id))?;

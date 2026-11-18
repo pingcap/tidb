@@ -386,6 +386,10 @@ pub fn cluster_session_stack(
         factory.load_sys_ks_info_schema().map_err(|error|RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     }
     let ttl_job_manager = factory.start_ttl_job_manager();
+    // Go master `BootstrapSession`'s `dom.StartMVService()` (outside tests).
+    let mv_service = factory
+        .start_mv_service()
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     let skipped = render_skipped(factory.boot_skipped_tables());
     let stats_receipt = stats.receipt();
     // The controller stops in the closure, before the authority closes the
@@ -401,6 +405,7 @@ pub fn cluster_session_stack(
         ddl_session_pool: Arc::clone(&ddl_session_pool) as _,
         workers: vec![
             Box::new(ttl_job_manager),
+            Box::new(mv_service),
             replica_read_checker,
             log_backup_advancer,
             Box::new(stats_maintenance),
