@@ -35,6 +35,7 @@ import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
@@ -603,6 +604,16 @@ func (is *InfoSyncer) getEtcdClientForMinStartTS() *clientv3.Client {
 	return is.unprefixedEtcdCli
 }
 
+// gcProtectionTS is the inclusive safe-point bound published to PD. In
+// Classic, GC may remove even a protected primary rollback at the data safe
+// point. Keep that version while the oldest transaction is still active.
+func (is *InfoSyncer) gcProtectionTS() uint64 {
+	if kerneltype.IsClassic() && is.minStartTS > 0 {
+		return is.minStartTS - 1
+	}
+	return is.minStartTS
+}
+
 // storeMinStartTS stores self server min start timestamp to etcd.
 func (is *InfoSyncer) storeMinStartTS(ctx context.Context, session *concurrency.Session) error {
 	cli := is.getEtcdClientForMinStartTS()
@@ -610,7 +621,7 @@ func (is *InfoSyncer) storeMinStartTS(ctx context.Context, session *concurrency.
 		return nil
 	}
 	return util.PutKVToEtcd(ctx, cli, serverinfo.KeyOpDefaultRetryCnt, is.minStartTSPath,
-		strconv.FormatUint(is.minStartTS, 10),
+		strconv.FormatUint(is.gcProtectionTS(), 10),
 		clientv3.WithLease(session.Lease()))
 }
 

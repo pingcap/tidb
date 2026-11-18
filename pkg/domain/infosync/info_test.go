@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	keyspacepb "github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -48,6 +49,18 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	goleak.VerifyTestMain(m, opts...)
+}
+
+func TestMinStartTSProtectsPrimaryRollback(t *testing.T) {
+	is := &InfoSyncer{}
+	require.Zero(t, is.gcProtectionTS())
+	is.minStartTS = 100
+	if kerneltype.IsClassic() {
+		require.Equal(t, uint64(99), is.gcProtectionTS())
+	} else {
+		require.Equal(t, uint64(100), is.gcProtectionTS())
+	}
+	require.Equal(t, uint64(100), is.GetMinStartTS())
 }
 
 func TestPutBundlesRetry(t *testing.T) {
