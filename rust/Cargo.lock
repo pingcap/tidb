@@ -6742,6 +6742,7 @@ dependencies = [
  "tidb-dxf-storage",
  "tidb-errno",
  "tidb-execdetails",
+ "tidb-executor",
  "tidb-executor-aggfuncs",
  "tidb-executor-aggregate",
  "tidb-executor-internal-applycache",

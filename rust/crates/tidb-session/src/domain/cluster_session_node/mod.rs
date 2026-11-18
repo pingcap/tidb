@@ -19,8 +19,7 @@
 //! driver plans and executes joins, subqueries, aggregates, window functions,
 //! `SHOW` and `EXPLAIN` ([`crate::domain::pipeline_session`] serves it over TCP against
 //! an in-process catalog). [`tidb_domain_core::cluster_session`] binds that same driver's
-//! catalog to real transactional storage (the `cluster-session-smoke` binary
-//! proves it against a live cluster). [`tidb_domain_core::cluster_privileges`] turns the
+//! catalog to real transactional storage. [`tidb_domain_core::cluster_privileges`] turns the
 //! cluster's own `mysql.*` rows into the registry the handshake authenticates
 //! against. This module is the one node where all three run at once:
 //!
@@ -213,8 +212,7 @@ use tidb_executor::ddl_exec::WriteOutcome;
 use tidb_variable::wire_status::WireStatus;
 use tidb_executor::ddl_exec::map_error;
 
-/// The PD/TiKV control-plane deadline this node's boot and statements use, the
-/// same one the bounded node applies.
+/// The PD/TiKV control-plane deadline this node's boot and statements use.
 pub const CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Pinned Go `statistics/handle.StatsOwnerKey`.

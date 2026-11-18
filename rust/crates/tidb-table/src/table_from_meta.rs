@@ -83,8 +83,8 @@ pub trait TableAutoIds: std::fmt::Debug + Send + Sync {
 /// Counters that live in this process and start at zero, one per table id.
 ///
 /// This is what the tier did before the counter had a home, and it is correct
-/// ONLY where nothing else writes the same rows -- tests and the smoke
-/// binary. It is deliberately not the production default: against shared
+/// ONLY where nothing else writes the same rows -- tests. It is deliberately
+/// not the production default: against shared
 /// cluster storage a counter that starts at zero re-issues ids that already
 /// exist.
 #[derive(Debug, Default)]
@@ -294,16 +294,13 @@ pub fn new_temporary_table_from_table_info(
 
 /// Translates one stored `TableInfo` into a table over cluster storage.
 ///
-/// Unlike the bounded node's `configure_loaded_column`, this one applies NO
-/// charset/collation gate, and must not: the wide path keeps the stored
+/// This applies NO charset/collation gate, and must not: it keeps the stored
 /// `FieldType` verbatim, so every collation-consuming site downstream --
 /// `SortExec` (`collation_of_node`), `HashAggExec`'s group key (which is also
 /// how `SELECT DISTINCT` is built), the hash-join key class, and the compare
 /// builtins' `derived_collation` -- reads the column's REAL collation and
 /// runs under it. Refusing a `utf8mb4_general_ci` table here would deny a
-/// table this tier serves correctly. (The bounded node needs its gate because
-/// its own comparator hardcodes `utf8mb4_bin`; the two tiers share no
-/// execution code.)
+/// table that is served correctly.
 pub fn cluster_table(
     table: &TableInfo,
     auto: &AutoIdSource<'_>,

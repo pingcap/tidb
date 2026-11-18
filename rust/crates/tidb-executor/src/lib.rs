@@ -219,6 +219,7 @@ pub mod union_scan;
 pub mod view;
 
 pub use apply::ApplyExec;
+#[cfg(any(test, feature = "test-util"))]
 pub use ddl::run_create_table_on;
 pub use ddl_sequence::show_create_sequence;
 #[cfg(test)]
