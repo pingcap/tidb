@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -104,6 +105,53 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, canLoadSysTablePhysical)
 
+<<<<<<< HEAD
+=======
+	// mysql.user upgraded from an old TiDB has nullable privilege columns, which
+	// are NOT NULL in a new cluster. They can only be restored logically.
+	mockedUserTI = userTI.Clone()
+	tablespacePrivCol := model.FindColumnInfo(mockedUserTI.Columns, "create_tablespace_priv")
+	require.NotNil(t, tablespacePrivCol)
+	require.True(t, mysql.HasNotNullFlag(tablespacePrivCol.GetFlag()))
+	tablespacePrivCol.Name = ast.NewCIStr("Create_tablespace_priv")
+	tablespacePrivCol.DelFlag(mysql.NotNullFlag)
+	canLoadSysTablePhysical, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedUserTI,
+	}}, false)
+	require.NoError(t, err)
+	require.False(t, canLoadSysTablePhysical)
+
+	// other nullable columns are still incompatible with NOT NULL columns.
+	mockedUserTI = userTI.Clone()
+	mockedUserTI.Columns[0].DelFlag(mysql.NotNullFlag) // Columns[0] is `Host` char(255) NOT NULL
+	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedUserTI,
+	}}, false)
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
+
+	// mysql.user backup from older TiDB may miss Operate_view_priv. It cannot be
+	// loaded physically, but logical restore can fill the target default value and
+	// execute a fixed compatibility expression while copying rows into mysql.user.
+	mockedUserTI = cloneTableInfoWithoutColumn(userTI, "Operate_view_priv")
+	canLoadSysTablePhysical, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedUserTI,
+	}}, false)
+	require.NoError(t, err)
+	require.False(t, canLoadSysTablePhysical)
+
+	// recognized compatible columns still require their configured dependency columns.
+	mockedUserTI = cloneTableInfoWithoutColumn(userTI, "Operate_view_priv")
+	mockedUserTI = cloneTableInfoWithoutColumn(mockedUserTI, "Super_priv")
+	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedUserTI,
+	}}, false)
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
+
+>>>>>>> cc41f850bbd (br: restore mysql.user privilege columns that upgrades added as nullable (#72264))
 	// use the mysql.db table to test for column count mismatch.
 	dbTI, err := restore.GetTableSchema(cluster.Domain, sysDB, pmodel.NewCIStr("db"))
 	require.NoError(t, err)
@@ -384,6 +432,155 @@ func TestCheckPrivilegeTableRowsCollateCompatibility(t *testing.T) {
 	mse.MustExecute("DROP TABLE __TiDB_BR_Temporary_mysql.columns_priv")
 }
 
+<<<<<<< HEAD
+=======
+func TestRestoreSystemSchemasUpgradeOperateViewPrivilege(t *testing.T) {
+	cluster := mc
+	ctx := context.Background()
+	g := gluetidb.New()
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	err := client.InitConnections(g, cluster.Storage)
+	require.NoError(t, err)
+	defer client.Close()
+	client.SetWithSysTable(true)
+
+	tk := testkit.NewTestKit(t, cluster.Storage)
+	const (
+		userName     = "br_restore_operate_view"
+		dbName       = "br_restore_operate_view_db"
+		tableName    = "br_restore_operate_view_table"
+		keepUserName = "br_restore_operate_keep"
+		keepDBName   = "br_restore_operate_keep_db"
+		extraColumn  = "br_extra_int"
+		bindSQL      = "select /* br_restore_bind_info */ 1"
+		sqlDigest    = "br_restore_bind_sql_digest"
+		planDigest   = "br_restore_bind_plan_digest"
+	)
+	cleanup := func() {
+		tk.MustExec("DROP DATABASE IF EXISTS __TiDB_BR_Temporary_mysql")
+		tk.MustExec(fmt.Sprintf("ALTER TABLE mysql.user DROP COLUMN IF EXISTS %s", extraColumn))
+		tk.MustExec(fmt.Sprintf("DELETE FROM mysql.bind_info WHERE original_sql='%s' OR sql_digest='%s' OR plan_digest='%s'", bindSQL, sqlDigest, planDigest))
+		tk.MustExec(fmt.Sprintf("DELETE FROM mysql.tables_priv WHERE User='%s' AND Host='%%' AND DB='%s' AND Table_name='%s'", userName, dbName, tableName))
+		tk.MustExec(fmt.Sprintf("DELETE FROM mysql.db WHERE User='%s' AND Host='%%' AND DB='%s'", userName, dbName))
+		tk.MustExec(fmt.Sprintf("DELETE FROM mysql.user WHERE User='%s' AND Host='%%'", userName))
+		tk.MustExec(fmt.Sprintf("DELETE FROM mysql.db WHERE User='%s' AND Host='%%' AND DB='%s'", keepUserName, keepDBName))
+		tk.MustExec(fmt.Sprintf("DELETE FROM mysql.user WHERE User='%s' AND Host='%%'", keepUserName))
+	}
+	cleanup()
+	defer cleanup()
+
+	tk.MustExec(fmt.Sprintf("INSERT INTO mysql.user (Host, User, authentication_string, plugin, Super_priv, Operate_view_priv) VALUES ('%%', '%s', '', 'mysql_native_password', 'Y', 'N')", keepUserName))
+	tk.MustExec(fmt.Sprintf("INSERT INTO mysql.db (Host, DB, User, Operate_view_priv) VALUES ('%%', '%s', '%s', 'Y')", keepDBName, keepUserName))
+
+	tk.MustExec("CREATE DATABASE __TiDB_BR_Temporary_mysql")
+	tk.MustExec("CREATE TABLE __TiDB_BR_Temporary_mysql.user LIKE mysql.user")
+	tk.MustExec("ALTER TABLE __TiDB_BR_Temporary_mysql.user DROP COLUMN Operate_view_priv")
+	tk.MustExec("CREATE TABLE __TiDB_BR_Temporary_mysql.db LIKE mysql.db")
+	tk.MustExec("ALTER TABLE __TiDB_BR_Temporary_mysql.db DROP COLUMN Operate_view_priv")
+	tk.MustExec("CREATE TABLE __TiDB_BR_Temporary_mysql.tables_priv LIKE mysql.tables_priv")
+	tk.MustExec("ALTER TABLE __TiDB_BR_Temporary_mysql.tables_priv MODIFY COLUMN Table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References') DEFAULT NULL")
+	tk.MustExec("CREATE TABLE __TiDB_BR_Temporary_mysql.bind_info LIKE mysql.bind_info")
+	tk.MustExec("ALTER TABLE __TiDB_BR_Temporary_mysql.bind_info DROP COLUMN last_used_date")
+	tk.MustExec(fmt.Sprintf("ALTER TABLE mysql.user ADD COLUMN %s int", extraColumn))
+
+	tk.MustExec(fmt.Sprintf("INSERT INTO __TiDB_BR_Temporary_mysql.user (Host, User, authentication_string, plugin, Super_priv) VALUES ('%%', '%s', '', 'mysql_native_password', 'Y')", userName))
+	tk.MustExec(fmt.Sprintf("INSERT INTO __TiDB_BR_Temporary_mysql.db (Host, DB, User, Show_view_priv) VALUES ('%%', '%s', '%s', 'Y')", dbName, userName))
+	tk.MustExec(fmt.Sprintf("INSERT INTO __TiDB_BR_Temporary_mysql.tables_priv (Host, DB, User, Table_name, Table_priv) VALUES ('%%', '%s', '%s', '%s', 'Select,Show View')", dbName, userName, tableName))
+	tk.MustExec(fmt.Sprintf(`INSERT INTO __TiDB_BR_Temporary_mysql.bind_info (
+			original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest
+		) VALUES ('%s', '%s', '%s', 'enabled', '2020-01-01 00:00:00', '2020-01-01 00:00:00', 'utf8mb4', 'utf8mb4_bin', 'manual', '%s', '%s')`,
+		bindSQL, bindSQL, dbName, sqlDigest, planDigest))
+
+	info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
+	require.NoError(t, err)
+	tmpSysDB, ok := info.SchemaByName(utils.TemporaryDBName(mysql.SystemDB))
+	require.True(t, ok)
+	backupTables := make([]*metautil.Table, 0, 4)
+	for _, name := range []string{"user", "db", "tables_priv", "bind_info"} {
+		ti, err := restore.GetTableSchema(cluster.Domain, tmpSysDB.Name, ast.NewCIStr(name))
+		require.NoError(t, err)
+		backupTables = append(backupTables, &metautil.Table{DB: tmpSysDB, Info: ti})
+	}
+	client.SetDatabases(map[string]*metautil.Database{
+		tmpSysDB.Name.O: {
+			Info:   tmpSysDB,
+			Tables: backupTables,
+		},
+	})
+
+	err = client.RestoreSystemSchemas(ctx, filter.CaseInsensitive(filter.NewSchemasFilter(mysql.SystemDB)), false)
+	require.NoError(t, err)
+
+	tk.MustQuery(fmt.Sprintf("SELECT Operate_view_priv FROM mysql.user WHERE User='%s' AND Host='%%'", userName)).
+		Check(testkit.Rows("Y"))
+	tk.MustQuery(fmt.Sprintf("SELECT %s IS NULL FROM mysql.user WHERE User='%s' AND Host='%%'", extraColumn, userName)).
+		Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("SELECT Operate_view_priv FROM mysql.db WHERE User='%s' AND Host='%%' AND DB='%s'", userName, dbName)).
+		Check(testkit.Rows("N"))
+	tk.MustQuery(fmt.Sprintf("SELECT Table_priv FROM mysql.tables_priv WHERE User='%s' AND Host='%%' AND DB='%s' AND Table_name='%s'", userName, dbName, tableName)).
+		Check(testkit.Rows("Select,Show View"))
+	tk.MustQuery(fmt.Sprintf("SELECT Operate_view_priv FROM mysql.user WHERE User='%s' AND Host='%%'", keepUserName)).
+		Check(testkit.Rows("N"))
+	tk.MustQuery(fmt.Sprintf("SELECT Operate_view_priv FROM mysql.db WHERE User='%s' AND Host='%%' AND DB='%s'", keepUserName, keepDBName)).
+		Check(testkit.Rows("Y"))
+	tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM mysql.bind_info WHERE original_sql='%s' AND last_used_date IS NULL", bindSQL)).
+		Check(testkit.Rows("1"))
+}
+
+func TestRestoreSystemSchemasRejectsNullInUpgradedNullableColumn(t *testing.T) {
+	cluster := mc
+	ctx := context.Background()
+	g := gluetidb.New()
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	require.NoError(t, client.InitConnections(g, cluster.Storage))
+	defer client.Close()
+	client.SetWithSysTable(true)
+
+	tk := testkit.NewTestKit(t, cluster.Storage)
+	const (
+		nullUserName = "br_restore_null_tablespace"
+		userName     = "br_restore_tablespace"
+	)
+	cleanup := func() {
+		tk.MustExec("DROP DATABASE IF EXISTS __TiDB_BR_Temporary_mysql")
+		tk.MustExec(fmt.Sprintf("DELETE FROM mysql.user WHERE User IN ('%s', '%s')", nullUserName, userName))
+	}
+	cleanup()
+	defer cleanup()
+
+	tk.MustExec("CREATE DATABASE __TiDB_BR_Temporary_mysql")
+	tk.MustExec("CREATE TABLE __TiDB_BR_Temporary_mysql.user LIKE mysql.user")
+	tk.MustExec("ALTER TABLE __TiDB_BR_Temporary_mysql.user MODIFY COLUMN Create_tablespace_priv ENUM('N','Y') DEFAULT 'N'")
+	tk.MustExec(fmt.Sprintf("INSERT INTO __TiDB_BR_Temporary_mysql.user (Host, User, authentication_string, plugin, Create_tablespace_priv) VALUES ('%%', '%s', '', 'mysql_native_password', NULL)", nullUserName))
+
+	restoreUserTable := func() error {
+		info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
+		require.NoError(t, err)
+		tmpSysDB, ok := info.SchemaByName(utils.TemporaryDBName(mysql.SystemDB))
+		require.True(t, ok)
+		ti, err := restore.GetTableSchema(cluster.Domain, tmpSysDB.Name, ast.NewCIStr("user"))
+		require.NoError(t, err)
+		client.SetDatabases(map[string]*metautil.Database{
+			tmpSysDB.Name.O: {
+				Info:   tmpSysDB,
+				Tables: []*metautil.Table{{DB: tmpSysDB, Info: ti}},
+			},
+		})
+		return client.RestoreSystemSchemas(ctx, filter.CaseInsensitive(filter.NewSchemasFilter(mysql.SystemDB)), false)
+	}
+
+	err := restoreUserTable()
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err), "%v", err)
+	require.Contains(t, strings.ToLower(err.Error()), "create_tablespace_priv")
+	tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM mysql.user WHERE User='%s'", nullUserName)).Check(testkit.Rows("0"))
+
+	tk.MustExec(fmt.Sprintf("UPDATE __TiDB_BR_Temporary_mysql.user SET User='%s', Create_tablespace_priv='Y' WHERE User='%s'", userName, nullUserName))
+	require.NoError(t, restoreUserTable())
+	tk.MustQuery(fmt.Sprintf("SELECT Create_tablespace_priv FROM mysql.user WHERE User='%s' AND Host='%%'", userName)).
+		Check(testkit.Rows("Y"))
+}
+
+>>>>>>> cc41f850bbd (br: restore mysql.user privilege columns that upgrades added as nullable (#72264))
 // NOTICE: Once there is a new system table, BR needs to ensure that it is correctly classified:
 //
 // - IF it is an unrecoverable table, please add the table name into `unRecoverableTable`.
