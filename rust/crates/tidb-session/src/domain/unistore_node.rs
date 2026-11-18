@@ -699,22 +699,39 @@ pub fn unistore_cluster_session_stack_from_for_keyspace(
     // version -- the owner's `WaitVersionSynced` waits on it.
     let schema_pins = Arc::new(tidb_ddl::schema_sync::SchemaPinRegistry::default());
     let min_job_id_refresher = Arc::new(tidb_ddl_systable::MinJobIdRefresher::new());
-    let schema_sync_ack = tidb_ddl::schema_sync::SchemaSyncAck::spawn(
-        Arc::clone(&catalog),
-        opener.clone(),
-        Arc::clone(&schema_pins),
-        Arc::clone(&min_job_id_refresher),
+    // Go `Syncer.sysSessionPool` (see `cluster_stack`).
+    let ddl_session_pool = Arc::new(crate::ddl_session_pool::NodeDdlSessionPool::mock_storage());
+    // Go creates the syncer in `NewDomain` and starts `mdlCheckLoop` in
+    // `Domain.Start`, once the system sessions exist: after the bind below.
+    let schema_sync_ack = tidb_ddl::schema_sync::SchemaSyncAck::initialize(
         None,
         server_info.get_local_server_info().static_info.id,
         Arc::clone(&server_info),
-        Arc::clone(&schema_validator),
-        reloader.waker(),
-        reloader.stats_source(),
-        tidb_ddl::schema_sync::MDL_CHECK_LOOK_DURATION,
-        IN_PROCESS_TIMEOUT,
     )
     .map_err(|error| engine(SqlQueryError::unknown(error)))?;
-    let ddl_session_pool = Arc::new(crate::ddl_session_pool::NodeDdlSessionPool::mock_storage());
+    let start_mdl_check_loop = {
+        let (catalog, pins, refresher, validator) = (
+            Arc::clone(&catalog),
+            Arc::clone(&schema_pins),
+            Arc::clone(&min_job_id_refresher),
+            Arc::clone(&schema_validator),
+        );
+        let (waker, stats) = (reloader.waker(), reloader.stats_source());
+        let sessions = Arc::clone(&ddl_session_pool);
+        move |ack: tidb_ddl::schema_sync::SchemaSyncAck| {
+            ack.start(
+                catalog,
+                sessions as _,
+                pins,
+                refresher,
+                validator,
+                waker,
+                stats,
+                tidb_ddl::schema_sync::MDL_CHECK_LOOK_DURATION,
+            )
+            .map_err(|error| engine(SqlQueryError::unknown(error)))
+        }
+    };
     let cluster_ddl = Arc::new(
         RealClusterDdl::new_with_min_job_id_refresher(
             opener.clone(),
@@ -829,6 +846,7 @@ pub fn unistore_cluster_session_stack_from_for_keyspace(
     // The pool's sessions are the node's, so it is bound once the node's
     // session services are: the job scheduler takes one as soon as it can.
     ddl_session_pool.bind(&factory);
+    let schema_sync_ack = start_mdl_check_loop(schema_sync_ack)?;
     crate::domain::real_tikv_node::new_privilege_handle(&users, factory.advanced_sys_session_pool());
     // Go's bootstrap provisions `root@%` through SQL; this node provisions its
     // `--auth-file` accounts the same way, before any client connects. Under

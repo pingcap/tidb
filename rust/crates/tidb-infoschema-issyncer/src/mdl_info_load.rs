@@ -24,19 +24,10 @@
 //! acknowledgement on the Rust node; the decision and the etcd write live
 //! with the node, which owns the etcd client and the session registry.
 //!
-//! The table is read the way the account and statistics loaders read their
-//! `mysql.*` tables: one read-only transaction, the [`SystemTableView`]
-//! projection, no SQL session. `job_id` is the clustered integer handle, so
-//! it decodes from the record key; `version` comes from the row value.
+//! The rows come from Go's statement on a system session, as Go's syncer
+//! reads them; the caller supplies the session's executor.
 
-use std::time::Duration;
-
-use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
-use crate::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_datatype::Datum;
-use tidb_txnkv::kv_storage::Storage;
-
-use tidb_infoschema::cluster_catalog::{MetaPairs, MetaSnapshot};
 use tidb_infoschema::SessionExtendedInfoSchema;
 
 /// One running DDL job the owner is waiting on.
@@ -60,78 +51,32 @@ fn str_to_int64s(text: &str) -> Vec<i64> {
         .collect()
 }
 
-/// Reads every `mysql.tidb_mdl_info` row at one fresh timestamp.
+/// Go `Syncer.refreshMDLCheckTableInfo`: the jobs at or above the current
+/// minimum job ID whose version this node's `catalog` has loaded, read by
+/// Go's statement through `execute` (a fresh system session's executor).
 ///
-/// `catalog` locates the table; it is the node's already-loaded catalog, so
-/// no meta walk happens here — only the table's own record scan. A catalog
-/// that predates the table returns a retryable missing-table error; the caller
-/// refreshes the catalog and retries, matching Go's SQL behavior.
+/// # Errors
+///
+/// The statement's error.
 pub fn refresh_mdl_check_table_info(
-    opener: &dyn Storage,
-    timeout: Duration,
+    execute: &mut dyn FnMut(&str) -> Result<Vec<Vec<Datum>>, String>,
     catalog: &SessionExtendedInfoSchema,
     min_job_id: i64,
-) -> Result<Vec<MdlJob>, SystemTableError> {
-    let view = match SystemTableView::locate(
-        catalog,
-        "tidb_mdl_info",
-        &["job_id", "version", "table_ids"],
-    ) {
-        Ok(view) => view,
-        // Go's restricted SQL query would fail if this system table were
-        // absent. Treat that as a retryable catalog race instead of silently
-        // caching an empty MDL set and leaving the owner waiting forever.
-        Err(error @ SystemTableError::Missing { .. }) => return Err(error),
-        Err(error) => return Err(error),
-    };
-    let mut transaction = opener
-        .begin_read_only()
-        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-    let loaded: Result<MetaPairs, SystemTableError> = {
-        let mut snapshot = TransactionMetaSnapshot::new(transaction.as_mut(), timeout);
-        // Go executes the restricted SQL query against a fresh session. Keep
-        // the same result semantics by scanning the system-table record
-        // prefix and applying both predicates after decoding. This avoids
-        // depending on a native range seek whose region behavior differs
-        // between TiDB nodes while the MDL row is being published.
-        let mut pairs = scan_system_table(&mut snapshot, &view)?;
-        // The Go SQL planner's lower bound is the current minimum job ID.
-        // If a region scan races publication of that row, use the equivalent
-        // clustered-key point read before treating the table as empty.
-        if pairs.is_empty() && min_job_id > 0 {
-            let key = view.record_prefix(&[Datum::Int(min_job_id)])?;
-            if let Some(value) = snapshot.get(&key)? {
-                pairs.push((key, value));
-            }
-        }
-        Ok(pairs)
-    };
-    transaction
-        .finish_without_writes()
-        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-    let pairs = loaded?;
-    let mut jobs = Vec::with_capacity(pairs.len());
-    for (key, value) in &pairs {
-        let row = SystemRow::parse(&view, key, value)?;
-        let (Some(job_id), Some(version)) = (row.i64("job_id")?, row.i64("version")?) else {
-            // A row missing either column is not one this node can ack;
-            // skipping it leaves the owner waiting on the nodes that can
-            // read it, never acking a version this node did not see.
-            continue;
-        };
-        if job_id < min_job_id || version > catalog.schema_meta_version() {
-            continue;
-        }
-        // Decoded exactly as Go: `Str2Int64Map` on the stored text, where an
-        // empty string yields `{0}` (ParseInt("") errors into 0), and table
-        // id 0 matches no real table -- so a job with no listed tables gates
-        // on nothing, which is Go's behaviour verbatim.
-        let table_ids = str_to_int64s(&row.text("table_ids")?.unwrap_or_default());
-        jobs.push(MdlJob {
-            job_id,
-            version,
-            table_ids,
-        });
-    }
-    Ok(jobs)
+) -> Result<Vec<MdlJob>, String> {
+    let sql = format!(
+        "select job_id, version, table_ids from mysql.tidb_mdl_info\n\t\twhere job_id >= {min_job_id} and version <= {}",
+        catalog.schema_meta_version()
+    );
+    let rows = execute(&sql)?;
+    Ok(rows
+        .iter()
+        .map(|row| MdlJob {
+            job_id: row[0].get_int64(),
+            version: row[1].get_int64(),
+            // Go `util.Str2Int64Map(rows[i].GetString(2))`: an empty string
+            // yields `{0}` (ParseInt("") errors into 0), and table id 0
+            // matches no real table.
+            table_ids: str_to_int64s(&String::from_utf8_lossy(row[2].go_bytes())),
+        })
+        .collect())
 }

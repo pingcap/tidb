@@ -927,27 +927,49 @@ fn new_cluster_domain(
     // an older version. The owner's `WaitVersionSynced` waits on it.
     let schema_pins = Arc::new(tidb_ddl::schema_sync::SchemaPinRegistry::default());
     let min_job_id_refresher = Arc::new(MinJobIdRefresher::new());
-    let schema_sync_ack = tidb_ddl::schema_sync::SchemaSyncAck::spawn(
-        Arc::clone(&catalog),
-        authority.transaction_opener(),
-        Arc::clone(&schema_pins),
-        Arc::clone(&min_job_id_refresher),
+    // Go `Syncer.sysSessionPool`: the MDL check reads `mysql.tidb_mdl_info`
+    // on the node's system sessions. Go creates the syncer in `NewDomain`
+    // and starts `mdlCheckLoop` in `Domain.Start`, once those sessions
+    // exist: the loop starts below, after the pool is bound.
+    let ddl_session_pool = Arc::new(tidb_session::ddl_session_pool::NodeDdlSessionPool::default());
+    let schema_sync_ack = tidb_ddl::schema_sync::SchemaSyncAck::initialize(
         etcd.clone(),
         server_info.get_local_server_info().static_info.id,
         Arc::clone(&server_info),
-        Arc::clone(&schema_validator),
-        reloader.waker(),
-        reloader.stats_source(),
-        tidb_ddl::schema_sync::MDL_CHECK_LOOK_DURATION,
-        CONTROL_PLANE_TIMEOUT,
     )
     .map_err(|error| {
         RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
             "initialize schema-version syncer failed: {error}"
         )))
     })?;
+    let start_mdl_check_loop = {
+        let (catalog, pins, refresher, validator) = (
+            Arc::clone(&catalog),
+            Arc::clone(&schema_pins),
+            Arc::clone(&min_job_id_refresher),
+            Arc::clone(&schema_validator),
+        );
+        let (waker, stats) = (reloader.waker(), reloader.stats_source());
+        let sessions = Arc::clone(&ddl_session_pool);
+        move |ack: tidb_ddl::schema_sync::SchemaSyncAck| {
+            ack.start(
+                catalog,
+                sessions as _,
+                pins,
+                refresher,
+                validator,
+                waker,
+                stats,
+                tidb_ddl::schema_sync::MDL_CHECK_LOOK_DURATION,
+            )
+            .map_err(|error| {
+                RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+                    "start the MDL check loop failed: {error}"
+                )))
+            })
+        }
+    };
     let schema_version_syncer = Some(schema_sync_ack.syncer());
-    let ddl_session_pool = Arc::new(tidb_session::ddl_session_pool::NodeDdlSessionPool::default());
     let cluster_ddl = Arc::new(
         RealClusterDdl::new_with_min_job_id_refresher(
             authority.transaction_opener(),
@@ -1114,6 +1136,7 @@ fn new_cluster_domain(
     // The pool's sessions are the node's, so it is bound once the node's
     // session services are: the job scheduler takes one as soon as it can.
     ddl_session_pool.bind(&factory);
+    let schema_sync_ack = start_mdl_check_loop(schema_sync_ack)?;
     tidb_session::domain::real_tikv_node::new_privilege_handle(&users, factory.advanced_sys_session_pool());
     Ok(ClusterDomain {
         factory,
