@@ -454,12 +454,19 @@ func TestSkylinePruningWithMissingIndexStats(t *testing.T) {
 		}
 		fmt.Fprintf(&values, "(%d, 1, 1, 1, 'payload')", i)
 	}
+	// Keep secondary keys locked to exercise ANALYZE before their background commit finishes.
+	testfailpoint.Enable(t, "tikvclient/beforeCommitSecondaries", `return("skip")`)
 	tk.MustExec("insert into t values " + values.String())
+	// Resolve secondary locks with a table scan before the mock ANALYZE scan, which skips locks.
+	tk.MustQuery("select count(*) from t ignore index(idx_id)").Check(testkit.Rows("1000"))
 	tk.MustExec("analyze table t")
+	tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").CheckAt([]int{5}, testkit.Rows("1000"))
 	tk.MustExec("alter table t add index idx_abc(a, b, c)")
 	// Only idx_id has statistics, and it is much more selective than idx_abc.
 	tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't' and is_index = 1").CheckAt([]int{3}, testkit.Rows("idx_id"))
 	const query = "select * from t where id = 1 and a = 1 and b = 1 and c = 1"
-	tk.MustQuery("explain format = 'brief' " + query).CheckContain("index:idx_id(id)")
+	plan := tk.MustQuery("explain format = 'brief' " + query)
+	plan.CheckNotContain("stats:pseudo")
+	plan.CheckContain("index:idx_id(id)")
 	tk.MustQuery(query).Check(testkit.Rows("1 1 1 1 payload"))
 }
