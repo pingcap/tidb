@@ -270,6 +270,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             | AdminStmt::AlterRange(_)
             | AdminStmt::DropProcedure(_) => return self.build_simple(stmt),
             AdminStmt::RefreshMaterializedView(refresh) => return self.build_refresh_materialized_view(refresh),
+            AdminStmt::PurgeMaterializedViewLog(purge) => return self.build_purge_materialized_view_log(purge),
             _ => return self.build_admin(stmt, admin),
         })
     }
@@ -1419,6 +1420,34 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         };
         let mlog_name = tidb_model::table::materialized_view_log_table_name(&base_name);
         Ok((database, table, mlog_name))
+    }
+
+    /// Go master `buildPurgeMaterializedViewLog`: a database to purge in and
+    /// (Go's preprocessor) an existing target; the executor checks OPERATE
+    /// VIEW on the log.
+    fn build_purge_materialized_view_log(
+        &mut self,
+        purge: &tidb_ast::PurgeMaterializedViewLogStmt,
+    ) -> Result<Plan, PlanError> {
+        let (database, table, original) = self.qualified(&purge.table);
+        if database.is_empty() {
+            return Err(PlanError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])));
+        }
+        // Go master's preprocessor `handleTableName` on the target.
+        if self.source.find_table(&database, &table).is_none()
+            && !matches!(self.source.try_find_view(&database, &table), Ok(Some(_)))
+            && self.source.find_sequence(&database, &table).is_none()
+        {
+            let written_db = match purge.table.as_slice() {
+                [schema, _] => schema.clone(),
+                _ => self.source.current_database().to_owned(),
+            };
+            return Err(PlanError::from(
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                    .gen_with_stack_by_args(&[written_db.into(), original.into()]),
+            ));
+        }
+        Ok(Plan::PurgeMaterializedViewLog(Box::new(purge.clone())))
     }
 
     /// Go master `buildRefreshMaterializedView`: OPERATE VIEW on the view,

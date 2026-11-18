@@ -1,0 +1,6 @@
+["create database e29", "OK 0"]
+["use e29", "OK 0"]
+["set tidb_mview_enable = ON", "OK 0"]
+["create table t (id int primary key, v int)", "OK 0"]
+["create materialized view log on t (v)", "OK 0"]
+["insert into t values (1, 1)", "OK 1"]

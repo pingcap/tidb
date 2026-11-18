@@ -543,6 +543,8 @@ impl Session {
                 let sql = tidb_parser::carry_client_sql(stmt.original_text(), client).into_owned();
                 self.refresh_materialized_view(refresh, &sql).map(Some)
             }
+            // Go master `PurgeMaterializedViewLogExec`.
+            Plan::PurgeMaterializedViewLog(purge) => self.purge_materialized_view_log(purge).map(Some),
             Plan::CompactTable(compact) => self.compact_table_tiflash_exec(compact).map(Some),
             // Go `AlterDDLJobExec`: the job's row rewritten, no result set.
             Plan::AlterDdlJob(alter) => {

@@ -41,27 +41,36 @@ const REFRESH_HIST_STATUS_FAILED: &str = "failed";
 /// Go master `mvRefreshShadowTablePrefix`.
 const MV_REFRESH_SHADOW_TABLE_PREFIX: &str = "__mv_shadow_";
 
-fn plain(message: impl Into<String>) -> DriverError {
+pub(crate) fn plain(message: impl Into<String>) -> DriverError {
     DriverError::Mysql(MysqlError::unknown(message.into()))
 }
 
-/// Go `errors.Annotate(cause, message)`: `message: cause`.
-fn annotate(error: &DriverError, message: &str) -> DriverError {
-    plain(format!("{message}: {}", driver_message(error)))
+/// Go `errors.Annotate(cause, message)`: `Error()` reads `message: cause`,
+/// while the client and `SHOW WARNINGS` see the cause (`errors.Cause`).
+pub(crate) fn annotate(error: &DriverError, message: &str) -> DriverError {
+    DriverError::Mysql(error.clone().to_mysql_error().annotate(message))
 }
 
-fn driver_message(error: &DriverError) -> String {
+/// Go `err.Error()`.
+pub(crate) fn driver_message(error: &DriverError) -> String {
     match error {
-        DriverError::Mysql(error) => error.message.clone(),
+        DriverError::Mysql(error) => error.error_string(),
         other => other.to_string(),
     }
 }
 
-fn is_table_not_exists(error: &DriverError) -> bool {
+/// Go `StmtCtx.AppendWarning(err)` as `SHOW WARNINGS` reads it: the cause's
+/// code and message (`errors.Cause`).
+pub(crate) fn append_cause_warning(session: &mut Session, error: &DriverError) {
+    let cause = error.clone().to_mysql_error();
+    session.append_warning(tidb_context::WarningLevel::Warning, cause.code, cause.message);
+}
+
+pub(crate) fn is_table_not_exists(error: &DriverError) -> bool {
     matches!(error, DriverError::Mysql(error) if error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS))
 }
 
-fn datum_u64(datum: &Datum) -> Option<u64> {
+pub(crate) fn datum_u64(datum: &Datum) -> Option<u64> {
     match datum {
         Datum::UInt(value) => Some(*value),
         Datum::Int(value) => u64::try_from(*value).ok(),
@@ -69,7 +78,7 @@ fn datum_u64(datum: &Datum) -> Option<u64> {
     }
 }
 
-fn datum_i64(datum: &Datum) -> Option<i64> {
+pub(crate) fn datum_i64(datum: &Datum) -> Option<i64> {
     match datum {
         Datum::Int(value) => Some(*value),
         Datum::UInt(value) => i64::try_from(*value).ok(),
@@ -77,7 +86,7 @@ fn datum_i64(datum: &Datum) -> Option<i64> {
     }
 }
 
-fn datum_text(datum: &Datum) -> String {
+pub(crate) fn datum_text(datum: &Datum) -> String {
     match datum {
         Datum::String(value) => String::from_utf8_lossy(value.bytes()).into_owned(),
         Datum::Bytes(value) => String::from_utf8_lossy(value).into_owned(),
@@ -88,7 +97,7 @@ fn datum_text(datum: &Datum) -> String {
 }
 
 /// One statement on a system session (Go `sqlExec.ExecuteInternal`).
-fn sys_sql(session: &mut Session, sql: &str, arguments: &[SqlArg<'_>]) -> Result<Vec<Vec<Datum>>, DriverError> {
+pub(crate) fn sys_sql(session: &mut Session, sql: &str, arguments: &[SqlArg<'_>]) -> Result<Vec<Vec<Datum>>, DriverError> {
     let sql = crate::domain::cluster_session_node::sql_with_params(sql, arguments)
         .map_err(|error| plain(error.to_string()))?;
     let context = tidb_sqlexec::BackgroundContext;
@@ -184,12 +193,12 @@ fn refresh_hist_missing_table() -> DriverError {
 
 /// Go master `histTime`: a time in the history session's zone, to the
 /// microsecond.
-fn hist_time(at: chrono::DateTime<chrono::Local>) -> String {
+pub(crate) fn hist_time(at: chrono::DateTime<chrono::Local>) -> String {
     at.format("%Y-%m-%d %H:%M:%S%.6f").to_string()
 }
 
 /// Go master `formatDurationSecondsBetween`.
-fn format_duration_seconds_between(start: chrono::DateTime<chrono::Local>, end: chrono::DateTime<chrono::Local>) -> String {
+pub(crate) fn format_duration_seconds_between(start: chrono::DateTime<chrono::Local>, end: chrono::DateTime<chrono::Local>) -> String {
     let micros = (end - start).num_microseconds().unwrap_or_default().max(0);
     format!("{}.{:06}", micros / 1_000_000, micros % 1_000_000)
 }
@@ -313,7 +322,7 @@ fn finalize_refresh_hist_with_retry(
         Err(error) => error,
     };
     finalize_refresh_hist(session, refresh_job_id, mview_id, status, read_tso, commit_tso, start, end, failed_reason)
-        .map_err(|retry| plain(format!("first finalize attempt failed: {}: {}", driver_message(&first), driver_message(&retry))))
+        .map_err(|retry| annotate(&retry, &format!("first finalize attempt failed: {}", driver_message(&first))))
 }
 
 /// Go master `markRefreshFailedAlertState`, through `reportMVRefreshFailed`
@@ -518,7 +527,7 @@ impl Session {
     }
 
     /// Go `GetLatestInfoSchema` of the refreshing session.
-    fn refresh_latest_info_schema(&self) -> std::sync::Arc<tidb_infoschema::SessionExtendedInfoSchema> {
+    pub(crate) fn refresh_latest_info_schema(&self) -> std::sync::Arc<tidb_infoschema::SessionExtendedInfoSchema> {
         match &self.node {
             Some(node) => node.latest_info_schema(),
             None => std::sync::Arc::new(
@@ -527,7 +536,7 @@ impl Session {
         }
     }
 
-    fn open_refresh_system_session(&self) -> Result<Session, DriverError> {
+    pub(crate) fn open_refresh_system_session(&self) -> Result<Session, DriverError> {
         use crate::domain::cluster_session_node::DomainSessions as _;
         let domain = self
             .domain_services()
@@ -650,9 +659,12 @@ impl Session {
                 &[SqlArg::String(lock_name.as_bytes()), SqlArg::Signed(MV_REFRESH_ADVISORY_LOCK_TIMEOUT_SEC)],
             )?;
             if got.first().and_then(|row| row.first()).and_then(datum_i64) != Some(1) {
-                return Err(plain(format!(
-                    "another refresh or materialized view log creation is running for materialized view {schema}.{name}, please retry later: materialized view refresh advisory lock conflict"
-                )));
+                return Err(annotate(
+                    &plain("materialized view refresh advisory lock conflict"),
+                    &format!(
+                        "another refresh or materialized view log creation is running for materialized view {schema}.{name}, please retry later"
+                    ),
+                ));
             }
             let locked = self.recheck_refresh_target_under_lock(schema, &name, mview_id, mode).and_then(|()| {
                 // Go: CREATE publishes the input logs; a missing
@@ -703,7 +715,7 @@ impl Session {
                 );
                 return match locked {
                     Ok(_) => Err(plain(invariant)),
-                    Err(error) => Err(plain(format!("{invariant}: {}", driver_message(&error)))),
+                    Err(error) => Err(annotate(&error, &invariant)),
                 };
             }
             locked
@@ -862,7 +874,13 @@ impl Session {
             txn_finished = true;
             let commit_tso = session_json_u64(refresh, "tidb_last_txn_info", "commit_ts");
             if commit_tso.is_none() {
-                self.append_warning(tidb_context::WarningLevel::Warning, tidb_errno::errcode::ErrUnknown, ("refresh materialized view: refresh committed but failed to capture refresh commit tso: refresh materialized view: last transaction info is empty").to_string());
+                append_cause_warning(
+                    self,
+                    &annotate(
+                        &plain("refresh materialized view: last transaction info is empty"),
+                        "refresh materialized view: refresh committed but failed to capture refresh commit tso",
+                    ),
+                );
             }
             // Go `finalizeSuccess`.
             if let Err(error) = finalize_refresh_hist_with_retry(
@@ -876,16 +894,16 @@ impl Session {
                 chrono::Local::now(),
                 None,
             ) {
-                self.append_warning(tidb_context::WarningLevel::Warning, tidb_errno::errcode::ErrUnknown, (&format!(
-                    "refresh materialized view: refresh committed but failed to finalize refresh history: {}",
-                    driver_message(&error)
-                )).to_string());
+                append_cause_warning(
+                    self,
+                    &annotate(&error, "refresh materialized view: refresh committed but failed to finalize refresh history"),
+                );
             }
             if let Err(error) = delete_refresh_alert_state(&mut hist, mview_id) {
-                self.append_warning(tidb_context::WarningLevel::Warning, tidb_errno::errcode::ErrUnknown, (&format!(
-                    "refresh materialized view: refresh committed but failed to delete refresh alert: {}",
-                    driver_message(&error)
-                )).to_string());
+                append_cause_warning(
+                    self,
+                    &annotate(&error, "refresh materialized view: refresh committed but failed to delete refresh alert"),
+                );
             }
             // Go `newMVRefreshStmtResultFromWriteCounts`.
             self.statement_message = format!("Rows inserted: {insert_rows}  Updated: 0  Deleted: {delete_rows}");
@@ -959,20 +977,15 @@ impl Session {
             chrono::Local::now(),
             None,
         ) {
-            self.append_warning(
-                tidb_context::WarningLevel::Warning,
-                tidb_errno::errcode::ErrUnknown,
-                format!(
-                    "refresh materialized view: refresh committed but failed to finalize refresh history: {}",
-                    driver_message(&error)
-                ),
+            append_cause_warning(
+                self,
+                &annotate(&error, "refresh materialized view: refresh committed but failed to finalize refresh history"),
             );
         }
         if let Err(error) = delete_refresh_alert_state(&mut hist, mview_id) {
-            self.append_warning(
-                tidb_context::WarningLevel::Warning,
-                tidb_errno::errcode::ErrUnknown,
-                format!("refresh materialized view: refresh committed but failed to delete refresh alert: {}", driver_message(&error)),
+            append_cause_warning(
+                self,
+                &annotate(&error, "refresh materialized view: refresh committed but failed to delete refresh alert"),
             );
         }
         // Go `newMVRefreshStmtResultFromWriteCounts(shadow load rows, 0, 0)`.
@@ -1136,11 +1149,10 @@ impl Session {
                                 tidb_log::Field::new("error", tidb_log::Value::Str(driver_message(&drop_error))),
                             ],
                         );
-                        Err(plain(format!(
-                            "{}: cleanup shadow table {schema}.{shadow_name} failed: {}",
-                            driver_message(&error),
-                            driver_message(&drop_error)
-                        )))
+                        Err(annotate(
+                            &error,
+                            &format!("cleanup shadow table {schema}.{shadow_name} failed: {}", driver_message(&drop_error)),
+                        ))
                     }
                 }
             }
@@ -1197,7 +1209,7 @@ fn refresh_source_log_ids(sources: &[tidb_model::MViewRefreshSource]) -> Vec<i64
 
 /// Go master `allocJobID`: the store's current version, read as a fresh
 /// transaction's start TS.
-fn session_current_tso(session: &mut Session) -> Result<u64, DriverError> {
+pub(crate) fn session_current_tso(session: &mut Session) -> Result<u64, DriverError> {
     let version = session.node_conn().store_current_version().map_err(plain)?;
     if version == 0 {
         return Err(plain("invalid job id"));

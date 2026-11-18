@@ -52,6 +52,12 @@ pub struct MysqlError {
     /// `StmtCtx.AppendError`) while expression-evaluation failures do not,
     /// so the warning-buffer seam needs to tell the two apart.
     pub(crate) from_evaluation: bool,
+    /// The messages Go's `errors.Annotate` / `Annotatef` put in front of
+    /// this failure, outermost first and joined by `": "`. Go reports the
+    /// CAUSE to the client and in `SHOW WARNINGS` (`errors.Cause`), so the
+    /// wire [`Self::message`] stays the cause's; only `Error()`
+    /// ([`Self::error_string`]) carries the annotation.
+    pub(crate) annotation: Option<String>,
 }
 
 impl MysqlError {
@@ -79,6 +85,7 @@ impl MysqlError {
             message: message.into(),
             identity: Some(proto.identity()),
             from_evaluation: false,
+            annotation: None,
         }
     }
 
@@ -119,6 +126,7 @@ impl MysqlError {
             message: error.message,
             identity: error.identity,
             from_evaluation: false,
+            annotation: None,
         }
     }
 
@@ -133,6 +141,7 @@ impl MysqlError {
             message: message.into(),
             identity: None,
             from_evaluation: false,
+            annotation: None,
         }
     }
 
@@ -151,6 +160,26 @@ impl MysqlError {
     /// alone (`terror.ToSQLError` drops the prefix).
     #[must_use]
     pub fn error_string(&self) -> String {
+        match &self.annotation {
+            Some(annotation) => format!("{annotation}: {}", self.cause_error_string()),
+            None => self.cause_error_string(),
+        }
+    }
+
+    /// Go `errors.Annotate(err, message)`: `message` in front of this
+    /// failure's `Error()`, the wire message unchanged (Go writes
+    /// `errors.Cause(err)` to the client).
+    #[must_use]
+    pub fn annotate(mut self, message: &str) -> Self {
+        self.annotation = Some(match self.annotation.take() {
+            Some(inner) => format!("{message}: {inner}"),
+            None => message.to_owned(),
+        });
+        self
+    }
+
+    /// `Error()` of the cause alone (Go `errors.Cause(err).Error()`).
+    fn cause_error_string(&self) -> String {
         match self.identity {
             Some(identity) => {
                 // `pingcap/errors` prints the bare code where the class has no
@@ -224,3 +253,19 @@ impl From<&str> for MysqlError {
     }
 }
 
+
+#[cfg(test)]
+mod annotate_tests {
+    use super::MysqlError;
+
+    /// Go `errors.Annotate`: `Error()` reads `outer: inner: cause` while
+    /// `errors.Cause` -- what the client sees -- is the cause alone.
+    #[test]
+    fn annotations_prefix_error_string_but_not_the_wire_message() {
+        let error = MysqlError::unknown("mlog purge lock conflict").annotate("inner").annotate("outer");
+        assert_eq!(error.message, "mlog purge lock conflict");
+        assert_eq!(error.code, 1105);
+        assert_eq!(error.error_string(), "outer: inner: mlog purge lock conflict");
+        assert_eq!(MysqlError::unknown("plain").error_string(), "plain");
+    }
+}

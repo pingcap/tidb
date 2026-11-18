@@ -35,6 +35,15 @@ impl Value {
         }
     }
 
+    /// Go `v, ok := val.(bool)`.
+    pub fn as_bool(&self) -> Option<bool> {
+        match self.0.as_deref() {
+            Some("true") => Some(true),
+            Some("false") => Some(false),
+            _ => None,
+        }
+    }
+
     /// Go `val.(int)`.
     pub fn int(&self) -> i64 {
         self.0

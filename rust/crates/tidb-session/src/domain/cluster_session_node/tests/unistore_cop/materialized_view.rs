@@ -726,3 +726,65 @@ fn a_failed_complete_refresh_rolls_back_as_go_master() {
 fn commit_ts_column_answers_as_go_master() {
     replay_go_master(include_str!("../../../../../testdata/commit_ts_column_go.jsonl"));
 }
+
+/// Go master's `PurgeMaterializedViewLogExec`: the target's errors, the
+/// purge-info checkpoint, one history row per purge (none when the cutoff
+/// fence skips it, a failed one when the dependent views' refresh info is
+/// missing), the safe TSO bounded by each dependent view's last read, and
+/// the OK packet's deleted count. Replayed from a Go master node
+/// (`testdata/mlog_purge_go.jsonl`).
+#[test]
+fn purge_materialized_view_log_answers_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/mlog_purge_go.jsonl"));
+}
+
+/// Go master's lock conflicts, captured on two connections of a Go master
+/// node (`tools/e29/p15/conflict.py`): while another transaction holds the
+/// purge-info row, PURGE fails with the CAUSE on the wire (Go
+/// `errors.Cause(errors.Annotatef(errMLogPurgeLockConflict, ...))`) and the
+/// whole annotated text in its failed history row; while another session
+/// holds the view's refresh advisory lock, both COMPLETE refreshes do the
+/// same with `errMVRefreshAdvisoryLockConflict`.
+#[test]
+fn purge_and_refresh_lock_conflicts_answer_as_go_master() {
+    let (stack, mut session) = replay_go_master(include_str!("../../../../../testdata/mlog_purge_conflict_setup_go.jsonl"));
+    let mut holder = stack.factory.open_session(session_context(2132)).unwrap();
+    assert_eq!(answer(&mut holder, "use e29"), "OK");
+    assert_eq!(answer(&mut holder, "begin"), "OK");
+    assert_eq!(answer(&mut holder, "select count(*) from mysql.tidb_mlog_purge_info for update"), r#"RS:[["1"]]"#);
+    assert_eq!(answer(&mut session, "purge materialized view log on t"), "ERR 1105 mlog purge lock conflict");
+    assert_eq!(answer(&mut holder, "rollback"), "OK");
+    assert_eq!(
+        answer(&mut session, "select PURGE_STATUS, PURGE_ROWS, PURGE_FAILED_REASON, PURGE_CUTOFF_TSO from mysql.tidb_mlog_purge_hist"),
+        r#"RS:[["failed","0","another purge is running for materialized view log on e29.t, please retry later: mlog purge lock conflict",null]]"#
+    );
+    assert_eq!(answer(&mut session, "select count(*) from `$mlog$t`"), r#"RS:[["1"]]"#);
+    assert_eq!(answer(&mut session, "purge materialized view log on t"), "OK");
+    assert_eq!(
+        answer(&mut session, "select PURGE_STATUS, PURGE_ROWS from mysql.tidb_mlog_purge_hist order by PURGE_JOB_ID"),
+        r#"RS:[["failed","0"],["success","1"]]"#
+    );
+
+    assert_eq!(answer(&mut session, "create materialized view mv (v, c) as select v, count(*) from t group by v"), "OK");
+    let (_, mv) = stack.factory.catalog_snapshot().table_info_by_name("e29", "mv").unwrap();
+    let lock = {
+        let mv = mv.read();
+        format!("mv_refresh_{}_{}", mv.db_id, mv.id)
+    };
+    assert_eq!(answer(&mut session, &format!("select get_lock('{lock}', 10)")), r#"RS:[["1"]]"#);
+    assert_eq!(
+        answer(&mut holder, "refresh materialized view mv complete in place"),
+        "ERR 1105 materialized view refresh advisory lock conflict"
+    );
+    assert_eq!(answer(&mut holder, "select row_count()"), r#"RS:[["0"]]"#);
+    assert_eq!(
+        answer(&mut holder, "refresh materialized view mv complete out of place"),
+        "ERR 1105 materialized view refresh advisory lock conflict"
+    );
+    assert_eq!(answer(&mut session, &format!("select release_lock('{lock}')")), r#"RS:[["1"]]"#);
+    let reason = "another refresh or materialized view log creation is running for materialized view e29.mv, please retry later: materialized view refresh advisory lock conflict";
+    assert_eq!(
+        answer(&mut session, "select REFRESH_METHOD, REFRESH_STATUS, REFRESH_FAILED_REASON from mysql.tidb_mview_refresh_hist order by REFRESH_JOB_ID"),
+        format!(r#"RS:[["complete in place manual","failed","{reason}"],["complete out of place manual","failed","{reason}"]]"#)
+    );
+}
