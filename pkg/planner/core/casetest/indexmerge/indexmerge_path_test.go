@@ -47,7 +47,7 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, domains json null, images json null, KEY `a_domains_b` (a, (cast(`domains` as char(253) array)), b))")
-	sql := "SELECT * FROM t WHERE   '15975127' member of (domains)   AND '15975128' member of (domains) AND a = 1 AND b = 2"
+	sql := "SELECT * FROM t WHERE '15975127' member of (domains) AND '15975128' member of (domains) AND a = 1 AND b > 1 AND b IN (2,3)"
 
 	par := parser.New()
 	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
@@ -87,7 +87,7 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 		true,
 	)
 	require.True(t, ok)
-	accessFilters, _, mvColOffset, mvFilterMutations := plannercore.CollectFilters4MVIndexMutations(tk.Session().GetPlanCtx(), cnfs, idxCols, tbl.Meta().FindIndexByName("a_domains_b"))
+	accessFilters, remainingFilters, mvColOffset, mvFilterMutations := plannercore.CollectFilters4MVIndexMutations(tk.Session().GetPlanCtx(), cnfs, idxCols, tbl.Meta().FindIndexByName("a_domains_b"))
 
 	// assert mv col access filters.
 	require.Equal(t, len(accessFilters), 3)
@@ -99,7 +99,9 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	require.Equal(t, sf.FuncName.L, ast.JSONMemberOf)
 	sf, ok = accessFilters[2].(*expression.ScalarFunction)
 	require.True(t, ok)
-	require.Equal(t, sf.FuncName.L, ast.EQ)
+	require.Equal(t, ast.In, sf.FuncName.L)
+	require.Len(t, remainingFilters, 1)
+	require.Equal(t, ast.GT, remainingFilters[0].(*expression.ScalarFunction).FuncName.L)
 
 	// assert mv col offset
 	require.Equal(t, mvColOffset, 1)
@@ -112,6 +114,23 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	sf, ok = mvFilterMutations[1].(*expression.ScalarFunction)
 	require.True(t, ok)
 	require.Equal(t, sf.FuncName.L, ast.JSONMemberOf)
+
+	t.Run("ConjunctOrder", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table mv(id int primary key, j json, c int, d int, index m((cast(j as signed array)), c, d))")
+		tk.MustExec(`insert into mv values (1,'[1,2]',2,1), (2,'[1]',3,1), (3,'[1]',4,1),
+			(4,'[1]',2,0), (5,'[2]',3,1), (6,'[1]',1,1)`)
+		const query = "select /*+ use_index_merge(mv,m) */ id from mv where 1 member of(j) and "
+		for _, pred := range []string{"c in (2,3) and c > 1", "c > 1 and c in (2,3)"} {
+			sql := query + pred + " and d=1 order by id"
+			tk.MustQuery(sql).Check(testkit.Rows("1", "2"))
+			plan := tk.MustQuery("explain format='brief' " + sql)
+			plan.CheckContain("range:[1 2 1,1 2 1], [1 3 1,1 3 1]")
+		}
+		// A range that excludes an IN value must still be enforced.
+		tk.MustQuery(query + "c > 2 and c in (2,3) and d=1").Check(testkit.Rows("2"))
+	})
 }
 
 func TestMultiMVIndexRandom(t *testing.T) {

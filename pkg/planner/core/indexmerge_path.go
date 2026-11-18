@@ -1120,34 +1120,34 @@ func collectFilters4MVIndex(
 	mvColIdx := arrayColOffset(sctx, idxCols)
 	for z, col := range idxCols {
 		found := false
-		stop := false
+		var rangeFilters []int
 		for i, f := range filters {
 			if usedAsAccess[i] {
 				continue
 			}
 			if ok, tp := checkAccessFilter4IdxCol(sctx, f, col); ok {
 				if tp == rangeOnNonMVColTp {
-					if z < mvColIdx || isPrefixIdxCol(idxInfo, z, col) {
-						continue
+					// A point predicate may still follow and let us use the next index column.
+					if z > mvColIdx && !isPrefixIdxCol(idxInfo, z, col) {
+						rangeFilters = append(rangeFilters, i)
 					}
-					stop = true
-				} else if stop {
-					// a range has been taken on this column, only more ranges on it (`c>1 and c<10`) can join it.
 					continue
 				}
 				accessFilters = append(accessFilters, f)
 				usedAsAccess[i] = true
 				found = true
 				// access filter type on mv col overrides normal col for the return value of this function
-				if accessTp == unspecifiedFilterTp || accessTp == eqOrInOnNonMVColTp || accessTp == rangeOnNonMVColTp {
+				if accessTp == unspecifiedFilterTp || accessTp == eqOrInOnNonMVColTp {
 					accessTp = tp
 				}
-				if !stop {
-					break
-				}
+				break
 			}
 		}
-		if !found || stop {
+		if !found {
+			for _, i := range rangeFilters {
+				accessFilters = append(accessFilters, filters[i])
+				usedAsAccess[i] = true
+			}
 			break
 		}
 	}
@@ -1207,7 +1207,7 @@ func CollectFilters4MVIndexMutations(sctx base.PlanContext, filters []expression
 	mvColIdx := arrayColOffset(sctx, idxCols)
 	for z, col := range idxCols {
 		found := false
-		stop := false
+		var rangeFilters []int
 		for i, f := range filters {
 			if usedAsAccess[i] {
 				continue
@@ -1228,12 +1228,9 @@ func CollectFilters4MVIndexMutations(sctx base.PlanContext, filters []expression
 					continue
 				}
 				if tp == rangeOnNonMVColTp {
-					if z < mvColIdx || isPrefixIdxCol(idxInfo, z, col) {
-						continue
+					if z > mvColIdx && !isPrefixIdxCol(idxInfo, z, col) {
+						rangeFilters = append(rangeFilters, i)
 					}
-					// ranges can only be the last access filters, see collectFilters4MVIndex.
-					stop = true
-				} else if stop {
 					continue
 				}
 				accessFilters = append(accessFilters, f)
@@ -1242,7 +1239,11 @@ func CollectFilters4MVIndexMutations(sctx base.PlanContext, filters []expression
 				// shouldn't break once found here, because we want to collect all the mutation mv filters here.
 			}
 		}
-		if !found || stop {
+		if !found {
+			for _, i := range rangeFilters {
+				accessFilters = append(accessFilters, filters[i])
+				usedAsAccess[i] = true
+			}
 			break
 		}
 	}
