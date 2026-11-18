@@ -18,11 +18,13 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -396,10 +398,33 @@ PARTITION BY RANGE (c) (
 	tk.MustExec(`alter table t1 attributes="key=value";`)
 	tk.MustExec(`alter table t1 partition p0 attributes="key1=value1";`)
 	tk.MustExec(`alter table t3 attributes="key=value";`)
+	expectedRuleIDs := []string{"schema/drop_db/t1", "schema/drop_db/t1/p0", "schema/drop_db/t3"}
+	// The existing rules are looked up in batches of 10000 tables and partitions, so use
+	// enough partitions for two batches, with rules at the start, on both sides of the
+	// batch boundary and at the end.
+	const partitionCnt = 8192
+	// Cleaning up after that many partitions is slow with the delete-range settings of the tests.
+	originGC := util.IsEmulatorGCEnable()
+	util.EmulatorGCDisable()
+	originBatchSize := ddl.SetBatchInsertDeleteRangeSize(ddl.DefaultBatchInsertDeleteRangeSize)
+	defer func() {
+		ddl.SetBatchInsertDeleteRangeSize(originBatchSize)
+		if originGC {
+			util.EmulatorGCEnable()
+		}
+	}()
+	for _, tbl := range []string{"big1", "big2"} {
+		tk.MustExec(fmt.Sprintf("create table %s (c int) partition by hash(c) partitions %d", tbl, partitionCnt))
+	}
+	for _, partition := range []string{"big1/p0", "big2/p1798", "big2/p1799", "big2/p8191"} {
+		tbl, partitionName, _ := strings.Cut(partition, "/")
+		tk.MustExec(fmt.Sprintf(`alter table %s partition %s attributes="key=value";`, tbl, partitionName))
+		expectedRuleIDs = append(expectedRuleIDs, "schema/drop_db/"+partition)
+	}
 	// A rule of another schema must be kept.
 	tk.MustExec("create table test.t1 (c int)")
 	tk.MustExec(`alter table test.t1 attributes="key=value";`)
-	require.Len(t, tk.MustQuery(`select * from information_schema.attributes;`).Rows(), 4)
+	require.Len(t, tk.MustQuery(`select * from information_schema.attributes;`).Rows(), len(expectedRuleIDs)+1)
 
 	// Only the label rules that exist should be deleted from PD, since deleting
 	// a rule for every table and partition is slow when there are many of them.
@@ -409,7 +434,7 @@ PARTITION BY RANGE (c) (
 	})
 	tk.MustExec("drop database drop_db")
 	require.NotNil(t, deletedRuleIDs.Load())
-	require.ElementsMatch(t, []string{"schema/drop_db/t1", "schema/drop_db/t1/p0", "schema/drop_db/t3"}, *deletedRuleIDs.Load())
+	require.ElementsMatch(t, expectedRuleIDs, *deletedRuleIDs.Load())
 	tk.MustQuery(`select id from information_schema.attributes;`).Check(testkit.Rows("schema/test/t1"))
 }
 

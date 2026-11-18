@@ -506,6 +506,8 @@ func existingLabelRuleIDs(ctx context.Context, ruleIDs []string) ([]string, erro
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		// Go through the requested IDs instead of the returned rules, to keep the order
+		// of the IDs and to never delete a rule that was not asked for.
 		for _, ruleID := range batch {
 			if _, ok := rules[ruleID]; ok {
 				existing = append(existing, ruleID)
