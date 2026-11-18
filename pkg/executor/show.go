@@ -2400,7 +2400,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	if user := e.Ctx().GetSessionVars().User; user != nil {
 		// The token may be leaked without secure transport, but the cloud can ensure security in some situations,
 		// so we don't enforce secure connections.
-		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
+		if token, err = sessionstates.CreateSessionToken(user.AuthUsername, user.AuthHostname); err != nil {
 			return err
 		}
 	}

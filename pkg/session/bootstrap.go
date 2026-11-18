@@ -831,6 +831,9 @@ func bootstrap(s sessiontypes.Session) {
 		// To reduce conflict when multiple TiDB-server start at the same time.
 		// Actually only one server need to do the bootstrap. So we chose DDL owner to do this.
 		if dom.DDL().OwnerManager().IsOwner() {
+			if err := initLegacyECDSASessionToken(s.GetStore(), true); err != nil {
+				logutil.BgLogger().Fatal("disable legacy ECDSA session tokens during bootstrap failed", zap.Error(err))
+			}
 			doDDLWorks(s)
 			doDMLWorks(s)
 			runBootstrapSQLFile = true
