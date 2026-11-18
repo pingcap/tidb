@@ -31,10 +31,7 @@
 //! Views are metadata-only objects and are registered from their stored
 //! `TableInfo.View` definition; a sequence, a partitioned table, or a table
 //! still mid-DDL is refused by name, and the refusal is kept and reported
-//! rather than making the table silently disappear -- the same choice
-//! [`configure_loaded_table`] makes for the bounded read path.
-//!
-//! [`configure_loaded_table`]: tidb_infoschema::cluster_catalog::configure_loaded_table
+//! rather than making the table silently disappear.
 
 use std::sync::Arc;
 use tidb_stats_handle_syncload::stats_watch::{StatsSnapshot, TableStatsState};

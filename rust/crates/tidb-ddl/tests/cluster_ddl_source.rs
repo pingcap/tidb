@@ -3888,11 +3888,8 @@ fn the_shapes_a_bootstrap_needs_are_admitted_rather_than_refused() {
     // exactly the metadata Go builds, which is what
     // `mysql_bootstrap_tableinfo_source` proves table by table.
     //
-    // Admitting them does NOT mean this node can serve them: whether a stored
-    // table is readable is `configure_loaded_table`'s single decision, taken at
-    // LOAD time, and it still refuses everything but a clustered signed-BIGINT
-    // handle. Writing the catalog a real TiDB writes and serving it are two
-    // separate questions, and only one of them belongs in DDL admission.
+    // Writing the catalog a real TiDB writes and serving it are two separate
+    // questions, and only the first belongs in DDL admission.
     for sql in [
         // A nullable column.
         "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT)",

@@ -231,6 +231,9 @@ tidb-vardef = { path = "../tidb-vardef" }
 tracing = "0.1"
 
 [dev-dependencies]
+# The integration tests build their tables with the test-only in-process
+# CREATE TABLE (`run_create_table_on`), which `test-util` exposes.
+tidb-executor = { path = ".", features = ["test-util"] }
 hex = "0.4"
 tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
 tidb-metabuild = { path = "../tidb-metabuild" }

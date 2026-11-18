@@ -293,9 +293,9 @@ pub fn run_create_system_table_in(
     }
     info.db_id = catalog.database_id(database).unwrap_or_default();
     info.state = tidb_model::SchemaState::PUBLIC;
-    let auto_ids = tidb_table::table_from_meta::LocalTableAutoIds::default();
-    let table = tidb_table::table_from_meta::cluster_table(&info, &tidb_table::table_from_meta::AutoIdSource::In { db_id: info.db_id, ids: &auto_ids },
-    )
+    // Go `createPerfSchemaTable`: a virtual table holds no allocators, so
+    // nothing can draw an id from it.
+    let table = tidb_table::table_from_meta::cluster_table(&info, &tidb_table::table_from_meta::AutoIdSource::Unavailable)
     .map_err(tidb_driver_error::DriverError::unsupported)?;
     let name = info.name.original().to_owned();
     catalog.register_kv_in(database, &name, table)

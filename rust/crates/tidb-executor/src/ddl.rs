@@ -12,15 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `ddl.CreateTable` and its job run in one process over the in-process
-//! [`SessionExtendedInfoSchema`]: the executor's test fixtures build their tables here
-//! ([`run_create_table_on`]). The table is the DDL package's own --
-//! `BuildTableInfoWithStmt` / `BuildTableInfoWithLike`
+//! The executor's test fixtures build their tables here
+//! ([`run_create_table_on`], built only for tests and the `test-util`
+//! feature): `CREATE TABLE` over the in-process [`SessionExtendedInfoSchema`]
+//! without a DDL job or a store. Production `CREATE TABLE` runs as a DDL job
+//! (`tidb-ddl`), as Go's does; this path exists only until the executor's
+//! tests run on the mock store as Go's testkit does. The table is the DDL
+//! package's own -- `BuildTableInfoWithStmt` / `BuildTableInfoWithLike`
 //! (`tidb_ddl_build::table_info_build`), checked by
 //! `checkTableInfoValidWithStmt` and `checkTableInfoValidExtra` -- loaded
-//! back with `TableFromMeta` (`tidb_table::table_from_meta::cluster_table`),
-//! so a fixture's table is the one a node's DDL job builds from the same
-//! statement. It goes with Stage 5's in-process catalog.
+//! back with `TableFromMeta` (`tidb_table::table_from_meta::cluster_table`).
 //!
 //! The submodules are the executor's own: `hypo_index` (the index
 //! advisor's hypothetical indexes) and `indexes` (an index backfill
@@ -38,7 +39,9 @@ pub use indexes::{index_backfill_error};
 
 
 use crate::driver::DriverError;
+#[cfg(any(test, feature = "test-util"))]
 use tidb_infoschema::SessionExtendedInfoSchema;
+#[cfg(any(test, feature = "test-util"))]
 use tidb_ast::{DdlStmt, Stmt};
 
 /// Go `CREATE TABLE` through its job, in one process: the table built from
@@ -47,6 +50,7 @@ use tidb_ast::{DdlStmt, Stmt};
 /// table loaded back from that metadata (`TableFromMeta`), registered in
 /// `catalog`. Returns whether a table was created (`false` only for `IF NOT
 /// EXISTS` over an existing name).
+#[cfg(any(test, feature = "test-util"))]
 pub fn create_table_in_catalog(
     create: &tidb_ast::CreateTableStmt,
     catalog: &mut SessionExtendedInfoSchema,
@@ -168,6 +172,7 @@ pub fn create_table_in_catalog(
 /// `MockInfoSchema` number their tables themselves, a stored table's come
 /// from meta's `GenGlobalID`. One process-wide sequence, so two fixtures'
 /// tables never share an id.
+#[cfg(any(test, feature = "test-util"))]
 fn fixture_global_id() -> i64 {
     static NEXT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
     NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
@@ -176,6 +181,7 @@ fn fixture_global_id() -> i64 {
 /// Parses and executes a `CREATE TABLE`, building a [`TableInfo`] and
 /// registering a TiKV-byte-backed table in `catalog`. Returns whether a table
 /// was created (`false` only for `IF NOT EXISTS` over an existing name).
+#[cfg(any(test, feature = "test-util"))]
 pub fn run_create_table_on(sql: &str, catalog: &mut SessionExtendedInfoSchema) -> Result<bool, DriverError> {
     // A stock session's context: UTC, the SHIPPED strict `sql_mode` and
     // `tidb_enable_clustered_index` ON (`StmtContext`'s derived `Default`
@@ -191,6 +197,7 @@ pub fn run_create_table_on(sql: &str, catalog: &mut SessionExtendedInfoSchema) -
 /// [`run_create_table_on`] in `current_db` under `ctx`: the session settings
 /// (SQL mode, time zone, clock, `tidb_enable_clustered_index`) the statement
 /// is built with.
+#[cfg(any(test, feature = "test-util"))]
 pub fn run_create_table_on_with(
     sql: &str,
     catalog: &mut SessionExtendedInfoSchema,
@@ -212,10 +219,12 @@ pub fn run_create_table_on_with(
 }
 
 /// The default schema an unqualified `CREATE TABLE` lands in.
+#[cfg(any(test, feature = "test-util"))]
 fn tidb_executor_default_database() -> &'static str {
     tidb_infoschema::DEFAULT_DATABASE
 }
 
+#[cfg(any(test, feature = "test-util"))]
 use tidb_ddl_build::metabuild::new_metabuild_context_with_sctx;
 
 #[cfg(test)]

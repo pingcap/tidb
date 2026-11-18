@@ -237,7 +237,7 @@ pub(crate) const RESULT_BATCH_SIZE: usize = 128;
 /// Go `clientConn.dispatch`'s default arm (`pkg/server/conn.go:1592-1593`)
 /// for a command byte with no owner. This is deliberately distinct from
 /// `ER_UNKNOWN_COM_ERROR` (1047), which is Go's errno for a *known* command
-/// such as `COM_FIELD_LIST` that this bounded node has not implemented.
+/// such as `COM_FIELD_LIST` that this node has not implemented.
 fn unknown_command_error(code: u8) -> SqlQueryError {
     SqlQueryError::unknown(format!("command {code} not supported now"))
 }

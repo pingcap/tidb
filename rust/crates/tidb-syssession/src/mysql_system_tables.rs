@@ -14,11 +14,9 @@
 
 //! Reading `mysql.*` rows a Go TiDB wrote.
 //!
-//! The bounded read path ([`tidb_infoschema::cluster_catalog::configure_loaded_table`])
-//! serves only tables whose handle is a signed `BIGINT` primary key. Every
-//! `mysql.*` table in scope here fails that test, and they fail it in three
-//! different ways, which is why this module reads a row from its *key and*
-//! value rather than the value alone:
+//! Every `mysql.*` table in scope here keeps part of a row outside the
+//! value, in three different ways, which is why this module reads a row
+//! from its *key and* value rather than the value alone:
 //!
 //! * The grant tables (`mysql.user`, `mysql.db`, …) carry a **non-clustered**
 //!   `PRIMARY KEY (Host, User)` — verified against a live v8.5.7 cluster's

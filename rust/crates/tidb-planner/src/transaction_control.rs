@@ -46,7 +46,7 @@ pub enum TransactionControl {
     RollbackToSavepoint(String),
     /// `RELEASE SAVEPOINT name`: forget a mark, keeping its writes.
     ReleaseSavepoint(String),
-    /// A transaction-control statement the bounded node cannot honor yet (named
+    /// A transaction-control statement this node cannot honor yet (named
     /// for its diagnostic), e.g. `START TRANSACTION ... AS OF TIMESTAMP`.
     Unsupported(&'static str),
 }
