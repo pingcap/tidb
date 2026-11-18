@@ -117,7 +117,7 @@ type evictedStmtRecord struct {
 }
 
 func (s *stmtLogStorage) log(r *StmtRecord) {
-	b, err := json.Marshal(r)
+	b, err := marshalStmtRecordWithEvicted(r, false)
 	if err != nil {
 		logutil.BgLogger().Warn("failed to marshal statement summary", zap.Error(err))
 		return
