@@ -991,8 +991,23 @@ ORDER BY t1.a, t2.a, t3.a, var`
 			tk.MustQuery("select /* issue:72560 */ id from t use index(i) order by " + orderBy).Check(testkit.Rows("1", "2", "3"))
 			tk.MustQuery("select /* issue:72560 */ id from t ignore index(i) order by " + orderBy).Check(testkit.Rows("1", "2", "3"))
 		}
-		// non-NULL constants can still use the index order
-		tk.MustQuery("select /* issue:72560 */ id from t use index(i) order by 1-c, id").Check(testkit.Rows("1", "3", "2"))
+		// non-NULL constants can still use the index order without a Sort
+		query := "select /* issue:72560 */ id from t use index(i) order by 1-c desc, id"
+		tk.MustQuery(query).Check(testkit.Rows("2", "3", "1"))
+		plan := tk.MustQuery("explain format = 'brief' " + query)
+		plan.MultiCheckContain([]string{"index:i(c)", "keep order:true"})
+		plan.CheckNotContain("Sort")
+
+		// parameters may become NULL on a later execution, so a cached plan must keep the Sort
+		tk.MustExec("set @@tidb_enable_prepared_plan_cache = 1")
+		tk.MustExec("prepare s from 'select /* issue:72560 */ id from t use index(i) order by nullif(?, 0) - c desc, id'")
+		tk.MustExec("set @p = 1")
+		tk.MustQuery("execute s using @p").Check(testkit.Rows("2", "3", "1"))
+		tk.MustQuery("execute s using @p").Check(testkit.Rows("2", "3", "1"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		tk.MustExec("set @p = 0")
+		tk.MustQuery("execute s using @p").Check(testkit.Rows("1", "2", "3"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	})
 }
 

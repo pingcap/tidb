@@ -855,7 +855,7 @@ func (sf *ScalarFunction) RemapColumn(m map[int64]*Column) (Expression, error) {
 // - ast.Minus
 // - ast.UnaryMinus
 //
-// The constant operand of ast.Plus and ast.Minus must not be NULL, since
+// The constant operand of ast.Plus and ast.Minus must be immutable and not NULL, since
 // `col + NULL` / `NULL - col` is NULL for every row and doesn't follow col's order.
 func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool) {
 	switch sf.FuncName.String() {
@@ -922,15 +922,16 @@ func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool) {
 	return nil, false
 }
 
-// isNonNullConstant returns true if expr is a constant whose value is known to be non-NULL.
+// isNonNullConstant returns true if expr is an immutable constant whose value is non-NULL.
+// Parameter markers and deferred expressions are rejected: their value can change
+// between executions of a cached plan, e.g. `NULLIF(?, 0) - col` may become NULL.
 func isNonNullConstant(expr Expression) bool {
 	c, ok := expr.(*Constant)
 	if !ok {
 		return false
 	}
-	if c.DeferredExpr != nil || c.ParamMarker != nil {
-		// The value may change across executions, keep the previous behavior.
-		return true
+	if c.ConstLevel() != ConstStrict {
+		return false
 	}
 	return !c.Value.IsNull()
 }
