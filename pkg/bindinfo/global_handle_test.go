@@ -131,8 +131,20 @@ func TestBindingCacheReloadDoesNotPublishStaleSnapshot(t *testing.T) {
 		t.Fatal("second reload did not contend for the reload lock")
 	}
 	unblock()
-	require.NoError(t, <-firstResult)
-	require.NoError(t, <-secondResult)
+	for _, worker := range []struct {
+		name   string
+		result <-chan error
+	}{
+		{name: "first", result: firstResult},
+		{name: "second", result: secondResult},
+	} {
+		select {
+		case err := <-worker.result:
+			require.NoError(t, err, "%s reload failed", worker.name)
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s reload did not finish", worker.name)
+		}
+	}
 	require.Empty(t, handle.GetAllGlobalBindings())
 }
 
