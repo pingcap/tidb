@@ -1927,9 +1927,10 @@ func appendPrunedRangeCandidates(ds *logicalop.DataSource, prop *property.Physic
 		if (path.EqCondCount <= 1 && inListCount < 2) || !indexHasAnalyzedStats(ds, path) {
 			continue
 		}
-		// Full-key ranges on a unique index read at most one row each and can become a
-		// [Batch]PointGet; shortening them saves no meaningful work.
-		if path.Index.Unique && rangesCoverAllIndexColumns(path) {
+		// Keep small unique point gets as Batch_Point_Get. For a large cross product,
+		// also consider a prefix-range alternative so the seek count is bounded.
+		if path.Index.Unique && rangesCoverAllIndexColumns(path) &&
+			(ds.SCtx().GetSessionVars().RangeMaxCount <= 0 || int64(len(path.Ranges)) <= ds.SCtx().GetSessionVars().RangeMaxCount) {
 			continue
 		}
 		for cutoff := max(1, path.EqCondCount); cutoff < path.EqOrInCondCount; cutoff++ {
@@ -2488,6 +2489,9 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 
 		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && isPointGetConvertableSchema(ds, len(path.Ranges) == 1)
+		if canConvertPointGet && ds.SCtx().GetSessionVars().RangeMaxCount > 0 {
+			canConvertPointGet = int64(len(path.Ranges)) <= ds.SCtx().GetSessionVars().RangeMaxCount
+		}
 		if fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix52592, false) {
 			canConvertPointGet = false
 		}

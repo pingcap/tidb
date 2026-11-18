@@ -57,6 +57,45 @@ func TestBinaryLiteralNumericAggregation(t *testing.T) {
 	tk.MustQuery("select sum(b'101010'),avg(b'101010') from bit_agg where a=3").Check(testkit.Rows("<nil> <nil>"))
 }
 
+func TestIssue73346BatchPointGetInJoinRepro(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists p, i")
+	tk.MustExec("create table p (id bigint primary key, state varchar(20) not null)")
+	tk.MustExec("create table i (id bigint primary key, p_id bigint not null, e_id bigint not null, excluded tinyint not null, unique key uk_p_e (p_id, e_id), key idx_p_excl_e (p_id, excluded, e_id), key idx_excl_p_e (excluded, p_id, e_id))")
+	pRows := make([]string, 50)
+	for i := range pRows {
+		pRows[i] = fmt.Sprintf("(%d, 'paid')", i+1)
+	}
+	tk.MustExec("insert into p values " + strings.Join(pRows, ", "))
+	iRows := make([]string, 25)
+	eIDs := make([]string, 25)
+	for i := range iRows {
+		pID := i + 1
+		eID := 1001 + i
+		iRows[i] = fmt.Sprintf("(%d, %d, %d, 0)", pID*10+1, pID, eID)
+		eIDs[i] = fmt.Sprintf("%d", eID)
+	}
+	tk.MustExec("insert into i values " + strings.Join(iRows, ", "))
+	tk.MustExec("analyze table p")
+	tk.MustExec("analyze table i")
+	pIDs := make([]string, len(pRows))
+	for i := range pIDs {
+		pIDs[i] = fmt.Sprintf("%d", i+1)
+	}
+	query := "select i.id from p join i on i.p_id = p.id where p.id in (" + strings.Join(pIDs, ", ") + ") and p.state in ('paid', 'pending') and i.excluded = 0 and i.e_id in (" + strings.Join(eIDs, ", ") + ")"
+	plan := fmt.Sprint(tk.MustQuery("explain format='plan_tree' " + query).Rows())
+	require.Contains(t, plan, "IndexLookUp(Probe)")
+	require.Contains(t, plan, "index:uk_p_e(p_id, e_id) range:[1,1]")
+	require.Contains(t, plan, "in(test.i.e_id")
+	require.NotContains(t, plan, "Batch_Point_Get root table:i")
+
+	// A small composite-key IN product remains eligible for Batch_Point_Get.
+	smallQuery := "select i.id from p join i on i.p_id = p.id where p.id in (1, 2) and p.state in ('paid', 'pending') and i.excluded = 0 and i.e_id in (1001, 1002)"
+	smallPlan := fmt.Sprint(tk.MustQuery("explain format='plan_tree' " + smallQuery).Rows())
+	require.Contains(t, smallPlan, "Batch_Point_Get root table:i, index:uk_p_e")
+}
+
 func TestReverseExpressionSortNullableColumn(t *testing.T) {
 	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
 	tk.MustExec("use test")
