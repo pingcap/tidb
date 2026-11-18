@@ -4206,7 +4206,8 @@ var defaultSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableSelectForShare, Value: BoolToOnOff(vardef.DefTiDBEnableSelectForShare), Type: vardef.TypeBool,
 		Validation: func(_ *SessionVars, normalizedValue, originalValue string, _ vardef.ScopeFlag) (string, error) {
 			if kerneltype.IsNextGen() && TiDBOptOn(normalizedValue) {
-				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBEnableSelectForShare, originalValue)
+				// Relaxed session initialization keeps the normalized value even on error.
+				return vardef.Off, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBEnableSelectForShare, originalValue)
 			}
 			return normalizedValue, nil
 		}, SetSession: func(s *SessionVars, val string) error {
