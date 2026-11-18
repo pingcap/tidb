@@ -36,6 +36,8 @@ const (
 	FeatureIDGlobalIndex = "global_index"
 	// FeatureIDAffinity is the `Affinity` feature.
 	FeatureIDAffinity = "affinity"
+	// FeatureIDPresplit is the pre-split feature.
+	FeatureIDPresplit = "pre_split"
 )
 
 var featureIDs = map[string]struct{}{
@@ -48,6 +50,7 @@ var featureIDs = map[string]struct{}{
 	FeatureIDTTL:            {},
 	FeatureIDGlobalIndex:    {},
 	FeatureIDAffinity:       {},
+	FeatureIDPresplit:       {},
 }
 
 // CanParseFeature is used to check if a feature can be parsed.

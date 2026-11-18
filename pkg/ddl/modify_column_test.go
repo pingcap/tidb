@@ -1617,3 +1617,32 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 		})
 	}
 }
+
+// TestModifyColumnLoadTableRangeError verifies transient range-loading retries
+// preserve converted values and table consistency in both persisted job formats.
+func TestModifyColumnLoadTableRangeError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	originalVersion := model.GetJobVerInUse()
+	t.Cleanup(func() { model.SetJobVerInUse(originalVersion) })
+	for _, version := range []model.JobVersion{model.JobVersion1, model.JobVersion2} {
+		t.Run(fmt.Sprintf("job_version_%d", version), func(t *testing.T) {
+			model.SetJobVerInUse(version)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("drop database if exists modifycol;")
+			tk.MustExec("create database modifycol;")
+			tk.MustExec("use modifycol;")
+
+			// Use a type conversion that definitely requires reorg.
+			tk.MustExec("create table t (a int primary key, b int, c int);")
+			batchInsert(tk, "t", 0, 100)
+
+			// A transient PD error must not roll back reorg in either persisted job format.
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/loadTableRangesFromPDErr",
+				`1*return("All returned regions have no leaders, limit: 1")`)
+
+			tk.MustExec("alter table t change column b b varchar(16);")
+			tk.MustQuery("select b from t where a in (0, 99) order by a").Check(testkit.Rows("0", "99"))
+			tk.MustExec("admin check table t;")
+		})
+	}
+}

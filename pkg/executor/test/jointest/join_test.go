@@ -29,6 +29,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestIndexMergeJoinInnerHashAggOrder(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table imj_outer(id int primary key, c0 int, c1 int, c2 varchar(50))")
+	tk.MustExec("create table imj_inner(id int primary key, c0 int, c1 int, c2 varchar(50), key(c0))")
+	tk.MustExec("insert into imj_outer values (1,10,100,'a'),(2,20,200,'b'),(3,30,300,'c'),(4,null,400,'d'),(5,10,500,'e'),(6,20,null,'f'),(7,40,700,'g'),(8,50,800,'h')")
+	values := make([]string, 500)
+	for i := range values {
+		values[i] = fmt.Sprintf("(%d,%d,%d,'r')", i+1, []int{10, 20, 30, 60}[i%4], i)
+	}
+	tk.MustExec("insert into imj_inner values " + strings.Join(values, ","))
+	tk.MustExec("analyze table imj_outer, imj_inner")
+	tk.MustExec("set tidb_enable_index_merge_join = on")
+	query := "select c0 from imj_outer where c0 in (select c0 from imj_inner) group by c0 order by c0"
+	plan := fmt.Sprint(tk.MustQuery("explain " + query).Rows())
+	require.NotContains(t, plan, "IndexMergeJoin")
+	for range 20 {
+		tk.MustQuery(query).Check(testkit.Rows("10", "20", "30"))
+	}
+	control := "select /*+ INL_MERGE_JOIN(i) */ count(*) from imj_outer o join imj_inner i on o.c0=i.c0"
+	require.Contains(t, fmt.Sprint(tk.MustQuery("explain "+control).Rows()), "IndexMergeJoin")
+	tk.MustQuery(control).Check(testkit.Rows("625"))
+}
+
 func TestJoin2(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

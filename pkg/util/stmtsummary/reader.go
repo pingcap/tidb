@@ -85,7 +85,7 @@ func (ssr *stmtSummaryReader) GetStmtSummaryCurrentRows() [][]types.Datum {
 		}
 	}
 	if ssr.checker == nil {
-		if otherDatum := ssr.getStmtEvictedOtherRow(other); otherDatum != nil {
+		if otherDatum := ssr.getStmtEvictedOtherRow(other, beginTime); otherDatum != nil {
 			rows = append(rows, otherDatum)
 		}
 	}
@@ -167,7 +167,7 @@ func (ssr *stmtSummaryReader) getStmtByDigestHistoryRow(ssbd *stmtSummaryByDiges
 	return rows
 }
 
-func (ssr *stmtSummaryReader) getStmtEvictedOtherRow(ssbde *stmtSummaryByDigestEvicted) []types.Datum {
+func (ssr *stmtSummaryReader) getStmtEvictedOtherRow(ssbde *stmtSummaryByDigestEvicted, beginTimeForCurInterval int64) []types.Datum {
 	var seElement *stmtSummaryByDigestEvictedElement
 
 	ssbde.Lock()
@@ -176,7 +176,9 @@ func (ssr *stmtSummaryReader) getStmtEvictedOtherRow(ssbde *stmtSummaryByDigestE
 	}
 	ssbde.Unlock()
 
-	if seElement == nil {
+	// Evicted summaries are lazy expired just like regular summaries. Do not
+	// expose the latest evicted row when it belongs to an earlier interval.
+	if seElement == nil || seElement.beginTime < beginTimeForCurInterval {
 		return nil
 	}
 
@@ -453,31 +455,31 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 		return ssElement.maxProcessedKeys
 	},
 	AvgRocksdbDeleteSkippedCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumRocksdbDeleteSkippedCount), ssElement.execCount)
+		return avgFloat4Uint(ssElement.sumRocksdbDeleteSkippedCount, ssElement.execCount)
 	},
 	MaxRocksdbDeleteSkippedCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.maxRocksdbDeleteSkippedCount
 	},
 	AvgRocksdbKeySkippedCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumRocksdbKeySkippedCount), ssElement.execCount)
+		return avgFloat4Uint(ssElement.sumRocksdbKeySkippedCount, ssElement.execCount)
 	},
 	MaxRocksdbKeySkippedCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.maxRocksdbKeySkippedCount
 	},
 	AvgRocksdbBlockCacheHitCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumRocksdbBlockCacheHitCount), ssElement.execCount)
+		return avgFloat4Uint(ssElement.sumRocksdbBlockCacheHitCount, ssElement.execCount)
 	},
 	MaxRocksdbBlockCacheHitCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.maxRocksdbBlockCacheHitCount
 	},
 	AvgRocksdbBlockReadCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumRocksdbBlockReadCount), ssElement.execCount)
+		return avgFloat4Uint(ssElement.sumRocksdbBlockReadCount, ssElement.execCount)
 	},
 	MaxRocksdbBlockReadCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.maxRocksdbBlockReadCount
 	},
 	AvgRocksdbBlockReadByteStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumRocksdbBlockReadByte), ssElement.execCount)
+		return avgFloat4Uint(ssElement.sumRocksdbBlockReadByte, ssElement.execCount)
 	},
 	MaxRocksdbBlockReadByteStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.maxRocksdbBlockReadByte
@@ -597,7 +599,7 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 		return ssElement.prepared
 	},
 	AvgAffectedRowsStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgFloat(int64(ssElement.sumAffectedRows), ssElement.execCount)
+		return avgFloat4Uint(ssElement.sumAffectedRows, ssElement.execCount)
 	},
 	FirstSeenStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		firstSeen := ssElement.firstSeen

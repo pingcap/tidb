@@ -607,13 +607,16 @@ func generateTaskExecutorNodes(ctx context.Context) (serverNodes []*infosync.Ser
 	if err != nil {
 		return nil, err
 	}
-	if len(serverInfos) == 0 {
-		return nil, errors.New("not found instance")
-	}
-
 	serverNodes = make([]*infosync.ServerInfo, 0, len(serverInfos))
 	for _, serverInfo := range serverInfos {
+		// Standalone BR publishes server info without running a task executor.
+		if serverInfo.DisableRPC {
+			continue
+		}
 		serverNodes = append(serverNodes, serverInfo)
+	}
+	if len(serverNodes) == 0 {
+		return nil, errors.New("not found instance")
 	}
 	return serverNodes, nil
 }

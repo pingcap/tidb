@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
@@ -39,6 +40,59 @@ func (t *testAllocator) AdvanceGlobalIDs(n int) (int64, error) {
 	old := int64(*t)
 	*t = testAllocator(int64(*t) + int64(n))
 	return old, nil
+}
+
+func TestCreateDoesNotMutateInputMetadata(t *testing.T) {
+	ctx := context.Background()
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	db, supportPolicy, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "")
+	require.NoError(t, err)
+	require.False(t, supportPolicy)
+	defer db.Close()
+
+	dbInfo := &model.DBInfo{
+		ID:                 100,
+		Name:               pmodel.NewCIStr("immutable_metadata"),
+		Charset:            "utf8mb4",
+		Collate:            "utf8mb4_bin",
+		PlacementPolicyRef: &model.PolicyRefInfo{Name: pmodel.NewCIStr("missing_policy")},
+	}
+	exists, err := db.CreateDatabase(ctx, dbInfo, supportPolicy, nil)
+	require.NoError(t, err)
+	require.False(t, exists)
+	require.NotNil(t, dbInfo.PlacementPolicyRef)
+
+	fieldType := types.NewFieldType(mysql.TypeTimestamp)
+	table := &metautil.Table{
+		DB: dbInfo,
+		Info: &model.TableInfo{
+			ID:   101,
+			Name: pmodel.NewCIStr("t"),
+			Columns: []*model.ColumnInfo{{
+				ID:        1,
+				Name:      pmodel.NewCIStr("id"),
+				FieldType: *fieldType,
+				State:     model.StatePublic,
+			}},
+			Charset:            "utf8mb4",
+			Collate:            "utf8mb4_bin",
+			PlacementPolicyRef: &model.PolicyRefInfo{Name: pmodel.NewCIStr("missing_policy")},
+			TTLInfo: &model.TTLInfo{
+				ColumnName:       pmodel.NewCIStr("id"),
+				IntervalExprStr:  "1",
+				IntervalTimeUnit: int(ast.TimeUnitDay),
+				Enable:           true,
+			},
+		},
+	}
+	allocator := testAllocator(1000)
+	ids, err := prealloctableid.NewAndPrealloc([]*metautil.Table{table}, &allocator)
+	require.NoError(t, err)
+	db.RegisterPreallocatedIDs(ids)
+	require.NoError(t, db.CreateTable(ctx, table, nil, supportPolicy, nil))
+
+	require.NotNil(t, table.Info.PlacementPolicyRef)
+	require.True(t, table.Info.TTLInfo.Enable)
 }
 
 func TestRestoreAutoIncID(t *testing.T) {

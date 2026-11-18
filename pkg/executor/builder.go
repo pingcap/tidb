@@ -2692,6 +2692,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor
 			joiners:      joiners,
 			corCols:      corCols,
 			concurrency:  v.Concurrency,
+			keepOrder:    v.KeepOrder,
 			useCache:     v.CanUseCache,
 		}
 	}
@@ -2846,6 +2847,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
 		virtualAssignmentsOffset:  v.VirtualAssignmentsOffset,
 		multiUpdateOnSameTable:    multiUpdateOnSameTable,
+		isMultiTable:              v.IsMultiTable,
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
 		assignFlag:                assignFlag,

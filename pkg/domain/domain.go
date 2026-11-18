@@ -1384,6 +1384,7 @@ const serverIDForStandalone = 1 // serverID for standalone deployment.
 func (do *Domain) Init(
 	sysExecutorFactory func(*Domain) (pools.Resource, error),
 	ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker,
+	infoSyncerOptions ...infosync.SyncerOption,
 ) error {
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
@@ -1455,7 +1456,7 @@ func (do *Domain) Init(
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
 		do.etcdClient, do.unprefixedEtcdCli, pdCli, pdHTTPCli,
-		do.Store().GetCodec(), skipRegisterToDashboard, do.infoCache)
+		do.Store().GetCodec(), skipRegisterToDashboard, do.infoCache, infoSyncerOptions...)
 	if err != nil {
 		return err
 	}
@@ -1663,6 +1664,10 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	if err != nil {
 		return err
 	}
+	if serverInfo.DisableRPC {
+		variable.SetEnableAdaptiveReplicaRead(false)
+		return nil
+	}
 	zone := ""
 	for k, v := range serverInfo.Labels {
 		if k == placement.DCLabelKey && v != "" {
@@ -1707,6 +1712,9 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	}
 	svrIDsInThisZone := make([]string, 0)
 	for _, s := range servers {
+		if s.DisableRPC {
+			continue
+		}
 		if v, ok := s.Labels[placement.DCLabelKey]; ok && v != "" {
 			if _, ok := storeZones[v]; ok {
 				storeZones[v]++
