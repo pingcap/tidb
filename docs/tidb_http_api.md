@@ -613,6 +613,8 @@ timezone.*
 
 30. Get statistics data of specific table and timestamp.
 
+     This API depends on historical statistics, which are deprecated and will be removed in a future release.
+
      ```shell
      curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyyMMddHHmmss}
      ```
