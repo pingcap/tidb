@@ -573,7 +573,7 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 				return err
 			}
 		}
-		if err := rc.checkNoNullInUpgradedNullableColumns(ctx, db.TemporaryName.L, dbName, tableName, ti, downstreamTable); err != nil {
+		if err := rc.checkNoNullInUpgradedNullableColumns(ctx, db.TemporaryName.L, dbName, tableName, ti, db.ExistingTables[tableName]); err != nil {
 			return err
 		}
 		// target column order may different with source cluster
@@ -669,7 +669,7 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, co
 					col.Name, col.FieldType.String())
 			}
 			backupFieldType := backupCol.FieldType
-			if isUpgradedNullableSystemTableColumn(decodedSysDBName.L, backupTi.Name.L, col.Name.L, backupCol, col) {
+			if isUpgradedNullableSystemTableColumn(mysql.SystemDB, backupTi.Name.L, col.Name.L, backupCol, col) {
 				// The logical restore refuses a NULL in such a column before it
 				// copies the rows.
 				log.Warn("nullable column in backup data is NOT NULL in cluster",
