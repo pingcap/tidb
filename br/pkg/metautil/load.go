@@ -50,15 +50,16 @@ func (db *Database) GetTable(name string) *Table {
 // LoadBackupTables loads schemas from BackupMeta.
 func LoadBackupTables(ctx context.Context, reader *MetaReader, loadStats bool) (map[string]*Database, error) {
 	ch := make(chan *Table)
-	errCh := make(chan error)
+	errCh := make(chan error, 1)
+	done := make(chan struct{})
+	defer func() { <-done }()
 	go func() {
+		defer close(done)
 		var opts []ReadSchemaOption
 		if !loadStats {
 			opts = []ReadSchemaOption{SkipStats}
 		}
-		if err := reader.ReadSchemasFiles(ctx, ch, opts...); err != nil {
-			errCh <- errors.Trace(err)
-		}
+		errCh <- reader.ReadSchemasFiles(ctx, ch, opts...)
 		close(ch)
 	}()
 
@@ -67,11 +68,11 @@ func LoadBackupTables(ctx context.Context, reader *MetaReader, loadStats bool) (
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case err := <-errCh:
-			return nil, errors.Trace(err)
 		case table, ok := <-ch:
 			if !ok {
-				close(errCh)
+				if err := <-errCh; err != nil {
+					return nil, errors.Trace(err)
+				}
 				return databases, nil
 			}
 			dbName := table.DB.Name.String()
