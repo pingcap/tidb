@@ -932,6 +932,14 @@ fn find_statement_table<'catalog>(
                     statement.table
                 )));
             }
+            // Go master `CheckMViewReadable` in `buildAnalyzeTable`.
+            let vars = tidb_planner::util::MViewSessionVars::of(&*statement.eval_context);
+            tidb_planner::util::check_mview_readable(&vars, &table.read(), &statement.table).map_err(|error| {
+                match error.kind() {
+                    tidb_planner_core_base::PlanErrorKind::Mysql(error) => ClusterAnalyzeError::Mysql(error.clone()),
+                    _ => ClusterAnalyzeError::Other(error.message().to_owned()),
+                }
+            })?;
             Ok(table)
         })
 }

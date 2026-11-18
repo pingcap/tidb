@@ -1298,6 +1298,7 @@ pub fn build_create_materialized_view_data(
     sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     build: &MViewBuild,
 ) -> Result<u64, tidb_terror::MysqlError> {
+    tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/pauseCreateMaterializedViewBuild", |_| {});
     if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr").is_some() {
         return Err(tidb_terror::MysqlError::unknown("mock create materialized view build error"));
     }

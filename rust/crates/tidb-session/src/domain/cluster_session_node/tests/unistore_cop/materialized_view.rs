@@ -486,6 +486,72 @@ fn create_materialized_view_answers_as_go_master() {
 /// (`mockCreateMaterializedViewBuildErr`): the statement fails with the
 /// build's error, and the view, its refresh rows and its entries in the base
 /// table and the log are gone.
+/// Go master `TestCreateMaterializedViewRefreshInfoRunningAndSuccess`:
+/// while the initial build runs, the refresh-info row already holds the
+/// build's read TSO, ANALYZE (`buildAnalyzeTable`'s `CheckMViewReadable`)
+/// and both refresh forms refuse the view, and no refresh source is
+/// registered; once the build finishes, the view reads, its source is
+/// registered, ANALYZE runs and the refresh-info TSO moved forward.
+#[test]
+fn create_materialized_view_refresh_info_running_and_success() {
+    let (stack, _users, mut root) = go_master_mview_stack();
+    mv_setup(&mut root, &[
+        "use test",
+        "set tidb_mview_enable = ON",
+        "create table t (a int not null, b int not null)",
+        "insert into t values (1, 10), (1, 5), (2, 7)",
+        "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+    ]);
+    let pause = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/ddl/pauseCreateMaterializedViewBuild", "pause");
+    let mut ddl = stack.factory.open_session(session_context(2140)).unwrap();
+    mv_setup(&mut ddl, &["use test", "set tidb_mview_enable = ON"]);
+    let ddl_done = std::thread::spawn(move || {
+        answer(
+            &mut ddl,
+            "create materialized view mv_state (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a",
+        )
+    });
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let (mview_id, init_ts) = loop {
+        let rows = answer(&mut root, "select MVIEW_ID, LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info");
+        let rows: Vec<Vec<Option<String>>> = serde_json::from_str(rows.strip_prefix("RS:").unwrap_or("[]")).unwrap_or_default();
+        if let [row] = rows.as_slice() {
+            if let (Some(Ok(id)), Some(Ok(ts))) =
+                (row[0].as_deref().map(str::parse::<i64>), row[1].as_deref().map(str::parse::<u64>))
+            {
+                if id != 0 && ts != 0 {
+                    break (id, ts);
+                }
+            }
+        }
+        assert!(std::time::Instant::now() < deadline, "the initial build never registered its refresh info");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+
+    let refused = answer(&mut root, "analyze table mv_state");
+    assert!(refused.contains("initial build is in progress"), "{refused}");
+    for sql in ["refresh materialized view mv_state fast", "refresh materialized view mv_state complete in place"] {
+        let refused = answer(&mut root, sql);
+        assert!(refused.contains("initial build is in progress"), "{sql}: {refused}");
+    }
+    assert_eq!(
+        answer(&mut root, &format!("select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = {mview_id}")),
+        r#"RS:[["0"]]"#
+    );
+    drop(pause);
+    assert_eq!(ddl_done.join().unwrap(), "OK");
+    assert_eq!(answer(&mut root, "select a, s, cnt from mv_state order by a"), r#"RS:[["1","15","2"],["2","7","1"]]"#);
+    assert_eq!(
+        answer(&mut root, &format!("select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = {mview_id}")),
+        r#"RS:[["1"]]"#
+    );
+    assert_eq!(answer(&mut root, "analyze table mv_state"), "OK");
+    let final_ts = answer(&mut root, &format!("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = {mview_id}"));
+    let final_ts: u64 = serde_json::from_str::<Vec<Vec<String>>>(final_ts.strip_prefix("RS:").unwrap()).unwrap()[0][0].parse().unwrap();
+    assert!(final_ts > init_ts, "{final_ts} > {init_ts}");
+}
+
 #[test]
 fn create_materialized_view_rolls_back_a_failed_build() {
     let (stack, mut session) = replay_go_master(
