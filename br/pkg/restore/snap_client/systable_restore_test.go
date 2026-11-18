@@ -394,9 +394,10 @@ func TestCheckPrivilegeTableRowsCollateCompatibility(t *testing.T) {
 		{"columns_priv", CreateColumnSQL, "Host, DB, User, Table_name, Column_name", "('%','test','newroot','ta1','ca1'),('%','Test','newroot','ta1','ca1')"},
 	} {
 		t.Run(cs.name, func(t *testing.T) {
+			mse := &mustExecuteSession{ctx, se, t}
 			mse.MustExecute(cs.createSQL)
 			defer mse.MustExecute("DROP TABLE __TiDB_BR_Temporary_mysql." + cs.name)
-			upstream, err := restore.GetTableSchema(cluster.Domain, ast.NewCIStr("__TiDB_BR_Temporary_mysql"), ast.NewCIStr(cs.name))
+			upstream, err := restore.GetTableSchema(cluster.Domain, pmodel.NewCIStr("__TiDB_BR_Temporary_mysql"), pmodel.NewCIStr(cs.name))
 			require.NoError(t, err)
 			downstream := upstream.Clone()
 			// Column order may differ between the backup and the destination.
