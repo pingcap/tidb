@@ -64,7 +64,13 @@ func calculateSum(ctx types.Context, sum, v types.Datum) (data types.Datum, err 
 
 	switch v.Kind() {
 	case types.KindNull:
-	case types.KindInt64, types.KindUint64:
+	// BIT columns evaluate to a KindMysqlBit datum, and SUM/AVG over BIT
+	// returns DECIMAL (see typeInfer4Sum/typeInfer4Avg), so the partial
+	// sum must be a decimal datum too. Otherwise the partial result would
+	// be a float64 datum stored in a DECIMAL-typed column, and the final
+	// stage would decode it as a decimal and get a wrong value.
+	// See https://github.com/pingcap/tidb/issues/72740.
+	case types.KindInt64, types.KindUint64, types.KindMysqlBit:
 		var d *types.MyDecimal
 		d, err = v.ToDecimal(ctx)
 		if err == nil {

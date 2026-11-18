@@ -1120,3 +1120,15 @@ WHERE `f` >= 1753632000
   AND `f` <= 1753718399
   AND `g` = 0
 GROUP BY `a`, left(FROM_UNIXTIME(e), 10);
+
+# TestSumAvgOnBitColumn: SUM/AVG over a BIT column must return an exact
+# DECIMAL, not a DOUBLE which silently rounds values above 2^53.
+# See https://github.com/pingcap/tidb/issues/72740.
+drop table if exists t_bit_sum;
+create table t_bit_sum (g int, b bit(64));
+insert into t_bit_sum values (1, 9007199254740993),(1, 1);
+select g, sum(b), sum(b+0) from t_bit_sum group by g;
+select g, avg(b) from t_bit_sum group by g;
+select g, sum(distinct b) from t_bit_sum group by g;
+select g, sum(b) from t_bit_sum group by g having sum(b) = 9007199254740994;
+drop table if exists t_bit_sum;
