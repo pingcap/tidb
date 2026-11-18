@@ -124,7 +124,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a
-	github.com/tikv/client-go/v2 v2.0.8-0.20261027104816-348a939fb4b6
+	github.com/tikv/client-go/v2 v2.0.8-0.20261029152027-3f9d5b43e9e5
 	github.com/tikv/pd/client v0.0.0-20261028135905-3150b0b95aa1
 	github.com/timakin/bodyclose v0.0.0-20260723120731-857993a2939c
 	github.com/twmb/murmur3 v1.1.6
