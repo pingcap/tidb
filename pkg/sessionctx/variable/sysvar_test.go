@@ -1620,6 +1620,11 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 		},
 		{TiDBAnalyzeSampledNDVThreshold, "0", "100000000"},
 		{
+			TiDBEnableAdaptiveLimitScan,
+			BoolToOnOff(DefTiDBEnableAdaptiveLimitScan),
+			On,
+		},
+		{
 			TiDBRowFormatVersion,
 			strconv.Itoa(DefTiDBRowFormatV1),
 			strconv.Itoa(DefTiDBRowFormatV2),

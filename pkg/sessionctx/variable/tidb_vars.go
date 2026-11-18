@@ -1946,3 +1946,9 @@ func mustParseTime(layout string, str string) time.Time {
 
 	return time
 }
+
+// TiDBEnableAdaptiveLimitScan enables statement-local admission control for ordered LIMIT scans.
+const TiDBEnableAdaptiveLimitScan = "tidb_enable_adaptive_limit_scan"
+
+// DefTiDBEnableAdaptiveLimitScan is OFF for existing clusters; fresh bootstrap enables it.
+const DefTiDBEnableAdaptiveLimitScan = false

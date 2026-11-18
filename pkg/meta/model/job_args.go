@@ -1362,7 +1362,13 @@ type IndexArg struct {
 	ConditionString string `json:"condition_string,omitempty"`
 
 	// Only used for job args v2.
-	SplitOpt *IndexArgSplitOpt `json:"split_opt,omitempty"`
+	// Old DDL owners may ignore AutoPreSplit during rolling upgrades;
+	// this best-effort optimization does not affect correctness.
+	// AutoPreSplit must be separate from SplitOpt. Otherwise, an old DDL owner
+	// ignores the unknown auto field, treats the non-nil empty SplitOpt as a
+	// manual split, and rejects the add-index job.
+	AutoPreSplit bool              `json:"auto_presplit,omitempty"`
+	SplitOpt     *IndexArgSplitOpt `json:"split_opt,omitempty"`
 }
 
 // IndexArgSplitOpt is a field of IndexArg used by index presplit.
