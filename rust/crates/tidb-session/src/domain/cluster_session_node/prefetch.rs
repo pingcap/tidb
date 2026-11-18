@@ -29,7 +29,7 @@ impl ClusterServerSession<'_> {
     /// interrupted; any other lock failure is only logged, as Go's.
     pub fn prefetch_point_plan_keys(&mut self, statements: &[String], sqls: &str) -> Result<(), SqlQueryError> {
         self.session.prefetched_point_plans.clear();
-        let Some(transaction) = self.node.txn.explicit.as_ref() else {
+        let Some(transaction) = self.node.txn.explicit() else {
             return Ok(());
         };
         // Only prefetch in-transaction query for simplicity.
@@ -82,7 +82,7 @@ impl ClusterServerSession<'_> {
         if idx_keys.is_empty() && row_keys.is_empty() {
             return Ok(());
         }
-        let transaction = self.node.txn.explicit.as_ref().expect("checked above");
+        let transaction = self.node.txn.explicit().expect("checked above");
         let mut snapshot = transaction.snapshot().map_err(SqlQueryError::unknown)?;
         set_resource_group_tagger_for_multi_stmt_prefetch(snapshot.as_mut(), sqls);
         let to_keys = |keys: &[Vec<u8>]| keys.iter().cloned().map(tidb_txnkv::Key::from_bytes).collect::<Vec<_>>();

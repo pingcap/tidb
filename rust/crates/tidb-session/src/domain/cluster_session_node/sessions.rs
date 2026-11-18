@@ -919,7 +919,7 @@ impl tidb_syssession::SessionContext for ClusterStatsSessionContext {
     }
 
     fn txn_valid(&self) -> Result<bool, tidb_sqlexec::SqlExecError> {
-        self.with_session(|session| Ok(session.node.txn.explicit.is_some()))
+        self.with_session(|session| Ok(session.node.txn.explicit().is_some()))
     }
 
     fn sql_executor(&self) -> Arc<dyn tidb_sqlexec::SqlExecutor> {
@@ -1111,7 +1111,7 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
 
     fn transaction_start_ts(&self, active: bool) -> Result<u64, tidb_sqlexec::SqlExecError> {
         self.with_session(|session| {
-            if let Some(transaction) = session.node.txn.explicit.as_ref() {
+            if let Some(transaction) = session.node.txn.explicit() {
                 return Ok(transaction.start_ts());
             }
             if active {
@@ -1253,7 +1253,7 @@ impl tidb_ddl_session::SessionContext for ClusterStatsSessionContext {
         _active: bool,
     ) -> tidb_ddl_session::Result<Option<Arc<dyn tidb_ddl_session::Transaction>>> {
         self.with_session(|session| {
-            Ok(session.node.txn.explicit.as_ref().map(|transaction| {
+            Ok(session.node.txn.explicit().map(|transaction| {
                 Arc::new(NodeDdlTransaction {
                     start_ts: transaction.start_ts(),
                 }) as Arc<dyn tidb_ddl_session::Transaction>

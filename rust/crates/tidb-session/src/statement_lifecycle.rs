@@ -190,13 +190,13 @@ impl StatementLifecycle<'_> {
     /// read and read back by its publication after the read handle is gone --
     /// autocommit publishes THERE, not at a fresh one, see `StatementReadTs`.
     pub fn begin_statement_scope(&mut self, notify_executor_breakpoint: bool) -> StatementScope {
-        let autocommit = self.txn.explicit.is_none() && self.session.historical_read_ts().is_none();
+        let autocommit = self.txn.explicit().is_none() && self.session.historical_read_ts().is_none();
         if autocommit {
             self.session.current_tso().clear();
         }
         // Go `ActivateTxn` for a transaction outside `BEGIN`: the last
         // transaction's footprint tracker goes.
-        if self.txn.explicit.is_none() {
+        if self.txn.explicit().is_none() {
             self.session.detach_mem_db_footprint();
         }
         // Go `session.Txn(true)` -> `SetMemoryFootprintChangeHook`, once per
@@ -253,7 +253,7 @@ impl StatementLifecycle<'_> {
         // execution; their keys reach the owner's lock step, which flags
         // them as Go's optimistic `LockKeys` does.
         self.session
-            .set_selected_lock_keys(self.txn.explicit.as_ref().map(|transaction| {
+            .set_selected_lock_keys(self.txn.explicit().map(|transaction| {
                 tidb_sessionctx::select_lock::SelectedLockKeys::new(
                     tidb_txnkv::transaction::LockWaitTime::Timeout(
                         self.session.lock_wait_timeout(),
@@ -310,7 +310,7 @@ impl StatementLifecycle<'_> {
                     // An autocommit attempt's failure ended its transaction
                     // and reset the whole buffer; the replay is a new
                     // transaction with a statement checkpoint of its own.
-                    if self.txn.explicit.is_none() {
+                    if self.txn.explicit().is_none() {
                         savepoint = self.txn.buffer().checkpoint();
                     }
                 }
@@ -319,7 +319,7 @@ impl StatementLifecycle<'_> {
         self.session.set_retrying_statement(false);
         self.session.end_external_mpp_query_scope(outcome.is_err());
         if outcome.is_ok()
-            && self.txn.explicit.is_some()
+            && self.txn.explicit().is_some()
             && self.txn.lazy_uniqueness_check_enabled()
         {
             self.txn.buffer().preserve_statement_presumptions(savepoint);
@@ -363,8 +363,7 @@ impl StatementLifecycle<'_> {
             && (is_dml || shape == StatementReadShape::LockingRead)
             && self
                 .txn
-                .explicit
-                .as_ref()
+                .explicit()
                 .is_some_and(|txn| txn.is_pessimistic())
             && self.session.in_transaction()
             && !self.session.pessimistic_constraint_check_in_place()
@@ -429,7 +428,7 @@ impl StatementLifecycle<'_> {
         run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
         read_ts: &transactions::StatementReadTs,
     ) -> Result<T, SqlQueryError> {
-        if let Some(transaction) = self.txn.explicit.as_ref() {
+        if let Some(transaction) = self.txn.explicit() {
             transaction
                 .set_resource_group_name(resource_group)
                 .map_err(SqlQueryError::unknown)?;
@@ -453,7 +452,7 @@ impl StatementLifecycle<'_> {
             // Selected rows belong to this execution attempt, not an earlier
             // plan or a partially executed failed read.
             self.session.take_selected_lock_keys();
-            if let Some(transaction) = self.txn.explicit.as_ref() {
+            if let Some(transaction) = self.txn.explicit() {
                 let _ = transaction.take_statement_lock_failure();
             }
             // Go `decideTxnMode`: under the default `pessimistic-auto-commit =
@@ -467,7 +466,7 @@ impl StatementLifecycle<'_> {
             // (`tryUpdatePointPlan`) and locks it inside execution with the
             // session's `LockWaitTimeout` (`getLockWaitTime`).
             let autocommit_write =
-                self.txn.explicit.is_none() && shape == StatementReadShape::AutocommitWrite;
+                self.txn.explicit().is_none() && shape == StatementReadShape::AutocommitWrite;
             let autocommit_pessimistic =
                 autocommit_write && self.autocommit_write_is_pessimistic(retrying);
             if autocommit_write {
@@ -501,7 +500,7 @@ impl StatementLifecycle<'_> {
             // that activation; a failed open is reported by the read or
             // commit that follows.
             if self.activate_statement_txn
-                && self.txn.explicit.is_none()
+                && self.txn.explicit().is_none()
                 && shape != StatementReadShape::AutocommitWrite
             {
                 let _ = self
@@ -515,7 +514,7 @@ impl StatementLifecycle<'_> {
             // inside a pending `autocommit = 0` transaction that is its
             // activation.
             if self.activate_statement_txn {
-                if let Some(transaction) = self.txn.explicit.as_ref() {
+                if let Some(transaction) = self.txn.explicit() {
                     if let Err(error) = transaction.activate() {
                         let _ = self.finish_snapshot();
                         break Err(SqlQueryError::unknown(error));
@@ -535,7 +534,7 @@ impl StatementLifecycle<'_> {
             // for the transaction an autocommit statement ends: recorded
             // only when the statement activated one (`TxnCtx.StartTS != 0`),
             // before the commit whose hook overwrites it.
-            if self.txn.explicit.is_none() && self.session.historical_read_ts().is_none() {
+            if self.txn.explicit().is_none() && self.session.historical_read_ts().is_none() {
                 if let Some(start_ts) = read_ts.get() {
                     self.session.record_started_txn_info(start_ts);
                 }
@@ -543,7 +542,7 @@ impl StatementLifecycle<'_> {
             // Go `TxnCtx.GetForUpdateTS` as the statement left it: a deferred
             // handle advances the for-update timestamp at its first read,
             // after the open published the transaction's earlier one.
-            if let Some(transaction) = self.txn.explicit.as_ref() {
+            if let Some(transaction) = self.txn.explicit() {
                 self.session
                     .current_for_update_ts()
                     .publish(transaction.for_update_ts());
@@ -567,7 +566,7 @@ impl StatementLifecycle<'_> {
                                 }
                             }
                         }
-                        Ok(PessimisticStep::Retry { .. }) if self.txn.explicit.is_none() => {
+                        Ok(PessimisticStep::Retry { .. }) if self.txn.explicit().is_none() => {
                             // The autocommit statement's lock found a newer
                             // committed version of a key it wrote: as for its
                             // locking reads, the replay is a new implicit
@@ -609,7 +608,7 @@ impl StatementLifecycle<'_> {
                         // transaction, `session.CommitTxn` ->
                         // `session.doCommitWithRetry`.
                         let ends_transaction =
-                            self.txn.explicit.is_none() && !self.session.in_transaction();
+                            self.txn.explicit().is_none() && !self.session.in_transaction();
                         let _commit = ends_transaction.then(|| {
                             (
                                 tidb_tracing::begin_thread_region_scope("session.CommitTxn"),
@@ -641,7 +640,7 @@ impl StatementLifecycle<'_> {
                         self.session
                             .retract_statement_failure(error.code, &error.message);
                     }
-                    if self.txn.explicit.is_none()
+                    if self.txn.explicit().is_none()
                         && matches!(failure, Some(StatementLockFailure::Retry { .. }))
                     {
                         // The autocommit statement's lock found a newer
@@ -699,12 +698,12 @@ impl StatementLifecycle<'_> {
             // Go `autoCommitAfterStmt`: a statement that failed outside a
             // transaction is rolled back under `session.RollbackTxn`.
             let _rollback_txn =
-                (!committing && self.txn.explicit.is_none() && !self.session.in_transaction())
+                (!committing && self.txn.explicit().is_none() && !self.session.in_transaction())
                     .then(|| tidb_tracing::start_thread_region_ex("session.RollbackTxn"));
             self.txn.rollback_implicit();
             // Cancel the client's active fair scope. Ordinary locks remain
             // transaction-owned, following Go StmtRollback.
-            if let Some(transaction) = self.txn.explicit.as_ref() {
+            if let Some(transaction) = self.txn.explicit() {
                 let _ = transaction.finish_pessimistic_statement(false);
                 // The statement's writes go; the transaction keeps its
                 // earlier writes and native lock ownership.
@@ -815,8 +814,7 @@ impl StatementLifecycle<'_> {
     fn lock_optimistic_statement_keys(&mut self) {
         if self
             .txn
-            .explicit
-            .as_ref()
+            .explicit()
             .is_none_or(|transaction| transaction.is_pessimistic())
         {
             return;
@@ -921,7 +919,7 @@ impl StatementLifecycle<'_> {
             && !self.session.vars().batch_insert()
             && could_retry
             && retried < self.autocommit_retry_budget()
-            && self.txn.explicit.is_none()
+            && self.txn.explicit().is_none()
     }
 
     /// Go's autocommit retry budget: `@@tidb_retry_limit` (default 10),
@@ -1048,7 +1046,7 @@ impl StatementLifecycle<'_> {
         resource_group: &str,
         read_ts: &transactions::StatementReadTs,
     ) {
-        if self.txn.explicit.is_some() {
+        if self.txn.explicit().is_some() {
             return;
         }
         // Go's staleness provider starts a `TxnCtx` it never marks retryable.
@@ -1087,7 +1085,7 @@ impl StatementLifecycle<'_> {
         shape: StatementReadShape,
         resource_group: &str,
     ) -> Result<ReadStatement, SqlQueryError> {
-        if let Some(transaction) = &self.txn.explicit {
+        if let Some(transaction) = self.txn.explicit() {
             transaction
                 .set_resource_group_name(resource_group)
                 .map_err(SqlQueryError::unknown)?;
@@ -1097,8 +1095,7 @@ impl StatementLifecycle<'_> {
         if shape == StatementReadShape::LockingRead
             && self
                 .txn
-                .explicit
-                .as_ref()
+                .explicit()
                 .is_some_and(|transaction| !transaction.is_pessimistic())
         {
             self.session.set_selected_lock_keys(Some(
@@ -1147,7 +1144,7 @@ impl StatementLifecycle<'_> {
                 self.session.record_started_txn_info(start_ts);
             }
         }
-        if success && self.txn.explicit.is_some() {
+        if success && self.txn.explicit().is_some() {
             self.lock_optimistic_statement_keys();
         }
         let result = if success {
@@ -1195,7 +1192,7 @@ impl StatementLifecycle<'_> {
     /// line: an `explicit` the session no longer believes in is always one to
     /// publish.
     pub fn commit_if_session_left_transaction(&mut self) -> Result<(), SqlQueryError> {
-        if self.txn.explicit.is_none() || self.session.in_transaction() {
+        if self.txn.explicit().is_none() || self.session.in_transaction() {
             return Ok(());
         }
         self.commit_explicit()

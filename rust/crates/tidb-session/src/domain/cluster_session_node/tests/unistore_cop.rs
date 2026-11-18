@@ -3828,7 +3828,7 @@ fn session_activation_checks_existence_for_pessimistic_locks() {
             // then stages them. Both absent and existing records must survive
             // the native client's assertion check from the lock metadata.
             super::super::transactions::stage_pessimistic_statement(
-                session.node().txn.explicit.as_deref().unwrap(),
+                session.node().txn.explicit().as_deref().unwrap(),
                 &session.node().buffer,
                 session.lock_wait_timeout(),
                 |_, _| {
@@ -14516,7 +14516,7 @@ fn deferred_uniqueness_batch_terminal_dml_error_aborts_prior_writes() {
         Some(tidb_exeerrors::ERR_LAZY_UNIQUENESS_CHECK_FAILURE.identity())
     );
     assert!(!session.in_transaction());
-    assert!(session.node().txn.explicit.is_none());
+    assert!(session.node().txn.explicit().is_none());
     assert!(session.node().buffer.is_empty());
     assert!(rows(&mut session, "SELECT * FROM t").is_empty());
     rows(&mut session, "INSERT INTO t VALUES (2)");
@@ -14628,7 +14628,7 @@ fn deferred_uniqueness_batch_binary_prepared_dml_shares_abort_policy() {
     };
     assert_eq!(error.code, 8147, "{error:?}");
     assert!(!session.in_transaction());
-    assert!(session.node().txn.explicit.is_none());
+    assert!(session.node().txn.explicit().is_none());
     assert!(session.node().buffer.is_empty());
     assert!(rows(&mut session, "SELECT * FROM t").is_empty());
 }

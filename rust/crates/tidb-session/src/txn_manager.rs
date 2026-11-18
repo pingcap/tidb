@@ -126,6 +126,23 @@ impl ProviderSessionVars for ActivationVars<'_> {
     }
 }
 
+/// What the session's one transaction is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TxnKind {
+    /// Entered by `BEGIN` or an `autocommit = 0` statement (Go `InTxn()`).
+    Explicit,
+    /// An autocommit INSERT / UPDATE / DELETE's implicit transaction.
+    ImplicitWrite,
+    /// An autocommit read's implicit transaction, ended without a commit.
+    ImplicitRead,
+}
+
+/// The entered transaction and what it is.
+struct EnteredTxn {
+    kind: TxnKind,
+    txn: Box<dyn OpenClusterTransaction>,
+}
+
 /// See the module documentation.
 pub struct TxnManager {
     transactions: Arc<dyn ClusterTransactions>,
@@ -134,18 +151,11 @@ pub struct TxnManager {
     /// The session's staged writes: a handle shared with the tables it reads
     /// and writes through.
     buffer: MutationBuffer,
-    /// The transaction a `BEGIN` holds open, or the pending one an
-    /// `autocommit = 0` statement entered. `None` is autocommit, where a
-    /// statement prepares a timestamp of its own after planning and waits for
-    /// it at its first read.
-    pub explicit: Option<Box<dyn OpenClusterTransaction>>,
-    /// Go's `LazyTxn` while an autocommit INSERT / UPDATE / DELETE runs: the
-    /// statement's implicit transaction, pending on its timestamp future
-    /// (Go `txnFuture`) until a read, a lock or the commit activates it,
-    /// and committed or rolled back when the statement ends.
-    implicit: Option<Box<dyn OpenClusterTransaction>>,
-    /// Whether `implicit` is an autocommit read's (ended without a commit).
-    implicit_read: bool,
+    /// Go's one `LazyTxn`: the transaction a `BEGIN` holds open (or the
+    /// pending one an `autocommit = 0` statement entered), or an autocommit
+    /// statement's implicit one, pending on its timestamp future (Go
+    /// `txnFuture`) until a read, a lock or the commit activates it.
+    txn: Option<EnteredTxn>,
     /// Go `LazyTxn` captures this policy when the transaction becomes valid.
     lazy_uniqueness_check_enabled: bool,
     /// Held from `BEGIN` to `COMMIT`/`ROLLBACK`.
@@ -163,7 +173,7 @@ pub struct TxnManager {
 impl TxnManager {
     /// Go `LazyTxn.GoString`.
     pub fn go_string(&self) -> String {
-        match &self.explicit {
+        match self.explicit() {
             None => "Txn{state=invalid}".into(),
             Some(txn) => match txn.start_ts_if_active() {
                 Some(ts) => format!("Txn{{state=valid, txnStartTS={ts}}}"),
@@ -185,9 +195,7 @@ impl TxnManager {
             schema_pins,
             connection_id,
             buffer,
-            explicit: None,
-            implicit: None,
-            implicit_read: false,
+            txn: None,
             lazy_uniqueness_check_enabled: false,
             pin: None,
             could_retry: false,
@@ -213,7 +221,37 @@ impl TxnManager {
     /// write's implicit one (Go's one `LazyTxn`).
     #[must_use]
     pub fn current(&self) -> Option<&dyn OpenClusterTransaction> {
-        self.explicit.as_deref().or(self.implicit.as_deref())
+        self.txn.as_ref().map(|entered| &*entered.txn)
+    }
+
+    /// The explicit transaction: Go's `LazyTxn` while `InTxn()`.
+    #[must_use]
+    pub fn explicit(&self) -> Option<&dyn OpenClusterTransaction> {
+        self.txn
+            .as_ref()
+            .filter(|entered| entered.kind == TxnKind::Explicit)
+            .map(|entered| &*entered.txn)
+    }
+
+    fn set_explicit(&mut self, txn: Box<dyn OpenClusterTransaction>) {
+        // An autocommit statement ends its implicit transaction before the
+        // next statement enters one.
+        debug_assert!(self.txn.is_none(), "a transaction entered over another");
+        self.txn = Some(EnteredTxn { kind: TxnKind::Explicit, txn });
+    }
+
+    /// Ends the explicit transaction's hold on the slot (its commit or
+    /// rollback follows).
+    pub fn take_explicit(&mut self) -> Option<Box<dyn OpenClusterTransaction>> {
+        self.explicit()?;
+        self.txn.take().map(|entered| entered.txn)
+    }
+
+    fn take_implicit(&mut self) -> Option<Box<dyn OpenClusterTransaction>> {
+        if self.explicit().is_some() {
+            return None;
+        }
+        self.txn.take().map(|entered| entered.txn)
     }
 
     /// Go `PrepareTxnCtx` for an autocommit INSERT / UPDATE / DELETE: the
@@ -231,8 +269,7 @@ impl TxnManager {
     ) {
         let pending =
             self.transactions.prepare_autocommit_write(resource_group, pessimistic, fair_locking, options.clone());
-        self.implicit_read = false;
-        self.enter_implicit(pessimistic, pending, options, read_ts);
+        self.enter_implicit(TxnKind::ImplicitWrite, pessimistic, pending, options, read_ts);
     }
 
     /// Go `PrepareTxnCtx` for an autocommit read: the same implicit
@@ -247,12 +284,12 @@ impl TxnManager {
         read_ts: tidb_domain_core::cluster_transactions::StatementReadTs,
     ) {
         let pending = self.transactions.prepare_autocommit_read(resource_group, low_resolution, options.clone());
-        self.implicit_read = true;
-        self.enter_implicit(false, pending, options, read_ts);
+        self.enter_implicit(TxnKind::ImplicitRead, false, pending, options, read_ts);
     }
 
     fn enter_implicit(
         &mut self,
+        kind: TxnKind,
         pessimistic: bool,
         pending: Result<Box<dyn tidb_domain_core::cluster_transactions::PendingClusterTransaction>, String>,
         options: SessionTransactionOptions,
@@ -266,18 +303,19 @@ impl TxnManager {
             read_ts.record(transaction.start_ts());
             Ok(transaction)
         });
-        self.implicit = Some(Box::new(if self.implicit_read {
+        let txn: Box<dyn OpenClusterTransaction> = Box::new(if kind == TxnKind::ImplicitRead {
             LazyClusterTransaction::new_implicit_read(options, self.buffer.clone(), opener)
         } else {
             LazyClusterTransaction::new_implicit(pessimistic, options, self.buffer.clone(), opener)
-        }));
+        });
+        debug_assert!(self.txn.is_none(), "a transaction entered over another");
+        self.txn = Some(EnteredTxn { kind, txn });
     }
 
     /// Go `RollbackTxn` for an autocommit statement that failed or is
     /// replayed: the implicit transaction ends without publishing.
     pub fn rollback_implicit(&mut self) {
-        self.implicit_read = false;
-        if let Some(transaction) = self.implicit.take() {
+        if let Some(transaction) = self.take_implicit() {
             let _ = transaction.rollback();
         }
     }
@@ -380,7 +418,7 @@ impl TxnManager {
         resource_group: &str,
         schema_version: i64,
     ) {
-        if self.explicit.is_some() || session.is_autocommit() {
+        if self.explicit().is_some() || session.is_autocommit() {
             return;
         }
         self.enter_pending(session, resource_group, schema_version);
@@ -416,7 +454,7 @@ impl TxnManager {
             }
             Ok(transaction)
         });
-        self.explicit = Some(Box::new(LazyClusterTransaction::new(
+        self.set_explicit(Box::new(LazyClusterTransaction::new(
             pessimistic,
             Self::statement_transaction_options(session),
             self.buffer.clone(),
@@ -469,7 +507,7 @@ impl TxnManager {
         if let Some(observer) = session.transaction_observer() {
             observer.activated(transaction.start_ts());
         }
-        self.explicit = Some(transaction);
+        self.set_explicit(transaction);
         self.pin_schema(session, schema_version);
         Ok(())
     }
@@ -486,7 +524,7 @@ impl TxnManager {
         schema_version: i64,
     ) -> Result<Option<BufferCheckpoint>, SqlQueryError> {
         self.enter_if_autocommit_off(session, resource_group, schema_version);
-        let Some(transaction) = self.explicit.as_ref() else {
+        let Some(transaction) = self.explicit() else {
             return Ok(None);
         };
         transaction.activate().map_err(SqlQueryError::unknown)?;
@@ -600,14 +638,15 @@ impl TxnManager {
         read_ts: Option<u64>,
         resource_group: &str,
     ) -> Result<(), SqlQueryError> {
-        if self.explicit.is_some() || session.in_transaction() {
+        if self.explicit().is_some() || session.in_transaction() {
             return Ok(());
         }
-        let mut write_transaction = self.implicit.take();
+        let read_only = self.txn.as_ref().is_some_and(|entered| entered.kind == TxnKind::ImplicitRead);
+        let mut write_transaction = self.take_implicit();
         // Go commits a read-only transaction by doing nothing that reaches
         // the store. An autocommit read's implicit transaction is read-only;
         // whatever a non-DML statement staged publishes as before.
-        if std::mem::take(&mut self.implicit_read) {
+        if read_only {
             if let Some(transaction) = write_transaction.take() {
                 let _ = transaction.rollback();
             }
@@ -694,7 +733,7 @@ impl TxnManager {
     ) -> Result<(), SqlQueryError> {
         session.current_tso().clear();
         self.pin = None;
-        let Some(mut transaction) = self.explicit.take() else {
+        let Some(mut transaction) = self.take_explicit() else {
             if let Some(observer) = session.transaction_observer() {
                 observer.finished();
             }
@@ -784,7 +823,7 @@ impl TxnManager {
         session.clear_table_delta();
         session.current_tso().clear();
         self.pin = None;
-        let result = match self.explicit.take() {
+        let result = match self.take_explicit() {
             Some(transaction) => {
                 // Go `pkg/session/metrics`: a rolled-back transaction counts
                 // as an abort, and its statement count is observed under the

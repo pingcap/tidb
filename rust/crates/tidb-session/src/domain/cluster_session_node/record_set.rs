@@ -58,8 +58,7 @@ impl<'s> ClusterServerSession<'s> {
             && self
                 .node
                 .txn
-                .explicit
-                .as_ref()
+                .explicit()
                 .is_some_and(|transaction| transaction.is_pessimistic());
         let (opened, snapshot) = if buffers_rows || shape == StatementReadShape::AutocommitWrite {
             // The drained record set of the latest attempt stays here, outside

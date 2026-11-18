@@ -61,7 +61,7 @@ impl CatalogFollower {
     /// and a schema that moved under them would describe rows that timestamp
     /// cannot see. Go holds the transaction's `InfoSchema` for the same reason.
     pub(super) fn rebuild_if_stale(&mut self, session: &mut Session, txn: &TxnManager) {
-        if txn.explicit.is_some() || session.in_transaction() {
+        if txn.explicit().is_some() || session.in_transaction() {
             return;
         }
         self.rebuild(session);

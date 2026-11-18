@@ -471,7 +471,7 @@ impl<'s> ClusterServerSession<'s> {
 
     /// Go `TransactionContext.GetKeyInPessimisticLockCache`.
     pub fn get_key_in_pessimistic_lock_cache(&self, key: &[u8]) -> Option<Vec<u8>> {
-        self.node.txn.explicit.as_ref().and_then(|txn| txn.get_key_in_pessimistic_lock_cache(key))
+        self.node.txn.explicit().and_then(|txn| txn.get_key_in_pessimistic_lock_cache(key))
     }
 
     /// The same session and store half for a shorter borrow, as a step that
@@ -730,7 +730,7 @@ impl<'s> ClusterServerSession<'s> {
     /// Go `Session.Txn().StartTS()` of the transaction [`Self::new_txn`]
     /// opened.
     pub fn explicit_start_ts(&self) -> Option<u64> {
-        self.node.txn.explicit.as_ref().map(|transaction| transaction.start_ts())
+        self.node.txn.explicit().map(|transaction| transaction.start_ts())
     }
 
     /// Go `store.CurrentVersion(kv.GlobalTxnScope).Ver`.
@@ -762,7 +762,7 @@ impl<'s> ClusterServerSession<'s> {
     /// ended the session's transaction leaves no store transaction behind.
     fn end_or_enter_txn(&mut self, stmt: &Stmt) -> Result<(), SqlQueryError> {
         if let Err(error) = self.control_transaction_stmt(stmt) {
-            if self.node.txn.explicit.is_some() && !self.session.in_transaction() {
+            if self.node.txn.explicit().is_some() && !self.session.in_transaction() {
                 self.discard_explicit()?;
             }
             return Err(error);
@@ -775,7 +775,7 @@ impl<'s> ClusterServerSession<'s> {
     /// statement: [`Session::new_txn_in_stmt`] over this session's
     /// transaction manager, when a transaction is open.
     pub fn new_txn_in_stmt(&mut self) -> Result<(), SqlQueryError> {
-        if self.node.txn.explicit.is_none() && !self.session.in_transaction() {
+        if self.node.txn.explicit().is_none() && !self.session.in_transaction() {
             return Ok(());
         }
         let hooks = self.commit_hooks();
@@ -813,7 +813,7 @@ impl<'s> ClusterServerSession<'s> {
             .load_common_global_variables_if_needed()
             .map_err(map_error)?;
         self.rebuild_catalog_if_stale();
-        if read_only && self.node.txn.explicit.is_none() && !self.session.in_transaction() {
+        if read_only && self.node.txn.explicit().is_none() && !self.session.in_transaction() {
             let vars = self.session.vars();
             if vars.snapshot_ts() != 0
                 || vars
@@ -832,7 +832,7 @@ impl<'s> ClusterServerSession<'s> {
         node.txn.set_pending_size_limits(&self.session);
         // Go `SetOptionsOnTxnActive` reads the session values when the
         // transaction activates, so a pending one follows each statement's.
-        if let Some(transaction) = &self.node.txn.explicit {
+        if let Some(transaction) = self.node.txn.explicit() {
             transaction
                 .set_activation_options(TxnManager::statement_transaction_options(&self.session));
         }
@@ -929,7 +929,7 @@ impl<'s> ClusterServerSession<'s> {
                 tidb_ast::DmlStmt::Insert(_) | tidb_ast::DmlStmt::Update(_) | tidb_ast::DmlStmt::Delete(_)
             )
         );
-        (dml && self.node.txn.explicit.is_none() && !self.session.in_transaction())
+        (dml && self.node.txn.explicit().is_none() && !self.session.in_transaction())
             .then_some(StatementReadShape::AutocommitWrite)
     }
 
@@ -1106,7 +1106,7 @@ impl<'s> ClusterServerSession<'s> {
         // point: `Session::control_transaction` sets `in_transaction` for any
         // BEGIN spelling, so honoring the refusal afterwards would leave the
         // session inside a transaction that this node never opened -- no
-        // `self.node.txn.explicit`, so every following statement reads at a fresh
+        // `self.node.txn.explicit()`, so every following statement reads at a fresh
         // timestamp, its writes stay in the buffer, and its COMMIT publishes
         // without a conflict check. The read-only node already refuses here
         // (`real_tikv_node`); this one used to fall through an empty arm.
@@ -1137,7 +1137,7 @@ impl<'s> ClusterServerSession<'s> {
                 // A failed statement that has ended the session's transaction
                 // must not leave the store transaction for the next
                 // statement's `commit_if_session_left_transaction` to publish.
-                if self.node.txn.explicit.is_some() && !self.session.in_transaction() {
+                if self.node.txn.explicit().is_some() && !self.session.in_transaction() {
                     self.discard_explicit()?;
                 }
                 return Err(error);
@@ -1153,7 +1153,7 @@ impl<'s> ClusterServerSession<'s> {
                 // `doCommitWithRetry` opens its region only over a valid
                 // transaction.
                 drop(simple_exec.take());
-                let _commit_txn = CommitTxnRegions::begin(self.node.txn.explicit.is_some());
+                let _commit_txn = CommitTxnRegions::begin(self.node.txn.explicit().is_some());
                 self.commit_explicit()?;
             }
             Some(TransactionControl::Rollback) => {
@@ -2079,7 +2079,7 @@ impl<'s> ClusterServerSession<'s> {
             .retain_process_statement_with_digest(statement.sql(), statement.digest());
         // A `BEGIN` is a `BEGIN` whichever protocol carried it. Run as an
         // ordinary statement it would flip only the driver session's own flag
-        // and leave `self.node.txn.explicit` unopened -- the two pieces of transaction
+        // and leave `self.node.txn.explicit()` unopened -- the two pieces of transaction
         // state disagreeing, with every following statement reading at a fresh
         // timestamp and a racing writer never detected. Routed here the state
         // cannot diverge, whoever calls this.
@@ -2733,13 +2733,13 @@ impl<'s> ClusterServerSession<'s> {
     fn begin_statement(&mut self) {
         // Go `TxnCtx.StatementCount`: every statement inside an explicit
         // transaction counts toward its COMMIT observation.
-        if let Some(transaction) = self.node.txn.explicit.as_ref() {
+        if let Some(transaction) = self.node.txn.explicit() {
             transaction.note_statement();
         }
         // Go builds a fresh `TxnCtx` -- membuffer and GLOBAL temporary rows --
         // for every statement no transaction continues into: neither this
         // node's explicit transaction nor one the session itself opened.
-        if self.node.txn.explicit.is_none() {
+        if self.node.txn.explicit().is_none() {
             self.session.start_statement_transaction_scope();
         }
         self.session.clear_statement_message();
@@ -2760,7 +2760,7 @@ impl<'s> ClusterServerSession<'s> {
     /// (`session.go:2485`), and starts with `checkSEMStmt`, as Go's
     /// `PlanBuilder.Build` does for every statement.
     fn compile(&mut self, sql: &str, stmt: &Stmt) -> Result<CompiledStatement, SqlQueryError> {
-        let in_txn = self.node.txn.explicit.is_some() || self.session.in_transaction();
+        let in_txn = self.node.txn.explicit().is_some() || self.session.in_transaction();
         self
             .session
             .validate_statement_in_txn(stmt, in_txn)
