@@ -59,7 +59,14 @@ fn answer(session: &mut Session, sql: &str) -> String {
 /// creates its materialized view tables; this branch's bootstrap does not, so
 /// the replay creates them first.
 fn replay_go_master(capture: &str) -> (UnistoreClusterStack, Session) {
-    let (stack, _users) = cop_backed_stack();
+    let (stack, _users, session) = go_master_mview_stack();
+    replay_on(stack, session, capture)
+}
+
+/// A node with Go master's materialized view system tables and a root
+/// session on it.
+fn go_master_mview_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserStore>, Session) {
+    let (stack, users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(2131)).unwrap();
     for table in tidb_metadef::BOOTSTRAP_TABLES.iter().filter(|table| {
         matches!(
@@ -74,6 +81,10 @@ fn replay_go_master(capture: &str) -> (UnistoreClusterStack, Session) {
         answer(&mut session, tidb_metadef::system_tables_def::CREATE_TI_DBMVIEW_FAST_REFRESH_SOURCE_INFO_TABLE),
         "OK"
     );
+    (stack, users, session)
+}
+
+fn replay_on(stack: UnistoreClusterStack, mut session: Session, capture: &str) -> (UnistoreClusterStack, Session) {
     let mut mismatches = Vec::new();
     for line in capture.lines() {
         let (sql, go): (String, String) = serde_json::from_str(line).expect("a captured statement");
@@ -787,4 +798,275 @@ fn purge_and_refresh_lock_conflicts_answer_as_go_master() {
         answer(&mut session, "select REFRESH_METHOD, REFRESH_STATUS, REFRESH_FAILED_REASON from mysql.tidb_mview_refresh_hist order by REFRESH_JOB_ID"),
         format!(r#"RS:[["complete in place manual","failed","{reason}"],["complete out of place manual","failed","{reason}"]]"#)
     );
+}
+
+/// Go master's `CancelMaterializedViewJobExec`: no running job, a running
+/// job whose view or log the latest schema cannot resolve, the request
+/// recorded once with its requester, and a second request refused.
+/// Replayed from a Go master node (`testdata/mview_cancel_job_go.jsonl`).
+#[test]
+fn cancel_materialized_view_job_answers_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/mview_cancel_job_go.jsonl"));
+}
+
+/// Go master's `TestCancelMaterializedViewLogPurgeJob` /
+/// `TestPurgeMaterializedViewLogCancelWatcherUsesHistRequest` /
+/// `TestPurgeMaterializedViewLogRunningHistHeartbeat` setup: a purge paused
+/// after its running history row, on its own session and thread.
+struct PausedPurge {
+    stack: UnistoreClusterStack,
+    users: Arc<ConfiguredUserStore>,
+    root: Session,
+    mlog_id: i64,
+    job_id: String,
+    purge: std::thread::JoinHandle<String>,
+    _poll: tidb_failpoint::Guard,
+    _heartbeat: Option<tidb_failpoint::Guard>,
+}
+
+const PAUSE_PURGE: &str = "github.com/pingcap/tidb/pkg/executor/pausePurgeMaterializedViewLogAfterInsertPurgeHistRunning";
+
+fn paused_purge(table: &str, heartbeat: bool) -> PausedPurge {
+    let (stack, users, mut root) = go_master_mview_stack();
+    for sql in [
+        "use test".to_owned(),
+        "set tidb_mview_enable = ON".to_owned(),
+        format!("create table {table} (id int primary key, v int not null)"),
+        format!("create materialized view log on {table} (id, v) purge next date_add(now(), interval 1 hour)"),
+        format!("insert into {table} values (1, 10)"),
+    ] {
+        assert_eq!(answer(&mut root, &sql).get(..2), Some("OK"), "{sql}");
+    }
+    let (_, mlog) = stack.factory.catalog_snapshot().table_info_by_name("test", &format!("$mlog${table}")).unwrap();
+    let mlog_id = mlog.read().id;
+    let poll = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/mockMVTaskMonitorPollInterval", "return(50)");
+    let heartbeat = heartbeat.then(|| {
+        tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/mockMVTaskHistHeartbeatInterval", "return(50)")
+    });
+    tidb_failpoint::enable(PAUSE_PURGE, "pause").unwrap();
+    let mut purge_session = stack.factory.open_session(session_context(2140)).unwrap();
+    let statement = format!("purge materialized view log on {table}");
+    let purge = std::thread::spawn(move || {
+        assert_eq!(answer(&mut purge_session, "use test"), "OK");
+        answer(&mut purge_session, &statement)
+    });
+    let running =
+        format!("select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = {mlog_id} and PURGE_STATUS = 'running'");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while answer(&mut root, &running) != r#"RS:[["1"]]"# {
+        assert!(std::time::Instant::now() < deadline, "the purge never reached its running history row");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let job = answer(
+        &mut root,
+        &format!(
+            "select PURGE_JOB_ID from mysql.tidb_mlog_purge_hist where MLOG_ID = {mlog_id} and PURGE_STATUS = 'running' order by PURGE_JOB_ID desc limit 1"
+        ),
+    );
+    let job_id = serde_json::from_str::<Vec<Vec<String>>>(job.strip_prefix("RS:").unwrap()).unwrap()[0][0].clone();
+    PausedPurge { stack, users, root, mlog_id, job_id, purge, _poll: poll, _heartbeat: heartbeat }
+}
+
+/// Go master's `waitMVTaskCancelWatcherRequested`: a receiver that fires
+/// when a monitor named with `prefix` observes the cancel request.
+fn wait_cancel_watcher_requested(prefix: &'static str) -> (std::sync::mpsc::Receiver<()>, tidb_failpoint::Guard) {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let sender = std::sync::Mutex::new(Some(sender));
+    let guard = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/executor/mvTaskCancelWatcherRequested",
+        move |name: &mut dyn std::any::Any| {
+            if name.downcast_ref::<String>().is_some_and(|name| name.starts_with(prefix)) {
+                if let Some(sender) = sender.lock().unwrap().take() {
+                    let _ = sender.send(());
+                }
+            }
+        },
+    );
+    (receiver, guard)
+}
+
+fn last_purge_hist(root: &mut Session, mlog_id: i64) -> String {
+    answer(
+        root,
+        &format!(
+            "select PURGE_STATUS, PURGE_METHOD, PURGE_END_TIME is not null, PURGE_FAILED_REASON from mysql.tidb_mlog_purge_hist where MLOG_ID = {mlog_id} order by PURGE_JOB_ID desc limit 1"
+        ),
+    )
+}
+
+/// Go master's `TestCancelMaterializedViewLogPurgeJob`: CANCEL needs
+/// OPERATE VIEW on the log; once granted, the monitor sees the request, the
+/// purge fails as canceled manually and its history row names who canceled
+/// it.
+#[test]
+fn cancel_materialized_view_log_purge_job_as_go_master() {
+    let PausedPurge { stack, users, mut root, mlog_id, job_id, purge, _poll, _heartbeat } =
+        paused_purge("t_purge_cancel_job", false);
+    assert_eq!(answer(&mut root, "create user 'mv_purge_cancel_u'@'%' identified by 'abc'"), "OK");
+    let identity = users
+        .authenticate_native(
+            "mv_purge_cancel_u",
+            "127.0.0.1",
+            &super::super::node_fixture::SALT,
+            &super::super::node_fixture::scramble(b"abc", &super::super::node_fixture::SALT),
+        )
+        .expect("mv_purge_cancel_u logs in");
+    let mut cancel =
+        stack.factory.open_session(super::super::node_fixture::session_context_with_identity(2141, identity)).unwrap();
+    let denied = answer(&mut cancel, &format!("cancel materialized view log purge job {job_id}"));
+    assert!(denied.contains("OPERATE VIEW command denied"), "{denied}");
+    assert_eq!(
+        answer(&mut root, "grant operate view on test.`$mlog$t_purge_cancel_job` to 'mv_purge_cancel_u'@'%'"),
+        "OK"
+    );
+    let (requested, _watch) = wait_cancel_watcher_requested("mlog-purge-");
+    assert_eq!(answer(&mut cancel, &format!("cancel materialized view log purge job {job_id}")), "OK");
+    requested.recv_timeout(std::time::Duration::from_secs(10)).expect("the purge's monitor observes the request");
+    tidb_failpoint::disable(PAUSE_PURGE);
+    let purged = purge.join().unwrap();
+    assert!(purged.contains("materialized view task canceled manually"), "{purged}");
+    assert_eq!(
+        last_purge_hist(&mut root, mlog_id),
+        r#"RS:[["failed","manual","1","cancelled manually by 'mv_purge_cancel_u'@'%'"]]"#
+    );
+}
+
+/// Go master's `TestPurgeMaterializedViewLogCancelWatcherUsesHistRequest`:
+/// the monitor reads the history row's request and its requester, whoever
+/// wrote it.
+#[test]
+fn purge_cancel_watcher_uses_the_hist_request_as_go_master() {
+    let PausedPurge { mut root, mlog_id, purge, _poll, _heartbeat, .. } = paused_purge("t_purge_cancel_watch", false);
+    let (requested, _watch) = wait_cancel_watcher_requested("mlog-purge-");
+    let request = format!(
+        "UPDATE mysql.tidb_mlog_purge_hist SET CANCEL_REQUEST_TIME = NOW(6), CANCEL_REQUESTED_BY = {} WHERE MLOG_ID = {mlog_id} AND PURGE_STATUS = 'running' AND CANCEL_REQUEST_TIME IS NULL",
+        "'''purge_watcher_req''@''stage-d'''"
+    );
+    assert_eq!(answer(&mut root, &request), "OK");
+    requested.recv_timeout(std::time::Duration::from_secs(10)).expect("the purge's monitor observes the request");
+    tidb_failpoint::disable(PAUSE_PURGE);
+    let purged = purge.join().unwrap();
+    assert!(purged.contains("materialized view task canceled manually"), "{purged}");
+    assert_eq!(
+        last_purge_hist(&mut root, mlog_id),
+        r#"RS:[["failed","manual","1","cancelled manually by 'purge_watcher_req'@'stage-d'"]]"#
+    );
+    assert_eq!(
+        answer(
+            &mut root,
+            &format!("select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = {mlog_id} and PURGE_STATUS = 'running'")
+        ),
+        r#"RS:[["0"]]"#
+    );
+}
+
+/// Go master's `TestPurgeMaterializedViewLogRunningHistHeartbeat`: the
+/// monitor moves the running row's heartbeat, and the purge then succeeds.
+#[test]
+fn purge_running_hist_heartbeat_as_go_master() {
+    let PausedPurge { mut root, mlog_id, purge, _poll, _heartbeat, .. } = paused_purge("t_purge_heartbeat", true);
+    let heartbeat = format!(
+        "select cast(LAST_HEARTBEAT_TIME as char) from mysql.tidb_mlog_purge_hist where MLOG_ID = {mlog_id} and PURGE_STATUS = 'running' order by PURGE_JOB_ID desc limit 1"
+    );
+    let first = answer(&mut root, &heartbeat);
+    assert!(first.starts_with(r#"RS:[[""#), "{first}");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while answer(&mut root, &heartbeat) == first {
+        assert!(std::time::Instant::now() < deadline, "the heartbeat never moved");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    tidb_failpoint::disable(PAUSE_PURGE);
+    assert_eq!(purge.join().unwrap(), "OK");
+    assert_eq!(
+        answer(
+            &mut root,
+            &format!(
+                "select PURGE_STATUS, LAST_HEARTBEAT_TIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = {mlog_id} order by PURGE_JOB_ID desc limit 1"
+            )
+        ),
+        r#"RS:[["success","1"]]"#
+    );
+}
+
+const PAUSE_REFRESH: &str = "github.com/pingcap/tidb/pkg/executor/pauseRefreshMaterializedViewAfterInsertRefreshHistRunning";
+
+/// Go master's `TestMaterializedViewRefreshCancellation` (its subtests
+/// refresh by DELTA APPLY, not yet ported; the COMPLETE modes share the same
+/// monitor): a refresh paused after its running history row, canceled by a
+/// user once granted OPERATE VIEW on the view, fails as canceled manually,
+/// and its history row names who canceled it.
+#[test]
+fn cancel_materialized_view_refresh_job_as_go_master() {
+    for (mode, method) in [("complete in place", "complete in place manual"), ("complete out of place", "complete out of place manual")] {
+        let (stack, users, mut root) = go_master_mview_stack();
+        for sql in [
+            "use test",
+            "set tidb_mview_enable = ON",
+            "create table t_refresh_cancel_job (a int not null, b int not null)",
+            "insert into t_refresh_cancel_job values (1, 10), (1, 5), (2, 7)",
+            "create materialized view log on t_refresh_cancel_job (a, b) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv_refresh_cancel_job (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_refresh_cancel_job group by a",
+            "create user 'mv_refresh_cancel_u'@'%' identified by 'abc'",
+        ] {
+            assert_eq!(answer(&mut root, sql).get(..2), Some("OK"), "{sql}");
+        }
+        let (_, mv) = stack.factory.catalog_snapshot().table_info_by_name("test", "mv_refresh_cancel_job").unwrap();
+        let mview_id = mv.read().id;
+        let _poll =
+            tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/mockMVTaskMonitorPollInterval", "return(50)");
+        tidb_failpoint::enable(PAUSE_REFRESH, "pause").unwrap();
+        let mut refresh_session = stack.factory.open_session(session_context(2150)).unwrap();
+        let statement = format!("refresh materialized view mv_refresh_cancel_job {mode}");
+        let refresh = std::thread::spawn(move || {
+            assert_eq!(answer(&mut refresh_session, "use test"), "OK");
+            answer(&mut refresh_session, &statement)
+        });
+        let running = format!(
+            "select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = {mview_id} and REFRESH_STATUS = 'running'"
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while answer(&mut root, &running) != r#"RS:[["1"]]"# {
+            assert!(std::time::Instant::now() < deadline, "{mode}: the refresh never reached its running history row");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let job = answer(
+            &mut root,
+            &format!(
+                "select REFRESH_JOB_ID from mysql.tidb_mview_refresh_hist where MVIEW_ID = {mview_id} and REFRESH_STATUS = 'running' order by REFRESH_JOB_ID desc limit 1"
+            ),
+        );
+        let job_id = serde_json::from_str::<Vec<Vec<String>>>(job.strip_prefix("RS:").unwrap()).unwrap()[0][0].clone();
+        let identity = users
+            .authenticate_native(
+                "mv_refresh_cancel_u",
+                "127.0.0.1",
+                &super::super::node_fixture::SALT,
+                &super::super::node_fixture::scramble(b"abc", &super::super::node_fixture::SALT),
+            )
+            .expect("mv_refresh_cancel_u logs in");
+        let mut cancel =
+            stack.factory.open_session(super::super::node_fixture::session_context_with_identity(2151, identity)).unwrap();
+        let denied = answer(&mut cancel, &format!("cancel materialized view refresh job {job_id}"));
+        assert!(denied.contains("OPERATE VIEW command denied"), "{mode}: {denied}");
+        assert_eq!(answer(&mut root, "grant operate view on test.mv_refresh_cancel_job to 'mv_refresh_cancel_u'@'%'"), "OK");
+        let (requested, _watch) = wait_cancel_watcher_requested("refresh-");
+        assert_eq!(answer(&mut cancel, &format!("cancel materialized view refresh job {job_id}")), "OK");
+        requested.recv_timeout(std::time::Duration::from_secs(10)).expect("the refresh's monitor observes the request");
+        tidb_failpoint::disable(PAUSE_REFRESH);
+        let refreshed = refresh.join().unwrap();
+        assert!(refreshed.contains("materialized view task canceled manually"), "{mode}: {refreshed}");
+        assert_eq!(
+            answer(
+                &mut root,
+                &format!(
+                    "select REFRESH_STATUS, REFRESH_METHOD, REFRESH_END_TIME is not null, REFRESH_FAILED_REASON from mysql.tidb_mview_refresh_hist where MVIEW_ID = {mview_id} order by REFRESH_JOB_ID desc limit 1"
+                )
+            ),
+            format!(r#"RS:[["failed","{method}","1","cancelled manually by 'mv_refresh_cancel_u'@'%'"]]"#),
+            "{mode}"
+        );
+        // The view still answers its last refresh, and refreshes again.
+        assert_eq!(answer(&mut root, &format!("refresh materialized view mv_refresh_cancel_job {mode}")).get(..2), Some("OK"), "{mode}");
+        assert_eq!(answer(&mut root, "select * from mv_refresh_cancel_job order by a"), r#"RS:[["1","15","2"],["2","7","1"]]"#, "{mode}");
+    }
 }

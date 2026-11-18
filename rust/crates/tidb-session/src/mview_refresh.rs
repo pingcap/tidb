@@ -29,7 +29,10 @@ use tidb_executor::sessionctx::StmtOutput;
 use tidb_sqlescape::SqlArg;
 use tidb_terror::MysqlError;
 
+use crate::mview_task::{read_hist_cancel_request, start_mv_task_monitor, MvTaskCancelController, MvTaskMonitor, MvTaskWatch};
 use crate::Session;
+
+const FP: &str = "github.com/pingcap/tidb/pkg/executor/";
 
 /// Go master `mvRefreshAdvisoryLockTimeoutSec`.
 const MV_REFRESH_ADVISORY_LOCK_TIMEOUT_SEC: i64 = 1;
@@ -325,6 +328,41 @@ fn finalize_refresh_hist_with_retry(
         .map_err(|retry| annotate(&retry, &format!("first finalize attempt failed: {}", driver_message(&first))))
 }
 
+/// Go master's refresh `startMVTaskMonitor`: the cancel request read from
+/// and the heartbeat written to the job's `tidb_mview_refresh_hist` row.
+fn start_refresh_task_monitor(
+    watch: Session,
+    controller: &std::sync::Arc<MvTaskCancelController>,
+    refresh_job_id: u64,
+    mview_id: i64,
+) -> Result<MvTaskMonitor, DriverError> {
+    start_mv_task_monitor(
+        watch,
+        std::sync::Arc::clone(controller),
+        format!("refresh-{refresh_job_id}"),
+        // Go master `readRefreshHistCancelRequest`.
+        Box::new(move |session: &mut Session| {
+            read_hist_cancel_request(
+                session,
+                "SELECT CANCEL_REQUEST_TIME, CANCEL_REQUESTED_BY\nFROM mysql.tidb_mview_refresh_hist\nWHERE REFRESH_JOB_ID = %?\n  AND MVIEW_ID = %?",
+                refresh_job_id,
+                mview_id,
+                "refresh materialized view: required system table mysql.tidb_mview_refresh_hist does not exist",
+            )
+        }),
+        // Go master `updateRefreshHistHeartbeat`.
+        Some(Box::new(move |session: &mut Session| {
+            sys_sql(
+                session,
+                "UPDATE mysql.tidb_mview_refresh_hist\nSET LAST_HEARTBEAT_TIME = NOW(6)\nWHERE REFRESH_JOB_ID = %?\n  AND MVIEW_ID = %?\n  AND REFRESH_STATUS = 'running'",
+                &[SqlArg::Unsigned(refresh_job_id), SqlArg::Signed(mview_id)],
+            )
+            .map(|_| ())
+            .map_err(|error| if is_table_not_exists(&error) { refresh_hist_missing_table() } else { error })
+        })),
+    )
+}
+
 /// Go master `markRefreshFailedAlertState`, through `reportMVRefreshFailed`
 /// (which only logs its own failure).
 fn report_mv_refresh_failed(session: &mut Session, report: bool, mview_id: i64, schema: &str, name: &str) {
@@ -482,7 +520,9 @@ impl Session {
         let name = info.name.original().to_owned();
         let mut refresh_job_id = 0u64;
         let mut hist_inserted = false;
+        let controller = std::sync::Arc::new(MvTaskCancelController::default());
         let result = self.refresh_complete(
+            &controller,
             s.mode,
             sql,
             &schema,
@@ -504,7 +544,8 @@ impl Session {
         if refresh_job_id == 0 {
             refresh_job_id = session_current_tso(&mut hist)?;
         }
-        let reason = driver_message(&error);
+        let (failed_reason, error) = controller.normalize_task_failure(error);
+        let reason = failed_reason.unwrap_or_else(|| driver_message(&error));
         report_mv_refresh_failed(&mut hist, mview.alert_refresh_failed, info.id, &schema, &name);
         insert_refresh_hist_failed(
             &mut hist,
@@ -630,6 +671,7 @@ impl Session {
     #[allow(clippy::too_many_arguments)]
     fn refresh_complete(
         &mut self,
+        controller: &std::sync::Arc<MvTaskCancelController>,
         mode: RefreshMaterializedViewMode,
         sql: &str,
         schema: &str,
@@ -643,6 +685,8 @@ impl Session {
         let name = info.name.original().to_owned();
         let mview_id = info.id;
         let mut refresh = self.open_refresh_system_session()?;
+        // Go: the refresh session runs under the task's cancelable context.
+        let refresh_watch = controller.watch_guard(&refresh);
         let vars = refresh_session_vars(self, mview);
         let names: Vec<String> = vars.iter().map(|(name, _)| name.clone()).collect();
         let original = read_session_vars(&mut refresh, &names)?;
@@ -676,6 +720,7 @@ impl Session {
                 }
                 if mode == RefreshMaterializedViewMode::CompleteOutOfPlace {
                     return self.refresh_complete_out_of_place_locked(
+                        controller,
                         &mut refresh,
                         sql,
                         schema,
@@ -688,6 +733,8 @@ impl Session {
                     );
                 }
                 self.refresh_complete_in_place_locked(
+                    controller,
+                    &refresh_watch,
                     &mut refresh,
                     schema,
                     &name,
@@ -699,6 +746,9 @@ impl Session {
                     hist_inserted,
                 )
             });
+            // Go releases the lock through the session, outside the task's
+            // canceled context.
+            refresh_watch.reset();
             // Go master `releaseMVRefreshAdvisoryLockFully`: the lock is held
             // exactly once.
             let mut released = 0;
@@ -759,6 +809,8 @@ impl Session {
     #[allow(clippy::too_many_arguments)]
     fn refresh_complete_in_place_locked(
         &mut self,
+        controller: &std::sync::Arc<MvTaskCancelController>,
+        refresh_watch: &MvTaskWatch,
         refresh: &mut Session,
         schema: &str,
         name: &str,
@@ -788,9 +840,12 @@ impl Session {
             insert_refresh_hist_running(&mut hist, start_ts, mview_id, schema, name, method, &hist_time(refresh_start))?;
             *hist_inserted = true;
             let finalize_failure = |hist: &mut Session, refresh: &mut Session, txn_finished: &mut bool, error: DriverError| {
-                let mut reason = driver_message(&error);
+                let (failed_reason, error) = controller.normalize_task_failure(error);
+                let mut reason = failed_reason.unwrap_or_else(|| driver_message(&error));
                 let mut rollback_error = None;
                 if !*txn_finished {
+                    // Go `finalizeCtx`: the rollback runs uncanceled.
+                    refresh_watch.reset();
                     if let Err(rollback) = sys_sql(refresh, "ROLLBACK", &[]) {
                         reason = format!("{reason}; rollback error: {}", driver_message(&rollback));
                         rollback_error = Some(rollback);
@@ -831,6 +886,15 @@ impl Session {
                 }
                 error
             };
+            let monitor =
+                self.open_refresh_system_session().and_then(|watch| start_refresh_task_monitor(watch, controller, start_ts, mview_id));
+            // Go `defer stopTaskMonitor()`: dropped when the refresh returns.
+            let _monitor = match monitor {
+                Ok(monitor) => monitor,
+                Err(error) => return Err(finalize_failure(&mut hist, refresh, &mut txn_finished, error)),
+            };
+            tidb_failpoint::inject_call(&format!("{FP}refreshMaterializedViewAfterInsertRefreshHistRunning"), &mut ());
+            tidb_failpoint::inject(&format!("{FP}pauseRefreshMaterializedViewAfterInsertRefreshHistRunning"), |_| {});
             // Go master `executeRefreshMaterializedViewCompleteInPlace`.
             let data = (|| {
                 let view_args = [SqlArg::String(schema.as_bytes()), SqlArg::String(name.as_bytes())];
@@ -921,6 +985,7 @@ impl Session {
     #[allow(clippy::too_many_arguments)]
     fn refresh_complete_out_of_place_locked(
         &mut self,
+        controller: &std::sync::Arc<MvTaskCancelController>,
         refresh: &mut Session,
         sql: &str,
         schema: &str,
@@ -939,12 +1004,24 @@ impl Session {
         let mut hist = self.open_refresh_system_session()?;
         insert_refresh_hist_running(&mut hist, job_id, mview_id, schema, &name, method, &hist_time(refresh_start))?;
         *hist_inserted = true;
-        let build = self.execute_refresh_materialized_view_complete_out_of_place(refresh, sql, schema, info, mview, expected);
+        let monitor = self
+            .open_refresh_system_session()
+            .and_then(|watch| start_refresh_task_monitor(watch, controller, job_id, mview_id));
+        let build = monitor.and_then(|monitor| {
+            tidb_failpoint::inject_call(&format!("{FP}refreshMaterializedViewAfterInsertRefreshHistRunning"), &mut ());
+            tidb_failpoint::inject(&format!("{FP}pauseRefreshMaterializedViewAfterInsertRefreshHistRunning"), |_| {});
+            let build =
+                self.execute_refresh_materialized_view_complete_out_of_place(controller, refresh, sql, schema, info, mview, expected);
+            // Go `defer stopTaskMonitor()`.
+            drop(monitor);
+            build
+        });
         let (build_read_tso, inserted) = match build {
             Ok(build) => build,
             Err(error) => {
                 // Go `finalizeFailure`.
-                let reason = driver_message(&error);
+                let (failed_reason, error) = controller.normalize_task_failure(error);
+                let reason = failed_reason.unwrap_or_else(|| driver_message(&error));
                 report_mv_refresh_failed(&mut hist, mview.alert_refresh_failed, mview_id, schema, &name);
                 if let Err(hist_error) = finalize_refresh_hist_with_retry(
                     &mut hist,
@@ -1002,6 +1079,7 @@ impl Session {
     /// Answers the build read TSO and the rows loaded.
     fn execute_refresh_materialized_view_complete_out_of_place(
         &mut self,
+        controller: &std::sync::Arc<MvTaskCancelController>,
         refresh: &mut Session,
         sql: &str,
         schema: &str,
@@ -1013,6 +1091,8 @@ impl Session {
         let name = info.name.original().to_owned();
         // Go `domain.GetDomain(e.Ctx()).InfoSchema()`: the domain's latest.
         let mut build = self.open_refresh_system_session()?;
+        // Go: the build session runs under the task's cancelable context.
+        let _build_watch = controller.watch_guard(&build);
         let current = build.refresh_latest_info_schema().table_info_by_id(info.id).map(|table| table.read().clone());
         let Some(current) = current else {
             return Err(DriverError::Mysql(MysqlError::from_terror(

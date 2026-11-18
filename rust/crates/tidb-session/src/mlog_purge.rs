@@ -35,6 +35,7 @@ use crate::mview_refresh::{
     annotate, datum_i64, datum_u64, driver_message, format_duration_seconds_between, hist_time, is_table_not_exists,
     plain, session_current_tso, sys_sql,
 };
+use crate::mview_task::{read_hist_cancel_request, start_mv_task_monitor, MvTaskCancelController, MvTaskMonitor};
 use crate::Session;
 
 /// Go master `mlogPurgeAdaptiveBatchWindow`.
@@ -689,6 +690,28 @@ impl MLogPurgeThrottlePlan {
     }
 }
 
+/// Go master `readPurgeHistCancelRequest`.
+fn read_purge_hist_cancel_request(session: &mut Session, purge_job_id: u64, mlog_id: i64) -> Result<(bool, String), DriverError> {
+    read_hist_cancel_request(
+        session,
+        "SELECT CANCEL_REQUEST_TIME, CANCEL_REQUESTED_BY\nFROM mysql.tidb_mlog_purge_hist\nWHERE PURGE_JOB_ID = %? AND MLOG_ID = %?",
+        purge_job_id,
+        mlog_id,
+        "required system table mysql.tidb_mlog_purge_hist does not exist",
+    )
+}
+
+/// Go master `updatePurgeHistHeartbeat`.
+fn update_purge_hist_heartbeat(session: &mut Session, purge_job_id: u64, mlog_id: i64) -> Result<(), DriverError> {
+    sys_sql(
+        session,
+        "UPDATE mysql.tidb_mlog_purge_hist\nSET LAST_HEARTBEAT_TIME = NOW(6)\nWHERE PURGE_JOB_ID = %? AND MLOG_ID = %? AND PURGE_STATUS = 'running'",
+        &[SqlArg::Unsigned(purge_job_id), SqlArg::Signed(mlog_id)],
+    )
+    .map(|_| ())
+    .map_err(|error| if is_table_not_exists(&error) { purge_hist_missing_table() } else { error })
+}
+
 /// Go master `readLatestMLogPurgeCutoffFenceTSO`.
 fn read_latest_mlog_purge_cutoff_fence_tso(session: &mut Session, mlog_id: i64) -> Result<Option<u64>, DriverError> {
     let rows = sys_sql(
@@ -853,9 +876,10 @@ impl Session {
         let method = validate_purge_materialized_view_log_stmt(stmt)?;
         let target = self.resolve_purge_materialized_view_log_meta(stmt)?;
         let mut progress = PurgeProgress::default();
+        let controller = std::sync::Arc::new(MvTaskCancelController::default());
         let result = self
             .check_operate_view_on_mlog(&target.schema, &target.mlog_name)
-            .and_then(|()| self.execute_purge_materialized_view_log(&target, method, purge_start, &mut progress));
+            .and_then(|()| self.execute_purge_materialized_view_log(&target, method, purge_start, &controller, &mut progress));
         let Err(error) = result else {
             return result;
         };
@@ -864,7 +888,8 @@ impl Session {
         }
         // Go master `insertMLogPurgeHistFailedFallback`: a failure before the
         // running row still leaves a durable failed history row.
-        let reason = driver_message(&error);
+        let (failed_reason, error) = controller.normalize_task_failure(error);
+        let reason = failed_reason.unwrap_or_else(|| driver_message(&error));
         let mut hist = self.open_refresh_system_session().map_err(|open| {
             annotate(&open, &format!("purge materialized view log: failed to open history session after error {reason}"))
         })?;
@@ -975,6 +1000,7 @@ impl Session {
         target: &PurgeTarget,
         method: &str,
         purge_start: chrono::DateTime<chrono::Local>,
+        controller: &std::sync::Arc<MvTaskCancelController>,
         progress: &mut PurgeProgress,
     ) -> Result<StmtOutput, DriverError> {
         let user_var = |name: &str| self.vars.get_system(name).unwrap_or_default();
@@ -1015,7 +1041,12 @@ impl Session {
             }
         };
         let mut restore_delete_threads = Vec::new();
-        let result = self.open_refresh_system_session().and_then(|mut hist| {
+        // Go: the purge and delete sessions run under the task's cancelable
+        // context.
+        let purge_handle = controller.watch(&purge);
+        let delete_handle = controller.watch(&delete);
+        let open_session = || self.open_refresh_system_session();
+        let result = open_session().and_then(|mut hist| {
             let mut txn_started = false;
             let mut txn_finished = false;
             let outcome = purge_locked(
@@ -1032,12 +1063,19 @@ impl Session {
                 &mut txn_started,
                 &mut txn_finished,
                 &mut restore_delete_threads,
+                controller,
+                &purge_handle,
+                &open_session,
             );
+            // Go `finalizeCtx`: the cleanup runs uncanceled.
+            purge_handle.reset();
             if txn_started && !txn_finished {
                 let _ = sys_sql(&mut purge, "ROLLBACK", &[]);
             }
             outcome
         });
+        purge_handle.reset();
+        delete_handle.reset();
         restore_vars(&mut delete, &restore_delete_threads);
         restore_vars(&mut delete, &restore_delete);
         restore_vars(&mut purge, &restore_purge);
@@ -1071,20 +1109,28 @@ fn purge_locked(
     txn_started: &mut bool,
     txn_finished: &mut bool,
     restore_delete_threads: &mut Vec<(&'static str, String)>,
+    controller: &std::sync::Arc<MvTaskCancelController>,
+    purge_handle: &tidb_sqlkiller::StatementCancellation,
+    open_session: &dyn Fn() -> Result<Session, DriverError>,
 ) -> Result<(i64, Option<DriverError>), DriverError> {
+    // Go `stopTaskMonitor`, deferred: dropping the monitor stops it.
+    let mut _monitor: Option<MvTaskMonitor> = None;
     let schema = target.schema.as_str();
     let base_table = target.base_table.name.original();
     let mlog_id = target.mlog_id;
     // Go `finalizeFailure`.
     let finalize_failure = |purge: &mut Session, hist: &mut Session, progress: &PurgeProgress, txn_started: bool, txn_finished: &mut bool, error: DriverError| {
+        let (failed_reason, error) = controller.normalize_task_failure(error);
         if txn_started && !*txn_finished {
+            // Go `finalizeCtx`: the rollback runs uncanceled.
+            purge_handle.reset();
             let _ = sys_sql(purge, "ROLLBACK", &[]);
             *txn_finished = true;
         }
         if !progress.hist_running_inserted {
             return error;
         }
-        let reason = driver_message(&error);
+        let reason = failed_reason.unwrap_or_else(|| driver_message(&error));
         match finalize_mlog_purge_hist_with_retry(
             hist,
             progress.purge_job_id,
@@ -1157,6 +1203,18 @@ fn purge_locked(
             &hist_time(purge_start),
         ));
         progress.hist_running_inserted = true;
+        let purge_job_id = progress.purge_job_id;
+        let started = open_session().and_then(|watch| {
+            start_mv_task_monitor(
+                watch,
+                std::sync::Arc::clone(controller),
+                format!("mlog-purge-{purge_job_id}"),
+                Box::new(move |session: &mut Session| read_purge_hist_cancel_request(session, purge_job_id, mlog_id)),
+                Some(Box::new(move |session: &mut Session| update_purge_hist_heartbeat(session, purge_job_id, mlog_id))),
+            )
+        });
+        _monitor = Some(try_purge!(started));
+        tidb_failpoint::inject(&format!("{FP}pausePurgeMaterializedViewLogAfterInsertPurgeHistRunning"), |_| {});
     }
     let skip_delete_by_checkpoint = locked_last_purged_tso.is_some_and(|last| last >= safe_purge_tso);
     if !skip_purge_by_cutoff_fence && !skip_delete_by_checkpoint && safe_purge_tso > 0 {
@@ -1192,12 +1250,16 @@ fn purge_locked(
                             );
                             let rows = try_purge!(deleted);
                             progress.total_purge_rows += rows;
+                            tidb_failpoint::inject(&format!("{FP}pausePurgeMaterializedViewLogAfterDeleteBatch"), |_| {});
                             let has_more_ranges = range_index + 1 < plan.row_id_ranges.len();
                             let batch_completed = rows >= effective_batch_size;
                             if let Some(throttle) = throttle_plan.as_mut() {
                                 if should_throttle_mlog_purge_delete_batch(batch_completed, has_more_ranges) {
                                     match throttle.maybe_sleep(delete_loop_start, progress.total_purge_rows) {
                                         Ok(()) => effective_batch_size = throttle.effective_delete_batch_size(batch_size),
+                                        Err(error) if controller.is_manual_cancel_requested() => {
+                                            try_purge!(Err(error));
+                                        }
                                         Err(error) => {
                                             log_purge_warn("purge materialized view log: adaptive throttle sleep failed, fallback to unthrottled purge", &target.schema, &target.mlog_name, Some(&error));
                                             throttle_plan = None;
@@ -1225,6 +1287,7 @@ fn purge_locked(
                 );
                 let rows = try_purge!(deleted);
                 progress.total_purge_rows += rows;
+                tidb_failpoint::inject(&format!("{FP}pausePurgeMaterializedViewLogAfterDeleteBatch"), |_| {});
                 if rows < batch_size {
                     break;
                 }

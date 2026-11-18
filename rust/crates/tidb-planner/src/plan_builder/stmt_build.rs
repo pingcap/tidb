@@ -268,7 +268,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             | AdminStmt::RenameUser { .. }
             | AdminStmt::AlterInstance(_)
             | AdminStmt::AlterRange(_)
-            | AdminStmt::DropProcedure(_) => return self.build_simple(stmt),
+            | AdminStmt::DropProcedure(_)
+            // Go master: `buildSimple` for `CancelMaterializedViewJobStmt`.
+            | AdminStmt::CancelMaterializedViewJob(_) => return self.build_simple(stmt),
             AdminStmt::RefreshMaterializedView(refresh) => return self.build_refresh_materialized_view(refresh),
             AdminStmt::PurgeMaterializedViewLog(purge) => return self.build_purge_materialized_view_log(purge),
             _ => return self.build_admin(stmt, admin),
