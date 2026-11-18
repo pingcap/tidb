@@ -2661,3 +2661,156 @@ func TestBinCollationRangeForIndex(t *testing.T) {
 	require.Equal(t, "[eq(test.t.f, abc)]", expression.StringifyExpressionsWithCtx(ectx, remainedConds))
 	require.Equal(t, "[[\"\\x00A\\x00B\\x00C\",\"\\x00A\\x00B\\x00C\"]]", fmt.Sprintf("%v", ranges))
 }
+
+func TestInvalidTimestampRange(t *testing.T) {
+	t.Run("invalidDateNearDST", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+		tk.MustExec("use test")
+		tk.MustExec("set time_zone = 'Europe/London'")
+		tk.MustExec("create table dst_range (k int, ts timestamp, index idx_ts(ts), index idx(k, ts))")
+		tk.MustExec("insert into dst_range values (0, '2024-03-31 00:00:00'), (1, '2024-03-31 00:00:00'), (1, '2024-03-31 03:00:00')")
+		// Day zero normalizes near the March 31 DST transition. Check the source
+		// date before TIMESTAMP conversion can adjust it to a valid transition time.
+		for _, mode := range []string{"DEFAULT", "'ALLOW_INVALID_DATES'"} {
+			tk.MustExec("set sql_mode = " + mode)
+			for _, bound := range []string{"'2024-04-00'", "cast('2024-04-00' as datetime)", "'0000-00-00 00:00:00'"} {
+				for _, op := range []string{"<", "<=", "=", "!=", ">=", ">"} {
+					query := "select ts from dst_range %s where k = 1 and ts " + op + " " + bound + " order by ts"
+					expected := tk.MustQuery(fmt.Sprintf(query, "ignore index(idx_ts, idx)")).Rows()
+					if op == "<" && bound == "'2024-04-00'" {
+						require.Equal(t, testkit.RowsWithSep("|", "2024-03-31 00:00:00", "2024-03-31 03:00:00"), expected)
+					}
+					for _, index := range []string{"idx_ts", "idx"} {
+						tk.MustQuery(fmt.Sprintf(query, "force index("+index+")")).Check(expected)
+					}
+				}
+			}
+		}
+	})
+
+	t.Run("correlated", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		for _, zone := range []string{"UTC", "+00:00", "+08:00", "America/Goose_Bay"} {
+			for _, index := range []string{"index idx(ts)", "index idx(k,ts,n)", "primary key(k,ts,n) clustered"} {
+				t.Run(zone+index, func(t *testing.T) {
+					tk := testkit.NewTestKit(t, store)
+					tk.MustExec("use test")
+					tk.MustExec("set sql_mode='ALLOW_INVALID_DATES'")
+					tk.MustExec("set time_zone='" + zone + "'")
+					tk.MustExec("drop table if exists cor_outer, cor_inner, cor_plain")
+					tk.MustExec("create table cor_outer(id int primary key, d datetime)")
+					tk.MustExec("insert into cor_outer values (1,'2017-02-28'),(2,'2017-02-30'),(3,'2017-03-01'),(4,'2017-03-00'),(5,NULL),(6,'0000-00-00')")
+					tk.MustExec("create table cor_inner(k int, ts timestamp(6), n int," + index + ")")
+					tk.MustExec("create table cor_plain(k int, ts timestamp(6), n int)")
+					tk.MustExec("insert into cor_inner values (1,'2017-02-28',1),(1,'2017-03-01',1),(1,'2017-03-01',2),(2,'2017-03-01',1),(1,'0000-00-00',1)")
+					tk.MustExec("insert into cor_plain select * from cor_inner")
+					hint := "idx"
+					if strings.HasPrefix(index, "primary") {
+						hint = "primary"
+					}
+					if index == "index idx(k,ts,n)" {
+						for _, order := range []string{"asc", "desc"} {
+							query := "select o.id,(select /*+ NO_DECORRELATE() */ i.n from cor_inner i force index(idx) where i.k=1 and i.ts=o.d order by i.n " + order + " limit 1) from cor_outer o order by o.id"
+							baseline := strings.ReplaceAll(query, "cor_inner i force index(idx)", "cor_plain i")
+							expected := testkit.Rows("1 1", "2 <nil>", "3 1", "4 <nil>", "5 <nil>", "6 1")
+							if order == "desc" {
+								expected = testkit.Rows("1 1", "2 <nil>", "3 2", "4 <nil>", "5 <nil>", "6 1")
+							}
+							tk.MustQuery(baseline).Check(expected)
+							tk.MustQuery(query).Check(expected)
+							planRows := tk.MustQuery("explain format='brief' " + query).Rows()
+							plan := fmt.Sprint(planRows)
+							require.Contains(t, plan, "IndexRangeScan")
+							require.Contains(t, plan, "table:i, index:idx(k, ts, n)")
+							require.Contains(t, plan, "range: decided by [eq(test.cor_inner.k, 1) eq(test.cor_inner.ts, test.cor_outer.d)]")
+							if order == "asc" {
+								// ConstCols lets the scan provide n's order after the two equality columns.
+								require.NotContains(t, plan, "Sort")
+								require.NotContains(t, plan, "TopN")
+								for _, row := range planRows {
+									if strings.Contains(fmt.Sprint(row[0]), "IndexRangeScan") {
+										require.Contains(t, fmt.Sprint(row), "keep order:true")
+									}
+								}
+							} else {
+								require.Contains(t, plan, "TopN")
+								require.Contains(t, plan, "test.cor_inner.n:desc, offset:0, count:1")
+							}
+						}
+					}
+					for _, op := range []string{"=", "<", "<=", ">", ">=", "!="} {
+						for _, body := range []string{"count(*)", "min(i.ts)", "i.ts"} {
+							limit := ""
+							if body == "i.ts" {
+								limit = " order by i.ts limit 1"
+							}
+							query := "select o.id,(select /*+ NO_DECORRELATE() */ " + body + " from cor_inner i force index(" + hint + ") where i.k=1 and i.ts " + op + " o.d and i.n=1" + limit + ") from cor_outer o order by o.id"
+							baseline := strings.ReplaceAll(query, "cor_inner i force index("+hint+")", "cor_plain i")
+							tk.MustQuery(query).Check(tk.MustQuery(baseline).Rows())
+						}
+					}
+				})
+			}
+		}
+	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	for _, zone := range []string{"UTC", "+00:00", "Etc/UTC", "+08:00", "-05:00", "America/New_York"} {
+		t.Run(zone, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set time_zone = '" + zone + "'")
+			tk.MustExec("set sql_mode = 'ALLOW_INVALID_DATES'")
+			tk.MustExec("drop table if exists timestamp_range")
+			tk.MustExec("create table timestamp_range (k int, ts timestamp(6) null, index idx(k, ts), index ts_idx(ts))")
+			tk.MustExec(`insert into timestamp_range values
+				(0, '2017-02-28 00:00:00'), (1, '2017-02-28 00:00:00'),
+				(1, '2017-02-28 23:59:59.999999'), (1, '2017-03-01 00:00:00'),
+				(1, '2017-03-02 00:00:00'), (2, '2017-03-01 00:00:00'),
+				(1, '0000-00-00 00:00:00'), (1, null)`)
+			for _, bound := range []string{"cast('2017-02-30' as date)", "cast('2017-03-00 12:00:00' as datetime)", "cast('2017-00-10' as date)"} {
+				for _, op := range []string{"<", "<=", ">", ">=", "=", "!=", "<=>"} {
+					for _, idx := range []string{"idx", "ts_idx"} {
+						t.Run(bound+op+idx, func(t *testing.T) {
+							query := "select k, ts from timestamp_range %s where k = 1 and ts " + op + " " + bound + " order by k, ts"
+							expected := tk.MustQuery(fmt.Sprintf(query, "ignore index (idx, ts_idx)")).Rows()
+							require.Equal(t, expected, tk.MustQuery(fmt.Sprintf(query, "force index ("+idx+")")).Rows())
+						})
+					}
+				}
+			}
+			for _, predicate := range []string{
+				"k = 1 and ts >= cast('2017-02-28' as datetime) and ts < cast('2017-02-30' as date)",
+				"k = 1 and ts >= cast('2017-02-30' as date) and ts < cast('2017-03-02' as datetime)",
+				"k = 1 and ts in (cast('2017-02-30' as date), cast('2017-03-01' as date))",
+				"k = 1 and (ts < cast('2017-02-30' as date) or ts >= cast('2017-03-02' as date))",
+				"(k = 1 and ts < cast('2017-02-30' as date)) or (k = 2 and ts >= cast('2017-03-00' as date))",
+			} {
+				query := "select k, ts from timestamp_range %s where " + predicate + " order by k, ts"
+				expected := tk.MustQuery(fmt.Sprintf(query, "ignore index (idx, ts_idx)")).Rows()
+				tk.MustQuery(fmt.Sprintf(query, "force index (idx)")).Check(expected)
+			}
+
+			// A rejected timestamp bound must retain the preceding equality and the original filter.
+			tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("timestamp_range"))
+			require.NoError(t, err)
+			sctx := tk.Session()
+			for _, op := range []string{"<", ">="} {
+				selection := getSelectionFromQuery(t, sctx, "select * from timestamp_range where k = 1 and ts "+op+" cast('2017-02-30' as date)")
+				cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Meta().Columns, selection.Schema().Columns, tbl.Meta().Indices[0])
+				res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), selection.Conditions, cols, lengths, 0)
+				require.NoError(t, err)
+				require.Equal(t, "[[1,1]]", fmt.Sprint(res.Ranges))
+				require.Len(t, res.AccessConds, 1)
+				require.Len(t, res.RemainedConds, 1)
+				require.Contains(t, expression.StringifyExpressionsWithCtx(sctx.GetExprCtx().GetEvalCtx(), res.RemainedConds), "2017-02-30")
+				ranges, access, remained, err := ranger.BuildColumnRange(res.RemainedConds, sctx.GetRangerCtx(), cols[1].RetType, types.UnspecifiedLength, 0)
+				require.NoError(t, err)
+				require.Equal(t, "[[NULL,+inf]]", fmt.Sprint(ranges))
+				require.Empty(t, access)
+				require.Equal(t, res.RemainedConds, remained)
+				checkRangeFallbackAndReset(t, sctx, false)
+			}
+		})
+	}
+}

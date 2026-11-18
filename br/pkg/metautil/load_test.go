@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -35,6 +36,87 @@ func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) 
 		Files:   mockFiles,
 		Schemas: mockSchemas,
 	}
+}
+
+func TestReadSchemasFilesCancelDuringOutput(t *testing.T) {
+	store, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	db, err := json.Marshal(model.DBInfo{ID: 1, Name: ast.NewCIStr("test")})
+	require.NoError(t, err)
+	schemas := make([]*backuppb.Schema, 0, 2)
+	for id := int64(1); id <= 2; id++ {
+		table, err := json.Marshal(model.TableInfo{ID: id, Name: ast.NewCIStr(fmt.Sprintf("t%d", id))})
+		require.NoError(t, err)
+		schemas = append(schemas, &backuppb.Schema{Db: db, Table: table})
+	}
+	reader := NewMetaReader(mockBackupMeta(schemas, nil), store,
+		&backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT})
+	ctx, cancel := context.WithCancel(context.Background())
+	output := make(chan *Table)
+	done := make(chan error, 1)
+	go func() {
+		done <- reader.ReadSchemasFiles(ctx, output)
+		close(output)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		// Unblock the old implementation if cancellation fails to stop output.
+		for range output {
+		}
+	})
+
+	select {
+	case table := <-output:
+		require.NotNil(t, table)
+	case <-time.After(5 * time.Second):
+		t.Fatal("reader did not deliver the first table")
+	}
+	// Stop receiving while the other table still needs to be delivered.
+	cancel()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("reader blocked delivering a table after cancellation")
+	}
+}
+
+func TestLoadBackupMetaReadErrors(t *testing.T) {
+	store, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	cipher := &backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
+	missing := &backuppb.MetaFile{MetaFiles: []*backuppb.File{{Name: "missing.meta"}}}
+	files := make([]*backuppb.File, MaxBatchSize+1)
+	schemas := make([]*backuppb.Schema, MaxBatchSize+1)
+	db, err := json.Marshal(model.DBInfo{ID: 1, Name: ast.NewCIStr("test")})
+	require.NoError(t, err)
+	for i := range files {
+		files[i] = &backuppb.File{StartKey: tablecodec.EncodeRowKey(123, []byte("a"))}
+		schemas[i] = &backuppb.Schema{Db: db}
+	}
+	for _, tc := range []struct {
+		name string
+		meta *backuppb.BackupMeta
+	}{
+		{"schema", &backuppb.BackupMeta{SchemaIndex: missing}},
+		{"file", &backuppb.BackupMeta{FileIndex: missing}},
+		{"partial files", &backuppb.BackupMeta{Files: files, FileIndex: missing, Schemas: schemas}},
+		{"parse", &backuppb.BackupMeta{Schemas: []*backuppb.Schema{{Db: []byte("invalid json")}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for range 128 {
+				_, err := LoadBackupTables(context.Background(), NewMetaReader(tc.meta, store, cipher), false)
+				require.Error(t, err)
+				if tc.name != "parse" {
+					require.Contains(t, err.Error(), "missing.meta")
+				}
+			}
+		})
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = LoadBackupTables(ctx, NewMetaReader(&backuppb.BackupMeta{}, store, cipher), false)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestLoadBackupMeta(t *testing.T) {

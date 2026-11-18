@@ -147,11 +147,11 @@ func TestLoadDataInitParam(t *testing.T) {
 			ColumnAssignments:  stmt.ColumnAssignments,
 			ColumnsAndUserVars: stmt.ColumnsAndUserVars,
 		}
-		importPlan, err := importer.NewPlanFromLoadDataPlan(sctx, plan)
+		importPlan, err := executor.NewPlanFromLoadDataPlan(sctx, plan)
 		if err != nil {
 			return nil, err
 		}
-		return importer.NewLoadDataController(importPlan, tbl, importer.ASTArgsFromPlan(plan))
+		return importer.NewLoadDataController(importPlan, tbl, executor.ASTArgsFromPlan(plan))
 	}
 	assertErrorContains := func(sql string, contains string) {
 		ld, err := buildController(sql)
@@ -592,7 +592,6 @@ func prepareLoadDataStore() func() {
 	vardef.SetSchemaLease(500 * time.Millisecond)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
-	domain.DisableDumpHistoricalStats4Test()
 	dom, err := session.BootstrapSession(store)
 	if err != nil {
 		_ = store.Close()

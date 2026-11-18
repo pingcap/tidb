@@ -258,8 +258,10 @@ package importinto
 //     job row remains running; SHOW IMPORT JOB overlays awaiting-resolution
 //     from the DXF task state when runtime information is available.
 //
-//   - IMPORT INTO ... FROM SELECT returns through the import-from-select path
-//     before submitTask and does not use this import-job/DXF-task table path.
+//   - On classic kernel, IMPORT INTO ... FROM SELECT returns through the local
+//     import-from-select path before submitTask and bypasses these job/task tables.
+//     On nextgen, FROM SELECT uses submitTask and the Query pipeline, so the same
+//     import-job/DXF-task consistency windows described here apply.
 //
 // Practical risks, required invariants, and residual consistency windows.
 //

@@ -43,10 +43,8 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 		globalStatsTableIDs[globalStatsID.tableID] = struct{}{}
 	}
 
-	tableIDs := make(map[int64]struct{}, len(globalStatsTableIDs))
 	updatedTableIDs := make([]int64, 0, len(globalStatsTableIDs))
 	for tableID := range globalStatsTableIDs {
-		tableIDs[tableID] = struct{}{}
 		tableUpdated := false
 		for globalStatsID, info := range globalStatsMap {
 			if globalStatsID.tableID != tableID {
@@ -86,13 +84,6 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 		}
 		if tableUpdated {
 			updatedTableIDs = append(updatedTableIDs, tableID)
-		}
-	}
-
-	for tableID := range tableIDs {
-		// Dump stats to historical storage.
-		if err := recordHistoricalStats(e.Ctx(), tableID); err != nil {
-			logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 		}
 	}
 

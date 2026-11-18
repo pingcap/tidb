@@ -417,6 +417,12 @@ TASKLOOP:
 		for i := sentTasks; i < len(tasks); i++ {
 			finishJobWithLog(statsHandle, tasks[i].job, err)
 		}
+		// The result handler returns early on a kill signal or a panic, so it may
+		// leave results it never read. waitFinish has closed resultsCh by now.
+		for result := range resultsCh {
+			finishJobWithLog(statsHandle, result.Job, err)
+			result.DestroyAndPutToPool()
+		}
 		return err
 	}
 
@@ -750,20 +756,6 @@ func resetAnalyzeOptionsForPartitions(ctx context.Context, exec sqlexec.Restrict
 	return err
 }
 
-func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
-	statsHandle := domain.GetDomain(sctx).StatsHandle()
-	historicalStatsEnabled, err := statsHandle.CheckHistoricalStatsEnable()
-	if err != nil {
-		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
-	}
-	if !historicalStatsEnabled {
-		return nil
-	}
-	historicalStatsWorker := domain.GetDomain(sctx).GetHistoricalStatsWorker()
-	historicalStatsWorker.SendTblToDumpHistoricalStats(tableID)
-	return nil
-}
-
 // handleResultsError will handle the error fetch from resultsCh and record it in log
 func (e *AnalyzeExec) handleResultsError(
 	buildStatsConcurrency int,
@@ -821,7 +813,6 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 			worker.run(ctx1, statsHandle, enableAnalyzeSnapshot)
 		})
 	}
-	tableIDs := map[int64]struct{}{}
 	panicCnt := 0
 	var err error
 	// Only if all the analyze workers exit can we close the saveResultsCh.
@@ -845,7 +836,6 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 			continue
 		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
-		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
 		failpoint.InjectCall("analyzeBeforeSendToSaveResults")
 		saveResultsCh <- results
 	}
@@ -860,12 +850,6 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 		intest.Assert(len(errSet) > 0, "errSet should at least contain one error")
 		errMsg := slices.Collect(maps.Keys(errSet))
 		err = errors.New(strings.Join(errMsg, ","))
-	}
-	for tableID := range tableIDs {
-		// Dump stats to historical storage.
-		if err := recordHistoricalStats(e.Ctx(), tableID); err != nil {
-			statslogutil.StatsErrVerboseLogger().Error("record historical stats failed", zap.Error(err))
-		}
 	}
 	return err
 }
@@ -921,6 +905,7 @@ func analyzeWorkerExitErr(ctx context.Context, errExitCh <-chan struct{}) error 
 func (e *AnalyzeExec) trySendAnalyzeResult(ctx context.Context, statsHandle *handle.Handle, resultsCh chan<- *statistics.AnalyzeResults, result *statistics.AnalyzeResults) {
 	select {
 	case resultsCh <- result:
+		failpoint.InjectCall("analyzeResultSent")
 		return
 	case <-ctx.Done():
 	case <-e.errExitCh:

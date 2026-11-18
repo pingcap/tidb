@@ -16,6 +16,7 @@ package recovertest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -24,11 +25,14 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -37,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -268,6 +273,350 @@ func TestFlashbackTable(t *testing.T) {
 	tk.MustExec("flashback table t")
 	tk.MustExec("insert into t values (3)")
 	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2", "3"))
+
+	// A standalone flashback cannot prove that historical child rows still
+	// match the current parent table. In particular, a newly created table that
+	// reuses the historical parent name is a different object.
+	tk.MustExec("drop database if exists fk_flashback")
+	tk.MustExec("create database fk_flashback")
+	tk.MustExec("use fk_flashback")
+	tk.MustExec("create table p (id int primary key)")
+	tk.MustExec("create table c (id int primary key, pid int, foreign key (pid) references p(id))")
+	tk.MustExec("insert into p values (1)")
+	tk.MustExec("insert into c values (2, 1)")
+	tk.MustExec("drop table c")
+	tk.MustExec("drop table p")
+	// The old external endpoint must not become an apparent self-reference
+	// when the child is restored under its former parent's name.
+	tk.MustGetErrCode("flashback table c to p", errno.ErrUnsupportedDDLOperation)
+	tk.MustQuery("show tables like 'p'").Check(testkit.Rows())
+	tk.MustExec("create table p (id int primary key)")
+	tk.MustGetErrCode("flashback table c", errno.ErrUnsupportedDDLOperation)
+	tk.MustQuery("show tables like 'c'").Check(testkit.Rows())
+
+	// The same guard applies when recovering a parent that is currently
+	// referenced by another table.
+	tk.MustExec("drop table p")
+	tk.MustExec("set foreign_key_checks = 0")
+	tk.MustExec("create table c (id int primary key, pid int, foreign key (pid) references p(id))")
+	tk.MustGetErrCode("recover table p", errno.ErrUnsupportedDDLOperation)
+
+	// Renaming a self-referencing table during flashback must also rename the
+	// recovered foreign-key endpoint.
+	tk.MustExec("drop database if exists fk_self_flashback")
+	tk.MustExec("create database fk_self_flashback")
+	tk.MustExec("use fk_self_flashback")
+	tk.MustExec("set foreign_key_checks = 1")
+	tk.MustExec("create table tree (id int primary key, parent_id int, foreign key (parent_id) references tree(id) on delete cascade)")
+	tk.MustExec("insert into tree values (1, null), (2, 1)")
+	tk.MustExec("drop table tree")
+	tk.MustExec("flashback table tree to restored_tree")
+	tk.MustQuery("select referenced_table_name from information_schema.key_column_usage where table_schema = 'fk_self_flashback' and table_name = 'restored_tree' and referenced_table_name is not null").Check(testkit.Rows("restored_tree"))
+	tk.MustExec("insert into restored_tree values (3, 1)")
+	tk.MustExec("delete from restored_tree where id = 1")
+	tk.MustQuery("select * from restored_tree").Check(testkit.Rows())
+}
+
+type recoverTableSnapshotReadError struct {
+	meta.Reader
+	err error
+}
+
+func (r recoverTableSnapshotReadError) GetTable(int64, int64) (*model.TableInfo, error) {
+	return nil, r.err
+}
+
+func TestFlashbackTableForeignKeyOwnerCheck(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		replaceParent bool
+	}{
+		{name: "unchanged_parent"},
+		{name: "new_child_of_replacement_parent", replaceParent: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+			tk := testkit.NewTestKit(t, store)
+			flashTK := testkit.NewTestKit(t, store)
+			tk.MustExec("create database fk_owner_flashback")
+			tk.MustExec("use fk_owner_flashback")
+			flashTK.MustExec("use fk_owner_flashback")
+			tk.MustExec("set foreign_key_checks = 1")
+			t.Cleanup(func() { tk.MustExec("set foreign_key_checks = 1") })
+			timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+			t.Cleanup(resetGC)
+			tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+			require.NoError(t, gcutil.EnableGC(tk.Session()))
+			tk.MustExec("create table p (id int primary key)")
+			tk.MustExec("insert into p values (1)")
+			oldParent, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("fk_owner_flashback"), ast.NewCIStr("p"))
+			require.NoError(t, err)
+			oldID := oldParent.Meta().ID
+			tk.MustExec("drop table p")
+
+			ownerJobIDs := make(chan int64, 1)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+				if job.Type == model.ActionRecoverTable && job.TableID == oldID {
+					select {
+					case ownerJobIDs <- job.ID:
+					default:
+					}
+				}
+			})
+			beforeQueue := make(chan bool, 1)
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			resume := func() { releaseOnce.Do(func() { close(release) }) }
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			t.Cleanup(cancel)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterCheckRecoverTableForeignKeys", func(info *model.RecoverTableInfo) {
+				if info.TableInfo.ID != oldID {
+					return
+				}
+				// Pause the client after the real frontend check, before a recover
+				// job can block the concurrent FK DDLs on p's table dependency.
+				select {
+				case beforeQueue <- flashTK.Session().GetSessionVars().StmtCtx.IsDDLJobInQueue.Load():
+				case <-ctx.Done():
+					return
+				}
+				select {
+				case <-release:
+				case <-ctx.Done():
+				}
+			})
+			result := make(chan error, 1)
+			finished := make(chan struct{})
+			t.Cleanup(func() {
+				resume()
+				cancel()
+				select {
+				case <-finished:
+				case <-time.After(10 * time.Second):
+					t.Error("FLASHBACK did not finish after releasing the frontend barrier")
+				}
+			})
+			go func() {
+				defer close(finished)
+				rs, execErr := flashTK.ExecWithContext(ctx, "flashback table p")
+				if rs != nil {
+					closeErr := rs.Close()
+					if execErr == nil {
+						execErr = closeErr
+					}
+				}
+				result <- execErr
+			}()
+			select {
+			case queued := <-beforeQueue:
+				require.False(t, queued, "the frontend barrier must precede job submission")
+			case execErr := <-result:
+				t.Fatalf("FLASHBACK returned before the frontend barrier: %v", execErr)
+			case <-ctx.Done():
+				t.Fatal("FLASHBACK did not reach the frontend barrier")
+			}
+
+			if tt.replaceParent {
+				// No recovery job is queued yet, so these FK DDLs cannot wait on
+				// its exclusive dependency on p. The child belongs to a new p,
+				// whose rows do not match the historical parent being recovered.
+				tk.MustExecWithContext(ctx, "create table p (id int primary key)")
+				replacement, lookupErr := dom.InfoSchema().TableByName(ctx, ast.NewCIStr("fk_owner_flashback"), ast.NewCIStr("p"))
+				require.NoError(t, lookupErr)
+				require.NotEqual(t, oldID, replacement.Meta().ID)
+				tk.MustExecWithContext(ctx, "insert into p values (2)")
+				tk.MustExecWithContext(ctx, "create table c (id int primary key, pid int, foreign key (pid) references p(id))")
+				tk.MustExecWithContext(ctx, "insert into c values (1, 2)")
+				tk.MustExecWithContext(ctx, "set foreign_key_checks = 0")
+				tk.MustExecWithContext(ctx, "drop table p")
+				tk.MustExecWithContext(ctx, "set foreign_key_checks = 1")
+				require.Len(t, dom.InfoSchema().GetTableReferredForeignKeys("fk_owner_flashback", "p"), 1)
+			}
+			resume()
+			select {
+			case err = <-result:
+			case <-ctx.Done():
+				t.Fatal("FLASHBACK did not finish after the frontend barrier")
+			}
+			var ownerJobID int64
+			select {
+			case ownerJobID = <-ownerJobIDs:
+			default:
+				t.Fatal("FLASHBACK did not reach the owner-side recovery check")
+			}
+			require.Positive(t, ownerJobID)
+			history, historyErr := ddl.GetHistoryJobByID(tk.Session(), ownerJobID)
+			require.NoError(t, historyErr)
+			require.NotNil(t, history)
+			require.Equal(t, oldID, history.TableID)
+			if tt.replaceParent {
+				require.True(t, dbterror.ErrGeneralUnsupportedDDL.Equal(err), "unexpected recovery result: %v", err)
+				require.True(t, history.IsCancelled())
+				require.True(t, dbterror.ErrGeneralUnsupportedDDL.Equal(history.Error))
+				tk.MustQuery("show tables like 'p'").Check(testkit.Rows())
+				_, exists := dom.InfoSchema().TableByID(context.Background(), oldID)
+				require.False(t, exists)
+				tk.MustQuery("select * from c").Check(testkit.Rows("1 2"))
+				require.Len(t, dom.InfoSchema().GetTableReferredForeignKeys("fk_owner_flashback", "p"), 1)
+			} else {
+				require.NoError(t, err)
+				require.True(t, history.IsSynced())
+				tk.MustQuery("select * from p").Check(testkit.Rows("1"))
+			}
+		})
+	}
+
+	for _, version := range []model.JobVersion{model.JobVersion1, model.JobVersion2} {
+		for _, tc := range []struct {
+			name      string
+			external  bool
+			rename    bool
+			transient bool
+		}{
+			{name: "external_rename", external: true, rename: true},
+			{name: "self_rename", rename: true},
+			{name: "self_same_name"},
+			{name: "self_rename_transient", rename: true, transient: true},
+		} {
+			t.Run(fmt.Sprintf("legacy_%s/%s", version, tc.name), func(t *testing.T) {
+				store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("create database fk_owner_legacy_flashback")
+				tk.MustExec("use fk_owner_legacy_flashback")
+				timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+				t.Cleanup(resetGC)
+				tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+				require.NoError(t, gcutil.EnableGC(tk.Session()))
+				if tc.external {
+					tk.MustExec("create table p (id int primary key)")
+					tk.MustExec("create table c (id int primary key, pid int, foreign key (pid) references p(id))")
+					tk.MustExec("insert into p values (1)")
+					tk.MustExec("insert into c values (2, 1)")
+				} else {
+					tk.MustExec("create table c (id int primary key, pid int, foreign key (pid) references c(id) on delete cascade)")
+					tk.MustExec("insert into c values (1, null), (2, 1)")
+				}
+				schema, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("fk_owner_legacy_flashback"))
+				require.True(t, ok)
+				child, err := dom.InfoSchema().TableByName(context.Background(), schema.Name, ast.NewCIStr("c"))
+				require.NoError(t, err)
+				restoredTable := child.Meta().Clone()
+				dropJobIDs := make(chan int64, 1)
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+					if job.Type == model.ActionDropTable && job.TableID == restoredTable.ID {
+						select {
+						case dropJobIDs <- job.ID:
+						default:
+						}
+					}
+				})
+				tk.MustExec("drop table c")
+				var dropJobID int64
+				select {
+				case dropJobID = <-dropJobIDs:
+				default:
+					t.Fatal("DROP TABLE did not reach the owner")
+				}
+				dropJob, err := ddl.GetHistoryJobByID(tk.Session(), dropJobID)
+				require.NoError(t, err)
+				require.NotNil(t, dropJob)
+				if tc.external {
+					tk.MustExec("drop table p")
+				}
+				snapshotTS := ddl.GetRecoverSnapshotTS(dropJob)
+				autoIDs, err := dom.GetSnapshotMeta(snapshotTS).GetAutoIDAccessors(schema.ID, restoredTable.ID).Get()
+				require.NoError(t, err)
+
+				var snapshotMu sync.Mutex
+				snapshotCalls := 0
+				if tc.transient {
+					testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/recoverTableForeignKeySnapshot", func(info *model.RecoverTableInfo, reader *meta.Reader) {
+						if info.TableInfo.ID != restoredTable.ID {
+							return
+						}
+						snapshotMu.Lock()
+						defer snapshotMu.Unlock()
+						snapshotCalls++
+						if snapshotCalls == 1 {
+							*reader = recoverTableSnapshotReadError{Reader: *reader, err: kv.ErrTxnRetryable}
+						}
+					})
+				}
+
+				// Submit each persisted argument version directly, as an older
+				// frontend would, without invoking the current frontend guard.
+				if tc.rename {
+					restoredTable.Name = ast.NewCIStr("p")
+					if !tc.external {
+						restoredTable.ForeignKeys[0].RefTable = restoredTable.Name
+					}
+				}
+				restoredTable.State = model.StateNone
+				recoverInfo := &model.RecoverTableInfo{
+					SchemaID:      schema.ID,
+					TableInfo:     restoredTable,
+					DropJobID:     dropJobID,
+					SnapshotTS:    snapshotTS,
+					AutoIDs:       autoIDs,
+					OldSchemaName: schema.Name.L,
+					OldTableName:  "c",
+				}
+				job := &model.Job{
+					Version:    version,
+					SchemaID:   schema.ID,
+					SchemaName: schema.Name.L,
+					TableID:    restoredTable.ID,
+					TableName:  restoredTable.Name.L,
+					Type:       model.ActionRecoverTable,
+					BinlogInfo: &model.HistoryInfo{},
+				}
+				if tc.rename {
+					job.InvolvingSchemaInfo = []model.InvolvingSchemaInfo{
+						{Database: schema.Name.L, Table: "c"},
+						{Database: schema.Name.L, Table: "p"},
+					}
+				}
+				args := &model.RecoverArgs{
+					RecoverInfo: &model.RecoverSchemaInfo{RecoverTableInfos: []*model.RecoverTableInfo{recoverInfo}},
+				}
+				err = dom.DDLExecutor().(ddl.ExecutorForTest).DoDDLJobWrapper(tk.Session(), ddl.NewJobWrapperWithArgs(job, args, true))
+				require.Positive(t, job.ID)
+				history, historyErr := ddl.GetHistoryJobByID(tk.Session(), job.ID)
+				require.NoError(t, historyErr)
+				require.NotNil(t, history)
+				require.Equal(t, version, history.Version)
+				historyArgs, historyErr := model.GetRecoverArgs(history)
+				require.NoError(t, historyErr)
+				historyInfo := historyArgs.RecoverTableInfos()[0]
+				require.Equal(t, "c", historyInfo.OldTableName)
+				require.Equal(t, schema.Name.L, historyInfo.OldSchemaName)
+				require.Equal(t, snapshotTS, historyInfo.SnapshotTS)
+				if tc.external {
+					require.True(t, dbterror.ErrGeneralUnsupportedDDL.Equal(err), "unexpected recovery result: %v", err)
+					require.True(t, history.IsCancelled())
+					require.True(t, dbterror.ErrGeneralUnsupportedDDL.Equal(history.Error))
+					tk.MustQuery("show tables").Check(testkit.Rows())
+					_, exists := dom.InfoSchema().TableByID(context.Background(), restoredTable.ID)
+					require.False(t, exists)
+				} else {
+					require.NoError(t, err)
+					require.True(t, history.IsSynced())
+					target := restoredTable.Name.L
+					tk.MustQuery("select referenced_table_name from information_schema.key_column_usage where table_schema = 'fk_owner_legacy_flashback' and table_name = '" + target + "' and referenced_table_name is not null").Check(testkit.Rows(target))
+					tk.MustQuery("select count(*) from " + target).Check(testkit.Rows("2"))
+					tk.MustExec("insert into " + target + " values (3, 1)")
+					tk.MustExec("delete from " + target + " where id = 1")
+					tk.MustQuery("select * from " + target).Check(testkit.Rows())
+					if tc.transient {
+						snapshotMu.Lock()
+						require.GreaterOrEqual(t, snapshotCalls, 2)
+						snapshotMu.Unlock()
+						require.Positive(t, history.ErrorCount)
+					}
+				}
+			})
+		}
+	}
 }
 
 func TestRecoverTempTable(t *testing.T) {
@@ -695,6 +1044,366 @@ func TestFlashbackSchemaWithManyTables(t *testing.T) {
 	tk.MustExec("flashback database many_tables")
 
 	tk.MustQuery("select count(*) from many_tables.t_0_0").Check(testkit.Rows("0"))
+}
+
+func TestFlashbackSchemaViews(t *testing.T) {
+	for _, rename := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rename=%t", rename), func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("set tidb_mview_enable=on")
+			timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+			defer resetGC()
+			tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+			tk.MustExec("create database view_recover")
+			tk.MustExec("create table view_recover.t (a int not null)")
+			tk.MustExec("insert into view_recover.t values (1), (2)")
+			tk.MustExec("create database view_recover_external")
+			tk.MustExec("create table view_recover_external.t (a int not null)")
+			tk.MustExec("insert into view_recover_external.t values (10)")
+			tk.MustExec("set sql_mode = 'ANSI_QUOTES'")
+			tk.MustExec(`create algorithm=merge sql security invoker view view_recover.v (a, literal, encoded) as
+				select "view_recover"."t"."a", 'view_recover.t', _latin1'view_recover.t' from "view_recover"."t"`)
+			tk.MustExec("set sql_mode = default")
+			tk.MustExec("create view view_recover.v_nested as select a from view_recover.v where exists (select 1 from view_recover.t where t.a = v.a)")
+			tk.MustExec("create view view_recover.v_external as select t.a, e.a as external_a from view_recover.t as t cross join view_recover_external.t as e")
+			tk.MustExec("create view view_recover.v_star as select view_recover.t.* from view_recover.t")
+			tk.MustExec("create view view_recover.v_cte as with view_recover as (select a from view_recover.t) select view_recover.a from view_recover union all select a from view_recover_external.t")
+			view, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("view_recover"), ast.NewCIStr("v"))
+			require.NoError(t, err)
+			originalViewInfo := *view.Meta().View
+			checkViews := func(dbName string, extraRow bool) {
+				rows := []string{"1 view_recover.t view_recover.t latin1", "2 view_recover.t view_recover.t latin1"}
+				values := []string{"1", "2"}
+				externalRows := []string{"1 10", "2 10"}
+				if extraRow {
+					rows = append(rows, "3 view_recover.t view_recover.t latin1")
+					values = append(values, "3")
+					externalRows = append(externalRows, "3 10")
+				}
+				tk.MustQuery("select a, literal, encoded, charset(encoded) from " + dbName + ".v order by a").Check(testkit.Rows(rows...))
+				for _, name := range []string{"v_nested", "v_star"} {
+					tk.MustQuery("select * from " + dbName + "." + name + " order by a").Check(testkit.Rows(values...))
+				}
+				tk.MustQuery("select * from " + dbName + ".v_external order by a").Check(testkit.Rows(externalRows...))
+				tk.MustQuery("select * from " + dbName + ".v_cte order by a").Check(testkit.Rows(append(values, "10")...))
+			}
+			checkViews("view_recover", false)
+			tk.MustExec("drop database view_recover")
+			dbName, recoverSQL := "view_recover", "flashback database view_recover"
+			if rename {
+				dbName = "view_recovered"
+				recoverSQL += " to " + dbName
+			}
+			tk.MustExec(recoverSQL)
+			checkViews(dbName, false)
+			view, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr("v"))
+			require.NoError(t, err)
+			recoveredViewInfo := *view.Meta().View
+			recoveredViewInfo.SelectStmt = originalViewInfo.SelectStmt
+			require.Equal(t, originalViewInfo, recoveredViewInfo)
+			if rename {
+				// Reusing the old name must not silently redirect recovered views.
+				tk.MustExec("create database view_recover")
+				tk.MustExec("create table view_recover.t (a int not null)")
+				tk.MustExec("insert into view_recover.t values (99)")
+				checkViews(dbName, false)
+			}
+			tk.MustExec("insert into " + dbName + ".t values (3)")
+			checkViews(dbName, true)
+			if rename {
+				tk.MustExec("drop database " + dbName)
+				tk.MustExec("flashback database " + dbName + " to view_recovered_again")
+				checkViews("view_recovered_again", true)
+			}
+		})
+	}
+}
+
+func TestFlashbackSchemaMaterializedViews(t *testing.T) {
+	for _, rename := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rename=%t", rename), func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("set tidb_mview_enable=on")
+			timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+			defer resetGC()
+			tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+			tk.MustExec("create database mv_recover")
+			tk.MustExec("use mv_recover")
+			tk.MustExec("create table t (a int not null)")
+			tk.MustExec("insert into t values (1), (1), (2)")
+			tk.MustExec("create materialized view log on t (a)")
+			tk.MustExec("create materialized view mv1 (a, cnt) as select mv_recover.t.a, count(*) from mv_recover.t group by mv_recover.t.a")
+			tk.MustExec("create materialized view log on mv1 (a)")
+			tk.MustExec("create materialized view mv2 (a, cnt) as select a, count(*) from mv1 group by a")
+			// An unrelated database's maintenance state must remain untouched.
+			tk.MustExec("create database mv_unrelated")
+			tk.MustExec("create table mv_unrelated.t (a int not null)")
+			tk.MustExec("create materialized view log on mv_unrelated.t (a)")
+			tk.MustExec("create materialized view mv_unrelated.mv (a, cnt) as select a, count(*) from mv_unrelated.t group by a")
+			stateQueries := []string{
+				"select * from mysql.tidb_mview_refresh_info order by mview_id",
+				"select * from mysql.tidb_mlog_purge_info order by mlog_id",
+				"select * from mysql.tidb_mview_fast_refresh_source_info order by mview_id, mlog_id",
+			}
+			oldRefreshState := tk.MustQuery(stateQueries[0]).Rows()
+			db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("mv_recover"))
+			require.True(t, ok)
+			started, resume := make(chan struct{}), make(chan struct{})
+			var pauseOnce, resumeOnce sync.Once
+			resumeDrop := func() { resumeOnce.Do(func() { close(resume) }) }
+			defer resumeDrop()
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", func(jobW *model.JobW) {
+				if jobW.Type == model.ActionDropSchema && jobW.SchemaID == db.ID {
+					pauseOnce.Do(func() {
+						close(started)
+						<-resume
+					})
+				}
+			})
+			dropTK := testkit.NewTestKit(t, store)
+			dropErr := make(chan error, 1)
+			go func() { dropErr <- dropTK.ExecToErr("drop database mv_recover") }()
+			select {
+			case <-started:
+			case <-time.After(10 * time.Second):
+				t.Fatal("DROP DATABASE did not reach its first worker step")
+			}
+			// Advance both baselines after the DROP job's StartTS, but before it
+			// starts removing the schema. Recovering the submission snapshot is stale.
+			tk.MustExec("insert into t values (2), (3)")
+			tk.MustExec("refresh materialized view mv1 fast")
+			tk.MustExec("refresh materialized view mv2 fast")
+			tk.MustExec("purge materialized view log on t")
+			tk.MustExec("purge materialized view log on mv1")
+			tk.MustExec("update mysql.tidb_mview_refresh_info set NEXT_REFRESH_UNIX_SECONDS = 2100000000")
+			tk.MustExec("update mysql.tidb_mlog_purge_info set NEXT_PURGE_UNIX_SECONDS = 2100000000")
+			require.NotEqual(t, oldRefreshState, tk.MustQuery(stateQueries[0]).Rows())
+			before := make([][][]any, len(stateQueries))
+			for i, sql := range stateQueries {
+				before[i] = tk.MustQuery(sql).Rows()
+			}
+			resumeDrop()
+			require.NoError(t, <-dropErr)
+			testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep")
+			recoverSQL, dbName := "flashback database mv_recover", "mv_recover"
+			if rename {
+				dbName = "mv_recovered"
+				recoverSQL += " to " + dbName
+			}
+			tk.MustExec(recoverSQL)
+			for i, sql := range stateQueries {
+				require.Equal(t, before[i], tk.MustQuery(sql).Rows(), sql)
+			}
+			tk.MustExec("use " + dbName)
+			tk.MustQuery("select * from mv1 order by a").Check(testkit.Rows("1 2", "2 2", "3 1"))
+			tk.MustQuery("select * from mv2 order by a").Check(testkit.Rows("1 1", "2 1", "3 1"))
+			tk.MustExec("insert into t values (1), (4)")
+			tk.MustExec("refresh materialized view mv1 fast")
+			tk.MustExec("refresh materialized view mv2 fast")
+			tk.MustQuery("select * from mv1 order by a").Check(testkit.Rows("1 3", "2 2", "3 1", "4 1"))
+			tk.MustQuery("select * from mv2 order by a").Check(testkit.Rows("1 1", "2 1", "3 1", "4 1"))
+			tk.MustExec("refresh materialized view mv2 complete in place")
+			tk.MustQuery("select * from mv2 order by a").Check(testkit.Rows("1 1", "2 1", "3 1", "4 1"))
+			tk.MustExec("purge materialized view log on t")
+			tk.MustExec("purge materialized view log on mv1")
+		})
+	}
+}
+
+func TestFlashbackSchemaMaterializedViewEscapedDefinition(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		sqlMode string
+		literal string
+	}{
+		{name: "default", literal: `'x\\y'`},
+		{name: "no_backslash_escapes_and_ansi_quotes", sqlMode: "NO_BACKSLASH_ESCAPES,ANSI_QUOTES", literal: `'x\y'`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("set tidb_mview_enable=on")
+			timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+			defer resetGC()
+			tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+			tk.MustExec("create database mv_recover_escaped")
+			tk.MustExec("use mv_recover_escaped")
+			tk.MustExec("create table t (a int not null, s varchar(20) not null)")
+			tk.MustExec("create materialized view log on t (a, s)")
+			tk.MustExec("set sql_mode = '" + tc.sqlMode + "'")
+			definitionSQLMode := tk.Session().GetSessionVars().SQLMode
+			tk.MustExec("create materialized view mv (a, cnt) as select a, count(*) from mv_recover_escaped.t where s = " + tc.literal + " group by a")
+			tk.MustExec("create view v as select a from mv_recover_escaped.t where s = " + tc.literal)
+			tk.MustExec("set sql_mode = default")
+			// Include a row matching the incorrectly doubled literal as well.
+			tk.MustExec("insert into t values (1, x'785c79'), (2, x'785c5c79')")
+			tk.MustExec("refresh materialized view mv fast")
+			tk.MustQuery("select * from mv").Check(testkit.Rows("1 1"))
+
+			dbName := "mv_recover_escaped"
+			for i, newName := range []string{"mv_recovered_escaped", "mv_recovered_escaped_again"} {
+				tk.MustExec("drop database " + dbName)
+				tk.MustExec("flashback database " + dbName + " to " + newName)
+				dbName = newName
+				tk.MustExec("use " + dbName)
+				mv, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr("mv"))
+				require.NoError(t, err)
+				require.Equal(t, definitionSQLMode, mv.Meta().MaterializedView.DefinitionSQLMode)
+				tk.MustQuery("select * from mv").Check(testkit.Rows(fmt.Sprintf("1 %d", i+1)))
+				tk.MustExec("insert into t values (1, x'785c79'), (2, x'785c5c79')")
+				tk.MustExec("refresh materialized view mv fast")
+				rows := testkit.Rows(fmt.Sprintf("1 %d", i+2))
+				tk.MustQuery("select * from mv").Check(rows)
+				tk.MustQuery("select a, count(*) from v group by a").Check(rows)
+			}
+		})
+	}
+}
+
+func TestFlashbackSchemaMaterializedViewLog(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_mview_enable=on")
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	tk.MustExec("create database mlog_recover")
+	tk.MustExec("use mlog_recover")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("create materialized view log on t (a)")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("purge materialized view log on t")
+	tk.MustExec("insert into t values (2)")
+	const stateSQL = "select * from mysql.tidb_mlog_purge_info order by mlog_id"
+	before := tk.MustQuery(stateSQL).Rows()
+	tk.MustExec("drop database mlog_recover")
+	tk.MustExec("flashback database mlog_recover")
+	require.Equal(t, before, tk.MustQuery(stateSQL).Rows())
+	tk.MustExec("use mlog_recover")
+	tk.MustExec("insert into t values (3)")
+	tk.MustQuery("select a from `$mlog$t` order by a").Check(testkit.Rows("2", "3"))
+	tk.MustExec("purge materialized view log on t")
+	tk.MustQuery("select count(*) from `$mlog$t`").Check(testkit.Rows("0"))
+}
+
+func TestFlashbackSchemaMaterializedViewAtomicity(t *testing.T) {
+	for _, jobUpdateError := range []bool{false, true} {
+		t.Run(fmt.Sprintf("job_update_error=%t", jobUpdateError), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("set tidb_mview_enable=on")
+			timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+			defer resetGC()
+			tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+			tk.MustExec("create database mv_recover_atomic")
+			tk.MustExec("use mv_recover_atomic")
+			tk.MustExec("create table t (a int not null)")
+			tk.MustExec("insert into t values (1)")
+			tk.MustExec("create materialized view log on t (a)")
+			tk.MustExec("create materialized view mv (a, cnt) as select a, count(*) from t group by a")
+			stateQueries := []string{
+				"select * from mysql.tidb_mview_refresh_info order by mview_id",
+				"select * from mysql.tidb_mlog_purge_info order by mlog_id",
+				"select * from mysql.tidb_mview_fast_refresh_source_info order by mview_id, mlog_id",
+			}
+			before := make([][][]any, len(stateQueries))
+			for i, sql := range stateQueries {
+				before[i] = tk.MustQuery(sql).Rows()
+			}
+			tk.MustExec("drop database mv_recover_atomic")
+			var injected bool
+			if jobUpdateError {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable", func(job *model.Job, err *error) {
+					if job.Type == model.ActionRecoverSchema && job.IsDone() && !injected {
+						injected = true
+						*err = errors.New("injected recover schema job update error")
+					}
+				})
+			} else {
+				testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRecoverSchemaMaterializedViewInfoError", `1*return("injected recover schema maintenance error")`)
+				observer := testkit.NewTestKit(t, store)
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRollbackTxnForMustRollbackTxnOnError", func(job *model.Job) {
+					if job.Type == model.ActionRecoverSchema {
+						injected = true
+						for _, sql := range stateQueries {
+							observer.MustQuery(sql).Check(testkit.Rows())
+						}
+						observer.MustQuery("show databases like 'mv_recover_atomic'").Check(testkit.Rows())
+					}
+				})
+			}
+			tk.MustExec("flashback database mv_recover_atomic")
+			require.True(t, injected)
+			for i, sql := range stateQueries {
+				require.Equal(t, before[i], tk.MustQuery(sql).Rows(), sql)
+			}
+			tk.MustExec("use mv_recover_atomic")
+			tk.MustExec("insert into t values (2)")
+			tk.MustExec("refresh materialized view mv fast")
+			tk.MustQuery("select * from mv order by a").Check(testkit.Rows("1 1", "2 1"))
+		})
+	}
+}
+
+func TestFlashbackSchemaMaterializedViewLogBaseline(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_mview_enable=on")
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	tk.MustExec("create database mv_recover_baseline")
+	tk.MustExec("use mv_recover_baseline")
+	tk.MustExec("create table t (a int not null)")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("create materialized view log on t (a)")
+	tk.MustExec("create materialized view mv1 (a, cnt) as select a, count(*) from t group by a")
+	tk.MustExec("create materialized view log on mv1 (a)")
+	tk.MustExec("create materialized view mv2 (a, cnt) as select a, count(*) from mv1 group by a")
+	// Cutover replaces the parent's log. The child's old baseline must survive
+	// recovery so FAST still rejects it until a COMPLETE refresh establishes a new one.
+	tk.MustExec("refresh materialized view mv1 complete out of place")
+	const sourcesSQL = "select * from mysql.tidb_mview_fast_refresh_source_info order by mview_id, mlog_id"
+	before := tk.MustQuery(sourcesSQL).Rows()
+	require.True(t, exeerrors.ErrMVRefreshLogBaselineChanged.Equal(tk.ExecToErr("refresh materialized view mv2 fast")))
+	tk.MustExec("drop database mv_recover_baseline")
+	tk.MustExec("flashback database mv_recover_baseline")
+	require.Equal(t, before, tk.MustQuery(sourcesSQL).Rows())
+	tk.MustExec("use mv_recover_baseline")
+	require.True(t, exeerrors.ErrMVRefreshLogBaselineChanged.Equal(tk.ExecToErr("refresh materialized view mv2 fast")))
+	tk.MustExec("refresh materialized view mv2 complete in place")
+	tk.MustExec("insert into t values (2)")
+	tk.MustExec("refresh materialized view mv1 fast")
+	tk.MustExec("refresh materialized view mv2 fast")
+	tk.MustQuery("select * from mv2 order by a").Check(testkit.Rows("1 1", "2 1"))
+}
+
+func TestFlashbackSchemaMaterializedViewMissingMaintenance(t *testing.T) {
+	for _, table := range []string{"tidb_mview_refresh_info", "tidb_mlog_purge_info", "tidb_mview_fast_refresh_source_info"} {
+		t.Run(table, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("set tidb_mview_enable=on")
+			timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+			defer resetGC()
+			tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+			tk.MustExec("create database mv_recover_missing")
+			tk.MustExec("use mv_recover_missing")
+			tk.MustExec("create table t (a int not null)")
+			tk.MustExec("create materialized view log on t (a)")
+			tk.MustExec("create materialized view mv (a, cnt) as select a, count(*) from t group by a")
+			tk.MustExec("delete from mysql." + table)
+			tk.MustExec("drop database mv_recover_missing")
+			err := tk.ExecToErr("flashback database mv_recover_missing")
+			require.ErrorContains(t, err, "maintenance records missing from mysql."+table)
+			tk.MustQuery("show databases like 'mv_recover_missing'").Check(testkit.Rows())
+			for _, stateTable := range []string{"tidb_mview_refresh_info", "tidb_mlog_purge_info", "tidb_mview_fast_refresh_source_info"} {
+				tk.MustQuery("select count(*) from mysql." + stateTable).Check(testkit.Rows("0"))
+			}
+		})
+	}
 }
 
 // mockGC is used to make GC work in the test environment.

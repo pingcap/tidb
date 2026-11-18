@@ -25,6 +25,35 @@ where table_schema = 'test' and table_name = 'mv_compare_output'
 order by ordinal_position;
 show index from mv_compare_output;
 
+# OUTPUT must reject writes while preserving an active historical read-only transaction.
+create table t_compare_snapshot (id int primary key);
+insert into t_compare_snapshot values (1);
+do sleep(0.01);
+set @stale_ts = now(6);
+do sleep(0.1);
+connect (compare_observer, localhost, root,,test);
+connection default;
+start transaction read only as of timestamp @stale_ts;
+set @transaction_ts = @@tidb_current_ts;
+select id from t_compare_snapshot order by id;
+connection compare_observer;
+insert into t_compare_snapshot values (2);
+connection default;
+--replace_regex /timestamp '[^']*'/timestamp '<timestamp>'/ /TSO: [0-9]+/TSO: <tso>/
+compare materialized view mv_compare as of timestamp @stale_ts;
+--error 1105
+compare materialized view mv_compare as of timestamp @stale_ts output into table mv_compare_stale_output;
+select @@tidb_current_ts = @transaction_ts as same_transaction;
+select id from t_compare_snapshot order by id;
+connection compare_observer;
+select count(*) from information_schema.tables
+where table_schema = 'test' and table_name = 'mv_compare_stale_output';
+connection default;
+rollback;
+select id from t_compare_snapshot order by id;
+disconnect compare_observer;
+drop table t_compare_snapshot;
+
 # Base-table writes after the refresh watermark do not make the MV inconsistent.
 insert into t_compare values (1, 40), (2, 50);
 set @compare_ts = now(6);
