@@ -155,7 +155,7 @@ func TestIntegration(t *testing.T) {
 			},
 		} {
 			t.Run(input.name, func(t *testing.T) {
-				backend, err := objstore.ParseBackend("s3://backup-bucket/prefix"+input.query, nil)
+				backend, err := storage.ParseBackend("s3://backup-bucket/prefix"+input.query, nil)
 				require.NoError(t, err)
 				task := simpleTask("s3_context_"+input.name, 1)
 				task.PBInfo.Storage = backend

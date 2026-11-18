@@ -3577,13 +3577,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-<<<<<<< HEAD
-        sum = "h1:TOpiYURrbprEqPbXVuaFIAagQm3n4+hsKsKL5beY1GQ=",
-        version = "v0.0.0-20261026071505-70b5775c3362",
-=======
-        sum = "h1:ymP9CnhW3cNZLg5cea2ZgqCSTG91FrQts2e6HnULBu8=",
-        version = "v0.0.0-20261016101550-f8ad079c8e98",
->>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983))
+        sum = "h1:mPlzjZr7ETZUerN3fjYwSUD5zH0qmX6EPMBevNw7ntE=",
+        version = "v0.0.0-20261104094450-1bf153fd02d4",
     )
     go_repository(
         name = "com_github_pingcap_log",

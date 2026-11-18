@@ -96,27 +96,12 @@ func TestUrlNoQuery(t *testing.T) {
 			expectedValue: "s3://bucket/prefix/",
 		},
 		{
-<<<<<<< HEAD
-=======
-			inputName:     FlagPiTRAddIndexSQLStorage,
-			expectedName:  "pitr-add-index-sql-storage",
-			inputValue:    "s3://bucket/pitr/add-index?access-key=1&secret-key=2",
-			expectedValue: "s3://bucket/pitr/add-index",
-		},
-		{
-			inputName:     "upstream-storage",
-			expectedName:  "upstream-storage",
+			inputName:     flagCheckpointStorage,
+			expectedName:  "checkpoint-storage",
 			inputValue:    "s3://bucket/prefix?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D",
 			expectedValue: "s3://bucket/prefix",
 		},
 		{
-			inputName:     "downstream-storage",
-			expectedName:  "downstream-storage",
-			inputValue:    "s3://bucket/prefix?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D",
-			expectedValue: "s3://bucket/prefix",
-		},
-		{
->>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983))
 			inputName:     flagFullBackupCipherKey,
 			expectedName:  "crypter.key",
 			inputValue:    "537570657253656372657456616C7565",

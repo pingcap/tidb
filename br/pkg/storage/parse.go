@@ -67,38 +67,11 @@ const InvalidURLPlaceholder = ast.InvalidURLPlaceholder
 
 // RedactURL masks the credentials in a storage URL or endpoint so that it can
 // be put into logs and error messages. An unparseable value is replaced by
-<<<<<<< HEAD:br/pkg/storage/parse.go
 // InvalidURLPlaceholder, userinfo and fragments are removed, and queries are
 // dropped unless the scheme has a safe query allowlist in ast.RedactURL.
 // A value with neither "://" nor "?" is a local path and is returned unchanged.
 func RedactURL(rawURL string) string {
 	return ast.RedactURL(rawURL)
-=======
-// InvalidURLPlaceholder, userinfo and fragments are removed, and the query of a URL with an
-// unknown scheme is dropped, since ast.RedactURL cannot tell which parameters
-// are secret there. A value with neither "://" nor "?" is a local path and is
-// returned unchanged.
-func RedactURL(rawURL string) string {
-	// A plain local path has nothing to mask, and parsing it would escape or
-	// reject characters such as spaces and '%'.
-	if !strings.Contains(rawURL, "://") && !strings.Contains(rawURL, "?") {
-		return rawURL
-	}
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return InvalidURLPlaceholder
-	}
-	u.Fragment = ""
-	u.RawFragment = ""
-	rawURL = u.String()
-	switch strings.ToLower(u.Scheme) {
-	case "", "file", "local", "hdfs", "noop", "gs", "gcs", "s3", "ks3", "oss", "azure", "azblob":
-		return ast.RedactURL(rawURL)
-	}
-	u.User = nil
-	u.RawQuery = ""
-	return u.String()
->>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983)):pkg/objstore/parse.go
 }
 
 // ParseRawURL parse raw url to url object.
@@ -173,10 +146,6 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		if err := ExtractQueryParameters(u, &s3Options); err != nil {
 			return nil, errors.Trace(err)
 		}
-<<<<<<< HEAD:br/pkg/storage/parse.go
-=======
-		s3Options.SetForcePathStyle(rawURL)
->>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983)):pkg/objstore/parse.go
 		if err := s3Options.Apply(s3); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -232,7 +201,6 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 // fields (more types will be supported in the future), and tagged for JSON
 // serialization.
 //
-<<<<<<< HEAD:br/pkg/storage/parse.go
 // All of the URL's query parameters will be removed after a successful call.
 // If the query cannot be decoded, the URL and options are left unchanged.
 func ExtractQueryParameters(u *url.URL, options any) error {
@@ -240,17 +208,6 @@ func ExtractQueryParameters(u *url.URL, options any) error {
 	// instead, without retaining decoder errors that may expose query contents.
 	values, err := url.ParseQuery(u.RawQuery)
 	if err != nil {
-=======
-// All of the URL's query parameters will be removed after calling this method.
-// It returns an error, leaving the options unchanged, if the query cannot be
-// decoded.
-func ExtractQueryParameters(u *url.URL, options any) error {
-	// URL.Query skips parameters it cannot decode, which would silently drop
-	// options such as sse-kms-context.
-	values, err := url.ParseQuery(u.RawQuery)
-	if err != nil {
-		// The decoder error may quote part of the query.
->>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983)):pkg/objstore/parse.go
 		return errors.Annotate(berrors.ErrStorageInvalidConfig, "parse storage URL query failed: invalid format")
 	}
 
@@ -295,15 +252,6 @@ func ExtractQueryParameters(u *url.URL, options any) error {
 	// Clean up the URL finally.
 	u.RawQuery = ""
 	return nil
-<<<<<<< HEAD:br/pkg/storage/parse.go
-=======
-}
-
-// NormalizeQueryParameterKey normalizes object storage URL query parameter keys
-// to match backend option tags.
-func NormalizeQueryParameterKey(key string) string {
-	return strings.ToLower(strings.ReplaceAll(key, "_", "-"))
->>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983)):pkg/objstore/parse.go
 }
 
 // FormatBackendURL obtains the raw URL which can be used the reconstruct the

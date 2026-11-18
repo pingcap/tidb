@@ -224,11 +224,7 @@ func (cfg *TestStorageConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 // RunTestStorage tests all operations of an external storage.
 func RunTestStorage(ctx context.Context, cfg TestStorageConfig) error {
 	logger := logutil.Logger(ctx)
-<<<<<<< HEAD
 	logger.Info("Starting external storage test", zap.String("storage", storage.RedactURL(cfg.StorageURI)), zap.Any("options", cfg.BackendOptions.Redacted()))
-=======
-	logger.Info("Starting external storage test", zap.String("storage", objstore.RedactURL(cfg.StorageURI)), zap.Any("options", cfg.BackendOptions.Redacted()))
->>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983))
 
 	// Initialize test report
 	report := &TestReport{

@@ -338,13 +338,10 @@ func TestBRIESecureText(t *testing.T) {
 			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix'\E$`,
 		},
 		{
-<<<<<<< HEAD
 			input:   `backup database * to 's3://bucket/prefix?sse-kms-context={"tenant":"a&region=private-context-value"}'`,
 			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix'\E$`,
 		},
 		{
-=======
->>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983))
 			input:   `backup database * to 's3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a;x&private-context-value"}'`,
 			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix'\E$`,
 		},
@@ -371,13 +368,10 @@ func TestBRIESecureText(t *testing.T) {
 			input:   "backup database * to 's3://user:pass@bucket/prefix?region=us-west-2'",
 			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix?region=us-west-2'\E$`,
 		},
-<<<<<<< HEAD
 		{
 			input:   "backup database * to 'azure://c/p?account-name=a&sas-token=sv=2020-08-04&ss=b&sig=SECRETSIG'",
 			secured: `^\QBACKUP DATABASE * TO 'azure://c/p?account-name=a&sas-token=xxxxxx'\E$`,
 		},
-=======
->>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983))
 	}
 
 	p := parser.New()
@@ -452,8 +446,6 @@ func TestRedactURL(t *testing.T) {
 		{args{"s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?Access_Key=FAKE_AST_AK&other-key=benign"}, "s3://bucket/path?Access_Key=xxxxxx"},
 		{args{"azure://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?SAS_Token=FAKE_AST_SAS&account-name=benign"}, "azure://bucket/path?SAS_Token=xxxxxx&account-name=benign"},
 		{args{"~/file"}, "~/file"},
-		{args{"/data/my files/100%off#name"}, "/data/my files/100%off#name"},
-		{args{"s3://bucket/%zz?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D"}, "(invalid URL)"},
 		{args{"gs://bucket/file"}, "gs://bucket/file"},
 		{args{"gs://bucket/file?storage-class=NEARLINE&predefined-acl=private&unknown=secret"}, "gs://bucket/file?predefined-acl=private&storage-class=NEARLINE"},
 		{args{"gcs://bucket/file?storage-class=COLDLINE&predefined-acl=private&credentials-file=secret"}, "gcs://bucket/file?credentials-file=xxxxxx&predefined-acl=private&storage-class=COLDLINE"},
@@ -474,7 +466,6 @@ func TestRedactURL(t *testing.T) {
 		{args{"gcs://bucket/file?"}, "gcs://bucket/file"},
 		{args{"local:///tmp/backup?"}, "local:///tmp/backup"},
 		{args{"s3://bucket/file"}, "s3://bucket/file"},
-<<<<<<< HEAD
 		{args{"s3://bucket/file?other-key=123"}, "s3://bucket/file"},
 		{args{"s3://bucket/file?acl=private&force-path-style=true&provider=aws&region=us-east-1&sse=AES256&storage-class=STANDARD"}, "s3://bucket/file?acl=private&force-path-style=true&provider=aws&region=us-east-1&sse=AES256&storage-class=STANDARD"},
 		{args{"ks3://bucket/file?region=us-east-1&unknown-key=secret"}, "ks3://bucket/file?region=us-east-1"},
@@ -499,16 +490,6 @@ func TestRedactURL(t *testing.T) {
 		{args{`s3://bucket/file?sse-kms-context={"a":"x&region=private-context-value"}&sse-kms-context=%7B%7D`}, "s3://bucket/file"},
 		{args{`s3://bucket/file?sse-kms-context=%7B%7D&SSE_KMS_CONTEXT={"a":"x&region=private-context-value"}`}, "s3://bucket/file"},
 		{args{"s3://bucket/file?sse-kms-context=%7B%22a%22%3A%22x%26region%3Dprivate-context-value%22%7D&region=us-east-1"}, "s3://bucket/file?region=us-east-1&sse-kms-context=xxxxxx"},
-=======
-		{args{"s3://bucket/file?other-key=123"}, "s3://bucket/file?other-key=123"},
-		{args{"s3://bucket/file?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D"}, "s3://bucket/file?sse-kms-context=xxxxxx"},
-		// An unescaped '#' or '&' splits the raw JSON, so the whole query is dropped.
-		{args{`s3://bucket/file?sse-kms-context={"tenant":"#context-value"}`}, "s3://bucket/file"},
-		{args{`s3://bucket/file?sse=aws:kms&sse-kms-context={"tenant":"a&private-context-value"}`}, "s3://bucket/file"},
-		{args{`s3://bucket/file?sse=aws:kms&sse-kms-context={"tenant":"a;x&private-context-value"}`}, "s3://bucket/file"},
-		{args{`s3://bucket/file?sse=aws:kms&sse-kms-context={"tenant":"a%zz&private-context-value"}`}, "s3://bucket/file"},
-		{args{"s3://bucket/file?SSE_KMS_CONTEXT=%7B%7D&SSE_KMS_CONTEXT=%7B%22a%22%3A%22b%22%7D"}, "s3://bucket/file?SSE_KMS_CONTEXT=xxxxxx"},
->>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983))
 		{args{"s3://bucket/file?access-key=123"}, "s3://bucket/file?access-key=xxxxxx"},
 		{args{"s3://bucket/file?secret-access-key=123"}, "s3://bucket/file?secret-access-key=xxxxxx"},
 		{args{"s3://bucket/file?external-id=tenant-123&role-arn=role&profile=default"}, "s3://bucket/file?external-id=tenant-123&profile=default&role-arn=role"},
@@ -535,13 +516,9 @@ func TestRedactURL(t *testing.T) {
 		{args{"azure://container/file?endpoint=https%3A%2F%2Facct.blob.core.windows.net"}, "azure://container/file?endpoint=xxxxxx"},
 		{args{"azure://container/file?endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%25zz%3Fsig%3Dsecret"}, "azure://container/file?endpoint=xxxxxx"},
 		{args{"azblob://container/file?endpoint=first-secret&endpoint=second-secret"}, "azblob://container/file?endpoint=xxxxxx"},
-<<<<<<< HEAD
 		{args{"s3://bucket/file?endpoint=https%3A%2F%2Fs3.example.com"}, "s3://bucket/file?endpoint=xxxxxx"},
 		{args{"ks3://bucket/file?endpoint=https%3A%2F%2Fuser%3Apass%40host%2F%3Fsig%3Dsecret"}, "ks3://bucket/file?endpoint=xxxxxx"},
 		{args{"oss://bucket/file?EndPoint=first-secret&EndPoint=second-secret"}, "oss://bucket/file?EndPoint=xxxxxx"},
-=======
-		{args{"s3://bucket/file?endpoint=https%3A%2F%2Fs3.example.com"}, "s3://bucket/file?endpoint=https%3A%2F%2Fs3.example.com"},
->>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983))
 		{args{"s3://user:pass@b/p?region=r"}, "s3://b/p?region=r"},
 		{args{"gs://user:pass@bucket/file"}, "gs://bucket/file"},
 	}

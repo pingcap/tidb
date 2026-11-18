@@ -20,7 +20,6 @@ import (
 	"strings"
 	"testing"
 
-<<<<<<< HEAD
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
@@ -28,9 +27,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-=======
-	backup "github.com/pingcap/kvproto/pkg/brpb"
->>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983))
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -102,7 +98,6 @@ func TestRedactInitAndValueAndKey(t *testing.T) {
 	require.Equal(t, Key([]byte(secret)), redacted)
 }
 
-<<<<<<< HEAD
 func TestRedactLockInfo(t *testing.T) {
 	previousMode := errors.RedactLogEnabled.Load()
 	t.Cleanup(func() { errors.RedactLogEnabled.Store(previousMode) })
@@ -288,15 +283,9 @@ func TestTaskInfoS3CredentialsRedacted(t *testing.T) {
 		}
 	}
 	s3 := &backup.S3{
-		Bucket:       "backup-bucket",
-		SessionToken: "session-token-value",
-=======
-func TestTaskInfoS3CredentialsRedacted(t *testing.T) {
-	s3 := &backup.S3{
 		Bucket:                  "backup-bucket",
 		SessionToken:            "session-token-value",
 		SseKmsEncryptionContext: "eyJ0ZW5hbnQiOiJjb250ZXh0LXZhbHVlIn0=",
->>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983))
 	}
 	info := &backup.StreamBackupTaskInfo{
 		Name:    "backup-task",
@@ -305,15 +294,11 @@ func TestTaskInfoS3CredentialsRedacted(t *testing.T) {
 	original := info.String()
 	redacted := (TaskInfoRedacted{Info: info}).String()
 	require.NotContains(t, redacted, s3.SessionToken)
-<<<<<<< HEAD
-=======
 	require.NotContains(t, redacted, s3.SseKmsEncryptionContext)
->>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983))
 	require.Contains(t, redacted, s3.Bucket)
 	require.Contains(t, redacted, info.Name)
 	require.Equal(t, original, info.String())
 }
-<<<<<<< HEAD
 
 func TestTaskInfoEncryptionCredentialsRedacted(t *testing.T) {
 	previous := errors.RedactLogEnabled.Load()
@@ -390,5 +375,3 @@ func TestTaskInfoEncryptionCredentialsRedacted(t *testing.T) {
 		}
 	}
 }
-=======
->>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983))
