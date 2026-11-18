@@ -700,7 +700,8 @@ impl StatementReadTs {
 
     /// Go `LazyTxn.Wait`'s deferred `DurationWaitTS = time.Since(begin)`:
     /// the pending transaction became valid after `waited`.
-    fn record_wait_ts(&self, waited: Duration) {
+    /// Go `DurationWaitTS`: the time the statement waited for its timestamp.
+    pub fn record_wait_ts(&self, waited: Duration) {
         if let Some(phase_durations) = &self.phase_durations {
             phase_durations.set_duration_wait_ts(waited);
         }
@@ -714,7 +715,8 @@ impl StatementReadTs {
         self
     }
 
-    fn record(&self, start_ts: u64) {
+    /// The statement's transaction is valid at `start_ts`.
+    pub fn record(&self, start_ts: u64) {
         *self
             .value
             .lock()
@@ -761,14 +763,6 @@ struct DeferredSnapshot {
     /// Where the open publishes the statement's timestamp, so the publication
     /// can find it after this handle is gone.
     read_ts: StatementReadTs,
-    /// A same-transaction write owner, handed to the session when this
-    /// statement snapshot is dropped.  The slot is shared because the storage
-    /// seam intentionally exposes only `ClusterSnapshot` to the executor.
-    write_handoff: Option<WriteTransactionSlot>,
-    /// Where a lock taken after the statement's read leaves its outcome for
-    /// the statement owner (Go `handlePessimisticLockError`).
-    lock_failure: Option<StatementLockFailureSlot>,
-    mutation_buffer: Option<MutationBuffer>,
     /// Behind one `Mutex` because `start_ts` takes `&self` and must answer
     /// with the timestamp of the same transaction the reads use -- and because
     /// the declaration below must be settled against the open atomically.
@@ -786,11 +780,6 @@ struct DeferredState {
     prepared: Option<Box<dyn PendingClusterSnapshot>>,
     /// `None` until the first read waits for the prepared snapshot.
     opened: Option<Box<dyn ClusterSnapshot>>,
-    /// A writable transaction being opened for an UPDATE/DELETE.  Its read
-    /// handle is installed in `opened`; the owner stays here until Drop can
-    /// hand it to the session for commit.
-    prefetched_write: Option<Result<Box<dyn PendingClusterTransaction>, String>>,
-    write_transaction: Option<Box<dyn OpenClusterTransaction>>,
     /// Whether the statement declared its whole read is one point get on the
     /// clustered handle, which is what decides WHICH transaction the first
     /// read opens.
@@ -812,7 +801,6 @@ impl fmt::Debug for DeferredSnapshot {
             .field("prepared", &state.prepared.is_some())
             .field("opened", &state.opened.is_some())
             .field("max_ts", &state.max_ts)
-            .field("write_transaction", &state.write_transaction.is_some())
             .finish()
     }
 }
@@ -829,61 +817,7 @@ impl DeferredSnapshot {
             resource_group,
             low_resolution_tso,
             read_ts,
-            write_handoff: None,
-            lock_failure: None,
-            mutation_buffer: None,
             state: Mutex::new(DeferredState::default()),
-        }
-    }
-
-    fn new_prefetched_write(
-        transactions: Arc<dyn ClusterTransactions>,
-        read_ts: StatementReadTs,
-        write_handoff: WriteTransactionSlot,
-        lock_failure: StatementLockFailureSlot,
-        mutation_buffer: MutationBuffer,
-        resource_group: Arc<str>,
-        pessimistic: bool,
-        fair_locking: bool,
-        options: SessionTransactionOptions,
-    ) -> Self {
-        // The timestamp request goes out now and is waited for by the first
-        // read; the transaction opens on that thread. Spawning a thread per
-        // statement to open it eagerly cost a thread creation and join per
-        // autocommit write.
-        let prefetched_write = Some(transactions.prepare_autocommit_write(
-            &resource_group,
-            pessimistic,
-            fair_locking,
-            options,
-        ));
-        Self {
-            transactions,
-            resource_group,
-            // A write refuses a low-resolution timestamp before it runs.
-            low_resolution_tso: false,
-            read_ts,
-            write_handoff: Some(write_handoff),
-            lock_failure: Some(lock_failure),
-            mutation_buffer: Some(mutation_buffer),
-            state: Mutex::new(DeferredState {
-                prefetched_write,
-                ..DeferredState::default()
-            }),
-        }
-    }
-
-    /// The outcome of a lock the statement took after its read, mapped as a
-    /// lock inside an explicit transaction is
-    /// ([`StatementLockFailure::from_outcome`]) and left for the statement
-    /// owner.
-    fn lock_outcome(&self, outcome: LockKeysOutcome) -> Result<(), StorageError> {
-        let Some(failure) = StatementLockFailure::from_outcome(outcome) else {
-            return Ok(());
-        };
-        match &self.lock_failure {
-            Some(slot) => Err(failure.record(slot)),
-            None => Err(failure.record(&StatementLockFailureSlot::default())),
         }
     }
 
@@ -930,7 +864,7 @@ impl DeferredSnapshot {
         use_snapshot: impl FnOnce(&mut dyn ClusterSnapshot) -> Result<T, StorageError>,
     ) -> Result<T, StorageError> {
         let mut guard = self.state();
-        self.open_in(&mut guard, None)?;
+        self.open_in(&mut guard)?;
         use_snapshot(guard.opened.as_mut().expect("just opened").as_mut())
     }
 
@@ -939,55 +873,13 @@ impl DeferredSnapshot {
     /// a pessimistic implicit transaction then locks them with returned
     /// values before any read (Go `PointGetExecutor.getAndLock`), and the
     /// statement reads from the lock responses.
-    fn open_in(
-        &self,
-        guard: &mut DeferredState,
-        lock: Option<(Vec<Vec<u8>>, tidb_txnkv::transaction::LockWaitTime, bool)>,
-    ) -> Result<(), StorageError> {
+    fn open_in(&self, guard: &mut DeferredState) -> Result<(), StorageError> {
         if guard.opened.is_none() {
             // Go `LazyTxn.Wait` times turning the pending transaction valid:
             // waiting for its timestamp future and creating the transaction.
-            // A prefetched write records it once its transaction is valid,
-            // before the point-write lock that follows.
             let begin_wait = std::time::Instant::now();
-            let waits_prefetched_write = !guard.max_ts && guard.prefetched_write.is_some();
             let opened = if guard.max_ts {
                 self.transactions.open_max_ts_snapshot(&self.resource_group)
-            } else if let Some(prefetched_write) = guard.prefetched_write.take() {
-                let transaction = prefetched_write.and_then(PendingClusterTransaction::wait);
-                self.read_ts.record_wait_ts(begin_wait.elapsed());
-                let transaction = transaction.map_err(StorageError::Backend)?;
-                if let Some(buffer) = &self.mutation_buffer {
-                    transaction.bind_mutation_buffer(buffer);
-                }
-                // Go enables point-write locking only for pessimistic
-                // transactions; a locking plan alone does not imply it.
-                let lock = lock.filter(|_| transaction.is_pessimistic());
-                let snapshot = if let Some((keys, wait, only_if_exists)) = lock {
-                    let outcome = if only_if_exists {
-                        transaction.lock_staged_keys_with_values_if_exist(keys, wait)
-                    } else {
-                        transaction.lock_staged_keys_with_values(keys, wait)
-                    }
-                    .map_err(StorageError::Backend)?;
-                    match outcome {
-                        LockKeysOutcome::Locked { .. } => transaction.snapshot_for(true),
-                        LockKeysOutcome::RetryStatement { for_update_ts, .. } => {
-                            transaction.snapshot_at_for(for_update_ts, true)
-                        }
-                        failed => {
-                            // The lock ran in this transaction: the failed
-                            // statement's `TxnCtx.StartTS` is its start.
-                            self.read_ts.record(transaction.start_ts());
-                            return self.lock_outcome(failed);
-                        }
-                    }
-                } else {
-                    transaction.snapshot()
-                }
-                .map_err(StorageError::Backend)?;
-                guard.write_transaction = Some(transaction);
-                Ok(snapshot)
             } else if let Some(prepared) = guard.prepared.take() {
                 prepared.wait().or_else(|prepared_error| {
                     self.open_now()
@@ -1000,9 +892,7 @@ impl DeferredSnapshot {
             } else {
                 self.open_now()
             };
-            if !waits_prefetched_write {
-                self.read_ts.record_wait_ts(begin_wait.elapsed());
-            }
+            self.read_ts.record_wait_ts(begin_wait.elapsed());
             let mut opened = opened.map_err(StorageError::Backend)?;
             if let Some(options) = &guard.read_options {
                 opened.set_snapshot_read_options(options.clone());
@@ -1017,46 +907,6 @@ impl DeferredSnapshot {
             guard.opened = Some(opened);
         }
         Ok(())
-    }
-}
-
-/// A pessimistic lock's SQL error as the storage seam reports it, keeping
-/// Go's code and SQLSTATE (1205, 1213, 3572, ...).
-/// The transaction owner a write statement transfers after its snapshot handle
-/// is unbound.  Keeping this alias here avoids exposing the concrete TiKV
-/// transaction implementation through the storage trait.
-pub type WriteTransactionSlot = Arc<Mutex<Option<Box<dyn OpenClusterTransaction>>>>;
-
-
-impl Drop for DeferredSnapshot {
-    fn drop(&mut self) {
-        let Some(handoff) = self.write_handoff.take() else {
-            return;
-        };
-        let mut state = self.state();
-        // An UPDATE/DELETE normally consumes the prefetch in its first read.
-        // Receiving an unopened prefetch here also covers a no-row write, so
-        // the statement still commits/finishes the same transaction rather
-        // than leaking a worker.
-        let transaction = state.write_transaction.take().or_else(|| {
-            state
-                .prefetched_write
-                .take()
-                .and_then(Result::ok)
-                .and_then(|pending| pending.wait().ok())
-        });
-        drop(state);
-        if let Some(transaction) = transaction {
-            // Go's executor builder activates a DML's transaction before the
-            // statement runs (`buildInsert` -> `updateForUpdateTS` ->
-            // `GetStmtForUpdateTS`), so a write that never read -- a point
-            // INSERT, failed or not -- still has `TxnCtx.StartTS`, which its
-            // slow log and `tidb_last_query_info` report.
-            if self.read_ts.get().is_none() {
-                self.read_ts.record(transaction.start_ts());
-            }
-            *handoff.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(transaction);
-        }
     }
 }
 
@@ -1079,62 +929,6 @@ impl ClusterSnapshot for DeferredSnapshot {
 
     fn prepare(&mut self) -> Result<(), StorageError> {
         self.prepare_open()
-    }
-
-    /// Go `PointGetExecutor.getAndLock` in a pessimistic implicit
-    /// transaction: as the statement's first act the lock opens the write
-    /// transaction and the statement reads from the lock responses; after a
-    /// read it locks through the open transaction.
-    fn lock_keys_for_read(
-        &mut self,
-        keys: &[Key],
-        wait: tidb_txnkv::transaction::LockWaitTime,
-        only_if_exists: bool,
-    ) -> Result<(), StorageError> {
-        let keys: Vec<Vec<u8>> = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
-        let mut guard = self.state();
-        if guard.opened.is_none() {
-            return self.open_in(&mut guard, Some((keys, wait, only_if_exists)));
-        }
-        let Some(transaction) = guard
-            .write_transaction
-            .as_ref()
-            .filter(|transaction| transaction.is_pessimistic())
-        else {
-            return Ok(());
-        };
-        let outcome = if only_if_exists {
-            transaction.lock_staged_keys_with_values_if_exist(keys, wait)
-        } else {
-            transaction.lock_staged_keys_with_values(keys, wait)
-        };
-        // The statement already read at its start timestamp, so a newer
-        // committed version is a write conflict for the whole statement.
-        self.lock_outcome(outcome.map_err(StorageError::Backend)?)
-    }
-
-    /// Go `doLockKeys` from `SelectLockExec.Next` in a pessimistic implicit
-    /// transaction: the statement has read through its write transaction,
-    /// which locks the keys of the rows the plan returned.
-    fn do_lock_keys(
-        &mut self,
-        keys: &[Key],
-        wait: tidb_txnkv::transaction::LockWaitTime,
-    ) -> Result<(), StorageError> {
-        let keys: Vec<Vec<u8>> = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
-        let mut guard = self.state();
-        self.open_in(&mut guard, None)?;
-        let Some(transaction) = guard
-            .write_transaction
-            .as_ref()
-            .filter(|transaction| transaction.is_pessimistic())
-        else {
-            return Ok(());
-        };
-        let outcome = transaction
-            .lock_staged_keys_with_assertions(keys, BTreeSet::new(), BTreeMap::new(), wait)
-            .map_err(StorageError::Backend)?;
-        self.lock_outcome(outcome)
     }
 
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
@@ -1207,32 +1001,6 @@ pub fn deferred_snapshot(
     low_resolution_tso: bool,
 ) -> Box<dyn ClusterSnapshot> {
     Box::new(DeferredSnapshot::new(transactions, read_ts, resource_group, low_resolution_tso))
-}
-
-/// [`deferred_snapshot`] with a writable transaction opened in parallel with
-/// DML planning.  The statement reads and commits through that one owner.
-pub fn prefetched_write_snapshot(
-    transactions: Arc<dyn ClusterTransactions>,
-    read_ts: StatementReadTs,
-    write_handoff: WriteTransactionSlot,
-    lock_failure: StatementLockFailureSlot,
-    mutation_buffer: MutationBuffer,
-    resource_group: Arc<str>,
-    pessimistic: bool,
-    fair_locking: bool,
-    options: SessionTransactionOptions,
-) -> Box<dyn ClusterSnapshot> {
-    Box::new(DeferredSnapshot::new_prefetched_write(
-        transactions,
-        read_ts,
-        write_handoff,
-        lock_failure,
-        mutation_buffer,
-        resource_group,
-        pessimistic,
-        fair_locking,
-        options,
-    ))
 }
 
 /// The production transaction tier: real read-only transactions and the

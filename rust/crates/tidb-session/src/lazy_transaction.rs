@@ -59,6 +59,11 @@ struct Pending {
     resource_group: Option<String>,
     assertion_level: Option<tidb_proto::KvrpcAssertionLevel>,
     buffer: Option<MutationBuffer>,
+    /// An autocommit statement's implicit transaction takes the SQL buffer
+    /// over only while nothing is staged in it: one activated after the
+    /// statement staged its writes leaves the buffer to the lock and the
+    /// commit, which are handed it explicitly.
+    bind_only_if_empty: bool,
     checker: Option<Arc<dyn SchemaLeaseChecker>>,
     /// The activation's own failure, reported by every later call that needs
     /// the transaction.
@@ -95,7 +100,9 @@ impl Shared {
         match opener(state.options.clone()) {
             Ok(transaction) => {
                 if let Some(buffer) = &state.buffer {
-                    transaction.bind_mutation_buffer(buffer);
+                    if !state.bind_only_if_empty || buffer.is_empty() {
+                        transaction.bind_mutation_buffer(buffer);
+                    }
                 }
                 if let Some(checker) = &state.checker {
                     let mut transaction = transaction;
@@ -163,12 +170,27 @@ impl LazyClusterTransaction {
                     resource_group: None,
                     assertion_level: None,
                     buffer: Some(buffer),
+                    bind_only_if_empty: false,
                     checker: None,
                     failed: None,
                     open: None,
                 }),
             }),
         }
+    }
+
+    /// An autocommit statement's implicit transaction (see
+    /// `Pending::bind_only_if_empty`).
+    #[must_use]
+    pub fn new_implicit(
+        pessimistic: bool,
+        options: SessionTransactionOptions,
+        buffer: MutationBuffer,
+        opener: TransactionOpener,
+    ) -> Self {
+        let transaction = Self::new(pessimistic, options, buffer, opener);
+        transaction.shared.state().bind_only_if_empty = true;
+        transaction
     }
 
     /// A snapshot that opens the transaction at its first read and is then

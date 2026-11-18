@@ -428,19 +428,12 @@ impl StatementLifecycle<'_> {
                 )
                 .map_err(SqlQueryError::unknown)?;
         }
-        let write_transaction = (self.txn.explicit.is_none()
-            && shape == StatementReadShape::AutocommitWrite)
-            .then(|| Arc::new(Mutex::new(None)));
         // Go `handlePessimisticDML`'s statement loop: run, lock the staged
         // keys, and on a lock conflict roll the STATEMENT back and re-execute
         // it reading at the advanced `for_update_ts`. `None` is the first
         // attempt, reading at the transaction's own snapshot.
         let mut retry_read_ts: Option<u64> = None;
         let mut retries = tidb_store_driver_error::pessimistic_lock_error::PessimisticStatementRetry::default();
-        // Where an autocommit pessimistic statement's lock, taken after its
-        // read, leaves its outcome; a statement in an explicit transaction
-        // uses its transaction's slot.
-        let lock_failure: StatementLockFailureSlot = Arc::default();
         // Whether the statement reached `finishStmt`'s commit: a failure
         // there is the commit's own, not one `autoCommitAfterStmt` rolls
         // back.
@@ -452,9 +445,6 @@ impl StatementLifecycle<'_> {
             if let Some(transaction) = self.txn.explicit.as_ref() {
                 let _ = transaction.take_statement_lock_failure();
             }
-            *lock_failure
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
             // Go `decideTxnMode`: under the default `pessimistic-auto-commit =
             // false` an autocommit DML runs optimistically -- a read at its
             // start timestamp and a one-phase prewrite -- and only the retry
@@ -472,32 +462,26 @@ impl StatementLifecycle<'_> {
             if autocommit_write {
                 self.begin_autocommit_statement_locks(autocommit_pessimistic);
             }
-            let snapshot = if autocommit_write {
+            if autocommit_write {
                 let vars = self.session.vars();
                 // Go `OnPessimisticStmtStart` (`isolation/base.go:711`):
                 // fair locking follows the session variable; a client
                 // connection is neither internal nor restricted SQL.
                 let fair_locking = vars.pessimistic_transaction_fair_locking();
-                transactions::prefetched_write_snapshot(
-                    Arc::clone(self.txn.transactions()),
-                    read_ts.clone(),
-                    Arc::clone(
-                        write_transaction
-                            .as_ref()
-                            .expect("autocommit write created its transaction handoff"),
-                    ),
-                    Arc::clone(&lock_failure),
-                    self.txn.buffer().clone(),
-                    Arc::<str>::from(resource_group),
+                let options = tidb_domain_core::session_transaction::set_options_on_txn_active(vars)
+                    .with_statement_kv_context(self.session.statement_kv_context_cell())
+                    .with_temporary_tables(self.session.temporary_table_ids())
+                    .with_guarantee_linearizability(self.session.guarantee_linearizability())
+                    .with_kill_signal(self.session.kv_kill_signal());
+                self.txn.enter_implicit_write(
                     autocommit_pessimistic,
                     fair_locking,
-                    tidb_domain_core::session_transaction::set_options_on_txn_active(vars)
-                        .with_statement_kv_context(self.session.statement_kv_context_cell())
-                        .with_temporary_tables(self.session.temporary_table_ids())
-                        .with_guarantee_linearizability(self.session.guarantee_linearizability())
-                        .with_kill_signal(self.session.kv_kill_signal()),
-                )
-            } else {
+                    resource_group,
+                    options,
+                    read_ts.clone(),
+                );
+            }
+            let snapshot = {
                 match self.open_read_snapshot(shape, retry_read_ts, read_ts, resource_group, is_dml)
                 {
                     Ok(snapshot) => snapshot,
@@ -546,6 +530,14 @@ impl StatementLifecycle<'_> {
                 }
             }
             let outcome = run(&mut self.session);
+            // Go's executor builder activates an autocommit DML's transaction
+            // before it runs (`updateForUpdateTS`), so a statement that never
+            // read still has its `TxnCtx.StartTS`, from the same future.
+            if autocommit_write {
+                if let Some(transaction) = self.txn.current() {
+                    let _ = transaction.activate();
+                }
+            }
             // Go `CommitTxn` / `RollbackTxn` -> `setLastTxnInfoBeforeTxnEnd`
             // for the transaction an autocommit statement ends: recorded
             // only when the statement activated one (`TxnCtx.StartTS != 0`),
@@ -574,10 +566,9 @@ impl StatementLifecycle<'_> {
                     if let Err(error) = finished {
                         break Err(error);
                     }
-                    let autocommit_lock = write_transaction.as_ref().filter(|_| autocommit_pessimistic);
-                    match self.lock_pessimistic_statement_keys(savepoint, autocommit_lock) {
+                    match self.lock_pessimistic_statement_keys(savepoint) {
                         Ok(PessimisticStep::Done) => {
-                            if let Some(transaction) = self.txn.explicit.as_ref() {
+                            if let Some(transaction) = self.txn.current() {
                                 if let Err(error) = transaction.finish_pessimistic_statement(true) {
                                     break Err(SqlQueryError::unknown(error));
                                 }
@@ -592,7 +583,7 @@ impl StatementLifecycle<'_> {
                                 break Err(transactions::sql_error(error));
                             }
                             self.session.record_statement_retry();
-                            Self::rollback_prefetched_write(write_transaction.clone());
+                            self.txn.rollback_implicit();
                             self.txn.buffer().restore(savepoint.clone());
                             tidb_breakpoint::inject(&*self.session, "lockErrorAndThenOnStmtRetryCalled");
                             continue;
@@ -634,11 +625,7 @@ impl StatementLifecycle<'_> {
                                 ),
                             )
                         });
-                        self.flush_if_autocommit(
-                            read_ts.get(),
-                            write_transaction.clone(),
-                            resource_group,
-                        )
+                        self.flush_if_autocommit(read_ts.get(), resource_group)
                     }) {
                         Ok(()) => break Ok(value),
                         Err(error) => break Err(error),
@@ -652,13 +639,8 @@ impl StatementLifecycle<'_> {
                     // Inside an explicit transaction the transaction keeps
                     // the outcome; an autocommit statement's lock, taken
                     // after its read, left it in `lock_failure`.
-                    let failure = match self.txn.explicit.as_ref() {
-                        Some(transaction) => transaction.take_statement_lock_failure(),
-                        None => lock_failure
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .take(),
-                    };
+                    let failure =
+                        self.txn.current().and_then(|transaction| transaction.take_statement_lock_failure());
                     if failure.is_some() {
                         // The storage error the lock raised is the statement
                         // owner's to consume, as `handlePessimisticLockError`
@@ -678,7 +660,7 @@ impl StatementLifecycle<'_> {
                         // The implicit transaction has nothing earlier to
                         // keep: the replay is a new one, reading the version
                         // that beat the statement.
-                        Self::rollback_prefetched_write(write_transaction.clone());
+                        self.txn.rollback_implicit();
                         self.txn.buffer().restore(savepoint.clone());
                         tidb_breakpoint::inject(
                             &*self.session,
@@ -726,7 +708,7 @@ impl StatementLifecycle<'_> {
             let _rollback_txn =
                 (!committing && self.txn.explicit.is_none() && !self.session.in_transaction())
                     .then(|| tidb_tracing::start_thread_region_ex("session.RollbackTxn"));
-            Self::rollback_prefetched_write(write_transaction);
+            self.txn.rollback_implicit();
             // Cancel the client's active fair scope. Ordinary locks remain
             // transaction-owned, following Go StmtRollback.
             if let Some(transaction) = self.txn.explicit.as_ref() {
@@ -769,25 +751,20 @@ impl StatementLifecycle<'_> {
     /// Go `handlePessimisticDML`'s lock step for the statement that just ran:
     /// what the transaction says about the keys it staged.
     ///
-    /// `autocommit` is a pessimistic autocommit statement's write
-    /// transaction (Go's implicit pessimistic `LazyTxn`, which
-    /// `handlePessimisticDML` locks the same way); `None` otherwise.
+    /// It locks in the statement's transaction: the explicit one, or a
+    /// pessimistic autocommit statement's implicit one (Go's one `LazyTxn`,
+    /// which `handlePessimisticDML` locks the same way).
     pub fn lock_pessimistic_statement_keys(
         &mut self,
         savepoint: &BufferCheckpoint,
-        autocommit: Option<&transactions::WriteTransactionSlot>,
     ) -> Result<PessimisticStep, SqlQueryError> {
-        let target = match (self.txn.explicit.as_ref(), autocommit) {
-            (Some(transaction), _) => {
-                if !transaction.is_pessimistic() {
-                    self.lock_optimistic_statement_keys();
-                    return Ok(PessimisticStep::Done);
-                }
-                PessimisticLockTarget::Explicit
-            }
-            (None, Some(slot)) => PessimisticLockTarget::Autocommit(slot),
-            (None, None) => return Ok(PessimisticStep::Done),
+        let Some(transaction) = self.txn.current() else {
+            return Ok(PessimisticStep::Done);
         };
+        if !transaction.is_pessimistic() {
+            self.lock_optimistic_statement_keys();
+            return Ok(PessimisticStep::Done);
+        }
         // Go `handlePessimisticDML`: `KeysNeedToLock` plus
         // `CollectUnchangedKeysForXLock` lock in ONE `LockKeys`. The rows a
         // plan's `SelectLockExec` read were locked inside execution, and a
@@ -827,13 +804,13 @@ impl StatementLifecycle<'_> {
             requests.push((wait, keys));
         }
         for (wait, keys) in requests {
-            match self.lock_pessimistic_keys_in(target, savepoint, keys, wait, false)? {
+            match self.lock_pessimistic_keys(savepoint, keys, wait, false)? {
                 PessimisticStep::Done => {}
                 retry => return Ok(retry),
             }
         }
         if !shared_keys.is_empty() {
-            return self.lock_pessimistic_keys_in(target, savepoint, shared_keys, wait, true);
+            return self.lock_pessimistic_keys(savepoint, shared_keys, wait, true);
         }
         Ok(PessimisticStep::Done)
     }
@@ -863,33 +840,11 @@ impl StatementLifecycle<'_> {
         wait: tidb_txnkv::transaction::LockWaitTime,
         shared: bool,
     ) -> Result<PessimisticStep, SqlQueryError> {
-        self.lock_pessimistic_keys_in(PessimisticLockTarget::Explicit, savepoint, keys, wait, shared)
-    }
-
-    fn lock_pessimistic_keys_in(
-        &mut self,
-        target: PessimisticLockTarget<'_>,
-        savepoint: &BufferCheckpoint,
-        keys: Vec<Vec<u8>>,
-        wait: tidb_txnkv::transaction::LockWaitTime,
-        shared: bool,
-    ) -> Result<PessimisticStep, SqlQueryError> {
         // Go `tryLockKeys`' `filterTemporaryTableKeys`: a temporary table's
         // rows are never locked in the store.
         let keys = tidb_tblctx::temporary_table::filter_temporary_table_keys(&self.session.txn_temporary_tables, keys);
-        let autocommit_guard = match target {
-            PessimisticLockTarget::Explicit => None,
-            PessimisticLockTarget::Autocommit(slot) => {
-                Some(slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
-            }
-        };
-        let transaction: &dyn tidb_domain_core::cluster_transactions::OpenClusterTransaction = match &autocommit_guard {
-            None => self.txn.explicit.as_deref().expect("pessimistic transaction"),
-            // The statement wrote nothing that opened a transaction.
-            Some(guard) => match guard.as_deref() {
-                Some(transaction) if transaction.is_pessimistic() => transaction,
-                _ => return Ok(PessimisticStep::Done),
-            },
+        let Some(transaction) = self.txn.current() else {
+            return Ok(PessimisticStep::Done);
         };
         // Table-selected native flags decide which keys need locking. A
         // live session switch cannot override an earlier key's selected policy.
@@ -1071,7 +1026,9 @@ impl StatementLifecycle<'_> {
                 .open_snapshot_at(ts, resource_group)
                 .map_err(SqlQueryError::unknown);
         }
-        if let Some(transaction) = &self.txn.explicit {
+        // The explicit transaction, or an autocommit write's implicit one:
+        // Go reads both through the same `LazyTxn` and providers.
+        if let Some(transaction) = self.txn.current() {
             let locking = shape == StatementReadShape::LockingRead;
             let snapshot = match retry_read_ts {
                 Some(ts) => transaction.snapshot_at_for(ts, locking),
@@ -1204,11 +1161,7 @@ impl StatementLifecycle<'_> {
             finished
                 .and_then(|()| self.commit_if_session_left_transaction())
                 .and_then(|()| {
-                    self.flush_if_autocommit(
-                        statement.read_ts.get(),
-                        None,
-                        &statement.resource_group,
-                    )
+                    self.flush_if_autocommit(statement.read_ts.get(), &statement.resource_group)
                 })
         } else {
             self.txn.buffer().restore(statement.savepoint);
@@ -1258,31 +1211,9 @@ impl StatementLifecycle<'_> {
     pub fn flush_if_autocommit(
         &mut self,
         read_ts: Option<u64>,
-        write_transaction: Option<transactions::WriteTransactionSlot>,
         resource_group: &str,
     ) -> Result<(), SqlQueryError> {
-        self.txn.flush_if_autocommit(
-            self.session,
-            self.hooks.as_ref(),
-            read_ts,
-            write_transaction,
-            resource_group,
-        )
-    }
-
-    pub fn rollback_prefetched_write(
-        write_transaction: Option<transactions::WriteTransactionSlot>,
-    ) {
-        let Some(write_transaction) = write_transaction else {
-            return;
-        };
-        let transaction = write_transaction
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .take();
-        if let Some(transaction) = transaction {
-            let _ = transaction.rollback();
-        }
+        self.txn.flush_if_autocommit(self.session, self.hooks.as_ref(), read_ts, resource_group)
     }
 
     /// Ends the explicit transaction by publishing its buffer at its own start
@@ -1338,15 +1269,6 @@ pub fn autocommit_dml_is_pessimistic(session: &Session, retrying: bool) -> bool 
         },
     )
     .is_pessimistic()
-}
-
-/// The transaction a pessimistic statement's keys lock in.
-#[derive(Clone, Copy)]
-enum PessimisticLockTarget<'a> {
-    /// The session's explicit transaction.
-    Explicit,
-    /// A pessimistic autocommit statement's write transaction.
-    Autocommit(&'a transactions::WriteTransactionSlot),
 }
 
 /// The slot every table of a session reads through.

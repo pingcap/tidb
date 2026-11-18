@@ -71,6 +71,13 @@ Five places in the Rust rewrite differ from Go's structure in ways that make eve
 - [x] (2026-11-17) S04: `ReorgSlot` is Go's `reorgCtx` (`doneCh`, `rowCount`, warnings) for every reorganization: `run_reorg` starts the local backfill (`run_local_reorg`) on its own thread as it does the DXF one, each step waits one `updateProgressInterval` and answers `ErrWaitReorgTimeout` with the rows so far; the local backfill checks ownership through `IndexBackfiller::check_owner` (Go `isReorgRunnable`), and the cooperative deadline (`BackfillExecutor::deadline`, `TableRecordOutcome::Progress`) is gone.
 - [x] (2026-11-17) S03: `ClusterDdlError::Backfill` carries a `DdlPlanError` built from the error's Go cause (`DdlPlanError::from_cause`, Go `errors.Cause`); storage and SQL failures keep their identity; `reorg_fn_error` keeps it for commit and index-backfill failures.
 - [x] (2026-11-17) S06: `Domain::close` (Go `Domain.Close`, DDL stops first) and `ClusterDdl::stop` (Go `DDL.Stop`); server shutdown and the realtikv harness close the domain (commit `80beac1d46f`).
+- [ ] X-rows (structural register, user 2026-11-19: "Structural refactors first"): X12, then X05, X13, X09, X11.
+  - [ ] X12 stage 1: an autocommit INSERT / UPDATE / DELETE runs in an implicit `LazyClusterTransaction` (Go's one `LazyTxn`, pending on `prepare_autocommit_write`'s future, Go `txnFuture`), opened, locked (`handlePessimisticDML`) and committed through the calls the explicit transaction uses; `DeferredSnapshot`'s prefetched-write branch, `WriteTransactionSlot` and the autocommit lock-failure slot go.
+  - [ ] X12 stage 2: an autocommit read runs in the same implicit transaction (pending until a read activates it; the point-get max-ts shortcut as Go's `AdviseOptimizeWithPlan`); `DeferredSnapshot` goes.
+  - [ ] X05: `tidb-sessiontxn` (Go `pkg/sessiontxn`): `TxnContextProvider` with Go's optimistic / pessimistic RR / RC / serializable / staleness providers, `EnterNewTxn`, `OnStmtStart`, `OnStmtErrorForNextAction`, `OnStmtRetry`, `AdviseWarmup`, `AdviseOptimizeWithPlan`, `GetStmtReadTS`, `GetStmtForUpdateTS`; the decisions now in `statement_lifecycle.rs` / `txn.rs` / `txn_mode.rs` move onto them.
+  - [ ] X13: `SetSession` / `SetGlobal` / `GetSession` / `GetGlobal` on `SysVarDef` (the name switches in `set_hooks.rs`, `variables.rs`, `StaticSessionVars`), as #73 did for `Validation`. Design: Go's hooks all take `*SessionVars`; #73's `Validation` takes only a sibling-value `Lookup`, so the session-dependent checks (`checkIsolationLevel`'s warnings, `require_secure_transport`'s TLS state, the noop gate, `max_allowed_packet`'s scope) stayed in `set_hooks.rs`. Step 1 widens `Lookup` into a vars context (sibling values, statement warnings, TLS state, noop mode) that `SessionVars` and the global accessor both implement; step 2 moves each `set_hooks.rs` branch onto its variable (`Validation`, `SetSession`, `SetGlobal`, per Go's `sysvar.go`); step 3 the session-side hooks in `tidb-session` `variables.rs` and `StaticSessionVars`.
+  - [ ] X09: privileges, sysvar load, stats writes, analyze, bootstrap rows and bindings read and write `mysql.*` through SQL; `SystemTableView` / `system_row_write` go.
+  - [ ] X11: `tidb-executor`'s tests run on the mock store through DDL jobs; `MemTableStorage`, `LocalTableAutoIds`, `run_create_table_on` and `cluster-session-smoke` go.
 
 ## Surprises & Discoveries
 
@@ -102,6 +109,9 @@ Five places in the Rust rewrite differ from Go's structure in ways that make eve
 - Decision: the infoschema provider answers the statement's one latest infoschema for both `p(true)` and `p(false)`.
   Rationale: a Rust statement holds one infoschema snapshot (the domain's as it starts), and every Rust reader asks for the latest one (`GetLatestInfoSchema`); the session's transaction schema is added when a builtin that reads `GetSessionInfoSchema` is ported.
   Date/Author: 2026-11-17, Claude.
+- Decision: the structural X-rows go in the order X12, X05, X13, X09, X11, ahead of the small rows (X06/X07 are analyzed and wait).
+  Rationale: X12 and X05 are the transaction layer, where the duplicated autocommit path produced the 9004/8141 bugs fixed in 03c4d1d89dd; X12 merges the two transaction objects first so X05's providers have one transaction to decide for. X13 follows #73's shape. X09 and X11 are the widest but least entangled.
+  Date/Author: 2026-11-19, user ("Structural refactors first") and Claude.
 
 ## Outcomes & Retrospective
 

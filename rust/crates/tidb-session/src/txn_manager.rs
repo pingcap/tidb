@@ -36,7 +36,7 @@ use tidb_store_driver_txn::cluster_storage::{BufferCheckpoint, MutationBuffer};
 use tidb_txnkv::transaction::SchemaLeaseChecker;
 
 use tidb_domain_core::cluster_transactions::{
-    ClusterTransactions, CommittedTxnInfo, OpenClusterTransaction, WriteTransactionSlot,
+    ClusterTransactions, CommittedTxnInfo, OpenClusterTransaction,
 };
 use crate::lazy_transaction::{LazyClusterTransaction, TransactionOpener};
 use crate::Session;
@@ -103,6 +103,11 @@ pub struct TxnManager {
     /// statement prepares a timestamp of its own after planning and waits for
     /// it at its first read.
     pub explicit: Option<Box<dyn OpenClusterTransaction>>,
+    /// Go's `LazyTxn` while an autocommit INSERT / UPDATE / DELETE runs: the
+    /// statement's implicit transaction, pending on its timestamp future
+    /// (Go `txnFuture`) until a read, a lock or the commit activates it,
+    /// and committed or rolled back when the statement ends.
+    implicit: Option<Box<dyn OpenClusterTransaction>>,
     /// Go `LazyTxn` captures this policy when the transaction becomes valid.
     lazy_uniqueness_check_enabled: bool,
     /// Held from `BEGIN` to `COMMIT`/`ROLLBACK`.
@@ -139,9 +144,51 @@ impl TxnManager {
             connection_id,
             buffer,
             explicit: None,
+            implicit: None,
             lazy_uniqueness_check_enabled: false,
             pin: None,
             autocommit_txn_bytes: 0,
+        }
+    }
+
+    /// The statement's transaction: the explicit one, else an autocommit
+    /// write's implicit one (Go's one `LazyTxn`).
+    #[must_use]
+    pub fn current(&self) -> Option<&dyn OpenClusterTransaction> {
+        self.explicit.as_deref().or(self.implicit.as_deref())
+    }
+
+    /// Go `PrepareTxnCtx` for an autocommit INSERT / UPDATE / DELETE: the
+    /// statement's implicit transaction enters pending on a timestamp future
+    /// (`prepare_autocommit_write`, Go `txnFuture`) requested now, so the
+    /// request overlaps planning; the first read, lock or the commit
+    /// activates it and records its start in `read_ts`.
+    pub fn enter_implicit_write(
+        &mut self,
+        pessimistic: bool,
+        fair_locking: bool,
+        resource_group: &str,
+        options: SessionTransactionOptions,
+        read_ts: tidb_domain_core::cluster_transactions::StatementReadTs,
+    ) {
+        let pending =
+            self.transactions.prepare_autocommit_write(resource_group, pessimistic, fair_locking, options.clone());
+        let opener: TransactionOpener = Box::new(move |_options| {
+            let begin = std::time::Instant::now();
+            let transaction = pending.and_then(|pending| pending.wait());
+            read_ts.record_wait_ts(begin.elapsed());
+            let transaction = transaction?;
+            read_ts.record(transaction.start_ts());
+            Ok(transaction)
+        });
+        self.implicit = Some(Box::new(LazyClusterTransaction::new_implicit(pessimistic, options, self.buffer.clone(), opener)));
+    }
+
+    /// Go `RollbackTxn` for an autocommit statement that failed or is
+    /// replayed: the implicit transaction ends without publishing.
+    pub fn rollback_implicit(&mut self) {
+        if let Some(transaction) = self.implicit.take() {
+            let _ = transaction.rollback();
         }
     }
 
@@ -458,12 +505,12 @@ impl TxnManager {
         session: &mut Session,
         hooks: &dyn CommitHooks,
         read_ts: Option<u64>,
-        write_transaction: Option<WriteTransactionSlot>,
         resource_group: &str,
     ) -> Result<(), SqlQueryError> {
         if self.explicit.is_some() || session.in_transaction() {
             return Ok(());
         }
+        let write_transaction = self.implicit.take();
         // Go's autocommit `CommitTxn`, which a failed commit has run too.
         session.set_txn_isolation_level_one_shot_state_for_next_txn();
         // Go `doCommitWithRetry` -> `recordOnTransactionExecution`: a
@@ -480,11 +527,8 @@ impl TxnManager {
         session.publish_transaction_committing();
         tidb_failpoint::eval("github.com/pingcap/tidb/pkg/session/mockSlowCommit");
         if let Some(write_transaction) = write_transaction {
-            let transaction = write_transaction
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .take();
-            if let Some(mut transaction) = transaction {
+            {
+                let mut transaction = write_transaction;
                 if let Some(checker) = hooks.schema_lease_checker() {
                     transaction.set_schema_lease_checker(checker);
                 }
