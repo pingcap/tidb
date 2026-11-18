@@ -26,6 +26,7 @@ tidb-dxf = { path = "../tidb-dxf" }
 tidb-dxf-scheduler = { path = "../tidb-dxf-scheduler" }
 tidb-dxf-taskexecutor = { path = "../tidb-dxf-taskexecutor" }
 tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-objstore = { path = "../tidb-objstore" }
 tidb-lightning-common = { path = "../tidb-lightning-common" }
 tidb-util-disttask = { path = "../tidb-util-disttask" }
 tidb-domain-sqlsvrapi = { path = "../tidb-domain-sqlsvrapi" }

@@ -93,7 +93,7 @@ pub fn extract_task_serve_response(
 fn stream_extract_response(name: &str) -> Result<Vec<u8>, String> {
     let path = format!("{}/{name}", tidb_domain::extract::get_extract_task_dir_name());
     let storage = tidb_planner_extstore::get_global_ext_storage()?;
-    storage.read_file(&path).map_err(|error| error.to_string())
+    storage.read_file(&tidb_gocontext::Context::background(), &path).map_err(|error| error.to_string())
 }
 
 fn build_extract_task(values: &crate::mvcc_routes::Values) -> Result<(ExtractTask, bool), String> {

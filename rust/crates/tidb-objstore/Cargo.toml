@@ -18,8 +18,15 @@ tidb-aws-sdk = { path = "../tidb-aws-sdk" }
 tidb-failpoint = { path = "../tidb-failpoint" }
 tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-objstore-recording = { path = "../tidb-objstore-recording" }
+tidb-oss-sdk = { path = "../tidb-oss-sdk" }
+tidb-azure-sdk = { path = "../tidb-azure-sdk" }
+hmac = "0.12"
+sha1 = "0.10"
+quick-xml = { version = "0.38", features = ["serialize"] }
+url = "2"
+percent-encoding = "2"
 flate2 = { workspace = true }
-opendal = { version = "=0.55.0", features = ["services-s3", "services-azblob", "services-gcs"] }
+opendal = { version = "=0.55.0", features = ["services-s3", "services-azblob", "services-gcs", "services-oss"] }
 anyhow = "1"
 async-trait.workspace = true
 http = "1"

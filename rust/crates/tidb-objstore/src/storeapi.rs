@@ -23,6 +23,20 @@ pub enum Permission {
 }
 
 /// Go `Features`.
+impl Permission {
+    /// Go's `Permission` string.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AccessBuckets => "AccessBucket",
+            Self::ListObjects => "ListObjects",
+            Self::GetObject => "GetObject",
+            Self::PutObject => "PutObject",
+            Self::PutAndDeleteObject => "PutAndDeleteObject",
+        }
+    }
+}
+
 pub type Features = u64;
 /// Go `FeatureStrongConsistency`.
 pub const FEATURE_STRONG_CONSISTENCY: Features = 1;
