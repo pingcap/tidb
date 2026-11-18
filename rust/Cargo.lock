@@ -9710,6 +9710,7 @@ dependencies = [
  "tidb-session-cursor",
  "tidb-sessionctx",
  "tidb-sessionstates",
+ "tidb-sessiontxn",
  "tidb-sessmgr",
  "tidb-sli",
  "tidb-spill-storage",

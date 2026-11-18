@@ -266,6 +266,10 @@ impl StatementLifecycle<'_> {
             }));
         let delta_savepoint = self.session.table_delta_savepoint();
         let mut retried: u32 = 0;
+        // Go `doCommitWithRetry` reads the failed transaction's
+        // `TxnCtx.CouldRetry` once; `s.retry` then replays within its budget
+        // although each replay's transaction is pessimistic.
+        let mut could_retry = None;
         self.session.begin_external_mpp_query_scope();
         let outcome = loop {
             match self.attempt_statement(
@@ -281,7 +285,8 @@ impl StatementLifecycle<'_> {
                 Err(error) => {
                     self.session
                         .restore_table_delta_savepoint(delta_savepoint.clone());
-                    if !self.may_retry_autocommit_statement(&error, retried) {
+                    let could_retry = *could_retry.get_or_insert_with(|| self.txn.could_retry());
+                    if !self.may_retry_autocommit_statement(&error, retried, could_retry) {
                         break Err(error);
                     }
                     retried += 1;
@@ -898,79 +903,31 @@ impl StatementLifecycle<'_> {
         }
     }
 
-    /// Whether the statement that just failed is one Go would have retried
-    /// internally instead of reporting.
+    /// Go `doCommitWithRetry` (`session.go:806`) after an autocommit
+    /// statement's commit failed: replay it when the error is retryable (Go
+    /// `kv.IsTxnRetryableError`, narrowed to the write conflict that reaches
+    /// this seam), `@@tidb_batch_insert` is off (its earlier batches are
+    /// committed), and the failed transaction `could_retry` (Go
+    /// `TxnCtx.CouldRetry`, decided once by its optimistic provider; a
+    /// pessimistic one never sets it), within `s.retry`'s budget. The replay
+    /// is pessimistic (`decideTxnMode`'s `RetryInfo.Retrying` arm).
     ///
-    /// This is `isOptimisticTxnRetryable`
-    /// (`pkg/sessiontxn/isolation/optimistic.go:66-104`) reduced to the only
-    /// arm this node can reach. Go's `!sessVars.InTxn()` early return is the
-    /// whole reason `tidb_disable_txn_auto_retry` -- which defaults to `true`
-    /// (`pkg/sessionctx/vardef/tidb_vars.go:1528`) -- does not stop this:
-    /// that variable is consulted eleven lines LATER, and only a
-    /// multi-statement transaction ever gets there. A single autocommit
-    /// statement has no earlier statements whose reads a replay could
-    /// falsify, so it is retried unconditionally. Inside `BEGIN` we refuse,
-    /// which is Go with the default variable.
-    ///
-    /// The error test is Go's `kv.IsTxnRetryableError` (`pkg/kv/error.go:85`)
-    /// narrowed to the code that reaches this seam: only a write conflict.
-    ///
-    /// # The one thing this replay is NOT, and what it costs
-    ///
-    /// Go's replay runs in PESSIMISTIC mode whatever `@@tidb_txn_mode` says:
-    /// `retry` calls `PrepareTxnCtx(ctx, nil)` (`pkg/session/session.go:1194`)
-    /// while `RetryInfo.Retrying` is set, and `decideTxnMode`
-    /// (`session.go:4921-4923`) returns `ast.Pessimistic` unconditionally for
-    /// that. This node's replay stays optimistic, because it has no
-    /// pessimistic statement path at all -- the seam is
-    /// `RealOptimisticTransactionOpener` from end to end.
-    ///
-    /// What that does NOT cost is a lost update. The replay re-runs the whole
-    /// statement against its own fresh timestamp and publishes at that same
-    /// one, so a value derived from a stale read cannot reach the store: see
-    /// `an_autocommit_update_that_loses_the_race_is_retried_at_a_new_read`,
-    /// and the exhausted-budget case still reports 9007 rather than
-    /// succeeding.
-    ///
-    /// What it does cost is the failure mode under a lock that is HELD rather
-    /// than a commit that already landed. Measured on TiDB over `mockstore`
-    /// (2026-08-03), with a second session holding a pessimistic lock on the
-    /// row and `innodb_lock_wait_timeout = 1`:
-    ///
-    /// ```text
-    /// s1 @@tidb_txn_mode -> pessimistic
-    /// s1 @@tidb_disable_txn_auto_retry -> 1
-    /// s2 holds a pessimistic lock on id=1
-    /// s1 autocommit update -> [tikv:1205]Lock wait timeout exceeded; try
-    ///                         restarting transaction
-    /// ```
-    ///
-    /// Go WAITS on the lock -- 1205 is a pessimistic-lock error, so the replay
-    /// really did take locks -- and against a lock that clears in time it
-    /// succeeds. This node cannot wait: it spends its budget of re-reads and
-    /// reports 9007. Closing that needs the pessimistic path (a
-    /// `tidb_store_driver_txn::transaction::TikvTxn` in pessimistic mode exists;
-    /// nothing at this tier drives it), NOT a mode flag: locks have to
-    /// be taken while the statement reads, and taking them after it has
-    /// computed from a stale read would introduce exactly the lost update this
-    /// seam exists to prevent.
-    pub fn may_retry_autocommit_statement(&self, error: &SqlQueryError, retried: u32) -> bool {
-        // Go `doCommitWithRetry` (`session.go:879`): never under
-        // `@@tidb_batch_insert`, whose earlier batches are already committed.
+    /// Go's `s.retry` replays the transaction's `StmtHistory`; this port's
+    /// history is the one autocommit statement, so an explicit transaction
+    /// (whose `CouldRetry` only restricted SQL can set, since user SQL
+    /// always has `tidb_disable_txn_auto_retry = ON`) is not replayed.
+    pub fn may_retry_autocommit_statement(&self, error: &SqlQueryError, retried: u32, could_retry: bool) -> bool {
         error.code == ERR_WRITE_CONFLICT
             && !self.session.vars().batch_insert()
+            && could_retry
             && retried < self.autocommit_retry_budget()
             && self.txn.explicit.is_none()
-            && !self.session.in_transaction()
     }
 
     /// Go's autocommit retry budget: `@@tidb_retry_limit` (default 10),
     /// scaled DOWN by transaction size the way `doCommitWithRetry` does
-    /// (`pkg/session/session.go:881-882`). A limit of 0 disables the retry
-    /// entirely (`isOptimisticTxnRetryable`, `optimistic.go:82-84`); this
-    /// autocommit seam has no explicit transaction, so `CouldRetry` and the
-    /// `for_update`/pipelined gates that only apply inside one are always in
-    /// the retryable state here.
+    /// (`pkg/session/session.go:881-882`). A limit of 0 or less is Go's
+    /// `commitRetryLimit > 0` gate.
     pub fn autocommit_retry_budget(&self) -> u32 {
         let limit = self
             .session
@@ -1091,7 +1048,20 @@ impl StatementLifecycle<'_> {
         resource_group: &str,
         read_ts: &transactions::StatementReadTs,
     ) {
-        if self.txn.explicit.is_some() || self.session.historical_read_ts().is_some() {
+        if self.txn.explicit.is_some() {
+            return;
+        }
+        // Go's staleness provider starts a `TxnCtx` it never marks retryable.
+        let stale = self.session.historical_read_ts().is_some();
+        self.txn.decide_could_retry(
+            self.session,
+            // `decide_could_retry`'s `pessimistic` argument: no optimistic
+            // provider decides for these.
+            stale || (autocommit_write && autocommit_pessimistic),
+            tidb_sessiontxn::EnterNewTxnType::BeforeStmt,
+            false,
+        );
+        if stale {
             return;
         }
         let vars = self.session.vars();

@@ -1025,8 +1025,8 @@ impl<'s> ClusterServerSession<'s> {
     /// [`StatementLifecycle::may_retry_autocommit_statement`], for the tests
     /// that pin Go's retryable-error allowlist.
     #[cfg(test)]
-    fn may_retry_autocommit_statement(&mut self, error: &SqlQueryError, retried: u32) -> bool {
-        self.lifecycle().may_retry_autocommit_statement(error, retried)
+    fn may_retry_autocommit_statement(&mut self, error: &SqlQueryError, retried: u32, could_retry: bool) -> bool {
+        self.lifecycle().may_retry_autocommit_statement(error, retried, could_retry)
     }
 
     /// Drops the explicit transaction without publishing anything; see

@@ -151,6 +151,7 @@ tidb-model = { path = "../tidb-model" }
 tidb-executor = { path = "../tidb-executor" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
+tidb-sessiontxn = { path = "../tidb-sessiontxn" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-ddl-session = { path = "../tidb-ddl-session" }
 tidb-workloadlearning = { path = "../tidb-workloadlearning" }

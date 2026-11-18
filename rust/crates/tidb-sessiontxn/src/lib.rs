@@ -21,6 +21,8 @@
 //! `LazyTxn`, X12), `kv.Snapshot` is [`ClusterSnapshot`], and an error is
 //! [`SqlQueryError`].
 
+pub mod isolation;
+
 use tidb_domain_core::cluster_transactions::OpenClusterTransaction;
 use tidb_kv::cluster_storage::ClusterSnapshot;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;

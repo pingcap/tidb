@@ -471,13 +471,18 @@ fn txn_retryable_error_matrix_matches_the_reachable_go_allowlist() {
 
     assert!(session
         .node_conn()
-        .may_retry_autocommit_statement(&conflict, 0));
+        .may_retry_autocommit_statement(&conflict, 0, true));
     assert!(!session
         .node_conn()
-        .may_retry_autocommit_statement(&conflict, AUTOCOMMIT_RETRY_LIMIT));
+        .may_retry_autocommit_statement(&conflict, AUTOCOMMIT_RETRY_LIMIT, true));
     assert!(!session
         .node_conn()
-        .may_retry_autocommit_statement(&unavailable, 0));
+        .may_retry_autocommit_statement(&unavailable, 0, true));
+    // Go `doCommitWithRetry`: `commitRetryLimit = 0` unless the failed
+    // transaction's `TxnCtx.CouldRetry`.
+    assert!(!session
+        .node_conn()
+        .may_retry_autocommit_statement(&conflict, 0, false));
 
     // Go `isOptimisticTxnRetryable` (`optimistic.go:82-84`): a zero
     // `@@tidb_retry_limit` disables the replay, and any other value is the
@@ -485,14 +490,14 @@ fn txn_retryable_error_matrix_matches_the_reachable_go_allowlist() {
     set(&mut session, "SET tidb_retry_limit = 0");
     assert!(!session
         .node_conn()
-        .may_retry_autocommit_statement(&conflict, 0));
+        .may_retry_autocommit_statement(&conflict, 0, true));
     set(&mut session, "SET tidb_retry_limit = 3");
     assert!(session
         .node_conn()
-        .may_retry_autocommit_statement(&conflict, 2));
+        .may_retry_autocommit_statement(&conflict, 2, true));
     assert!(!session
         .node_conn()
-        .may_retry_autocommit_statement(&conflict, 3));
+        .may_retry_autocommit_statement(&conflict, 3, true));
     set(&mut session, "SET tidb_retry_limit = 10");
 
     session
@@ -501,7 +506,7 @@ fn txn_retryable_error_matrix_matches_the_reachable_go_allowlist() {
         .expect("begin");
     assert!(!session
         .node_conn()
-        .may_retry_autocommit_statement(&conflict, 0));
+        .may_retry_autocommit_statement(&conflict, 0, true));
 }
 
 /// `pkg/kv.IsTxnRetryableError` deliberately excludes TiKV's explicit 9005.

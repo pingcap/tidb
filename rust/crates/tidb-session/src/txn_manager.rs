@@ -27,6 +27,8 @@
 //! the catalog a write-conflict message is rewritten against -- as
 //! [`CommitHooks`], the way Go's commit reads them off the session.
 
+use tidb_sessiontxn::isolation::{optimistic::is_optimistic_txn_retryable, ProviderSessionVars};
+use tidb_sessiontxn::EnterNewTxnType;
 use tidb_domain_core::session_transaction::set_options_on_txn_active;
 use std::sync::Arc;
 
@@ -90,6 +92,40 @@ impl CommitTxnRegions {
     }
 }
 
+/// The `SessionVars` an optimistic provider reads when its transaction
+/// activates; `in_txn` is Go's `InTxn()` at that moment (set by `BEGIN`, or by
+/// `ActivateTxn` for an `autocommit = 0` transaction).
+struct ActivationVars<'a> {
+    session: &'a Session,
+    in_txn: bool,
+}
+
+impl ProviderSessionVars for ActivationVars<'_> {
+    fn retry_limit(&self) -> i64 {
+        self.session
+            .vars()
+            .get_system(tidb_vardef::tidb_vars::TIDB_RETRY_LIMIT)
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_TIDB_RETRY_LIMIT)
+    }
+    fn snapshot_ts(&self) -> u64 {
+        self.session.vars().snapshot_ts()
+    }
+    fn in_txn(&self) -> bool {
+        self.in_txn
+    }
+    fn in_restricted_sql(&self) -> bool {
+        self.session.vars().restricted_sql
+    }
+    fn disable_txn_auto_retry(&self) -> bool {
+        self.session.vars().system_bool(
+            tidb_vardef::tidb_vars::TIDB_DISABLE_TXN_AUTO_RETRY,
+            tidb_vardef::defaults::DEF_TIDB_DISABLE_TXN_AUTO_RETRY,
+        )
+    }
+}
+
 /// See the module documentation.
 pub struct TxnManager {
     transactions: Arc<dyn ClusterTransactions>,
@@ -114,6 +150,10 @@ pub struct TxnManager {
     lazy_uniqueness_check_enabled: bool,
     /// Held from `BEGIN` to `COMMIT`/`ROLLBACK`.
     pin: Option<Box<dyn Send>>,
+    /// Go `TxnCtx.CouldRetry`: decided by the optimistic provider when the
+    /// transaction is entered (`isOptimisticTxnRetryable`); a pessimistic or
+    /// stale-read transaction never sets it.
+    could_retry: bool,
     /// Go `doCommitWithRetry`'s `txnSize`, read from the buffer just before
     /// the autocommit commit that may fail: the commit resets the buffer, and
     /// the retry budget is decided after it.
@@ -150,8 +190,23 @@ impl TxnManager {
             implicit_read: false,
             lazy_uniqueness_check_enabled: false,
             pin: None,
+            could_retry: false,
             autocommit_txn_bytes: 0,
         }
+    }
+
+    /// Go `TxnCtx.CouldRetry` of the transaction last entered.
+    #[must_use]
+    pub fn could_retry(&self) -> bool {
+        self.could_retry
+    }
+
+    /// Go `OptimisticTxnContextProvider.onTxnActive`: an optimistic
+    /// transaction's `CouldRetry`; the pessimistic providers leave the new
+    /// `TxnCtx`'s `false`.
+    pub(crate) fn decide_could_retry(&mut self, session: &Session, pessimistic: bool, tp: EnterNewTxnType, in_txn: bool) {
+        self.could_retry = !pessimistic
+            && is_optimistic_txn_retryable(&ActivationVars { session, in_txn }, tp, false);
     }
 
     /// The statement's transaction: the explicit one, else an autocommit
@@ -344,6 +399,7 @@ impl TxnManager {
             return;
         }
         let pessimistic = Self::is_pessimistic(session);
+        self.decide_could_retry(session, pessimistic, EnterNewTxnType::BeforeStmt, true);
         // Go `OnPessimisticStmtStart` (`isolation/base.go:711`): fair locking
         // follows the session's `@@tidb_pessimistic_txn_fair_locking`.
         let fair_locking = session.vars().pessimistic_transaction_fair_locking();
@@ -387,6 +443,7 @@ impl TxnManager {
         schema_version: i64,
     ) -> Result<(), SqlQueryError> {
         if let Some(ts) = session.historical_read_ts() {
+            self.could_retry = false;
             session.current_tso().publish(ts);
             if let Some(observer) = session.transaction_observer() {
                 observer.activated(ts);
@@ -394,6 +451,7 @@ impl TxnManager {
             return Ok(());
         }
         let pessimistic = Self::is_pessimistic(session);
+        self.decide_could_retry(session, pessimistic, EnterNewTxnType::WithBeginStmt, true);
         // Go `OnPessimisticStmtStart` (`isolation/base.go:711`): fair locking
         // follows the session's `@@tidb_pessimistic_txn_fair_locking`.
         let fair_locking = session.vars().pessimistic_transaction_fair_locking();
