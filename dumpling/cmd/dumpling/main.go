@@ -28,8 +28,10 @@ import (
 
 func main() {
 	pflag.Usage = func() {
-		fmt.Fprint(os.Stderr,
+		fmt.Fprint(os.Stdout,
 			"Dumpling is a CLI tool that helps you dump MySQL/TiDB data\n\nUsage:\n  dumpling [flags]\n\nFlags:\n")
+		flagSet := pflag.CommandLine
+		flagSet.SetOutput(os.Stdout)
 		pflag.PrintDefaults()
 	}
 	printVersion := pflag.BoolP("version", "V", false, "Print Dumpling version")
@@ -40,23 +42,23 @@ func main() {
 	pflag.Parse()
 	if printHelp, err := pflag.CommandLine.GetBool(export.FlagHelp); printHelp || err != nil {
 		if err != nil {
-			fmt.Printf("\nGet help flag error: %s\n", err)
+			fmt.Fprintf(os.Stderr, "\nGet help flag error: %s\n", err)
 		}
 		pflag.Usage()
 		return
 	}
-	println(cli.LongVersion())
+	fmt.Print(cli.LongVersion())
 	if *printVersion {
 		return
 	}
 
 	err := conf.ParseFromFlags(pflag.CommandLine)
 	if err != nil {
-		fmt.Printf("\nparse arguments failed: %+v\n", err)
+		fmt.Fprintf(os.Stderr, "\nparse arguments failed: %+v\n", err)
 		os.Exit(1)
 	}
 	if pflag.NArg() > 0 {
-		fmt.Printf("\nmeet some unparsed arguments, please check again: %+v\n", pflag.Args())
+		fmt.Fprintf(os.Stderr, "\nmeet some unparsed arguments, please check again: %+v\n", pflag.Args())
 		os.Exit(1)
 	}
 
@@ -69,14 +71,14 @@ func main() {
 
 	dumper, err := export.NewDumper(context.Background(), conf)
 	if err != nil {
-		fmt.Printf("\ncreate dumper failed: %s\n", err.Error())
+		fmt.Fprintf(os.Stderr, "\ncreate dumper failed: %s\n", err.Error())
 		os.Exit(1)
 	}
 	err = dumper.Dump()
 	_ = dumper.Close()
 	if err != nil {
 		dumper.L().Error("dump failed error stack info", zap.Error(err))
-		fmt.Printf("\ndump failed: %s\n", err.Error())
+		fmt.Fprintf(os.Stderr, "\ndump failed: %s\n", err.Error())
 		os.Exit(1)
 	}
 	dumper.L().Info("dump data successfully, dumpling will exit now")
