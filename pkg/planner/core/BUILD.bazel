@@ -290,12 +290,7 @@ go_test(
         "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",
         "//pkg/planner/core/rule",
-<<<<<<< HEAD
-=======
         "//pkg/planner/funcdep",
-        "//pkg/planner/mview",
-        "//pkg/planner/planctx",
->>>>>>> 4cf8049d13c (planner: extract join FDs lazily in GetMergeJoin (#72827))
         "//pkg/planner/property",
         "//pkg/planner/util",
         "//pkg/planner/util/coretestsdk",
