@@ -114,6 +114,39 @@ func TestReadPasswordTerminal(t *testing.T) {
 	}
 }
 
+func TestPasswordPromptBeforeVersion(t *testing.T) {
+	master, tty := openPasswordPTY(t)
+	cmd := exec.Command(os.Args[0], "-test.run=^TestReadPasswordTerminalProcess$")
+	cmd.Env = append(os.Environ(),
+		"TEST_TOTAL_SHARDS=1", "TEST_SHARD_INDEX=0", "TESTBRIDGE_TEST_ONLY=", "GO_TEST_WRAP=0",
+		"DUMPLING_PASSWORD_TEST_CHILD=1", "DUMPLING_PASSWORD_TEST_CLI=1")
+	cmd.ExtraFiles = []*os.File{tty}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 3}
+	cmd.Stdout, cmd.Stderr = tty, tty
+	require.NoError(t, cmd.Start())
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+
+	prompt := readPasswordPTY(t, master, len("Enter password: "))
+	require.Equal(t, "Enter password: ", string(prompt), "password prompt must precede the version banner")
+	require.Eventually(t, func() bool {
+		return passwordTerminalState(t, master).Lflag&unix.ECHO == 0
+	}, 10*time.Second, time.Millisecond)
+	_, err := master.WriteString("\r")
+	require.NoError(t, err)
+	require.Equal(t, "\r\n", string(readPasswordPTY(t, master, 2)))
+	require.Equal(t, "Release version: ", string(readPasswordPTY(t, master, len("Release version: "))))
+	go func() { _, _ = io.Copy(io.Discard, master) }()
+	select {
+	case err := <-done:
+		// The CLI exits after failing to connect to the deliberately unused port.
+		require.Error(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("dumpling did not finish")
+	}
+}
+
 func readPasswordPTY(t *testing.T, master *os.File, size int) []byte {
 	t.Helper()
 	data := make([]byte, size)
@@ -134,6 +167,11 @@ func readPasswordPTY(t *testing.T, master *os.File, size int) []byte {
 
 func TestReadPasswordTerminalProcess(t *testing.T) {
 	if os.Getenv("DUMPLING_PASSWORD_TEST_CHILD") != "1" {
+		return
+	}
+	if os.Getenv("DUMPLING_PASSWORD_TEST_CLI") == "1" {
+		os.Args = []string{os.Args[0], "--ask-password", "--host=127.0.0.1", "--port=1"}
+		main()
 		return
 	}
 	tty := os.NewFile(3, "password-tty")

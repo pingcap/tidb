@@ -45,8 +45,8 @@ func main() {
 		pflag.Usage()
 		return
 	}
-	println(cli.LongVersion())
 	if *printVersion {
+		println(cli.LongVersion())
 		return
 	}
 
@@ -74,6 +74,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	println(cli.LongVersion())
 
 	registry := conf.PromRegistry
 	registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
