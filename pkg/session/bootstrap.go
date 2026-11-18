@@ -396,20 +396,9 @@ func checkBootstrapSchemaDeployment(m meta.Reader) (classicBootstrapped bool, er
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	// Classic creates the mysql database first, so its ID is among the first
-	// allocated IDs. Checking the first ten IDs is enough to find it, including
-	// when bootstrap is only partial, instead of loading all databases in the
-	// keyspace.
-	var classicMySQLDBID int64
-	for id := int64(1); id <= 10; id++ {
-		db, err := m.GetDatabase(id)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if db != nil && db.Name.L == mysql.SystemDB {
-			classicMySQLDBID = db.ID
-			break
-		}
+	classicMySQLDBID, err := meta.GetLegacySystemDBID(m)
+	if err != nil {
+		return false, errors.Trace(err)
 	}
 
 	if systemDB == nil && bootstrapVer > notBootstrapped && !deploymode.IsStarter() {

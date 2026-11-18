@@ -948,19 +948,7 @@ func (m *Mutator) GetSystemDBID() (int64, error) {
 		if db != nil && db.Name.L == mysql.SystemDB {
 			return db.ID, nil
 		}
-		// Existing Starter tier cluster are bootstrapped with legacy ID.
-		// Since MySQL database is created early, we bound the check to the first
-		// ten database IDs.
-		for id := int64(1); id <= 10; id++ {
-			db, err := m.GetDatabase(id)
-			if err != nil {
-				return 0, err
-			}
-			if db != nil && db.Name.L == mysql.SystemDB {
-				return db.ID, nil
-			}
-		}
-		return 0, nil
+		return GetLegacySystemDBID(m)
 	}
 
 	dbs, err := m.ListDatabases()
@@ -969,6 +957,23 @@ func (m *Mutator) GetSystemDBID() (int64, error) {
 	}
 	for _, db := range dbs {
 		if db.Name.L == mysql.SystemDB {
+			return db.ID, nil
+		}
+	}
+	return 0, nil
+}
+
+// GetLegacySystemDBID finds the mysql database created by Classic bootstrap,
+// ignoring the reserved NextGen ID. It returns (0, nil) if none exists.
+func GetLegacySystemDBID(m Reader) (int64, error) {
+	// Classic creates mysql early, so checking the first ten database IDs also
+	// covers partial bootstrap without loading every database in the keyspace.
+	for id := int64(1); id <= 10; id++ {
+		db, err := m.GetDatabase(id)
+		if err != nil {
+			return 0, err
+		}
+		if db != nil && db.Name.L == mysql.SystemDB {
 			return db.ID, nil
 		}
 	}
