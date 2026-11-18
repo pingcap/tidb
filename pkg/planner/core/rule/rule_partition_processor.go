@@ -338,7 +338,7 @@ func (s *PartitionProcessor) getUsedKeyPartitions(ctx base.PlanContext,
 						} else {
 							d = types.NewIntDatum(posLow + int64(i))
 						}
-						idx, err := pe.LocateKeyPartition(pi.Num, []types.Datum{d})
+						idx, err := pe.LocateKeyPartition(tc.Location(), pi.Num, []types.Datum{d})
 						if err != nil {
 							// If we failed to get the point position, we can just skip and ignore it.
 							continue
@@ -366,7 +366,7 @@ func (s *PartitionProcessor) getUsedKeyPartitions(ctx base.PlanContext,
 
 		colVals := make([]types.Datum, 0, len(r.HighVal))
 		colVals = append(colVals, r.HighVal...)
-		idx, err := pe.LocateKeyPartition(pi.Num, colVals)
+		idx, err := pe.LocateKeyPartition(tc.Location(), pi.Num, colVals)
 		if err != nil {
 			// If we failed to get the point position, we can just skip and ignore it.
 			continue

@@ -3228,6 +3228,45 @@ func TestPointGetKeyPartitioning(t *testing.T) {
 	tk.MustQuery(`SELECT * FROM t WHERE b = 'Ab'`).Check(testkit.Rows("Aa Ab Ac"))
 }
 
+func TestKeyPartitionTimestampTimeZone(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	setup := func(t *testing.T) *testkit.TestKit {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(`use test`)
+		tk.MustExec(`drop table if exists t`)
+		tk.MustExec(`create table t (id int, ts timestamp, primary key (id, ts)) partition by key (ts) partitions 8`)
+		tk.MustExec(`set time_zone = '+00:00'`)
+		tk.MustExec(`insert into t values (1, '2024-01-01 00:00:00')`)
+		return tk
+	}
+
+	t.Run("duplicate", func(t *testing.T) {
+		tk := setup(t)
+		tk.MustExec(`set time_zone = '+08:00'`)
+		tk.MustGetErrCode(`insert into t values (1, '2024-01-01 08:00:00')`, 1062)
+		tk.MustQuery(`select count(*) from t`).Check(testkit.Rows("1"))
+	})
+	t.Run("lookup", func(t *testing.T) {
+		tk := setup(t)
+		tk.MustExec(`set time_zone = '-05:00'`)
+		for _, mode := range []string{"static", "dynamic"} {
+			tk.MustExec("set tidb_partition_prune_mode = '" + mode + "'")
+			tk.MustQuery(`select * from t where id = 1 and ts = '2023-12-31 19:00:00'`).Check(testkit.Rows("1 2023-12-31 19:00:00"))
+			tk.MustQuery(`select * from t where ts = '2023-12-31 19:00:00'`).Check(testkit.Rows("1 2023-12-31 19:00:00"))
+		}
+	})
+	t.Run("fractional", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(`use test`)
+		tk.MustExec(`create table tf (id int, ts timestamp(6), primary key (id, ts)) partition by key (ts) partitions 8`)
+		tk.MustExec(`set time_zone = '+08:00'`)
+		tk.MustExec(`insert into tf values (1, '2024-01-01 08:00:00.123456')`)
+		tk.MustExec(`set time_zone = '+00:00'`)
+		tk.MustGetErrCode(`insert into tf values (1, '2024-01-01 00:00:00.123456')`, 1062)
+		tk.MustQuery(`select * from tf where id = 1 and ts = '2024-01-01 00:00:00.123456'`).Check(testkit.Rows("1 2024-01-01 00:00:00.123456"))
+	})
+}
+
 func TestExplainPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -360,13 +360,21 @@ func (pe *PartitionExpr) GetPartColumnsForKeyPartition(columns []*expression.Col
 }
 
 // LocateKeyPartition is the common interface used to locate the destination partition
-func (kp *ForKeyPruning) LocateKeyPartition(numParts uint64, r []types.Datum) (int, error) {
+func (kp *ForKeyPruning) LocateKeyPartition(loc *time.Location, numParts uint64, r []types.Datum) (int, error) {
 	h := crc32.NewIEEE()
 	for _, col := range kp.KeyPartCols {
 		val := r[col.Index]
 		if val.Kind() == types.KindNull {
 			h.Write([]byte{0})
 		} else {
+			if col.RetType.GetType() == mysql.TypeTimestamp && val.Kind() == types.KindMysqlTime {
+				// Match timestamp key encoding: hash the UTC value, not the session-local value.
+				ts := val.GetMysqlTime()
+				if err := ts.ConvertTimeZone(loc, time.UTC); err != nil {
+					return 0, err
+				}
+				val.SetMysqlTime(ts)
+			}
 			data, err := kp.datumToHashKey(&val)
 			if err != nil {
 				return 0, err
@@ -1462,7 +1470,8 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp 
 		// Note that only LIST and RANGE supports REORGANIZE PARTITION
 		idx, err = t.locateHashPartition(ctx, partitionExpr, num, r)
 	case ast.PartitionTypeKey:
-		idx, err = partitionExpr.LocateKeyPartition(num, r)
+		tc := ctx.TypeCtx()
+		idx, err = partitionExpr.LocateKeyPartition(tc.Location(), num, r)
 	case ast.PartitionTypeList:
 		idx, err = partitionExpr.locateListPartition(ctx, r)
 		pi := t.Meta().Partition
