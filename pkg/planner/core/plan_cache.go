@@ -180,6 +180,10 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		}
 		stmt.ResolveCtx = nodeW.GetResolveContext()
 		stmt.SchemaVersion = is.SchemaMetaVersion()
+	} else if !isNonPrepared && stmt.hasForShare {
+		if err := checkForShareMode(vars); err != nil {
+			return err
+		}
 	}
 	// A privilege revocation or SET ROLE does not change the schema version.
 	// Recheck the resolved targets on every execution, including cache misses.
@@ -213,7 +217,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	if isNonPrepared {
 		cacheEnabled = vars.EnableNonPreparedPlanCache
 	}
-	if stmt.StmtCacheable && cacheEnabled && !metadataLockFailed && vars.IsIsolation(ast.RepeatableRead) && !stmt.ForUpdateRead && IsReadOnly(stmtAst.Stmt, vars) {
+	if stmt.StmtCacheable && cacheEnabled && !metadataLockFailed && vars.IsIsolation(ast.RepeatableRead) && !stmt.isForUpdateRead(vars) && IsReadOnly(stmtAst.Stmt, vars) {
 		stmt.snapshotVersion = planCacheSnapshotVersions(ctx, is, stmt)
 	}
 

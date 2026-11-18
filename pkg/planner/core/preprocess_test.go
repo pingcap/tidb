@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -616,8 +617,33 @@ func TestRejectSkipLocked(t *testing.T) {
 	for _, noop := range []string{"OFF", "ON", "WARN"} {
 		tk.MustExec("set session tidb_enable_noop_functions = " + noop)
 		for _, suffix := range []string{"for update skip locked", "for share skip locked"} {
-			tk.MustGetErrCode("select * from t where id = 7 " + suffix, mysql.ErrNotSupportedYet)
-			tk.MustGetErrCode("select * from t " + suffix, mysql.ErrNotSupportedYet)
+			tk.MustGetErrCode("select * from t where id = 7 "+suffix, mysql.ErrNotSupportedYet)
+			tk.MustGetErrCode("select * from t "+suffix, mysql.ErrNotSupportedYet)
 		}
 	}
+}
+
+func TestSelectForSharePreparedModes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table shared_mode (id int primary key)")
+	tk.MustExec("insert into shared_mode values (1)")
+	if kerneltype.IsNextGen() {
+		tk.MustGetErrCode("set tidb_enable_select_for_share = ON", mysql.ErrWrongValueForVar)
+		return
+	}
+	tk.MustExec("set tidb_enable_select_for_share = ON")
+
+	// Prepare under the native mode; each execution must use the current mode.
+	tk.MustExec("prepare s from 'select id from shared_mode where id = 1 for share'")
+	tk.MustQuery("execute s").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_enable_select_for_share = OFF")
+	tk.MustContainErrMsg("execute s", "LOCK IN SHARE MODE")
+	tk.MustExec("set tidb_enable_noop_functions = ON")
+	tk.MustQuery("execute s").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_enable_select_for_share = ON")
+	tk.MustExec("begin optimistic")
+	tk.MustGetErrCode("execute s", mysql.ErrNotSupportedYet)
+	tk.MustExec("rollback")
 }

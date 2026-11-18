@@ -63,6 +63,7 @@ type BatchPointGetExec struct {
 	idxVals        [][]types.Datum
 	txn            kv.Transaction
 	lock           bool
+	inShareMode    bool
 	waitTime       int64
 	inited         uint32
 	values         [][]byte
@@ -437,7 +438,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		lockKeys := make([]kv.Key, len(keys)+len(indexKeys))
 		copy(lockKeys, keys)
 		copy(lockKeys[len(keys):], indexKeys)
-		err = LockKeys(ctx, e.Ctx(), e.waitTime, lockKeys...)
+		err = lockKeysWithMode(ctx, e.Ctx(), e.waitTime, e.inShareMode, lockKeys...)
 		if err != nil {
 			return err
 		}
@@ -492,7 +493,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	// Lock exists keys only for Read Committed Isolation.
 	if e.lock && rc {
-		err = LockKeys(ctx, e.Ctx(), e.waitTime, existKeys...)
+		err = lockKeysWithMode(ctx, e.Ctx(), e.waitTime, e.inShareMode, existKeys...)
 		if err != nil {
 			return err
 		}
@@ -503,6 +504,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 
 // LockKeys locks the keys for pessimistic transaction.
 func LockKeys(ctx context.Context, sctx sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
+	return lockKeysWithMode(ctx, sctx, lockWaitTime, false, keys...)
+}
+
+func lockKeysWithMode(ctx context.Context, sctx sessionctx.Context, lockWaitTime int64, inShareMode bool, keys ...kv.Key) error {
 	sessVars := sctx.GetSessionVars()
 
 	if err := checkMaxExecutionTimeExceeded(sctx); err != nil {
@@ -510,7 +515,7 @@ func LockKeys(ctx context.Context, sctx sessionctx.Context, lockWaitTime int64, 
 	}
 
 	txnCtx := sessVars.TxnCtx
-	lctx, err := newLockCtx(sctx, lockWaitTime, len(keys), false)
+	lctx, err := newSelectLockCtx(sctx, lockWaitTime, len(keys), inShareMode)
 	if err != nil {
 		return err
 	}

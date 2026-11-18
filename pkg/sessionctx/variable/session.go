@@ -1888,6 +1888,9 @@ type SessionVars struct {
 	// EnableLazyCursorFetch defines whether to enable the lazy cursor fetch.
 	EnableLazyCursorFetch bool
 
+	// EnableSelectForShare permits explicit locking reads to acquire shared row locks.
+	EnableSelectForShare bool
+
 	// SharedLockPromotion indicates whether the `select for lock` statements would be executed as the
 	// `select for update` statements which do acquire pessimsitic locks.
 	SharedLockPromotion bool
@@ -3993,6 +3996,11 @@ func ToTiPBTiFlashPreAggMode(mode string) (tipb.TiFlashPreAggMode, bool) {
 // sessions and global user sessions/variables are isolated and do not affect each other.
 func (s *SessionVars) UseLowResolutionTSO() bool {
 	return !s.InRestrictedSQL && s.lowResolutionTSO && s.ConnectionID > 0
+}
+
+// UseSelectForShare reports whether this clause requests a native shared lock.
+func (s *SessionVars) UseSelectForShare(lock *ast.SelectLockInfo) bool {
+	return s.EnableSelectForShare && lock.IsForShare()
 }
 
 // PessimisticLockEligible indicates whether pessimistic lock should not be ignored for the current

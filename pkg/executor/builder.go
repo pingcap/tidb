@@ -818,6 +818,16 @@ func (b *executorBuilder) buildDeallocate(v *plannercore.Deallocate) exec.Execut
 	return e
 }
 
+func (b *executorBuilder) recordSelectLock(inShareMode bool) {
+	b.hasLock = true
+	if inShareMode {
+		vars := b.sctx.GetSessionVars()
+		if !vars.TxnCtx.IsPessimistic || !(vars.IsIsolation(ast.ReadCommitted) || vars.IsIsolation(ast.RepeatableRead)) {
+			b.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("SELECT FOR SHARE outside pessimistic READ COMMITTED or REPEATABLE READ transactions")
+		}
+	}
+}
+
 func (b *executorBuilder) buildSelectLock(v *physicalop.PhysicalLock) exec.Executor {
 	if !b.inSelectLockStmt {
 		b.inSelectLockStmt = true
@@ -839,7 +849,7 @@ func (b *executorBuilder) buildSelectLock(v *physicalop.PhysicalLock) exec.Execu
 		return src
 	}
 	// If the `PhysicalLock` is not ignored by the above logic, set the `hasLock` flag.
-	b.hasLock = true
+	b.recordSelectLock(b.sctx.GetSessionVars().UseSelectForShare(v.Lock))
 	e := &SelectLockExec{
 		BaseExecutor:       exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID(), src),
 		Lock:               v.Lock,
@@ -6250,6 +6260,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 		keepOrder:          plan.KeepOrder,
 		desc:               plan.Desc,
 		lock:               plan.Lock,
+		inShareMode:        plan.InShareMode,
 		waitTime:           plan.LockWaitTime,
 		columns:            plan.Columns,
 		handles:            handles,
@@ -6303,7 +6314,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 	}
 
 	if e.lock {
-		b.hasLock = true
+		b.recordSelectLock(e.inShareMode)
 	}
 	if pi := plan.TblInfo.GetPartitionInfo(); pi != nil && len(plan.PartitionIdxs) > 0 {
 		defs := plan.TblInfo.GetPartitionInfo().Definitions

@@ -1282,11 +1282,11 @@ func fillContentForTablePath(tablePath *util.AccessPath, tblInfo *model.TableInf
 }
 
 // isForUpdateReadSelectLock checks if the lock type need to use forUpdateRead
-func isForUpdateReadSelectLock(lock *ast.SelectLockInfo) bool {
+func isForUpdateReadSelectLock(ctx base.PlanContext, lock *ast.SelectLockInfo) bool {
 	if lock == nil {
 		return false
 	}
-	return lock.LockType == ast.SelectLockForUpdate ||
+	return ctx.GetSessionVars().UseSelectForShare(lock) || lock.LockType == ast.SelectLockForUpdate ||
 		lock.LockType == ast.SelectLockForUpdateNoWait ||
 		lock.LockType == ast.SelectLockForUpdateWaitN
 }

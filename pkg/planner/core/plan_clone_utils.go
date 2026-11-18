@@ -66,6 +66,7 @@ func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *physicalop
 	dst.UnsignedHandle = src.UnsignedHandle
 	dst.IsTableDual = src.IsTableDual
 	dst.Lock = src.Lock
+	dst.InShareMode = src.InShareMode
 	dst.SetOutputNames(src.OutputNames())
 	dst.LockWaitTime = src.LockWaitTime
 	dst.Columns = src.Columns
