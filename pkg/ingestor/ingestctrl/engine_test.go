@@ -50,6 +50,68 @@ func makePebbleDB(t *testing.T, opt *pebble.Options) (*pebble.DB, string) {
 	return db, tmpPath
 }
 
+func TestAppendRowsSortedWithReusedKeyBuffer(t *testing.T) {
+	keyAdapter := common.DupDetectKeyAdapter{}
+	w := &Writer{
+		engine: &Engine{
+			sstDir:     t.TempDir(),
+			keyAdapter: keyAdapter,
+			logger:     log.L(),
+		},
+		isKVSorted: true,
+	}
+	kvs := []common.KvPair{
+		{Key: []byte("a"), Val: []byte("1"), RowID: common.EncodeIntRowID(1)},
+		{Key: []byte("b"), Val: []byte("2"), RowID: common.EncodeIntRowID(1)},
+	}
+
+	var expectedSize int64
+	for _, pair := range kvs {
+		require.NoError(t, w.appendRowsSorted([]common.KvPair{pair}))
+		expectedSize += int64(keyAdapter.EncodedLen(pair.Key, pair.RowID) + len(pair.Val))
+	}
+
+	meta, err := w.writer.Load().close()
+	require.NoError(t, err)
+	require.Equal(t, int64(len(kvs)), meta.totalCount)
+	require.Equal(t, expectedSize, meta.totalSize)
+}
+
+func TestSSTWriterWriteKVsWithReusedKeyBuffer(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.sst")
+	writer, err := newSSTWriter(path, 16*1024)
+	require.NoError(t, err)
+	sw := &sstWriter{sstMeta: &sstMeta{path: path}, writer: writer, logger: log.L()}
+
+	// Simulate appendRowsSorted's reusable sortedKeyBuf. Every batch starts
+	// writing at offset zero, so the next batch can overwrite sw.lastKey when
+	// it aliases the shared buffer.
+	keyBuf := make([]byte, 0, 64)
+	encode := func(keys ...string) []common.KvPair {
+		keyBuf = keyBuf[:0]
+		kvs := make([]common.KvPair, 0, len(keys))
+		for _, key := range keys {
+			start := len(keyBuf)
+			keyBuf = append(keyBuf, key...)
+			kvs = append(kvs, common.KvPair{Key: keyBuf[start:], Val: []byte("v")})
+		}
+		return kvs
+	}
+
+	// Keep all keys the same length so the first key in the next batch lands
+	// on the same byte range as the previous batch's last key.
+	require.NoError(t, sw.writeKVs(encode("aaa", "bbb", "ccc")))
+	require.NoError(t, sw.writeKVs(encode("ddd")))
+	require.NoError(t, sw.writeKVs(encode("eee", "fff", "ggg")))
+
+	// A skipped key is not included in totalSize, while totalCount records the
+	// number of input KVs. The aliasing bug would produce 24 instead of 28.
+	require.Equal(t, int64(28), sw.totalSize)
+	require.Equal(t, int64(7), sw.totalCount)
+	require.NoError(t, sw.writer.Close())
+}
+
 func TestGetEngineSizeWhenImport(t *testing.T) {
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,

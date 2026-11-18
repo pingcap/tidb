@@ -70,12 +70,10 @@ type InsertValues struct {
 
 	writeStats *execdetails.WriteRuntimeStats
 
-	rowCount                    uint64
-	curBatchCnt                 uint64
-	maxRowsInBatch              uint64
-	lastInsertID                uint64
-	recordRUV2RowsColMultiply   bool
-	ruv2RecordedRowsColMultiply int64
+	rowCount       uint64
+	curBatchCnt    uint64
+	maxRowsInBatch uint64
+	lastInsertID   uint64
 
 	SelectExec exec.Executor
 
@@ -116,32 +114,6 @@ type InsertValues struct {
 	fkCascades []*FKCascadeExec
 
 	ignoreErr bool
-}
-
-func (e *InsertValues) rowsColMultiply() int64 {
-	colCount := len(e.insertColumns)
-	if e.rowCount == 0 || colCount == 0 {
-		return 0
-	}
-
-	const maxInt64 = uint64(1<<63 - 1)
-	if e.rowCount > maxInt64/uint64(colCount) {
-		return int64(maxInt64)
-	}
-	return int64(e.rowCount * uint64(colCount))
-}
-
-func (e *InsertValues) recordRowsColMultiply2RUV2Metrics() {
-	if !e.recordRUV2RowsColMultiply {
-		return
-	}
-	current := e.rowsColMultiply()
-	delta := current - e.ruv2RecordedRowsColMultiply
-	if delta <= 0 {
-		return
-	}
-	recordInsertRowsColMultiply2Metrics(e.Ctx().GetSessionVars(), delta)
-	e.ruv2RecordedRowsColMultiply = current
 }
 
 type defaultVal struct {
@@ -320,7 +292,6 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 			if err = base.exec(ctx, rows); err != nil {
 				return err
 			}
-			e.recordRowsColMultiply2RUV2Metrics()
 			rows = rows[:0]
 			memTracker.Consume(-memUsageOfRows)
 			memUsageOfRows = 0
@@ -346,7 +317,6 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	if err != nil {
 		return err
 	}
-	e.recordRowsColMultiply2RUV2Metrics()
 	memTracker.Consume(-memUsageOfRows)
 	return nil
 }
@@ -605,7 +575,6 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 				if err = base.exec(ctx, rows); err != nil {
 					return err
 				}
-				e.recordRowsColMultiply2RUV2Metrics()
 				rows = rows[:0]
 				extraColsInSel = extraColsInSel[:0]
 				totalMemDelta += -memUsageOfRows - memUsageOfExtraCols
@@ -631,7 +600,6 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		if err != nil {
 			return err
 		}
-		e.recordRowsColMultiply2RUV2Metrics()
 		rows = rows[:0]
 		extraColsInSel = extraColsInSel[:0]
 		memTracker.Consume(-memUsageOfRows - memUsageOfExtraCols - chkMemUsage)

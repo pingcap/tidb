@@ -40,17 +40,23 @@ func (j *innerJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlk
 	joinedChk.SetNumVirtualRows(joinedChk.NumRows())
 	// always set in complete chunk during probe
 	joinedChk.SetInCompleteChunk(true)
-	defer joinedChk.SetInCompleteChunk(isInCompleteChunk)
+	initialRemainCap := remainCap
+	defer func() {
+		// Capacity is consumed only by candidate pairs. Publish the batch even
+		// when residual evaluation fails, the query is killed, or append panics.
+		j.addJoinedRows(int64(initialRemainCap - remainCap))
+		joinedChk.SetInCompleteChunk(isInCompleteChunk)
+	}()
 
 	tagHelper := j.ctx.hashTableContext.tagHelper
 	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
 		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
 			candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
+				remainCap--
 				// key matched, convert row to column for build side
 				j.appendBuildRowToCachedBuildRowsV1(j.currentProbeRow, candidateRow, joinedChk, 0, hasOtherCondition)
 				j.matchedRowsForCurrentProbeRow++
-				remainCap--
 			} else {
 				j.probeCollision++
 			}

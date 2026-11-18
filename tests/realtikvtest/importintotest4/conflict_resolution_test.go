@@ -34,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -61,14 +63,20 @@ func (s *mockGCSSuite) TestNextGenExpiredConflictRowCleanup() {
 	)
 	ctx := s.ctx
 	baseSortURI := fmt.Sprintf("gs://%s?endpoint=%s", sortBucket, gcsEndpoint)
-	originalCloudStorageURI := vardef.CloudStorageURI.Load()
+	originalCloudStorageURIRows := s.tk.MustQuery(`select variable_value from mysql.global_variables
+		where variable_name = ?`, vardef.TiDBCloudStorageURI).Rows()
+	require.Len(t, originalCloudStorageURIRows, 1)
+	originalCloudStorageURI := originalCloudStorageURIRows[0][0]
 	t.Cleanup(func() {
-		vardef.CloudStorageURI.Store(originalCloudStorageURI)
+		s.tk.MustExec("set global tidb_cloud_storage_uri = ?", originalCloudStorageURI)
 	})
 
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sourceBucket})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sortBucket})
-	vardef.CloudStorageURI.Store(baseSortURI)
+	s.tk.MustExec("set global tidb_cloud_storage_uri = ?", baseSortURI)
+	s.tk.MustQuery(`select variable_value from mysql.global_variables
+		where variable_name = ?`, vardef.TiDBCloudStorageURI).
+		Check(testkit.Rows(baseSortURI))
 	rootedSortURI := handle.GetCloudStorageURI(ctx, s.store)
 	sortStore, err := importer.GetSortStore(ctx, rootedSortURI)
 	require.NoError(t, err)
@@ -164,7 +172,7 @@ func (s *mockGCSSuite) getSourceRowCount(sourceContents []string) int {
 
 func (s *mockGCSSuite) getTaskByJob(jobID int64) *proto.Task {
 	s.T().Helper()
-	taskKey := importinto.TaskKey(jobID)
+	taskKey := taskkey.ForJob(jobID)
 	task, err2 := s.taskMgr.GetTaskByKeyWithHistory(s.ctx, taskKey)
 	s.NoError(err2)
 	return task
@@ -219,7 +227,7 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 	s.NoError(err)
 
 	task := s.getTaskByJob(int64(jobID))
-	s.checkExternalFields(task.ID, false)
+	s.checkExternalFields(task.ID, sortStorageURI, false)
 
 	// check lines inside the file that records the conflicted rows.
 	subtasks := s.getSubtasksOfStep(task.ID, proto.ImportStepCollectConflicts)
@@ -652,6 +660,8 @@ func (s *mockGCSSuite) TestGlobalSortFunctionalIndexConflictAfterAddingVisibleCo
 		unique key uk_expr ((a + 1))
 	)`)
 	s.tk.MustExec("alter table t add column tail int")
+	// ADD UNIQUE KEY rebuilds the index, which requires global sort on NextGen.
+	realtikvtest.SetupNextGenGlobalSort(s.T(), s.tk)
 	s.tk.MustExec("alter table t add unique key uk_tail (tail)")
 
 	result := s.tk.MustQuery(fmt.Sprintf(`import into t from '%s'
@@ -817,21 +827,22 @@ func (s *mockGCSSuite) TestGlobalSortConflictResolutionMultipleSubtasks() {
 	})
 }
 
-func (s *mockGCSSuite) checkMergeStepConflictInfo(jobID int64) {
+func (s *mockGCSSuite) checkMergeStepConflictInfo(jobID int64, sortStorageURI string) {
 	s.T().Helper()
 
 	task := s.getTaskByJob(jobID)
 	subtasks := s.getSubtasksOfStep(task.ID, proto.ImportStepMergeSort)
 
-	taskMeta := importinto.TaskMeta{}
+	taskMeta := taskinfo.TaskMeta{}
 	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 	kvGroupCanConflict := make(map[string]bool, len(taskMeta.Plan.TableInfo.Indices)+1)
 	kvGroupCanConflict["data"] = taskMeta.Plan.TableInfo.HasClusteredIndex()
 	for _, idx := range taskMeta.Plan.TableInfo.Indices {
 		kvGroupCanConflict[globalsort.IndexID2KVGroup(idx.ID)] = idx.Unique
 	}
-	store, err := importer.GetSortStore(s.ctx, taskMeta.Plan.CloudStorageURI)
+	store, err := importer.GetSortStore(s.ctx, sortStorageURI)
 	s.NoError(err)
+	defer store.Close()
 	for _, st := range subtasks {
 		m := importinto.MergeSortStepMeta{}
 		s.NoError(json.Unmarshal(st.Meta, &m))
@@ -865,7 +876,7 @@ func (s *mockGCSSuite) TestGlobalSortConflictFoundInMergeSort() {
 				[]string{},
 				"__force_merge_step",
 			)
-			s.checkMergeStepConflictInfo(jobID)
+			s.checkMergeStepConflictInfo(jobID, fmt.Sprintf("gs://sorted?endpoint=%s", gcsEndpoint))
 		}
 	})
 
@@ -883,7 +894,7 @@ func (s *mockGCSSuite) TestGlobalSortConflictFoundInMergeSort() {
 				[]string{},
 				"__force_merge_step",
 			)
-			s.checkMergeStepConflictInfo(jobID)
+			s.checkMergeStepConflictInfo(jobID, fmt.Sprintf("gs://sorted?endpoint=%s", gcsEndpoint))
 		}
 	})
 }

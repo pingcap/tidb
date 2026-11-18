@@ -58,7 +58,7 @@ var (
 	// part-size in range 5~20M, but not all thread will upload at same time.
 	// this value might not be optimal.
 	// TODO need data on AWS and other machine types
-	maxUploadWorkersPerThread = 8
+	maxUploadWorkersPerThread = 4
 	// we use hex of 0-256 as partition prefix, it might duplicate with task ID,
 	// so we add a header to it.
 	partitionHeader     = "p"

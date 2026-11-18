@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/stats"
+	"github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -154,9 +155,6 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	}
 	if err := cleanAccessPathForFTS(ds); err != nil {
 		return nil, false, err
-	}
-	if vars := ds.SCtx().GetSessionVars(); vars != nil && vars.RUV2Metrics != nil {
-		vars.RUV2Metrics.AddPlanDeriveStatsPaths(int64(len(ds.PossibleAccessPaths)))
 	}
 
 	indexForce := false
@@ -645,10 +643,15 @@ func initStats(ds *logicalop.DataSource) {
 }
 
 func deriveStatsByFilter(ds *logicalop.DataSource, conds expression.CNFExprs, filledPaths []*util.AccessPath) *property.StatsInfo {
-	selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, conds, filledPaths)
+	selectivityConds, mlogCommitTSSelectivity, hasMLogCommitTSSelectivity :=
+		mview.SplitMLogCommitTSFilterSelectivity(ds.SCtx(), ds.TableInfo, ds.Schema(), conds)
+	selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, selectivityConds, filledPaths)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 		selectivity = cost.SelectionFactor
+	}
+	if hasMLogCommitTSSelectivity {
+		selectivity *= mlogCommitTSSelectivity
 	}
 	// TODO: remove NewHistCollBySelectivity later on.
 	// if ds.SCtx().GetSessionVars().OptimizerSelectivityLevel >= 1 {

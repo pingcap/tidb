@@ -29,7 +29,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "TiDB query processing numbers per second",
 	},
 	"tidb_qps_ideal": {
-		PromQL: `sum(tidb_server_connections) * sum(rate(tidb_server_handle_query_duration_seconds_count[$RANGE_DURATION])) / sum(rate(tidb_server_handle_query_duration_seconds_sum[$RANGE_DURATION]))`,
+		PromQL: `sum(tidb_server_connections) * sum(rate(tidb_server_handle_command_duration_seconds_count[$RANGE_DURATION])) / sum(rate(tidb_server_handle_command_duration_seconds_sum[$RANGE_DURATION]))`,
 	},
 	"tidb_ops_statement": {
 		PromQL:  `sum(rate(tidb_executor_statement_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)`,

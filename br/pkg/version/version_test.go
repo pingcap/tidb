@@ -590,6 +590,30 @@ func TestDetectServerInfo(t *testing.T) {
 	}
 }
 
+func TestParseServerInfoNextGen(t *testing.T) {
+	cases := []struct {
+		versionStr      string
+		expectedNextGen bool
+	}{
+		// Next-gen (premium keyspace) clusters use the cloud version format.
+		{"8.0.11-TiDB-CLOUD.202603.0", true},
+		{"8.0.11-TiDB-CLOUD.202603.3-1c7827b003-dirty", true},
+		{"Release Version: CLOUD.202603.2\nEdition: Community", true},
+		{"Release Version: CLOUD.202603.5-1c7827b003-dirty\nEdition: Community", true},
+		// Classical clusters must not be flagged as next-gen, including the
+		// look-alike version that embeds an extra "-X-" marker.
+		{"5.7.25-TiDB-v4.0.0-alpha-1263-g635f2e1af", false},
+		{"8.0.18", false},
+		{"10.4.10-MariaDB-1:10.4.10+maria~bionic", false},
+		{"8.0.11-TiDB-X-CLOUD.202603.0", false},
+	}
+
+	for _, tc := range cases {
+		info := ParseServerInfo(tc.versionStr)
+		require.Equalf(t, tc.expectedNextGen, info.NextGen, "version=%q", tc.versionStr)
+	}
+}
+
 func makeVersion(major, minor, patch int64, preRelease string) *semver.Version {
 	return &semver.Version{
 		Major:      major,

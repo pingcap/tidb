@@ -357,8 +357,9 @@ func TestExternalStarterExitSkipsAutoIDOwner(t *testing.T) {
 		"keyspace":           {keyspaceName},
 		"skip_auto_id_owner": {"true"},
 	}
-	statusCode, _ := getStarterStatusPath(ctx, t, statusURL, "/tidb-pool/exit?"+query.Encode())
+	statusCode, body := getStarterStatusPath(ctx, t, statusURL, "/tidb-pool/exit?"+query.Encode())
 	require.Equal(t, http.StatusNotModified, statusCode)
+	require.Empty(t, body)
 
 	db := openStarterDB(t)
 	require.NoError(t, db.PingContext(ctx))

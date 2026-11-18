@@ -17,7 +17,11 @@ package ddl_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"runtime/debug"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,11 +29,14 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	disttestutil "github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -38,10 +45,16 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
 )
@@ -61,7 +74,24 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	want := "tenant_only"
+	if kerneltype.IsNextGen() {
+		want = resourcegroup.DefaultResourceGroupName
+	}
+	var client *backfillResourceGroupClient
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithClientHijacker(func(inner tikv.Client) tikv.Client {
+		client = &backfillResourceGroupClient{
+			Client:     inner,
+			checkGroup: func(group string) { assert.Equal(t, want, group) },
+		}
+		return client
+	}))
+	tikv.DisableResourceControl() // Inspect attribution independently of PD's group cache.
+	t.Cleanup(func() {
+		if vardef.EnableResourceControl.Load() {
+			tikv.EnableResourceControl()
+		}
+	})
 	sch, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
 	require.NoError(t, err)
 	sch.(*ddl.LitBackfillScheduler).BaseScheduler = &scheduler.BaseScheduler{
@@ -83,15 +113,41 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
+	var resourceMeta ddl.BackfillTaskMeta
+	require.NoError(t, json.Unmarshal(task.Meta, &resourceMeta))
+	resourceMeta.Job.Type = model.ActionAddIndex
+	resourceMeta.Job.ReorgMeta.ResourceGroupName = "tenant_only"
+	resourceMeta.EleIDs = []int64{tblInfo.Indices[0].ID}
+	task.Meta, err = json.Marshal(&resourceMeta)
+	require.NoError(t, err)
+	originalMeta := append([]byte(nil), task.Meta...)
 
 	// 1.1 OnNextSubtasksBatch
 	task.Step = sch.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
 	execIDs := []string{":4000"}
 	ctx := util.WithInternalSourceType(context.Background(), "backfill")
+	client.recording.Store(true)
 	metas, err := sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
+	client.recording.Store(false)
 	require.NoError(t, err)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
+	require.Positive(t, client.scanCount.Load())
+	// Worker execution uses a decoded copy; persisted foreground metadata stays intact.
+	checked := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeGetUserTableForBackfillStep", func(job *model.Job) {
+		checked = true
+		require.Equal(t, want, job.ReorgMeta.ResourceGroupName)
+	})
+	param := taskexecutor.NewParamForTest(nil, nil, proto.NodeResourceForTest, ":4000")
+	param.TaskRuntime = newBackfillingSchedulerTestRuntime(ctrl, store, dom.SysSessionPool())
+	worker := taskexecutor.GetTaskExecutorFactory(proto.Backfill)(ctx, task, param)
+	require.NoError(t, worker.Init(ctx))
+	_, err = worker.(taskexecutor.Extension).GetStepExecutor(task)
+	worker.Close()
+	require.NoError(t, err)
+	require.True(t, checked)
+	require.Equal(t, originalMeta, task.Meta)
 	var taskMetaView struct {
 		Summary *struct {
 			IndexKVSize uint64 `json:"index_kv_size"`
@@ -196,6 +252,53 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
+}
+
+func TestBackfillingSchedulerTableRangeScanError(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the test drives add-index backfill with the mock ingest backend, which nextgen does not support")
+	}
+	disttestutil.ReduceCheckInterval(t)
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	if kerneltype.IsClassic() {
+		tk.MustExec("set global tidb_enable_dist_task = on")
+		tk.MustExec("set global tidb_ddl_enable_fast_reorg = on")
+		t.Cleanup(func() {
+			tk.MustExec("set global tidb_enable_dist_task = off")
+		})
+	}
+
+	// A non-empty table is required. An empty table legitimately produces an empty plan.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int primary key, v int)")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2)")
+
+	// Fail only the snapshot iteration used by distributed add-index planning.
+	// Earlier scans (empty-table check, reorg handle init) also call
+	// iterateSnapshotKeys and must keep working. The error is transient: planning
+	// retries, then the index is built. If the error were treated as an empty
+	// table, ADD INDEX would publish idx with no entries and admin check would fail.
+	var injected atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockSnapshotIterError", func(errP *error) {
+		if errP == nil || *errP != nil || injected.Load() {
+			return
+		}
+		if !strings.Contains(string(debug.Stack()), "generatePlanForPhysicalTable") {
+			return
+		}
+		if injected.CompareAndSwap(false, true) {
+			*errP = errors.New("mock snapshot iter error")
+		}
+	})
+
+	tk.MustExec("alter table t1 add index idx(v)")
+	require.True(t, injected.Load())
+	tk.MustExec("admin check table t1")
+	tk.MustQuery("select id from t1 use index(idx) where v = 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select id from t1 use index(idx) where v = 2").Check(testkit.Rows("2"))
 }
 
 func TestCalculateRegionBatch(t *testing.T) {
@@ -542,8 +645,11 @@ func TestBackfillTaskMetaVersion(t *testing.T) {
 	}
 	require.Equal(t, ddl.BackfillTaskMetaVersion1, meta.Version)
 
-	// Optional fields are decode-compatible without a task-meta version bump.
+	// Optional fields are decode-compatible without a task-meta version bump,
+	// and zero values are omitted when the meta is encoded.
 	require.NoError(t, json.Unmarshal([]byte(`{"summary":{"index_kv_size":0}}`), meta))
+	require.NotNil(t, meta.Summary)
+	require.Zero(t, meta.Summary.IndexKVSize)
 	metaBytes, err = json.Marshal(meta)
 	require.NoError(t, err)
 	var summaryMetaView struct {
@@ -551,7 +657,22 @@ func TestBackfillTaskMetaVersion(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(metaBytes, &summaryMetaView))
 	require.NotNil(t, summaryMetaView.Summary)
-	indexKVSize, ok := summaryMetaView.Summary["index_kv_size"]
-	require.True(t, ok)
-	require.JSONEq(t, "0", string(indexKVSize))
+	_, ok := summaryMetaView.Summary["index_kv_size"]
+	require.False(t, ok, "zero-valued summary fields are omitted from the encoded meta")
+}
+
+// Check the actual snapshot scan requests used to discover backfill ranges.
+type backfillResourceGroupClient struct {
+	tikv.Client
+	recording  atomic.Bool
+	scanCount  atomic.Int64
+	checkGroup func(string)
+}
+
+func (c *backfillResourceGroupClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if c.recording.Load() && req.Type == tikvrpc.CmdScan {
+		c.scanCount.Add(1)
+		c.checkGroup(req.GetResourceControlContext().GetResourceGroupName())
+	}
+	return c.Client.SendRequest(ctx, addr, req, timeout)
 }

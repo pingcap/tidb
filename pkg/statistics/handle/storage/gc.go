@@ -15,22 +15,17 @@
 package storage
 
 import (
-	"context"
 	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -54,12 +49,6 @@ func (gc *statsGCImpl) GCStats(is infoschema.InfoSchema, ddlLease time.Duration)
 	return util.CallWithSCtx(gc.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return GCStats(sctx, gc.statsHandle, is, ddlLease)
 	})
-}
-
-// ClearOutdatedHistoryStats clear outdated historical stats.
-// Only for test.
-func (gc *statsGCImpl) ClearOutdatedHistoryStats() error {
-	return util.CallWithSCtx(gc.statsHandle.SPool(), ClearOutdatedHistoryStats)
 }
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
@@ -113,18 +102,6 @@ func GCStats(
 		if err := gcTableStats(sctx, statsHandle, is, row.GetInt64(0)); err != nil {
 			return errors.Trace(err)
 		}
-		_, existed := is.TableByID(context.Background(), row.GetInt64(0))
-		if !existed {
-			if err := gcHistoryStatsFromKV(sctx, row.GetInt64(0)); err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-
-	if err := ClearOutdatedHistoryStats(sctx); err != nil {
-		logutil.BgLogger().Warn("failed to gc outdated historical stats",
-			zap.Duration("duration", vardef.HistoricalStatsDuration.Load()),
-			zap.Error(err))
 	}
 
 	return nil
@@ -178,60 +155,6 @@ func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64, soft bool
 		}
 	}
 	return nil
-}
-
-func forCount(total int64, batch int64) int64 {
-	result := total / batch
-	if total%batch > 0 {
-		result++
-	}
-	return result
-}
-
-// ClearOutdatedHistoryStats clear outdated historical stats
-func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
-	sql := "select count(*) from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
-	rs, err := util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
-	if err != nil {
-		return err
-	}
-	if rs == nil {
-		return nil
-	}
-	var rows []chunk.Row
-	defer terror.Call(rs.Close)
-	if rows, err = sqlexec.DrainRecordSet(context.Background(), rs, 8); err != nil {
-		return errors.Trace(err)
-	}
-	count := rows[0].GetInt64(0)
-	if count > 0 {
-		for range forCount(count, int64(1000)) {
-			sql = "delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 1000 "
-			_, err = util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
-			if err != nil {
-				return err
-			}
-		}
-		for range forCount(count, int64(50)) {
-			sql = "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 50 "
-			_, err = util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
-			return err
-		}
-		logutil.BgLogger().Info("clear outdated historical stats")
-	}
-	return nil
-}
-
-// gcHistoryStatsFromKV delete history stats from kv.
-func gcHistoryStatsFromKV(sctx sessionctx.Context, physicalID int64) (err error) {
-	sql := "delete from mysql.stats_history where table_id = %?"
-	_, err = util.Exec(sctx, sql, physicalID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	sql = "delete from mysql.stats_meta_history where table_id = %?"
-	_, err = util.Exec(sctx, sql, physicalID)
-	return err
 }
 
 // deleteHistStatsFromKV deletes all records about a column or an index and updates version.

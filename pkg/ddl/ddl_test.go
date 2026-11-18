@@ -23,6 +23,8 @@ import (
 	"time"
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -31,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -40,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -50,6 +54,13 @@ import (
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
+
+func TestDiagnosticModeDisallowsSwitchMDL(t *testing.T) {
+	t.Cleanup(diagnosticmode.SetForTest(true))
+
+	d := &ddl{}
+	require.ErrorIs(t, d.SwitchMDL(true), diagnosticmode.ErrDDLNotAllowed)
+}
 
 // DDLForTest exports for testing.
 type DDLForTest interface {
@@ -112,6 +123,11 @@ func (c *ddlJobRUReportingContext) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 }
 
 func TestAccountJobRU(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(cfg *config.Config) {
+		cfg.RUV2.DDLWeights.TxnKVBytes = 2
+	})
+
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
@@ -137,17 +153,23 @@ func TestAccountJobRU(t *testing.T) {
 	require.NoError(t, w.accountJobRU(job))
 	expectedRU := float64(7)
 	if kerneltype.IsNextGen() {
-		expectedRU += float64(activeTxn.Size())
+		expectedRU += 2 * float64(activeTxn.Size())
 	}
 	require.Equal(t, expectedRU, job.RU)
 
 	accountedRU := job.RU
 	w.tp = addIdxWorker
 	require.NoError(t, w.accountJobRU(job))
+	if kerneltype.IsNextGen() {
+		accountedRU += 2 * float64(activeTxn.Size())
+	}
 	require.Equal(t, accountedRU, job.RU)
 
 	w.tp = backgroundWorker
 	require.NoError(t, w.accountJobRU(job))
+	if kerneltype.IsNextGen() {
+		accountedRU += 2 * float64(activeTxn.Size())
+	}
 	require.Equal(t, accountedRU, job.RU)
 
 	t.Run("reports through the DDL session resource group", func(t *testing.T) {
@@ -161,10 +183,36 @@ func TestAccountJobRU(t *testing.T) {
 		}
 		w := worker{sess: sess.NewSession(sessCtx)}
 
-		w.reportJobRUV3Consumption(42)
+		w.reportJobRUConsumption(&model.Job{RU: 42})
 
 		require.Equal(t, []ddlJobRUReport{{
 			resourceGroupName: resourcegroup.DefaultResourceGroupName,
+			tikvRUV2:          42,
+			tidbRUV2:          0,
+			tiflashRUV2:       0,
+		}}, reporter.reports)
+	})
+
+	t.Run("reports reorganization jobs through the persisted resource group", func(t *testing.T) {
+		reporter := &ddlJobRUReporter{}
+		sessCtx := &ddlJobRUReportingContext{
+			Context: mock.NewContext(),
+			dctx: &distsqlctx.DistSQLContext{
+				ResourceGroupName:     resourcegroup.DefaultResourceGroupName,
+				RUConsumptionReporter: reporter,
+			},
+		}
+		w := worker{sess: sess.NewSession(sessCtx)}
+
+		w.reportJobRUConsumption(&model.Job{
+			RU: 42,
+			ReorgMeta: &model.DDLReorgMeta{
+				ResourceGroupName: "non-default-group",
+			},
+		})
+
+		require.Equal(t, []ddlJobRUReport{{
+			resourceGroupName: "non-default-group",
 			tikvRUV2:          42,
 			tidbRUV2:          0,
 			tiflashRUV2:       0,
@@ -181,9 +229,9 @@ func TestAccountJobRU(t *testing.T) {
 		}
 		w := worker{sess: sess.NewSession(sessCtx)}
 
-		w.reportJobRUV3Consumption(42)
+		w.reportJobRUConsumption(&model.Job{RU: 42})
 		sessCtx.dctx = nil
-		w.reportJobRUV3Consumption(42)
+		w.reportJobRUConsumption(&model.Job{RU: 42})
 
 		require.Empty(t, reporter.reports)
 	})
@@ -200,7 +248,7 @@ func TestAccountJobRU(t *testing.T) {
 		w := worker{sess: sess.NewSession(sessCtx)}
 
 		require.Panics(t, func() {
-			w.reportJobRUV3Consumption(42)
+			w.reportJobRUConsumption(&model.Job{RU: 42})
 		})
 	})
 }
@@ -239,7 +287,7 @@ func ReconcileStorageClassTransitionTopologyForTest(
 	if len(operations) != 1 {
 		return fmt.Errorf("expected one running storage class transition, got %d", len(operations))
 	}
-	return reconcileStorageClassTransitionTopology(ctx, se, tblInfo, operations[0], operations[0].schemaVersion)
+	return reconcileStorageClassTransitionTopology(ctx, se, nil, tblInfo, operations[0], operations[0].schemaVersion)
 }
 
 func (s *JobSubmitter) DDLJobDoneChMap() *generic.SyncMap[int64, chan struct{}] {
@@ -640,16 +688,24 @@ func TestMergeContinuousKeyRanges(t *testing.T) {
 	}
 }
 
-func TestDetectAndUpdateJobVersion(t *testing.T) {
+func TestDetectAndUpdateClassicCompatibility(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	d := &ddl{ddlCtx: &ddlCtx{ctx: ctx}}
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	d := &ddl{ddlCtx: &ddlCtx{ctx: ctx, store: store}}
 
+	originalDisabled := vardef.IsLegacyECDSASessionTokenDisabled()
 	reset := func() {
 		model.SetJobVerInUse(model.JobVersion1)
 		model.SetGlobalIndexV1Supported(false)
+		vardef.SetLegacyECDSASessionTokenDisabled(kerneltype.IsNextGen())
 	}
-	t.Cleanup(reset)
+	t.Cleanup(func() {
+		reset()
+		vardef.SetLegacyECDSASessionTokenDisabled(originalDisabled)
+	})
 	// other ut in the same address space might change it
 	reset()
 	require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
@@ -657,7 +713,7 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 
 	t.Run("in ut", func(t *testing.T) {
 		reset()
-		d.detectAndUpdateJobVersion()
+		d.detectAndUpdateClassicCompatibility()
 		if testargsv1.ForceV1 {
 			require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
 		} else {
@@ -685,7 +741,7 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 		reset()
 		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.6-alpha-228-g650888fea7-dirty",
 			"8.0.11-TiDB-v9.0.0", "8.0.11-TiDB-8.5.6-beta")
-		d.detectAndUpdateJobVersionOnce()
+		d.detectAndUpdateClassicCompatibilityOnce()
 		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 		require.True(t, model.GetGlobalIndexV1Supported())
 	})
@@ -693,22 +749,22 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 	t.Run("all support v2 but not global index v1", func(t *testing.T) {
 		reset()
 		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.5.5")
-		d.detectAndUpdateJobVersionOnce()
+		d.detectAndUpdateClassicCompatibilityOnce()
 		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 		require.False(t, model.GetGlobalIndexV1Supported())
 	})
 
 	t.Run("v1 first, later all support v2 and global index v1", func(t *testing.T) {
 		reset()
-		intervalBak := detectJobVerInterval
+		intervalBak := detectClassicCompatibilityInterval
 		t.Cleanup(func() {
-			detectJobVerInterval = intervalBak
+			detectClassicCompatibilityInterval = intervalBak
 		})
-		detectJobVerInterval = time.Millisecond
+		detectClassicCompatibilityInterval = time.Millisecond
 		// unknown version
 		mockGetAllServerInfo(t, "unknown")
 		iterateCnt := 0
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDetectAndUpdateJobVersionOnce", func() {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDetectAndUpdateClassicCompatibilityOnce", func() {
 			iterateCnt++
 			if iterateCnt == 1 {
 				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
@@ -740,30 +796,114 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 				require.False(t, model.GetGlobalIndexV1Supported())
 				// upgrade to version supporting global index v1
 				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.6", "8.0.11-TiDB-v8.5.6", "8.0.11-TiDB-v8.5.6")
+			} else if iterateCnt == 7 && kerneltype.IsClassic() {
+				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+				require.True(t, model.GetGlobalIndexV1Supported())
+				require.False(t, vardef.IsLegacyECDSASessionTokenDisabled())
+				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.9", "8.0.11-TiDB-v8.5.9")
 			} else {
 				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 				require.True(t, model.GetGlobalIndexV1Supported())
+				require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
 			}
 		})
-		d.detectAndUpdateJobVersion()
+		d.detectAndUpdateClassicCompatibility()
 		d.wg.Wait()
-		require.EqualValues(t, 7, iterateCnt)
+		if kerneltype.IsClassic() {
+			require.EqualValues(t, 8, iterateCnt)
+		} else {
+			require.EqualValues(t, 7, iterateCnt)
+		}
+	})
+
+	t.Run("legacy ECDSA upgrade gate", func(t *testing.T) {
+		if kerneltype.IsNextGen() {
+			t.Skip("NextGen always disables legacy ECDSA")
+		}
+		cases := []struct {
+			name     string
+			versions []string
+			disabled bool
+		}{
+			{name: "empty registry"},
+			{name: "unknown version", versions: []string{"unknown"}},
+			{name: "invalid version", versions: []string{"8.0.11-TiDB-invalid"}},
+			{name: "mixed versions", versions: []string{"8.0.11-TiDB-v8.5.8", "8.0.11-TiDB-v8.5.9"}},
+			{name: "prerelease", versions: []string{"8.0.11-TiDB-v8.5.9-alpha"}, disabled: true},
+			{name: "minimum version", versions: []string{"8.0.11-TiDB-v8.5.9", "8.0.11-TiDB-v8.5.9"}, disabled: true},
+			{name: "newer versions", versions: []string{"8.0.11-TiDB-v8.5.9", "8.0.11-TiDB-v9.0.0-alpha"}, disabled: true},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				reset()
+				store, err := mockstore.NewMockStore()
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, store.Close()) })
+				d := &ddl{ddlCtx: &ddlCtx{ctx: ctx, store: store}}
+				mockGetAllServerInfo(t, tc.versions...)
+				require.NoError(t, d.detectAndUpdateClassicCompatibilityOnce())
+				require.Equal(t, tc.disabled, vardef.IsLegacyECDSASessionTokenDisabled())
+				txn, err := store.Begin()
+				require.NoError(t, err)
+				disabled, err := meta.NewReader(txn).GetLegacyECDSASessionTokenDisabled()
+				require.NoError(t, err)
+				require.Equal(t, tc.disabled, disabled)
+				require.NoError(t, txn.Rollback())
+			})
+		}
+	})
+
+	t.Run("persist before disabling and never re-enable", func(t *testing.T) {
+		if kerneltype.IsNextGen() {
+			t.Skip("NextGen always disables legacy ECDSA")
+		}
+		reset()
+		store, err := mockstore.NewMockStore()
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, store.Close()) })
+		d := &ddl{ddlCtx: &ddlCtx{ctx: ctx, store: store}}
+		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.9")
+		const commitFailpoint = "github.com/pingcap/tidb/pkg/kv/mockCommitErrorInNewTxn"
+		testfailpoint.Enable(t, commitFailpoint, `return("no_retry")`)
+		require.ErrorContains(t, d.detectAndUpdateClassicCompatibilityOnce(), "mock commit error")
+		require.False(t, vardef.IsLegacyECDSASessionTokenDisabled())
+		testfailpoint.Disable(t, commitFailpoint)
+		require.NoError(t, d.detectAndUpdateClassicCompatibilityOnce())
+		require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
+		// A restarted node must observe the persisted switch, even with old or
+		// unknown server versions. A completed transition cannot be reversed.
+		vardef.SetLegacyECDSASessionTokenDisabled(false)
+		mockGetAllServerInfo(t, "unknown")
+		require.NoError(t, d.detectAndUpdateClassicCompatibilityOnce())
+		require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
+		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.8")
+		require.NoError(t, d.detectAndUpdateClassicCompatibilityOnce())
+		require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
+		vardef.SetLegacyECDSASessionTokenDisabled(false)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", `return("invalid JSON")`)
+		require.Error(t, d.detectAndUpdateClassicCompatibilityOnce())
+		require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
 	})
 }
 
 func TestSetGlobalIndexVersionFlag(t *testing.T) {
-	tblInfo := &model.TableInfo{} // non-clustered (zero value)
-	idxInfo := &model.IndexInfo{Global: true, Unique: false}
+	originalSupported := model.GetGlobalIndexV1Supported()
+	t.Run("version_selection", func(t *testing.T) {
+		tblInfo := &model.TableInfo{} // non-clustered (zero value)
+		idxInfo := &model.IndexInfo{Global: true, Unique: false}
 
-	model.SetGlobalIndexV1Supported(false)
-	t.Cleanup(func() { model.SetGlobalIndexV1Supported(false) })
+		model.SetGlobalIndexV1Supported(false)
+		t.Cleanup(func() { model.SetGlobalIndexV1Supported(originalSupported) })
 
-	setGlobalIndexVersion(tblInfo, idxInfo)
-	require.Equal(t, uint8(0), idxInfo.GlobalIndexVersion)
+		setGlobalIndexVersion(tblInfo, idxInfo)
+		require.Equal(t, uint8(0), idxInfo.GlobalIndexVersion)
 
-	model.SetGlobalIndexV1Supported(true)
-	setGlobalIndexVersion(tblInfo, idxInfo)
-	require.Equal(t, model.GlobalIndexVersionV1, idxInfo.GlobalIndexVersion)
+		model.SetGlobalIndexV1Supported(true)
+		setGlobalIndexVersion(tblInfo, idxInfo)
+		require.Equal(t, model.GlobalIndexVersionV1, idxInfo.GlobalIndexVersion)
+	})
+	// Cleanup must preserve the capability negotiated before this test.
+	require.Equal(t, originalSupported, model.GetGlobalIndexV1Supported())
 }
 
 func TestGetJobCheckIntervalForCreateMaterializedView(t *testing.T) {
@@ -773,6 +913,14 @@ func TestGetJobCheckIntervalForCreateMaterializedView(t *testing.T) {
 
 	val, changed = getJobCheckInterval(model.ActionCreateMaterializedView, len(slowDDLIntervalPolicy))
 	require.Equal(t, slowDDLIntervalPolicy[len(slowDDLIntervalPolicy)-1], val)
+	require.False(t, changed)
+
+	val, changed = getJobCheckInterval(model.ActionCreateMaterializedViewShadow, 0)
+	require.Equal(t, fastDDLIntervalPolicy[0], val)
+	require.True(t, changed)
+
+	val, changed = getJobCheckInterval(model.ActionCreateMaterializedViewShadow, len(fastDDLIntervalPolicy))
+	require.Equal(t, fastDDLIntervalPolicy[len(fastDDLIntervalPolicy)-1], val)
 	require.False(t, changed)
 }
 
@@ -865,4 +1013,279 @@ func TestNormalizeMVDefinitionHintDBNames(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, sql, "READ_FROM_STORAGE(TIFLASH[`test`.`src`])")
 	require.Contains(t, sql, "HASH_JOIN_PROBE(`test`.`src`)")
+}
+
+func TestReplaceMaterializedViewID(t *testing.T) {
+	ids, replaced := replaceMaterializedViewID([]int64{10, 20}, 30, 40)
+	require.False(t, replaced)
+	require.Equal(t, []int64{10, 20}, ids)
+
+	ids, replaced = replaceMaterializedViewID([]int64{10, 20, 10}, 10, 30)
+	require.True(t, replaced)
+	require.Equal(t, []int64{30, 20}, ids)
+}
+
+func TestCheckHistoryJobStmtType(t *testing.T) {
+	p := parser.New()
+	parseStmt := func(sql string) ast.StmtNode {
+		stmt, _, err := p.ParseSQL(sql)
+		require.NoError(t, err)
+		require.Len(t, stmt, 1)
+		return stmt[0]
+	}
+
+	createTableStmt := parseStmt("create table t (a int)")
+	createMViewStmt := parseStmt("create materialized view mv (a, c) as select a, count(1) from t group by a")
+	createMLogStmt := parseStmt("create materialized view log on t (a)")
+	refreshMViewStmt := parseStmt("refresh materialized view mv complete out of place")
+	dropTableStmt := parseStmt("drop table t")
+	createDBStmt := parseStmt("create database test")
+	createPolicyStmt := parseStmt("create placement policy p followers=1")
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateTable, createTableStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateTable, createMLogStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateTable, createMViewStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateMaterializedView, createMViewStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateMaterializedView, createTableStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewLog, createMLogStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewLog, createTableStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewShadow, refreshMViewStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewShadow, createTableStmt))
+	require.True(t, checkHistoryJobStmtType(model.ActionDropMaterializedViewShadow, dropTableStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionDropMaterializedViewShadow, createTableStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateSchema, createDBStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateSchema, createTableStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreatePlacementPolicy, createPolicyStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreatePlacementPolicy, createTableStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateTables, createTableStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateTables, createMLogStmt))
+}
+
+func TestMaterializedViewLogBaseInitialBuildState(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		state      model.SchemaState
+		buildState model.MViewInitBuildState
+		valid      bool
+	}{
+		{name: "ready", state: model.StatePublic, buildState: model.MViewInitBuildReady, valid: true},
+		{name: "deferred", state: model.StatePublic, buildState: model.MViewInitBuildDeferred},
+		{name: "building", state: model.StatePublic, buildState: model.MViewInitBuildBuilding},
+		{name: "not public", state: model.StateWriteOnly, buildState: model.MViewInitBuildReady},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			info := &model.TableInfo{
+				State:            testCase.state,
+				MaterializedView: &model.MaterializedViewInfo{InitBuildState: testCase.buildState},
+			}
+			require.Equal(t, testCase.valid, isValidMaterializedViewLogBaseTable("test", info))
+		})
+	}
+}
+
+func TestValidateMaterializedViewSourceState(t *testing.T) {
+	base := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("base"),
+		State: model.StatePublic,
+	}
+	require.NoError(t, validateMaterializedViewSourceState("test", base))
+
+	view := base.Clone()
+	view.View = &model.ViewInfo{}
+	require.ErrorContains(t, validateMaterializedViewSourceState("test", view), "is not BASE TABLE")
+
+	building := base.Clone()
+	building.MaterializedView = &model.MaterializedViewInfo{InitBuildState: model.MViewInitBuildBuilding}
+	require.ErrorContains(t, validateMaterializedViewSourceState("test", building), "initial build is in progress")
+
+	deferred := base.Clone()
+	deferred.MaterializedView = &model.MaterializedViewInfo{InitBuildState: model.MViewInitBuildDeferred}
+	require.ErrorContains(t, validateMaterializedViewSourceState("test", deferred), "initial build has not completed")
+}
+
+func TestValidateMaterializedViewSourceMLog(t *testing.T) {
+	source := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("mv_parent"),
+		State: model.StatePublic,
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{
+			MLogID: 2,
+		},
+	}
+	mlog := &model.TableInfo{
+		ID:                  2,
+		Name:                ast.NewCIStr("$mlog$mv_parent"),
+		State:               model.StatePublic,
+		MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: 1},
+	}
+	require.NoError(t, validateMaterializedViewSourceMLog("test", source, mlog))
+
+	wrongBase := mlog.Clone()
+	wrongBase.MaterializedViewLog.BaseTableID = 3
+	require.ErrorContains(t, validateMaterializedViewSourceMLog("test", source, wrongBase), "is not a materialized view log")
+
+	wrongID := mlog.Clone()
+	wrongID.ID = 3
+	require.ErrorContains(t, validateMaterializedViewSourceMLog("test", source, wrongID), "is not a materialized view log")
+
+	notMLog := mlog.Clone()
+	notMLog.MaterializedViewLog = nil
+	require.ErrorContains(t, validateMaterializedViewSourceMLog("test", source, notMLog), "is not a materialized view log")
+}
+
+func TestOnCreateMaterializedViewBaseCheckNestedSource(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(source, mlog *model.TableInfo)
+		err    string
+	}{
+		{name: "ready"},
+		{name: "building", mutate: func(source, _ *model.TableInfo) {
+			source.MaterializedView.InitBuildState = model.MViewInitBuildBuilding
+		}, err: "initial build is in progress"},
+		{name: "deferred", mutate: func(source, _ *model.TableInfo) {
+			source.MaterializedView.InitBuildState = model.MViewInitBuildDeferred
+		}, err: "initial build has not completed"},
+		{name: "source_not_public", mutate: func(source, _ *model.TableInfo) {
+			source.State = model.StateWriteOnly
+		}, err: "not in public"},
+		{name: "wrong_mlog_source", mutate: func(_, mlog *model.TableInfo) {
+			mlog.MaterializedViewLog.BaseTableID = 99
+		}, err: "invalid materialized view log metadata"},
+		{name: "mlog_not_public", mutate: func(_, mlog *model.TableInfo) {
+			mlog.State = model.StateWriteOnly
+		}, err: "invalid materialized view log metadata"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := mockstore.NewMockStore()
+			require.NoError(t, err)
+			defer func() { require.NoError(t, store.Close()) }()
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+			err = kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+				m := meta.NewMutator(txn)
+				require.NoError(t, m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}))
+				source := &model.TableInfo{
+					ID: 2, Name: ast.NewCIStr("mv_parent"), State: model.StatePublic,
+					MaterializedView:     &model.MaterializedViewInfo{InitBuildState: model.MViewInitBuildReady},
+					MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: 3},
+				}
+				mlog := &model.TableInfo{
+					ID: 3, Name: ast.NewCIStr("$mlog$mv_parent"), State: model.StatePublic,
+					MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: source.ID},
+				}
+				if tc.mutate != nil {
+					tc.mutate(source, mlog)
+				}
+				require.NoError(t, m.CreateTableOrView(1, source))
+				require.NoError(t, m.CreateTableOrView(1, mlog))
+				actual, err := onCreateMaterializedViewBaseCheck(m, 1, source.ID, "test")
+				if tc.err == "" {
+					require.NoError(t, err)
+					require.Equal(t, source.ID, actual.ID)
+				} else {
+					require.ErrorContains(t, err, tc.err)
+					require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(err))
+					if validateErr := validateMaterializedViewSourceMLog("test", source, mlog); validateErr != nil {
+						require.True(t, dbterror.ErrInvalidDDLJob.Equal(err))
+						require.ErrorContains(t, err, validateErr.Error())
+					}
+				}
+				return nil
+			})
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestValidateMaterializedViewNestingDepth(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		sharedDepth int
+		cycle       bool
+		missing     bool
+		err         string
+	}{
+		{name: "shared_sources_at_limit", sharedDepth: 13},
+		{name: "shared_sources_above_limit", sharedDepth: 14, err: "materialized view nesting depth exceeds maximum of 16"},
+		{name: "cycle", cycle: true, err: "materialized view nesting depth exceeds maximum of 16"},
+		{name: "missing_source", missing: true, err: "table 99 missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tables := map[int64]*model.TableInfo{1: {ID: 1}}
+			for depth := 1; depth <= tc.sharedDepth; depth++ {
+				id := int64(depth + 1)
+				tables[id] = &model.TableInfo{ID: id, MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{id - 1}}}
+			}
+			sharedID := int64(tc.sharedDepth + 1)
+			tables[100] = &model.TableInfo{ID: 100, MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{sharedID}}}
+			source := &model.TableInfo{ID: 101, MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{sharedID, 100}}}
+			if tc.cycle {
+				source.MaterializedView.BaseTableIDs = []int64{source.ID}
+				tables[source.ID] = source
+			}
+			if tc.missing {
+				source.MaterializedView.BaseTableIDs = []int64{99}
+			}
+			err := validateMaterializedViewNestingDepth(source, func(id int64) (*model.TableInfo, error) {
+				if tbl, ok := tables[id]; ok {
+					return tbl, nil
+				}
+				return nil, fmt.Errorf("table %d missing", id)
+			})
+			if tc.err == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.err)
+			}
+		})
+	}
+}
+
+func TestOnCreateMaterializedViewBaseCheckNestingDepth(t *testing.T) {
+	for _, sourceDepth := range []int{0, 1, 15, 16, 17} {
+		t.Run(fmt.Sprintf("source_depth_%d", sourceDepth), func(t *testing.T) {
+			store, err := mockstore.NewMockStore()
+			require.NoError(t, err)
+			defer func() { require.NoError(t, store.Close()) }()
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+			err = kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+				m := meta.NewMutator(txn)
+				require.NoError(t, m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}))
+				const mlogID int64 = 100
+				var source *model.TableInfo
+				for depth := 0; depth <= sourceDepth; depth++ {
+					source = &model.TableInfo{
+						ID: int64(depth + 2), Name: ast.NewCIStr(fmt.Sprintf("source_%d", depth)), State: model.StatePublic,
+					}
+					if depth > 0 {
+						source.MaterializedView = &model.MaterializedViewInfo{BaseTableIDs: []int64{source.ID - 1}}
+					}
+					if depth == sourceDepth {
+						source.MaterializedViewBase = &model.MaterializedViewBaseInfo{MLogID: mlogID}
+					}
+					require.NoError(t, m.CreateTableOrView(1, source))
+				}
+				require.NoError(t, m.CreateTableOrView(1, &model.TableInfo{
+					ID: mlogID, Name: ast.NewCIStr("$mlog$source"), State: model.StatePublic,
+					MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: source.ID},
+				}))
+				_, err := onCreateMaterializedViewBaseCheck(m, 1, source.ID, "test")
+				if sourceDepth < 16 {
+					require.NoError(t, err)
+				} else {
+					require.ErrorContains(t, err, "materialized view nesting depth exceeds maximum of 16")
+					require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(err))
+				}
+				return nil
+			})
+			require.NoError(t, err)
+		})
+	}
 }

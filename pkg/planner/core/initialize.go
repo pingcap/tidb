@@ -38,6 +38,18 @@ func (p ImportInto) Init(ctx base.PlanContext) *ImportInto {
 	return &p
 }
 
+// Init initializes MViewDeltaMerge.
+func (p MViewDeltaMerge) Init(ctx base.PlanContext) *MViewDeltaMerge {
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeMViewDeltaMerge, 0)
+	return &p
+}
+
+// Init initializes MViewCompleteDeltaApply.
+func (p MViewCompleteDeltaApply) Init(ctx base.PlanContext) *MViewCompleteDeltaApply {
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeMViewCompleteDeltaApply, 0)
+	return &p
+}
+
 // Init initializes ScalarSubqueryEvalCtx
 func (p ScalarSubqueryEvalCtx) Init(ctx base.PlanContext, offset int) *ScalarSubqueryEvalCtx {
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeScalarSubQuery, offset)

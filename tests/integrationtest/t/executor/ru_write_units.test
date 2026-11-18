@@ -1,4 +1,4 @@
---echo # RUv3 plan occurrences and committed write payload
+--echo # RUv2 plan occurrences and committed write payload
 create table ru_write_units (id int primary key, v varchar(10000));
 explain analyze format='ru' select 1;
 explain analyze format='ru' insert into ru_write_units values (1, repeat('x', 10000));

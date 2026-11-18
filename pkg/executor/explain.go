@@ -154,17 +154,14 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				ruDetails = ruDetailsRaw.(*clientutil.RUDetails).Clone()
 			}
 			ruv2Metrics := execdetails.SyncRUV2MetricsFromContext(ctx)
-			if ruDetails != nil || ruv2Metrics != nil {
+			if ruDetails != nil {
 				ruVersion := rmclient.DefaultRUVersion
 				if do := domain.GetDomain(e.Ctx()); do != nil {
 					ruVersion = do.GetRUVersion()
 				}
-				coll.RegisterStats(e.explain.TargetPlan.ID(), &execdetails.RURuntimeStats{
-					RUDetails: ruDetails,
-					Metrics:   ruv2Metrics.Clone(),
-					Weights:   e.Ctx().GetSessionVars().RUV2Weights(),
-					RUVersion: ruVersion,
-				})
+				if ruVersion != rmclient.RUVersionV2 {
+					coll.RegisterStats(e.explain.TargetPlan.ID(), &execdetails.RURuntimeStats{RUDetails: ruDetails})
+				}
 			}
 			e.registerExplainRUOperatorStats(coll, ruv2Metrics, err == nil)
 		}

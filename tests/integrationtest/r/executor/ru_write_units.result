@@ -1,4 +1,4 @@
-# RUv3 plan occurrences and committed write payload
+# RUv2 plan occurrences and committed write payload
 create table ru_write_units (id int primary key, v varchar(10000));
 explain analyze format='ru' select 1;
 id	task	actRows	selfRU	cumRU	cumRU%	detail

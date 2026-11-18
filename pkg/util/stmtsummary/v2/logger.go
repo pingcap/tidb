@@ -20,10 +20,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 	"go.uber.org/zap/buffer"
 	"go.uber.org/zap/zapcore"
@@ -35,19 +37,25 @@ type stmtLogStorage struct {
 	logger *zap.Logger
 }
 
-func newStmtLogStorage(cfg *log.Config) *stmtLogStorage {
+// newStmtLogStorage builds the file-backed logger used to persist statement
+// summary window rotations. Backpressure-free behavior here is critical: when
+// logger initialization fails we MUST surface the error to the caller (the
+// static Setup path in main). A silent fallback to zap.NewNop() would make
+// persistent mode look enabled while silently dropping every rotated window,
+// so we fail closed instead and let Setup refuse to register the global
+// StmtSummary instance.
+func newStmtLogStorage(cfg *log.Config) (*stmtLogStorage, error) {
 	// Create the stmt logger
 	logger, prop, err := log.InitLogger(cfg)
 	if err != nil {
-		logutil.BgLogger().Error("failed to init logger", zap.Error(err))
-		return &stmtLogStorage{logger: zap.NewNop()}
+		return nil, fmt.Errorf("stmtsummary: init statement summary logger: %w", err)
 	}
 	// Replace 2018-12-19-unified-log-format text encoder with statements encoder
 	newCore := log.NewTextCore(&stmtLogEncoder{}, prop.Syncer, prop.Level)
 	logger = logger.WithOptions(zap.WrapCore(func(zapcore.Core) zapcore.Core {
 		return newCore
 	}))
-	return &stmtLogStorage{logger}
+	return &stmtLogStorage{logger: logger}, nil
 }
 
 func (s *stmtLogStorage) persist(w *stmtWindow, end time.Time) {
@@ -127,6 +135,17 @@ func marshalEvictedStmtRecord(r *StmtRecord) ([]byte, error) {
 }
 
 func marshalStmtRecordWithEvicted(r *StmtRecord, evicted bool) ([]byte, error) {
+	// Readers can still hold the source record, so redact only an output copy.
+	switch mode := errors.RedactLogEnabled.Load(); mode {
+	case errors.RedactLogEnable:
+		output := *r
+		output.SampleSQL = r.NormalizedSQL
+		r = &output
+	case errors.RedactLogMarker:
+		output := *r
+		output.SampleSQL = redact.String(mode, r.SampleSQL)
+		r = &output
+	}
 	fields := config.GetGlobalConfig().GetKeyspaceObservabilityStmtLogFields()
 	if len(fields) == 0 {
 		if evicted {
