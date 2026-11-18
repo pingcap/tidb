@@ -2363,7 +2363,7 @@
           "      │ └─Selection cop[tikv]  eq(test.t.a, test.t.a)",
           "      │   └─IndexFullScan cop[tikv] table:t3, index:idx_a(a) keep order:false, stats:pseudo",
           "      └─IndexLookUp(Probe) root  ",
-          "        ├─Selection(Build) cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+          "        ├─Selection(Build) cop[tikv]  eq(test.t.a, test.t.a)",
           "        │ └─IndexRangeScan cop[tikv] table:t2, index:idx_a(a) range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo",
           "        └─TableRowIDScan(Probe) cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
@@ -2454,7 +2454,7 @@
           "│   │   └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo",
           "│   └─StreamAgg(Probe) root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
           "│     └─IndexReader root  index:Selection",
-          "│       └─Selection cop[tikv]  gt(test.t.a, 0), not(isnull(test.t.a))",
+          "│       └─Selection cop[tikv]  gt(test.t.a, 0)",
           "│         └─IndexRangeScan cop[tikv] table:t, index:idx_a(a) range: decided by [eq(test.t.a, test.t.a)], keep order:true, stats:pseudo",
           "└─TableReader(Probe) root  data:Selection",
           "  └─Selection cop[tikv]  not(isnull(test.t.b))",
@@ -2472,9 +2472,8 @@
           "│   │ └─Selection cop[tikv]  eq(test.t.b, 1), not(isnull(test.t.a))",
           "│   │   └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo",
           "│   └─StreamAgg(Probe) root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
-          "│     └─IndexReader root  index:Selection",
-          "│       └─Selection cop[tikv]  not(isnull(test.t.a))",
-          "│         └─IndexRangeScan cop[tikv] table:t1, index:idx_a(a) range: decided by [eq(test.t.a, test.t.a)], keep order:true, stats:pseudo",
+          "│     └─IndexReader root  index:IndexRangeScan",
+          "│       └─IndexRangeScan cop[tikv] table:t1, index:idx_a(a) range: decided by [eq(test.t.a, test.t.a)], keep order:true, stats:pseudo",
           "└─TableReader(Probe) root  data:Selection",
           "  └─Selection cop[tikv]  not(isnull(test.t.b))",
           "    └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo"
@@ -2670,12 +2669,12 @@
     "Cases": [
       {
         "SQL": "select /*+ INL_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
-        "Plan": "IndexJoin{IndexLookUp(Index(t1.idx_a)[[NULL,NULL]]->Sel([not(isnull(test.t1.a))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
+        "Plan": "IndexJoin{IndexLookUp(Index(t1.idx_a)[[NULL,NULL]], Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
         "Warns": null
       },
       {
         "SQL": "select /*+ INL_HASH_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
-        "Plan": "IndexHashJoin{IndexLookUp(Index(t1.idx_a)[[NULL,NULL]]->Sel([not(isnull(test.t1.a))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
+        "Plan": "IndexHashJoin{IndexLookUp(Index(t1.idx_a)[[NULL,NULL]], Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
         "Warns": null
       },
       {
@@ -2814,12 +2813,12 @@
       },
       {
         "SQL": "select /*+ INL_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
-        "Plan": "IndexJoin{IndexLookUp(Index(t1.idx_a)[[NULL,NULL]]->Sel([not(isnull(test.t1.a))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
+        "Plan": "IndexJoin{IndexLookUp(Index(t1.idx_a)[[NULL,NULL]], Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
         "Hints": "inl_join(`test`.`t1`), use_index(@`sel_1` `test`.`t1` `idx_a`), no_order_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` )"
       },
       {
         "SQL": "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
-        "Plan": "IndexHashJoin{IndexLookUp(Index(t1.idx_a)[[NULL,NULL]]->Sel([not(isnull(test.t1.a))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
+        "Plan": "IndexHashJoin{IndexLookUp(Index(t1.idx_a)[[NULL,NULL]], Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
         "Hints": "inl_hash_join(`test`.`t1`), use_index(@`sel_1` `test`.`t1` `idx_a`), no_order_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` )"
       },
       {
@@ -2839,7 +2838,7 @@
     "Cases": [
       {
         "SQL": "select /*+ inl_hash_join(test.t1) */ * from test.t2 join test.t1 on test.t2.a = test.t1.a",
-        "Plan": "IndexHashJoin{IndexReader(Index(t2.idx_a)[[-inf,+inf]])->IndexReader(Index(t1.idx_a)[[NULL,NULL]]->Sel([not(isnull(test.t1.a))]))}(test.t2.a,test.t1.a)"
+        "Plan": "IndexHashJoin{IndexReader(Index(t2.idx_a)[[-inf,+inf]])->IndexReader(Index(t1.idx_a)[[NULL,NULL]])}(test.t2.a,test.t1.a)"
       }
     ]
   },

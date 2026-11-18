@@ -1186,9 +1186,8 @@
           "  ├─IndexReader(Build) root partition:p0 index:Selection",
           "  │ └─Selection cop[tikv]  not(isnull(test_partition_1.t2.b))",
           "  │   └─IndexRangeScan cop[tikv] table:t2, index:a(a, b, id) range:[1 1,1 1], [1 6,1 6], [2 1,2 1], [2 6,2 6], keep order:false, stats:pseudo",
-          "  └─IndexReader(Probe) root partition:all index:Selection",
-          "    └─Selection cop[tikv]  in(test_partition_1.t1.b, 1, 6), not(isnull(test_partition_1.t1.b))",
-          "      └─IndexRangeScan cop[tikv] table:t1, index:a(a, b, id) range: decided by [eq(test_partition_1.t1.b, test_partition_1.t2.b) in(test_partition_1.t1.a, 1, 6)], keep order:false, stats:pseudo"
+          "  └─IndexReader(Probe) root partition:all index:IndexRangeScan",
+          "    └─IndexRangeScan cop[tikv] table:t1, index:a(a, b, id) range: decided by [eq(test_partition_1.t1.b, test_partition_1.t2.b) in(test_partition_1.t1.a, 1, 6)], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1212,9 +1211,8 @@
           "  ├─IndexReader(Build) root partition:p0 index:Selection",
           "  │ └─Selection cop[tikv]  not(isnull(test_partition_1.t2.b))",
           "  │   └─IndexRangeScan cop[tikv] table:t2, index:a(a, b, id) range:[1 1,1 1], [1 6,1 6], [2 1,2 1], [2 6,2 6], keep order:false, stats:pseudo",
-          "  └─IndexReader(Probe) root partition:all index:Selection",
-          "    └─Selection cop[tikv]  in(test_partition_1.t1.b, 6, 1), not(isnull(test_partition_1.t1.b))",
-          "      └─IndexRangeScan cop[tikv] table:t1, index:a(a, b, id) range: decided by [eq(test_partition_1.t1.b, test_partition_1.t2.b) in(test_partition_1.t1.a, 1, 6)], keep order:false, stats:pseudo"
+          "  └─IndexReader(Probe) root partition:all index:IndexRangeScan",
+          "    └─IndexRangeScan cop[tikv] table:t1, index:a(a, b, id) range: decided by [eq(test_partition_1.t1.b, test_partition_1.t2.b) in(test_partition_1.t1.a, 1, 6)], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1238,9 +1236,8 @@
           "  ├─IndexReader(Build) root partition:dual index:Selection",
           "  │ └─Selection cop[tikv]  not(isnull(test_partition_1.t2.b))",
           "  │   └─IndexRangeScan cop[tikv] table:t2, index:a(a, b, id) range:[1 6,1 6], [1 9,1 9], [1 100,1 100], [2 6,2 6], [2 9,2 9], [2 100,2 100], keep order:false, stats:pseudo",
-          "  └─IndexReader(Probe) root partition:p1 index:Selection",
-          "    └─Selection cop[tikv]  in(test_partition_1.t1.b, 100, 9, 6), not(isnull(test_partition_1.t1.b))",
-          "      └─IndexRangeScan cop[tikv] table:t1, index:a(a, b, id) range: decided by [eq(test_partition_1.t1.b, test_partition_1.t2.b) in(test_partition_1.t1.a, 1, 6)], keep order:false, stats:pseudo"
+          "  └─IndexReader(Probe) root partition:p1 index:IndexRangeScan",
+          "    └─IndexRangeScan cop[tikv] table:t1, index:a(a, b, id) range: decided by [eq(test_partition_1.t1.b, test_partition_1.t2.b) in(test_partition_1.t1.a, 1, 6)], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1264,9 +1261,8 @@
           "  ├─IndexReader(Build) root partition:p0 index:Selection",
           "  │ └─Selection cop[tikv]  not(isnull(test_partition_1.t2.b))",
           "  │   └─IndexRangeScan cop[tikv] table:t2, index:a(a, b, id) range:[1 1,1 1], [1 6,1 6], [1 9,1 9], [1 100,1 100], [2 1,2 1], [2 6,2 6], [2 9,2 9], [2 100,2 100], keep order:false, stats:pseudo",
-          "  └─IndexReader(Probe) root partition:all index:Selection",
-          "    └─Selection cop[tikv]  in(test_partition_1.t1.b, 100, 9, 6, 1), not(isnull(test_partition_1.t1.b))",
-          "      └─IndexRangeScan cop[tikv] table:t1, index:a(a, b, id) range: decided by [eq(test_partition_1.t1.b, test_partition_1.t2.b) in(test_partition_1.t1.a, 1, 6)], keep order:false, stats:pseudo"
+          "  └─IndexReader(Probe) root partition:all index:IndexRangeScan",
+          "    └─IndexRangeScan cop[tikv] table:t1, index:a(a, b, id) range: decided by [eq(test_partition_1.t1.b, test_partition_1.t2.b) in(test_partition_1.t1.a, 1, 6)], keep order:false, stats:pseudo"
         ]
       },
       {

@@ -659,8 +659,7 @@
           "│ └─Selection cop[tikv]  not(isnull(test.t1.a))",
           "│   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─IndexLookUp(Probe) root  ",
-          "  ├─Selection(Build) cop[tikv]  not(isnull(test.t2.a))",
-          "  │ └─IndexRangeScan cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warning": null
@@ -688,8 +687,7 @@
           "│ └─Selection cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
           "│   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─IndexLookUp(Probe) root  ",
-          "  ├─Selection(Build) cop[tikv]  not(isnull(test.t2.a))",
-          "  │ └─IndexRangeScan cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
           "  └─Selection(Probe) cop[tikv]  not(isnull(test.t2.b))",
           "    └─TableRowIDScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
@@ -1794,9 +1792,8 @@
           "    │ └─Selection cop[tikv]  not(isnull(test.t2.a))",
           "    │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
           "    └─HashAgg(Probe) root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a, funcs:count(1)->Column",
-          "      └─IndexReader root  index:Selection",
-          "        └─Selection cop[tikv]  not(isnull(test.t3.a))",
-          "          └─IndexRangeScan cop[tikv] table:t3, index:a(a) range: decided by [eq(test.t3.a, test.t1.a)], keep order:false, stats:pseudo"
+          "      └─IndexReader root  index:IndexRangeScan",
+          "        └─IndexRangeScan cop[tikv] table:t3, index:a(a) range: decided by [eq(test.t3.a, test.t1.a)], keep order:false, stats:pseudo"
         ],
         "Warning": [
           "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2, t1) */. Maybe you can use the table alias name"

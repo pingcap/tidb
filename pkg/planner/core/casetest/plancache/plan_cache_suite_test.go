@@ -498,13 +498,12 @@ func runPreparedPlanCacheRedactExplain(t *testing.T, tk *testkit.TestKit) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		"IndexJoin_11 37.46 root  inner join, inner:IndexLookUp_28, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+		"IndexJoin_11 37.46 root  inner join, inner:IndexLookUp_27, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
 		"├─TableReader_24(Build) 9990.00 root  data:Selection_23",
 		"│ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t1.a))",
 		"│   └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-		"└─IndexLookUp_28(Probe) 37.46 root  ",
-		"  ├─Selection_27(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
-		"  │ └─IndexRangeScan_25 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
+		"└─IndexLookUp_27(Probe) 37.46 root  ",
+		"  ├─IndexRangeScan_25(Build) 37.46 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan_26(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 	tk.MustExec(`deallocate prepare stmt1`)
 }
@@ -590,9 +589,9 @@ func runPreparedPlanCacheLeftJoinRangeScan(t *testing.T, tk *testkit.TestKit) {
 			{"└─HashJoin_12"},
 			{"  ├─IndexReader_26(Build)"},
 			{"  │ └─IndexRangeScan_25"}, // RangeScan instead of FullScan
-			{"  └─TableReader_32(Probe)"},
-			{"    └─Selection_31"},
-			{"      └─TableFullScan_30"},
+			{"  └─TableReader_31(Probe)"},
+			{"    └─Selection_30"},
+			{"      └─TableFullScan_29"},
 		})
 
 	tk.MustExec("execute st using @b")

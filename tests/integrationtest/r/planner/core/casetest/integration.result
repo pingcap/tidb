@@ -301,8 +301,7 @@ IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest
 │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.a)), not(isnull(planner__core__casetest__integration.t.b))
 │   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	root		
-  ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__integration.s.a))
-  │ └─IndexRangeScan	cop[tikv]	table:s, index:a(a)	range: decided by [eq(planner__core__casetest__integration.s.a, planner__core__casetest__integration.t.a)], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:s, index:a(a)	range: decided by [eq(planner__core__casetest__integration.s.a, planner__core__casetest__integration.t.a)], keep order:false, stats:pseudo
   └─Selection(Probe)	cop[tikv]		not(isnull(planner__core__casetest__integration.s.b))
     └─TableRowIDScan	cop[tikv]	table:s	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.a;
@@ -312,8 +311,7 @@ IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest
 │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.a)), not(isnull(planner__core__casetest__integration.t.b))
 │   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	root		
-  ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__integration.s.a))
-  │ └─IndexRangeScan	cop[tikv]	table:s, index:a(a)	range: decided by [eq(planner__core__casetest__integration.s.a, planner__core__casetest__integration.t.a)], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:s, index:a(a)	range: decided by [eq(planner__core__casetest__integration.s.a, planner__core__casetest__integration.t.a)], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:s	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.a = s.b;
 id	task	access object	operator info
@@ -323,8 +321,7 @@ Projection	root		planner__core__casetest__integration.t.a, planner__core__casete
   │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.a))
   │   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─IndexLookUp(Probe)	root		
-    ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__integration.s.a))
-    │ └─IndexRangeScan	cop[tikv]	table:s, index:a(a)	range: decided by [eq(planner__core__casetest__integration.s.a, planner__core__casetest__integration.t.a)], keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	cop[tikv]	table:s, index:a(a)	range: decided by [eq(planner__core__casetest__integration.s.a, planner__core__casetest__integration.t.a)], keep order:false, stats:pseudo
     └─Selection(Probe)	cop[tikv]		not(isnull(planner__core__casetest__integration.s.b))
       └─TableRowIDScan	cop[tikv]	table:s	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.b;
@@ -334,8 +331,7 @@ IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__case
 │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.a)), not(isnull(planner__core__casetest__integration.t.b))
 │   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	root		
-  ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__integration.s.a))
-  │ └─IndexRangeScan	cop[tikv]	table:s, index:a(a)	range: decided by [eq(planner__core__casetest__integration.s.a, planner__core__casetest__integration.t.a)], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:s, index:a(a)	range: decided by [eq(planner__core__casetest__integration.s.a, planner__core__casetest__integration.t.a)], keep order:false, stats:pseudo
   └─Selection(Probe)	cop[tikv]		not(isnull(planner__core__casetest__integration.s.b))
     └─TableRowIDScan	cop[tikv]	table:s	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.a;
@@ -345,8 +341,7 @@ IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__case
 │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.a)), not(isnull(planner__core__casetest__integration.t.b))
 │   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	root		
-  ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__integration.s.a))
-  │ └─IndexRangeScan	cop[tikv]	table:s, index:a(a)	range: decided by [eq(planner__core__casetest__integration.s.a, planner__core__casetest__integration.t.a)], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:s, index:a(a)	range: decided by [eq(planner__core__casetest__integration.s.a, planner__core__casetest__integration.t.a)], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:s	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.a = s.b;
 id	task	access object	operator info
@@ -356,8 +351,7 @@ Projection	root		planner__core__casetest__integration.t.a, planner__core__casete
   │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__integration.t.a))
   │   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─IndexLookUp(Probe)	root		
-    ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__integration.s.a))
-    │ └─IndexRangeScan	cop[tikv]	table:s, index:a(a)	range: decided by [eq(planner__core__casetest__integration.s.a, planner__core__casetest__integration.t.a)], keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	cop[tikv]	table:s, index:a(a)	range: decided by [eq(planner__core__casetest__integration.s.a, planner__core__casetest__integration.t.a)], keep order:false, stats:pseudo
     └─Selection(Probe)	cop[tikv]		not(isnull(planner__core__casetest__integration.s.b))
       └─TableRowIDScan	cop[tikv]	table:s	keep order:false, stats:pseudo
 drop table if exists t;

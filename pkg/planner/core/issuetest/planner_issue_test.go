@@ -125,8 +125,7 @@ func TestPlannerIssueRegressions(t *testing.T) {
 				"  │   └─TableFullScan cop[tikv] table:ta keep order:false, stats:pseudo",
 				"  └─HashAgg(Probe) root  group by:test.tb.b1, test.tb.b2, funcs:count(test.tb.b3)->Column, funcs:firstrow(test.tb.b1)->test.tb.b1",
 				"    └─IndexLookUp root  ",
-				"      ├─Selection(Build) cop[tikv]  not(isnull(test.tb.b1))",
-				"      │ └─IndexRangeScan cop[tikv] table:tb, index:idx_b(b1) range: decided by [eq(test.tb.b1, test.ta.a1)], keep order:false, stats:pseudo",
+				"      ├─IndexRangeScan(Build) cop[tikv] table:tb, index:idx_b(b1) range: decided by [eq(test.tb.b1, test.ta.a1)], keep order:false, stats:pseudo",
 				"      └─TableRowIDScan(Probe) cop[tikv] table:tb keep order:false, stats:pseudo"))
 		tk.MustExec("create table t1(col_1 int, index idx_1(col_1));")
 		tk.MustExec("create table t2(col_1 int, col_2 int, index idx_2(col_1));")

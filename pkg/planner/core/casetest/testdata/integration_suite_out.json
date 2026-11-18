@@ -92,9 +92,9 @@
         "SQL": "explain format = 'verbose' select count(*) from t3 t join t3 on t.a = t3.b",
         "Plan": [
           "StreamAgg_14 1.00 2128.93 root  funcs:count(1)->Column#9",
-          "└─HashJoin_37 3.00 1979.23 root  inner join, equal:[eq(test.t3.a, test.t3.b)]",
-          "  ├─IndexReader_36(Build) 3.00 45.23 root  index:IndexFullScan_35",
-          "  │ └─IndexFullScan_35 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false",
+          "└─HashJoin_36 3.00 1979.23 root  inner join, equal:[eq(test.t3.a, test.t3.b)]",
+          "  ├─IndexReader_35(Build) 3.00 45.23 root  index:IndexFullScan_34",
+          "  │ └─IndexFullScan_34 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false",
           "  └─TableReader_31(Probe) 3.00 68.11 root  data:Selection_30",
           "    └─Selection_30 3.00 831.62 cop[tikv]  not(isnull(test.t3.a))",
           "      └─TableFullScan_29 3.00 681.92 cop[tikv] table:t keep order:false"

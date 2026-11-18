@@ -19,8 +19,7 @@ Projection	root		globalindex__index_join.p.id, globalindex__index_join.p.c, glob
   │ └─Selection	cop[tikv]		not(isnull(globalindex__index_join.t.id))
   │   └─TableFullScan	cop[tikv]	table:t	keep order:false
   └─IndexLookUp(Probe)	root	partition:all	
-    ├─Selection(Build)	cop[tikv]		not(isnull(globalindex__index_join.p.id))
-    │ └─IndexRangeScan	cop[tikv]	table:p, index:idx(id)	range: decided by [eq(globalindex__index_join.p.id, globalindex__index_join.t.id)], keep order:false
+    ├─IndexRangeScan(Build)	cop[tikv]	table:p, index:idx(id)	range: decided by [eq(globalindex__index_join.p.id, globalindex__index_join.t.id)], keep order:false
     └─TableRowIDScan(Probe)	cop[tikv]	table:p	keep order:false
 select * from p inner join t on p.id = t.id;
 id	c	id	c
@@ -33,8 +32,7 @@ Projection	root		globalindex__index_join.p.id, globalindex__index_join.p.c, glob
   │ └─Selection	cop[tikv]		not(isnull(globalindex__index_join.t.id))
   │   └─TableFullScan	cop[tikv]	table:t	keep order:false
   └─IndexLookUp(Probe)	root	partition:all	
-    ├─Selection(Build)	cop[tikv]		not(isnull(globalindex__index_join.p.id))
-    │ └─IndexRangeScan	cop[tikv]	table:p, index:idx(id)	range: decided by [eq(globalindex__index_join.p.id, globalindex__index_join.t.id)], keep order:false
+    ├─IndexRangeScan(Build)	cop[tikv]	table:p, index:idx(id)	range: decided by [eq(globalindex__index_join.p.id, globalindex__index_join.t.id)], keep order:false
     └─TableRowIDScan(Probe)	cop[tikv]	table:p	keep order:false
 select p.id from p inner join t on p.id = t.id;
 id
@@ -48,7 +46,7 @@ Projection	root	NULL	globalindex__index_join.p.id, globalindex__index_join.p.c, 
   │ └─Selection	cop[tikv]	NULL	not(isnull(globalindex__index_join.t.id))
   │   └─TableFullScan	cop[tikv]	table:t	keep order:false
   └─IndexLookUp(Probe)	root	partition:p1	NULL
-    ├─Selection(Build)	cop[tikv]	NULL	in(_tidb_tid, tid1), not(isnull(globalindex__index_join.p.id))
+    ├─Selection(Build)	cop[tikv]	NULL	in(_tidb_tid, tid1)
     │ └─IndexRangeScan	cop[tikv]	table:p, index:idx(id)	range: decided by [eq(globalindex__index_join.p.id, globalindex__index_join.t.id)], keep order:false
     └─TableRowIDScan(Probe)	cop[tikv]	table:p	keep order:false
 select * from p partition(p1) inner join t on p.id = t.id;
@@ -60,7 +58,7 @@ IndexJoin	root	NULL	inner join, inner:IndexReader, outer key:globalindex__index_
 │ └─Selection	cop[tikv]	NULL	not(isnull(globalindex__index_join.t.id))
 │   └─TableFullScan	cop[tikv]	table:t	keep order:false
 └─IndexReader(Probe)	root	partition:p1	index:Selection
-  └─Selection	cop[tikv]	NULL	in(_tidb_tid, tid1), not(isnull(globalindex__index_join.p.id))
+  └─Selection	cop[tikv]	NULL	in(_tidb_tid, tid1)
     └─IndexRangeScan	cop[tikv]	table:p, index:idx(id)	range: decided by [eq(globalindex__index_join.p.id, globalindex__index_join.t.id)], keep order:false
 select p.id from p partition(p1) inner join t on p.id = t.id;
 id
@@ -84,8 +82,7 @@ Projection	root		globalindex__index_join.p.id, globalindex__index_join.p.c, glob
   │ └─Selection	cop[tikv]		not(isnull(globalindex__index_join.t.id))
   │   └─TableFullScan	cop[tikv]	table:t	keep order:false
   └─IndexLookUp(Probe)	root	partition:all	
-    ├─Selection(Build)	cop[tikv]		not(isnull(globalindex__index_join.p.id))
-    │ └─IndexRangeScan	cop[tikv]	table:p, index:idx(id)	range: decided by [eq(globalindex__index_join.p.id, globalindex__index_join.t.id)], keep order:false
+    ├─IndexRangeScan(Build)	cop[tikv]	table:p, index:idx(id)	range: decided by [eq(globalindex__index_join.p.id, globalindex__index_join.t.id)], keep order:false
     └─TableRowIDScan(Probe)	cop[tikv]	table:p	keep order:false
 select * from p inner join t on p.id = t.id;
 id	c	d	e	id	c
@@ -98,8 +95,7 @@ Projection	root		globalindex__index_join.p.id, globalindex__index_join.p.c, glob
   │ └─Selection	cop[tikv]		not(isnull(globalindex__index_join.t.id))
   │   └─TableFullScan	cop[tikv]	table:t	keep order:false
   └─IndexLookUp(Probe)	root	partition:all	
-    ├─Selection(Build)	cop[tikv]		not(isnull(globalindex__index_join.p.id))
-    │ └─IndexRangeScan	cop[tikv]	table:p, index:idx(id)	range: decided by [eq(globalindex__index_join.p.id, globalindex__index_join.t.id)], keep order:false
+    ├─IndexRangeScan(Build)	cop[tikv]	table:p, index:idx(id)	range: decided by [eq(globalindex__index_join.p.id, globalindex__index_join.t.id)], keep order:false
     └─TableRowIDScan(Probe)	cop[tikv]	table:p	keep order:false
 select p.id from p inner join t on p.id = t.id;
 id
@@ -113,7 +109,7 @@ Projection	root	NULL	globalindex__index_join.p.id, globalindex__index_join.p.c, 
   │ └─Selection	cop[tikv]	NULL	not(isnull(globalindex__index_join.t.id))
   │   └─TableFullScan	cop[tikv]	table:t	keep order:false
   └─IndexLookUp(Probe)	root	partition:p1	NULL
-    ├─Selection(Build)	cop[tikv]	NULL	in(_tidb_tid, tid1), not(isnull(globalindex__index_join.p.id))
+    ├─Selection(Build)	cop[tikv]	NULL	in(_tidb_tid, tid1)
     │ └─IndexRangeScan	cop[tikv]	table:p, index:idx(id)	range: decided by [eq(globalindex__index_join.p.id, globalindex__index_join.t.id)], keep order:false
     └─TableRowIDScan(Probe)	cop[tikv]	table:p	keep order:false
 select * from p partition(p1) inner join t on p.id = t.id;
@@ -125,7 +121,7 @@ IndexJoin	root	NULL	inner join, inner:IndexReader, outer key:globalindex__index_
 │ └─Selection	cop[tikv]	NULL	not(isnull(globalindex__index_join.t.id))
 │   └─TableFullScan	cop[tikv]	table:t	keep order:false
 └─IndexReader(Probe)	root	partition:p1	index:Selection
-  └─Selection	cop[tikv]	NULL	in(_tidb_tid, tid1), not(isnull(globalindex__index_join.p.id))
+  └─Selection	cop[tikv]	NULL	in(_tidb_tid, tid1)
     └─IndexRangeScan	cop[tikv]	table:p, index:idx(id)	range: decided by [eq(globalindex__index_join.p.id, globalindex__index_join.t.id)], keep order:false
 select p.id from p partition(p1) inner join t on p.id = t.id;
 id

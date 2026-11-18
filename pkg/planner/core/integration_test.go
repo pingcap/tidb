@@ -2144,12 +2144,22 @@ func TestPlanCacheForIndexJoinRangeFallback(t *testing.T) {
 		tk.MustExec("create table t1(a int, b varchar(10), c varchar(10), index idx_a_b(a, b))")
 		tk.MustExec("create table t2(d int)")
 		tk.MustExec("set @@tidb_opt_range_max_size=1260")
+		// rangeScanInfo returns the operator info of the IndexRangeScan row; infoCol is the column holding it.
+		rangeScanInfo := func(rows [][]any, infoCol int) string {
+			for _, row := range rows {
+				if strings.Contains(row[0].(string), "IndexRangeScan") {
+					return row[infoCol].(string)
+				}
+			}
+			require.FailNow(t, "no IndexRangeScan in plan", "%v", rows)
+			return ""
+		}
 		// 1260 is enough for [? a,? a], [? b,? b], [? c,? c] but is not enough for [? aaaaaa,? aaaaaa], [? bbbbbb,? bbbbbb], [? cccccc,? cccccc].
 		rows := tk.MustQuery("explain format='plan_tree' select /*+ inl_join(t1) */ * from  t1 join t2 on t1.a = t2.d where t1.b in ('a', 'b', 'c')").Rows()
-		require.True(t, strings.Contains(rows[6][3].(string), "range: decided by [eq(test.t1.a, test.t2.d) in(test.t1.b, a, b, c)]"))
+		require.Contains(t, rangeScanInfo(rows, 3), "range: decided by [eq(test.t1.a, test.t2.d) in(test.t1.b, a, b, c)]")
 		tk.MustQuery("show warnings").Check(testkit.Rows())
 		rows = tk.MustQuery("explain format='plan_tree' select /*+ inl_join(t1) */ * from  t1 join t2 on t1.a = t2.d where t1.b in ('aaaaaa', 'bbbbbb', 'cccccc');").Rows()
-		require.Contains(t, rows[6][3].(string), "range: decided by [eq(test.t1.a, test.t2.d)]")
+		require.Contains(t, rangeScanInfo(rows, 3), "range: decided by [eq(test.t1.a, test.t2.d)]")
 		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1260 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
 
 		tk.MustExec("prepare stmt1 from 'select /*+ inl_join(t1) */ * from  t1 join t2 on t1.a = t2.d where t1.b in (?, ?, ?)'")
@@ -2165,7 +2175,7 @@ func TestPlanCacheForIndexJoinRangeFallback(t *testing.T) {
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 		// We don't limit range mem usage when rebuilding index join ranges for the cached plan. So [? aaaaaa,? aaaaaa], [? bbbbbb,? bbbbbb], [? cccccc,? cccccc] can be built.
-		require.Contains(t, rows[6][4].(string), "range: decided by [eq(test.t1.a, test.t2.d) in(test.t1.b, aaaaaa, bbbbbb, cccccc)]")
+		require.Contains(t, rangeScanInfo(rows, 4), "range: decided by [eq(test.t1.a, test.t2.d) in(test.t1.b, aaaaaa, bbbbbb, cccccc)]")
 
 		// Test the plan with range fallback would not be put into cache.
 		tk.MustExec("prepare stmt2 from 'select /*+ inl_join(t1) */ * from  t1 join t2 on t1.a = t2.d where t1.b in (?, ?, ?, ?, ?)'")

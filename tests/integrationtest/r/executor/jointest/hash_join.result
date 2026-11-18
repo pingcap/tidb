@@ -11,9 +11,8 @@ id	task	access object	operator info
 IndexHashJoin	root		inner join, inner:IndexReader, outer key:executor__jointest__hash_join.t.a, inner key:executor__jointest__hash_join.s.a, equal cond:eq(executor__jointest__hash_join.t.a, executor__jointest__hash_join.s.a)
 ├─IndexReader(Build)	root		index:IndexFullScan
 │ └─IndexFullScan	cop[tikv]	table:t, index:a(a)	keep order:true, stats:pseudo
-└─IndexReader(Probe)	root		index:Selection
-  └─Selection	cop[tikv]		not(isnull(executor__jointest__hash_join.s.a))
-    └─IndexRangeScan	cop[tikv]	table:s, index:a(a)	range: decided by [eq(executor__jointest__hash_join.s.a, executor__jointest__hash_join.t.a)], keep order:false, stats:pseudo
+└─IndexReader(Probe)	root		index:IndexRangeScan
+  └─IndexRangeScan	cop[tikv]	table:s, index:a(a)	range: decided by [eq(executor__jointest__hash_join.s.a, executor__jointest__hash_join.t.a)], keep order:false, stats:pseudo
 select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;
 a	a
 1	1
