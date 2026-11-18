@@ -100,7 +100,6 @@ scripts.
 
 | Row | Go module | Rust implementations |
 | --- | --- | --- |
-| X08 | `pkg/planner/extstore` over `pkg/objstore` | `tidb-planner-extstore` (own `Storage` trait; S3, GCS, Azure, OSS, HDFS, noop over `opendal`), and `tidb-objstore` (`storeapi::Storage`; S3, GCS, Azure, HDFS, local, memory). No dependency between them. |
 | X09 | system tables through SQL on an internal session | restricted SQL, and `tidb-syssession`'s `SystemTableView` / `system_row_write` key/value reader-writer; `ddl_reorg_table.rs` and `ddl_delete_range.rs` use both |
 | X10 | `AnalyzeIndexExec` (`AnalyzeIndexReq` per region) | `AnalyzeIndexReq` for the NDV path, and a full index-key scan into TiDB with `tidb_stats::IndependentIndexAnalyze` for independent indexes |
 | X11 | one `kv.Transaction` path, tests on `mockstore` | `ClusterTableStorage` in production, and `MemTableStorage` + `LocalTableAutoIds` + `run_create_table_on` under 50 `tidb-executor` test files |

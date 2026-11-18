@@ -6488,7 +6488,7 @@ fn modify_column_ddl_events_follow_go() {
 fn plan_replayer_dump_writes_gos_archive_and_status() {
     let base = std::env::temp_dir().join(format!("plan-replayer-dump-{}", std::process::id()));
     tidb_planner_extstore::set_global_ext_storage_for_test(Some(Arc::new(
-        tidb_planner_extstore::LocalStorage::new(&base).unwrap(),
+        tidb_objstore::LocalStorage::new(&base.to_string_lossy()).unwrap(),
     )));
     let (stack, _users) =
         cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
@@ -6561,7 +6561,7 @@ fn plan_replayer_dump_writes_gos_archive_and_status() {
 fn plan_replayer_dump_with_stats_as_of_timestamp_runs_gos_calc() {
     let base = std::env::temp_dir().join(format!("plan-replayer-as-of-{}", std::process::id()));
     tidb_planner_extstore::set_global_ext_storage_for_test(Some(Arc::new(
-        tidb_planner_extstore::LocalStorage::new(&base).unwrap(),
+        tidb_objstore::LocalStorage::new(&base.to_string_lossy()).unwrap(),
     )));
     let (stack, _users) =
         cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
@@ -6630,7 +6630,7 @@ fn plan_replayer_dump_with_stats_as_of_timestamp_runs_gos_calc() {
 fn plan_replayer_dump_of_a_client_file_runs_gos_file_dump() {
     let base = std::env::temp_dir().join(format!("plan-replayer-file-{}", std::process::id()));
     tidb_planner_extstore::set_global_ext_storage_for_test(Some(Arc::new(
-        tidb_planner_extstore::LocalStorage::new(&base).unwrap(),
+        tidb_objstore::LocalStorage::new(&base.to_string_lossy()).unwrap(),
     )));
     let (stack, _users) =
         cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
@@ -6689,7 +6689,7 @@ fn plan_replayer_dump_of_a_client_file_runs_gos_file_dump() {
 fn plan_replayer_load_restores_a_dump_like_go() {
     let base = std::env::temp_dir().join(format!("plan-replayer-load-{}", std::process::id()));
     tidb_planner_extstore::set_global_ext_storage_for_test(Some(Arc::new(
-        tidb_planner_extstore::LocalStorage::new(&base).unwrap(),
+        tidb_objstore::LocalStorage::new(&base.to_string_lossy()).unwrap(),
     )));
     let (stack, _users) =
         cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
@@ -6762,7 +6762,7 @@ fn plan_replayer_load_restores_a_dump_like_go() {
 fn extract_handle_dumps_the_summarized_plans_like_go() {
     let base = std::env::temp_dir().join(format!("extract-task-{}", std::process::id()));
     tidb_planner_extstore::set_global_ext_storage_for_test(Some(Arc::new(
-        tidb_planner_extstore::LocalStorage::new(&base).unwrap(),
+        tidb_objstore::LocalStorage::new(&base.to_string_lossy()).unwrap(),
     )));
     let (stack, _users) =
         cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
@@ -6919,8 +6919,8 @@ fn statement_summary_records_the_memory_arbitration_wait() {
 fn plan_replayer_capture_dumps_a_matching_statement_and_gc_expires_files() {
     let base = std::env::temp_dir().join(format!("plan-replayer-capture-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
-    let storage = Arc::new(tidb_planner_extstore::LocalStorage::new(&base).unwrap());
-    tidb_planner_extstore::set_global_ext_storage_for_test(Some(storage.clone() as Arc<dyn tidb_planner_extstore::Storage>));
+    let storage = Arc::new(tidb_objstore::LocalStorage::new(&base.to_string_lossy()).unwrap());
+    tidb_planner_extstore::set_global_ext_storage_for_test(Some(storage.clone() as tidb_planner_extstore::ExtStorage));
     let nanos = |at: chrono::DateTime<chrono::Utc>| at.timestamp_nanos_opt().unwrap();
     let month_ago = nanos(chrono::Utc::now() - chrono::Duration::days(30));
     let old_dump = format!("replayer/replayer_old_{month_ago}.zip");

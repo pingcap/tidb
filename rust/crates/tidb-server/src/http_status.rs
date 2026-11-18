@@ -915,7 +915,8 @@ fn handle_download_file(file: &DownloadFile, is_forwarded: bool, routes: &Status
         Ok(storage) => storage,
         Err(error) => return write_error(error),
     };
-    let exists = match storage.file_exists(&file.file_path) {
+    let ctx = tidb_gocontext::Context::background();
+    let exists = match storage.file_exists(&ctx, &file.file_path) {
         Ok(exists) => exists,
         Err(error) => return write_error(error.to_string()),
     };
@@ -924,7 +925,7 @@ fn handle_download_file(file: &DownloadFile, is_forwarded: bool, routes: &Status
         tidb_logutil::bg_logger().info(message, &fields);
     };
     if exists {
-        let content = match storage.read_file(&file.file_path) {
+        let content = match storage.read_file(&ctx, &file.file_path) {
             Ok(content) => content,
             Err(error) => return write_error(error.to_string()),
         };
@@ -3072,8 +3073,8 @@ mod schema_route_tests {
     fn dump_files_download_like_go() {
         let base = std::env::temp_dir().join(format!("status-download-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
-        let storage = Arc::new(tidb_planner_extstore::LocalStorage::new(&base).unwrap());
-        tidb_planner_extstore::set_global_ext_storage_for_test(Some(storage.clone() as Arc<dyn tidb_planner_extstore::Storage>));
+        let storage = Arc::new(tidb_objstore::LocalStorage::new(&base.to_string_lossy()).unwrap());
+        tidb_planner_extstore::set_global_ext_storage_for_test(Some(storage.clone() as tidb_planner_extstore::ExtStorage));
         std::fs::create_dir_all(base.join("replayer")).unwrap();
         std::fs::write(base.join("replayer/replayer_x_1.zip"), b"PK-bytes").unwrap();
         let mut archive = tidb_replayer::zip::ZipWriter::new(Vec::new());

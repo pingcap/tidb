@@ -278,7 +278,7 @@ impl replayer::VariablesDumpSource for SysVarRegistry {
 }
 
 /// Go `getPresignedURL` over the local global storage.
-struct LocalPresign(Option<std::sync::Arc<dyn tidb_planner_extstore::Storage>>);
+struct LocalPresign(Option<tidb_planner_extstore::ExtStorage>);
 
 impl replayer::PresignSource for LocalPresign {
     fn has_global_storage(&self) -> bool {
@@ -288,7 +288,8 @@ impl replayer::PresignSource for LocalPresign {
         self.0
             .as_ref()
             .ok_or_else(|| "no global external storage".to_owned())?
-            .presign_file(path, expire)
+            .presign_file(&tidb_gocontext::Context::background(), path, expire)
+            .map_err(|error| error.to_string())
     }
 }
 

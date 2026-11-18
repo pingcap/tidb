@@ -1015,7 +1015,8 @@ fn cloud_storage_features_and_copier_follow_go() {
     let strong = crate::storeapi::FEATURE_STRONG_CONSISTENCY;
     let start_after = crate::storeapi::FEATURE_SUPPORTS_START_AFTER;
     for (uri, features) in [
-        ("s3://b/p?endpoint=http://127.0.0.1:1&force-path-style=true", strong | start_after),
+        // A non-AWS provider: Go detects only the official S3's region.
+        ("s3://b/p?endpoint=http://127.0.0.1:1&force-path-style=true&provider=minio", strong | start_after),
         ("gcs://b/p?endpoint=http://127.0.0.1:1", strong | start_after),
         ("azure://b/p?account-name=a&account-key=a2V5&endpoint=http://127.0.0.1:1/a", strong),
     ] {
@@ -1024,3 +1025,4 @@ fn cloud_storage_features_and_copier_follow_go() {
         assert!(storage.as_copier().is_some(), "{uri}");
     }
 }
+

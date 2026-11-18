@@ -1,8 +1,8 @@
-//! Go `pkg/objstore/s3like` (`store.go`) with the `s3store` client, and the
-//! GCS (`gcs.go`) and Azure Blob (`azblob.go`) storages, over the
-//! `opendal` object transports `tidb-planner-extstore` also uses. Keys,
-//! listing, ranges and URIs follow the Go storages; the SDK clients are
-//! replaced by `opendal`'s.
+//! Go `pkg/objstore/s3like` (`store.go`) with the `s3store` client (and its
+//! KS3 storage, `s3store.KS3Storage`), the `ossstore` client
+//! (`crate::ossstore`), and the GCS (`gcs.go`) and Azure Blob (`azblob.go`)
+//! storages, over `opendal` object transports. Keys, listing, ranges and URIs
+//! follow the Go storages; the SDK clients are replaced by `opendal`'s.
 //!
 //! Errors never carry a request URL or credential: an `opendal` failure is
 //! reported as its kind, annotated with the bucket and key the way Go
@@ -21,7 +21,7 @@ use crate::gopath;
 use crate::objectio::{BufferedWriter, Reader, Writer};
 use crate::storeapi::{self, BucketPrefix, Options, ReaderOption, Storage, WalkOption, WriterOption};
 
-static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+pub(crate) static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
         .enable_all()
@@ -30,13 +30,13 @@ static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
 });
 
 /// An `opendal` failure without its request details.
-fn native_error(error: &opendal::Error) -> Error {
+pub(crate) fn native_error(error: &opendal::Error) -> Error {
     let kind = if error.kind() == opendal::ErrorKind::NotFound { ErrorKind::NotFound } else { ErrorKind::Other };
     Error::new(kind, format!("object storage: {}", error.kind()))
 }
 
 /// Runs `future` on the storage runtime, stopping when `ctx` is done.
-fn run<T>(ctx: &Context, future: impl std::future::Future<Output = opendal::Result<T>>) -> Result<T> {
+pub(crate) fn run<T>(ctx: &Context, future: impl std::future::Future<Output = opendal::Result<T>>) -> Result<T> {
     check_ctx(ctx)?;
     RUNTIME.block_on(async {
         tokio::pin!(future);
@@ -51,9 +51,11 @@ fn run<T>(ctx: &Context, future: impl std::future::Future<Output = opendal::Resu
 
 /// Which Go storage a [`CloudStorage`] is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Flavor {
-    /// Go `s3like.Storage`.
+pub(crate) enum Flavor {
+    /// Go `s3like.Storage` (also OSS's `OSSStore`).
     S3,
+    /// Go `s3store.KS3Storage`.
+    Ks3,
     /// Go `GCSStorage`.
     Gcs,
     /// Go `AzureBlobStorage`.
@@ -62,23 +64,24 @@ enum Flavor {
 
 /// Go `s3like.Storage`, `GCSStorage` or `AzureBlobStorage`.
 pub struct CloudStorage {
-    op: opendal::Operator,
-    flavor: Flavor,
-    bucket: String,
+    pub(crate) op: opendal::Operator,
+    pub(crate) flavor: Flavor,
+    pub(crate) bucket: String,
     /// Go `gcs.Prefix` / `options.Prefix` as configured.
-    raw_prefix: String,
+    pub(crate) raw_prefix: String,
     /// Go `s3like.Storage.bucketPrefix`.
-    bucket_prefix: BucketPrefix,
-    access_rec: Option<std::sync::Arc<tidb_objstore_recording::AccessStats>>,
+    pub(crate) bucket_prefix: BucketPrefix,
+    pub(crate) access_rec: Option<std::sync::Arc<tidb_objstore_recording::AccessStats>>,
     /// The provider's client for what `opendal` cannot send (a copy from
-    /// another bucket or container).
-    client: CloudClient,
+    /// another bucket or container, an OSS presign).
+    pub(crate) client: CloudClient,
 }
 
 /// Go `s3like.Storage.s3Cli`, `GCSStorage`'s client and
 /// `AzureBlobStorage`'s container client.
-enum CloudClient {
+pub(crate) enum CloudClient {
     S3(crate::s3client::S3Client),
+    Oss(crate::ossstore::OssClient),
     Gcs(crate::gcsclient::GcsClient),
     Azure(crate::azclient::AzureClient),
 }
@@ -87,7 +90,7 @@ impl CloudStorage {
     /// The object key of `name`.
     fn key(&self, name: &str) -> String {
         match self.flavor {
-            Flavor::S3 => self.bucket_prefix.object_key(name),
+            Flavor::S3 | Flavor::Ks3 => self.bucket_prefix.object_key(name),
             // Go `path.Join(prefix, name)`.
             Flavor::Gcs | Flavor::Azure => {
                 let joined = gopath::join(&[&self.raw_prefix, name]);
@@ -98,7 +101,7 @@ impl CloudStorage {
 
     fn file_info(&self, name: &str) -> String {
         match self.flavor {
-            Flavor::S3 => format!("file info: input.bucket='{}', input.key='{}'", self.bucket, self.key(name)),
+            Flavor::S3 | Flavor::Ks3 => format!("file info: input.bucket='{}', input.key='{}'", self.bucket, self.key(name)),
             Flavor::Gcs => format!("file info: input.bucket='{}', input.key='{}'", self.bucket, self.key(name)),
             Flavor::Azure => format!("file info: bucket(container)='{}', key='{}'", self.bucket, self.key(name)),
         }
@@ -179,7 +182,7 @@ impl Storage for CloudStorage {
         let default = WalkOption::default();
         let opt = opt.unwrap_or(&default);
         let (list_prefix, trim) = match self.flavor {
-            Flavor::S3 => (
+            Flavor::S3 | Flavor::Ks3 => (
                 self.bucket_prefix.object_key(&storeapi::Prefix::new(&opt.sub_dir).object_key(&opt.obj_prefix)),
                 self.bucket_prefix.prefix_str().to_owned(),
             ),
@@ -219,7 +222,7 @@ impl Storage for CloudStorage {
             check_ctx(ctx)?;
             let trimmed = key.strip_prefix(&trim).unwrap_or(&key);
             let trimmed = trimmed.strip_prefix('/').unwrap_or(trimmed);
-            if self.flavor == Flavor::S3 && size <= 0 && trimmed.ends_with('/') {
+            if matches!(self.flavor, Flavor::S3 | Flavor::Ks3) && size <= 0 && trimmed.ends_with('/') {
                 continue;
             }
             if self.flavor != Flavor::Azure && !opt.start_after.is_empty() && trimmed <= opt.start_after.as_str() {
@@ -233,6 +236,8 @@ impl Storage for CloudStorage {
     fn uri(&self) -> String {
         match self.flavor {
             Flavor::S3 => format!("s3://{}/{}", self.bucket, self.bucket_prefix.prefix_str()),
+            // Go `KS3Storage.URI`.
+            Flavor::Ks3 => format!("ks3://{}/{}", self.bucket, self.bucket_prefix.prefix_str()),
             Flavor::Gcs => format!("gcs://{}/{}", self.bucket, self.raw_prefix),
             Flavor::Azure => format!("azure://{}/{}", self.bucket, self.raw_prefix),
         }
@@ -246,7 +251,7 @@ impl Storage for CloudStorage {
         let writer = run(ctx, self.op.writer_with(&key).chunk(chunk).concurrent(concurrency).into_future_writer())
             .map_err(|e| e.annotate(format!("failed to create file, {}", self.file_info(path))))?;
         let inner = Box::new(CloudWriter { writer: Some(writer), ctx: ctx.clone() });
-        if self.flavor == Flavor::S3 {
+        if matches!(self.flavor, Flavor::S3 | Flavor::Ks3) {
             Ok(Box::new(BufferedWriter::new(
                 inner,
                 chunk,
@@ -258,26 +263,45 @@ impl Storage for CloudStorage {
         }
     }
 
+    /// Go `s3like.Storage.Rename`, `KS3Storage.Rename`, `GCSStorage.Rename`
+    /// and `AzureBlobStorage.Rename`: read, write, delete.
     fn rename(&self, ctx: &Context, old: &str, new: &str) -> Result<()> {
-        if self.flavor == Flavor::S3 {
-            let content = self.read_file(ctx, old)?;
-            self.write_file(ctx, new, &content)?;
-            return self.delete_file(ctx, old);
-        }
-        run(ctx, self.op.copy(&self.key(old), &self.key(new)))?;
+        let content = self.read_file(ctx, old)?;
+        self.write_file(ctx, new, &content)?;
         self.delete_file(ctx, old)
     }
 
     fn presign_file(&self, ctx: &Context, file_name: &str, expire: Duration) -> Result<String> {
+        if self.flavor == Flavor::Azure {
+            // Go `AzureBlobStorage.PresignFile`.
+            return Err(Error::other("AzureBlobStorage backend does not support PresignFile"));
+        }
         if expire.is_zero() {
             return Err(Error::other("presign expiration must be positive"));
         }
+        if self.flavor == Flavor::Ks3 {
+            // Go `KS3Storage.PresignFile`.
+            return Err(Error::other("KS3 backend does not support PresignFile"));
+        }
+        if let CloudClient::Oss(client) = &self.client {
+            check_ctx(ctx)?;
+            return client.presign(&self.bucket, &self.key(file_name), expire);
+        }
         run(ctx, self.op.presign_read(&self.key(file_name), expire)).map(|req| req.uri().to_string())
+    }
+
+    /// Go `OSSStore.Close`; the other storages close nothing.
+    fn close(&self) {
+        if let CloudClient::Oss(client) = &self.client {
+            client.close();
+        }
     }
 
     fn features(&self) -> storeapi::Features {
         match self.flavor {
             Flavor::S3 => storeapi::FEATURE_STRONG_CONSISTENCY | storeapi::FEATURE_SUPPORTS_START_AFTER,
+            // Go `KS3Storage` is no `FeatureProvider`.
+            Flavor::Ks3 => 0,
             // Go `GCSStorage.Features` / `AzureBlobStorage.Features`.
             Flavor::Gcs => storeapi::FEATURE_STRONG_CONSISTENCY | storeapi::FEATURE_SUPPORTS_START_AFTER,
             Flavor::Azure => storeapi::FEATURE_STRONG_CONSISTENCY,
@@ -306,6 +330,7 @@ impl storeapi::Copier for CloudStorage {
                 berrors::ERR_STORAGE_INVALID_CONFIG,
                 match self.flavor {
                     Flavor::S3 => format!("CopyFrom is only supported by S3 storage, get {}", e.uri()),
+                    Flavor::Ks3 => format!("S3Storage.CopyFrom supports S3 storage only, get {}", e.uri()),
                     Flavor::Gcs => format!("GCSStorage.CopyFrom supports only GCSStorage, get {}", e.uri()),
                     Flavor::Azure => format!("AzureBlobStorage.CopyFrom supports *AzureBlobStorage only, got {}", e.uri()),
                 },
@@ -314,6 +339,22 @@ impl storeapi::Copier for CloudStorage {
         let (from, to) = (source.key(&spec.from), self.key(&spec.to));
         let copy = async {
             match (&self.client, &source.client) {
+                // Go `KS3Storage.CopyFrom`: a CopyObject in KS3, which
+                // `opendal` sends (and the KS3 transport signs) within one
+                // bucket.
+                (CloudClient::S3(_), _) if self.flavor == Flavor::Ks3 => {
+                    if source.bucket != self.bucket {
+                        return Err(Error::other("a KS3 CopyFrom across buckets is not supported by this storage"));
+                    }
+                    self.op
+                        .copy(&from, &to)
+                        .await
+                        .map_err(|e| native_error(&e).annotate(format!("failed to copy object, bucket={} from={from} to={to}", self.bucket)))
+                }
+                (CloudClient::Oss(client), _) => client
+                    .copy_object(&source.bucket, &from, &self.bucket, &to)
+                    .await
+                    .map_err(|e| e.annotate(format!("failed to copy object, bucket={} from={from} to={to}", self.bucket))),
                 (CloudClient::S3(client), _) => client
                     .copy_object(&source.bucket_prefix.bucket, &from, &to)
                     .await
@@ -457,54 +498,100 @@ impl Writer for CloudWriter {
     }
 }
 
-/// Go `s3store.NewS3Storage` (and the KS3 / OSS providers, which `opendal`
-/// reaches through the S3 protocol).
+/// Go `s3store.NewS3Storage`, and `s3store.NewKS3Storage` for the KS3 SDK
+/// provider; `storage::new` sends the OSS provider to
+/// `ossstore::new_oss_storage`.
 pub fn new_s3_storage(ctx: &Context, s3: &S3, opts: &Options) -> Result<CloudStorage> {
     check_ctx(ctx)?;
     if s3.bucket.is_empty() {
         return Err(berrors::annotate(berrors::ERR_STORAGE_INVALID_CONFIG, "bucket name is empty"));
     }
+    let ks3 = s3.provider == tidb_objstore_s3like::KS3_SDK_PROVIDER;
+    if ks3 && s3.region.is_empty() {
+        return Err(Error::other("ks3 region is empty"));
+    }
+    if ks3 && !s3.role_arn.is_empty() {
+        return Err(Error::other(format!("ks3 does not support role arn, arn: {}", s3.role_arn)));
+    }
     let region = if s3.region.is_empty() { "us-east-1" } else { &s3.region };
-    let mut builder = opendal::services::S3::default().bucket(&s3.bucket).region(region);
-    if !s3.endpoint.is_empty() {
-        builder = builder.endpoint(&s3.endpoint);
-    }
-    if !s3.force_path_style {
-        builder = builder.enable_virtual_host_style();
-    }
     let http = crate::s3client::http_client()?;
-    let credentials = crate::s3client::credentials(s3, region, opts, &http)?;
-    match &credentials {
-        None => builder = builder.allow_anonymous().disable_config_load().disable_ec2_metadata(),
-        Some(loader) => {
-            builder = builder.customized_credential_load(Box::new(crate::s3client::SharedCredentials(Arc::clone(loader))));
-        }
-    }
-    if !s3.storage_class.is_empty() {
-        builder = builder.default_storage_class(&s3.storage_class);
-    }
-    if !s3.sse.is_empty() {
-        builder = builder.server_side_encryption(&s3.sse);
-    }
-    if !s3.sse_kms_key_id.is_empty() {
-        builder = builder.server_side_encryption_aws_kms_key_id(&s3.sse_kms_key_id);
-    }
-    let op = {
+    let credentials = crate::s3client::credentials(s3, region, opts, &http, ks3)?;
+    let build = |region: &str| -> Result<opendal::Operator> {
         let _guard = RUNTIME.enter();
-        opendal::Operator::new(builder).map_err(|e| native_error(&e))?.finish()
+        // The transport adds Go's canned ACL and signs (SigV4, or KS3's V2).
+        let transport = crate::s3_transport::Transport {
+            client: http.clone(),
+            credentials: credentials.clone(),
+            region: region.to_owned(),
+            bucket: s3.bucket.clone(),
+            path_style: s3.force_path_style,
+            ks3,
+            acl: s3.acl.clone(),
+        };
+        let mut builder = opendal::services::S3::default().bucket(&s3.bucket).region(region);
+        if ks3 {
+            builder = builder.disable_list_objects_v2();
+        }
+        if !s3.endpoint.is_empty() {
+            builder = builder.endpoint(&s3.endpoint);
+        }
+        if !s3.force_path_style {
+            builder = builder.enable_virtual_host_style();
+        }
+        match &credentials {
+            None => builder = builder.allow_anonymous().disable_config_load().disable_ec2_metadata(),
+            Some(loader) => {
+                builder = builder.customized_credential_load(Box::new(crate::s3client::SharedCredentials(Arc::clone(loader))));
+            }
+        }
+        if !s3.storage_class.is_empty() {
+            builder = builder.default_storage_class(&s3.storage_class);
+        }
+        if !s3.sse.is_empty() {
+            builder = builder.server_side_encryption(&s3.sse);
+        }
+        if !s3.sse_kms_key_id.is_empty() {
+            builder = builder.server_side_encryption_aws_kms_key_id(&s3.sse_kms_key_id);
+        }
+        Ok(opendal::Operator::new(builder)
+            .map_err(|e| native_error(&e))?
+            .layer(opendal::layers::HttpClientLayer::new(opendal::raw::HttpClient::with(transport)))
+            .finish())
     };
+    let mut op = build(region)?;
+    let mut resolved_region = region.to_owned();
+    // Go: only the official S3 detects the bucket's region
+    // (`manager.GetBucketRegion`, a HEAD of the bucket signed with the
+    // storage's credentials); other providers keep the configured one.
+    if !ks3 && (s3.provider.is_empty() || s3.provider == "aws") {
+        let detected = detect_bucket_region(ctx, &op, &http, credentials.as_ref(), region)
+            .map_err(|e| e.annotate(format!("failed to get region of bucket {}", s3.bucket)))?;
+        if !s3.region.is_empty() && s3.region != detected {
+            return Err(Error::other(format!(
+                "s3 bucket and region are not matched, bucket={}, input region={}, real region={detected}",
+                s3.bucket, s3.region
+            )));
+        }
+        if detected != region {
+            op = build(&detected)?;
+        }
+        resolved_region = detected;
+    }
     let s3_client = crate::s3client::S3Client {
         http,
         credentials,
-        region: region.to_owned(),
-        endpoint: crate::s3client::bucket_endpoint(s3, region, opts),
+        region: resolved_region.clone(),
+        endpoint: crate::s3client::bucket_endpoint(s3, &resolved_region, opts),
         sse: s3.sse.clone(),
         sse_kms_key_id: s3.sse_kms_key_id.clone(),
         sse_kms_encryption_context: s3.sse_kms_encryption_context.clone(),
+        bucket: s3.bucket.clone(),
+        ks3,
+        path_style: s3.force_path_style,
     };
     let storage = CloudStorage {
         op,
-        flavor: Flavor::S3,
+        flavor: if ks3 { Flavor::Ks3 } else { Flavor::S3 },
         bucket: s3.bucket.clone(),
         raw_prefix: s3.prefix.clone(),
         bucket_prefix: BucketPrefix::new(&s3.bucket, &s3.prefix),
@@ -513,6 +600,58 @@ pub fn new_s3_storage(ctx: &Context, s3: &S3, opts: &Options) -> Result<CloudSto
     };
     check_permissions(ctx, &storage, &opts.check_permissions)?;
     Ok(storage)
+}
+
+/// Go `manager.GetBucketRegion`: the `x-amz-bucket-region` of a HEAD of the
+/// bucket, `us-east-1` when the response names none (Go's normalization).
+fn detect_bucket_region(
+    ctx: &Context,
+    op: &opendal::Operator,
+    http: &reqwest12::Client,
+    credentials: Option<&Arc<dyn reqsign::AwsCredentialLoad>>,
+    region: &str,
+) -> Result<String> {
+    let bucket_url = {
+        let signed = run(ctx, op.presign_stat("", Duration::from_secs(60)))?;
+        let mut url = reqwest12::Url::parse(&signed.uri().to_string()).map_err(|_| Error::other("invalid bucket URL"))?;
+        url.set_query(None);
+        url
+    };
+    check_ctx(ctx)?;
+    let head = async {
+        let mut request = http.head(bucket_url).build().map_err(|_| Error::other("invalid bucket request"))?;
+        if let Some(loader) = credentials {
+            let credential = loader
+                .load_credential(http.clone())
+                .await
+                .map_err(|_| Error::other("failed to load S3 credentials"))?
+                .ok_or_else(|| Error::other("no S3 credentials"))?;
+            reqsign::AwsV4Signer::new("s3", region)
+                .sign(&mut request, &credential)
+                .map_err(|_| Error::other("S3 signing failed"))?;
+        }
+        http.execute(request).await.map_err(|_| Error::other("HTTP request failed"))
+    };
+    let response = RUNTIME.block_on(async {
+        tokio::pin!(head);
+        loop {
+            tokio::select! {
+                result = &mut head => return result,
+                () = tokio::time::sleep(Duration::from_millis(20)) => check_ctx(ctx)?,
+            }
+        }
+    })?;
+    let header = response
+        .headers()
+        .get("x-amz-bucket-region")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    match header {
+        Some(detected) => Ok(detected),
+        None if response.status().is_success() => Ok("us-east-1".to_owned()),
+        None => Err(Error::other(format!("HTTP {}", response.status().as_u16()))),
+    }
 }
 
 /// Go `NewGCSStorage`.
@@ -531,7 +670,7 @@ pub fn new_gcs_storage(ctx: &Context, gcs: &Gcs, opts: &Options) -> Result<Cloud
         None => builder = builder.allow_anonymous().disable_vm_metadata().disable_config_load(),
     }
     let gcs_client = crate::gcsclient::GcsClient {
-        http,
+        http: http.clone(),
         token,
         endpoint: if gcs.endpoint.is_empty() { "https://storage.googleapis.com".to_owned() } else { gcs.endpoint.clone() },
     };
@@ -543,7 +682,10 @@ pub fn new_gcs_storage(ctx: &Context, gcs: &Gcs, opts: &Options) -> Result<Cloud
     }
     let op = {
         let _guard = RUNTIME.enter();
-        opendal::Operator::new(builder).map_err(|e| native_error(&e))?.finish()
+        opendal::Operator::new(builder)
+            .map_err(|e| native_error(&e))?
+            .layer(opendal::layers::HttpClientLayer::new(opendal::raw::HttpClient::with(http)))
+            .finish()
     };
     let storage = CloudStorage {
         op,
@@ -558,49 +700,167 @@ pub fn new_gcs_storage(ctx: &Context, gcs: &Gcs, opts: &Options) -> Result<Cloud
     Ok(storage)
 }
 
-/// Go `newAzureBlobStorage`.
+/// Go `newAzureBlobStorage`: `getAzureServiceClientBuilder`'s credential
+/// (an explicit SAS, an explicit shared key, the environment's service
+/// principal, `AZURE_STORAGE_KEY`, else `DefaultAzureCredential`), the
+/// container's `GetProperties`, and the access tier and encryption checks.
 pub fn new_azure_blob_storage(ctx: &Context, az: &AzureBlobStorage, opts: &Options) -> Result<CloudStorage> {
     check_ctx(ctx)?;
+    if az.bucket.is_empty() {
+        return Err(Error::other("bucket(container) cannot be empty to access azure blob storage"));
+    }
+    let explicit_sas = !az.account_name.is_empty() && !az.access_sig.is_empty();
+    let explicit_key = !az.account_name.is_empty() && !az.shared_key.is_empty();
     let account = if az.account_name.is_empty() {
         std::env::var("AZURE_STORAGE_ACCOUNT").unwrap_or_default()
     } else {
         az.account_name.clone()
     };
-    let endpoint = if az.endpoint.is_empty() {
-        format!("https://{account}.blob.core.windows.net")
-    } else {
+    if account.is_empty() {
+        return Err(Error::other("account name cannot be empty to access azure blob storage"));
+    }
+    // Go: an explicit SAS without an endpoint goes into the service URL; a
+    // custom endpoint is used as given, its query being the SAS.
+    let endpoint = if !az.endpoint.is_empty() {
         az.endpoint.clone()
+    } else if explicit_sas {
+        format!("https://{account}.blob.core.windows.net/?{}", az.access_sig.trim_start_matches('?'))
+    } else {
+        format!("https://{account}.blob.core.windows.net")
     };
-    let mut builder = opendal::services::Azblob::default().container(&az.bucket).endpoint(&endpoint).account_name(&account);
-    let mut credential = reqsign::AzureStorageConfig { account_name: Some(account.clone()), ..Default::default() };
-    if !az.shared_key.is_empty() {
-        builder = builder.account_key(&az.shared_key);
-        credential.account_key = Some(az.shared_key.clone());
-    } else if let Ok(key) = std::env::var("AZURE_STORAGE_KEY") {
-        builder = builder.account_key(&key);
-        credential.account_key = Some(key);
+    let mut config = reqsign::AzureStorageConfig::default().from_env();
+    config.account_name = Some(account.clone());
+    config.account_key = None;
+    config.sas_token = None;
+    let credentials = if opts.no_credentials {
+        None
+    } else if explicit_sas {
+        config.sas_token = Some(
+            reqwest12::Url::parse(&endpoint).ok().and_then(|url| url.query().map(str::to_owned)).unwrap_or_default(),
+        );
+        Some(tidb_azure_sdk::Credentials::new(config, false).map_err(Error::other)?)
+    } else if explicit_key {
+        config.account_key = Some(az.shared_key.clone());
+        Some(tidb_azure_sdk::Credentials::new(config, false).map_err(|e| Error::other(format!("Failed to get azure sharedKey credential: {e}")))?)
+    } else {
+        // Go tries the service principal first and falls back when its
+        // constructor rejects the configuration.
+        let principal = [&config.client_id, &config.client_secret, &config.tenant_id]
+            .iter()
+            .all(|value| value.as_ref().is_some_and(|s| !s.is_empty()));
+        let direct = principal.then(|| tidb_azure_sdk::Credentials::new(config.clone(), true).ok()).flatten();
+        match direct {
+            Some(credential) => Some(credential),
+            None => match std::env::var("AZURE_STORAGE_KEY").ok().filter(|key| !key.is_empty()) {
+                Some(key) => {
+                    config.account_key = Some(key);
+                    Some(tidb_azure_sdk::Credentials::new(config, false).map_err(|e| Error::other(format!("Failed to get azure sharedKey credential: {e}")))?)
+                }
+                None => Some(tidb_azure_sdk::Credentials::new(config, false).map_err(Error::other)?),
+            },
+        }
     }
-    if !az.access_sig.is_empty() {
-        builder = builder.sas_token(&az.access_sig);
-        credential.sas_token = Some(az.access_sig.clone());
+    .map(Arc::new);
+    let http = crate::s3client::http_client()?;
+    // Go `containerClient.GetProperties`.
+    if let Some(credentials) = &credentials {
+        let mut target = reqwest12::Url::parse(&endpoint).map_err(|_| Error::other("invalid Azure endpoint"))?;
+        let path = format!("{}/{}", target.path().trim_end_matches('/'), az.bucket);
+        target.set_path(&path);
+        let mut query = target.query().map(str::to_owned).unwrap_or_default();
+        if !query.is_empty() {
+            query.push('&');
+        }
+        query.push_str("restype=container");
+        target.set_query(Some(&query));
+        let request = async {
+            if credentials.is_bearer() && target.scheme() != "https" {
+                return Err(Error::other("Azure bearer credentials require HTTPS"));
+            }
+            let cred = credentials.load().await.map_err(|_| Error::other("cannot load Azure credentials"))?;
+            let mut request = http
+                .get(target)
+                .header("x-ms-version", "2022-11-02")
+                .build()
+                .map_err(|_| Error::other("invalid Azure request"))?;
+            if !matches!(cred, reqsign::AzureStorageCredential::SharedAccessSignature(..)) {
+                reqsign::AzureStorageSigner::new().sign(&mut request, &cred).map_err(|_| Error::other("Azure signing failed"))?;
+            }
+            let response = http.execute(request).await.map_err(|_| Error::other("Azure container properties request failed"))?;
+            if !response.status().is_success() {
+                return Err(Error::other(format!("Azure container properties: HTTP {}", response.status().as_u16())));
+            }
+            Ok(())
+        };
+        RUNTIME.block_on(async {
+            tokio::pin!(request);
+            loop {
+                tokio::select! {
+                    result = &mut request => return result,
+                    () = tokio::time::sleep(Duration::from_millis(20)) => check_ctx(ctx)?,
+                }
+            }
+        })?;
     }
-    let azure_client = crate::azclient::AzureClient {
-        http: crate::s3client::http_client()?,
-        endpoint: endpoint.clone(),
-        container: az.bucket.clone(),
-        credential,
+    let has_key = az.encryption_key.is_some();
+    if (!az.encryption_scope.is_empty() || has_key) && !az.storage_class.is_empty() {
+        return Err(Error::other(
+            "Set Blob Tier cannot be used with customer-provided key/scope. Please don't supply the access-tier when use encryption-key or encryption-scope.",
+        ));
+    }
+    if !az.encryption_scope.is_empty() && has_key {
+        return Err(Error::other(
+            "Undefined input: There are both encryption-scope and customer provided key. Please select only one to encrypt blobs.",
+        ));
+    }
+    let tier = match az.storage_class.as_str() {
+        "Archive" | "archive" => "Archive",
+        "Cool" | "cool" => "Cool",
+        "Hot" | "hot" => "Hot",
+        other => other,
     };
-    // Go's CPKInfo. The `opendal` client has no encryption-scope option, so
-    // a configured scope is not sent.
-    if let Some(key) = &az.encryption_key {
-        builder = builder
-            .encryption_algorithm("AES256")
-            .encryption_key(&key.encryption_key)
-            .encryption_key_sha256(&key.encryption_key_sha256);
+    // The SAS is sent as the endpoint's query; the data endpoint drops it
+    // and the transport's credential appends it once.
+    let mut data_endpoint = reqwest12::Url::parse(&endpoint).map_err(|_| Error::other("invalid Azure endpoint"))?;
+    if explicit_sas {
+        data_endpoint.set_query(None);
     }
+    let data_endpoint = data_endpoint.as_str().trim_end_matches('/').to_owned();
     let op = {
         let _guard = RUNTIME.enter();
-        opendal::Operator::new(builder).map_err(|e| native_error(&e))?.finish()
+        use opendal::Configurator as _;
+        let mut builder = opendal::services::AzblobConfig {
+            // The transport authenticates every request; an empty SAS keeps
+            // `opendal`'s own signer from consulting an ambient chain.
+            sas_token: Some(String::new()),
+            ..Default::default()
+        }
+        .into_builder()
+        .container(&az.bucket)
+        .endpoint(&data_endpoint)
+        .account_name(&account);
+        if let Some(key) = &az.encryption_key {
+            builder = builder
+                .encryption_algorithm("AES256")
+                .encryption_key(&key.encryption_key)
+                .encryption_key_sha256(&key.encryption_key_sha256);
+        }
+        let transport = crate::azclient::Transport {
+            client: http.clone(),
+            credentials: credentials.clone(),
+            tier: tier.to_owned(),
+            scope: az.encryption_scope.clone(),
+        };
+        opendal::Operator::new(builder)
+            .map_err(|e| native_error(&e))?
+            .layer(opendal::layers::HttpClientLayer::new(opendal::raw::HttpClient::with(transport)))
+            .finish()
+    };
+    let azure_client = crate::azclient::AzureClient {
+        http,
+        endpoint: data_endpoint,
+        container: az.bucket.clone(),
+        credentials,
     };
     let storage = CloudStorage {
         op,
@@ -615,27 +875,23 @@ pub fn new_azure_blob_storage(ctx: &Context, az: &AzureBlobStorage, opts: &Optio
     Ok(storage)
 }
 
-/// Go `s3like.CheckPermissions` / `gcs.CheckPermissions`.
+/// Go `s3like.CheckPermissions` over `s3Client` (and KS3's
+/// `permissionCheckFnKS3`), as `NewS3Storage` / `NewKS3Storage` run it: each
+/// permission one request whose status decides, in the caller's order. Go's
+/// GCS and Azure storages check nothing.
 fn check_permissions(ctx: &Context, storage: &CloudStorage, perms: &[storeapi::Permission]) -> Result<()> {
-    use storeapi::Permission as P;
+    let CloudClient::S3(client) = &storage.client else {
+        return Ok(());
+    };
     for perm in perms {
-        let result = match perm {
-            P::AccessBuckets | P::ListObjects => run(ctx, storage.op.list_with(&storage.key("")).limit(1).into_future()).map(|_| ()),
-            P::GetObject => match run(ctx, storage.op.stat(&storage.key("not-exists"))) {
-                Err(e) if e.is_not_found() => Ok(()),
-                other => other.map(|_| ()),
-            },
-            P::PutObject | P::PutAndDeleteObject => {
-                let key = storage.key(&format!("perm-check/{}", uuid::Uuid::new_v4()));
-                run(ctx, storage.op.write(&key, b"check".to_vec()))
-                    .and_then(|_| run(ctx, storage.op.delete(&key)))
-            }
-        };
+        let result = client.check_permission(ctx, *perm, &storage.bucket_prefix, &storage.op);
         result.map_err(|e| {
-            berrors::annotate(
-                "[BR:ExternalStorage:ErrStorageInvalidPermission]external storage permission",
-                format!("check permission {perm:?} failed due to {e}"),
-            )
+            let message = if storage.flavor == Flavor::Ks3 {
+                format!("check permission {} failed due to {e}", perm.as_str())
+            } else {
+                format!("check permission failed due to permission {}: {e}", perm.as_str())
+            };
+            berrors::annotate(berrors::ERR_STORAGE_INVALID_PERMISSION, message)
         })?;
     }
     Ok(())

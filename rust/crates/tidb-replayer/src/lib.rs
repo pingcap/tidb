@@ -64,6 +64,34 @@ pub trait Storage {
     fn create(&self, path: &Path) -> io::Result<Self::Writer>;
 }
 
+/// Go `storeapi.Storage.Create(ctx, path, nil)`: the storages this package's
+/// callers hand it (`extstore.GetGlobalExtStorage`) are `objstore`'s.
+impl Storage for dyn tidb_objstore::storeapi::Storage {
+    type Writer = StorageWriter;
+
+    fn create(&self, path: &Path) -> io::Result<Self::Writer> {
+        let ctx = tidb_gocontext::Context::background();
+        let writer = tidb_objstore::storeapi::Storage::create(self, &ctx, &path.to_string_lossy(), None)?;
+        Ok(StorageWriter { writer, ctx })
+    }
+}
+
+/// Go `objectio.Writer` with the context its `Write` / `Close` take.
+pub struct StorageWriter {
+    writer: Box<dyn tidb_objstore::objectio::Writer>,
+    ctx: tidb_gocontext::Context,
+}
+
+impl ObjectWriter for StorageWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        Ok(self.writer.write(&self.ctx, bytes)?)
+    }
+
+    fn close(&mut self) -> io::Result<()> {
+        Ok(self.writer.close(&self.ctx)?)
+    }
+}
+
 /// Native equivalent of Go `io.WriteCloser`.
 pub trait WriteCloser {
     /// Writes bytes.

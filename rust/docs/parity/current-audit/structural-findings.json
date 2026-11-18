@@ -2,8 +2,8 @@
   "date": "2026-11-18",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 24,
-    "open": 23,
+    "unresolved": 23,
+    "open": 22,
     "partial": 1
   },
   "findings": [
@@ -30,14 +30,6 @@
       "finding": "A window frame bound takes any expression here. Go's `parseFrameBound` accepts only a number literal, a `?` marker or `INTERVAL expr unit`, as the yacc grammar did, and answers 1064 for `ROWS BETWEEN 1+0 PRECEDING AND CURRENT ROW`; this port parses `parse_expr(PREDICATE + 1)` and runs the query (4 rows). The planner's non-constant-bound refusal (`window.rs`, `evalAstExprWithPlanCtx ... is not ported`) exists only because the parser lets such bounds through. [2026-11-18 probes](structural-audit-2026-11-18.md)",
       "rust_evidence": "`rust/crates/tidb-parser/src/expr/window.rs` (`parse_frame_bound`), `rust/crates/tidb-planner/src/plan_builder/window.rs`",
       "go_owner": "`pkg/parser/expr_func_parser.go` (`parseFrameBound`)"
-    },
-    {
-      "id": "X08",
-      "status": "open",
-      "group": "Structure: Go's shape before more ports",
-      "finding": "`pkg/planner/extstore` has a second object-storage stack. Go's `extstore` (one 434-line file with its tests) is a thin wrapper: `NewExtStorage` parses the URL and calls `objstore.New`, so the plan replayer, optimizer trace and extract task files go through the same storages as BR and IMPORT INTO. `tidb-planner-extstore` (3,566 lines) does not depend on `tidb-objstore`: it defines its own `Storage` trait and its own S3, GCS, Azure Blob, OSS, HDFS and noop storages over `opendal` / `reqsign`, beside `tidb-objstore`'s `storeapi::Storage` and its S3 / GCS / Azure / HDFS / local / memory storages. A fix to one storage (credentials, retries, URL options, redaction) does not reach the other.",
-      "rust_evidence": "`rust/crates/tidb-planner-extstore/src/{storage,cloud,gcs,azblob,oss,hdfs,noop,object_storage,s3_transport}.rs`, `rust/crates/tidb-planner-extstore/Cargo.toml`, `rust/crates/tidb-objstore/src/storeapi.rs`",
-      "go_owner": "`pkg/planner/extstore/extstore.go` (`NewExtStorage` over `objstore.New`), `pkg/objstore`"
     },
     {
       "id": "X09",
@@ -200,7 +192,7 @@
       "go_owner": "`pkg/util/misc.go` (`InternalHTTPClient`, `initInternalClient`), `pkg/executor/memtable_reader.go` (`fetchClusterConfig`)"
     }
   ],
-  "unresolved": 24,
-  "open": 23,
+  "unresolved": 23,
+  "open": 22,
   "partial": 1
 }

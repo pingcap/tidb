@@ -1,14 +1,31 @@
-// Copyright 2026 PingCAP, Inc. Licensed under Apache-2.0.
-//! Go `s3store.NewKS3Storage`'s SDK V2 signer and S3 object upload options.
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! What Go's S3 SDK clients put on a request that `opendal` does not: the
+//! canned ACL of `s3Client.PutObject` / `CreateMultipartUpload`
+//! (`options.Acl`), and `s3store.NewKS3Storage`'s KS3 SDK V2 signature in
+//! place of SigV4.
 use base64::Engine;
 use hmac::Mac;
 use http::{HeaderMap, Request, Response};
 use opendal::raw::{HttpBody, HttpClient, HttpFetch};
 use std::sync::Arc;
 
-pub(super) struct Transport {
+pub(crate) struct Transport {
     pub client: reqwest12::Client,
-    pub credentials: Arc<dyn reqsign::AwsCredentialLoad>,
+    /// `None` sends the request anonymously (Go `NoCredentials`).
+    pub credentials: Option<Arc<dyn reqsign::AwsCredentialLoad>>,
     pub region: String,
     pub bucket: String,
     pub path_style: bool,
@@ -38,8 +55,10 @@ impl HttpFetch for Transport {
             req.headers_mut()
                 .insert("x-amz-acl", self.acl.parse().map_err(|_| error())?);
         }
-        let cred = self
-            .credentials
+        let Some(credentials) = &self.credentials else {
+            return HttpClient::with(self.client.clone()).fetch(req).await;
+        };
+        let cred = credentials
             .load_credential(self.client.clone())
             .await
             .map_err(|_| error())?
@@ -69,7 +88,7 @@ impl HttpFetch for Transport {
     }
 }
 /// Go KS3 SDK `v2.signer.build`: canonical headers/resource and HMAC-SHA1.
-pub(super) fn sign_v2(
+pub(crate) fn sign_v2(
     method: &str,
     url: &url::Url,
     headers: &mut HeaderMap,

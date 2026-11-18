@@ -23,9 +23,26 @@ use crate::error::{Error, Result};
 /// Go `storage.ScopeReadWrite`, the scope `opendal`'s GCS service asks for.
 const GCS_SCOPE: &str = "https://www.googleapis.com/auth/devstorage.read_write";
 
-/// One token loader handed to `opendal` and to [`GcsClient`], so both send
-/// the same, once-fetched, token.
-pub(crate) struct SharedTokenLoader(pub Arc<reqsign::GoogleTokenLoader>);
+/// Where a GCS storage's tokens come from: a service account or external
+/// account (`reqsign`'s loader), or an `authorized_user` refresh token, which
+/// Go's `google.CredentialsFromJSON` also accepts and `reqsign` does not.
+pub(crate) enum GcsToken {
+    Reqsign(reqsign::GoogleTokenLoader),
+    AuthorizedUser(AuthorizedUser, reqwest12::Client),
+}
+
+impl GcsToken {
+    pub(crate) async fn load(&self) -> anyhow::Result<Option<reqsign::GoogleToken>> {
+        match self {
+            Self::Reqsign(loader) => loader.load().await,
+            Self::AuthorizedUser(user, http) => reqsign::GoogleTokenLoad::load(user, http.clone()).await,
+        }
+    }
+}
+
+/// One token source handed to `opendal` and to [`GcsClient`], so both send
+/// the same tokens.
+pub(crate) struct SharedTokenLoader(pub Arc<GcsToken>);
 
 impl std::fmt::Debug for SharedTokenLoader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -40,34 +57,122 @@ impl reqsign::GoogleTokenLoad for SharedTokenLoader {
     }
 }
 
-/// The token loader `opendal`'s GCS builder assembles from the storage's
-/// credentials blob; `None` is anonymous (Go `option.WithoutAuthentication`).
+/// An `authorized_user` credentials file (`gcloud auth application-default
+/// login`): an OAuth2 refresh token exchanged at `token_uri`.
+#[derive(serde::Deserialize)]
+pub(crate) struct AuthorizedUser {
+    client_id: String,
+    client_secret: String,
+    refresh_token: String,
+    #[serde(default)]
+    token_uri: String,
+}
+
+impl std::fmt::Debug for AuthorizedUser {
+    /// Credentials never reach debug output.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AuthorizedUser { credentials: [REDACTED] }")
+    }
+}
+
+#[async_trait::async_trait]
+impl reqsign::GoogleTokenLoad for AuthorizedUser {
+    /// Go `google.credentialsFile.tokenSource` for `authorized_user`: the
+    /// OAuth2 refresh-token grant.
+    async fn load(&self, client: reqwest12::Client) -> anyhow::Result<Option<reqsign::GoogleToken>> {
+        let endpoint = if self.token_uri.is_empty() { "https://oauth2.googleapis.com/token" } else { &self.token_uri };
+        let response = client
+            .post(endpoint)
+            .form(&[
+                ("grant_type", "refresh_token"),
+                ("client_id", &self.client_id),
+                ("client_secret", &self.client_secret),
+                ("refresh_token", &self.refresh_token),
+            ])
+            .send()
+            .await
+            .map_err(|_| anyhow::anyhow!("GCS credential refresh failed"))?;
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!("GCS credential refresh: HTTP {}", response.status().as_u16()));
+        }
+        #[derive(serde::Deserialize)]
+        struct Token {
+            access_token: String,
+            expires_in: usize,
+        }
+        let bytes = response.bytes().await.map_err(|_| anyhow::anyhow!("invalid GCS credential response"))?;
+        let token: Token =
+            serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("invalid GCS credential response"))?;
+        Ok(Some(reqsign::GoogleToken::new(&token.access_token, token.expires_in, GCS_SCOPE)))
+    }
+}
+
+/// The token source of a storage's credentials blob (Go
+/// `option.WithCredentialsJSON`), else of the environment's and the
+/// well-known location's credentials, else of the VM metadata; `None` is
+/// anonymous (Go `option.WithoutAuthentication`).
 pub(crate) fn token_loader(
     credentials_blob: &str,
     no_credentials: bool,
     http: &reqwest12::Client,
-) -> Result<Option<Arc<reqsign::GoogleTokenLoader>>> {
+) -> Result<Option<Arc<GcsToken>>> {
     if no_credentials && credentials_blob.is_empty() {
         return Ok(None);
     }
-    // `opendal`'s GCS builder: the blob, else the environment's and the
-    // well-known location's credentials, else the VM metadata.
+    if !credentials_blob.is_empty() {
+        let value: serde_json::Value =
+            serde_json::from_str(credentials_blob).map_err(|_| Error::other("invalid GCS credentials JSON"))?;
+        if value["type"] == "authorized_user" {
+            let user: AuthorizedUser = serde_json::from_value(value)
+                .map_err(|_| Error::other("invalid GCS authorized_user credentials"))?;
+            return Ok(Some(Arc::new(GcsToken::AuthorizedUser(user, http.clone()))));
+        }
+    }
     let mut credentials = reqsign::GoogleCredentialLoader::default();
     if !credentials_blob.is_empty() {
         use base64::Engine as _;
         credentials = credentials.with_content(&base64::engine::general_purpose::STANDARD.encode(credentials_blob));
     }
     let mut loader = reqsign::GoogleTokenLoader::new(GCS_SCOPE, http.clone());
-    if let Ok(Some(credential)) = credentials.load() {
-        loader = loader.with_credentials(credential);
+    match credentials.load() {
+        Ok(Some(credential)) => loader = loader.with_credentials(credential),
+        // Go `google.FindDefaultCredentials`: without an explicit, an
+        // environment or a well-known credentials file, only Compute
+        // Engine's metadata server remains.
+        _ if credentials_blob.is_empty() && !on_gce(http) => {
+            return Err(crate::berrors::annotate(
+                crate::berrors::ERR_STORAGE_INVALID_CONFIG,
+                "google: could not find default credentials. See https://cloud.google.com/docs/authentication/external/set-up-adc for more information Or you should provide '--gcs.credentials-file'",
+            ));
+        }
+        _ => {}
     }
-    Ok(Some(Arc::new(loader)))
+    Ok(Some(Arc::new(GcsToken::Reqsign(loader))))
 }
 
-/// Go `GCSStorage`'s client: what its `CopyFrom` sends.
+/// Go `metadata.OnGCE`, bounded: the metadata server (`GCE_METADATA_HOST`,
+/// else `169.254.169.254`) answers with `Metadata-Flavor: Google`.
+fn on_gce(http: &reqwest12::Client) -> bool {
+    let endpoint = std::env::var("GCE_METADATA_HOST")
+        .map(|host| format!("http://{host}/"))
+        .unwrap_or_else(|_| "http://169.254.169.254/".to_owned());
+    // reqwest arms the timeout when the request is sent, which needs the
+    // runtime's timer.
+    let probe = async {
+        http.get(endpoint)
+            .header("Metadata-Flavor", "Google")
+            .timeout(std::time::Duration::from_millis(500))
+            .send()
+            .await
+    };
+    crate::cloud::RUNTIME.block_on(probe).is_ok_and(|response| {
+        response.headers().get("Metadata-Flavor").is_some_and(|value| value == "Google")
+    })
+}
+
 pub(crate) struct GcsClient {
     pub http: reqwest12::Client,
-    pub token: Option<Arc<reqsign::GoogleTokenLoader>>,
+    pub token: Option<Arc<GcsToken>>,
     /// The JSON API's base, `opendal`'s endpoint.
     pub endpoint: String,
 }

@@ -15,3 +15,5 @@ getrandom.workspace = true
 base64.workspace = true
 flate2.workspace = true
 crc32fast.workspace = true
+tidb-objstore = { path = "../tidb-objstore" }
+tidb-gocontext = { path = "../tidb-gocontext" }

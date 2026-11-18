@@ -34,9 +34,53 @@ pub(crate) struct AzureClient {
     /// Go `resolvedServiceEndpoint`.
     pub endpoint: String,
     pub container: String,
-    /// The `AzureStorageLoader` configuration `opendal` builds its credential
-    /// from: the account and its shared key or SAS token.
-    pub credential: reqsign::AzureStorageConfig,
+    /// The storage's credential (`None` without credentials), shared with
+    /// its [`Transport`].
+    pub credentials: Option<std::sync::Arc<tidb_azure_sdk::Credentials>>,
+}
+
+/// Go `AzureBlobStorage`'s upload options and its pipeline's authorization,
+/// at `opendal`'s HTTP boundary: an upload carries the access tier
+/// (`PutBlob` / `CommitBlockList`'s `Tier`) and the encryption scope
+/// (`CPKScopeInfo`); every request is signed with the storage's shared key
+/// or bearer token, or carries its SAS.
+pub(crate) struct Transport {
+    pub client: reqwest12::Client,
+    pub credentials: Option<std::sync::Arc<tidb_azure_sdk::Credentials>>,
+    pub tier: String,
+    pub scope: String,
+}
+
+impl opendal::raw::HttpFetch for Transport {
+    async fn fetch(
+        &self,
+        mut req: http::Request<opendal::Buffer>,
+    ) -> opendal::Result<http::Response<opendal::raw::HttpBody>> {
+        let error = || opendal::Error::new(opendal::ErrorKind::Unexpected, "Azure request signing failed");
+        let upload = req.method() == http::Method::PUT
+            && !req.uri().query().is_some_and(|q| q.split('&').any(|p| p == "comp=block"));
+        if upload && !self.tier.is_empty() {
+            req.headers_mut().insert("x-ms-access-tier", self.tier.parse().map_err(|_| error())?);
+        }
+        if upload && !self.scope.is_empty() {
+            req.headers_mut().insert("x-ms-encryption-scope", self.scope.parse().map_err(|_| error())?);
+        }
+        let Some(credentials) = &self.credentials else {
+            return opendal::raw::HttpClient::with(self.client.clone()).fetch(req).await;
+        };
+        if credentials.is_bearer() && req.uri().scheme_str() != Some("https") {
+            return Err(opendal::Error::new(opendal::ErrorKind::ConfigInvalid, "Azure bearer credentials require HTTPS"));
+        }
+        let cred = credentials.load().await.map_err(|_| error())?;
+        req.headers_mut().remove(http::header::AUTHORIZATION);
+        // Go's SAS client: the token is the request URL's query.
+        reqsign::AzureStorageSigner::new().sign(&mut req, &cred).map_err(|_| error())?;
+        let response = opendal::raw::HttpClient::with(self.client.clone()).fetch(req).await?;
+        if response.status() == http::StatusCode::UNAUTHORIZED {
+            credentials.expire();
+        }
+        Ok(response)
+    }
 }
 
 /// Go `urlOfObjectByEndpoint`: `path.Join(endpoint's path, container,
@@ -63,11 +107,8 @@ impl AzureClient {
         let headers = req.headers_mut();
         headers.insert("x-ms-version", http::HeaderValue::from_static(API_VERSION));
         headers.insert("x-ms-date", now.parse().map_err(|_| Error::other("invalid Azure request date"))?);
-        let credential = reqsign::AzureStorageLoader::new(self.credential.clone())
-            .load()
-            .await
-            .map_err(|_| Error::other("cannot load the Azure credential"))?;
-        if let Some(credential) = credential {
+        if let Some(credentials) = &self.credentials {
+            let credential = credentials.load().await.map_err(|_| Error::other("cannot load the Azure credential"))?;
             reqsign::AzureStorageSigner::new()
                 .sign(&mut req, &credential)
                 .map_err(|_| Error::other("cannot sign the Azure request"))?;

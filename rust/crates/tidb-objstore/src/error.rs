@@ -103,6 +103,9 @@ pub mod berrors {
     /// Go `ErrStorageInvalidConfig`.
     pub const ERR_STORAGE_INVALID_CONFIG: &str =
         "[BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config";
+    /// Go `ErrStorageInvalidPermission`.
+    pub const ERR_STORAGE_INVALID_PERMISSION: &str =
+        "[BR:ExternalStorage:ErrStorageInvalidPermission]external storage permission";
     /// Go `ErrStorageUnknown`.
     pub const ERR_STORAGE_UNKNOWN: &str =
         "[BR:ExternalStorage:ErrStorageUnknown]unknown external storage error";

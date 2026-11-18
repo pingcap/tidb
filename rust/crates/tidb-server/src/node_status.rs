@@ -1015,7 +1015,7 @@ mod tests {
     fn extract_task_dump_answers_like_go() {
         let base = std::env::temp_dir().join(format!("extract-route-{}", std::process::id()));
         tidb_planner_extstore::set_global_ext_storage_for_test(Some(Arc::new(
-            tidb_planner_extstore::LocalStorage::new(&base).unwrap(),
+            tidb_objstore::LocalStorage::new(&base.to_string_lossy()).unwrap(),
         )));
         let stack = stack();
         tidb_session::domain::cluster_session_node::setup_extract_handle(&stack.factory);

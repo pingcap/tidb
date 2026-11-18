@@ -18,6 +18,8 @@ mod local;
 pub mod locking;
 mod memstore;
 mod noop;
+mod ossstore;
+mod s3_transport;
 mod azclient;
 mod gcsclient;
 mod s3client;
@@ -33,7 +35,7 @@ pub use hdfs::HdfsStorage;
 pub use local::{LocalStorage, LOCAL_URI_PREFIX, TOMBSTONE_SIZE};
 pub use memstore::MemStorage;
 pub use noop::{NoopStorage, NoopWriter};
-pub use storage::{create, new, new_from_url, new_with_default_opt, read_data_in_range};
+pub use storage::{create, new, new_from_url, new_with_default_opt, read_data_in_range, validate_cloud_storage_uri};
 
 pub use options::{AzblobBackendOptions, GCSBackendOptions, QueryParameters};
 

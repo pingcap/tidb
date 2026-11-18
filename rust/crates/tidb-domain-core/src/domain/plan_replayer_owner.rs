@@ -118,18 +118,29 @@ impl tidb_sqlexec::RestrictedSqlExecutor for PooledSql {
 struct GcStorage;
 
 impl GcStorage {
-    fn storage() -> Result<Arc<dyn tidb_planner_extstore::Storage>, PlanReplayerError> {
+    fn storage() -> Result<tidb_planner_extstore::ExtStorage, PlanReplayerError> {
         tidb_planner_extstore::get_global_ext_storage().map_err(PlanReplayerError::Other)
     }
 }
 
 impl DumpFileStorage for GcStorage {
     fn walk_dir(&self, sub_dir: &str) -> Result<Vec<String>, PlanReplayerError> {
-        Self::storage()?.walk_dir(sub_dir).map_err(|error| PlanReplayerError::Other(error.to_string()))
+        // Go `gcDumpFilesByPath`: `WalkDir` with `SubDir`, every file name.
+        let mut names = Vec::new();
+        let option = tidb_objstore::storeapi::WalkOption { sub_dir: sub_dir.to_owned(), ..Default::default() };
+        Self::storage()?
+            .walk_dir(&tidb_gocontext::Context::background(), Some(&option), &mut |name, _| {
+                names.push(name.to_owned());
+                Ok(())
+            })
+            .map_err(|error| PlanReplayerError::Other(error.to_string()))?;
+        Ok(names)
     }
 
     fn delete_file(&self, file_name: &str) -> Result<(), PlanReplayerError> {
-        Self::storage()?.delete_file(file_name).map_err(PlanReplayerError::Other)
+        Self::storage()?
+            .delete_file(&tidb_gocontext::Context::background(), file_name)
+            .map_err(|error| PlanReplayerError::Other(error.to_string()))
     }
 }
 

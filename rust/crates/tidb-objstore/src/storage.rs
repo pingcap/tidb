@@ -39,6 +39,11 @@ pub fn new(ctx: &Context, backend: &StorageBackend, opts: Option<&Options>) -> R
     match &backend.backend {
         Some(Backend::Local(local)) => Ok(Arc::new(crate::local::LocalStorage::new(&local.path)?)),
         Some(Backend::Hdfs(hdfs)) => Ok(Arc::new(crate::hdfs::HdfsStorage::new(&hdfs.remote))),
+        // Go: the KS3 SDK provider is `s3store.NewKS3Storage` (inside
+        // `new_s3_storage`), the OSS provider `ossstore.NewOSSStorage`.
+        Some(Backend::S3(s3)) if s3.provider == tidb_objstore_s3like::OSS_PROVIDER => {
+            Ok(Arc::new(crate::ossstore::new_oss_storage(ctx, s3, opts)?))
+        }
         Some(Backend::S3(s3)) => Ok(Arc::new(crate::cloud::new_s3_storage(ctx, s3, opts)?)),
         Some(Backend::Noop(_)) => Ok(Arc::new(crate::noop::NoopStorage)),
         Some(Backend::Gcs(gcs)) => Ok(Arc::new(crate::cloud::new_gcs_storage(ctx, gcs, opts)?)),
@@ -82,4 +87,25 @@ pub fn read_data_in_range(ctx: &Context, storage: &dyn Storage, name: &str, star
         return Err(crate::Error::other(if n == 0 { "EOF" } else { "unexpected EOF" }));
     }
     Ok(n)
+}
+
+/// Go `ValidateCloudStorageURI` (`helper.go`), which validates
+/// `tidb_cloud_storage_uri`: the storage opens and may list, read and reach
+/// its bucket.
+pub fn validate_cloud_storage_uri(ctx: &Context, uri: &str) -> Result<()> {
+    let backend = crate::parse_backend(uri, None).map_err(crate::Error::other)?;
+    let storage = new(
+        ctx,
+        &backend,
+        Some(&Options {
+            check_permissions: vec![
+                crate::storeapi::Permission::ListObjects,
+                crate::storeapi::Permission::GetObject,
+                crate::storeapi::Permission::AccessBuckets,
+            ],
+            ..Options::default()
+        }),
+    )?;
+    storage.close();
+    Ok(())
 }
