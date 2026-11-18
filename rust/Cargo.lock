@@ -8215,6 +8215,21 @@ name = "tidb-mvmap"
 version = "0.0.0"
 
 [[package]]
+name = "tidb-mvservice"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "crossbeam-channel",
+ "tidb-cpu",
+ "tidb-gocontext",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-memory",
+ "tidb-murmur3",
+ "tidb-timer",
+]
+
+[[package]]
 name = "tidb-mysql"
 version = "0.0.0"
 dependencies = [
