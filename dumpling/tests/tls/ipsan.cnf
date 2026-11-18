@@ -2,6 +2,11 @@
 CN = 127.0.0.1
 [req]
 distinguished_name = dn
+[CA]
+# Newer OpenSSL versions issue v3 certificates, which require an explicit CA flag.
+basicConstraints = critical,CA:TRUE
+keyUsage = critical,keyCertSign,cRLSign
+subjectKeyIdentifier = hash
 [EXT]
 subjectAltName = @alt_names
 keyUsage = digitalSignature,keyEncipherment
