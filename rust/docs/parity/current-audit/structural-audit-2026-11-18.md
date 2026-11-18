@@ -57,8 +57,6 @@ mysql -h127.0.0.1 -P<port> -uroot -vvv --force --table < probes.sql
 | E33 | `SHOW DISTRIBUTION JOBS` | 1105 `get leader failed, pd http cli is nil` (no PD) | 1105 `... (ADMIN Show) ...` |
 | E33 | `CANCEL DISTRIBUTION JOB 1` | 1105 `get leader failed, balance-range-scheduler` | 1105 `... (ADMIN CancelDistributionJob) ...` |
 | E33 | `CREATE STATISTICS s1 (correlation) ON t3(a, b)`, `DROP STATISTICS s1`, `GRANT PROXY ...` | 8108 `Unsupported type *ast.CreateStatisticsStmt` (and so on) | 1105 `... is not supported yet` |
-| E34 | `ANALYZE TABLE t UPDATE HISTOGRAM ON b WITH 2 BUCKETS`, `... DROP HISTOGRAM ON b` | OK, sample-rate note | 1105 `this node does not run UPDATE/DROP HISTOGRAM ON` |
-| E34 | `ANALYZE TABLE t WITH 0.5 NDVRATE` | 1105 `Value of analyze option NDVRATE should be positive and not larger than 0` | 1105 `NDVRATE is not a knob this node reads` |
 | E35 | `EXPLAIN 'abcdef'` | 1105 `can't find any plans for 'abcdef'` | 1105 `EXPLAIN of a plan digest is not supported yet` |
 | E35 | `EXPLAIN FORMAT = 'cost_trace' SELECT * FROM t WHERE a = 1` | `costFormula` `N/A` | `costFormula` empty |
 | E36 | `SHOW SESSION BINDINGS` | `2026-11-18 13:43:06.564` | `2026-11-18 13:43:06.590000` |

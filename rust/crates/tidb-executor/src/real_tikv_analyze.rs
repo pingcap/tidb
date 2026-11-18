@@ -448,6 +448,15 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
         .finish_without_writes()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
 
+    // Go `getAnalyzeColumnList`.
+    for name in &statement.column_names {
+        if !table.cols().iter_deref().any(|column| column.read().name.lowercase() == name.go_to_lower()) {
+            return Err(ClusterAnalyzeError::from(
+                tidb_plannererrors::ERR_ANALYZE_MISS_COLUMN
+                    .gen_with_stack_by_args(&[name.as_str().into(), table.name.original().into()]),
+            ));
+        }
+    }
     let index_tasks = select_index_tasks(&table, statement)?;
 
     let mut resolution = resolve_analyze_options(
@@ -2569,6 +2578,7 @@ fn selected_columns_for_choice(
         partitions: Vec::new(),
         index_names: None,
         columns: choice.clone(),
+        column_names: Vec::new(),
         raw_options: Default::default(),
         persist_options: false,
         default_columns: AnalyzeColumnChoice::All,
@@ -3055,6 +3065,7 @@ mod tests {
             partitions: Vec::new(),
             index_names: None,
             columns: AnalyzeColumnChoice::All,
+            column_names: Vec::new(),
             raw_options: Default::default(),
             persist_options: true,
             default_columns: AnalyzeColumnChoice::All,

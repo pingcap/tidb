@@ -263,6 +263,10 @@ pub struct AnalyzeStatement {
     pub index_names: Option<Vec<String>>,
     /// Which columns the pinned planner selects before execution.
     pub columns: AnalyzeColumnChoice,
+    /// Go `AnalyzeTableStmt.ColumnNames`: the columns the statement names
+    /// (`COLUMNS ...` or `UPDATE|DROP HISTOGRAM ON ...`), each of which
+    /// `getAnalyzeColumnList` requires the table to have.
+    pub column_names: Vec<String>,
     /// Options explicitly named by this statement, before saved-option merge.
     pub raw_options: AnalyzeOptionOverrides,
     /// Live global gate for reading and saving `mysql.analyze_options`.
@@ -482,11 +486,15 @@ pub fn lower_analyze_admin(
         tidb_ast::AnalyzeTarget::Columns(names) => {
             (AnalyzeColumnChoice::Explicit(names.clone()), None)
         }
-        tidb_ast::AnalyzeTarget::Histogram { .. } => {
-            return Err(AnalyzeError::Unsupported(
-                "this node does not run UPDATE/DROP HISTOGRAM ON".to_owned(),
-            ));
+        // Go `buildAnalyze` never reads `HistogramOperation`: the statement
+        // keeps the default column choice and only its names are checked.
+        tidb_ast::AnalyzeTarget::Histogram { .. } => (AnalyzeColumnChoice::Default, None),
+    };
+    let column_names = match &analyze.target {
+        tidb_ast::AnalyzeTarget::Columns(names) | tidb_ast::AnalyzeTarget::Histogram { columns: names, .. } => {
+            names.clone()
         }
+        _ => Vec::new(),
     };
 
     let mut raw_options = AnalyzeOptionOverrides::default();
@@ -569,9 +577,12 @@ pub fn lower_analyze_admin(
                     )));
                 }
             }
+            // Go `handleAnalyzeOptions`' default arm: NDVRATE has no
+            // `analyzeOptionLimit` entry, so its limit is 0 and every value
+            // is refused.
             tidb_ast::AnalyzeOptionKind::NdvRate => {
                 return Err(AnalyzeError::Unsupported(
-                    "NDVRATE is not a knob this node reads".to_owned(),
+                    "Value of analyze option NDVRATE should be positive and not larger than 0".to_owned(),
                 ));
             }
         }
@@ -607,6 +618,7 @@ pub fn lower_analyze_admin(
             partitions: analyze.partitions.clone(),
             index_names: index_names.clone(),
             columns: columns.clone(),
+            column_names: column_names.clone(),
             raw_options,
             persist_options: true,
             default_columns: AnalyzeColumnChoice::All,

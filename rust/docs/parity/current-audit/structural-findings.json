@@ -2,8 +2,8 @@
   "date": "2026-11-18",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 21,
-    "open": 20,
+    "unresolved": 20,
+    "open": 19,
     "partial": 1
   },
   "findings": [
@@ -120,14 +120,6 @@
       "go_owner": "`pkg/executor/builder.go` (`build`), `pkg/executor/simple.go`, `pkg/executor/set_config.go`, `pkg/executor/distribute.go`, `pkg/executor/simple.go` (`executeAlterRange`, REFRESH STATS)"
     },
     {
-      "id": "E34",
-      "status": "open",
-      "group": "Executor, DML and expressions",
-      "finding": "`ANALYZE TABLE t UPDATE HISTOGRAM ON c ...` and `DROP HISTOGRAM ON c` are refused (`this node does not run UPDATE/DROP HISTOGRAM ON`). This branch's Go parses them and `buildAnalyze` ignores `HistogramOperation`, so they run as an ordinary ANALYZE of the table with its sample-rate note. `ANALYZE ... WITH 0.5 NDVRATE` answers `NDVRATE is not a knob this node reads`, where Go's `handleAnalyzeOptions` answers `Value of analyze option NDVRATE should be positive and not larger than 0`. [2026-11-18 probes](structural-audit-2026-11-18.md)",
-      "rust_evidence": "`rust/crates/tidb-executor/src/analyze.rs` (target and option resolution)",
-      "go_owner": "`pkg/planner/core/planbuilder.go` (`buildAnalyze`, `handleAnalyzeOptions`, `analyzeOptionLimit`)"
-    },
-    {
       "id": "E35",
       "status": "open",
       "group": "Executor, DML and expressions",
@@ -176,7 +168,7 @@
       "go_owner": "`pkg/executor/show_stats.go` (`fetchShowStatsHistogram`, `appendTableForStatsHistograms`), `pkg/statistics/handle/cache` (`GetPhysicalTableStats`)"
     }
   ],
-  "unresolved": 21,
-  "open": 20,
+  "unresolved": 20,
+  "open": 19,
   "partial": 1
 }
