@@ -3570,6 +3570,8 @@ func upgradeToVer233(s sessiontypes.Session, ver int64) {
 		ADD UNIQUE INDEX unique_registration_params_v2 (
 			filter_hash, route_hash, start_ts, restored_ts, upstream_cluster_id, with_sys_table, cmd(256))`, dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry DROP INDEX unique_registration_params", dbterror.ErrCantDropFieldOrKey)
+
+	initGlobalVariableIfNotExists(s, variable.TiDBEnableAdaptiveLimitScan, variable.Off)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

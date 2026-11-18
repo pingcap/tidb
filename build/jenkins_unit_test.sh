@@ -20,7 +20,7 @@
 
 set -o pipefail
 
-make bazel_coverage_test
+make bazel_ci_test
 EXIT_STATUS=$?
 # collect the junit and coverage report
 bazel_collect

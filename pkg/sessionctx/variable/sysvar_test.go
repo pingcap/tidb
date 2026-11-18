@@ -1619,6 +1619,11 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 			Off,
 		},
 		{
+			TiDBEnableAdaptiveLimitScan,
+			BoolToOnOff(DefTiDBEnableAdaptiveLimitScan),
+			On,
+		},
+		{
 			TiDBRowFormatVersion,
 			strconv.Itoa(DefTiDBRowFormatV1),
 			strconv.Itoa(DefTiDBRowFormatV2),

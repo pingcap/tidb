@@ -1736,6 +1736,9 @@ type PhysicalIndexJoin struct {
 	// FromDecorrelatedApply is true only when this IndexJoin keeps the original
 	// Apply outer/inner order after decorrelation.
 	FromDecorrelatedApply bool
+	// OuterOrderRequired records the outer child's ordering requirement when
+	// the plan is built. Cloning can omit nil child requirements.
+	OuterOrderRequired bool
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -1760,6 +1763,7 @@ func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
 	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
 	cloned.FromDecorrelatedApply = p.FromDecorrelatedApply
+	cloned.OuterOrderRequired = p.OuterOrderRequired
 	return cloned, nil
 }
 
