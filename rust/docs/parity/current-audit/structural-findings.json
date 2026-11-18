@@ -3,16 +3,16 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 15,
-    "open": 14,
-    "partial": 1
+    "open": 13,
+    "partial": 2
   },
   "findings": [
     {
       "id": "X05",
-      "status": "open",
+      "status": "partial",
       "group": "Structure: Go's shape before more ports",
-      "finding": "Go's `pkg/sessiontxn` has no Rust package. Go routes every transaction decision through one `TxnContextProvider` per transaction (`isolation.OptimisticTxnContextProvider`, `PessimisticRRTxnContextProvider`, `PessimisticRCTxnContextProvider`, `PessimisticSerializableTxnContextProvider`, `staleread.StalenessTxnContextProvider`), chosen by `EnterNewTxn` and driven by `OnStmtStart` / `OnStmtErrorForNextAction` / `OnStmtRetry` / `AdviseWarmup` / `AdviseOptimizeWithPlan` / `GetStmtReadTS` / `GetStmtForUpdateTS`. The port has no provider type: the same decisions are made in place in `tidb-session` (`txn_manager.rs`, `txn.rs`'s staleness arm, `dispatch.rs`'s RC check-ts and after-query-error arms), `tidb-sessionctx` (`PessimisticTxnProvider`, a two-variant enum the planner reads), `tidb-store-driver-txn` (`cluster_table_storage.rs`'s `OnPessimisticStmtStart` and RC `getStmtTS`) and `tidb-domain-core` (`cluster_transactions.rs`'s `ActivateTxn` wait and `OnStmtRetry`). Each new isolation rule has to be found and repeated at every site, where Go adds one provider method.",
-      "rust_evidence": "`rust/crates/tidb-session/src/txn_manager.rs`, `txn.rs`, `dispatch.rs`; `rust/crates/tidb-sessionctx/src/stmt_context.rs` (`PessimisticTxnProvider`); `rust/crates/tidb-store-driver-txn/src/cluster_table_storage.rs`; `rust/crates/tidb-domain-core/src/cluster_transactions.rs`",
+      "finding": "`pkg/sessiontxn` is ported as `tidb-sessiontxn` (2026-11-19): `TxnManager` holds one provider per transaction (`Optimistic`, `PessimisticRR`, `PessimisticRC`, `PessimisticSerializable`, `StalenessTxnContextProvider`, chosen as `newProviderWithRequest`), which owns the transaction and answers each statement's snapshot, `OnStmtStart` (RCCheckTS), `OnStmtRetry` (the for-update timestamp) and `OnStmtErrorForNextAction` (pessimistic lock errors, the after-query retry). Remaining decisions still made outside a provider: `AdviseOptimizeWithPlan` -- `tidb-session` `dispatch.rs` `pessimistic_txn_provider` recomputes a two-variant `tidb-sessionctx::PessimisticTxnProvider` from session state (it calls SERIALIZABLE repeatable read) and `tidb-executor` `isolation_advise.rs` holds Go's `notNeedGetLatestTSFromPD` / `planSkipGetTsoFromPD`, while the optimistic max-ts point get is `open_read_snapshot`'s `AutocommitPointGet` arm; `OnInitialize` / `EnterNewTxn` (`TxnManager::open` / `enter_pending` / `enter_implicit_*` enter directly, and `decide_txn_mode` runs beside them); `OnPessimisticStmtStart` / `End` (fair locking armed in `cluster_table_storage.rs`); and an autocommit pessimistic statement's lock retry rolls its implicit transaction back and enters a new one, where Go's `OnStmtRetry` keeps the transaction and advances its for-update timestamp.",
+      "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs` (`pessimistic_txn_provider`), `txn_manager.rs`, `statement_lifecycle.rs` (`open_read_snapshot`, the autocommit `PessimisticStep::Retry` arm); `rust/crates/tidb-sessionctx/src/stmt_context.rs` (`PessimisticTxnProvider`); `rust/crates/tidb-executor/src/isolation_advise.rs`; `rust/crates/tidb-store-driver-txn/src/cluster_table_storage.rs` (fair locking)",
       "go_owner": "`pkg/sessiontxn` (`interface.go`, `txn_manager.go`), `pkg/sessiontxn/isolation`, `pkg/sessiontxn/staleread`, `pkg/sessiontxn/internal`, `pkg/session/txnmanager.go`"
     },
     {
@@ -129,6 +129,6 @@
     }
   ],
   "unresolved": 15,
-  "open": 14,
-  "partial": 1
+  "open": 13,
+  "partial": 2
 }
