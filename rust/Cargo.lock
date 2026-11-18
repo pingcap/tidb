@@ -9896,6 +9896,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-sessiontxn"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-domain-core",
+ "tidb-kv",
+ "tidb-store-driver-error",
+]
+
+[[package]]
 name = "tidb-sessmgr"
 version = "0.0.0"
 dependencies = [

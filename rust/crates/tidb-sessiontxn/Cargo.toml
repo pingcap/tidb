@@ -1,0 +1,17 @@
+[package]
+name = "tidb-sessiontxn"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/sessiontxn: the transaction context providers a session's statements take their timestamps, snapshots and retry decisions from."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-domain-core = { path = "../tidb-domain-core" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-store-driver-error = { path = "../tidb-store-driver-error" }

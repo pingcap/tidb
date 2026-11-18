@@ -164,6 +164,7 @@ members = [
     "crates/tidb-lightning-mydump",
     "crates/tidb-murmur3",
     "crates/tidb-mvservice",
+    "crates/tidb-sessiontxn",
     "crates/tidb-mviewutil",
     "crates/tidb-mysql",
     "crates/tidb-metadef",

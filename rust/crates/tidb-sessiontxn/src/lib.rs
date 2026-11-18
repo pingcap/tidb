@@ -1,0 +1,237 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Go `pkg/sessiontxn` (`interface.go`): how a session enters a
+//! transaction, and the provider every statement of that transaction asks
+//! for its read / for-update timestamps, its snapshots and what to do after
+//! an error.
+//!
+//! Go's `kv.Transaction` is [`OpenClusterTransaction`] (the session's one
+//! `LazyTxn`, X12), `kv.Snapshot` is [`ClusterSnapshot`], and an error is
+//! [`SqlQueryError`].
+
+use tidb_domain_core::cluster_transactions::OpenClusterTransaction;
+use tidb_kv::cluster_storage::ClusterSnapshot;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
+
+/// Go `EnterNewTxnType`: how a new transaction is entered.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EnterNewTxnType {
+    /// Go `EnterNewTxnDefault`: start a new transaction now, without any
+    /// scenario assumptions.
+    #[default]
+    Default,
+    /// Go `EnterNewTxnWithBeginStmt`: `BEGIN` / `START TRANSACTION`.
+    WithBeginStmt,
+    /// Go `EnterNewTxnBeforeStmt`: before a statement when no transaction is
+    /// present; the transaction is lazy, activated only when needed.
+    BeforeStmt,
+    /// Go `EnterNewTxnWithReplaceProvider`: replace the current provider
+    /// (stale read).
+    WithReplaceProvider,
+}
+
+/// Go `TxnMode` values of `EnterNewTxnRequest` (`ast.Pessimistic`,
+/// `ast.Optimistic`, or empty: decided from the session variables).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TxnMode {
+    /// Empty: `tidb_txn_mode` decides.
+    #[default]
+    FromVars,
+    /// `ast.Optimistic`.
+    Optimistic,
+    /// `ast.Pessimistic`.
+    Pessimistic,
+}
+
+/// Go `EnterNewTxnRequest`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EnterNewTxnRequest {
+    /// Go `Type`.
+    pub tp: EnterNewTxnType,
+    /// Go `TxnMode`.
+    pub txn_mode: TxnMode,
+    /// Go `CausalConsistencyOnly`.
+    pub causal_consistency_only: bool,
+    /// Go `StaleReadTS`: zero for a transaction that is not a stale read.
+    pub stale_read_ts: u64,
+}
+
+/// Go `StmtErrorHandlePoint`: where a statement error is being handled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StmtErrorHandlePoint {
+    /// Go `StmtErrAfterQuery`.
+    AfterQuery,
+    /// Go `StmtErrAfterPessimisticLock`.
+    AfterPessimisticLock,
+}
+
+/// Go `StmtErrorAction`: the next action after a statement error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StmtErrorAction {
+    /// Go `StmtActionError`: return the error, no retry.
+    Error,
+    /// Go `StmtActionRetryReady`: this component caused the error and is
+    /// ready for the retry.
+    RetryReady,
+    /// Go `StmtActionNoIdea`: not this component's error; another one
+    /// decides, else the original error is returned.
+    NoIdea,
+}
+
+/// Go `ErrorAction`: [`StmtErrorAction::Error`] with `error`.
+///
+/// # Errors
+///
+/// Always `error`, as Go's pair `(StmtActionError, err)`.
+pub fn error_action(error: SqlQueryError) -> Result<StmtErrorAction, SqlQueryError> {
+    Err(error)
+}
+
+/// Go `RetryReady`.
+#[must_use]
+pub fn retry_ready() -> Result<StmtErrorAction, SqlQueryError> {
+    Ok(StmtErrorAction::RetryReady)
+}
+
+/// Go `NoIdea`.
+#[must_use]
+pub fn no_idea() -> Result<StmtErrorAction, SqlQueryError> {
+    Ok(StmtErrorAction::NoIdea)
+}
+
+/// Go `TxnAdvisable`: optimizations within a transaction.
+pub trait TxnAdvisable {
+    /// Go `AdviseWarmup`: warm up inner state (fetch the timestamp early).
+    ///
+    /// # Errors
+    ///
+    /// The warm-up failed.
+    fn advise_warmup(&mut self) -> Result<(), SqlQueryError>;
+    /// Go `AdviseOptimizeWithPlan`: optimize the transaction for the plan
+    /// (the point get that reads the latest version without a timestamp).
+    ///
+    /// # Errors
+    ///
+    /// The advice could not be applied.
+    fn advise_optimize_with_plan(&mut self, plan: &dyn std::any::Any) -> Result<(), SqlQueryError>;
+}
+
+/// Go `TxnContextProvider`: one transaction's context.
+pub trait TxnContextProvider: TxnAdvisable {
+    /// Go `GetTxnScope`.
+    fn get_txn_scope(&self) -> String;
+    /// Go `GetReadReplicaScope`.
+    fn get_read_replica_scope(&self) -> String;
+    /// Go `GetStmtReadTS`: the read timestamp of a SELECT (not FOR UPDATE).
+    ///
+    /// # Errors
+    ///
+    /// The timestamp could not be obtained.
+    fn get_stmt_read_ts(&mut self) -> Result<u64, SqlQueryError>;
+    /// Go `GetStmtForUpdateTS`: the timestamp of an INSERT / UPDATE /
+    /// DELETE or a SELECT ... FOR UPDATE.
+    ///
+    /// # Errors
+    ///
+    /// The timestamp could not be obtained.
+    fn get_stmt_for_update_ts(&mut self) -> Result<u64, SqlQueryError>;
+    /// Go `GetSnapshotWithStmtReadTS`.
+    ///
+    /// # Errors
+    ///
+    /// The snapshot could not be opened.
+    fn get_snapshot_with_stmt_read_ts(&mut self) -> Result<Box<dyn ClusterSnapshot>, SqlQueryError>;
+    /// Go `GetSnapshotWithStmtForUpdateTS`.
+    ///
+    /// # Errors
+    ///
+    /// The snapshot could not be opened.
+    fn get_snapshot_with_stmt_for_update_ts(&mut self) -> Result<Box<dyn ClusterSnapshot>, SqlQueryError>;
+    /// Go `OnInitialize`: entering a new transaction with this provider.
+    ///
+    /// # Errors
+    ///
+    /// The transaction could not be entered.
+    fn on_initialize(&mut self, tp: EnterNewTxnType) -> Result<(), SqlQueryError>;
+    /// Go `OnStmtStart`.
+    ///
+    /// # Errors
+    ///
+    /// The statement could not start in this transaction.
+    fn on_stmt_start(&mut self, node: Option<&tidb_ast::Stmt>) -> Result<(), SqlQueryError>;
+    /// Go `OnPessimisticStmtStart`.
+    ///
+    /// # Errors
+    ///
+    /// Fair locking could not start.
+    fn on_pessimistic_stmt_start(&mut self) -> Result<(), SqlQueryError>;
+    /// Go `OnPessimisticStmtEnd`.
+    ///
+    /// # Errors
+    ///
+    /// Fair locking could not end.
+    fn on_pessimistic_stmt_end(&mut self, is_successful: bool) -> Result<(), SqlQueryError>;
+    /// Go `OnStmtErrorForNextAction`.
+    ///
+    /// # Errors
+    ///
+    /// The error is to be returned ([`StmtErrorAction::Error`]).
+    fn on_stmt_error_for_next_action(
+        &mut self,
+        point: StmtErrorHandlePoint,
+        error: SqlQueryError,
+    ) -> Result<StmtErrorAction, SqlQueryError>;
+    /// Go `OnStmtRetry`.
+    ///
+    /// # Errors
+    ///
+    /// The retry could not be prepared.
+    fn on_stmt_retry(&mut self) -> Result<(), SqlQueryError>;
+    /// Go `OnStmtCommit`.
+    ///
+    /// # Errors
+    ///
+    /// The statement's commit hook failed.
+    fn on_stmt_commit(&mut self) -> Result<(), SqlQueryError>;
+    /// Go `OnStmtRollback`.
+    ///
+    /// # Errors
+    ///
+    /// The statement's rollback hook failed.
+    fn on_stmt_rollback(&mut self, is_for_pessimistic_retry: bool) -> Result<(), SqlQueryError>;
+    /// Go `OnLocalTemporaryTableCreated`.
+    fn on_local_temporary_table_created(&mut self);
+    /// Go `ActivateTxn`: the transaction, activated.
+    ///
+    /// # Errors
+    ///
+    /// The transaction could not be activated.
+    fn activate_txn(&mut self) -> Result<&dyn OpenClusterTransaction, SqlQueryError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go `ErrorAction` / `RetryReady` / `NoIdea`.
+    #[test]
+    fn error_action_helpers_answer_as_go() {
+        let error = SqlQueryError::unknown("boom".to_owned());
+        assert_eq!(error_action(error.clone()).unwrap_err().message, error.message);
+        assert_eq!(retry_ready().unwrap(), StmtErrorAction::RetryReady);
+        assert_eq!(no_idea().unwrap(), StmtErrorAction::NoIdea);
+        assert_eq!(EnterNewTxnRequest::default().tp, EnterNewTxnType::Default);
+    }
+}
