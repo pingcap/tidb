@@ -321,8 +321,10 @@ fn drop_table_like<S: MetaSnapshot>(
     identifiers: &[(String, String)],
     (start_ts, upgrading): (u64, bool),
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    // Go `dropTableObject`: only a table object reads `ForeignKeyChecks`.
-    let fk_check = action != ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG && job_context.foreign_key_checks();
+    // Go `dropTableObject`: only a table object reads `ForeignKeyChecks`; a
+    // view, sequence, materialized view, log or shadow table drops with
+    // `FKCheck` false.
+    let fk_check = action == ActionType::ACTION_DROP_TABLE && job_context.foreign_key_checks();
     let mut job = job_for(job_context, action, schema_id, schema);
     job.table_id = table.id;
     job.table_name = table.name.lowercase().to_owned().into();

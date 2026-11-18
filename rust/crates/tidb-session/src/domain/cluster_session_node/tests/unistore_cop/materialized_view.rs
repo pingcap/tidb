@@ -522,3 +522,65 @@ fn refresh_materialized_view_complete_in_place_answers_as_go_master() {
 fn create_materialized_view_log_on_a_view_takes_the_refresh_lock_as_go_master() {
     replay_go_master(include_str!("../../../../../testdata/mview_log_on_mview_lock_go.jsonl"));
 }
+
+/// Go `dropTableObject`: only a table object reads `ForeignKeyChecks` into
+/// its job's `DropTableArgs.FKCheck`; a view, a sequence, a materialized view
+/// and its log drop with it false whatever the session says (Go master and
+/// the branch alike). The submitted args are gone once the job finishes, so
+/// the job is read as it is delivered.
+#[test]
+fn drop_jobs_carry_fk_check_only_for_a_table_as_go() {
+    let (_stack, mut session) = replay_go_master("");
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let _delivered = {
+        let seen = std::sync::Arc::clone(&seen);
+        tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", move |job| {
+            use tidb_model::ActionType as A;
+            let job = job.downcast_mut::<tidb_model::Job>().unwrap();
+            let drop = [
+                A::ACTION_DROP_TABLE,
+                A::ACTION_DROP_VIEW,
+                A::ACTION_DROP_SEQUENCE,
+                A::ACTION_DROP_MATERIALIZED_VIEW,
+                A::ACTION_DROP_MATERIALIZED_VIEW_LOG,
+            ];
+            if !drop.contains(&job.type_) {
+                return;
+            }
+            if let Ok(Some(args)) = tidb_model::get_drop_table_args(&mut job.clone()) {
+                seen.lock().unwrap().push((job.type_, args.read().fk_check));
+            }
+        })
+    };
+    for sql in [
+        "set tidb_mview_enable = ON",
+        "set foreign_key_checks = ON",
+        "create database e29",
+        "use e29",
+        "create table t (id int primary key, g int not null, v int)",
+        "create view vw as select * from t",
+        "create sequence sq",
+        "create materialized view log on t (g, v)",
+        "create materialized view mv (g, c) as select g, count(*) from t group by g",
+        "drop view vw",
+        "drop sequence sq",
+        "drop materialized view mv",
+        "drop materialized view log on t",
+        "drop table t",
+    ] {
+        assert_eq!(answer(&mut session, sql), "OK", "{sql}");
+    }
+    use tidb_model::ActionType as A;
+    let mut seen = seen.lock().unwrap().clone();
+    seen.dedup();
+    assert_eq!(
+        seen,
+        [
+            (A::ACTION_DROP_VIEW, false),
+            (A::ACTION_DROP_SEQUENCE, false),
+            (A::ACTION_DROP_MATERIALIZED_VIEW, false),
+            (A::ACTION_DROP_MATERIALIZED_VIEW_LOG, false),
+            (A::ACTION_DROP_TABLE, true),
+        ]
+    );
+}
