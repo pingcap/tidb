@@ -1,0 +1,443 @@
+use test;
+set tidb_mview_enable = on;
+create table t_mv_txn_66385 (a int not null, b int not null);
+insert into t_mv_txn_66385 values (1, 10), (1, 5), (2, 7);
+create materialized view log if not exists on t_mv_txn_66385 (a, b) purge next date_add(now(), interval 1 hour);
+create materialized view log if not exists on t_mv_txn_66385 (a);
+show warnings;
+Level	Code	Message
+Note	1050	Table 'test.$mlog$t_mv_txn_66385' already exists
+create materialized view if not exists mv_txn_66385 (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
+select a, sum(b), count(1) from t_mv_txn_66385 group by a;
+create materialized view if not exists mv_txn_66385 (a, cnt) as
+select a, count(1) from t_mv_txn_66385 group by a;
+show warnings;
+Level	Code	Message
+Note	1050	Table 'test.mv_txn_66385' already exists
+refresh materialized view mv_txn_66385 with async mode complete in place;
+Error 1105 (HY000): refresh materialized view: WITH ASYNC MODE is not supported yet
+begin;
+refresh materialized view mv_txn_66385 complete in place;
+Error 1105 (HY000): cannot run REFRESH MATERIALIZED VIEW in explicit transaction
+rollback;
+prepare stmt from "refresh materialized view mv_txn_66385 complete in place";
+begin;
+execute stmt;
+Error 1105 (HY000): cannot run REFRESH MATERIALIZED VIEW in explicit transaction
+rollback;
+deallocate prepare stmt;
+set autocommit = 0;
+select @@tidb_current_ts = 0;
+@@tidb_current_ts = 0
+1
+refresh materialized view mv_txn_66385 complete in place;
+select @@tidb_current_ts = 0;
+@@tidb_current_ts = 0
+1
+insert into t_mv_txn_66385 values (3, 4);
+select @@tidb_current_ts > 0;
+@@tidb_current_ts > 0
+1
+refresh materialized view mv_txn_66385 complete in place;
+Error 1105 (HY000): cannot run REFRESH MATERIALIZED VIEW in explicit transaction
+rollback;
+set autocommit = 1;
+drop materialized view mv_txn_66385;
+drop materialized view log on t_mv_txn_66385;
+drop table if exists t_mv_txn_66385;
+create table t_mv_inc_67017 (a int not null, b int not null);
+insert into t_mv_inc_67017 values (1, 10), (1, 5), (2, 7);
+create materialized view log on t_mv_inc_67017 (a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv_inc_67017 (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
+select a, sum(b), count(1) from t_mv_inc_67017 group by a;
+select * from mv_inc_67017 order by a;
+a	s	cnt
+1	15	2
+2	7	1
+insert into t_mv_inc_67017 values (2, 3), (3, 4);
+refresh materialized view mv_inc_67017 complete delta apply;
+select * from mv_inc_67017 order by a;
+a	s	cnt
+1	15	2
+2	10	2
+3	4	1
+select refresh_commit_tso > refresh_read_tso from mysql.tidb_mview_refresh_hist
+where mview_schema = 'test' and mview_name = 'mv_inc_67017' and refresh_status = 'success';
+refresh_commit_tso > refresh_read_tso
+1
+drop materialized view mv_inc_67017;
+drop materialized view log on t_mv_inc_67017;
+drop table if exists t_mv_inc_67017;
+create table t_mv_ddl_70457 (a int not null, b int not null);
+insert into t_mv_ddl_70457 values (1, 10), (1, 5), (2, 7);
+create materialized view log on t_mv_ddl_70457 (a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv_ddl_70457 (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
+select a, sum(b), count(1) from t_mv_ddl_70457 group by a;
+create index idx_a on mv_ddl_70457 (a);
+drop index idx_a on mv_ddl_70457;
+create index idx_expr on mv_ddl_70457 ((a + 1));
+Error 8200 (HY000): Unsupported ADD INDEX on materialized view table that changes writable columns
+alter table mv_ddl_70457 add index idx_expr2 ((a + 1));
+Error 8200 (HY000): Unsupported ADD INDEX on materialized view table that changes writable columns
+desc mv_ddl_70457;
+Field	Type	Null	Key	Default	Extra
+a	int	NO	PRI	NULL	
+s	decimal(32,0)	YES		NULL	
+cnt	bigint	NO		NULL	
+drop materialized view mv_ddl_70457;
+drop materialized view log on t_mv_ddl_70457;
+drop table if exists t_mv_ddl_70457;
+create table t_mv_empty_mlog (a int not null, b int not null, key idx_a(a));
+create materialized view log on t_mv_empty_mlog (a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv_empty_mlog (a, cnt, mx, mn) refresh fast as
+select a, count(1), max(b), min(b) from t_mv_empty_mlog where false group by a;
+insert into t_mv_empty_mlog values (1, 10), (1, 20);
+refresh materialized view mv_empty_mlog fast;
+select * from mv_empty_mlog;
+a	cnt	mx	mn
+refresh materialized view mv_empty_mlog fast;
+select count(*) from mysql.tidb_mview_refresh_hist
+where mview_schema = 'test' and mview_name = 'mv_empty_mlog' and refresh_status = 'success'
+and refresh_commit_tso > refresh_read_tso;
+count(*)
+2
+drop materialized view mv_empty_mlog;
+drop materialized view log on t_mv_empty_mlog;
+drop table t_mv_empty_mlog;
+create table t_mv_bit (
+id int primary key, g int not null,
+b8 bit(8), b16 bit(16), b64 bit(64), key(g)
+);
+create materialized view log on t_mv_bit (g, b8, b16, b64);
+insert into t_mv_bit values
+(1, 1, 127, 32767, 9223372036854775807),
+(2, 1, 128, 32768, 9223372036854775808),
+(3, 2, null, null, null);
+create materialized view mv_bit (g, cnt, mn8, mx8, mn16, mx16, mn64, mx64) refresh fast as
+select g, count(1), min(b8), max(b8), min(b16), max(b16), min(b64), max(b64)
+from t_mv_bit group by g;
+insert into t_mv_bit values
+(4, 1, 255, 65535, 18446744073709551615),
+(5, 3, 1, 1, 1), (6, 4, null, null, null);
+refresh materialized view mv_bit fast;
+select g, cnt, cast(mn8 as unsigned), cast(mx8 as unsigned),
+cast(mn16 as unsigned), cast(mx16 as unsigned),
+cast(mn64 as unsigned), cast(mx64 as unsigned) from mv_bit order by g;
+g	cnt	cast(mn8 as unsigned)	cast(mx8 as unsigned)	cast(mn16 as unsigned)	cast(mx16 as unsigned)	cast(mn64 as unsigned)	cast(mx64 as unsigned)
+1	3	127	255	32767	65535	9223372036854775807	18446744073709551615
+2	1	NULL	NULL	NULL	NULL	NULL	NULL
+3	1	1	1	1	1	1	1
+4	1	NULL	NULL	NULL	NULL	NULL	NULL
+update t_mv_bit set b8 = 1, b16 = 1, b64 = 1 where id = 4;
+delete from t_mv_bit where id = 2;
+update t_mv_bit set b8 = 128, b16 = 32768, b64 = 9223372036854775808 where id = 3;
+update t_mv_bit set b8 = 255, b16 = 65535, b64 = 18446744073709551615 where id = 5;
+refresh materialized view mv_bit fast;
+select g, cnt, cast(mn8 as unsigned), cast(mx8 as unsigned),
+cast(mn16 as unsigned), cast(mx16 as unsigned),
+cast(mn64 as unsigned), cast(mx64 as unsigned) from mv_bit order by g;
+g	cnt	cast(mn8 as unsigned)	cast(mx8 as unsigned)	cast(mn16 as unsigned)	cast(mx16 as unsigned)	cast(mn64 as unsigned)	cast(mx64 as unsigned)
+1	2	1	127	1	32767	1	9223372036854775807
+2	1	128	128	32768	32768	9223372036854775808	9223372036854775808
+3	1	255	255	65535	65535	18446744073709551615	18446744073709551615
+4	1	NULL	NULL	NULL	NULL	NULL	NULL
+update t_mv_bit set b8 = null, b16 = null, b64 = null where g = 1;
+delete from t_mv_bit where g = 3;
+refresh materialized view mv_bit fast;
+select g, cnt, cast(mn8 as unsigned), cast(mx8 as unsigned),
+cast(mn16 as unsigned), cast(mx16 as unsigned),
+cast(mn64 as unsigned), cast(mx64 as unsigned) from mv_bit order by g;
+g	cnt	cast(mn8 as unsigned)	cast(mx8 as unsigned)	cast(mn16 as unsigned)	cast(mx16 as unsigned)	cast(mn64 as unsigned)	cast(mx64 as unsigned)
+1	2	NULL	NULL	NULL	NULL	NULL	NULL
+2	1	128	128	32768	32768	9223372036854775808	9223372036854775808
+4	1	NULL	NULL	NULL	NULL	NULL	NULL
+delete from t_mv_bit;
+refresh materialized view mv_bit fast;
+select count(*) from mv_bit;
+count(*)
+0
+drop materialized view mv_bit;
+drop materialized view log on t_mv_bit;
+drop table t_mv_bit;
+create table t_mv_source_info (a int not null, b int not null);
+insert into t_mv_source_info values (1, 10), (2, 20);
+create materialized view log on t_mv_source_info (a, b);
+create materialized view mv_source_info (a, s, cnt) refresh fast as
+select a, sum(b), count(*) from t_mv_source_info group by a;
+set @source_mv_old_id = (select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_source_info');
+set @source_log_id = (select mlog_id from information_schema.tidb_mlogs where table_schema = 'test' and mlog_name = '$mlog$t_mv_source_info');
+select MLOG_ID = @source_log_id as input_log_matches from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_old_id;
+input_log_matches
+1
+select get_lock(concat('mlog_purge_', @source_log_id), 0) as lock_acquired;
+lock_acquired
+1
+purge materialized view log on t_mv_source_info;
+Error 8182 (HY000): materialized view advisory lock conflict: another purge or materialized view cutover is running for materialized view log on test.t_mv_source_info, please retry later
+select release_lock(concat('mlog_purge_', @source_log_id)) as lock_released;
+lock_released
+1
+insert into t_mv_source_info values (1, 5);
+refresh materialized view mv_source_info fast;
+select * from mv_source_info order by a;
+a	s	cnt
+1	15	2
+2	20	1
+select MLOG_ID = @source_log_id as input_log_matches from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_old_id;
+input_log_matches
+1
+update mysql.tidb_mview_fast_refresh_source_info set MLOG_ID = 0 where MVIEW_ID = @source_mv_old_id;
+insert into t_mv_source_info values (2, 3);
+refresh materialized view mv_source_info fast;
+Error 8183 (HY000): refresh materialized view test.mv_source_info fast: input log baseline has changed; run COMPLETE refresh to rebuild it
+select * from mv_source_info order by a;
+a	s	cnt
+1	15	2
+2	20	1
+refresh materialized view mv_source_info complete delta apply;
+select * from mv_source_info order by a;
+a	s	cnt
+1	15	2
+2	23	2
+select MLOG_ID = @source_log_id as input_log_matches from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_old_id;
+input_log_matches
+1
+insert into mysql.tidb_mview_fast_refresh_source_info values (@source_mv_old_id, -1);
+refresh materialized view mv_source_info fast;
+Error 8183 (HY000): refresh materialized view test.mv_source_info fast: input log baseline has changed; run COMPLETE refresh to rebuild it
+refresh materialized view mv_source_info complete in place;
+select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_old_id;
+count(*)
+1
+update mysql.tidb_mview_fast_refresh_source_info set MLOG_ID = -1 where MVIEW_ID = @source_mv_old_id;
+refresh materialized view mv_source_info complete out of place;
+set @source_mv_new_id = (select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_source_info');
+select @source_mv_new_id <> @source_mv_old_id as target_replaced;
+target_replaced
+1
+select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_old_id;
+count(*)
+0
+select MLOG_ID = @source_log_id as input_log_matches from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_new_id;
+input_log_matches
+1
+delete from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_new_id;
+refresh materialized view mv_source_info fast;
+Error 1105 (HY000): refresh materialized view: input log records are missing for test.mv_source_info
+select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_new_id;
+count(*)
+0
+drop materialized view mv_source_info;
+select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID in (@source_mv_old_id, @source_mv_new_id);
+count(*)
+0
+drop materialized view log on t_mv_source_info;
+drop table t_mv_source_info;
+create table t_mv_drop_owned_log (a int not null, b int not null);
+insert into t_mv_drop_owned_log values (1, 10), (1, 5), (2, 7);
+create materialized view log on t_mv_drop_owned_log (a, b);
+create materialized view mv_drop_owned_log (a, s, cnt) as
+select a, sum(b), count(1) from t_mv_drop_owned_log group by a;
+create materialized view log on mv_drop_owned_log (a, s, cnt);
+set @owned_mlog_id = (select mlog_id from information_schema.tidb_mlogs where table_schema = 'test' and mlog_name = '$mlog$mv_drop_owned_log');
+drop materialized view mv_drop_owned_log;
+Error 8200 (HY000): Unsupported DROP MATERIALIZED VIEW with materialized view log
+drop materialized view if exists mv_drop_owned_log;
+Error 8200 (HY000): Unsupported DROP MATERIALIZED VIEW with materialized view log
+select * from mv_drop_owned_log order by a;
+a	s	cnt
+1	15	2
+2	7	1
+select mlog_name, base_table_name from information_schema.tidb_mlogs where mlog_id = @owned_mlog_id;
+mlog_name	base_table_name
+$mlog$mv_drop_owned_log	mv_drop_owned_log
+select count(*) from mysql.tidb_mlog_purge_info where mlog_id = @owned_mlog_id;
+count(*)
+1
+drop materialized view log on mv_drop_owned_log;
+select count(*) from mysql.tidb_mlog_purge_info where mlog_id = @owned_mlog_id;
+count(*)
+0
+drop materialized view mv_drop_owned_log;
+show tables like 'mv_drop_owned_log';
+Tables_in_test (mv_drop_owned_log)
+show tables like '$mlog$mv_drop_owned_log';
+Tables_in_test ($mlog$mv_drop_owned_log)
+drop materialized view log on t_mv_drop_owned_log;
+drop table t_mv_drop_owned_log;
+create table t_mv_mlog_refresh (a int not null, b int not null);
+insert into t_mv_mlog_refresh values (1, 10), (1, 5), (2, 7);
+create materialized view log on t_mv_mlog_refresh (a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv_mlog_refresh (a, s, cnt) refresh fast as
+select a, sum(b), count(1) from t_mv_mlog_refresh group by a;
+create materialized view log on mv_mlog_refresh (a, s, cnt);
+update t_mv_mlog_refresh set b = 11 where a = 1 and b = 10;
+delete from t_mv_mlog_refresh where a = 2;
+insert into t_mv_mlog_refresh values (3, 4);
+refresh materialized view mv_mlog_refresh fast;
+update t_mv_mlog_refresh set b = 12 where a = 1 and b = 11;
+delete from t_mv_mlog_refresh where a = 3;
+insert into t_mv_mlog_refresh values (4, 8);
+refresh materialized view mv_mlog_refresh complete delta apply;
+select a, s, cnt, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`
+from `$mlog$mv_mlog_refresh`
+order by a, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`, s;
+a	s	cnt	_MLOG$_DML_TYPE	_MLOG$_OLD_NEW
+1	15	2	U	-1
+1	16	2	U	-1
+1	16	2	U	1
+1	17	2	U	1
+2	7	1	D	-1
+3	4	1	D	-1
+3	4	1	I	1
+4	8	1	I	1
+drop materialized view log on mv_mlog_refresh;
+drop materialized view mv_mlog_refresh;
+drop materialized view log on t_mv_mlog_refresh;
+drop table if exists t_mv_mlog_refresh;
+create table t_nested_mv_refresh (a int not null, b int not null, v int not null);
+insert into t_nested_mv_refresh values (1, 1, 10), (1, 1, 5), (1, 2, 7), (2, 1, 4);
+create materialized view log on t_nested_mv_refresh (a, b, v);
+create materialized view mv_nested_parent (a, b, s, cnt) refresh fast as
+select a, b, sum(v), count(1) from t_nested_mv_refresh group by a, b;
+create materialized view log on mv_nested_parent (a, b, s, cnt);
+create materialized view mv_nested_child (a, s, cnt, cnt_s) refresh fast as
+select a, sum(s), count(1), count(s) from mv_nested_parent group by a;
+select a, s, cnt, cnt_s from mv_nested_child order by a;
+a	s	cnt	cnt_s
+1	22	2	2
+2	4	1	1
+update t_nested_mv_refresh set v = 11 where a = 1 and b = 1 and v = 10;
+delete from t_nested_mv_refresh where a = 1 and b = 2;
+insert into t_nested_mv_refresh values (3, 1, 8);
+refresh materialized view mv_nested_parent fast;
+refresh materialized view mv_nested_child fast;
+select a, s, cnt, cnt_s from mv_nested_child order by a;
+a	s	cnt	cnt_s
+1	16	1	1
+2	4	1	1
+3	8	1	1
+update t_nested_mv_refresh set v = 12 where a = 1 and b = 1 and v = 11;
+delete from t_nested_mv_refresh where a = 3 and b = 1;
+insert into t_nested_mv_refresh values (4, 1, 9);
+refresh materialized view mv_nested_parent complete delta apply;
+refresh materialized view mv_nested_child fast;
+select a, s, cnt, cnt_s from mv_nested_child order by a;
+a	s	cnt	cnt_s
+1	17	1	1
+2	4	1	1
+4	9	1	1
+drop materialized view mv_nested_child;
+drop materialized view log on mv_nested_parent;
+drop materialized view mv_nested_parent;
+drop materialized view log on t_nested_mv_refresh;
+drop table if exists t_nested_mv_refresh;
+create table t_oop_log (a int not null, b int not null);
+insert into t_oop_log values (1, 10), (2, 20);
+create materialized view log on t_oop_log (a, b);
+create materialized view mv_oop_log (a, s, cnt) refresh fast as select a, sum(b), count(*) from t_oop_log group by a;
+create materialized view log on mv_oop_log (a, s, cnt);
+create materialized view mv_oop_child (a, s, cnt, cnt_s) refresh fast as select a, sum(s), count(*), count(s) from mv_oop_log group by a;
+set @oop_old_mv = (select tidb_table_id from information_schema.tables where table_schema='test' and table_name='mv_oop_log');
+set @oop_old_log = (select tidb_table_id from information_schema.tables where table_schema='test' and table_name='$mlog$mv_oop_log');
+set @oop_child = (select tidb_table_id from information_schema.tables where table_schema='test' and table_name='mv_oop_child');
+set @oop_child_tso = (select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID=@oop_child);
+insert into t_oop_log values (3, 30);
+refresh materialized view mv_oop_log complete out of place;
+set @oop_new_mv = (select tidb_table_id from information_schema.tables where table_schema='test' and table_name='mv_oop_log');
+set @oop_new_log = (select tidb_table_id from information_schema.tables where table_schema='test' and table_name='$mlog$mv_oop_log');
+select @oop_new_mv <> @oop_old_mv as mv_replaced, @oop_new_log <> @oop_old_log as log_replaced;
+mv_replaced	log_replaced
+1	1
+select * from mv_oop_log order by a;
+a	s	cnt
+1	10	1
+2	20	1
+3	30	1
+select count(*) from `$mlog$mv_oop_log`;
+count(*)
+0
+select count(*) from mysql.tidb_mlog_purge_info where MLOG_ID=@oop_old_log;
+count(*)
+0
+select LAST_PURGED_TSO is null from mysql.tidb_mlog_purge_info where MLOG_ID=@oop_new_log;
+LAST_PURGED_TSO is null
+1
+select MLOG_ID=@oop_old_log as old_input_preserved from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID=@oop_child;
+old_input_preserved
+1
+select LAST_SUCCESS_READ_TSO=@oop_child_tso as child_watermark_preserved from mysql.tidb_mview_refresh_info where MVIEW_ID=@oop_child;
+child_watermark_preserved
+1
+refresh materialized view mv_oop_child fast;
+Error 8183 (HY000): refresh materialized view test.mv_oop_child fast: input log baseline has changed; run COMPLETE refresh to rebuild it
+select * from mv_oop_child order by a;
+a	s	cnt	cnt_s
+1	10	1	1
+2	20	1	1
+insert into t_oop_log values (4, 40);
+refresh materialized view mv_oop_log fast;
+purge materialized view log on mv_oop_log;
+select count(*) > 0 as child_protects_new_log from `$mlog$mv_oop_log`;
+child_protects_new_log
+1
+select LAST_PURGED_TSO=@oop_child_tso as child_watermark_protects_new_log from mysql.tidb_mlog_purge_info where MLOG_ID=@oop_new_log;
+child_watermark_protects_new_log
+1
+refresh materialized view mv_oop_child complete delta apply;
+select MLOG_ID=@oop_new_log as input_recovered from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID=@oop_child;
+input_recovered
+1
+insert into t_oop_log values (5, 50);
+refresh materialized view mv_oop_log fast;
+refresh materialized view mv_oop_child fast;
+select * from mv_oop_child order by a;
+a	s	cnt	cnt_s
+1	10	1	1
+2	20	1	1
+3	30	1	1
+4	40	1	1
+5	50	1	1
+drop materialized view mv_oop_child;
+drop materialized view log on mv_oop_log;
+drop materialized view mv_oop_log;
+drop materialized view log on t_oop_log;
+drop table t_oop_log;
+set @flashback_gc_enabled = @@global.tidb_gc_enable;
+set global tidb_gc_enable = off;
+set @flashback_gc_safe_point = (select variable_value from mysql.tidb where variable_name = 'tikv_gc_safe_point');
+insert into mysql.tidb(variable_name, variable_value, comment)
+values ('tikv_gc_safe_point', '20060102-15:04:05 +0000', '')
+on duplicate key update variable_value = values(variable_value);
+create table t_flashback_mv (a int not null);
+insert into t_flashback_mv values (1);
+create table mv_flashback (a int);
+drop table mv_flashback;
+create table `$mlog$t_flashback_mv` (a int);
+drop table `$mlog$t_flashback_mv`;
+create materialized view log on t_flashback_mv (a);
+create materialized view mv_flashback (a, cnt) as select a, count(*) from t_flashback_mv group by a;
+flashback table mv_flashback;
+Error 8200 (HY000): Unsupported FLASHBACK TABLE on materialized view table
+flashback table `$mlog$t_flashback_mv` to mv_flashback_restored;
+Error 8200 (HY000): Unsupported FLASHBACK TABLE on materialized view log table
+drop materialized view mv_flashback;
+flashback table mv_flashback;
+Error 8200 (HY000): Unsupported FLASHBACK TABLE on materialized view table
+flashback table mv_flashback to mv_flashback_restored;
+Error 8200 (HY000): Unsupported FLASHBACK TABLE on materialized view table
+drop materialized view log on t_flashback_mv;
+flashback table `$mlog$t_flashback_mv`;
+Error 8200 (HY000): Unsupported FLASHBACK TABLE on materialized view log table
+flashback table `$mlog$t_flashback_mv` to mv_flashback_restored;
+Error 8200 (HY000): Unsupported FLASHBACK TABLE on materialized view log table
+select count(*) as restored_objects from information_schema.tables
+where table_schema = 'test' and table_name in ('mv_flashback', '$mlog$t_flashback_mv', 'mv_flashback_restored');
+restored_objects
+0
+drop table t_flashback_mv;
+update mysql.tidb set variable_value = @flashback_gc_safe_point
+where variable_name = 'tikv_gc_safe_point' and @flashback_gc_safe_point is not null;
+delete from mysql.tidb where variable_name = 'tikv_gc_safe_point' and @flashback_gc_safe_point is null;
+set global tidb_gc_enable = @flashback_gc_enabled;
+set tidb_mview_enable = off;

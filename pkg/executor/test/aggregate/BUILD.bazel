@@ -9,10 +9,11 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 10,
+    shard_count = 11,
     deps = [
         "//pkg/config",
         "//pkg/executor/aggregate",
+        "//pkg/parser/mysql",
         "//pkg/session",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",

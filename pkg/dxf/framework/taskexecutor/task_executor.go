@@ -630,7 +630,7 @@ func (e *BaseTaskExecutor) tryModifyTaskRequiredSlots(ctx context.Context, oldTa
 		// in time, so we trigger GC here.
 		//nolint: revive
 		runtime.GC()
-		e.requiredSlotsModifyApplied(latestTask.RequiredSlots)
+		e.requiredSlotsModifyApplied(latestTask.RequiredSlots, newResource)
 	} else if latestTask.RequiredSlots > oldTask.RequiredSlots {
 		exchanged := e.slotMgr.exchange(&latestTask.TaskBase)
 		if !exchanged {
@@ -646,11 +646,12 @@ func (e *BaseTaskExecutor) tryModifyTaskRequiredSlots(ctx context.Context, oldTa
 			return
 		}
 
-		e.requiredSlotsModifyApplied(latestTask.RequiredSlots)
+		e.requiredSlotsModifyApplied(latestTask.RequiredSlots, newResource)
 	}
 }
 
-func (e *BaseTaskExecutor) requiredSlotsModifyApplied(newSlots int) {
+func (e *BaseTaskExecutor) requiredSlotsModifyApplied(newSlots int, newResource *proto.StepResource) {
+	e.stepExec.SetResource(newResource)
 	clone := *e.task.Load()
 	e.logger.Info("task required slots modification applied",
 		zap.Int64("currSubtaskID", e.currSubtaskID.Load()), zap.Int("old", clone.RequiredSlots),

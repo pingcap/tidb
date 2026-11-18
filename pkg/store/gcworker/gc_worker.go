@@ -1709,6 +1709,46 @@ func doGCPlacementRules(se sessionapi.Session, _ uint64,
 					TableID: tableID,
 				}
 				mockJ.FillFinishedArgs(&model.DropTableArgs{})
+			} else if strings.HasPrefix(x, "mview-cutover:") {
+				values := strings.Split(strings.TrimPrefix(x, "mview-cutover:"), ":")
+				if len(values) < 2 || len(values) > 4 {
+					return
+				}
+				oldMViewID, oldErr := strconv.ParseInt(values[0], 10, 64)
+				shadowTableID, shadowErr := strconv.ParseInt(values[1], 10, 64)
+				if oldErr != nil || shadowErr != nil {
+					return
+				}
+				var oldMLogID int64
+				if len(values) >= 3 {
+					var logErr error
+					oldMLogID, logErr = strconv.ParseInt(values[2], 10, 64)
+					if logErr != nil {
+						return
+					}
+				}
+				mockJ = &model.Job{
+					Version: model.GetJobVerInUse(),
+					ID:      dr.JobID,
+					Type:    model.ActionMViewRefreshOutOfPlaceCutover,
+					TableID: oldMViewID,
+				}
+				var newMLogID int64
+				if len(values) == 4 {
+					var logErr error
+					newMLogID, logErr = strconv.ParseInt(values[3], 10, 64)
+					if logErr != nil {
+						return
+					}
+					mockJ.State = model.JobStateCancelled
+				}
+				mockJ.FillArgs(&model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
+					OldMViewID:    oldMViewID,
+					ShadowTableID: shadowTableID,
+					OldMLogID:     oldMLogID,
+					NewMLogID:     newMLogID,
+					BuildReadTSO:  1,
+				})
 			}
 		default:
 			return
@@ -1739,7 +1779,8 @@ func doGCPlacementRules(se sessionapi.Session, _ uint64,
 	// Notify PD to drop the placement rules of partition-ids and table-id, even if there may be no placement rules.
 	var physicalTableIDs []int64
 	switch historyJob.Type {
-	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
+	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
+		model.ActionDropMaterializedViewShadow:
 		var args *model.DropTableArgs
 		args, err = model.GetFinishedDropTableArgs(historyJob)
 		if err != nil {
@@ -1749,6 +1790,21 @@ func doGCPlacementRules(se sessionapi.Session, _ uint64,
 	case model.ActionCreateMaterializedView:
 		if historyJob.IsRollbackDone() && historyJob.TableID != 0 {
 			physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
+		}
+	case model.ActionMViewRefreshOutOfPlaceCutover:
+		args, err2 := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(historyJob)
+		if err2 != nil {
+			return err2
+		}
+		if historyJob.IsCancelled() {
+			if args.NewMLogID != 0 {
+				physicalTableIDs = append(physicalTableIDs, args.NewMLogID)
+			}
+		} else {
+			physicalTableIDs = append(physicalTableIDs, args.OldMViewID)
+			if args.OldMLogID != 0 {
+				physicalTableIDs = append(physicalTableIDs, args.OldMLogID)
+			}
 		}
 	case model.ActionTruncateTable, model.ActionTruncateTablePartition:
 		var args *model.TruncateTableArgs
@@ -1842,7 +1898,8 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 
 	if historyJob.Type == model.ActionDropTable ||
 		historyJob.Type == model.ActionDropMaterializedView ||
-		historyJob.Type == model.ActionDropMaterializedViewLog {
+		historyJob.Type == model.ActionDropMaterializedViewLog ||
+		historyJob.Type == model.ActionDropMaterializedViewShadow {
 		var (
 			args  *model.DropTableArgs
 			rules map[string]*label.Rule

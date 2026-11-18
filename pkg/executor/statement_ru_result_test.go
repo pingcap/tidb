@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -418,6 +419,23 @@ func TestStatementRUUsesConfig(t *testing.T) {
 }
 
 func TestStatementRUResultValueContracts(t *testing.T) {
+	t.Run("frontend compile bytes follow plan cache hits", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		vars := fixture.stmt.Ctx.GetSessionVars()
+		for _, originalSQL := range []string{"", statementRUSimpleSelectSQLForTest} {
+			vars.StmtCtx.OriginalSQL = originalSQL
+			for _, hit := range []bool{false, true, false} {
+				vars.FoundInPlanCache = hit
+				bytes := statementRUFrontendCompileBytes(fixture.stmt)
+				if hit {
+					require.Zero(t, bytes)
+				} else {
+					require.Positive(t, bytes)
+				}
+			}
+		}
+	})
+
 	t.Run("calculator finalizes typed units without plan input", func(t *testing.T) {
 		calculator := statementRUCalculator{
 			units: ruv2.StmtUnits{
@@ -567,6 +585,7 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 			liveDetail.TotalKeys,
 			liveDetail.ProcessedKeys,
 			liveDetail.ProcessedKeysSize,
+			liveDetail.TotalKeysSize,
 		)
 		require.Equal(t, statementRUScanEvidenceValid, liveScanEvidence.state)
 		require.NotEqual(t, finalized.units.ScanBytes, liveScanEvidence.scanBytes)
@@ -588,18 +607,18 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 	})
 
 	t.Run("scan evidence has one valid unavailable invalid classification", func(t *testing.T) {
-		evidence := classifyStatementRUScanEvidence(10, 2, 6)
+		evidence := classifyStatementRUScanEvidence(10, 2, 6, 0)
 		require.Equal(t, statementRUScanEvidenceValid, evidence.state)
 		require.Equal(t, float64(30), evidence.scanBytes)
 
-		evidence = classifyStatementRUScanEvidence(10, 0, 0)
+		evidence = classifyStatementRUScanEvidence(10, 0, 0, 0)
 		require.Equal(t, statementRUScanEvidenceValid, evidence.state)
 		require.Zero(t, evidence.scanBytes)
 
-		require.Equal(t, statementRUScanEvidenceInvalid, classifyStatementRUScanEvidence(10, 0, 1).state)
-		require.Equal(t, statementRUScanEvidenceInvalid, classifyStatementRUScanEvidence(-1, 1, 1).state)
-		require.Equal(t, statementRUScanEvidenceUnavailable, classifyStatementRUScanEvidence(0, 1, 1).state)
-		require.Equal(t, statementRUScanEvidenceUnavailable, classifyStatementRUScanEvidence(1, 1, 0).state)
+		require.Equal(t, statementRUScanEvidenceInvalid, classifyStatementRUScanEvidence(10, 0, 1, 0).state)
+		require.Equal(t, statementRUScanEvidenceInvalid, classifyStatementRUScanEvidence(-1, 1, 1, 0).state)
+		require.Equal(t, statementRUScanEvidenceUnavailable, classifyStatementRUScanEvidence(0, 1, 1, 0).state)
+		require.Equal(t, statementRUScanEvidenceUnavailable, classifyStatementRUScanEvidence(1, 1, 0, 0).state)
 	})
 
 	t.Run("finalized and published payloads contain no live references", func(t *testing.T) {
@@ -664,5 +683,103 @@ func requireStatementRUValueOnlyType(t *testing.T, valueType reflect.Type) {
 			reflect.Slice,
 			reflect.UnsafePointer,
 		}, fieldType.Kind())
+	}
+}
+
+func TestStatementRUTTLJobEligibility(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		restricted bool
+		source     string
+		jobID      string
+		eligible   bool
+		ttl        bool
+	}{
+		{"ttl job", true, kv.InternalTxnTTL, "job-1", true, true},
+		{"global ttl", true, kv.InternalTxnTTL, "", false, false},
+		{"other internal", true, kv.InternalTxnOthers, "job-1", false, false},
+		{"external", false, kv.InternalTxnTTL, "job-1", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newStatementRUSimpleSelectFixture(t)
+			stmt := fixture.stmt
+			vars := stmt.Ctx.GetSessionVars()
+			flat := vars.StmtCtx.GetFlatPlan()
+			vars.StmtCtx.SetFlatPlan(nil)
+			vars.InRestrictedSQL = tc.restricted
+			vars.RequestSourceType = tc.source
+			vars.TTLJobID = tc.jobID
+			stmt.statementRUOwner = nil
+			installStatementRUOwner(stmt)
+			vars.StmtCtx.SetFlatPlan(flat)
+			require.Equal(t, tc.eligible, stmt.statementRUOwner != nil)
+			// The original attribution survives session restoration before terminal.
+			vars.TTLJobID = ""
+			vars.InRestrictedSQL = false
+			stmt.recordStatementRURootEOF()
+			stmt.RecordStatementRUFinalOutcome(true)
+			before := testutil.ToFloat64(metrics.RUV2Total)
+			ttlBefore := testutil.ToFloat64(metrics.RUV2TTLTotal)
+			stmt.finishStatementRU(nil)
+			delta := testutil.ToFloat64(metrics.RUV2Total) - before
+			ttlDelta := testutil.ToFloat64(metrics.RUV2TTLTotal) - ttlBefore
+			if tc.eligible {
+				require.Positive(t, delta)
+			} else {
+				require.Zero(t, delta)
+			}
+			if tc.ttl {
+				require.InDelta(t, delta, ttlDelta, 1e-9)
+			} else {
+				require.Zero(t, ttlDelta)
+			}
+			stmt.finishStatementRU(nil)
+			require.Equal(t, ttlBefore+ttlDelta, testutil.ToFloat64(metrics.RUV2TTLTotal))
+		})
+	}
+}
+
+func TestStatementRUBackendScanBytes(t *testing.T) {
+	for _, tc := range []struct {
+		name                                                 string
+		totalKeys, processedKeys, processedBytes, totalBytes int64
+		want                                                 float64
+		valid                                                bool
+	}{
+		{"reported", 10, 2, 6, 123, 123, true},
+		{"legacy fallback", 10, 2, 6, 0, 30, true},
+		{"no processed keys", 10, 0, 0, 123, 123, true},
+		{"only total bytes", 0, 0, 0, 123, 123, true},
+		{"negative total", 10, 2, 6, -1, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, point := range []bool{false, true} {
+				fixture := newStatementRUSimpleSelectFixture(t)
+				vars := fixture.stmt.Ctx.GetSessionVars()
+				coll := execdetails.NewRuntimeStatsColl(nil)
+				vars.StmtCtx.RuntimeStatsColl = coll
+				plan := fixture.stmt.Plan
+				if point {
+					plan = newStatementRUPointLookupPlanForTest(fixture, false)
+					stats := statementRUPointResponseStatsForTestFromResponse(&kvrpcpb.ScanDetailV2{
+						TotalVersions: uint64(tc.totalKeys), ProcessedVersions: uint64(tc.processedKeys),
+						ProcessedVersionsSize: uint64(tc.processedBytes), TotalVersionsSize: uint64(tc.totalBytes),
+					}, 1)
+					coll.RegisterStats(plan.ID(), &statementRUPointResponseStatsForTest{stats: stats})
+				} else {
+					reader := plan.(*physicalop.PhysicalTableReader)
+					coll.RecordCopStats(reader.TablePlan.ID(), kv.TiKV, &util.ScanDetail{
+						TotalKeys: tc.totalKeys, ProcessedKeys: tc.processedKeys,
+						ProcessedKeysSize: tc.processedBytes, TotalKeysSize: tc.totalBytes,
+					}, util.TimeDetail{}, nil, nil)
+				}
+				finalized, ok := calculateStatementRU(plannercore.FlattenPhysicalPlan(plan, false), coll,
+					vars.RUV2Metrics, statementRUWriteSnapshot{}, fixture.owner.calculationSetup, true)
+				require.Equal(t, tc.valid, ok, "point=%v", point)
+				if ok {
+					require.Equal(t, tc.want, finalized.units.ScanBytes, "point=%v", point)
+				}
+			}
+		})
 	}
 }

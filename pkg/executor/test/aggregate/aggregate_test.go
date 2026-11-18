@@ -17,6 +17,8 @@ package aggregate
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand"
@@ -30,11 +32,62 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
+
+func TestStreamAggJSONInputBufferReuse(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_init_chunk_size=32")
+	tk.MustExec("set tidb_max_chunk_size=32")
+	tk.MustExec("set tidb_streamagg_concurrency=1")
+	for _, tp := range []struct {
+		name string
+		code byte
+		size int
+	}{
+		{"blob", mysql.TypeBlob, 2},
+		{"varbinary(8)", mysql.TypeVarchar, 2},
+		{"bit(16)", mysql.TypeBit, 2},
+		{"binary(8)", mysql.TypeString, 8},
+	} {
+		t.Run(tp.name, func(t *testing.T) {
+			tk.MustExec("drop table if exists t_json_agg")
+			tk.MustExec("create table t_json_agg(g int, k varchar(8), v " + tp.name + ")")
+			values := make([]string, 0, 96)
+			expectedObjects := []map[string]string{{}, {}}
+			expectedArrays := make([][]string, 2)
+			for i := range 96 {
+				values = append(values, fmt.Sprintf("(%d, '%03d', x'%04x')", i%2, i, i+1))
+				buf := make([]byte, tp.size)
+				buf[1] = byte(i + 1)
+				value := fmt.Sprintf("base64:type%d:%s", tp.code, base64.StdEncoding.EncodeToString(buf))
+				expectedObjects[i%2][fmt.Sprintf("%03d", i)] = value
+				expectedArrays[i%2] = append(expectedArrays[i%2], value)
+			}
+			tk.MustExec("insert into t_json_agg values " + strings.Join(values, ","))
+			// Each group spans multiple Sort output chunks reused by StreamAgg.
+			sql := "select /*+ stream_agg() */ g, json_objectagg(k, v), json_arrayagg(v) from t_json_agg group by g order by g"
+			tk.MustHavePlan(sql, "StreamAgg")
+			tk.MustHavePlan(sql, "Sort")
+			rows := tk.MustQuery(sql).Rows()
+			require.Len(t, rows, 2)
+			for group, row := range rows {
+				var object map[string]string
+				var array []string
+				require.NoError(t, json.Unmarshal([]byte(row[1].(string)), &object))
+				require.NoError(t, json.Unmarshal([]byte(row[2].(string)), &array))
+				require.Equal(t, expectedObjects[group], object)
+				require.ElementsMatch(t, expectedArrays[group], array)
+			}
+		})
+	}
+}
 
 func TestHashAggRuntimeStat(t *testing.T) {
 	partialInfo := &aggregate.AggWorkerInfo{

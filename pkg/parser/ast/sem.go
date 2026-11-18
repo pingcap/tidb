@@ -16,6 +16,20 @@ package ast
 // DDL Statements
 
 const (
+	// CompareMaterializedViewCommand represents COMPARE MATERIALIZED VIEW statement
+	CompareMaterializedViewCommand = "COMPARE MATERIALIZED VIEW"
+	// ShowCreateMaterializedViewCommand represents SHOW CREATE MATERIALIZED VIEW statement
+	ShowCreateMaterializedViewCommand = "SHOW CREATE MATERIALIZED VIEW"
+	// ShowCreateMaterializedViewLogCommand represents SHOW CREATE MATERIALIZED VIEW LOG statement
+	ShowCreateMaterializedViewLogCommand = "SHOW CREATE MATERIALIZED VIEW LOG"
+	// ShowMaterializedViewsCommand represents SHOW MATERIALIZED VIEWS statement
+	ShowMaterializedViewsCommand = "SHOW MATERIALIZED VIEWS"
+	// ShowMaterializedViewLogsCommand represents SHOW MATERIALIZED VIEW LOGS statement
+	ShowMaterializedViewLogsCommand = "SHOW MATERIALIZED VIEW LOGS"
+	// ShowMaterializedViewRemainLogsCommand represents SHOW MATERIALIZED VIEW REMAIN_LOGS statement
+	ShowMaterializedViewRemainLogsCommand = "SHOW MATERIALIZED VIEW REMAIN_LOGS"
+	// ShowMaterializedViewLogWaitPurgeCommand represents SHOW MATERIALIZED VIEW LOG WAIT_PURGE statement
+	ShowMaterializedViewLogWaitPurgeCommand = "SHOW MATERIALIZED VIEW LOG WAIT_PURGE"
 	// AlterDatabaseCommand represents ALTER DATABASE statement
 	AlterDatabaseCommand = "ALTER DATABASE"
 	// AlterInstanceCommand represents ALTER INSTANCE statement
@@ -72,6 +86,10 @@ const (
 	PurgeMaterializedViewLogCommand = "PURGE MATERIALIZED VIEW LOG"
 	// CancelMaterializedViewLogPurgeJobCommand represents CANCEL MATERIALIZED VIEW LOG PURGE JOB statement
 	CancelMaterializedViewLogPurgeJobCommand = "CANCEL MATERIALIZED VIEW LOG PURGE JOB"
+	// CancelMaterializedViewRefreshJobCommand represents CANCEL MATERIALIZED VIEW REFRESH JOB statement
+	CancelMaterializedViewRefreshJobCommand = "CANCEL MATERIALIZED VIEW REFRESH JOB"
+	// RefreshMaterializedViewCommand represents REFRESH MATERIALIZED VIEW statement
+	RefreshMaterializedViewCommand = "REFRESH MATERIALIZED VIEW"
 	// DropPlacementPolicyCommand represents DROP PLACEMENT POLICY statement
 	DropPlacementPolicyCommand = "DROP PLACEMENT POLICY"
 	// DropResourceGroupCommand represents DROP RESOURCE GROUP statement
@@ -649,8 +667,26 @@ func (n *PurgeMaterializedViewLogStmt) SEMCommand() string {
 }
 
 // SEMCommand returns the command string for the statement.
+func (n *RefreshMaterializedViewStmt) SEMCommand() string {
+	return RefreshMaterializedViewCommand
+}
+
+// SEMCommand returns the user-facing command because this internal statement
+// is generated while executing REFRESH MATERIALIZED VIEW.
+func (n *RefreshMaterializedViewImplementStmt) SEMCommand() string {
+	return RefreshMaterializedViewCommand
+}
+
+// SEMCommand returns the command string for the statement.
 func (n *CancelMaterializedViewJobStmt) SEMCommand() string {
-	return CancelMaterializedViewLogPurgeJobCommand
+	switch n.Tp {
+	case CancelMaterializedViewJobTypeRefresh:
+		return CancelMaterializedViewRefreshJobCommand
+	case CancelMaterializedViewJobTypeLogPurge:
+		return CancelMaterializedViewLogPurgeJobCommand
+	default:
+		return UnknownCommand
+	}
 }
 
 // SEMCommand returns the command string for the statement.
@@ -766,6 +802,18 @@ func (n *SetOprStmt) SEMCommand() string {
 // SEMCommand returns the command string for the statement.
 func (n *ShowStmt) SEMCommand() string {
 	switch n.Tp {
+	case ShowCreateMaterializedView:
+		return ShowCreateMaterializedViewCommand
+	case ShowCreateMaterializedViewLog:
+		return ShowCreateMaterializedViewLogCommand
+	case ShowMaterializedViews:
+		return ShowMaterializedViewsCommand
+	case ShowMaterializedViewLogs:
+		return ShowMaterializedViewLogsCommand
+	case ShowMaterializedViewRemainLogs:
+		return ShowMaterializedViewRemainLogsCommand
+	case ShowMaterializedViewLogWaitPurge:
+		return ShowMaterializedViewLogWaitPurgeCommand
 	case ShowCreateTable:
 		return ShowCreateTableCommand
 	case ShowCreateView:
@@ -1393,4 +1441,9 @@ func (n *ProcedureErrorVal) SEMCommand() string {
 // SEMCommand returns the command string for the statement.
 func (n *ProcedureErrorState) SEMCommand() string {
 	return ProcedureCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *CompareMaterializedViewStmt) SEMCommand() string {
+	return CompareMaterializedViewCommand
 }

@@ -11,6 +11,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/diagnosticmode",
         "//pkg/ddl/util",
         "//pkg/kv",
         "//pkg/metrics",
@@ -36,7 +37,7 @@ go_test(
     srcs = ["syncer_test.go"],
     embed = [":serverinfo"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",

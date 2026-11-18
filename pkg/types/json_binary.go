@@ -359,15 +359,16 @@ func (bj BinaryJSON) marshalFloat64To(buf []byte) ([]byte, error) {
 	floatBuf := buf[floatPos:]
 
 	if ffmt == 'e' {
-		// clean up e-09 to e-9
-		n := len(floatBuf)
-		if n >= 4 && buf[n-4] == 'e' && buf[n-3] == '-' && buf[n-2] == '0' {
+		// clean up e-09 to e-9. The float is at the end of `buf`, and `buf` may
+		// already contain other content before `floatPos`.
+		n := len(buf)
+		if n-floatPos >= 4 && buf[n-4] == 'e' && buf[n-3] == '-' && buf[n-2] == '0' {
 			buf[n-2] = buf[n-1]
 			buf = buf[:n-1]
 		}
 
 		// remove the leading '+' in the exponent
-		plusPos := bytes.IndexRune(floatBuf, '+')
+		plusPos := bytes.IndexByte(buf[floatPos:], '+')
 		if plusPos > 0 {
 			buf = slices.Delete(buf, floatPos+plusPos, floatPos+plusPos+1)
 		}

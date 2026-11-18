@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util"
 	parserutil "github.com/pingcap/tidb/pkg/util/parser"
 )
@@ -59,12 +60,26 @@ func (nr *nameResolver) Leave(inNode ast.Node) bool {
 // of `ColumnInfo` is a string field, so we need to parse
 // it into ast.ExprNode. This function is for that.
 func ParseExpression(expr string) (node ast.ExprNode, err error) {
+	return parseExpression(expr, nil)
+}
+
+// ParseExpressionWithSQLMode parses an ExprNode using the specified SQL mode.
+// The SQL mode is part of the expression's parsing semantics for expressions
+// restored from metadata, such as materialized view schedules.
+func ParseExpressionWithSQLMode(expr string, sqlMode mysql.SQLMode) (node ast.ExprNode, err error) {
+	return parseExpression(expr, &sqlMode)
+}
+
+func parseExpression(expr string, sqlMode *mysql.SQLMode) (node ast.ExprNode, err error) {
 	expr = fmt.Sprintf("select %s", expr)
 	charset, collation := charset.GetDefaultCharsetAndCollate()
 	parse := parserutil.GetParser()
 	defer func() {
 		parserutil.DestroyParser(parse)
 	}()
+	if sqlMode != nil {
+		parse.SetSQLMode(*sqlMode)
+	}
 	stmts, _, err := parse.ParseSQL(expr,
 		parser.CharsetConnection(charset),
 		parser.CollationConnection(collation))

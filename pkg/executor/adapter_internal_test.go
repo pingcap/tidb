@@ -431,6 +431,24 @@ func TestObserveStmtFinishedOnTopProfilingIgnores(t *testing.T) {
 	require.InDelta(t, 0.0, incr.TotalRU, 1e-9)
 }
 
+func TestRUDetailsForStatementLogPreservesUnfinalizedRU(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.BindDomainAndSchValidator(newMockDomainWithRUVersion(t, rmclient.RUVersionV2), nil)
+	stmt := &ExecStmt{Ctx: ctx}
+	ruDetails := util.NewRUDetailsWith(11, 7, 20*time.Millisecond)
+
+	unfinalized := stmt.ruDetailsForStatementLog(ruDetails, nil)
+	require.Same(t, ruDetails, unfinalized)
+	require.Equal(t, 11.0, unfinalized.RRU())
+	require.Equal(t, 7.0, unfinalized.WRU())
+
+	finalizedZero := stmt.ruDetailsForStatementLog(ruDetails, []float64{0})
+	require.NotSame(t, ruDetails, finalizedZero)
+	require.Zero(t, finalizedZero.RRU())
+	require.Zero(t, finalizedZero.WRU())
+	require.Equal(t, 20*time.Millisecond, finalizedZero.RUWaitDuration())
+}
+
 type mockResourceGroupProvider struct {
 	rmclient.ResourceGroupProvider
 	config *rmclient.Config

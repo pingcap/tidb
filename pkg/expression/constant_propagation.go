@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
@@ -252,6 +253,19 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 	}
 	if _, ok := inequalFunctions[sf.FuncName.L]; ok {
 		return false, true, cond
+	}
+	if sf.FuncName.L == ast.Like || sf.FuncName.L == ast.Ilike {
+		// LIKE and ILIKE preserve trailing spaces, unlike equality under PAD SPACE
+		// collations: 'a ' = 'a', but 'a ' LIKE 'a_' is true and 'a' LIKE 'a_' is false.
+		// String equality under binary and utf8mb4_0900_bin is byte-exact, so equal
+		// values have the same pattern-matching result. Numeric types can also have
+		// binary collation, but equal numbers need not have identical string forms.
+		collation := src.RetType.GetCollate()
+		if src.RetType.EvalType() != types.ETString || tgt.RetType.EvalType() != types.ETString ||
+			collation != tgt.RetType.GetCollate() ||
+			(collation != charset.CollationBin && collation != charset.CollationUTF8MB40900Bin) {
+			return false, true, cond
+		}
 	}
 	// See
 	//	https://github.com/pingcap/tidb/issues/15782
@@ -630,9 +644,9 @@ type propOuterJoinConstSolver struct {
 	// TODO: remove this func pointer for performance
 	vaildExprFunc VaildConstantPropagationExpressionFuncType
 
-	// nullSensitive indicates if this outer join is null sensitive, if true, we cannot generate
-	// additional `col is not null` condition from column equal conditions. Specifically, this value
-	// is true for LeftOuterSemiJoin, AntiLeftOuterSemiJoin and AntiSemiJoin.
+	// nullSensitive indicates if this join's output distinguishes an empty inner side from a NULL
+	// comparison (LeftOuterSemiJoin, AntiLeftOuterSemiJoin, AntiSemiJoin). When true, we cannot
+	// derive `innerCol is not null` or propagate column equalities over nullable / InOperand keys.
 	nullSensitive bool
 }
 
@@ -884,9 +898,6 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 // 'expression(..., outerCol, ...)' does not reference columns outside children schemas of join node.
 // Derived new expressions must be appended into join condition, not filter condition.
 func (s *propOuterJoinConstSolver) propagateColumnEQ() {
-	if s.nullSensitive {
-		return
-	}
 	visited := make([]bool, 2*len(s.joinConds)+len(s.filterConds))
 	if s.unionSet == nil {
 		s.unionSet = disjointset.NewIntSet(len(s.columns))
@@ -899,19 +910,34 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 	for i := range s.joinConds {
 		outerCol, innerCol = s.validColEqualCond(s.joinConds[i])
 		if outerCol != nil {
+			childCol := s.innerSchema.RetrieveColumn(innerCol)
+			if s.nullSensitive {
+				// For null-sensitive joins (LeftOuterSemiJoin, AntiLeftOuterSemiJoin, AntiSemiJoin),
+				// deriving inner filters from outer predicates is unsafe when NULL can produce UNKNOWN:
+				//   - nullable inner key: for `7 IN (3, NULL)`, pushing `inner = 7` drops NULL and turns NULL into 0;
+				//   - nullable outer key: for `NULL IN (99)`, pushing `inner IS NULL` empties the inner side and turns NULL into 0.
+				// Propagation is only safe when `outerCol = innerCol` is a plain equality (not a null-aware
+				// InOperand) and both keys are NOT NULL, so `=` is strictly two-valued (TRUE or FALSE).
+				// Check `outerSchema`/`innerSchema` instead of `outerCol`/`innerCol` directly, because a lower
+				// outer join can null-extend a column while its Column ref in `joinConds` keeps NotNullFlag.
+				outerInputCol := s.outerSchema.RetrieveColumn(outerCol)
+				if IsEQCondFromIn(s.joinConds[i]) ||
+					!mysql.HasNotNullFlag(outerInputCol.RetType.GetFlag()) ||
+					!mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
+					continue
+				}
+			}
 			outerID := s.getColID(outerCol)
 			innerID := s.getColID(innerCol)
 			s.unionSet.Union(outerID, innerID)
 			visited[i] = true
 			// Generate `innerCol is not null` from `outerCol = innerCol`. Note that `outerCol is not null`
 			// does not hold since we are in outer join.
-			// For AntiLeftOuterSemiJoin, this does not work, for example:
-			// `select *, t1.a not in (select t2.b from t t2) from t t1` does not imply `t2.b is not null`.
-			// For LeftOuterSemiJoin, this does not work either, for example:
-			// `select *, t1.a in (select t2.b from t t2) from t t1`
-			// rows with t2.b is null would impact whether LeftOuterSemiJoin should output 0 or null if there
-			// is no row satisfying t2.b = t1.a
-			childCol := s.innerSchema.RetrieveColumn(innerCol)
+			// Note: null-sensitive joins with a nullable inner column are already skipped above, because:
+			// - For AntiLeftOuterSemiJoin, `select *, t1.a not in (select t2.b from t t2) from t t1`
+			//   does not imply `t2.b is not null`.
+			// - For LeftOuterSemiJoin, in `select *, t1.a in (select t2.b from t t2) from t t1`,
+			//   rows with `t2.b is null` determine whether the join outputs 0 or null when no row satisfies `t2.b = t1.a`.
 			if !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
 				notNullExpr := BuildNotNullExpr(s.ctx, childCol)
 				s.joinConds = append(s.joinConds, notNullExpr)

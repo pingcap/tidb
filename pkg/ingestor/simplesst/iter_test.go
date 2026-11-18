@@ -35,6 +35,10 @@ import (
 	"golang.org/x/exp/rand"
 )
 
+func readerMemoryForConcurrency(concurrency int) int64 {
+	return int64(concurrency * ConcurrentReaderBufferSizePerConc)
+}
+
 func TestMergeKVIter(t *testing.T) {
 	ctx := context.Background()
 	memStore := objstore.NewMemStorage()
@@ -63,7 +67,15 @@ func TestMergeKVIter(t *testing.T) {
 	}
 
 	trackStore := &testutils.TrackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true, 1)
+	iter, err := NewMergeKVIter(
+		ctx,
+		filenames,
+		[]uint64{0, 0, 0},
+		trackStore,
+		5,
+		true,
+		readerMemoryForConcurrency(256),
+	)
 	require.NoError(t, err)
 	// close one empty file immediately in NewMergeKVIter
 	require.EqualValues(t, 2, trackStore.Opened.Load())
@@ -86,6 +98,26 @@ func TestMergeKVIter(t *testing.T) {
 	require.Equal(t, expected, got)
 	err = iter.Close()
 	require.NoError(t, err)
+	require.EqualValues(t, 0, trackStore.Opened.Load())
+
+	iter, err = NewMergeKVIter(
+		ctx,
+		filenames,
+		[]uint64{0, 0, 0},
+		trackStore,
+		5,
+		true,
+		0,
+	)
+	require.NoError(t, err)
+	require.False(t, iter.iter.checkHotspot)
+	got = got[:0]
+	for iter.Next() {
+		got = append(got, [2]string{string(iter.Key()), string(iter.Value())})
+	}
+	require.NoError(t, iter.Error())
+	require.Equal(t, expected, got)
+	require.NoError(t, iter.Close())
 	require.EqualValues(t, 0, trackStore.Opened.Load())
 }
 
@@ -115,7 +147,15 @@ func TestOneUpstream(t *testing.T) {
 	}
 
 	trackStore := &testutils.TrackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true, 1)
+	iter, err := NewMergeKVIter(
+		ctx,
+		filenames,
+		[]uint64{0, 0, 0},
+		trackStore,
+		5,
+		true,
+		readerMemoryForConcurrency(256),
+	)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, trackStore.Opened.Load())
 
@@ -152,14 +192,30 @@ func TestAllEmpty(t *testing.T) {
 	}
 
 	trackStore := &testutils.TrackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, []string{filenames[0]}, []uint64{0}, trackStore, 5, false, 1)
+	iter, err := NewMergeKVIter(
+		ctx,
+		[]string{filenames[0]},
+		[]uint64{0},
+		trackStore,
+		5,
+		false,
+		readerMemoryForConcurrency(256),
+	)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, trackStore.Opened.Load())
 	require.False(t, iter.Next())
 	require.NoError(t, iter.Error())
 	require.NoError(t, iter.Close())
 
-	iter, err = NewMergeKVIter(ctx, filenames, []uint64{0, 0}, trackStore, 5, false, 1)
+	iter, err = NewMergeKVIter(
+		ctx,
+		filenames,
+		[]uint64{0, 0},
+		trackStore,
+		5,
+		false,
+		readerMemoryForConcurrency(256),
+	)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, trackStore.Opened.Load())
 	require.False(t, iter.Next())
@@ -197,7 +253,15 @@ func TestCorruptContent(t *testing.T) {
 	}
 
 	trackStore := &testutils.TrackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true, 1)
+	iter, err := NewMergeKVIter(
+		ctx,
+		filenames,
+		[]uint64{0, 0, 0},
+		trackStore,
+		5,
+		true,
+		readerMemoryForConcurrency(256),
+	)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, trackStore.Opened.Load())
 
@@ -285,7 +349,15 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 
 	offsets := make([]uint64, len(dataNames))
 
-	iter, err := NewMergeKVIter(context.Background(), dataNames, offsets, st, 2048, true, 1)
+	iter, err := NewMergeKVIter(
+		context.Background(),
+		dataNames,
+		offsets,
+		st,
+		2048,
+		true,
+		readerMemoryForConcurrency(256),
+	)
 	require.NoError(t, err)
 
 	for iter.Next() {
@@ -332,6 +404,15 @@ func TestReadAfterCloseConnReader(t *testing.T) {
 }
 
 func TestHotspot(t *testing.T) {
+	oldConcurrentReaderBufferSize := ConcurrentReaderBufferSizePerConc
+	ConcurrentReaderBufferSizePerConc = 26
+	t.Cleanup(func() {
+		ConcurrentReaderBufferSizePerConc = oldConcurrentReaderBufferSize
+	})
+	require.Equal(t, 0, getConcurrentReaderConcurrency(25))
+	require.Equal(t, 1, getConcurrentReaderConcurrency(26))
+	require.Equal(t, 256, getConcurrentReaderConcurrency(readerMemoryForConcurrency(300)))
+
 	ctx := context.Background()
 	store := objstore.NewMemStorage()
 
@@ -359,9 +440,31 @@ func TestHotspot(t *testing.T) {
 		err = writer.Close(ctx)
 		require.NoError(t, err)
 	}
+	cappedIter, err := NewMergeKVIter(
+		ctx,
+		filenames,
+		make([]uint64, len(filenames)),
+		store,
+		26,
+		true,
+		readerMemoryForConcurrency(300),
+	)
+	require.NoError(t, err)
+	for _, reader := range cappedIter.iter.readers {
+		require.Equal(t, concurrentReaderTotalConcurrency, reader.r.byteReader.concurrentReader.concurrency)
+	}
+	require.NoError(t, cappedIter.Close())
 
 	// readerBufSize = 8+5+8+5, every KV will cause reload
-	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 26, true, 1)
+	iter, err := NewMergeKVIter(
+		ctx,
+		filenames,
+		make([]uint64, len(filenames)),
+		store,
+		26,
+		true,
+		readerMemoryForConcurrency(4),
+	)
 	require.NoError(t, err)
 	iter.iter.checkHotspotPeriod = 2
 	// after read key00 and key01 from reader_0, it becomes hotspot
@@ -373,6 +476,7 @@ func TestHotspot(t *testing.T) {
 	r0 := &iter.iter.readers[0].r.byteReader.concurrentReader
 	require.True(t, r0.expected)
 	require.True(t, r0.now)
+	require.Equal(t, int64(4*ConcurrentReaderBufferSizePerConc), r0.largeBufferPool.TotalSize())
 	r1 := &iter.iter.readers[1].r.byteReader.concurrentReader
 	require.False(t, r1.expected)
 	require.False(t, r1.now)
@@ -464,7 +568,15 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 
 	beforeMem := getMemoryInUse()
 
-	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 1024, true, 16)
+	iter, err := NewMergeKVIter(
+		ctx,
+		filenames,
+		make([]uint64, len(filenames)),
+		store,
+		1024,
+		true,
+		readerMemoryForConcurrency(16),
+	)
 	require.NoError(t, err)
 	iter.iter.checkHotspotPeriod = 10
 	i := 0
@@ -633,7 +745,7 @@ func (s *slowOpenStorage) Open(
 }
 
 type asyncFailStorage struct {
-	*objstore.MemStorage
+	storeapi.Storage
 	failingPaths map[string]struct{}
 	openStarted  chan struct{}
 	continueOpen chan struct{}
@@ -649,7 +761,7 @@ func (s *asyncFailStorage) Open(
 		<-s.continueOpen
 		return nil, fmt.Errorf("injected open failure for %s", filePath)
 	}
-	return s.MemStorage.Open(ctx, filePath, o)
+	return s.Storage.Open(ctx, filePath, o)
 }
 
 func TestMergePropBaseIter(t *testing.T) {
@@ -720,7 +832,7 @@ func TestMergePropBaseIterCloseWithAsyncOpenError(t *testing.T) {
 	}
 
 	store := &asyncFailStorage{
-		MemStorage:   memStore,
+		Storage:      memStore,
 		failingPaths: failingPaths,
 		openStarted:  make(chan struct{}, readerLimit),
 		continueOpen: make(chan struct{}),
@@ -743,6 +855,92 @@ func TestMergePropBaseIterCloseWithAsyncOpenError(t *testing.T) {
 	<-iter.closeCh
 	close(store.continueOpen)
 	require.NoError(t, <-closeDone)
+}
+
+func TestMergePropBaseIterReaderCleanup(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		fileNum  int
+		failPath string
+		empty    bool
+	}{
+		{name: "early close after producer exits", fileNum: 4},
+		{name: "initial open fails with full pre-open queue", fileNum: 7, failPath: "/test0"},
+		{name: "replacement open fails with full pre-open queue", fileNum: 7, failPath: "/test2", empty: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			tracked := &testutils.TrackOpenMemStorage{MemStorage: objstore.NewMemStorage()}
+			multiStat := MultipleFilesStat{MaxOverlappingNum: 1}
+			for i := range tc.fileNum {
+				path := fmt.Sprintf("/test%d", i)
+				multiStat.Filenames = append(multiStat.Filenames, [2]string{"", path})
+				data := encodeMultiProps(nil, []*RangeProperty{{FirstKey: []byte{byte(i)}}})
+				if tc.empty && i == 0 {
+					data = nil
+				}
+				require.NoError(t, tracked.WriteFile(ctx, path, data))
+			}
+			if tc.failPath == "" {
+				iter, err := newMergePropBaseIter(ctx, multiStat, tracked)
+				require.NoError(t, err)
+				// All pre-opens fit in the queue, so the producer can exit before close.
+				iter.wg.Wait()
+				require.EqualValues(t, tc.fileNum, tracked.Opened.Load())
+				require.NoError(t, iter.close())
+				require.Zero(t, tracked.Opened.Load())
+				return
+			}
+
+			store := &asyncFailStorage{
+				Storage:      tracked,
+				failingPaths: map[string]struct{}{tc.failPath: {}},
+				openStarted:  make(chan struct{}, 1),
+				continueOpen: make(chan struct{}),
+			}
+			type result struct {
+				iter *mergePropBaseIter
+				err  error
+			}
+			done := make(chan result, 1)
+			go func() {
+				iter, err := newMergePropBaseIter(ctx, multiStat, store)
+				done <- result{iter, err}
+			}()
+			<-store.openStarted
+			// With limit=2, three async tasks fill the queue and block the producer.
+			filled := false
+			for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+				if tracked.TotalOpened.Load() >= 4 {
+					filled = true
+					break
+				}
+				runtime.Gosched()
+			}
+			close(store.continueOpen)
+			var got result
+			select {
+			case got = <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("iterator construction did not return")
+			}
+			// Clean up the old implementation too, so a failing regression does not
+			// leave a producer behind. It must not be the caller's responsibility.
+			if got.iter != nil {
+				defer func() {
+					close(got.iter.closeCh)
+					got.iter.wg.Wait()
+					if got.iter.iter != nil {
+						_ = got.iter.iter.close()
+					}
+				}()
+			}
+			require.True(t, filled, "pre-open queue did not fill")
+			require.ErrorContains(t, got.err, "injected open failure")
+			require.Zero(t, tracked.Opened.Load())
+			require.Nil(t, got.iter)
+		})
+	}
 }
 
 func TestEmptyBaseReader4LimitSizeMergeIter(t *testing.T) {
@@ -808,10 +1006,4 @@ func TestCloseLimitSizeMergeIterHalfway(t *testing.T) {
 	err = iter.close()
 	require.NoError(t, err)
 	require.EqualValues(t, 0, store.Opened.Load())
-}
-
-func TestMergeKVIterPassWrongParam(t *testing.T) {
-	// Caller must ensure the outerConcurrency is set
-	_, err := NewMergeKVIter(nil, nil, nil, nil, 0, true, 1)
-	require.Error(t, err, "outerConcurrency must be positive, caller must ensure that the correct value is passed in")
 }

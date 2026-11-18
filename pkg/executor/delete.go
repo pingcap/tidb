@@ -189,6 +189,14 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []p
 		if err != nil {
 			return err
 		}
+		// After EXCHANGE PARTITION, _tidb_rowid is only unique within a partition.
+		if pt, ok := e.tblID2Table[info.TblID].(table.PartitionedTable); ok && !pt.Meta().HasClusteredIndex() {
+			p, err := pt.GetPartitionByRow(e.Ctx().GetExprCtx().GetEvalCtx(), joinedRow[info.Start:info.End])
+			if err != nil {
+				return err
+			}
+			handle = kv.NewPartitionHandle(p.GetPhysicalID(), handle)
+		}
 		// tblRowMap[info.TblID][handle] hold the row datas binding to this table and this handle.
 		row, exist := tblRowMap[info.TblID].Get(handle)
 		if !exist {
@@ -264,6 +272,10 @@ func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableR
 				}
 			}
 
+			// The partition ID is only for the map key, RemoveRecord finds the partition from the row.
+			if ph, ok := h.(kv.PartitionHandle); ok {
+				h = ph.Handle
+			}
 			err = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val.handleVal, val.posInfo)
 			return err == nil
 		})

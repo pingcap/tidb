@@ -505,6 +505,12 @@ func TestLogicalSchemaProducerHash64Equals(t *testing.T) {
 	d2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, d1.Equals(d2))
+
+	d1.DBName = ast.NewCIStr("test")
+	d1.TableInfo = &model.TableInfo{Name: ast.NewCIStr("t")}
+	commitTSCol := d1.NewExtraCommitTSSchemaCol()
+	require.Equal(t, mysql.TypeLonglong, commitTSCol.RetType.GetType())
+	require.True(t, mysql.HasUnsignedFlag(commitTSCol.RetType.GetFlag()))
 }
 
 func TestLogicalMaxOneRowHash64Equals(t *testing.T) {

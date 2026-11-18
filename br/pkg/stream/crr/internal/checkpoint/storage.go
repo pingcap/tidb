@@ -205,7 +205,7 @@ func validateIncrementalMetaScanStorage(rawURI string) error {
 		return fmt.Errorf("parse upstream storage uri %q: %w", rawURI, err)
 	}
 	switch parsed.Scheme {
-	case "s3", "file", "gcs":
+	case "s3", "oss", "file", "gcs":
 		return nil
 	case "":
 		return fmt.Errorf("upstream storage uri %q has empty scheme", rawURI)

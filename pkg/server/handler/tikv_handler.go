@@ -273,7 +273,7 @@ func (t *TikvHandlerTool) GetRegionsMeta(regionIDs []uint64) ([]RegionMeta, erro
 		})
 
 		if region.Meta == nil {
-			return nil, errors.Errorf("region not found for regionID %q", regionID)
+			return nil, errors.Errorf("region not found for regionID %d", regionID)
 		}
 		regions[i] = RegionMeta{
 			ID:          regionID,
