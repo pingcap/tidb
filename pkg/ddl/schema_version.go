@@ -442,6 +442,11 @@ func shouldCheckAssumedServer(job *model.Job) bool {
 	if kerneltype.IsClassic() {
 		return false
 	}
+	if !metadef.IsReservedID(job.SchemaID) {
+		// Legacy NextGen uses ordinary schema IDs for mysql.
+		// The owner's InfoSchema may not have loaded a newly created built-in yet.
+		return metadef.IsBuiltinSystemTable(job.SchemaName, job.TableName)
+	}
 
 	// check the table ID is enough, as we forbid doing DDL which involve multiple
 	// table IDs on system tables in nextgen, such as RenameTables, TruncateTable,

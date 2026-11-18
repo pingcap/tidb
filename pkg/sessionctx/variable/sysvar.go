@@ -3491,15 +3491,17 @@ var defaultSysVars = []*SysVar{
 	{
 		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:  vardef.TiDBEnableAsyncMergeGlobalStats,
-		Value: BoolToOnOff(vardef.DefTiDBEnableAsyncMergeGlobalStats),
+		Value: vardef.On,
 		Type:  vardef.TypeBool,
+		// Reads return ON too: upgradeToVer177 persisted OFF on upgraded clusters,
+		// and persisted values are read without Validation.
+		GetSession: func(_ *SessionVars) (string, error) { return vardef.On, nil },
+		GetGlobal:  func(_ context.Context, _ *SessionVars) (string, error) { return vardef.On, nil },
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-			vars.StmtCtx.AppendWarning(errors.NewNoStackError("The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a future release; changing it is discouraged."))
-			return normalizedValue, nil
-		},
-		SetSession: func(s *SessionVars, val string) error {
-			s.EnableAsyncMergeGlobalStats = TiDBOptOn(val)
-			return nil
+			if !TiDBOptOn(normalizedValue) {
+				vars.StmtCtx.AppendWarning(errors.NewNoStackError("global statistics are always merged asynchronously, so this will have no effect"))
+			}
+			return vardef.On, nil
 		},
 	},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptPrefixIndexSingleScan, Value: BoolToOnOff(vardef.DefTiDBOptPrefixIndexSingleScan), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {

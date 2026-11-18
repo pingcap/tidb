@@ -50,8 +50,8 @@ type partitionItemID struct {
 	partitionID int64
 }
 
-// StatsWrapper wrapper stats
-type StatsWrapper struct {
+// statsWrapper holds the histograms and TopNs of one column or index in all partitions.
+type statsWrapper struct {
 	AllHg   []*statistics.Histogram
 	AllTopN []*statistics.TopN
 	// missedNotNull is the non-NULL rows of the partitions whose TopN and
@@ -59,9 +59,8 @@ type StatsWrapper struct {
 	missedNotNull int64
 }
 
-// NewStatsWrapper returns wrapper
-func NewStatsWrapper(hg []*statistics.Histogram, topN []*statistics.TopN) *StatsWrapper {
-	return &StatsWrapper{
+func newStatsWrapper(hg []*statistics.Histogram, topN []*statistics.TopN) *statsWrapper {
+	return &statsWrapper{
 		AllHg:   hg,
 		AllTopN: topN,
 	}
@@ -76,7 +75,7 @@ func toSQLIndex(isIndex bool) int {
 	return index
 }
 
-// AsyncMergePartitionStats2GlobalStats is used to merge partition stats to global stats.
+// globalStatsMerger is used to merge partition stats to global stats.
 // it divides the merge task into two parts.
 // - IOWorker: load stats from storage. it will load fmsketch, cmsketch, histogram and topn. and send them to cpuWorker.
 // - CPUWorker: merge the stats from IOWorker and generate global stats.
@@ -91,14 +90,13 @@ func toSQLIndex(isIndex bool) int {
 // │                        │        │                       │
 // │                        │        │                       │
 // └────────────────────────┘        └───────────────────────┘
-type AsyncMergePartitionStats2GlobalStats struct {
+type globalStatsMerger struct {
 	is                  infoschema.InfoSchema
 	statsHandle         statstypes.StatsHandle
 	globalStats         *GlobalStats
 	cmsketch            chan mergeItem[*statistics.CMSketch]
 	fmsketch            chan mergeItem[*statistics.FMSketch]
-	histogramAndTopn    chan mergeItem[*StatsWrapper]
-	allPartitionStats   map[int64]*statistics.Table
+	histogramAndTopn    chan mergeItem[*statsWrapper]
 	PartitionDefinition map[int64]model.PartitionDefinition
 	tableInfo           map[int64]*model.TableInfo
 	// key is partition id and histID
@@ -122,18 +120,17 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	skipMissingPartitionStats bool
 }
 
-// NewAsyncMergePartitionStats2GlobalStats creates a new AsyncMergePartitionStats2GlobalStats.
-func NewAsyncMergePartitionStats2GlobalStats(
+func newGlobalStatsMerger(
 	statsHandle statstypes.StatsHandle,
 	globalTableInfo *model.TableInfo,
 	histIDs []int64,
-	is infoschema.InfoSchema) (*AsyncMergePartitionStats2GlobalStats, error) {
+	is infoschema.InfoSchema) *globalStatsMerger {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
-	return &AsyncMergePartitionStats2GlobalStats{
+	return &globalStatsMerger{
 		statsHandle:             statsHandle,
 		cmsketch:                make(chan mergeItem[*statistics.CMSketch], 5),
 		fmsketch:                make(chan mergeItem[*statistics.FMSketch], 5),
-		histogramAndTopn:        make(chan mergeItem[*StatsWrapper]),
+		histogramAndTopn:        make(chan mergeItem[*statsWrapper]),
 		PartitionDefinition:     make(map[int64]model.PartitionDefinition),
 		tableInfo:               make(map[int64]*model.TableInfo),
 		partitionIDs:            make([]int64, 0, partitionNum),
@@ -141,15 +138,14 @@ func NewAsyncMergePartitionStats2GlobalStats(
 		cpuWorkerExitChan:       make(chan struct{}),
 		skipPartition:           make(map[partitionItemID]struct{}),
 		sketchNotNull:           make(map[partitionItemID]int64),
-		allPartitionStats:       make(map[int64]*statistics.Table),
 		globalTableInfo:         globalTableInfo,
 		histIDs:                 histIDs,
 		is:                      is,
 		partitionNum:            partitionNum,
-	}, nil
+	}
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, isIndex bool) (err error) {
+func (a *globalStatsMerger) prepare(sctx sessionctx.Context, isIndex bool) (err error) {
 	if len(a.histIDs) == 0 {
 		for _, col := range a.globalTableInfo.Columns {
 			// The virtual generated column stats can not be merged to the global stats.
@@ -160,7 +156,6 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 		}
 	}
 	a.globalStats = newGlobalStats(len(a.histIDs))
-	a.globalStats.Num = len(a.histIDs)
 	a.globalStatsNDV = make([]int64, 0, a.globalStats.Num)
 	a.sampledNDV = make([]bool, 0, a.globalStats.Num)
 	statslogutil.StatsLogger().Info("global stats prepare: fetching per-partition meta",
@@ -230,7 +225,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) dealWithSkipPartition(partitionID int64, isIndex bool, idx int, err error) error {
+func (a *globalStatsMerger) dealWithSkipPartition(partitionID int64, isIndex bool, idx int, err error) error {
 	switch {
 	case types.ErrPartitionStatsMissing.Equal(err):
 		return a.dealErrPartitionStatsMissing(partitionID)
@@ -241,7 +236,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealWithSkipPartition(partitionID
 	}
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) dealErrPartitionStatsMissing(partitionID int64) error {
+func (a *globalStatsMerger) dealErrPartitionStatsMissing(partitionID int64) error {
 	missingPart := fmt.Sprintf("partition `%s`", a.PartitionDefinition[partitionID].Name.L)
 	a.globalStats.MissingPartitionStats = append(a.globalStats.MissingPartitionStats, missingPart)
 	for _, histID := range a.histIDs {
@@ -253,7 +248,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealErrPartitionStatsMissing(part
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) dealErrPartitionColumnStatsMissing(isIndex bool, partitionID int64, idx int) error {
+func (a *globalStatsMerger) dealErrPartitionColumnStatsMissing(isIndex bool, partitionID int64, idx int) error {
 	var missingPart string
 	if isIndex {
 		missingPart = fmt.Sprintf("partition `%s` index `%s`", a.PartitionDefinition[partitionID].Name.L, a.tableInfo[partitionID].FindIndexNameByID(a.histIDs[idx]))
@@ -271,7 +266,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealErrPartitionColumnStatsMissin
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context, isIndex bool) (err error) {
+func (a *globalStatsMerger) ioWorker(sctx sessionctx.Context, isIndex bool) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			statslogutil.StatsLogger().Warn("ioWorker panic", zap.Stack("stack"), zap.Any("error", r))
@@ -306,7 +301,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context,
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.StatementContext, killer *sqlkiller.SQLKiller, opts map[ast.AnalyzeOptionType]uint64, isIndex bool) (err error) {
+func (a *globalStatsMerger) cpuWorker(stmtCtx *stmtctx.StatementContext, killer *sqlkiller.SQLKiller, opts map[ast.AnalyzeOptionType]uint64, isIndex bool) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			statslogutil.StatsLogger().Warn("cpuWorker panic", zap.Stack("stack"), zap.Any("error", r))
@@ -340,12 +335,12 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 }
 
 // Result returns the global stats.
-func (a *AsyncMergePartitionStats2GlobalStats) Result() *GlobalStats {
+func (a *globalStatsMerger) Result() *GlobalStats {
 	return a.globalStats
 }
 
 // MergePartitionStats2GlobalStats merges partition stats to global stats.
-func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
+func (a *globalStatsMerger) MergePartitionStats2GlobalStats(
 	sctx sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64,
 	isIndex bool,
@@ -384,7 +379,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 	)
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Context, isIndex bool) error {
+func (a *globalStatsMerger) loadFmsketch(sctx sessionctx.Context, isIndex bool) error {
 	statslogutil.StatsLogger().Info("global stats load: fmsketch",
 		zap.String("table", a.globalTableInfo.Name.L),
 		zap.Int64("tableID", a.globalTableInfo.ID),
@@ -431,7 +426,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Cont
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Context, isIndex bool) error {
+func (a *globalStatsMerger) loadCMsketch(sctx sessionctx.Context, isIndex bool) error {
 	failpoint.Inject("PanicInIOWorker", nil)
 	statslogutil.StatsLogger().Info("global stats load: cmsketch",
 		zap.String("table", a.globalTableInfo.Name.L),
@@ -466,7 +461,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Cont
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx sessionctx.Context, tableInfo *model.TableInfo, isIndex bool) error {
+func (a *globalStatsMerger) loadHistogramAndTopN(sctx sessionctx.Context, tableInfo *model.TableInfo, isIndex bool) error {
 	failpoint.Inject("ErrorSameTime", func(val failpoint.Value) {
 		if val, _ := val.(bool); val {
 			time.Sleep(1 * time.Second)
@@ -511,10 +506,10 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 		if len(hists) == 0 && len(topn) == 0 {
 			continue
 		}
-		wrapper := NewStatsWrapper(hists, topn)
+		wrapper := newStatsWrapper(hists, topn)
 		wrapper.missedNotNull = missedNotNull
 		select {
-		case a.histogramAndTopn <- mergeItem[*StatsWrapper]{
+		case a.histogramAndTopn <- mergeItem[*statsWrapper]{
 			wrapper, i,
 		}:
 		case <-a.cpuWorkerExitChan:
@@ -526,7 +521,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) dealFMSketch() {
+func (a *globalStatsMerger) dealFMSketch() {
 	failpoint.Inject("PanicInCPUWorker", nil)
 	ndvMergers := make([]statistics.PartitionNDVMerger, a.globalStats.Num)
 	for {
@@ -547,7 +542,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealFMSketch() {
 	}
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) dealCMSketch() error {
+func (a *globalStatsMerger) dealCMSketch() error {
 	failpoint.Inject("dealCMSketchErr", func(val failpoint.Value) {
 		if val, _ := val.(bool); val {
 			failpoint.Return(errors.New("dealCMSketch returned error"))
@@ -573,7 +568,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealCMSketch() error {
 	}
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stmtctx.StatementContext, killer *sqlkiller.SQLKiller, opts map[ast.AnalyzeOptionType]uint64, isIndex bool) (err error) {
+func (a *globalStatsMerger) dealHistogramAndTopN(stmtCtx *stmtctx.StatementContext, killer *sqlkiller.SQLKiller, opts map[ast.AnalyzeOptionType]uint64, isIndex bool) (err error) {
 	failpoint.Inject("dealHistogramAndTopNErr", func(val failpoint.Value) {
 		if val, _ := val.(bool); val {
 			failpoint.Return(errors.New("dealHistogramAndTopNErr returned error"))

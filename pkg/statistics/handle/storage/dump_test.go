@@ -350,8 +350,10 @@ func TestLoadStatsFMSketchConcurrentAnalyze(t *testing.T) {
 			require.NoError(t, h.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 1))
 			stats, err := h.TableStatsFromStorage(tableInfo, partitionID, true, 0)
 			require.NoError(t, err)
-			hist, _, _, fms, ok := stats.GetStatsInfo(1, isIndex == 1, false)
-			require.True(t, ok)
+			hist, fms := &stats.GetCol(1).Histogram, stats.GetCol(1).FMSketch
+			if isIndex == 1 {
+				hist, fms = &stats.GetIdx(1).Histogram, stats.GetIdx(1).FMSketch
+			}
 			require.Equal(t, int64(3), hist.NDV)
 			require.Equal(t, hist.NDV, fms.NDV())
 		})

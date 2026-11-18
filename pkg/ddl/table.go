@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/tikv/client-go/v2/tikv"
@@ -1582,12 +1583,7 @@ func checkConstraintNamesNotExists(t *meta.Mutator, schemaID int64, constraints 
 	if len(constraints) == 0 {
 		return nil
 	}
-	tbInfos, err := t.ListTables(context.Background(), schemaID)
-	if err != nil {
-		return err
-	}
-
-	for _, tb := range tbInfos {
+	return t.IterTables(schemaID, func(tb *model.TableInfo) error {
 		for _, constraint := range constraints {
 			if constraint.State != model.StateWriteOnly {
 				if constraintInfo := tb.FindConstraintInfoByName(constraint.Name.L); constraintInfo != nil {
@@ -1595,9 +1591,8 @@ func checkConstraintNamesNotExists(t *meta.Mutator, schemaID int64, constraints 
 				}
 			}
 		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 func checkTableIDNotExists(t *meta.Mutator, schemaID, tableID int64) error {
@@ -2212,8 +2207,8 @@ func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobC
 	if args.OldMLogID != 0 {
 		// Drain old purges before taking the shared schema-version mutex. The
 		// advisory lock also excludes new purges until this job finishes.
-		if err := w.acquireMLogPurgeAdvisoryLockForCutover(jobCtx, args.OldMLogID); err != nil {
-			if errors.Cause(err) == errMViewCutoverPurgeLockTimeout {
+		if err := w.acquireMLogPurgeAdvisoryLockForCutover(jobCtx, job, args.OldMLogID); err != nil {
+			if exeerrors.ErrMVAdvisoryLockConflict.Equal(err) {
 				// Retrying this job would reset the total purge-lock wait budget.
 				job.State = model.JobStateCancelled
 			}

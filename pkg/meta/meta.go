@@ -938,6 +938,29 @@ func (m *Mutator) CreateSysDatabaseByID(name string, id int64) error {
 
 // GetSystemDBID gets the system DB ID. return (0, nil) indicates that the system DB does not exist.
 func (m *Mutator) GetSystemDBID() (int64, error) {
+	if kerneltype.IsNextGen() {
+		db, err := m.GetDatabase(metadef.SystemDatabaseID)
+		if err != nil {
+			return 0, err
+		}
+		if db != nil && db.Name.L == mysql.SystemDB {
+			return db.ID, nil
+		}
+		// Existing Starter tier cluster are bootstrapped with legacy ID.
+		// Since MySQL database is created early, we bound the check to the first
+		// ten database IDs.
+		for id := int64(1); id <= 10; id++ {
+			db, err := m.GetDatabase(id)
+			if err != nil {
+				return 0, err
+			}
+			if db != nil && db.Name.L == mysql.SystemDB {
+				return db.ID, nil
+			}
+		}
+		return 0, nil
+	}
+
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return 0, err
@@ -2134,6 +2157,20 @@ func (m *Mutator) FinishStarterBootstrap(version int64) error {
 	return errors.Trace(err)
 }
 
+// IsLegacyNextGen implements Reader.
+func (m *Mutator) IsLegacyNextGen() (bool, error) {
+	if kerneltype.IsClassic() {
+		return false, nil
+	}
+	// Initial system-schema bootstrap precedes schema loading, so checking for
+	// the reserved mysql database distinguishes native and Classic layouts.
+	db, err := m.GetDatabase(metadef.SystemDatabaseID)
+	if err != nil {
+		return false, err
+	}
+	return db == nil, nil
+}
+
 // ElementKeyType is a key type of the element.
 type ElementKeyType []byte
 
@@ -2265,6 +2302,23 @@ func (m *Mutator) SetRUStats(stats *RUStats) error {
 
 	err = m.txn.Set(mRequestUnitStats, data)
 	return errors.Trace(err)
+}
+
+// GetSchemaDiffCommitTS returns the commit timestamp of an existing schema diff.
+// The diff key is written in the same transaction as the schema metadata changes.
+func GetSchemaDiffCommitTS(m Reader, store kv.Storage, version int64, startTS uint64) (uint64, error) {
+	tikvStore, ok := store.(helper.Storage)
+	if !ok {
+		return 0, errors.New("cannot get store from domain")
+	}
+	resp, err := helper.NewHelper(tikvStore).GetMvccByEncodedKeyWithTS(m.EncodeSchemaDiffKey(version), startTS)
+	if err != nil {
+		return 0, err
+	}
+	if resp == nil || resp.Info == nil || len(resp.Info.Writes) == 0 {
+		return 0, errors.New("There is no Write MVCC info for the schema version")
+	}
+	return resp.Info.Writes[0].CommitTs, nil
 }
 
 // GetOldestSchemaVersion gets the oldest schema version at the GC safe point.
