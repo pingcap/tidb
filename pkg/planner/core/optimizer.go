@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades"
 	"github.com/pingcap/tidb/pkg/planner/cascades/impl"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/joinorder"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -374,24 +373,13 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 
 // VolcanoOptimize includes: logicalOptimize, physicalOptimize
 func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
-	return volcanoOptimize(ctx, sctx, flag, logic, nil)
-}
-
-func volcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan, candidate *joinorder.GreedyCandidate) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
 	flag = adjustOptimizationFlags(flag, logic)
-	if candidate != nil {
-		ctx = joinorder.WithGreedyCandidate(ctx, candidate)
-	}
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, nil, 0, err
 	}
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
-	}
-	// A duplicate Greedy round has no physical candidate to compare.
-	if candidate.IsDuplicate() {
-		return logic, nil, 0, nil
 	}
 	failpoint.Inject("ConsumeVolcanoOptimizePanic", nil)
 	physical, cost, err := physicalOptimize(logic)
@@ -446,18 +434,6 @@ func DoOptimize(
 ) (base.PhysicalPlan, float64, error) {
 	_, finalPlan, cost, err := doOptimize(ctx, sctx, flag, logic)
 	return finalPlan, cost, err
-}
-
-// DoOptimizeWithGreedyCandidate optimizes one statement-level Greedy round.
-// It can return a nil plan without error when the alternative repeats the baseline join trees.
-func DoOptimizeWithGreedyCandidate(
-	ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan, candidate *joinorder.GreedyCandidate,
-) (base.PhysicalPlan, float64, error) {
-	if candidate == nil {
-		return DoOptimize(ctx, sctx, flag, logic)
-	}
-	_, plan, cost, err := volcanoOptimize(ctx, sctx, flag, logic, candidate)
-	return plan, cost, err
 }
 
 // mergeContinuousSelections merge continuous selections which may occur after changing plans.

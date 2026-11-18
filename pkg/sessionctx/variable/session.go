@@ -1091,12 +1091,6 @@ type SessionVars struct {
 	// When > 0: allow Cartesian Join if cost(cartesian join) * threshold < cost(non cartesian join).
 	CartesianJoinOrderThreshold float64
 
-	// EnableGreedyJoinReorderAlternative allows a second advanced Greedy join tree.
-	EnableGreedyJoinReorderAlternative bool
-
-	// OptJoinReorderBlockingPenaltyRatio scales blocking input cost in the opt-in Greedy alternative.
-	OptJoinReorderBlockingPenaltyRatio float64
-
 	// cpuFactor is the CPU cost of processing one expression for one row.
 	cpuFactor float64
 	// copCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
@@ -2519,7 +2513,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptPartialOrderedIndexForTopN:    vardef.DefTiDBOptPartialOrderedIndexForTopN,
 		EnableCachePrepareStmt:           vardef.DefEnableCachePrepareStmt,
 	}
-	vars.OptJoinReorderBlockingPenaltyRatio = vardef.DefOptJoinReorderBlockingPenaltyRatio
 	vars.QueryCopStoreLimit = vardef.DefTiDBQueryCopStoreLimit
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))

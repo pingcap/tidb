@@ -13,7 +13,6 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
-        "//pkg/planner/core/joinorder",
         "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",
         "//pkg/planner/core/rule",

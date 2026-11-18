@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
@@ -237,37 +236,9 @@ func calcCumCost(p base.LogicalPlan, node1, node2 *Node) float64 {
 	return p.StatsInfo().RowCount + cost1 + cost2
 }
 
-const (
-	blockingInputCostCapFactor = 1_000
-	minBlockingInputCostCap    = 1_000_000
-)
-
-// LeafCost estimates the leaf score for the opt-in Greedy alternative.
-// A leaf is normally priced by its output rows. Limit and TopN account for skipped rows,
-// while operators that block on their input add a capped fraction of the input rows.
-func LeafCost(p base.LogicalPlan) float64 {
-	rows := p.StatsInfo().RowCount
-	switch op := p.(type) {
-	case *logicalop.LogicalLimit:
-		return math.Max(rows, float64(op.Count)+float64(op.Offset))
-	case *logicalop.LogicalTopN:
-		return math.Max(rows, float64(op.Count)+float64(op.Offset))
-	case *logicalop.LogicalAggregation, *logicalop.LogicalSort, *logicalop.LogicalWindow:
-		vars := p.SCtx().GetSessionVars()
-		vars.RecordRelevantOptVar(vardef.TiDBOptJoinReorderBlockingPenaltyRatio)
-		ratio := vars.OptJoinReorderBlockingPenaltyRatio
-		if ratio == 0 {
-			return rows
-		}
-		var inputRows float64
-		for _, child := range p.Children() {
-			inputRows += child.StatsInfo().RowCount
-		}
-		inputCap := math.Max(minBlockingInputCostCap, blockingInputCostCapFactor*rows)
-		return rows + ratio*math.Min(inputRows, inputCap)
-	default:
-		return rows
-	}
+// outputRowsLeafCost costs a join group input by its estimated output rows.
+func outputRowsLeafCost(p base.LogicalPlan) float64 {
+	return p.StatsInfo().RowCount
 }
 
 // LegacyLeafCost sums the estimated row counts of a leaf's whole subtree.

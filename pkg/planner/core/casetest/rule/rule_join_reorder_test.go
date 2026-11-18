@@ -15,6 +15,8 @@
 package rule
 
 import (
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -243,75 +245,83 @@ func TestJoinReorderSuite(t *testing.T) {
 		})
 	})
 }
-
-func TestGreedyJoinReorderAlternative(t *testing.T) {
+func TestGreedyOutputRowsAlternativeRound(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("select @@tidb_opt_enable_greedy_join_reorder_alternative").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@tidb_opt_join_reorder_blocking_penalty_ratio").Check(testkit.Rows("0"))
 	tk.MustExec("set tidb_opt_enable_advanced_join_reorder = on")
 	tk.MustExec("set tidb_opt_join_reorder_threshold = 0")
 	tk.MustExec("set tidb_enable_cascades_planner = off")
 
-	check := func(t *testing.T, query string, keepOriginal bool) {
-		t.Helper()
-		explain := "explain format='plan_tree' " + query
-		tk.MustExec("set tidb_opt_enable_greedy_join_reorder_alternative = off")
-		tk.MustExec("set tidb_opt_join_reorder_blocking_penalty_ratio = 1")
-		original := tk.MustQuery(explain).Rows()
-		tk.MustExec("set tidb_opt_join_reorder_blocking_penalty_ratio = 0")
-		require.Equal(t, original, tk.MustQuery(explain).Rows())
-
-		tk.MustExec("set tidb_opt_enable_greedy_join_reorder_alternative = on")
-		selected := tk.MustQuery(explain).Rows()
-		if keepOriginal {
-			require.Equal(t, original, selected)
-		} else {
-			require.NotEqual(t, original, selected)
-			require.Contains(t, strings.Join(testdata.ConvertRowsToStrings(selected), "\n"), "table:b, index:ix_k(k)")
-		}
-		// Ratio 1 produces the original plan again for these two queries.
-		tk.MustExec("set tidb_opt_join_reorder_blocking_penalty_ratio = 1")
-		require.Equal(t, original, tk.MustQuery(explain).Rows())
-
-		for _, mode := range [][2]string{{"on", "3"}, {"off", "0"}, {"off", "3"}} {
-			tk.MustExec("set tidb_opt_enable_advanced_join_reorder = " + mode[0])
-			tk.MustExec("set tidb_opt_join_reorder_threshold = " + mode[1])
-			tk.MustExec("set tidb_opt_enable_greedy_join_reorder_alternative = off")
-			tk.MustExec("set tidb_opt_join_reorder_blocking_penalty_ratio = 1")
-			legacy := tk.MustQuery(explain).Rows()
-			tk.MustExec("set tidb_opt_enable_greedy_join_reorder_alternative = on")
-			tk.MustExec("set tidb_opt_join_reorder_blocking_penalty_ratio = 0")
-			require.Equal(t, legacy, tk.MustQuery(explain).Rows(), "advanced=%s, threshold=%s", mode[0], mode[1])
-		}
-		tk.MustExec("set tidb_opt_enable_advanced_join_reorder = on")
-		tk.MustExec("set tidb_opt_join_reorder_threshold = 0")
+	columnID := regexp.MustCompile(`Column#\d+`)
+	explain := func(query string) string {
+		rows := testdata.ConvertRowsToStrings(tk.MustQuery("explain format='plan_tree' " + query).Rows())
+		return columnID.ReplaceAllString(strings.Join(rows, "\n"), "Column#")
+	}
+	plan := func(alternative, query string) string {
+		tk.MustExec("set tidb_opt_enable_alternative_logical_plans = " + alternative)
+		return explain(query)
+	}
+	// roundRuns reports whether optimizing query attempts the greedy-output-rows round.
+	roundRuns := func(t *testing.T, query string) (runs bool) {
+		t.Run("round", func(t *testing.T) {
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/failIfAlternativeLogicalPlanRoundTriggered",
+				fmt.Sprintf("return(%q)", "greedy-output-rows:"+query))
+			err := tk.ExecToErr(query)
+			if err != nil {
+				require.ErrorContains(t, err, "unexpected alternative logical plan round")
+			}
+			runs = err != nil
+		})
+		return runs
 	}
 
-	t.Run("Q17 keeps the original at a near tie", func(t *testing.T) {
-		tk.MustExec("use test")
-		tk.MustExec(`create table part (
-			p_partkey int not null primary key, p_name varchar(55) not null, p_mfgr char(25) not null,
-			p_brand char(10) not null, p_type varchar(25) not null, p_size int not null,
-			p_container char(10) not null, p_retailprice decimal(15,2) not null, p_comment varchar(23) not null
-		)`)
-		tk.MustExec(`create table lineitem (
-			l_orderkey int not null, l_partkey int not null, l_suppkey int not null, l_linenumber int not null,
-			l_quantity decimal(15,2) not null, l_extendedprice decimal(15,2) not null,
-			l_discount decimal(15,2) not null, l_tax decimal(15,2) not null,
-			l_returnflag char(1) not null, l_linestatus char(1) not null, l_shipdate date not null,
-			l_commitdate date not null, l_receiptdate date not null, l_shipinstruct char(25) not null,
-			l_shipmode char(10) not null, l_comment varchar(44) not null,
-			primary key (l_orderkey,l_linenumber)
-		)`)
-		require.NoError(t, testkit.LoadTableStats("greedy_part.json", dom))
-		require.NoError(t, testkit.LoadTableStats("greedy_lineitem.json", dom))
-		check(t, `select sum(l_extendedprice) / 7.0 from lineitem, part
-			where p_partkey = l_partkey and p_brand = 'Brand#44' and p_container = 'WRAP PKG'
-			and l_quantity < (select 0.2 * avg(l_quantity) from lineitem where l_partkey = p_partkey)`, true)
+	t.Run("aggregation over a large join drives index lookups", func(t *testing.T) {
+		tk.MustExec("create database jr_inflate")
+		tk.MustExec("use jr_inflate")
+		tk.MustExec("create table members (id bigint primary key, v int not null)")
+		tk.MustExec("create table memberships (id bigint primary key, group_id bigint not null, member_id bigint not null, " +
+			"member_type varchar(32) not null, key idx_group(group_id, member_id, member_type))")
+		tk.MustExec("create table principals (id bigint primary key, owner_type varchar(32) not null, owner_id bigint not null, " +
+			"key idx_owner(owner_type, owner_id))")
+		tk.MustExec("create table roles (id bigint primary key, principal_type varchar(32) not null, principal_id bigint not null, " +
+			"key idx_principal(principal_id, principal_type))")
+		for _, name := range []string{"members", "memberships", "principals", "roles"} {
+			require.NoError(t, testkit.LoadTableStats("inflate_"+name+".json", dom))
+		}
+		query := func(group int) string {
+			return fmt.Sprintf("select r.id from roles r join principals p on r.principal_id = p.id "+
+				"join (select distinct m.id from members m join memberships g on m.id = g.member_id "+
+				"where g.group_id = %d and g.member_type = 'M') x on p.owner_id = x.id "+
+				"where r.principal_type = 'P' and p.owner_type = 'M'", group)
+		}
+
+		// Group 12345 has 10 members, but by default its aggregation is costed with
+		// the 1,000,000 member rows below it, so it is joined last and roles is scanned.
+		small := query(12345)
+		original := plan("off", small)
+		require.Contains(t, original, "TableFullScan")
+		alternative := plan("on", small)
+		require.NotContains(t, alternative, "TableFullScan")
+		require.Contains(t, alternative, "table:r, index:idx_principal(principal_id, principal_type)")
+		require.True(t, roundRuns(t, small))
+		// A SET_VAR hint, which a binding can carry, enables the round for one statement.
+		hinted := strings.Replace(small, "select ", "select /*+ SET_VAR(tidb_opt_enable_alternative_logical_plans=ON) */ ", 1)
+		require.Equal(t, alternative, plan("off", hinted))
+
+		// Group 0 has 50,000 members, and the default order stays cheaper.
+		big := query(0)
+		require.Equal(t, plan("off", big), plan("on", big))
+
+		// Only greedy join reorder of the advanced implementation arms the round.
+		tk.MustExec("set tidb_opt_join_reorder_threshold = 10")
+		require.False(t, roundRuns(t, small))
+		tk.MustExec("set tidb_opt_join_reorder_threshold = 0")
+		tk.MustExec("set tidb_opt_enable_advanced_join_reorder = off")
+		require.False(t, roundRuns(t, small))
+		tk.MustExec("set tidb_opt_enable_advanced_join_reorder = on")
 	})
 
-	t.Run("three-table fanout switches to index probes", func(t *testing.T) {
+	t.Run("aggregation over a large table drives index probes", func(t *testing.T) {
 		tk.MustExec("create database jr_repro")
 		tk.MustExec("use jr_repro")
 		tk.MustExec("create table anchors (k int primary key, v int not null)")
@@ -320,8 +330,14 @@ func TestGreedyJoinReorderAlternative(t *testing.T) {
 		for _, name := range []string{"anchors", "fanout", "agg_input"} {
 			require.NoError(t, testkit.LoadTableStats("greedy_"+name+".json", dom))
 		}
-		check(t, `select sum(a.v + b.v + x.mx)
-			from anchors a join fanout b on a.k = b.k
-			join (select k, max(v) as mx from agg_input group by k) x on x.k = a.k`, false)
+		query := "select sum(a.v + b.v + x.mx) from anchors a join fanout b on a.k = b.k " +
+			"join (select k, max(v) as mx from agg_input group by k) x on x.k = a.k"
+		original := plan("off", query)
+		alternative := plan("on", query)
+		require.NotEqual(t, original, alternative)
+		require.Contains(t, alternative, "table:b, index:ix_k(k)")
+		// Base tables cost the same either way, so the round is skipped.
+		require.False(t, roundRuns(t, "select sum(a.v + b.v + c.v) from anchors a join fanout b on a.k = b.k "+
+			"join agg_input c on c.k = a.k"))
 	})
 }

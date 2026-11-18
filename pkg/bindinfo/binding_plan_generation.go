@@ -447,8 +447,6 @@ func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state)
 			sctx.GetSessionVars().EnableSemiJoinRewrite = state.varValues[i].(bool)
 		case vardef.TiDBOptSelectivityFactor:
 			sctx.GetSessionVars().SelectivityFactor = state.varValues[i].(float64)
-		case vardef.TiDBOptJoinReorderBlockingPenaltyRatio:
-			sctx.GetSessionVars().OptJoinReorderBlockingPenaltyRatio = state.varValues[i].(float64)
 		case vardef.TiDBOptEnableAlternativeLogicalPlans:
 			sctx.GetSessionVars().EnableAlternativeLogicalPlans = state.varValues[i].(bool)
 		default:
@@ -559,9 +557,6 @@ func adjustVar(varName string, varVal any) (newVarVal any, err error) {
 		}
 		// increase 0.1 each step
 		return v + 0.1, nil
-	case vardef.TiDBOptJoinReorderBlockingPenaltyRatio:
-		// Explore plans with the blocking input cost enabled and disabled.
-		return 1 - varVal.(float64), nil
 	case vardef.TiDBOptPreferRangeScan, vardef.TiDBOptEnableNoDecorrelateInSelect, vardef.TiDBOptAlwaysKeepJoinKey, vardef.TiDBOptEnableSemiJoinRewrite, vardef.TiDBOptEnableAlternativeLogicalPlans: // flip the switch
 		return !varVal.(bool), nil
 	}
@@ -655,8 +650,6 @@ func getStartState(vars []string, fixes []uint64, indexHintCount int) (*state, e
 			s.varValues = append(s.varValues, vardef.DefOptSelectivityFactor)
 		case vardef.TiDBOptCartesianJoinOrderThreshold:
 			s.varValues = append(s.varValues, vardef.DefOptCartesianJoinOrderThreshold)
-		case vardef.TiDBOptJoinReorderBlockingPenaltyRatio:
-			s.varValues = append(s.varValues, vardef.DefOptJoinReorderBlockingPenaltyRatio)
 		case vardef.TiDBOptEnableAlternativeLogicalPlans:
 			s.varValues = append(s.varValues, vardef.DefOptEnableAlternativeLogicalPlans)
 		default:

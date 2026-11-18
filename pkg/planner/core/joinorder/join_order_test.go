@@ -15,7 +15,6 @@
 package joinorder
 
 import (
-	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -87,30 +86,42 @@ func TestCloneNodesForGreedyStartIsolation(t *testing.T) {
 	require.NotNil(t, cloned[0].p)
 }
 
-func TestJoinLeafCost(t *testing.T) {
+func TestArmGreedyOutputRowsRound(t *testing.T) {
 	ctx := coretestsdk.MockContext()
 	t.Cleanup(func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	})
 
-	vars := ctx.GetSessionVars()
-	vars.ResetRelevantOptVarsAndFixes(true)
-	limit := logicalop.LogicalLimit{Count: 1, Offset: math.MaxUint64}.Init(ctx, 0)
-	limit.SetStats(&property.StatsInfo{RowCount: 1})
-	require.Equal(t, float64(1<<64), LeafCost(limit))
-	topN := logicalop.LogicalTopN{Count: 1, Offset: math.MaxUint64}.Init(ctx, 0)
-	topN.SetStats(&property.StatsInfo{RowCount: 1})
-	require.Equal(t, float64(1<<64), LeafCost(topN))
-	require.NotContains(t, vars.RelevantOptVars, vardef.TiDBOptJoinReorderBlockingPenaltyRatio)
-
+	leaf := func(rows float64) *Node {
+		p := logicalop.LogicalTableDual{}.Init(ctx, 0)
+		p.SetStats(&property.StatsInfo{RowCount: rows})
+		return &Node{p: p, cumCost: LegacyLeafCost(p)}
+	}
 	input := logicalop.LogicalTableDual{}.Init(ctx, 0)
 	input.SetStats(&property.StatsInfo{RowCount: 8_000_000})
 	agg := logicalop.LogicalAggregation{}.Init(ctx, 0)
 	agg.SetChildren(input)
 	agg.SetStats(&property.StatsInfo{RowCount: 10})
-	vars.OptJoinReorderBlockingPenaltyRatio = 0.5
-	require.Equal(t, 500_010.0, LeafCost(agg))
-	require.Contains(t, vars.RelevantOptVars, vardef.TiDBOptJoinReorderBlockingPenaltyRatio)
-	vars.OptJoinReorderBlockingPenaltyRatio = 0
-	require.Equal(t, 10.0, LeafCost(agg))
+	require.Equal(t, 8_000_010.0, LegacyLeafCost(agg))
+	require.Equal(t, 10.0, outputRowsLeafCost(agg))
+	inflated := &Node{p: agg, cumCost: LegacyLeafCost(agg)}
+
+	vars := ctx.GetSessionVars()
+	sc := vars.StmtCtx
+	check := func(nodes []*Node, enabled, wantRelevant, wantArmed bool) {
+		t.Helper()
+		vars.ResetRelevantOptVarsAndFixes(true)
+		vars.EnableAlternativeLogicalPlans = enabled
+		sc.AlternativeLogicalPlanInflatedGreedyLeaf = false
+		armGreedyOutputRowsRound(ctx, nodes)
+		_, relevant := vars.RelevantOptVars[vardef.TiDBOptEnableAlternativeLogicalPlans]
+		require.Equal(t, wantRelevant, relevant)
+		require.Equal(t, wantArmed, sc.AlternativeLogicalPlanInflatedGreedyLeaf)
+	}
+	// Base relations cost the same either way.
+	check([]*Node{leaf(1), leaf(2), leaf(3)}, true, false, false)
+	// Two inputs only commute, which the physical optimizer covers.
+	check([]*Node{inflated, leaf(2)}, true, false, false)
+	check([]*Node{leaf(1), inflated, leaf(3)}, false, true, false)
+	check([]*Node{leaf(1), inflated, leaf(3)}, true, true, true)
 }

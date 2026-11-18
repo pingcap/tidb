@@ -496,6 +496,14 @@ type StatementContext struct {
 	// AlternativeLogicalPlanSemiJoinRewrite indicates whether the current logical
 	// build found a semi join that can try an additional SEMI_JOIN_REWRITE round.
 	AlternativeLogicalPlanSemiJoinRewrite bool
+	// AlternativeLogicalPlanInflatedGreedyLeaf indicates whether the current first
+	// round ran greedy join reorder over at least three inputs, one of which is
+	// costed above its output rows because its subtree rows are counted too.
+	AlternativeLogicalPlanInflatedGreedyLeaf bool
+	// AlternativeLogicalPlanGreedyOutputRows is a mode flag set by the
+	// "greedy-output-rows" alternative round. When true, greedy join reorder
+	// costs each join group input by its estimated output rows only.
+	AlternativeLogicalPlanGreedyOutputRows bool
 	// AlternativeLogicalPlanFTSLikeFallback is a mode flag controlling how the
 	// expression rewriter handles MATCH...AGAINST in predicate contexts. When
 	// false (the default, matching Alt-disabled behavior) the rewriter emits
@@ -715,6 +723,8 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanHasPredicateContextMatch = false
 	sc.AlternativeLogicalPlanPreferCorrelate = false
 	sc.AlternativeLogicalPlanSemiJoinRewrite = false
+	sc.AlternativeLogicalPlanInflatedGreedyLeaf = false
+	sc.AlternativeLogicalPlanGreedyOutputRows = false
 	sc.AlternativeLogicalPlanMixedStorageEngines = false
 	sc.AlternativeLogicalPlanMissingTiFlashPath = false
 	sc.AlternativeLogicalPlanHasStoreTypeHint = false
@@ -750,6 +760,13 @@ func (sc *StatementContext) MarkAlternativeLogicalPlanPreferCorrelate() {
 // found a semi join that can try an extra SEMI_JOIN_REWRITE-based logical round.
 func (sc *StatementContext) MarkAlternativeLogicalPlanSemiJoinRewrite() {
 	sc.AlternativeLogicalPlanSemiJoinRewrite = true
+}
+
+// MarkAlternativeLogicalPlanInflatedGreedyLeaf records that the current first
+// round found a greedy join group whose input costs differ when costed by
+// output rows, so the greedy-output-rows round may build a different order.
+func (sc *StatementContext) MarkAlternativeLogicalPlanInflatedGreedyLeaf() {
+	sc.AlternativeLogicalPlanInflatedGreedyLeaf = true
 }
 
 // MarkAlternativeLogicalPlanMixedStorageEngines records that round 1's chosen
