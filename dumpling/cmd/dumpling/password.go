@@ -74,6 +74,12 @@ func readPassword(tty *os.File) (password string, err error) {
 // readPasswordLine retains password bytes without a line editor's character
 // filtering or length limit. In raw mode it also handles Enter and cancellation.
 func readPasswordLine(input io.Reader) (string, error) {
+	const (
+		ctrlC = '\x03'
+		ctrlD = '\x04'
+		ctrlU = '\x15'
+		del   = '\x7f'
+	)
 	reader := bufio.NewReader(input)
 	var password []byte
 	defer func() { clear(password) }()
@@ -85,15 +91,15 @@ func readPasswordLine(input io.Reader) (string, error) {
 		switch b {
 		case '\r', '\n':
 			return string(password), nil
-		case '\x03':
+		case ctrlC:
 			return "", fmt.Errorf("password prompt interrupted")
-		case '\x04':
+		case ctrlD:
 			return "", io.EOF
-		case '\b', '\x7f':
+		case '\b', del:
 			_, size := utf8.DecodeLastRune(password)
 			clear(password[len(password)-size:])
 			password = password[:len(password)-size]
-		case '\x15':
+		case ctrlU:
 			clear(password)
 			password = password[:0]
 		default:
