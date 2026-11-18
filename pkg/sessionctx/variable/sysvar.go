@@ -982,7 +982,11 @@ var defaultSysVars = []*SysVar{
 			return origin, nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool},
-	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: Off, Type: TypeBool, Depended: true},
+	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: Off, Type: TypeBool, Depended: true,
+		Validation: func(vars *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs(TiDBEnableHistoricalStats))
+			return normalizedValue, nil
+		}},
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: On, Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return getTiDBTableValue(s, "tikv_gc_enable", On)
@@ -1596,6 +1600,10 @@ var defaultSysVars = []*SysVar{
 		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return BoolToOnOff(EnableHistoricalStatsForCapture.Load()), nil
 		},
+		Validation: func(vars *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs(TiDBEnableHistoricalStatsForCapture))
+			return normalizedValue, nil
+		},
 	},
 	{Scope: ScopeGlobal, Name: TiDBHistoricalStatsDuration, Value: DefTiDBHistoricalStatsDuration.String(), Type: TypeDuration, MinValue: int64(time.Second), MaxValue: uint64(time.Hour * 24 * 365),
 		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
@@ -1607,6 +1615,9 @@ var defaultSysVars = []*SysVar{
 			}
 			HistoricalStatsDuration.Store(d)
 			return nil
+		}, Validation: func(vars *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs(TiDBHistoricalStatsDuration))
+			return normalizedValue, nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBLowResolutionTSOUpdateInterval, Value: strconv.Itoa(DefTiDBLowResolutionTSOUpdateInterval), Type: TypeInt, MinValue: 10, MaxValue: 60000,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {

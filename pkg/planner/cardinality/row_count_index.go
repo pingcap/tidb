@@ -79,6 +79,16 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
 		}
+		// The index has no statistics, but its columns may. Estimate from the column statistics so that
+		// the result agrees with the skyline pruning, which treats such an index as having statistics.
+		var ok bool
+		result, ok, err = getRowCountByColumnStatsForIndex(sctx, coll, indexRanges, idxCols, colsLen)
+		if err != nil || ok {
+			if err == nil && sc.EnableOptimizerCETrace && idx != nil {
+				ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats-Column Stats", uint64(result))
+			}
+			return result, errors.Trace(err)
+		}
 		result, err = getPseudoRowCountByIndexRanges(sc.TypeCtx(), indexRanges, float64(coll.RealtimeCount), colsLen)
 		if err == nil && sc.EnableOptimizerCETrace && idx != nil {
 			ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats-Pseudo", uint64(result))
@@ -532,8 +542,79 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	return estimateRowCountWithUniformDistribution(sctx, idx, realtimeRowCount, modifyCount)
 }
 
+// getRowCountByColumnStatsForIndex estimates the row count of indexRanges from the column statistics of
+// idxCols, for an index that has no statistics of its own. Multi-column ranges use exponential backoff,
+// because multiplying single column selectivities can badly underestimate an index whose columns each
+// have a low NDV. ok is false, and the caller should fall back to pseudo estimation, when idxCols is
+// unavailable or some column covered by a range lacks valid statistics (e.g. a virtual column).
+// uniqueColsLen is the number of columns of a unique index, or -1 for a non-unique index: a point
+// range over all of its columns matches at most one row.
+func getRowCountByColumnStatsForIndex(sctx planctx.PlanContext, coll *statistics.HistColl, indexRanges []*ranger.Range,
+	idxCols []*expression.Column, uniqueColsLen int) (count float64, ok bool, err error) {
+	if coll == nil || coll.RealtimeCount <= 0 || len(idxCols) == 0 || len(indexRanges) == 0 {
+		return 0, false, nil
+	}
+	colsIDs := make([]int64, len(idxCols))
+	for i, col := range idxCols {
+		if col == nil {
+			return 0, false, nil
+		}
+		colsIDs[i] = col.UniqueID
+	}
+	for _, ran := range indexRanges {
+		if len(ran.LowVal) == 0 || len(ran.LowVal) > len(idxCols) {
+			return 0, false, nil
+		}
+		for _, colID := range colsIDs[:len(ran.LowVal)] {
+			if statistics.ColumnStatsIsInvalid(coll.GetCol(colID), sctx, coll, colID) {
+				return 0, false, nil
+			}
+		}
+	}
+	tc := sctx.GetSessionVars().StmtCtx.TypeCtx()
+	realtimeCount := float64(coll.RealtimeCount)
+	for _, ran := range indexRanges {
+		if uniqueColsLen > 0 && !ran.LowExclude && !ran.HighExclude {
+			eqLen, err := ran.PrefixEqualLen(tc)
+			if err != nil {
+				return 0, false, errors.Trace(err)
+			}
+			if eqLen == uniqueColsLen {
+				count++
+				continue
+			}
+		}
+		if len(ran.LowVal) == 1 {
+			cnt, err := GetRowCountByColumnRanges(sctx, coll, colsIDs[0], []*ranger.Range{ran})
+			if err != nil {
+				return 0, false, errors.Trace(err)
+			}
+			count += cnt
+			continue
+		}
+		sel, success, err := expBackoffEstimationByColIDs(sctx, coll, colsIDs, 0, len(idxCols), false, ran, idxCols)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+		if !success {
+			return 0, false, nil
+		}
+		count += sel * realtimeCount
+	}
+	return mathutil.Clamp(count, 1, realtimeCount), true, nil
+}
+
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
 func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRange *ranger.Range, idxCols []*expression.Column) (sel float64, success bool, err error) {
+	idxHasStats := idx.Histogram.Len() > 0 || idx.TopN.Num() > 0
+	return expBackoffEstimationByColIDs(sctx, coll, coll.Idx2ColUniqueIDs[idx.Histogram.ID], idx.NDV, len(idx.Info.Columns), idxHasStats, indexRange, idxCols)
+}
+
+// expBackoffEstimationByColIDs is the core of expBackoffEstimation. It does not require index statistics:
+// colsIDs are the unique IDs of the index columns, idxNDV is the index NDV (0 if unknown), numIdxCols is the
+// number of index columns, and idxHasStats indicates whether the index itself has a histogram or TopN.
+func expBackoffEstimationByColIDs(sctx planctx.PlanContext, coll *statistics.HistColl, colsIDs []int64, idxNDV int64, numIdxCols int, idxHasStats bool,
+	indexRange *ranger.Range, idxCols []*expression.Column) (sel float64, success bool, err error) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
@@ -552,7 +633,6 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 			Collators: make([]collate.Collator, 1),
 		},
 	}
-	colsIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
 	singleColumnEstResults := make([]float64, 0, len(indexRange.LowVal))
 	// The following codes uses Exponential Backoff to reduce the impact of independent assumption. It works like:
 	//   1. Calc the selectivity of each column.
@@ -604,8 +684,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 			// statistics. See https://github.com/pingcap/tidb/issues/69134.
 			// Any other column lacking statistics keeps the existing behavior:
 			// skip it and estimate from the remaining columns.
-			if i < len(idxCols) && idxCols[i] != nil && idxCols[i].VirtualExpr != nil &&
-				(idx.Histogram.Len() > 0 || idx.TopN.Num() > 0) {
+			if i < len(idxCols) && idxCols[i] != nil && idxCols[i].VirtualExpr != nil && idxHasStats {
 				return 0, false, nil
 			}
 			continue
@@ -631,11 +710,12 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 	// is less than the number of index columns - use 90% of the bound to differentiate a subset from full index match.
 	// If there is an individual column selectivity that goes below this bound, use that selectivity only.
 	histNDV := coll.RealtimeCount
-	if idx.NDV > 0 {
-		histNDV = idx.NDV
+	if idxNDV > 0 {
+		histNDV = idxNDV
 	}
 	idxLowBound := 1 / float64(min(histNDV, coll.RealtimeCount))
-	if l < len(idx.Info.Columns) {
+	// Adjust idxLowBound upwards if we have not used all index columns.
+	if l < numIdxCols {
 		idxLowBound /= 0.9
 	}
 	minTwoCol := min(singleColumnEstResults[0], singleColumnEstResults[1], idxLowBound)
