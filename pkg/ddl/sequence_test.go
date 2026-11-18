@@ -95,6 +95,9 @@ func TestSequenceFunction(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
+	// NewTestKit can switch the schema cache implementation, discarding cached sequence values.
+	// Create both test kits before creating sequences so their caches remain stable below.
+	tk1 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("drop sequence if exists seq1")
@@ -483,7 +486,6 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select setval(seq, 100)").Check(testkit.Rows("100"))
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	tk1 := testkit.NewTestKit(t, store)
 	tk1.SetSession(se)
 	tk1.MustExec("use test")
 	tk1.MustQuery("select setval(seq, 50)").Check(testkit.Rows("<nil>"))
