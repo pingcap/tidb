@@ -17,13 +17,17 @@ package gluetidb
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -125,4 +129,54 @@ func TestGlueReusesServingDomain(t *testing.T) {
 	info, err = infosync.GetServerInfoByID(context.Background(), dom.DDL().GetID())
 	require.NoError(t, err)
 	require.False(t, info.DisableRPC)
+}
+
+func TestMDLInitializedBeforeBRDomainStarts(t *testing.T) {
+	for _, entrypoint := range []string{"GetDomain", "CreateSession", "UseOneShotSession"} {
+		t.Run(entrypoint, func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+			dom.Close()
+			original := variable.EnableMDL.Load()
+			variable.EnableMDL.Store(false)
+			t.Cleanup(func() { variable.EnableMDL.Store(original) })
+			observed := make(chan bool, 1)
+			dispatched := make(chan bool, 1)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDDLStart", func(mode ddl.StartMode) {
+				require.Equal(t, ddl.Normal, mode)
+				observed <- variable.EnableMDL.Load()
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
+				select {
+				case dispatched <- variable.EnableMDL.Load():
+				default:
+				}
+			})
+			g := New()
+			defer func() {
+				if dom, _ := session.GetDomain(nil); dom != nil {
+					dom.Close()
+				}
+			}()
+			switch entrypoint {
+			case "GetDomain":
+				_, err := g.GetDomain(store)
+				require.NoError(t, err)
+			case "CreateSession":
+				se, err := g.CreateSession(store)
+				require.NoError(t, err)
+				se.Close()
+			case "UseOneShotSession":
+				require.NoError(t, g.UseOneShotSession(store, false, func(glue.Session) error { return nil }))
+			}
+			for _, observations := range []chan bool{observed, dispatched} {
+				select {
+				case enabled := <-observations:
+					require.True(t, enabled, "BR must load persisted MDL before starting its DDL scheduler")
+				case <-time.After(10 * time.Second):
+					require.FailNow(t, "BR DDL did not start or dispatch")
+				}
+			}
+		})
+	}
 }
