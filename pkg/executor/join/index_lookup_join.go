@@ -525,7 +525,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	nextChunkCap, maxChunkSize := ow.executor.InitCap(), ow.executor.MaxChunkSize()
 	controller := ow.lookup.AdaptiveLimitController
-	strictOuterWindow := controller != nil && !controller.HasLookupStage()
+	strictOuterWindow := controller != nil
 	if nextChunkCap <= 0 {
 		nextChunkCap = chunk.InitialCapacity
 	}
