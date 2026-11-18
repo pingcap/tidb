@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
@@ -252,6 +253,19 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 	}
 	if _, ok := inequalFunctions[sf.FuncName.L]; ok {
 		return false, true, cond
+	}
+	if sf.FuncName.L == ast.Like || sf.FuncName.L == ast.Ilike {
+		// LIKE and ILIKE preserve trailing spaces, unlike equality under PAD SPACE
+		// collations: 'a ' = 'a', but 'a ' LIKE 'a_' is true and 'a' LIKE 'a_' is false.
+		// String equality under binary and utf8mb4_0900_bin is byte-exact, so equal
+		// values have the same pattern-matching result. Numeric types can also have
+		// binary collation, but equal numbers need not have identical string forms.
+		collation := src.RetType.GetCollate()
+		if src.RetType.EvalType() != types.ETString || tgt.RetType.EvalType() != types.ETString ||
+			collation != tgt.RetType.GetCollate() ||
+			(collation != charset.CollationBin && collation != charset.CollationUTF8MB40900Bin) {
+			return false, true, cond
+		}
 	}
 	// See
 	//	https://github.com/pingcap/tidb/issues/15782
