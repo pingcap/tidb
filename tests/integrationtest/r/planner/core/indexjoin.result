@@ -1581,3 +1581,25 @@ a	s	a	s
 1	a	1	a
 1	a	2	A
 2	b	4	b
+drop table if exists o, i;
+create table o (s varchar(10) collate utf8mb4_general_ci);
+create table i (s varchar(10) collate utf8mb4_general_ci, key k(s));
+insert into o values ('A'), ('a'), ('b');
+insert into i values ('A'), ('a'), ('b');
+explain format='plan_tree' select /*+ inl_join(i) */ o.s, i.s from o left join i on o.s = i.s and i.s <> _utf8mb4'a' collate utf8mb4_general_ci where o.s <> _utf8mb4'a' collate utf8mb4_bin; -- kept, the outer filter compares under a different collation than the key;
+id	task	access object	operator info
+IndexJoin	root		left outer join, inner:IndexReader, left side:TableReader, outer key:planner__core__indexjoin.o.s, inner key:planner__core__indexjoin.i.s, equal cond:eq(planner__core__indexjoin.o.s, planner__core__indexjoin.i.s)
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		ne(planner__core__indexjoin.o.s, "a")
+│   └─TableFullScan	cop[tikv]	table:o	keep order:false, stats:pseudo
+└─IndexReader(Probe)	root		index:Selection
+  └─Selection	cop[tikv]		ne(planner__core__indexjoin.i.s, "a"), not(isnull(planner__core__indexjoin.i.s))
+    └─IndexRangeScan	cop[tikv]	table:i, index:k(s)	range: decided by [eq(planner__core__indexjoin.i.s, planner__core__indexjoin.o.s)], keep order:false, stats:pseudo
+select /*+ inl_join(i) */ o.s, i.s from o left join i on o.s = i.s and i.s <> _utf8mb4'a' collate utf8mb4_general_ci where o.s <> _utf8mb4'a' collate utf8mb4_bin order by o.s, i.s;
+s	s
+A	NULL
+b	b
+select /*+ hash_join(i) */ o.s, i.s from o left join i on o.s = i.s and i.s <> _utf8mb4'a' collate utf8mb4_general_ci where o.s <> _utf8mb4'a' collate utf8mb4_bin order by o.s, i.s;
+s	s
+A	NULL
+b	b

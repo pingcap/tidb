@@ -933,15 +933,19 @@ var symmetricOp = map[string]string{
 // collectIndexJoinOuterKeyFilters returns the filters that the outer child of an index join enforces on
 // exactly one of outerKeys. It looks through Selection, Projection (plain column renames) and UnionScan
 // down to the DataSource, whose pushed-down conditions are all applied by any plan built for it, and stops
-// at any other operator. Only deterministic filters without correlated columns are returned.
-func collectIndexJoinOuterKeyFilters(outer base.LogicalPlan, outerKeys []*expression.Column) []expression.Expression {
+// at any other operator. Only comparisons of the key with constants under the key's own collation are
+// returned (see keyComparisonFilterColumn), the same requirement the inner filter they justify dropping
+// must meet. The match is by hash code, which does not include a constant's collation, so without this
+// `o.s <> 'a' collate utf8mb4_bin` could stand in for `i.s <> 'a' collate utf8mb4_general_ci`.
+func collectIndexJoinOuterKeyFilters(ctx expression.EvalContext, outer base.LogicalPlan,
+	outerKeys []*expression.Column) []expression.Expression {
 	if len(outerKeys) == 0 {
 		return nil
 	}
 	var filters []expression.Expression
 	seen := make(map[string]struct{})
 	for _, cond := range collectEnforcedConds(outer) {
-		col := singleFilterColumn(cond)
+		col := keyComparisonFilterColumn(ctx, cond)
 		if col == nil || !slices.ContainsFunc(outerKeys, func(key *expression.Column) bool { return key.EqualColumn(col) }) {
 			continue
 		}

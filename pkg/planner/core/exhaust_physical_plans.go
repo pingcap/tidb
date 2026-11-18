@@ -517,7 +517,7 @@ func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.Physica
 	}
 	var outerKeyFilters []expression.Expression
 	if ge == nil {
-		outerKeyFilters = collectIndexJoinOuterKeyFilters(p.Children()[outerIdx], outerJoinKeys)
+		outerKeyFilters = collectIndexJoinOuterKeyFilters(p.SCtx().GetExprCtx().GetEvalCtx(), p.Children()[outerIdx], outerJoinKeys)
 	}
 	// for pk path
 	indexJoinPropTS := &property.IndexJoinRuntimeProp{
