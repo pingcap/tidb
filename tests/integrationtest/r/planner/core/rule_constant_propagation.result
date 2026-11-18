@@ -434,3 +434,32 @@ select * from (select * from u where u.name in ('a', 'b')) tmp left join v on tm
 id	name	id	name
 1	a	1	A
 2	b	2	b
+drop table if exists t_mutable, s_mutable;
+create table t_mutable (k varbinary(2));
+create table s_mutable (k varbinary(2) not null, marker int);
+insert into t_mutable values (x'ffff');
+insert into s_mutable values (x'ffff', 1);
+set @old_prepare_cache = @@tidb_enable_prepared_plan_cache;
+set @@tidb_enable_prepared_plan_cache = on;
+set @enabled = 1;
+prepare st from 'select count(*), count(s_mutable.marker)
+from (select k from t_mutable where k in (random_bytes(1), x''ffff'')) x
+left join s_mutable on x.k = s_mutable.k where ? = 1';
+execute st using @enabled;
+count(*)	count(s_mutable.marker)
+1	1
+prepare st from 'select count(*), count(s_mutable.marker)
+from (select k from t_mutable where k = random_bytes(1)) x
+left join s_mutable on x.k = s_mutable.k where ? = 1';
+execute st using @enabled;
+count(*)	count(s_mutable.marker)
+0	0
+prepare st from 'select count(*), count(s_mutable.marker)
+from (select k from t_mutable where k > random_bytes(1)) x
+left join s_mutable on x.k = s_mutable.k where ? = 1';
+execute st using @enabled;
+count(*)	count(s_mutable.marker)
+1	1
+deallocate prepare st;
+set @@tidb_enable_prepared_plan_cache = @old_prepare_cache;
+drop table t_mutable, s_mutable;

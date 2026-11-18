@@ -210,11 +210,12 @@ func (p *LogicalSelection) PredicateSimplification() base.LogicalPlan {
 
 // PullUpConstantPredicates implements the base.LogicalPlan.<9th> interface.
 func (p *LogicalSelection) PullUpConstantPredicates() []expression.Expression {
+	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	var result []expression.Expression
 	for _, candidatePredicate := range p.Conditions {
-		// the candidate predicate should be a constant and compare predicate
-		match := expression.ValidCompareConstantPredicate(p.SCtx().GetExprCtx().GetEvalCtx(), candidatePredicate)
-		if match {
+		// Pull-up copies the predicate, and a Constant may wrap a mutable deferred expression.
+		if expression.ValidCompareConstantPredicate(evalCtx, candidatePredicate) &&
+			!expression.IsMutableEffectsExpr(candidatePredicate) {
 			result = append(result, candidatePredicate)
 		}
 	}

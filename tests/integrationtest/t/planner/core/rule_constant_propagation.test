@@ -158,3 +158,29 @@ explain format='plan_tree' select * from (select * from t where t.id not in (1, 
 select * from (select * from t where t.id in (1, 2, 3)) tmp left join s on tmp.id=s.id order by tmp.id;
 select * from t, (select * from s where s.id in (1, 2, 4)) tmp where t.id=tmp.id order by t.id;
 select * from (select * from u where u.name in ('a', 'b')) tmp left join v on tmp.name=v.name order by tmp.id;
+
+# Prepared planning wraps RANDOM_BYTES in a deferred Constant. The binary
+# value X'FFFF' makes each filter's result independent of the random byte.
+drop table if exists t_mutable, s_mutable;
+create table t_mutable (k varbinary(2));
+create table s_mutable (k varbinary(2) not null, marker int);
+insert into t_mutable values (x'ffff');
+insert into s_mutable values (x'ffff', 1);
+set @old_prepare_cache = @@tidb_enable_prepared_plan_cache;
+set @@tidb_enable_prepared_plan_cache = on;
+set @enabled = 1;
+prepare st from 'select count(*), count(s_mutable.marker)
+  from (select k from t_mutable where k in (random_bytes(1), x''ffff'')) x
+  left join s_mutable on x.k = s_mutable.k where ? = 1';
+execute st using @enabled;
+prepare st from 'select count(*), count(s_mutable.marker)
+  from (select k from t_mutable where k = random_bytes(1)) x
+  left join s_mutable on x.k = s_mutable.k where ? = 1';
+execute st using @enabled;
+prepare st from 'select count(*), count(s_mutable.marker)
+  from (select k from t_mutable where k > random_bytes(1)) x
+  left join s_mutable on x.k = s_mutable.k where ? = 1';
+execute st using @enabled;
+deallocate prepare st;
+set @@tidb_enable_prepared_plan_cache = @old_prepare_cache;
+drop table t_mutable, s_mutable;
