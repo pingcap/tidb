@@ -116,6 +116,10 @@ Five places in the Rust rewrite differ from Go's structure in ways that make eve
   Rationale: Rust cannot share the session mutably between `TxnManager` and a provider the way Go's `sctx` pointer does; giving the provider the transaction keeps one owner per transaction, which X12 established.
   Date/Author: 2026-11-19, Claude.
 
+- Decision: X05 2b onward: Go's `p.sctx` becomes a `cx: &mut dyn TxnContext` argument of each `TxnContextProvider` method (the trait in `tidb-sessiontxn`; `TxnContext` = `ProviderSessionVars` plus `StmtCtx.RCCheckTS`, the stale-read timestamp, `TxnCtx.SetForUpdateTS`'s publish cell and the cluster transaction authority). The providers (`OptimisticTxnContextProvider`, `PessimisticRRTxnContextProvider`, `PessimisticRCTxnContextProvider`, `PessimisticSerializableTxnContextProvider`, the staleness one) live in `tidb-sessiontxn::isolation` / `staleread`, own the `Box<dyn OpenClusterTransaction>` (Go's `p.txn` plus the `LazyTxn`), and `TxnManager`'s `explicit` / `implicit` slots become one `Box<dyn TxnContextProvider>` plus Go's `InTxn`. Order: (2b) the trait gains `cx`, the optimistic provider owns the transaction and `TxnManager` holds the provider; `explicit` users read `TxnManager::explicit()` (the provider's transaction while `InTxn`); (3) the RR / RC / serializable providers take `open_read_snapshot`'s pessimistic and RC branches; (4) staleness; (5) the lifecycle retry decisions call `on_stmt_error_for_next_action`.
+  Rationale: a stored `sctx` would alias the session mutably; passing it per call keeps Go's method set and one owner per transaction.
+  Date/Author: 2026-11-19, Claude.
+
 ## Outcomes & Retrospective
 
 (none yet)
