@@ -1650,6 +1650,8 @@ pub struct StmtContextData {
     /// the materialized view guards read them.
     in_mview_maintenance: bool,
     in_restricted_sql: bool,
+    /// Go master `PlanCtxExtended.mlogCommitTSEstimation`.
+    mlog_commit_ts_estimation: Option<tidb_exprctx::MLogCommitTSEstimation>,
     /// Go `SessionVars.EnableINLJoinInnerMultiPattern`
     /// (`@@tidb_enable_inl_join_inner_multi_pattern`, default `ON`).
     enable_inl_join_inner_multi_pattern: bool,
@@ -2577,6 +2579,14 @@ context_configuration! {
     pub fn with_mview_maintenance(mut self, in_mview_maintenance: bool, in_restricted_sql: bool) -> Self {
         self.in_mview_maintenance = in_mview_maintenance;
         self.in_restricted_sql = in_restricted_sql;
+        self
+    }
+
+    /// Go master `WithMLogCommitTSEstimation`: scopes the FAST refresh's
+    /// retained mlog window to the planning this context serves.
+    #[must_use]
+    pub fn with_mlog_commit_ts_estimation(mut self, estimation: tidb_exprctx::MLogCommitTSEstimation) -> Self {
+        self.mlog_commit_ts_estimation = Some(estimation);
         self
     }
 
@@ -3729,6 +3739,7 @@ impl StmtContext {
             enable_full_outer_join: false,
             in_mview_maintenance: false,
             in_restricted_sql: false,
+            mlog_commit_ts_estimation: None,
             enable_inl_join_inner_multi_pattern: true,
             enable_hash_join: true,
             enable_null_aware_anti_join: true,
@@ -7551,6 +7562,10 @@ pub fn sql_warn_of(level: WarningLevel, error: &tidb_terror::MysqlError) -> SqlW
 impl Columns for StmtContext {
     fn in_mview_maintenance(&self) -> bool {
         self.in_mview_maintenance
+    }
+
+    fn mlog_commit_ts_estimation(&self) -> Option<tidb_exprctx::MLogCommitTSEstimation> {
+        self.mlog_commit_ts_estimation
     }
 
     fn in_restricted_sql(&self) -> bool {

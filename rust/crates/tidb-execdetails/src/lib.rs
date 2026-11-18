@@ -82,6 +82,8 @@ pub const TP_RU_RUNTIME_STATS: i32 = 19;
 /// Go master `TpMViewCompleteDeltaApplyRuntimeStats` (after master's
 /// `TpExplainRURuntimeStats` .. `TpMViewDeltaMergeAggRuntimeStats`).
 pub const TP_MVIEW_COMPLETE_DELTA_APPLY_RUNTIME_STATS: i32 = 25;
+/// Go master `TpMViewDeltaMergeAggRuntimeStats`.
+pub const TP_MVIEW_DELTA_MERGE_AGG_RUNTIME_STATS: i32 = 24;
 
 /// Go `execdetails.FormatDuration` (`util.go`): formats a duration for
 /// explain output, pruning precision for human readability — under 1µs the

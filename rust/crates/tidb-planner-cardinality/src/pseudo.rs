@@ -575,20 +575,34 @@ pub fn derive_stats_by_filter(
     selectivity_factor: f64,
     scale_ndv_skew_ratio: f64,
 ) -> tidb_planner_property::stats_info::StatsInfo {
+    table_stats.scale(
+        pseudo_filter_selectivity(table_stats, conds, resolve, indexes, selectivity_factor),
+        scale_ndv_skew_ratio,
+    )
+}
+
+/// The `Selectivity` half of [`derive_stats_by_filter`]: the unanalyzed
+/// table's `pseudoSelectivity` of `conds`.
+#[must_use]
+pub fn pseudo_filter_selectivity(
+    table_stats: &tidb_planner_property::stats_info::StatsInfo,
+    conds: &[tidb_expr::expression::Expression],
+    resolve: &dyn Fn(i64) -> Option<PseudoColumn>,
+    indexes: &[PseudoIndex],
+    selectivity_factor: f64,
+) -> f64 {
     // `Selectivity`: zero rows or no conditions is 100% (`selectivity.go:61`).
-    let selectivity = if table_stats.row_count() == 0.0 || conds.is_empty() {
-        1.0
-    } else {
-        let predicates: Vec<PseudoPredicate> = conds
-            .iter()
-            .map(|cond| classify_pseudo_predicate(cond, resolve))
-            .collect();
-        pseudo_selectivity(
-            &predicates,
-            indexes,
-            table_stats.row_count() as i64,
-            selectivity_factor,
-        )
-    };
-    table_stats.scale(selectivity, scale_ndv_skew_ratio)
+    if table_stats.row_count() == 0.0 || conds.is_empty() {
+        return 1.0;
+    }
+    let predicates: Vec<PseudoPredicate> = conds
+        .iter()
+        .map(|cond| classify_pseudo_predicate(cond, resolve))
+        .collect();
+    pseudo_selectivity(
+        &predicates,
+        indexes,
+        table_stats.row_count() as i64,
+        selectivity_factor,
+    )
 }

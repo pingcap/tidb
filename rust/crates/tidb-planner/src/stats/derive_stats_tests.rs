@@ -847,3 +847,60 @@ fn deriving_an_index_path_records_the_index_in_the_used_stats_ledger() {
         );
     }
 }
+
+/// Go master `TestDeriveStatsByFilterUsesMLogCommitTSSelectivity`
+/// (`core/stats_mview_test.go`): with the active FAST refresh's window, the
+/// mlog's commit-ts filters scale the source by their share of the retained
+/// window instead of `Selectivity`.
+#[test]
+fn derive_stats_by_filter_uses_mlog_commit_ts_selectivity() {
+    struct EstimationContext(tidb_exprctx::MLogCommitTSEstimation);
+    impl tidb_exprctx::Columns for EstimationContext {
+        fn get(&self, _: &[String]) -> Option<tidb_datatype::Datum> {
+            None
+        }
+        fn mlog_commit_ts_estimation(&self) -> Option<tidb_exprctx::MLogCommitTSEstimation> {
+            Some(self.0)
+        }
+    }
+    const fn compose_ts(physical: u64) -> u64 {
+        physical << 18
+    }
+    let allocator = PlanIdAllocator::new();
+    let mut commit_ts = Column::new(1, tidb_model::ColumnInfo::new_extra_commit_ts_col_info().field_type);
+    commit_ts.id = tidb_model::column::EXTRA_COMMIT_TS_ID;
+    let mut source = DataSource::new(base(&allocator, "DataSource", Some(Schema::new(vec![commit_ts.clone()]))), 100, "mlog");
+    source.table_info = Some(tidb_model::GoShared::new(tidb_model::TableInfo {
+        id: 100,
+        name: CiString::new("mlog"),
+        materialized_view_log: Some(tidb_model::GoShared::new(tidb_model::table::MaterializedViewLogInfo::default())),
+        ..tidb_model::TableInfo::default()
+    }));
+    source.table_stats = Some(StatsInfo::new(100.0, []));
+    let bound = |name: &str, tso: u64| {
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            name,
+            FieldType::new(FieldTypeCode::Tiny),
+            vec![
+                Expression::Column(commit_ts.clone()),
+                Expression::Constant(tidb_expr::constant::Constant::new(
+                    tidb_datatype::Datum::UInt(tso),
+                    FieldType::new(FieldTypeCode::LongLong),
+                )),
+            ],
+        )
+        .unwrap()
+    };
+    source.pushed_down_conds = vec![bound("gt", compose_ts(20)), bound("le", compose_ts(50))];
+    let mut plan = LogicalPlan::DataSource(source);
+    let estimation = EstimationContext(tidb_exprctx::MLogCommitTSEstimation {
+        mlog_table_id: 100,
+        retained_lower_tso: compose_ts(10),
+        retained_upper_tso: compose_ts(110),
+    });
+    let mut context = crate::rule::rule_tests::test_context(&allocator);
+    context.eval_context = &estimation;
+    let (stats, _) = plan.recursive_derive_stats_with_context(&[], &context).unwrap();
+    assert!((stats.row_count() - 30.0).abs() < 0.0001, "{}", stats.row_count());
+}

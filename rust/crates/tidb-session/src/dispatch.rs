@@ -555,6 +555,8 @@ impl Session {
             Plan::PurgeMaterializedViewLog(purge) => self.purge_materialized_view_log(purge).map(Some),
             // Go master `CompareMaterializedViewExec`.
             Plan::CompareMaterializedView(compare) => self.compare_materialized_view(compare).map(Some),
+            // Go master `MViewDeltaMergeAggExec`.
+            Plan::MViewDeltaMerge(merge) => self.mview_delta_merge(merge).map(Some),
             // Go master `MViewCompleteDeltaApplyExec`.
             Plan::MViewCompleteDeltaApply(apply) => self.mview_complete_delta_apply(apply).map(Some),
             Plan::CompactTable(compact) => self.compact_table_tiflash_exec(compact).map(Some),

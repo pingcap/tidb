@@ -1499,10 +1499,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ) -> Result<Plan, PlanError> {
         let refresh = &implement.refresh_stmt;
         let mode = refresh.mode;
-        if mode == tidb_ast::RefreshMaterializedViewMode::Fast {
-            return Err(PlanError::internal("RefreshMaterializedViewImplementStmt: FAST is not supported on this node yet"));
-        }
-        if mode != tidb_ast::RefreshMaterializedViewMode::CompleteDeltaApply {
+        if !matches!(
+            mode,
+            tidb_ast::RefreshMaterializedViewMode::Fast | tidb_ast::RefreshMaterializedViewMode::CompleteDeltaApply
+        ) {
             return Err(PlanError::internal(format!(
                 "RefreshMaterializedViewImplementStmt: unsupported mode {mode:?}"
             )));
@@ -1526,6 +1526,21 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 "table {database}.{} is not a materialized view",
                 info.name.original()
             )));
+        }
+        // Go master's FAST half: `mview.Build` over the window, which this
+        // tier's executor runs with the catalog's base table and log, then
+        // optimizes as it does every derived SELECT.
+        if mode == tidb_ast::RefreshMaterializedViewMode::Fast {
+            return Ok(Plan::MViewDeltaMerge(Box::new(crate::common_plans::MViewDeltaMerge {
+                database,
+                name: info.name.original().to_owned(),
+                options: crate::mview::BuildOptions {
+                    from_ts: implement.last_successful_refresh_read_tso,
+                    to_ts: implement.target_refresh_read_tso,
+                },
+                mlog_retained_lower_tso: implement.mlog_retained_lower_tso,
+                registered_mlog_ids: implement.registered_mlog_ids.clone(),
+            })));
         }
         let (charset, collation) = self.ctx.connection_charset_info();
         let (charset, collation) = (charset.to_owned(), collation.to_owned());

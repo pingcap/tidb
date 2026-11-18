@@ -17,7 +17,7 @@
 pub mod context;
 pub mod optional;
 
-pub use context::{BlockEncryptionMode, Columns, CurrentTso, EncodeKeyArgs, EncodeKeyError, ErrorLevel, EvalError, JsonError, NoColumns, PlanCacheParams, SequenceEvalError, ZonedNoColumns};
+pub use context::{BlockEncryptionMode, Columns, CurrentTso, MLogCommitTSEstimation, EncodeKeyArgs, EncodeKeyError, ErrorLevel, EvalError, JsonError, NoColumns, PlanCacheParams, SequenceEvalError, ZonedNoColumns};
 pub use optional::{
     optional_property_desc_list, DynOptionalEvalPropProvider, EmptyParamValues, OptionalEvalPropDesc, OptionalEvalPropKey,
     OptionalEvalPropKeySet, OptionalEvalPropProvider, ParamIndexExceedParamCounts, ParamValues,

@@ -92,9 +92,21 @@ fn replay_on(stack: UnistoreClusterStack, session: Session, capture: &str) -> (U
 /// table)` the node's catalog resolves reads as this node's ID.
 fn replay_on_with_ids(
     stack: UnistoreClusterStack,
+    session: Session,
+    capture: &str,
+    ids: &[(i64, &str, &str)],
+) -> (UnistoreClusterStack, Session) {
+    replay_on_masked(stack, session, capture, ids, &|answer| answer.to_owned())
+}
+
+/// [`replay_on_with_ids`] comparing both answers through `mask`, which
+/// blanks what differs by wall-clock time alone.
+fn replay_on_masked(
+    stack: UnistoreClusterStack,
     mut session: Session,
     capture: &str,
     ids: &[(i64, &str, &str)],
+    mask: &dyn Fn(&str) -> String,
 ) -> (UnistoreClusterStack, Session) {
     let mut mismatches = Vec::new();
     for line in capture.lines() {
@@ -112,6 +124,7 @@ fn replay_on_with_ids(
         }
         // The capture script's JSON spacing is Python's.
         let rows = |answer: &str| answer.strip_prefix("RS:").map(|rows| serde_json::from_str::<serde_json::Value>(rows).unwrap());
+        let (rust, go) = (mask(&rust), mask(&go));
         let same = match (rows(&rust), rows(&go)) {
             (Some(rust), Some(go)) => rust == go,
             _ => rust == go,
@@ -1738,6 +1751,52 @@ fn refresh_materialized_view_profile_answers_as_go_master() {
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
 
+/// Go master FAST refresh WITH PROFILE: the step rows and, under the merge
+/// step, the analyzed `MViewDeltaMerge` with Go's `mview_delta_merge_agg`
+/// runtime stats, compared by shape. The merge source below it is left out:
+/// its log-side estimate is the commit-ts window's wall-clock share of the
+/// retained log, so its join choice follows timing (Go's second refresh here
+/// hashes at a 24% share); the DRY RUN test compares that plan.
+#[test]
+fn refresh_materialized_view_fast_profile_answers_as_go_master() {
+    let (_stack, _users, mut session) = go_master_mview_stack();
+    let mut mismatches = Vec::new();
+    let mut profiles = Vec::new();
+    for line in include_str!("../../../../../testdata/mview_refresh_profile_fast_go.jsonl").lines() {
+        let (sql, go): (String, String) = serde_json::from_str(line).unwrap();
+        let rust = answer(&mut session, &sql);
+        if !sql.contains("with profile") {
+            let rows = |answer: &str| answer.strip_prefix("RS:").map(|rows| serde_json::from_str::<serde_json::Value>(rows).unwrap());
+            if rust.get(..2) != go.get(..2) || rows(&rust) != rows(&go) {
+                mismatches.push(format!("{sql}\n  go:   {go}\n  rust: {rust}"));
+            }
+            continue;
+        }
+        let shape = |answer: &str| -> Vec<String> {
+            answer
+                .strip_prefix("RS:")
+                .map(|rows| serde_json::from_str::<Vec<Vec<String>>>(rows).unwrap())
+                .unwrap_or_default()
+                .iter()
+                .filter(|row| row[0].starts_with("[S") || row[0].starts_with("  MViewDeltaMerge "))
+                .map(|row| profile_shape(&row[0]))
+                .collect()
+        };
+        if shape(&go) != shape(&rust) || !rust.starts_with("RS:") {
+            mismatches.push(format!("{sql}\n  go:   {:#?}\n  rust: {:#?}\n  raw: {rust}", shape(&go), shape(&rust)));
+        }
+        profiles.push(rust);
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    assert!(
+        profiles[0].contains("mview_delta_merge_agg:{merge_worker:{")
+            && profiles[0].contains("row_ops:3, rows:{insert:1, update:1, delete:1, noop:0}}}"),
+        "{}",
+        profiles[0]
+    );
+    assert!(profiles[1].contains("row_ops:0, rows:{insert:0, update:0, delete:0, noop:0}}}"), "{}", profiles[1]);
+}
+
 /// Go master `TestProfileMaterializedViewRefreshStepRuntime/redaction`: the
 /// profiled plans follow the caller's `tidb_redact_log`, in place and out of
 /// place.
@@ -1764,4 +1823,57 @@ fn refresh_materialized_view_profile_redacts_as_go_master() {
         }
     }
     assert_eq!(answer(&mut root, "set global tidb_redact_log = OFF"), "OK");
+}
+
+/// Go master FAST refresh (`mview.Build` and `MViewDeltaMergeAggExec`): the
+/// log window's per-group deltas merged into a view of COUNT(*), NOT NULL and
+/// nullable SUMs with their COUNTs -- groups inserted, updated and deleted by
+/// their new COUNT(*), NULL sums where the COUNT reaches zero -- with the
+/// history row's method and scanned log rows, an empty window, and Go's
+/// refusals of what FAST cannot merge and of AS OF targets before the last
+/// refresh or in the future.
+///
+/// The DRY RUN's merge source is Go's plan: its log-side cardinality comes
+/// from `SplitMLogCommitTSFilterSelectivity` -- the commit-ts filter's share
+/// of the retained log window in physical milliseconds -- so those estimates
+/// and the window's TSO literal are wall-clock values, masked; a pseudo 1/3
+/// estimate in their place means the window never reached the planner.
+#[test]
+fn refresh_materialized_view_fast_answers_as_go_master() {
+    let (stack, _users, session) = go_master_mview_stack();
+    let (_stack, mut session) = replay_on_masked(
+        stack,
+        session,
+        include_str!("../../../../../testdata/mview_refresh_fast_go.jsonl"),
+        &[],
+        &mask_mlog_window_estimates,
+    );
+    let dry_run = answer(&mut session, "refresh materialized view mv_fast fast dry run");
+    let selection = dry_run
+        .split("\"],")
+        .find(|row| row.contains("Selection"))
+        .expect("the log scan's commit-ts selection");
+    assert!(!selection.contains("estRows:3333.33"), "{selection}");
+}
+
+/// Blanks the wall-clock values: every estimate but the full log scan's
+/// 10000 pseudo rows, the `_tidb_commit_ts` window literal, and the TSOs the
+/// AS OF refusals name.
+fn mask_mlog_window_estimates(answer: &str) -> String {
+    const MARKERS: [&str; 6] =
+        ["estRows:", "_tidb_commit_ts, ", "target tso ", "LAST_SUCCESS_READ_TSO ", "readTS: ", "currentTS: "];
+    let mut out = String::with_capacity(answer.len());
+    let mut rest = answer;
+    while let Some((at, marker)) =
+        MARKERS.iter().filter_map(|marker| rest.find(marker).map(|at| (at, *marker))).min_by_key(|(at, _)| *at)
+    {
+        let start = at + marker.len();
+        out.push_str(&rest[..start]);
+        let len = rest[start..].find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(rest.len() - start);
+        let value = &rest[start..start + len];
+        out.push_str(if value.is_empty() || value == "10000.00" { value } else { "?" });
+        rest = &rest[start + len..];
+    }
+    out.push_str(rest);
+    out
 }

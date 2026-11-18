@@ -3956,6 +3956,24 @@ pub fn explain_mview_complete_delta_apply(
     render_built_plan(ctx, &physical, catalog, format, &[])
 }
 
+/// Go master `Explain.RenderResult` over `MViewDeltaMerge`, FAST refresh's
+/// internal `RefreshMaterializedViewImplementStmt` plan: the operator with
+/// Go's `ExplainInfo` over the optimized merge source.
+pub fn explain_mview_delta_merge(
+    plan: &tidb_planner::common_plans::MViewDeltaMerge,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    format: ExplainFormat,
+    retained_upper_tso: u64,
+) -> Result<SelectMeta, DriverError> {
+    let build = crate::driver::mview_delta_merge::build_merge_source(plan, catalog, ctx)?;
+    let (mut physical, _) =
+        crate::driver::mview_delta_merge::plan_mview_delta_merge(plan, &build, catalog, current_db, ctx, retained_upper_tso)?;
+    crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
+    render_built_plan(ctx, &physical, catalog, format, &[])
+}
+
 /// Reports a plan the statement already has -- EXPLAIN FORMAT =
 /// 'plan_cache' over the plan the non-prepared cache gave it -- as EXPLAIN
 /// rows, executing nothing.

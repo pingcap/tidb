@@ -229,26 +229,39 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                     let record_used_item = |item_id, is_index| {
                         op.record_used_item(derivation.used_stats_recorder, item_id, is_index);
                     };
-                    let range_selectivity = analyzed_filter_selectivity_in(
+                    // Go master `mview.SplitMLogCommitTSFilterSelectivity`:
+                    // a FAST refresh's mlog commit-ts filters are estimated
+                    // over the retained log window, not by `Selectivity`.
+                    let mlog_split = {
+                        let table_info = op.table_info.as_ref().map(|info| info.read());
+                        crate::mview::split_mlog_commit_ts_filter_selectivity(
+                            env.eval_context,
+                            table_info.as_deref(),
+                            self_schema,
+                            &op.pushed_down_conds,
+                        )
+                    };
+                    let (selectivity_conds, mlog_commit_ts_selectivity) = match mlog_split {
+                        Some((conds, selectivity)) => (std::borrow::Cow::Owned(conds), selectivity),
+                        None => (std::borrow::Cow::Borrowed(op.pushed_down_conds.as_slice()), 1.0),
+                    };
+                    let selectivity = analyzed_filter_selectivity_in(
                         &table_stats,
-                        &op.pushed_down_conds,
+                        &selectivity_conds,
                         &derivation,
                         Some(&filled_paths),
                         Some(&record_used_item),
-                    );
-                    let stats = range_selectivity.map_or_else(
-                        || {
-                            tidb_planner_cardinality::pseudo::derive_stats_by_filter(
-                                &table_stats,
-                                &op.pushed_down_conds,
-                                &resolve,
-                                &[],
-                                tidb_planner_core_cost::SELECTION_FACTOR,
-                                env.scale_ndv_skew_ratio,
-                            )
-                        },
-                        |selectivity| table_stats.scale(selectivity, env.scale_ndv_skew_ratio),
-                    );
+                    )
+                    .unwrap_or_else(|| {
+                        tidb_planner_cardinality::pseudo::pseudo_filter_selectivity(
+                            &table_stats,
+                            &selectivity_conds,
+                            &resolve,
+                            &[],
+                            tidb_planner_core_cost::SELECTION_FACTOR,
+                        )
+                    }) * mlog_commit_ts_selectivity;
+                    let stats = table_stats.scale(selectivity, env.scale_ndv_skew_ratio);
                     // Go derivePathStatsAndTryHeuristics fixes IsSingleScan
                     // with the first stats profile. Join reorder can derive
                     // this before the final column-pruning pass.

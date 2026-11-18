@@ -281,6 +281,7 @@ fn finalize_refresh_hist(
     status: &str,
     read_tso: Option<u64>,
     commit_tso: Option<u64>,
+    refresh_rows: Option<i64>,
     start: chrono::DateTime<chrono::Local>,
     end: chrono::DateTime<chrono::Local>,
     failed_reason: Option<&str>,
@@ -293,7 +294,7 @@ fn finalize_refresh_hist(
         &[
             SqlArg::String(end_text.as_bytes()),
             SqlArg::String(status.as_bytes()),
-            SqlArg::Null,
+            refresh_rows.map_or(SqlArg::Null, SqlArg::Signed),
             SqlArg::String(duration.as_bytes()),
             SqlArg::Null,
             read_tso.map_or(SqlArg::Null, SqlArg::Unsigned),
@@ -316,15 +317,16 @@ fn finalize_refresh_hist_with_retry(
     status: &str,
     read_tso: Option<u64>,
     commit_tso: Option<u64>,
+    refresh_rows: Option<i64>,
     start: chrono::DateTime<chrono::Local>,
     end: chrono::DateTime<chrono::Local>,
     failed_reason: Option<&str>,
 ) -> Result<(), DriverError> {
-    let first = match finalize_refresh_hist(session, refresh_job_id, mview_id, status, read_tso, commit_tso, start, end, failed_reason) {
+    let first = match finalize_refresh_hist(session, refresh_job_id, mview_id, status, read_tso, commit_tso, refresh_rows, start, end, failed_reason) {
         Ok(()) => return Ok(()),
         Err(error) => error,
     };
-    finalize_refresh_hist(session, refresh_job_id, mview_id, status, read_tso, commit_tso, start, end, failed_reason)
+    finalize_refresh_hist(session, refresh_job_id, mview_id, status, read_tso, commit_tso, refresh_rows, start, end, failed_reason)
         .map_err(|retry| annotate(&retry, &format!("first finalize attempt failed: {}", driver_message(&first))))
 }
 
@@ -520,14 +522,16 @@ impl Session {
         if s.observe_type == RefreshMaterializedViewObserveType::Profile {
             return self.refresh_materialized_view_profile(s, sql);
         }
-        if !matches!(
-            s.mode,
-            RefreshMaterializedViewMode::CompleteInPlace
-                | RefreshMaterializedViewMode::CompleteOutOfPlace
-                | RefreshMaterializedViewMode::CompleteDeltaApply
-        ) {
-            return Err(DriverError::unsupported(format!("REFRESH MATERIALIZED VIEW {method} on this node")));
-        }
+        // Go master `evaluateRefreshMaterializedViewTargetTSO`: FAST ... AS OF
+        // TIMESTAMP bounds the window.
+        let target_tso = match &s.as_of {
+            Some(as_of) => {
+                let target = self.calculate_as_of_ts_expr(as_of)?;
+                self.validate_snapshot_read_ts(target)?;
+                target
+            }
+            None => 0,
+        };
         let refresh_start = chrono::Local::now();
         let (schema, info) = self.resolve_refresh_materialized_view_target(s)?;
         let mview = info.materialized_view.as_ref().expect("resolved as a view").read().clone();
@@ -547,6 +551,7 @@ impl Session {
         let result = self.refresh_complete(
             &controller,
             s.mode,
+            target_tso,
             sql,
             &schema,
             &info,
@@ -719,6 +724,7 @@ impl Session {
         &mut self,
         controller: &std::sync::Arc<MvTaskCancelController>,
         mode: RefreshMaterializedViewMode,
+        target_tso: u64,
         sql: &str,
         schema: &str,
         info: &tidb_model::TableInfo,
@@ -785,12 +791,12 @@ impl Session {
                 }
                 self.refresh_complete_in_place_locked(
                     mode,
+                    target_tso,
                     controller,
                     &refresh_watch,
                     &mut refresh,
                     schema,
-                    &name,
-                    mview_id,
+                    info,
                     mview,
                     method,
                     refresh_start,
@@ -862,12 +868,12 @@ impl Session {
     fn refresh_complete_in_place_locked(
         &mut self,
         mode: RefreshMaterializedViewMode,
+        target_tso: u64,
         controller: &std::sync::Arc<MvTaskCancelController>,
         refresh_watch: &MvTaskWatch,
         refresh: &mut Session,
         schema: &str,
-        name: &str,
-        mview_id: i64,
+        info: &tidb_model::TableInfo,
         mview: &tidb_model::table::MaterializedViewInfo,
         method: &str,
         refresh_start: chrono::DateTime<chrono::Local>,
@@ -876,12 +882,37 @@ impl Session {
     ) -> Result<StmtOutput, DriverError> {
         self.observe_mv_refresh_step("TXN_BEGIN", || sys_sql(refresh, "BEGIN PESSIMISTIC", &[]))?;
         let mut txn_finished = false;
+        let (name, mview_id) = (info.name.original(), info.id);
+        let fast = mode == RefreshMaterializedViewMode::Fast;
         let result = (|| {
             let locked = self.observe_mv_refresh_step("LOCK_REFRESH_INFO", || lock_refresh_info_row(refresh, mview_id))?;
+            if fast && locked.last_success_read_tso_null {
+                return Err(plain("refresh materialized view fast: LAST_SUCCESS_READ_TSO is NULL"));
+            }
+            if fast && target_tso > 0 && target_tso == locked.last_success_read_tso {
+                // Go `newMVRefreshStmtResultFromWriteCounts(0, 0, 0)`: the
+                // window is empty.
+                self.statement_message = "Rows inserted: 0  Updated: 0  Deleted: 0".to_owned();
+                return Ok(StmtOutput::Affected(0));
+            }
             let mut hist = self.open_refresh_system_session()?;
-            if read_refresh_source_ids(refresh, mview_id)?.is_empty() {
+            // Re-read the registration under the refresh-info row lock.
+            let registered_logs = read_refresh_source_ids(refresh, mview_id)?;
+            if registered_logs.is_empty() {
                 return Err(plain("refresh materialized view: input log records are missing"));
             }
+            let latest = self.refresh_latest_info_schema();
+            if fast {
+                check_mv_refresh_log_baseline(&resolve_refresh_sources(&latest, mview_id)?, &registered_logs)?;
+            }
+            let bounded_fast = fast && target_tso > 0 && target_tso > locked.last_success_read_tso;
+            // Go `checkFastRefreshMLogIntegrity`, on the history session so it
+            // sees the latest committed purge state.
+            let mlog_retained_lower_tso = if fast {
+                check_fast_refresh_mlog_integrity(&mut hist, &latest, schema, info, locked.last_success_read_tso)?
+            } else {
+                0
+            };
             // Go `refreshSctx.Txn(true).StartTS()`: the lock above activated
             // the transaction.
             let start_ts = refresh
@@ -914,6 +945,7 @@ impl Session {
                         start_ts,
                         mview_id,
                         REFRESH_HIST_STATUS_FAILED,
+                        None,
                         None,
                         None,
                         refresh_start,
@@ -958,7 +990,21 @@ impl Session {
             // Go master `executeRefreshMaterializedViewCompleteDeltaApply`:
             // the internal `RefreshMaterializedViewImplementStmt` on the refresh
             // session; its OK packet is the statement's.
-            let delta_apply = (mode == RefreshMaterializedViewMode::CompleteDeltaApply).then(|| {
+            if fast && target_tso > 0 && target_tso < locked.last_success_read_tso {
+                let error = plain(format!(
+                    "refresh materialized view fast as of timestamp: target tso {target_tso} is older than LAST_SUCCESS_READ_TSO {}",
+                    locked.last_success_read_tso
+                ));
+                refresh.vars.in_mview_maintenance = original_maintenance;
+                return Err(finalize_failure(&mut hist, refresh, &mut txn_finished, error));
+            }
+            let implemented = matches!(mode, RefreshMaterializedViewMode::Fast | RefreshMaterializedViewMode::CompleteDeltaApply);
+            let delta_apply = implemented.then(|| {
+                let (step, window) = if fast {
+                    ("DATA_CHANGE_FAST_MERGE", (locked.last_success_read_tso, target_tso, mlog_retained_lower_tso, registered_logs.clone()))
+                } else {
+                    ("DATA_CHANGE_COMPLETE_DELTA_APPLY", (0, 0, 0, Vec::new()))
+                };
                 let implement = tidb_ast::Stmt::Admin(tidb_ast::NodeBox::new(tidb_ast::AdminStmt::RefreshMaterializedViewImplement(
                     Box::new(tidb_ast::RefreshMaterializedViewImplementStmt {
                         refresh_stmt: tidb_ast::RefreshMaterializedViewStmt {
@@ -968,26 +1014,28 @@ impl Session {
                             observe_type: RefreshMaterializedViewObserveType::None,
                             as_of: None,
                         },
-                        last_successful_refresh_read_tso: 0,
-                        target_refresh_read_tso: 0,
-                        mlog_retained_lower_tso: 0,
-                        registered_mlog_ids: Vec::new(),
+                        last_successful_refresh_read_tso: window.0,
+                        target_refresh_read_tso: window.1,
+                        mlog_retained_lower_tso: window.2,
+                        registered_mlog_ids: window.3,
                     }),
                 )));
                 let sql = implement.restore();
-                let (affected_rows, _) = self.observe_mv_refresh_step("DATA_CHANGE_COMPLETE_DELTA_APPLY", || {
+                let (affected_rows, _) = self.observe_mv_refresh_step(step, || {
                     refresh
                         .node_conn()
                         .run_ordinary_write(&sql, &implement)
                         .map_err(crate::domain::cluster_session_node::sql_query_error_to_driver)
                 })?;
-                self.emit_mv_refresh_step_plan_rows("DATA_CHANGE_COMPLETE_DELTA_APPLY", refresh);
+                self.emit_mv_refresh_step_plan_rows(step, refresh);
+                // Go `collectFastRefreshMLogScanRows`, from the statement's plan.
+                let refresh_rows = if fast { refresh.fast_refresh_mlog_scan_rows() } else { None };
                 // Go `captureMVRefreshStmtResult`, before the next statement
                 // resets the statement context.
                 let message = refresh.statement_message().to_owned();
                 let read_tso = session_json_u64(refresh, "tidb_last_query_info", "for_update_ts")
                     .ok_or_else(|| plain("refresh materialized view: invalid refresh read tso"))?;
-                Ok::<_, DriverError>((affected_rows, message, read_tso))
+                Ok::<_, DriverError>((affected_rows, message, read_tso, refresh_rows))
             });
             // Go master `executeRefreshMaterializedViewCompleteInPlace`.
             let mut in_place = || {
@@ -1010,6 +1058,7 @@ impl Session {
                     u64::try_from(insert_rows + delete_rows).unwrap_or_default(),
                     format!("Rows inserted: {insert_rows}  Updated: 0  Deleted: {delete_rows}"),
                     read_tso,
+                    None,
                 ))
             };
             let data = match delta_apply {
@@ -1017,10 +1066,20 @@ impl Session {
                 None => in_place(),
             };
             refresh.vars.in_mview_maintenance = original_maintenance;
-            let (affected_rows, statement_message, read_tso) = match data {
+            let (affected_rows, statement_message, actual_read_tso, refresh_rows) = match data {
                 Ok(data) => data,
                 Err(error) => return Err(finalize_failure(&mut hist, refresh, &mut txn_finished, error)),
             };
+            let mut read_tso = actual_read_tso;
+            if bounded_fast {
+                if target_tso > actual_read_tso {
+                    let error = plain(format!(
+                        "refresh materialized view fast as of timestamp: target tso {target_tso} is newer than actual refresh read tso {actual_read_tso}"
+                    ));
+                    return Err(finalize_failure(&mut hist, refresh, &mut txn_finished, error));
+                }
+                read_tso = target_tso;
+            }
             if let Some(value) =
                 tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorAfterDataChanges")
             {
@@ -1033,10 +1092,13 @@ impl Session {
             // baseline replaced when the logs changed.
             let persisted = (|| {
                 self.observe_mv_refresh_step("PERSIST_REFRESH_INFO", || {
-                    let confirmed = refresh_source_log_ids(&self.resolve_mv_complete_refresh_sources(mview_id, read_tso)?);
-                    let registered = read_refresh_source_ids(refresh, mview_id)?;
-                    if registered != confirmed {
-                        replace_refresh_source_ids(refresh, mview_id, &confirmed)?;
+                    // FAST keeps its registered logs; a COMPLETE refresh
+                    // re-registers the ones its read confirmed.
+                    if !fast {
+                        let confirmed = refresh_source_log_ids(&self.resolve_mv_complete_refresh_sources(mview_id, read_tso)?);
+                        if registered_logs != confirmed {
+                            replace_refresh_source_ids(refresh, mview_id, &confirmed)?;
+                        }
                     }
                     persist_refresh_success(refresh, mview_id, locked, read_tso, chrono::Utc::now().timestamp())
                 })?;
@@ -1065,6 +1127,7 @@ impl Session {
                     REFRESH_HIST_STATUS_SUCCESS,
                     Some(read_tso),
                     commit_tso,
+                    refresh_rows,
                     refresh_start,
                     chrono::Local::now(),
                     None,
@@ -1146,6 +1209,7 @@ impl Session {
                         REFRESH_HIST_STATUS_FAILED,
                         None,
                         None,
+                        None,
                         refresh_start,
                         chrono::Local::now(),
                         Some(&reason),
@@ -1167,6 +1231,7 @@ impl Session {
                 mview_id,
                 REFRESH_HIST_STATUS_SUCCESS,
                 Some(build_read_tso),
+                None,
                 None,
                 refresh_start,
                 chrono::Local::now(),
@@ -1388,27 +1453,36 @@ impl Session {
             .ok_or_else(|| DriverError::unsupported("the session has no domain to read a snapshot schema from"))?;
         let catalog = crate::domain::cluster_session_node::get_snapshot_info_schema(&domain, read_tso)
             .map_err(|error| annotate(&error, "refresh materialized view: cannot load computation snapshot schema"))?;
-        let mview = catalog
-            .table_info_by_id(mview_id)
-            .and_then(|table| table.read().materialized_view.clone())
-            .ok_or_else(|| plain(format!("refresh materialized view: target {mview_id} is missing from the computation schema")))?;
-        let mut sources = Vec::new();
-        for &id in mview.read().base_table_ids.iter() {
-            let source = catalog
-                .table_info_by_id(id)
-                .ok_or_else(|| plain(format!("refresh materialized view: source {id} is missing from the computation schema")))?;
-            let source = source.read();
-            sources.push(tidb_model::MViewRefreshSource {
-                table_id: source.id,
-                mlog_id: source.materialized_view_base.as_ref().map_or(0, |base| base.read().mlog_id),
-            });
-        }
-        sources.sort_by_key(|source| source.table_id);
-        if sources.is_empty() {
-            return Err(plain("refresh materialized view: source set is empty"));
-        }
-        Ok(sources)
+        resolve_refresh_sources(&catalog, mview_id)
     }
+}
+
+/// Go master `mviewutil.ResolveRefreshSources`: the view's sources and their
+/// logs in `catalog`, sorted by table ID.
+fn resolve_refresh_sources(
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    mview_id: i64,
+) -> Result<Vec<tidb_model::MViewRefreshSource>, DriverError> {
+    let mview = catalog
+        .table_info_by_id(mview_id)
+        .and_then(|table| table.read().materialized_view.clone())
+        .ok_or_else(|| plain(format!("refresh materialized view: target {mview_id} is missing from the computation schema")))?;
+    let mut sources = Vec::new();
+    for &id in mview.read().base_table_ids.iter() {
+        let source = catalog
+            .table_info_by_id(id)
+            .ok_or_else(|| plain(format!("refresh materialized view: source {id} is missing from the computation schema")))?;
+        let source = source.read();
+        sources.push(tidb_model::MViewRefreshSource {
+            table_id: source.id,
+            mlog_id: source.materialized_view_base.as_ref().map_or(0, |base| base.read().mlog_id),
+        });
+    }
+    sources.sort_by_key(|source| source.table_id);
+    if sources.is_empty() {
+        return Err(plain("refresh materialized view: source set is empty"));
+    }
+    Ok(sources)
 }
 
 /// Go master `mviewutil.RefreshSourceLogIDs`: the sorted, distinct log set.
@@ -1446,4 +1520,188 @@ impl Session {
         self.statement_message = stats.stmt_message();
         Ok(StmtOutput::Affected(stats.affected_rows()))
     }
+
+    /// Go master `MViewDeltaMergeAggExec` (with `buildMViewDeltaMerge`'s
+    /// `validateMVFastRefreshInput`) for FAST refresh's internal
+    /// `RefreshMaterializedViewImplementStmt`: the log window merged into the
+    /// view, the statement's affected rows and message set.
+    pub(crate) fn mview_delta_merge(
+        &mut self,
+        merge: &tidb_planner::common_plans::MViewDeltaMerge,
+    ) -> Result<StmtOutput, DriverError> {
+        use tidb_executor::stmt_ctx_build::ResetContextOfStmt as _;
+        let current_db = self.current_database().to_owned();
+        let ctx = self.statement_context_ignoring(true, false);
+        let build = self.with_staged_catalog(|catalog| {
+            tidb_executor::driver::mview_delta_merge::build_merge_source(merge, catalog, &ctx)
+        })?;
+        // Go `validateMVFastRefreshInput` at the statement's for-update TS.
+        let read_tso = u64::try_from(self.current_for_update_ts().value()).unwrap_or_default();
+        let sources = self.resolve_mv_complete_refresh_sources(build.mv_table_id, read_tso)?;
+        check_mv_refresh_log_baseline(&sources, &merge.registered_mlog_ids)?;
+        if !sources.iter().any(|source| source.table_id == build.base_table_id && source.mlog_id == build.mlog_table_id) {
+            return Err(plain(
+                "refresh materialized view: planned source/log binding differs from the computation snapshot; retry refresh",
+            ));
+        }
+        // Go: the retained mlog window ends at the statement's for-update TS.
+        let stats = self.with_staged_catalog(|catalog| {
+            tidb_executor::driver::mview_delta_merge::run_mview_delta_merge(merge, &build, catalog, &current_db, &ctx, read_tso)
+        })?;
+        self.statement_message = stats.stmt_message();
+        Ok(StmtOutput::Affected(stats.affected_rows()))
+    }
+
+    /// Go `sessionctx.ValidateSnapshotReadTS` for a stale read: a read
+    /// timestamp after the store's current one is refused.
+    pub(crate) fn validate_snapshot_read_ts(&self, read_ts: u64) -> Result<(), DriverError> {
+        let mut sys = self.open_refresh_system_session()?;
+        let current = sys.node_conn().store_current_version().map_err(plain)?;
+        if read_ts > current {
+            return Err(plain(format!(
+                "cannot set read timestamp to a future time, readTS: {read_ts}, currentTS: {current}"
+            )));
+        }
+        Ok(())
+    }
 }
+
+/// Go master `checkMVRefreshLogBaseline`.
+fn check_mv_refresh_log_baseline(sources: &[tidb_model::MViewRefreshSource], registered: &[i64]) -> Result<(), DriverError> {
+    if sources.iter().any(|source| source.mlog_id == 0) {
+        return Err(plain(
+            "refresh materialized view fast: source has no materialized view log; run COMPLETE refresh to rebuild the input log baseline",
+        ));
+    }
+    if refresh_source_log_ids(sources) != registered {
+        return Err(plain("refresh materialized view fast: input log baseline has changed; run COMPLETE refresh to rebuild it"));
+    }
+    Ok(())
+}
+
+/// Go master `readMLogPurgeInfoLastPurgedTSO`.
+fn read_mlog_purge_info_last_purged_tso(session: &mut Session, mlog_id: i64) -> Result<Option<u64>, DriverError> {
+    let rows = sys_sql(session, "SELECT LAST_PURGED_TSO FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %?", &[SqlArg::Signed(mlog_id)])
+        .map_err(|error| {
+            if is_table_not_exists(&error) {
+                plain("refresh materialized view: required system table mysql.tidb_mlog_purge_info does not exist")
+            } else {
+                error
+            }
+        })?;
+    let Some(row) = rows.first() else {
+        return Err(plain(format!("refresh materialized view: mlog purge info row missing for mlog id {mlog_id}")));
+    };
+    Ok(row.first().and_then(datum_u64))
+}
+
+/// Go master `readLatestHazardousMLogPurgeCutoffTSO`.
+fn read_latest_hazardous_mlog_purge_cutoff_tso(session: &mut Session, mlog_id: i64) -> Result<Option<u64>, DriverError> {
+    let rows = sys_sql(
+        session,
+        "SELECT PURGE_CUTOFF_TSO\nFROM mysql.tidb_mlog_purge_hist\nWHERE MLOG_ID = %?\n  AND (\n    PURGE_STATUS = %?\n    OR PURGE_STATUS = %?\n    OR PURGE_ROWS > 0\n  )\nORDER BY PURGE_JOB_ID DESC\nLIMIT 1",
+        &[SqlArg::Signed(mlog_id), SqlArg::String(b"running"), SqlArg::String(b"orphaned")],
+    )
+    .map_err(|error| {
+        if is_table_not_exists(&error) {
+            plain("refresh materialized view: required system table mysql.tidb_mlog_purge_hist does not exist")
+        } else {
+            error
+        }
+    })?;
+    Ok(rows.first().and_then(|row| row.first()).and_then(datum_u64))
+}
+
+/// Go master `checkFastRefreshMLogIntegrity` (with
+/// `resolveRefreshMaterializedViewLogInfo`): the log may not have been purged
+/// past the last successful read TSO; answers the retained lower TSO.
+pub(crate) fn check_fast_refresh_mlog_integrity(
+    session: &mut Session,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    schema: &str,
+    info: &tidb_model::TableInfo,
+    last_success_read_tso: u64,
+) -> Result<u64, DriverError> {
+    let Some(mview) = info.materialized_view.as_ref().map(|mview| mview.read().clone()) else {
+        return Err(plain("refresh materialized view: target is not a materialized view"));
+    };
+    if mview.base_table_ids.len() != 1 {
+        return Err(plain("refresh materialized view: fast refresh requires exactly one base table"));
+    }
+    let base_id = mview.base_table_ids[0];
+    let Some(base) = catalog.table_info_by_id(base_id) else {
+        return Err(plain(format!(
+            "refresh materialized view: cannot resolve base table {base_id} for materialized view {schema}.{}",
+            info.name.original()
+        )));
+    };
+    let base = base.read().clone();
+    let Some(base_meta) = base.materialized_view_base.as_ref().map(|meta| meta.read().clone()) else {
+        return Err(plain(format!("refresh materialized view: base table {base_id} is missing materialized view base metadata")));
+    };
+    if base_meta.mlog_id == 0 {
+        return Err(plain(format!(
+            "refresh materialized view: materialized view log does not exist for base table {schema}.{}",
+            base.name.original()
+        )));
+    }
+    let last_purged = read_mlog_purge_info_last_purged_tso(session, base_meta.mlog_id)?;
+    let hazard_cutoff = read_latest_hazardous_mlog_purge_cutoff_tso(session, base_meta.mlog_id)?;
+    let hazard_fence = last_purged.unwrap_or(0).max(hazard_cutoff.unwrap_or(0));
+    if hazard_fence > last_success_read_tso {
+        return Err(plain(format!(
+            "refresh materialized view fast: materialized view log may have been purged beyond LAST_SUCCESS_READ_TSO (hazard tso {hazard_fence}, LAST_SUCCESS_READ_TSO {last_success_read_tso})"
+        )));
+    }
+    Ok(hazard_fence)
+}
+
+impl Session {
+    /// Go master `collectFastRefreshMLogScanRows`: the rows the FAST merge's
+    /// one log scan read, from this session's last statement plan and its
+    /// runtime stats.
+    pub(crate) fn fast_refresh_mlog_scan_rows(&self) -> Option<i64> {
+        let (plan, runtime) = {
+            let cell = self.process_plan_info.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            (cell.plan.clone()?, cell.runtime_stats_coll.clone()?)
+        };
+        let physical = plan.get::<tidb_planner_core_operator_physicalop::PhysicalPlan>()?;
+        let tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root) = &*physical else {
+            return None;
+        };
+        if root.go_operator != "MViewDeltaMerge" {
+            return None;
+        }
+        let mut scan_ids = Vec::new();
+        collect_mlog_scan_plan_ids(root.select_plan.as_deref()?, &mut scan_ids);
+        if scan_ids.len() != 1 {
+            return None;
+        }
+        let source = runtime.get::<std::sync::Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>()?;
+        source.cop_runtime_info(scan_ids[0]).map(|info| info.act_rows)
+    }
+}
+
+/// Go master `collectMLogScanPlanIDs`: the plan ids of the scans of a
+/// materialized view log, pushed-down plans included.
+fn collect_mlog_scan_plan_ids(plan: &tidb_planner_core_operator_physicalop::PhysicalPlan, out: &mut Vec<i64>) {
+    use tidb_planner_core_operator_physicalop::PhysicalPlan;
+    match plan {
+        PhysicalPlan::TableScan(scan) => {
+            if scan.table.as_ref().is_some_and(|table| table.read().materialized_view_log.is_some()) {
+                out.push(i64::from(plan.id()));
+            }
+        }
+        PhysicalPlan::TableReader(reader) => {
+            if let Some(pushed) = reader.table_plan.as_deref() {
+                collect_mlog_scan_plan_ids(pushed, out);
+            }
+        }
+        _ => {
+            for child in plan.children() {
+                collect_mlog_scan_plan_ids(child, out);
+            }
+        }
+    }
+}
+

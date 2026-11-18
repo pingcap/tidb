@@ -372,7 +372,8 @@ impl Session {
         let view_args = [SqlArg::String(schema.as_bytes()), SqlArg::String(view_name.as_bytes())];
         let escape = |sql: &str| tidb_sqlescape::escape_sql_text(sql, &view_args).map_err(|error| plain(error.to_string()));
 
-        let (mut delete_rows, mut insert_rows, mut delta_rows, mut load_rows) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let (mut delete_rows, mut insert_rows, mut delta_rows, mut load_rows, mut fast_rows) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
         match s.mode {
             // Go `buildOutOfPlaceRefreshPlanRows`: the load's statement shape
             // over the view itself, no shadow being created.
@@ -394,10 +395,11 @@ impl Session {
             }
             // Go `buildCompleteDeltaRefreshPlanRows`.
             RefreshMaterializedViewMode::CompleteDeltaApply => {
-                delta_rows = self.render_mv_refresh_plan_rows_for_implement(s)?;
+                delta_rows = self.render_mv_refresh_plan_rows_for_implement(s, ImplementWindow::default())?;
             }
+            // Go `buildFastMergePlanRows`.
             RefreshMaterializedViewMode::Fast => {
-                return Err(DriverError::unsupported("REFRESH MATERIALIZED VIEW FAST DRY RUN on this node"));
+                fast_rows = self.build_fast_merge_plan_rows(s, &schema, &info)?;
             }
         }
 
@@ -408,6 +410,7 @@ impl Session {
                 StepKind::CompleteDelete => &delete_rows,
                 StepKind::CompleteInsert => &insert_rows,
                 StepKind::CompleteDeltaApply => &delta_rows,
+                StepKind::FastMerge => &fast_rows,
                 StepKind::OutOfPlaceLoadShadow => &load_rows,
                 _ => continue,
             };
@@ -439,41 +442,117 @@ impl Session {
         Ok(rows.iter().map(|row| row.iter().map(explain_cell).collect()).collect())
     }
 
+    /// Go master `buildFastMergePlanRows` with
+    /// `loadFastRefreshImplementOptionsForDryRun`: the window from the view's
+    /// last successful read TSO to the AS OF target, if any.
+    fn build_fast_merge_plan_rows(
+        &mut self,
+        s: &RefreshMaterializedViewStmt,
+        schema: &str,
+        info: &tidb_model::TableInfo,
+    ) -> Result<Vec<Vec<String>>, DriverError> {
+        let target = match &s.as_of {
+            Some(as_of) => {
+                let target = self.calculate_as_of_ts_expr(as_of)?;
+                self.validate_snapshot_read_ts(target)?;
+                target
+            }
+            None => 0,
+        };
+        let mut validation = self.open_refresh_system_session()?;
+        let rows = sys_sql(
+            &mut validation,
+            "SELECT LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
+            &[SqlArg::Signed(info.id)],
+        )
+        .map_err(|error| {
+            if crate::mview_refresh::is_table_not_exists(&error) {
+                plain("refresh materialized view: required system table mysql.tidb_mview_refresh_info does not exist")
+            } else {
+                error
+            }
+        })?;
+        let Some(row) = rows.first() else {
+            return Err(plain("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh_info"));
+        };
+        let Some(last) = row.first().and_then(crate::mview_refresh::datum_u64) else {
+            return Err(plain("refresh materialized view fast: LAST_SUCCESS_READ_TSO is NULL"));
+        };
+        let mut window = ImplementWindow { last_successful_refresh_read_tso: last, ..ImplementWindow::default() };
+        if target > 0 && target == last {
+            return Ok(Vec::new());
+        }
+        window.mlog_retained_lower_tso = crate::mview_refresh::check_fast_refresh_mlog_integrity(
+            &mut validation,
+            &self.refresh_latest_info_schema(),
+            schema,
+            info,
+            last,
+        )?;
+        if target > 0 && target < last {
+            return Err(plain(format!(
+                "refresh materialized view fast as of timestamp: target tso {target} is older than LAST_SUCCESS_READ_TSO {last}"
+            )));
+        }
+        window.target_refresh_read_tso = target;
+        self.render_mv_refresh_plan_rows_for_implement(s, window)
+    }
+
     /// Go master `renderPlanRowsForInternalStmt` over the internal
     /// `RefreshMaterializedViewImplementStmt`: its plan optimized and
     /// rendered as a brief EXPLAIN.
-    fn render_mv_refresh_plan_rows_for_implement(&self, s: &RefreshMaterializedViewStmt) -> Result<Vec<Vec<String>>, DriverError> {
-        let sys = self.open_mv_refresh_observe_internal_session()?;
+    fn render_mv_refresh_plan_rows_for_implement(
+        &self,
+        s: &RefreshMaterializedViewStmt,
+        window: ImplementWindow,
+    ) -> Result<Vec<Vec<String>>, DriverError> {
+        let mut sys = self.open_mv_refresh_observe_internal_session()?;
         let mut refresh_stmt = s.clone();
         refresh_stmt.observe_type = tidb_ast::RefreshMaterializedViewObserveType::None;
+        refresh_stmt.as_of = None;
         if refresh_stmt.view_name.len() == 1 {
             refresh_stmt.view_name.insert(0, self.current_database().to_owned());
         }
         let implement = tidb_ast::Stmt::Admin(tidb_ast::NodeBox::new(tidb_ast::AdminStmt::RefreshMaterializedViewImplement(Box::new(
             tidb_ast::RefreshMaterializedViewImplementStmt {
                 refresh_stmt,
-                last_successful_refresh_read_tso: 0,
-                target_refresh_read_tso: 0,
-                mlog_retained_lower_tso: 0,
+                last_successful_refresh_read_tso: window.last_successful_refresh_read_tso,
+                target_refresh_read_tso: window.target_refresh_read_tso,
+                mlog_retained_lower_tso: window.mlog_retained_lower_tso,
                 registered_mlog_ids: Vec::new(),
             },
         ))));
         let Some((plan, _, ctx)) = sys.build_statement_plan(&implement)? else {
             return Err(plain("dry run refresh materialized view: invalid internal statement"));
         };
-        let tidb_planner::common_plans::Plan::MViewCompleteDeltaApply(apply) = plan else {
-            return Err(plain("dry run refresh materialized view: unexpected internal plan"));
-        };
         let current_db = sys.current_database().to_owned();
+        // Go's builder activates the internal session's transaction; its
+        // start TS bounds the retained mlog window.
+        let retained_upper_tso = sys.node_conn().store_current_version().map_err(plain)?;
         // Go renders `Explain{Format: brief}` outside an EXPLAIN statement:
         // the operator info keeps its plan ids (`StmtCtx.IgnoreExplainIDSuffix`
         // is unset) and the id column's are stripped by the formatter, which
         // the row format with ids gives once formatted.
-        let (_, rows) = sys.with_planning_catalog(|catalog| {
-            tidb_executor::explain_mview_complete_delta_apply(&apply, catalog, &current_db, &ctx, tidb_sessionctx::explain_format::ExplainFormat::Row)
+        let format = tidb_sessionctx::explain_format::ExplainFormat::Row;
+        let (_, rows) = sys.with_planning_catalog(|catalog| match &plan {
+            tidb_planner::common_plans::Plan::MViewCompleteDeltaApply(apply) => {
+                tidb_executor::explain_mview_complete_delta_apply(apply, catalog, &current_db, &ctx, format)
+            }
+            tidb_planner::common_plans::Plan::MViewDeltaMerge(merge) => {
+                tidb_executor::explain_mview_delta_merge(merge, catalog, &current_db, &ctx, format, retained_upper_tso)
+            }
+            _ => Err(plain("dry run refresh materialized view: unexpected internal plan")),
         })?;
         Ok(rows.iter().map(|row| row.iter().map(explain_cell).collect()).collect())
     }
+}
+
+/// Go master `refreshImplementOptions`.
+#[derive(Clone, Copy, Debug, Default)]
+struct ImplementWindow {
+    last_successful_refresh_read_tso: u64,
+    target_refresh_read_tso: u64,
+    mlog_retained_lower_tso: u64,
 }
 
 #[cfg(test)]

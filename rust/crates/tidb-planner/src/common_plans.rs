@@ -177,6 +177,8 @@ pub enum Plan {
     PurgeMaterializedViewLog(Box<tidb_ast::PurgeMaterializedViewLogStmt>),
     /// Go master `CompareMaterializedView`.
     CompareMaterializedView(Box<tidb_ast::CompareMaterializedViewStmt>),
+    /// Go master `MViewDeltaMerge`: FAST refresh's merge.
+    MViewDeltaMerge(Box<MViewDeltaMerge>),
     /// Go master `MViewCompleteDeltaApply`: COMPLETE DELTA APPLY's diff
     /// source and the layout its executor writes the view from. The diff
     /// SELECT is optimized where this tier's executor plans queries.
@@ -255,6 +257,22 @@ pub enum Plan {
     ExplainFor(Box<tidb_ast::ExplainForStmt>),
     /// Go `Trace` (`buildTrace`).
     Trace(Box<tidb_ast::TraceStmt>),
+}
+
+/// Go master `MViewDeltaMerge`: FAST refresh's merge of the log window into
+/// the view.
+#[derive(Clone, Debug)]
+pub struct MViewDeltaMerge {
+    /// The view's schema.
+    pub database: String,
+    /// The view's name.
+    pub name: String,
+    /// Go `mview.BuildOptions`: the log window.
+    pub options: crate::mview::BuildOptions,
+    /// Go `MLogRetainedLowerTSO`.
+    pub mlog_retained_lower_tso: u64,
+    /// Go `RegisteredMLogIDs`.
+    pub registered_mlog_ids: Vec<i64>,
 }
 
 /// Go master `MViewCompleteDeltaApply`.

@@ -493,6 +493,18 @@ pub enum EncodeKeyError {
     Eval(EvalError),
 }
 
+/// Go master `planctx.MLogCommitTSEstimation`: the retained commit-ts window
+/// of the materialized view log a FAST refresh plans its merge source over.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MLogCommitTSEstimation {
+    /// Go `MLogTableID`.
+    pub mlog_table_id: i64,
+    /// Go `RetainedLowerTSO`.
+    pub retained_lower_tso: u64,
+    /// Go `RetainedUpperTSO`.
+    pub retained_upper_tso: u64,
+}
+
 /// Resolves column and session state during evaluation.
 pub trait Columns {
     /// Returns the referenced column, matched by its final name segment.
@@ -507,6 +519,12 @@ pub trait Columns {
     /// Go `SessionVars.InRestrictedSQL` of the statement's session.
     fn in_restricted_sql(&self) -> bool {
         false
+    }
+
+    /// Go master `MLogCommitTSEstimationContext.GetMLogCommitTSEstimation`:
+    /// the window a FAST refresh scopes over its merge-source planning.
+    fn mlog_commit_ts_estimation(&self) -> Option<MLogCommitTSEstimation> {
+        None
     }
 
     /// Go `SessionVars.User`'s `AuthUsername` and `AuthHostname`, when the
