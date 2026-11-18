@@ -116,6 +116,28 @@ pub(super) struct MockCluster {
 }
 
 impl MockCluster {
+    /// The one-shot region failures a commit is told to report, whichever
+    /// transaction commits.
+    fn injected_commit_failure(&self) -> Option<SqlQueryError> {
+        let cause = if self.fail_next_region_commit.swap(false, Ordering::AcqRel) {
+            TransactionCause::BackoffExhausted {
+                terminal: tikv_client::retry::BO_REGION_MISS.terminal_error,
+                detail: "regionMiss backoffer exhausted".to_owned(),
+            }
+        } else if self.fail_next_generic_region_commit.swap(false, Ordering::AcqRel) {
+            TransactionCause::Region {
+                detail: "TiKV returned terminal region error: FlashbackInProgress region=42".to_owned(),
+            }
+        } else {
+            return None;
+        };
+        let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
+            receipt: OptimisticTransactionReceipt::new(1, 2, b"k".to_vec(), 1),
+            cause,
+        });
+        commit_outcome_to_sql_error(&outcome).err().map(sql_error)
+    }
+
     pub(super) fn rows(&self) -> usize {
         self.committed.lock().expect("committed").len()
     }
@@ -353,16 +375,20 @@ struct MockPendingSnapshot {
 /// first use, carrying the mode the node decided for the attempt.
 struct MockPendingTransaction {
     start_ts: u64,
+    data: BTreeMap<Vec<u8>, Vec<u8>>,
     cluster: Arc<MockCluster>,
     pessimistic: bool,
 }
 
 impl PendingClusterTransaction for MockPendingTransaction {
+    /// The autocommit statement's implicit transaction turns valid: that is
+    /// the statement opening its read, which `opened` counts.
     fn wait(self: Box<Self>) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        self.cluster.opened.fetch_add(1, Ordering::AcqRel);
         Ok(Box::new(MockSessionTransaction {
             start_ts: self.start_ts,
             opened_at: std::time::Instant::now(),
-            data: self.cluster.snapshot(),
+            data: self.data,
             cluster: self.cluster,
             max_ts: false,
             pessimistic: self.pessimistic,
@@ -472,9 +498,19 @@ impl ClusterTransactions for MockTransactions {
     ) -> Result<Box<dyn PendingClusterTransaction>, String> {
         self.0.record_resource_group(resource_group);
         // The mock's timestamp is taken now, as the real opener dispatches
-        // its PD request now; the transaction opens when first needed.
+        // its PD request now; the transaction opens when first needed. Its
+        // rows are the image at that timestamp, and a race lands after it.
+        self.0.prepared.fetch_add(1, Ordering::AcqRel);
+        let data = self.0.snapshot();
+        let start_ts = self.0.timestamp();
+        if self.0.race_every_read.load(Ordering::Acquire)
+            || self.0.race_next_read.swap(false, Ordering::AcqRel)
+        {
+            self.0.commit_from_another_session();
+        }
         Ok(Box::new(MockPendingTransaction {
-            start_ts: self.0.timestamp(),
+            start_ts,
+            data,
             cluster: Arc::clone(&self.0),
             pessimistic,
         }))
@@ -492,33 +528,8 @@ impl ClusterTransactions for MockTransactions {
         if staged.is_empty() {
             return Ok(None);
         }
-        if self.0.fail_next_region_commit.swap(false, Ordering::AcqRel) {
-            let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
-                receipt: OptimisticTransactionReceipt::new(1, 2, b"k".to_vec(), 1),
-                cause: TransactionCause::BackoffExhausted {
-                    terminal: tikv_client::retry::BO_REGION_MISS.terminal_error,
-                    detail: "regionMiss backoffer exhausted".to_owned(),
-                },
-            });
-            return commit_outcome_to_sql_error(&outcome)
-                .map(|()| None)
-                .map_err(sql_error);
-        }
-        if self
-            .0
-            .fail_next_generic_region_commit
-            .swap(false, Ordering::AcqRel)
-        {
-            let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
-                receipt: OptimisticTransactionReceipt::new(1, 2, b"k".to_vec(), 1),
-                cause: TransactionCause::Region {
-                    detail: "TiKV returned terminal region error: FlashbackInProgress region=42"
-                        .to_owned(),
-                },
-            });
-            return commit_outcome_to_sql_error(&outcome)
-                .map(|()| None)
-                .map_err(sql_error);
+        if let Some(error) = self.0.injected_commit_failure() {
+            return Err(error);
         }
         // Autocommit publishes at the timestamp the statement READ at, which is
         // what puts a commit that landed in between inside TiKV's conflict
@@ -630,6 +641,10 @@ impl OpenClusterTransaction for MockSessionTransaction {
         let staged = buffer.snapshot();
         if staged.is_empty() {
             return Ok(None);
+        }
+        if let Some(error) = self.cluster.injected_commit_failure() {
+            buffer.reset();
+            return Err(error);
         }
         for key in buffer.presume_not_exists_keys() {
             if self.data.contains_key(&key) {

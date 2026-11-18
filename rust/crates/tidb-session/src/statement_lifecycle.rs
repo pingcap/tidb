@@ -248,7 +248,7 @@ impl StatementLifecycle<'_> {
         // version; this hold is what keeps a Go DDL owner from publishing a
         // drop under a statement mid-flight. Dropped with the scope.
         let _statement_pin = self.txn.hold_schema_pin(self.follower.schema_version());
-        let savepoint = self.txn.buffer().checkpoint();
+        let mut savepoint = self.txn.buffer().checkpoint();
         // An optimistic transaction's locking reads lock nothing during
         // execution; their keys reach the owner's lock step, which flags
         // them as Go's optimistic `LockKeys` does.
@@ -302,6 +302,12 @@ impl StatementLifecycle<'_> {
                     // (`pkg/session/session.go:1207`), so a schema that moved
                     // under the conflict is picked up before the next try.
                     self.follower.rebuild_if_stale(self.session, self.txn);
+                    // An autocommit attempt's failure ended its transaction
+                    // and reset the whole buffer; the replay is a new
+                    // transaction with a statement checkpoint of its own.
+                    if self.txn.explicit.is_none() {
+                        savepoint = self.txn.buffer().checkpoint();
+                    }
                 }
             }
         };

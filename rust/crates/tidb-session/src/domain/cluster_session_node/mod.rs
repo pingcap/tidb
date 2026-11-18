@@ -918,11 +918,10 @@ impl<'s> ClusterServerSession<'s> {
     }
 
     /// [`StatementReadShape::AutocommitWrite`] for an autocommit INSERT,
-    /// UPDATE or DELETE (Go `isDMLStatement`) whose implicit transaction
-    /// Go's `decideTxnMode` makes pessimistic (`pessimistic-auto-commit`):
-    /// that shape's write transaction is the one
-    /// `handlePessimisticDML` locks.
-    fn pessimistic_autocommit_dml_shape(&self, stmt: &Stmt) -> Option<StatementReadShape> {
+    /// UPDATE or DELETE (Go `isDMLStatement`): it runs in the implicit
+    /// transaction (Go's `LazyTxn`) that `decideTxnMode` makes optimistic or
+    /// pessimistic and `handlePessimisticDML` locks.
+    fn autocommit_dml_shape(&self, stmt: &Stmt) -> Option<StatementReadShape> {
         let dml = matches!(
             stmt,
             Stmt::Dml(dml) if matches!(
@@ -930,10 +929,8 @@ impl<'s> ClusterServerSession<'s> {
                 tidb_ast::DmlStmt::Insert(_) | tidb_ast::DmlStmt::Update(_) | tidb_ast::DmlStmt::Delete(_)
             )
         );
-        (dml && self.node.txn.explicit.is_none()
-            && !self.session.in_transaction()
-            && crate::statement_lifecycle::autocommit_dml_is_pessimistic(&self.session, false))
-        .then_some(StatementReadShape::AutocommitWrite)
+        (dml && self.node.txn.explicit.is_none() && !self.session.in_transaction())
+            .then_some(StatementReadShape::AutocommitWrite)
     }
 
     /// Runs an ordinary write statement (INSERT, UPDATE, DELETE and the like)
@@ -959,7 +956,7 @@ impl<'s> ClusterServerSession<'s> {
         // plan names through `TableStorage::lock_keys_for_read`, so nothing is
         // classified or locked here before the statement compiles.
         self.node.activate_statement_txn = self.activates_txn_at_build(stmt);
-        let shape = self.pessimistic_autocommit_dml_shape(stmt).unwrap_or(StatementReadShape::Unknown);
+        let shape = self.autocommit_dml_shape(stmt).unwrap_or(StatementReadShape::Unknown);
         let attempt = self.with_prelocked_statement(
             shape,
             &resource_group,
@@ -2292,7 +2289,7 @@ impl<'s> ClusterServerSession<'s> {
             bound_template.as_ref().map_or_else(
                 || self.session.statement_read_shape(&sql, &params),
                 |bound| {
-                    self.pessimistic_autocommit_dml_shape(bound)
+                    self.autocommit_dml_shape(bound)
                         .unwrap_or_else(|| self.session.statement_read_shape_bound(bound))
                 },
             )
