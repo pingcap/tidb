@@ -2786,12 +2786,17 @@ func TestSessionRootTrackerDetach(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create table t1(a int, c int, index idx(a))")
-	tk.MustExec("set tidb_mem_quota_query=10")
-	err := tk.QueryToErr("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
-	fmt.Println(err.Error())
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
+	const query = "select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a"
+	tk.MustExec("set tidb_mem_quota_query=128")
+	err := func() error {
+		// The hash join can spill and finish without invoking the OOM cancel action.
+		spillEnabled := variable.EnableTmpStorageOnOOM.Swap(false)
+		defer variable.EnableTmpStorageOnOOM.Store(spillEnabled)
+		return tk.QueryToErr(query)
+	}()
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err), "expected query memory limit error, got %v", err)
 	tk.MustExec("set tidb_mem_quota_query=1000")
-	rs, err := tk.Exec("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	rs, err := tk.Exec(query)
 	require.NoError(t, err)
 	require.NotNil(t, tk.Session().GetSessionVars().MemTracker.GetFallbackForTest(false))
 	err = rs.Close()
