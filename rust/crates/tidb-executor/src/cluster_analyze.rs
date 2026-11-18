@@ -40,7 +40,7 @@ use tidb_model::index::IndexInfo;
 use tidb_model::table_info::TableInfo;
 use tidb_model::SchemaState;
 
-use tidb_infoschema::cluster_catalog::{PagedMetaSnapshot, RegionPagedMetaSnapshot};
+use tidb_infoschema::cluster_catalog::PagedMetaSnapshot;
 
 
 use tidb_kv::key::prefix_scan_end;
@@ -335,65 +335,39 @@ pub fn is_columnar_index(index: &IndexInfo) -> bool {
     index.vector_info.is_some() || index.inverted_info.is_some() || index.full_text_info.is_some()
 }
 
-/// Runs one pinned-Go independent global-index task.
-pub fn analyze_independent_index<S: RegionPagedMetaSnapshot>(
-    snapshot: &mut S,
-    table: &TableInfo,
-    index: &IndexInfo,
-    options: &AnalyzeOptions,
-    version: u64,
-) -> Result<AnalyzeReport, AnalyzeError> {
-    analyze_independent_index_with_progress(snapshot, table.id, index, options, version, |_| {})
-}
-
 /// Go `AnalyzeIndexExec` over one physical table's keys of `index`: the
 /// table itself for a special global index, each partition in turn for a
-/// multi-valued one.
-pub(crate) fn analyze_independent_index_with_progress<S: RegionPagedMetaSnapshot>(
-    snapshot: &mut S,
+/// multi-valued one. The keys are summarized by the store through
+/// `AnalyzeIndexReq` (Go `analyzeIndexPushdown`).
+pub(crate) fn analyze_independent_index_with_progress<S>(
+    opener: &tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
     physical_id: i64,
     index: &IndexInfo,
+    statement: &AnalyzeStatement,
     options: &AnalyzeOptions,
     version: u64,
-    mut progress: impl FnMut(i64),
-) -> Result<AnalyzeReport, AnalyzeError> {
-    let bucket_count = usize::try_from(options.num_buckets)
-        .map_err(|_| AnalyzeError::unsupported("invalid ANALYZE bucket count".to_owned()))?;
-    let topn_count = usize::try_from(options.num_topn)
-        .map_err(|_| AnalyzeError::unsupported("invalid ANALYZE TopN count".to_owned()))?;
-    let column_count = index.columns.len();
-    let prefix = tidb_tablecodec::table_key::encode_index_seek_key(physical_id, index.id, &[]);
-    let range_end = finite_successor(&prefix)?;
-    let regions = snapshot
-        .scan_regions(&prefix, &range_end)
-        .map_err(|error| AnalyzeError::Read(error.into()))?;
-    let mut fragments = Vec::with_capacity(regions.len());
-    for region in regions {
-        let mut processor = tidb_stats::IndependentIndexAnalyze::new(
-            index.id,
-            column_count,
-            bucket_count,
-            topn_count,
-        );
-        let row_count = region.pairs.len();
-        for (key, _) in region.pairs {
-            let (encoded_columns, _) = tidb_tablecodec::cut_index_key(&key, column_count)
-                .map_err(|error| AnalyzeError::unsupported(error.to_string()))?;
-            processor
-                .push(&encoded_columns)
-                .map_err(|error| AnalyzeError::unsupported(error.to_string()))?;
-        }
-        progress(i64::try_from(row_count).unwrap_or(i64::MAX));
-        fragments.push(processor.finish_fragment());
-    }
-    let built = tidb_stats::update_index_result(
-        index.id,
-        bucket_count,
-        topn_count,
-        fragments,
-    )
-    .map_err(|error| AnalyzeError::unsupported(error.to_string()))?;
-    let count = built.count;
+    concurrency: u64,
+    timeout: std::time::Duration,
+    killer: &tidb_sqlkiller::SqlKiller,
+    resource_group: &str,
+    progress: &dyn Fn(i64),
+) -> Result<AnalyzeReport, AnalyzeError>
+where
+    S: tidb_store_driver_txn::transaction::StoreClient,
+{
+    let (built, count) = sampling::collect_index_stats(
+        opener,
+        physical_id,
+        index,
+        statement,
+        options,
+        version,
+        concurrency,
+        timeout,
+        killer,
+        resource_group,
+        progress,
+    )?;
     Ok(AnalyzeReport {
         stats: ClusterTableStats {
             table_id: physical_id,
@@ -411,7 +385,7 @@ pub(crate) fn analyze_independent_index_with_progress<S: RegionPagedMetaSnapshot
                 flag: 0,
                 load_status: tidb_stats::StatsLoadedStatus::full_load(),
                 histogram: built.histogram,
-                topn: Some(built.topn),
+                topn: built.topn,
                 cms: None,
                 fm_sketch: Some(built.fm_sketch),
             }],
@@ -558,13 +532,8 @@ fn cluster_analyze_plan(
 
 #[cfg(test)]
 mod tests {
-    use super::{analyze_independent_index, cluster_analyze_plan, AnalyzeOptions};
-    use tidb_infoschema::cluster_catalog::{
-        ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot, RegionPagedMetaSnapshot,
-    };
+    use super::{cluster_analyze_plan, AnalyzeOptions};
     use tidb_ast::CiString;
-    use tidb_tablecodec::table_key::encode_index_seek_key;
-    use tidb_codec::Encoder;
     use tidb_datatype::UNSPECIFIED_LENGTH;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_model::column::ColumnInfo;
@@ -955,91 +924,5 @@ mod tests {
         let plan = cluster_analyze_plan(&table, None, false)
             .expect("the independent task owns a special global index");
         assert!(plan.indexes().is_empty());
-    }
-
-    struct RegionSnapshot(Vec<tidb_txnkv::kv_storage::SnapshotScanRegion>);
-
-    impl MetaSnapshot for RegionSnapshot {
-        fn get(&mut self, _key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
-            Ok(None)
-        }
-
-        fn scan_prefix(&mut self, _prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
-            Ok(Vec::new())
-        }
-    }
-
-    impl PagedMetaSnapshot for RegionSnapshot {
-        fn scan_page(
-            &mut self,
-            _start: &[u8],
-            _end: &[u8],
-            _limit: usize,
-        ) -> Result<MetaPairs, ClusterCatalogError> {
-            Ok(Vec::new())
-        }
-    }
-
-    impl RegionPagedMetaSnapshot for RegionSnapshot {
-        fn scan_regions(
-            &mut self,
-            _start: &[u8],
-            _end: &[u8],
-        ) -> Result<Vec<tidb_txnkv::kv_storage::SnapshotScanRegion>, ClusterCatalogError> {
-            Ok(self.0.clone())
-        }
-    }
-
-    #[test]
-    fn independent_index_keeps_region_topn_boundaries() {
-        let table = TableInfo {
-            id: 42,
-            name: CiString::new("t"),
-            ..TableInfo::default()
-        };
-        let index = IndexInfo {
-            id: 7,
-            name: CiString::new("idx_a"),
-            state: SchemaState::PUBLIC,
-            global: true,
-            columns: vec![IndexColumn {
-                name: CiString::new("a"),
-                offset: 0,
-                length: 3,
-                use_changing_type: false,
-            }]
-            .into(),
-            ..IndexInfo::default()
-        };
-        let encoder = Encoder::new(false);
-        let one = encoder.encode_key(&[Datum::Int(1)]).unwrap();
-        let two = encoder.encode_key(&[Datum::Int(2)]).unwrap();
-        let key = |value: &[u8], handle: i64| {
-            let mut encoded = value.to_vec();
-            encoded.extend(encoder.encode_key(&[Datum::Int(handle)]).unwrap());
-            encode_index_seek_key(table.id, index.id, &encoded)
-        };
-        let mut snapshot = RegionSnapshot(vec![
-            tidb_txnkv::kv_storage::SnapshotScanRegion {
-                region: tikv_client::tikv::new_region_ver_id(1, 1, 1),
-                end_key: key(&two, 1),
-                pairs: vec![(key(&one, 1), Vec::new()), (key(&two, 1), Vec::new())],
-            },
-            tidb_txnkv::kv_storage::SnapshotScanRegion {
-                region: tikv_client::tikv::new_region_ver_id(2, 1, 1),
-                end_key: Vec::new(),
-                pairs: vec![(key(&two, 2), Vec::new()), (key(&two, 3), Vec::new())],
-            },
-        ]);
-        let mut options = AnalyzeOptions::default();
-        options.num_buckets = 2;
-        options.num_topn = 1;
-
-        let report =
-            analyze_independent_index(&mut snapshot, &table, &index, &options, 100).unwrap();
-        let item = &report.stats.indexes[0];
-        assert_eq!(report.scanned_rows, 4);
-        assert_eq!(item.topn.as_ref().unwrap().entries()[0].count, 2);
-        assert_eq!(item.histogram.buckets.last().unwrap().count, 2);
     }
 }

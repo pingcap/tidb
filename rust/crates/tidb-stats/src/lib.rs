@@ -43,7 +43,7 @@ pub mod fmsketch_codec;
 mod go_stable_sort;
 pub mod histogram;
 pub mod histogram_allocation;
-pub mod independent_index_analyze;
+pub mod analyze_index;
 pub mod index;
 pub mod index_query;
 pub mod memory_usage;
@@ -102,9 +102,8 @@ pub use fmsketch_codec::{
     insert_value_with_error_policy, FmSketchCodecError, FmSketchProto,
 };
 pub use histogram::{Bucket, Histogram, HistogramAllocation};
-pub use independent_index_analyze::{
-    update_index_result, IndependentIndexAnalyze, IndependentIndexFragment,
-    IndependentIndexMergeError, IndependentIndexStatistics, DEFAULT_INDEX_CMS_DEPTH,
+pub use analyze_index::{
+    AnalyzeIndexMergeError, AnalyzeIndexResult, AnalyzeIndexStatistics, DEFAULT_INDEX_CMS_DEPTH,
     DEFAULT_INDEX_CMS_WIDTH,
 };
 pub use index::{copy_index, index_is_all_evicted, Index, IndexInfo};

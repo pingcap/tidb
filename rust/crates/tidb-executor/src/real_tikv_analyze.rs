@@ -1182,6 +1182,8 @@ pub fn commit_cluster_analyze<S: StoreClient>(
                 stats_lease,
                 record_history,
                 &|count| job.update(jobs, count),
+                killer,
+                resource_group,
             )
         }));
         let task_result = match task_result {
@@ -1218,6 +1220,8 @@ pub fn commit_cluster_analyze<S: StoreClient>(
                 stats_lease,
                 record_history,
                 &|count| job.update(jobs, count),
+                killer,
+                resource_group,
             )
         }));
         let task_result = match task_result {
@@ -2388,12 +2392,14 @@ fn commit_cluster_independent_index<S: StoreClient>(
     stats_lease: Duration,
     record_history: &dyn Fn() -> bool,
     progress: &dyn Fn(i64),
+    killer: &SqlKiller,
+    resource_group: &str,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let mut transaction = opener
         .begin_read_only()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let start_ts = transaction.start_ts();
-    let (report, is_partition) = {
+    let target = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_info_schema(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
@@ -2413,17 +2419,27 @@ fn commit_cluster_independent_index<S: StoreClient>(
                     table.name.original()
                 ))
             })?;
-        let report = analyze_independent_index_with_progress(
-            &mut snapshot,
-            physical_id.unwrap_or(table.id),
-            &index,
-            options,
-            start_ts,
-            progress,
-        )
-        .map_err(ClusterAnalyzeError::Analyze)?;
-        (report, physical_id.is_some_and(|id| id != table.id))
+        (index, physical_id.unwrap_or(table.id), physical_id.is_some_and(|id| id != table.id))
     };
+    let (index, target_id, is_partition) = target;
+    let report = analyze_independent_index_with_progress(
+        opener,
+        target_id,
+        &index,
+        statement,
+        options,
+        start_ts,
+        crate::cluster_analyze::sampling::adaptive_anlayze_dist_sql_concurrency(
+            statement.scan_concurrency,
+            opener.store().pd_http_client(),
+            timeout,
+        ),
+        timeout,
+        killer,
+        resource_group,
+        progress,
+    )
+    .map_err(ClusterAnalyzeError::Analyze)?;
     transaction
         .finish_without_writes()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;

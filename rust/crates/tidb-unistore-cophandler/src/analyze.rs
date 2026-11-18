@@ -37,10 +37,10 @@ fn execute(
     }
     let request =
         tipb::AnalyzeReq::decode(req.data.as_slice()).map_err(|e| other_error(&e.to_string()))?;
-    if matches!(
-        request.tp(),
-        tipb::AnalyzeType::TypeIndex | tipb::AnalyzeType::TypeCommonHandle
-    ) {
+    if request.tp() == tipb::AnalyzeType::TypeIndex {
+        return execute_index(store, req, &request);
+    }
+    if request.tp() == tipb::AnalyzeType::TypeCommonHandle {
         return execute_index_ndv(store, req, &request);
     }
     if request.tp() != tipb::AnalyzeType::TypeFullSampling {
@@ -273,8 +273,162 @@ fn execute(
     .encode_to_vec())
 }
 
-// The NDV subtask uses one bucket and no TopN/CMS. Refuse broader index
-// requests until their full histogram builder is implemented here.
+/// Go `handleAnalyzeIndexReq` with its `analyzeIndexProcessor`: every index
+/// key in the ranges, its columns cut from the key, feeds a sorted histogram
+/// of `bucket_size` buckets, the CMSketch (each column prefix), the FMSketch
+/// and, for stats version 2, the runs of equal values from which the
+/// `top_n_size` most frequent become the response's TopN (and leave the
+/// CMSketch).
+fn execute_index(
+    store: &dyn tidb_unistore_dbreader::DbReader,
+    req: &coprocessor::Request,
+    request: &tipb::AnalyzeReq,
+) -> Result<Vec<u8>, coprocessor::Response> {
+    let index = request
+        .idx_req
+        .as_ref()
+        .ok_or_else(|| other_error("missing ANALYZE index"))?;
+    let stats_version = index.version.unwrap_or(1);
+    let column_count = usize::try_from(index.num_columns()).map_err(|_| other_error("invalid index column count"))?;
+    let mut builder = tidb_stats::SortedHistogramBuilder::new(
+        index.bucket_size(),
+        0,
+        &tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Blob),
+        stats_version as isize,
+    );
+    let topn_count = index.top_n_size.unwrap_or(0);
+    let mut cms = match (index.cmsketch_depth, index.cmsketch_width) {
+        (Some(depth), Some(width)) => Some(
+            tidb_stats::CmsSketch::try_new(depth as u32, width as u32)
+                .map_err(|_| other_error("invalid CMSketch dimensions"))?,
+        ),
+        _ => None,
+    };
+    let mut fm_sketch = tidb_stats::FmSketch::new(index.sketch_size() as usize);
+    let mut topn_values: Vec<tidb_stats::TopNEntry> = Vec::new();
+    let mut current: Option<tidb_stats::TopNEntry> = None;
+    let mut row = Vec::new();
+    for_each_key(store, req, |key| {
+        let key = crate::mpp_exec::decode_index_keyspace_prefix(key).map_err(|error| other_error(&error))?;
+        let (values, _) = tidb_tablecodec::cut_index_key(&key, column_count).map_err(|e| other_error(&e.to_string()))?;
+        row.clear();
+        for value in &values {
+            row.extend_from_slice(value);
+            if let Some(cms) = cms.as_mut() {
+                cms.insert_bytes(&row);
+            }
+        }
+        let encoded = tidb_codec::encode_value(&[Datum::Bytes(row.clone())]).map_err(|e| other_error(&e.to_string()))?;
+        tidb_stats::insert_encoded_value(&mut fm_sketch, &encoded);
+        if stats_version >= 2 {
+            match current.as_mut() {
+                Some(run) if run.encoded == row => run.count += 1,
+                _ => {
+                    if let Some(run) = current.replace(tidb_stats::TopNEntry { encoded: row.clone(), count: 1 }) {
+                        topn_values.push(run);
+                    }
+                }
+            }
+        }
+        builder.iterate(Datum::Bytes(row.clone())).map_err(|e| other_error(&e.to_string()))
+    })?;
+    if stats_version >= 2 {
+        topn_values.extend(current);
+        tidb_stats::sort_topn_meta(&mut topn_values);
+        topn_values.truncate(usize::try_from(topn_count).unwrap_or(0));
+    }
+    let cms = cms.map(|mut cms| {
+        if stats_version >= 2 {
+            for entry in &topn_values {
+                cms.sub_hashed(tidb_stats::hash_bytes(&entry.encoded), entry.count);
+            }
+        }
+        let mut topn = tidb_stats::TopN::new(topn_values.len());
+        for entry in &topn_values {
+            topn.append(&entry.encoded, entry.count);
+        }
+        let bytes = tidb_stats::encode_cmsketch_and_topn(Some(&cms), Some(&topn)).unwrap_or_default();
+        tipb::CmSketch::decode(bytes.as_slice()).map_err(|e| other_error(&e.to_string()))
+    });
+    Ok(tipb::AnalyzeIndexResp {
+        hist: Some(histogram_to_proto(builder.histogram())),
+        cms: cms.transpose()?,
+        collector: Some(tipb::SampleCollector {
+            fm_sketch: Some(tipb::FmSketch { mask: Some(fm_sketch.mask()), hashset: fm_sketch.sorted_hashes() }),
+            ..Default::default()
+        }),
+    }
+    .encode_to_vec())
+}
+
+/// Go `HistogramToProto`.
+fn histogram_to_proto(histogram: &tidb_stats::Histogram) -> tipb::Histogram {
+    let bytes = |datum: &Datum| match datum {
+        Datum::Bytes(bytes) => bytes.clone(),
+        _ => Vec::new(),
+    };
+    tipb::Histogram {
+        ndv: Some(histogram.ndv),
+        buckets: histogram
+            .buckets
+            .iter()
+            .map(|bucket| tipb::Bucket {
+                count: Some(bucket.count),
+                lower_bound: Some(bytes(&bucket.lower_bound)),
+                upper_bound: Some(bytes(&bucket.upper_bound)),
+                repeats: Some(bucket.repeat),
+                ndv: Some(bucket.ndv),
+            })
+            .collect(),
+    }
+}
+
+/// Go `dbReader.Scan` over every request range at the request's start TS,
+/// handing each key to `process` (Go's `ScanProcessor.Process`); a lock
+/// becomes the response's `locked`.
+fn for_each_key(
+    store: &dyn tidb_unistore_dbreader::DbReader,
+    req: &coprocessor::Request,
+    mut process: impl FnMut(&[u8]) -> Result<(), coprocessor::Response>,
+) -> Result<(), coprocessor::Response> {
+    for range in &req.ranges {
+        if range.start >= range.end {
+            return Err(other_error("invalid ANALYZE range"));
+        }
+        let mut cursor = range.start.clone();
+        loop {
+            let pairs = store.scan(&tidb_unistore_dbreader::ScanReq {
+                start_key: cursor,
+                end_key: range.end.clone(),
+                limit: 1024,
+                version: req.start_ts,
+                sample_step: 0,
+                reverse: false,
+            });
+            if pairs.is_empty() {
+                break;
+            }
+            let mut next = pairs.last().unwrap().key.clone();
+            next.push(0);
+            for pair in pairs {
+                if let Some(error) = pair.error {
+                    return Err(match *error {
+                        tidb_unistore_kverrors::KvError::Locked(lock) => coprocessor::Response {
+                            locked: Some(*lock),
+                            ..Default::default()
+                        },
+                        error => other_error(&error.to_string()),
+                    });
+                }
+                process(&pair.key)?;
+            }
+            cursor = next;
+        }
+    }
+    Ok(())
+}
+
+// The common-handle NDV subtask uses one bucket and no TopN/CMS.
 fn execute_index_ndv(
     store: &dyn tidb_unistore_dbreader::DbReader,
     req: &coprocessor::Request,
@@ -328,30 +482,20 @@ fn execute_index_ndv(
                         error => other_error(&error.to_string()),
                     });
                 }
-                let key = if request.tp() == tipb::AnalyzeType::TypeCommonHandle {
-                    let RecordHandle::Common(bytes) =
-                        tidb_tablecodec::table_key::decode_row_key(&pair.key)
-                            .map_err(|e| other_error(&e.to_string()))?
-                    else {
-                        return Err(other_error("invalid common handle"));
-                    };
-                    let mut remaining = bytes.as_slice();
-                    let mut key = Vec::new();
-                    for _ in 0..index.num_columns() {
-                        let (part, rest) = tidb_codec::cut_one(remaining)
-                            .map_err(|e| other_error(&e.to_string()))?;
-                        key.extend_from_slice(part);
-                        remaining = rest;
-                    }
-                    key
-                } else {
-                    let key = crate::mpp_exec::decode_index_keyspace_prefix(&pair.key)
-                        .map_err(|error| other_error(&error))?;
-                    tidb_tablecodec::cut_index_key(&key, index.num_columns() as usize)
+                let RecordHandle::Common(bytes) =
+                    tidb_tablecodec::table_key::decode_row_key(&pair.key)
                         .map_err(|e| other_error(&e.to_string()))?
-                        .0
-                        .concat()
+                else {
+                    return Err(other_error("invalid common handle"));
                 };
+                let mut remaining = bytes.as_slice();
+                let mut key = Vec::new();
+                for _ in 0..index.num_columns() {
+                    let (part, rest) = tidb_codec::cut_one(remaining)
+                        .map_err(|e| other_error(&e.to_string()))?;
+                    key.extend_from_slice(part);
+                    remaining = rest;
+                }
                 let encoded = tidb_codec::encode_value(&[Datum::Bytes(key.clone())])
                     .map_err(|e| other_error(&e.to_string()))?;
                 tidb_stats::insert_encoded_value(&mut sketch, &encoded);
@@ -402,6 +546,64 @@ mod tests {
         check_index_ndv(false, false);
         check_index_ndv(false, true);
         check_index_ndv(true, false);
+    }
+
+    /// Go `handleAnalyzeIndexReq` for `AnalyzeIndexExec`'s full request:
+    /// the histogram covers every key, the TopN holds the most frequent
+    /// value and the CMSketch is sent with it.
+    #[test]
+    fn index_request_builds_histogram_topn_and_cmsketch() {
+        use tidb_proto::{KvrpcMutation, KvrpcOp};
+        let mut store = MvccStore::new();
+        let prefix = tidb_tablecodec::table_key::encode_index_seek_key(42, 3, &[]);
+        for (id, value) in [(1, "aa"), (2, "aa"), (3, "bb")] {
+            let mut key = prefix.clone();
+            key.extend(tidb_codec::encode_key(&[Datum::Bytes(value.as_bytes().to_vec()), Datum::Int(id)]).unwrap());
+            store
+                .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
+                    mutations: vec![KvrpcMutation { op: KvrpcOp::Put as i32, key: key.clone(), value: vec![0], ..Default::default() }],
+                    primary_lock: key.clone(),
+                    start_version: 10,
+                    ..Default::default()
+                })
+                .unwrap();
+            store.commit(&[key], 10, 11).unwrap();
+        }
+        let mut end = prefix.clone();
+        *end.last_mut().unwrap() += 1;
+        let request = tipb::AnalyzeReq {
+            tp: Some(tipb::AnalyzeType::TypeIndex as i32),
+            idx_req: Some(tipb::AnalyzeIndexReq {
+                num_columns: Some(1),
+                bucket_size: Some(256),
+                top_n_size: Some(1),
+                cmsketch_depth: Some(5),
+                cmsketch_width: Some(2048),
+                sketch_size: Some(10000),
+                version: Some(2),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let response = handle(
+            &mut store,
+            &coprocessor::Request {
+                data: request.encode_to_vec().into(),
+                start_ts: 20,
+                ranges: vec![coprocessor::KeyRange { start: prefix, end }],
+                ..Default::default()
+            },
+        );
+        assert!(response.other_error.is_empty(), "{}", response.other_error);
+        let response = tipb::AnalyzeIndexResp::decode(response.data.as_ref()).unwrap();
+        let hist = response.hist.unwrap();
+        assert_eq!(hist.ndv(), 2);
+        assert_eq!(hist.buckets.last().unwrap().count(), 3);
+        let cms = response.cms.unwrap();
+        assert_eq!(cms.rows.len(), 5);
+        assert_eq!(cms.top_n.len(), 1);
+        assert_eq!(cms.top_n[0].count(), 2);
+        assert_eq!(cms.top_n[0].data(), tidb_codec::encode_key(&[Datum::Bytes(b"aa".to_vec())]).unwrap());
     }
 
     fn check_index_ndv(common: bool, nulls: bool) {
