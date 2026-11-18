@@ -361,7 +361,7 @@
         ]
       },
       {
-        "SQL": "explain select * from t1 where a>1",
+        "SQL": "explain select * from t1 where a>2",
         "Plan": [
           " TableReader       root         ",
           " └─ExchangeSender  cop[tiflash] ",
@@ -404,7 +404,7 @@
         ]
       },
       {
-        "SQL": "explain select a from t1 where a>1",
+        "SQL": "explain select a from t1 where a>2",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -413,7 +413,7 @@
         ]
       },
       {
-        "SQL": "explain select a from t1 where a>1 and b>1",
+        "SQL": "explain select a from t1 where a>2 and b>1",
         "Plan": [
           " TableReader           root         ",
           " └─ExchangeSender      cop[tiflash] ",
@@ -423,12 +423,12 @@
         ]
       },
       {
-        "SQL": "explain select * from t1 where a>1 and b>1 and c>1",
+        "SQL": "explain select * from t1 where a>2 and b>1 and c>1",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] gt(test.t1.c, ?)",
-          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), gt(test.t1.b, ?), keep order:false"
+          "   └─Selection       cop[tiflash] gt(test.t1.b, ?), gt(test.t1.c, ?)",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
         ]
       },
       {
@@ -485,7 +485,7 @@
         ]
       },
       {
-        "SQL": "explain select count(a), max(t) from t1 where a>1",
+        "SQL": "explain select count(a), max(t) from t1 where a>2",
         "Plan": [
           " HashAgg           root         funcs:count(test.t1.a)->?, funcs:max(test.t1.t)->?",
           " └─TableReader     root         ",
