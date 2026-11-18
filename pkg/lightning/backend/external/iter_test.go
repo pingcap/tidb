@@ -660,6 +660,29 @@ func (s *slowOpenStorage) Open(
 	return s.MemStorage.Open(ctx, filePath, o)
 }
 
+<<<<<<< HEAD:pkg/lightning/backend/external/iter_test.go
+=======
+type asyncFailStorage struct {
+	storeapi.Storage
+	failingPaths map[string]struct{}
+	openStarted  chan struct{}
+	continueOpen chan struct{}
+}
+
+func (s *asyncFailStorage) Open(
+	ctx context.Context,
+	filePath string,
+	o *storeapi.ReaderOption,
+) (objectio.Reader, error) {
+	if _, ok := s.failingPaths[filePath]; ok {
+		s.openStarted <- struct{}{}
+		<-s.continueOpen
+		return nil, fmt.Errorf("injected open failure for %s", filePath)
+	}
+	return s.Storage.Open(ctx, filePath, o)
+}
+
+>>>>>>> 112b03441bd (ingestor: close unused pre-opened statistics readers (#71136)):pkg/ingestor/simplesst/iter_test.go
 func TestMergePropBaseIter(t *testing.T) {
 	// this test should be finished around 1 second. However, due to CI is not
 	// stable, we don't check the time.
@@ -703,6 +726,145 @@ func TestMergePropBaseIter(t *testing.T) {
 	require.EqualValues(t, fileNum, store.openCnt.Load())
 }
 
+<<<<<<< HEAD:pkg/lightning/backend/external/iter_test.go
+=======
+func TestMergePropBaseIterCloseWithAsyncOpenError(t *testing.T) {
+	const readerLimit = 32
+	const fileNum = readerLimit * 2
+
+	ctx := context.Background()
+	memStore := objstore.NewMemStorage()
+	failingPaths := make(map[string]struct{}, readerLimit)
+	filenames := make([]string, fileNum)
+	for i := range filenames {
+		filename := fmt.Sprintf("/test%06d", i)
+		filenames[i] = filename
+		if i >= readerLimit {
+			failingPaths[filename] = struct{}{}
+			continue
+		}
+
+		writer, err := memStore.Create(ctx, filename, nil)
+		require.NoError(t, err)
+		buf := encodeMultiProps(nil, []*RangeProperty{{FirstKey: []byte{byte(i)}}})
+		_, err = writer.Write(ctx, buf)
+		require.NoError(t, err)
+		require.NoError(t, writer.Close(ctx))
+	}
+
+	store := &asyncFailStorage{
+		Storage:      memStore,
+		failingPaths: failingPaths,
+		openStarted:  make(chan struct{}, readerLimit),
+		continueOpen: make(chan struct{}),
+	}
+	multiStat := MultipleFilesStat{MaxOverlappingNum: readerLimit - 1}
+	for _, filename := range filenames {
+		multiStat.Filenames = append(multiStat.Filenames, [2]string{"", filename})
+	}
+
+	iter, err := newMergePropBaseIter(ctx, multiStat, store)
+	require.NoError(t, err)
+	for range readerLimit {
+		<-store.openStarted
+	}
+
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- iter.close()
+	}()
+	<-iter.closeCh
+	close(store.continueOpen)
+	require.NoError(t, <-closeDone)
+}
+
+func TestMergePropBaseIterReaderCleanup(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		fileNum  int
+		failPath string
+		empty    bool
+	}{
+		{name: "early close after producer exits", fileNum: 4},
+		{name: "initial open fails with full pre-open queue", fileNum: 7, failPath: "/test0"},
+		{name: "replacement open fails with full pre-open queue", fileNum: 7, failPath: "/test2", empty: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			tracked := &testutils.TrackOpenMemStorage{MemStorage: objstore.NewMemStorage()}
+			multiStat := MultipleFilesStat{MaxOverlappingNum: 1}
+			for i := range tc.fileNum {
+				path := fmt.Sprintf("/test%d", i)
+				multiStat.Filenames = append(multiStat.Filenames, [2]string{"", path})
+				data := encodeMultiProps(nil, []*RangeProperty{{FirstKey: []byte{byte(i)}}})
+				if tc.empty && i == 0 {
+					data = nil
+				}
+				require.NoError(t, tracked.WriteFile(ctx, path, data))
+			}
+			if tc.failPath == "" {
+				iter, err := newMergePropBaseIter(ctx, multiStat, tracked)
+				require.NoError(t, err)
+				// All pre-opens fit in the queue, so the producer can exit before close.
+				iter.wg.Wait()
+				require.EqualValues(t, tc.fileNum, tracked.Opened.Load())
+				require.NoError(t, iter.close())
+				require.Zero(t, tracked.Opened.Load())
+				return
+			}
+
+			store := &asyncFailStorage{
+				Storage:      tracked,
+				failingPaths: map[string]struct{}{tc.failPath: {}},
+				openStarted:  make(chan struct{}, 1),
+				continueOpen: make(chan struct{}),
+			}
+			type result struct {
+				iter *mergePropBaseIter
+				err  error
+			}
+			done := make(chan result, 1)
+			go func() {
+				iter, err := newMergePropBaseIter(ctx, multiStat, store)
+				done <- result{iter, err}
+			}()
+			<-store.openStarted
+			// With limit=2, three async tasks fill the queue and block the producer.
+			filled := false
+			for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+				if tracked.TotalOpened.Load() >= 4 {
+					filled = true
+					break
+				}
+				runtime.Gosched()
+			}
+			close(store.continueOpen)
+			var got result
+			select {
+			case got = <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("iterator construction did not return")
+			}
+			// Clean up the old implementation too, so a failing regression does not
+			// leave a producer behind. It must not be the caller's responsibility.
+			if got.iter != nil {
+				defer func() {
+					close(got.iter.closeCh)
+					got.iter.wg.Wait()
+					if got.iter.iter != nil {
+						_ = got.iter.iter.close()
+					}
+				}()
+			}
+			require.True(t, filled, "pre-open queue did not fill")
+			require.ErrorContains(t, got.err, "injected open failure")
+			require.Zero(t, tracked.Opened.Load())
+			require.Nil(t, got.iter)
+		})
+	}
+}
+
+>>>>>>> 112b03441bd (ingestor: close unused pre-opened statistics readers (#71136)):pkg/ingestor/simplesst/iter_test.go
 func TestEmptyBaseReader4LimitSizeMergeIter(t *testing.T) {
 	fileNum := 100
 	filenames := make([]string, fileNum)
