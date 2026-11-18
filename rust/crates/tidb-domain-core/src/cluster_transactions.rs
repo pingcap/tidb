@@ -65,7 +65,8 @@ use tidb_store_driver_txn::transaction::StoreClient;
 use tidb_store_driver_txn::cluster_table_storage::{
     commit_staged_buffer, lock_pessimistic_statement_with, mutation_buffer_from_mutations,
     overlay_staged_mutations, stage_mutations, LockKeysOutcome, MaxTsSnapshot,
-    PreparedStatementSnapshot, SessionTransaction, StatementSnapshot,
+    PreparedStatementSnapshot, SessionTransaction, StatementLockFailure, StatementLockFailureSlot,
+    StatementSnapshot,
 };
 use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
@@ -764,8 +765,9 @@ struct DeferredSnapshot {
     /// statement snapshot is dropped.  The slot is shared because the storage
     /// seam intentionally exposes only `ClusterSnapshot` to the executor.
     write_handoff: Option<WriteTransactionSlot>,
-    /// See [`LockRetrySlot`].
-    lock_retry: Option<LockRetrySlot>,
+    /// Where a lock taken after the statement's read leaves its outcome for
+    /// the statement owner (Go `handlePessimisticLockError`).
+    lock_failure: Option<StatementLockFailureSlot>,
     mutation_buffer: Option<MutationBuffer>,
     /// Behind one `Mutex` because `start_ts` takes `&self` and must answer
     /// with the timestamp of the same transaction the reads use -- and because
@@ -828,7 +830,7 @@ impl DeferredSnapshot {
             low_resolution_tso,
             read_ts,
             write_handoff: None,
-            lock_retry: None,
+            lock_failure: None,
             mutation_buffer: None,
             state: Mutex::new(DeferredState::default()),
         }
@@ -838,7 +840,7 @@ impl DeferredSnapshot {
         transactions: Arc<dyn ClusterTransactions>,
         read_ts: StatementReadTs,
         write_handoff: WriteTransactionSlot,
-        lock_retry: LockRetrySlot,
+        lock_failure: StatementLockFailureSlot,
         mutation_buffer: MutationBuffer,
         resource_group: Arc<str>,
         pessimistic: bool,
@@ -862,7 +864,7 @@ impl DeferredSnapshot {
             low_resolution_tso: false,
             read_ts,
             write_handoff: Some(write_handoff),
-            lock_retry: Some(lock_retry),
+            lock_failure: Some(lock_failure),
             mutation_buffer: Some(mutation_buffer),
             state: Mutex::new(DeferredState {
                 prefetched_write,
@@ -871,15 +873,18 @@ impl DeferredSnapshot {
         }
     }
 
-    /// A conflict the statement's lock found after its read: the statement
-    /// owner re-runs it at `for_update_ts`.
-    fn lock_conflict(&self, for_update_ts: u64) -> StorageError {
-        if let Some(slot) = &self.lock_retry {
-            *slot.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(for_update_ts);
+    /// The outcome of a lock the statement took after its read, mapped as a
+    /// lock inside an explicit transaction is
+    /// ([`StatementLockFailure::from_outcome`]) and left for the statement
+    /// owner.
+    fn lock_outcome(&self, outcome: LockKeysOutcome) -> Result<(), StorageError> {
+        let Some(failure) = StatementLockFailure::from_outcome(outcome) else {
+            return Ok(());
+        };
+        match &self.lock_failure {
+            Some(slot) => Err(failure.record(slot)),
+            None => Err(failure.record(&StatementLockFailureSlot::default())),
         }
-        StorageError::Backend(format!(
-            "pessimistic lock conflict: the statement retries at {for_update_ts}"
-        ))
     }
 
     /// Opens the statement's snapshot synchronously, from the oracle the
@@ -970,12 +975,11 @@ impl DeferredSnapshot {
                         LockKeysOutcome::RetryStatement { for_update_ts, .. } => {
                             transaction.snapshot_at_for(for_update_ts, true)
                         }
-                        LockKeysOutcome::StatementError(error)
-                        | LockKeysOutcome::TransactionError(error) => {
+                        failed => {
                             // The lock ran in this transaction: the failed
                             // statement's `TxnCtx.StartTS` is its start.
                             self.read_ts.record(transaction.start_ts());
-                            return Err(lock_storage_error(error));
+                            return self.lock_outcome(failed);
                         }
                     }
                 } else {
@@ -1018,23 +1022,11 @@ impl DeferredSnapshot {
 
 /// A pessimistic lock's SQL error as the storage seam reports it, keeping
 /// Go's code and SQLSTATE (1205, 1213, 3572, ...).
-fn lock_storage_error(error: tidb_store_driver_error::pessimistic_lock_error::LockSqlError) -> StorageError {
-    StorageError::Sql(
-        tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
-            .with_identity_opt(error.identity),
-    )
-}
-
 /// The transaction owner a write statement transfers after its snapshot handle
 /// is unbound.  Keeping this alias here avoids exposing the concrete TiKV
 /// transaction implementation through the storage trait.
 pub type WriteTransactionSlot = Arc<Mutex<Option<Box<dyn OpenClusterTransaction>>>>;
 
-/// Where an autocommit statement's lock, taken after its read, leaves the
-/// `for_update_ts` its conflict asks the statement to be re-run at (Go
-/// `handlePessimisticLockError` -> `OnStmtRetry`). The statement owner takes
-/// it back after the snapshot is gone.
-pub type LockRetrySlot = Arc<Mutex<Option<u64>>>;
 
 impl Drop for DeferredSnapshot {
     fn drop(&mut self) {
@@ -1116,17 +1108,9 @@ impl ClusterSnapshot for DeferredSnapshot {
         } else {
             transaction.lock_staged_keys_with_values(keys, wait)
         };
-        match outcome.map_err(StorageError::Backend)? {
-            LockKeysOutcome::Locked { .. } => Ok(()),
-            // The statement already read at its start timestamp, so a newer
-            // committed version is a write conflict for the whole statement.
-            LockKeysOutcome::RetryStatement { for_update_ts, .. } => {
-                Err(self.lock_conflict(for_update_ts))
-            }
-            LockKeysOutcome::StatementError(error) | LockKeysOutcome::TransactionError(error) => {
-                Err(lock_storage_error(error))
-            }
-        }
+        // The statement already read at its start timestamp, so a newer
+        // committed version is a write conflict for the whole statement.
+        self.lock_outcome(outcome.map_err(StorageError::Backend)?)
     }
 
     /// Go `doLockKeys` from `SelectLockExec.Next` in a pessimistic implicit
@@ -1150,17 +1134,7 @@ impl ClusterSnapshot for DeferredSnapshot {
         let outcome = transaction
             .lock_staged_keys_with_assertions(keys, BTreeSet::new(), BTreeMap::new(), wait)
             .map_err(StorageError::Backend)?;
-        match outcome {
-            LockKeysOutcome::Locked { .. } => Ok(()),
-            // The statement already read at its start timestamp, so a newer
-            // committed version is a write conflict for the whole statement.
-            LockKeysOutcome::RetryStatement { for_update_ts, .. } => {
-                Err(self.lock_conflict(for_update_ts))
-            }
-            LockKeysOutcome::StatementError(error) | LockKeysOutcome::TransactionError(error) => {
-                Err(lock_storage_error(error))
-            }
-        }
+        self.lock_outcome(outcome)
     }
 
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
@@ -1241,7 +1215,7 @@ pub fn prefetched_write_snapshot(
     transactions: Arc<dyn ClusterTransactions>,
     read_ts: StatementReadTs,
     write_handoff: WriteTransactionSlot,
-    lock_retry: LockRetrySlot,
+    lock_failure: StatementLockFailureSlot,
     mutation_buffer: MutationBuffer,
     resource_group: Arc<str>,
     pessimistic: bool,
@@ -1252,7 +1226,7 @@ pub fn prefetched_write_snapshot(
         transactions,
         read_ts,
         write_handoff,
-        lock_retry,
+        lock_failure,
         mutation_buffer,
         resource_group,
         pessimistic,
