@@ -917,6 +917,25 @@ impl<'s> ClusterServerSession<'s> {
         )
     }
 
+    /// [`StatementReadShape::AutocommitWrite`] for an autocommit INSERT,
+    /// UPDATE or DELETE (Go `isDMLStatement`) whose implicit transaction
+    /// Go's `decideTxnMode` makes pessimistic (`pessimistic-auto-commit`):
+    /// that shape's write transaction is the one
+    /// `handlePessimisticDML` locks.
+    fn pessimistic_autocommit_dml_shape(&self, stmt: &Stmt) -> Option<StatementReadShape> {
+        let dml = matches!(
+            stmt,
+            Stmt::Dml(dml) if matches!(
+                dml.as_ref(),
+                tidb_ast::DmlStmt::Insert(_) | tidb_ast::DmlStmt::Update(_) | tidb_ast::DmlStmt::Delete(_)
+            )
+        );
+        (dml && self.node.txn.explicit.is_none()
+            && !self.session.in_transaction()
+            && crate::statement_lifecycle::autocommit_dml_is_pessimistic(&self.session, false))
+        .then_some(StatementReadShape::AutocommitWrite)
+    }
+
     /// Runs an ordinary write statement (INSERT, UPDATE, DELETE and the like)
     /// through the statement lifecycle and answers its affected-row count and
     /// last insert id.
@@ -927,9 +946,12 @@ impl<'s> ClusterServerSession<'s> {
     ) -> Result<(u64, u64), SqlQueryError> {
         let owned = sql.to_owned();
         let resource_group = self.session.statement_resource_group(stmt).into_owned();
-        // A write declares nothing. Its read-before-write reaches the snapshot
-        // as the same `get` a point-get SELECT issues, which is exactly why the
-        // declaration is made from the statement rather than from the read.
+        // An INSERT / UPDATE / DELETE whose implicit transaction Go's
+        // `decideTxnMode` makes pessimistic runs as an autocommit write, as
+        // the binary protocol's does. Otherwise a write declares nothing: its
+        // read-before-write reaches the snapshot as the same `get` a
+        // point-get SELECT issues, which is exactly why the declaration is
+        // made from the statement rather than from the read.
         //
         // Go's pessimistic point write folds its row read INTO its lock inside
         // execution (`PointGetExecutor.getAndLock`,
@@ -937,8 +959,9 @@ impl<'s> ClusterServerSession<'s> {
         // plan names through `TableStorage::lock_keys_for_read`, so nothing is
         // classified or locked here before the statement compiles.
         self.node.activate_statement_txn = self.activates_txn_at_build(stmt);
+        let shape = self.pessimistic_autocommit_dml_shape(stmt).unwrap_or(StatementReadShape::Unknown);
         let attempt = self.with_prelocked_statement(
-            StatementReadShape::Unknown,
+            shape,
             &resource_group,
             true,
             move |session| match session
@@ -2268,7 +2291,10 @@ impl<'s> ClusterServerSession<'s> {
         } else {
             bound_template.as_ref().map_or_else(
                 || self.session.statement_read_shape(&sql, &params),
-                |bound| self.session.statement_read_shape_bound(bound),
+                |bound| {
+                    self.pessimistic_autocommit_dml_shape(bound)
+                        .unwrap_or_else(|| self.session.statement_read_shape_bound(bound))
+                },
             )
         };
         if effective.is_some_and(|stmt| matches!(stmt, Stmt::Query(_))) {

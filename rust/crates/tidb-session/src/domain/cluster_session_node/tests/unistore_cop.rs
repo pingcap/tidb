@@ -11865,6 +11865,92 @@ fn a_pessimistic_autocommit_point_update_locks_from_its_plan() {
     );
 }
 
+/// Go with `pessimistic-auto-commit = true`: an autocommit UPDATE / DELETE
+/// over a row another transaction holds waits the lock out and fails with
+/// 1205 (`ErrLockWaitTimeout`) through the text protocol, for a range plan
+/// as for a point one; the row is unchanged.
+#[test]
+fn a_pessimistic_autocommit_write_times_out_on_a_held_row() {
+    struct ConfigGuard;
+    impl Drop for ConfigGuard {
+        fn drop(&mut self) {
+            tidb_config::config_tree::config::update_global(|config| {
+                config.pessimistic_txn.pessimistic_auto_commit = tidb_config::config_tree::AtomicBool::new(false);
+            });
+        }
+    }
+
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut holder = factory.open_session(session_context(106)).expect("session opens");
+    rows(&mut holder, "CREATE TABLE test.acwait (id int primary key, v int)");
+    rows(&mut holder, "INSERT INTO test.acwait VALUES (1, 10), (2, 20)");
+    let mut writer = factory.open_session(session_context(107)).expect("session opens");
+    writer.node_conn().execute_write("SET SESSION innodb_lock_wait_timeout = 1").expect("set lock wait");
+
+    holder.node_conn().control_transaction("BEGIN PESSIMISTIC").expect("begin holder");
+    rows(&mut holder, "SELECT * FROM test.acwait WHERE id = 1 FOR UPDATE");
+    let _guard = ConfigGuard;
+    tidb_config::config_tree::config::update_global(|config| {
+        config.pessimistic_txn.pessimistic_auto_commit = tidb_config::config_tree::AtomicBool::new(true);
+    });
+    for sql in [
+        "UPDATE test.acwait SET v = v + 1 WHERE v = 10",
+        "UPDATE test.acwait SET v = v + 1 WHERE id = 1",
+        "DELETE FROM test.acwait WHERE v = 10",
+        "DELETE FROM test.acwait WHERE id = 1",
+    ] {
+        match writer.node_conn().execute_write(sql) {
+            Err(error) => assert_eq!(error.code, 1205, "{sql}: {}", error.message),
+            Ok(outcome) => panic!("{sql}: the held row makes the statement wait, got {outcome:?}"),
+        }
+    }
+    holder.node_conn().control_transaction("ROLLBACK").expect("rollback holder");
+    assert_eq!(displayed(rows(&mut holder, "SELECT id, v FROM test.acwait ORDER BY id")), [["1", "10"], ["2", "20"]]);
+}
+
+/// Go with `pessimistic-auto-commit = true`: an autocommit INSERT whose
+/// unique value another transaction is inserting waits on that key's lock
+/// and, once the other commits, fails with 1062 (`ErrDupEntry`), as an
+/// explicit pessimistic INSERT does.
+#[test]
+fn a_pessimistic_autocommit_insert_racing_a_unique_value_is_a_duplicate() {
+    struct ConfigGuard;
+    impl Drop for ConfigGuard {
+        fn drop(&mut self) {
+            tidb_config::config_tree::config::update_global(|config| {
+                config.pessimistic_txn.pessimistic_auto_commit = tidb_config::config_tree::AtomicBool::new(false);
+            });
+        }
+    }
+
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut holder = factory.open_session(session_context(108)).expect("session opens");
+    rows(&mut holder, "CREATE TABLE test.acuniq (id int primary key, u int, unique key uk (u))");
+    let _guard = ConfigGuard;
+    tidb_config::config_tree::config::update_global(|config| {
+        config.pessimistic_txn.pessimistic_auto_commit = tidb_config::config_tree::AtomicBool::new(true);
+    });
+    holder.node_conn().control_transaction("BEGIN PESSIMISTIC").expect("begin holder");
+    rows(&mut holder, "INSERT INTO test.acuniq VALUES (1, 5)");
+    let outcome = std::thread::scope(|scope| {
+        let contender = scope.spawn(|| {
+            let mut writer = factory.open_session(session_context(109)).expect("session opens");
+            let outcome = writer.node_conn().execute_write("INSERT INTO test.acuniq VALUES (2, 5)").map(|_| ());
+            outcome
+        });
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        holder.node_conn().control_transaction("COMMIT").expect("commit holder");
+        contender.join().expect("contender joins")
+    });
+    match outcome {
+        Err(error) => assert_eq!(error.code, 1062, "{}", error.message),
+        Ok(()) => panic!("the committed unique value makes the racing INSERT a duplicate"),
+    }
+    assert_eq!(displayed(rows(&mut holder, "SELECT id, u FROM test.acuniq")), [["1", "5"]]);
+}
+
 /// Go `LazyTxn.LockKeys` marks the transaction `LockWaiting` while its lock
 /// request waits (`updateState(TxnLockAcquiring)`), including the lock a
 /// point read takes inside `PointGetExecutor.Next`: `TIDB_TRX` shows it.
