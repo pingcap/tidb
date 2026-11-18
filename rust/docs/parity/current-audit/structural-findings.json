@@ -2,8 +2,8 @@
   "date": "2026-11-18",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 18,
-    "open": 17,
+    "unresolved": 24,
+    "open": 23,
     "partial": 1
   },
   "findings": [
@@ -19,7 +19,7 @@
       "id": "X06",
       "status": "open",
       "group": "Structure: Go's shape before more ports",
-      "finding": "The parser builds `EXPLAIN` in a different order from Go. Go's `parseExplainStmt` looks at the token after EXPLAIN [ANALYZE] [FORMAT] and only parses SELECT, INSERT, REPLACE, UPDATE, DELETE, ALTER, WITH, TABLE, VALUES, IMPORT or `(`; any other token is a syntax error at that token. `parse_explain_tail` parses any statement first and then rejects what is not a query, a DML or ALTER TABLE. Two visible effects: (1) `EXPLAIN LOAD DATA ...` (also CALL and BATCH, which are `DmlStmt` here) parses and fails at execution with 1105 `EXPLAIN of LoadData is not supported yet`, where Go answers 1064; (2) the 1064 for `EXPLAIN SHOW TABLES`, `EXPLAIN SET @a = 1`, `EXPLAIN ANALYZE SHOW TABLES` and `EXPLAIN FORMAT='plan_tree' ANALYZE SELECT ...` points at the end of the text (`column 19 near \"\"`) where Go points at the inner statement (`column 12 near \"SHOW TABLES\"`). `ADMIN SHOW TELEMETRY` has the same position difference (Go `column 5`, Rust `column 20`). The parser ring (`difftests/INTEGRATION_PARSER_DIFF.md`) compares acceptance and restore only, so it does not see error positions. [2026-11-18 probes](structural-audit-2026-11-18.md)",
+      "finding": "The parser builds `EXPLAIN` in a different order from Go. Go's `parseExplainStmt` looks at the token after EXPLAIN [ANALYZE] [FORMAT] and only parses SELECT, INSERT, REPLACE, UPDATE, DELETE, ALTER, WITH, TABLE, VALUES, IMPORT or `(`; any other token is a syntax error at that token. `parse_explain_tail` parses any statement first and then rejects what is not a query, a DML or ALTER TABLE. Two visible effects: (1) `EXPLAIN LOAD DATA ...` and `EXPLAIN CALL p()` parse and fail at execution with 1105 `EXPLAIN of LoadData / Call is not supported yet`, where Go answers 1064; (2) the 1064 for `EXPLAIN SHOW TABLES`, `EXPLAIN SET @a = 1`, `EXPLAIN ANALYZE SHOW TABLES` and `EXPLAIN FORMAT='plan_tree' ANALYZE SELECT ...` points at the end of the text (`column 19 near \"\"`) where Go points at the inner statement (`column 12 near \"SHOW TABLES\"`). `ADMIN SHOW TELEMETRY` has the same position difference (Go `column 5`, Rust `column 20`). The parser ring (`difftests/INTEGRATION_PARSER_DIFF.md`) compares acceptance and restore only, so it does not see error positions. [2026-11-18 probes](structural-audit-2026-11-18.md)",
       "rust_evidence": "`rust/crates/tidb-parser/src/lib.rs` (`parse_explain_tail`), `rust/crates/tidb-executor/src/compiler/explain.rs` (`EXPLAIN of {} is not supported yet`)",
       "go_owner": "`pkg/parser/set_explain_parser.go` (`parseExplainStmt`), `pkg/parser/admin_stmt_parser.go`"
     },
@@ -32,10 +32,58 @@
       "go_owner": "`pkg/parser/expr_func_parser.go` (`parseFrameBound`)"
     },
     {
+      "id": "X08",
+      "status": "open",
+      "group": "Structure: Go's shape before more ports",
+      "finding": "`pkg/planner/extstore` has a second object-storage stack. Go's `extstore` (one 434-line file with its tests) is a thin wrapper: `NewExtStorage` parses the URL and calls `objstore.New`, so the plan replayer, optimizer trace and extract task files go through the same storages as BR and IMPORT INTO. `tidb-planner-extstore` (3,566 lines) does not depend on `tidb-objstore`: it defines its own `Storage` trait and its own S3, GCS, Azure Blob, OSS, HDFS and noop storages over `opendal` / `reqsign`, beside `tidb-objstore`'s `storeapi::Storage` and its S3 / GCS / Azure / HDFS / local / memory storages. A fix to one storage (credentials, retries, URL options, redaction) does not reach the other.",
+      "rust_evidence": "`rust/crates/tidb-planner-extstore/src/{storage,cloud,gcs,azblob,oss,hdfs,noop,object_storage,s3_transport}.rs`, `rust/crates/tidb-planner-extstore/Cargo.toml`, `rust/crates/tidb-objstore/src/storeapi.rs`",
+      "go_owner": "`pkg/planner/extstore/extstore.go` (`NewExtStorage` over `objstore.New`), `pkg/objstore`"
+    },
+    {
+      "id": "X09",
+      "status": "open",
+      "group": "Structure: Go's shape before more ports",
+      "finding": "`mysql.*` tables have two access paths. Go reads and writes every system table through SQL on an internal session (`ExecRestrictedSQL` / `sess.Execute`): the DDL job queue (`jobsubmit/submit.go`'s `insert into mysql.tidb_ddl_job`), DDL history, reorg handles, delete ranges, the MDL info, the privilege load (`cache.go` `LoadAll`), `mysql.global_variables`, the statistics tables and the bootstrap rows. This port also has a direct key/value reader and writer, `tidb-syssession`'s `SystemTableView` (`mysql_system_tables.rs`) and `system_row_write.rs`, which decode and encode rows through `TableCommon` with their own default materialization, casting and handle-layout choice (`HandleLayout::of`). Production callers on the direct path: `tidb-ddl-systable` `ddl_job_table.rs`, `tidb-ddl` `ddl_history_table.rs` (writes; reads go through SQL in `ddl_history.rs`), `ddl_reorg_table.rs` and `ddl_delete_range.rs` (both paths in one file), `tidb-privilege` `cluster_privilege_load.rs`, `tidb-syssession` `cluster_sysvar_load.rs` (writes go through SQL), `tidb-stats-handle-storage` `cluster_stats_write.rs`, `tidb-infoschema-issyncer` `mdl_info_load.rs`, `tidb-executor` `cluster_analyze.rs`, `tidb-session` `mysql_bootstrap/rows.rs`. Whatever the SQL layer does on Go's path (request source and resource group, assertions, constraint checks, statement memory, `tidb_txn_assertion_level`) has to be repeated or is missing on the direct one.",
+      "rust_evidence": "`rust/crates/tidb-syssession/src/mysql_system_tables.rs`, `system_row_write.rs`, and the callers named in the gap",
+      "go_owner": "`pkg/ddl/jobsubmit/submit.go`, `pkg/ddl/job_scheduler.go`, `pkg/ddl/delete_range.go`, `pkg/ddl/reorg.go`, `pkg/privilege/privileges/cache.go`, `pkg/session/session.go` (`GetGlobalSysVar`, bootstrap), `pkg/statistics/handle/storage`, `pkg/infoschema/issyncer`"
+    },
+    {
+      "id": "X10",
+      "status": "open",
+      "group": "Structure: Go's shape before more ports",
+      "finding": "Index ANALYZE has two implementations. The NDV-only index path sends Go's `AnalyzeIndexReq` to the store (`cluster_analyze/sampling.rs`), but an independent index (a special global index, a multi-valued index) is analyzed by scanning every index key into TiDB through a snapshot (`analyze_independent_index_with_progress`, called from `real_tikv_analyze.rs`) and building per-region fragments with `tidb_stats::IndependentIndexAnalyze`, which re-implements in TiDB what TiKV's analyze handler does. Go's `AnalyzeIndexExec` sends `AnalyzeIndexReq` coprocessor tasks for every index kind and merges the regions' histograms. The local scan moves the whole index over the network and its histogram construction is not TiKV's. Source-confirmed.",
+      "rust_evidence": "`rust/crates/tidb-executor/src/cluster_analyze.rs` (`analyze_independent_index_with_progress`), `real_tikv_analyze.rs`, `cluster_analyze/sampling.rs`, `rust/crates/tidb-stats/src/independent_index_analyze.rs`",
+      "go_owner": "`pkg/executor/analyze_idx.go` (`AnalyzeIndexExec`, `fetchAnalyzeResult`), `pkg/executor/analyze.go`"
+    },
+    {
+      "id": "X11",
+      "status": "open",
+      "group": "Structure: Go's shape before more ports",
+      "finding": "An in-process tier survives beside the store-backed one. `tidb-kv`'s `MemTableStorage` (no transaction, `do_lock_keys` a no-op), `tidb-table`'s `LocalTableAutoIds` / `tidb-autoid` `LocalAutoIdStore`, `LocalSequenceCounter`, `tidb-session`'s `SharedCatalog` and `tidb-executor`'s `ddl.rs` (`run_create_table_on`, a CREATE TABLE without a DDL job) give the executor a second storage, allocator and DDL implementation. 50 of `tidb-executor`'s test files build their tables with `run_create_table_on`, so those executors are tested over `MemTableStorage` while production runs over `tidb-store-driver-txn`'s `ClusterTableStorage`; `tidb-session`'s `Session::new()` already opens the mock store, as Go's testkit does. Go has one path: a test runs on `mockstore` (unistore) through the same `kv.Transaction`, meta allocators and DDL jobs as production. Comments still describe a removed third tier (\"the bounded node\", `configure_loaded_table`, which no longer exists).",
+      "rust_evidence": "`rust/crates/tidb-kv/src/storage.rs` (`MemTableStorage`), `rust/crates/tidb-table/src/table_from_meta.rs` (`LocalTableAutoIds`), `rust/crates/tidb-autoid/src/{lib,sequence}.rs`, `rust/crates/tidb-executor/src/ddl.rs`, `rust/crates/tidb-session/src/lib.rs` (`SharedCatalog`); stale comments in `tidb-table/src/table_from_meta.rs`, `tidb-syssession/src/mysql_system_tables.rs`, `tidb-domain-core/src/cluster_session.rs`",
+      "go_owner": "`pkg/testkit` (`CreateMockStore`), `pkg/store/mockstore`, `pkg/meta/autoid`, `pkg/ddl`"
+    },
+    {
+      "id": "X12",
+      "status": "open",
+      "group": "Structure: Go's shape before more ports",
+      "finding": "A statement's reads and locks have two implementations. An autocommit statement uses `tidb-domain-core`'s `DeferredSnapshot` and a statement inside a transaction uses `tidb-store-driver-txn`'s `SessionSnapshot`; both implement `ClusterSnapshot` with their own get / batch_get / scan, for-update timestamp and `do_lock_keys`, and map a pessimistic lock conflict to the statement retry in different ways (`DeferredSnapshot` turns `RetryStatement` into a `lock_conflict` error plus a retry slot; `SessionSnapshot` keeps the outcome for the statement owner). Go has one `LazyTxn` / `KVTxn` and one provider per transaction for both cases (X05).",
+      "rust_evidence": "`rust/crates/tidb-domain-core/src/cluster_transactions.rs` (`DeferredSnapshot`), `rust/crates/tidb-store-driver-txn/src/cluster_table_storage.rs` (`SessionSnapshot`)",
+      "go_owner": "`pkg/session/txn.go` (`LazyTxn`), `pkg/sessiontxn/isolation/base.go`, `pkg/executor/executor.go` (`doLockKeys`)"
+    },
+    {
+      "id": "X13",
+      "status": "open",
+      "group": "Structure: Go's shape before more ports",
+      "finding": "System variable behavior is not kept on the variable. Go's `SysVar` carries each variable's `Validation`, `SetSession`, `SetGlobal`, `GetSession` and `GetGlobal` closures in `sysvar.go`. `tidb-variable`'s `SysVarDef` holds only static metadata, so the behavior is in name switches elsewhere: 36 `self.name == \"...\"` branches in the generic `SysVar` validation (`sysvar.rs`: `tidb_partition_prune_mode`, `time_zone`, `tidb_snapshot`, `tidb_server_memory_limit`, ...), about 30 name checks in `set_hooks.rs` (`set_system_var` / `set_node_wide_sys_var`: noop gating, isolation level, prune-mode and MPP warnings), and session-side hooks in `tidb-session` `variables.rs`. `tidb-exprstatic`'s `StaticSessionVars` re-implements the `SetSession` of the variables it reads. A variable's rules can live in three places, and adding one means finding all of them.",
+      "rust_evidence": "`rust/crates/tidb-variable/src/sysvar.rs` (`SysVarDef`, validation), `set_hooks.rs`, `rust/crates/tidb-session/src/variables.rs`, `rust/crates/tidb-exprstatic/src/evalctx.rs` (`StaticSessionVars`)",
+      "go_owner": "`pkg/sessionctx/variable/sysvar.go`, `pkg/sessionctx/variable/variable.go` (`SysVar`), `pkg/sessionctx/variable/session.go` (`SetSystemVar`)"
+    },
+    {
       "id": "B03",
       "status": "open",
       "group": "System tables and startup",
-      "finding": "The `tidb-server` binary does not take Go's command line. `parse_node_config` first lets `main_flags.rs` take the flags it ports from `initFlagSet`, then parses its own options, which accept only the `--name` form: Go's `-store unistore -path ...` is refused with `unsupported option -store`. It adds options Go has no counterpart for (`--auth-file`, `--load-privileges`, `--lease-ms`, `--affinity-cpus`, `--max-connections`, `--connection-timeout-ms`, `--max-allowed-packet`, `--no-auto-tls`, `--no-disconnect-on-expired-password`, `--ssl-*`, `--cluster-ssl-*`). One of them picks a second account source: `--auth-file` reads users from a TSV file (`ConfiguredUserStore::load`) and refuses a non-loopback listener, and a unistore node started without it fails with `missing required option --auth-file` unless `--load-privileges` is given. Go has one flag set and one account source, `mysql.user` loaded by the privilege cache.",
+      "finding": "The `tidb-server` binary does not take Go's command line. `parse_node_config` first lets `main_flags.rs` take the flags it ports from `initFlagSet`, then parses its own options, which accept only the `--name` form: Go's `-store unistore -path ...` is refused with `unsupported option -store`. It adds options Go has no counterpart for (`--auth-file`, `--load-privileges`, `--lease-ms`, `--max-connections`, `--connection-timeout-ms`, `--max-allowed-packet`, `--no-auto-tls`, `--no-disconnect-on-expired-password`) and aliases (`--ssl-cert` / `--ssl-key` / `--ssl-ca` beside Go's `-sql-*`, `--cluster-ssl-*` beside Go's `-cluster-ca` / `-cluster-cert` / `-cluster-key`). One of them picks a second account source: `--auth-file` reads users from a TSV file (`ConfiguredUserStore::load`) and refuses a non-loopback listener, and a unistore node started without it fails with `missing required option --auth-file` unless `--load-privileges` is given. Go has one flag set and one account source, `mysql.user` loaded by the privilege cache.",
       "rust_evidence": "`rust/crates/tidb-server/src/node_flags.rs` (`parse_node_config`), `main_flags.rs`, `rust/crates/tidb-session/src/domain/configured_user_store.rs`, `real_tikv_node/mod.rs` (`configured_account_store`)",
       "go_owner": "`cmd/tidb-server/main.go` (`initFlagSet`, `overrideConfig`), `pkg/privilege/privileges/cache.go` (`LoadAll`)"
     },
@@ -147,12 +195,12 @@
       "id": "N09",
       "status": "open",
       "group": "Domain and process services",
-      "finding": "Internal HTTP clients use the operating system's proxy settings. hyper-util's `client-proxy-system` is enabled through feature unification (aws-smithy), so a `reqwest` client built without `.no_proxy()` reads the macOS / Windows system proxy. Go's `util.InternalHTTPClient` uses `http.DefaultTransport` (environment variables only) or, with cluster TLS, a bare `http.Transport` with no proxy. Observed on macOS with a system proxy at 127.0.0.1:7897: `SHOW CONFIG WHERE name = 'log.level'` is empty with warning `request http://10.0.0.8:20200/config failed: 502 Bad Gateway`, where Go returns the row. `tidb-br` `conn.rs`, `import_store.rs` and the JSON report client opt out with `.no_proxy()`; `cluster_config.rs`, `metrics_reader.rs`, `tiflash_replica_manager.rs`, `cluster_http.rs` and `node_status.rs` do not. [2026-11-18 probes](structural-audit-2026-11-18.md)",
+      "finding": "Internal HTTP clients use the operating system's proxy settings. hyper-util's `client-proxy-system` is enabled through feature unification (aws-smithy), so a `reqwest` client built without `.no_proxy()` reads the macOS / Windows system proxy. Go's `util.InternalHTTPClient` uses `http.DefaultTransport` (environment variables only) or, with cluster TLS, a bare `http.Transport` with no proxy. Observed on macOS with a system proxy at 127.0.0.1:7897: `SHOW CONFIG WHERE name = 'log.level'` is empty with warning `request http://10.0.0.8:20200/config failed: 502 Bad Gateway`, where Go returns the row. `tidb-br` `conn.rs`, `import_store.rs` and the JSON report client opt out with `.no_proxy()`; `cluster_config.rs`, `metrics_reader.rs`, `tiflash_replica_manager.rs`, `cluster_http.rs` and `node_status.rs` do not. The opt-outs disagree because there is no counterpart of Go's one `util.InternalHTTPClient`: about a dozen call sites each build their own `reqwest` client, and the PD HTTP calls (`/pd/api/v1/...` in `tidb-ddl`, `tidb-domain`, `tidb-domain-infosync`, `tidb-executor`, `tidb-server`) are made ad hoc instead of through one client as Go's `pdhttp.Client` does. [2026-11-18 probes](structural-audit-2026-11-18.md)",
       "rust_evidence": "`rust/crates/tidb-executor/src/cluster_config.rs`, `metrics_reader.rs`, `rust/crates/tidb-ddl/src/tiflash_replica_manager.rs`, `rust/crates/tidb-store-driver-txn/src/cluster_http.rs`, `rust/crates/tidb-server/src/node_status.rs`, `rust/Cargo.lock` (`system-configuration` under `hyper-util`)",
       "go_owner": "`pkg/util/misc.go` (`InternalHTTPClient`, `initInternalClient`), `pkg/executor/memtable_reader.go` (`fetchClusterConfig`)"
     }
   ],
-  "unresolved": 18,
-  "open": 17,
+  "unresolved": 24,
+  "open": 23,
   "partial": 1
 }
