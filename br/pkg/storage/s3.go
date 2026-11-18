@@ -219,6 +219,9 @@ type S3BackendOptions struct {
 
 // Apply apply s3 options on backuppb.S3.
 func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
+	if options.Provider == ks3SDKProvider && options.SseKmsContext != "" {
+		return errors.Annotate(berrors.ErrStorageInvalidConfig, "sse-kms-context is not supported by the KS3 driver")
+	}
 	if options.Endpoint != "" {
 		u, err := url.Parse(options.Endpoint)
 		if err != nil {

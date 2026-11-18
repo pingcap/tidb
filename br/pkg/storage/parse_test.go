@@ -3,6 +3,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
@@ -72,6 +74,98 @@ func TestS3SSEKMSContextURL(t *testing.T) {
 		_, err := ParseBackend("s3://bucket/prefix?sse=aws:kms&sse-kms-context="+rawQuery, nil)
 		require.ErrorContains(t, err, "parse storage URL query failed")
 		require.NotContains(t, err.Error(), "private-context")
+	}
+}
+
+func TestKS3RejectsSSEKMSContext(t *testing.T) {
+	const rawContext = `{"tenant":"private-context"}`
+	for _, rawURL := range []string{
+		"ks3://bucket/prefix",
+		"ks3://bucket/prefix?provider=aws",
+		"s3://bucket/prefix?provider=ks3-sdk",
+	} {
+		t.Run(rawURL, func(t *testing.T) {
+			for _, fromQuery := range []bool{false, true} {
+				options := &BackendOptions{S3: S3BackendOptions{Sse: "aws:kms", SseKmsContext: rawContext}}
+				input := rawURL
+				if fromQuery {
+					options.S3.SseKmsContext = ""
+					separator := "?"
+					if strings.Contains(input, "?") {
+						separator = "&"
+					}
+					input += separator + "sse-kms-context=" + url.QueryEscape(rawContext)
+				}
+				_, err := ParseBackend(input, options)
+				require.True(t, berrors.ErrStorageInvalidConfig.Equal(err))
+				require.ErrorContains(t, err, "sse-kms-context is not supported by the KS3 driver")
+				require.NotContains(t, err.Error(), "private-context")
+			}
+		})
+	}
+
+	// Reject persisted/direct protobuf configuration before initializing the SDK,
+	// even when other required settings (such as region) are absent.
+	backend := &backuppb.S3{Provider: ks3SDKProvider, SseKmsEncryptionContext: "private-encoded-context"}
+	_, err := NewKS3Storage(context.Background(), backend, &ExternalStorageOptions{})
+	require.ErrorContains(t, err, "sse-kms-context is not supported by the KS3 driver")
+	require.True(t, berrors.ErrStorageInvalidConfig.Equal(err))
+	require.NotContains(t, err.Error(), "private-encoded-context")
+	_, err = New(context.Background(), &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: backend}}, nil)
+	require.ErrorContains(t, err, "sse-kms-context is not supported by the KS3 driver")
+
+	// Ordinary KS3 configurations still initialize without any network requests.
+	for _, rawURL := range []string{"ks3://bucket/prefix", "s3://bucket/prefix?provider=ks3-sdk"} {
+		parsed, err := ParseBackend(rawURL, &BackendOptions{S3: S3BackendOptions{
+			Region: "cn-beijing-6", Endpoint: "https://ks3.invalid", AccessKey: "fake-ak", SecretAccessKey: "fake-sk",
+		}})
+		require.NoError(t, err)
+		require.Equal(t, ks3SDKProvider, parsed.GetS3().Provider)
+		client, err := New(context.Background(), parsed, nil)
+		require.NoError(t, err)
+		require.IsType(t, &KS3Storage{}, client)
+	}
+
+	options := S3BackendOptions{Provider: ks3SDKProvider, SseKmsContext: rawContext}
+	require.ErrorContains(t, options.Apply(&backuppb.S3{}), "sse-kms-context is not supported by the KS3 driver")
+}
+
+func TestExtractQueryParametersRejectsDuplicateOptions(t *testing.T) {
+	const secret = `{"tenant":"private-context"}`
+	encoded := url.QueryEscape(secret)
+	for _, query := range []string{
+		"sse-kms-context=" + encoded + "&SSE_KMS_CONTEXT=" + encoded,
+		"sse-kms-context=" + encoded + "&SSE_KMS_CONTEXT=",
+		"sse-kms-context=&SSE_KMS_CONTEXT=",
+		"sse-kms-context=" + encoded + "&sse-kms-context=" + encoded,
+		"sse-kms-context=" + encoded + "&sse-kms-context=",
+		"access-key=private-context&ACCESS_KEY=private-context",
+		"force-path-style=true&FORCE_PATH_STYLE=true",
+		"force-path-style=true&FORCE_PATH_STYLE=false",
+	} {
+		u, err := url.Parse("s3://bucket/prefix?region=new-region&" + query)
+		require.NoError(t, err)
+		originalURL := *u
+		options := S3BackendOptions{Region: "original-region", SseKmsContext: "original-context"}
+		originalOptions := options
+		err = ExtractQueryParameters(u, &options)
+		require.True(t, berrors.ErrStorageInvalidConfig.Equal(err))
+		require.ErrorContains(t, err, "duplicate storage URL option")
+		require.NotContains(t, err.Error(), "private-context")
+		require.Equal(t, originalURL, *u)
+		require.Equal(t, originalOptions, options)
+		_, err = ParseBackend(originalURL.String(), nil)
+		require.ErrorContains(t, err, "duplicate storage URL option")
+	}
+
+	// Each alias works by itself. Unknown options retain their existing behavior.
+	for _, key := range []string{"sse-kms-context", "SSE_KMS_CONTEXT"} {
+		u, err := url.Parse("s3://bucket/prefix?" + key + "=" + encoded + "&unknown=a&UNKNOWN=b")
+		require.NoError(t, err)
+		var options S3BackendOptions
+		require.NoError(t, ExtractQueryParameters(u, &options))
+		require.Equal(t, secret, options.SseKmsContext)
+		require.Empty(t, u.RawQuery)
 	}
 }
 
