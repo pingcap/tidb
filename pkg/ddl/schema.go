@@ -37,8 +37,9 @@ const dropSchemaTTLRestoreRegistrationsLogKey = "drop_schema_ttl_restore_registr
 const (
 	// labelRuleLookupBatchSize is the number of label rule IDs sent to PD in one lookup request.
 	labelRuleLookupBatchSize = 10000
-	// maxDropSchemaEventSize is the size in bytes of the tables and partitions that one drop
-	// schema event describes, to keep the events small since each one is stored as a single row.
+	// maxDropSchemaEventSize is the size in bytes of the encoded tables and partitions above
+	// which a drop schema event is split, to keep the events small since each one is stored
+	// as a single row. An event with a single table can still be larger.
 	maxDropSchemaEventSize = 2 * 1024 * 1024
 )
 
@@ -328,7 +329,11 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		if len(miniTables) > tooManyTablesThreshold {
 			tablesPerJob = 500
 		}
-		maxEventSize := min(maxDropSchemaEventSize, int(kv.TxnEntrySizeLimit.Load()/2))
+		maxEventSize := maxDropSchemaEventSize
+		// Zero means that the size of an entry is not limited.
+		if entrySizeLimit := kv.TxnEntrySizeLimit.Load(); entrySizeLimit > 0 {
+			maxEventSize = min(maxEventSize, int(entrySizeLimit/2))
+		}
 		subJobID := int64(0)
 		for start := 0; start < len(miniTables); {
 			end, err := dropSchemaEventBatchEnd(miniTables, start, tablesPerJob, maxEventSize)

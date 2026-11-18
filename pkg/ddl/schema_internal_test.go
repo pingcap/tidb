@@ -254,8 +254,9 @@ func TestDropSchemaEventBatchEnd(t *testing.T) {
 	require.Equal(t, []int{1, 1, 1, 2}, batchSizes(100, maxSize, 0, 20, 30, 0, 0))
 }
 
-// TestDropSchemaEventSize checks that the drop schema events stay small also for tables with
-// the maximum number of partitions and the longest names, whatever characters the names use.
+// TestDropSchemaEventSize checks that the drop schema events with several tables stay small,
+// also with many partitions and the longest names, whatever characters the names use.
+// Only an event with a single table can be larger.
 func TestDropSchemaEventSize(t *testing.T) {
 	// Tables per schema event, larger than the number of tables below.
 	const tablesPerEvent = 500
