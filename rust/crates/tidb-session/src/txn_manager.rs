@@ -32,6 +32,7 @@ use tidb_sessiontxn::isolation::optimistic::OptimisticTxnContextProvider;
 use tidb_sessiontxn::isolation::readcommitted::PessimisticRCTxnContextProvider;
 use tidb_sessiontxn::isolation::repeatable_read::PessimisticRRTxnContextProvider;
 use tidb_sessiontxn::isolation::serializable::PessimisticSerializableTxnContextProvider;
+use tidb_sessiontxn::staleread::provider::StalenessTxnContextProvider;
 use tidb_sessiontxn::{EnterNewTxnType, TxnContext, TxnContextProvider};
 use tidb_domain_core::session_transaction::set_options_on_txn_active;
 use std::sync::Arc;
@@ -131,6 +132,10 @@ enum TxnKind {
     ImplicitWrite,
     /// An autocommit read's implicit transaction, ended without a commit.
     ImplicitRead,
+    /// `START TRANSACTION READ ONLY AS OF`: Go's stale transaction. Its
+    /// statements read through the staleness provider; it publishes nothing
+    /// and ends without a commit.
+    Stale,
 }
 
 /// The entered transaction and what it is.
@@ -353,6 +358,38 @@ impl TxnManager {
         self.txn = Some(EnteredTxn { kind, provider: new_provider(txn, isolation) });
     }
 
+    /// Go `StalenessTxnContextProvider.OnInitialize`: a read-only
+    /// transaction at the as-of timestamp, its statements read through the
+    /// staleness provider (`activateStaleTxn` for a stale `BEGIN`,
+    /// `enterNewStaleTxnWithReplaceProvider` for one statement).
+    pub fn enter_stale(
+        &mut self,
+        statement_only: bool,
+        ts: u64,
+        resource_group: &str,
+        options: SessionTransactionOptions,
+    ) {
+        let pending = self.transactions.prepare_stale_read(ts, resource_group, options.clone());
+        let opener: TransactionOpener = Box::new(move |_options| pending.and_then(|pending| pending.wait()));
+        let txn: Box<dyn OpenClusterTransaction> =
+            Box::new(LazyClusterTransaction::new_implicit_read(options, self.buffer.clone(), opener));
+        debug_assert!(self.txn.is_none(), "a transaction entered over another");
+        self.could_retry = false;
+        self.txn = Some(EnteredTxn {
+            kind: if statement_only { TxnKind::ImplicitRead } else { TxnKind::Stale },
+            provider: Box::new(StalenessTxnContextProvider::new(txn)),
+        });
+    }
+
+    /// Ends a stale transaction (it publishes nothing).
+    fn end_stale(&mut self) {
+        if self.txn.as_ref().is_some_and(|entered| entered.kind == TxnKind::Stale) {
+            if let Some(entered) = self.txn.take() {
+                let _ = entered.provider.into_txn().rollback();
+            }
+        }
+    }
+
     /// Go `RollbackTxn` for an autocommit statement that failed or is
     /// replayed: the implicit transaction ends without publishing.
     pub fn rollback_implicit(&mut self) {
@@ -523,11 +560,11 @@ impl TxnManager {
         schema_version: i64,
     ) -> Result<(), SqlQueryError> {
         if let Some(ts) = session.historical_read_ts() {
-            self.could_retry = false;
             session.current_tso().publish(ts);
             if let Some(observer) = session.transaction_observer() {
                 observer.activated(ts);
             }
+            self.enter_stale(false, ts, resource_group, Self::statement_transaction_options(session));
             return Ok(());
         }
         let pessimistic = Self::is_pessimistic(session);
@@ -776,6 +813,7 @@ impl TxnManager {
         session.current_tso().clear();
         self.pin = None;
         let Some(mut transaction) = self.take_explicit() else {
+            self.end_stale();
             if let Some(observer) = session.transaction_observer() {
                 observer.finished();
             }
@@ -905,6 +943,7 @@ impl TxnManager {
                 result.map_err(SqlQueryError::unknown)
             }
             None => {
+                self.end_stale();
                 if let Some(observer) = session.transaction_observer() {
                     observer.finished();
                 }

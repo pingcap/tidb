@@ -325,6 +325,17 @@ pub trait ClusterTransactions: Send + Sync {
         self.prepare_autocommit_write(resource_group, false, false, options)
     }
 
+    /// Go `StalenessTxnContextProvider.activateStaleTxn`: a read-only
+    /// transaction at the as-of timestamp (`PrepareTSFuture(ConstantFuture(ts))`).
+    fn prepare_stale_read(
+        &self,
+        _ts: u64,
+        _resource_group: &str,
+        _options: SessionTransactionOptions,
+    ) -> Result<Box<dyn PendingClusterTransaction>, String> {
+        Err("stale reads need a cluster store".to_owned())
+    }
+
     /// Publishes one autocommit statement's staged writes as its own
     /// transaction **at `read_ts`**, then empties the buffer. An empty buffer
     /// publishes nothing.
@@ -844,13 +855,30 @@ where
     S: StoreClient,
 {
     opener: Arc<RealOptimisticTransactionOpener<S>>,
-    start_ts: tidb_txnkv::driver::tikv_store::StoreTimestampFuture,
+    start_ts: StartTsFuture,
     timeout: Duration,
     pessimistic: bool,
     fair_locking: bool,
     /// An autocommit read's implicit transaction opens read-only.
     read_only: bool,
     options: SessionTransactionOptions,
+}
+
+/// The future a pending transaction's start timestamp comes from: the
+/// oracle's, or Go `sessiontxn.ConstantFuture` (a stale read's as-of
+/// timestamp).
+enum StartTsFuture {
+    Oracle(tidb_txnkv::driver::tikv_store::StoreTimestampFuture),
+    Constant(u64),
+}
+
+impl StartTsFuture {
+    fn wait(self) -> Result<u64, String> {
+        match self {
+            Self::Oracle(future) => future.wait(),
+            Self::Constant(ts) => Ok(ts),
+        }
+    }
 }
 
 impl<S> PendingClusterTransaction for PendingSessionTransaction<S>
@@ -1077,7 +1105,7 @@ where
             .map_err(|error| error.to_string())?;
         Ok(Box::new(PendingSessionTransaction {
             opener,
-            start_ts,
+            start_ts: StartTsFuture::Oracle(start_ts),
             timeout: self.timeout,
             pessimistic,
             fair_locking,
@@ -1098,7 +1126,24 @@ where
             .map_err(|error| error.to_string())?;
         Ok(Box::new(PendingSessionTransaction {
             opener,
-            start_ts,
+            start_ts: StartTsFuture::Oracle(start_ts),
+            timeout: self.timeout,
+            pessimistic: false,
+            fair_locking: false,
+            read_only: true,
+            options,
+        }))
+    }
+
+    fn prepare_stale_read(
+        &self,
+        ts: u64,
+        resource_group: &str,
+        options: SessionTransactionOptions,
+    ) -> Result<Box<dyn PendingClusterTransaction>, String> {
+        Ok(Box::new(PendingSessionTransaction {
+            opener: self.opener_for_resource_group(resource_group),
+            start_ts: StartTsFuture::Constant(ts),
             timeout: self.timeout,
             pessimistic: false,
             fair_locking: false,

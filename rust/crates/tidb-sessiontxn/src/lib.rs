@@ -22,6 +22,7 @@
 //! [`SqlQueryError`].
 
 pub mod isolation;
+pub mod staleread;
 
 use tidb_domain_core::cluster_transactions::OpenClusterTransaction;
 use tidb_kv::cluster_storage::ClusterSnapshot;

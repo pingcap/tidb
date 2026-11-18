@@ -1017,13 +1017,6 @@ impl StatementLifecycle<'_> {
         resource_group: &str,
         is_dml: bool,
     ) -> Result<Box<dyn ClusterSnapshot>, SqlQueryError> {
-        if let Some(ts) = self.session.historical_read_ts() {
-            return self
-                .txn
-                .transactions()
-                .open_snapshot_at(ts, resource_group)
-                .map_err(SqlQueryError::unknown);
-        }
         // The explicit transaction, or an autocommit statement's implicit
         // one: its provider decides the timestamp (Go
         // `GetSnapshotWithStmtReadTS` / `GetSnapshotWithStmtForUpdateTS`; a
@@ -1078,20 +1071,8 @@ impl StatementLifecycle<'_> {
         resource_group: &str,
         read_ts: &transactions::StatementReadTs,
     ) {
-        if self.txn.explicit().is_some() {
-            return;
-        }
-        // Go's staleness provider starts a `TxnCtx` it never marks retryable.
-        let stale = self.session.historical_read_ts().is_some();
-        self.txn.decide_could_retry(
-            self.session,
-            // `decide_could_retry`'s `pessimistic` argument: no optimistic
-            // provider decides for these.
-            stale || (autocommit_write && autocommit_pessimistic),
-            tidb_sessiontxn::EnterNewTxnType::BeforeStmt,
-            false,
-        );
-        if stale {
+        // The explicit transaction (a stale one included) serves the statement.
+        if self.txn.current().is_some() {
             return;
         }
         let vars = self.session.vars();
@@ -1100,6 +1081,20 @@ impl StatementLifecycle<'_> {
             .with_temporary_tables(self.session.temporary_table_ids())
             .with_guarantee_linearizability(self.session.guarantee_linearizability())
             .with_kill_signal(self.session.kv_kill_signal());
+        // Go `EnterNewTxnWithReplaceProvider`: a statement's `AS OF` read
+        // enters the staleness provider (never retryable).
+        if let Some(ts) = self.session.historical_read_ts() {
+            self.txn.enter_stale(true, ts, resource_group, options);
+            return;
+        }
+        self.txn.decide_could_retry(
+            self.session,
+            // `decide_could_retry`'s `pessimistic` argument: no optimistic
+            // provider decides for a pessimistic transaction.
+            autocommit_write && autocommit_pessimistic,
+            tidb_sessiontxn::EnterNewTxnType::BeforeStmt,
+            false,
+        );
         if autocommit_write {
             // Go `OnPessimisticStmtStart` (`isolation/base.go:711`): fair
             // locking follows the session variable; a client connection is
