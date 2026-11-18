@@ -459,6 +459,11 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		}
 	}
 	nextChunkCap, maxChunkSize := ow.executor.InitCap(), ow.executor.MaxChunkSize()
+<<<<<<< HEAD
+=======
+	controller := ow.lookup.AdaptiveLimitController
+	strictOuterWindow := controller != nil
+>>>>>>> cd9601b3f2f (executor: grow adaptive lookup batches after zero-output windows (#73339))
 	if nextChunkCap <= 0 {
 		nextChunkCap = chunk.InitialCapacity
 	}

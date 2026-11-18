@@ -1578,6 +1578,27 @@ func (w *indexWorker) extractLookupTaskData(
 	handleOffsets []int,
 ) (data extractedLookupTaskData, err error) {
 	data.startTime = time.Now()
+<<<<<<< HEAD
+=======
+	if w.adaptiveLimitController != nil {
+		// Reserve before extracting handles so a large DistSQL chunk cannot be
+		// admitted directly into table lookup tasks beyond the physical window.
+		// The controller applies its current batch limit after waking up.
+		reserved, ok, err := w.adaptiveLimitController.ReserveLookup(ctx, w.maxBatchSize)
+		if err != nil {
+			return data, err
+		}
+		if !ok {
+			data.adaptiveLimitStopped = true
+			return data, nil
+		}
+		data.adaptiveLimitReservation = reserved
+		w.batchSize = reserved
+		defer func() {
+			w.batchSize = w.adaptiveLimitController.SuggestedBatchSize(w.maxBatchSize)
+		}()
+	}
+>>>>>>> cd9601b3f2f (executor: grow adaptive lookup batches after zero-output windows (#73339))
 	if w.idxLookup.indexLookUpPushDown {
 		data.completedRows, data.handles, data.exhausted, err = w.extractLookUpPushDownRowsOrHandles(ctx, rowIter, handleOffsets)
 	} else {
