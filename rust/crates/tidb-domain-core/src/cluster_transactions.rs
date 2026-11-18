@@ -526,6 +526,12 @@ pub trait OpenClusterTransaction: Send {
         0
     }
 
+    /// Go `updateForUpdateTS`: a fresh for-update timestamp, which a retried
+    /// statement reads and locks at.
+    fn advance_for_update_ts(&self) -> Result<u64, String> {
+        Err("only a pessimistic transaction advances its for-update timestamp".to_owned())
+    }
+
     /// Starts a current-read statement without changing the transaction's
     /// repeatable-read snapshot.
     fn fresh_locking_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
@@ -656,6 +662,7 @@ pub fn stage_pessimistic_statement<T>(
                 tidb_txnkv::transaction::LockWaitTime::Timeout(lock_wait_timeout),
             )
         },
+        || transaction.advance_for_update_ts(),
         build,
     )
     .map_err(|error| error.to_string());
@@ -1274,6 +1281,10 @@ where
 
     fn for_update_ts(&self) -> u64 {
         SessionTransaction::for_update_ts(self)
+    }
+
+    fn advance_for_update_ts(&self) -> Result<u64, String> {
+        SessionTransaction::advance_for_update_ts(self).map_err(|error| error.to_string())
     }
 
     fn fresh_locking_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {

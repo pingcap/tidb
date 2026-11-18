@@ -75,7 +75,7 @@ use tidb_txnkv::Key;
 
 use tidb_store_driver_error::pessimistic_lock_error::{
     commit_outcome_to_sql_error_with_hint, duplicate_cause, duplicate_key_sql_error,
-    is_retryable_statement_failure, lock_failure_to_sql_error,
+    is_retryable_statement_failure, lock_failure_to_sql_error, locked_with_conflict_error,
     LockSqlError, PessimisticStatementRetry,
 };
 
@@ -99,8 +99,11 @@ pub enum LockKeysOutcome {
     /// statement RE-EXECUTED reading at this advanced `for_update_ts` --
     /// Go's `handlePessimisticLockError` -> `UpdateForUpdateTS` -> rebuild.
     RetryStatement {
-        /// The advanced statement timestamp the retry reads at.
-        for_update_ts: u64,
+        /// Go's `lockErr`: the write conflict (a locked-with-conflict result
+        /// as `generateWriteConflictForLockedWithConflict` renders it) or the
+        /// retryable deadlock. The statement's provider decides whether the
+        /// statement retries (`OnStmtErrorForNextAction`).
+        lock_error: LockSqlError,
         /// The keys THIS call newly locked and RETAINED across the retry
         /// (fair locking's whole point); see [`LockKeysOutcome::Locked`].
         newly_locked: Vec<Vec<u8>>,
@@ -119,8 +122,8 @@ pub enum LockKeysOutcome {
 pub enum StatementLockFailure {
     /// Re-execute the statement reading at this advanced `for_update_ts`.
     Retry {
-        /// The advanced statement timestamp the retry reads at.
-        for_update_ts: u64,
+        /// Go's `lockErr` (see [`LockKeysOutcome::RetryStatement`]).
+        lock_error: LockSqlError,
     },
     /// The statement fails with this error; the transaction stays open.
     Statement(LockSqlError),
@@ -139,7 +142,7 @@ impl StatementLockFailure {
     pub fn from_outcome(outcome: LockKeysOutcome) -> Option<Self> {
         match outcome {
             LockKeysOutcome::Locked { .. } => None,
-            LockKeysOutcome::RetryStatement { for_update_ts, .. } => Some(Self::Retry { for_update_ts }),
+            LockKeysOutcome::RetryStatement { lock_error, .. } => Some(Self::Retry { lock_error }),
             LockKeysOutcome::StatementError(error) => Some(Self::Statement(error)),
             LockKeysOutcome::TransactionError(error) => Some(Self::Transaction(error)),
         }
@@ -149,9 +152,7 @@ impl StatementLockFailure {
     /// executor fails with; the statement owner consumes that error.
     pub fn record(self, slot: &StatementLockFailureSlot) -> StorageError {
         let message = match &self {
-            Self::Retry { for_update_ts } => {
-                format!("pessimistic lock conflict: the statement retries at {for_update_ts}")
-            }
+            Self::Retry { lock_error } => lock_error.message.clone(),
             Self::Statement(error) | Self::Transaction(error) => error.message.clone(),
         };
         *slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(self);
@@ -258,12 +259,17 @@ fn acquire_statement_locks<S: StoreClient>(
                 };
             }
             lock_values.current.clear();
-            match transaction.advance_for_update_ts() {
-                Ok(for_update_ts) => LockKeysOutcome::RetryStatement {
-                    for_update_ts,
-                    newly_locked: acquired.keys,
-                },
-                Err(error) => LockKeysOutcome::TransactionError(lock_failure_to_sql_error(&error)),
+            // Go `generateWriteConflictForLockedWithConflict`: the key with
+            // the latest conflicting commit names the write conflict.
+            let lock_error = acquired
+                .locked_with_conflict
+                .iter()
+                .max_by_key(|(_, ts)| *ts)
+                .map(|(key, ts)| locked_with_conflict_error(transaction.start_ts(), *ts, key))
+                .expect("a locked-with-conflict result names its keys");
+            LockKeysOutcome::RetryStatement {
+                lock_error,
+                newly_locked: acquired.keys,
             }
         }
         Err(failure) => {
@@ -285,14 +291,9 @@ fn acquire_statement_locks<S: StoreClient>(
             }
             if is_retryable_statement_failure(&failure) {
                 lock_values.current.clear();
-                return match transaction.advance_for_update_ts() {
-                    Ok(for_update_ts) => LockKeysOutcome::RetryStatement {
-                        for_update_ts,
-                        newly_locked: Vec::new(),
-                    },
-                    Err(error) => {
-                        LockKeysOutcome::TransactionError(lock_failure_to_sql_error(&error))
-                    }
+                return LockKeysOutcome::RetryStatement {
+                    lock_error: lock_failure_to_sql_error(&failure),
+                    newly_locked: Vec::new(),
                 };
             }
             let error = lock_failure_to_sql_error(&failure);
@@ -1117,6 +1118,29 @@ impl<S: StoreClient> SessionTransaction<S> {
         }
     }
 
+    /// Go `updateForUpdateTS`: a fresh timestamp becomes the pessimistic
+    /// transaction's for-update timestamp, which a retried statement reads
+    /// and locks at.
+    ///
+    /// # Errors
+    ///
+    /// The timestamp could not be fetched, or the transaction is not
+    /// pessimistic.
+    pub fn advance_for_update_ts(&self) -> Result<u64, StorageError> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match &mut *state {
+            SessionTransactionState::Pessimistic { transaction, .. } => transaction
+                .advance_for_update_ts()
+                .map_err(|error| StorageError::Backend(lock_failure_to_sql_error(&error).message)),
+            _ => Err(StorageError::Backend(
+                "only a pessimistic transaction advances its for-update timestamp".to_owned(),
+            )),
+        }
+    }
+
     /// `@@tidb_pessimistic_txn_fair_locking` reaching this transaction. Only a
     /// pessimistic transaction locks, so only it can lock fairly; the flag
     /// reaches the transaction as each locking statement starts.
@@ -1691,6 +1715,11 @@ pub fn lock_pessimistic_statement<S: StoreClient, T>(
                 )
                 .map_err(|error| error.to_string())
         },
+        || {
+            transaction
+                .advance_for_update_ts()
+                .map_err(|error| error.to_string())
+        },
         build,
     );
     transaction
@@ -1798,6 +1827,7 @@ pub fn lock_pessimistic_statement_with<T>(
         BTreeSet<Vec<u8>>,
         BTreeMap<Vec<u8>, DuplicateKeyHint>,
     ) -> Result<LockKeysOutcome, String>,
+    mut advance_for_update_ts: impl FnMut() -> Result<u64, String>,
     mut build: impl FnMut(Box<dyn ClusterSnapshot>, u64) -> Result<(T, Vec<BufferMutation>), String>,
 ) -> Result<(T, Vec<BufferMutation>), PessimisticStatementTransactionError> {
     let mut retry_read_ts = None;
@@ -1862,11 +1892,14 @@ pub fn lock_pessimistic_statement_with<T>(
                 record_lock_retries(retries.count());
                 return Ok((value, mutations));
             }
-            LockKeysOutcome::RetryStatement { for_update_ts, .. } => {
+            LockKeysOutcome::RetryStatement { .. } => {
                 retries
                     .retry()
                     .map_err(PessimisticStatementTransactionError::Transaction)?;
-                retry_read_ts = Some(for_update_ts);
+                // Go `updateForUpdateTS` before the statement retries.
+                retry_read_ts = Some(
+                    advance_for_update_ts().map_err(PessimisticStatementTransactionError::Build)?,
+                );
             }
             LockKeysOutcome::StatementError(error) | LockKeysOutcome::TransactionError(error) => {
                 return Err(PessimisticStatementTransactionError::Transaction(error));
@@ -2544,6 +2577,7 @@ mod tests {
                     newly_locked: keys,
                 })
             },
+            || Ok(3),
             |_, _| {
                 Ok((
                     (),

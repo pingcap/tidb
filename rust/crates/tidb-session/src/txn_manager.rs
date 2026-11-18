@@ -31,6 +31,7 @@ use tidb_sessiontxn::isolation::{optimistic::is_optimistic_txn_retryable, Provid
 use tidb_sessiontxn::isolation::optimistic::OptimisticTxnContextProvider;
 use tidb_sessiontxn::isolation::readcommitted::PessimisticRCTxnContextProvider;
 use tidb_sessiontxn::isolation::repeatable_read::PessimisticRRTxnContextProvider;
+use tidb_sessiontxn::isolation::serializable::PessimisticSerializableTxnContextProvider;
 use tidb_sessiontxn::{EnterNewTxnType, TxnContext, TxnContextProvider};
 use tidb_domain_core::session_transaction::set_options_on_txn_active;
 use std::sync::Arc;
@@ -139,15 +140,17 @@ struct EnteredTxn {
 }
 
 /// Go `newProviderWithRequest` for a transaction the store opened:
-/// optimistic, else pessimistic READ-COMMITTED or REPEATABLE-READ by the
-/// level the transaction entered with (`IsolationLevelForNewTxn`).
-fn new_provider(txn: Box<dyn OpenClusterTransaction>, read_committed: bool) -> Box<dyn TxnContextProvider> {
+/// optimistic, else the pessimistic provider of the level the transaction
+/// entered with (`IsolationLevelForNewTxn`), REPEATABLE-READ for every level
+/// but READ-COMMITTED and SERIALIZABLE.
+fn new_provider(txn: Box<dyn OpenClusterTransaction>, isolation: &str) -> Box<dyn TxnContextProvider> {
     if !txn.is_pessimistic() {
-        Box::new(OptimisticTxnContextProvider::new(txn))
-    } else if read_committed {
-        Box::new(PessimisticRCTxnContextProvider::new(txn))
-    } else {
-        Box::new(PessimisticRRTxnContextProvider::new(txn))
+        return Box::new(OptimisticTxnContextProvider::new(txn));
+    }
+    match isolation.to_ascii_uppercase().as_str() {
+        "READ-COMMITTED" => Box::new(PessimisticRCTxnContextProvider::new(txn)),
+        "SERIALIZABLE" => Box::new(PessimisticSerializableTxnContextProvider::new(txn)),
+        _ => Box::new(PessimisticRRTxnContextProvider::new(txn)),
     }
 }
 
@@ -269,11 +272,11 @@ impl TxnManager {
         self.txn.as_mut().map(|entered| &mut *entered.provider)
     }
 
-    fn set_explicit(&mut self, txn: Box<dyn OpenClusterTransaction>, read_committed: bool) {
+    fn set_explicit(&mut self, txn: Box<dyn OpenClusterTransaction>, isolation: &str) {
         // An autocommit statement ends its implicit transaction before the
         // next statement enters one.
         debug_assert!(self.txn.is_none(), "a transaction entered over another");
-        self.txn = Some(EnteredTxn { kind: TxnKind::Explicit, provider: new_provider(txn, read_committed) });
+        self.txn = Some(EnteredTxn { kind: TxnKind::Explicit, provider: new_provider(txn, isolation) });
     }
 
     /// Ends the explicit transaction's hold on the slot (its commit or
@@ -298,7 +301,7 @@ impl TxnManager {
     pub fn enter_implicit_write(
         &mut self,
         pessimistic: bool,
-        read_committed: bool,
+        isolation: &str,
         fair_locking: bool,
         resource_group: &str,
         options: SessionTransactionOptions,
@@ -306,7 +309,7 @@ impl TxnManager {
     ) {
         let pending =
             self.transactions.prepare_autocommit_write(resource_group, pessimistic, fair_locking, options.clone());
-        self.enter_implicit(TxnKind::ImplicitWrite, pessimistic, read_committed, pending, options, read_ts);
+        self.enter_implicit(TxnKind::ImplicitWrite, pessimistic, isolation, pending, options, read_ts);
     }
 
     /// Go `PrepareTxnCtx` for an autocommit read: the same implicit
@@ -321,14 +324,14 @@ impl TxnManager {
         read_ts: tidb_domain_core::cluster_transactions::StatementReadTs,
     ) {
         let pending = self.transactions.prepare_autocommit_read(resource_group, low_resolution, options.clone());
-        self.enter_implicit(TxnKind::ImplicitRead, false, false, pending, options, read_ts);
+        self.enter_implicit(TxnKind::ImplicitRead, false, "", pending, options, read_ts);
     }
 
     fn enter_implicit(
         &mut self,
         kind: TxnKind,
         pessimistic: bool,
-        read_committed: bool,
+        isolation: &str,
         pending: Result<Box<dyn tidb_domain_core::cluster_transactions::PendingClusterTransaction>, String>,
         options: SessionTransactionOptions,
         read_ts: tidb_domain_core::cluster_transactions::StatementReadTs,
@@ -347,7 +350,7 @@ impl TxnManager {
             LazyClusterTransaction::new_implicit(pessimistic, options, self.buffer.clone(), opener)
         });
         debug_assert!(self.txn.is_none(), "a transaction entered over another");
-        self.txn = Some(EnteredTxn { kind, provider: new_provider(txn, read_committed) });
+        self.txn = Some(EnteredTxn { kind, provider: new_provider(txn, isolation) });
     }
 
     /// Go `RollbackTxn` for an autocommit statement that failed or is
@@ -492,13 +495,13 @@ impl TxnManager {
             }
             Ok(transaction)
         });
-        let read_committed = session.is_read_committed();
+        let isolation = session.isolation_for_provider();
         self.set_explicit(Box::new(LazyClusterTransaction::new(
             pessimistic,
             Self::statement_transaction_options(session),
             self.buffer.clone(),
             opener,
-        )), read_committed);
+        )), &isolation);
         self.pin_schema(session, schema_version);
     }
 
@@ -546,7 +549,7 @@ impl TxnManager {
         if let Some(observer) = session.transaction_observer() {
             observer.activated(transaction.start_ts());
         }
-        self.set_explicit(transaction, session.is_read_committed());
+        self.set_explicit(transaction, &session.isolation_for_provider());
         self.pin_schema(session, schema_version);
         Ok(())
     }

@@ -104,6 +104,7 @@ fn restricted_pessimistic_statement_retries_obey_live_config() {
         update_global(|config| config.pessimistic_txn.max_retry_count = limit);
         let mut calls = 0;
         let mut read_timestamps = Vec::new();
+        let mut advances = 0u64;
         let result = lock_pessimistic_statement_with(
             1,
             &tidb_store_driver_txn::cluster_storage::MutationBuffer::new(),
@@ -118,7 +119,7 @@ fn restricted_pessimistic_statement_retries_obey_live_config() {
                 }
                 if calls <= conflicts {
                     Ok(LockKeysOutcome::RetryStatement {
-                        for_update_ts: calls as u64 + 10,
+                        lock_error: tidb_store_driver_error::pessimistic_lock_error::locked_with_conflict_error(0, 1, b"k"),
                         newly_locked: keys,
                     })
                 } else {
@@ -127,6 +128,11 @@ fn restricted_pessimistic_statement_retries_obey_live_config() {
                         newly_locked: keys,
                     })
                 }
+            },
+            || {
+                // Go `updateForUpdateTS` before each retry.
+                advances += 1;
+                Ok(advances + 10)
             },
             |_, _| {
                 Ok((

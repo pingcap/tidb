@@ -15,7 +15,7 @@
 //! Go `pkg/sessiontxn/isolation/repeatable_read.go`.
 
 use super::txn_start_ts;
-use crate::{TxnContext, TxnContextProvider};
+use crate::{no_idea, retry_ready, StmtErrorAction, StmtErrorHandlePoint, TxnContext, TxnContextProvider};
 use tidb_domain_core::cluster_transactions::OpenClusterTransaction;
 use tidb_kv::cluster_storage::ClusterSnapshot;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
@@ -26,8 +26,8 @@ use tidb_store_driver_error::sql_query_error::SqlQueryError;
 /// reads at the timestamp the lock step advanced to.
 pub struct PessimisticRRTxnContextProvider {
     txn: Box<dyn OpenClusterTransaction>,
-    /// The for-update timestamp of the current statement's retry (Go
-    /// `OnStmtRetry`).
+    /// The for-update timestamp `OnStmtRetry` fetched for the current
+    /// statement's retry.
     retry_ts: Option<u64>,
 }
 
@@ -88,8 +88,26 @@ impl TxnContextProvider for PessimisticRRTxnContextProvider {
         Ok(())
     }
 
-    fn on_stmt_retry(&mut self, _cx: &mut dyn TxnContext, for_update_ts: u64) -> Result<(), SqlQueryError> {
-        self.retry_ts = Some(for_update_ts);
+    // Go `updateForUpdateTS` (RC: `prepareStmt`'s fresh statement future).
+    fn on_stmt_retry(&mut self, _cx: &mut dyn TxnContext) -> Result<(), SqlQueryError> {
+        self.retry_ts = Some(self.txn.advance_for_update_ts().map_err(SqlQueryError::unknown)?);
         Ok(())
     }
+
+    /// Go `handleAfterPessimisticLockError`: a write conflict or a
+    /// retryable single-statement deadlock retries the statement; the lock
+    /// step reports every other lock error to the statement directly, as the
+    /// `ErrorAction` Go answers for it.
+    fn on_stmt_error_for_next_action(
+        &mut self,
+        _cx: &mut dyn TxnContext,
+        point: StmtErrorHandlePoint,
+        _error: SqlQueryError,
+    ) -> Result<StmtErrorAction, SqlQueryError> {
+        match point {
+            StmtErrorHandlePoint::AfterPessimisticLock => retry_ready(),
+            StmtErrorHandlePoint::AfterQuery => no_idea(),
+        }
+    }
+
 }

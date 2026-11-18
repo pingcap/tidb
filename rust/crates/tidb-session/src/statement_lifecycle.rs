@@ -39,6 +39,7 @@ use tidb_store_driver_txn::cluster_storage::{BufferCheckpoint, SwappableSnapshot
 
 use tidb_domain_core::cluster_transactions as transactions;
 use crate::txn_manager::SessionTxnContext;
+use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use crate::txn_manager::{CommitHooks, TxnManager};
 use crate::Session;
 
@@ -144,8 +145,8 @@ pub enum PessimisticStep {
     Done,
     /// Re-execute the statement reading at this advanced `for_update_ts`.
     Retry {
-        /// The statement timestamp the replay reads at.
-        for_update_ts: u64,
+        /// Go's `lockErr`, for the provider's decision.
+        lock_error: LockSqlError,
     },
 }
 
@@ -444,7 +445,7 @@ impl StatementLifecycle<'_> {
         // it reading at the advanced `for_update_ts` (the provider's
         // `OnStmtRetry`). An implicit transaction's provider is entered fresh
         // inside the loop.
-        self.on_provider_stmt_event(None)?;
+        self.on_provider_stmt_event(false)?;
         let mut retries = tidb_store_driver_error::pessimistic_lock_error::PessimisticStatementRetry::default();
         // Whether the statement reached `finishStmt`'s commit: a failure
         // there is the commit's own, not one `autoCommitAfterStmt` rolls
@@ -568,11 +569,14 @@ impl StatementLifecycle<'_> {
                                 }
                             }
                         }
-                        Ok(PessimisticStep::Retry { .. }) if self.txn.explicit().is_none() => {
+                        Ok(PessimisticStep::Retry { lock_error, .. }) if self.txn.explicit().is_none() => {
                             // The autocommit statement's lock found a newer
                             // committed version of a key it wrote: as for its
                             // locking reads, the replay is a new implicit
                             // transaction reading the version that beat it.
+                            if let Err(error) = self.provider_retries_lock_error(lock_error) {
+                                break Err(error);
+                            }
                             if let Err(error) = retries.retry() {
                                 break Err(transactions::sql_error(error));
                             }
@@ -582,7 +586,10 @@ impl StatementLifecycle<'_> {
                             tidb_breakpoint::inject(&*self.session, "lockErrorAndThenOnStmtRetryCalled");
                             continue;
                         }
-                        Ok(PessimisticStep::Retry { for_update_ts }) => {
+                        Ok(PessimisticStep::Retry { lock_error }) => {
+                            if let Err(error) = self.provider_retries_lock_error(lock_error) {
+                                break Err(error);
+                            }
                             if let Err(error) = retries.retry() {
                                 break Err(transactions::sql_error(error));
                             }
@@ -592,7 +599,7 @@ impl StatementLifecycle<'_> {
                             // reads at the timestamp that sees the version
                             // that beat it.
                             self.txn.buffer().restore(savepoint.clone());
-                            if let Err(error) = self.on_provider_stmt_event(Some(for_update_ts)) {
+                            if let Err(error) = self.on_provider_stmt_event(true) {
                                 break Err(error);
                             }
                             tidb_breakpoint::inject(
@@ -644,11 +651,14 @@ impl StatementLifecycle<'_> {
                         self.session
                             .retract_statement_failure(error.code, &error.message);
                     }
-                    if self.txn.explicit().is_none()
-                        && matches!(failure, Some(StatementLockFailure::Retry { .. }))
+                    if let (None, Some(StatementLockFailure::Retry { lock_error, .. })) =
+                        (self.txn.explicit(), failure.as_ref())
                     {
                         // The autocommit statement's lock found a newer
                         // committed version of a row it read.
+                        if let Err(error) = self.provider_retries_lock_error(lock_error.clone()) {
+                            break Err(error);
+                        }
                         if let Err(error) = retries.retry() {
                             break Err(transactions::sql_error(error));
                         }
@@ -666,8 +676,11 @@ impl StatementLifecycle<'_> {
                     }
                     match failure {
                         None => break Err(error),
-                        Some(StatementLockFailure::Retry { for_update_ts }) => {
+                        Some(StatementLockFailure::Retry { lock_error }) => {
                             self.session.record_pessimistic_lock_error(tidb_errno::errcode::ErrWriteConflict);
+                            if let Err(error) = self.provider_retries_lock_error(lock_error) {
+                                break Err(error);
+                            }
                             if let Err(error) = retries.retry() {
                                 break Err(transactions::sql_error(error));
                             }
@@ -676,7 +689,7 @@ impl StatementLifecycle<'_> {
                             // and the replay reads at the timestamp that sees
                             // the version that beat it.
                             self.txn.buffer().restore(savepoint.clone());
-                            if let Err(error) = self.on_provider_stmt_event(Some(for_update_ts)) {
+                            if let Err(error) = self.on_provider_stmt_event(true) {
                                 break Err(error);
                             }
                             tidb_breakpoint::inject(
@@ -886,9 +899,9 @@ impl StatementLifecycle<'_> {
         };
         match outcome {
             LockKeysOutcome::Locked { .. } => Ok(PessimisticStep::Done),
-            LockKeysOutcome::RetryStatement { for_update_ts, .. } => {
+            LockKeysOutcome::RetryStatement { lock_error, .. } => {
                 self.session.record_pessimistic_lock_error(tidb_errno::errcode::ErrWriteConflict);
-                Ok(PessimisticStep::Retry { for_update_ts })
+                Ok(PessimisticStep::Retry { lock_error })
             }
             LockKeysOutcome::StatementError(error) => {
                 self.session.record_pessimistic_lock_error(error.code);
@@ -960,17 +973,40 @@ impl StatementLifecycle<'_> {
             .max(1)
     }
 
-    /// Go `OnStmtStart` (no retry timestamp) or `OnStmtRetry` on the
-    /// session transaction's provider, if one is entered.
-    fn on_provider_stmt_event(&mut self, retry_for_update_ts: Option<u64>) -> Result<(), SqlQueryError> {
+    /// Go `ExecStmt.handlePessimisticLockError`'s
+    /// `OnStmtErrorForNextAction(StmtErrAfterPessimisticLock, lockErr)`: `Ok`
+    /// when the provider is ready to retry the statement, else the error the
+    /// statement fails with (`lockErr` itself unless the provider answers
+    /// another).
+    fn provider_retries_lock_error(&mut self, lock_error: LockSqlError) -> Result<(), SqlQueryError> {
+        let error = transactions::sql_error(lock_error);
+        let in_txn = self.session.in_transaction();
+        let Some(provider) = self.txn.provider_mut() else {
+            return Err(error);
+        };
+        let mut cx = SessionTxnContext { session: self.session, in_txn, locking_read: false };
+        match provider.on_stmt_error_for_next_action(
+            &mut cx,
+            tidb_sessiontxn::StmtErrorHandlePoint::AfterPessimisticLock,
+            error.clone(),
+        )? {
+            tidb_sessiontxn::StmtErrorAction::RetryReady => Ok(()),
+            _ => Err(error),
+        }
+    }
+
+    /// Go `OnStmtStart`, or `OnStmtRetry` when `retry`, on the session
+    /// transaction's provider, if one is entered.
+    fn on_provider_stmt_event(&mut self, retry: bool) -> Result<(), SqlQueryError> {
         let in_txn = self.session.in_transaction();
         let Some(provider) = self.txn.provider_mut() else {
             return Ok(());
         };
         let mut cx = SessionTxnContext { session: self.session, in_txn, locking_read: false };
-        match retry_for_update_ts {
-            Some(ts) => provider.on_stmt_retry(&mut cx, ts),
-            None => provider.on_stmt_start(&mut cx),
+        if retry {
+            provider.on_stmt_retry(&mut cx)
+        } else {
+            provider.on_stmt_start(&mut cx)
         }
     }
 
@@ -1069,10 +1105,10 @@ impl StatementLifecycle<'_> {
             // locking follows the session variable; a client connection is
             // neither internal nor restricted SQL.
             let fair_locking = vars.pessimistic_transaction_fair_locking();
-            let read_committed = self.session.is_read_committed();
+            let isolation = self.session.isolation_for_provider();
             self.txn.enter_implicit_write(
                 autocommit_pessimistic,
-                read_committed,
+                &isolation,
                 fair_locking,
                 resource_group,
                 options,
@@ -1089,7 +1125,7 @@ impl StatementLifecycle<'_> {
         shape: StatementReadShape,
         resource_group: &str,
     ) -> Result<ReadStatement, SqlQueryError> {
-        self.on_provider_stmt_event(None)?;
+        self.on_provider_stmt_event(false)?;
         if let Some(transaction) = self.txn.explicit() {
             transaction
                 .set_resource_group_name(resource_group)

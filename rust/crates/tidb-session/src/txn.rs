@@ -74,9 +74,9 @@ pub(crate) struct TxnCtx {
     /// The mode the transaction opened in, resolved from the `BEGIN` keyword
     /// and `@@tidb_txn_mode` exactly as Go resolves it (`TxnCtx.IsPessimistic`).
     mode: SessionTxnMode,
-    /// Go `TxnCtx.Isolation == ReadCommitted`: a later `SET SESSION` affects
-    /// the next transaction, not the missing-key lock policy of this one.
-    read_committed: bool,
+    /// Go `TxnCtx.Isolation`: a later `SET SESSION` affects the next
+    /// transaction, not this one's provider or missing-key lock policy.
+    isolation: String,
     /// Go `StalenessTxnContextProvider`: the as-of timestamp, which is also
     /// the transaction's `StartTS`, and the historical schema and timestamp
     /// hold every statement of the transaction reads (`TxnCtx.InfoSchema`).
@@ -376,6 +376,16 @@ impl Session {
     /// Go `SessionVars.IsIsolation(ast.ReadCommitted)` for the transaction
     /// in force (or, before one starts, the session's setting).
     #[must_use]
+    /// Go `TxnCtx.Isolation` of the open transaction, else
+    /// `IsolationLevelForNewTxn`: the level `newProviderWithRequest` picks a
+    /// pessimistic provider by.
+    pub fn isolation_for_provider(&self) -> String {
+        self.txn_ctx.as_ref().map_or_else(
+            || self.vars.isolation_level_for_new_txn(self.in_transaction()),
+            |txn| txn.isolation.clone(),
+        )
+    }
+
     pub fn is_read_committed(&self) -> bool {
         self.read_committed_locking()
     }
@@ -390,7 +400,7 @@ impl Session {
                     .get_system("transaction_isolation")
                     .is_ok_and(|value| value.eq_ignore_ascii_case("READ-COMMITTED")),
             },
-            |txn| txn.read_committed,
+            |txn| txn.isolation.eq_ignore_ascii_case("READ-COMMITTED"),
         )
     }
 
@@ -476,17 +486,14 @@ impl Session {
     fn open_txn_ctx(&mut self, mode: SessionTxnMode, begin_stmt: Option<bool>) {
         // Go `txnManager.newProviderWithRequest` picks the provider from
         // `IsolationLevelForNewTxn`, which honors `SET TRANSACTION`.
-        let read_committed = self
-            .vars
-            .isolation_level_for_new_txn(self.in_transaction())
-            .eq_ignore_ascii_case("READ-COMMITTED");
+        let isolation = self.vars.isolation_level_for_new_txn(self.in_transaction());
         // A fresh transaction gets a fresh, empty staged-write tracker --
         // Go's own membuffer is empty the moment a transaction activates.
         self.staged_writes = std::sync::Arc::default();
         self.txn_ctx = Some(TxnCtx {
             lock_expire: Default::default(),
             mode,
-            read_committed,
+            isolation,
             stale: None,
             savepoints: tidb_variable::savepoints::SavepointStack::default(),
             begin_stmt,
@@ -770,7 +777,7 @@ impl Session {
         self.txn_ctx = Some(TxnCtx {
             lock_expire: Default::default(),
             mode: SessionTxnMode::Optimistic,
-            read_committed: false,
+            isolation: String::new(),
             stale: Some((ts, read)),
             savepoints: tidb_variable::savepoints::SavepointStack::default(),
             begin_stmt: Some(false),

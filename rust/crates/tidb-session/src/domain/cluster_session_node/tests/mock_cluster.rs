@@ -349,7 +349,7 @@ impl ClusterSnapshot for MockSnapshot {
             .is_ok()
         {
             StatementLockFailure::Retry {
-                for_update_ts: self.cluster.timestamp(),
+                lock_error: tidb_store_driver_error::pessimistic_lock_error::locked_with_conflict_error(0, 1, b"k"),
             }
         } else {
             return Ok(());
@@ -699,6 +699,10 @@ impl OpenClusterTransaction for MockSessionTransaction {
     }
 
     /// A pessimistic locking read is a current read, at a fresh timestamp.
+    fn advance_for_update_ts(&self) -> Result<u64, String> {
+        Ok(self.cluster.timestamp())
+    }
+
     fn fresh_locking_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
         if !self.pessimistic {
             return Err(
@@ -755,7 +759,7 @@ impl OpenClusterTransaction for MockSessionTransaction {
             .is_ok()
         {
             return Ok(LockKeysOutcome::RetryStatement {
-                for_update_ts: self.cluster.timestamp(),
+                lock_error: tidb_store_driver_error::pessimistic_lock_error::locked_with_conflict_error(0, 1, b"k"),
                 newly_locked: keys,
             });
         }

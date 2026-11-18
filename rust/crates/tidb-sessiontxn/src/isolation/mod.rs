@@ -17,6 +17,7 @@
 pub mod optimistic;
 pub mod readcommitted;
 pub mod repeatable_read;
+pub mod serializable;
 
 use tidb_domain_core::cluster_transactions::OpenClusterTransaction;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;

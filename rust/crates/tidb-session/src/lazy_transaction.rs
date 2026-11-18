@@ -386,6 +386,12 @@ impl OpenClusterTransaction for LazyClusterTransaction {
             .map_or(0, |transaction| transaction.for_update_ts())
     }
 
+    fn advance_for_update_ts(&self) -> Result<u64, String> {
+        let mut state = self.shared.state();
+        Shared::activate_in(&mut state)?;
+        state.open.as_ref().expect("just activated").advance_for_update_ts()
+    }
+
     fn fresh_locking_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
         self.lazy_snapshot(|transaction| transaction.fresh_locking_snapshot())
     }

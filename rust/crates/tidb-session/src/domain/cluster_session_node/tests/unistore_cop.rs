@@ -1912,6 +1912,54 @@ fn global_bindings_do_not_depend_on_unrelated_staged_writes() {
     }
 }
 
+/// Go `PessimisticSerializableTxnContextProvider` (`newProviderWithRequest`'s
+/// SERIALIZABLE arm, reachable under `tidb_skip_isolation_level_check`):
+/// every statement reads and locks at the start timestamp, and a lock that
+/// meets a newer commit returns its write conflict instead of retrying. Go
+/// master capture: `tidb-wt/tools/x05/go_serializable.jsonl`.
+#[test]
+fn a_serializable_pessimistic_transaction_reads_and_locks_at_its_start_timestamp() {
+    let (stack, _users) = cop_backed_stack();
+    let mut reader = stack.factory.open_session(session_context(127)).expect("reader");
+    let mut writer = stack.factory.open_session(session_context(128)).expect("writer");
+    for sql in [
+        "CREATE TABLE test.ser (id INT PRIMARY KEY, v INT)",
+        "INSERT INTO test.ser VALUES (1, 1), (2, 1)",
+        "SET SESSION tidb_skip_isolation_level_check = 1",
+        "SET SESSION transaction_isolation = 'SERIALIZABLE'",
+    ] {
+        reader.node_conn().execute_write(sql).expect("setup");
+    }
+    let conflict = |result: Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError>| {
+        let error = result.err().expect("the lock meets a newer commit");
+        assert_eq!(error.code, 9007, "{}", error.message);
+        assert!(error.message.starts_with("Write conflict, txnStartTS="), "{}", error.message);
+    };
+    let read = "SELECT v FROM test.ser WHERE id = 1";
+    reader.node_conn().control_transaction("BEGIN PESSIMISTIC").expect("begin");
+    assert_eq!(displayed(rows(&mut reader, read)), vec![vec!["1"]]);
+    writer.node_conn().execute_write("UPDATE test.ser SET v = 2 WHERE id = 1").expect("peer");
+    assert_eq!(displayed(rows(&mut reader, read)), vec![vec!["1"]]);
+    conflict(reader.node_conn().execute("SELECT v FROM test.ser WHERE id = 1 FOR UPDATE").and_then(|mut result| {
+        crate::domain::resultset_source::ResultSetSource::next_batch(result.source(), 8)
+            .map(|_| ())
+            .map_err(|error| tidb_store_driver_error::sql_query_error::SqlQueryError::new(error.code, *b"HY000", &error.message))
+    }));
+    conflict(reader.node_conn().execute_write("UPDATE test.ser SET v = v + 10 WHERE id = 1").map(|_| ()));
+    assert_eq!(displayed(rows(&mut reader, read)), vec![vec!["1"]]);
+    reader.node_conn().control_transaction("COMMIT").expect("commit");
+    assert_eq!(displayed(rows(&mut reader, read)), vec![vec!["2"]]);
+
+    let read = "SELECT v FROM test.ser WHERE id = 2";
+    reader.node_conn().control_transaction("BEGIN PESSIMISTIC").expect("begin");
+    assert_eq!(displayed(rows(&mut reader, read)), vec![vec!["1"]]);
+    writer.node_conn().execute_write("UPDATE test.ser SET v = 5 WHERE id = 2").expect("peer");
+    conflict(reader.node_conn().execute_write("UPDATE test.ser SET v = v + 10 WHERE id = 2").map(|_| ()));
+    assert_eq!(displayed(rows(&mut reader, read)), vec![vec!["1"]]);
+    reader.node_conn().control_transaction("COMMIT").expect("commit");
+    assert_eq!(displayed(rows(&mut reader, read)), vec![vec!["5"]]);
+}
+
 /// Go `PessimisticRCTxnContextProvider` under `tidb_rc_read_check_ts`: a
 /// read-only statement of a pessimistic READ-COMMITTED transaction reads at
 /// the transaction's latest fetched timestamp with `RCCheckTS`, so a row a

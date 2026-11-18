@@ -193,15 +193,14 @@ pub trait TxnContextProvider: Send {
     fn on_stmt_start(&mut self, _cx: &mut dyn TxnContext) -> Result<(), SqlQueryError> {
         Ok(())
     }
-    /// Go `OnStmtRetry`: the statement re-executes. Go's pessimistic
-    /// providers fetch the new for-update timestamp here
-    /// (`updateForUpdateTS`); the store's lock step has already fetched it,
-    /// so it arrives as `for_update_ts`, and the retry reads at it.
+    /// Go `OnStmtRetry`: the statement re-executes. A pessimistic provider
+    /// fetches a new for-update timestamp (`updateForUpdateTS`), which the
+    /// retry reads and locks at.
     ///
     /// # Errors
     ///
     /// The retry could not be prepared.
-    fn on_stmt_retry(&mut self, _cx: &mut dyn TxnContext, _for_update_ts: u64) -> Result<(), SqlQueryError> {
+    fn on_stmt_retry(&mut self, _cx: &mut dyn TxnContext) -> Result<(), SqlQueryError> {
         Ok(())
     }
     /// Go `OnStmtErrorForNextAction` (base: an error after the pessimistic
