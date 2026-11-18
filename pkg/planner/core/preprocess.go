@@ -1744,6 +1744,13 @@ func (p *preprocessor) checkConstraintGrammar(stmt *ast.Constraint) {
 }
 
 func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
+	if stmt.LockInfo != nil {
+		switch stmt.LockInfo.LockType {
+		case ast.SelectLockForUpdateSkipLocked, ast.SelectLockForShareSkipLocked:
+			p.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("SKIP LOCKED")
+			return
+		}
+	}
 	noopFuncsMode := p.sctx.GetSessionVars().NoopFuncsMode
 	if noopFuncsMode == variable.OnInt {
 		// Set `ForShareLockEnabledByNoop` properly before returning.

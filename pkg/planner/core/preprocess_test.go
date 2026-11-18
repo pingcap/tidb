@@ -607,3 +607,17 @@ func TestPreprocessDeleteFromWithAlias(t *testing.T) {
 	tk.MustExec("delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id;")
 	tk.MustExec("create global binding for delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id using delete /*+ MAX_EXECUTION_TIME(10)*/ tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id;")
 }
+
+func TestRejectSkipLocked(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key)")
+	for _, noop := range []string{"OFF", "ON", "WARN"} {
+		tk.MustExec("set session tidb_enable_noop_functions = " + noop)
+		for _, suffix := range []string{"for update skip locked", "for share skip locked"} {
+			tk.MustGetErrCode("select * from t where id = 7 " + suffix, mysql.ErrNotSupportedYet)
+			tk.MustGetErrCode("select * from t " + suffix, mysql.ErrNotSupportedYet)
+		}
+	}
+}
