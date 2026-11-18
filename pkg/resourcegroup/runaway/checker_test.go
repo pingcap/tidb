@@ -161,14 +161,20 @@ func TestExceedsThresholds(t *testing.T) {
 	})
 
 	t.Run("DeadlineExceeded", func(t *testing.T) {
-		c := &Checker{deadline: time.Now().Add(-time.Second)}
-		cause := c.exceedsThresholds(time.Now(), nil, 0)
+		c := &Checker{deadline: time.Unix(0, 0)}
+		cause := c.exceedsThresholds(c.deadline.Add(time.Nanosecond), nil, 0)
+		assert.Contains(t, cause, "ElapsedTime")
+	})
+
+	t.Run("DeadlineAtThreshold", func(t *testing.T) {
+		c := &Checker{deadline: time.Unix(0, 0)}
+		cause := c.exceedsThresholds(c.deadline, nil, 0)
 		assert.Contains(t, cause, "ElapsedTime")
 	})
 
 	t.Run("DeadlineNotExceeded", func(t *testing.T) {
-		c := &Checker{deadline: time.Now().Add(time.Hour)}
-		assert.Empty(t, c.exceedsThresholds(time.Now(), nil, 0))
+		c := &Checker{deadline: time.Unix(0, 0)}
+		assert.Empty(t, c.exceedsThresholds(c.deadline.Add(-time.Nanosecond), nil, 0))
 	})
 
 	t.Run("ProcessedKeysNotExceeded", func(t *testing.T) {

@@ -28,6 +28,8 @@
 
 3. Get the metadata of all regions
 
+    If PD cannot find a requested region, TiDB returns an error containing its decimal ID, such as `region not found for regionID 123`.
+
     ```shell
     curl http://{TiDBIP}:10080/regions/meta
     ```
@@ -610,6 +612,8 @@ timezone.*
      ```
 
 30. Get statistics data of specific table and timestamp.
+
+     This API depends on historical statistics, which are deprecated and will be removed in a future release.
 
      ```shell
      curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyyMMddHHmmss}

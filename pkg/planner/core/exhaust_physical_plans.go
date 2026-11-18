@@ -613,6 +613,17 @@ func constructIndexMergeJoin(
 	path *util.AccessPath,
 	compareFilters *ColWithCmpFuncManager,
 ) []base.PhysicalPlan {
+	// An ordered index scan does not guarantee ordered output after HashAgg.
+	// The inner wrappers are unary; inspect them before trusting index order.
+	for inner := innerTask.Plan(); inner != nil; {
+		if _, ok := inner.(*PhysicalHashAgg); ok {
+			return nil
+		}
+		if len(inner.Children()) != 1 {
+			break
+		}
+		inner = inner.Children()[0]
+	}
 	hintExists := false
 	if (outerIdx == 1 && (p.PreferJoinType&h.PreferLeftAsINLMJInner) > 0) || (outerIdx == 0 && (p.PreferJoinType&h.PreferRightAsINLMJInner) > 0) {
 		hintExists = true
@@ -756,7 +767,7 @@ func getIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.PhysicalPro
 	} else {
 		innerJoinKeys, outerJoinKeys, _, _ = p.GetJoinKeys()
 	}
-	innerChildWrapper := extractIndexJoinInnerChildPattern(p, innerChild)
+	innerChildWrapper := extractIndexJoinInnerChildPattern(p, innerChild, innerJoinKeys)
 	if innerChildWrapper == nil {
 		return nil
 	}
@@ -856,9 +867,88 @@ type indexJoinInnerChildWrapper struct {
 	ds             *logicalop.DataSource
 	hasDitryWrite  bool
 	zippedChildren []base.LogicalPlan
+	// rangeOtherConds are the join's other conditions that may be used to build runtime
+	// ranges on the inner side, see pruneIndexJoinRangeCondsForAgg.
+	rangeOtherConds []expression.Expression
 }
 
-func extractIndexJoinInnerChildPattern(p *logicalop.LogicalJoin, innerChild base.LogicalPlan) *indexJoinInnerChildWrapper {
+// pruneIndexJoinRangeCondsForAgg drops the join's other conditions that reference a column of
+// the aggregation which is not a direct GROUP BY column. Those conditions are only used to build
+// runtime ranges (e.g. `a.c2 > t1.c2` on index(c1, c2)); a range on such a column would filter
+// rows below the aggregation and split groups. The index join still evaluates all of its other
+// conditions above the aggregation, and equality-only access paths remain available.
+func pruneIndexJoinRangeCondsForAgg(conds []expression.Expression, la *logicalop.LogicalAggregation) []expression.Expression {
+	groupByCols := make(map[int64]struct{}, len(la.GroupByItems))
+	for _, item := range la.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			groupByCols[col.UniqueID] = struct{}{}
+		}
+	}
+	kept := make([]expression.Expression, 0, len(conds))
+	for _, cond := range conds {
+		safe := true
+		for _, col := range expression.ExtractColumns(cond) {
+			if !la.Schema().Contains(col) {
+				// columns from the outer side.
+				continue
+			}
+			if _, ok := groupByCols[col.UniqueID]; !ok {
+				safe = false
+				break
+			}
+		}
+		if safe {
+			kept = append(kept, cond)
+		}
+	}
+	return kept
+}
+
+// checkIndexJoinInnerTaskWithAgg checks if join key set is subset of group by items.
+// Otherwise the aggregation group might be split into multiple groups by the join keys, which generate incorrect result.
+// Current limitation:
+// This check currently relies on UniqueID matching between:
+// 1) columns extracted from GroupByItems, and
+// 2) columns from DataSource that are used as inner join keys.
+// It works for plain GROUP BY columns, but it is conservative for GROUP BY expressions or
+// columns introduced/re-mapped by intermediate operators (for example, GROUP BY c1+c2).
+// In those cases, semantically equivalent keys may carry different UniqueIDs, and columns
+// nested inside expressions are deliberately not treated as grouping keys, so we may
+// reject some valid index join plans (false negatives) to keep correctness.
+// TODO: use FunctionDependency/equivalence reasoning to replace pure UniqueID subset matching.
+func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, innerJoinKeys []*expression.Column, dataSourceSchema *expression.Schema) bool {
+	// Only direct GROUP BY columns count as grouping keys. A column that merely
+	// appears inside a GROUP BY expression (for example GROUP BY c2 % 2) does not
+	// partition the groups by that column, so probing per join-key value would
+	// still split a group across probes.
+	groupByCols := make(map[int64]struct{}, len(la.GroupByItems))
+	for _, item := range la.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			groupByCols[col.UniqueID] = struct{}{}
+		}
+	}
+
+	// Only check the inner keys that is from the DataSource, and newly generated keys like agg func or projection column
+	// will not be considerted here. Because we only need to make sure the keys from DataSource is not split by group by,
+	// and the newly generated keys will not cause the split.
+	innerKeysFromDataSource := make(map[int64]struct{}, len(innerJoinKeys))
+	for _, key := range innerJoinKeys {
+		if expression.ExprFromSchema(key, dataSourceSchema) {
+			innerKeysFromDataSource[key.UniqueID] = struct{}{}
+		}
+	}
+	if len(innerKeysFromDataSource) > len(groupByCols) {
+		return false
+	}
+	for keyColID := range innerKeysFromDataSource {
+		if _, ok := groupByCols[keyColID]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func extractIndexJoinInnerChildPattern(p *logicalop.LogicalJoin, innerChild base.LogicalPlan, innerJoinKeys []*expression.Column) *indexJoinInnerChildWrapper {
 	wrapper := &indexJoinInnerChildWrapper{}
 	nextChild := func(pp base.LogicalPlan) base.LogicalPlan {
 		if len(pp.Children()) != 1 {
@@ -886,6 +976,15 @@ childLoop:
 	}
 	if wrapper.ds == nil || wrapper.ds.PreferStoreType&h.PreferTiFlash != 0 {
 		return nil
+	}
+	wrapper.rangeOtherConds = p.OtherConditions
+	for _, child := range wrapper.zippedChildren {
+		if la, ok := child.(*logicalop.LogicalAggregation); ok {
+			if !checkIndexJoinInnerTaskWithAgg(la, innerJoinKeys, wrapper.ds.Schema()) {
+				return nil
+			}
+			wrapper.rangeOtherConds = pruneIndexJoinRangeCondsForAgg(wrapper.rangeOtherConds, la)
+		}
 	}
 	return wrapper
 }
@@ -917,7 +1016,7 @@ func buildIndexJoinInner2TableScan(
 	var innerTask, innerTask2 base.Task
 	var indexJoinResult *indexJoinPathResult
 	if ds.TableInfo.IsCommonHandle {
-		indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResult(p, ds, innerJoinKeys, outerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
+		indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResult(p, ds, wrapper.rangeOtherConds, innerJoinKeys, outerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
 		if indexJoinResult == nil {
 			return nil
 		}
@@ -1014,7 +1113,7 @@ func buildIndexJoinInner2IndexScan(
 		}
 		return false
 	}
-	indexJoinResult, keyOff2IdxOff := getBestIndexJoinPathResult(p, ds, innerJoinKeys, outerJoinKeys, indexValid)
+	indexJoinResult, keyOff2IdxOff := getBestIndexJoinPathResult(p, ds, wrapper.rangeOtherConds, innerJoinKeys, outerJoinKeys, indexValid)
 	if indexJoinResult == nil {
 		return nil
 	}
@@ -1075,19 +1174,20 @@ func constructInnerTableScanTask(
 		return nil
 	}
 	ts := PhysicalTableScan{
-		Table:           ds.TableInfo,
-		Columns:         ds.Columns,
-		TableAsName:     ds.TableAsName,
-		DBName:          ds.DBName,
-		filterCondition: ds.PushedDownConds,
-		Ranges:          ranges,
-		rangeInfo:       rangeInfo,
-		KeepOrder:       keepOrder,
-		Desc:            desc,
-		physicalTableID: ds.PhysicalTableID,
-		isPartition:     ds.PartitionDefIdx != nil,
-		tblCols:         ds.TblCols,
-		tblColHists:     ds.TblColHists,
+		Table:                                    ds.TableInfo,
+		Columns:                                  ds.Columns,
+		TableAsName:                              ds.TableAsName,
+		DBName:                                   ds.DBName,
+		filterCondition:                          ds.PushedDownConds,
+		Ranges:                                   ranges,
+		rangeInfo:                                rangeInfo,
+		KeepOrder:                                keepOrder,
+		Desc:                                     desc,
+		physicalTableID:                          ds.PhysicalTableID,
+		isPartition:                              ds.PartitionDefIdx != nil,
+		tblCols:                                  ds.TblCols,
+		tblColHists:                              ds.TblColHists,
+		ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema().Clone())
 	if rowCount <= 0 {
@@ -1306,14 +1406,15 @@ func constructInnerIndexScanTask(
 	if !path.IsSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
-			Columns:         ds.Columns,
-			Table:           is.Table,
-			TableAsName:     ds.TableAsName,
-			DBName:          ds.DBName,
-			isPartition:     ds.PartitionDefIdx != nil,
-			physicalTableID: ds.PhysicalTableID,
-			tblCols:         ds.TblCols,
-			tblColHists:     ds.TblColHists,
+			Columns:                                  ds.Columns,
+			Table:                                    is.Table,
+			TableAsName:                              ds.TableAsName,
+			DBName:                                   ds.DBName,
+			isPartition:                              ds.PartitionDefIdx != nil,
+			physicalTableID:                          ds.PhysicalTableID,
+			tblCols:                                  ds.TblCols,
+			tblColHists:                              ds.TblColHists,
+			ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
 		ts.schema = is.dataSourceSchema.Clone()
 		if ds.TableInfo.IsCommonHandle {
@@ -2539,10 +2640,8 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 			"MPP mode may be blocked because operator `Apply` is not supported now.")
 		return nil, true, nil
 	}
-	if !prop.IsSortItemEmpty() && la.SCtx().GetSessionVars().EnableParallelApply {
-		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Parallel Apply rejects the possible order properties of its outer child currently"))
-		return nil, true, nil
-	}
+	// Parallel Apply now supports ordered output via a reorder buffer,
+	// so we no longer reject sort properties here.
 	disableAggPushDownToCop(la.Children()[0])
 	join := GetHashJoin(la, prop)
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
@@ -2552,11 +2651,18 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 		columns = append(columns, &tmp.Column)
 	}
 	cacheHitRatio := 0.0
-	if la.StatsInfo().RowCount != 0 {
-		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(columns, la.Schema(), la.StatsInfo())
-		// for example, if there are 100 rows and the number of distinct values of these correlated columns
-		// are 70, then we can assume 30 rows can hit the cache so the cache hit ratio is 1 - (70/100) = 0.3
-		cacheHitRatio = 1 - (ndv / la.StatsInfo().RowCount)
+	// The inner plan runs once per outer row and the cache is looked up once per run, so the
+	// distinct correlated values have to be compared against the number of outer rows. The rows
+	// the Apply itself emits are not that number: a LATERAL join can return several rows per
+	// outer row, which would overstate the ratio and enable a cache that cannot hit.
+	outerChild := la.Children()[0]
+	stats0 := outerChild.StatsInfo()
+	if stats0 != nil && stats0.RowCount != 0 {
+		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(columns, outerChild.Schema(), stats0)
+		// for example, if there are 100 outer rows and the number of distinct values of these
+		// correlated columns are 70, then we can assume 30 rows can hit the cache so the cache
+		// hit ratio is 1 - (70/100) = 0.3
+		cacheHitRatio = 1 - (ndv / stats0.RowCount)
 	}
 
 	var canUseCache bool
@@ -2566,6 +2672,29 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 		canUseCache = false
 	}
 
+	// When the parent requires ordering, compute the expected row count for the
+	// outer child.  For a semi/anti-semi join, each outer row produces at most
+	// one output row, so if the parent expects N rows we need N / selectivity
+	// outer rows.  For other join types the ratio may differ, but using the
+	// Apply's own selectivity is still a reasonable approximation.  Unordered
+	// props keep the unlimited expected count so existing plan choices between
+	// Apply and HashJoin are unchanged (matches #66786 on master).
+	outerExpectedCnt := math.MaxFloat64
+	if !prop.IsSortItemEmpty() && prop.ExpectedCnt < math.MaxFloat64 {
+		outerRowCount := la.Children()[0].StatsInfo().RowCount
+		applyRowCount := la.StatsInfo().RowCount
+		if applyRowCount > 0 && outerRowCount > 0 {
+			selectivity := applyRowCount / outerRowCount
+			if selectivity > 0 {
+				outerExpectedCnt = prop.ExpectedCnt / selectivity
+			}
+		}
+		// The outer side can never need fewer rows than the parent expects.
+		if outerExpectedCnt < prop.ExpectedCnt {
+			outerExpectedCnt = prop.ExpectedCnt
+		}
+	}
+
 	apply := PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,
@@ -2573,7 +2702,7 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 	}.Init(la.SCtx(),
 		la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt),
 		la.QueryBlockOffset(),
-		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus},
+		&property.PhysicalProperty{ExpectedCnt: outerExpectedCnt, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus},
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus})
 	apply.SetSchema(la.Schema())
 	return []base.PhysicalPlan{apply}, true, nil

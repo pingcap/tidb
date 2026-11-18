@@ -180,7 +180,7 @@ func TestCheckPrivilegeWithRoles(t *testing.T) {
 	rootTk.MustExec("GRANT SELECT(a) ON t TO r;")
 	rootTk.MustExec("GRANT r TO u;")
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u", Hostname: "%"}, nil, nil, nil))
-	tk.MustGetErrCode("SELECT a FROM test.t;", mysql.ErrColumnaccessDenied)
+	tk.MustGetErrCode("SELECT a FROM test.t;", mysql.ErrTableaccessDenied)
 	tk.MustExec("SET ROLE r;")
 	tk.MustQuery("SELECT a FROM test.t;")
 	tk.MustGetErrCode("SELECT b FROM test.t;", mysql.ErrColumnaccessDenied)
@@ -750,6 +750,124 @@ func TestShowCreateTable(t *testing.T) {
 	tk.MustExec(`SHOW CREATE TABLE mysql.user`)
 }
 
+func TestExchangePartitionChecksTargetTablePrivileges(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE DATABASE exchange_src`)
+	rootTk.MustExec(`CREATE DATABASE exchange_dst`)
+	rootTk.MustExec(`CREATE TABLE exchange_src.pt (a int primary key) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (100),
+		PARTITION p1 VALUES LESS THAN (200)
+	)`)
+	rootTk.MustExec(`CREATE TABLE exchange_dst.nt (a int primary key)`)
+	rootTk.MustExec(`CREATE USER 'exchange_low'@'%'`)
+	rootTk.MustExec(`GRANT ALTER, DROP ON exchange_src.* TO 'exchange_low'@'%'`)
+
+	tk := testkit.NewTestKit(t, store)
+	authLow := func() {
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
+			Username: "exchange_low", Hostname: "%", AuthUsername: "exchange_low", AuthHostname: "%",
+		}, nil, nil, nil))
+	}
+	exchange := func() error {
+		authLow()
+		return tk.ExecToErr(`ALTER TABLE exchange_src.pt EXCHANGE PARTITION p0 WITH TABLE exchange_dst.nt`)
+	}
+
+	// EXCHANGE PARTITION swaps the data of both tables, so to match MySQL it requires
+	// ALTER, INSERT, CREATE and DROP on BOTH the partitioned table (pt) and the
+	// non-partitioned table (nt). Grant them one missing privilege at a time and assert
+	// each is enforced; in particular DROP on nt guards against destroying/replacing nt's
+	// existing data without the DROP privilege.
+
+	// Missing CREATE on the target table nt.
+	err := exchange()
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "CREATE command denied")
+	require.Contains(t, err.Error(), "'nt'")
+
+	// nt now has CREATE+INSERT, but the partitioned table pt still lacks INSERT.
+	rootTk.MustExec(`GRANT CREATE, INSERT ON exchange_dst.* TO 'exchange_low'@'%'`)
+	err = exchange()
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "INSERT command denied")
+	require.Contains(t, err.Error(), "'pt'")
+
+	// pt now has INSERT+CREATE, but the target table nt still lacks ALTER.
+	rootTk.MustExec(`GRANT INSERT, CREATE ON exchange_src.* TO 'exchange_low'@'%'`)
+	err = exchange()
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "ALTER command denied")
+	require.Contains(t, err.Error(), "'nt'")
+
+	// nt now has ALTER, but still lacks DROP: exchanging replaces nt's existing data, which
+	// MySQL gates behind DROP on nt. Without DROP the statement must still be denied.
+	rootTk.MustExec(`GRANT ALTER ON exchange_dst.* TO 'exchange_low'@'%'`)
+	err = exchange()
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "DROP command denied")
+	require.Contains(t, err.Error(), "'nt'")
+
+	// Full MySQL-aligned privilege set on both tables -> allowed.
+	rootTk.MustExec(`GRANT DROP ON exchange_dst.* TO 'exchange_low'@'%'`)
+	authLow()
+	tk.MustExec(`ALTER TABLE exchange_src.pt EXCHANGE PARTITION p0 WITH TABLE exchange_dst.nt`)
+}
+
+func TestExchangePartitionRejectsReservedSystemTableTarget(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`CREATE DATABASE exchange_reserved`)
+	tk.MustExec(`CREATE TABLE exchange_reserved.pt (a int primary key) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (100),
+		PARTITION p1 VALUES LESS THAN (200)
+	)`)
+
+	err := tk.ExecToErr(`ALTER TABLE exchange_reserved.pt EXCHANGE PARTITION p0 WITH TABLE mysql.tidb_ddl_job`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Exchange partition on system table 'mysql.tidb_ddl_job'")
+}
+
+func TestRenameTablesChecksAllPairsPrivileges(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE DATABASE rename_priv_atk`)
+	rootTk.MustExec(`CREATE DATABASE rename_priv_vic`)
+	rootTk.MustExec(`CREATE USER 'rename_low'@'%'`)
+	rootTk.MustExec(`GRANT ALL PRIVILEGES ON rename_priv_atk.* TO 'rename_low'@'%'`)
+	rootTk.MustExec(`CREATE TABLE rename_priv_atk.pair0a (id INT)`)
+	rootTk.MustExec(`CREATE TABLE rename_priv_atk.pair0b (id INT)`)
+	rootTk.MustExec(`CREATE TABLE rename_priv_vic.secret (id INT)`)
+
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
+		Username:     "rename_low",
+		Hostname:     "localhost",
+		AuthUsername: "rename_low",
+		AuthHostname: "%",
+	}, nil, nil, nil))
+
+	tk.MustGetErrCode(`RENAME TABLE rename_priv_atk.pair0a TO rename_priv_atk.pair0a_tmp,
+		rename_priv_vic.secret TO rename_priv_atk.secret_stolen`, errno.ErrTableaccessDenied)
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0a'`).Check(testkit.Rows("pair0a"))
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0a_tmp'`).Check(testkit.Rows())
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_vic LIKE 'secret'`).Check(testkit.Rows("secret"))
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'secret_stolen'`).Check(testkit.Rows())
+
+	tk.MustGetErrCode(`RENAME TABLE rename_priv_atk.pair0a TO rename_priv_atk.pair0a_tmp,
+		rename_priv_atk.pair0b TO rename_priv_vic.pair0b_tmp`, errno.ErrTableaccessDenied)
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0a'`).Check(testkit.Rows("pair0a"))
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0a_tmp'`).Check(testkit.Rows())
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0b'`).Check(testkit.Rows("pair0b"))
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_vic LIKE 'pair0b_tmp'`).Check(testkit.Rows())
+
+	tk.MustExec(`RENAME TABLE rename_priv_atk.pair0a TO rename_priv_atk.pair0a_tmp,
+		rename_priv_atk.pair0b TO rename_priv_atk.pair0b_tmp`)
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0a_tmp'`).Check(testkit.Rows("pair0a_tmp"))
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0b_tmp'`).Check(testkit.Rows("pair0b_tmp"))
+}
+
 func TestAnalyzeTable(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 
@@ -830,7 +948,7 @@ func TestPerformanceSchema(t *testing.T) {
 	tk.MustExec(`CREATE USER 'u1'@'localhost';`)
 
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustGetErrCode(`select * from performance_schema.events_statements_summary_by_digest where schema_name = 'tst'`, errno.ErrColumnaccessDenied)
+	tk.MustGetErrCode(`select * from performance_schema.events_statements_summary_by_digest where schema_name = 'tst'`, errno.ErrTableaccessDenied)
 
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`GRANT SELECT ON *.* TO 'u1'@'localhost';`)
@@ -887,6 +1005,22 @@ func TestMetricsSchema(t *testing.T) {
 		},
 		{
 			"SELECT * FROM metrics_schema.up",
+			"nobody",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+			},
+		},
+		{
+			"SELECT COUNT(*) FROM metrics_schema.up",
+			"nobody",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+			},
+		},
+		{
+			"SELECT 1 FROM metrics_schema.up LIMIT 1",
 			"nobody",
 			func(err error) {
 				require.Error(t, err)
@@ -1813,7 +1947,7 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 		},
 		{
 			sql:     "select * from tmp join t where tmp.id=t.id",
-			errcode: mysql.ErrColumnaccessDenied,
+			errcode: mysql.ErrTableaccessDenied,
 		},
 		{
 			sql:     "(select * from tmp) union (select * from t)",
@@ -2425,16 +2559,16 @@ func TestSelectColumnPrivilegeInSubqueryAndCTE(t *testing.T) {
 		FROM t1 GROUP BY b HAVING
     COUNT(*) > (SELECT AVG(a) FROM (SELECT COUNT(*) AS a FROM t1 GROUP BY b) AS counts);`
 	userTk.MustQuery(`select a from t1 where a in (select a from t1);`).Check(testkit.Rows(`1`))
-	userTk.MustGetErrCode(`select a from t1 where a in (select a from t2);`, errno.ErrColumnaccessDenied)
-	userTk.MustGetErrCode(`select a from t1 where exists (select a from t2);`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`select a from t1 where a in (select a from t2);`, errno.ErrTableaccessDenied)
+	userTk.MustGetErrCode(`select a from t1 where exists (select a from t2);`, errno.ErrTableaccessDenied)
 	userTk.MustGetErrCode(`select a from t1 where b = (select a from t1);`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`select a from t1 where a = (select b from t1);`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`select a from t1 where b in (select a from t1);`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`select a from t1 where b > any(select a from t1);`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`select a from t1 where b > all(select a from t1);`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`select a from t1 where b = 1 and exists (select a from t1);`, errno.ErrColumnaccessDenied)
-	userTk.MustGetErrCode(`SELECT (SELECT a FROM t2) FROM t1;`, errno.ErrColumnaccessDenied)
-	userTk.MustGetErrCode(`SELECT b FROM t2	WHERE a = (SELECT MAX(a) FROM t1);`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`SELECT (SELECT a FROM t2) FROM t1;`, errno.ErrTableaccessDenied)
+	userTk.MustGetErrCode(`SELECT b FROM t2	WHERE a = (SELECT MAX(a) FROM t1);`, errno.ErrTableaccessDenied)
 	userTk.MustGetErrCode(`SELECT count(*) FROM test.t2;`, errno.ErrTableaccessDenied)
 	userTk.MustGetErrCode(`SELECT (SELECT count(*) FROM test.t2);`, errno.ErrTableaccessDenied)
 	userTk.MustExec("SELECT count(*) FROM test.t1;")
@@ -2521,7 +2655,7 @@ func TestUpdateColumnPrivilege(t *testing.T) {
 	tk.MustExec(`INSERT INTO test.t2 VALUES (1, 2);`)
 
 	userTk.MustGetErrCode(`UPDATE test.t1, test.t2 SET a = c WHERE b = d`, errno.ErrColumnaccessDenied)
-	userTk.MustGetErrCode(`UPDATE test.t1, (SELECT c FROM test.t2 WHERE d = 2) AS tt SET a = tt.c	`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`UPDATE test.t1, (SELECT c FROM test.t2 WHERE d = 2) AS tt SET a = tt.c	`, errno.ErrTableaccessDenied)
 	tk.MustExec(`GRANT SELECT(c,d) ON test.t2 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`UPDATE test.t1, test.t2 SET a = c WHERE b = d`)
 	userTk.MustExec(`UPDATE test.t1, (SELECT c FROM test.t2 WHERE d = 2) AS tt SET a = tt.c	`)
@@ -2644,11 +2778,11 @@ func TestColumnPrivilege4Views(t *testing.T) {
 	userTk.MustContainErrMsg("SELECT * FROM test.v3",
 		"[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 'v3'")
 	userTk.MustContainErrMsg("SELECT * FROM test.v4",
-		"[planner:1356]View 'test.v4' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
+		"[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 'v4'")
 	userTk.MustContainErrMsg("SELECT * FROM test.v5",
 		"[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 'v5'")
 	userTk.MustContainErrMsg("SELECT * FROM test.v6",
-		"[planner:1356]View 'test.v6' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
+		"[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 'v6'")
 
 	// 2. testuser has SELECT privilege of test.v1 and test.v2
 	tk.MustExec(`GRANT SELECT(a) ON test.v1 to 'testuser'@'localhost';`)
@@ -2710,9 +2844,13 @@ func TestColumnPrivilege4TraceAndExplain(t *testing.T) {
 	explainSQL := "EXPLAIN SELECT a,b,c FROM test.t"
 	grantSQL := "GRANT SELECT(%s) ON test.t TO 'testuser'@'localhost';"
 
-	for _, colName := range []string{"a", "b", "c"} {
+	for i, colName := range []string{"a", "b", "c"} {
 		userTk.MustQuery(traceSQL).CheckContain("session.RollbackTxn")
-		userTk.MustGetErrCode(explainSQL, mysql.ErrColumnaccessDenied)
+		errCode := mysql.ErrColumnaccessDenied
+		if i == 0 {
+			errCode = mysql.ErrTableaccessDenied
+		}
+		userTk.MustGetErrCode(explainSQL, errCode)
 		tk.MustExec(fmt.Sprintf(grantSQL, colName))
 	}
 

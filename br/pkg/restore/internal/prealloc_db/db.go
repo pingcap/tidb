@@ -139,26 +139,27 @@ func (db *DB) CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInf
 
 // CreateDatabase executes a CREATE DATABASE SQL.
 func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo, supportPolicy bool, policyMap *sync.Map) (bool, error) {
-	log.Info("create database", zap.Stringer("name", schema.Name))
+	schemaClone := schema.Clone()
+	log.Info("create database", zap.Stringer("name", schemaClone.Name))
 
 	if !supportPolicy {
 		log.Info("set placementPolicyRef to nil when target tidb not support policy",
-			zap.Stringer("database", schema.Name))
-		schema.PlacementPolicyRef = nil
+			zap.Stringer("database", schemaClone.Name))
+		schemaClone.PlacementPolicyRef = nil
 	}
 
-	if schema.PlacementPolicyRef != nil {
-		if err := db.ensurePlacementPolicy(ctx, schema.PlacementPolicyRef.Name, policyMap); err != nil {
+	if schemaClone.PlacementPolicyRef != nil {
+		if err := db.ensurePlacementPolicy(ctx, schemaClone.PlacementPolicyRef.Name, policyMap); err != nil {
 			return false, errors.Trace(err)
 		}
 	}
 
-	err := db.se.CreateDatabaseOnExistError(ctx, schema)
+	err := db.se.CreateDatabaseOnExistError(ctx, schemaClone)
 	if err != nil {
 		if infoschema.ErrDatabaseExists.Equal(err) {
 			return true, nil
 		}
-		log.Error("create database failed", zap.Stringer("db", schema.Name), zap.Error(err))
+		log.Error("create database failed", zap.Stringer("db", schemaClone.Name), zap.Error(err))
 	}
 	return false, errors.Trace(err)
 }
@@ -273,20 +274,21 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
 		clonedInfos := make(map[string][]*model.TableInfo)
 		for _, table := range tables {
+			targetInfo := table.Info.Clone()
 			if !supportPolicy {
 				log.Info("set placementPolicyRef to nil when target tidb not support policy",
-					zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
-				table.Info.ClearPlacement()
+					zap.Stringer("table", targetInfo.Name), zap.Stringer("db", table.DB.Name))
+				targetInfo.ClearPlacement()
 			} else {
-				if err := db.ensureTablePlacementPolicies(ctx, table.Info, policyMap); err != nil {
+				if err := db.ensureTablePlacementPolicies(ctx, targetInfo, policyMap); err != nil {
 					return errors.Trace(err)
 				}
 			}
 
-			if ttlInfo := table.Info.TTLInfo; ttlInfo != nil {
+			if ttlInfo := targetInfo.TTLInfo; ttlInfo != nil {
 				ttlInfo.Enable = false
 			}
-			infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
+			infoClone, err := db.preallocedIDs.RewriteTableInfo(targetInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -311,21 +313,22 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 // CreateTable executes a CREATE TABLE SQL.
 func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 	ddlTables map[restore.UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
+	targetInfo := table.Info.Clone()
 	if !supportPolicy {
 		log.Info("set placementPolicyRef to nil when target tidb not support policy",
-			zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
-		table.Info.ClearPlacement()
+			zap.Stringer("table", targetInfo.Name), zap.Stringer("db", table.DB.Name))
+		targetInfo.ClearPlacement()
 	} else {
-		if err := db.ensureTablePlacementPolicies(ctx, table.Info, policyMap); err != nil {
+		if err := db.ensureTablePlacementPolicies(ctx, targetInfo, policyMap); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	if ttlInfo := table.Info.TTLInfo; ttlInfo != nil {
+	if ttlInfo := targetInfo.TTLInfo; ttlInfo != nil {
 		ttlInfo.Enable = false
 	}
 
-	infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
+	infoClone, err := db.preallocedIDs.RewriteTableInfo(targetInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}

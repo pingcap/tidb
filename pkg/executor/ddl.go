@@ -144,7 +144,7 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	}
 
 	defer func() {
-		e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue = false
+		e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue.Store(false)
 		e.Ctx().GetSessionVars().StmtCtx.DDLJobID = 0
 	}()
 
@@ -222,8 +222,8 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	if err != nil {
 		// If the owner return ErrTableNotExists error when running this DDL, it may be caused by schema changed,
 		// otherwise, ErrTableNotExists can be returned before putting this DDL job to the job queue.
-		if (e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue && infoschema.ErrTableNotExists.Equal(err)) ||
-			!e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue {
+		isDDLJobInQueue := e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue.Load()
+		if (isDDLJobInQueue && infoschema.ErrTableNotExists.Equal(err)) || !isDDLJobInQueue {
 			return e.toErr(err)
 		}
 		return err
@@ -572,7 +572,16 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return err
 	}
 	if len(s.NewName) != 0 {
+		oldTableName := tblInfo.Name
+		tblInfo = tblInfo.Clone()
 		tblInfo.Name = pmodel.NewCIStr(s.NewName)
+		oldSchemaName := pmodel.NewCIStr(job.SchemaName)
+		for _, fk := range tblInfo.ForeignKeys {
+			if fk.Version >= model.FKVersion1 &&
+				fk.RefSchema.L == oldSchemaName.L && fk.RefTable.L == oldTableName.L {
+				fk.RefTable = tblInfo.Name
+			}
+		}
 	}
 	// Check the table ID was not exists.
 	is := domain.GetDomain(e.Ctx()).InfoSchema()

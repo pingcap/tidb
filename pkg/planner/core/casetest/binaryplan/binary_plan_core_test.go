@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package binaryplan
 
 import (
 	"encoding/base64"
@@ -185,6 +185,8 @@ func TestTooLongBinaryPlan(t *testing.T) {
 func TestLongBinaryPlan(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
+	// Capture the binary plan regardless of how quickly the query finishes.
+	newCfg.Instance.SlowThreshold = 0
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	require.NoError(t, err)
 	newCfg.Log.SlowQueryFile = f.Name()

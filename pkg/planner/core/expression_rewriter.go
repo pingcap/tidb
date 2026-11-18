@@ -1514,9 +1514,6 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr:
-		if v.F == ast.AggFuncCount {
-			er.collectPrivsForCount()
-		}
 	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause, *ast.SubqueryExpr,
 		*ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr, *ast.WindowFuncExpr, *ast.TableNameExpr:
 	case *driver.ValueExpr:
@@ -2494,48 +2491,6 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	} else {
 		function, er.err = er.newFunction(v.FnName.L, &v.Type, args...)
 		er.ctxStackAppend(function, types.EmptyName)
-	}
-}
-
-// Assume that there are two tables t and t1, which contain a and b columns individually. In MySQL:
-// -- Require `a` or `b` SELECT privilege
-// select count(*) from t;
-// select count(1) from t;
-// -- Require `a` SELECT privilege
-// select count(a) from t;
-// -- Require `b` SELECT privilege
-// select count(b) from t;
-// -- Require `SELCT` privilege of `t.a` and `t1.a`
-// select count(*) from t join t1 on t.a = t1.a;
-func (er *expressionRewriter) collectPrivsForCount() {
-	b := er.planCtx.builder
-	if b == nil {
-		return
-	}
-	// dbName -> tableName
-	tableNames := make(map[string]map[string]struct{})
-	for _, fieldName := range er.names {
-		tblName := &ast.TableName{
-			Name:   fieldName.OrigTblName,
-			Schema: fieldName.DBName,
-		}
-		if b.is != nil && infoschema.TableIsView(b.is, fieldName.DBName, fieldName.TblName) {
-			tblName.Name = fieldName.TblName
-		}
-		if len(tblName.Name.L) > 0 && len(tblName.Schema.L) > 0 {
-			if _, ok := tableNames[tblName.Schema.L]; !ok {
-				tableNames[tblName.Schema.L] = make(map[string]struct{})
-			}
-			tableNames[tblName.Schema.L][tblName.Name.L] = struct{}{}
-		}
-	}
-
-	user, host := auth.GetUserAndHostName(b.ctx.GetSessionVars().User)
-	for db, tables := range tableNames {
-		for table := range tables {
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, db, table, "*",
-				plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", user, host, table))
-		}
 	}
 }
 

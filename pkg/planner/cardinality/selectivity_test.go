@@ -468,6 +468,8 @@ func TestNewIndexWithoutStats(t *testing.T) {
 	testKit.MustExec("create table t(a int, b int, c int, index idxa(a), index idxca(c,a))")
 	testKit.MustExec("set @@tidb_analyze_version=2")
 	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	// idxab is estimated from column statistics, so discourage full table scans - this is an index test.
+	testKit.MustExec("set @@tidb_opt_table_full_scan_cost_factor=1000")
 	testKit.MustExec("insert into t values (1, 1, 1)")
 	testKit.MustExec("insert into t select mod(a,250), mod(a,10), mod(a,100) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
 	testKit.MustExec("analyze table t")
@@ -485,6 +487,34 @@ func TestNewIndexWithoutStats(t *testing.T) {
 	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b > 5 and c > 5").CheckContain("idxab(a, b)")
 	// New index idxab should NOT win because idxca has the same number of equals and has statistics
 	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b > 5 and c = 5").CheckContain("idxca(c, a)")
+	// The missing-statistics rules do not depend on tidb_opt_prefer_range_scan.
+	testKit.MustExec("set @@tidb_opt_prefer_range_scan=0")
+	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b = 5").CheckContain("idxab(a, b)")
+	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b > 5 and c = 5").CheckContain("idxca(c, a)")
+}
+
+func TestMissingStatsIndexUsesColumnStats(t *testing.T) {
+	// An index without statistics, whose access columns all have column statistics, is compared on its
+	// estimates instead of by the missing-statistics heuristics. It should behave as if it was analyzed.
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int, d int)")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	// a, b and c are fully correlated with 2 distinct values each. d is unique.
+	testKit.MustExec("insert into t select mod(a,2), mod(a,2), mod(a,2), a from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 1000) select a from x) as subquery")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index idx_abc on t(a, b, c)")
+	testKit.MustExec("create index idx_d on t(d)")
+	for _, preferRange := range []string{"0", "1"} {
+		testKit.MustExec("set @@tidb_opt_prefer_range_scan=" + preferRange)
+		// Half of the table matches. The extra equal predicates of idx_abc must not prune the full table scan.
+		testKit.MustQuery("explain format='brief' select * from t where a = 1 and b = 1 and c = 1").CheckContain("TableFullScan")
+		// A selective index is still chosen.
+		testKit.MustQuery("explain format='brief' select * from t where d = 5").CheckContain("idx_d(d)")
+	}
 }
 
 func TestVirtualColumnIndexEstimation(t *testing.T) {
@@ -532,6 +562,76 @@ func TestVirtualColumnIndexEstimation(t *testing.T) {
 	estRows, err = strconv.ParseFloat(rows[0][1].(string), 64)
 	require.NoError(t, err)
 	require.Greater(t, estRows, 10.0)
+}
+
+func TestNewIndexWithLowNDVColumnStats(t *testing.T) {
+	// An index without statistics, whose columns each have a low NDV, is estimated from column statistics.
+	// The columns are fully correlated, so assuming independence would underestimate badly. Exponential
+	// backoff must be used instead.
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int)")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("insert into t select mod(a,10), mod(a,10), mod(a,10) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 1000) select a from x) as subquery")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index idx_abc on t(a, b, c)")
+	rows := testKit.MustQuery("explain format='brief' select * from t use index(idx_abc) where a = 1 and b = 1 and c = 1").Rows()
+	var estRows float64
+	for _, row := range rows {
+		if strings.Contains(row[0].(string), "IndexRangeScan") {
+			var err error
+			estRows, err = strconv.ParseFloat(row[1].(string), 64)
+			require.NoError(t, err)
+		}
+	}
+	// Actual row count is 100. Independence would estimate 1000 * 0.1^3 = 1, while exponential
+	// backoff estimates 1000 * 0.1 * 0.1^(1/2) * 0.1^(1/4) ~= 17.8.
+	require.Greater(t, estRows, 10.0)
+}
+
+func TestMissingStatsIndexWithVirtualColumn(t *testing.T) {
+	// An index without statistics on a virtual column (which has no column statistics) and a column with
+	// statistics must still account for the virtual column, and report its statistics as missing.
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(int_col int, string_col varchar(255))")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec(`insert into t values (-1, "foo"), (1, "bar")`)
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index combined_index on t((int_col + int_col), string_col)")
+	// The virtual column has no statistics, so the index falls back to the pseudo estimation for all of its
+	// columns instead of estimating from string_col alone.
+	testKit.MustQuery(`explain format='brief' select * from t where int_col + int_col = 2 and string_col = "bar"`).
+		CheckContain("stats:partial[combined_index:missing]")
+}
+
+func TestIssue71999(t *testing.T) {
+	// An index without statistics must not prune an index with statistics via the prefer-range
+	// skyline rule unless its access columns cover the other index's access columns.
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(id int not null, a int not null, b int not null, c int not null, key idx_id(id))")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("set @@tidb_opt_prefer_range_scan=1")
+	testKit.MustExec("insert into t select a, 1, 1, 1 from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 1000) select a from x) as subquery")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index idx_abc on t(a, b, c)")
+	// idx_abc has no statistics and its access columns (a, b, c) do not cover idx_id's (id),
+	// so it must not prune idx_id, which has statistics and is far more selective.
+	testKit.MustQuery("explain format='brief' select * from t where id = 1 and a = 1 and b = 1 and c = 1").CheckContain("idx_id(id)")
+	testKit.MustExec("set @@tidb_opt_prefer_range_scan=0")
+	testKit.MustQuery("explain format='brief' select * from t where id = 1 and a = 1 and b = 1 and c = 1").CheckContain("idx_id(id)")
+
+	// On master, the case where a, b and c have no column statistics at all is also covered. It relies on
+	// the min/max (risk) row estimates, which release-8.5 does not have, so it is not part of this backport.
 }
 
 func TestEstimationUniqueKeyEqualConds(t *testing.T) {
@@ -1855,4 +1955,107 @@ func TestUninitializedStats(t *testing.T) {
 	tk.MustQuery("explain analyze select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';")
 	tk.MustQuery("show stats_histograms").CheckNotContain("allEvicted")
 	tk.MustQuery("explain analyze select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';").CheckNotContain("unInitialized")
+}
+
+// TestEqualEstimateOnZeroRepeatBucketUpper covers equality estimation on a
+// bucket upper that carries no point frequency. Merged global histograms
+// produce such buckets when an upper falls on a merge cut, and the sampled
+// builder produces them when the estimated NDV exceeds the histogram's row
+// count. A bucket upper is a value observed in the data, so a zero Repeat
+// means "not recorded" rather than "no rows", and the estimate must fall
+// back to the uniform average instead of reporting an exact zero.
+func TestEqualEstimateOnZeroRepeatBucketUpper(t *testing.T) {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	colInfo := &model.ColumnInfo{ID: 1, FieldType: *tp}
+	// 200 rows over an NDV of 100, so the uniform average is 2 per value.
+	hg := statistics.NewHistogram(colInfo.ID, 100, 0, 0, tp, 2, 0)
+	lo1, up1 := types.NewIntDatum(1), types.NewIntDatum(50)
+	lo2, up2 := types.NewIntDatum(51), types.NewIntDatum(100)
+	hg.AppendBucket(&lo1, &up1, 100, 0) // no frequency recorded for 50
+	hg.AppendBucket(&lo2, &up2, 200, 5) // 100 was observed 5 times
+	col := &statistics.Column{
+		Histogram:         *hg,
+		Info:              colInfo,
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
+	sctx := mock.NewContext()
+
+	est, err := cardinality.GetColumnRowCount(sctx, col, getRange(50, 50), 200, 0, false)
+	require.NoError(t, err)
+	require.Equal(t, 2.0, est,
+		"a zero Repeat must fall back to the uniform average, not report zero rows")
+
+	est, err = cardinality.GetColumnRowCount(sctx, col, getRange(100, 100), 200, 0, false)
+	require.NoError(t, err)
+	require.Equal(t, 5.0, est, "an observed Repeat must still be used as is")
+}
+
+// TestIndexRangeEstimationWithPrefixedCommonHandle covers a clustered handle whose leading
+// column is a prefixed index column. The handle appended to a non-unique secondary index
+// stores that column truncated, so the execution ranges must keep prefix semantics and
+// re-check the predicate as a filter. Estimation follows a different route: a tuple
+// comparison spanning the index column and the whole handle reaches Selectivity() without
+// a filled access path (through the index merge OR path estimation), where the ranges are
+// built from the length slice assembled in Selectivity() itself. That slice must hold one
+// entry per column of the extended index key; see issue #70532, where the appended handle
+// counted as a single column and range building read past the end of the slice.
+func TestIndexRangeEstimationWithPrefixedCommonHandle(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(p1 varchar(64), p2 int, c int, primary key(p1(2), p2) clustered, key ic(c))")
+	vals := make([]string, 0, 100)
+	for i := 1; i <= 100; i++ {
+		// Every p1 shares the same 2-character prefix, so the prefix stored in the index
+		// key carries no information beyond "some row of this table".
+		vals = append(vals, fmt.Sprintf("('pp_%03d', %d, %d)", i, i, i%10))
+	}
+	tk.MustExec("insert into t values " + strings.Join(vals, ","))
+	tk.MustExec("analyze table t all columns")
+
+	// Returns the estRows and operator info of the named operator in the plan.
+	planRow := func(sql, operator string) (estRows, operatorInfo string) {
+		rows := tk.MustQuery("explain format='brief' " + sql).Rows()
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), operator) {
+				return row[1].(string), row[4].(string)
+			}
+		}
+		t.Fatalf("no %s in plan for %q", operator, sql)
+		return "", ""
+	}
+
+	// Equality on the prefixed handle column ranges over the stored prefix only, and the
+	// full predicate stays as a filter on the table side, where the untruncated value is
+	// available.
+	sql := "select * from t use index(ic) where c = 5 and p1 = 'pp_055'"
+	_, opInfo := planRow(sql, "IndexRangeScan")
+	require.Contains(t, opInfo, `range:[5 "pp",5 "pp"]`, "the handle range must use the stored prefix")
+	_, opInfo = planRow(sql, "Selection")
+	require.Contains(t, opInfo, `eq(test.t.p1, "pp_055")`, "the prefixed predicate must be re-checked")
+	tk.MustQuery(sql).Check(testkit.Rows("pp_055 55 5"))
+
+	// The column after the prefixed one is still ranged over: the prefix only widens its
+	// own dimension of the key.
+	sql = "select * from t use index(ic) where c = 5 and p1 = 'pp_055' and p2 = 55"
+	_, opInfo = planRow(sql, "IndexRangeScan")
+	require.Contains(t, opInfo, `range:[5 "pp" 55,5 "pp" 55]`, "the handle range must keep the p2 dimension")
+	tk.MustQuery(sql).Check(testkit.Rows("pp_055 55 5"))
+
+	// A tuple comparison spanning the index column and the whole handle. Planning this
+	// panicked before the length slice was extended per appended column. The estimate is
+	// the Selectivity() result over the tuple predicate: the appended dimensions are
+	// estimated from the handle columns' own statistics, which hold untruncated values,
+	// so the bounds handed to estimation stay untruncated as well.
+	sql = "select * from t where (c, p1, p2) > (5, 'pp_055', 55)"
+	estRows, _ := planRow(sql, "Selection")
+	require.Equal(t, "40.00", estRows)
+	require.Len(t, tk.MustQuery(sql).Rows(), 44)
+
+	sql = "select * from t use index(ic) where (c, p1, p2) > (5, 'pp_055', 55)"
+	estRows, opInfo = planRow(sql, "IndexRangeScan")
+	require.Contains(t, opInfo, `range:[5 "pp",5 +inf], (5,+inf]`, "the handle range must use the stored prefix")
+	require.Equal(t, "50.00", estRows)
+	require.Len(t, tk.MustQuery(sql).Rows(), 44)
 }

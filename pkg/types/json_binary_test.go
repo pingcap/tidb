@@ -15,11 +15,16 @@
 package types
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 )
 
@@ -171,7 +176,21 @@ func TestQuoteString(t *testing.T) {
 	}{
 		{raw: "3", quoted: `"3"`},
 		{raw: "hello, \"escaped quotes\" world", quoted: `"hello, \"escaped quotes\" world"`},
-		{raw: "你", quoted: `你`},
+		{raw: "你", quoted: `"你"`},
+		// The expected results below are the same as MySQL 8.0, which checks
+		// letters and digits by the lowest byte of the code point, and accepts
+		// the combining marks U+0300-U+036F except as the first character.
+		{raw: "é", quoted: `é`},
+		{raw: "ß", quoted: `ß`},
+		{raw: "α", quoted: `α`},
+		{raw: "с", quoted: `с`},
+		{raw: "б", quoted: `"б"`},
+		{raw: "aб", quoted: `aб`},
+		{raw: "ÿ", quoted: `"ÿ"`},
+		{raw: "Ā", quoted: `"Ā"`},
+		{raw: "😀", quoted: `"😀"`},
+		{raw: "a\u0301", quoted: "a\u0301"},
+		{raw: "\u0301", quoted: "\"\u0301\""},
 		{raw: "true", quoted: `true`},
 		{raw: "null", quoted: `null`},
 		{raw: `"`, quoted: `"\""`},
@@ -720,6 +739,33 @@ func TestBinaryJSONOpaque(t *testing.T) {
 	}
 }
 
+func TestMarshalFloatInContainer(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`["1234567e-0", 1.2345678e20]`, `["1234567e-0", 1.2345678e20]`},
+		{`["ae-0x", 1.5e-20]`, `["ae-0x", 1.5e-20]`},
+		{`{"e-0": 1e-20, "k": [1e20, -1.5e-20]}`, `{"e-0": 1e-20, "k": [1e20, -1.5e-20]}`},
+	}
+	for _, test := range tests {
+		j, err := ParseBinaryJSONFromString(test.input)
+		require.NoError(t, err)
+		require.Equal(t, test.expected, j.String())
+	}
+
+	// The float is rendered after the other content in the buffer, and the
+	// content before it should not affect the result.
+	for _, f := range []float64{1.2345678e20, 1.5e-20, -1e300, 5e-324} {
+		scalar := CreateBinaryJSON(f).String()
+		for n := range 30 {
+			prefix := strings.Repeat("x", n) + "e-0"
+			j := CreateBinaryJSON([]any{prefix, f})
+			require.Equal(t, fmt.Sprintf(`["%s", %s]`, prefix, scalar), j.String())
+		}
+	}
+}
+
 func TestHashValue(t *testing.T) {
 	// The following values should have different hash value
 	jsons := []BinaryJSON{
@@ -740,4 +786,106 @@ func TestHashValue(t *testing.T) {
 	}
 
 	require.Equal(t, len(jsons), len(counter))
+}
+
+func FuzzJSONExtract(f *testing.F) {
+	f.Add(`["abc", 5, 1.234]`, "$[0]")
+	f.Add(`{"key": "value"}`, "$.key")
+	f.Add(`{"key": "value"}`, "$.*")
+	f.Add(`{"key": "value"}`, "$.**")
+	f.Add(`"abc"`, "$")
+	f.Add("5", "$")
+	f.Add("1.2345", "$")
+
+	var db *sql.DB
+	testDBDSN := os.Getenv("TEST_MYSQL_DSN")
+	if testDBDSN != "" {
+		var err error
+		db, err = sql.Open("mysql", testDBDSN)
+		require.NoError(f, err)
+		defer db.Close()
+	}
+
+	caseFile, err := os.OpenFile("/tmp/testcase", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+	if err != nil {
+		panic(err)
+	}
+
+	f.Fuzz(func(t *testing.T, jsonData string, path string) {
+		if !utf8.Valid([]byte(jsonData)) || !utf8.ValidString(path) {
+			// TiDB actually has different behavior with MySQL when there are invalid utf8 characters
+			// ref https://github.com/pingcap/tidb/issues/58886
+			t.Skip()
+		}
+
+		j, err := ParseBinaryJSONFromString(jsonData)
+		if err != nil {
+			// not interesting value
+			t.Skip()
+		}
+
+		pathExpr, err := ParseJSONPathExpr(path)
+		if err != nil {
+			// not interesting value
+			t.Skip()
+		}
+
+		// TODO: support multiple json path expressions
+		output, found := j.Extract([]JSONPathExpression{pathExpr})
+		if found {
+			require.NotEqual(t, output.TypeCode, 0)
+		}
+
+		if db == nil {
+			return
+		}
+
+		output.Walk(func(fullpath JSONPathExpression, bj BinaryJSON) (stop bool, err error) {
+			if bj.TypeCode == JSONTypeCodeFloat64 {
+				// skip the test with float point, as MySQL itself doesn't have a consistent behavior between multiple versions and
+				// in different situation.
+				t.Skip()
+			}
+
+			// skip test case with invalid unicode
+			if bj.TypeCode == JSONTypeCodeString && strings.ContainsRune(string(bj.GetString()), utf8.RuneError) {
+				t.Skip()
+			}
+			if bj.TypeCode == JSONTypeCodeObject {
+				count := bj.GetElemCount()
+				for i := 0; i < count; i++ {
+					key := string(bj.objectGetKey(i))
+					if strings.ContainsRune(key, utf8.RuneError) {
+						t.Skip()
+					}
+				}
+			}
+
+			return false, nil
+		})
+
+		fmt.Fprintf(caseFile, "jsonData: %s, path: %s\n", jsonData, path)
+
+		// validate the result is the same with MySQL
+		conn, err := db.Conn(context.Background())
+		require.NoError(t, err)
+		defer conn.Close()
+
+		rows, err := conn.QueryContext(context.Background(), `SELECT JSON_EXTRACT(?, ?)`, jsonData, path)
+		require.NoError(t, err)
+		defer rows.Close()
+
+		var mysqlResult *string
+		rows.Next()
+		require.NoError(t, rows.Scan(&mysqlResult))
+		require.NoError(t, rows.Err())
+
+		if mysqlResult == nil {
+			require.False(t, found)
+			// not interesting value
+			t.Skip()
+		}
+
+		require.Equal(t, *mysqlResult, output.String(), "Expect %v, got %v", []byte(*mysqlResult), []byte(output.String()))
+	})
 }

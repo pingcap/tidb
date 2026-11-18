@@ -44,6 +44,13 @@ import (
 )
 
 func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) *logicalop.LogicalMemTable {
+	memTable, ok, _ := getLogicalMemTableWithRemained(t, dom, se, parser, sql)
+	require.True(t, ok, sql)
+	return memTable
+}
+
+func getLogicalMemTableWithRemained(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool, []expression.Expression) {
+	se.GetSessionVars().PlanColumnID.Store(0)
 	stmt, err := parser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 
@@ -58,12 +65,20 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 
 	// Obtain the leaf plan
 	leafPlan := logicalPlan
+	var remained []expression.Expression
 	for len(leafPlan.Children()) > 0 {
+		if selection, ok := leafPlan.(*logicalop.LogicalSelection); ok {
+			remained = append(remained, selection.Conditions...)
+		}
 		leafPlan = leafPlan.Children()[0]
 	}
-
-	logicalMemTable := leafPlan.(*logicalop.LogicalMemTable)
-	return logicalMemTable
+	switch lg := leafPlan.(type) {
+	case *logicalop.LogicalMemTable:
+		return lg, true, remained
+	case *logicalop.LogicalTableDual:
+		return nil, false, remained
+	}
+	panic("unreachable")
 }
 
 func TestClusterConfigTableExtractor(t *testing.T) {
@@ -238,6 +253,221 @@ func timestamp(t *testing.T, s string) int64 {
 	tt, err := time.ParseInLocation("2006-01-02 15:04:05.999", s, time.Local)
 	require.NoError(t, err)
 	return tt.UnixMilli()
+}
+
+func TestStatementsSummaryExtractorOpenEndedTimeRange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	se.GetSessionVars().TimeZone = time.Local
+	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
+
+	minTime, err := types.MinDatetime.GoTime(time.UTC)
+	require.NoError(t, err)
+	maxTime, err := types.MaxDatetime.GoTime(time.UTC)
+	require.NoError(t, err)
+	startTime := time.Date(2020, 1, 1, 0, 0, 0, 0, time.Local)
+	endTime := time.Date(2020, 1, 2, 0, 0, 0, 0, time.Local)
+	cases := []struct {
+		sql   string
+		start time.Time
+		end   time.Time
+	}{
+		{
+			sql:   "select * from information_schema.statements_summary where summary_end_time >= '2020-01-01 00:00:00'",
+			start: startTime,
+			end:   maxTime,
+		},
+		{
+			sql:   "select * from information_schema.statements_summary where summary_begin_time <= '2020-01-02 00:00:00'",
+			start: minTime,
+			end:   endTime,
+		},
+	}
+
+	p := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := getLogicalMemTable(t, dom, se, p, ca.sql)
+		extractor, ok := logicalMemTable.Extractor.(*plannercore.StatementsSummaryExtractor)
+		require.True(t, ok, ca.sql)
+		require.NotNil(t, extractor.CoarseTimeRange, ca.sql)
+		require.Equal(t, ca.start, extractor.CoarseTimeRange.StartTime, ca.sql)
+		require.Equal(t, ca.end, extractor.CoarseTimeRange.EndTime, ca.sql)
+	}
+
+	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustQuery("explain select * from information_schema.statements_summary where summary_end_time >= '2020-01-01 00:00:00'").MultiCheckContain([]string{
+		"end_time: 9999-12-31 23:59:59.999999",
+	})
+}
+
+func TestStatementsSummaryExtractorPreparedTimeRange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("set tidb_enable_prepared_plan_cache = 1")
+	tk.MustExec("prepare stmt from 'select digest, sum(exec_count) from information_schema.statements_summary_history where summary_begin_time <= from_unixtime(?) and summary_end_time >= from_unixtime(?) group by digest'")
+	tk.MustExec("set @end = 1577923200, @begin = 1577836800")
+	tk.MustQuery("execute stmt using @end, @begin")
+	preparedPlan := tk.Session().ShowProcess().Plan
+	if execute, ok := preparedPlan.(*plannercore.Execute); ok {
+		preparedPlan = execute.Plan
+	}
+	plan, ok := preparedPlan.(base.PhysicalPlan)
+	require.True(t, ok, "%T", preparedPlan)
+	for len(plan.Children()) > 0 {
+		plan = plan.Children()[0]
+	}
+	memTable, ok := plan.(*plannercore.PhysicalMemTable)
+	require.True(t, ok)
+	extractor := memTable.Extractor.(*plannercore.StatementsSummaryExtractor)
+	require.NotNil(t, extractor.CoarseTimeRange)
+	require.Equal(t, time.Unix(1577836800, 0).UTC(), extractor.CoarseTimeRange.StartTime.UTC())
+	require.Equal(t, time.Unix(1577923200, 0).UTC(), extractor.CoarseTimeRange.EndTime.UTC())
+}
+
+func TestStatementsSummaryExtractorPreparedTimeRangeDST(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	for _, ca := range []struct {
+		name      string
+		timezone  string
+		bound     string
+		skipRange bool
+	}{
+		{"NewYorkFold", "America/New_York", "2024-11-03 01:30:00", true},
+		{"NewYorkGap", "America/New_York", "2024-03-10 02:30:00", true},
+		{"LordHoweFold", "Australia/Lord_Howe", "2024-04-07 01:45:00", true},
+		{"LordHoweGap", "Australia/Lord_Howe", "2024-10-06 02:15:00", true},
+		{"NewYorkAfterFold", "America/New_York", "2024-11-03 03:30:00", false},
+		{"UTC", "+00:00", "2024-11-03 01:30:00", false},
+	} {
+		t.Run(ca.name, func(t *testing.T) {
+			tk.MustExec("set time_zone = '" + ca.timezone + "'")
+			tk.MustExec("prepare dst_stmt from 'select digest from information_schema.statements_summary_history where summary_begin_time <= cast(? as datetime) and summary_end_time >= cast(? as datetime)'")
+			tk.MustExec("set @bound = '" + ca.bound + "'")
+			tk.MustQuery("execute dst_stmt using @bound, @bound")
+			plan := tk.Session().ShowProcess().Plan
+			if execute, ok := plan.(*plannercore.Execute); ok {
+				plan = execute.Plan
+			}
+			physical, ok := plan.(base.PhysicalPlan)
+			require.True(t, ok, "%T", plan)
+			for len(physical.Children()) > 0 {
+				physical = physical.Children()[0]
+			}
+			memTable, ok := physical.(*plannercore.PhysicalMemTable)
+			require.True(t, ok, "%T", physical)
+			extractor := memTable.Extractor.(*plannercore.StatementsSummaryExtractor)
+			require.False(t, extractor.SkipRequest)
+			if ca.skipRange {
+				require.Nil(t, extractor.CoarseTimeRange)
+				return
+			}
+			require.NotNil(t, extractor.CoarseTimeRange)
+		})
+	}
+}
+
+func TestStatementsSummaryExtractorConservativeTimeRange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	se.GetSessionVars().TimeZone = time.UTC
+	se.GetSessionVars().StmtCtx.SetTimeZone(time.UTC)
+	p := parser.New()
+	for _, ca := range []struct {
+		name      string
+		predicate string
+		start     string
+		end       string
+	}{
+		{
+			name:      "ConstantLeftBeginLowerBound",
+			predicate: "'2022-12-27 02:00:00' <= summary_begin_time",
+		},
+		{
+			name:      "ConstantLeftEndUpperBound",
+			predicate: "'2022-12-27 03:00:00' >= summary_end_time",
+		},
+		{
+			name:      "ConstantLeftRange",
+			predicate: "'2022-12-27 03:00:00' >= summary_begin_time and '2022-12-27 02:00:00' <= summary_end_time",
+			start:     "2022-12-27T02:00:00Z",
+			end:       "2022-12-27T03:00:00Z",
+		},
+		{
+			name:      "CrossedEndpoints",
+			predicate: "summary_begin_time <= '2022-12-27 02:01:00' and summary_end_time >= '2022-12-27 02:02:00'",
+		},
+		{
+			name:      "StrictPoint",
+			predicate: "summary_begin_time < '2022-12-27 02:05:00' and summary_end_time > '2022-12-27 02:05:00'",
+			start:     "2022-12-27T02:05:00Z",
+			end:       "2022-12-27T02:05:00Z",
+		},
+		{
+			name:      "FractionalPoint",
+			predicate: "summary_begin_time < '2022-12-27 02:00:00.000500' and summary_end_time >= '2022-12-27 02:00:00'",
+			start:     "2022-12-27T02:00:00Z",
+			end:       "2022-12-27T02:00:00.000500Z",
+		},
+		{
+			name:      "FutureOverflow",
+			predicate: "summary_begin_time <= '3001-01-18 23:59:59'",
+		},
+		{
+			name:      "PastOverflow",
+			predicate: "summary_end_time >= '1000-01-01 00:00:00'",
+		},
+		{
+			name:      "SafeBoundSurvives",
+			predicate: "summary_begin_time <= '3001-01-18 23:59:59' and summary_end_time >= '2022-12-27 02:00:00'",
+			start:     "2022-12-27T02:00:00Z",
+			end:       "9999-12-31T23:59:59.999999Z",
+		},
+		{
+			name:      "StrictUnixNanoMaximum",
+			predicate: "summary_end_time > '2262-04-11 23:47:16.854775'",
+			start:     "2262-04-11T23:47:16.854775Z",
+			end:       "9999-12-31T23:59:59.999999Z",
+		},
+		{
+			name:      "AboveUnixNanoMaximum",
+			predicate: "summary_begin_time <= '2262-04-11 23:47:16.854776'",
+		},
+		{
+			name:      "StrictUnixNanoMinimum",
+			predicate: "summary_begin_time < '1677-09-21 00:12:43.145225'",
+			start:     "0001-01-01T00:00:00Z",
+			end:       "1677-09-21T00:12:43.145225Z",
+		},
+		{
+			name:      "BelowUnixNanoMinimum",
+			predicate: "summary_end_time >= '1677-09-21 00:12:43.145224'",
+		},
+	} {
+		t.Run(ca.name, func(t *testing.T) {
+			memTable, ok, remained := getLogicalMemTableWithRemained(t, dom, se, p,
+				"select digest from information_schema.statements_summary_history where "+ca.predicate)
+			require.True(t, ok)
+			extractor := memTable.Extractor.(*plannercore.StatementsSummaryExtractor)
+			require.False(t, extractor.SkipRequest)
+			require.NotEmpty(t, remained)
+			if ca.start == "" {
+				require.Nil(t, extractor.CoarseTimeRange)
+				return
+			}
+			require.NotNil(t, extractor.CoarseTimeRange)
+			start, err := time.Parse(time.RFC3339Nano, ca.start)
+			require.NoError(t, err)
+			end, err := time.Parse(time.RFC3339Nano, ca.end)
+			require.NoError(t, err)
+			require.True(t, start.Equal(extractor.CoarseTimeRange.StartTime))
+			require.True(t, end.Equal(extractor.CoarseTimeRange.EndTime))
+		})
+	}
 }
 
 func TestClusterLogTableExtractor(t *testing.T) {
@@ -1574,6 +1804,7 @@ func TestColumns(t *testing.T) {
 		tableSchemaPattern []string
 		tableNamePattern   []string
 		skipRequest        bool
+		remained           string
 	}{
 		{
 			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where lower(column_name)=lower('T');`,
@@ -1611,27 +1842,42 @@ func TestColumns(t *testing.T) {
 		{
 			sql:              `select * from information_schema.COLUMNS where table_name like 'T%';`,
 			tableNamePattern: []string{"t%"},
+			remained:         "[like(Column#3, T%, 92)]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'T%';`,
 			columnNamePattern: []string{"t%"},
+			remained:          "[like(Column#4, T%, 92)]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'i%';`,
 			columnNamePattern: []string{"i%"},
+			remained:          "[like(Column#4, i%, 92)]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' or column_name like "def%";`,
 			columnNamePattern: []string{},
+			remained:          "[or(like(Column#4, abc%, 92), like(Column#4, def%, 92))]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' and column_name like "%def";`,
 			columnNamePattern: []string{"abc%", "%def"},
+			remained:          "[like(Column#4, abc%, 92) like(Column#4, %def, 92)]",
+		},
+		{
+			sql:               `select * from information_schema.COLUMNS where column_name ilike 'T%';`,
+			columnNamePattern: []string{"t%"},
 		},
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, ok, remained := getLogicalMemTableWithRemained(t, dom, se, parser, ca.sql)
+		if ca.remained == "" {
+			require.Empty(t, remained, ca.sql)
+		} else {
+			require.Equal(t, ca.remained, expression.StringifyExpressionsWithCtx(se.GetExprCtx().GetEvalCtx(), remained), ca.sql)
+		}
+		require.True(t, ok, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
 
 		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaColumnsExtractor)
@@ -1725,6 +1971,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		prepared string
 		userVars []any
 		params   []any
+		filter   bool
 		checker  func(extractor base.MemTablePredicateExtractor)
 	}{
 		{
@@ -1764,6 +2011,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			prepared: "select * from information_schema.COLUMNS where table_name like ?",
 			userVars: []any{`"a%"`},
 			params:   []any{"a%"},
+			filter:   true,
 			checker: func(extractor base.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.InfoSchemaColumnsExtractor)
 				require.EqualValues(t, []string{"a%"}, rse.LikePatterns["table_name"])
@@ -1805,7 +2053,13 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
-		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
+		inner := plan.(*plannercore.Execute).Plan
+		if ca.filter {
+			selection := inner.(*plannercore.PhysicalSelection)
+			require.Len(t, selection.Conditions, 1)
+			inner = selection.Children()[0]
+		}
+		extractor := inner.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
 
@@ -1823,7 +2077,13 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		nodeW := resolve.NewNodeW(execStmt)
 		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
-		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
+		inner := plan.(*plannercore.Execute).Plan
+		if ca.filter {
+			selection := inner.(*plannercore.PhysicalSelection)
+			require.Len(t, selection.Conditions, 1)
+			inner = selection.Children()[0]
+		}
+		extractor := inner.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
 }
@@ -1837,7 +2097,31 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 		sql           string
 		skipRequest   bool
 		colPredicates map[string]set.StringSet
+		likePatterns  []string
+		remained      string
 	}{
+		{
+			sql:           `select * from information_schema.tables where table_name like 'T%';`,
+			colPredicates: map[string]set.StringSet{},
+			likePatterns:  []string{"t%"},
+			remained:      "[like(Column#3, T%, 92)]",
+		},
+		{
+			sql:           `select * from information_schema.tables where table_name like 't%';`,
+			colPredicates: map[string]set.StringSet{},
+			likePatterns:  []string{"t%"},
+			remained:      "[like(Column#3, t%, 92)]",
+		},
+		{
+			sql:           `select * from information_schema.tables where table_name collate utf8mb4_bin like 'T%';`,
+			colPredicates: map[string]set.StringSet{},
+			remained:      "[like(cast(Column#3, varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin), T%, 92)]",
+		},
+		{
+			sql:           `select * from information_schema.tables where table_name ilike 'T%';`,
+			colPredicates: map[string]set.StringSet{},
+			likePatterns:  []string{"t%"},
+		},
 		{
 			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_schema='test';`,
 			skipRequest: false,
@@ -2061,7 +2345,13 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, ok, remained := getLogicalMemTableWithRemained(t, dom, se, parser, ca.sql)
+		if ca.remained != "" {
+			require.Equal(t, ca.remained, expression.StringifyExpressionsWithCtx(se.GetExprCtx().GetEvalCtx(), remained), ca.sql)
+		} else if ca.likePatterns != nil {
+			require.Empty(t, remained, ca.sql)
+		}
+		require.True(t, ok, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
 		ex, ok := logicalMemTable.Extractor.(interface {
 			GetBase() *plannercore.InfoSchemaBaseExtractor
@@ -2069,5 +2359,6 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, ca.skipRequest, ex.GetBase().SkipRequest, "SQL: %v", ca.sql)
 		require.Equal(t, ca.colPredicates, ex.GetBase().ColPredicates, "SQL: %v", ca.sql)
+		require.Equal(t, ca.likePatterns, ex.GetBase().LikePatterns["table_name"], ca.sql)
 	}
 }

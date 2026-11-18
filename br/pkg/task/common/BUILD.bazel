@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "common",
+    srcs = ["storage.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/task/common",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/metautil",
+        "//br/pkg/storage",
+        "//br/pkg/utils",
+        "@com_github_gogo_protobuf//proto",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/encryptionpb",
+    ],
+)

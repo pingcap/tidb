@@ -880,6 +880,14 @@ var defaultSysVars = []*SysVar{
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return stmtsummaryv2.SetMaxSQLLength(TidbOptInt(val, DefTiDBStmtSummaryMaxSQLLength))
 		}},
+	{Scope: ScopeGlobal, Name: TiDBStmtSummaryPersistEvicted, Value: BoolToOnOff(DefTiDBStmtSummaryPersistEvicted), Type: TypeBool, AllowEmpty: true,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			return stmtsummaryv2.SetPersistEvicted(TiDBOptOn(val))
+		}},
+	{Scope: ScopeGlobal, Name: TiDBStmtSummaryGroupByUser, Value: BoolToOnOff(DefTiDBStmtSummaryGroupByUser), Type: TypeBool, AllowEmpty: true,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			return stmtsummaryv2.SetGroupByUser(TiDBOptOn(val))
+		}},
 	{Scope: ScopeGlobal, Name: TiDBCapturePlanBaseline, Value: DefTiDBCapturePlanBaseline, Type: TypeBool, AllowEmptyAll: true},
 	{Scope: ScopeGlobal, Name: TiDBEvolvePlanTaskMaxTime, Value: strconv.Itoa(DefTiDBEvolvePlanTaskMaxTime), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
 	{Scope: ScopeGlobal, Name: TiDBEvolvePlanTaskStartTime, Value: DefTiDBEvolvePlanTaskStartTime, Type: TypeTime},
@@ -974,7 +982,11 @@ var defaultSysVars = []*SysVar{
 			return origin, nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool},
-	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: Off, Type: TypeBool, Depended: true},
+	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: Off, Type: TypeBool, Depended: true,
+		Validation: func(vars *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs(TiDBEnableHistoricalStats))
+			return normalizedValue, nil
+		}},
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: On, Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return getTiDBTableValue(s, "tikv_gc_enable", On)
@@ -1588,6 +1600,10 @@ var defaultSysVars = []*SysVar{
 		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return BoolToOnOff(EnableHistoricalStatsForCapture.Load()), nil
 		},
+		Validation: func(vars *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs(TiDBEnableHistoricalStatsForCapture))
+			return normalizedValue, nil
+		},
 	},
 	{Scope: ScopeGlobal, Name: TiDBHistoricalStatsDuration, Value: DefTiDBHistoricalStatsDuration.String(), Type: TypeDuration, MinValue: int64(time.Second), MaxValue: uint64(time.Hour * 24 * 365),
 		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
@@ -1599,6 +1615,9 @@ var defaultSysVars = []*SysVar{
 			}
 			HistoricalStatsDuration.Store(d)
 			return nil
+		}, Validation: func(vars *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs(TiDBHistoricalStatsDuration))
+			return normalizedValue, nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBLowResolutionTSOUpdateInterval, Value: strconv.Itoa(DefTiDBLowResolutionTSOUpdateInterval), Type: TypeInt, MinValue: 10, MaxValue: 60000,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
@@ -1610,6 +1629,12 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBEnableConnectionEventLog, Value: BoolToOnOff(DefTiDBEnableConnectionEventLog), Type: TypeBool, SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+		EnableConnectionEventLog.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return BoolToOnOff(EnableConnectionEventLog.Load()), nil
+	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerContinuousCapture, Value: BoolToOnOff(false), Type: TypeBool,
@@ -1726,6 +1751,18 @@ var defaultSysVars = []*SysVar{
 		SetSession: func(s *SessionVars, val string) error {
 			timeoutMS := tidbOptPositiveInt32(val, 0)
 			s.MaxExecutionTime = uint64(timeoutMS)
+			return nil
+		}},
+	{
+		Scope:                   ScopeGlobal | ScopeSession,
+		Name:                    TiDBMaxKeysRead,
+		Value:                   "0",
+		Type:                    TypeUnsigned,
+		MinValue:                0,
+		MaxValue:                math.MaxUint64,
+		IsHintUpdatableVerified: true,
+		SetSession: func(s *SessionVars, val string) error {
+			s.MaxKeysRead = TidbOptUint64(val, 0)
 			return nil
 		}},
 	{
@@ -2034,6 +2071,10 @@ var defaultSysVars = []*SysVar{
 			s.SetAllowPreferRangeScan(TiDBOptOn(val))
 			return nil
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptAlwaysKeepJoinKey, Value: BoolToOnOff(DefOptAlwaysKeepJoinKey), Type: TypeBool, IsHintUpdatableVerified: true, SetSession: func(s *SessionVars, val string) error {
+		s.AlwaysKeepJoinKey = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptLimitPushDownThreshold, Value: strconv.Itoa(DefOptLimitPushDownThreshold), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.LimitPushDownThreshold = TidbOptInt64(val, DefOptLimitPushDownThreshold)
 		return nil
@@ -3764,6 +3805,11 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 		if intest.InTest {
 			varVal = Off
 		}
+	case TiDBRedactLog:
+		if intest.InTest {
+			// Tests assert SQL and values in errors; redaction tests enable it explicitly.
+			varVal = Off
+		}
 	// For the following sysvars, we change the default
 	// FOR NEW INSTALLS ONLY. In most cases you don't want to do this.
 	// It is better to change the value in the Sysvar struct, so that
@@ -4093,6 +4139,8 @@ const (
 	TxnIsolationOneShot = "tx_isolation_one_shot"
 	// MaxExecutionTime is the name of the 'max_execution_time' system variable.
 	MaxExecutionTime = "max_execution_time"
+	// TiDBMaxKeysRead is the maximum number of storage engine keys a SELECT may examine (0 = unlimited).
+	TiDBMaxKeysRead = "tidb_max_keys_read"
 	// TiKVClientReadTimeout is the name of the 'tikv_client_read_timeout' system variable.
 	TiKVClientReadTimeout = "tikv_client_read_timeout"
 	// TiDBLoadBindingTimeout is the name of the 'tidb_load_binding_timeout' system variable.

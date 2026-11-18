@@ -669,9 +669,19 @@ func TestSetVar(t *testing.T) {
 
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 tidb_enable_historical_stats is deprecated and will be removed in a future release."))
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_historical_stats = 0")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 tidb_enable_historical_stats is deprecated and will be removed in a future release."))
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_historical_stats_for_capture = 1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 tidb_enable_historical_stats_for_capture is deprecated and will be removed in a future release."))
+	tk.MustQuery("select @@tidb_enable_historical_stats_for_capture").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_historical_stats_for_capture = default")
+	tk.MustExec("set global tidb_historical_stats_duration = '1h'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 tidb_historical_stats_duration is deprecated and will be removed in a future release."))
+	tk.MustQuery("select @@tidb_historical_stats_duration").Check(testkit.Rows("1h0m0s"))
+	tk.MustExec("set global tidb_historical_stats_duration = default")
 
 	// test for tidb_enable_column_tracking
 	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("1"))

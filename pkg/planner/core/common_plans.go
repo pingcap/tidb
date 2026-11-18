@@ -487,6 +487,9 @@ type Update struct {
 
 	IgnoreError bool
 
+	// IsMultiTable is set when the statement updates a join, so the same row can be matched more than once.
+	IsMultiTable bool
+
 	VirtualAssignmentsOffset int
 
 	SelectPlan base.PhysicalPlan
@@ -581,6 +584,7 @@ type V2AnalyzeOptions struct {
 	PhyTableID  int64
 	RawOpts     map[ast.AnalyzeOptionType]uint64
 	FilledOpts  map[ast.AnalyzeOptionType]uint64
+	ResetOpts   map[ast.AnalyzeOptionType]struct{}
 	ColChoice   pmodel.ColumnChoice
 	ColumnList  []*model.ColumnInfo
 	IsPartition bool

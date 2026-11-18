@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1393,4 +1394,150 @@ func TestGetVersionFailed(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockGetCurrentVersionFailed", "2*return(true)")
 
 	tk.MustExec("alter table t add column b int")
+}
+
+// TestAddIndexDownscalePreservesTailError runs the real txn-backfill DDL path and
+// observes its terminal error before accepting rollback or a complete retried index.
+func TestAddIndexDownscalePreservesTailError(t *testing.T) {
+	fastReorg, distTask := variable.EnableFastReorg.Load(), variable.EnableDistTask.Load()
+	workerCount, batchSize := variable.GetDDLReorgWorkerCounter(), variable.GetDDLReorgBatchSize()
+	t.Cleanup(func() {
+		variable.EnableFastReorg.Store(fastReorg)
+		variable.EnableDistTask.Store(distTask)
+		variable.SetDDLReorgWorkerCounter(workerCount)
+		variable.SetDDLReorgBatchSize(batchSize)
+	})
+
+	for _, downscale := range []bool{false, true} {
+		t.Run(fmt.Sprintf("downscale=%t", downscale), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			variable.EnableFastReorg.Store(false)
+			variable.EnableDistTask.Store(false)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t (c1 bigint primary key, c2 bigint, c3 bigint)")
+			batchInsert(tk, "t", 0, 4096)
+			tk.MustQuery("split table t between (0) and (4096) regions 4")
+
+			ddlTK := testkit.NewTestKit(t, store)
+			ddlTK.MustExec("use test")
+			ddlTK.MustExec("set global tidb_ddl_reorg_worker_cnt=4")
+			ddlTK.MustExec("set global tidb_ddl_reorg_batch_size=32")
+			type heldWorker struct {
+				jobID int64
+				ctx   context.Context
+			}
+			started := make(chan heldWorker, 1)
+			tailEntered := make(chan struct{})
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			unblock := func() { releaseOnce.Do(func() { close(release) }) }
+			var held atomic.Bool
+			var targetJobID atomic.Int64
+			var errorDelivered atomic.Bool
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			done := make(chan error, 1)
+			finished := make(chan struct{})
+			const hook = "github.com/pingcap/tidb/pkg/ddl/afterBackfillBatch"
+			testfailpoint.EnableCall(t, hook, func(jobID int64, workerID int, workCtx context.Context, batchDone bool, batchErr *error) {
+				if batchDone || *batchErr != nil {
+					return
+				}
+				if workerID == 0 {
+					// Ensure a removable worker takes a range even if worker zero
+					// is scheduled first; no request latency is part of the premise.
+					select {
+					case <-tailEntered:
+					case <-ctx.Done():
+					}
+					return
+				}
+				if !held.CompareAndSwap(false, true) {
+					return
+				}
+				// A real batch has committed, but this range still contains rows.
+				// Only workers above zero are removed by THREAD=1. Hold this
+				// ordinary terminal error until after retirement, without sleeps.
+				targetJobID.Store(jobID)
+				started <- heldWorker{jobID: jobID, ctx: workCtx}
+				close(tailEntered)
+				select {
+				case <-release:
+				case <-ctx.Done():
+				}
+				*batchErr = kv.ErrKeyExists.FastGenByArgs("tail-worker", "t.idx_a")
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onBackfillTaskError", func(jobID int64, err error) {
+				if jobID == targetJobID.Load() && kv.ErrKeyExists.Equal(err) {
+					errorDelivered.Store(true)
+				}
+			})
+			t.Cleanup(func() {
+				cancel()
+				unblock()
+				select {
+				case <-finished:
+				case <-time.After(5 * time.Second):
+					t.Error("ADD INDEX did not stop after releasing the held batch")
+				}
+			})
+			go func() {
+				defer close(finished)
+				rs, err := ddlTK.ExecWithContext(ctx, "alter table t add unique index idx_a(c2)")
+				if rs != nil {
+					if closeErr := rs.Close(); err == nil {
+						err = closeErr
+					}
+				}
+				done <- err
+			}()
+			var worker heldWorker
+			select {
+			case worker = <-started:
+			case err := <-done:
+				t.Fatalf("ADD INDEX finished before a tail batch was held: %v", err)
+			case <-ctx.Done():
+				t.Fatal("ADD INDEX never reached a tail worker batch")
+			}
+			if downscale {
+				tk.MustExecWithContext(ctx, fmt.Sprintf("admin alter ddl jobs %d thread = 1", worker.jobID))
+				select {
+				case <-worker.ctx.Done():
+				case <-ctx.Done():
+					t.Fatal("ADMIN THREAD did not retire the held worker")
+				}
+			} else {
+				require.NoError(t, worker.ctx.Err(), "the no-downscale control must keep its worker active")
+			}
+			unblock()
+			var ddlErr error
+			select {
+			case ddlErr = <-done:
+			case <-ctx.Done():
+				t.Fatal("ADD INDEX did not consume the tail worker result")
+			}
+			require.True(t, errorDelivered.Load(), "terminal backfill error did not reach the result collector")
+			history, err := ddl.GetHistoryJobByID(tk.Session(), worker.jobID)
+			require.NoError(t, err)
+			require.NotNil(t, history)
+			tk.MustQuery("select count(*), sum(c1) from t").Check(testkit.Rows("4096 8386560"))
+			tk.MustExec("admin check table t")
+			if ddlErr != nil {
+				require.True(t, kv.ErrKeyExists.Equal(ddlErr), "the terminal error must be preserved: %v", ddlErr)
+				require.Equal(t, model.JobStateRollbackDone, history.State)
+				require.Nil(t, external.GetTableByName(t, tk, "test", "t").Meta().FindIndexByName("idx_a"))
+				// After rollback, rebuilding must also cover the former tail range.
+				tk.MustExec("alter table t add unique index idx_a(c2)")
+			} else {
+				// ADMIN THREAD can conflict with the owner's metadata transaction.
+				// A full retry may succeed, but it must not hide a dropped result
+				// or publish an incomplete index.
+				require.Equal(t, model.JobStateSynced, history.State)
+				require.NotNil(t, external.GetTableByName(t, tk, "test", "t").Meta().FindIndexByName("idx_a"))
+			}
+			tk.MustQuery("select count(*), sum(c1) from t force index(idx_a)").Check(testkit.Rows("4096 8386560"))
+			tk.MustQuery("select count(*), sum(c1) from t ignore index(idx_a)").Check(testkit.Rows("4096 8386560"))
+			tk.MustExec("admin check table t")
+		})
+	}
 }

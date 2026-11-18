@@ -23,6 +23,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -199,12 +201,15 @@ func TestChangeUserAndResetSessionResourceGroupCounter(t *testing.T) {
 
 	metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName).Inc()
 
+	requireCounter := func(rgTest, defaultGroup float64) {
+		require.Equal(t, rgTest, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues("rg_test")))
+		require.Equal(t, defaultGroup, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName)))
+	}
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create resource group rg_test RU_PER_SEC = 1000;")
 	tk.MustExec("set resource group rg_test")
-
-	require.Equal(t, 0.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName)))
-	require.Equal(t, 1.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues("rg_test")))
+	requireCounter(1, 0)
 
 	tidbdrv := NewTiDBDriver(store)
 	cfg := serverutil.NewTestConfig()
@@ -228,23 +233,41 @@ func TestChangeUserAndResetSessionResourceGroupCounter(t *testing.T) {
 	}
 	cc.SetCtx(&TiDBContext{Session: tk.Session()})
 
-	userData := append([]byte("root"), 0x0, 0x0)
-	userData = append(userData, []byte("test")...)
-	userData = append(userData, 0x0)
-	err = cc.dispatch(context.Background(), append([]byte{mysql.ComChangeUser}, userData...))
-	require.NoError(t, err)
+	changeUser := func(user, db string) error {
+		data := append([]byte(user), 0x0, 0x0)
+		data = append(data, []byte(db)...)
+		data = append(data, 0x0)
+		return cc.dispatch(context.Background(), append([]byte{mysql.ComChangeUser}, data...))
+	}
 
-	require.Equal(t, 0.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues("rg_test")))
-	require.Equal(t, 1.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName)))
+	require.NoError(t, changeUser("root", "test"))
+	requireCounter(0, 1)
 
 	_, err = cc.ctx.Session.Execute(context.Background(), "set resource group rg_test")
 	require.NoError(t, err)
-	require.Equal(t, 1.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues("rg_test")))
-	require.Equal(t, 0.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName)))
+	requireCounter(1, 0)
 	err = cc.dispatch(context.Background(), []byte{mysql.ComResetConnection})
 	require.NoError(t, err)
-	require.Equal(t, 0.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues("rg_test")))
-	require.Equal(t, 1.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName)))
+	requireCounter(0, 1)
+
+	// Change to a user bound to a resource group, where authentication itself moves the counter.
+	tk.MustExec("create user u_rg resource group rg_test")
+	require.NoError(t, changeUser("u_rg", ""))
+	requireCounter(1, 0)
+	require.NoError(t, changeUser("u_rg", ""))
+	requireCounter(1, 0)
+
+	// Authentication succeeds and binds the group, then useDB fails and the old session is restored.
+	require.Error(t, changeUser("u_rg", "no_such_db"))
+	require.Equal(t, "u_rg", cc.user)
+	requireCounter(1, 0)
+
+	require.Error(t, changeUser("no_such_user", ""))
+	require.Equal(t, "u_rg", cc.user)
+	requireCounter(1, 0)
+
+	require.NoError(t, changeUser("root", ""))
+	requireCounter(0, 1)
 }
 
 func TestMalformHandshakeHeader(t *testing.T) {
@@ -752,12 +775,18 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 	// /status HTTP endpoint
 	server.health.Store(true)
 	defer server.Close()
+	conn, peerConn := net.Pipe()
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+		require.NoError(t, peerConn.Close())
+	})
 
 	cc := &clientConn{
 		connectionID: 1,
 		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
 		server:       server,
 		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		bufReadConn:  serverutil.NewBufferedReadConn(conn),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		alloc:        arena.NewAllocator(512),
@@ -765,6 +794,10 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 		capability:   capability,
 	}
 	cc.SetCtx(tc)
+	originalEnableConnectionEventLog := variable.EnableConnectionEventLog.Swap(true)
+	t.Cleanup(func() {
+		variable.EnableConnectionEventLog.Store(originalEnableConnectionEventLog)
+	})
 	for _, cs := range inputs {
 		inBytes := append([]byte{cs.com}, cs.in...)
 		err := cc.dispatch(context.Background(), inBytes)
@@ -1716,6 +1749,295 @@ func TestChangeUserAuth(t *testing.T) {
 	require.EqualError(t, err, t.Name())
 	require.Same(t, tc, cc.getCtx())
 	require.Equal(t, "root", cc.user)
+}
+
+func TestChangeUserAuthSwitch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER low_priv")
+	salt := []byte("12345678901234567890")
+	scramble := func(plugin, password string) []byte {
+		if password == "" {
+			return []byte{}
+		}
+		hash := auth.Sha256Hash
+		if plugin == mysql.AuthNativePassword {
+			hash = auth.Sha1Hash
+		} else if plugin == mysql.AuthTiDBSM3Password {
+			hash = auth.Sm3Hash
+		}
+		stage1 := hash([]byte(password))
+		stage2 := hash(stage1)
+		var mask []byte
+		if plugin == mysql.AuthNativePassword {
+			mask = hash(append(append([]byte{}, salt...), stage2...))
+		} else {
+			mask = hash(append(stage2, salt...))
+		}
+		for i := range stage1 {
+			stage1[i] ^= mask[i]
+		}
+		return stage1
+	}
+	cfg := serverutil.NewTestConfig()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
+	srv, err := NewServer(cfg, NewTiDBDriver(store))
+	require.NoError(t, err)
+	defer srv.Close()
+
+	for _, testCase := range []struct {
+		name             string
+		plugin           string
+		password         string
+		emptySwitch      bool
+		noSwitch         bool
+		wrongPassword    bool
+		omitContinuation bool
+	}{
+		{name: "native_empty", plugin: mysql.AuthNativePassword},
+		{name: "native_empty_response", plugin: mysql.AuthNativePassword, password: "password", emptySwitch: true},
+		{name: "native_no_switch", plugin: mysql.AuthNativePassword, password: "password", noSwitch: true},
+		{name: "sha2", plugin: mysql.AuthCachingSha2Password, password: "password"},
+		{name: "sha2_empty", plugin: mysql.AuthCachingSha2Password},
+		{name: "sha2_wrong_password", plugin: mysql.AuthCachingSha2Password, password: "password", wrongPassword: true},
+		{name: "sha2_read_error", plugin: mysql.AuthCachingSha2Password, password: "password", omitContinuation: true},
+		{name: "sm3", plugin: mysql.AuthTiDBSM3Password, password: "password"},
+		{name: "sm3_empty", plugin: mysql.AuthTiDBSM3Password},
+		{name: "sm3_read_error", plugin: mysql.AuthTiDBSM3Password, password: "password", omitContinuation: true},
+	} {
+		// Passwordless users have empty stored credentials and negotiate native authentication.
+		expectedPlugin := testCase.plugin
+		passwordClause := ""
+		if testCase.password != "" {
+			passwordClause = fmt.Sprintf(" BY '%s'", testCase.password)
+		} else {
+			expectedPlugin = mysql.AuthNativePassword
+		}
+		tk.MustExec(fmt.Sprintf("CREATE USER '%s' IDENTIFIED WITH %s%s", testCase.name, testCase.plugin, passwordClause))
+		for _, emptyPlugin := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/empty_plugin=%t", testCase.name, emptyPlugin), func(t *testing.T) {
+				var input, output bytes.Buffer
+				needFullAuth := testCase.plugin != mysql.AuthNativePassword && testCase.password != ""
+				if !testCase.noSwitch {
+					response := scramble(testCase.plugin, testCase.password)
+					if testCase.emptySwitch {
+						response = []byte{}
+					}
+					input.Write(append([]byte{byte(len(response)), 0, 0, 1}, response...))
+					if needFullAuth && !testCase.omitContinuation {
+						password := testCase.password
+						if testCase.wrongPassword {
+							password = "wrong_password"
+						}
+						response = append([]byte(password), 0)
+						input.Write(append([]byte{byte(len(response)), 0, 0, 3}, response...))
+					}
+				}
+				brc := serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: input})
+				pkt := internal.NewPacketIO(brc)
+				pkt.SetBufWriter(bufio.NewWriter(&output))
+				cc := &clientConn{
+					connectionID: 1,
+					alloc:        arena.NewAllocator(1024),
+					chunkAlloc:   chunk.NewAllocator(),
+					peerHost:     "localhost",
+					collation:    mysql.DefaultCollationID,
+					capability:   mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+					pkt:          pkt,
+					bufReadConn:  brc,
+					server:       srv,
+					user:         "low_priv",
+					authPlugin:   mysql.AuthNativePassword,
+					salt:         salt,
+					tlsConn:      tls.Client(nil, &tls.Config{}),
+				}
+				se, err := session.CreateSession4Test(store)
+				require.NoError(t, err)
+				require.NoError(t, se.Auth(&auth.UserIdentity{Username: "low_priv", Hostname: "localhost"}, nil, nil, nil))
+				oldCtx := &TiDBContext{Session: se, stmts: make(map[int]*TiDBStatement)}
+				cc.SetCtx(oldCtx)
+				defer func() { require.NoError(t, cc.getCtx().Close()) }()
+
+				initialAuth := scramble(mysql.AuthNativePassword, "password")
+				data := append([]byte(testCase.name), 0, byte(len(initialAuth)))
+				data = append(data, initialAuth...)
+				data = append(data, 0, 0, 0) // empty database and two-byte character set
+				if testCase.noSwitch {
+					data = append(data, mysql.AuthNativePassword...)
+					data = append(data, 0)
+				} else if emptyPlugin {
+					data = append(data, 0)
+				}
+				err = cc.handleChangeUser(context.Background(), data)
+				denied := testCase.emptySwitch || testCase.wrongPassword || testCase.omitContinuation
+				if denied {
+					if testCase.omitContinuation {
+						require.ErrorIs(t, err, io.EOF)
+					} else {
+						require.ErrorContains(t, err, "Access denied")
+					}
+					require.Same(t, oldCtx, cc.getCtx())
+					require.Equal(t, "low_priv", cc.user)
+					require.Equal(t, mysql.AuthNativePassword, cc.authPlugin)
+					testkit.NewTestKitWithSession(t, store, se).MustQuery("SELECT CURRENT_USER()").Check(testkit.Rows("low_priv@%"))
+				} else {
+					require.NoError(t, err)
+					require.Equal(t, testCase.name, cc.ctx.GetSessionVars().User.Username)
+				}
+				require.NoError(t, cc.flush(context.Background()))
+				packets := internal.NewPacketIO(serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: output}))
+				if !testCase.noSwitch {
+					response, err := packets.ReadPacket()
+					require.NoError(t, err)
+					expected := append([]byte{mysql.AuthSwitchRequest}, expectedPlugin...)
+					expected = append(expected, 0)
+					expected = append(expected, salt...)
+					require.Equal(t, append(expected, 0), response)
+					packets.SetSequence(2)
+					if needFullAuth {
+						response, err = packets.ReadPacket()
+						require.NoError(t, err)
+						require.Equal(t, []byte{1, 4}, response)
+						packets.SetSequence(4)
+					}
+				}
+				if !denied {
+					response, err := packets.ReadPacket()
+					require.NoError(t, err)
+					require.Equal(t, mysql.OKHeader, response[0])
+				}
+				if denied || expectedPlugin == mysql.AuthNativePassword {
+					return
+				}
+
+				// The next change uses the negotiated plugin and must authenticate
+				// without another plugin switch.
+				nextUser := testCase.name + "_next"
+				tk.MustExec(fmt.Sprintf("CREATE USER IF NOT EXISTS '%s' IDENTIFIED WITH %s%s", nextUser, testCase.plugin, passwordClause))
+				require.Equal(t, testCase.plugin, cc.authPlugin)
+				var continuation bytes.Buffer
+				if needFullAuth {
+					response := append([]byte(testCase.password), 0)
+					continuation.Write(append([]byte{byte(len(response)), 0, 0, 1}, response...))
+				}
+				cc.setConn(&testutil.BytesConn{Buffer: continuation})
+				cc.pkt.SetBufWriter(bufio.NewWriter(&output))
+				cc.pkt.SetSequence(0)
+				output.Reset()
+				initialAuth = scramble(testCase.plugin, testCase.password)
+				data = append([]byte(nextUser), 0, byte(len(initialAuth)))
+				data = append(data, initialAuth...)
+				data = append(data, 0, 0, 0) // empty database and two-byte character set
+				data = append(data, testCase.plugin...)
+				data = append(data, 0)
+				require.NoError(t, cc.handleChangeUser(context.Background(), data))
+				require.Equal(t, nextUser, cc.ctx.GetSessionVars().User.Username)
+				require.NoError(t, cc.flush(context.Background()))
+				packets = internal.NewPacketIO(serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: output}))
+				if needFullAuth {
+					response, err := packets.ReadPacket()
+					require.NoError(t, err)
+					require.Equal(t, []byte{1, 4}, response)
+					packets.SetSequence(2)
+				}
+				response, err := packets.ReadPacket()
+				require.NoError(t, err)
+				require.Equal(t, mysql.OKHeader, response[0])
+			})
+		}
+	}
+}
+
+func TestChangeUserAuthSocket(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER low_priv")
+	tk.MustExec("CREATE USER socket_user IDENTIFIED WITH auth_socket")
+	tk.MustExec("CREATE USER socket_mapped IDENTIFIED WITH auth_socket AS 'socket_os_user'")
+
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	srv, err := NewServer(cfg, NewTiDBDriver(store))
+	require.NoError(t, err)
+	defer srv.Close()
+	t.Cleanup(func() { mockOSUserForAuthSocketTest.Store(nil) })
+
+	for _, protocol := range []struct {
+		name       string
+		capability uint32
+		plugin     []byte
+	}{
+		{name: "legacy", capability: mysql.ClientProtocol41},
+		{name: "empty_plugin", capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth, plugin: []byte{0}},
+		{name: "omitted_plugin", capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth},
+		{name: "native_plugin", capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth, plugin: append([]byte(mysql.AuthNativePassword), 0)},
+	} {
+		t.Run(protocol.name, func(t *testing.T) {
+			for _, testCase := range []struct {
+				name   string
+				user   string
+				auth   string
+				unix   bool
+				osUser string
+				denied bool
+			}{
+				{name: "tcp_forged_username", user: "socket_user", auth: "socket_user", denied: true},
+				{name: "tcp_empty_auth", user: "socket_user", denied: true},
+				{name: "tcp_forged_mapping", user: "socket_mapped", auth: "socket_os_user", denied: true},
+				{name: "unix_forged_username", user: "socket_user", auth: "socket_user", unix: true, osUser: "other_os_user", denied: true},
+				{name: "unix_empty_auth", user: "socket_user", unix: true, osUser: "other_os_user", denied: true},
+				{name: "unix_forged_mapping", user: "socket_mapped", auth: "socket_os_user", unix: true, osUser: "other_os_user", denied: true},
+				{name: "unix_matching_username", user: "socket_user", auth: "untrusted_client_data", unix: true, osUser: "socket_user"},
+				{name: "unix_matching_mapping", user: "socket_mapped", unix: true, osUser: "socket_os_user"},
+			} {
+				t.Run(testCase.name, func(t *testing.T) {
+					mockOSUserForAuthSocketTest.Store(&testCase.osUser)
+					cc := &clientConn{
+						connectionID:  1,
+						alloc:         arena.NewAllocator(1024),
+						chunkAlloc:    chunk.NewAllocator(),
+						peerHost:      "localhost",
+						collation:     mysql.DefaultCollationID,
+						capability:    protocol.capability,
+						pkt:           internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+						server:        srv,
+						user:          "low_priv",
+						dbname:        "test",
+						authPlugin:    mysql.AuthNativePassword,
+						isUnixSocket:  testCase.unix,
+						socketCredUID: uint32(os.Getuid()),
+					}
+					se, err := session.CreateSession4Test(store)
+					require.NoError(t, err)
+					require.NoError(t, se.Auth(&auth.UserIdentity{Username: "low_priv", Hostname: "localhost"}, nil, nil, nil))
+					oldCtx := &TiDBContext{Session: se, stmts: make(map[int]*TiDBStatement)}
+					cc.SetCtx(oldCtx)
+					defer func() { require.NoError(t, cc.getCtx().Close()) }()
+
+					data := append([]byte(testCase.user), 0, byte(len(testCase.auth)))
+					data = append(data, testCase.auth...)
+					data = append(data, 0, 0, 0) // empty database and two-byte character set
+					data = append(data, protocol.plugin...)
+					err = cc.handleChangeUser(context.Background(), data)
+					if testCase.denied {
+						require.ErrorContains(t, err, "Access denied")
+						require.Same(t, oldCtx, cc.getCtx())
+						require.Equal(t, "low_priv", cc.user)
+						require.Equal(t, "test", cc.dbname)
+						require.Equal(t, mysql.AuthNativePassword, cc.authPlugin)
+						require.Equal(t, "low_priv", cc.ctx.GetSessionVars().User.Username)
+						testkit.NewTestKitWithSession(t, store, cc.ctx.Session).
+							MustQuery("SELECT CURRENT_USER()").Check(testkit.Rows("low_priv@%"))
+						return
+					}
+					require.NoError(t, err)
+					require.Equal(t, testCase.user, cc.ctx.GetSessionVars().User.Username)
+					require.Equal(t, mysql.AuthSocket, cc.ctx.GetSessionVars().User.AuthPlugin)
+				})
+			}
+		})
+	}
 }
 
 func TestChangeUserAuthFailureRestoresOldSession(t *testing.T) {
