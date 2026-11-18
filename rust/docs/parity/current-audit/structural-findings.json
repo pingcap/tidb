@@ -2,8 +2,8 @@
   "date": "2026-11-18",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 23,
-    "open": 22,
+    "unresolved": 21,
+    "open": 20,
     "partial": 1
   },
   "findings": [
@@ -96,28 +96,12 @@
       "go_owner": "`pkg/privilege/privileges/ldap`, `pkg/privilege/privileges/privileges.go` (`ConnectionVerification`), `pkg/sessionctx/variable/sysvar.go` (the `authentication_ldap_*` hooks)"
     },
     {
-      "id": "A07",
-      "status": "open",
-      "group": "Privileges, wire and administration",
-      "finding": "A query that parses to no statement (only a comment) answers an OK packet with 0 affected rows and no message. Go's `handleQuery` calls `writeOK`, which reports the session's current affected rows, last insert ID and message, so after `INSERT ... VALUES (..),(..),(..)` a comment-only query answers `3 rows affected, Records: 3 Duplicates: 0` and after a REPLACE `1 row affected`. [2026-11-18 probes](structural-audit-2026-11-18.md)",
-      "rust_evidence": "`rust/crates/tidb-server/src/mysql_connection.rs` (`statements.is_empty()` arm)",
-      "go_owner": "`pkg/server/conn.go` (`handleQuery`, `writeOK`)"
-    },
-    {
       "id": "A08",
       "status": "open",
       "group": "Privileges, wire and administration",
       "finding": "`SHOW SESSION_STATES` encodes a different set of session variables from Go's. On a fresh session Go's `sys-vars` include `character_set_server` and not `tidb_opt_tiflash_concurrency_factor`; this port's are the reverse (other keys equal). Go keeps a variable only when `GetSessionStatesSystemVar` finds it in the session's `systems` cache, so the difference is in which variables a new session caches. A session migrated between a Go and a Rust node (TiProxy) can lose or gain a value. [2026-11-18 probes](structural-audit-2026-11-18.md)",
       "rust_evidence": "`rust/crates/tidb-session/src/session_states.rs`, `rust/crates/tidb-variable/src/vars.rs` (`get_session_states_system_var`)",
       "go_owner": "`pkg/session/session.go` (`EncodeStates`), `pkg/sessionctx/variable/session.go` (`GetSessionStatesSystemVar`)"
-    },
-    {
-      "id": "D13",
-      "status": "open",
-      "group": "DDL",
-      "finding": "`FOREIGN KEY ... MATCH PARTIAL` is refused with 1105 `MATCH PARTIAL is not supported yet`. Go creates the table and warns 1064 `The MATCH clause is parsed but ignored by any storage engine`, as both already do for MATCH FULL. [2026-11-18 probes](structural-audit-2026-11-18.md)",
-      "rust_evidence": "`rust/crates/tidb-ddl-build/src/foreign_key.rs`, `rust/crates/tidb-ddl/src/cluster_ddl.rs`",
-      "go_owner": "`pkg/parser` (reference definition, the MATCH warning), `pkg/ddl/foreign_key.go`"
     },
     {
       "id": "E29",
@@ -192,7 +176,7 @@
       "go_owner": "`pkg/executor/show_stats.go` (`fetchShowStatsHistogram`, `appendTableForStatsHistograms`), `pkg/statistics/handle/cache` (`GetPhysicalTableStats`)"
     }
   ],
-  "unresolved": 23,
-  "open": 22,
+  "unresolved": 21,
+  "open": 20,
   "partial": 1
 }

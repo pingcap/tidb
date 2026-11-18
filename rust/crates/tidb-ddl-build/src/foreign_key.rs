@@ -211,11 +211,6 @@ pub fn build_fk_infos(create: &CreateTableStmt, schema: &str, table: &mut TableI
         let TableConstraint::ForeignKey(definition) = constraint else {
             continue;
         };
-        if definition.reference.match_type == tidb_ast::MatchType::Partial {
-            return Err(refusal(tidb_terror::MysqlError::unknown(
-                "MATCH PARTIAL is not supported yet",
-            )));
-        }
         foreign_key_id += 1;
         let fk_name = match definition.name.as_deref() {
             Some("") => {

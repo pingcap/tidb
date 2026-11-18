@@ -187,6 +187,7 @@ mod expression_default_fold_source;
 mod expression_index_write_source;
 mod extract_compound_source;
 mod fk_actions_show_create_source;
+mod fk_match_clause_source;
 mod fk_child_insert_update_cascade_source;
 mod fk_index_guard_source;
 mod fk_on_delete_cascade_source;

@@ -6312,11 +6312,6 @@ fn create_foreign_key(
             "Cannot add foreign key constraint",
         ));
     }
-    if definition.reference.match_type == tidb_ast::MatchType::Partial {
-        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
-            "MATCH PARTIAL is not supported yet",
-        )));
-    }
     // Go `checkFKDupName`.
     if stored
         .foreign_keys

@@ -2004,11 +2004,13 @@ fn a_write_inside_a_transaction_reports_the_open_transaction_on_its_own_ok_packe
     );
 
     // COM_PING answers off the same live status rather than a constant, so the
-    // client cannot be told mid-transaction that no transaction is open.
+    // client cannot be told mid-transaction that no transaction is open. Go's
+    // `writeOK` also repeats the last statement's affected rows (the INSERT's
+    // one row), as Go master over unistore does.
     write_packet(&mut client, 0, &[COM_PING]);
     reader.set_sequence(1);
     assert_eq!(
-        read_ok_status_flags(&mut reader),
+        read_write_ok_status_flags(&mut reader, 1),
         SERVER_STATUS_AUTOCOMMIT | SERVER_STATUS_IN_TRANS
     );
 
@@ -2668,4 +2670,105 @@ impl QuerySession for MessageSession {
     fn statement_info(&self) -> Vec<u8> {
         b"Records: 2  Duplicates: 1  Warnings: 0".to_vec()
     }
+}
+
+/// A session whose last statement left Go's `AffectedRows`, `LastInsertID`
+/// and `LastMessage` (a three-row INSERT).
+struct LastStatementSession;
+
+impl QuerySession for LastStatementSession {
+    fn parse_statement(&mut self, sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        tidb_parser::parse(sql).map_err(|error| SqlQueryError::unknown(format!("{error:?}")))
+    }
+
+    fn execute_stmt<'a>(
+        &'a mut self,
+        _sql: &str,
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
+        Ok(None)
+    }
+
+    fn affected_rows(&self) -> u64 {
+        3
+    }
+
+    fn last_insert_id(&self) -> u64 {
+        1
+    }
+
+    fn statement_info(&self) -> Vec<u8> {
+        b"Records: 3  Duplicates: 0  Warnings: 0".to_vec()
+    }
+
+    /// A text that parses to no statement splits into none (Go
+    /// `handleQuery`'s `len(stmts) == 0`).
+    fn split_statements(&mut self, sql: &str, _client_multi_statements: bool) -> Result<Vec<String>, SqlQueryError> {
+        let statements = tidb_parser::parse_multi(sql).map_err(|error| SqlQueryError::unknown(format!("{error:?}")))?;
+        Ok(if statements.is_empty() { Vec::new() } else { vec![sql.to_owned()] })
+    }
+}
+
+struct LastStatementFactory;
+
+impl QuerySessionFactory for LastStatementFactory {
+    type Session = LastStatementSession;
+
+    fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        Ok(LastStatementSession)
+    }
+}
+
+/// Go `writeOK` (`writeOkWith`) reads the session's last affected rows,
+/// insert id and message: a query that parses to no statement, and a
+/// `COM_PING`, answer what the previous statement left. Go master over
+/// unistore: after a three-row INSERT, `/* only a comment */` answers 3
+/// rows, insert id 1, `Records: 3  Duplicates: 0  Warnings: 0`.
+#[test]
+fn a_bare_ok_reports_the_last_statements_rows_id_and_message() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &LastStatementFactory,
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    let info = b"Records: 3  Duplicates: 0  Warnings: 0";
+    let expect_ok = |packet: Vec<u8>| {
+        assert_eq!(&packet[..3], &[0x00, 3, 1], "{packet:?}");
+        // status (2) and warnings (2), then the length-encoded message.
+        assert_eq!(packet[7] as usize, info.len(), "{packet:?}");
+        assert_eq!(&packet[8..], info, "{packet:?}");
+    };
+    let mut query = vec![COM_QUERY];
+    query.extend_from_slice(b"/* only a comment */");
+    write_packet(&mut client, 0, &query);
+    reader.set_sequence(1);
+    expect_ok(reader.read_packet().unwrap());
+
+    write_packet(&mut client, 0, &[COM_PING]);
+    reader.set_sequence(1);
+    expect_ok(reader.read_packet().unwrap());
+
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    drop(client);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
 }

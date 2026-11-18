@@ -1848,8 +1848,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     write_ok(
         &mut output,
         response_sequence,
-        engine.wire_status(),
-        engine.warning_count(),
+        &engine,
         protocol_41,
     )?;
     // Go `onConn`: past the handshake, the connection counts against its
@@ -2509,8 +2508,7 @@ fn run_connection_commands<S: QuerySession>(
                     write_ok(
                         output,
                         next_sequence,
-                        engine.wire_status(),
-                        engine.warning_count(),
+                        &*engine,
                         protocol_41,
                     )?;
                     record_client_warnings(&*output, &*engine);
@@ -2518,8 +2516,7 @@ fn run_connection_commands<S: QuerySession>(
                 Command::Ping => write_ok(
                     output,
                     1,
-                    engine.wire_status(),
-                    engine.warning_count(),
+                    &*engine,
                     protocol_41,
                 )?,
                 Command::Query(bytes) => {
@@ -2560,8 +2557,7 @@ fn run_connection_commands<S: QuerySession>(
                         write_ok(
                             output,
                             1,
-                            engine.wire_status(),
-                            engine.warning_count(),
+                            &*engine,
                             protocol_41,
                         )?;
                         queries += 1;
@@ -3615,8 +3611,7 @@ fn run_connection_commands<S: QuerySession>(
                         Ok(()) => write_ok(
                             output,
                             1,
-                            engine.wire_status(),
-                            engine.warning_count(),
+                            &*engine,
                             protocol_41,
                         )?,
                         Err(error) => write_query_error(output, &error, protocol_41)?,
@@ -3671,8 +3666,7 @@ fn run_connection_commands<S: QuerySession>(
                         write_ok(
                             output,
                             1,
-                            engine.wire_status(),
-                            engine.warning_count(),
+                            &*engine,
                             protocol_41,
                         )?;
                     }

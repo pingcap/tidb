@@ -172,20 +172,23 @@ pub(crate) fn write_unknown_statement<O: ConnectionPacketOutput + ?Sized>(
 /// flag to keep in step with it.
 ///
 /// None of these commands runs a statement, so none resets the warning buffer
-/// and each reports the count the preceding statement left -- which is what
-/// `ctx.WarningCount()` reads at that moment too.
-pub(crate) fn write_ok<O: ConnectionPacketOutput + ?Sized>(
+/// and each reports what the preceding statement left: Go's `writeOkWith`
+/// reads `cc.ctx.LastMessage()`, `AffectedRows()`, `LastInsertID()` and
+/// `WarningCount()` at that moment, so a comment-only query after a
+/// three-row INSERT answers `3 rows affected, Records: 3 ...`.
+pub(crate) fn write_ok<O: ConnectionPacketOutput + ?Sized, S: crate::driver::QuerySession + ?Sized>(
     output: &mut O,
     sequence: u8,
-    status: WireStatus,
-    warnings: u16,
+    session: &S,
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
     let payload = encode_ok_packet(&OkPacket {
-        status_flags: status.bits(),
-        warnings,
+        affected_rows: session.affected_rows(),
+        last_insert_id: session.last_insert_id(),
+        status_flags: session.wire_status().bits(),
+        warnings: session.warning_count(),
+        info: session.statement_info(),
         protocol_41,
-        ..OkPacket::default()
     });
     write_payload(output, sequence, &payload)
 }
