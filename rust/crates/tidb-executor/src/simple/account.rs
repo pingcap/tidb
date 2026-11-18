@@ -1267,11 +1267,8 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         &mut self,
         grant: &tidb_ast::GrantStmt,
     ) -> Result<(), DriverError> {
-        if grant.object_type.is_some() {
-            return Err(DriverError::unsupported(
-                "GRANT ... ON FUNCTION/PROCEDURE is not supported yet",
-            ));
-        }
+        // Go's GrantExec / RevokeExec never read `ObjectType`: `ON TABLE`,
+        // `ON FUNCTION` and `ON PROCEDURE` name the same table-level target.
         let with_grant = if grant.with_grant {
             tidb_mysql::GrantPriv.bit()
         } else {
@@ -1315,6 +1312,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 let names_static = grant.privileges.iter().any(|privilege| !privilege.dynamic);
                 let mask = static_mask | if names_static { with_grant } else { 0 };
                 let missing = self.grantees_missing(&grant.users, no_auto_create_user)?;
+                self.grant_column_list_outside_table_scope(grant, None)?;
                 tls_policy = load_tls_policy()?;
                 self.create_grantees(&grant.users, &missing)?;
                 for spec in &grant.users {
@@ -1338,6 +1336,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 let privs = self.resolve_scoped_privs(&grant.privileges, ScopeKind::Database)?;
                 let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit()) | with_grant;
                 let missing = self.grantees_missing(&grant.users, no_auto_create_user)?;
+                self.grant_column_list_outside_table_scope(grant, Some(&database))?;
                 tls_policy = load_tls_policy()?;
                 self.create_grantees(&grant.users, &missing)?;
                 for spec in &grant.users {
@@ -1488,11 +1487,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         &mut self,
         revoke: &tidb_ast::RevokeStmt,
     ) -> Result<(), DriverError> {
-        if revoke.object_type.is_some() {
-            return Err(DriverError::unsupported(
-                "REVOKE ... ON FUNCTION/PROCEDURE is not supported yet",
-            ));
-        }
+        // Go's RevokeExec never reads `ObjectType` (see `grant_stmt`).
         let Some(registry) = self.privilege_registry().cloned() else {
             return Err(DriverError::unsupported(
                 "REVOKE requires a server front end with a privilege registry",
@@ -1642,6 +1637,28 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         Ok(())
     }
 
+    /// Go `GrantExec`'s `checkAndInitColumnPriv` for a privilege with a
+    /// column list at DB or global scope: `getTargetSchemaAndTable` looks up
+    /// the table named `""` in the level's database (the current one for
+    /// `*.*`), so the grant fails with 1146 `Table 'db.' doesn't exist`, or
+    /// `miss DB name for grant privilege` with no database at all.
+    fn grant_column_list_outside_table_scope(
+        &self,
+        grant: &tidb_ast::GrantStmt,
+        database: Option<&str>,
+    ) -> Result<(), DriverError> {
+        if grant.privileges.iter().all(|privilege| privilege.columns.is_empty()) {
+            return Ok(());
+        }
+        let database = database.map(str::to_owned).unwrap_or_else(|| self.session_vars().current_db.clone());
+        if database.is_empty() {
+            return Err(DriverError::from(tidb_terror::MysqlError::unknown("miss DB name for grant privilege")));
+        }
+        Err(DriverError::from(
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.gen_with_stack_by_args(&[(&database).into(), "".into()]),
+        ))
+    }
+
     /// Resolves a DB/TABLE-scope `GRANT`/`REVOKE`'s database qualifier: the
     /// written name, or (Go's `getTargetSchemaName`) the session's current
     /// database when the statement wrote a bare `*`/table name.
@@ -1774,11 +1791,10 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 result.extend_from_slice(all_scoped);
                 continue;
             }
-            if !privilege.columns.is_empty() {
-                return Err(DriverError::unsupported(
-                    "GRANT/REVOKE with a column list is not supported yet",
-                ));
-            }
+            // A column list outside TABLE scope: Go's grantDBLevel /
+            // grantGlobalLevel and the REVOKE arms grant or revoke the plain
+            // privilege; GRANT first fails `checkAndInitColumnPriv`
+            // (`grant_column_list_outside_table_scope`).
             // A DYNAMIC privilege is refused for being at the wrong LEVEL
             // before anything asks whether it is registered, so an
             // unregistered name outside `*.*` reports 3619 and not 3929
@@ -1862,11 +1878,10 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 mask |= tidb_privilege::all_privs_mask();
                 continue;
             }
-            if !privilege.columns.is_empty() {
-                return Err(DriverError::unsupported(
-                    "GRANT/REVOKE with a column list is not supported yet",
-                ));
-            }
+            // A column list outside TABLE scope: Go's grantDBLevel /
+            // grantGlobalLevel and the REVOKE arms grant or revoke the plain
+            // privilege; GRANT first fails `checkAndInitColumnPriv`
+            // (`grant_column_list_outside_table_scope`).
             if privilege.dynamic {
                 if reject_unregistered && !tidb_privilege::is_dynamic_privilege(&privilege.name) {
                     return Err(DriverError::from(

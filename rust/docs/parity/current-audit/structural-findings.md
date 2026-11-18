@@ -6,7 +6,7 @@ carried as written); the [JSON register](structural-findings.json) holds the sam
 rows. A repaired finding is removed, not kept. The live probes behind the new rows
 are in [structural-audit-2026-11-18.md](structural-audit-2026-11-18.md).
 
-**18 unresolved: 17 open, 1 partial.**
+**17 unresolved: 16 open, 1 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -37,7 +37,6 @@ unresolved until it is restated against its Go owner or closed.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| A05 | open | GRANT and REVOKE with an object type are refused. `GRANT SELECT ON TABLE sa.t TO u` and its REVOKE answer 1105 `GRANT ... ON FUNCTION/PROCEDURE is not supported yet` because `grant_stmt` refuses any `object_type`, including `Table`; Go ignores the object type and grants at table level. For FUNCTION / PROCEDURE Go answers 1144 (`Illegal GRANT/REVOKE command`). A column list at database scope (`GRANT SELECT (b) ON sa.* ...`) answers 1105 `GRANT/REVOKE with a column list is not supported yet` where Go answers 1146 `Table 'sa.' doesn't exist`. [2026-11-18 probes](structural-audit-2026-11-18.md) | `pkg/executor/grant.go`, `pkg/executor/revoke.go`, `pkg/planner/core/planbuilder.go` (`buildGrant` / `buildRevoke`) |
 | A06 | open | LDAP authentication is not ported. Accounts with `authentication_ldap_simple` / `authentication_ldap_sasl` can be created, the connection switches to the cleartext / SASL client plugin, and the `authentication_ldap_*` variables exist, but the verifier always answers access denied (`configured_user_store.rs`: "this server has neither configured"). Go binds to the LDAP server through `ldap.LDAPSimpleAuthImpl.AuthLDAPSimple` / `LDAPSASLAuthImpl.AuthLDAPSASL`, configured by those variables' `SetGlobal` hooks. | `pkg/privilege/privileges/ldap`, `pkg/privilege/privileges/privileges.go` (`ConnectionVerification`), `pkg/sessionctx/variable/sysvar.go` (the `authentication_ldap_*` hooks) |
 | A08 | open | `SHOW SESSION_STATES` encodes a different set of session variables from Go's. On a fresh session Go's `sys-vars` include `character_set_server` and not `tidb_opt_tiflash_concurrency_factor`; this port's are the reverse (other keys equal). Go keeps a variable only when `GetSessionStatesSystemVar` finds it in the session's `systems` cache, so the difference is in which variables a new session caches. A session migrated between a Go and a Rust node (TiProxy) can lose or gain a value. [2026-11-18 probes](structural-audit-2026-11-18.md) | `pkg/session/session.go` (`EncodeStates`), `pkg/sessionctx/variable/session.go` (`GetSessionStatesSystemVar`) |
 

@@ -43,9 +43,6 @@ mysql -h127.0.0.1 -P<port> -uroot -vvv --force --table < probes.sql
 
 | Row | Statement | Go | Rust |
 | --- | --- | --- | --- |
-| A05 | `GRANT SELECT ON TABLE sa.t TO sa_u1` | OK | 1105 `GRANT ... ON FUNCTION/PROCEDURE is not supported yet` |
-| A05 | `GRANT EXECUTE ON FUNCTION sa.f TO sa_u1` | 1144 `Illegal GRANT/REVOKE command; ...` | 1105 (same text as above) |
-| A05 | `GRANT SELECT (b) ON sa.* TO sa_u1` | 1146 `Table 'sa.' doesn't exist` | 1105 `GRANT/REVOKE with a column list is not supported yet` |
 | A08 | `SHOW SESSION_STATES` on a new session | `sys-vars` has `character_set_server` | `sys-vars` has `tidb_opt_tiflash_concurrency_factor` instead |
 | B03 | `tidb-server -store unistore -path ...` | starts | `unsupported option -store` |
 | E33 | `BINLOG 'abc'` | OK | 1105 `this statement kind (ADMIN Binlog) is not supported yet` |

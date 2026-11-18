@@ -2,8 +2,8 @@
   "date": "2026-11-18",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 18,
-    "open": 17,
+    "unresolved": 17,
+    "open": 16,
     "partial": 1
   },
   "findings": [
@@ -70,14 +70,6 @@
       "finding": "The `tidb-server` binary does not take Go's command line. `parse_node_config` first lets `main_flags.rs` take the flags it ports from `initFlagSet`, then parses its own options, which accept only the `--name` form: Go's `-store unistore -path ...` is refused with `unsupported option -store`. It adds options Go has no counterpart for (`--auth-file`, `--load-privileges`, `--lease-ms`, `--max-connections`, `--connection-timeout-ms`, `--max-allowed-packet`, `--no-auto-tls`, `--no-disconnect-on-expired-password`) and aliases (`--ssl-cert` / `--ssl-key` / `--ssl-ca` beside Go's `-sql-*`, `--cluster-ssl-*` beside Go's `-cluster-ca` / `-cluster-cert` / `-cluster-key`). One of them picks a second account source: `--auth-file` reads users from a TSV file (`ConfiguredUserStore::load`) and refuses a non-loopback listener, and a unistore node started without it fails with `missing required option --auth-file` unless `--load-privileges` is given. Go has one flag set and one account source, `mysql.user` loaded by the privilege cache.",
       "rust_evidence": "`rust/crates/tidb-server/src/node_flags.rs` (`parse_node_config`), `main_flags.rs`, `rust/crates/tidb-session/src/domain/configured_user_store.rs`, `real_tikv_node/mod.rs` (`configured_account_store`)",
       "go_owner": "`cmd/tidb-server/main.go` (`initFlagSet`, `overrideConfig`), `pkg/privilege/privileges/cache.go` (`LoadAll`)"
-    },
-    {
-      "id": "A05",
-      "status": "open",
-      "group": "Privileges, wire and administration",
-      "finding": "GRANT and REVOKE with an object type are refused. `GRANT SELECT ON TABLE sa.t TO u` and its REVOKE answer 1105 `GRANT ... ON FUNCTION/PROCEDURE is not supported yet` because `grant_stmt` refuses any `object_type`, including `Table`; Go ignores the object type and grants at table level. For FUNCTION / PROCEDURE Go answers 1144 (`Illegal GRANT/REVOKE command`). A column list at database scope (`GRANT SELECT (b) ON sa.* ...`) answers 1105 `GRANT/REVOKE with a column list is not supported yet` where Go answers 1146 `Table 'sa.' doesn't exist`. [2026-11-18 probes](structural-audit-2026-11-18.md)",
-      "rust_evidence": "`rust/crates/tidb-executor/src/simple/account.rs` (`grant_stmt`, the REVOKE arm, `resolve_scoped_privs`)",
-      "go_owner": "`pkg/executor/grant.go`, `pkg/executor/revoke.go`, `pkg/planner/core/planbuilder.go` (`buildGrant` / `buildRevoke`)"
     },
     {
       "id": "A06",
@@ -152,7 +144,7 @@
       "go_owner": "`pkg/executor/show_stats.go` (`fetchShowStatsHistogram`, `appendTableForStatsHistograms`), `pkg/statistics/handle/cache` (`GetPhysicalTableStats`)"
     }
   ],
-  "unresolved": 18,
-  "open": 17,
+  "unresolved": 17,
+  "open": 16,
   "partial": 1
 }
