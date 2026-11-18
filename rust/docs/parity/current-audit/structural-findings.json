@@ -51,7 +51,7 @@
       "id": "X12",
       "status": "open",
       "group": "Structure: Go's shape before more ports",
-      "finding": "A statement's reads and locks have two implementations. An autocommit statement uses `tidb-domain-core`'s `DeferredSnapshot` and a statement inside a transaction uses `tidb-store-driver-txn`'s `SessionSnapshot`; both implement `ClusterSnapshot` with their own get / batch_get / scan, for-update timestamp and `do_lock_keys`, and map a pessimistic lock conflict to the statement retry in different ways (`DeferredSnapshot` turns `RetryStatement` into a `lock_conflict` error plus a retry slot; `SessionSnapshot` keeps the outcome for the statement owner). Go has one `LazyTxn` / `KVTxn` and one provider per transaction for both cases (X05).",
+      "finding": "A statement's reads still have two transaction objects. An autocommit statement uses `tidb-domain-core`'s `DeferredSnapshot` and a statement inside a transaction uses `tidb-store-driver-txn`'s `SessionSnapshot`; both implement `ClusterSnapshot`. Their locks now go through one `lock_pessimistic` (Go `KVTxn.LockKeys`) and one `StatementLockFailure` outcome for the statement owner, but the two objects, their for-update timestamps and their lifetimes remain separate. Go has one `LazyTxn` / `KVTxn` and one provider per transaction for both cases (X05).",
       "rust_evidence": "`rust/crates/tidb-domain-core/src/cluster_transactions.rs` (`DeferredSnapshot`), `rust/crates/tidb-store-driver-txn/src/cluster_table_storage.rs` (`SessionSnapshot`)",
       "go_owner": "`pkg/session/txn.go` (`LazyTxn`), `pkg/sessiontxn/isolation/base.go`, `pkg/executor/executor.go` (`doLockKeys`)"
     },

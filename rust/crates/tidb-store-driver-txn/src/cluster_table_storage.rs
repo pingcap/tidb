@@ -128,6 +128,37 @@ pub enum StatementLockFailure {
     Transaction(LockSqlError),
 }
 
+/// Where a statement's lock leaves its [`StatementLockFailure`] for the
+/// statement owner, which takes it back after the executor fails.
+pub type StatementLockFailureSlot = Arc<Mutex<Option<StatementLockFailure>>>;
+
+impl StatementLockFailure {
+    /// The statement owner's next move for a lock outcome, `None` when the
+    /// keys were locked (Go `handlePessimisticLockError`'s input).
+    #[must_use]
+    pub fn from_outcome(outcome: LockKeysOutcome) -> Option<Self> {
+        match outcome {
+            LockKeysOutcome::Locked { .. } => None,
+            LockKeysOutcome::RetryStatement { for_update_ts, .. } => Some(Self::Retry { for_update_ts }),
+            LockKeysOutcome::StatementError(error) => Some(Self::Statement(error)),
+            LockKeysOutcome::TransactionError(error) => Some(Self::Transaction(error)),
+        }
+    }
+
+    /// Leaves the failure in `slot` and returns the storage error the
+    /// executor fails with; the statement owner consumes that error.
+    pub fn record(self, slot: &StatementLockFailureSlot) -> StorageError {
+        let message = match &self {
+            Self::Retry { for_update_ts } => {
+                format!("pessimistic lock conflict: the statement retries at {for_update_ts}")
+            }
+            Self::Statement(error) | Self::Transaction(error) => error.message.clone(),
+        };
+        *slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(self);
+        StorageError::Backend(message)
+    }
+}
+
 /// Failure while executing one restricted SQL statement in a pessimistic
 /// transaction.
 #[derive(Debug)]
@@ -666,7 +697,7 @@ where
     /// The outcome of a lock a statement handle took during execution,
     /// shared with every handle of this transaction and taken by the
     /// statement owner when the statement fails.
-    statement_lock_failure: Arc<Mutex<Option<StatementLockFailure>>>,
+    statement_lock_failure: StatementLockFailureSlot,
     /// The executor buffer bound to this transaction, whose duplicate hints
     /// name a key a statement lock finds already present (Go builds the 1062
     /// text from the key and schema: `ExtractKeyExistsErrFromHandle`).
@@ -716,6 +747,62 @@ fn arm_fair_locking<S: StoreClient>(state: &mut SessionTransactionState<S>, fair
     if let SessionTransactionState::Pessimistic { transaction, .. } = state {
         transaction.set_fair_locking(fair_locking);
     }
+}
+
+/// Go `KVTxn.LockKeys` in a pessimistic transaction, as every statement lock
+/// takes it: fair locking armed, the locks acquired at the for-update
+/// timestamp, the lock duration observed, and the transaction ended when the
+/// failure is the transaction's. `None` when the transaction is not
+/// pessimistic; the caller decides what that means.
+#[allow(clippy::too_many_arguments)]
+fn lock_pessimistic<S: StoreClient>(
+    state: &mut SessionTransactionState<S>,
+    fair_locking: bool,
+    timeout: Duration,
+    keys: &[Vec<u8>],
+    presume_not_exists: &BTreeSet<Vec<u8>>,
+    duplicate_hints: &BTreeMap<Vec<u8>, DuplicateKeyHint>,
+    return_values: bool,
+    only_if_exists: bool,
+    in_share_mode: bool,
+    wait: LockWaitTime,
+) -> Option<LockKeysOutcome> {
+    arm_fair_locking(state, fair_locking);
+    let SessionTransactionState::Pessimistic {
+        transaction,
+        lock_values,
+        ..
+    } = state
+    else {
+        return None;
+    };
+    let call = UnaryCallContext::with_timeout(timeout);
+    let lock_started = Instant::now();
+    let outcome = acquire_statement_locks(
+        transaction,
+        lock_values,
+        keys,
+        presume_not_exists,
+        duplicate_hints,
+        return_values,
+        only_if_exists,
+        in_share_mode,
+        wait,
+        &call,
+    );
+    if matches!(outcome, LockKeysOutcome::TransactionError(_)) {
+        let _ = finish_session_transaction(state);
+    } else {
+        // Go `LockKeysDetail.TotalTime` feeds the client-go
+        // `pessimistic_lock_keys_duration` histogram (`adapter.go:588`),
+        // charged per lock acquisition through the client's own registry.
+        let lock_elapsed = lock_started.elapsed();
+        accumulate_lock_observation(keys.len() as u64, lock_elapsed);
+        tidb_metrics::client_go_metrics::observe_pessimistic_lock_keys_duration(
+            lock_elapsed.as_secs_f64(),
+        );
+    }
+    Some(outcome)
 }
 
 impl<S: StoreClient> fmt::Debug for SessionTransaction<S> {
@@ -1053,41 +1140,28 @@ impl<S: StoreClient> SessionTransaction<S> {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        arm_fair_locking(&mut state, self.fair_locking);
-        let call = UnaryCallContext::with_timeout(self.timeout);
-        let outcome = match &mut *state {
-            SessionTransactionState::Pessimistic {
-                transaction,
-                lock_values,
-                ..
-            } => acquire_statement_locks(
-                transaction,
-                lock_values,
-                &keys,
-                &BTreeSet::new(),
-                &BTreeMap::new(),
-                true,
-                true,
-                false,
-                wait,
-                &call,
-            ),
-            SessionTransactionState::Optimistic(_) => {
-                return Ok(LockKeysOutcome::Locked {
-                    for_update_ts: 0,
-                    newly_locked: Vec::new(),
-                })
-            }
-            SessionTransactionState::Finished => {
-                return Err(StorageError::Backend(
-                    "the transaction is already finished".to_owned(),
-                ));
-            }
-        };
-        if matches!(outcome, LockKeysOutcome::TransactionError(_)) {
-            let _ = finish_session_transaction(&mut state);
+        let outcome = lock_pessimistic(
+            &mut state,
+            self.fair_locking,
+            self.timeout,
+            &keys,
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+            true,
+            true,
+            false,
+            wait,
+        );
+        match (outcome, &*state) {
+            (Some(outcome), _) => Ok(outcome),
+            (None, SessionTransactionState::Finished) => Err(StorageError::Backend(
+                "the transaction is already finished".to_owned(),
+            )),
+            (None, _) => Ok(LockKeysOutcome::Locked {
+                for_update_ts: 0,
+                newly_locked: Vec::new(),
+            }),
         }
-        Ok(outcome)
     }
 
     /// [`Self::lock_keys`], asking TiKV to answer each newly locked key's row
@@ -1138,51 +1212,33 @@ impl<S: StoreClient> SessionTransaction<S> {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        arm_fair_locking(&mut state, self.fair_locking);
-        let call = UnaryCallContext::with_timeout(self.timeout);
-        let lock_started = std::time::Instant::now();
-        let outcome = match &mut *state {
-            SessionTransactionState::Pessimistic {
-                transaction,
-                lock_values,
-                ..
-            } => acquire_statement_locks(
-                transaction,
-                lock_values,
-                &keys,
-                &presume_not_exists,
-                &duplicate_hints,
-                return_values,
-                false,
-                in_share_mode,
-                wait,
-                &call,
-            ),
-            SessionTransactionState::Optimistic(_) => LockKeysOutcome::TransactionError(
-                LockSqlError::from(tidb_terror::MysqlError::unknown(
-                    "a pessimistic lock requires a pessimistic transaction",
-                )),
-            ),
-            SessionTransactionState::Finished => {
-                return Err(StorageError::Backend(
-                    "the transaction is already finished".to_owned(),
+        let outcome = lock_pessimistic(
+            &mut state,
+            self.fair_locking,
+            self.timeout,
+            &keys,
+            &presume_not_exists,
+            &duplicate_hints,
+            return_values,
+            false,
+            in_share_mode,
+            wait,
+        );
+        match (outcome, &*state) {
+            (Some(outcome), _) => Ok(outcome),
+            (None, SessionTransactionState::Finished) => Err(StorageError::Backend(
+                "the transaction is already finished".to_owned(),
+            )),
+            (None, _) => {
+                let error = LockKeysOutcome::TransactionError(LockSqlError::from(
+                    tidb_terror::MysqlError::unknown(
+                        "a pessimistic lock requires a pessimistic transaction",
+                    ),
                 ));
+                let _ = finish_session_transaction(&mut state);
+                Ok(error)
             }
-        };
-        let lock_elapsed = lock_started.elapsed();
-        if !matches!(outcome, LockKeysOutcome::TransactionError(_)) {
-            // Go `LockKeysDetail.TotalTime` feeds the client-go
-            // `pessimistic_lock_keys_duration` histogram (`adapter.go:588`),
-            // charged per lock acquisition through the client's own registry.
-            accumulate_lock_observation(keys.len() as u64, lock_elapsed);
-            tidb_metrics::client_go_metrics::observe_pessimistic_lock_keys_duration(
-                lock_elapsed.as_secs_f64(),
-            );
         }
-        if matches!(outcome, LockKeysOutcome::TransactionError(_)) {
-            let _ = finish_session_transaction(&mut state);
-        }
-        Ok(outcome)
     }
 
     /// Completes the client's fair-locking scope. Ordinary locks remain owned
@@ -1855,7 +1911,7 @@ struct SessionSnapshot<S: StoreClient> {
     /// `@@tidb_pessimistic_txn_fair_locking` as the transaction captured it.
     fair_locking: bool,
     /// See [`SessionTransaction::take_statement_lock_failure`].
-    statement_lock_failure: Arc<Mutex<Option<StatementLockFailure>>>,
+    statement_lock_failure: StatementLockFailureSlot,
     /// See `SessionTransaction::bound_buffer`.
     bound_buffer: Arc<Mutex<Option<MutationBuffer>>>,
 }
@@ -2231,17 +2287,6 @@ impl<S: StoreClient> SessionSnapshot<S> {
             // cache (`e.lock`), whichever statement shape opened this handle.
             self.locking = true;
         }
-        arm_fair_locking(&mut state, self.fair_locking);
-        let call = UnaryCallContext::with_timeout(self.timeout);
-        let lock_started = std::time::Instant::now();
-        let SessionTransactionState::Pessimistic {
-            transaction,
-            lock_values,
-            ..
-        } = &mut *state
-        else {
-            unreachable!("checked pessimistic above");
-        };
         let hints: BTreeMap<Vec<u8>, DuplicateKeyHint> = self
             .bound_buffer
             .lock()
@@ -2257,9 +2302,10 @@ impl<S: StoreClient> SessionSnapshot<S> {
                     .collect()
             })
             .unwrap_or_default();
-        let outcome = acquire_statement_locks(
-            transaction,
-            lock_values,
+        let outcome = lock_pessimistic(
+            &mut state,
+            self.fair_locking,
+            self.timeout,
             &keys,
             &BTreeSet::new(),
             &hints,
@@ -2267,39 +2313,13 @@ impl<S: StoreClient> SessionSnapshot<S> {
             only_if_exists,
             false,
             wait,
-            &call,
-        );
-        let lock_elapsed = lock_started.elapsed();
-        if !matches!(outcome, LockKeysOutcome::TransactionError(_)) {
-            accumulate_lock_observation(keys.len() as u64, lock_elapsed);
-            tidb_metrics::client_go_metrics::observe_pessimistic_lock_keys_duration(
-                lock_elapsed.as_secs_f64(),
-            );
+        )
+        .expect("checked pessimistic above");
+        drop(state);
+        match StatementLockFailure::from_outcome(outcome) {
+            None => Ok(()),
+            Some(failure) => Err(failure.record(&self.statement_lock_failure)),
         }
-        let failure = match outcome {
-            LockKeysOutcome::Locked { .. } => return Ok(()),
-            LockKeysOutcome::RetryStatement { for_update_ts, .. } => {
-                StatementLockFailure::Retry { for_update_ts }
-            }
-            LockKeysOutcome::StatementError(error) => StatementLockFailure::Statement(error),
-            LockKeysOutcome::TransactionError(error) => {
-                let _ = finish_session_transaction(&mut state);
-                StatementLockFailure::Transaction(error)
-            }
-        };
-        let message = match &failure {
-            StatementLockFailure::Retry { for_update_ts } => {
-                format!("pessimistic lock conflict: the statement retries at {for_update_ts}")
-            }
-            StatementLockFailure::Statement(error) | StatementLockFailure::Transaction(error) => {
-                error.message.clone()
-            }
-        };
-        *self
-            .statement_lock_failure
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(failure);
-        Err(StorageError::Backend(message))
     }
 }
 

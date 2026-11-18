@@ -29,7 +29,9 @@ use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use tidb_store_driver_txn::cluster_table_storage::{LockKeysOutcome, StatementLockFailure};
+use tidb_store_driver_txn::cluster_table_storage::{
+    LockKeysOutcome, StatementLockFailure, StatementLockFailureSlot,
+};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_executor::access_path::StatementReadShape;
 use tidb_kv::cluster_storage::ClusterSnapshot;
@@ -435,9 +437,10 @@ impl StatementLifecycle<'_> {
         // attempt, reading at the transaction's own snapshot.
         let mut retry_read_ts: Option<u64> = None;
         let mut retries = tidb_store_driver_error::pessimistic_lock_error::PessimisticStatementRetry::default();
-        // An autocommit pessimistic statement's lock conflict (see
-        // [`transactions::LockRetrySlot`]).
-        let lock_retry: transactions::LockRetrySlot = Arc::default();
+        // Where an autocommit pessimistic statement's lock, taken after its
+        // read, leaves its outcome; a statement in an explicit transaction
+        // uses its transaction's slot.
+        let lock_failure: StatementLockFailureSlot = Arc::default();
         // Whether the statement reached `finishStmt`'s commit: a failure
         // there is the commit's own, not one `autoCommitAfterStmt` rolls
         // back.
@@ -449,7 +452,7 @@ impl StatementLifecycle<'_> {
             if let Some(transaction) = self.txn.explicit.as_ref() {
                 let _ = transaction.take_statement_lock_failure();
             }
-            *lock_retry
+            *lock_failure
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
             // Go `decideTxnMode`: under the default `pessimistic-auto-commit =
@@ -483,7 +486,7 @@ impl StatementLifecycle<'_> {
                             .as_ref()
                             .expect("autocommit write created its transaction handoff"),
                     ),
-                    Arc::clone(&lock_retry),
+                    Arc::clone(&lock_failure),
                     self.txn.buffer().clone(),
                     Arc::<str>::from(resource_group),
                     autocommit_pessimistic,
@@ -631,29 +634,28 @@ impl StatementLifecycle<'_> {
                     // `PointGetExecutor.getAndLock`) and the statement failed
                     // on that lock: act on the lock's outcome as
                     // `handlePessimisticLockError` does.
-                    let failure = self
-                        .txn
-                        .explicit
-                        .as_ref()
-                        .and_then(|transaction| transaction.take_statement_lock_failure());
-                    // An autocommit statement's lock found a newer committed
-                    // version of a row it read.
-                    let autocommit_retry = if self.txn.explicit.is_none() {
-                        lock_retry
+                    // Inside an explicit transaction the transaction keeps
+                    // the outcome; an autocommit statement's lock, taken
+                    // after its read, left it in `lock_failure`.
+                    let failure = match self.txn.explicit.as_ref() {
+                        Some(transaction) => transaction.take_statement_lock_failure(),
+                        None => lock_failure
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .take()
-                    } else {
-                        None
+                            .take(),
                     };
-                    if failure.is_some() || autocommit_retry.is_some() {
+                    if failure.is_some() {
                         // The storage error the lock raised is the statement
                         // owner's to consume, as `handlePessimisticLockError`
                         // does: what the client sees is the lock outcome.
                         self.session
                             .retract_statement_failure(error.code, &error.message);
                     }
-                    if autocommit_retry.is_some() {
+                    if self.txn.explicit.is_none()
+                        && matches!(failure, Some(StatementLockFailure::Retry { .. }))
+                    {
+                        // The autocommit statement's lock found a newer
+                        // committed version of a row it read.
                         if let Err(error) = retries.retry() {
                             break Err(transactions::sql_error(error));
                         }
