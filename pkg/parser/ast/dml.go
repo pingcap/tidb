@@ -681,6 +681,11 @@ type SelectLockInfo struct {
 	Tables   []*TableName
 }
 
+// IsForShare reports whether the statement requests a shared locking read.
+func (n *SelectLockInfo) IsForShare() bool {
+	return n != nil && (n.LockType == SelectLockForShare || n.LockType == SelectLockForShareNoWait || n.LockType == SelectLockForShareSkipLocked)
+}
+
 // Hash64 implements the cascades/base.Hasher.<0th> interface.
 func (n *SelectLockInfo) Hash64(h util.IHasher) {
 	h.HashInt(int(n.LockType))

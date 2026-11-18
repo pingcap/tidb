@@ -1214,6 +1214,8 @@ const (
 	// division operations performed with the / operator.
 	DivPrecisionIncrement = "div_precision_increment"
 
+	// TiDBEnableSelectForShare enables genuine shared locking for pessimistic locking reads.
+	TiDBEnableSelectForShare = "tidb_enable_select_for_share"
 	// TiDBEnableSharedLockPromotion indicates whether the `select for share` statement would be executed
 	// as `select for update` statements which do acquire pessimistic locks.
 	TiDBEnableSharedLockPromotion = "tidb_enable_shared_lock_promotion"
@@ -1971,6 +1973,7 @@ const (
 	DefTiFlashPreAggMode                              = ForcePreAggStr
 	DefTiDBEnableLazyCursorFetch                      = false
 	DefOptEnableProjectionPushDown                    = true
+	DefTiDBEnableSelectForShare                       = false
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBEnableSharedLockUpgrade                    = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault

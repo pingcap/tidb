@@ -547,6 +547,29 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 			})
 		}
 	})
+	t.Run("PreparedNativeSharedLock", func(t *testing.T) {
+		if kerneltype.IsNextGen() {
+			t.Skip("native shared reads are Classic-only")
+		}
+		enableReadOnlyDDLFp(t)
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("create database ro")
+		tk.MustExec("create table ro.t(id int primary key)")
+		tk.MustExec("insert into ro.t values (1)")
+		tk.MustExec("alter database ro read only = 1")
+		tk.MustExec("set tidb_enable_shared_lock_promotion = OFF")
+		tk.MustExec("set tidb_enable_noop_functions = ON")
+		tk.MustExec("begin pessimistic")
+		defer tk.MustExec("rollback")
+		tk.MustExec("prepare s from 'select * from ro.t where id = 1 for share'")
+		tk.MustQuery("execute s").Check(testkit.Rows("1"))
+		tk.MustExec("set tidb_enable_select_for_share = ON")
+		tk.MustGetErrCode("execute s", 3989)
+		tk.MustGetErrCode("select * from ro.t where id = 1 for share", 3989)
+		tk.MustExec("set tidb_enable_select_for_share = OFF")
+		tk.MustQuery("execute s").Check(testkit.Rows("1"))
+	})
 	t.Run("ExplicitLockTargets", func(t *testing.T) {
 		enableReadOnlyDDLFp(t)
 		store := testkit.CreateMockStore(t)

@@ -1201,9 +1201,11 @@ func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.
 		if lock {
 			if pointGet != nil {
 				pointGet.Lock = lock
+				pointGet.InShareMode = sctx.GetSessionVars().UseSelectForShare(physLock.Lock)
 				pointGet.LockWaitTime = waitTime
 			} else {
 				batchPointGet.Lock = lock
+				batchPointGet.InShareMode = sctx.GetSessionVars().UseSelectForShare(physLock.Lock)
 				batchPointGet.LockWaitTime = waitTime
 			}
 		}
