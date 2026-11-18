@@ -328,6 +328,11 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/meta/metabuild",
         "//pkg/meta/model",
+<<<<<<< HEAD
+=======
+        "//pkg/metrics",
+        "//pkg/objstore",
+>>>>>>> fbd695f684b (ddl: use task node count for global-sort ingest planning (#73382))
         "//pkg/owner",
         "//pkg/parser",
         "//pkg/parser/ast",

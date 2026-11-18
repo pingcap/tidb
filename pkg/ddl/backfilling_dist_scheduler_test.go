@@ -31,7 +31,12 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+<<<<<<< HEAD
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+=======
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+>>>>>>> fbd695f684b (ddl: use task node count for global-sort ingest planning (#73382))
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -301,6 +306,66 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
+
+	// Exercise real ingest planning with a tiny non-empty file. The live server
+	// list can include nodes that are not eligible for this task (issue #73379).
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockWriteIngest")
+	extStore, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(extStore.Close)
+	kvMeta := &globalsort.SortedKVMeta{}
+	writer := simplesst.NewWriterBuilder().SetMemorySizeLimit(1024).SetBlockSize(1024).
+		SetOnCloseFunc(kvMeta.MergeSummary).Build(extStore, "data", "writer")
+	require.NoError(t, writer.WriteRow(ctx, []byte("ta"), []byte(strings.Repeat("v", 40)), nil))
+	require.NoError(t, writer.Close(ctx))
+	require.Equal(t, uint64(42), kvMeta.TotalKVSize)
+	for i, s := range gotSubtasks {
+		group := &globalsort.SortedKVMeta{}
+		if i == 0 {
+			group = kvMeta
+		}
+		m := &ddl.BackfillSubTaskMeta{EleIDs: []int64{10}, MetaGroups: []*globalsort.SortedKVMeta{group}}
+		raw, err := m.Marshal()
+		require.NoError(t, err)
+		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, raw))
+	}
+	var backfillMeta ddl.BackfillTaskMeta
+	require.NoError(t, json.Unmarshal(task.Meta, &backfillMeta))
+	backfillMeta.CloudStorageURI = extStore.URI()
+	task.Meta, err = json.Marshal(&backfillMeta)
+	require.NoError(t, err)
+
+	liveExecIDs := make([]string, 64)
+	originalServerInfo := scheduler.MockServerInfo.Swap(&liveExecIDs)
+	t.Cleanup(func() { scheduler.MockServerInfo.Store(originalServerInfo) })
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockTaskExecutorNodes", "return()")
+	originalNodeResource := storage.GetNodeResource()
+	storage.SetNodeResource(proto.NodeResourceForTest)
+	t.Cleanup(func() { storage.SetNodeResource(originalNodeResource) })
+	for _, tc := range []struct {
+		nodeCnt int
+		size    uint64
+	}{{1, 42}, {2, 21}, {64, 1}} {
+		task.MaxNodeCount = tc.nodeCnt
+		execIDs = make([]string, tc.nodeCnt)
+		if kerneltype.IsNextGen() {
+			// NextGen plans for the task limit even before workers scale out.
+			execIDs = execIDs[:1]
+		}
+		subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, proto.BackfillStepWriteAndIngest)
+		require.NoError(t, err)
+		require.Len(t, subtaskMetas, 1)
+		var m ddl.BackfillSubTaskMeta
+		require.NoError(t, json.Unmarshal(subtaskMetas[0], &m))
+		require.NoError(t, m.ReadJSONFromExternalStorage(ctx, extStore, &m))
+		require.Len(t, m.MetaGroups, 1)
+		require.Equal(t, tc.size, m.MetaGroups[0].TotalKVSize, "node count %d", tc.nodeCnt)
+		require.Equal(t, kvMeta.StartKey, m.MetaGroups[0].StartKey)
+		require.Equal(t, kvMeta.EndKey, m.MetaGroups[0].EndKey)
+		require.Len(t, m.DataFiles, 1)
+		require.Len(t, m.StatFiles, 1)
+		require.Equal(t, []int64{10}, m.EleIDs)
+	}
 }
 
 func TestGetNextStep(t *testing.T) {
