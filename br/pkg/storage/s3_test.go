@@ -28,12 +28,15 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	. "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 const bucketRegionHeader = "X-Amz-Bucket-Region"
@@ -2080,6 +2083,61 @@ func TestS3EncryptionContextRequests(t *testing.T) {
 				})
 			source := NewS3StorageForTest(s.s3, &backuppb.S3{Bucket: "source", Prefix: "source-prefix/"})
 			require.NoError(t, storage.CopyFrom(ctx, source, CopySpec{From: "object", To: "copy"}))
+		})
+	}
+}
+
+func TestS3EncryptionContextSDKDebugLogs(t *testing.T) {
+	for _, provider := range []string{"aws", "minio"} {
+		t.Run(provider, func(t *testing.T) {
+			core, logs := observer.New(zap.DebugLevel)
+			t.Cleanup(log.ReplaceGlobals(zap.New(core), &log.ZapProperties{
+				Core: core, Level: zap.NewAtomicLevelAt(zap.DebugLevel),
+			}))
+			const contextJSON = `{"tenant":"FAKE_PRIVATE_CONTEXT"}`
+			encodedContext := base64.StdEncoding.EncodeToString([]byte(contextJSON))
+			var writes int
+			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				// AWS's streaming checksum middleware finishes when the transport
+				// consumes the request body, just as a real HTTP transport does.
+				if req.Body != nil {
+					if _, err := io.Copy(io.Discard, req.Body); err != nil {
+						return nil, err
+					}
+				}
+				body := ""
+				if req.Method == http.MethodPut {
+					writes++
+					require.Equal(t, encodedContext, req.Header.Get("X-Amz-Server-Side-Encryption-Context"), "logging must not mutate the transmitted context")
+					if req.Header.Get("X-Amz-Copy-Source") != "" {
+						body = `<CopyObjectResult><ETag>etag</ETag></CopyObjectResult>`
+					}
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header: http.Header{
+						"X-Amz-Bucket-Region": []string{"us-east-1"},
+						"Etag":                []string{"etag"},
+					},
+					Body: io.NopCloser(strings.NewReader(body)), Request: req,
+				}, nil
+			})}
+			ctx := context.Background()
+			storage, err := NewS3Storage(ctx, &backuppb.S3{
+				Provider: provider, Endpoint: "https://s3.example.test", ForcePathStyle: true,
+				Bucket: "bucket", Region: "us-east-1", AccessKey: "FAKE_ACCESS_KEY", SecretAccessKey: "FAKE_SECRET_KEY",
+				Sse: "aws:kms", SseKmsKeyId: "key-id", SseKmsEncryptionContext: encodedContext,
+			}, &ExternalStorageOptions{HTTPClient: client, CheckPermissions: []Permission{PutAndDeleteObject}})
+			require.NoError(t, err)
+			require.NoError(t, storage.WriteFile(ctx, "object", []byte("payload")))
+			require.NoError(t, storage.CopyFrom(ctx, storage, CopySpec{From: "object", To: "copy"}))
+			require.Equal(t, 3, writes, "permission probe, PutObject and CopyObject must reach the SDK")
+			requestLogs := logs.FilterMessageSnippet("PUT ").All()
+			require.Len(t, requestLogs, writes, "DEBUG request dumps must remain enabled")
+			for _, entry := range logs.All() {
+				require.NotContains(t, entry.Message, encodedContext)
+				require.NotContains(t, entry.Message, "FAKE_PRIVATE_CONTEXT")
+			}
 		})
 	}
 }

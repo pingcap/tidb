@@ -437,6 +437,10 @@ type pingcapLogger struct {
 	logger *zap.Logger
 }
 
+// The SDK logs a copy of the HTTP headers. Redact the context in that copy only,
+// preserving the value sent to S3. HTTP header names are case-insensitive.
+var sseKmsContextLogHeader = regexp.MustCompile(`(?im)^(x-amz-server-side-encryption-context:[\t ]*)[^\r\n]*`)
+
 func newLogger(extraFields ...zap.Field) pingcapLogger {
 	return pingcapLogger{
 		logger: log.L().WithOptions(zap.AddCallerSkip(1)).With(extraFields...),
@@ -455,6 +459,7 @@ func (p pingcapLogger) Logf(classification logging.Classification, format string
 	}
 
 	msg := fmt.Sprintf(format, v...)
+	msg = sseKmsContextLogHeader.ReplaceAllString(msg, "${1}[REDACTED]")
 	loggerF(msg)
 }
 
