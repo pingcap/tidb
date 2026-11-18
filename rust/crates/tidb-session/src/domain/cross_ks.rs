@@ -235,16 +235,19 @@ impl<S: StoreClient + Send + 'static> SessionManager<S> {
         )
         .map_err(|error| error.to_string())?;
         let min_job_id = Arc::new(tidb_ddl_systable::MinJobIdRefresher::new());
+        let ddl_pool = Arc::new(crate::ddl_session_pool::CrossKsDdlSessionPool::new(
+            current_keyspace.to_owned(),
+            resources.clone(),
+        ));
         workers.schema_version = Some(workers.schema_version.take().unwrap().start(
             catalog.clone(),
-            opener.clone(),
+            Arc::clone(&ddl_pool) as _,
             pins,
             min_job_id.clone(),
             validator,
             reloader.waker(),
             reloader.stats_source(),
             tidb_ddl::schema_sync::MDL_CHECK_LOOK_DURATION,
-            timeout,
         )?);
         workers.info_schema = Some(reloader);
         let ddl_client = super::cross_ks_ddl::DdlClient {
@@ -255,10 +258,7 @@ impl<S: StoreClient + Send + 'static> SessionManager<S> {
             min_job_id: min_job_id.clone(),
             catalog: catalog.clone(),
             etcd,
-            ddl_pool: Arc::new(crate::ddl_session_pool::CrossKsDdlSessionPool::new(
-                current_keyspace.to_owned(),
-                resources.clone(),
-            )),
+            ddl_pool,
         };
         let mut run_min_job_id = true;
         tidb_failpoint::inject_call(

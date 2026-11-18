@@ -699,9 +699,11 @@ pub fn unistore_cluster_session_stack_from_for_keyspace(
     // version -- the owner's `WaitVersionSynced` waits on it.
     let schema_pins = Arc::new(tidb_ddl::schema_sync::SchemaPinRegistry::default());
     let min_job_id_refresher = Arc::new(tidb_ddl_systable::MinJobIdRefresher::new());
+    // Go `Syncer.sysSessionPool` (see `cluster_stack`).
+    let ddl_session_pool = Arc::new(crate::ddl_session_pool::NodeDdlSessionPool::mock_storage());
     let schema_sync_ack = tidb_ddl::schema_sync::SchemaSyncAck::spawn(
         Arc::clone(&catalog),
-        opener.clone(),
+        Arc::clone(&ddl_session_pool) as _,
         Arc::clone(&schema_pins),
         Arc::clone(&min_job_id_refresher),
         None,
@@ -711,10 +713,8 @@ pub fn unistore_cluster_session_stack_from_for_keyspace(
         reloader.waker(),
         reloader.stats_source(),
         tidb_ddl::schema_sync::MDL_CHECK_LOOK_DURATION,
-        IN_PROCESS_TIMEOUT,
     )
     .map_err(|error| engine(SqlQueryError::unknown(error)))?;
-    let ddl_session_pool = Arc::new(crate::ddl_session_pool::NodeDdlSessionPool::mock_storage());
     let cluster_ddl = Arc::new(
         RealClusterDdl::new_with_min_job_id_refresher(
             opener.clone(),

@@ -43,12 +43,10 @@ use tidb_infoschema_issyncer::catalog_watch::{
 };
 use tidb_ddl_systable::MinJobIdRefresher;
 use tidb_infoschema_issyncer::mdl_info_load::{refresh_mdl_check_table_info, MdlJob};
-use tidb_syssession::mysql_system_tables::SystemTableError;
 use tidb_infoschema_isvalidator::{SchemaValidator, Validator as _};
 use tidb_pd_client::EtcdClient;
 use tidb_schemaver::etcd_syncer::new_etcd_syncer;
 use tidb_schemaver::{Context as SchemaVersionContext, Recv, Syncer as SchemaVersionSyncer};
-use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 /// The tables live local work still reads at older schema versions.
 ///
@@ -226,9 +224,9 @@ impl SchemaSyncAck {
     /// the loop only touches TiKV when the loaded version moved or an ack is
     /// still owed. Session, watch, monotonic-write, and owner-wait behavior
     /// comes from the shared `tidb-schemaver` package implementation.
-    pub fn spawn<S>(
+    pub fn spawn(
         catalog: Arc<InfoCache>,
-        opener: RealOptimisticTransactionOpener<S>,
+        sessions: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
         pins: Arc<SchemaPinRegistry>,
         min_job_id_refresher: Arc<MinJobIdRefresher>,
         etcd: Option<Arc<EtcdClient>>,
@@ -238,14 +236,10 @@ impl SchemaSyncAck {
         reload_waker: CatalogReloadWaker,
         reload_stats: CatalogReloadStatsSource,
         tick: Duration,
-        timeout: Duration,
-    ) -> Result<Self, String>
-    where
-        S: StoreClient + Send + 'static,
-    {
+    ) -> Result<Self, String> {
         Self::initialize(etcd, ddl_id, server_info)?.start(
-            catalog, opener, pins, min_job_id_refresher, schema_validator,
-            reload_waker, reload_stats, tick, timeout,
+            catalog, sessions, pins, min_job_id_refresher, schema_validator,
+            reload_waker, reload_stats, tick,
         )
     }
 
@@ -281,17 +275,16 @@ impl SchemaSyncAck {
     }
 
     /// Go `SyncLoop` / `MDLCheckLoop`: start only after initial reload succeeds.
-    pub fn start<S: StoreClient + Send + 'static>(
+    pub fn start(
         mut self,
         catalog: Arc<InfoCache>,
-        opener: RealOptimisticTransactionOpener<S>,
+        sessions: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
         pins: Arc<SchemaPinRegistry>,
         min_job_id_refresher: Arc<MinJobIdRefresher>,
         schema_validator: Arc<SchemaValidator>,
         reload_waker: CatalogReloadWaker,
         reload_stats: CatalogReloadStatsSource,
         tick: Duration,
-        timeout: Duration,
     ) -> Result<Self, String> {
         let syncer = self.syncer.clone();
         let syncer_context = self.syncer_context.clone();
@@ -343,7 +336,6 @@ impl SchemaSyncAck {
         let thread = match crate::worker::sql_worker_thread("schema-sync-ack").spawn(move || {
             run_ack_loop(
                 &catalog,
-                &opener,
                 &pins,
                 &min_job_id_refresher,
                 ack_syncer.as_ref(),
@@ -351,8 +343,8 @@ impl SchemaSyncAck {
                 &schema_validator,
                 &reload_waker,
                 &reload_stats,
+                sessions.as_ref(),
                 tick,
-                timeout,
                 &stop_seen,
             );
         }) {
@@ -445,9 +437,29 @@ fn handle_global_version_recv(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_ack_loop<S>(
+/// Go `refreshMDLCheckTableInfo`'s session: a fresh system session (Go
+/// `sysSessionPool.Get` and a `rollback` to make sure it is new), its
+/// statements under `kv.InternalTxnMeta`.
+fn refresh_mdl_check_table_info_on(
+    sessions: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    min_job_id: i64,
+) -> Result<Vec<MdlJob>, String> {
+    let session = sessions.open_sql_session().map_err(|error| error.to_string())?;
+    let ctx = tikv_client::util::with_internal_source_type(
+        &tikv_client::trace::TraceContext::new(),
+        tidb_txnkv::INTERNAL_TXN_META,
+    );
+    let mut execute = |sql: &str| {
+        tidb_sqlexec::execute_sql(&ctx, session.get_sql_executor(), sql, &[])
+            .map_err(|error| error.to_string())
+    };
+    execute("rollback")?;
+    refresh_mdl_check_table_info(&mut execute, catalog, min_job_id)
+}
+
+fn run_ack_loop(
     catalog: &InfoCache,
-    opener: &RealOptimisticTransactionOpener<S>,
     pins: &SchemaPinRegistry,
     min_job_id_refresher: &MinJobIdRefresher,
     syncer: &dyn SchemaVersionSyncer,
@@ -455,12 +467,10 @@ fn run_ack_loop<S>(
     validator: &SchemaValidator,
     reload_waker: &CatalogReloadWaker,
     reload_stats: &CatalogReloadStatsSource,
+    sessions: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     tick: Duration,
-    timeout: Duration,
     stop: &AtomicBool,
-) where
-    S: StoreClient,
-{
+) {
     // Go's `jobCache`: (job id -> version already acknowledged).
     let mut acked: BTreeMap<i64, i64> = BTreeMap::new();
     // Keep rows loaded by the schema-reload path. MDL checks run every tick,
@@ -533,7 +543,7 @@ fn run_ack_loop<S>(
                 last_reload_pass,
             ) {
                 let min_job_id = min_job_id_refresher.get_curr_min_job_id();
-                match refresh_mdl_check_table_info(opener, timeout, &catalog.get_latest(), min_job_id) {
+                match refresh_mdl_check_table_info_on(sessions, &catalog.get_latest(), min_job_id) {
                     Ok(mut jobs) => {
                         jobs.retain(|job| !tidb_infoschema_issyncer::cross_ks::skip_mdl_check(catalog.is_cross_ks(), &job.table_ids));
                         scanned_version = Some(loaded);
@@ -558,34 +568,6 @@ fn run_ack_loop<S>(
                         last_reload_pass = Some(reload_pass);
                         retry_mdl_scan = true;
                         next_mdl_scan = Instant::now() + EMPTY_MDL_RETRY;
-                        if matches!(error, SystemTableError::Missing { .. }) {
-                            // The MDL row is published by the DDL owner while
-                            // a node can still hold its startup catalog. Go's
-                            // SQL path resolves the table from its fresh
-                            // session schema; refresh the Rust catalog through
-                            // the same fresh snapshot before retrying.
-                            let _reload = catalog.lock_reload();
-                            let current = catalog.get_latest();
-                            // Published to the node's cache, so loaded in the
-                            // node's implementation (Go `shouldUseV2`): a V1
-                            // image here republished the version as V1 and
-                            // the next reload switched back, full-loading it
-                            // into the shared V2 `Data` under its readers.
-                            match tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster_at(
-                                opener, timeout,
-                            )
-                            .map(|(refreshed, _)| refreshed)
-                            {
-                                Ok(refreshed)
-                                    if refreshed.schema_meta_version() >= current.schema_meta_version() =>
-                                {
-                                    catalog.upsert(refreshed);
-                                }
-                                // Go resolves the table from a fresh session
-                                // and has no such refresh to log.
-                                Ok(_) | Err(_) => {}
-                            }
-                        }
                         // Go `refreshMDLCheckTableInfo`.
                         tidb_logutil::bg_logger().warn(
                             "get mdl info from tidb_mdl_info failed",
@@ -1080,9 +1062,17 @@ mod tests {
         };
         let context = Context::background();
         reporter.init(&context).unwrap();
+        // Go's syncer reads `mysql.tidb_mdl_info` on a system session.
+        let sessions = tidb_session::ddl_session_pool::NodeDdlSessionPool::for_store(
+            opener.clone(),
+            timeout,
+            Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
+            true,
+            Duration::from_millis(500),
+        )
+        .unwrap();
         run_ack_loop(
             &catalog,
-            &opener,
             &SchemaPinRegistry::default(),
             &MinJobIdRefresher::new(),
             &reporter,
@@ -1090,8 +1080,8 @@ mod tests {
             &SchemaValidator::new(Duration::from_secs(45)),
             &reloader.waker(),
             &reloader.stats_source(),
+            sessions.as_ref(),
             Duration::ZERO,
-            timeout,
             &reporter.stop,
         );
         assert_eq!(

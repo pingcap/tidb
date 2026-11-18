@@ -922,9 +922,12 @@ fn new_cluster_domain(
     // an older version. The owner's `WaitVersionSynced` waits on it.
     let schema_pins = Arc::new(tidb_ddl::schema_sync::SchemaPinRegistry::default());
     let min_job_id_refresher = Arc::new(MinJobIdRefresher::new());
+    // Go `Syncer.sysSessionPool`: the MDL check reads `mysql.tidb_mdl_info`
+    // on the node's system sessions once the domain binds them.
+    let ddl_session_pool = Arc::new(tidb_session::ddl_session_pool::NodeDdlSessionPool::default());
     let schema_sync_ack = tidb_ddl::schema_sync::SchemaSyncAck::spawn(
         Arc::clone(&catalog),
-        authority.transaction_opener(),
+        Arc::clone(&ddl_session_pool) as _,
         Arc::clone(&schema_pins),
         Arc::clone(&min_job_id_refresher),
         etcd.clone(),
@@ -934,7 +937,6 @@ fn new_cluster_domain(
         reloader.waker(),
         reloader.stats_source(),
         tidb_ddl::schema_sync::MDL_CHECK_LOOK_DURATION,
-        CONTROL_PLANE_TIMEOUT,
     )
     .map_err(|error| {
         RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
@@ -942,7 +944,6 @@ fn new_cluster_domain(
         )))
     })?;
     let schema_version_syncer = Some(schema_sync_ack.syncer());
-    let ddl_session_pool = Arc::new(tidb_session::ddl_session_pool::NodeDdlSessionPool::default());
     let cluster_ddl = Arc::new(
         RealClusterDdl::new_with_min_job_id_refresher(
             authority.transaction_opener(),
