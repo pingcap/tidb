@@ -8,7 +8,7 @@ go_test(
         "recover_test.go",
     ],
     flaky = True,
-    shard_count = 13,
+    shard_count = 20,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -29,6 +29,7 @@ go_test(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/dbterror",
+        "//pkg/util/dbterror/exeerrors",
         "//pkg/util/gcutil",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",

@@ -1109,6 +1109,9 @@ func setGlobalVars() {
 	vardef.SetSchemaLease(schemaLeaseDuration)
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	vardef.SetStatsLease(statsLeaseDuration)
+	if !cfg.Performance.EnableStatsCacheMemQuota {
+		log.Warn("performance.enable-stats-cache-mem-quota is deprecated and has no effect; the stats cache always uses its memory quota")
+	}
 	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
 	vardef.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
