@@ -18,8 +18,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -28,6 +30,41 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSkipScanCandidateProperties(t *testing.T) {
+	retType := types.NewFieldType(mysql.TypeLonglong)
+	groupCol := &expression.Column{UniqueID: 1, ID: 1, RetType: retType}
+	secondCol := &expression.Column{UniqueID: 2, ID: 2, RetType: retType}
+	indexColumns := []*expression.Column{groupCol, secondCol}
+
+	prefixColumnCount, ok := skipScanPrefixColumnCount([]expression.Expression{groupCol}, indexColumns)
+	require.True(t, ok)
+	require.Equal(t, 1, prefixColumnCount)
+
+	_, ok = skipScanPrefixColumnCount([]expression.Expression{secondCol}, indexColumns)
+	require.False(t, ok)
+
+	ctx := mock.NewContext()
+	maxFunc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncMax, []expression.Expression{secondCol}, false)
+	require.NoError(t, err)
+	countFunc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncCount, []expression.Expression{secondCol}, false)
+	require.NoError(t, err)
+	require.True(t, skipScanAggregationSupported([]*aggregation.AggFuncDesc{maxFunc}))
+	require.False(t, skipScanAggregationSupported([]*aggregation.AggFuncDesc{countFunc}))
+
+	scan := &physicalop.PhysicalIndexScan{
+		Index:   &model.IndexInfo{ID: 1},
+		IdxCols: indexColumns,
+	}
+	agg := &physicalop.PhysicalStreamAgg{
+		GroupByItems: []expression.Expression{groupCol},
+		AggFuncs:     []*aggregation.AggFuncDesc{maxFunc},
+	}
+	cop := &physicalop.CopTask{IndexPlan: scan}
+	markSkipScanForStreamAgg(agg, cop)
+	require.True(t, scan.SkipScan)
+	require.Equal(t, 1, scan.SkipScanPrefixColumnCount)
+}
 
 func TestPhysicalUnionScanAttach2Task(t *testing.T) {
 	ctx := mock.NewContext()

@@ -1723,6 +1723,7 @@ func attach2Task4PhysicalStreamAgg(pp base.PhysicalPlan, tasks ...base.Task) bas
 			if storeType == kv.TiFlash && len(p.GroupByItems) > 0 {
 				return base.InvalidTask
 			}
+			markSkipScanForStreamAgg(p, cop)
 			partialAgg, finalAgg := p.NewPartialAggregate(storeType, false)
 			if partialAgg != nil {
 				if cop.TablePlan != nil {
@@ -1760,6 +1761,55 @@ func attach2Task4PhysicalStreamAgg(pp base.PhysicalPlan, tasks ...base.Task) bas
 		attachPlan2Task(p, t)
 	}
 	return t
+}
+
+// markSkipScanForStreamAgg records the storage-side skip-scan properties on an
+// index scan. It is intentionally conservative: skipping rows is
+// only valid when the aggregation result can be obtained from one
+// representative row per grouping prefix.
+//
+// The properties are carried by PhysicalIndexScan until the tipb protocol
+// exposes the corresponding IndexScan fields. TiDB does not calculate a next
+// prefix or perform result deduplication here; those responsibilities belong
+// to the storage scanner and the existing upper StreamAgg respectively.
+func markSkipScanForStreamAgg(agg *physicalop.PhysicalStreamAgg, cop *physicalop.CopTask) {
+	if len(cop.IdxMergePartPlans) > 0 {
+		return
+	}
+	scan, ok := cop.IndexPlan.(*physicalop.PhysicalIndexScan)
+	if !ok || scan.Index == nil || len(agg.GroupByItems) == 0 {
+		return
+	}
+	prefixColumnCount, ok := skipScanPrefixColumnCount(agg.GroupByItems, scan.IdxCols)
+	if !ok || !skipScanAggregationSupported(agg.AggFuncs) {
+		return
+	}
+	scan.SkipScan = true
+	scan.SkipScanPrefixColumnCount = prefixColumnCount
+}
+
+func skipScanPrefixColumnCount(groupByItems []expression.Expression, indexColumns []*expression.Column) (int, bool) {
+	if len(groupByItems) == 0 || len(groupByItems) > len(indexColumns) {
+		return 0, false
+	}
+	for i, item := range groupByItems {
+		groupByCol, ok := item.(*expression.Column)
+		if !ok || !groupByCol.EqualColumn(indexColumns[i]) {
+			return 0, false
+		}
+	}
+	return len(groupByItems), true
+}
+
+func skipScanAggregationSupported(aggFuncs []*aggregation.AggFuncDesc) bool {
+	for _, aggFunc := range aggFuncs {
+		switch aggFunc.Name {
+		case ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func attach2TaskForMpp1Phase(p *physicalop.PhysicalHashAgg, mpp *physicalop.MppTask) base.Task {
