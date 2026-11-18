@@ -65,6 +65,7 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 			if tblInfo.Affinity == nil {
 				continue
 			}
+			// Use mysql.AllPrivMask to stay consistent with SHOW PLACEMENT visibility checks.
 			if checker != nil && !checker.RequestVerification(activeRoles, result.DBName.O, tblInfo.Name.O, "", mysql.AllPrivMask) {
 				continue
 			}
