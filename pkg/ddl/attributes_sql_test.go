@@ -395,9 +395,11 @@ PARTITION BY RANGE (c) (
 	}
 	tk.MustExec("create table t3 (c int)")
 	tk.MustExec("create table t4 (c int)")
-	tk.MustExec(`alter table t1 attributes="key=value";`)
-	tk.MustExec(`alter table t1 partition p0 attributes="key1=value1";`)
-	tk.MustExec(`alter table t3 attributes="key=value";`)
+	// The attributes PD acts on are used: merge_option for a whole table, with another
+	// value for one of its partitions, and for a non-partitioned table.
+	tk.MustExec(`alter table t1 attributes="merge_option=allow";`)
+	tk.MustExec(`alter table t1 partition p0 attributes="merge_option=deny";`)
+	tk.MustExec(`alter table t3 attributes="merge_option=deny";`)
 	expectedRuleIDs := []string{"schema/drop_db/t1", "schema/drop_db/t1/p0", "schema/drop_db/t3"}
 	// The existing rules are looked up in batches of 10000 tables and partitions, so use
 	// enough partitions for two batches, with rules at the start, on both sides of the
@@ -416,14 +418,17 @@ PARTITION BY RANGE (c) (
 	for _, tbl := range []string{"big1", "big2"} {
 		tk.MustExec(fmt.Sprintf("create table %s (c int) partition by hash(c) partitions %d", tbl, partitionCnt))
 	}
+	// A rule of a partitioned table covers all its partitions.
+	tk.MustExec(`alter table big1 attributes="merge_option=allow";`)
+	expectedRuleIDs = append(expectedRuleIDs, "schema/drop_db/big1")
 	for _, partition := range []string{"big1/p0", "big2/p1798", "big2/p1799", "big2/p8191"} {
 		tbl, partitionName, _ := strings.Cut(partition, "/")
-		tk.MustExec(fmt.Sprintf(`alter table %s partition %s attributes="key=value";`, tbl, partitionName))
+		tk.MustExec(fmt.Sprintf(`alter table %s partition %s attributes="merge_option=deny";`, tbl, partitionName))
 		expectedRuleIDs = append(expectedRuleIDs, "schema/drop_db/"+partition)
 	}
 	// A rule of another schema must be kept.
 	tk.MustExec("create table test.t1 (c int)")
-	tk.MustExec(`alter table test.t1 attributes="key=value";`)
+	tk.MustExec(`alter table test.t1 attributes="merge_option=deny";`)
 	require.Len(t, tk.MustQuery(`select * from information_schema.attributes;`).Rows(), len(expectedRuleIDs)+1)
 
 	// Only the label rules that exist should be deleted from PD, since deleting
