@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -241,6 +242,39 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 		require.Equal(t, autoPreSplitPlanPlanned, plan.state)
 		require.Equal(t, []string{"10", "20"},
 			splitKeyFirstValuesForIndex(t, plan.splitKeys, idxInfo.ID))
+	})
+
+	t.Run("timestamp TopN and Histogram values in the session time zone are merged", func(t *testing.T) {
+		loc := time.FixedZone("+05", 5*60*60)
+		sctx := mock.NewContext()
+		sctx.GetSessionVars().TimeZone = loc
+		sctx.GetSessionVars().StmtCtx.SetTimeZone(loc)
+		tsTblInfo, _ := buildAutoPreSplitTestTableInfoFromSQL(t,
+			"create table t(a bigint, b timestamp, index idx(b))", 100)
+		colInfo := tsTblInfo.Columns[1]
+		localDatum := types.NewTimeDatum(types.NewTime(
+			types.FromDate(2026, 1, 1, 15, 0, 0, 0), mysql.TypeTimestamp, types.DefaultFsp))
+		encoded, err := codec.EncodeKey(loc, nil, localDatum)
+		require.NoError(t, err)
+		topN := statistics.NewTopN(1)
+		topN.AppendTopN(encoded, 15)
+
+		statsTbl := buildAutoPreSplitTestStats(tsTblInfo.ID, 40, 0, colInfo, topN)
+		utcDatum := types.NewTimeDatum(types.NewTime(
+			types.FromDate(2026, 1, 1, 10, 0, 0, 0), mysql.TypeTimestamp, types.DefaultFsp))
+		setAutoPreSplitTestHistogram(
+			t, statsTbl.GetCol(colInfo.ID), colInfo, 0,
+			[]types.Datum{utcDatum}, []int64{20})
+
+		topNValues, err := buildAutoPreSplitTopNValues(sctx, topN, colInfo)
+		require.NoError(t, err)
+		histogramValues, err := buildAutoPreSplitHistogramValues(
+			sctx, &statsTbl.GetCol(colInfo.ID).Histogram, colInfo)
+		require.NoError(t, err)
+		require.Equal(t, encoded, histogramValues[0].encoded)
+		merged, totalCount := mergeAutoPreSplitValues(append(topNValues, histogramValues...))
+		require.Len(t, merged, 1)
+		require.Equal(t, uint64(35), totalCount)
 	})
 
 	t.Run("equal TopN and Histogram values are merged", func(t *testing.T) {
