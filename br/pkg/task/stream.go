@@ -1356,13 +1356,17 @@ func checkTaskCompat(cfg *RestoreConfig, task streamhelper.Task) error {
 	return nil
 }
 
-func checkIncompatibleChangefeed(ctx context.Context, backupTS uint64, etcdCLI *clientv3.Client) error {
-	nameSet, err := cdcutil.GetIncompatibleChangefeedsWithSafeTS(ctx, etcdCLI, backupTS)
+func checkIncompatibleChangefeed(ctx context.Context, restoreTS uint64, etcdCLI *clientv3.Client) error {
+	// The threshold is BackupTS for snapshot restore and the target TS for PITR.
+	nameSet, err := cdcutil.GetIncompatibleChangefeedsWithSafeTS(ctx, etcdCLI, restoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if !nameSet.Empty() {
-		return errors.Errorf("%splease remove changefeed(s) before restore", nameSet.MessageToUser())
+		return errors.Errorf("cannot restore: %srestoreTS is BackupTS for snapshot restore or the target timestamp for PITR. "+
+			"The effective checkpointTS is the maximum of the changefeed checkpoint-ts and start-ts. "+
+			"Please advance the changefeed checkpoint to at least restoreTS, or remove the incompatible changefeed(s) before retrying restore; "+
+			"pausing a changefeed alone does not resolve the timestamp conflict", nameSet.MessageToUser())
 	}
 	return nil
 }

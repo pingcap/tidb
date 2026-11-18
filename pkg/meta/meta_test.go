@@ -1056,6 +1056,109 @@ func TestTableNameExtract(t *testing.T) {
 	require.Equal(t, `"\"啊"`, meta.Unescape(nameLMatch[1]))
 }
 
+type historyScanTxn struct {
+	kv.Transaction
+	lowerBound kv.Key
+	readKeys   []kv.Key
+}
+
+func (t *historyScanTxn) IterReverse(start, lowerBound kv.Key) (kv.Iterator, error) {
+	t.lowerBound = append(kv.Key(nil), lowerBound...)
+	iter, err := t.Transaction.IterReverse(start, lowerBound)
+	if err != nil {
+		return nil, err
+	}
+	scan := &historyScanIterator{Iterator: iter, txn: t}
+	scan.recordKey()
+	return scan, nil
+}
+
+type historyScanIterator struct {
+	kv.Iterator
+	txn *historyScanTxn
+}
+
+func (i *historyScanIterator) Next() error {
+	if err := i.Iterator.Next(); err != nil {
+		return err
+	}
+	i.recordKey()
+	return nil
+}
+
+func (i *historyScanIterator) recordKey() {
+	if i.Iterator.Valid() {
+		i.txn.readKeys = append(i.txn.readKeys, append(kv.Key(nil), i.Iterator.Key()...))
+	}
+}
+
+func TestHistoryDDLJobIteratorLowerBound(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	for id := int64(10); id <= 40; id += 10 {
+		tableName := "target"
+		if id == 30 {
+			tableName = "other"
+		}
+		require.NoError(t, m.AddHistoryDDLJob(&model.Job{ID: id, SchemaName: "db", TableName: tableName}, true))
+	}
+	require.NoError(t, txn.Commit(context.Background()))
+	for _, ca := range []struct {
+		name      string
+		minJobID  int64
+		tableName string
+		jobIDs    []int64
+		readIDs   []int64
+	}{
+		{"inclusive", 20, "target", []int64{40, 20}, []int64{40, 30, 20}},
+		{"missing boundary ID", 21, "target", []int64{40}, []int64{40, 30}},
+		{"zero matches", 20, "missing", nil, []int64{40, 30, 20}},
+		{"above newest", 41, "target", nil, nil},
+		{"below oldest", 1, "target", []int64{40, 20, 10}, []int64{40, 30, 20, 10}},
+		{"unbounded", 0, "target", []int64{40, 20, 10}, nil},
+	} {
+		t.Run(ca.name, func(t *testing.T) {
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			defer func() { require.NoError(t, txn.Rollback()) }()
+			scanTxn := &historyScanTxn{Transaction: txn}
+			m := meta.NewMutator(scanTxn)
+			iter, err := m.GetLastHistoryDDLJobsIteratorWithFilter(
+				set.NewStringSet("db"), set.NewStringSet(ca.tableName), ca.minJobID)
+			require.NoError(t, err)
+			var jobIDs []int64
+			for {
+				jobs, err := iter.GetLastJobs(1, nil)
+				require.NoError(t, err)
+				if len(jobs) == 0 {
+					break
+				}
+				jobIDs = append(jobIDs, jobs[0].ID)
+			}
+			require.Equal(t, ca.jobIDs, jobIDs)
+			jobs, err := iter.GetLastJobs(1, nil)
+			require.NoError(t, err)
+			require.Empty(t, jobs)
+			var lowerBound kv.Key
+			if ca.minJobID > 0 {
+				lowerBound = meta.DDLJobHistoryKey(m, ca.minJobID)
+				var readKeys []kv.Key
+				for _, id := range ca.readIDs {
+					readKeys = append(readKeys, meta.DDLJobHistoryKey(m, id))
+				}
+				// Record raw KV positions before name filtering or job decoding,
+				// including the initial position and repeated EOF reads.
+				require.Equal(t, readKeys, scanTxn.readKeys)
+			}
+			require.Equal(t, lowerBound, scanTxn.lowerBound)
+		})
+	}
+}
+
 func TestIsJobMatch(t *testing.T) {
 	job := &model.Job{SchemaName: "db1", TableName: "t1"}
 	data, err := job.Encode(true)

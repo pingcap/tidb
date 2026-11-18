@@ -887,7 +887,8 @@ type Performance struct {
 	// Deprecated: this config has been deprecated. It has no effect.
 	AnalyzePartitionConcurrencyQuota  uint `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
 	PlanReplayerDumpWorkerConcurrency uint `toml:"plan-replayer-dump-worker-concurrency" json:"plan-replayer-dump-worker-concurrency"`
-	EnableStatsCacheMemQuota          bool `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
+	// Deprecated: this config has no effect. The stats cache always uses its memory quota.
+	EnableStatsCacheMemQuota bool `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
