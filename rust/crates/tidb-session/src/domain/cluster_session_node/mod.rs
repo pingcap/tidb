@@ -376,6 +376,13 @@ pub struct NodeConn {
     pub(crate) store: Option<Arc<crate::domain::mock_store::MockStoreDomain>>,
 }
 
+impl NodeConn {
+    /// Go `sessiontxn.GetTxnManager(sctx)`.
+    pub(crate) fn txn_manager(&self) -> &TxnManager {
+        &self.txn
+    }
+}
+
 /// One [`Session`] over a store with its store half ([`NodeConn`]) lent
 /// beside it: the receiver of every step Go's `session` takes on its store.
 ///

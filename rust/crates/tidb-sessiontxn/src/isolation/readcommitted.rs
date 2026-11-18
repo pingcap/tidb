@@ -17,6 +17,7 @@
 use super::txn_start_ts;
 use crate::{no_idea, retry_ready, StmtErrorAction, StmtErrorHandlePoint, TxnContext, TxnContextProvider};
 use tidb_domain_core::cluster_transactions::OpenClusterTransaction;
+use tidb_planner_core_operator_physicalop::PhysicalPlan;
 use tidb_kv::cluster_storage::ClusterSnapshot;
 use tidb_store_driver_error::pessimistic_lock_error::ERR_WRITE_CONFLICT;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
@@ -90,6 +91,14 @@ impl TxnContextProvider for PessimisticRCTxnContextProvider {
 
     // Go: "Try to mark the `RCCheckTS` flag for the first time execution of
     // in-transaction read requests using read-consistency isolation level."
+    fn plan_advisor(
+        &self,
+        retrying: bool,
+        rc_write_check_ts: bool,
+    ) -> Option<std::sync::Arc<dyn tidb_sessionctx::TxnPlanAdvisor>> {
+        (!retrying).then(|| std::sync::Arc::new(RCPlanAdvisor { rc_write_check_ts }) as _)
+    }
+
     fn on_stmt_start(
         &mut self,
         cx: &mut dyn TxnContext,
@@ -132,4 +141,56 @@ impl TxnContextProvider for PessimisticRCTxnContextProvider {
         }
     }
 
+}
+
+/// Go `PessimisticRCTxnContextProvider.AdviseOptimizeWithPlan` under
+/// `tidb_rc_write_check_ts`: the kept timestamp is read with `RCCheckTS`
+/// (`checkTSInWriteStmt`).
+#[derive(Debug)]
+pub struct RCPlanAdvisor {
+    /// Go `SessionVars.RcWriteCheckTS`.
+    pub rc_write_check_ts: bool,
+}
+
+impl tidb_sessionctx::TxnPlanAdvisor for RCPlanAdvisor {
+    fn advise_optimize_with_plan(
+        &self,
+        plan: &dyn std::any::Any,
+        insert_replace_or_on_duplicate: bool,
+    ) -> Option<bool> {
+        let plan = plan.downcast_ref::<PhysicalPlan>()?;
+        plan_skip_get_tso_from_pd(plan, self.rc_write_check_ts, insert_replace_or_on_duplicate, false)
+            .then_some(true)
+    }
+}
+
+/// Go `planSkipGetTsoFromPD`.
+pub fn plan_skip_get_tso_from_pd(
+    plan: &PhysicalPlan,
+    rc_write_check_ts: bool,
+    insert_replace_or_on_duplicate: bool,
+    in_lock_or_write_stmt: bool,
+) -> bool {
+    match plan {
+        PhysicalPlan::PointGet(point) => rc_write_check_ts && (point.lock || in_lock_or_write_stmt),
+        PhysicalPlan::Dml(root) => match root.go_operator.as_str() {
+            "Insert" => root.select_plan.is_none() && !insert_replace_or_on_duplicate,
+            _ => root.select_plan.as_deref().is_some_and(|select| {
+                plan_skip_get_tso_from_pd(select, rc_write_check_ts, false, true)
+            }),
+        },
+        _ => {
+            let children = plan.children();
+            let is_physical_lock = matches!(plan, PhysicalPlan::Lock(_));
+            !children.is_empty()
+                && children.iter().all(|child| {
+                    plan_skip_get_tso_from_pd(
+                        child,
+                        rc_write_check_ts,
+                        false,
+                        is_physical_lock || in_lock_or_write_stmt,
+                    )
+                })
+        }
+    }
 }

@@ -229,6 +229,17 @@ pub trait TxnContextProvider: Send {
             _ => no_idea(),
         }
     }
+    /// Go `AdviseOptimizeWithPlan`, handed to the executor builder: the
+    /// advisor of this provider's plan advice, `None` for a provider whose
+    /// advice is the base no-op (serializable, staleness; the optimistic
+    /// max-ts point get is decided before the plan runs).
+    fn plan_advisor(
+        &self,
+        _retrying: bool,
+        _rc_write_check_ts: bool,
+    ) -> Option<std::sync::Arc<dyn tidb_sessionctx::TxnPlanAdvisor>> {
+        None
+    }
     /// Go `ActivateTxn`: the transaction, activated.
     ///
     /// # Errors

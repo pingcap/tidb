@@ -2707,6 +2707,7 @@ impl Session {
     pub(crate) fn on_stmt_start(&mut self, stmt: &Stmt) {
         // Go's fresh `StmtCtx`; the RC provider's `OnStmtStart` sets it.
         self.stmt_rc_check_ts = false;
+        self.stmt_txn_plan_advisor = None;
         self.stmt_weak_consistency = self.is_weak_consistency_read(stmt);
         self.stmt_is_read_only = stmt.is_read_only(true);
     }
@@ -2740,25 +2741,24 @@ impl Session {
         self.stmt_rc_check_ts = true;
     }
 
-    /// The Go provider whose `AdviseOptimizeWithPlan` this statement's plan
-    /// reaches: a pessimistic transaction's statement that reads neither a
-    /// `tidb_snapshot` nor a stale timestamp (both providers return early
-    /// for those); read committed takes no advice for a retried statement
-    /// (`RetryInfo.Retrying`).
-    pub(crate) fn pessimistic_txn_provider(&self) -> Option<tidb_sessionctx::PessimisticTxnProvider> {
-        if !self.in_transaction()
-            || !self.statement_txn_mode().is_pessimistic()
-            || self.historical_read_ts().is_some()
-            || self.txn_is_stale_read()
-        {
-            return None;
-        }
-        if !self.is_read_committed() {
-            return Some(tidb_sessionctx::PessimisticTxnProvider::RepeatableRead);
-        }
-        (!self.retrying).then(|| tidb_sessionctx::PessimisticTxnProvider::ReadCommitted {
-            rc_write_check_ts: self.rc_write_check_ts(),
-        })
+    /// The plan advisor of the session transaction's provider (Go
+    /// `AdviseOptimizeWithPlan`), as its `OnStmtStart` published it.
+    pub(crate) fn txn_plan_advisor(&self) -> Option<std::sync::Arc<dyn tidb_sessionctx::TxnPlanAdvisor>> {
+        self.stmt_txn_plan_advisor.clone()
+    }
+
+    /// Publishes the provider's advisor for a statement that reads neither a
+    /// `tidb_snapshot` nor a stale timestamp (the providers return early for
+    /// those).
+    pub(crate) fn set_txn_plan_advisor(
+        &mut self,
+        provider: &dyn tidb_sessiontxn::TxnContextProvider,
+    ) {
+        self.stmt_txn_plan_advisor = (self.in_transaction()
+            && self.historical_read_ts().is_none()
+            && !self.txn_is_stale_read())
+        .then(|| provider.plan_advisor(self.retrying, self.rc_write_check_ts()))
+        .flatten();
     }
 
     /// Go `SessionVars.RcWriteCheckTS`, set by `tidb_rc_write_check_ts`.

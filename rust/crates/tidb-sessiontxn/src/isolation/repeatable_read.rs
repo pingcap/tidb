@@ -17,6 +17,7 @@
 use super::txn_start_ts;
 use crate::{no_idea, retry_ready, StmtErrorAction, StmtErrorHandlePoint, TxnContext, TxnContextProvider};
 use tidb_domain_core::cluster_transactions::OpenClusterTransaction;
+use tidb_planner_core_operator_physicalop::PhysicalPlan;
 use tidb_kv::cluster_storage::ClusterSnapshot;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
@@ -83,6 +84,14 @@ impl TxnContextProvider for PessimisticRRTxnContextProvider {
         })
     }
 
+    fn plan_advisor(
+        &self,
+        _retrying: bool,
+        _rc_write_check_ts: bool,
+    ) -> Option<std::sync::Arc<dyn tidb_sessionctx::TxnPlanAdvisor>> {
+        Some(std::sync::Arc::new(RRPlanAdvisor))
+    }
+
     fn on_stmt_start(
         &mut self,
         _cx: &mut dyn TxnContext,
@@ -114,4 +123,44 @@ impl TxnContextProvider for PessimisticRRTxnContextProvider {
         }
     }
 
+}
+
+/// Go `PessimisticRRTxnContextProvider.AdviseOptimizeWithPlan`: a point get
+/// (or a write whose reads are all point gets) keeps the current for-update
+/// timestamp (`optimizeForNotFetchingLatestTS`).
+#[derive(Debug)]
+pub struct RRPlanAdvisor;
+
+impl tidb_sessionctx::TxnPlanAdvisor for RRPlanAdvisor {
+    fn advise_optimize_with_plan(
+        &self,
+        plan: &dyn std::any::Any,
+        _insert_replace_or_on_duplicate: bool,
+    ) -> Option<bool> {
+        let plan = plan.downcast_ref::<PhysicalPlan>()?;
+        not_need_get_latest_ts_from_pd(plan, false).then_some(false)
+    }
+}
+
+/// Go `notNeedGetLatestTSFromPD`.
+pub fn not_need_get_latest_ts_from_pd(plan: &PhysicalPlan, in_lock_or_write_stmt: bool) -> bool {
+    match plan {
+        PhysicalPlan::PointGet(point) => !in_lock_or_write_stmt || point.lock,
+        PhysicalPlan::BatchPointGet(batch) => !in_lock_or_write_stmt || batch.lock,
+        PhysicalPlan::Dml(root) => match root.go_operator.as_str() {
+            "Insert" => root.select_plan.is_none(),
+            _ => root
+                .select_plan
+                .as_deref()
+                .is_some_and(|select| not_need_get_latest_ts_from_pd(select, true)),
+        },
+        _ => {
+            let children = plan.children();
+            let is_physical_lock = matches!(plan, PhysicalPlan::Lock(_));
+            !children.is_empty()
+                && children.iter().all(|child| {
+                    not_need_get_latest_ts_from_pd(child, is_physical_lock || in_lock_or_write_stmt)
+                })
+        }
+    }
 }

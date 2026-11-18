@@ -1834,7 +1834,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_placement_mode_ignore(self.placement_mode_ignore())
                     .with_lock_unchanged_keys(self.lock_unchanged_keys())
                     .with_rc_check_ts(self.stmt_rc_check_ts())
-                    .with_pessimistic_txn_provider(self.pessimistic_txn_provider())
+                    .with_txn_plan_advisor(self.txn_plan_advisor())
                     .with_mpp_exchange_compression_mode(self.mpp_exchange_compression_mode())
                     .with_mpp_version(self.choose_mpp_version())
                     .with_tiflash_fast_scan(
@@ -2055,7 +2055,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_placement_mode_ignore(self.placement_mode_ignore())
                     .with_lock_unchanged_keys(self.lock_unchanged_keys())
                     .with_rc_check_ts(self.stmt_rc_check_ts())
-                    .with_pessimistic_txn_provider(self.pessimistic_txn_provider())
+                    .with_txn_plan_advisor(self.txn_plan_advisor())
                     .with_mpp_exchange_compression_mode(self.mpp_exchange_compression_mode())
                     .with_mpp_version(self.choose_mpp_version())
                     .with_tiflash_fast_scan(
@@ -2630,7 +2630,7 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn stmt_rc_check_ts(&self) -> bool;
     /// The Go pessimistic provider that takes this statement's
     /// `AdviseOptimizeWithPlan`, if any.
-    fn pessimistic_txn_provider(&self) -> Option<tidb_sessionctx::PessimisticTxnProvider>;
+    fn txn_plan_advisor(&self) -> Option<std::sync::Arc<dyn tidb_sessionctx::TxnPlanAdvisor>>;
     /// Go's TiFlash fallback: TiFlash is out of `IsolationReadEngines`.
     fn tiflash_fallback(&self) -> bool;
     /// The TiFlash cluster Go's `handleFineGrainedShuffle` asks, where the

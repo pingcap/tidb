@@ -1033,10 +1033,11 @@ impl StatementLifecycle<'_> {
         };
         let mut cx = SessionTxnContext { session: self.session, in_txn, locking_read: false };
         if retry {
-            provider.on_stmt_retry(&mut cx)
-        } else {
-            provider.on_stmt_start(&mut cx, node)
+            return provider.on_stmt_retry(&mut cx);
         }
+        provider.on_stmt_start(&mut cx, node)?;
+        self.session.set_txn_plan_advisor(provider);
+        Ok(())
     }
 
     pub fn open_read_snapshot(

@@ -375,17 +375,19 @@ impl PlannerWarningAppender {
     }
 }
 
-/// The Go pessimistic transaction-context provider a statement's
-/// `AdviseOptimizeWithPlan` reaches (`pkg/sessiontxn/isolation`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PessimisticTxnProvider {
-    /// `PessimisticRRTxnContextProvider`.
-    RepeatableRead,
-    /// `PessimisticRCTxnContextProvider`, with `SessionVars.RcWriteCheckTS`.
-    ReadCommitted {
-        /// `tidb_rc_write_check_ts`.
-        rc_write_check_ts: bool,
-    },
+/// Go `TxnAdvisable.AdviseOptimizeWithPlan` as the statement's transaction
+/// provider answers it for the executor builder (Go passes the plan as
+/// `any`): `Some(check_ts)` when the plan keeps the transaction's current
+/// for-update timestamp instead of fetching a fresh one
+/// (`optimizeForNotFetchingLatestTS`), read under `RCCheckTS` when
+/// `check_ts`.
+pub trait TxnPlanAdvisor: Send + Sync + std::fmt::Debug {
+    /// The advice for `plan` (a `PhysicalPlan`).
+    fn advise_optimize_with_plan(
+        &self,
+        plan: &dyn std::any::Any,
+        insert_replace_or_on_duplicate: bool,
+    ) -> Option<bool>;
 }
 
 /// Go `SessionVars`' inputs to `handleFineGrainedShuffle` and
@@ -1503,7 +1505,7 @@ pub struct StmtContextData {
     rc_check_ts: bool,
     /// The Go pessimistic transaction-context provider that takes this
     /// statement's `AdviseOptimizeWithPlan`, if any.
-    pessimistic_txn_provider: Option<PessimisticTxnProvider>,
+    txn_plan_advisor: Option<Arc<dyn TxnPlanAdvisor>>,
     /// The session inputs of Go's `handleFineGrainedShuffle`.
     tiflash_fine_grained_shuffle: TiFlashFineGrainedShuffleSession,
     /// The compression an enforced MPP exchange takes (Go
@@ -3071,8 +3073,8 @@ context_configuration! {
 
     /// Sets the pessimistic provider that takes this statement's plan advice.
     #[must_use]
-    pub fn with_pessimistic_txn_provider(mut self, provider: Option<PessimisticTxnProvider>) -> Self {
-        self.pessimistic_txn_provider = provider;
+    pub fn with_txn_plan_advisor(mut self, advisor: Option<Arc<dyn TxnPlanAdvisor>>) -> Self {
+        self.txn_plan_advisor = advisor;
         self
     }
 
@@ -3683,7 +3685,7 @@ impl StmtContext {
             hash_exchange_with_new_collation:
                 tidb_vardef::defaults::DEF_TIDB_HASH_EXCHANGE_WITH_NEW_COLLATION,
             rc_check_ts: false,
-            pessimistic_txn_provider: None,
+            txn_plan_advisor: None,
             tiflash_fine_grained_shuffle: TiFlashFineGrainedShuffleSession::default(),
             mpp_exchange_compression_mode: tidb_vardef::modes::ExchangeCompressionMode::RECOMMENDED,
             mpp_version: tidb_txnkv::MppVersion::NEWEST,
@@ -5926,8 +5928,8 @@ impl StmtContext {
     /// The pessimistic provider that takes this statement's
     /// `AdviseOptimizeWithPlan`.
     #[must_use]
-    pub fn pessimistic_txn_provider(&self) -> Option<PessimisticTxnProvider> {
-        self.pessimistic_txn_provider
+    pub fn txn_plan_advisor(&self) -> Option<&Arc<dyn TxnPlanAdvisor>> {
+        self.txn_plan_advisor.as_ref()
     }
 
     /// Go `SessionVars.ChooseMppVersion()`.

@@ -302,6 +302,12 @@ impl TxnManager {
             .map(|entered| entered.provider.txn())
     }
 
+    /// The provider of the session's transaction, read-only.
+    #[must_use]
+    pub fn provider(&self) -> Option<&dyn TxnContextProvider> {
+        self.txn.as_ref().map(|entered| &*entered.provider)
+    }
+
     /// The provider of the session's transaction (Go
     /// `sessiontxn.GetTxnManager(sctx).GetContextProvider()`).
     pub fn provider_mut(&mut self) -> Option<&mut (dyn TxnContextProvider + 'static)> {

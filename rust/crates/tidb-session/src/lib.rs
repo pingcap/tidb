@@ -792,6 +792,9 @@ pub struct Session {
     /// Go `StmtCtx.RCCheckTS`, decided at statement start
     /// (`PessimisticRCTxnContextProvider.OnStmtStart`).
     stmt_rc_check_ts: bool,
+    /// The session transaction provider's `AdviseOptimizeWithPlan` advisor,
+    /// published at statement start (`OnStmtStart`).
+    stmt_txn_plan_advisor: Option<std::sync::Arc<dyn tidb_sessionctx::TxnPlanAdvisor>>,
     /// Go `StmtCtx.WeakConsistency`, decided at statement start
     /// (`ResetContextOfStmt`'s `isWeakConsistencyRead`).
     stmt_weak_consistency: bool,
@@ -1146,6 +1149,7 @@ impl Session {
             retrying: false,
             retrying_statement: false,
             stmt_rc_check_ts: false,
+            stmt_txn_plan_advisor: None,
             stmt_weak_consistency: false,
             stmt_is_read_only: false,
             row_id_shards: Arc::default(),

@@ -9903,6 +9903,8 @@ dependencies = [
  "tidb-ast",
  "tidb-domain-core",
  "tidb-kv",
+ "tidb-planner-core-operator-physicalop",
+ "tidb-sessionctx",
  "tidb-store-driver-error",
 ]
 

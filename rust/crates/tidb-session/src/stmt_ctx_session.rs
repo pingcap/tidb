@@ -416,8 +416,8 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         self.tiflash_fallback
     }
 
-    fn pessimistic_txn_provider(&self) -> Option<tidb_sessionctx::PessimisticTxnProvider> {
-        Session::pessimistic_txn_provider(self)
+    fn txn_plan_advisor(&self) -> Option<std::sync::Arc<dyn tidb_sessionctx::TxnPlanAdvisor>> {
+        Session::txn_plan_advisor(self)
     }
 
     fn tiflash_cluster_info(&self) -> Option<std::sync::Arc<dyn tidb_sessionctx::TiFlashClusterInfo>> {
