@@ -1637,6 +1637,18 @@ mod tests {
         }
     }
 
+    /// Go `Server.Stats` reads `Uptime` from the server info's
+    /// `StartTimestamp`: the node's server info and the uptime clock are the
+    /// same instant, fixed when the node builds its server info.
+    #[test]
+    fn uptime_counts_from_the_server_infos_start_timestamp() {
+        let uptime_start = tidb_session::domain::real_tikv_node::server_start_unix_timestamp();
+        // A server info built a second later still carries the process start.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let info = tidb_session::domain::serverinfo_etcd::get_server_info(&test_config());
+        assert_eq!(info.static_info.start_timestamp, uptime_start);
+    }
+
     fn test_config() -> NodeConfig {
         NodeConfig {
             report_status: false,

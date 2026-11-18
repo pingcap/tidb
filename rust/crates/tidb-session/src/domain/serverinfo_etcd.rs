@@ -34,15 +34,17 @@ pub fn get_server_info(
             .global_config
             .enable_global_kill
             .then(|| Arc::new(|| 1u64) as Arc<dyn Fn() -> u64 + Send + Sync>),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |since| since.as_secs() as i64),
+        // Go `NewInfoSyncer` stamps `StartTimestamp` when the server info is
+        // created at startup, and `Server.Stats`' `Uptime` counts from it:
+        // one process-start clock for both.
+        crate::domain::real_tikv_node::server_start_unix_timestamp(),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tidb_domain::server_id::{ServerIdAuthority, ServerIdIntervals, ServerIdKeeper};
     use tidb_ddl::etcd_ops::EtcdClientOps;

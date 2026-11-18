@@ -48,7 +48,6 @@ mysql -h127.0.0.1 -P<port> -uroot -vvv --force --table < probes.sql
 | A05 | `GRANT SELECT (b) ON sa.* TO sa_u1` | 1146 `Table 'sa.' doesn't exist` | 1105 `GRANT/REVOKE with a column list is not supported yet` |
 | A08 | `SHOW SESSION_STATES` on a new session | `sys-vars` has `character_set_server` | `sys-vars` has `tidb_opt_tiflash_concurrency_factor` instead |
 | B03 | `tidb-server -store unistore -path ...` | starts | `unsupported option -store` |
-| B04 | `SHOW GLOBAL STATUS LIKE 'Uptime'` 25 minutes after start | seconds since start | 0 on the first read, then seconds since that read |
 | E33 | `BINLOG 'abc'` | OK | 1105 `this statement kind (ADMIN Binlog) is not supported yet` |
 | E33 | `REFRESH STATS t3` | OK | 1105 `... (ADMIN RefreshStats) ...` |
 | E33 | ``ALTER RANGE global PLACEMENT POLICY = `default` `` | OK | 1105 `... (ADMIN AlterRange) ...` |
@@ -59,7 +58,6 @@ mysql -h127.0.0.1 -P<port> -uroot -vvv --force --table < probes.sql
 | E33 | `CREATE STATISTICS s1 (correlation) ON t3(a, b)`, `DROP STATISTICS s1`, `GRANT PROXY ...` | 8108 `Unsupported type *ast.CreateStatisticsStmt` (and so on) | 1105 `... is not supported yet` |
 | E35 | `EXPLAIN 'abcdef'` | 1105 `can't find any plans for 'abcdef'` | 1105 `EXPLAIN of a plan digest is not supported yet` |
 | E35 | `EXPLAIN FORMAT = 'cost_trace' SELECT * FROM t WHERE a = 1` | `costFormula` `N/A` | `costFormula` empty |
-| E36 | `SHOW SESSION BINDINGS` | `2026-11-18 13:43:06.564` | `2026-11-18 13:43:06.590000` |
 | N09 | `SHOW CONFIG WHERE name = 'log.level'` (macOS, system proxy 127.0.0.1:7897) | 1 row | empty, warning `request http://10.0.0.8:20200/config failed: 502 Bad Gateway` |
 | X06 | `EXPLAIN LOAD DATA LOCAL INFILE '/nonexistent' INTO TABLE t` | 1064 at `column 12 near "LOAD DATA ..."` | 1105 `EXPLAIN of LoadData is not supported yet` |
 | X06 | `EXPLAIN CALL p()` | 1064 `column 12 near "CALL p()"` | 1105 `EXPLAIN of Call is not supported yet` |

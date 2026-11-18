@@ -2,8 +2,8 @@
   "date": "2026-11-18",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 20,
-    "open": 19,
+    "unresolved": 18,
+    "open": 17,
     "partial": 1
   },
   "findings": [
@@ -72,14 +72,6 @@
       "go_owner": "`cmd/tidb-server/main.go` (`initFlagSet`, `overrideConfig`), `pkg/privilege/privileges/cache.go` (`LoadAll`)"
     },
     {
-      "id": "B04",
-      "status": "open",
-      "group": "System tables and startup",
-      "finding": "`Uptime` (SHOW STATUS and COM_STATISTICS) counts from the first time it is read, not from process start, on a node started with `--load-privileges`. `server_start_unix_timestamp` is a lazy `OnceLock` that only `configured_account_store` (the `--auth-file` path) touches during startup; observed: a node up for 25 minutes answered `Uptime 0`, then 15, 21. Go reads `infosync` `ServerInfo.StartTimestamp`, set when the server info is created at startup. [2026-11-18 probes](structural-audit-2026-11-18.md)",
-      "rust_evidence": "`rust/crates/tidb-session/src/domain/real_tikv_node/mod.rs` (`server_start_unix_timestamp`), `rust/crates/tidb-server/src/stat.rs`, `mysql_connection.rs` (COM_STATISTICS)",
-      "go_owner": "`pkg/server/stat.go` (`Stats`), `pkg/domain/infosync/info.go` (`ServerInfo.StartTimestamp`)"
-    },
-    {
       "id": "A05",
       "status": "open",
       "group": "Privileges, wire and administration",
@@ -128,14 +120,6 @@
       "go_owner": "`pkg/planner/core/planbuilder.go` (`buildExplain`, `getHintedStmtThroughPlanDigest`), `pkg/planner/core/common_plans.go` (`N/A` cost formula)"
     },
     {
-      "id": "E36",
-      "status": "open",
-      "group": "Executor, DML and expressions",
-      "finding": "A binding's create and update times are strings (`tidb-bindinfo` `Binding.create_time: String`), re-parsed as `TIMESTAMP(6)` when SHOW BINDINGS renders them. Go keeps `types.Time` with its own precision: a session binding is stamped `TypeTimestamp` with fsp 3 and shows `2026-11-18 13:43:06.564`, where this port shows `... 13:43:06.590000`. Global bindings agree (both read `mysql.bind_info`'s fsp 6). [2026-11-18 probes](structural-audit-2026-11-18.md)",
-      "rust_evidence": "`rust/crates/tidb-bindinfo/src/binding.rs` (`Binding`), `rust/crates/tidb-executor/src/show/exec.rs` (`show_bindings_rows`), `rust/crates/tidb-session/src/binding_arm.rs` (`binding_timestamp`)",
-      "go_owner": "`pkg/bindinfo/binding.go` (`Binding.CreateTime`), `pkg/bindinfo/session_handle.go` (`CreateSessionBinding`), `pkg/executor/show.go` (`fetchShowBind`)"
-    },
-    {
       "id": "N07",
       "status": "open",
       "group": "Domain and process services",
@@ -168,7 +152,7 @@
       "go_owner": "`pkg/executor/show_stats.go` (`fetchShowStatsHistogram`, `appendTableForStatsHistograms`), `pkg/statistics/handle/cache` (`GetPhysicalTableStats`)"
     }
   ],
-  "unresolved": 20,
-  "open": 19,
+  "unresolved": 18,
+  "open": 17,
   "partial": 1
 }

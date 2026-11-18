@@ -189,6 +189,7 @@ mod extract_compound_source;
 mod fk_actions_show_create_source;
 mod fk_match_clause_source;
 mod analyze_histogram_option_source;
+mod binding_time_precision_source;
 mod fk_child_insert_update_cascade_source;
 mod fk_index_guard_source;
 mod fk_on_delete_cascade_source;

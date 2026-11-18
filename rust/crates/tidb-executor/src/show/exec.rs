@@ -1801,11 +1801,15 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     /// Go `ShowExec.fetchShowBind`: the GLOBAL or SESSION bindings, one row
     /// each, their times as the `TIMESTAMP(6)` values `mysql.bind_info` keeps.
     fn show_bindings_rows(&mut self, global_scope: bool) -> Result<Vec<Vec<Datum>>, DriverError> {
+        // Each time keeps its own precision: `mysql.bind_info`'s
+        // `TIMESTAMP(6)` for a global binding, Go `CreateSessionBinding`'s
+        // fsp 3 for a session one.
         let time = |text: &str| {
+            let fsp = text.split_once('.').map_or(0, |(_, fraction)| fraction.len().min(6) as i64);
             tidb_datatype::parse_time(
                 text,
                 tidb_datatype::TimeType::DateTime,
-                6,
+                fsp,
                 false,
                 true,
                 false,
