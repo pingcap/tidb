@@ -29,8 +29,10 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -773,15 +775,93 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 		return jobID, sysKSTaskMgr
 	}
 
+	submissionTableID := 0
+	newSubmissionPlan := func(tk *testkit.TestKit) *importer.Plan {
+		submissionTableID++
+		tableName := fmt.Sprintf("submit_target_%d", submissionTableID)
+		tk.MustExec("create table test." + tableName + "(a int primary key)")
+		is := domain.GetDomain(tk.Session()).InfoSchema()
+		db, ok := is.SchemaByName(ast.NewCIStr("test"))
+		require.True(t, ok)
+		tbl, err := is.TableByName(ctx, db.Name, ast.NewCIStr(tableName))
+		require.NoError(t, err)
+		return &importer.Plan{DBID: db.ID, DBName: db.Name.O, TableInfo: tbl.Meta(), Keyspace: tk.Session().GetStore().GetKeyspace(), Parameters: &importer.ImportParameters{}}
+	}
+
+	t.Run("read-only transition excludes background import", func(t *testing.T) {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaReadOnlyDDL", "return")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockModifySchemaReadOnlyDDL", "return")
+		config.UpdateGlobal(func(conf *config.Config) { conf.KeyspaceName = "ks" })
+		sysTaskMgr := manuallyInitFn(t, userKSStore, sysKSStore)
+		userKSTK.MustExec("create database read_only_import")
+		userKSTK.MustExec("create table read_only_import.t(a int primary key)")
+		dom := domain.GetDomain(userKSTK.Session())
+		db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("read_only_import"))
+		require.True(t, ok)
+		tbl, err := dom.InfoSchema().TableByName(ctx, db.Name, ast.NewCIStr("t"))
+		require.NoError(t, err)
+		_, task, err := executor.SubmitImportTask(ctx, &importer.Plan{
+			DBID: db.ID, DBName: db.Name.O, TableInfo: tbl.Meta(), Keyspace: "ks", Parameters: &importer.ImportParameters{},
+		}, "import into read_only_import.t from '/path/to/file'")
+		require.NoError(t, err)
+		tbl, err = dom.InfoSchema().TableByName(ctx, db.Name, ast.NewCIStr("t"))
+		require.NoError(t, err)
+		require.Equal(t, model.TableModeImport, tbl.Meta().Mode)
+		userKSTK.MustGetErrCode("alter database read_only_import read only = 1", 8258)
+		fullTask, err := sysTaskMgr.GetTaskByID(ctx, task.ID)
+		require.NoError(t, err)
+		require.NoError(t, (&importinto.ImportCleaner{}).Clean(ctx, fullTask))
+		userKSTK.MustExec("drop table read_only_import.t")
+		require.NoError(t, (&importinto.ImportCleaner{}).Clean(ctx, fullTask), "cleanup must tolerate a dropped table on retry")
+		userKSTK.MustExec("alter database read_only_import read only = 1")
+		userKSTK.MustExec("alter database read_only_import read only = 0")
+		userKSTK.MustExec("drop database read_only_import")
+		require.NoError(t, (&importinto.ImportCleaner{}).Clean(ctx, fullTask), "cleanup must tolerate a dropped database on retry")
+		userKSTK.MustExec("delete from mysql.tidb_import_jobs")
+		sysKSTK.MustExec("delete from mysql.tidb_global_task where id = ?", task.ID)
+	})
+
+	t.Run("authorized read-only import restores table mode", func(t *testing.T) {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaReadOnlyDDL", "return")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockModifySchemaReadOnlyDDL", "return")
+		config.UpdateGlobal(func(conf *config.Config) { conf.KeyspaceName = "ks" })
+		sysTaskMgr := manuallyInitFn(t, userKSStore, sysKSStore)
+		userKSTK.MustExec("create database authorized_import")
+		userKSTK.MustExec("create table authorized_import.t(a int primary key)")
+		dom := domain.GetDomain(userKSTK.Session())
+		db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("authorized_import"))
+		require.True(t, ok)
+		tbl, err := dom.InfoSchema().TableByName(ctx, db.Name, ast.NewCIStr("t"))
+		require.NoError(t, err)
+		plan := &importer.Plan{DBID: db.ID, DBName: db.Name.O, TableInfo: tbl.Meta(), Keyspace: "ks", Parameters: &importer.ImportParameters{}}
+		userKSTK.MustExec("alter database authorized_import read only = 1")
+		_, _, err = executor.SubmitImportTask(ctx, plan, "import into authorized_import.t from '/path/to/file'")
+		require.ErrorContains(t, err, "read only mode")
+		plan.SchemaReadOnlyBypass = true
+		_, task, err := executor.SubmitImportTask(ctx, plan, "import into authorized_import.t from '/path/to/file'")
+		require.NoError(t, err)
+		fullTask, err := sysTaskMgr.GetTaskByID(ctx, task.ID)
+		require.NoError(t, err)
+		var metadata map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(fullTask.Meta, &metadata))
+		require.NotContains(t, string(fullTask.Meta), "SchemaReadOnlyBypass")
+		require.NoError(t, (&importinto.ImportCleaner{}).Clean(ctx, fullTask))
+		tbl, err = dom.InfoSchema().TableByName(ctx, db.Name, ast.NewCIStr("t"))
+		require.NoError(t, err)
+		require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
+		userKSTK.MustGetErrCode("insert into authorized_import.t values (1)", 3989)
+		userKSTK.MustExec("alter database authorized_import read only = 0")
+		userKSTK.MustExec("drop database authorized_import")
+		userKSTK.MustExec("delete from mysql.tidb_import_jobs")
+		sysKSTK.MustExec("delete from mysql.tidb_global_task where id = ?", task.ID)
+	})
+
 	t.Run("submit task in system keyspace", func(t *testing.T) {
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.KeyspaceName = keyspace.System
 		})
 		manuallyInitFn(t, sysKSStore, sysKSStore)
-		jobID, task, err := executor.SubmitImportTask(ctx, &importer.Plan{
-			TableInfo:  &model.TableInfo{},
-			Parameters: &importer.ImportParameters{},
-		}, "import into t from '/path/to/file'")
+		jobID, task, err := executor.SubmitImportTask(ctx, newSubmissionPlan(sysKSTK), "import into t from '/path/to/file'")
 		require.NoError(t, err)
 		// both inside system keyspace
 		sysKSTK.MustQuery("select count(1) from mysql.tidb_import_jobs where id = ?", jobID).Check(testkit.Rows("1"))
@@ -798,10 +878,7 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 			conf.KeyspaceName = "ks"
 		})
 		manuallyInitFn(t, userKSStore, sysKSStore)
-		jobID, task, err := executor.SubmitImportTask(ctx, &importer.Plan{
-			TableInfo:  &model.TableInfo{},
-			Parameters: &importer.ImportParameters{},
-		}, "import into t from '/path/to/file'")
+		jobID, task, err := executor.SubmitImportTask(ctx, newSubmissionPlan(userKSTK), "import into t from '/path/to/file'")
 		require.NoError(t, err)
 		// job created in user keyspace, task created in system keyspace
 		userKSTK.MustQuery("select count(1) from mysql.tidb_import_jobs where id = ?", jobID).Check(testkit.Rows("1"))
@@ -913,13 +990,11 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 		})
 		manuallyInitFn(t, sysKSStore, sysKSStore)
 
-		jobID, task, err := executor.SubmitImportTask(ctx, &importer.Plan{
-			TableInfo:       &model.TableInfo{},
-			Parameters:      &importer.ImportParameters{},
-			ThreadCnt:       16,
-			MaxNodeCnt:      8,
-			CloudStorageURI: "local:///tmp/prepare-mode-sort",
-		}, "import into t from 's3://bucket/test.csv'")
+		plan := newSubmissionPlan(sysKSTK)
+		plan.ThreadCnt = 16
+		plan.MaxNodeCnt = 8
+		plan.CloudStorageURI = "local:///tmp/prepare-mode-sort"
+		jobID, task, err := executor.SubmitImportTask(ctx, plan, "import into t from 's3://bucket/test.csv'")
 		require.NoError(t, err)
 		sysKSTK.MustQuery("select count(1) from mysql.tidb_import_jobs where id = ?", jobID).Check(testkit.Rows("1"))
 		sysKSTK.MustQuery(
@@ -942,13 +1017,11 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 		})
 		manuallyInitFn(t, sysKSStore, sysKSStore)
 
-		jobID, task, err := executor.SubmitImportTask(ctx, &importer.Plan{
-			TableInfo:       &model.TableInfo{},
-			Parameters:      &importer.ImportParameters{},
-			ThreadCnt:       4,
-			MaxNodeCnt:      2,
-			CloudStorageURI: "local:///tmp/prepare-mode-sort-starter",
-		}, "import into t from 's3://bucket/test.csv'")
+		plan := newSubmissionPlan(sysKSTK)
+		plan.ThreadCnt = 4
+		plan.MaxNodeCnt = 2
+		plan.CloudStorageURI = "local:///tmp/prepare-mode-sort-starter"
+		jobID, task, err := executor.SubmitImportTask(ctx, plan, "import into t from 's3://bucket/test.csv'")
 		require.NoError(t, err)
 		sysKSTK.MustQuery("select count(1) from mysql.tidb_import_jobs where id = ?", jobID).Check(testkit.Rows("1"))
 		sysKSTK.MustQuery(

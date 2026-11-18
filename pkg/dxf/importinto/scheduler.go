@@ -590,16 +590,22 @@ func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, ta
 }
 
 func (sch *importScheduler) switchTableMode2NormalMode(ctx context.Context, taskMeta *taskinfo.TaskMeta, logger *zap.Logger) {
-	if !kerneltype.IsClassic() {
-		return
-	}
 	if taskMeta == nil || taskMeta.Plan.DBID == 0 || taskMeta.Plan.TableInfo == nil || taskMeta.Plan.TableInfo.ID == 0 {
 		return
 	}
-	err := sch.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se,
-			model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
-	})
+	var err error
+	if kerneltype.IsNextGen() {
+		err = sch.TaskRuntime.AlterTableMode(ctx, model.AlterTableModeTarget{
+			SchemaID: taskMeta.Plan.DBID, SchemaName: ast.NewCIStr(taskMeta.Plan.DBName),
+			TableID: taskMeta.Plan.TableInfo.ID, TableName: taskMeta.Plan.TableInfo.Name,
+			TargetMode: model.TableModeNormal,
+		})
+	} else {
+		err = sch.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se,
+				model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
+		})
+	}
 	if err != nil {
 		logger.Warn(
 			"alter table mode to normal failure",

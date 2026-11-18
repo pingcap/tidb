@@ -56,6 +56,12 @@ func onCreateSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 	dbInfo := args.DBInfo
+	if dbInfo.ReadOnly {
+		if err := checkSchemaReadOnlyCompatibility(jobCtx.ctx); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+	}
 	dbInfo.ID = schemaID
 	dbInfo.State = model.StateNone
 
@@ -196,6 +202,22 @@ func checkSchemaReadOnlyBeforeJob(jobCtx *jobContext, job *model.Job) error {
 	return nil
 }
 
+func checkSchemaReadOnlyCompatibility(ctx context.Context) error {
+	servers, err := infosync.GetAllServerInfo(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(servers) == 0 {
+		return errors.New("cannot determine whether all TiDB nodes support database read-only mode")
+	}
+	for _, server := range servers {
+		if server == nil || !server.SchemaReadOnly {
+			return errors.New("some TiDB nodes do not support database read-only mode; finish upgrading all nodes before enabling it")
+		}
+	}
+	return nil
+}
+
 func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	args, err := model.GetModifySchemaArgs(job)
 	if err != nil {
@@ -241,6 +263,10 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 
 	switch job.SchemaState {
 	case model.StateNone:
+		if err := checkSchemaReadOnlyCompatibility(jobCtx.ctx); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
 		// Table mode outlives the import submission transaction. Check it while
 		// this database-wide job excludes mode changes, before publishing ReadOnly;
 		// otherwise ingestion can continue and its mode-restoration DDL is blocked.

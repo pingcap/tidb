@@ -115,6 +115,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	if err != nil {
 		return err
 	}
+	importPlan.SchemaReadOnlyBypass = privilege.CanWriteReadOnlySchema(e.userSctx, ast.NewCIStr(importPlan.DBName).L)
 	astArgs := astArgsFromImportPlan(e.plan)
 	if err = ValidateImportIntoColAssignmentsWithEncodeCtx(importPlan, astArgs.ColumnAssignments); err != nil {
 		return err
@@ -289,7 +290,7 @@ func SubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string) (in
 	return doSubmitImportTask(ctx, plan, stmt, nil, nil)
 }
 
-func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
+func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (jobResultID int64, taskResult *proto.TaskBase, resultErr error) {
 	var instances []*serverinfo.ServerInfo
 	if instance != nil {
 		instances = append(instances, instance)
@@ -325,6 +326,23 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 		jobID, taskID int64
 	)
 	var runningOnUserKS bool
+	var tableModeSet, taskSubmitted bool
+	defer func() {
+		if !tableModeSet || taskSubmitted || taskID != 0 {
+			return
+		}
+		// Registration must not strand a table in import mode if task creation
+		// fails, including the separate SYSTEM-keyspace submission in NextGen.
+		// If an ID was allocated, its commit may be indeterminate: retain the
+		// protection for that task's scheduler/cleaner rather than allow ingestion
+		// to race a read-only transition.
+		cleanupErr := taskManager.WithNewTxn(context.WithoutCancel(ctx), func(se sessionctx.Context) error {
+			return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, plan.DBID, plan.TableInfo.ID)
+		})
+		if cleanupErr != nil {
+			resultErr = errors.Annotatef(resultErr, "release import table mode failed: %v", cleanupErr)
+		}
+	}()
 	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		runningOnUserKS = kv.IsUserKS(se.GetStore())
 		var err2 error
@@ -334,12 +352,14 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 		if err2 != nil {
 			return err2
 		}
-		if kerneltype.IsClassic() {
-			err2 = ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID)
-			if err2 != nil {
-				return err2
-			}
+		if plan.SchemaReadOnlyBypass {
+			defer privilege.WithInternalSchemaReadOnlyBypass(se, ast.NewCIStr(plan.DBName).L)()
 		}
+		err2 = ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID)
+		if err2 != nil {
+			return err2
+		}
+		tableModeSet = plan.TableInfo.Mode == model.TableModeNormal
 		// in classical kernel or if we are inside SYSTEM keyspace itself, we
 		// submit the task to DXF in the same transaction as creating the job.
 		if kerneltype.IsClassic() || kv.IsSystemKS(se.GetStore()) {
@@ -380,6 +400,7 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 			return 0, nil, err2
 		}
 	}
+	taskSubmitted = true
 	handle.NotifyTaskChange()
 	task, err := dxfTaskMgr.GetTaskBaseByID(ctx, taskID)
 	if err != nil {
@@ -449,6 +470,9 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	}
 	defer CloseSession(newSCtx)
 	inheritMViewMaintenanceFlag(e.userSctx, newSCtx)
+	if privilege.CanWriteReadOnlySchema(e.userSctx, ast.NewCIStr(e.controller.Plan.DBName).L) {
+		defer privilege.WithInternalSchemaReadOnlyBypass(newSCtx, ast.NewCIStr(e.controller.Plan.DBName).L)()
+	}
 
 	if err2 = e.controller.CheckRequirements(ctx, newSCtx); err2 != nil {
 		return err2

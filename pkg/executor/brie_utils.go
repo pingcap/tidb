@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"go.uber.org/zap"
 )
@@ -93,6 +94,7 @@ func BRIECreateTable(
 	brComment string,
 	cs ...ddl.CreateTableOption,
 ) error {
+	defer privilege.WithInternalSchemaReadOnlyBypass(sctx, dbName.L)()
 	d := domain.GetDomain(sctx).DDLExecutor()
 	query, err := showRestoredCreateTable(sctx, dbName, clonedTable, brComment)
 	if err != nil {
@@ -128,6 +130,7 @@ func BRIECreateTables(
 	}()
 	for db, tablesInDB := range clonedTables {
 		dbName := ast.NewCIStr(db)
+		defer privilege.WithInternalSchemaReadOnlyBypass(sctx, dbName.L)()
 		querys := make([]string, 0, len(tablesInDB))
 		for _, table := range tablesInDB {
 			query, err := showRestoredCreateTable(sctx, dbName, table, brComment)

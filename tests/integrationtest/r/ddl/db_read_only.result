@@ -599,3 +599,46 @@ rollback;
 alter database ro_lock read only = 0;
 drop database ro_lock;
 drop database rw_lock;
+create database ro_maintenance;
+create table ro_maintenance.t(a int not null, index idx(a));
+insert into ro_maintenance.t values (1);
+set tidb_mview_enable = on;
+create materialized view log on ro_maintenance.t(a);
+create materialized view ro_maintenance.mv(a, cnt) as select a, count(1) from ro_maintenance.t group by a;
+insert into ro_maintenance.t values (2);
+alter database ro_maintenance read only = 1;
+refresh materialized view ro_maintenance.mv fast;
+Error 3989 (HY000): Schema 'ro_maintenance' is in read only mode.
+refresh materialized view ro_maintenance.mv complete delta apply;
+Error 3989 (HY000): Schema 'ro_maintenance' is in read only mode.
+purge materialized view log on ro_maintenance.t;
+Error 3989 (HY000): Schema 'ro_maintenance' is in read only mode.
+admin recover index ro_maintenance.t idx;
+Error 3989 (HY000): Schema 'ro_maintenance' is in read only mode.
+admin cleanup index ro_maintenance.t idx;
+Error 3989 (HY000): Schema 'ro_maintenance' is in read only mode.
+admin check table ro_maintenance.t;
+select * from ro_maintenance.mv order by a;
+a	cnt
+1	1
+grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'root'@'%';
+refresh materialized view ro_maintenance.mv fast;
+refresh materialized view ro_maintenance.mv complete delta apply;
+purge materialized view log on ro_maintenance.t;
+admin recover index ro_maintenance.t idx;
+ADDED_COUNT	SCAN_COUNT
+0	2
+admin cleanup index ro_maintenance.t idx;
+REMOVED_COUNT
+0
+select * from ro_maintenance.mv order by a;
+a	cnt
+1	1
+2	1
+revoke RESTRICTED_REPLICA_WRITER_ADMIN on *.* from 'root'@'%';
+refresh materialized view ro_maintenance.mv fast;
+Error 3989 (HY000): Schema 'ro_maintenance' is in read only mode.
+purge materialized view log on ro_maintenance.t;
+Error 3989 (HY000): Schema 'ro_maintenance' is in read only mode.
+alter database ro_maintenance read only = 0;
+drop database ro_maintenance;

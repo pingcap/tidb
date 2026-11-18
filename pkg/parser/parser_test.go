@@ -3174,6 +3174,7 @@ func TestDDL(t *testing.T) {
 		{"ALTER SCHEMA S READ ONLY=default CHARSET=gbk", false, ""},
 		{"ALTER SCHEMA S READ ONLY=default COLLATION = utf8_general_ci", false, ""},
 		{"CREATE SCHEMA S(a INT, READ ONLY=0)", false, ""},
+		{"CREATE TABLE t(a INT READ ONLY=0)", false, ""},
 
 		// 5. create partition
 		{`create table m (c int) partition by range (c) (partition p1 values less than (200) primary_region="us");`, false, ""},

@@ -245,8 +245,9 @@ type TxnCtxNoNeedToRestore struct {
 	EnableMDL bool
 	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
 	relatedTableForMDL *sync.Map
-	// relatedTableForReadOnly maps table IDs to database names when MDL is disabled.
-	// It participates in database read-only draining, without acquiring MDL locks.
+	// relatedTableForReadOnly maps table IDs to database names for read-only
+	// draining and lazy activation checks, including when MDL is enabled:
+	// database read-only jobs do not acquire table metadata locks.
 	relatedTableForReadOnly *sync.Map
 
 	// FairLockingUsed marking whether at least one of the statements in the transaction was executed in

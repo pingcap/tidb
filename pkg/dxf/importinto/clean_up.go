@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -102,7 +104,7 @@ func (*ImportCleaner) BatchClean(ctx context.Context, tasks []*proto.Task) error
 		isGlobalSort := taskMeta.Plan.IsGlobalSort()
 		redactSensitiveInfo(task, taskMeta)
 
-		if err = cleanTableMode(ctx, taskMeta); err != nil {
+		if err = cleanTableMode(ctx, task, taskMeta); err != nil {
 			return err
 		}
 		failpoint.InjectCall("mockCleanupError", &err)
@@ -174,21 +176,35 @@ func sendMeterOnCleanInParallel(ctx context.Context, tasks []*proto.Task, sendFn
 	return eg.Wait()
 }
 
-func cleanTableMode(ctx context.Context, taskMeta *taskinfo.TaskMeta) error {
-	if !kerneltype.IsClassic() {
+func cleanTableMode(ctx context.Context, task *proto.Task, taskMeta *taskinfo.TaskMeta) error {
+	if taskMeta.Plan.TableInfo == nil || taskMeta.Plan.DBID == 0 || taskMeta.Plan.TableInfo.ID == 0 {
 		return nil
 	}
 	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
 	}
-	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
-	}); err != nil {
+	if kerneltype.IsNextGen() {
+		runtime, release, err := dxfutil.AcquireTaskRuntime(taskManager, task.Keyspace, dxfutil.GenHolderID("import-cleaner", task.ID))
+		if err != nil {
+			return err
+		}
+		defer release()
+		err = runtime.AlterTableMode(ctx, model.AlterTableModeTarget{
+			SchemaID: taskMeta.Plan.DBID, SchemaName: ast.NewCIStr(taskMeta.Plan.DBName),
+			TableID: taskMeta.Plan.TableInfo.ID, TableName: taskMeta.Plan.TableInfo.Name,
+			TargetMode: model.TableModeNormal,
+		})
+	} else {
+		err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
+		})
+	}
+	if err != nil {
 		// If the table is not found, it means the table has been either
 		// dropped or truncated. In such cases, the table mode has already
 		// been reset to normal, so we can ignore this error.
-		if !goerrors.Is(err, infoschema.ErrTableNotExists) {
+		if !goerrors.Is(err, infoschema.ErrTableNotExists) && !goerrors.Is(err, infoschema.ErrDatabaseNotExists) {
 			return err
 		}
 

@@ -325,6 +325,11 @@ func (e *executor) CreateSchemaWithInfo(
 	dbInfo *model.DBInfo,
 	onExist OnExist,
 ) error {
+	if dbInfo.ReadOnly {
+		if err := checkSchemaReadOnlyCompatibility(e.ctx); err != nil {
+			return err
+		}
+	}
 	is := e.infoCache.GetLatest()
 	_, ok := is.SchemaByName(dbInfo.Name)
 	if ok {
@@ -470,6 +475,11 @@ func (e *executor) ModifySchemaReadOnlyState(ctx sessionctx.Context, stmt *ast.A
 	dbName := stmt.Name
 	if metadef.IsMemOrSysDB(dbName.L) {
 		return dbterror.ErrAccessSystemDBRejected.GenWithStackByArgs(dbName.L)
+	}
+	if readOnly {
+		if err := checkSchemaReadOnlyCompatibility(e.ctx); err != nil {
+			return err
+		}
 	}
 	is := e.infoCache.GetLatest()
 	dbInfo, ok := is.SchemaByName(dbName)
@@ -8135,7 +8145,22 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	// A job can wait behind a read-only transition after its SQL passed
 	// preprocessing. Persist the submitter's bypass decision for the owner.
 	job.CheckSchemaReadOnly = job.Type != model.ActionModifySchemaReadOnly &&
-		job.Type != model.ActionCreateSchema && !privilege.HasExplicitReplicaWriterAdmin(ctx)
+		job.Type != model.ActionCreateSchema && job.Type != model.ActionUpdateTiFlashReplicaStatus &&
+		!privilege.HasExplicitReplicaWriterAdmin(ctx)
+	if job.CheckSchemaReadOnly {
+		job.CheckSchemaReadOnly = false
+		for _, target := range job.GetInvolvingSchemaInfo() {
+			if target.Mode == model.ExclusiveInvolving && target.Database != model.InvolvingNone &&
+				!privilege.CanWriteReadOnlySchema(ctx, target.Database) {
+				job.CheckSchemaReadOnly = true
+				break
+			}
+		}
+	}
+	if args, ok := jobW.JobArgs.(*model.AlterTableModeArgs); ok && job.Type == model.ActionAlterTableMode && args.TableMode == model.TableModeNormal {
+		// Completing an authorized import only publishes operational metadata.
+		job.CheckSchemaReadOnly = false
+	}
 
 	if traceevent.IsEnabled(tracing.DDLJob) && ctx.GetTraceCtx() != nil {
 		traceevent.TraceEvent(ctx.GetTraceCtx(), tracing.DDLJob, "ddlDelieverJobTask",

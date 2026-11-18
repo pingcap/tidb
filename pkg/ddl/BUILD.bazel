@@ -409,6 +409,7 @@ go_test(
         "//pkg/parser/terror",
         "//pkg/parser/types",
         "//pkg/planner/util",
+        "//pkg/privilege",
         "//pkg/resourcegroup",
         "//pkg/resourcemanager/pool/workerpool",
         "//pkg/server",

@@ -782,8 +782,8 @@ func rollbackModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver int64
 	// The execution path records progress before writing database metadata.
 	// A cancelled queued job must not undo a preceding job's successful change.
 	if job.SchemaState == model.StateNone {
-		job.State = model.JobStateRollbackDone
-		return ver, nil
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
 	}
 	dbInfo, err := jobCtx.metaMut.GetDatabase(job.SchemaID)
 	if err != nil {
@@ -803,5 +803,8 @@ func rollbackModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver int64
 	}
 	job.State = model.JobStateRollbackDone
 	job.SchemaState = model.StateNone
+	if job.Error == nil {
+		job.Error = toTError(dbterror.ErrCancelledDDLJob)
+	}
 	return ver, nil
 }

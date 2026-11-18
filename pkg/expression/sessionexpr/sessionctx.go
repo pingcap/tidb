@@ -431,7 +431,7 @@ func (s *sequenceOperator) checkReadOnly() error {
 		return err
 	}
 	is := s.sctx.GetLatestISWithoutSessExt()
-	if db, ok := is.SchemaByName(ast.NewCIStr(s.db)); ok && db.ReadOnly && !privilege.HasExplicitReplicaWriterAdmin(s.sctx) {
+	if db, ok := is.SchemaByName(ast.NewCIStr(s.db)); ok && db.ReadOnly && !privilege.CanWriteReadOnlySchema(s.sctx, db.Name.L) {
 		return dbterror.ErrSchemaInReadOnlyMode.GenWithStackByArgs(db.Name.O)
 	}
 	failpoint.InjectCall("afterSequenceReadOnlyCheck")

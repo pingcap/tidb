@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -613,7 +614,8 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 		// We should return a special error for batch insert.
 		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
-	return nil
+	failpoint.InjectCall("afterBatchInsertNewTxn", e.Ctx())
+	return activateSchemaReadOnlyWrite(e.Ctx(), e.Table.Meta())
 }
 
 // getRow gets the row which from `insert into select from` or `load data`.

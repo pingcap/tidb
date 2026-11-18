@@ -618,6 +618,7 @@ func getServerInfo(id string, serverIDGetter func() uint64, assumedKS string, di
 			AssumedKeyspace: assumedKS,
 			ServerIDGetter:  serverIDGetter,
 			DisableRPC:      disableRPC,
+			SchemaReadOnly:  true,
 		},
 		DynamicInfo: DynamicInfo{
 			Labels: maps.Clone(cfg.Labels),

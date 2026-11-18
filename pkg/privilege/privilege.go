@@ -129,6 +129,29 @@ type Manager interface {
 // to write to databases that are in read-only mode (e.g. replication threads).
 const ReplicaWriterAdminPriv = "RESTRICTED_REPLICA_WRITER_ADMIN"
 
+type schemaReadOnlyBypassKey struct{}
+
+func (schemaReadOnlyBypassKey) String() string { return "schema-read-only-bypass" }
+
+// WithInternalSchemaReadOnlyBypass authorizes a trusted internal operation for
+// one database. The caller must authorize the parent operation and restore the
+// previous value before returning a pooled session.
+func WithInternalSchemaReadOnlyBypass(ctx sessionctx.Context, database string) func() {
+	key := schemaReadOnlyBypassKey{}
+	previous := ctx.Value(key)
+	ctx.SetValue(key, database)
+	return func() { ctx.SetValue(key, previous) }
+}
+
+// CanWriteReadOnlySchema accepts an explicit user grant or a database-scoped
+// authorization inherited by trusted internal work; internal SQL alone is insufficient.
+func CanWriteReadOnlySchema(ctx interface {
+	Value(fmt.Stringer) any
+	GetSessionVars() *variable.SessionVars
+}, database string) bool {
+	return HasExplicitReplicaWriterAdmin(ctx) || ctx.Value(schemaReadOnlyBypassKey{}) == database
+}
+
 // HasExplicitReplicaWriterAdmin reports whether an authenticated session may
 // bypass database read-only checks. SUPER and internal sessions do not imply it.
 func HasExplicitReplicaWriterAdmin(ctx interface {

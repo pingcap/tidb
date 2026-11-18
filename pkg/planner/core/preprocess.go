@@ -326,8 +326,32 @@ func (p *preprocessor) schemasForMatchingTables(
 			continue
 		}
 		dbNames = append(dbNames, tblW.DBInfo.Name)
+		p.checkLocalTemporaryTableReadOnly(tblW)
 	}
 	return dbNames
+}
+
+func (p *preprocessor) checkLocalTemporaryTableReadOnly(tbl *resolve.TableNameW) {
+	if tbl == nil || tbl.DBInfo == nil || tbl.TableInfo == nil || tbl.TableInfo.TempTableType != model.TempTableLocal {
+		return
+	}
+	// Local tables are not protected by MDL or database transaction draining.
+	// A write must therefore use the current flag even in an older transaction.
+	db, exists := p.sctx.GetLatestISWithoutSessExt().SchemaByName(tbl.DBInfo.Name)
+	if exists && db.ReadOnly && !privilege.CanWriteReadOnlySchema(p.sctx, db.Name.L) {
+		p.err = infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(db.Name.O)
+	}
+}
+
+func (p *preprocessor) checkLocalTemporaryWriteTargets(refs *ast.TableRefsClause) {
+	if refs == nil {
+		return
+	}
+	collector := &tableSourceCollector{}
+	refs.Accept(collector)
+	for _, name := range collector.tableName {
+		p.checkLocalTemporaryTableReadOnly(p.resolveCtx.GetTableName(name))
+	}
 }
 
 func updateAssignmentTargetsTable(tableInfo *model.TableInfo, columnName string) bool {
@@ -351,6 +375,13 @@ func (p *preprocessor) extractUpdateSchemas(node *ast.UpdateStmt) []ast.CIStr {
 		column := assignment.Column
 		if column.Schema.L != "" {
 			dbNames = append(dbNames, column.Schema)
+			for _, tbl := range tables {
+				resolved := p.resolveCtx.GetTableName(tbl)
+				if resolved != nil && resolved.DBInfo != nil && resolved.DBInfo.Name.L == column.Schema.L &&
+					(column.Table.L == "" || column.Table.L == tbl.Name.L) {
+					p.checkLocalTemporaryTableReadOnly(resolved)
+				}
+			}
 			continue
 		}
 
@@ -389,6 +420,7 @@ func (p *preprocessor) extractMultiDeleteSchemas(node *ast.DeleteStmt) []ast.CIS
 		tblW := p.resolveCtx.GetTableName(tbl)
 		if tblW != nil && tblW.DBInfo != nil {
 			dbNames = append(dbNames, tblW.DBInfo.Name)
+			p.checkLocalTemporaryTableReadOnly(tblW)
 		}
 	}
 	return dbNames
@@ -415,6 +447,16 @@ func (p *preprocessor) extractSchema(in ast.Node) []ast.CIStr {
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.AlterMaterializedViewStmt:
 		dbNames = append(dbNames, node.ViewName.Schema)
+	case *ast.RefreshMaterializedViewStmt:
+		dbNames = append(dbNames, node.ViewName.Schema)
+	case *ast.PurgeMaterializedViewLogStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.AdminStmt:
+		if node.Tp == ast.AdminRecoverIndex || node.Tp == ast.AdminCleanupIndex {
+			for _, tbl := range node.Tables {
+				dbNames = append(dbNames, tbl.Schema)
+			}
+		}
 	case *ast.DropTableStmt:
 		for _, tbl := range node.Tables {
 			dbNames = append(dbNames, tbl.Schema)
@@ -466,12 +508,14 @@ func (p *preprocessor) extractSchema(in ast.Node) []ast.CIStr {
 			dbNames = append(dbNames, sequence.Schema)
 		}
 	case *ast.InsertStmt:
+		p.checkLocalTemporaryWriteTargets(node.Table)
 		dbNames = append(dbNames, getAllDBNames(node.Table)...)
 	case *ast.DeleteStmt:
 		if node.Tables != nil {
 			dbNames = append(dbNames, p.extractMultiDeleteSchemas(node)...)
 		} else {
 			// single table delete statement
+			p.checkLocalTemporaryWriteTargets(node.TableRefs)
 			dbNames = append(dbNames, getAllDBNames(node.TableRefs)...)
 		}
 	case *ast.UpdateStmt:
@@ -521,10 +565,9 @@ func (p *preprocessor) checkSchemaReadOnly(dbName ast.CIStr) {
 
 	dbInfo, exists := p.ensureInfoSchema().SchemaByName(dbName)
 	if exists && dbInfo.ReadOnly {
-		// Allow replication threads with RESTRICTED_REPLICA_WRITER_ADMIN to bypass.
-		// Gate on User != nil so that internal/unauthenticated sessions (including
-		// mock-store test sessions where SkipWithGrant is true) are still blocked.
-		if privilege.HasExplicitReplicaWriterAdmin(p.sctx) {
+		// Accept an explicit replica-writer grant or a trusted operation's scoped
+		// authorization. Internal or unauthenticated sessions alone stay blocked.
+		if privilege.CanWriteReadOnlySchema(p.sctx, dbName.L) {
 			return
 		}
 		p.err = errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(dbName.O))

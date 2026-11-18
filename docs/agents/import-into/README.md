@@ -71,8 +71,11 @@ when only reading one package at a time.
 ## Cleanup Troubleshooting
 
 - Cleanup entrypoint is `ImportCleaner.Clean` in `clean_up.go`.
-- Classic kernel behavior:
-  - Attempts to switch table mode back to normal.
+- Table mode in Classic and NextGen:
+  - Task submission sets import mode before physical ingestion. Database
+    read-only transitions reject tables in that mode.
+  - Completion and cleanup switch the mode back to normal. NextGen uses the
+    task keyspace's runtime and session pool, including cross-keyspace cleanup.
   - Ignores `infoschema.ErrTableNotExists` during cleanup.
 - Global-sort artifact cleanup:
   - Deletes task-scoped files via `external.CleanUpFiles(..., <task-id>)`.
