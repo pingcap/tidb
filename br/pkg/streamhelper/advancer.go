@@ -990,7 +990,7 @@ func resolveLocksForRangeWithMaxVersionRetry(
 ) (rangetask.TaskStat, error) {
 	currentMaxVersion := maxVersion
 	for retry := 0; ; retry++ {
-		stat, err := tikv.ResolveLocksForRange(
+		stat, err := tikv.ResolveDataLocksForRange(
 			ctx, resolver, currentMaxVersion, startKey, endKey, tikv.NewGcResolveLockMaxBackoffer, tikv.GCScanLockLimit)
 		if err == nil || !isScanLockLockedError(err) || retry >= resolveLockMaxVersionMaxRetry {
 			return stat, err
