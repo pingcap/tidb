@@ -3299,7 +3299,7 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueSource
             ),
             requested_version,
             current_ts,
-            auto_analyze_min_count: tidb_stats::DEFAULT_AUTO_ANALYZE_MIN_COUNT,
+            auto_analyze_min_count: tidb_stats::AUTO_ANALYZE_MIN_CNT.load(std::sync::atomic::Ordering::SeqCst),
         })
     }
 }

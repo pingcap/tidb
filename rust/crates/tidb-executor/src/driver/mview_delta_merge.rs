@@ -179,8 +179,90 @@ fn format_agg_dependency(info: &AggInfo) -> String {
 }
 
 /// Go master `MViewDeltaMerge.ExplainInfo`.
-fn explain_info(build: &BuildResult) -> String {
-    format!("agg_deps:[{}]", build.agg_infos.iter().map(format_agg_dependency).collect::<Vec<_>>().join(", "))
+fn explain_info(build: &BuildResult, full_update: bool) -> String {
+    let mut info = format!("agg_deps:[{}]", build.agg_infos.iter().map(format_agg_dependency).collect::<Vec<_>>().join(", "));
+    if full_update {
+        info.push_str(", full_update:index_lookup");
+    }
+    info
+}
+
+/// Go master `mvFullUpdateLookupTemplate`: the MIN / MAX fallback's lookup
+/// child, the template IndexJoin it came from, and how its output maps onto
+/// the view.
+pub struct FullUpdateLookup {
+    inner: PhysicalPlan,
+    join: tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
+    /// Go `OutputMVOffsets`: the view offset of each inner output column.
+    output_mv_offsets: Vec<usize>,
+}
+
+/// Go `findMVFullUpdateIndexJoinTemplatePlan`: the template's IndexJoin,
+/// or the one an IndexHashJoin embeds (the Rust planner has no
+/// IndexMergeJoin).
+fn find_index_join(plan: &PhysicalPlan) -> Option<&tidb_planner_core_operator_physicalop::PhysicalIndexJoin> {
+    match plan {
+        PhysicalPlan::IndexJoin(join) => Some(join),
+        PhysicalPlan::IndexHashJoin(join) => Some(&join.physical_index_join),
+        _ => plan.children().iter().find_map(find_index_join),
+    }
+}
+
+/// Go master `extractMVFullUpdateLookupTemplate` and
+/// `deriveMVFullUpdateOutputMVOffsetsByInnerSchema`.
+fn extract_full_update_lookup_template(
+    lookup_plan: &PhysicalPlan,
+    build: &BuildResult,
+) -> Result<FullUpdateLookup, DriverError> {
+    let join = find_index_join(lookup_plan)
+        .ok_or_else(|| plain("mview full-update lookup template: expected index join plan but not found"))?;
+    let inner = join
+        .base
+        .children()
+        .get(join.inner_child_idx)
+        .cloned()
+        .ok_or_else(|| plain("mview full-update lookup template: index join inner plan is nil"))?;
+    let inner_schema = inner.schema().map(|schema| schema.columns.clone()).unwrap_or_default();
+    if inner_schema.len() != build.full_update_lookup_column_count {
+        return Err(plain(format!(
+            "mview full-update lookup template: unexpected inner schema length: got {}, expected {}",
+            inner_schema.len(),
+            build.full_update_lookup_column_count
+        )));
+    }
+    if join.inner_join_keys.len() != build.group_key_mv_offsets.len() {
+        return Err(plain(format!(
+            "mview full-update lookup template: unexpected inner join key count: got {}, expected {}",
+            join.inner_join_keys.len(),
+            build.group_key_mv_offsets.len()
+        )));
+    }
+    let mut output_mv_offsets: Vec<Option<usize>> = vec![None; inner_schema.len()];
+    for (key_pos, key) in join.inner_join_keys.iter().enumerate() {
+        let index = inner_schema.iter().position(|column| column.unique_id == key.unique_id).ok_or_else(|| {
+            plain(format!("mview full-update lookup template: invalid inner join key at position {key_pos}"))
+        })?;
+        if output_mv_offsets[index].is_some() {
+            return Err(plain(format!("mview full-update lookup template: duplicate key result col idx {index}")));
+        }
+        output_mv_offsets[index] = Some(build.group_key_mv_offsets[key_pos]);
+    }
+    let mut non_key = build
+        .full_update_lookup_mv_offsets
+        .iter()
+        .copied()
+        .filter(|offset| !build.group_key_mv_offsets.contains(offset));
+    for slot in &mut output_mv_offsets {
+        if slot.is_none() {
+            *slot = Some(non_key.next().ok_or_else(|| {
+                plain("mview full-update lookup template: non-key column mapping mismatch")
+            })?);
+        }
+    }
+    if non_key.next().is_some() {
+        return Err(plain("mview full-update lookup template: non-key column mapping mismatch"));
+    }
+    Ok(FullUpdateLookup { inner, join: join.clone(), output_mv_offsets: output_mv_offsets.into_iter().flatten().collect() })
 }
 
 /// Go master `mviewRefreshMLogIsEmpty`: the log side of the merge source
@@ -225,7 +307,7 @@ pub fn plan_mview_delta_merge(
     current_db: &str,
     ctx: &crate::StmtContext,
     retained_upper_tso: u64,
-) -> Result<(PhysicalPlan, bool), DriverError> {
+) -> Result<(PhysicalPlan, bool, Option<FullUpdateLookup>), DriverError> {
     // Go master `WithMLogCommitTSEstimation` around the merge source's
     // optimization: the retained log window the commit-ts filters are
     // estimated over.
@@ -234,8 +316,19 @@ pub fn plan_mview_delta_merge(
         retained_lower_tso: plan.mlog_retained_lower_tso,
         retained_upper_tso,
     });
-    let source = super::planner_bridge::physical_select_plan(&build.merge_source_select, catalog, current_db, &plan_ctx)
-        .map_err(super::planner_error_to_driver)?;
+    // Go optimizes the merge source and the lookup template under one
+    // session: both draw from its plan-id and column-id counters.
+    let (plan_ids, column_ids) =
+        (tidb_planner_core_base::PlanIdAllocator::new(), tidb_planner_core_base::ColumnIdAllocator::new());
+    let source = super::planner_bridge::physical_select_plan_with_allocators(
+        &build.merge_source_select,
+        catalog,
+        current_db,
+        &plan_ctx,
+        &plan_ids,
+        &column_ids,
+    )
+    .map_err(super::planner_error_to_driver)?;
     let width = source.schema().map_or(0, |schema| schema.columns.len());
     if width != build.source_column_count {
         return Err(plain(format!(
@@ -244,16 +337,66 @@ pub fn plan_mview_delta_merge(
         )));
     }
     let empty = mlog_is_empty(&source);
-    let plan_ids = tidb_planner_core_base::PlanIdAllocator::new();
+    // Go `buildRefreshMaterializedViewImplement`'s MIN / MAX fallback: the
+    // lookup template planned (IndexJoin over the supporting index) while
+    // the log has rows.
+    let full_update = match &build.full_update_lookup_template_sql {
+        Some(template) if !empty => {
+            // Go `validateMVFullUpdateSupportingIndex`.
+            let base = catalog.table_info_by_id(build.base_table_id).ok_or_else(|| {
+                plain(format!(
+                    "mview full-update lookup template: base table id {} not found in infoschema",
+                    build.base_table_id
+                ))
+            })?;
+            let indexes =
+                tidb_mviewutil::find_visible_indexes_with_prefix_covering_columns(&base.read(), &build.group_key_base_cols);
+            if indexes.is_empty() {
+                return Err(plain(
+                    "refresh materialized view fast with MIN/MAX requires base table index whose leading columns cover all GROUP BY columns",
+                ));
+            }
+            let sql = tidb_planner::mview::set_full_update_lookup_index_hint(template, &indexes);
+            let select = match ctx.parse(&sql).map_err(|error| plain(error.to_string()))? {
+                tidb_ast::Stmt::Query(query) => match &*query {
+                    tidb_ast::QueryStmt::Select(select) => (**select).clone(),
+                    _ => return Err(plain("mview full-update lookup template is not a select")),
+                },
+                _ => return Err(plain("mview full-update lookup template is not a query")),
+            };
+            let lookup_ctx = plan_ctx.clone().with_inl_join_inner_multi_pattern(true);
+            let lookup_plan = super::planner_bridge::physical_select_plan_with_allocators(
+                &select,
+                catalog,
+                current_db,
+                &lookup_ctx,
+                &plan_ids,
+                &column_ids,
+            )
+            .map_err(super::planner_error_to_driver)?;
+            let width = lookup_plan.schema().map_or(0, |schema| schema.columns.len());
+            if width != build.full_update_lookup_column_count {
+                return Err(plain(format!(
+                    "mview full-update lookup template: unexpected output schema length: got {width}, expected {}",
+                    build.full_update_lookup_column_count
+                )));
+            }
+            Some(extract_full_update_lookup_template(&lookup_plan, build)?)
+        }
+        _ => None,
+    };
+    let root_ids = tidb_planner_core_base::PlanIdAllocator::new();
     Ok((
         PhysicalPlan::Dml(tidb_planner_core_operator_physicalop::PhysicalDmlRoot {
             base: tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(&plan_ids, "MViewDeltaMerge", 0),
             go_operator: "MViewDeltaMerge".to_owned(),
-            explain_info: Some(explain_info(build)),
+            explain_info: Some(explain_info(build, full_update.is_some())),
             select_plan: Some(Box::new(source)),
+            full_update_inner: full_update.as_ref().map(|lookup| Box::new(lookup.inner.clone())),
             ..Default::default()
         }),
         empty,
+        full_update,
     ))
 }
 
@@ -400,7 +543,139 @@ fn merge_value(
                 old => add_sum(old, delta),
             }
         }
-        AggKind::Min | AggKind::Max => Err(plain("MIN / MAX merge is not supported on this node yet")),
+        AggKind::Min | AggKind::Max => Err(plain("MIN / MAX merges through merge_min_max")),
+    }
+}
+
+/// Go master `minMaxDecision`.
+#[derive(Clone, Debug, PartialEq)]
+enum MinMaxMerged {
+    /// The merged extremum (NULL for an empty group).
+    Value(Datum),
+    /// The delta cannot prove the extremum: recompute the group.
+    Recompute,
+}
+
+/// The ordering of two extremum values: strings by their collation.
+fn compare_extremum(left: &Datum, right: &Datum) -> Result<std::cmp::Ordering, DriverError> {
+    let collation = match left {
+        Datum::String(value) => value.collation(),
+        _ => tidb_charset::Collation::Binary,
+    };
+    left.compare(right, collation).map_err(|error| plain(error.to_string()))
+}
+
+/// Go master `minMax*Merger.mergeChunk` for one row (see Go's decision
+/// flow): the merged MIN / MAX, or a recompute when the deltas do not carry
+/// the successor extremum.
+fn merge_min_max(
+    info: &AggInfo,
+    row: &[Datum],
+    merged: &std::collections::HashMap<usize, Datum>,
+    output: usize,
+    count_star_output: usize,
+) -> Result<MinMaxMerged, DriverError> {
+    let is_max = info.kind == AggKind::Max;
+    let deps = &info.dependencies;
+    // Go `countRef`: COUNT(expr) when the mapping has one, else COUNT(*).
+    let count_ref = if deps.len() == 5 { deps[4] } else { count_star_output };
+    let Some(final_cnt) = merged.get(&count_ref).and_then(datum_i64) else {
+        return Err(plain("min/max count dependency contains null"));
+    };
+    if final_cnt == 0 {
+        return Ok(MinMaxMerged::Value(Datum::Null));
+    }
+    let cnt = |offset: usize| datum_i64(&row[offset]).unwrap_or(0);
+    let (added, added_cnt, removed, removed_cnt) = (&row[deps[0]], cnt(deps[1]), &row[deps[2]], cnt(deps[3]));
+    let old = &row[output];
+    let (old_exists, add_exists, remove_exists) =
+        (!matches!(old, Datum::Null), !matches!(added, Datum::Null), !matches!(removed, Datum::Null));
+    // `outranks(a, b)`: a is strictly the better extremum.
+    let outranks = |a: &Datum, b: &Datum| -> Result<bool, DriverError> {
+        let order = compare_extremum(a, b)?;
+        Ok(if is_max { order.is_gt() } else { order.is_lt() })
+    };
+    // chooseAddRemove: +1 add dominates, -1 remove dominates, 0 neither.
+    let mut choose = 0;
+    let mut same_extremum_value = false;
+    if add_exists != remove_exists {
+        choose = if add_exists { 1 } else { -1 };
+    } else if add_exists && remove_exists {
+        let order = compare_extremum(added, removed)?;
+        choose = match if is_max { order } else { order.reverse() } {
+            std::cmp::Ordering::Greater => 1,
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Equal => {
+                same_extremum_value = true;
+                match added_cnt.cmp(&removed_cnt) {
+                    std::cmp::Ordering::Greater => 1,
+                    std::cmp::Ordering::Less => -1,
+                    std::cmp::Ordering::Equal => 0,
+                }
+            }
+        };
+    }
+    let use_old = || MinMaxMerged::Value(if old_exists { old.clone() } else { Datum::Null });
+    if choose == 0 {
+        // Added and removed cancel at the same value: unless old outranks it,
+        // the deltas do not carry the replacement extremum.
+        if same_extremum_value && (!old_exists || outranks(added, old)?) {
+            return Ok(MinMaxMerged::Recompute);
+        }
+        return Ok(use_old());
+    }
+    if choose > 0 {
+        if !old_exists || outranks(added, old)? {
+            return Ok(MinMaxMerged::Value(added.clone()));
+        }
+        return Ok(use_old());
+    }
+    if !old_exists {
+        return Err(plain("invalid min/max fast-path state (remove-dominant without old value)"));
+    }
+    if outranks(removed, old)? {
+        return Err(plain("invalid min/max fast-path state (remove-dominant outranks old value)"));
+    }
+    if compare_extremum(removed, old)?.is_eq() {
+        return Ok(MinMaxMerged::Recompute);
+    }
+    Ok(use_old())
+}
+
+/// Go master `recomputeMinMaxSingleRow` for one group: its recomputed row
+/// through the lookup child, rebuilt over the group's key.
+fn recompute_min_max_group(
+    reader: &dyn tidb_executor_join::index_lookup::IndexJoinReaderBuilder,
+    key: Vec<Datum>,
+) -> Result<Vec<Datum>, DriverError> {
+    let mut exec = reader
+        .build_executor_for_index_join(tidb_executor_join::index_lookup::IndexJoinProbes {
+            keys: vec![key],
+            ..Default::default()
+        })
+        .map_err(DriverError::from)?;
+    let types = reader.ret_field_types().to_vec();
+    let mut chunk = tidb_executor_internal_exec::new_first_chunk(exec.as_ref());
+    let mut rows = Vec::new();
+    let result = loop {
+        chunk.reset();
+        if let Err(error) = exec.next(&mut chunk) {
+            break Err(DriverError::from(error));
+        }
+        if chunk.num_rows() == 0 {
+            break Ok(());
+        }
+        for index in 0..chunk.num_rows() {
+            rows.push(chunk.get_row(index).get_datum_row(&types));
+        }
+    };
+    let closed = exec.close().map_err(DriverError::from);
+    result?;
+    closed?;
+    match rows.len() {
+        1 => Ok(rows.pop().expect("one row")),
+        0 => Err(plain("min/max single-row recompute returns no row")),
+        _ => Err(plain("min/max single-row recompute returns more than one row")),
     }
 }
 
@@ -418,7 +693,12 @@ pub fn run_mview_delta_merge(
     ctx: &crate::StmtContext,
     retained_upper_tso: u64,
 ) -> Result<DeltaMergeWriterStats, DriverError> {
-    let (mut root, mlog_empty) = plan_mview_delta_merge(plan, build, catalog, current_db, ctx, retained_upper_tso)?;
+    let (mut root, mlog_empty, full_update) =
+        plan_mview_delta_merge(plan, build, catalog, current_db, ctx, retained_upper_tso)?;
+    let full_update_reader = full_update
+        .as_ref()
+        .map(|lookup| super::physical_builder::full_update_reader_builder(&lookup.inner, &lookup.join, catalog, ctx))
+        .transpose()?;
     crate::explain::publish_physical_process_info(ctx, &root, catalog)?;
     let dml = super::physical_builder::DmlExec::new(&root, ctx);
     let root_id = i64::from(root.id());
@@ -490,11 +770,44 @@ pub fn run_mview_delta_merge(
                 // Go `mergeOneChunk`: each aggregate in order.
                 let work_start = std::time::Instant::now();
                 let mut merged = std::collections::HashMap::new();
+                let mut recompute = Vec::new();
                 for &index in &order {
                     let info = &build.agg_infos[index];
                     let output = delta + info.mv_offset;
-                    let value = merge_value(info, row, &merged, output, unsigned[info.mv_offset])?;
+                    let value = if matches!(info.kind, AggKind::Min | AggKind::Max) {
+                        match merge_min_max(info, row, &merged, output, delta + build.count_star_mv_offset)? {
+                            MinMaxMerged::Value(value) => value,
+                            MinMaxMerged::Recompute => {
+                                recompute.push(info.mv_offset);
+                                Datum::Null
+                            }
+                        }
+                    } else {
+                        merge_value(info, row, &merged, output, unsigned[info.mv_offset])?
+                    };
                     merged.insert(output, value);
+                }
+                if !recompute.is_empty() {
+                    // Go `recomputeMinMaxRows`.
+                    let (Some(reader), Some(lookup)) = (full_update_reader.as_ref(), full_update.as_ref()) else {
+                        return Err(plain("min/max recompute requires the full-update lookup"));
+                    };
+                    if plan.options.to_ts > 0 {
+                        // Go reads the base table at the AS OF target here
+                        // (`FullUpdateSnapshot`); this node reads at the
+                        // statement snapshot only.
+                        return Err(plain(
+                            "FAST refresh AS OF of a materialized view whose MIN / MAX must be recomputed is not supported on this node yet",
+                        ));
+                    }
+                    let key: Vec<Datum> = build.group_key_mv_offsets.iter().map(|&offset| row[delta + offset].clone()).collect();
+                    let recomputed = recompute_min_max_group(reader.as_ref(), key)?;
+                    for mv_offset in recompute {
+                        let column = lookup.output_mv_offsets.iter().position(|&offset| offset == mv_offset).ok_or_else(|| {
+                            plain(format!("min/max recompute has no output for mv offset {mv_offset}"))
+                        })?;
+                        merged.insert(delta + mv_offset, recomputed[column].clone());
+                    }
                 }
                 stats.worker_time += work_start.elapsed();
                 // Go `buildRowOps`.
@@ -624,5 +937,43 @@ mod tests {
             merge_value(&count_star, &negative, &merged, 6, false).unwrap_err().to_string(),
             "count becomes negative (-1)"
         );
+    }
+
+    /// Go master `TestMaxFastPathAndSingleRowRecompute`'s decisions:
+    /// [0] delta count(*), [1] added max, [2] added count, [3] removed max,
+    /// [4] removed count, [5] group key, [6] mv count(*), [7] mv max.
+    #[test]
+    fn max_fast_path_and_recompute_as_go() {
+        let max = info(AggKind::Max, 1, vec![1, 2, 3, 4]);
+        let count = |merged_count: i64| {
+            let mut merged = std::collections::HashMap::new();
+            merged.insert(6, Datum::Int(merged_count));
+            merged
+        };
+        let int = Datum::Int;
+        // A greater added maximum replaces the old one.
+        let row = vec![int(0), int(12), int(1), Datum::Null, int(0), int(1), int(3), int(10)];
+        assert_eq!(merge_min_max(&max, &row, &count(3), 7, 6).unwrap(), MinMaxMerged::Value(int(12)));
+        // Removing the old maximum leaves no successor in the delta: recompute.
+        let row = vec![int(0), Datum::Null, int(0), int(10), int(1), int(2), int(3), int(10)];
+        assert_eq!(merge_min_max(&max, &row, &count(3), 7, 6).unwrap(), MinMaxMerged::Recompute);
+        // No delta keeps the old maximum.
+        let row = vec![int(0), Datum::Null, int(0), Datum::Null, int(0), int(3), int(3), int(5)];
+        assert_eq!(merge_min_max(&max, &row, &count(3), 7, 6).unwrap(), MinMaxMerged::Value(int(5)));
+        // An empty group's extremum is NULL.
+        assert_eq!(merge_min_max(&max, &row, &count(0), 7, 6).unwrap(), MinMaxMerged::Value(Datum::Null));
+        // Added and removed cancel at a value above the old one: recompute;
+        // below it, the old maximum stands.
+        let row = vec![int(0), int(20), int(1), int(20), int(1), int(3), int(3), int(10)];
+        assert_eq!(merge_min_max(&max, &row, &count(3), 7, 6).unwrap(), MinMaxMerged::Recompute);
+        let row = vec![int(0), int(7), int(1), int(7), int(1), int(3), int(3), int(10)];
+        assert_eq!(merge_min_max(&max, &row, &count(3), 7, 6).unwrap(), MinMaxMerged::Value(int(10)));
+        // A removed value above the old maximum is an invalid state.
+        let row = vec![int(0), Datum::Null, int(0), int(11), int(1), int(3), int(3), int(10)];
+        assert!(merge_min_max(&max, &row, &count(3), 7, 6).is_err());
+        // MIN mirrors: a smaller added minimum replaces the old one.
+        let min = info(AggKind::Min, 1, vec![1, 2, 3, 4]);
+        let row = vec![int(0), int(2), int(1), Datum::Null, int(0), int(1), int(3), int(10)];
+        assert_eq!(merge_min_max(&min, &row, &count(3), 7, 6).unwrap(), MinMaxMerged::Value(int(2)));
     }
 }

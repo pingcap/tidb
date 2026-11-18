@@ -115,7 +115,7 @@ impl Domain {
                         .map(|info| (server_info_of(info), tidb_util_disttask::generate_exec_id(info)))
                         .collect())
                 }),
-                analyzer: None,
+                analyzer: Some(Arc::new(DomainMvAnalyzer(Arc::downgrade(self)))),
                 metrics: Arc::new(MetricsReporter::default()),
             };
             // Go `RegisterMVService`: the default config with the default
@@ -299,4 +299,191 @@ fn register_mv_service_sysvar_hooks(globals: &tidb_domain::global_sysvars::Globa
             Ok(())
         }),
     );
+}
+
+/// Go `serviceHelper`'s MV log analyze half over the domain: its statistics
+/// handle, the system process tracker and `do.stopAutoAnalyze` (the
+/// service context ending here).
+struct DomainMvAnalyzer(Weak<Domain>);
+
+/// Go `mlogAnalyzeTask` candidates' statistics, as `GetNonPseudoPhysicalTableStats` finds them.
+fn mlog_stats(domain: &Domain, mlog_id: i64) -> Option<(tidb_mvservice::MLogStats, i32)> {
+    let statistics = domain.stats.load();
+    let table = statistics.get(&mlog_id).and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)?;
+    if table.hist_coll.pseudo {
+        return None;
+    }
+    Some((
+        tidb_mvservice::MLogStats {
+            pseudo: table.hist_coll.pseudo,
+            realtime_count: table.hist_coll.realtime_count,
+            modify_count: table.hist_coll.modify_count,
+            analyzed: tidb_stats::table_is_analyzed(table.last_analyze_version),
+            analyze_row_count: table.hist_coll.analyze_row_count(),
+        },
+        table.hist_coll.stats_version,
+    ))
+}
+
+impl DomainMvAnalyzer {
+    fn domain(&self) -> Result<Arc<Domain>, MvsError> {
+        self.0.upgrade().ok_or_else(|| MvsError::Other("mv service: the domain is closed".to_owned()))
+    }
+
+    /// Go `mlogAnalyzeStopped`.
+    fn mlog_analyze_stopped(domain: &Domain, ctx: &Context) -> bool {
+        ctx.err().is_some()
+            || !domain
+                .global_vars
+                .get(tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE)
+                .map_or(true, |value| value.eq_ignore_ascii_case("ON"))
+    }
+
+    /// Go `canAnalyzeMLog`: not stopped and inside the auto-analyze window.
+    fn can_analyze_mlog(
+        domain: &Domain,
+        ctx: &Context,
+        sctx: &dyn crate::sys_session::DomainSysSession,
+    ) -> bool {
+        if Self::mlog_analyze_stopped(domain, ctx) {
+            return false;
+        }
+        let parameters = tidb_stats_handle_autoanalyze_exec::get_auto_analyze_parameters(sctx);
+        let get = |name: &str| parameters.get(name).cloned().unwrap_or_default();
+        let Ok((start, end)) = tidb_stats_handle_autoanalyze_exec::parse_auto_analysis_window(
+            &get(tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_START_TIME),
+            &get(tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_END_TIME),
+        ) else {
+            bg_logger().warn("mv service: failed to parse mlog auto analyze window", &[]);
+            return false;
+        };
+        let now = tidb_mvservice::mvs_now().instant();
+        tidb_timeutil::within_day_time_period(start.with_timezone(&chrono::Utc), end.with_timezone(&chrono::Utc), now)
+            && !Self::mlog_analyze_stopped(domain, ctx)
+    }
+
+    fn with_session<T>(
+        domain: &Arc<Domain>,
+        f: impl FnOnce(&dyn crate::sys_session::DomainSysSession) -> Result<T, MvsError>,
+    ) -> Result<T, MvsError> {
+        let pool = domain.advanced_sys_session_pool();
+        let mut outcome = None;
+        let mut f = Some(f);
+        pool.with_session(|session| {
+            session.with_session_context(|context| {
+                outcome = Some((f.take().expect("called once"))(context));
+                Ok(())
+            })
+        })
+        .map_err(|err| MvsError::Other(err.to_string()))?;
+        outcome.unwrap_or_else(|| Err(MvsError::Other("mv service: no system session".to_owned())))
+    }
+}
+
+fn sql_exec_error(err: tidb_sqlexec::SqlExecError) -> MvsError {
+    MvsError::Other(err.to_string())
+}
+
+impl tidb_mvservice::MVServiceAnalyzer for DomainMvAnalyzer {
+    /// Go `LoadAllTiDBMVLogAnalyzeTasks`.
+    fn load_all_tidb_mv_log_analyze_tasks(
+        &self,
+        ctx: &Context,
+    ) -> Result<std::collections::HashMap<i64, tidb_mvservice::MlogAnalyzeTask>, MvsError> {
+        const FETCH_SQL: &str = "SELECT MLOG_ID FROM mysql.tidb_mlog_purge_info";
+        let domain = self.domain()?;
+        if Self::mlog_analyze_stopped(&domain, ctx) {
+            return Ok(std::collections::HashMap::new());
+        }
+        Self::with_session(&domain, |sctx| {
+            let mut tasks = std::collections::HashMap::new();
+            if !Self::can_analyze_mlog(&domain, ctx, sctx) {
+                return Ok(tasks);
+            }
+            let locked = tidb_stats_handle_lockstats::session_stats_lock::query_locked_tables(sctx).map_err(sql_exec_error)?;
+            let mv_sctx = sctx.mv_service_session();
+            let rows = mv_sctx.exec_restricted_sql(FETCH_SQL, &[])?;
+            let ratio = tidb_mvservice::read_mlog_auto_analyze_ratio(mv_sctx);
+            let min_count = tidb_stats::AUTO_ANALYZE_MIN_CNT.load(std::sync::atomic::Ordering::SeqCst);
+            for row in rows {
+                let Some(tidb_datatype::Datum::Int(mlog_id)) = row.first().cloned() else {
+                    continue;
+                };
+                if mlog_id <= 0 || locked.contains(&mlog_id) {
+                    continue;
+                }
+                let Some((schema_name, mlog_name)) = tidb_mvservice::resolve_mv_log_identity_by_id(mv_sctx, mlog_id)? else {
+                    continue;
+                };
+                let Some((stats, _)) = mlog_stats(&domain, mlog_id) else {
+                    continue;
+                };
+                let (need, reason) = tidb_mvservice::need_analyze_mlog(Some(&stats), ratio, min_count);
+                if !need {
+                    continue;
+                }
+                tasks.insert(mlog_id, tidb_mvservice::MlogAnalyzeTask { schema_name, mlog_name, reason, ratio });
+            }
+            Ok(tasks)
+        })
+    }
+
+    /// Go `AnalyzeMVLog`: one `ANALYZE TABLE` of the log, rechecked first.
+    fn analyze_mv_log(&self, ctx: &Context, mlog_id: i64) -> Result<(), MvsError> {
+        const ANALYZE_MLOG_SQL: &str = "ANALYZE TABLE %n.%n";
+        let domain = self.domain()?;
+        if Self::mlog_analyze_stopped(&domain, ctx) {
+            return Ok(());
+        }
+        Self::with_session(&domain, |sctx| {
+            tidb_stats_handle_util::update_sctx_vars_for_stats(sctx).map_err(sql_exec_error)?;
+            let mv_sctx = sctx.mv_service_session();
+            let Some((schema_name, mlog_name)) = tidb_mvservice::resolve_mv_log_identity_by_id(mv_sctx, mlog_id)? else {
+                return Ok(());
+            };
+            let locked = tidb_stats_handle_lockstats::session_stats_lock::query_locked_tables(sctx).map_err(sql_exec_error)?;
+            if locked.contains(&mlog_id) {
+                return Ok(());
+            }
+            // A task may have waited in the executor queue or for a pooled session.
+            // Recheck current eligibility and controls before starting another ANALYZE.
+            let ratio = tidb_mvservice::read_mlog_auto_analyze_ratio(mv_sctx);
+            let Some((stats, stats_version)) = mlog_stats(&domain, mlog_id) else {
+                return Ok(());
+            };
+            let min_count = tidb_stats::AUTO_ANALYZE_MIN_CNT.load(std::sync::atomic::Ordering::SeqCst);
+            if !tidb_mvservice::need_analyze_mlog(Some(&stats), ratio, min_count).0 {
+                return Ok(());
+            }
+            if !Self::can_analyze_mlog(&domain, ctx, sctx) {
+                return Ok(());
+            }
+            let table_stats_ver = mv_sctx
+                .global_system_var(tidb_vardef::tidb_vars::TIDB_ANALYZE_VERSION)?
+                .parse::<i32>()
+                .map_err(|err| MvsError::Other(err.to_string()))?;
+            let need_version_rewrite_warn =
+                !tidb_stats::analyze_version_matches(Some(i64::from(stats_version)), stats.pseudo, i64::from(table_stats_ver));
+            let ids = domain.next_conn_id();
+            let released = Arc::clone(&ids);
+            let generator =
+                tidb_stats_handle_util::Generator::new(move || ids.next_id(), move |id| released.release(id));
+            let (track, untrack) = crate::sys_session::system_process_trackers(domain.processes());
+            tidb_stats_handle_autoanalyze_exec::run_analyze_stmt(
+                sctx,
+                &generator,
+                track,
+                untrack,
+                table_stats_ver,
+                need_version_rewrite_warn,
+                ANALYZE_MLOG_SQL,
+                &[
+                    tidb_sqlescape::SqlArg::String(schema_name.as_bytes()),
+                    tidb_sqlescape::SqlArg::String(mlog_name.as_bytes()),
+                ],
+            )
+            .map(|_| ())
+            .map_err(sql_exec_error)
+        })
+    }
 }

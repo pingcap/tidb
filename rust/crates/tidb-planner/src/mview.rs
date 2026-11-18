@@ -460,6 +460,33 @@ pub struct BuildResult {
     pub count_star_mv_offset: usize,
     /// Go `AggInfos`.
     pub agg_infos: Vec<AggInfo>,
+    /// Go `FullUpdateLookupTemplateSelect`, as SQL with the inner base
+    /// table's index hint left at [`FULL_UPDATE_INDEX_HINT_SLOT`] (Go's
+    /// builder sets it with `SetFullUpdateLookupIndexHint` once it has
+    /// validated the supporting indexes): the MIN / MAX fallback, absent
+    /// without MIN / MAX.
+    pub full_update_lookup_template_sql: Option<String>,
+    /// Go `FullUpdateLookupColumnCount`.
+    pub full_update_lookup_column_count: usize,
+    /// Go `FullUpdateLookupMVOffsets`.
+    pub full_update_lookup_mv_offsets: Vec<usize>,
+}
+
+/// Where the full-update lookup template's inner base table takes its
+/// `USE INDEX` hint.
+pub const FULL_UPDATE_INDEX_HINT_SLOT: &str = "/*__mview_full_update_index_hint__*/";
+
+/// Go `fullUpdateOuterAlias`.
+const FULL_UPDATE_OUTER_ALIAS: &str = "full_outer";
+/// Go `fullUpdateInnerAlias`.
+const FULL_UPDATE_INNER_ALIAS: &str = "full_inner";
+
+/// Go master `SetFullUpdateLookupIndexHint`: the template with its inner
+/// base table bound to `index_names`.
+#[must_use]
+pub fn set_full_update_lookup_index_hint(template_sql: &str, index_names: &[String]) -> String {
+    let hint = format!("USE INDEX ({})", index_names.iter().map(|name| escape(name)).collect::<Vec<_>>().join(", "));
+    template_sql.replace(FULL_UPDATE_INDEX_HINT_SLOT, &hint)
 }
 
 /// Go master `stripColumnQualifier` and `stripAllParentheses` over a parsed
@@ -727,11 +754,6 @@ pub fn build(
         .find(|col| col.info.kind == AggKind::CountStar)
         .map(|col| col.info.mv_offset)
         .ok_or_else(|| "materialized view definition must include COUNT(*) for mview".to_owned())?;
-    if has_min_max {
-        // The MIN / MAX fallback (`buildFullUpdateLookupTemplateSelect`)
-        // is not ported yet.
-        return Err("FAST refresh of a materialized view with MIN / MAX is not supported on this node yet".to_owned());
-    }
 
     // Go `inferAggArgNotNullByOffset`.
     let base_not_null: std::collections::HashMap<String, bool> = base
@@ -759,7 +781,8 @@ pub fn build(
 
     // Stage 2a (Go `buildMLogDeltaSelect`).
     let old_new = escape(tidb_model::table::MATERIALIZED_VIEW_LOG_OLD_NEW_COLUMN_NAME);
-    let mut sum_int_aliases = vec![DELTA_CNT_STAR_NAME.to_owned()];
+    let sum_int = tidb_expression_aggregation::names::SUM_INT;
+    let mut renames: Vec<(String, &'static str, &'static str)> = vec![(DELTA_CNT_STAR_NAME.to_owned(), "sum", sum_int)];
     let mut delta_fields = Vec::new();
     for &mv_offset in &group_key_offsets {
         delta_fields.push(format!("{} AS {}", escape(&group_key_base_col(mv_offset)?), escape(columns[mv_offset].name.original())));
@@ -771,13 +794,32 @@ pub fn build(
             AggKind::Count => {
                 let arg = col.arg_expr.as_ref().ok_or("COUNT aggregate argument is nil for mview")?.restore();
                 delta_fields.push(format!("SUM(IF({arg} IS NOT NULL, {old_new}, 0)) AS {}", escape(&col.delta_name)));
-                sum_int_aliases.push(col.delta_name.clone());
+                renames.push((col.delta_name.clone(), "sum", sum_int));
             }
             AggKind::Sum => {
                 let arg = col.arg_expr.as_ref().ok_or("SUM aggregate argument is nil for mview")?.restore();
                 delta_fields.push(format!("SUM(IF({old_new} = 1, {arg}, -({arg}))) AS {}", escape(&col.delta_name)));
             }
-            AggKind::Min | AggKind::Max => unreachable!("refused above"),
+            AggKind::Min | AggKind::Max => {
+                let (func, count) = if col.info.kind == AggKind::Max {
+                    ("MAX", tidb_expression_aggregation::names::MAX_COUNT)
+                } else {
+                    ("MIN", tidb_expression_aggregation::names::MIN_COUNT)
+                };
+                if col.info.arg_col_name.is_empty() {
+                    return Err(format!("{func} aggregate argument column is empty for mview"));
+                }
+                let arg = escape(&col.info.arg_col_name);
+                let added = format!("IF({old_new} = 1, {arg}, NULL)");
+                let removed = format!("IF({old_new} = -1, {arg}, NULL)");
+                delta_fields.push(format!("{func}({added}) AS {}", escape(&col.delta_name)));
+                delta_fields.push(format!("{func}({added}) AS {}", escape(&col.added_count_delta_name)));
+                delta_fields.push(format!("{func}({removed}) AS {}", escape(&col.removed_value_delta)));
+                delta_fields.push(format!("{func}({removed}) AS {}", escape(&col.removed_count_delta)));
+                let lower = if col.info.kind == AggKind::Max { "max" } else { "min" };
+                renames.push((col.added_count_delta_name.clone(), lower, count));
+                renames.push((col.removed_count_delta.clone(), lower, count));
+            }
         }
     }
     let mut delta_where = format!("{} > {}", escape(tidb_model::column::EXTRA_COMMIT_TS_NAME), opt.from_ts);
@@ -845,6 +887,92 @@ pub fn build(
         escape(name),
         escape(MV_TABLE_ALIAS),
     );
+    // Go `buildFullUpdateLookupTemplateSelect` (MIN / MAX only): an
+    // IndexJoin of one probe group-key tuple (outer) against the group's
+    // recomputation from the base table (inner).
+    let (full_update_lookup_template_sql, full_update_lookup_mv_offsets) = if has_min_max {
+        let base_table = format!("{}.{}", escape(db_name), escape(base.name.original()));
+        let mv_where = mv_select.where_clause.as_ref().map(|mv_where| {
+            let mut mv_where = mv_where.clone();
+            strip_column_qualifiers_and_parentheses(&mut mv_where);
+            format!(" WHERE {}", mv_where.restore())
+        });
+        let group_key_expr = |mv_offset: usize| match mv_select.fields.fields().get(mv_offset) {
+            Some(SelectField::Expr { expr: expr @ Expr::Column(_), .. }) => Ok(expr.restore()),
+            Some(_) => Err(format!("mv field at offset {mv_offset} is not a group key column")),
+            None => Err(format!("invalid mv offset {mv_offset}")),
+        };
+        // Go `buildFullUpdateLookupOuterSelect`.
+        let mut outer_fields = Vec::with_capacity(group_key_offsets.len());
+        for &mv_offset in &group_key_offsets {
+            outer_fields.push(format!("{} AS {}", group_key_expr(mv_offset)?, escape(&format!("__mview_full_outer_gk_{mv_offset}"))));
+        }
+        let outer_sql =
+            format!("SELECT {} FROM {base_table}{} LIMIT 1", outer_fields.join(", "), mv_where.clone().unwrap_or_default());
+        // Go `buildFullUpdateLookupInnerSelect`.
+        let agg_by_mv_offset: std::collections::HashMap<usize, &AggColInfo> =
+            agg_cols.iter().map(|col| (col.info.mv_offset, col)).collect();
+        let mut inner_fields = Vec::with_capacity(columns.len());
+        for (mv_offset, column) in columns.iter().enumerate() {
+            if group_key_offsets.contains(&mv_offset) {
+                inner_fields.push(format!("{} AS {}", group_key_expr(mv_offset)?, escape(&group_key_base_col(mv_offset)?)));
+                continue;
+            }
+            let col = agg_by_mv_offset
+                .get(&mv_offset)
+                .ok_or_else(|| format!("mv offset {mv_offset} is neither group key nor aggregate"))?;
+            // Full-update fallback only recomputes MIN/MAX aggregates.
+            let func = match col.info.kind {
+                AggKind::Max => "MAX",
+                AggKind::Min => "MIN",
+                _ => continue,
+            };
+            inner_fields.push(format!("{func}({}) AS {}", escape(&col.info.arg_col_name), escape(column.name.original())));
+        }
+        let inner_group_by = group_key_offsets.iter().map(|&mv_offset| group_key_expr(mv_offset)).collect::<Result<Vec<_>, _>>()?;
+        let inner_sql = format!(
+            "SELECT {} FROM {base_table} {FULL_UPDATE_INDEX_HINT_SLOT}{} GROUP BY {}",
+            inner_fields.join(", "),
+            mv_where.unwrap_or_default(),
+            inner_group_by.join(", ")
+        );
+        // Group keys can be NULL, so full-update lookup must use null-safe equality.
+        let mut on = Vec::with_capacity(group_key_offsets.len());
+        for &mv_offset in &group_key_offsets {
+            on.push(format!(
+                "{} <=> {}",
+                qual_col(FULL_UPDATE_OUTER_ALIAS, &format!("__mview_full_outer_gk_{mv_offset}")),
+                qual_col(FULL_UPDATE_INNER_ALIAS, &group_key_base_col(mv_offset)?)
+            ));
+        }
+        let mut fields = Vec::with_capacity(columns.len());
+        let mut mv_offsets = Vec::with_capacity(columns.len());
+        for (mv_offset, column) in columns.iter().enumerate() {
+            if agg_by_mv_offset.get(&mv_offset).is_some_and(|col| !matches!(col.info.kind, AggKind::Min | AggKind::Max)) {
+                continue;
+            }
+            let out = if group_key_offsets.contains(&mv_offset) { group_key_base_col(mv_offset)? } else { column.name.original().to_owned() };
+            fields.push(format!("{} AS {}", qual_col(FULL_UPDATE_INNER_ALIAS, &out), escape(column.name.original())));
+            mv_offsets.push(mv_offset);
+        }
+        // Keep the template stable on index-join path; the hint names the
+        // view's schema, as an internal session's current database may be empty.
+        let hint = format!(
+            "/*+ INL_JOIN({db}.{FULL_UPDATE_OUTER_ALIAS}, {db}.{FULL_UPDATE_INNER_ALIAS}) */",
+            db = escape(db_name)
+        );
+        let sql = format!(
+            "SELECT {hint} {} FROM ({outer_sql}) AS {} JOIN ({inner_sql}) AS {} ON {}",
+            fields.join(", "),
+            escape(FULL_UPDATE_OUTER_ALIAS),
+            escape(FULL_UPDATE_INNER_ALIAS),
+            on.join(" AND ")
+        );
+        (Some(sql), mv_offsets)
+    } else {
+        (None, Vec::new())
+    };
+
     let Stmt::Query(query) = parse(&merge_sql)? else {
         return Err("mview: merge source select is not a query".to_owned());
     };
@@ -852,12 +980,13 @@ pub fn build(
         return Err("mview: merge source select is not a select".to_owned());
     };
     let mut merge_select = (**merge_select).clone();
-    rename_sum_int_aggregates(&mut merge_select, &sum_int_aliases);
+    rename_internal_aggregates(&mut merge_select, &renames);
 
     // Go `buildFromLocal`'s dependencies.
     let delta_count = delta_columns.len();
     let expected_len = columns.len() + delta_count + usize::from(row_id_handle_offset.is_some());
     let sum_to_count = map_to_count_expr_dependencies(&agg_cols, &arg_not_null, &[AggKind::Sum], true)?;
+    let min_max_to_count = map_to_count_expr_dependencies(&agg_cols, &arg_not_null, &[AggKind::Min, AggKind::Max], false)?;
     let mut agg_infos = Vec::with_capacity(agg_cols.len());
     for (index, col) in agg_cols.iter().enumerate() {
         let mut info = col.info.clone();
@@ -873,6 +1002,16 @@ pub fn build(
                 format!("internal error: SUM at mv offset {} has no COUNT(expr) dependency", info.mv_offset)
             })?;
             deps.push(delta_count + agg_cols[*count].info.mv_offset);
+        }
+        if matches!(info.kind, AggKind::Min | AggKind::Max) {
+            for name in [&col.added_count_delta_name, &col.removed_value_delta, &col.removed_count_delta] {
+                deps.push(delta_columns.iter().position(|delta| delta == name).ok_or_else(|| {
+                    format!("internal error: delta column {name} not found in output")
+                })?);
+            }
+            if let Some(count) = min_max_to_count.get(&index) {
+                deps.push(delta_count + agg_cols[*count].info.mv_offset);
+            }
         }
         info.dependencies = deps;
         agg_infos.push(info);
@@ -897,21 +1036,28 @@ pub fn build(
         group_key_base_cols,
         count_star_mv_offset,
         agg_infos,
+        full_update_lookup_column_count: full_update_lookup_mv_offsets.len(),
+        full_update_lookup_template_sql,
+        full_update_lookup_mv_offsets,
     })
 }
 
-/// Go `aggSumInt`: the stage-1 `SUM` under each alias in `aliases` becomes
-/// `SUM_INT`, an aggregate no statement can spell.
-fn rename_sum_int_aggregates(select: &mut SelectStmt, aliases: &[String]) {
-    struct Renamer<'a>(&'a [String]);
+/// Go `aggSumInt` / `aggMaxCount` / `aggMinCount`: the stage-1 aggregate
+/// under each alias of `renames` becomes Go's internal aggregate (`SUM_INT`,
+/// `MAX_COUNT`, `MIN_COUNT`), which no statement can spell; the alias names
+/// the aggregate it was parsed as and the one it becomes.
+fn rename_internal_aggregates(select: &mut SelectStmt, renames: &[(String, &'static str, &'static str)]) {
+    struct Renamer<'a>(&'a [(String, &'static str, &'static str)]);
     impl tidb_ast::Visitor for Renamer<'_> {
         fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
             if let Some(SelectField::Expr { expr: Expr::Aggregate { name, written, .. }, alias: Some(alias), .. }) =
                 node.downcast_mut::<SelectField>()
             {
-                if self.0.iter().any(|candidate| candidate == alias) && name.eq_ignore_ascii_case("sum") {
-                    *name = "SUM_INT".to_owned();
-                    *written = Some(tidb_expression_aggregation::names::SUM_INT.to_owned());
+                if let Some((_, _, to)) =
+                    self.0.iter().find(|(candidate, from, _)| candidate == alias && name.eq_ignore_ascii_case(from))
+                {
+                    *name = to.to_uppercase();
+                    *written = Some((*to).to_owned());
                 }
             }
             false
@@ -920,7 +1066,7 @@ fn rename_sum_int_aggregates(select: &mut SelectStmt, aliases: &[String]) {
             true
         }
     }
-    tidb_ast::Visitable::accept(select, &mut Renamer(aliases));
+    tidb_ast::Visitable::accept(select, &mut Renamer(renames));
 }
 
 /// Go `oracle.ExtractPhysical`.

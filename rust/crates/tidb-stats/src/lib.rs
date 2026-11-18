@@ -61,7 +61,7 @@ pub mod table;
 
 pub use analysis_policy::{
     is_eligible_for_analysis, meets_auto_analyze_min_count, table_is_analyzed,
-    DEFAULT_AUTO_ANALYZE_MIN_COUNT,
+    AUTO_ANALYZE_MIN_CNT, DEFAULT_AUTO_ANALYZE_MIN_COUNT,
 };
 pub use analyze_jobs::{
     go_zero_time, AnalyzeJob, AnalyzeProgress, AnalyzeStatusJob, JobType, ANALYZE_FAILED,

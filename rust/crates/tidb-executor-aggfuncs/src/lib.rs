@@ -33,6 +33,7 @@ pub mod func_json_arrayagg;
 pub mod func_json_objectagg;
 pub mod func_lead_lag;
 pub mod func_max_min;
+pub mod func_max_min_count;
 pub mod func_ntile;
 pub mod func_percent_rank;
 pub mod func_percentile;

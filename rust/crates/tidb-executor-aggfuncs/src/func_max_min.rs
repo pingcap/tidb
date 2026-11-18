@@ -193,7 +193,7 @@ impl MaxMinKind {
 
     /// The bytes Go counts for a stored variable-size value (`len(val)`,
     /// `len(val.Value)`, `EstimatedMemUsage()`, `len(val.Name)`).
-    fn value_bytes(self, value: &Datum) -> i64 {
+    pub(crate) fn value_bytes(self, value: &Datum) -> i64 {
         match (self, value) {
             (Self::String, Datum::String(text)) => text.bytes().len() as i64,
             (Self::String, Datum::Bytes(bytes)) => bytes.len() as i64,
@@ -207,7 +207,7 @@ impl MaxMinKind {
 
     /// Go's typed value: a `FLOAT` keeps a `float32`, an unsigned integer
     /// its `uint64`.
-    fn store(self, value: Datum) -> Datum {
+    pub(crate) fn store(self, value: Datum) -> Datum {
         match (self, value) {
             (Self::Float32, Datum::Real(value) | Datum::Float32(value)) => Datum::Float32(value as f32 as f64),
             (Self::Uint, Datum::Int(value)) => Datum::UInt(value as u64),
@@ -232,7 +232,7 @@ pub struct MaxMin {
 
 impl MaxMin {
     /// Go's typed comparison of `candidate` with `current`.
-    fn compare(&self, candidate: &Datum, current: &Datum) -> Result<Ordering, ExecError> {
+    pub(crate) fn compare(&self, candidate: &Datum, current: &Datum) -> Result<Ordering, ExecError> {
         if let (Datum::Duration(left), Datum::Duration(right)) = (candidate, current) {
             // Go `Duration.Compare`: the nanoseconds alone.
             return Ok(left.nanoseconds().cmp(&right.nanoseconds()));
@@ -249,7 +249,13 @@ impl MaxMin {
     /// zero value of the kind while `isNull` holds.
     fn encode(&self, p: &PartialResult4MaxMin, buf: &mut Vec<u8>) {
         util::serialize_bool(p.val.is_none(), buf);
-        match (self.kind, p.val.as_ref()) {
+        self.encode_value(p.val.as_ref(), buf);
+    }
+
+    /// The value half of Go's `serializePartialResult4MaxMinX` (Go's
+    /// `MAX_COUNT` / `MIN_COUNT` put their count before it).
+    pub(crate) fn encode_value(&self, value: Option<&Datum>, buf: &mut Vec<u8>) {
+        match (self.kind, value) {
             (MaxMinKind::Int, Some(Datum::Int(value))) => util::serialize_i64(*value, buf),
             (MaxMinKind::Int, _) => util::serialize_i64(0, buf),
             (MaxMinKind::Uint, Some(Datum::UInt(value))) => util::serialize_u64(*value, buf),
@@ -287,7 +293,16 @@ impl MaxMin {
     /// Go `deserializePartialResult4MaxMinX`.
     fn decode(&self, pab: &mut util::Cursor<'_>) -> PartialResult4MaxMin {
         let is_null = pab.read_bool();
-        let value = match self.kind {
+        let value = self.decode_value(pab);
+        PartialResult4MaxMin {
+            val: (!is_null).then_some(value),
+            deque: None,
+        }
+    }
+
+    /// The value half of Go's `deserializePartialResult4MaxMinX`.
+    pub(crate) fn decode_value(&self, pab: &mut util::Cursor<'_>) -> Datum {
+        match self.kind {
             MaxMinKind::Int => Datum::Int(pab.read_i64()),
             MaxMinKind::Uint => Datum::UInt(pab.read_u64()),
             MaxMinKind::Float32 => Datum::Float32(f64::from(pab.read_f32())),
@@ -300,10 +315,6 @@ impl MaxMin {
             MaxMinKind::Enum => Datum::Enum(pab.read_enum(), self.collation),
             MaxMinKind::Set => Datum::Set(pab.read_set(), self.collation),
             MaxMinKind::VectorFloat32 => panic!("Not implemented"),
-        };
-        PartialResult4MaxMin {
-            val: (!is_null).then_some(value),
-            deque: None,
         }
     }
 }

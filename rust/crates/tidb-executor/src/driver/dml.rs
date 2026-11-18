@@ -915,6 +915,7 @@ fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
         go_operator: operator.to_owned(),
         explain_info: None,
         select_plan: select_plan.map(Box::new),
+        full_update_inner: None,
         update_expressions,
         fk_triggers,
         delete_col_pos,

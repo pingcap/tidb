@@ -375,6 +375,20 @@ fn def_sizes_are_gos() {
         ("DefPartialResult4MaxMinEnumSize", crate::func_max_min::DEF_PARTIAL_RESULT_4_MAX_MIN_ENUM_SIZE),
         ("DefPartialResult4MaxMinSetSize", crate::func_max_min::DEF_PARTIAL_RESULT_4_MAX_MIN_SET_SIZE),
         ("DefMaxMinDequeSize", crate::func_max_min::DEF_MAX_MIN_DEQUE_SIZE),
+        ("DefPartialResult4MaxMinCountIntSize", crate::func_max_min_count::DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_INT_SIZE),
+        ("DefPartialResult4MaxMinCountUintSize", crate::func_max_min_count::DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_UINT_SIZE),
+        ("DefPartialResult4MaxMinCountDecimalSize", crate::func_max_min_count::DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_DECIMAL_SIZE),
+        ("DefPartialResult4MaxMinCountFloat32Size", crate::func_max_min_count::DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_FLOAT32_SIZE),
+        ("DefPartialResult4MaxMinCountFloat64Size", crate::func_max_min_count::DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_FLOAT64_SIZE),
+        ("DefPartialResult4MaxMinCountTimeSize", crate::func_max_min_count::DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_TIME_SIZE),
+        ("DefPartialResult4MaxMinCountDurationSize", crate::func_max_min_count::DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_DURATION_SIZE),
+        ("DefPartialResult4MaxMinCountStringSize", crate::func_max_min_count::DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_STRING_SIZE),
+        ("DefPartialResult4MaxMinCountJSONSize", crate::func_max_min_count::DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_JSON_SIZE),
+        ("DefPartialResult4MaxMinCountVectorFloat32Size", crate::func_max_min_count::DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_VECTOR_FLOAT32_SIZE),
+        ("DefPartialResult4MaxMinCountEnumSize", crate::func_max_min_count::DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_ENUM_SIZE),
+        ("DefPartialResult4MaxMinCountSetSize", crate::func_max_min_count::DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_SET_SIZE),
+        ("DefPartialResult4MaxMinCountSlidingSize", crate::func_max_min_count::DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_SLIDING_SIZE),
+        ("DefMaxMinCountDequeSize", crate::func_max_min_count::DEF_MAX_MIN_COUNT_DEQUE_SIZE),
         ("DefPartialResult4BitFuncSize", crate::func_bitfuncs::DEF_PARTIAL_RESULT_4_BIT_FUNC_SIZE),
         ("DefPartialResult4VarPopFloat64Size", crate::func_varpop::DEF_PARTIAL_RESULT_4_VAR_POP_FLOAT64_SIZE),
         ("DefPartialResult4VarPopDistinctFloat64Size", crate::func_varpop::DEF_PARTIAL_RESULT_4_VAR_POP_DISTINCT_FLOAT64_SIZE),
@@ -716,6 +730,212 @@ fn max_min_spills_and_restores() {
                 } else {
                     assert_datum_eq(&actual, &expected, "max/min spill");
                 }
+            }
+        }
+    }
+}
+
+/// Go master `evalMaxMinCount`: the function over `datums`, row by row.
+fn eval_max_min_count(func_name: &'static str, field_type: &FieldType, datums: &[Datum]) -> i64 {
+    let mut column = Column::new(1, field_type.clone());
+    column.index = 0;
+    let desc = AggFuncDesc::new(&NoColumns, func_name, vec![Expression::Column(column)], false).expect("descriptor builds");
+    let func = build(&NoColumns, &desc, 0).expect("max_count/min_count is implemented");
+    let (mut pr, _) = func.alloc_partial_result();
+    let mut src = Chunk::new_chunk_with_capacity(std::slice::from_ref(field_type), datums.len());
+    for datum in datums {
+        src.append_datum(0, datum);
+    }
+    update_each_row(func.as_ref(), &src, &mut pr);
+    match final_datum(func.as_ref(), &mut pr, &desc.base.ret_type) {
+        Datum::Int(count) => count,
+        other => panic!("{func_name} answered {other:?}"),
+    }
+}
+
+/// Go master `buildDataByType`: `n` generated values and a trailing NULL.
+fn build_data_by_type(field_type: &FieldType, n: usize) -> Vec<Datum> {
+    (0..n).map(|i| data_gen(field_type, i)).chain(std::iter::once(Datum::Null)).collect()
+}
+
+/// Go master `TestMaxMinCountAllMaxMinTypes`.
+#[test]
+fn test_max_min_count_all_max_min_types() {
+    for field_type in [
+        FieldType::new(FieldTypeCode::LongLong),
+        unsigned_longlong(),
+        FieldType::new(FieldTypeCode::Float),
+        FieldType::new(FieldTypeCode::Double),
+        FieldType::new(FieldTypeCode::NewDecimal),
+        FieldType::new(FieldTypeCode::String),
+        FieldType::new(FieldTypeCode::Date),
+        FieldType::new(FieldTypeCode::Duration),
+        FieldType::new(FieldTypeCode::Json),
+        FieldType::new(FieldTypeCode::Enum),
+        FieldType::new(FieldTypeCode::Set),
+    ] {
+        let data = build_data_by_type(&field_type, 5);
+        let what = field_type.code();
+        assert_eq!(eval_max_min_count("max_count", &field_type, &data), 1, "{what:?}");
+        assert_eq!(eval_max_min_count("min_count", &field_type, &data), 1, "{what:?}");
+        assert_eq!(eval_max_min_count("max_count", &field_type, &[]), 0, "{what:?}");
+        assert_eq!(eval_max_min_count("min_count", &field_type, &[]), 0, "{what:?}");
+    }
+}
+
+/// Go master `TestMaxMinCountSpecialTypes`.
+#[test]
+fn test_max_min_count_special_types() {
+    let bit = |byte: u8| Datum::BinaryLiteral(tidb_datatype::BinaryLiteral::from(vec![byte]));
+    let bit_data = [bit(0x00), bit(0x01), bit(0x01), bit(0x02), bit(0x02), Datum::Null];
+    let bit_type = FieldType::new(FieldTypeCode::Bit);
+    assert_eq!(eval_max_min_count("max_count", &bit_type, &bit_data), 2);
+    assert_eq!(eval_max_min_count("min_count", &bit_type, &bit_data), 1);
+
+    let vector = |value: f32| Datum::new_vector_float32(tidb_datatype::VectorFloat32::must_create(vec![value, value]));
+    let vector_data = [vector(1.0), vector(2.0), vector(2.0), vector(3.0), vector(3.0), Datum::Null];
+    let vector_type = FieldType::new(FieldTypeCode::VectorFloat32);
+    assert_eq!(eval_max_min_count("max_count", &vector_type, &vector_data), 2);
+    assert_eq!(eval_max_min_count("min_count", &vector_type, &vector_data), 1);
+}
+
+/// Go master `TestMaxMinCountDuplicateSemantics`.
+#[test]
+fn test_max_min_count_duplicate_semantics() {
+    let int_type = FieldType::new(FieldTypeCode::LongLong);
+    let data = [0, 0, 1, 4, 4, 4].map(Datum::Int).into_iter().chain(std::iter::once(Datum::Null)).collect::<Vec<_>>();
+    assert_eq!(eval_max_min_count("max_count", &int_type, &data), 3);
+    assert_eq!(eval_max_min_count("min_count", &int_type, &data), 2);
+}
+
+/// Go master `TestMergePartialResult4MaxMinCount`: two partial results
+/// merged into a final one, the string's collation carried to the final
+/// stage's argument.
+#[test]
+fn test_merge_partial_result_4_max_min_count() {
+    let build_and_check = |func_name: &'static str, field_type: &FieldType, group1: &[Datum], group2: &[Datum], expected: i64| {
+        let mut column = Column::new(1, field_type.clone());
+        column.index = 0;
+        let desc = AggFuncDesc::new(&NoColumns, func_name, vec![Expression::Column(column)], false).expect("descriptor builds");
+        let (partial_desc, final_desc) = desc.split(&[0, 1]);
+        let final_arg_type = tidb_expr::wrap_cast::type_of(&final_desc.base.args[0]);
+        assert_eq!(final_arg_type.code(), field_type.code(), "{func_name}");
+        assert_eq!(final_arg_type.collation_name(), field_type.collation_name(), "{func_name}");
+        let partial_func = build(&NoColumns, &partial_desc, 0).expect("the partial function is implemented");
+        let final_func = build(&NoColumns, &final_desc, 0).expect("the final function is implemented");
+        let (mut final_pr, _) = final_func.alloc_partial_result();
+        for group in [group1, group2] {
+            let (mut pr, _) = partial_func.alloc_partial_result();
+            let mut src = Chunk::new_chunk_with_capacity(std::slice::from_ref(field_type), group.len());
+            for datum in group {
+                src.append_datum(0, datum);
+            }
+            update_each_row(partial_func.as_ref(), &src, &mut pr);
+            final_func.merge_partial_result(&NoColumns, &mut pr, &mut final_pr).expect("merge succeeds");
+        }
+        assert_eq!(final_datum(final_func.as_ref(), &mut final_pr, &desc.base.ret_type), Datum::Int(expected), "{func_name}");
+    };
+    let int_type = FieldType::new(FieldTypeCode::LongLong);
+    let group1 = [0, 1, 4, 4].map(Datum::Int);
+    let group2 = [Datum::Int(2), Datum::Int(4), Datum::Int(4), Datum::Null];
+    build_and_check("max_count", &int_type, &group1, &group2, 4);
+    build_and_check("min_count", &int_type, &group1, &group2, 1);
+
+    let mut str_type = FieldType::new(FieldTypeCode::String);
+    str_type.set_charset_name("utf8mb4");
+    str_type.set_collation_name("utf8mb4_general_ci");
+    let string = |text: &str| Datum::new_string_datum(text);
+    build_and_check("max_count", &str_type, &[string("B"), string("a")], &[string("b"), string("a")], 2);
+}
+
+/// Go master `TestRowBasedFinalMaxMinCountUnsupported`.
+#[test]
+fn test_row_based_final_max_min_count_unsupported() {
+    let int_type = FieldType::new(FieldTypeCode::LongLong);
+    let args = (0..2)
+        .map(|index| {
+            let mut column = Column::new(index as i64 + 1, int_type.clone());
+            column.index = index;
+            Expression::Column(column)
+        })
+        .collect::<Vec<_>>();
+    for mode in [tidb_expression_aggregation::AggFunctionMode::Final, tidb_expression_aggregation::AggFunctionMode::Partial2] {
+        for func_name in ["max_count", "min_count"] {
+            let mut desc = AggFuncDesc::new(&NoColumns, func_name, args.clone(), false).expect("descriptor builds");
+            desc.mode = mode;
+            let func = build(&NoColumns, &desc, 0).expect("the function is built");
+            let (mut pr, _) = func.alloc_partial_result();
+            let mut src = Chunk::new_chunk_with_capacity(&[int_type.clone(), int_type.clone()], 1);
+            src.append_int64(0, 2);
+            src.append_int64(1, 10);
+            let error = func.update_partial_result(&NoColumns, &[src.get_row(0)], &mut pr).expect_err("refused");
+            assert!(
+                format!("{error:?}").contains(&format!("row-based final aggregation for {func_name} is unsupported")),
+                "{error:?}"
+            );
+        }
+    }
+}
+
+/// Go master `TestMemMaxMinCount`.
+#[test]
+fn test_mem_max_min_count() {
+    use crate::func_max_min_count::*;
+    for (name, is_max) in [("max_count", true), ("min_count", false)] {
+        for (key_type, alloc) in [
+            (FieldType::new(FieldTypeCode::LongLong), DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_INT_SIZE),
+            (FieldType::new(FieldTypeCode::Duration), DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_DURATION_SIZE),
+        ] {
+            let p = AggTest::with_field_type(name, key_type, 5, Vec::new());
+            test_agg_mem_func(&p, alloc, &default_update_mem_deltas(&p), false);
+        }
+        for (tp, alloc) in [
+            (FieldTypeCode::String, DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_STRING_SIZE),
+            (FieldTypeCode::Json, DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_JSON_SIZE),
+            (FieldTypeCode::Enum, DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_ENUM_SIZE),
+            (FieldTypeCode::Set, DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_SET_SIZE),
+        ] {
+            let p = AggTest::new(name, tp, 5, Vec::new());
+            test_agg_mem_func(&p, alloc, &max_min_update_mem_deltas(&p, is_max), false);
+        }
+    }
+    let mut column = Column::new(1, FieldType::new(FieldTypeCode::VectorFloat32));
+    column.index = 0;
+    let desc = AggFuncDesc::new(&NoColumns, "max_count", vec![Expression::Column(column)], false).expect("descriptor builds");
+    let func = build(&NoColumns, &desc, 0).expect("max_count is implemented");
+    assert_eq!(func.alloc_partial_result().1, DEF_PARTIAL_RESULT_4_MAX_MIN_COUNT_VECTOR_FLOAT32_SIZE);
+}
+
+/// Every `maxMinCount4X` reads back what it spilled (Go master
+/// `serializePartialResult4MaxMinCountX`: isNull, count, value).
+#[test]
+fn max_min_count_spills_and_restores() {
+    for name in ["max_count", "min_count"] {
+        for key_type in [
+            FieldType::new(FieldTypeCode::LongLong),
+            FieldType::new(FieldTypeCode::NewDecimal),
+            FieldType::new(FieldTypeCode::String),
+            FieldType::new(FieldTypeCode::Json),
+            FieldType::new(FieldTypeCode::Enum),
+        ] {
+            let p = AggTest::with_field_type(name, key_type, 5, Vec::new());
+            let func = build(&NoColumns, &p.desc(false), 0).expect("max_count/min_count is implemented");
+            let blob = FieldType::new(FieldTypeCode::Blob);
+            let ret = FieldType::new(FieldTypeCode::LongLong);
+            for rows in [0, 5] {
+                let (mut pr, _) = func.alloc_partial_result();
+                let src_chk = p.gen_src_chk();
+                for i in 0..rows {
+                    func.update_partial_result(&NoColumns, &[src_chk.get_row(i)], &mut pr).expect("update succeeds");
+                }
+                let mut spill = Chunk::new_chunk_with_capacity(std::slice::from_ref(&blob), 1);
+                func.serialize_partial_result(&mut pr, &mut spill, &mut crate::spill_serialize_helper::SerializeHelper::new());
+                let (mut restored, mem_delta) = func.deserialize_partial_result(&spill);
+                assert_eq!(mem_delta, func.alloc_partial_result().1, "{name} {:?}", p.key_type.code());
+                // The restored extreme ties the original's: merging doubles the count.
+                func.merge_partial_result(&NoColumns, &mut pr, &mut restored[0]).expect("merge succeeds");
+                let expected = if rows == 0 { 0 } else { 2 };
+                assert_eq!(final_datum(func.as_ref(), &mut restored[0], &ret), Datum::Int(expected), "{name} {:?}", p.key_type.code());
             }
         }
     }

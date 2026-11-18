@@ -3587,6 +3587,9 @@ pub struct PhysicalDmlRoot {
     pub explain_info: Option<String>,
     /// The DML source plan, when present.
     pub select_plan: Option<Box<PhysicalPlan>>,
+    /// Go master `MViewDeltaMerge.FullUpdateInnerSource`: the MIN / MAX
+    /// fallback's lookup child, EXPLAIN's second child after the source.
+    pub full_update_inner: Option<Box<PhysicalPlan>>,
     /// Go `Update.OrderedList` expressions whose scalar subqueries inserted
     /// Apply operators into `select_plan`. Non-subquery SET expressions are
     /// evaluated by the ordinary Update executor and remain `None` here.
@@ -6025,6 +6028,7 @@ impl PhysicalPlan {
                 go_operator: op.go_operator.clone(),
                 explain_info: op.explain_info.clone(),
                 select_plan: op.select_plan.clone(),
+                full_update_inner: op.full_update_inner.clone(),
                 update_expressions: op.update_expressions.clone(),
                 fk_triggers: op.fk_triggers.clone(),
                 delete_col_pos: op.delete_col_pos.clone(),

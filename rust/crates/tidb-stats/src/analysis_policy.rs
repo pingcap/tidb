@@ -21,6 +21,11 @@
 /// Source's default `AutoAnalyzeMinCnt` value.
 pub const DEFAULT_AUTO_ANALYZE_MIN_COUNT: i64 = 1_000;
 
+/// Go `statistics.AutoAnalyzeMinCnt`: the live package variable its tests
+/// lower, which every auto-analyze eligibility check reads.
+pub static AUTO_ANALYZE_MIN_CNT: std::sync::atomic::AtomicI64 =
+    std::sync::atomic::AtomicI64::new(DEFAULT_AUTO_ANALYZE_MIN_COUNT);
+
 /// Returns whether a table has a valid last-analyze timestamp.
 pub const fn table_is_analyzed(last_analyze_version: u64) -> bool {
     last_analyze_version > 0

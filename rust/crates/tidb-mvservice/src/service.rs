@@ -398,7 +398,7 @@ struct RefreshAlertExecutionState {
 /// refresh/purge tasks.
 pub struct MVService {
     pub(crate) sys_session_pool: Arc<dyn SessionPool>,
-    last_meta_fetch_millis: AtomicI64,
+    pub(crate) last_meta_fetch_millis: AtomicI64,
     pub(crate) ctx: Context,
     pub(crate) sch: ServerConsistentHash,
 
@@ -515,13 +515,13 @@ impl MVService {
         ]
     }
 
-    fn run_task_executors(&self) {
+    pub(crate) fn run_task_executors(&self) {
         self.refresh_executor.run();
         self.purge_executor.run();
         self.mlog_analyze_executor.run();
     }
 
-    fn close_task_executors(&self) {
+    pub(crate) fn close_task_executors(&self) {
         self.refresh_executor.close();
         self.purge_executor.close();
         self.mlog_analyze_executor.close();

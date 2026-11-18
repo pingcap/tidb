@@ -1922,6 +1922,26 @@ fn refresh_materialized_view_fast_answers_as_go_master() {
     assert!(!selection.contains("estRows:3333.33"), "{selection}");
 }
 
+/// Go master FAST refresh of MIN / MAX (`merge_minmax.go` and the
+/// full-update lookup): extremes taken from the added rows, kept when the
+/// removed rows do not reach them, recomputed from the base table through
+/// the IndexJoin lookup child when a removed extreme leaves no successor in
+/// the delta (deleted maximum, changed minimum, emptied nullable column),
+/// groups deleted at COUNT(*) zero, the DRY RUN plan with the lookup child
+/// and `full_update:index_lookup`, and Go's refusal of a view whose base
+/// table has no index covering its group key.
+#[test]
+fn refresh_materialized_view_fast_min_max_answers_as_go_master() {
+    let (stack, _users, session) = go_master_mview_stack();
+    replay_on_masked(
+        stack,
+        session,
+        include_str!("../../../../../testdata/mview_refresh_fast_minmax_go.jsonl"),
+        &[],
+        &mask_mlog_window_estimates,
+    );
+}
+
 /// Blanks the wall-clock values: every estimate but the full log scan's
 /// 10000 pseudo rows, the `_tidb_commit_ts` window literal, and the TSOs the
 /// AS OF refusals name.
@@ -2122,4 +2142,34 @@ fn materialized_view_service_freshness_and_accumulation() {
         assert!(std::time::Instant::now() < deadline, "{gauges:?}");
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
+}
+
+/// Go master `TestMaterializedViewServiceAutomaticMaintenance/mlog_analyze`:
+/// with auto-analyze on and the minimum row count lowered, the service
+/// analyzes an MV log whose statistics were never analyzed.
+#[test]
+fn materialized_view_service_mlog_analyze() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let original_min_cnt = tidb_stats::AUTO_ANALYZE_MIN_CNT.swap(0, SeqCst);
+    let (stack, _users, mut root) = go_master_mview_stack();
+    mv_setup(&mut root, &[
+        "use test",
+        "set tidb_mview_enable = ON",
+        "set global tidb_enable_auto_analyze=ON",
+        "create table t_mvs_analyze (a int)",
+    ]);
+    super::drain_stats_ddl_events(&stack.factory, &mut root);
+    mv_setup(&mut root, &["create materialized view log on t_mvs_analyze (a)"]);
+    super::drain_stats_ddl_events(&stack.factory, &mut root);
+    mv_setup(&mut root, &["insert into t_mvs_analyze values (1), (2)"]);
+    stack.factory.dump_stats_delta_to_kv(true, &[]).expect("the delta flush succeeds");
+    root.update_stats_cache().expect("statsHandle.Update");
+    stack.factory.mv_service().set_task_backpressure_config(tidb_mvservice::TaskBackpressureConfig::default()).unwrap();
+    let _service = stack.factory.start_mv_service().unwrap();
+    eventually_answers(
+        &mut root,
+        "select count(*) > 0 from mysql.analyze_jobs where table_schema='test' and table_name='$mlog$t_mvs_analyze' and state='finished'",
+        r#"RS:[["1"]]"#,
+    );
+    tidb_stats::AUTO_ANALYZE_MIN_CNT.store(original_min_cnt, SeqCst);
 }

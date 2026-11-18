@@ -95,6 +95,8 @@ pub fn build(ctx: &dyn Columns, agg_func_desc: &AggFuncDesc, ordinal: usize) -> 
         "firstrow" => build_first_row(agg_func_desc, ordinal),
         "max" => build_max_min(agg_func_desc, ordinal, true),
         "min" => build_max_min(agg_func_desc, ordinal, false),
+        "max_count" => build_max_min_count(agg_func_desc, ordinal, true),
+        "min_count" => build_max_min_count(agg_func_desc, ordinal, false),
         "group_concat" => build_group_concat(ctx, agg_func_desc, ordinal),
         // Go `buildJSONArrayagg` and `buildJSONObjectAgg`.
         "json_arrayagg" | "json_objectagg" if agg_func_desc.mode == AggFunctionMode::Dedup => None,
@@ -316,6 +318,57 @@ fn build_first_row(agg_func_desc: &AggFuncDesc, ordinal: usize) -> Option<Box<dy
 }
 
 /// Go `buildMaxMin`.
+/// Go master `buildMaxMinCount`: typed by the ARGUMENT (the result is a
+/// count), compared under the argument's collation.
+fn build_max_min_count(agg_func_desc: &AggFuncDesc, ordinal: usize, is_max: bool) -> Option<Box<dyn AggFunc>> {
+    build_max_min_count_func(agg_func_desc, ordinal, is_max).map(|func| Box::new(func) as Box<dyn AggFunc>)
+}
+
+/// [`build_max_min_count`]'s concrete function.
+fn build_max_min_count_func(agg_func_desc: &AggFuncDesc, ordinal: usize, is_max: bool) -> Option<crate::func_max_min_count::MaxMinCount> {
+    if agg_func_desc.mode == AggFunctionMode::Dedup {
+        return None;
+    }
+    // Go `wrapUnsupportedRowBasedFinal`.
+    let unsupported_row_based_final = (matches!(agg_func_desc.mode, AggFunctionMode::Final | AggFunctionMode::Partial2)
+        && agg_func_desc.base.args.len() > 1)
+        .then_some(if is_max { "max_count" } else { "min_count" });
+    let base = base_agg_func(agg_func_desc, ordinal);
+    let field_type = base.args.first()?.static_type()?.clone();
+    let mut eval_type = field_type.eval_type();
+    if field_type.code() == FieldTypeCode::Bit {
+        eval_type = EvalType::String;
+    }
+    let kind = match field_type.code() {
+        FieldTypeCode::Enum => crate::func_max_min::MaxMinKind::Enum,
+        FieldTypeCode::Set => crate::func_max_min::MaxMinKind::Set,
+        _ => match eval_type {
+            EvalType::Int if field_type.is_unsigned() => crate::func_max_min::MaxMinKind::Uint,
+            EvalType::Int => crate::func_max_min::MaxMinKind::Int,
+            EvalType::Real => match field_type.code() {
+                FieldTypeCode::Float => crate::func_max_min::MaxMinKind::Float32,
+                FieldTypeCode::Double => crate::func_max_min::MaxMinKind::Float64,
+                _ => return None,
+            },
+            EvalType::Decimal => crate::func_max_min::MaxMinKind::Decimal,
+            EvalType::String => crate::func_max_min::MaxMinKind::String,
+            EvalType::Datetime | EvalType::Timestamp => crate::func_max_min::MaxMinKind::Time,
+            EvalType::Duration => crate::func_max_min::MaxMinKind::Duration,
+            EvalType::Json => crate::func_max_min::MaxMinKind::JSON,
+            EvalType::VectorFloat32 => crate::func_max_min::MaxMinKind::VectorFloat32,
+            #[allow(unreachable_patterns)]
+            _ => return None,
+        },
+    };
+    // Go `collate.GetCollator(argTp.GetCollate())`.
+    let collation =
+        tidb_charset::Collation::from_name(field_type.collation_name()).unwrap_or(tidb_charset::Collation::DEFAULT);
+    Some(crate::func_max_min_count::MaxMinCount {
+        inner: crate::func_max_min::MaxMin { base, is_max, kind, collation },
+        unsupported_row_based_final,
+    })
+}
+
 fn build_max_min(agg_func_desc: &AggFuncDesc, ordinal: usize, is_max: bool) -> Option<Box<dyn AggFunc>> {
     build_max_min_func(agg_func_desc, ordinal, is_max).map(|func| Box::new(func) as Box<dyn AggFunc>)
 }
@@ -503,6 +556,8 @@ pub fn build_window_functions(ctx: &dyn Columns, window_func_desc: &AggFuncDesc,
         // The window MAX/MIN slide (Go `buildMaxMinInWindowFunction`).
         "max" => build_max_min_in_window_function(ctx, window_func_desc, ordinal, true),
         "min" => build_max_min_in_window_function(ctx, window_func_desc, ordinal, false),
+        "max_count" => build_max_min_count_in_window_function(window_func_desc, ordinal, true),
+        "min_count" => build_max_min_count_in_window_function(window_func_desc, ordinal, false),
         _ => build(ctx, window_func_desc, ordinal),
     }
 }
@@ -531,6 +586,16 @@ fn build_lead_lag(ctx: &dyn Columns, agg_func_desc: &AggFuncDesc, ordinal: usize
         }
     }
     crate::func_lead_lag::BaseLeadLag { base: base_agg_func(agg_func_desc, ordinal), ret_tp, default_expr, offset }
+}
+
+/// Go master `buildMaxMinCountInWindowFunction`: the sliding variant of
+/// each kind that has one.
+fn build_max_min_count_in_window_function(agg_func_desc: &AggFuncDesc, ordinal: usize, is_max: bool) -> Option<Box<dyn AggFunc>> {
+    let count = build_max_min_count_func(agg_func_desc, ordinal, is_max)?;
+    if !crate::func_max_min::MaxMinSliding::slides(count.inner.kind) {
+        return Some(Box::new(count));
+    }
+    Some(Box::new(crate::func_max_min_count::MaxMinCountSliding { inner: count, start: std::sync::atomic::AtomicU64::new(0) }))
 }
 
 /// Go `buildMaxMinInWindowFunction`: the sliding variant of each kind

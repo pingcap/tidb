@@ -63,6 +63,8 @@ pub(crate) struct MockKnobs {
     pub(crate) last_accumulation_row_count_task_ids: Vec<i64>,
     pub(crate) task_duration_counts: HashMap<String, i64>,
     pub(crate) run_event_counts: HashMap<String, i64>,
+    pub(crate) refresh_manual_cancel_backoff: (bool, Option<GoTime>),
+    pub(crate) purge_manual_cancel_backoff: (bool, Option<GoTime>),
     /// Go `fullChainMVServiceHelper`'s pending metadata, when set.
     pub(crate) full_chain: Option<(HashMap<i64, GoTime>, HashMap<i64, GoTime>)>,
 }
@@ -79,6 +81,8 @@ pub(crate) struct MockMVServiceHelper {
     pub(crate) sync_refresh_alert_calls: AtomicI32,
     pub(crate) cleanup_stale_refresh_alert_calls: AtomicI32,
     pub(crate) server_refresh_calls: AtomicI32,
+    pub(crate) refresh_manual_cancel_backoff_calls: AtomicI32,
+    pub(crate) purge_manual_cancel_backoff_calls: AtomicI32,
     pub(crate) refresh_signal: Option<(Sender<i64>, Receiver<i64>)>,
     pub(crate) purge_signal: Option<(Sender<i64>, Receiver<i64>)>,
 }
@@ -129,12 +133,17 @@ impl MVTaskHandler for MockMVServiceHelper {
         }
     }
 
+    /// Go mock: the configured outcome, the cooldown time when none is set.
     fn try_backoff_refresh_manual_cancel(&self, _: &Context, _: &dyn SessionPool, _: i64, next: &GoTime) -> (bool, GoTime, Option<MvsError>) {
-        (false, next.clone(), None)
+        self.refresh_manual_cancel_backoff_calls.fetch_add(1, SeqCst);
+        let (applied, applied_next) = self.knobs.lock().unwrap().refresh_manual_cancel_backoff.clone();
+        (applied, applied_next.unwrap_or_else(|| next.clone()), None)
     }
 
     fn try_backoff_purge_manual_cancel(&self, _: &Context, _: &dyn SessionPool, _: i64, next: &GoTime) -> (bool, GoTime, Option<MvsError>) {
-        (false, next.clone(), None)
+        self.purge_manual_cancel_backoff_calls.fetch_add(1, SeqCst);
+        let (applied, applied_next) = self.knobs.lock().unwrap().purge_manual_cancel_backoff.clone();
+        (applied, applied_next.unwrap_or_else(|| next.clone()), None)
     }
 
     fn sync_mv_refresh_alert_states(
@@ -257,7 +266,7 @@ impl MVMetricsReporter for MockMVServiceHelper {
     }
 }
 
-fn new_service(helper: Arc<MockMVServiceHelper>, cfg: Config) -> Arc<MVService> {
+pub(crate) fn new_service(helper: Arc<MockMVServiceHelper>, cfg: Config) -> Arc<MVService> {
     new_mv_service(Context::background(), Arc::new(MockSessionPool), helper, cfg)
 }
 

@@ -1955,6 +1955,23 @@ fn physical_explain_operator(
                     )]
                 })
                 .unwrap_or_default();
+            // Go master `MViewDeltaMerge.Children()`: the full-update lookup
+            // child follows the merge source.
+            if let Some(inner) = root.full_update_inner.as_deref() {
+                children.push(physical_explain_operator(
+                    costs,
+                    eval_ctx,
+                    statement_context,
+                    brief_binary,
+                    inner,
+                    catalog,
+                    ExplainTask::Root,
+                    "",
+                    runtime,
+                    ignore_explain_id_suffix,
+                    probe_count,
+                ));
+            }
             // Go `flat_plan.go`: the FK checks and cascades flatten as the
             // DML root's remaining children, after the select source, and a
             // cascade's `CascadePlans` as its own children.
@@ -3968,7 +3985,7 @@ pub fn explain_mview_delta_merge(
     retained_upper_tso: u64,
 ) -> Result<SelectMeta, DriverError> {
     let build = crate::driver::mview_delta_merge::build_merge_source(plan, catalog, ctx)?;
-    let (mut physical, _) =
+    let (mut physical, _, _) =
         crate::driver::mview_delta_merge::plan_mview_delta_merge(plan, &build, catalog, current_db, ctx, retained_upper_tso)?;
     crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
     render_built_plan(ctx, &physical, catalog, format, &[])

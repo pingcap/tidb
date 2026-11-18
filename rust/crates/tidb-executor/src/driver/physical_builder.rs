@@ -2182,6 +2182,22 @@ fn build_index_lookup_source(
     Ok(IndexLookupSource::Builder(Arc::new(builder)))
 }
 
+/// Go master `MViewDeltaMerge`'s full-update lookup as Go's executor
+/// builder wraps it in a `dataReaderBuilder`: the template IndexJoin's inner
+/// child, rebuilt for each changed group's key.
+pub(crate) fn full_update_reader_builder(
+    inner: &PhysicalPlan,
+    join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
+    catalog: &SessionExtendedInfoSchema,
+    ctx: &crate::StmtContext,
+) -> Result<Arc<dyn tidb_executor_join::index_lookup::IndexJoinReaderBuilder>, DriverError> {
+    let state = BuildState::default();
+    let builder = DataReaderBuilder::new(inner, join, catalog, ctx, &state)?.ok_or_else(|| {
+        DriverError::unsupported(format!("physical {} cannot be built as an index-join inner plan", inner.tp()))
+    })?;
+    Ok(Arc::new(builder))
+}
+
 /// Go `dataReaderBuilder` for an index join's inner side
 /// (`BuildExecutorForIndexJoin`): the inner reader built anew for each task
 /// over `buildKvRangesForIndexJoin`.

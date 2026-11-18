@@ -39,6 +39,10 @@ mod executor_test;
 mod server_maintainer_test;
 #[cfg(test)]
 mod mvservice_test;
+#[cfg(test)]
+mod service_helper_test;
+#[cfg(test)]
+mod task_handler_test;
 
 pub use backpressure::{
     CpuMemBackpressureController, TaskBackpressureController, DEFAULT_BACKPRESSURE_CPU_THRESHOLD,
@@ -48,7 +52,7 @@ pub use consistenthash::ConsistentHash;
 pub use executor::{TaskExecutor, TaskFn};
 pub use metrics_reporter::MetricsReporter;
 pub use service_helper::{
-    latest_server_infos_by_instance, resolve_mv_log_identity_by_id, should_handle_mv_create_event, MVServiceAnalyzer, MVServiceSessionContext, MVServiceSessionPool, ServiceHelper,
+    latest_server_infos_by_instance, need_analyze_mlog, read_mlog_auto_analyze_ratio, resolve_mv_log_identity_by_id, MLogStats, should_handle_mv_create_event, MVServiceAnalyzer, MVServiceSessionContext, MVServiceSessionPool, ServiceHelper,
     SystemSessionPool,
 };
 pub use server_maintainer::{int64_key_to_binary_bytes, AvailableKey, ServerConsistentHash, ServerDiscovery, ServerInfo};

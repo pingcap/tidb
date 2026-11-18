@@ -1598,6 +1598,33 @@ pub(crate) fn physical_select_plan(
         .map(|(_, physical)| physical)
 }
 
+/// [`physical_select_plan`] drawing plan and column ids from the given
+/// allocators, as Go's session-wide `PlanID` / `PlanColumnID` counters do
+/// for several selects optimized under one statement.
+pub(crate) fn physical_select_plan_with_allocators(
+    select: &tidb_ast::SelectStmt,
+    catalog: &SessionExtendedInfoSchema,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+    plan_ids: &PlanIdAllocator,
+    column_ids: &ColumnIdAllocator,
+) -> Result<PhysicalPlan, tidb_planner_core_base::PlanError> {
+    let query = tidb_ast::QueryStmt::Select(Box::new(select.clone()));
+    planner_optimized_query_with_allocators(
+        &query,
+        catalog,
+        current_database,
+        ctx,
+        false,
+        plan_ids,
+        column_ids,
+        &ScalarSubqueryRegistry::default(),
+        BuildVisits::Discard,
+        QueryBuild::Statement,
+    )
+    .map(|(_, physical)| physical)
+}
+
 /// Builds the ordinary physical tree for either Go query-statement shape.
 /// Set operations, their CTEs, and plain SELECTs therefore all enter the same
 /// logical optimizer, physical search, and executor-builder switch.

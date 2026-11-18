@@ -1192,3 +1192,68 @@ pub fn should_handle_mv_create_event(event: &tidb_ddl_notifier::SchemaChangeEven
         _ => false,
     }
 }
+
+/// The fields of Go's `statistics.Table` `needAnalyzeMLog` reads.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MLogStats {
+    /// Go `Pseudo`.
+    pub pseudo: bool,
+    /// Go `RealtimeCount`.
+    pub realtime_count: i64,
+    /// Go `ModifyCount`.
+    pub modify_count: i64,
+    /// Go `IsAnalyzed()`.
+    pub analyzed: bool,
+    /// Go `GetAnalyzeRowCount()`.
+    pub analyze_row_count: f64,
+}
+
+/// Go `needAnalyzeMLog`: whether an MV log's statistics call for an
+/// `ANALYZE`, and why (`auto_analyze_min_count` is Go's
+/// `statistics.AutoAnalyzeMinCnt`).
+#[must_use]
+pub fn need_analyze_mlog(stats: Option<&MLogStats>, ratio: f64, auto_analyze_min_count: i64) -> (bool, String) {
+    let Some(stats) = stats.filter(|stats| !stats.pseudo && stats.realtime_count >= auto_analyze_min_count) else {
+        return (false, String::new());
+    };
+    if !stats.analyzed {
+        return (true, "mlog unanalyzed".to_owned());
+    }
+    if ratio == 0.0 {
+        return (false, String::new());
+    }
+    let mut tbl_cnt = stats.realtime_count as f64;
+    if stats.analyze_row_count > 0.0 {
+        tbl_cnt = stats.analyze_row_count;
+    }
+    if tbl_cnt <= 0.0 {
+        return (false, String::new());
+    }
+    if stats.modify_count as f64 / tbl_cnt <= ratio {
+        return (false, String::new());
+    }
+    (true, format!("too many mlog modifications({}/{}>{})", stats.modify_count, tbl_cnt, ratio))
+}
+
+/// Go `readMLogAutoAnalyzeRatio`: the GLOBAL `tidb_mlog_auto_analyze_ratio`,
+/// at least zero.
+#[must_use]
+pub fn read_mlog_auto_analyze_ratio(sctx: &dyn MVServiceSessionContext) -> f64 {
+    let default = tidb_vardef::defaults::DEF_MLOG_AUTO_ANALYZE_RATIO;
+    let text = get_global_system_var_best_effort(sctx, tidb_vardef::tidb_vars::TIDB_MLOG_AUTO_ANALYZE_RATIO)
+        .unwrap_or_else(|| default.to_string());
+    match text.parse::<f64>() {
+        Ok(ratio) => ratio.max(0.0),
+        Err(err) => {
+            bg_logger().warn(
+                "mv service: failed to parse mlog auto analyze ratio, fallback to default",
+                &[
+                    Field::new("var", Value::Str(tidb_vardef::tidb_vars::TIDB_MLOG_AUTO_ANALYZE_RATIO.to_owned())),
+                    Field::new("value", Value::Str(text)),
+                    Field::new("error", Value::Str(err.to_string())),
+                ],
+            );
+            default
+        }
+    }
+}
