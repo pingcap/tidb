@@ -118,7 +118,8 @@ pub use job_args::{
     get_alter_materialized_view_refresh_args, get_create_materialized_view_args,
     get_create_materialized_view_log_args, AlterMaterializedViewAttributesArgs,
     AlterMaterializedViewLogPurgeArgs, AlterMaterializedViewRefreshArgs, CreateMaterializedViewArgs,
-    CreateMaterializedViewLogArgs,
+    CreateMaterializedViewLogArgs, MViewRefreshSource, RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs,
+    get_refresh_materialized_view_complete_out_of_place_cutover_args,
 };
 pub use job_enums::{
     get_job_ver_in_use, modify_type_to_string, set_job_ver_in_use, str_to_job_state, JobState,

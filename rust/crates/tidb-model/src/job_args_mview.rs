@@ -282,3 +282,113 @@ pub fn get_alter_materialized_view_log_purge_args(
 ) -> Result<Option<GoShared<AlterMaterializedViewLogPurgeArgs>>, serde_json::Error> {
     get_or_decode_args(job)
 }
+
+/// Go `MViewRefreshSource`: one source table of a materialized view refresh
+/// and the log it read.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MViewRefreshSource {
+    /// Go `TableID`.
+    #[serde(rename = "table_id")]
+    pub table_id: i64,
+    /// Go `MLogID`.
+    #[serde(rename = "mlog_id")]
+    pub mlog_id: i64,
+}
+
+/// Go `RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs`: what the
+/// cutover needs to replace a view with its freshly built shadow table.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs {
+    /// Go `OldMViewID`.
+    #[serde(rename = "old_mview_id", default, skip_serializing_if = "is_zero_i64")]
+    pub old_mview_id: i64,
+    /// Go `ShadowTableID`.
+    #[serde(rename = "shadow_table_id", default, skip_serializing_if = "is_zero_i64")]
+    pub shadow_table_id: i64,
+    /// Go `BuildReadTSO`.
+    #[serde(rename = "build_read_tso", default, skip_serializing_if = "is_zero_u64")]
+    pub build_read_tso: u64,
+    /// Go `BuildSources` (a nil slice encodes as `null`).
+    #[serde(rename = "build_sources", default)]
+    pub build_sources: Option<Vec<MViewRefreshSource>>,
+    /// Go `ExpectedOldMViewRevision`.
+    #[serde(rename = "expected_old_mview_revision", default, skip_serializing_if = "Option::is_none")]
+    pub expected_old_mview_revision: Option<u64>,
+    /// Go `ExpectedLastSuccessReadTSO`.
+    #[serde(rename = "expected_last_success_read_tso", default, skip_serializing_if = "is_zero_u64")]
+    pub expected_last_success_read_tso: u64,
+    /// Go `ExpectedLastSuccessReadTSONull`.
+    #[serde(rename = "expected_last_success_read_tso_null", default, skip_serializing_if = "is_false")]
+    pub expected_last_success_read_tso_null: bool,
+    /// Go `NextRefreshUnixSeconds`.
+    #[serde(rename = "next_refresh_unix_seconds", default, skip_serializing_if = "Option::is_none")]
+    pub next_refresh_unix_seconds: Option<i64>,
+    /// Go `ShouldUpdateNextRefreshUnixSeconds`.
+    #[serde(rename = "should_update_next_refresh_unix_seconds", default, skip_serializing_if = "is_false")]
+    pub should_update_next_refresh_unix_seconds: bool,
+}
+
+fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
+}
+
+fn mview_refresh_sources_type() -> GoTypeIdentity {
+    builtin_type("[]model.MViewRefreshSource", GoTypeKind::Slice)
+}
+
+impl JobArgs for RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs {
+    job_args_identity_methods!(RefreshMaterializedViewCompleteOutOfPlaceCutover);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs receiver").read();
+        GoSharedSlice::from_vec(vec![
+            ColumnDefaultValue::Int(value.old_mview_id).into(),
+            ColumnDefaultValue::Int(value.shadow_table_id).into(),
+            typed_value_any(builtin_type("uint64", GoTypeKind::Uint64), value.build_read_tso),
+            typed_value_any(builtin_type("uint64", GoTypeKind::Uint64), value.expected_last_success_read_tso),
+            ColumnDefaultValue::Bool(value.expected_last_success_read_tso_null).into(),
+            typed_pointer_any(builtin_type("int64", GoTypeKind::Int64), value.next_refresh_unix_seconds.map(GoShared::new)),
+            ColumnDefaultValue::Bool(value.should_update_next_refresh_unix_seconds).into(),
+            typed_pointer_any(builtin_type("uint64", GoTypeKind::Uint64), value.expected_old_mview_revision.map(GoShared::new)),
+            typed_value_any(mview_refresh_sources_type(), value.build_sources.clone()),
+        ])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let (old, shadow) = (GoField::<i64>::default(), GoField::<i64>::default());
+        let (build_read_tso, expected_tso) = (GoField::<u64>::default(), GoField::<u64>::default());
+        let (expected_null, should_update) = (GoField::<bool>::default(), GoField::<bool>::default());
+        let next = GoField::<Option<i64>>::default();
+        let revision = GoField::<Option<u64>>::default();
+        let sources = GoField::<Option<Vec<MViewRefreshSource>>>::default();
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode(&old, builtin_type("int64", GoTypeKind::Int64))?;
+        decoder.decode(&shadow, builtin_type("int64", GoTypeKind::Int64))?;
+        decoder.decode(&build_read_tso, builtin_type("uint64", GoTypeKind::Uint64))?;
+        decoder.decode(&expected_tso, builtin_type("uint64", GoTypeKind::Uint64))?;
+        decoder.decode(&expected_null, builtin_type("bool", GoTypeKind::Bool))?;
+        decoder.decode(&next, builtin_type("*int64", GoTypeKind::Pointer))?;
+        decoder.decode(&should_update, builtin_type("bool", GoTypeKind::Bool))?;
+        decoder.decode(&revision, builtin_type("*uint64", GoTypeKind::Pointer))?;
+        decoder.decode(&sources, mview_refresh_sources_type())?;
+        decoder.finish(job);
+        Ok(Some(GoShared::new(Self {
+            old_mview_id: old.get(),
+            shadow_table_id: shadow.get(),
+            build_read_tso: build_read_tso.get(),
+            build_sources: sources.get(),
+            expected_old_mview_revision: revision.get(),
+            expected_last_success_read_tso: expected_tso.get(),
+            expected_last_success_read_tso_null: expected_null.get(),
+            next_refresh_unix_seconds: next.get(),
+            should_update_next_refresh_unix_seconds: should_update.get(),
+        })))
+    }
+}
+
+/// Go `GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs`.
+pub fn get_refresh_materialized_view_complete_out_of_place_cutover_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}

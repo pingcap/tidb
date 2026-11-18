@@ -446,6 +446,10 @@ pub enum JobArgsValue {
     AlterMaterializedViewRefresh(Option<GoShared<AlterMaterializedViewRefreshArgs>>),
     /// `*model.AlterMaterializedViewAttributesArgs`, including a typed nil pointer.
     AlterMaterializedViewAttributes(Option<GoShared<AlterMaterializedViewAttributesArgs>>),
+    /// `*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs`, including a typed nil pointer.
+    RefreshMaterializedViewCompleteOutOfPlaceCutover(
+        Option<GoShared<RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs>>,
+    ),
     /// `*model.AlterMaterializedViewLogPurgeArgs`, including a typed nil pointer.
     AlterMaterializedViewLogPurge(Option<GoShared<AlterMaterializedViewLogPurgeArgs>>),
     /// `*model.FlashbackClusterArgs`, including a typed nil pointer.
@@ -523,6 +527,7 @@ impl JobArgsValue {
             Self::CreateMaterializedView(value) => job.fill_args(value.clone()),
             Self::AlterMaterializedViewRefresh(value) => job.fill_args(value.clone()),
             Self::AlterMaterializedViewAttributes(value) => job.fill_args(value.clone()),
+            Self::RefreshMaterializedViewCompleteOutOfPlaceCutover(value) => job.fill_args(value.clone()),
             Self::AlterMaterializedViewLogPurge(value) => job.fill_args(value.clone()),
             Self::FlashbackCluster(value) => job.fill_args(value.clone()),
             Self::Recover(value) => job.fill_args(value.clone()),
@@ -578,6 +583,9 @@ impl JobArgsValue {
             Self::CreateMaterializedView(_) => "CreateMaterializedViewArgs",
             Self::AlterMaterializedViewRefresh(_) => "AlterMaterializedViewRefreshArgs",
             Self::AlterMaterializedViewAttributes(_) => "AlterMaterializedViewAttributesArgs",
+            Self::RefreshMaterializedViewCompleteOutOfPlaceCutover(_) => {
+                "RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs"
+            }
             Self::AlterMaterializedViewLogPurge(_) => "AlterMaterializedViewLogPurgeArgs",
             Self::FlashbackCluster(_) => "FlashbackClusterArgs",
             Self::Recover(_) => "RecoverArgs",
@@ -636,6 +644,9 @@ impl JobArgsValue {
             Self::CreateMaterializedView(value) => value.as_ref().map(GoShared::identity_address),
             Self::AlterMaterializedViewRefresh(value) => value.as_ref().map(GoShared::identity_address),
             Self::AlterMaterializedViewAttributes(value) => value.as_ref().map(GoShared::identity_address),
+            Self::RefreshMaterializedViewCompleteOutOfPlaceCutover(value) => {
+                value.as_ref().map(GoShared::identity_address)
+            }
             Self::AlterMaterializedViewLogPurge(value) => value.as_ref().map(GoShared::identity_address),
             Self::FlashbackCluster(value) => value.as_ref().map(GoShared::identity_address),
             Self::Recover(value) => value.as_ref().map(GoShared::identity_address),
@@ -809,6 +820,11 @@ impl JobArgsValue {
             .go_json_projection(),
             Self::AlterMaterializedViewAttributes(value) => GoTypedPointer::new(
                 model_type("AlterMaterializedViewAttributesArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::RefreshMaterializedViewCompleteOutOfPlaceCutover(value) => GoTypedPointer::new(
+                model_type("RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs", GoTypeKind::Struct),
                 value.clone(),
             )
             .go_json_projection(),

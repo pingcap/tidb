@@ -16,3 +16,7 @@ drop_mlog v1 [[{"Schema":{"O":"db","L":"db"},"Name":{"O":"$mlog$t","L":"$mlog$t"
 drop_mlog v2 {"identifiers":[{"Schema":{"O":"db","L":"db"},"Name":{"O":"$mlog$t","L":"$mlog$t"}}]}
 drop_shadow v1 [[{"Schema":{"O":"db","L":"db"},"Name":{"O":"s","L":"s"}}],false]
 drop_shadow v2 {"identifiers":[{"Schema":{"O":"db","L":"db"},"Name":{"O":"s","L":"s"}}]}
+cutover_full v1 [88,103,4242,4000,false,1700000000,true,7,[{"table_id":77,"mlog_id":101}]]
+cutover_full v2 {"old_mview_id":88,"shadow_table_id":103,"build_read_tso":4242,"build_sources":[{"table_id":77,"mlog_id":101}],"expected_old_mview_revision":7,"expected_last_success_read_tso":4000,"next_refresh_unix_seconds":1700000000,"should_update_next_refresh_unix_seconds":true}
+cutover_null v1 [88,103,4242,0,true,null,true,null,null]
+cutover_null v2 {"old_mview_id":88,"shadow_table_id":103,"build_read_tso":4242,"build_sources":null,"expected_last_success_read_tso_null":true,"should_update_next_refresh_unix_seconds":true}

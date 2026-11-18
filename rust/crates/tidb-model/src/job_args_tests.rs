@@ -2033,6 +2033,61 @@ fn materialized_view_job_args_are_go_masters_bytes() {
         let decoded = get_alter_materialized_view_log_purge_args(&mut job).unwrap().unwrap();
         assert_eq!((decoded.read().purge_method.as_str(), decoded.read().purge_schedule_sql_mode), ("DEFERRED", 4));
 
+        // Go `RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs`: every
+        // field set, then the nil pointers and nil sources.
+        let full = RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs {
+            old_mview_id: 88,
+            shadow_table_id: 103,
+            build_read_tso: 4242,
+            build_sources: Some(vec![MViewRefreshSource { table_id: 77, mlog_id: 101 }]),
+            expected_old_mview_revision: Some(7),
+            expected_last_success_read_tso: 4000,
+            expected_last_success_read_tso_null: false,
+            next_refresh_unix_seconds: Some(1_700_000_000),
+            should_update_next_refresh_unix_seconds: true,
+        };
+        let null = RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs {
+            old_mview_id: 88,
+            shadow_table_id: 103,
+            build_read_tso: 4242,
+            expected_last_success_read_tso_null: true,
+            should_update_next_refresh_unix_seconds: true,
+            ..Default::default()
+        };
+        for (name, args) in [("cutover_full", full), ("cutover_null", null)] {
+            let action = ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER;
+            let job = encoded_job(version, action, GoShared::new(args.clone()));
+            assert_eq!(raw(&job), go(name, version), "{name}");
+            let mut job = from_go(name, version, action);
+            let decoded = get_refresh_materialized_view_complete_out_of_place_cutover_args(&mut job).unwrap().unwrap();
+            let decoded = decoded.read();
+            assert_eq!(
+                (
+                    decoded.old_mview_id,
+                    decoded.shadow_table_id,
+                    decoded.build_read_tso,
+                    decoded.build_sources.clone(),
+                    decoded.expected_old_mview_revision,
+                    decoded.expected_last_success_read_tso,
+                    decoded.expected_last_success_read_tso_null,
+                    decoded.next_refresh_unix_seconds,
+                    decoded.should_update_next_refresh_unix_seconds,
+                ),
+                (
+                    args.old_mview_id,
+                    args.shadow_table_id,
+                    args.build_read_tso,
+                    args.build_sources.clone(),
+                    args.expected_old_mview_revision,
+                    args.expected_last_success_read_tso,
+                    args.expected_last_success_read_tso_null,
+                    args.next_refresh_unix_seconds,
+                    args.should_update_next_refresh_unix_seconds,
+                ),
+                "{name}"
+            );
+        }
+
         for (name, action, ident_name, fk_check) in [
             ("drop_mview", ActionType::ACTION_DROP_MATERIALIZED_VIEW, "mv", true),
             ("drop_mlog", ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG, "$mlog$t", false),
