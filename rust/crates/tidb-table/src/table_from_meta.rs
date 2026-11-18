@@ -552,8 +552,28 @@ pub fn table_from_meta(
             origin_default,
         })
     };
-    for column in &columns {
-        kv_columns.push(build_column(column)?);
+    // Go `TableFromMeta` keeps every column of `TableInfo.Columns` in its
+    // order, one a DDL is adding, dropping or changing included; a column in
+    // `StateNone` refuses the table.
+    for (i, shared) in table.columns.iter_deref().enumerate() {
+        let column = shared.read();
+        if column.state == SchemaState::NONE {
+            return Err(crate::table_errors::ERR_COLUMN_STATE_CANT_NONE
+                .gen_with_stack_by_args(&[column.name.original().into()])
+                .to_string());
+        }
+        if column.offset != i as i64 {
+            tracing::error!(
+                table = table.name.original(),
+                column = column.name.original(),
+                index = i,
+                offset = column.offset,
+                column_number = table.columns.len(),
+                "wrong table schema"
+            );
+        }
+        drop(column);
+        kv_columns.push(build_column(&shared)?);
     }
     let mut kv_table = TableCommon::loaded(table.clone(), kv_columns);
     kv_table.set_all_columns_public(
@@ -562,36 +582,17 @@ pub fn table_from_meta(
             .iter_deref()
             .all(|column| column.read().state == SchemaState::PUBLIC),
     );
-    // Go `TableFromMeta` keeps every column that is not `StateNone`: one a
-    // DDL is adding, dropping or changing is written by its state, and a
-    // public column a MODIFY COLUMN is checking carries its changing type.
-    let public_ids: Vec<i64> = columns.iter().map(|column| column.read().id).collect();
-    for shared in table.columns.iter_deref() {
-        let column = shared.read();
-        if column.state == SchemaState::PUBLIC {
-            if let (Some(changing), Some(offset)) = (
-                column.changing_field_type.as_ref(),
-                public_ids.iter().position(|id| *id == column.id),
-            ) {
-                kv_table.set_changing_field_type(offset, changing.read().clone());
-            }
-            continue;
-        }
-        if column.state == SchemaState::NONE {
-            continue;
-        }
-        // `DependencyColumnOffset` addresses `TableInfo.Columns`; the write
-        // row addresses the public columns by this loader's order.
-        let dependency = column.change_state_info.as_ref().and_then(|info| {
-            let offset = usize::try_from(info.read().dependency_column_offset).ok()?;
-            let id = table.columns.get(offset)?.read().id;
-            public_ids.iter().position(|public| *public == id)
-        });
-        kv_table.add_nonpublic_column(crate::tables::NonPublicColumn {
-            column: build_column(&shared)?,
-            state: column.state,
-            dependency,
-        });
+    // A public column a MODIFY COLUMN is checking carries its changing type.
+    let changing: Vec<(usize, tidb_datatype::FieldType)> = kv_table
+        .columns()
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, column)| {
+            column.read().changing_field_type.as_ref().map(|changing| (offset, changing.read().clone()))
+        })
+        .collect();
+    for (offset, changing) in changing {
+        kv_table.set_changing_field_type(offset, changing);
     }
     kv_table.set_name(table.name.original());
     // Go `LoadCheckConstraint` -> `removeInvalidCheckConstraintsInfo`: a
@@ -722,20 +723,8 @@ pub fn table_from_meta(
             if clustered_primary {
                 continue;
             }
-            // A key part may address a column a DDL is adding or changing,
-            // which the write row carries past the public columns.
-            let write_columns: Vec<crate::column::Column> = kv_table
-                .columns
-                .iter()
-                .cloned()
-                .chain(
-                    kv_table
-                        .nonpublic_columns()
-                        .iter()
-                        .map(|column| column.column.clone()),
-                )
-                .collect();
-            let Ok(nonpublic) = kv_index(&shared, &write_columns) else {
+            // A key part may address a column a DDL is adding or changing.
+            let Ok(nonpublic) = kv_index(&shared, kv_table.deletable_columns()) else {
                 continue;
             };
             kv_table.add_nonpublic_index(nonpublic, index.state, index.backfill_state);
@@ -771,7 +760,7 @@ pub fn table_from_meta(
         // clustered record corrupted tables shared with a Go TiDB node),
         // while multi-column join NDV estimation still reads its stats.
         let clustered_primary = (table.pk_is_handle || table.is_common_handle) && index.primary;
-        kv_table.add_index(kv_index(&shared, &kv_table.columns)?, clustered_primary);
+        kv_table.add_index(kv_index(&shared, kv_table.deletable_columns())?, clustered_primary);
         // Go `IndexInfo.ConditionExprString`: a partial index's predicate,
         // built as `TableFromMeta` builds it, in the default context.
         if index.has_condition() {
@@ -980,15 +969,14 @@ fn loaded_partition_spec(
         .map_err(|error| format!("its partitioning cannot be rebuilt: {error}"))
 }
 
-/// Translates one stored `IndexInfo` into the executor's `Index`, against
-/// the loaded executor table's full native column list.
+/// Go `NewIndex`: one stored `IndexInfo` as the executor's `Index`, over
+/// `columns`, the table's Go `TableCommon.Columns`
+/// ([`TableCommon::deletable_columns`]).
 ///
-/// The offsets are resolved by NAME here even though `IndexColumn.Offset`
-/// carries one, because the two count different things: Go's offset is a
-/// position in `TableInfo.Columns`, and a `Index`'s is a position in the
-/// native columns this loader built from `TableInfo.Cols()`, the public
-/// ones. Resolving against that same list also keeps backfill and normal
-/// writes from indexing different row slots.
+/// Each key part's offset is its Go `IndexColumn.Offset`, a position in
+/// `TableInfo.Columns`, which `columns` lists in order. Like Go, the offset
+/// is trusted; a part whose offset is past the last column is refused
+/// rather than read out of bounds.
 ///
 /// It is one function rather than a loop inside [`cluster_table`] because the
 /// `CREATE INDEX` backfill has to build the very same `Index` for an index
@@ -1002,18 +990,15 @@ pub fn kv_index(
     let index = shared.read();
     let mut offsets = Vec::with_capacity(index.columns.len());
     for column in index.columns.iter_deref() {
-        let (name, original_name) = {
-            let column = column.read();
-            (column.name.lowercase().to_owned(), column.name.original().to_owned())
-        };
-        let offset = columns
-            .iter()
-            .position(|column| tidb_hack::GoCaseCompare::go_lower_eq(column.read().name.original(), &name))
+        let column = column.read();
+        let offset = usize::try_from(column.offset)
+            .ok()
+            .filter(|offset| *offset < columns.len())
             .ok_or_else(|| {
                 format!(
-                    "its index {} covers non-public column {}",
+                    "its index {} covers unknown column {}",
                     index.name.original(),
-                    original_name
+                    column.name.original()
                 )
             })?;
         offsets.push(offset);

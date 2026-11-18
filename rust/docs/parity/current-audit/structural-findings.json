@@ -2,8 +2,8 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 3,
-    "open": 1,
+    "unresolved": 2,
+    "open": 0,
     "partial": 2
   },
   "findings": [
@@ -22,17 +22,9 @@
       "finding": "Materialized views are ported up to their statements (phases in `rust/docs/go-shape-refactors-execplan.md`): `TableInfo` keeps Go master's `materialized_view*` fields byte for byte, the base table's DML writes its MV log rows as Go's does, the action types, schema diffs and `tidb_mview_*` / `tidb_mlog_*` variables are Go master's, and the parser takes every materialized view statement (CREATE / ALTER / DROP MATERIALIZED VIEW [LOG], REFRESH, PURGE, CANCEL, COMPARE, the SHOW forms) with Go master's restore text and syntax errors. `CREATE MATERIALIZED VIEW LOG`, `DROP MATERIALIZED VIEW LOG` and `ALTER MATERIALIZED VIEW LOG` (PURGE and ADD COLUMN) run as Go master's do, DROP / TRUNCATE / RENAME TABLE, ALTER TABLE, CREATE / DROP / ALTER INDEX, PARTITION BY, REMOVE PARTITIONING and EXCHANGE PARTITION refuse a log and its base table as Go master's do, MODIFY / CHANGE COLUMN of a logged base table retypes the log's tracked column as Go master's does (a base table with dependent materialized views is refused until those are ported), (the log table Go builds, the base table's `MaterializedViewBase`, the `mysql.tidb_mlog_purge_info` row with its schedule, Go's refusals and the `tidb_mview_enable` gate); on a base table that is itself a materialized view the DDL session holds the view's refresh advisory lock for the job's delivery, as Go master's does. CREATE MATERIALIZED VIEW runs as Go master's does: the planner's SELECT build and column count, `validateCreateMaterializedViewQuery` (via `tidb-mviewutil`), the view table from the SELECT's output types with its group key and `MaterializedViewInfo`, the owner's create step and its initial build, the refresh and refresh-source rows, and the rollback of a failed build. ALTER MATERIALIZED VIEW (COMMENT, REFRESH with its schedule row, ATTRIBUTES) and DROP MATERIALIZED VIEW run as Go master's do too. The build runs Go's INSERT path (`REPLACE INTO view <definition>`); Go's TiKV store builds by IMPORT INTO instead, which this node does not run for it. `REFRESH MATERIALIZED VIEW ... COMPLETE IN PLACE` runs as Go master's does (advisory lock, refresh-info row lock, history rows, DELETE + INSERT of the definition, refresh-source baseline, success persist, failure alert), except Go's `ensureMVRefreshSchemaVersion` reload guard. The other REFRESH modes (COMPLETE OUT OF PLACE, DELTA APPLY, FAST), DRY RUN / PROFILE, PURGE / CANCEL / COMPARE and the SHOW forms are refused as unsupported statements. This branch's bootstrap does not create Go master's five materialized view tables (`mysql.tidb_mview_refresh_info` .. `tidb_mlog_purge_hist`, Go master's `upgradeToVer316`). The mview background service (`pkg/mvservice`) and its schedule, the planner's FAST-refresh delta plan (`pkg/planner/mview`) and the executor's delta merge aggregation are absent. IMPORT INTO depends on them in one place: a next-gen IMPORT INTO ... FROM SELECT runs on a DXF worker (`ImportStepQuery`) only during materialized-view maintenance (`InMViewMaintenance`), so this port refuses every next-gen FROM SELECT, as Go does outside maintenance, and `ImportStepQuery` is not ported.",
       "rust_evidence": "`rust/crates/tidb-executor/src/ddl_exec.rs` (the DDL refusal), `rust/crates/tidb-planner/src/plan_builder/stmt_build.rs` and `rust/crates/tidb-session/src/dispatch.rs` (the REFRESH / PURGE / CANCEL / COMPARE and SHOW refusals), `rust/crates/tidb-session/src/import_into.rs` (the next-gen FROM SELECT refusal)",
       "go_owner": "`pkg/ddl/materialized_view.go`, `pkg/ddl/mview_*.go`, `pkg/planner/mview`, `pkg/executor/mviewdeltamergeagg`, `pkg/util/mviewutil`, `ImportStepQuery` in `pkg/dxf/importinto` (Go master)"
-    },
-    {
-      "id": "S02",
-      "status": "open",
-      "group": "Structure: Go's shape before more ports",
-      "finding": "`TableCommon` keeps the public columns and the non-public (adding or changing) columns as two lists, and an index's `column_offsets` index whichever list it was loaded against (public for a public index, public then non-public for a non-public one). Go's `TableCommon.Columns` is every `tblInfo.Columns` entry in metadata order, `Cols()` / `VisibleCols()` / `WritableCols()` / `DeletableCols()` are slices derived from it, and `IndexColumn.Offset` always indexes `tblInfo.Columns`; the two bases caused the MODIFY COLUMN mutation-checker panic",
-      "go_owner": "`pkg/table/tables/tables.go` (`TableCommon`, `initTableCommon`)",
-      "rust_evidence": "`rust/crates/tidb-table/src/tables.rs`, `rust/crates/tidb-table/src/tables/nonpublic_columns.rs`, `rust/crates/tidb-table/src/table_from_meta.rs`"
     }
   ],
-  "unresolved": 3,
-  "open": 1,
+  "unresolved": 2,
+  "open": 0,
   "partial": 2
 }

@@ -14,7 +14,6 @@
 
 use super::*;
 use std::collections::BTreeMap;
-use std::sync::Arc;
 #[allow(unused_imports)]
 use tidb_table::tables::nonpublic_columns::*;
 use tidb_datatype::FieldTypeCode;
@@ -33,6 +32,47 @@ fn column(name: &str, id: i64, code: FieldTypeCode, origin: Option<Datum>) -> ti
         default_value: None,
         origin_default: origin,
     }
+}
+
+/// A column a DDL holds in `state`, casting the column at `dependency` when
+/// it is a MODIFY COLUMN's changing column.
+fn nonpublic(
+    name: &str,
+    id: i64,
+    origin: Option<Datum>,
+    state: tidb_model::SchemaState,
+    dependency: Option<i64>,
+) -> tidb_table::column::Column {
+    let column = column(name, id, FieldTypeCode::LongLong, origin);
+    {
+        let mut info = column.info.write();
+        info.state = state;
+        info.change_state_info = dependency.map(|offset| {
+            tidb_model::GoShared::new(tidb_model::column::ChangeStateInfo { dependency_column_offset: offset })
+        });
+    }
+    column
+}
+
+/// The table both writes go through: `a`, `b`, then an added column `c`
+/// and `b`'s changing column, at offsets 2 and 3 of `TableInfo.Columns`.
+fn table_with(c_state: tidb_model::SchemaState) -> TableCommon {
+    let mut table = TableCommon::new(
+        42,
+        vec![
+            column("a", 1, FieldTypeCode::LongLong, None),
+            column("b", 2, FieldTypeCode::LongLong, None),
+        ],
+    );
+    table.add_nonpublic_column(nonpublic("c", 3, Some(Datum::Int(7)), c_state, None));
+    table.add_nonpublic_column(nonpublic(
+        "_Col$_b_0",
+        4,
+        None,
+        tidb_model::SchemaState::WRITE_REORGANIZATION,
+        Some(1),
+    ));
+    table
 }
 
 fn stored(
@@ -55,24 +95,18 @@ fn stored(
 /// value.
 #[test]
 fn writes_carry_nonpublic_columns_like_go() {
-    let mut table = TableCommon::new(
-        42,
-        vec![
-            column("a", 1, FieldTypeCode::LongLong, None),
-            column("b", 2, FieldTypeCode::LongLong, None),
-        ],
-    );
+    let mut table = table_with(tidb_model::SchemaState::WRITE_ONLY);
     let mut store = tidb_kv::storage::MemTableStorage::new();
-    table.add_nonpublic_column(NonPublicColumn {
-        column: column("c", 3, FieldTypeCode::LongLong, Some(Datum::Int(7))),
-        state: tidb_model::SchemaState::WRITE_ONLY,
-        dependency: None,
-    });
-    table.add_nonpublic_column(NonPublicColumn {
-        column: column("_Col$_b_0", 4, FieldTypeCode::LongLong, None),
-        state: tidb_model::SchemaState::WRITE_REORGANIZATION,
-        dependency: Some(1),
-    });
+    // Go `TableCommon.Columns`: one list in `TableInfo.Columns` order, the
+    // public columns its `Cols()` prefix.
+    assert_eq!(table.columns().len(), 2);
+    let ids = |columns: &[tidb_table::column::Column]| columns.iter().map(|c| c.read().id).collect::<Vec<_>>();
+    assert_eq!(ids(table.deletable_columns()), vec![1, 2, 3, 4]);
+    assert_eq!(
+        table.meta().read().columns.iter_deref().map(|c| c.read().offset).collect::<Vec<_>>(),
+        vec![0, 1, 2, 3]
+    );
+    assert_eq!(table.writable_columns().map(|(offset, _)| offset).collect::<Vec<_>>(), vec![0, 1, 2, 3]);
     let ctx = crate::StmtContext::for_dml(false, false, false);
     let handle = table
         .insert_row_with_row_id_checked(&mut store, &[Datum::Int(1), Datum::Int(5)], None, 0, &ctx, false)
@@ -94,8 +128,8 @@ fn writes_carry_nonpublic_columns_like_go() {
     assert_eq!(row.get(&4), Some(&Datum::Int(9)));
 
     // Once delete-only, a column is no longer written.
-    let mut later = table.clone_for_test_nonpublic();
-    Arc::make_mut(later.nonpublic_columns_arc_mut())[0].state = tidb_model::SchemaState::DELETE_ONLY;
+    let mut later = table_with(tidb_model::SchemaState::DELETE_ONLY);
+    assert_eq!(later.writable_columns().map(|(offset, _)| offset).collect::<Vec<_>>(), vec![0, 1, 3]);
     let handle = later
         .insert_row_with_row_id_checked(&mut store, &[Datum::Int(2), Datum::Int(3)],
             Some(2),

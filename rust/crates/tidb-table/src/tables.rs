@@ -67,7 +67,7 @@ pub use row_decoder::{
 };
 pub use table_meta::{
     Column,
-    Index, NonPublicColumn, PreparedPointGetDecodeContext,
+    Index, PreparedPointGetDecodeContext,
     RowDecodeContext, TableCharset, TableHandle,
 };
 pub use index_entries::index_key_bounds;
@@ -467,10 +467,13 @@ pub struct TableCommon {
     /// in `storage_statistics`; these entries retain each partition's own
     /// row count and lengths.
     partition_storage_statistics: std::collections::BTreeMap<i64, (u64, u64, u64, u64)>,
-    /// The columns, in Go `TableInfo.Cols()` order: the order `TableFromMeta`
-    /// loads them in, hidden expression-index columns (`ColumnInfo.Hidden`)
-    /// wherever DDL placed them. A column's position here is its offset in
-    /// every row, index and planned expression.
+    /// Go `TableCommon.Columns`: every column of `TableInfo.Columns` in
+    /// metadata order, the ones a DDL is adding, dropping or changing
+    /// included. A column's place here is its Go `ColumnInfo.Offset`: the
+    /// slot a write row holds its value in, and what an index key part's
+    /// offset addresses, public index or not. Go's DDL keeps the non-public
+    /// columns after the public ones, so a public row is this list's public
+    /// prefix.
     ///
     /// Behind an `Arc`, because this is METADATA and Go shares metadata by
     /// pointer: an `InfoSchema`'s `TableInfo` is immutable and every session
@@ -483,11 +486,27 @@ pub struct TableCommon {
     /// build-a-new-TableInfo, one shared metadata copied only when a DDL
     /// actually changes it.
     pub(crate) columns: std::sync::Arc<Vec<crate::column::Column>>,
-    /// The offsets of `columns` whose Go `ColumnInfo.Hidden` is set, read
-    /// off [`Self::meta`] whenever it or the column list changes: Go reads
-    /// `Hidden` straight off each column, which a per-row lookup into the
+    /// Go `publicColumns`, the `Cols()` cache: the public columns of
+    /// [`Self::columns`] in its order, hidden expression-index columns
+    /// (`ColumnInfo.Hidden`) wherever DDL placed them, rebuilt by
+    /// [`Self::reset_columns_cache`]. What every reader, planned expression
+    /// and public row addresses.
+    pub(crate) public_columns: std::sync::Arc<Vec<crate::column::Column>>,
+    /// Go `hiddenColumns`, the `HiddenCols()` cache: the offsets in
+    /// [`Self::public_columns`] of the columns whose Go `ColumnInfo.Hidden`
+    /// is set, rebuilt by [`Self::reset_columns_cache`]. Go reads `Hidden`
+    /// straight off each column, which a per-row lookup into the
     /// `TableInfo` would not afford.
     hidden_offsets: Vec<usize>,
+    /// Go `visibleColumns`, the `VisibleCols()` cache: the offsets in
+    /// [`Self::public_columns`] of the columns that are not hidden, rebuilt
+    /// by [`Self::reset_columns_cache`].
+    visible_offsets: Vec<usize>,
+    /// Go `writableColumns`, the `WritableCols()` cache: the offsets in
+    /// [`Self::columns`] of the columns DML writes (every state but
+    /// delete-only and delete-reorganization), rebuilt by
+    /// [`Self::reset_columns_cache`].
+    writable_offsets: Vec<usize>,
     /// Go `model.IndexInfo.MVIndex`, carried as the SOURCE column each
     /// multi-valued index's single ARRAY key part was built over
     /// (`ColumnInfo.Dependences`, which DDL's `buildHiddenColumnInfoWithCheck`
@@ -508,10 +527,6 @@ pub struct TableCommon {
     pub(crate) indexes: std::sync::Arc<Vec<Index>>,
     /// Indexes a DDL is still adding or dropping; written by state only.
     nonpublic_indexes: std::sync::Arc<Vec<NonPublicIndex>>,
-    /// Columns a DDL is adding, dropping or changing. A write row carries
-    /// their values after the public columns (offset `columns.len() + i`),
-    /// which is where a non-public index's key parts address them.
-    pub(crate) nonpublic_columns: std::sync::Arc<Vec<NonPublicColumn>>,
     /// Go `ColumnInfo.ChangingFieldType` of public columns, by offset: the
     /// type a MODIFY COLUMN that rewrites no rows is checking writes against.
     changing_field_types: std::collections::BTreeMap<usize, FieldType>,
@@ -624,7 +639,7 @@ impl PointRowDecoder {
     pub fn new(table: &TableCommon) -> Self {
         Self {
             ordinary_columns: !table
-                .columns
+                .public_columns
                 .iter()
                 .any(|column| column.generated.is_some()),
             v2: None,
@@ -642,7 +657,7 @@ impl PointRowDecoder {
         if tidb_rowcodec::is_new_format(entry) && self.ordinary_columns {
             let (columns, handle_column_ids) = self.v2.get_or_insert_with(|| {
                 let columns = table
-                    .columns
+                    .public_columns
                     .iter()
                     .enumerate()
                     .map(|(offset, column)| tidb_rowcodec::ColumnInfo {
@@ -666,7 +681,7 @@ impl PointRowDecoder {
                             })
                             .map(|(offset, _)| offset),
                     )
-                    .filter_map(|offset| table.columns.get(offset).map(|column| column.read().id))
+                    .filter_map(|offset| table.public_columns.get(offset).map(|column| column.read().id))
                     .collect();
                 (columns, ids)
             });
@@ -689,7 +704,7 @@ impl PointRowDecoder {
                 }
             };
             let default_datum = |index: usize| {
-                table.columns[index]
+                table.public_columns[index]
                     .origin_default_value(context.type_flags(), context.zone())
                     .map_err(|error| error.to_string())
             };
@@ -709,7 +724,7 @@ impl PointRowDecoder {
         }
         if self.general.is_none() {
             self.general = Some(RowDecoder::for_table_read(
-                table.columns.clone(),
+                table.public_columns.clone(),
                 table.pk_handle_offset,
                 table.common_handle_offsets.clone(),
                 table.common_handle_prefix_lengths.clone(),
@@ -935,12 +950,71 @@ fn compose_row_id_shard(shard_bits: u64, shard: i64, id: i64) -> i64 {
 /// Go `autoid.RowIDBitLength`.
 const ROW_ID_BIT_LENGTH: u64 = 64;
 
+/// Go `col.State != StateDeleteOnly && != StateDeleteReorganization`: a
+/// column DML writes its value into.
+#[must_use]
+pub(crate) fn is_column_writable(column: &crate::column::Column) -> bool {
+    let state = column.read().state;
+    state != tidb_model::SchemaState::DELETE_ONLY && state != tidb_model::SchemaState::DELETE_REORGANIZATION
+}
+
+/// [`TableCommon::columns_mut`]'s view of Go `TableCommon.Columns`; dropping
+/// it rebuilds the derived column lists (Go `ResetColumnsCache`).
+pub struct ColumnsMut<'a> {
+    table: &'a mut TableCommon,
+}
+
+impl std::ops::Deref for ColumnsMut<'_> {
+    type Target = Vec<crate::column::Column>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.table.columns
+    }
+}
+
+impl std::ops::DerefMut for ColumnsMut<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        std::sync::Arc::make_mut(&mut self.table.columns)
+    }
+}
+
+impl Drop for ColumnsMut<'_> {
+    fn drop(&mut self) {
+        self.table.reset_columns_cache();
+    }
+}
+
 impl TableCommon {
-    /// The mutable view a DDL takes of the shared column metadata --
-    /// Go's "build a new TableInfo": the first mutation after a share
-    /// copies, an unshared table edits in place.
-    pub fn columns_mut(&mut self) -> &mut Vec<crate::column::Column> {
-        std::sync::Arc::make_mut(&mut self.columns)
+    /// The mutable view a DDL takes of the shared column metadata
+    /// ([`Self::columns`], Go `TableCommon.Columns`) -- Go's "build a new
+    /// TableInfo": the first mutation after a share copies, an unshared
+    /// table edits in place. The derived column lists are rebuilt when the
+    /// view is dropped (Go `ResetColumnsCache`).
+    pub fn columns_mut(&mut self) -> ColumnsMut<'_> {
+        ColumnsMut { table: self }
+    }
+
+    /// Go `ResetColumnsCache`: the column lists derived from
+    /// [`Self::columns`].
+    pub fn reset_columns_cache(&mut self) {
+        let public: Vec<crate::column::Column> = self
+            .columns
+            .iter()
+            .filter(|column| column.read().state == tidb_model::SchemaState::PUBLIC)
+            .cloned()
+            .collect();
+        self.public_columns = std::sync::Arc::new(public);
+        let (hidden, visible): (Vec<usize>, Vec<usize>) =
+            (0..self.public_columns.len()).partition(|offset| self.public_columns[*offset].read().hidden);
+        self.hidden_offsets = hidden;
+        self.visible_offsets = visible;
+        self.writable_offsets = self
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, column)| is_column_writable(column))
+            .map(|(offset, _)| offset)
+            .collect();
     }
 
     /// Go `Meta().ID`: the table's id.
@@ -954,15 +1028,10 @@ impl TableCommon {
         self.table_id = id;
     }
 
-    /// The shared column list.
+    /// The shared public column list (Go `Cols()`).
     #[must_use]
     pub fn columns_arc(&self) -> &std::sync::Arc<Vec<crate::column::Column>> {
-        &self.columns
-    }
-
-    /// The shared column list, for copy-on-write edits.
-    pub fn columns_arc_mut(&mut self) -> &mut std::sync::Arc<Vec<crate::column::Column>> {
-        &mut self.columns
+        &self.public_columns
     }
 
     /// The shared index list.
@@ -974,11 +1043,6 @@ impl TableCommon {
     /// The shared index list, for copy-on-write edits.
     pub fn indexes_arc_mut(&mut self) -> &mut std::sync::Arc<Vec<Index>> {
         &mut self.indexes
-    }
-
-    /// The shared non-public column list, for copy-on-write edits.
-    pub fn nonpublic_columns_arc_mut(&mut self) -> &mut std::sync::Arc<Vec<NonPublicColumn>> {
-        &mut self.nonpublic_columns
     }
 
     /// Clears Go `TableInfo.PKIsHandle`: the table's rows are keyed by the
@@ -1056,11 +1120,31 @@ impl TableCommon {
         &mut self.use_new_collation
     }
 
-    /// All table columns in physical offset order, including hidden columns
-    /// used by expression indexes, matching `TableInfo.Columns`.
+    /// Go `Cols()`: the public columns in metadata order, hidden
+    /// expression-index columns included.
     #[must_use]
     pub fn columns(&self) -> &[crate::column::Column] {
+        &self.public_columns
+    }
+
+    /// Go `DeletableCols()`: every column, Go `TableCommon.Columns`, in
+    /// `TableInfo.Columns` order. A column's position is its offset.
+    #[must_use]
+    pub fn deletable_columns(&self) -> &[crate::column::Column] {
         &self.columns
+    }
+
+    /// Go `WritableCols()`: the columns DML writes, every state but
+    /// delete-only and delete-reorganization, with their offsets in
+    /// [`Self::columns`].
+    pub fn writable_columns(&self) -> impl ExactSizeIterator<Item = (usize, &crate::column::Column)> {
+        self.writable_offsets.iter().map(|offset| (*offset, &self.columns[*offset]))
+    }
+
+    /// Whether a DDL holds any column in a non-public state.
+    #[must_use]
+    pub fn has_nonpublic_columns(&self) -> bool {
+        self.columns.len() != self.public_columns.len()
     }
 
     pub fn indexes_mut(&mut self) -> &mut Vec<Index> {
@@ -1123,13 +1207,15 @@ impl TableCommon {
             storage_statistics: (0, 0, 0, 0),
             partition_storage_statistics: std::collections::BTreeMap::new(),
             columns: std::sync::Arc::new(columns),
+            public_columns: std::sync::Arc::new(Vec::new()),
             hidden_offsets: Vec::new(),
+            visible_offsets: Vec::new(),
+            writable_offsets: Vec::new(),
             mv_key_part_sources: std::collections::BTreeMap::new(),
             keys_read: None,
             pk_handle_offset: None,
             indexes: std::sync::Arc::new(Vec::new()),
             nonpublic_indexes: std::sync::Arc::new(Vec::new()),
-            nonpublic_columns: std::sync::Arc::new(Vec::new()),
             changing_field_types: std::collections::BTreeMap::new(),
             changing_index_parts: std::collections::BTreeMap::new(),
             partition_reorg: None,
@@ -1382,7 +1468,7 @@ impl TableCommon {
             let idx = partition.locate_partition_common(
                 definitions.len() as u64,
                 row,
-                &self.columns,
+                &self.public_columns,
                 ctx,
             )?;
             Ok((idx, definitions[idx].id))
@@ -1464,7 +1550,7 @@ impl TableCommon {
         handles
             .iter()
             .map(|handle| {
-                let mut row = vec![Datum::Null; self.columns.len()];
+                let mut row = vec![Datum::Null; self.public_columns.len()];
                 self.fill_handle_columns(&mut row, handle, zone).ok()?;
                 self.row_partition_route(&row, ctx)
             })
@@ -1633,7 +1719,7 @@ impl TableCommon {
                     && columns.iter().enumerate().all(|(position, offset)| {
                         let length = index.prefix_length(position);
                         length == tidb_datatype::UNSPECIFIED_LENGTH
-                            || length >= self.columns[*offset].read().field_type.flen()
+                            || length >= self.public_columns[*offset].read().field_type.flen()
                     })
                     && self.partial_index_safe_for_columns(index, columns)
             })
@@ -2294,12 +2380,12 @@ impl TableCommon {
         like_default_escape: u8,
     ) -> Result<KvCheckConstraint, KvTableError> {
         let names = self
-            .columns
+            .public_columns
             .iter()
             .map(|column| column.read().name.original().to_owned())
             .collect::<Vec<_>>();
         let types = self
-            .columns
+            .public_columns
             .iter()
             .map(|column| column.read().field_type.clone())
             .collect::<Vec<_>>();
@@ -2350,12 +2436,12 @@ impl TableCommon {
                     && constraint.build_like_default_escape != ctx.like_default_escape())
             {
                 let names = self
-                    .columns
+                    .public_columns
                     .iter()
                     .map(|column| column.read().name.original().to_owned())
                     .collect::<Vec<_>>();
                 let types = self
-                    .columns
+                    .public_columns
                     .iter()
                     .map(|column| column.read().field_type.clone())
                     .collect::<Vec<_>>();
@@ -2379,7 +2465,7 @@ impl TableCommon {
             let value = crate::generated_column::eval_over_dependencies(
                 expression,
                 &constraint.dependencies,
-                &*self.columns,
+                &*self.public_columns,
                 row,
                 ctx,
             )
@@ -2508,7 +2594,7 @@ impl TableCommon {
             .zip(self.common_handle_offsets.iter().copied())
             .enumerate()
         {
-            let Some(column) = self.columns.get(offset) else {
+            let Some(column) = self.public_columns.get(offset) else {
                 return Err(KvTableError::Encode(
                     "a common-handle column is outside the table schema".to_owned(),
                 ));
@@ -2539,9 +2625,9 @@ impl TableCommon {
         config: tidb_tblctx::RowEncodingConfig,
         handle: &TableHandle,
     ) -> Result<Vec<u8>, KvTableError> {
-        let mut ids = Vec::with_capacity(self.columns.len());
-        let mut values = Vec::with_capacity(self.columns.len());
-        for (offset, column) in self.columns.iter().enumerate() {
+        let mut ids = Vec::with_capacity(self.public_columns.len());
+        let mut values = Vec::with_capacity(self.public_columns.len());
+        for (offset, column) in self.public_columns.iter().enumerate() {
             // A common-handle sort key is not the original value when its
             // collation loses information. Go keeps exactly those handle
             // columns in the row bytes and rebuilds only lossless handles
@@ -2570,15 +2656,16 @@ impl TableCommon {
             values.push(value);
         }
         // Go `AddRecord` / `updateRecord`: a write row past the public
-        // columns carries the writable non-public ones too.
-        if row.len() > self.columns.len() {
-            for (column, value) in self
-                .nonpublic_columns
-                .iter()
-                .zip(&row[self.columns.len()..])
-            {
-                if column.is_writable() && !skips_null_without_default(&column.column.read(), value) {
-                    ids.push(column.column.read().id);
+        // columns carries the writable non-public ones too, each at its
+        // offset.
+        if row.len() > self.public_columns.len() {
+            for (offset, column) in self.writable_columns() {
+                if column.read().state == tidb_model::SchemaState::PUBLIC {
+                    continue;
+                }
+                let Some(value) = row.get(offset) else { continue };
+                if !skips_null_without_default(&column.read(), value) {
+                    ids.push(column.read().id);
                     values.push(value.clone());
                 }
             }
@@ -2603,7 +2690,7 @@ impl TableCommon {
         zone: &SessionTimeZone,
     ) -> Result<(), KvTableError> {
         fill_handle_columns(
-            &self.columns,
+            &self.public_columns,
             self.pk_handle_offset,
             &self.common_handle_offsets,
             &self.common_handle_prefix_lengths,
@@ -2741,21 +2828,17 @@ impl TableCommon {
         self.meta.read().max_index_id + 1
     }
 
-    /// The columns a user can name or see (Go `table.Cols()` without the
-    /// `Hidden` ones), with their offsets in [`Self::columns`].
+    /// Go `VisibleCols()`: the columns a user can name or see (Go `Cols()`
+    /// without the `Hidden` ones), with their offsets in [`Self::columns`].
     #[must_use]
     pub fn visible_columns(&self) -> Vec<(usize, &crate::column::Column)> {
-        self.columns
-            .iter()
-            .enumerate()
-            .filter(|(offset, _)| !self.is_hidden(*offset))
-            .collect()
+        self.visible_offsets.iter().map(|offset| (*offset, &self.public_columns[*offset])).collect()
     }
 
     /// The offsets of [`Self::visible_columns`].
     #[must_use]
-    pub fn visible_offsets(&self) -> Vec<usize> {
-        (0..self.columns.len()).filter(|offset| !self.is_hidden(*offset)).collect()
+    pub fn visible_offsets(&self) -> &[usize] {
+        &self.visible_offsets
     }
 
     /// The visible columns' values of a stored `row`, in order: the row a
@@ -2773,7 +2856,7 @@ impl TableCommon {
     /// whose hidden columns are NULL until their generation fills them.
     #[must_use]
     pub fn stored_row(&self, visible: Vec<Datum>) -> Vec<Datum> {
-        let mut row = vec![Datum::Null; self.columns.len().max(visible.len())];
+        let mut row = vec![Datum::Null; self.public_columns.len().max(visible.len())];
         let mut offsets = (0..row.len()).filter(|offset| !self.is_hidden(*offset));
         for value in visible {
             let offset = offsets.next().expect("a stored row has room for every visible value");
@@ -2787,13 +2870,13 @@ impl TableCommon {
     /// offsets in this complete physical row layout.
     #[must_use]
     pub fn logical_columns(&self) -> &[crate::column::Column] {
-        &self.columns
+        &self.public_columns
     }
 
     /// How many columns a user can name or see.
     #[must_use]
     pub fn visible_column_count(&self) -> usize {
-        self.columns.len() - self.hidden_offsets.len()
+        self.visible_offsets.len()
     }
 
     /// Columns Go's logical `DataSource` allocates before appending its
@@ -2801,7 +2884,7 @@ impl TableCommon {
     /// expansion, this includes hidden expression-index columns.
     #[must_use]
     pub fn logical_data_source_column_count(&self) -> usize {
-        self.columns.len()
+        self.public_columns.len()
     }
 
     /// Go `ColumnInfo.Hidden` of the column at `offset`.
@@ -2821,13 +2904,14 @@ impl TableCommon {
                 .is_some_and(|info| !info.ptr_eq(&column.info))
         });
         if stale {
-            for column in self.columns_mut() {
+            for column in std::sync::Arc::make_mut(&mut self.columns) {
                 let id = column.read().id;
                 if let Some(info) = meta.find_column_by_id(id) {
                     column.info = info;
                 }
             }
         }
+        self.reset_columns_cache();
         // Go `table.Index` wraps the `IndexInfo` the `TableInfo` holds.
         let stale_index = |index: &Index| {
             meta.find_index_by_id(index.read().id)
@@ -2851,7 +2935,7 @@ impl TableCommon {
         }
         // Go reads the handle off the `TableInfo`: `PKIsHandle` names the
         // `PriKeyFlag` column, `IsCommonHandle` the PRIMARY KEY's parts.
-        let position_of_id = |id: i64| self.columns.iter().position(|column| column.read().id == id);
+        let position_of_id = |id: i64| self.public_columns.iter().position(|column| column.read().id == id);
         self.pk_handle_offset = meta
             .pk_is_handle
             .then(|| meta.get_pk_col_info())
@@ -2870,7 +2954,7 @@ impl TableCommon {
                     .filter_map(|part| {
                         let part = part.read();
                         let offset = self
-                            .columns
+                            .public_columns
                             .iter()
                             .position(|column| column.read().name == part.name)?;
                         Some((offset, part.length))
@@ -2880,23 +2964,19 @@ impl TableCommon {
             .unwrap_or_default();
         self.common_handle_offsets = offsets;
         self.common_handle_prefix_lengths = lengths;
-        self.hidden_offsets = self
-            .columns
-            .iter()
-            .enumerate()
-            .filter(|(_, column)| column.read().hidden)
-            .map(|(offset, _)| offset)
-            .collect();
     }
 
     /// Appends a hidden column -- the one an expression index key part is
     /// rewritten into, which Go `AddIndex` appends to `TableInfo.Columns` --
     /// and returns its offset.
     pub fn add_hidden_column(&mut self, column: crate::column::Column) -> usize {
-        self.record_fixture_column(&column, None, true);
-        self.columns_mut().push(column);
+        // Public, so before any column a DDL holds non-public.
+        let offset = self.public_columns.len();
+        let before = self.columns.get(offset).map(|column| column.read().id);
+        self.record_fixture_column(&column, before, true);
+        self.columns_mut().insert(offset, column);
         self.refresh_from_meta();
-        self.columns.len() - 1
+        offset
     }
 
     /// Adds a column at `position`, which is Go's ALTER TABLE ADD COLUMN.
@@ -2909,7 +2989,7 @@ impl TableCommon {
     /// `LocateOffsetToMove`); one past the end appends it, after any hidden
     /// expression-index column, as Go's `ADD COLUMN` without a position does.
     pub fn add_column(&mut self, position: usize, column: crate::column::Column) {
-        let position = position.min(self.columns.len());
+        let position = position.min(self.public_columns.len());
         let before = self.columns.get(position).map(|column| column.read().id);
         self.record_fixture_column(&column, before, false);
         self.columns_mut().insert(position, column);
@@ -2945,7 +3025,7 @@ impl TableCommon {
     /// again because nothing lists that id -- Go likewise leaves the old row
     /// values in place until the table is rewritten.
     pub fn drop_column(&mut self, offset: usize) {
-        let id = self.columns[offset].read().id;
+        let id = self.public_columns[offset].read().id;
         let position = self
             .meta
             .read()
@@ -3371,7 +3451,7 @@ impl TableCommon {
             .map(|(position, offset)| {
                 // A fixture may declare an index over columns it never added.
                 let info = self
-                    .columns
+                    .public_columns
                     .get(*offset)
                     .and_then(|column| meta.columns.iter_deref().find(|info| info.read().id == column.read().id));
                 tidb_model::IndexColumn {
@@ -3393,7 +3473,7 @@ impl TableCommon {
         let flag = u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY);
         let ids = offsets
             .iter()
-            .filter_map(|offset| self.columns.get(*offset).map(|column| column.read().id))
+            .filter_map(|offset| self.public_columns.get(*offset).map(|column| column.read().id))
             .collect::<Vec<_>>();
         let missing = ids.iter().any(|id| {
             self.meta
@@ -3447,7 +3527,7 @@ impl TableCommon {
         let Some(generated) = index
             .column_offsets
             .iter()
-            .filter_map(|offset| self.columns.get(*offset))
+            .filter_map(|offset| self.public_columns.get(*offset))
             .find(|column| column.read().field_type.is_array())
             .and_then(|column| column.generated.as_ref())
         else {
@@ -3577,14 +3657,14 @@ impl TableCommon {
             return Ok(true);
         };
         let context = IndexConditionContext {
-            columns: &self.columns,
+            columns: &self.public_columns,
             row,
             zone,
         };
         let value = crate::generated_column::eval_over_dependencies(
             &condition.expr,
             &condition.dependencies,
-            &*self.columns,
+            &*self.public_columns,
             row,
             &context,
         )
@@ -3640,7 +3720,7 @@ impl TableCommon {
             return false;
         }
         offsets.iter().all(|offset| {
-            self.columns
+            self.public_columns
                 .get(*offset)
                 .is_some_and(|column| not_null.contains(column.read().name.lowercase()))
         })
@@ -3705,7 +3785,7 @@ impl TableCommon {
     #[must_use]
     pub fn unsigned_pk_handle(&self) -> bool {
         self.pk_handle_offset
-            .and_then(|offset| self.columns.get(offset))
+            .and_then(|offset| self.public_columns.get(offset))
             .is_some_and(|column| column.read().field_type.is_unsigned())
     }
 
@@ -4288,7 +4368,7 @@ impl TableCommon {
         self.check_data_for_modify_column(row, Some(ctx))?;
         // Go reads `WritableCols` for an UPDATE: the old and new rows carry
         // the columns a DDL holds in an intermediate state.
-        let write_rows = if self.nonpublic_columns.is_empty() {
+        let write_rows = if !self.has_nonpublic_columns() {
             None
         } else {
             let old = match old_row {
@@ -4773,7 +4853,7 @@ fn clustered_key_text(table: &TableCommon, row: &[Datum]) -> String {
             if table.pk_handle_offset.is_none() {
                 if let (Some(length), Some(column)) = (
                     table.common_handle_prefix_lengths.get(position),
-                    table.columns.get(*offset),
+                    table.public_columns.get(*offset),
                 ) {
                     tidb_tablecodec::cut_datum_by_prefix_len(&mut value, *length, &column.read().field_type);
                 }
@@ -4934,7 +5014,7 @@ pub fn hypo_kv_indexes(
     hypo.table_indexes(database, &table.name())
         .into_iter()
         .filter_map(|index| {
-            crate::table_from_meta::kv_index(&tidb_model::GoShared::new(index.clone()), &table.columns).ok()
+            crate::table_from_meta::kv_index(&tidb_model::GoShared::new(index.clone()), table.deletable_columns()).ok()
         })
         .collect()
 }

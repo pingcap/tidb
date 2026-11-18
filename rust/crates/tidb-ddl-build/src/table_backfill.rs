@@ -164,8 +164,9 @@ pub trait KvTableBackfill {
     /// row rewrite over `[start, end)`. Each row not yet carrying the
     /// changing column (DML writes it once the column exists) gets the old
     /// column's value cast into it (`getRowRecord`) and is written back. The
-    /// changing column is the non-public column at `changing`; the old one
-    /// the public column at `old_offset`.
+    /// changing column is the non-public column at offset `changing` of
+    /// Go `TableCommon.Columns`; the old one the public column at
+    /// `old_offset`.
     ///
     /// A cast failure is the job's error (`reformatErrors`); a warning is
     /// counted by code. `cast_context` is the job's reorganization context.
@@ -659,12 +660,12 @@ impl KvTableBackfill for TableCommon {
         cast_context: &dyn tidb_tblctx::MutateContext,
     ) -> Result<ReorgBatch, KvTableError> {
         let target = self
-            .nonpublic_columns()
+            .deletable_columns()
             .get(changing)
+            .filter(|column| column.read().state != tidb_model::SchemaState::PUBLIC)
             .ok_or_else(|| {
                 KvTableError::Decode("the changing column is not on the table".to_owned())
             })?
-            .column
             .clone();
         let old_name = self
             .columns()
@@ -679,9 +680,10 @@ impl KvTableBackfill for TableCommon {
         let zone = decode_context.zone().clone();
         let decoder = reorg_row_decoder(self, decode_context)?;
         let types: std::collections::BTreeMap<i64, tidb_datatype::FieldType> = self
-            .nonpublic_columns()
+            .deletable_columns()
             .iter()
-            .map(|column| (column.column.read().id, column.column.read().field_type.clone()))
+            .filter(|column| column.read().state != tidb_model::SchemaState::PUBLIC)
+            .map(|column| (column.read().id, column.read().field_type.clone()))
             .collect();
         let mut rows = Vec::new();
         let mut task_done = false;
@@ -780,18 +782,22 @@ impl KvTableBackfill for TableCommon {
                     None => warnings.push((warning.code, warning.message, 1)),
                 }
             }
-            // The row as Go re-encodes it: every column it has, with the
-            // changing column's value added.
+            // The row as Go re-encodes it: every column it has, each at its
+            // offset, with the changing column's value added.
             let mut write_row = public_row;
-            for (position, column) in self.nonpublic_columns().iter().enumerate() {
-                write_row.push(if position == changing {
+            write_row.resize(self.deletable_columns().len(), tidb_datatype::Datum::Null);
+            for (offset, column) in self.deletable_columns().iter().enumerate() {
+                if column.read().state == tidb_model::SchemaState::PUBLIC {
+                    continue;
+                }
+                write_row[offset] = if offset == changing {
                     converted.clone()
                 } else {
                     stored
-                        .get(&column.column.read().id)
+                        .get(&column.read().id)
                         .cloned()
                         .unwrap_or(tidb_datatype::Datum::Null)
-                });
+                };
             }
             // Go `updateColumnWorker`: the reorg context's row encoder, and
             // the checksum when `vardef.EnableRowLevelChecksum` was on as

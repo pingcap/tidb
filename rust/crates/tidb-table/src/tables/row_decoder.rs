@@ -1059,7 +1059,7 @@ pub fn fill_row_checksum(
     }
     let decode_error = |error: &dyn std::fmt::Debug| KvTableError::Decode(format!("{error:?}"));
     let zone = context.zone();
-    let columns = table.columns.as_slice();
+    let columns = table.public_columns.as_slice();
     let column_types = columns
         .iter()
         .map(|column| (column.read().id, column.read().field_type.clone()))

@@ -345,7 +345,7 @@ impl TableCommon {
     /// the flag from exactly this test (`buildIndexColumns`).
     pub fn mv_index(&self, index: &Index) -> bool {
         index.column_offsets.iter().any(|offset| {
-            self.write_column(*offset)
+            self.columns.get(*offset)
                 .is_some_and(|column| column.read().field_type.is_array())
         })
     }
@@ -364,7 +364,7 @@ impl TableCommon {
             return Ok(vec![values]);
         }
         let is_array_part = |position: usize| {
-            self.write_column(index.column_offsets[position])
+            self.columns.get(index.column_offsets[position])
                 .is_some_and(|column| column.read().field_type.is_array())
         };
         let json_error = |error| KvTableError::Encode(format!("{error:?}"));
@@ -573,13 +573,11 @@ impl TableCommon {
     pub fn codec_table_info(&self) -> CodecTableInfo {
         let common_handle = !self.common_handle_offsets().is_empty();
         CodecTableInfo {
-            // The write row's columns: the public ones, then the columns a
-            // DDL holds in an intermediate state, which a non-public index's
-            // key parts address.
+            // The write row's columns, Go `TableCommon.Columns`: every
+            // column at its offset, which every index's key parts address.
             columns: self
                 .columns
                 .iter()
-                .chain(self.nonpublic_columns.iter().map(|column| &column.column))
                 .enumerate()
                 .map(|(offset, column)| CodecTableColumn {
                     id: column.read().id,
@@ -696,7 +694,7 @@ impl TableCommon {
         self.common_handle_offsets()
             .iter()
             .filter_map(|offset| {
-                let column = self.columns.get(*offset)?;
+                let column = self.public_columns.get(*offset)?;
                 if !column
                     .read().field_type
                     .need_restored_data_with_collation(self.use_new_collation)
@@ -1336,7 +1334,7 @@ impl TableCommon {
             let physical_id = match routed {
                 None => physical_ids[0],
                 Some(ctx) => {
-                    let mut row = vec![Datum::Null; self.columns.len()];
+                    let mut row = vec![Datum::Null; self.public_columns.len()];
                     for (offset, value) in index.column_offsets.iter().zip(values) {
                         if let Some(slot) = row.get_mut(*offset) {
                             *slot = value.clone();

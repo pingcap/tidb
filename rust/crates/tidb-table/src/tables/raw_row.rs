@@ -47,7 +47,7 @@ impl TableCommon {
         // Whether the column at `i` came from the handle.
         let mut from_handle = vec![false; offsets.len()];
         for (i, &offset) in offsets.iter().enumerate() {
-            let info = self.columns[offset].read();
+            let info = self.public_columns[offset].read();
             if self.pk_handle_offset == Some(offset) {
                 let TableHandle::Int(h) = handle else {
                     return Err(KvTableError::Decode("int handle expected".to_owned()));
@@ -84,7 +84,7 @@ impl TableCommon {
             if from_handle[i] {
                 continue;
             }
-            let column = &self.columns[offset];
+            let column = &self.public_columns[offset];
             let info = column.read();
             if let Some(v) = row_map.get(&info.id) {
                 row[i] = v.clone();

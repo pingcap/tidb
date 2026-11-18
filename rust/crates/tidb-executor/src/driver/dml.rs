@@ -1369,7 +1369,7 @@ fn run_insert_rows(
     let auto_random_offset = kv.auto_random().map(|spec| spec.offset);
     // Until generation makes it a stored row, a row holds the visible
     // columns, where an auto-id column sits at its visible position.
-    let visible_offsets = kv.visible_offsets();
+    let visible_offsets = kv.visible_offsets().to_vec();
     let visible_position =
         |stored: usize| visible_offsets.iter().position(|offset| *offset == stored);
     let stored_meta: Vec<ColumnDefaultMeta> = kv.columns().iter().map(kv_column_metadata).collect();
@@ -4114,7 +4114,7 @@ fn run_update_with_physical(
     let stored_meta = stored_column_metadata(table);
     let stored_handle_slot = extra_handle_slot.map(|_| stored_meta.len());
     let visible_offsets: Vec<usize> = match table {
-        TableEntry::Kv(kv) => kv.visible_offsets(),
+        TableEntry::Kv(kv) => kv.visible_offsets().to_vec(),
         _ => (0..column_meta.len()).collect(),
     };
     let handle_type = extra_handle_slot.map(|slot| column_list[slot].1.clone());
