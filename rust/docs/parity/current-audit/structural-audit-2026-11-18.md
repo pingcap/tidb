@@ -56,12 +56,6 @@ mysql -h127.0.0.1 -P<port> -uroot -vvv --force --table < probes.sql
 | E35 | `EXPLAIN 'abcdef'` | 1105 `can't find any plans for 'abcdef'` | 1105 `EXPLAIN of a plan digest is not supported yet` |
 | E35 | `EXPLAIN FORMAT = 'cost_trace' SELECT * FROM t WHERE a = 1` | `costFormula` `N/A` | `costFormula` empty |
 | N09 | `SHOW CONFIG WHERE name = 'log.level'` (macOS, system proxy 127.0.0.1:7897) | 1 row | empty, warning `request http://10.0.0.8:20200/config failed: 502 Bad Gateway` |
-| X06 | `EXPLAIN LOAD DATA LOCAL INFILE '/nonexistent' INTO TABLE t` | 1064 at `column 12 near "LOAD DATA ..."` | 1105 `EXPLAIN of LoadData is not supported yet` |
-| X06 | `EXPLAIN CALL p()` | 1064 `column 12 near "CALL p()"` | 1105 `EXPLAIN of Call is not supported yet` |
-| X06 | `EXPLAIN SHOW TABLES` | 1064 `column 12 near "SHOW TABLES"` | 1064 `column 19 near ""` |
-| X06 | `EXPLAIN SET @a = 1` | 1064 `column 11 near "SET @a = 1"` | 1064 `column 18 near ""` |
-| X06 | `ADMIN SHOW TELEMETRY` | 1064 `column 5 near "ADMIN SHOW TELEMETRY"` | 1064 `column 20 near ""` |
-| X07 | `SELECT a, SUM(a) OVER (ORDER BY a ROWS BETWEEN 1+0 PRECEDING AND CURRENT ROW) s FROM t` | 1064 near `+0 PRECEDING ...` | 4 rows |
 
 Probed with equal answers (not findings): `CAST ... AS UNSIGNED ARRAY`
 outside an index, expression indexes, generated and non-literal column

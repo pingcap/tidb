@@ -1757,8 +1757,18 @@ impl Parser {
         // and its `ExplainStmt.Restore` then emits `DESC ...`. It is not the
         // `TABLE <query>` result-set branch (whose leading TABLE keyword is
         // reserved and deliberately does not enter this path).
-        if !explore && is_name_or_keyword(self.peek()) {
-            return self.parse_describe_table();
+        // Go `parseExplainStmt` parses a statement only after one of the
+        // explainable tokens; any other name is the DESCRIBE form, and any
+        // other token (a reserved word included) is a syntax error there.
+        let explainable = self.is_op("(")
+            || ["SELECT", "INSERT", "REPLACE", "UPDATE", "DELETE", "ALTER", "WITH", "TABLE", "VALUES", "IMPORT"]
+                .iter()
+                .any(|keyword| self.is_kw(keyword));
+        if !explainable {
+            if !explore && is_name_or_keyword(self.peek()) {
+                return self.parse_describe_table();
+            }
+            return Err(self.err_here("unsupported EXPLAIN inner statement"));
         }
         let statement_start = self.peek().offset;
         let mut statement =

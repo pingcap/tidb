@@ -86,11 +86,6 @@
 //!   (`:3101`). Aggregates in window expressions are carried by auxiliary
 //!   select fields and Column markers, matching `windowAggMap` positions.
 //!   The auxiliary-subquery-field machinery remains a boundary.
-//! * `evalAstExprWithPlanCtx` (`:6900`), the constant folder an EXPLICIT
-//!   `RANGE n PRECEDING` / `n FOLLOWING` bound needs. Reproduced only for a
-//!   bound the expression rewriter already yields as an
-//!   [`Expression::Constant`]; anything else is refused rather than framed
-//!   wrongly.
 //! * `expression.GetCmpFunction` / `expression.GetAccurateCmpType`
 //!   (`builtin_compare.go:1489` / `:1420`). Not transcreated. Every call this
 //!   stage makes compares two expressions of the SAME `FieldType` — `(col,
@@ -1265,8 +1260,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ///
     /// # Errors
     ///
-    /// `ErrWindowRangeBoundNotConstant` and `ErrWindowFrameIllegal`, plus the
-    /// refusal named in section 3 when the offset does not fold to a constant.
+    /// `ErrWindowRangeBoundNotConstant` and `ErrWindowFrameIllegal`.
     pub fn build_window_function_frame_bound(
         &self,
         spec: &NamedWindowSpec,
@@ -1329,22 +1323,31 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             None => (offset, None),
         };
 
-        // `// boundary:` `evalAstExprWithPlanCtx` (`:6900`). Only a bound the
-        // rewriter yields as a folded constant is accepted; see section 3.
-        let constant = self
+        // Go `evalAstExprWithPlanCtx` (`:6920`): rewrite against no schema,
+        // then `Eval` on the empty row; either failing is
+        // `ErrWindowRangeBoundNotConstant`.
+        let not_constant = || {
+            PlanError::from(
+                tidb_plannererrors::ERR_WINDOW_RANGE_BOUND_NOT_CONSTANT
+                    .gen_with_stack_by_args(&[(window_name(&spec.name)).into()]),
+            )
+        };
+        let rewritten = self
             .rewrite_scalar(value_expr, &Schema::default(), &[], &BTreeMap::new())
-            .map_err(|_| {
-                PlanError::internal(format!(
-                    "Window '{}' has a non-constant frame bound",
-                    window_name(&spec.name)
-                ))
-            })?;
-        if !matches!(constant, Expression::Constant(_)) {
-            return Err(PlanError::internal(format!(
-                "Window '{}' has a non-constant frame bound: evalAstExprWithPlanCtx (logical_plan_builder.go:6900) is not ported",
-                window_name(&spec.name)
-            )));
-        }
+            .map_err(|_| not_constant())?;
+        let constant = match rewritten {
+            Expression::Constant(_) => rewritten,
+            other => {
+                let value = other
+                    .eval(self.ctx, tidb_chunk::row::Row::empty())
+                    .map_err(|_| not_constant())?;
+                let ret_type = other
+                    .static_type()
+                    .cloned()
+                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+                Expression::Constant(tidb_expr::constant::Constant::new(value, ret_type))
+            }
+        };
         // Go evaluates the constant as an INT and rejects a negative, a NULL
         // or an evaluation error with `ErrWindowFrameIllegal`. A negative
         // signed datum is exactly what `get_uint64_from_constant` refuses.

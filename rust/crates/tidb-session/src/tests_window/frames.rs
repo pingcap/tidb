@@ -1043,3 +1043,41 @@ fn window_wrapped_sliding_end_preserves_go_error() {
         }
     }
 }
+
+/// Go `evalAstExprWithPlanCtx` (`logical_plan_builder.go:6920`): a RANGE
+/// bound that rewrites without columns is evaluated on the empty row, so a
+/// user variable or `rand()` frames the window; a column is
+/// `ErrWindowRangeBoundNotConstant`. Every expectation is Go master output
+/// (a scalar-subquery bound is register row E38).
+#[test]
+fn window_range_bound_evaluates_a_non_literal_like_go() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE t(a INT, c DATE)",
+        "INSERT INTO t VALUES (1,'2024-01-01'),(2,'2024-01-02'),(3,'2024-01-05')",
+        "SET @v = 2",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let frame = |bound: &str| {
+        format!(
+            "SELECT a, SUM(a) OVER (ORDER BY c RANGE BETWEEN INTERVAL {bound} DAY PRECEDING AND CURRENT ROW) FROM t"
+        )
+    };
+    for bound in ["@v", "1+1"] {
+        assert_eq!(
+            row_text(session.run(&frame(bound))),
+            [["1", "1"], ["2", "3"], ["3", "3"]],
+            "{bound}"
+        );
+    }
+    assert_eq!(
+        row_text(session.run(&frame("floor(rand())"))),
+        [["1", "1"], ["2", "2"], ["3", "3"]]
+    );
+    let error = session.run(&frame("a")).unwrap_err().to_mysql_error();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (3590, "Window '<unnamed window>' has a non-constant frame bound.")
+    );
+}

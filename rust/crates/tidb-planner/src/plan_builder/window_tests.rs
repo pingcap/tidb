@@ -744,12 +744,31 @@ fn test_a_positional_window_order_by_item_names_a_child_column() {
 #[test]
 fn test_a_non_constant_range_bound_names_its_blocking_symbol() {
     let message = build_err(
-        "SELECT SUM(a) OVER (ORDER BY b RANGE BETWEEN a PRECEDING AND CURRENT ROW) FROM t",
+        // Go's parser takes a bare column only behind INTERVAL; the planner then
+        // answers 3590 (Go master probe).
+        "SELECT SUM(a) OVER (ORDER BY d RANGE BETWEEN INTERVAL a DAY PRECEDING AND CURRENT ROW) FROM t",
     );
-    assert!(
-        message.contains("evalAstExprWithPlanCtx") || message.contains("non-constant"),
-        "{message}"
-    );
+    assert_eq!(message, "Window '<unnamed window>' has a non-constant frame bound.");
+}
+
+#[test]
+fn test_an_evaluable_range_bound_is_evaluated_like_go() {
+    // Go `evalAstExprWithPlanCtx` evaluates a bound that rewrites without
+    // columns on the empty row; Go master answers these, and a NULL
+    // bound is ErrWindowFrameIllegal (3586).
+    for bound in ["1+1", "@nosuch"] {
+        let sql = format!(
+            "SELECT SUM(a) OVER (ORDER BY d RANGE BETWEEN INTERVAL {bound} DAY PRECEDING AND CURRENT ROW) FROM t"
+        );
+        if bound == "@nosuch" {
+            assert_eq!(
+                build_err(&sql),
+                "Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type"
+            );
+        } else {
+            build(&sql);
+        }
+    }
 }
 
 #[test]

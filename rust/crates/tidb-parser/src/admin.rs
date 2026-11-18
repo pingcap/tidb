@@ -25,7 +25,7 @@ use tidb_ast::{
 };
 use tidb_lexer::TokenKind;
 
-use crate::{PResult, Parser};
+use crate::{ParseError, PResult, Parser};
 
 #[path = "admin/ddl_job_alter.rs"]
 mod ddl_job_alter;
@@ -153,24 +153,23 @@ impl Parser {
             return Err(self.err_here("expected an ADMIN FLUSH target"));
         }
         if self.is_kw_at(1, "SHOW") {
+            // Go `parseAdminShow`: a name target (`TELEMETRY`, or
+            // `NEXT_ROW_ID` read as the table of `SHOW table NEXT_ROW_ID`)
+            // parses as a table name, finds no `NEXT_ROW_ID` after it and
+            // returns no statement, which `parseStatement` reports at the
+            // statement's first token (column 5 near the whole text). A
+            // keyword target (ALL of ALL JOBS) fails AT the keyword.
+            let statement_start = self.peek().clone();
             self.bump();
             self.expect_kw("SHOW")?;
-            // `ADMIN SHOW NEXT_ROW_ID` is go's `SHOW table NEXT_ROW_ID`
-            // production with the table missing: the yacc consumes
-            // NEXT_ROW_ID as the table name and fails AT EOF — column =
-            // NEXT_ROW_ID's end, near EMPTY (oracle: column 22 near "").
-            if self.is_kw("NEXT_ROW_ID") {
-                self.bump();
-                return Err(self.err_at_eof("expected NEXT_ROW_ID"));
-            }
-            // An IDENTIFIER target (NEXT_ROW_ID, TELEMETRY, ...) is a shape
-            // go's grammar starts but cannot continue: the yacc consumes the
-            // whole input and fails AT EOF — column = the last token's end,
-            // near EMPTY (oracle: ADMIN SHOW NEXT_ROW_ID column 22 near "";
-            // ADMIN SHOW TELEMETRY column 20 near ""). Keyword targets
-            // (ALL of ALL JOBS) fail AT the keyword with the full near.
-            if self.peek().kind != TokenKind::Keyword {
-                return Err(self.err_at_eof("expected an ADMIN SHOW target"));
+            if self.is_kw("NEXT_ROW_ID") || self.peek().kind != TokenKind::Keyword {
+                return Err(ParseError {
+                    message: "expected an ADMIN SHOW target".to_owned(),
+                    offset: statement_start.end_offset,
+                    near_offset: statement_start.offset,
+                    terror: None,
+                    message_follows_near: false,
+                });
             }
             return Err(self.err_here("expected an ADMIN SHOW target"));
         }

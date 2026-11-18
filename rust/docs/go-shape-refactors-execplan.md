@@ -112,6 +112,9 @@ Five places in the Rust rewrite differ from Go's structure in ways that make eve
 - Decision: the structural X-rows go in the order X12, X05, X13, X09, X11, ahead of the small rows (X06/X07 are analyzed and wait).
   Rationale: X12 and X05 are the transaction layer, where the duplicated autocommit path produced the 9004/8141 bugs fixed in 03c4d1d89dd; X12 merges the two transaction objects first so X05's providers have one transaction to decide for. X13 follows #73's shape. X09 and X11 are the widest but least entangled.
   Date/Author: 2026-11-19, user ("Structural refactors first") and Claude.
+- Decision: in X05 the provider owns the transaction (Go's provider plus the `LazyTxn` it reaches through `sctx.Txn()`); `tidb-session`'s `TxnManager` (Go `session.txnManager`) holds `Box<dyn TxnContextProvider>` chosen by Go's `newProviderWithRequest` (stale read -> staleness; `tidb_txn_mode` optimistic -> optimistic; pessimistic -> RC / serializable / RR by `IsolationLevelForNewTxn`), and `TxnManager::current()` asks the provider. The session-side inputs a provider reads (vars, the cluster transaction authority, the current-TSO cell, the statement read-ts record) come through a context trait in `tidb-sessiontxn` that `tidb-session` implements.
+  Rationale: Rust cannot share the session mutably between `TxnManager` and a provider the way Go's `sctx` pointer does; giving the provider the transaction keeps one owner per transaction, which X12 established.
+  Date/Author: 2026-11-19, Claude.
 
 ## Outcomes & Retrospective
 

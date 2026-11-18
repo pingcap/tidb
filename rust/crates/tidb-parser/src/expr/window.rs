@@ -346,7 +346,20 @@ impl Parser {
             self.expect_kw("ROW")?;
             return Ok(FrameBound::CurrentRow);
         }
-        let n = self.parse_expr(prec::PREDICATE + 1)?;
+        // Go `parseFrameBound`: `INTERVAL expr unit`, or else only a number
+        // literal or a `?` marker, as the yacc grammar's `NumLiteral` /
+        // `paramMarker`; any other token is a syntax error at that token.
+        let n = if self.is_kw("INTERVAL") {
+            self.parse_expr(prec::PREDICATE + 1)?
+        } else {
+            let token = self.peek();
+            let literal = matches!(token.kind, TokenKind::IntLit | TokenKind::FloatLit | TokenKind::DecLit)
+                || (token.kind == TokenKind::Op && token.text == "?");
+            if !literal {
+                return Err(self.err_here("expected a frame bound"));
+            }
+            self.parse_prefix(prec::PREDICATE + 1)?
+        };
         if self.is_kw("PRECEDING") {
             self.advance();
             return Ok(FrameBound::Preceding(Box::new(n)));

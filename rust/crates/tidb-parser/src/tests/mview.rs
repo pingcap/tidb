@@ -314,3 +314,36 @@ fn materialized_view_syntax_errors_answer_go_masters_text() {
         assert_eq!(error.compatibility_message(sql), go, "{sql}");
     }
 }
+
+/// Go `parseExplainStmt` parses a statement only after an explainable token,
+/// and Go `parseFrameBound` takes only a number, a `?` or `INTERVAL`: the
+/// 1064 text Go master answers over unistore (`tools/xtake/go_x0607.jsonl`).
+#[test]
+fn explain_and_frame_bound_syntax_errors_answer_go_masters_text() {
+    for (sql, go) in [
+        ("EXPLAIN SHOW TABLES", "line 1 column 12 near \"SHOW TABLES\" "),
+        ("EXPLAIN SET @a = 1", "line 1 column 11 near \"SET @a = 1\" "),
+        ("EXPLAIN ANALYZE SHOW TABLES", "line 1 column 20 near \"SHOW TABLES\" "),
+        ("EXPLAIN LOAD DATA INFILE 'x' INTO TABLE t", "line 1 column 12 near \"LOAD DATA INFILE 'x' INTO TABLE t\" "),
+        ("EXPLAIN CALL p()", "line 1 column 12 near \"CALL p()\" "),
+        ("EXPLAIN FORMAT='plan_tree' ANALYZE SELECT 1", "line 1 column 34 near \"ANALYZE SELECT 1\" "),
+        // This repository's Go parser (`parseAdminShow`, probed directly).
+        ("ADMIN SHOW TELEMETRY", "line 1 column 5 near \"ADMIN SHOW TELEMETRY\" "),
+        ("ADMIN SHOW NEXT_ROW_ID", "line 1 column 5 near \"ADMIN SHOW NEXT_ROW_ID\" "),
+        ("ADMIN SHOW ALL JOBS", "line 1 column 14 near \"ALL JOBS\" "),
+        (
+            "select sum(a) over (order by a rows between 1+0 preceding and current row) from t",
+            "line 1 column 46 near \"+0 preceding and current row) from t\" ",
+        ),
+        (
+            "select sum(a) over (order by a rows between a preceding and current row) from t",
+            "line 1 column 45 near \"a preceding and current row) from t\" ",
+        ),
+    ] {
+        let error = parse(sql).expect_err(sql);
+        assert_eq!(error.compatibility_message(sql), go, "{sql}");
+    }
+    assert!(parse("select sum(a) over (order by a rows between 1 preceding and current row) from t").is_ok());
+    assert!(parse("select sum(a) over (order by a range between interval 1 day preceding and current row) from t").is_ok());
+    assert!(parse("select sum(a) over (order by a rows between ? preceding and current row) from t").is_ok());
+}
