@@ -105,6 +105,46 @@ pub fn publish_bootstrap_with_effects<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
 ) -> Result<PublishedBootstrap, String> {
+    publish(opener, timeout, None)
+}
+
+/// Go `bootstrap(s)`'s `doDDLWorks` and `doDMLWorks` on the bootstrap
+/// domain: each DDL statement runs through `domain`'s DDL, whose owner
+/// executes the job, over a store whose `InitDDLTables` (and next-gen
+/// `bootstrapSchemas`) already ran
+/// ([`crate::mysql_bootstrap::init_ddl_tables`]).
+pub fn publish_bootstrap_on<S: StoreClient>(
+    domain: &tidb_domain_core::domain::Domain,
+    opener: &RealOptimisticTransactionOpener<S>,
+    timeout: Duration,
+) -> Result<PublishedBootstrap, String> {
+    publish(opener, timeout, Some(domain))
+}
+
+/// Go `bootstrapSessionImpl`'s `bootstrapSchemas` (next-gen) and
+/// `InitDDLTables` under this build's layout, before the bootstrap domain
+/// starts. Returns the id batches whose regions they owe a split.
+pub fn init_system_tables<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
+    timeout: Duration,
+) -> Result<BootstrapSplits, String> {
+    let layout = layout();
+    let mut global_batches = Vec::new();
+    if layout == BootstrapLayout::NextGen {
+        global_batches.extend(crate::mysql_bootstrap::bootstrap_schemas(opener, timeout)?);
+    }
+    global_batches.extend(crate::mysql_bootstrap::init_ddl_tables(opener, timeout, layout)?);
+    Ok(BootstrapSplits {
+        global_batches,
+        table_ids: Vec::new(),
+    })
+}
+
+fn publish<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
+    timeout: Duration,
+    domain: Option<&tidb_domain_core::domain::Domain>,
+) -> Result<PublishedBootstrap, String> {
     let mut environment = BootstrapEnvironment {
         system_tz: infer_system_tz(),
         // Go's `new_collations_enabled_on_first_bootstrap` default, which this
@@ -119,7 +159,7 @@ pub fn publish_bootstrap_with_effects<S: StoreClient>(
         &mut TransactionMetaSnapshot::new(&mut transaction, timeout),
     ).map_err(|error| error.to_string())?;
     let _ = transaction.rollback(&UnaryCallContext::with_timeout(timeout));
-    let write = crate::mysql_bootstrap::jobs::execute(opener, timeout, &environment, layout())
+    let write = crate::mysql_bootstrap::jobs::execute_on(opener, timeout, &environment, layout(), domain)
         .map_err(|error| error.to_string())?;
     let transaction = opener.begin().map_err(|error| error.to_string())?;
     let schema_version = write.schema_version;
@@ -166,7 +206,7 @@ pub fn log_bootstrap_successful(started: std::time::Instant) {
 
 #[cfg(test)]
 mod tests {
-    use super::{notify_committed_bootstrap, SchemaVersionNotifier};
+    use super::{notify_committed_bootstrap, BootstrapLayout, SchemaVersionNotifier};
     use std::cell::Cell;
     use tidb_txnkv::transaction::{CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause, UndeterminedTransaction};
 
@@ -225,8 +265,8 @@ mod tests {
             ddl_table_version: 0,
         };
         // Deliberately lose the DML write, as Go's test stops after doDDLWorks.
-        let _uncommitted_dml = crate::mysql_bootstrap::jobs::execute(
-            &opener, timeout, &environment, super::layout(),
+        let _uncommitted_dml = crate::mysql_bootstrap::jobs::execute_on(
+            &opener, timeout, &environment, super::layout(), None,
         ).unwrap();
         let (outcome, _) = super::publish_bootstrap(&opener, timeout).unwrap();
         tidb_store_driver_error::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome).unwrap();
@@ -239,6 +279,92 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0][0].go_bytes(), b"%");
         assert_eq!(rows[0][1].go_bytes(), b"root");
+    }
+
+    /// The bootstrapped `mysql` schema and seed rows of a store, as text.
+    fn bootstrapped_rows(opener: tidb_ddl::embedded_store::InProcessOpener) -> Vec<String> {
+        use std::{sync::Arc, time::Duration};
+        use tidb_ddl_build::session_pool::DdlSessionPool;
+        let pool = crate::ddl_session_pool::NodeDdlSessionPool::for_store(
+            opener, Duration::from_secs(20), Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
+            true, Duration::from_millis(500),
+        ).unwrap();
+        let mut se = pool.open_sql_session().unwrap();
+        let mut rendered = Vec::new();
+        for sql in [
+            "select table_name, tidb_table_id from information_schema.tables where table_schema in ('mysql', 'sys') order by table_name",
+            "select Host, User from mysql.user",
+            "select variable_name, variable_value from mysql.global_variables order by variable_name",
+            "select variable_name from mysql.tidb where variable_name not in ('bootstrapped_time') order by variable_name",
+        ] {
+            for row in se.execute(sql, &[]).unwrap() {
+                rendered.push(
+                    row.iter()
+                        .map(|datum| match datum {
+                            tidb_datatype::Datum::String(value) => {
+                                String::from_utf8_lossy(value.bytes()).into_owned()
+                            }
+                            other => format!("{other:?}"),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(","),
+                );
+            }
+        }
+        rendered
+    }
+
+    /// Go `bootstrapSessionImpl` then `bootstrap(s)` on the bootstrap
+    /// domain: `InitDDLTables` commits on its own first (a second node's run
+    /// creates nothing), then the DDL jobs run through the given domain's
+    /// DDL. The store ends with the same `mysql` schema and seed rows as the
+    /// one-step publish.
+    #[test]
+    fn bootstrap_on_domain_after_init_ddl_tables_matches_one_step_publish() {
+        bootstrap_on_domain_matches_one_step_publish(BootstrapLayout::Classic, 0);
+    }
+
+    /// [`bootstrap_on_domain_after_init_ddl_tables_matches_one_step_publish`]
+    /// under the next-gen layout, whose `bootstrapSchemas` also runs first
+    /// and cuts one batch per `versionedBootstrapSchemas` group.
+    #[test]
+    fn bootstrap_on_domain_after_bootstrap_schemas_matches_one_step_publish() {
+        bootstrap_on_domain_matches_one_step_publish(BootstrapLayout::NextGen, 2);
+    }
+
+    fn bootstrap_on_domain_matches_one_step_publish(layout: BootstrapLayout, schema_batches: usize) {
+        use std::time::Duration;
+        super::override_layout_on_this_thread(Some(layout));
+        let timeout = Duration::from_secs(20);
+        let (_pd_one_step, one_step) = tidb_ddl::embedded_store::in_process_write_stack().unwrap();
+        let (outcome, _) = super::publish_bootstrap(&one_step, timeout).unwrap();
+        tidb_store_driver_error::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome).unwrap();
+
+        let (_pd_on_domain, on_domain) = tidb_ddl::embedded_store::in_process_write_stack().unwrap();
+        let splits = super::init_system_tables(&on_domain, timeout).unwrap();
+        assert_eq!(
+            splits.global_batches.len(),
+            schema_batches + tidb_metadef::DDL_TABLE_VERSION_TABLES.len()
+        );
+        assert!(splits.table_ids.is_empty());
+        assert!(
+            super::init_system_tables(&on_domain, timeout).unwrap().global_batches.is_empty(),
+            "a second InitDDLTables finds every DDL table version"
+        );
+        let pool = crate::ddl_session_pool::NodeDdlSessionPool::for_bootstrap(on_domain.clone(), timeout).unwrap();
+        let domain = pool.store_domain().unwrap();
+        let published = super::publish_bootstrap_on(&domain, &on_domain, timeout).unwrap();
+        tidb_store_driver_error::pessimistic_lock_error::commit_outcome_to_sql_error(&published.outcome).unwrap();
+        assert!(published.splits.global_batches.is_empty(), "InitDDLTables already cut its tables");
+        // Only the classic layout's `mysql.*` tables are `CREATE TABLE` jobs.
+        assert_eq!(published.splits.table_ids.is_empty(), layout == BootstrapLayout::NextGen);
+        drop(domain);
+        drop(pool);
+
+        let expected = bootstrapped_rows(one_step);
+        assert!(expected.iter().any(|row| row.contains("tidb_ddl_job")), "{expected:?}");
+        assert_eq!(bootstrapped_rows(on_domain), expected);
+        super::override_layout_on_this_thread(None);
     }
 
     struct RecordingNotifier(Cell<usize>);

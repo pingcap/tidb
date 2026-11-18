@@ -166,42 +166,12 @@ impl NodeDdlSessionPool {
         view: Option<&tidb_model::TableInfo>,
         context: tidb_ddl::cluster_ddl::DdlContext,
     ) -> Result<(), String> {
-        let ddl = &self
-            .store_domain
-            .as_ref()
-            .expect("store-owned domain")
-            .domain
-            .ddl;
-        let tidb_ast::Stmt::Ddl(ddl_statement) = statement else {
-            return Err("bootstrap statement is not DDL".into());
-        };
-        let result = match &**ddl_statement {
-            tidb_ast::DdlStmt::CreateView(create) => {
-                let (schema, name) =
-                    tidb_ddl::cluster_ddl::split_name(&create.name, "mysql", "view")
-                        .map_err(|error| error.to_string())?;
-                ddl.create_view(
-                    &schema,
-                    &name,
-                    create.or_replace,
-                    view.expect("bootstrap view metadata"),
-                    context.as_ref(),
-                )
-            }
-            tidb_ast::DdlStmt::AlterResourceGroup(_) => {
-                let (group, _) = crate::mysql_bootstrap::bootstrap_default_resource_group()
-                    .map_err(|error| error.to_string())?;
-                ddl.do_ddl_job_wrapper(
-                    context.as_ref(),
-                    tidb_ddl::cluster_ddl::resource_group::alter_resource_group(
-                        &group,
-                        context.as_ref(),
-                    ),
-                )
-            }
-            _ => ddl.execute_ddl(statement, "mysql", &context),
-        };
-        result.map(drop).map_err(|error| error.to_string())
+        execute_bootstrap_ddl(
+            &self.store_domain.as_ref().expect("store-owned domain").domain,
+            statement,
+            view,
+            context,
+        )
     }
 
     /// Binds the pool to the domain whose sessions it hands out.
@@ -215,6 +185,52 @@ impl NodeDdlSessionPool {
             },
         ))));
     }
+
+    /// The domain [`Self::for_bootstrap`] built and owns.
+    #[cfg(test)]
+    pub(crate) fn store_domain(&self) -> Option<Arc<Domain>> {
+        self.store_domain.as_ref().map(|owned| Arc::clone(&owned.domain))
+    }
+}
+
+/// Go `mustExecute` for one bootstrap DDL statement, on `domain`'s DDL.
+pub(crate) fn execute_bootstrap_ddl(
+    domain: &Domain,
+    statement: &tidb_ast::Stmt,
+    view: Option<&tidb_model::TableInfo>,
+    context: tidb_ddl::cluster_ddl::DdlContext,
+) -> Result<(), String> {
+    let ddl = &domain.ddl;
+    let tidb_ast::Stmt::Ddl(ddl_statement) = statement else {
+        return Err("bootstrap statement is not DDL".into());
+    };
+    let result = match &**ddl_statement {
+        tidb_ast::DdlStmt::CreateView(create) => {
+            let (schema, name) =
+                tidb_ddl::cluster_ddl::split_name(&create.name, "mysql", "view")
+                    .map_err(|error| error.to_string())?;
+            ddl.create_view(
+                &schema,
+                &name,
+                create.or_replace,
+                view.expect("bootstrap view metadata"),
+                context.as_ref(),
+            )
+        }
+        tidb_ast::DdlStmt::AlterResourceGroup(_) => {
+            let (group, _) = crate::mysql_bootstrap::bootstrap_default_resource_group()
+                .map_err(|error| error.to_string())?;
+            ddl.do_ddl_job_wrapper(
+                context.as_ref(),
+                tidb_ddl::cluster_ddl::resource_group::alter_resource_group(
+                    &group,
+                    context.as_ref(),
+                ),
+            )
+        }
+        _ => ddl.execute_ddl(statement, "mysql", &context),
+    };
+    result.map(drop).map_err(|error| error.to_string())
 }
 
 /// Go `GetDomain(store)`'s owned domain for this pool's lifetime.

@@ -56,7 +56,7 @@ use tidb_metadef::{BOOTSTRAP_TABLES, DDL_TABLE_VERSION_TABLES};
 /// The tables Go's `versionedBootstrapSchemas` of this tree does not create:
 /// Go master's materialized-view version, which `BOOTSTRAP_TABLES` also
 /// carries for the next-gen layout.
-const MATERIALIZED_VIEW_TABLES: [&str; 5] = [
+pub(super) const MATERIALIZED_VIEW_TABLES: [&str; 5] = [
     "tidb_mview_refresh_info",
     "tidb_mlog_purge_info",
     "tidb_mview_refresh_hist",
@@ -389,14 +389,18 @@ pub(super) fn plan<S: MetaSnapshot>(
     plan_with(snapshot, start_ts, environment, layout, true)
 }
 
-/// Go `bootstrap` / `doDDLWorks`: commit `InitDDLTables`, then execute each
-/// statement through the domain's DDL session pool. The returned write holds
-/// only `doDMLWorks` and schema-cache initialization, never active job rows.
-pub(crate) fn execute<S: tidb_store_driver_txn::transaction::StoreClient>(
+/// Go `bootstrap` / `doDDLWorks`: commit `InitDDLTables` (when an earlier
+/// step has not), then execute each statement through `domain`'s DDL when
+/// given (Go `bootstrap(s)` on the bootstrap domain's session, whose DDL
+/// owner runs each job), else through a bootstrap domain of the DDL session
+/// pool's own. The returned write holds only `doDMLWorks` and schema-cache
+/// initialization, never active job rows.
+pub(crate) fn execute_on<S: tidb_store_driver_txn::transaction::StoreClient>(
     opener: &tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
     timeout: std::time::Duration,
     environment: &BootstrapEnvironment,
     layout: BootstrapLayout,
+    domain: Option<&tidb_domain_core::domain::Domain>,
 ) -> Result<BootstrapWrite, BootstrapError> {
     use std::sync::Arc;
     use tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot;
@@ -411,19 +415,28 @@ pub(crate) fn execute<S: tidb_store_driver_txn::transaction::StoreClient>(
     };
     let (start_ts, mut current) = snapshot()?;
     let mut pool: Option<Arc<crate::ddl_session_pool::NodeDdlSessionPool>> = None;
+    let mut started = false;
     plan_with_executor(&mut current, start_ts, environment, layout, false, true,
         &mut |overlay, _, last, sql, view| {
-            if pool.is_none() {
+            if !started {
                 let txn = opener.begin().map_err(|e| error(e.to_string()))?;
                 let outcome = txn.commit(overlay.net_mutations()?, &UnaryCallContext::with_timeout(timeout))
                     .map_err(|e| error(e.to_string()))?;
                 tidb_store_driver_error::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome)
                     .map_err(|e| error(e.message))?;
                 overlay.writes.clear();
-                pool = Some(crate::ddl_session_pool::NodeDdlSessionPool::for_bootstrap(opener.clone(), timeout)
-                    .map_err(error)?);
+                if domain.is_none() {
+                    pool = Some(crate::ddl_session_pool::NodeDdlSessionPool::for_bootstrap(opener.clone(), timeout)
+                        .map_err(error)?);
+                }
+                started = true;
             }
-            pool.as_ref().unwrap().execute_bootstrap(&parse_statement(sql)?, view, std::sync::Arc::new(bootstrap_context(sql)))
+            let statement = parse_statement(sql)?;
+            let context = std::sync::Arc::new(bootstrap_context(sql));
+            match domain {
+                Some(domain) => crate::ddl_session_pool::execute_bootstrap_ddl(domain, &statement, view, context),
+                None => pool.as_ref().expect("the bootstrap pool started").execute_bootstrap(&statement, view, context),
+            }
                 .map_err(|detail| BootstrapError::Job {
                     statement: sql.lines().next().unwrap_or(sql).trim().to_owned(), detail,
                 })?;
@@ -538,7 +551,13 @@ fn plan_with_executor<S: MetaSnapshot>(
 
     let mut created_tables = Vec::new();
     let mut global_batches = Vec::new();
-    if !classic {
+    // A resumed bootstrap over a store whose `bootstrapSchemas` already ran
+    // (`super::bootstrap_schemas`, before the bootstrap domain) finds `sys`.
+    let schemas_bootstrapped = resume
+        && overlay
+            .get(&key::database_kv_key(tidb_metadef::system::SYS_DATABASE_ID))?
+            .is_some();
+    if !classic && !schemas_bootstrapped {
         // `bootstrapSchemas`: `sys` and every `mysql.*` table at its reserved
         // id, cut in one split, built under the metabuild default
         // (`tidb_enable_clustered_index` ON: `mysql.user`, `mysql.tidb`,
@@ -671,6 +690,13 @@ fn plan_with_executor<S: MetaSnapshot>(
             table_ids.push(info.id);
             created_tables.push(info.clone());
         }
+    }
+
+    // A resumed bootstrap seeds the tables the store holds, whichever step
+    // created them (`InitDDLTables` and `bootstrapSchemas` may have run
+    // before it).
+    if resume {
+        created_tables = tidb_infoschema::cluster_catalog::list_tables(&mut overlay, database_id)?;
     }
 
     // Go `doDMLWorks`.

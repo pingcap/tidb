@@ -1472,6 +1472,9 @@ where
     schema_sync: Arc<ClusterSchemaSync<S>>,
     scheduler: Arc<PersistedDdlScheduler<S>>,
     owner: Arc<dyn tidb_owner::Manager>,
+    /// Whether `owner` is the process's owner manager (Go
+    /// `getOwnerManager`), whose session outlives this DDL.
+    owner_is_global: bool,
     server_state: Arc<dyn Syncer>,
     server_state_context: SleepContext,
     min_job_id_refresher: Arc<MinJobIdRefresher>,
@@ -1595,7 +1598,15 @@ where
     ) -> Result<Self, String> {
         // Go Loader keeps the allocator requirement for every load caller.
         catalog.set_row_ids(Arc::clone(&row_ids));
-        let owner_id = server_info.get_local_server_info().static_info.id;
+        // Go `newDDL`: with etcd, the DDL campaigns through the process's
+        // owner manager (`getOwnerManager`) and takes its ID.
+        let global_owner = notifier
+            .as_ref()
+            .and_then(|_| crate::owner_mgr::get_owner_manager(opener.store().get_keyspace()));
+        let owner_id = global_owner.as_ref().map_or_else(
+            || server_info.get_local_server_info().static_info.id,
+            |manager| manager.id().to_owned(),
+        );
         // Go `ddl.Start`: on the classic kernel, settle the job version and
         // the global index V1 key format before any job is submitted.
         let job_version_detector = if tidb_config_kerneltype::is_classic() {
@@ -1670,15 +1681,16 @@ where
             region_store: Arc::default(),
             start_mode: executor_start_mode,
         });
-        let owner: Arc<dyn tidb_owner::Manager> = match notifier.as_ref() {
-            Some(etcd) => Arc::new(tidb_owner::OwnerManager::new(
+        let owner: Arc<dyn tidb_owner::Manager> = match (global_owner.as_ref(), notifier.as_ref()) {
+            (Some(manager), _) => manager.owner_manager(),
+            (None, Some(etcd)) => Arc::new(tidb_owner::OwnerManager::new(
                 tidb_owner::Context::background(),
                 Arc::clone(etcd) as Arc<dyn tidb_owner::OwnerStore>,
                 "ddl",
                 owner_id.clone(),
                 DDL_OWNER_KEY,
             )),
-            None => Arc::new(local_ddl_owner(owner_id, opener.authority_id())),
+            (None, None) => Arc::new(local_ddl_owner(owner_id, opener.authority_id())),
         };
         *scheduler
             .owner
@@ -1712,6 +1724,7 @@ where
             ),
             scheduler,
             owner,
+            owner_is_global: global_owner.is_some(),
             server_state,
             server_state_context,
             min_job_id_refresher,
@@ -3591,8 +3604,10 @@ where
 {
     /// Go `ddl.close`: the server-state watch, the min-job-id refresher, the
     /// job-version detector and the temp-dir loop stop, the owner campaign
-    /// is cancelled and the job scheduler stops. A second call finds every
-    /// worker already taken.
+    /// loop breaks (`BreakCampaignLoop`: the process's owner manager keeps
+    /// its session until `CloseOwnerManager`; a manager of this DDL's own
+    /// closes) and the job scheduler stops. A second call finds every worker
+    /// already taken.
     fn stop(&self) {
         self.server_state_context.cancel();
         let _ = self.min_job_id_stop.send(());
@@ -3607,7 +3622,10 @@ where
             let _ = stop.send(());
             let _ = worker.join();
         }
-        self.owner.close();
+        self.owner.break_campaign_loop();
+        if !self.owner_is_global {
+            self.owner.close();
+        }
         self.scheduler.stop();
     }
 

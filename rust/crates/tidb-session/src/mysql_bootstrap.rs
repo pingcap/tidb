@@ -337,6 +337,190 @@ fn schema_cache_size_kv_key() -> Vec<u8> {
     tidb_structure::encode_string_data_key(tidb_tablecodec::table_key::META_PREFIX, key::SCHEMA_CACHE_SIZE)
 }
 
+/// Go `kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)` for a retried meta
+/// transaction.
+fn ddl_txn_context() -> tidb_txnkv::RunInNewTxnContext {
+    tidb_txnkv::RunInNewTxnContext {
+        request_source: Some(tidb_txnkv::RequestSource {
+            internal: true,
+            source_type: tidb_txnkv::INTERNAL_TXN_DDL.to_owned(),
+            explicit_source_type: String::new(),
+        }),
+    }
+}
+
+/// Go `createAndSplitTables`' meta half: writes `tables` (built at update TS
+/// zero) into `database_id` at the transaction's start TS. The caller cuts
+/// their regions once the transaction commits.
+fn create_tables<T: tidb_meta::transaction::MetaTransaction>(
+    mutator: &tidb_meta::transaction::Mutator<T>,
+    database_id: i64,
+    tables: &[TableInfo],
+) -> Result<Vec<i64>, tidb_meta::MetaError> {
+    let mut ids = Vec::with_capacity(tables.len());
+    for table in tables {
+        let mut info = table.clone();
+        info.update_ts = mutator.start_ts();
+        mutator.create_table_or_view(database_id, &info)?;
+        ids.push(info.id);
+    }
+    Ok(ids)
+}
+
+/// Go `bootstrapSchemas` (`pkg/session/bootstrap.go`), which
+/// `bootstrapSessionImpl` runs on the next-gen kernel before `InitDDLTables`
+/// and before any domain starts: `mysql` and `sys` at their reserved ids and
+/// each `versionedBootstrapSchemas` group of `mysql.*` tables the store's
+/// `NextGenBootTableVersion` lacks, in one retried transaction. Returns the
+/// id batches `createAndSplitTables` cuts, one per group it created.
+///
+/// # Errors
+///
+/// A table does not build, or the transaction failed.
+pub fn bootstrap_schemas<S: tidb_store_driver_txn::transaction::StoreClient>(
+    opener: &tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
+    timeout: std::time::Duration,
+) -> Result<Vec<Vec<i64>>, String> {
+    use tidb_meta::transaction::NextGenBootTableVersion;
+    // Go `meta.BaseNextGenBootTableVersion`, then
+    // `MaskingPolicyNextGenBootTableVersion`; this tree's Go has no
+    // materialized-view group.
+    let build = |filter: &dyn Fn(&BootstrapTable) -> bool| {
+        tidb_metadef::BOOTSTRAP_TABLES
+            .iter()
+            .filter(|table| filter(table))
+            .filter(|table| !jobs::MATERIALIZED_VIEW_TABLES.contains(&table.name))
+            .map(|table| build_bootstrap_table(table, 0))
+            .collect::<Result<Vec<_>, _>>()
+    };
+    let versions = [
+        (1, true, build(&|table| table.name != MASKING_POLICY_TABLE).map_err(|e| e.to_string())?),
+        (2, false, build(&|table| table.name == MASKING_POLICY_TABLE).map_err(|e| e.to_string())?),
+    ];
+    let mut batches = Vec::new();
+    let mut storage = tidb_store_driver_txn::meta_txn::MetaTxnStorage::new(opener, timeout);
+    tidb_txnkv::run_in_new_txn(&ddl_txn_context(), &mut storage, true, |transaction| {
+        batches.clear();
+        let mutator = tidb_meta::transaction::Mutator::new(&mut *transaction);
+        let current = mutator.next_gen_boot_table_version()?.0;
+        let mut largest = current;
+        for (version, with_sys, tables) in &versions {
+            if current >= *version {
+                continue;
+            }
+            tidb_logutil::bg_logger().info(
+                "bootstrap tables",
+                &[
+                    tidb_log::Field::new("currVer", tidb_log::Value::I64(current)),
+                    tidb_log::Field::new("targetVer", tidb_log::Value::I64(*version)),
+                ],
+            );
+            mutator.create_sys_database_by_id_if_not_exists(
+                SYSTEM_DB,
+                tidb_metadef::system::SYSTEM_DATABASE_ID,
+            )?;
+            batches.push(create_tables(
+                &mutator,
+                tidb_metadef::system::SYSTEM_DATABASE_ID,
+                tables,
+            )?);
+            if *with_sys {
+                mutator.create_sys_database_by_id_if_not_exists(
+                    SYS_DB,
+                    tidb_metadef::system::SYS_DATABASE_ID,
+                )?;
+            }
+            largest = largest.max(*version);
+        }
+        if largest > current {
+            mutator.set_next_gen_boot_table_version(NextGenBootTableVersion(largest))?;
+        }
+        Ok(())
+    })
+    .map_err(|error| error.to_string())?;
+    Ok(batches)
+}
+
+/// Go `InitDDLTables` (`pkg/session/session.go`), which every node runs
+/// before the bootstrap domain starts: the `mysql` database
+/// (`CreateMySQLDatabaseIfNotExists`) and each `ddlTableVersionTables` group
+/// the store's `DDLTableVersion` lacks, written straight into meta in one
+/// retried transaction. The DDL needs these tables before it runs any job.
+/// Returns the id batches `createAndSplitTables` cuts, one per group it
+/// created.
+///
+/// # Errors
+///
+/// A table does not build, or the transaction failed.
+pub fn init_ddl_tables<S: tidb_store_driver_txn::transaction::StoreClient>(
+    opener: &tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
+    timeout: std::time::Duration,
+    layout: BootstrapLayout,
+) -> Result<Vec<Vec<i64>>, String> {
+    use tidb_meta::transaction::DdlTableVersion;
+    let versions = tidb_metadef::DDL_TABLE_VERSION_TABLES
+        .iter()
+        .map(|version| {
+            // Go `InitDDLTables` builds under the metabuild default
+            // (`tidb_enable_clustered_index` ON).
+            version
+                .tables
+                .iter()
+                .map(|table| build_bootstrap_table(table, 0))
+                .collect::<Result<Vec<_>, _>>()
+                .map(|tables| (version.version, tables))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let mut batches = Vec::new();
+    let mut storage = tidb_store_driver_txn::meta_txn::MetaTxnStorage::new(opener, timeout);
+    tidb_txnkv::run_in_new_txn(&ddl_txn_context(), &mut storage, true, |transaction| {
+        batches.clear();
+        let mutator = tidb_meta::transaction::Mutator::new(&mut *transaction);
+        let current = mutator.ddl_table_version()?.0;
+        // Go `Mutator.CreateMySQLDatabaseIfNotExists`, under this layout.
+        let database_id = match layout {
+            BootstrapLayout::NextGen => {
+                let id = tidb_metadef::system::SYSTEM_DATABASE_ID;
+                mutator.create_sys_database_by_id_if_not_exists(SYSTEM_DB, id)?;
+                id
+            }
+            BootstrapLayout::Classic => match mutator.system_database_id()? {
+                0 => {
+                    let id = mutator.gen_global_id()?;
+                    mutator.create_sys_database_by_id(SYSTEM_DB, id)?;
+                    id
+                }
+                id => id,
+            },
+        };
+        let mut largest = current;
+        for (version, tables) in &versions {
+            if current >= *version {
+                continue;
+            }
+            tidb_logutil::bg_logger().info(
+                "init DDL tables",
+                &[
+                    tidb_log::Field::new("currVer", tidb_log::Value::I64(current)),
+                    tidb_log::Field::new("targetVer", tidb_log::Value::I64(*version)),
+                ],
+            );
+            largest = largest.max(*version);
+            batches.push(create_tables(&mutator, database_id, tables)?);
+        }
+        if largest > current {
+            mutator.set_ddl_table_version(DdlTableVersion(largest))?;
+        }
+        Ok(())
+    })
+    .map_err(|error| error.to_string())?;
+    Ok(batches)
+}
+
+/// Go `systemTablesOfMaskingPolicyNextGenVersion`'s one table.
+const MASKING_POLICY_TABLE: &str = "tidb_masking_policy";
+
 /// One view Go's bootstrap session creates with `CREATE OR REPLACE VIEW`
 /// (`doDDLWorks`: `metadef.CreateTiDBMDLView`, then
 /// `metadef.CreateSchemaUnusedIndexesView`). A view stores no column types --
