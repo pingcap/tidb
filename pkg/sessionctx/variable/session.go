@@ -773,6 +773,8 @@ var _ SessionVarsProvider = &SessionVars{}
 
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
+	// TiKVFullTextAnalyzerForRebuild pins the analyzer during BR index reconstruction.
+	TiKVFullTextAnalyzerForRebuild *model.TiKVFullTextIndexInfo
 	Concurrency
 	MemQuota
 	BatchSize
@@ -1140,6 +1142,8 @@ type SessionVars struct {
 	// EnableLocalMatchAgainst enables row-wise no-score MATCH ... AGAINST
 	// evaluation in TiDB and permits the equivalent scalar expression to run in TiFlash.
 	EnableLocalMatchAgainst bool
+	// EnableTiKVFullTextIndex opts new FULLTEXT DDL into positional TiKV indexes.
+	EnableTiKVFullTextIndex bool
 	// EnableFTSLikeFallback enables the substring-based MATCH alternative round.
 	EnableFTSLikeFallback bool
 

@@ -1,0 +1,43 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "tikvfulltext",
+    srcs = [
+        "analyzer.go",
+        "document.go",
+        "posting.go",
+        "query.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/expression/tikvfulltext",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression/tikvfulltext/matchagainst",
+        "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "tikvfulltext_test",
+    timeout = "short",
+    srcs = [
+        "analyzer_test.go",
+        "posting_test.go",
+        "query_test.go",
+    ],
+    embed = [":tikvfulltext"],
+    flaky = False,
+    shard_count = 40,
+    deps = [
+        "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/sessionctx/variable",
+        "//pkg/types",
+        "//pkg/util/codec",
+        "//pkg/util/mock",
+        "@com_github_stretchr_testify//require",
+    ],
+)

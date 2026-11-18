@@ -247,7 +247,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 				job.State = model.JobStateCancelled
 				return ver, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("column is covered by a FULLTEXT index")
 			}
-			if err := checkIndexInModifiableColumns(columns, idx.Columns, idx.VectorInfo != nil); err != nil {
+			if err := checkIndexInModifiableColumns(columns, idx.Columns, idx.VectorInfo != nil, idx); err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
@@ -1906,11 +1906,11 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		if indexInfo.FullTextInfo != nil {
 			return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("column is covered by a FULLTEXT index")
 		}
-		err = checkIndexInModifiableColumns(columns, indexInfo.Columns, indexInfo.VectorInfo != nil)
+		err = checkIndexInModifiableColumns(columns, indexInfo.Columns, indexInfo.VectorInfo != nil, indexInfo)
 		if err != nil {
 			return
 		}
-		err = checkIndexPrefixLength(columns, indexInfo.Columns)
+		err = checkIndexPrefixLength(columns, indexInfo)
 		return
 	}
 
@@ -1939,11 +1939,25 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 	return nil
 }
 
-func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, isVectorIndex bool) error {
+func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, isVectorIndex bool, indexInfos ...*model.IndexInfo) error {
+	var idxInfo *model.IndexInfo
+	if len(indexInfos) > 0 {
+		idxInfo = indexInfos[0]
+	}
 	for _, ic := range idxColumns {
 		col := model.FindColumnInfo(columns, ic.Name.L)
 		if col == nil {
 			return dbterror.ErrKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ic.Name)
+		}
+
+		if idxInfo != nil && idxInfo.IsTiKVFullTextIndex() && ic == idxInfo.TiKVFullTextColumn() {
+			// The index tokenizes the column, so the column must stay text;
+			// the key-length rules do not apply to it. The key columns before
+			// it follow the ordinary rules below.
+			if err := checkTiKVFullTextColumn(col); err != nil {
+				return err
+			}
+			continue
 		}
 
 		prefixLength := types.UnspecifiedLength

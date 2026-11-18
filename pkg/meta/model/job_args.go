@@ -1346,8 +1346,9 @@ type IndexArg struct {
 	HiddenCols              []*ColumnInfo                 `json:"hidden_cols,omitempty"`
 
 	// For vector index
-	FuncExpr string `json:"func_expr,omitempty"`
-	IsVector bool   `json:"is_vector,omitempty"`
+	FuncExpr     string                 `json:"func_expr,omitempty"`
+	IsVector     bool                   `json:"is_vector,omitempty"`
+	TiKVFullText *TiKVFullTextIndexInfo `json:"tikv_fulltext,omitempty"`
 
 	// For PK
 	IsPK    bool          `json:"is_pk,omitempty"`

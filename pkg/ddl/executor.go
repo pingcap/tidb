@@ -1006,6 +1006,18 @@ func checkGlobalIndexes(ec errctx.Context, tblInfo *model.TableInfo) error {
 
 func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+
+	if ctx.GetSessionVars().EnableTiKVFullTextIndex {
+		for _, constr := range s.Constraints {
+			if constr.Tp == ast.ConstraintFulltext {
+				if err := checkTiKVFullTextClusterSupport(); err != nil {
+					return errors.Trace(err)
+				}
+				break
+			}
+		}
+
+	}
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -1795,14 +1807,15 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 				err = e.createIndex(sctx, ident, ast.IndexKeyTypeUnique, pmodel.NewCIStr(constr.Name),
 					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
+			case ast.ConstraintFulltext:
+				err = e.createIndex(sctx, ident, ast.IndexKeyTypeFullText, pmodel.NewCIStr(constr.Name),
+					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintForeignKey:
 				// NOTE: we do not handle `symbol` and `index_name` well in the parser and we do not check ForeignKey already exists,
 				// so we just also ignore the `if not exists` check.
 				err = e.CreateForeignKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
 			case ast.ConstraintPrimaryKey:
 				err = e.CreatePrimaryKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
-			case ast.ConstraintFulltext:
-				err = e.createFullTextIndex(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintCheck:
 				if !variable.EnableCheckConstraint.Load() {
 					sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
@@ -3055,6 +3068,13 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 				return errors.Trace(dbterror.ErrTablesDifferentMetadata)
 			}
 		}
+		// FULLTEXT indexes built with different analyzers store different
+		// terms for the same text, so the entries of one would be read as
+		// the entries of the other.
+		if sourceIdx.IsTiKVFullTextIndex() != compatIdx.IsTiKVFullTextIndex() ||
+			(sourceIdx.IsTiKVFullTextIndex() && !sourceIdx.TiKVFullText.SameAnalyzer(compatIdx.TiKVFullText)) {
+			return errors.Trace(dbterror.ErrTablesDifferentMetadata)
+		}
 		if sourceIdx.ID != compatIdx.ID {
 			return dbterror.ErrPartitionExchangeDifferentOption.GenWithStackByArgs(fmt.Sprintf("index: %s", sourceIdx.Name))
 		}
@@ -4083,7 +4103,7 @@ func checkIndexLengthWithNewCharset(tblInfo *model.TableInfo, toCharset, toColla
 	}
 
 	for _, indexInfo := range tblInfo.Indices {
-		err := checkIndexPrefixLength(columns, indexInfo.Columns)
+		err := checkIndexPrefixLength(columns, indexInfo)
 		if err != nil {
 			return err
 		}
@@ -4702,7 +4722,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, false)
+	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, false, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4853,7 +4873,7 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, true)
+	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, true, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4994,15 +5014,29 @@ func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableNa
 
 func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName pmodel.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
-	// not support Spatial and FullText index
-	if keyType == ast.IndexKeyTypeSpatial {
+	// not support Spatial index
+	tikvFullText := false
+	switch keyType {
+	case ast.IndexKeyTypeSpatial:
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is not supported")
-	}
-	if keyType == ast.IndexKeyTypeFullText {
-		return e.createFullTextIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
-	}
-	if keyType == ast.IndexKeyTypeVector {
+	case ast.IndexKeyTypeVector:
 		return e.createVectorIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
+	case ast.IndexKeyTypeFullText:
+		if !ctx.GetSessionVars().EnableTiKVFullTextIndex && ctx.GetSessionVars().TiKVFullTextAnalyzerForRebuild == nil {
+			if indexOption != nil && len(indexOption.FullTextKeyColumns) > 0 {
+				return dbterror.ErrUnsupportedIndexType.GenWithStack("KEY_COLUMNS requires tidb_enable_tikv_fulltext_index")
+			}
+			return e.createFullTextIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
+		}
+
+		if err := checkTiKVFullTextClusterSupport(); err != nil {
+			return errors.Trace(err)
+		}
+		var err error
+		if indexOption, indexPartSpecifications, err = NormalizeTiKVFullTextIndex(indexOption, indexPartSpecifications); err != nil {
+			return errors.Trace(err)
+		}
+		tikvFullText = true
 	}
 	unique := keyType == ast.IndexKeyTypeUnique
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
@@ -5033,9 +5067,15 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications, false)
+	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications, false, tikvFullText)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	var tikvFullTextInfo *model.TiKVFullTextIndexInfo
+	if tikvFullText {
+		if tikvFullTextInfo, err = buildTiKVFullTextInfoWithCheck(metaBuildCtx, finalColumns, indexPartSpecifications, indexOption, tblInfo, nil); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	if err = checkCreateGlobalIndex(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexName.O, indexColumns, unique, indexOption != nil && indexOption.Global); err != nil {
@@ -5094,6 +5134,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			HiddenCols:              hiddenCols,
 			Global:                  global,
 			ConditionString:         conditionString,
+			TiKVFullText:            tikvFullTextInfo,
 		}},
 		OpType: model.OpAddIndex,
 	}

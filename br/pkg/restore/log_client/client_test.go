@@ -2725,3 +2725,69 @@ func TestGetLockedMigrationsReleasesReadLockOnLoadError(t *testing.T) {
 	}))
 	require.Emptyf(t, lingering, "readLock was not released after Load error; lingering files: %v", lingering)
 }
+
+// A FULLTEXT index built in TiKV is rebuilt with the analyzer settings it
+// recorded, in a cluster that has other settings in force by now.
+func TestRepairIngestFullTextIndex(t *testing.T) {
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec("set @@session.tidb_enable_tikv_fulltext_index = on")
+	tk.MustExec("set global innodb_ft_min_token_size = 2")
+	tk.MustExec("set @@session.innodb_ft_enable_stopword = off")
+	tk.MustExec("CREATE TABLE test.repair_fulltext_t1(id int primary key, tenant int, body text, fulltext index ft(body) key_columns (tenant));")
+	tk.MustExec("insert into test.repair_fulltext_t1 values (1, 7, 'to be or not to be')")
+	tk.MustExec("set global innodb_ft_min_token_size = 3")
+	g := gluetidb.New()
+	ctx := context.Background()
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, fakeSession{})
+
+	table, err := s.Mock.InfoSchema().TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("repair_fulltext_t1"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	var oldIndex *model.IndexInfo
+	for _, indexInfo := range tableInfo.Indices {
+		if indexInfo.Name.L == "ft" {
+			oldIndex = indexInfo
+		}
+	}
+	require.NotNil(t, oldIndex)
+	require.NotNil(t, oldIndex.TiKVFullText)
+	require.Equal(t, 2, oldIndex.TiKVFullText.MinTokenSize)
+	require.False(t, oldIndex.TiKVFullText.EnableStopword)
+
+	ingestRecorder := ingestrec.New()
+	require.NoError(t, ingestRecorder.TryAddJob(&model.Job{
+		Version:    model.JobVersion1,
+		SchemaName: "test",
+		TableName:  "repair_fulltext_t1",
+		TableID:    tableInfo.ID,
+		Type:       model.ActionAddIndex,
+		State:      model.JobStateSynced,
+		RowCount:   1,
+		RawArgs:    json.RawMessage(fmt.Sprintf("[%d, false, [], false]", oldIndex.ID)),
+		ReorgMeta:  &model.DDLReorgMeta{ReorgTp: model.ReorgTypeIngest},
+		BinlogInfo: &model.HistoryInfo{
+			TableInfo: &model.TableInfo{Indices: []*model.IndexInfo{oldIndex.Clone()}},
+		},
+	}, false))
+	require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, nil, g))
+
+	table, err = s.Mock.InfoSchema().TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("repair_fulltext_t1"))
+	require.NoError(t, err)
+	var newIndex *model.IndexInfo
+	for _, indexInfo := range table.Meta().Indices {
+		if indexInfo.Name.L == "ft" {
+			newIndex = indexInfo
+		}
+	}
+	require.NotNil(t, newIndex)
+	require.Less(t, oldIndex.ID, newIndex.ID)
+	require.NotNil(t, newIndex.TiKVFullText)
+	require.True(t, oldIndex.TiKVFullText.SameAnalyzer(newIndex.TiKVFullText))
+	// The key column is named by KEY_COLUMNS in the repair statement and
+	// keeps its place ahead of the tokenized column.
+	require.Len(t, newIndex.Columns, 2)
+	require.Equal(t, "tenant", newIndex.Columns[0].Name.L)
+	require.Equal(t, "body", newIndex.Columns[1].Name.L)
+	tk.MustExec("admin check table test.repair_fulltext_t1")
+}

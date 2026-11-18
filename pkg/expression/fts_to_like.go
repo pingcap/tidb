@@ -17,6 +17,7 @@ package expression
 import (
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -405,4 +406,115 @@ func buildFTSILikePredicate(ctx BuildContext, column Expression, term string) (E
 		RetType: types.NewFieldType(mysql.TypeTiny),
 	}
 	return NewFunction(ctx, ast.Ifnull, types.NewFieldType(mysql.TypeTiny), likeFunc, zeroConst)
+}
+
+// BuildFTSToILikeExpressionFromBuiltin pulls the search string and modifier
+// out of a MATCH...AGAINST scalar function (FTSMysqlMatchAgainst) and
+// delegates to BuildFTSToILikeExpression. It is the entry point for
+// selectivity estimation, where the FTS scalar function is opaque to the
+// stats engine; substituting an equivalent ILIKE expression lets the engine
+// reuse its TopN/histogram-based estimation paths instead of falling back
+// to a flat default that ignores column statistics.
+//
+// Non-NULL string proxies are restricted to single-column MATCH:
+// GetSelectivityByFilter only estimates expressions over a single column, so a
+// multi-column substituted ILIKE would be declined by the stats engine and fall
+// through to the same str-match default that the un-substituted FTS expression
+// already receives. Returning an error for the multi-column case lets the
+// selectivity caller's existing err-check fall through cleanly, without
+// producing a substitute that would never improve the estimate. A NULL search
+// is returned before that restriction because it is column-independent and
+// preserves SQL three-valued logic for every MATCH arity.
+func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction) (Expression, error) {
+	if fts == nil || fts.FuncName.L != ast.FTSMysqlMatchAgainst {
+		return nil, errors.Errorf("expected %s, got %v", TiKVMatchAgainst, fts)
+	}
+	args := fts.GetArgs()
+	if len(args) < 2 {
+		return nil, errors.Errorf("%s expects at least 2 args, got %d", TiKVMatchAgainst, len(args))
+	}
+	againstConst, ok := args[0].(*Constant)
+	if !ok {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with non-constant search string")
+	}
+	if againstConst.Value.IsNull() {
+		// Match the planner-side matchAgainstToLike NULL fast-path: emit
+		// Constant(NULL) so the substitute preserves SQL three-valued logic
+		// even though selectivity estimation does not currently exploit the
+		// difference. Constant(0) here would, under any future cost path that
+		// composes NOT over the substitute, report "NOT 0 = TRUE → selectivity
+		// 1" — opposite of native MATCH(NULL) which returns NULL.
+		return &Constant{
+			Value:   types.Datum{},
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		}, nil
+	}
+	localInfo, local := FTSMysqlMatchAgainstLocalEvalInfo(fts)
+	if local && localInfo.MatchNothing {
+		// The query provably matches nothing, so the exact selectivity is 0
+		// for every arity. Report that directly instead of approximating.
+		return ftsZeroIntConst(), nil
+	}
+	if len(args) > 2 {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("multi-column MATCH...AGAINST in selectivity substitution")
+	}
+	if againstConst.Value.Kind() != types.KindString {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with non-string search constant")
+	}
+	sig, ok := fts.Function.(*builtinFtsMysqlMatchAgainstSig)
+	if !ok {
+		return nil, errors.Errorf("unexpected builtin signature for %s: %T", TiKVMatchAgainst, fts.Function)
+	}
+	if local {
+		// Estimate the locally-evaluated predicate from a single analyzed
+		// token rather than re-deriving terms from the raw search string: the
+		// analyzer may have dropped stop words or over-length tokens, so the
+		// raw string can name terms the predicate never actually tests.
+		if localInfo.SelectivityTerm == "" {
+			return nil, ErrNotSupportedYet.GenWithStackByArgs(
+				"local MATCH...AGAINST query has no analyzer-safe string selectivity proxy",
+			)
+		}
+		return buildFTSILikePredicate(ctx, args[1], localInfo.SelectivityTerm)
+	}
+	return BuildFTSToILikeExpression(ctx, args[1:], againstConst.Value.GetString(), sig.modifier)
+}
+
+// BuildFTSTermILikePredicate builds the ILIKE predicate that selects the rows
+// whose column contains term, for estimating how many rows contain one
+// analyzed term of a full-text index. It is the bare ILIKE, without the IFNULL
+// buildFTSILikePredicate adds for negation: the statistics recognize an ILIKE
+// as a string match and estimate it from the column's TopN and histogram,
+// while an IFNULL around it would get the generic selectivity.
+func BuildFTSTermILikePredicate(ctx BuildContext, column Expression, term string) (Expression, error) {
+	return buildFTSILike(ctx, column, term)
+}
+
+// buildFTSILikePredicate builds a single ILIKE predicate for a column and search term,
+// wrapped in IFNULL so that NULL columns are treated as not containing the term.
+
+func buildFTSILike(ctx BuildContext, column Expression, term string) (Expression, error) {
+	escapedTerm := escapeFTSLikePattern(term)
+
+	// NOTE: Prefix matching (word*) in MySQL full-text search matches words that START with
+	// the prefix, but the word can appear anywhere in the text. Using LIKE without REGEXP,
+	// we cannot perfectly enforce word-start boundaries. We use %term% which may produce
+	// false positives but avoids false negatives.
+	pattern := "%" + escapedTerm + "%"
+
+	patternConst := &Constant{
+		Value:   types.NewStringDatum(pattern),
+		RetType: types.NewFieldType(mysql.TypeVarchar),
+	}
+
+	// Backslash escape character (=92) for ILIKE.
+	escapeConst := &Constant{
+		Value:   types.NewIntDatum(92),
+		RetType: types.NewFieldType(mysql.TypeTiny),
+	}
+
+	// MySQL full-text search is always case-insensitive regardless of column
+	// collation, so ILIKE matches that semantic rather than plain LIKE which
+	// would follow the column's collation.
+	return NewFunction(ctx, ast.Ilike, types.NewFieldType(mysql.TypeTiny), column, patternConst, escapeConst)
 }

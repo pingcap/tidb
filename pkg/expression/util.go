@@ -590,7 +590,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			}
 		}
 		if substituted {
-			if v.FuncName.L == ast.FTSMysqlMatchAgainst {
+			if v.FuncName.L == ast.FTSMysqlMatchAgainst || v.FuncName.L == TiKVMatchAgainst {
 				// MATCH ... AGAINST keeps planner-initialized local evaluation state
 				// in its signature, so rebuild it by cloning and replacing all args.
 				cloned := v.Clone().(*ScalarFunction)
@@ -701,7 +701,7 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 			sf := newSf.(*ScalarFunction)
 			sf.GetArgs()[0] = newArgs[0]
 			sf.CleanHashCode()
-		} else if x.FuncName.L == ast.FTSMysqlMatchAgainst {
+		} else if x.FuncName.L == ast.FTSMysqlMatchAgainst || x.FuncName.L == TiKVMatchAgainst {
 			newSf = x.Clone()
 			sf := newSf.(*ScalarFunction)
 			copy(sf.Function.getArgs(), newArgs)

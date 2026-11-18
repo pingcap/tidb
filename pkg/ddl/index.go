@@ -107,7 +107,11 @@ var DefaultCumulativeTimeout = 1 * time.Minute
 // exported for testing.
 var DefaultAnalyzeCheckInterval = 10 * time.Second
 
-func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, isVector bool) ([]*model.IndexColumn, bool, error) {
+// buildIndexColumns builds the index columns of an index definition. tikvFullText
+// marks a FULLTEXT index built in TiKV, whose key holds analyzed terms rather
+// than the column value, so the column is exempt from the key-length rules.
+func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, isVector bool, fullText ...bool) ([]*model.IndexColumn, bool, error) {
+	tikvFullText := len(fullText) > 0 && fullText[0]
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
 	var col *model.ColumnInfo
@@ -115,18 +119,23 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 	maxIndexLength := config.GetGlobalConfig().MaxIndexLength
 	// The sum of length of all index columns.
 	sumLength := 0
-	for _, ip := range indexPartSpecifications {
+	for i, ip := range indexPartSpecifications {
 		col = model.FindColumnInfo(columns, ip.Column.Name.L)
 		if col == nil {
 			return nil, false, dbterror.ErrKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ip.Column.Name)
 		}
+		// A FULLTEXT index built in TiKV tokenizes its last column; the
+		// columns before it are ordinary key columns.
+		tokenized := tikvFullText && i == len(indexPartSpecifications)-1
 		if isVector && col.FieldType.GetType() != mysql.TypeTiDBVectorFloat32 {
 			return nil, false, dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs(fmt.Sprintf("only support vector type, but this is type: %s", col.FieldType.String()))
 		}
 
 		// return error in strict sql mode
-		if err := checkIndexColumn(col, ip.Length, ctx != nil && (!ctx.GetSQLMode().HasStrictMode() || ctx.SuppressTooLongIndexErr()), isVector); err != nil {
-			return nil, false, err
+		if !isVector && !tokenized {
+			if err := checkIndexColumn(col, ip.Length, ctx != nil && (!ctx.GetSQLMode().HasStrictMode() || ctx.SuppressTooLongIndexErr()), false); err != nil {
+				return nil, false, err
+			}
 		}
 		if col.FieldType.IsArray() {
 			if mvIndex {
@@ -143,6 +152,12 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 		indexColumnLength, err := getIndexColumnLength(col, indexColLen)
 		if err != nil {
 			return nil, false, err
+		}
+		if tokenized {
+			// The key holds one analyzed term, bounded by the maximum token
+			// size, not the column value; the column's own length is
+			// irrelevant to the key-length limit.
+			indexColumnLength = 1
 		}
 		sumLength += indexColumnLength
 
@@ -194,8 +209,8 @@ func CheckPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications 
 	return lastCol, nil
 }
 
-func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn) error {
-	idxLen, err := indexColumnsLen(columns, idxColumns)
+func checkIndexPrefixLength(columns []*model.ColumnInfo, indexInfo *model.IndexInfo) error {
+	idxLen, err := indexColumnsLen(columns, indexInfo)
 	if err != nil {
 		return err
 	}
@@ -205,12 +220,18 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 	return nil
 }
 
-func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (colLen int, err error) {
-	for _, idxCol := range idxCols {
+func indexColumnsLen(cols []*model.ColumnInfo, indexInfo *model.IndexInfo) (colLen int, err error) {
+	for _, idxCol := range indexInfo.Columns {
 		col := model.FindColumnInfo(cols, idxCol.Name.L)
 		if col == nil {
 			err = dbterror.ErrKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", idxCol.Name.L)
 			return
+		}
+		if idxCol == indexInfo.TiKVFullTextColumn() {
+			// The key holds one analyzed term of the column, as in
+			// buildIndexColumns, not the column value.
+			colLen++
+			continue
 		}
 		var l int
 		l, err = getIndexColumnLength(col, idxCol.Length)
@@ -380,6 +401,27 @@ func BuildIndexInfo(
 	indexOption *ast.IndexOption,
 	state model.SchemaState,
 ) (*model.IndexInfo, error) {
+	return buildIndexInfo(ctx, tblInfo, indexName, isPrimary, isUnique, isVector, indexPartSpecifications, indexOption, state, nil)
+}
+
+// buildIndexInfo is BuildIndexInfo for a caller that already holds the
+// analyzer snapshot of a FULLTEXT index built in TiKV, as the DDL owner does
+// from the job; see buildTiKVFullTextInfoWithCheck.
+func buildIndexInfo(
+	ctx *metabuild.Context,
+	tblInfo *model.TableInfo,
+	indexName pmodel.CIStr,
+	isPrimary, isUnique bool,
+	isVector bool,
+	indexPartSpecifications []*ast.IndexPartSpecification,
+	indexOption *ast.IndexOption,
+	state model.SchemaState,
+	tikvFullTextAnalyzer *model.TiKVFullTextIndexInfo,
+) (*model.IndexInfo, error) {
+	if indexOption != nil && len(indexOption.FullTextKeyColumns) > 0 && !IsTiKVFullTextIndexOption(indexOption) {
+		return nil, dbterror.ErrUnsupportedIndexType.GenWithStack("KEY_COLUMNS can only be used on a FULLTEXT index stored in TiKV")
+	}
+
 	if err := checkTooLongIndex(indexName); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -400,9 +442,18 @@ func BuildIndexInfo(
 		idxInfo.VectorInfo = vectorInfo
 	}
 
+	tikvFullText := !isVector && IsTiKVFullTextIndexOption(indexOption)
+	if tikvFullText {
+		info, err := buildTiKVFullTextInfoWithCheck(ctx, tblInfo.Columns, indexPartSpecifications, indexOption, tblInfo, tikvFullTextAnalyzer)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		idxInfo.TiKVFullText = info
+	}
+
 	var err error
 	allTableColumns := tblInfo.Columns
-	idxInfo.Columns, idxInfo.MVIndex, err = buildIndexColumns(ctx, allTableColumns, indexPartSpecifications, isVector)
+	idxInfo.Columns, idxInfo.MVIndex, err = buildIndexColumns(ctx, allTableColumns, indexPartSpecifications, isVector, tikvFullText)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -813,7 +864,11 @@ func checkAndBuildIndexInfo(
 	if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
 		return nil, errors.Trace(err)
 	}
-	indexInfo, err = BuildIndexInfo(
+	// The owner has no session to read FULLTEXT analyzer settings from; the
+	// statement's session captured them into the job, and the index is both
+	// built with them and compared with the table's other FULLTEXT indexes
+	// under them.
+	indexInfo, err = buildIndexInfo(
 		nil,
 		tblInfo,
 		args.IndexName,
@@ -823,6 +878,7 @@ func checkAndBuildIndexInfo(
 		args.IndexPartSpecifications,
 		args.IndexOption,
 		model.StateNone,
+		args.TiKVFullText,
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -831,6 +887,14 @@ func checkAndBuildIndexInfo(
 		if _, err = CheckPKOnGeneratedColumn(tblInfo, args.IndexPartSpecifications); err != nil {
 			return nil, err
 		}
+	}
+	if indexInfo.TiKVFullText != nil {
+		// Without the job's snapshot the index would be built from defaults
+		// the user did not ask for.
+		if args.TiKVFullText == nil {
+			return nil, dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index job carries no analyzer settings")
+		}
+		indexInfo.TiKVFullText = args.TiKVFullText.Clone()
 	}
 	indexInfo.ID = AllocateIndexID(tblInfo)
 	tblInfo.Indices = append(tblInfo.Indices, indexInfo)

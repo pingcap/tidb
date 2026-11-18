@@ -1041,6 +1041,8 @@ const (
 	TpFKCascadeRuntimeStats
 	// TpRURuntimeStats is the tp for RURuntimeStats
 	TpRURuntimeStats
+	// TpFullTextScanRuntimeStats accounts for posting reads.
+	TpFullTextScanRuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.

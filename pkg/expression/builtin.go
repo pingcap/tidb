@@ -653,6 +653,7 @@ var funcs = map[string]functionClass{
 
 	// FTS functions.
 	ast.FTSMysqlMatchAgainst: &mysqlMatchAgainstFunctionClass{baseFunctionClass{ast.FTSMysqlMatchAgainst, 2, -1}},
+	TiKVMatchAgainst:         &ftsMysqlMatchAgainstFunctionClass{baseFunctionClass{TiKVMatchAgainst, 2, -1}},
 
 	// math functions
 	ast.Abs:      &absFunctionClass{baseFunctionClass{ast.Abs, 1, 1}},

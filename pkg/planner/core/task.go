@@ -680,6 +680,15 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 					newCount := p.Offset + p.Count
 					limitChildren := make([]base.PhysicalPlan, 0, len(cop.idxMergePartPlans))
 					for _, partialScan := range cop.idxMergePartPlans {
+						if is, ok := partialScan.(*PhysicalIndexScan); ok && is.FullText != nil {
+							// A FULLTEXT posting scan runs in TiDB, where no
+							// Limit executor is built over it; the scan stops
+							// at IndexMerge.PushedLimit by itself. It stays
+							// the partial plan, which is how the cost model,
+							// EXPLAIN and the runtime statistics know it.
+							limitChildren = append(limitChildren, partialScan)
+							continue
+						}
 						childProfile := partialScan.StatsInfo()
 						stats := util.DeriveLimitStats(childProfile, float64(newCount))
 						pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())

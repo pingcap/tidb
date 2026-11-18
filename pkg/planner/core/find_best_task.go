@@ -1434,7 +1434,7 @@ func indexMergePartialPathCoversFilter(
 	// Be conservative: only remove a filter when a normal index partial path
 	// carries the exact predicate in AccessConds. Filters handled by table/MV
 	// paths or by residual TableFilters still need the global Selection.
-	if partialPath == nil || partialPath.IsTablePath() || isMVIndexPath(partialPath) {
+	if partialPath == nil || partialPath.FullText != nil || partialPath.IsTablePath() || isMVIndexPath(partialPath) {
 		return false
 	}
 	if !isIndexCoveringCondition(ds, filter, partialPath.FullIdxCols, partialPath.FullIdxColLens) {
@@ -1549,6 +1549,7 @@ func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, pro
 		advisoryProp.SortItems = advisoryProp.AdvisorySortItems
 		candidate.matchWithAdvisorySortItems = true
 		candidate.partialPathMatchResults, _ = isMatchPropForIndexMerge(ds, path, advisoryProp)
+		candidate.matchWithAdvisorySortItems = len(candidate.partialPathMatchResults) == len(path.PartialIndexPaths)
 		// When using advisory items, there are no real sort items, so the
 		// overall match against the original property is PropNotMatched.
 		candidate.matchPropResult = property.PropNotMatched
@@ -1654,7 +1655,10 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		preferredPaths := make([]*candidatePath, 0, len(candidates))
 		var hasRangeScanPath bool
 		for _, c := range candidates {
-			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && (c.path.Index.Global || c.path.Index.MVIndex)) {
+			// A FULLTEXT index path reads only the postings of the search's
+			// terms, never the whole table, so it is kept to compete on cost.
+			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && (c.path.Index.Global || c.path.Index.MVIndex)) ||
+				isFullTextIndexPath(c.path) {
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
@@ -2192,6 +2196,14 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		}
 		if partPath.IsTablePath() {
 			scan = convertToPartialTableScan(ds, effectiveProp, partPath, partMatchPropResult, byItems)
+		} else if partPath.FullText != nil {
+			if !prop.IsSortItemEmpty() {
+				// The posting-list engine yields handles in handle order,
+				// never in index-column order, so it cannot keep an order
+				// even when the sort items name the indexed column.
+				return base.InvalidTask, nil
+			}
+			scan = ConvertToFullTextIndexScan(ds, effectiveProp, partPath)
 		} else {
 			var remainingFilters []expression.Expression
 			scan, remainingFilters, err = convertToPartialIndexScan(ds, cop.physPlanPartInfo, effectiveProp, partPath, partMatchPropResult, byItems)
@@ -2275,7 +2287,7 @@ func convertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysP
 	}
 
 	if len(indexConds) > 0 {
-		pushedFilters, remainingFilter := extractFiltersForIndexMerge(util.GetPushDownCtx(ds.SCtx()), indexConds)
+		pushedFilters, remainingFilter := extractFiltersForIndexMerge(util.GetPushDownCtx(ds.SCtx()), indexConds, ds.PushedDownConds)
 		var selectivity float64
 		if path.CountAfterAccess > 0 {
 			selectivity = path.CountAfterIndex / path.CountAfterAccess
@@ -2406,7 +2418,7 @@ func buildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 	}
 	var currentTopPlan base.PhysicalPlan = ts
 	if len(tableFilters) > 0 {
-		pushedFilters, remainingFilters := extractFiltersForIndexMerge(util.GetPushDownCtx(ds.SCtx()), tableFilters)
+		pushedFilters, remainingFilters := extractFiltersForIndexMerge(util.GetPushDownCtx(ds.SCtx()), tableFilters, ds.PushedDownConds)
 		pushedFilters1, remainingFilters1 := SplitSelCondsWithVirtualColumn(pushedFilters)
 		pushedFilters = pushedFilters1
 		remainingFilters = append(remainingFilters, remainingFilters1...)
@@ -2472,13 +2484,13 @@ func buildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 //
 //	But the new Selection should exclude the exprs that can NOT be pushed to ALL the storage engines.
 //	Because these exprs have already been put in another Selection(check rule_predicate_push_down).
-func extractFiltersForIndexMerge(ctx expression.PushDownContext, filters []expression.Expression) (pushed []expression.Expression, remaining []expression.Expression) {
+func extractFiltersForIndexMerge(ctx expression.PushDownContext, filters []expression.Expression, dsConds ...[]expression.Expression) (pushed []expression.Expression, remaining []expression.Expression) {
 	for _, expr := range filters {
 		if expression.CanExprsPushDown(ctx, []expression.Expression{expr}, kv.TiKV) {
 			pushed = append(pushed, expr)
 			continue
 		}
-		if expression.CanExprsPushDown(ctx, []expression.Expression{expr}, kv.UnSpecified) {
+		if expression.CanExprsPushDown(ctx, []expression.Expression{expr}, kv.UnSpecified) || (len(dsConds) > 0 && slices.ContainsFunc(dsConds[0], func(cond expression.Expression) bool { return cond.Equal(ctx.EvalCtx(), expr) })) {
 			remaining = append(remaining, expr)
 		}
 	}
@@ -3644,4 +3656,17 @@ func validateTableSamplePlan(ds *logicalop.DataSource, t base.Task, err error) e
 		}
 	}
 	return nil
+}
+
+// ConvertToFullTextIndexScan builds the partial plan of an IndexMerge that
+// reads a FULLTEXT index built in TiKV. The scan has no ranges and no
+// coprocessor request: TiDB's posting-list engine evaluates the search string
+// against the index and yields the matching handles.
+func ConvertToFullTextIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath) *PhysicalIndexScan {
+	is := getOriginalPhysicalIndexScan(ds, prop, path, false, false)
+	// The search string is baked into the plan. A literal one is the same in
+	// every execution; a plan built for a parameter's value is kept out of
+	// the plan cache when the path is built.
+	is.FullText = &FullTextScanInfo{Search: path.FullText.Search, PostingRows: path.FullText.PostingRows, PostingScans: path.FullText.PostingScans}
+	return is
 }

@@ -14,6 +14,8 @@
 package tidb
 
 const (
+	// FeatureIDFullTextKey identifies FULLTEXT key columns.
+	FeatureIDFullTextKey = "fts_key"
 	// FeatureIDTiDB represents the general TiDB-specific features.
 	FeatureIDTiDB = ""
 	// FeatureIDAutoRandom is the `auto_random` feature.
@@ -39,6 +41,7 @@ const (
 )
 
 var featureIDs = map[string]struct{}{
+	FeatureIDFullTextKey:    {},
 	FeatureIDAutoRandom:     {},
 	FeatureIDAutoIDCache:    {},
 	FeatureIDAutoRandomBase: {},
