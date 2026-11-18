@@ -30,13 +30,11 @@ func TestSetDefaultAndOptions(t *testing.T) {
 		vardef.TSOClientRPCModeDefault:      1,
 		vardef.TSOClientRPCModeParallel:     2,
 		vardef.TSOClientRPCModeParallelFast: 4,
+		"invalid":                           0,
 	} {
-		concurrency, ok := vardef.TSOClientRPCModeToConcurrency(mode)
-		require.True(t, ok)
+		concurrency := vardef.TSOClientRPCModeToConcurrency(mode)
 		require.Equal(t, expected, concurrency)
 	}
-	_, ok := vardef.TSOClientRPCModeToConcurrency("invalid")
-	require.False(t, ok)
 
 	globalConfig := config.GetGlobalConfig()
 	origSecurity := globalConfig.Security
@@ -63,8 +61,8 @@ func TestSetDefaultAndOptions(t *testing.T) {
 	require.Equal(t, time.Duration(float64(time.Millisecond)*vardef.DefTiDBTSOClientBatchMaxWaitTime), pdOpt.GetMaxTSOBatchWaitInterval())
 	require.Equal(t, vardef.DefTiDBEnableTSOFollowerProxy, pdOpt.GetEnableTSOFollowerProxy())
 	require.Equal(t, vardef.DefPDEnableFollowerHandleRegion, pdOpt.GetEnableFollowerHandle())
-	expectedConcurrency, ok := vardef.TSOClientRPCModeToConcurrency(vardef.DefTiDBTSOClientRPCMode)
-	require.True(t, ok)
+	expectedConcurrency := vardef.TSOClientRPCModeToConcurrency(vardef.DefTiDBTSOClientRPCMode)
+	require.NotZero(t, expectedConcurrency)
 	require.Equal(t, expectedConcurrency, pdOpt.GetTSOClientRPCConcurrency())
 	require.Equal(t, vardef.DefTiDBEnableBatchQueryRegion, pdOpt.GetEnableRouterClient())
 }

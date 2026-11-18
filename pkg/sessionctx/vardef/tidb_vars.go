@@ -2352,16 +2352,17 @@ const (
 )
 
 // TSOClientRPCModeToConcurrency returns the PD client concurrency for a TSO RPC mode.
-func TSOClientRPCModeToConcurrency(mode string) (int, bool) {
+// It returns zero for an unsupported mode.
+func TSOClientRPCModeToConcurrency(mode string) int {
 	switch mode {
 	case TSOClientRPCModeDefault:
-		return 1, true
+		return 1
 	case TSOClientRPCModeParallel:
-		return 2, true
+		return 2
 	case TSOClientRPCModeParallelFast:
-		return 4, true
+		return 4
 	default:
-		return 0, false
+		return 0
 	}
 }
 
