@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -54,6 +56,58 @@ func TestBindingCache(t *testing.T) {
 	tk.MustExec("drop global binding for select * from t;")
 	require.Nil(t, dom.BindHandle().LoadFromStorageToCache(false))
 	require.Equal(t, 1, len(dom.BindHandle().GetAllGlobalBindings()))
+}
+
+// TestBindingCacheReloadDoesNotPublishStaleSnapshot checks that a reload that
+// started before a binding was dropped cannot overwrite a later reload.
+func TestBindingCacheReloadDoesNotPublishStaleSnapshot(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create global binding for select * from t using select * from t")
+
+	handle := bindinfo.NewGlobalBindingHandle(dom.SysSessionPool())
+	require.NoError(t, handle.LoadFromStorageToCache(true))
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var first atomic.Bool
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/bindinfo/afterLoadBindingsFromStorage", func(target any) {
+		if target == handle && first.CompareAndSwap(false, true) {
+			close(started)
+			<-release
+		}
+	})
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- handle.LoadFromStorageToCache(false) }()
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("first reload did not read storage")
+	}
+
+	// Simulate a committed drop while the first reload holds its old snapshot.
+	tk.MustExec("update mysql.bind_info set status = 'deleted', update_time = date_add(update_time, interval 1 second) where source != 'builtin'")
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- handle.LoadFromStorageToCache(false) }()
+	var secondErr error
+	secondFinished := false
+	select {
+	case secondErr = <-secondDone:
+		secondFinished = true
+	case <-time.After(time.Second):
+	}
+	unblock()
+	require.NoError(t, <-firstDone)
+	if !secondFinished {
+		secondErr = <-secondDone
+	}
+	require.NoError(t, secondErr)
+	require.Empty(t, handle.GetAllGlobalBindings())
 }
 
 // TestConcurrentBindingCacheReloadAndMatch mirrors the hot-binding repro:

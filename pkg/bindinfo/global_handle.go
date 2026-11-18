@@ -114,6 +114,8 @@ type GlobalBindingHandle interface {
 type globalBindingHandle struct {
 	sPool util.DestroyableSessionPool
 
+	// reloadMu serializes cache snapshots and their publication.
+	reloadMu          sync.Mutex
 	fuzzyBindingCache atomic.Value
 
 	// lastTaskTime records the last update time for the global sql bind cache.
@@ -185,6 +187,9 @@ func (h *globalBindingHandle) setLastUpdateTime(t types.Time) {
 
 // LoadFromStorageToCache loads bindings from the storage into the cache.
 func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) {
+	h.reloadMu.Lock()
+	defer h.reloadMu.Unlock()
+
 	lastUpdateTime := h.getLastUpdateTime()
 	var timeCondition string
 	var newCache FuzzyBindingCache
@@ -223,6 +228,8 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 		if err != nil {
 			return err
 		}
+
+		failpoint.InjectCall("afterLoadBindingsFromStorage", h)
 
 		defer func() {
 			h.setLastUpdateTime(lastUpdateTime)
