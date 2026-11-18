@@ -65,6 +65,8 @@ done
 KEY=$(cat <<- EOF
 {
   "type": "service_account",
+  "project_id": "test",
+  "private_key_id": "dummyprivatekeyid",
   "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCT524vzG7uEVtX\nojcHbyQzVwlcaGkg1DWWLT+SufD08UYF0bsfcD0Etrtzo4ggwdxJQy5ygl3TNlcD\nKdelWbVyGfg9/sNB1RDlZYbQb0LVLHKjkVs7JyJsxrLk2e6NqD9ajwTEJUcLAQkj\nxlCcIi51beqrIRlvHjbtGwet/dNnRLSZf+i9SHvB2j64+RVYdnyf/IiLBvYyu7hF\nT6VjlljdbwC4TZ2jpfDL8nHRTiDiV+CX3/iH8MlMEOSM30AO5MPNVCZLlTA9W24a\nKi4NPBBlJLvG2mQELYdbhdM64iMvbPkDRtajJD6ogPB7wUoWbtSke5oOJNyV1HNt\nn91JH/dlAgMBAAECggEAQBwve2GSbfgxD0Xds4e9+dEO2jLZ6uSBS9TWOywFIa9Z\nqlkUUtbMZDgu/buTXJubeFg6EGGo+M4TnmfrNR2zFD/khj7hdS49kinVa5Dmt895\n66Osl3HprpvcXG2IxXd56q+Woc0Ew+TRiOPD+kGowLcB4ubIhw1iQpmWVRlyos6Q\nyvHssolrqOkRK9+1asixgow2Y15HtpXFN3XDIVj3gfdN1Zg80S66bTap1DS+dkJH\nSMgEZRilAjUGzbroqvZCiymlIJP5Jj5L5Wy8Qp/k1ixK10oaPgwvdmwXHX/DZ0vC\nT6XwpIaCYd3/XUWBHvrmQHFucWVPISZRi5WidggzuwKBgQDNHrxKaDrxcrV5Ncgu\npQrtQvTsIUCJGMo5m30X0Ac5CsIssOoQHdtEQW1ehJ8DtJRRb9rdWc4aelXsDUr+\no2m1zyZzM6S7IO2YhGDAo7Uu3fy1r33qYAt6uS/nHaJBpsKcyqqK+0wPDikdPLLx\nBBWZHF6WoswDEUVLQa/hHgpjPwKBgQC4l2/6xShNoobivzk8AE/Acq7PazA8gu4K\nY0UghTBlAst4RvBTURYZ2V3uw0S2FbfwL0/snHhNWZl5XjBX/H9oQmLri5qGOOpf\n9A11p5kd0x1mHDgTm/k7EgoskdXGB5NqXIB7l/3UI8Sk2N1PzHwyJJYfaB+EWTs8\n+LVy99VQWwKBgQCilRwVtiwSOSPSYWi8YCEbEpljmK+4eye/JZmviDpRYk+qcMf1\n4lRr85gm9OO9YiK1sf0+ufH9Vr5IDflFgG1HqFwHsAWANYdd/n9Z8eior1ehAurB\nHUO8EJEBlaGIfA+Bi7pF0w3kWQsJm5USKHSeGbh3ma4vOD8+eWBZBSCirQKBgQCe\n1uEq/sChnXtIXpgXg4Uc6xJ1tZy6VUgUdDulsjZklTUU+KYQa7QC5kKoFCtqK+It\nseiqiDIVDUa9Y0liTQotYwLQAT8kxJEZpF54oZFmUqX3mcy/QvYB2JIcrBkx4I7/\ndT2yHKX1CBpMZ7h41FMCquzrdaO5NTd+Td2FYrGSBQKBgEBnAerHh/NafYlVumlS\nVgouR9IketTegyEyntVyEvENx8OA5ZLMywCIKbPMFZgPR0RgDpyDxKauCU2E09e/\nboN76UOuOg11fknJh7vFbUbzM6BXvXVOTyX9ZtZBQcd5Y3tV+tYD1tHUgurGYWb+\nyHLBMOlXdpn0gZ4rwoIQgzD9\n-----END PRIVATE KEY-----\n",
   "client_email": "test@email.com",
   "token_uri": "http://localhost:5000/oauth/token"
@@ -87,16 +89,17 @@ done
 
 # new version backup full
 echo "backup start..."
-run_br --pd $PD_ADDR backup full -s "gcs://$BUCKET/$DB?endpoint=http://$GCS_HOST:$GCS_PORT/storage/v1/"
+run_br --pd $PD_ADDR backup full -s "gcs://$BUCKET/$DB?endpoint=http://$GCS_HOST:$GCS_PORT"
 
-# old version backup full v4.0.8 and disable check-requirements
-echo "v4.0.8 backup start..."
-bin/brv4.0.8 backup full \
-    -L "debug" \
-    --ca "$TEST_DIR/certs/ca.pem" \
-    --cert "$TEST_DIR/certs/br.pem" \
-    --key "$TEST_DIR/certs/br.key" \
-    --pd $PD_ADDR -s "gcs://$BUCKET/${DB}_old?endpoint=http://$GCS_HOST:$GCS_PORT/storage/v1/" --check-requirements=false
+if [ "${TEST_LEGACY_BR_GCS:-false}" = "true" ]; then
+    echo "v4.0.8 backup start..."
+    bin/brv4.0.8 backup full \
+        -L "debug" \
+        --ca "$TEST_DIR/certs/ca.pem" \
+        --cert "$TEST_DIR/certs/br.pem" \
+        --key "$TEST_DIR/certs/br.key" \
+        --pd $PD_ADDR -s "gcs://$BUCKET/${DB}_old?endpoint=http://$GCS_HOST:$GCS_PORT/storage/v1/" --check-requirements=false
+fi
 
 # clean up
 for i in $(seq $DB_COUNT); do
@@ -105,7 +108,7 @@ done
 
 # new version restore full
 echo "restore start..."
-run_br restore full -s "gcs://$BUCKET/$DB?" --pd $PD_ADDR --gcs.endpoint="http://$GCS_HOST:$GCS_PORT/storage/v1/" --check-requirements=false
+run_br restore full -s "gcs://$BUCKET/$DB?" --pd $PD_ADDR --gcs.endpoint="http://$GCS_HOST:$GCS_PORT" --check-requirements=false
 
 for i in $(seq $DB_COUNT); do
     row_count_new[${i}]=$(run_sql "SELECT COUNT(*) FROM $DB${i}.$TABLE;" | awk '/COUNT/{print $2}')
@@ -127,28 +130,29 @@ else
     echo "TEST: [$TEST_NAME] new version successd!"
 fi
 
-# clean up
-for i in $(seq $DB_COUNT); do
-    run_sql "DROP DATABASE $DB${i};"
-done
+if [ "${TEST_LEGACY_BR_GCS:-false}" = "true" ]; then
+    for i in $(seq $DB_COUNT); do
+        run_sql "DROP DATABASE $DB${i};"
+    done
 
-echo "v4.0.8 version restore start..."
-run_br restore full -s "gcs://$BUCKET/${DB}_old" --pd $PD_ADDR --gcs.endpoint="http://$GCS_HOST:$GCS_PORT/storage/v1/" --check-requirements=false
+    echo "v4.0.8 version restore start..."
+    run_br restore full -s "gcs://$BUCKET/${DB}_old" --pd $PD_ADDR --gcs.endpoint="http://$GCS_HOST:$GCS_PORT" --check-requirements=false
 
-for i in $(seq $DB_COUNT); do
-    row_count_new[${i}]=$(run_sql "SELECT COUNT(*) FROM $DB${i}.$TABLE;" | awk '/COUNT/{print $2}')
-done
+    for i in $(seq $DB_COUNT); do
+        row_count_new[${i}]=$(run_sql "SELECT COUNT(*) FROM $DB${i}.$TABLE;" | awk '/COUNT/{print $2}')
+    done
 
-fail=false
-for i in $(seq $DB_COUNT); do
-    if [ "${row_count_ori[i]}" != "${row_count_new[i]}" ];then
-        fail=true
-        echo "TEST: [$TEST_NAME] fail on database $DB${i}"
+    fail=false
+    for i in $(seq $DB_COUNT); do
+        if [ "${row_count_ori[i]}" != "${row_count_new[i]}" ];then
+            fail=true
+            echo "TEST: [$TEST_NAME] fail on database $DB${i}"
+        fi
+        echo "database $DB${i} [original] row count: ${row_count_ori[i]}, [after br] row count: ${row_count_new[i]}"
+    done
+
+    if $fail; then
+        echo "TEST: [$TEST_NAME] failed!"
+        exit 1
     fi
-    echo "database $DB${i} [original] row count: ${row_count_ori[i]}, [after br] row count: ${row_count_new[i]}"
-done
-
-if $fail; then
-    echo "TEST: [$TEST_NAME] failed!"
-    exit 1
 fi
