@@ -41,10 +41,10 @@ go_test(
     shard_count = 3,
     deps = [
         "//pkg/domain",
+        "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/property",
         "//pkg/planner/util/coretestsdk",
-        "//pkg/sessionctx/vardef",
         "//pkg/util/intset",
         "@com_github_bits_and_blooms_bitset//:bitset",
         "@com_github_stretchr_testify//require",

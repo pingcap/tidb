@@ -641,7 +641,7 @@ func shouldTrySemiJoinRewriteRound(sessVars *variable.SessionVars) bool {
 
 func shouldTryGreedyOutputRowsRound(sessVars *variable.SessionVars) bool {
 	return sessVars.EnableAlternativeLogicalPlans &&
-		sessVars.StmtCtx.AlternativeLogicalPlanInflatedGreedyLeaf
+		sessVars.StmtCtx.AlternativeLogicalPlanGreedyReorderByOutputRows
 }
 
 // shouldTryEngineRestrictedRounds holds the gates shared by the tikv-only and
@@ -700,8 +700,8 @@ var alternativeRounds = [...]alternativeRound{
 		// group input by its estimated output rows. By default an input also
 		// counts the rows below it, so a small aggregation over a large join is
 		// joined last even when it could drive index lookups into the other
-		// inputs. Round 1 arms this round only when such an input exists in a
-		// greedy group of at least three inputs.
+		// inputs. Round 1 arms this round only when costing the inputs of a
+		// greedy group by output rows changes its join order.
 		name:    "greedy-output-rows",
 		enabled: shouldTryGreedyOutputRowsRound,
 		setup: func(sv *variable.SessionVars) func() {

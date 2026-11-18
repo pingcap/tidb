@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -339,5 +340,23 @@ func TestGreedyOutputRowsAlternativeRound(t *testing.T) {
 		// Base tables cost the same either way, so the round is skipped.
 		require.False(t, roundRuns(t, "select sum(a.v + b.v + c.v) from anchors a join fanout b on a.k = b.k "+
 			"join agg_input c on c.k = a.k"))
+		// These aggregations are costed above their output rows, but they rank the
+		// same way under both costings and keep their order, so the round is skipped.
+		require.False(t, roundRuns(t, "select count(*) from (select k, max(v) as mx from agg_input group by k) x "+
+			"join (select k, max(v) as mx from agg_input group by k) y on x.k = y.k "+
+			"join (select k, max(v) as mx from agg_input group by k) z on y.k = z.k"))
+
+		// A cached plan is only reused under the setting it was built with.
+		tk.MustExec("prepare st from '" + query + "'")
+		for _, alternative := range []string{"off", "on", "off"} {
+			tk.MustExec("set tidb_opt_enable_alternative_logical_plans = " + alternative)
+			tk.MustExec("execute st")
+			tk.MustExec("execute st")
+			require.True(t, tk.Session().GetSessionVars().FoundInPlanCache, alternative)
+			process := tk.Session().ShowProcess()
+			tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: []*sessmgr.ProcessInfo{process}})
+			cached := testdata.ConvertRowsToStrings(tk.MustQuery(fmt.Sprintf("explain for connection %d", process.ID)).Rows())
+			require.Equal(t, alternative == "on", strings.Contains(strings.Join(cached, "\n"), "table:b, index:ix_k(k)"), alternative)
+		}
 	})
 }

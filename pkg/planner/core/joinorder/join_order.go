@@ -21,6 +21,7 @@ import (
 	"math"
 	"math/bits"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cockroachdb/errors"
@@ -558,41 +559,78 @@ func checkConnectionAndMakeJoin(detector *ConflictDetector, leftPlan, rightPlan 
 	return checkResult, newNode, nil
 }
 
-// armGreedyOutputRowsRound arms the greedy-output-rows alternative round when a
-// group of at least three inputs has an input costed above its output rows, as
-// LegacyLeafCost also counts the rows below it. Otherwise both costings rank the
-// inputs the same way and build the same order, and with only two inputs the
-// physical optimizer already tries both sides of the join.
-func armGreedyOutputRowsRound(ctx base.PlanContext, nodes []*Node) {
-	if len(nodes) < 3 {
-		return
-	}
-	for _, node := range nodes {
-		if node.cumCost > outputRowsLeafCost(node.p) {
-			vars := ctx.GetSessionVars()
-			vars.RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
-			if vars.EnableAlternativeLogicalPlans {
-				vars.StmtCtx.MarkAlternativeLogicalPlanInflatedGreedyLeaf()
-			}
-			return
-		}
-	}
-}
-
 func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
-	group := j.group
-	detector := newConflictDetector(j.ctx)
-	outputRows := j.ctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanGreedyOutputRows
-	costLeaf := LegacyLeafCost
-	if outputRows {
-		costLeaf = outputRowsLeafCost
+	if j.ctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanGreedyOutputRows {
+		return j.optimizeByLeafCost(outputRowsLeafCost)
 	}
-	nodes, err := detector.Build(group, costLeaf)
+	p, err := j.optimizeByLeafCost(LegacyLeafCost)
 	if err != nil {
 		return nil, err
 	}
-	if !outputRows {
-		armGreedyOutputRowsRound(j.ctx, nodes)
+	j.armGreedyOutputRowsRound(p)
+	return p, nil
+}
+
+// armGreedyOutputRowsRound arms the greedy-output-rows alternative round when
+// costing this group's inputs by their output rows builds a join order other
+// than p. Only an input costed above its output rows, because LegacyLeafCost
+// also counts the rows below it, can change the order. With two inputs the
+// order only commutes, which the physical optimizer already covers, and groups
+// with LEADING hints are skipped so the trial build does not repeat hint warnings.
+func (j *joinOrderGreedy) armGreedyOutputRowsRound(p base.LogicalPlan) {
+	group := j.group
+	if len(group.vertexes) < 3 || len(group.leadingHints) > 0 ||
+		!slices.ContainsFunc(group.vertexes, func(v base.LogicalPlan) bool {
+			return LegacyLeafCost(v) > outputRowsLeafCost(v)
+		}) {
+		return
+	}
+	vars := j.ctx.GetSessionVars()
+	vars.RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
+	if !vars.EnableAlternativeLogicalPlans {
+		return
+	}
+	alternative, err := j.optimizeByLeafCost(outputRowsLeafCost)
+	if err == nil && joinTreeShape(group, alternative) != joinTreeShape(group, p) {
+		vars.StmtCtx.MarkAlternativeLogicalPlanGreedyReorderByOutputRows()
+	}
+}
+
+// joinTreeShape describes the join order of a reordered group by the indexes
+// of its inputs. Children of inner joins are sorted, as the physical optimizer
+// tries both sides of an inner join.
+func joinTreeShape(group *joinGroup, p base.LogicalPlan) string {
+	inputs := make(map[int]int, len(group.vertexes))
+	for i, v := range group.vertexes {
+		inputs[v.ID()] = i
+	}
+	var shape func(base.LogicalPlan) string
+	shape = func(p base.LogicalPlan) string {
+		if i, ok := inputs[p.ID()]; ok {
+			return strconv.Itoa(i)
+		}
+		children := make([]string, 0, len(p.Children()))
+		for _, child := range p.Children() {
+			children = append(children, shape(child))
+		}
+		name := p.TP()
+		if join, ok := p.(*logicalop.LogicalJoin); ok {
+			name = join.JoinType.String()
+			if join.JoinType == base.InnerJoin {
+				slices.Sort(children)
+			}
+		}
+		return name + "(" + strings.Join(children, ",") + ")"
+	}
+	return shape(p)
+}
+
+func (j *joinOrderGreedy) optimizeByLeafCost(costLeaf func(base.LogicalPlan) float64) (base.LogicalPlan, error) {
+	group := j.group
+	detector := newConflictDetector(j.ctx)
+	nodes, err := detector.Build(group, costLeaf)
+	if err != nil {
+		return nil, err
 	}
 	nodeWithHint, nodes, err := j.buildJoinByHint(detector, nodes)
 	if err != nil {
