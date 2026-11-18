@@ -8061,6 +8061,9 @@ func isRetryableDDLCancelErr(err error) bool {
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
 func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (resErr error) {
+	if config.GetGlobalConfig().StarterParams.DisableUserDDLAndImport && !ctx.GetSessionVars().InRestrictedSQL {
+		return errors.New("Schema changes are temporarily unavailable during maintenance and will be available again soon")
+	}
 	if traceCtx := ctx.GetTraceCtx(); traceCtx != nil {
 		r := tracing.StartRegion(traceCtx, "ddl.DoDDLJobWrapper")
 		defer r.End()

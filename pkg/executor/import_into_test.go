@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -957,4 +958,113 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 			task.ID,
 		).Check(testkit.Rows("4 2 1"))
 	})
+}
+
+// starterImportOpenSpy observes child side effects at the import admission boundary.
+type starterImportOpenSpy struct {
+	exec.BaseExecutor
+	opened bool
+}
+
+func (s *starterImportOpenSpy) Open(context.Context) error {
+	s.opened = true
+	return nil
+}
+
+func TestStarterDisableUserDDLAndImport(t *testing.T) {
+	const ddlUnavailableMessage = "Schema changes are temporarily unavailable during maintenance and will be available again soon"
+	const importUnavailableMessage = "IMPORT INTO is temporarily unavailable during maintenance and will be available again soon"
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.StarterParams.DisableUserDDLAndImport = true
+	})
+	// Startup's restricted DDL must work even when user job admission is disabled.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	for _, sql := range []string{
+		"create table test.starter_target (a int)",
+		"create table test.starter_source (a int)",
+		"alter table test.starter_source add column upgrade_column int",
+		"alter table test.starter_source drop column upgrade_column",
+	} {
+		rs, err := tk.Session().ExecuteInternal(ctx, sql)
+		require.NoError(t, err)
+		require.Nil(t, rs)
+	}
+
+	t.Run("user DDL", func(t *testing.T) {
+		for _, sql := range []string{
+			"create table starter_rejected (a int)",
+			"alter table starter_target add column b int",
+			"alter table starter_target add column b int, add column c int",
+			"drop table starter_target",
+			"create database starter_rejected_db",
+			"create global temporary table starter_global_temp (a int) on commit delete rows",
+		} {
+			require.ErrorContains(t, tk.ExecToErr(sql), ddlUnavailableMessage)
+		}
+		require.ErrorContains(t, tk.ExecToErr("explain analyze alter table starter_target add column b int"), ddlUnavailableMessage)
+		tk.MustQuery("show tables like 'starter_rejected'").Check(testkit.Rows())
+		tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'test' and table_name = 'starter_target'").Check(testkit.Rows("1"))
+		tk.MustExec("prepare starter_ddl from 'create table starter_prepared (a int)'")
+		require.ErrorContains(t, tk.ExecToErr("execute starter_ddl"), ddlUnavailableMessage)
+		tk.MustExec("deallocate prepare starter_ddl")
+		id, _, _, err := tk.Session().PrepareStmt("create table starter_binary_prepared (a int)")
+		require.NoError(t, err)
+		_, err = tk.Session().ExecutePreparedStmt(context.Background(), id, nil)
+		require.ErrorContains(t, err, ddlUnavailableMessage)
+		require.NoError(t, tk.Session().DropPreparedStmt(id))
+		tk.MustQuery("show tables like 'starter_prepared'").Check(testkit.Rows())
+		tk.MustQuery("show tables like 'starter_binary_prepared'").Check(testkit.Rows())
+	})
+
+	t.Run("local temporary DDL and DML", func(t *testing.T) {
+		tk.MustExec("create temporary table starter_temp (a int)")
+		tk.MustExec("insert into starter_temp values (1)")
+		tk.MustQuery("select * from starter_temp").Check(testkit.Rows("1"))
+		tk.MustExec("drop temporary table starter_temp")
+		tk.MustExec("insert into starter_source values (1)")
+		tk.MustExec("update starter_source set a = 2")
+		tk.MustQuery("select * from starter_source").Check(testkit.Rows("2"))
+		tk.MustExec("delete from starter_source")
+	})
+
+	t.Run("IMPORT INTO", func(t *testing.T) {
+		// NextGen permits FROM SELECT only for materialized view maintenance.
+		vars := tk.Session().GetSessionVars()
+		vars.InMViewMaintenance = true
+		defer func() { vars.InMViewMaintenance = false }()
+		for _, sql := range []string{
+			"import into starter_target from 's3://bucket/disabled.csv'",
+			"import into starter_target from 's3://bucket/disabled.csv' with detached",
+			"import into starter_target from select * from starter_source with disable_precheck",
+			"explain analyze import into starter_target from select * from starter_source with disable_precheck",
+		} {
+			require.ErrorContains(t, tk.ExecToErr(sql), importUnavailableMessage)
+		}
+		require.NotEmpty(t, tk.MustQuery("explain import into starter_target from select * from starter_source").Rows())
+		tk.MustQuery("show import jobs").Check(testkit.Rows())
+		tk.MustQuery("select count(*) from mysql.tidb_global_task").Check(testkit.Rows("0"))
+		tk.MustQuery("select count(*) from mysql.tidb_global_task_history").Check(testkit.Rows("0"))
+	})
+
+	t.Run("import admission precedes child Open", func(t *testing.T) {
+		sctx := mock.NewContext()
+		child := &starterImportOpenSpy{BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0)}
+		importExec := &executor.ImportIntoExec{BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, child)}
+		require.ErrorContains(t, importExec.Open(context.Background()), importUnavailableMessage)
+		require.False(t, child.opened)
+		sctx.GetSessionVars().InRestrictedSQL = true
+		require.NoError(t, importExec.Open(context.Background()))
+		require.True(t, child.opened)
+	})
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.StarterParams.DisableUserDDLAndImport = false
+	})
+	tk.MustExec("create table starter_enabled (a int)")
+	tk.MustExec("alter table starter_enabled add column b int")
+	tk.MustExec("drop table starter_enabled")
 }

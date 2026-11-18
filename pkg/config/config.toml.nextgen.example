@@ -516,6 +516,10 @@ ingest-kv-bytes = 1.0
 
 # Starter-only extension parameters.
 [starter-params]
+# Reject new user DDL jobs and IMPORT INTO statements on this TiDB instance.
+# Internal bootstrap/upgrade DDL and local temporary-table DDL remain allowed.
+# Already submitted jobs and IMPORT INTO management statements are unaffected.
+disable-user-ddl-and-import = false
 # Path to a starter-only JSON manifest of versioned SQL. Empty means disabled.
 # Unlike initialize-sql-file, which runs only after TiDB first creates the cluster,
 # this manifest also initializes starter state in an existing cluster and applies

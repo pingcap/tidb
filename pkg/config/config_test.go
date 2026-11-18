@@ -1545,6 +1545,7 @@ func TestDeployModeConfig(t *testing.T) {
 	require.Equal(t, deploymode.Premium, conf.DeployMode)
 	require.Equal(t, DefDXFResourceLimit, conf.DXFResourceLimit)
 	require.Zero(t, conf.StarterParams.MaxImportDataSize)
+	require.False(t, conf.StarterParams.DisableUserDDLAndImport)
 	require.NoError(t, conf.Valid())
 	conf.DeployMode = deploymode.Mode(100)
 	require.ErrorContains(t, conf.Valid(), "invalid deploy-mode")
@@ -1552,6 +1553,10 @@ func TestDeployModeConfig(t *testing.T) {
 	conf.MaxAllowedPacket = 0
 	require.NoError(t, conf.Valid())
 	conf.MaxAllowedPacket = DefMaxAllowedPacket
+
+	conf.StarterParams.DisableUserDDLAndImport = true
+	require.ErrorContains(t, conf.Valid(), "starter-params.disable-user-ddl-and-import can only be configured for starter deploy mode")
+	conf.StarterParams.DisableUserDDLAndImport = false
 
 	storeDir := t.TempDir()
 	configFile := filepath.Join(storeDir, "config.toml")
@@ -1648,6 +1653,19 @@ bootstrap-file = "/etc/tidb/starter-bootstrap.json"`), 0644))
 	require.NoError(t, conf.Load(configFile))
 	require.Equal(t, "/etc/tidb/starter-bootstrap.json", conf.StarterParams.BootstrapFile)
 	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
+[starter-params]
+disable-user-ddl-and-import = true`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.True(t, conf.StarterParams.DisableUserDDLAndImport)
+	encoded, err := json.Marshal(conf.StarterParams)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"disable-user-ddl-and-import":true`)
+	require.NoError(t, conf.Valid())
+	conf.DeployMode = deploymode.PremiumReserved
+	require.ErrorContains(t, conf.Valid(), "starter-params.disable-user-ddl-and-import can only be configured for starter deploy mode")
 
 	conf = NewConfig()
 	conf.StarterParams.EnableManagerNotifier = true

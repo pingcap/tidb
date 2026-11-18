@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -101,6 +102,14 @@ func inheritMViewMaintenanceFlag(parent, child sessionctx.Context) {
 		"inheritMViewMaintenanceFlagApplied",
 		childVars.InMViewMaintenance,
 	)
+}
+
+// Open implements the Executor Open interface.
+func (e *ImportIntoExec) Open(ctx context.Context) error {
+	if config.GetGlobalConfig().StarterParams.DisableUserDDLAndImport && !e.Ctx().GetSessionVars().InRestrictedSQL {
+		return errors.New("IMPORT INTO is temporarily unavailable during maintenance and will be available again soon")
+	}
+	return e.BaseExecutor.Open(ctx)
 }
 
 // Next implements the Executor Next interface.
