@@ -14,8 +14,59 @@
 
 //! Go `pkg/sessiontxn/isolation/optimistic.go`.
 
-use super::ProviderSessionVars;
-use crate::EnterNewTxnType;
+use super::{txn_start_ts, ProviderSessionVars};
+use crate::{EnterNewTxnType, TxnContext, TxnContextProvider};
+use tidb_domain_core::cluster_transactions::OpenClusterTransaction;
+use tidb_kv::cluster_storage::ClusterSnapshot;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
+
+/// Go `OptimisticTxnContextProvider`: every statement reads and writes at the
+/// transaction's start timestamp.
+pub struct OptimisticTxnContextProvider {
+    txn: Box<dyn OpenClusterTransaction>,
+}
+
+impl OptimisticTxnContextProvider {
+    /// The provider of an optimistic transaction.
+    #[must_use]
+    pub fn new(txn: Box<dyn OpenClusterTransaction>) -> Self {
+        Self { txn }
+    }
+}
+
+impl TxnContextProvider for OptimisticTxnContextProvider {
+    fn txn(&self) -> &dyn OpenClusterTransaction {
+        &*self.txn
+    }
+
+    fn into_txn(self: Box<Self>) -> Box<dyn OpenClusterTransaction> {
+        self.txn
+    }
+
+    // Go `getStmtReadTSFunc = p.getTxnStartTS`.
+    fn get_stmt_read_ts(&mut self, _cx: &mut dyn TxnContext) -> Result<u64, SqlQueryError> {
+        txn_start_ts(&*self.txn)
+    }
+
+    // Go `getStmtForUpdateTSFunc = p.getTxnStartTS`.
+    fn get_stmt_for_update_ts(&mut self, _cx: &mut dyn TxnContext) -> Result<u64, SqlQueryError> {
+        txn_start_ts(&*self.txn)
+    }
+
+    fn get_snapshot_with_stmt_read_ts(
+        &mut self,
+        cx: &mut dyn TxnContext,
+    ) -> Result<Box<dyn ClusterSnapshot>, SqlQueryError> {
+        self.txn.snapshot_for(cx.locking_read()).map_err(SqlQueryError::unknown)
+    }
+
+    fn get_snapshot_with_stmt_for_update_ts(
+        &mut self,
+        cx: &mut dyn TxnContext,
+    ) -> Result<Box<dyn ClusterSnapshot>, SqlQueryError> {
+        self.txn.snapshot_for(cx.locking_read()).map_err(SqlQueryError::unknown)
+    }
+}
 
 /// Go `isOptimisticTxnRetryable`: the `TxnCtx.CouldRetry` an optimistic
 /// transaction gets when it activates (`OptimisticTxnContextProvider.

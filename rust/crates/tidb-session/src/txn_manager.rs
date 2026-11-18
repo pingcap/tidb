@@ -28,7 +28,10 @@
 //! [`CommitHooks`], the way Go's commit reads them off the session.
 
 use tidb_sessiontxn::isolation::{optimistic::is_optimistic_txn_retryable, ProviderSessionVars};
-use tidb_sessiontxn::EnterNewTxnType;
+use tidb_sessiontxn::isolation::optimistic::OptimisticTxnContextProvider;
+use tidb_sessiontxn::isolation::readcommitted::PessimisticRCTxnContextProvider;
+use tidb_sessiontxn::isolation::repeatable_read::PessimisticRRTxnContextProvider;
+use tidb_sessiontxn::{EnterNewTxnType, TxnContext, TxnContextProvider};
 use tidb_domain_core::session_transaction::set_options_on_txn_active;
 use std::sync::Arc;
 
@@ -92,15 +95,7 @@ impl CommitTxnRegions {
     }
 }
 
-/// The `SessionVars` an optimistic provider reads when its transaction
-/// activates; `in_txn` is Go's `InTxn()` at that moment (set by `BEGIN`, or by
-/// `ActivateTxn` for an `autocommit = 0` transaction).
-struct ActivationVars<'a> {
-    session: &'a Session,
-    in_txn: bool,
-}
-
-impl ProviderSessionVars for ActivationVars<'_> {
+impl ProviderSessionVars for SessionTxnContext<'_> {
     fn retry_limit(&self) -> i64 {
         self.session
             .vars()
@@ -140,7 +135,38 @@ enum TxnKind {
 /// The entered transaction and what it is.
 struct EnteredTxn {
     kind: TxnKind,
-    txn: Box<dyn OpenClusterTransaction>,
+    provider: Box<dyn TxnContextProvider>,
+}
+
+/// Go `newProviderWithRequest` for a transaction the store opened:
+/// optimistic, else pessimistic READ-COMMITTED or REPEATABLE-READ by the
+/// level the transaction entered with (`IsolationLevelForNewTxn`).
+fn new_provider(txn: Box<dyn OpenClusterTransaction>, read_committed: bool) -> Box<dyn TxnContextProvider> {
+    if !txn.is_pessimistic() {
+        Box::new(OptimisticTxnContextProvider::new(txn))
+    } else if read_committed {
+        Box::new(PessimisticRCTxnContextProvider::new(txn))
+    } else {
+        Box::new(PessimisticRRTxnContextProvider::new(txn))
+    }
+}
+
+/// The session as Go's providers read `sctx` (see [`TxnContext`]).
+pub(crate) struct SessionTxnContext<'a> {
+    pub(crate) session: &'a Session,
+    /// Go `InTxn()` at the moment of the call.
+    pub(crate) in_txn: bool,
+    /// The statement is a `SELECT ... FOR UPDATE`.
+    pub(crate) locking_read: bool,
+}
+
+impl TxnContext for SessionTxnContext<'_> {
+    fn rc_check_ts(&self) -> bool {
+        self.session.stmt_rc_check_ts()
+    }
+    fn locking_read(&self) -> bool {
+        self.locking_read
+    }
 }
 
 /// See the module documentation.
@@ -214,14 +240,18 @@ impl TxnManager {
     /// `TxnCtx`'s `false`.
     pub(crate) fn decide_could_retry(&mut self, session: &Session, pessimistic: bool, tp: EnterNewTxnType, in_txn: bool) {
         self.could_retry = !pessimistic
-            && is_optimistic_txn_retryable(&ActivationVars { session, in_txn }, tp, false);
+            && is_optimistic_txn_retryable(
+                &SessionTxnContext { session, in_txn, locking_read: false },
+                tp,
+                false,
+            );
     }
 
     /// The statement's transaction: the explicit one, else an autocommit
     /// write's implicit one (Go's one `LazyTxn`).
     #[must_use]
     pub fn current(&self) -> Option<&dyn OpenClusterTransaction> {
-        self.txn.as_ref().map(|entered| &*entered.txn)
+        self.txn.as_ref().map(|entered| entered.provider.txn())
     }
 
     /// The explicit transaction: Go's `LazyTxn` while `InTxn()`.
@@ -230,28 +260,34 @@ impl TxnManager {
         self.txn
             .as_ref()
             .filter(|entered| entered.kind == TxnKind::Explicit)
-            .map(|entered| &*entered.txn)
+            .map(|entered| entered.provider.txn())
     }
 
-    fn set_explicit(&mut self, txn: Box<dyn OpenClusterTransaction>) {
+    /// The provider of the session's transaction (Go
+    /// `sessiontxn.GetTxnManager(sctx).GetContextProvider()`).
+    pub fn provider_mut(&mut self) -> Option<&mut (dyn TxnContextProvider + 'static)> {
+        self.txn.as_mut().map(|entered| &mut *entered.provider)
+    }
+
+    fn set_explicit(&mut self, txn: Box<dyn OpenClusterTransaction>, read_committed: bool) {
         // An autocommit statement ends its implicit transaction before the
         // next statement enters one.
         debug_assert!(self.txn.is_none(), "a transaction entered over another");
-        self.txn = Some(EnteredTxn { kind: TxnKind::Explicit, txn });
+        self.txn = Some(EnteredTxn { kind: TxnKind::Explicit, provider: new_provider(txn, read_committed) });
     }
 
     /// Ends the explicit transaction's hold on the slot (its commit or
     /// rollback follows).
     pub fn take_explicit(&mut self) -> Option<Box<dyn OpenClusterTransaction>> {
         self.explicit()?;
-        self.txn.take().map(|entered| entered.txn)
+        self.txn.take().map(|entered| entered.provider.into_txn())
     }
 
     fn take_implicit(&mut self) -> Option<Box<dyn OpenClusterTransaction>> {
         if self.explicit().is_some() {
             return None;
         }
-        self.txn.take().map(|entered| entered.txn)
+        self.txn.take().map(|entered| entered.provider.into_txn())
     }
 
     /// Go `PrepareTxnCtx` for an autocommit INSERT / UPDATE / DELETE: the
@@ -262,6 +298,7 @@ impl TxnManager {
     pub fn enter_implicit_write(
         &mut self,
         pessimistic: bool,
+        read_committed: bool,
         fair_locking: bool,
         resource_group: &str,
         options: SessionTransactionOptions,
@@ -269,7 +306,7 @@ impl TxnManager {
     ) {
         let pending =
             self.transactions.prepare_autocommit_write(resource_group, pessimistic, fair_locking, options.clone());
-        self.enter_implicit(TxnKind::ImplicitWrite, pessimistic, pending, options, read_ts);
+        self.enter_implicit(TxnKind::ImplicitWrite, pessimistic, read_committed, pending, options, read_ts);
     }
 
     /// Go `PrepareTxnCtx` for an autocommit read: the same implicit
@@ -284,13 +321,14 @@ impl TxnManager {
         read_ts: tidb_domain_core::cluster_transactions::StatementReadTs,
     ) {
         let pending = self.transactions.prepare_autocommit_read(resource_group, low_resolution, options.clone());
-        self.enter_implicit(TxnKind::ImplicitRead, false, pending, options, read_ts);
+        self.enter_implicit(TxnKind::ImplicitRead, false, false, pending, options, read_ts);
     }
 
     fn enter_implicit(
         &mut self,
         kind: TxnKind,
         pessimistic: bool,
+        read_committed: bool,
         pending: Result<Box<dyn tidb_domain_core::cluster_transactions::PendingClusterTransaction>, String>,
         options: SessionTransactionOptions,
         read_ts: tidb_domain_core::cluster_transactions::StatementReadTs,
@@ -309,7 +347,7 @@ impl TxnManager {
             LazyClusterTransaction::new_implicit(pessimistic, options, self.buffer.clone(), opener)
         });
         debug_assert!(self.txn.is_none(), "a transaction entered over another");
-        self.txn = Some(EnteredTxn { kind, txn });
+        self.txn = Some(EnteredTxn { kind, provider: new_provider(txn, read_committed) });
     }
 
     /// Go `RollbackTxn` for an autocommit statement that failed or is
@@ -454,12 +492,13 @@ impl TxnManager {
             }
             Ok(transaction)
         });
+        let read_committed = session.is_read_committed();
         self.set_explicit(Box::new(LazyClusterTransaction::new(
             pessimistic,
             Self::statement_transaction_options(session),
             self.buffer.clone(),
             opener,
-        )));
+        )), read_committed);
         self.pin_schema(session, schema_version);
     }
 
@@ -507,7 +546,7 @@ impl TxnManager {
         if let Some(observer) = session.transaction_observer() {
             observer.activated(transaction.start_ts());
         }
-        self.set_explicit(transaction);
+        self.set_explicit(transaction, session.is_read_committed());
         self.pin_schema(session, schema_version);
         Ok(())
     }

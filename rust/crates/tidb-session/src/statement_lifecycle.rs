@@ -38,6 +38,7 @@ use tidb_kv::cluster_storage::ClusterSnapshot;
 use tidb_store_driver_txn::cluster_storage::{BufferCheckpoint, SwappableSnapshot};
 
 use tidb_domain_core::cluster_transactions as transactions;
+use crate::txn_manager::SessionTxnContext;
 use crate::txn_manager::{CommitHooks, TxnManager};
 use crate::Session;
 
@@ -440,9 +441,10 @@ impl StatementLifecycle<'_> {
         }
         // Go `handlePessimisticDML`'s statement loop: run, lock the staged
         // keys, and on a lock conflict roll the STATEMENT back and re-execute
-        // it reading at the advanced `for_update_ts`. `None` is the first
-        // attempt, reading at the transaction's own snapshot.
-        let mut retry_read_ts: Option<u64> = None;
+        // it reading at the advanced `for_update_ts` (the provider's
+        // `OnStmtRetry`). An implicit transaction's provider is entered fresh
+        // inside the loop.
+        self.on_provider_stmt_event(None)?;
         let mut retries = tidb_store_driver_error::pessimistic_lock_error::PessimisticStatementRetry::default();
         // Whether the statement reached `finishStmt`'s commit: a failure
         // there is the commit's own, not one `autoCommitAfterStmt` rolls
@@ -474,7 +476,7 @@ impl StatementLifecycle<'_> {
             }
             self.enter_implicit_transaction(shape, autocommit_write, autocommit_pessimistic, resource_group, read_ts);
             let snapshot = {
-                match self.open_read_snapshot(shape, retry_read_ts, read_ts, resource_group, is_dml)
+                match self.open_read_snapshot(shape, read_ts, resource_group, is_dml)
                 {
                     Ok(snapshot) => snapshot,
                     Err(error) => break Err(error),
@@ -590,7 +592,9 @@ impl StatementLifecycle<'_> {
                             // reads at the timestamp that sees the version
                             // that beat it.
                             self.txn.buffer().restore(savepoint.clone());
-                            retry_read_ts = Some(for_update_ts);
+                            if let Err(error) = self.on_provider_stmt_event(Some(for_update_ts)) {
+                                break Err(error);
+                            }
                             tidb_breakpoint::inject(
                                 &*self.session,
                                 "lockErrorAndThenOnStmtRetryCalled",
@@ -672,7 +676,9 @@ impl StatementLifecycle<'_> {
                             // and the replay reads at the timestamp that sees
                             // the version that beat it.
                             self.txn.buffer().restore(savepoint.clone());
-                            retry_read_ts = Some(for_update_ts);
+                            if let Err(error) = self.on_provider_stmt_event(Some(for_update_ts)) {
+                                break Err(error);
+                            }
                             tidb_breakpoint::inject(
                                 &*self.session,
                                 "lockErrorAndThenOnStmtRetryCalled",
@@ -954,10 +960,23 @@ impl StatementLifecycle<'_> {
             .max(1)
     }
 
+    /// Go `OnStmtStart` (no retry timestamp) or `OnStmtRetry` on the
+    /// session transaction's provider, if one is entered.
+    fn on_provider_stmt_event(&mut self, retry_for_update_ts: Option<u64>) -> Result<(), SqlQueryError> {
+        let in_txn = self.session.in_transaction();
+        let Some(provider) = self.txn.provider_mut() else {
+            return Ok(());
+        };
+        let mut cx = SessionTxnContext { session: self.session, in_txn, locking_read: false };
+        match retry_for_update_ts {
+            Some(ts) => provider.on_stmt_retry(&mut cx, ts),
+            None => provider.on_stmt_start(&mut cx),
+        }
+    }
+
     pub fn open_read_snapshot(
-        &self,
+        &mut self,
         shape: StatementReadShape,
-        retry_read_ts: Option<u64>,
         read_ts: &transactions::StatementReadTs,
         resource_group: &str,
         is_dml: bool,
@@ -969,47 +988,24 @@ impl StatementLifecycle<'_> {
                 .open_snapshot_at(ts, resource_group)
                 .map_err(SqlQueryError::unknown);
         }
-        // The explicit transaction, or an autocommit write's implicit one:
-        // Go reads both through the same `LazyTxn` and providers.
-        if let Some(transaction) = self.txn.current() {
-            let locking = shape == StatementReadShape::LockingRead;
-            let snapshot = match retry_read_ts {
-                Some(ts) => transaction.snapshot_at_for(ts, locking),
-                // Go's pessimistic READ-COMMITTED provider reads every
-                // statement at its own fresh timestamp (`getStmtTS`), so a
-                // statement sees what peers committed after BEGIN; repeatable
-                // read keeps the start timestamp. The timestamp is a future
-                // the first read or lock resolves, unless the plan advises
-                // keeping the latest one (`AdviseOptimizeWithPlan`).
-                None if transaction.is_pessimistic() && self.session.is_read_committed() => {
-                    // `prepareStmtTS`: under `RCCheckTS` the statement reads
-                    // at the latest timestamp the transaction fetched
-                    // (`latestOracleTS`) and the read checks for newer data.
-                    if self.session.stmt_rc_check_ts() {
-                        transaction.snapshot_at_for(transaction.for_update_ts(), locking)
-                    } else {
-                        transaction.deferred_statement_snapshot(locking)
-                    }
-                }
-                // Go's pessimistic DML and locking reads read at
-                // `GetStmtForUpdateTS`, a fresh timestamp, so they see rows
-                // peers committed after BEGIN -- unless the plan advises
-                // keeping the current one (`AdviseOptimizeWithPlan` ->
-                // `optimizeForNotFetchingLatestTS`). The deferred handle
-                // resolves at the statement's first read or lock.
-                None if (is_dml || shape == StatementReadShape::LockingRead)
-                    && transaction.is_pessimistic() =>
-                {
-                    transaction.deferred_statement_snapshot(locking)
-                }
-                None => transaction.snapshot_for(locking),
-            }
-            .map_err(SqlQueryError::unknown);
+        // The explicit transaction, or an autocommit statement's implicit
+        // one: its provider decides the timestamp (Go
+        // `GetSnapshotWithStmtReadTS` / `GetSnapshotWithStmtForUpdateTS`; a
+        // DML or locking read takes the for-update one).
+        let in_txn = self.session.in_transaction();
+        if let Some(provider) = self.txn.provider_mut() {
+            let locking_read = shape == StatementReadShape::LockingRead;
+            let mut cx = SessionTxnContext { session: self.session, in_txn, locking_read };
+            let snapshot = if is_dml || locking_read {
+                provider.get_snapshot_with_stmt_for_update_ts(&mut cx)
+            } else {
+                provider.get_snapshot_with_stmt_read_ts(&mut cx)
+            };
             // Go `TxnCtx.SetForUpdateTS`: the statement's for-update
             // timestamp, which `tidb_last_query_info` reports.
             self.session
                 .current_for_update_ts()
-                .publish(transaction.for_update_ts());
+                .publish(provider.txn().for_update_ts());
             return snapshot;
         }
         if shape == StatementReadShape::AutocommitPointGet {
@@ -1073,7 +1069,15 @@ impl StatementLifecycle<'_> {
             // locking follows the session variable; a client connection is
             // neither internal nor restricted SQL.
             let fair_locking = vars.pessimistic_transaction_fair_locking();
-            self.txn.enter_implicit_write(autocommit_pessimistic, fair_locking, resource_group, options, read_ts.clone());
+            let read_committed = self.session.is_read_committed();
+            self.txn.enter_implicit_write(
+                autocommit_pessimistic,
+                read_committed,
+                fair_locking,
+                resource_group,
+                options,
+                read_ts.clone(),
+            );
         } else if shape != StatementReadShape::AutocommitPointGet {
             let low_resolution = self.session.use_low_resolution_tso();
             self.txn.enter_implicit_read(low_resolution, resource_group, options, read_ts.clone());
@@ -1085,6 +1089,7 @@ impl StatementLifecycle<'_> {
         shape: StatementReadShape,
         resource_group: &str,
     ) -> Result<ReadStatement, SqlQueryError> {
+        self.on_provider_stmt_event(None)?;
         if let Some(transaction) = self.txn.explicit() {
             transaction
                 .set_resource_group_name(resource_group)
@@ -1118,7 +1123,7 @@ impl StatementLifecycle<'_> {
         };
         self.enter_implicit_transaction(shape, false, false, resource_group, &statement.read_ts);
         let setup = self
-            .open_read_snapshot(shape, None, &statement.read_ts, resource_group, false)
+            .open_read_snapshot(shape, &statement.read_ts, resource_group, false)
             .and_then(|snapshot| {
                 drop(self.bind(snapshot));
                 self.declare_read_shape(shape);

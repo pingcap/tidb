@@ -120,107 +120,116 @@ pub trait TxnAdvisable {
     /// # Errors
     ///
     /// The warm-up failed.
-    fn advise_warmup(&mut self) -> Result<(), SqlQueryError>;
+    fn advise_warmup(&mut self, cx: &mut dyn TxnContext) -> Result<(), SqlQueryError>;
     /// Go `AdviseOptimizeWithPlan`: optimize the transaction for the plan
     /// (the point get that reads the latest version without a timestamp).
     ///
     /// # Errors
     ///
     /// The advice could not be applied.
-    fn advise_optimize_with_plan(&mut self, plan: &dyn std::any::Any) -> Result<(), SqlQueryError>;
+    fn advise_optimize_with_plan(
+        &mut self,
+        cx: &mut dyn TxnContext,
+        plan: &dyn std::any::Any,
+    ) -> Result<(), SqlQueryError>;
 }
 
-/// Go `TxnContextProvider`: one transaction's context.
-pub trait TxnContextProvider: TxnAdvisable {
-    /// Go `GetTxnScope`.
-    fn get_txn_scope(&self) -> String;
-    /// Go `GetReadReplicaScope`.
-    fn get_read_replica_scope(&self) -> String;
+/// Go's `sctx` as a provider reads it. Go stores the session in the
+/// provider; here the session lends it to each call, so the provider and the
+/// session never alias.
+pub trait TxnContext: isolation::ProviderSessionVars {
+    /// Go `StmtCtx.RCCheckTS`.
+    fn rc_check_ts(&self) -> bool;
+    /// Whether the statement is a locking read (`SELECT ... FOR UPDATE`):
+    /// the snapshot handle takes it to route reads that lock in execution.
+    fn locking_read(&self) -> bool;
+}
+
+/// Go `TxnContextProvider`: one transaction's context. It owns the
+/// transaction (Go's `p.txn` and the session `LazyTxn` it activates). The
+/// default bodies are Go's `baseTxnContextProvider` methods that a provider
+/// does not override.
+pub trait TxnContextProvider: Send {
+    /// The transaction (Go `sctx.Txn(false)`).
+    fn txn(&self) -> &dyn OpenClusterTransaction;
+    /// The transaction, for its commit or rollback.
+    fn into_txn(self: Box<Self>) -> Box<dyn OpenClusterTransaction>;
     /// Go `GetStmtReadTS`: the read timestamp of a SELECT (not FOR UPDATE).
     ///
     /// # Errors
     ///
-    /// The timestamp could not be obtained.
-    fn get_stmt_read_ts(&mut self) -> Result<u64, SqlQueryError>;
+    /// The transaction could not be activated.
+    fn get_stmt_read_ts(&mut self, cx: &mut dyn TxnContext) -> Result<u64, SqlQueryError>;
     /// Go `GetStmtForUpdateTS`: the timestamp of an INSERT / UPDATE /
     /// DELETE or a SELECT ... FOR UPDATE.
     ///
     /// # Errors
     ///
-    /// The timestamp could not be obtained.
-    fn get_stmt_for_update_ts(&mut self) -> Result<u64, SqlQueryError>;
+    /// The transaction could not be activated.
+    fn get_stmt_for_update_ts(&mut self, cx: &mut dyn TxnContext) -> Result<u64, SqlQueryError>;
     /// Go `GetSnapshotWithStmtReadTS`.
     ///
     /// # Errors
     ///
     /// The snapshot could not be opened.
-    fn get_snapshot_with_stmt_read_ts(&mut self) -> Result<Box<dyn ClusterSnapshot>, SqlQueryError>;
+    fn get_snapshot_with_stmt_read_ts(
+        &mut self,
+        cx: &mut dyn TxnContext,
+    ) -> Result<Box<dyn ClusterSnapshot>, SqlQueryError>;
     /// Go `GetSnapshotWithStmtForUpdateTS`.
     ///
     /// # Errors
     ///
     /// The snapshot could not be opened.
-    fn get_snapshot_with_stmt_for_update_ts(&mut self) -> Result<Box<dyn ClusterSnapshot>, SqlQueryError>;
-    /// Go `OnInitialize`: entering a new transaction with this provider.
-    ///
-    /// # Errors
-    ///
-    /// The transaction could not be entered.
-    fn on_initialize(&mut self, tp: EnterNewTxnType) -> Result<(), SqlQueryError>;
+    fn get_snapshot_with_stmt_for_update_ts(
+        &mut self,
+        cx: &mut dyn TxnContext,
+    ) -> Result<Box<dyn ClusterSnapshot>, SqlQueryError>;
     /// Go `OnStmtStart`.
     ///
     /// # Errors
     ///
     /// The statement could not start in this transaction.
-    fn on_stmt_start(&mut self, node: Option<&tidb_ast::Stmt>) -> Result<(), SqlQueryError>;
-    /// Go `OnPessimisticStmtStart`.
+    fn on_stmt_start(&mut self, _cx: &mut dyn TxnContext) -> Result<(), SqlQueryError> {
+        Ok(())
+    }
+    /// Go `OnStmtRetry`: the statement re-executes. Go's pessimistic
+    /// providers fetch the new for-update timestamp here
+    /// (`updateForUpdateTS`); the store's lock step has already fetched it,
+    /// so it arrives as `for_update_ts`, and the retry reads at it.
     ///
     /// # Errors
     ///
-    /// Fair locking could not start.
-    fn on_pessimistic_stmt_start(&mut self) -> Result<(), SqlQueryError>;
-    /// Go `OnPessimisticStmtEnd`.
-    ///
-    /// # Errors
-    ///
-    /// Fair locking could not end.
-    fn on_pessimistic_stmt_end(&mut self, is_successful: bool) -> Result<(), SqlQueryError>;
-    /// Go `OnStmtErrorForNextAction`.
+    /// The retry could not be prepared.
+    fn on_stmt_retry(&mut self, _cx: &mut dyn TxnContext, _for_update_ts: u64) -> Result<(), SqlQueryError> {
+        Ok(())
+    }
+    /// Go `OnStmtErrorForNextAction` (base: an error after the pessimistic
+    /// lock is returned, anything else is no idea).
     ///
     /// # Errors
     ///
     /// The error is to be returned ([`StmtErrorAction::Error`]).
     fn on_stmt_error_for_next_action(
         &mut self,
+        _cx: &mut dyn TxnContext,
         point: StmtErrorHandlePoint,
         error: SqlQueryError,
-    ) -> Result<StmtErrorAction, SqlQueryError>;
-    /// Go `OnStmtRetry`.
-    ///
-    /// # Errors
-    ///
-    /// The retry could not be prepared.
-    fn on_stmt_retry(&mut self) -> Result<(), SqlQueryError>;
-    /// Go `OnStmtCommit`.
-    ///
-    /// # Errors
-    ///
-    /// The statement's commit hook failed.
-    fn on_stmt_commit(&mut self) -> Result<(), SqlQueryError>;
-    /// Go `OnStmtRollback`.
-    ///
-    /// # Errors
-    ///
-    /// The statement's rollback hook failed.
-    fn on_stmt_rollback(&mut self, is_for_pessimistic_retry: bool) -> Result<(), SqlQueryError>;
-    /// Go `OnLocalTemporaryTableCreated`.
-    fn on_local_temporary_table_created(&mut self);
+    ) -> Result<StmtErrorAction, SqlQueryError> {
+        match point {
+            StmtErrorHandlePoint::AfterPessimisticLock => error_action(error),
+            _ => no_idea(),
+        }
+    }
     /// Go `ActivateTxn`: the transaction, activated.
     ///
     /// # Errors
     ///
     /// The transaction could not be activated.
-    fn activate_txn(&mut self) -> Result<&dyn OpenClusterTransaction, SqlQueryError>;
+    fn activate_txn(&mut self) -> Result<&dyn OpenClusterTransaction, SqlQueryError> {
+        self.txn().activate().map_err(SqlQueryError::unknown)?;
+        Ok(self.txn())
+    }
 }
 
 #[cfg(test)]

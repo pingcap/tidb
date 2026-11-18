@@ -15,6 +15,11 @@
 //! Go `pkg/sessiontxn/isolation`: the providers of each isolation level.
 
 pub mod optimistic;
+pub mod readcommitted;
+pub mod repeatable_read;
+
+use tidb_domain_core::cluster_transactions::OpenClusterTransaction;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 /// The `*variable.SessionVars` fields Go's providers read.
 pub trait ProviderSessionVars {
@@ -28,4 +33,10 @@ pub trait ProviderSessionVars {
     fn in_restricted_sql(&self) -> bool;
     /// Go `SessionVars.DisableTxnAutoRetry`.
     fn disable_txn_auto_retry(&self) -> bool;
+}
+
+/// Go `baseTxnContextProvider.getTxnStartTS`: activates the transaction.
+pub(crate) fn txn_start_ts(txn: &dyn OpenClusterTransaction) -> Result<u64, SqlQueryError> {
+    txn.activate().map_err(SqlQueryError::unknown)?;
+    Ok(txn.start_ts())
 }
