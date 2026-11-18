@@ -76,6 +76,7 @@
 //! physical receipt; it must not re-enumerate access, join, or aggregation
 //! alternatives. EXPLAIN derives metadata from the same physical tree.
 
+pub mod mview;
 pub mod access_path;
 pub mod import_into;
 pub mod cascades;

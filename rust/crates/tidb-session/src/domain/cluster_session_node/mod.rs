@@ -902,6 +902,8 @@ impl<'s> ClusterServerSession<'s> {
             },
             stmt => stmt,
         };
+        // Go master's `buildMViewCompleteDeltaApply` calls
+        // `updateForUpdateTS` too.
         matches!(
             stmt,
             Stmt::Dml(dml) if matches!(
@@ -910,6 +912,9 @@ impl<'s> ClusterServerSession<'s> {
                     | tidb_ast::DmlStmt::Update(_)
                     | tidb_ast::DmlStmt::Delete(_)
             )
+        ) || matches!(
+            stmt,
+            Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::RefreshMaterializedViewImplement(_))
         )
     }
 

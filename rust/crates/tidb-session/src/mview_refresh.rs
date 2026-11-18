@@ -502,7 +502,12 @@ impl Session {
         if s.observe_type != RefreshMaterializedViewObserveType::None {
             return Err(DriverError::unsupported("REFRESH MATERIALIZED VIEW DRY RUN / WITH PROFILE on this node"));
         }
-        if !matches!(s.mode, RefreshMaterializedViewMode::CompleteInPlace | RefreshMaterializedViewMode::CompleteOutOfPlace) {
+        if !matches!(
+            s.mode,
+            RefreshMaterializedViewMode::CompleteInPlace
+                | RefreshMaterializedViewMode::CompleteOutOfPlace
+                | RefreshMaterializedViewMode::CompleteDeltaApply
+        ) {
             return Err(DriverError::unsupported(format!("REFRESH MATERIALIZED VIEW {method} on this node")));
         }
         let refresh_start = chrono::Local::now();
@@ -733,6 +738,7 @@ impl Session {
                     );
                 }
                 self.refresh_complete_in_place_locked(
+                    mode,
                     controller,
                     &refresh_watch,
                     &mut refresh,
@@ -809,6 +815,7 @@ impl Session {
     #[allow(clippy::too_many_arguments)]
     fn refresh_complete_in_place_locked(
         &mut self,
+        mode: RefreshMaterializedViewMode,
         controller: &std::sync::Arc<MvTaskCancelController>,
         refresh_watch: &MvTaskWatch,
         refresh: &mut Session,
@@ -895,8 +902,39 @@ impl Session {
             };
             tidb_failpoint::inject_call(&format!("{FP}refreshMaterializedViewAfterInsertRefreshHistRunning"), &mut ());
             tidb_failpoint::inject(&format!("{FP}pauseRefreshMaterializedViewAfterInsertRefreshHistRunning"), |_| {});
+            // Go master `executeRefreshMaterializedViewCompleteDeltaApply`:
+            // the internal `RefreshMaterializedViewImplementStmt` on the refresh
+            // session; its OK packet is the statement's.
+            let delta_apply = (mode == RefreshMaterializedViewMode::CompleteDeltaApply).then(|| {
+                let implement = tidb_ast::Stmt::Admin(tidb_ast::NodeBox::new(tidb_ast::AdminStmt::RefreshMaterializedViewImplement(
+                    Box::new(tidb_ast::RefreshMaterializedViewImplementStmt {
+                        refresh_stmt: tidb_ast::RefreshMaterializedViewStmt {
+                            view_name: vec![schema.to_owned(), name.to_owned()],
+                            with_async_mode: false,
+                            mode,
+                            observe_type: RefreshMaterializedViewObserveType::None,
+                            as_of: None,
+                        },
+                        last_successful_refresh_read_tso: 0,
+                        target_refresh_read_tso: 0,
+                        mlog_retained_lower_tso: 0,
+                        registered_mlog_ids: Vec::new(),
+                    }),
+                )));
+                let sql = implement.restore();
+                let (affected_rows, _) = refresh
+                    .node_conn()
+                    .run_ordinary_write(&sql, &implement)
+                    .map_err(crate::domain::cluster_session_node::sql_query_error_to_driver)?;
+                // Go `captureMVRefreshStmtResult`, before the next statement
+                // resets the statement context.
+                let message = refresh.statement_message().to_owned();
+                let read_tso = session_json_u64(refresh, "tidb_last_query_info", "for_update_ts")
+                    .ok_or_else(|| plain("refresh materialized view: invalid refresh read tso"))?;
+                Ok::<_, DriverError>((affected_rows, message, read_tso))
+            });
             // Go master `executeRefreshMaterializedViewCompleteInPlace`.
-            let data = (|| {
+            let mut in_place = || {
                 let view_args = [SqlArg::String(schema.as_bytes()), SqlArg::String(name.as_bytes())];
                 sys_sql(refresh, "DELETE FROM %n.%n", &view_args)?;
                 // Go `StmtCtx.AffectedRows()` of each statement.
@@ -907,9 +945,18 @@ impl Session {
                 let insert_rows = i64::try_from(refresh.affected_rows()).unwrap_or(i64::MAX);
                 let read_tso = session_json_u64(refresh, "tidb_last_query_info", "for_update_ts")
                     .ok_or_else(|| plain("refresh materialized view: invalid refresh read tso"))?;
-                Ok::<_, DriverError>((delete_rows, insert_rows, read_tso))
-            })();
-            let (delete_rows, insert_rows, read_tso) = match data {
+                // Go `newMVRefreshStmtResultFromWriteCounts`.
+                Ok::<_, DriverError>((
+                    u64::try_from(insert_rows + delete_rows).unwrap_or_default(),
+                    format!("Rows inserted: {insert_rows}  Updated: 0  Deleted: {delete_rows}"),
+                    read_tso,
+                ))
+            };
+            let data = match delta_apply {
+                Some(applied) => applied,
+                None => in_place(),
+            };
+            let (affected_rows, statement_message, read_tso) = match data {
                 Ok(data) => data,
                 Err(error) => return Err(finalize_failure(&mut hist, refresh, &mut txn_finished, error)),
             };
@@ -970,8 +1017,9 @@ impl Session {
                 );
             }
             // Go `newMVRefreshStmtResultFromWriteCounts`.
-            self.statement_message = format!("Rows inserted: {insert_rows}  Updated: 0  Deleted: {delete_rows}");
-            Ok(StmtOutput::Affected(u64::try_from(insert_rows + delete_rows).unwrap_or_default()))
+            // Go `captureMVRefreshStmtResult`.
+            self.statement_message = statement_message;
+            Ok(StmtOutput::Affected(affected_rows))
         })();
         if !txn_finished {
             let _ = sys_sql(refresh, "ROLLBACK", &[]);
@@ -1295,4 +1343,23 @@ pub(crate) fn session_current_tso(session: &mut Session) -> Result<u64, DriverEr
         return Err(plain("invalid job id"));
     }
     Ok(version)
+}
+
+impl Session {
+    /// Go master `MViewCompleteDeltaApplyExec` for the refresh session's
+    /// internal `RefreshMaterializedViewImplementStmt`: the view's diff rows
+    /// applied, the statement's affected rows and message set.
+    pub(crate) fn mview_complete_delta_apply(
+        &mut self,
+        apply: &tidb_planner::common_plans::MViewCompleteDeltaApply,
+    ) -> Result<StmtOutput, DriverError> {
+        use tidb_executor::stmt_ctx_build::ResetContextOfStmt as _;
+        let current_db = self.current_database().to_owned();
+        let ctx = self.statement_context_ignoring(true, false);
+        let stats = self.with_staged_catalog(|catalog| {
+            tidb_executor::driver::mview_delta_apply::run_mview_complete_delta_apply(apply, catalog, &current_db, &ctx)
+        })?;
+        self.statement_message = stats.stmt_message();
+        Ok(StmtOutput::Affected(stats.affected_rows()))
+    }
 }

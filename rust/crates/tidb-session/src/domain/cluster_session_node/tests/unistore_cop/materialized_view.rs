@@ -1007,13 +1007,16 @@ fn purge_running_hist_heartbeat_as_go_master() {
 const PAUSE_REFRESH: &str = "github.com/pingcap/tidb/pkg/executor/pauseRefreshMaterializedViewAfterInsertRefreshHistRunning";
 
 /// Go master's `TestMaterializedViewRefreshCancellation` (its subtests
-/// refresh by DELTA APPLY, not yet ported; the COMPLETE modes share the same
-/// monitor): a refresh paused after its running history row, canceled by a
+/// refresh by DELTA APPLY; IN PLACE and OUT OF PLACE share the monitor): a refresh paused after its running history row, canceled by a
 /// user once granted OPERATE VIEW on the view, fails as canceled manually,
 /// and its history row names who canceled it.
 #[test]
 fn cancel_materialized_view_refresh_job_as_go_master() {
-    for (mode, method) in [("complete in place", "complete in place manual"), ("complete out of place", "complete out of place manual")] {
+    for (mode, method) in [
+        ("complete delta apply", "complete delta apply manual"),
+        ("complete in place", "complete in place manual"),
+        ("complete out of place", "complete out of place manual"),
+    ] {
         let (stack, users, mut root) = go_master_mview_stack();
         for sql in [
             "use test",
@@ -1179,4 +1182,16 @@ fn full_outer_join_answers_as_go_master() {
 #[test]
 fn full_outer_join_plans_as_go_master() {
     replay_go_master(include_str!("../../../../../testdata/full_outer_join_explain_go.jsonl"));
+}
+
+/// Go master's REFRESH MATERIALIZED VIEW ... COMPLETE DELTA APPLY
+/// (`testdata/mview_refresh_delta_apply_go.jsonl`): the view's diff against
+/// its recomputed definition (inserts, deletes, updates of the payload
+/// columns, a moved group key, NULL group keys matched by `<=>`) applied in
+/// place, the OK packet's write counts, the history row and the refresh
+/// info, nothing written when nothing changed, and a view's own MV log
+/// recording the refresh's row changes.
+#[test]
+fn refresh_materialized_view_complete_delta_apply_answers_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/mview_refresh_delta_apply_go.jsonl"));
 }

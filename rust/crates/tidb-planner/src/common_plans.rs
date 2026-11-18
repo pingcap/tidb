@@ -175,6 +175,10 @@ pub enum Plan {
     RefreshMaterializedView(Box<tidb_ast::RefreshMaterializedViewStmt>),
     /// Go master `PurgeMaterializedViewLog`.
     PurgeMaterializedViewLog(Box<tidb_ast::PurgeMaterializedViewLogStmt>),
+    /// Go master `MViewCompleteDeltaApply`: COMPLETE DELTA APPLY's diff
+    /// source and the layout its executor writes the view from. The diff
+    /// SELECT is optimized where this tier's executor plans queries.
+    MViewCompleteDeltaApply(Box<MViewCompleteDeltaApply>),
     /// A logical operator tree (Go `base.LogicalPlan`).
     Logical(LogicalPlan),
     /// A physical operator tree (Go `base.PhysicalPlan`).
@@ -249,4 +253,15 @@ pub enum Plan {
     ExplainFor(Box<tidb_ast::ExplainForStmt>),
     /// Go `Trace` (`buildTrace`).
     Trace(Box<tidb_ast::TraceStmt>),
+}
+
+/// Go master `MViewCompleteDeltaApply`.
+#[derive(Clone, Debug)]
+pub struct MViewCompleteDeltaApply {
+    /// The view's schema and name.
+    pub database: String,
+    /// The view's name.
+    pub name: String,
+    /// Go `mview.BuildCompleteDiffSource`'s answer.
+    pub diff: crate::mview::CompleteDiffBuildResult,
 }

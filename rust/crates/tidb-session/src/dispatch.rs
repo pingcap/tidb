@@ -553,6 +553,8 @@ impl Session {
             }
             // Go master `PurgeMaterializedViewLogExec`.
             Plan::PurgeMaterializedViewLog(purge) => self.purge_materialized_view_log(purge).map(Some),
+            // Go master `MViewCompleteDeltaApplyExec`.
+            Plan::MViewCompleteDeltaApply(apply) => self.mview_complete_delta_apply(apply).map(Some),
             Plan::CompactTable(compact) => self.compact_table_tiflash_exec(compact).map(Some),
             // Go `AlterDDLJobExec`: the job's row rewritten, no result set.
             Plan::AlterDdlJob(alter) => {

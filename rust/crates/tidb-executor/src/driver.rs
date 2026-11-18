@@ -54,6 +54,7 @@ pub(crate) use table_resolver::TableResolver;
 mod dml;
 pub(crate) use tidb_planner::from_scope as from;
 mod multi_dml;
+pub mod mview_delta_apply;
 pub(crate) use multi_dml::{multi_dml_explain_plan, MultiDmlRef};
 
 pub use dml::dml_visit_info;
@@ -948,6 +949,11 @@ impl<'a> DmlSourceCursor<'a> {
             .map(|row| self.chunk.get_row(row).get_datum_row(&self.types))
             .collect();
         Ok(Some((rows, self.chunk.memory_usage())))
+    }
+
+    /// The source's result field types.
+    pub(crate) fn field_types(&self) -> &[FieldType] {
+        &self.types
     }
 
     /// Go `exec.Close(e.SelectExec)` in the write executor's `Close`.

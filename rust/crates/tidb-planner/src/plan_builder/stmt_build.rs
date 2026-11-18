@@ -273,6 +273,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             | AdminStmt::CancelMaterializedViewJob(_) => return self.build_simple(stmt),
             AdminStmt::RefreshMaterializedView(refresh) => return self.build_refresh_materialized_view(refresh),
             AdminStmt::PurgeMaterializedViewLog(purge) => return self.build_purge_materialized_view_log(purge),
+            AdminStmt::RefreshMaterializedViewImplement(implement) => {
+                return self.build_refresh_materialized_view_implement(implement)
+            }
             _ => return self.build_admin(stmt, admin),
         })
     }
@@ -1450,6 +1453,58 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             ));
         }
         Ok(Plan::PurgeMaterializedViewLog(Box::new(purge.clone())))
+    }
+
+    /// Go master `buildRefreshMaterializedViewImplement` for COMPLETE DELTA
+    /// APPLY: the view and its diff source (`mview.BuildCompleteDiffSource`).
+    /// FAST's merge plan (`mview.Build`) is not ported yet.
+    fn build_refresh_materialized_view_implement(
+        &mut self,
+        implement: &tidb_ast::RefreshMaterializedViewImplementStmt,
+    ) -> Result<Plan, PlanError> {
+        let refresh = &implement.refresh_stmt;
+        let mode = refresh.mode;
+        if mode == tidb_ast::RefreshMaterializedViewMode::Fast {
+            return Err(PlanError::internal("RefreshMaterializedViewImplementStmt: FAST is not supported on this node yet"));
+        }
+        if mode != tidb_ast::RefreshMaterializedViewMode::CompleteDeltaApply {
+            return Err(PlanError::internal(format!(
+                "RefreshMaterializedViewImplementStmt: unsupported mode {mode:?}"
+            )));
+        }
+        let (database, table, original) = self.qualified(&refresh.view_name);
+        if database.is_empty() {
+            return Err(PlanError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])));
+        }
+        let info = self
+            .source
+            .find_table(&database, &table)
+            .and_then(|table| table.table_info.as_ref().map(|info| info.read().clone_like_go()));
+        let Some(info) = info else {
+            return Err(PlanError::from(
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                    .gen_with_stack_by_args(&[database.clone().into(), original.into()]),
+            ));
+        };
+        if info.materialized_view.is_none() {
+            return Err(PlanError::internal(format!(
+                "table {database}.{} is not a materialized view",
+                info.name.original()
+            )));
+        }
+        let (charset, collation) = self.ctx.connection_charset_info();
+        let (charset, collation) = (charset.to_owned(), collation.to_owned());
+        let config = self.parser_config;
+        let parse = |sql: &str| {
+            tidb_parser::parse_with_config_and_connection(sql, config, &charset, &collation)
+                .map_err(|error| error.compatibility_message(sql))
+        };
+        let diff = crate::mview::build_complete_diff_source(&info, &database, &parse).map_err(PlanError::internal)?;
+        Ok(Plan::MViewCompleteDeltaApply(Box::new(crate::common_plans::MViewCompleteDeltaApply {
+            database,
+            name: info.name.original().to_owned(),
+            diff,
+        })))
     }
 
     /// Go master `buildRefreshMaterializedView`: OPERATE VIEW on the view,
