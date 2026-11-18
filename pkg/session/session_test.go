@@ -15,9 +15,13 @@
 package session
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,4 +30,45 @@ func TestGetStartMode(t *testing.T) {
 	require.Equal(t, ddl.Normal, getStartMode(currentBootstrapVersion+1))
 	require.Equal(t, ddl.Upgrade, getStartMode(currentBootstrapVersion-1))
 	require.Equal(t, ddl.Bootstrap, getStartMode(0))
+}
+
+func TestMDLInitializationPolicies(t *testing.T) {
+	original := variable.EnableMDL.Load()
+	t.Cleanup(func() { variable.EnableMDL.Store(original) })
+	for _, initializer := range []struct {
+		name   string
+		policy mdlInitPolicy
+	}{
+		{"normal", mdlInitEnableOnNull},
+		{"bootstrap", mdlInitForceEnable},
+		{"upgrade", mdlInitKeepDisabledOnNull},
+		{"BR", mdlInitKeepDisabledOnNull},
+	} {
+		for _, state := range []string{"missing", "enabled", "disabled"} {
+			t.Run(initializer.name+"/"+state, func(t *testing.T) {
+				store, err := mockstore.NewMockStore()
+				require.NoError(t, err)
+				defer func() { require.NoError(t, store.Close()) }()
+				if state != "missing" {
+					txn, err := store.Begin()
+					require.NoError(t, err)
+					require.NoError(t, meta.NewMutator(txn).SetMetadataLock(state == "enabled"))
+					require.NoError(t, txn.Commit(context.Background()))
+				}
+				expectedEnabled := state == "enabled" || initializer.name == "bootstrap" ||
+					(state == "missing" && initializer.name == "normal")
+				variable.EnableMDL.Store(!expectedEnabled)
+				_, err = initMDLVariable(store, initializer.policy)
+				require.NoError(t, err)
+				require.Equal(t, expectedEnabled, variable.EnableMDL.Load())
+				txn, err := store.Begin()
+				require.NoError(t, err)
+				enabled, missing, err := meta.NewMutator(txn).GetMetadataLock()
+				require.NoError(t, err)
+				require.NoError(t, txn.Rollback())
+				require.Equal(t, expectedEnabled, enabled)
+				require.Equal(t, state == "missing" && !expectedEnabled, missing)
+			})
+		}
+	}
 }
