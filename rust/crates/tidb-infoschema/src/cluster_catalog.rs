@@ -87,6 +87,13 @@ pub trait MetaSnapshot {
     /// Reads every key/value pair under `prefix`, in key order.
     fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError>;
 
+    /// The node's latest schema image (Go `infoCache.GetLatest()`), when the
+    /// snapshot carries one: [`load_executor_info_schema`] answers it for the
+    /// snapshot's own schema version instead of loading that version again.
+    fn latest_info_schema(&self) -> Option<&std::sync::Arc<crate::SessionExtendedInfoSchema>> {
+        None
+    }
+
     /// The node's auto-ID service client, for a job that reads or rebases a
     /// counter the service owns (`AUTO_ID_CACHE 1`). `None` for a snapshot
     /// that carries none.
@@ -276,6 +283,25 @@ pub fn load_info_schema<S: MetaSnapshot + ?Sized>(
     snapshot: &mut S,
 ) -> Result<crate::SessionExtendedInfoSchema, ClusterCatalogError> {
     load_info_schema_keeping(snapshot, &mut |_, _| true)
+}
+
+/// The schema a DDL executor statement reads from `snapshot`: the node's
+/// latest image when it is at the snapshot's schema version (Go `Loader`'s
+/// cache hit, `infoCache.GetByVersion`), else the image loaded from the
+/// snapshot. Either way the image of the snapshot's version.
+///
+/// # Errors
+///
+/// The snapshot's read or decode failure.
+pub fn load_executor_info_schema<S: MetaSnapshot + ?Sized>(
+    snapshot: &mut S,
+) -> Result<std::sync::Arc<crate::SessionExtendedInfoSchema>, ClusterCatalogError> {
+    if let Some(latest) = snapshot.latest_info_schema().cloned() {
+        if get_schema_version(snapshot)? == latest.schema_meta_version() {
+            return Ok(latest);
+        }
+    }
+    load_info_schema(snapshot).map(std::sync::Arc::new)
 }
 
 /// [`load_info_schema`] whose `keep` decides, table by table, what

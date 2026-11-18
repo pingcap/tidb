@@ -164,7 +164,7 @@ pub fn alter_placement_policy<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
     let (action, policy_name, schema_id, args) = {
         let Some(found) = find_policy(snapshot, name)? else {
             return Err(policy_not_exists(name));
@@ -214,7 +214,7 @@ pub fn drop_placement_policy<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
     let (action, policy_name, schema_id, args) = {
         let Some(found) = find_policy(snapshot, name)? else {
             if if_exists {

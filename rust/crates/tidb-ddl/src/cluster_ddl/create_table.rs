@@ -33,7 +33,7 @@ pub fn create_table_job<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
     let mut warnings = Vec::new();
     let info = build_create_table_info(&catalog, schema, table, build)?;
     // Go's partition sugar rewrites `QueryString` before the job copies it;

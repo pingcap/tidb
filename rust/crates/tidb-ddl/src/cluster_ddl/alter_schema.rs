@@ -117,7 +117,7 @@ pub fn modify_schema_charset_and_collate<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
     let (name, action, args, policy) = {
         let Some(database) = find_database(&catalog, name) else {
             return Err(DdlPlanError::from(
@@ -179,7 +179,7 @@ pub fn modify_schema_default_placement<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
     let (name, action, args, policy) = {
         if find_database(&catalog, name).is_none() {
             return Err(DdlPlanError::from(

@@ -21,7 +21,9 @@
 
 use std::collections::BTreeMap;
 
-use tidb_infoschema::cluster_catalog::{load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::{
+    load_executor_info_schema, load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot,
+};
 
 
 use tidb_kv::key::prefix_scan_end;
@@ -31,6 +33,10 @@ use tidb_meta::{key, value};
 #[derive(Default)]
 struct RecordedSnapshot {
     pairs: BTreeMap<Vec<u8>, Vec<u8>>,
+    /// The node's latest image the snapshot carries, if any.
+    latest: Option<std::sync::Arc<tidb_infoschema::SessionExtendedInfoSchema>>,
+    /// How many prefix scans the snapshot served.
+    scans: usize,
 }
 
 impl RecordedSnapshot {
@@ -44,7 +50,12 @@ impl MetaSnapshot for RecordedSnapshot {
         Ok(self.pairs.get(raw_key).cloned())
     }
 
+    fn latest_info_schema(&self) -> Option<&std::sync::Arc<tidb_infoschema::SessionExtendedInfoSchema>> {
+        self.latest.as_ref()
+    }
+
     fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
+        self.scans += 1;
         let end = prefix_scan_end(prefix).expect("finite scan end");
         Ok(self
             .pairs
@@ -214,4 +225,32 @@ fn v2_full_load_retains_only_must_loaded_metadata() {
     let v1 = load_info_schema(&mut snapshot).unwrap();
     let db = v1.stored_schemas().into_iter().find(|db| db.read().id == 3).unwrap();
     assert_eq!(db.read().deprecated_tables.len(), 7);
+}
+
+/// A DDL executor statement reads the node's latest image when it is at the
+/// snapshot's schema version (Go `Loader`'s version cache hit) without
+/// scanning meta, and loads the snapshot's image otherwise.
+#[test]
+fn executor_schema_is_the_latest_image_only_at_the_snapshot_version() {
+    let mut fresh = recorded_cluster();
+    let latest = std::sync::Arc::new(load_info_schema(&mut fresh).expect("catalog loads"));
+
+    let mut hit = recorded_cluster();
+    hit.latest = Some(std::sync::Arc::clone(&latest));
+    let image = load_executor_info_schema(&mut hit).expect("catalog loads");
+    assert!(std::sync::Arc::ptr_eq(&image, &latest));
+    assert_eq!(hit.scans, 0);
+
+    // The node is behind the snapshot: its image is not the snapshot's.
+    let mut behind = recorded_cluster();
+    behind.put(key::schema_version_kv_key(), value::encode_int_value(413));
+    behind.latest = Some(std::sync::Arc::clone(&latest));
+    let image = load_executor_info_schema(&mut behind).expect("catalog loads");
+    assert!(!std::sync::Arc::ptr_eq(&image, &latest));
+    assert_eq!(image.schema_meta_version(), 413);
+    assert!(behind.scans > 0);
+
+    let mut none = recorded_cluster();
+    let image = load_executor_info_schema(&mut none).expect("catalog loads");
+    assert_eq!(image.schema_meta_version(), 412);
 }

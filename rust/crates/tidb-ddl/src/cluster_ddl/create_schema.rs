@@ -50,7 +50,7 @@ pub fn create_schema_with_info<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
     if find_database(&catalog, info.name.original()).is_some() {
         // Go keeps the stack: the error may be seen as an error.
         let error = tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS

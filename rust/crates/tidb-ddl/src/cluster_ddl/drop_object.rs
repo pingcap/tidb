@@ -63,7 +63,7 @@ pub fn drop_table<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
 
     let identifiers: Vec<(String, String)> = if targets.is_empty() {
         vec![(schema.to_owned(), table.to_owned())]
@@ -142,7 +142,7 @@ pub fn drop_materialized_view_object<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
     let missing = || {
         Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
@@ -184,7 +184,7 @@ pub fn drop_view<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
     let stored = find_database(&catalog, schema)
         .and_then(|db| find_table(&catalog, &db.read(), name).map(|table| (db.read().id, table)));
     let Some((db_id, table)) = stored else {
@@ -223,7 +223,7 @@ pub fn drop_sequence<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
 
     let found = find_database(&catalog, schema).and_then(|database| {
         find_table(&catalog, &database.read(), name).map(|table| (database.read().id, table))
@@ -263,7 +263,7 @@ pub fn drop_schema<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
 
     let Some(database) = find_database(&catalog, name) else {
         if if_exists {

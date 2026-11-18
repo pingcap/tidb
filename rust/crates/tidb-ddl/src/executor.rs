@@ -718,7 +718,8 @@ impl<S: StoreClient> ExecutorStore for RealClusterDdl<S> {
                     .snapshot()
                     .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
             )
-            .with_auto_ids_opt(self.auto_ids.as_ref());
+            .with_auto_ids_opt(self.auto_ids.as_ref())
+            .with_latest_info_schema(self.latest_schema());
             build(
                 &mut snapshot,
                 preparation.start_ts(),
@@ -1225,7 +1226,7 @@ pub fn alter_table_set_tiflash_replica<E: ExecutorStore>(
 ) -> Result<ClusterDdlReport, SqlQueryError> {
     let tiflash = || ExecutorStore::tiflash_store_count(executor);
     executor.with_meta(context.as_ref(), |snapshot, start_ts, upgrading| {
-        let catalog = tidb_infoschema::cluster_catalog::load_info_schema(snapshot)?;
+        let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
         let built = crate::cluster_ddl::alter_table::alter_table_set_ti_flash_replica(
             snapshot,
             &catalog,
@@ -1252,7 +1253,7 @@ pub fn create_index<E: ExecutorStore>(
 ) -> Result<ClusterDdlReport, SqlQueryError> {
     let store_count = executor.store_count();
     executor.with_meta(context.as_ref(), |snapshot, start_ts, upgrading| {
-        let catalog = tidb_infoschema::cluster_catalog::load_info_schema(snapshot)?;
+        let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
         let mut has_null = |schema: &str, table: &tidb_model::TableInfo, column_id: i64| {
             executor.has_null_value(schema, table, column_id)
         };
@@ -1280,7 +1281,7 @@ pub fn drop_index<E: ExecutorStore>(
     let (schema, table) = split_name(&statement.table, current_db, "table")
         .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?;
     executor.with_meta(context.as_ref(), |snapshot, start_ts, upgrading| {
-        let catalog = tidb_infoschema::cluster_catalog::load_info_schema(snapshot)?;
+        let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
         let built = crate::cluster_ddl::drop_index::drop_index_by_name(
             snapshot,
             &catalog,
@@ -1311,7 +1312,7 @@ pub(super) fn recover_table<S: StoreClient>(
         .transpose()
         .map_err(|e| SqlQueryError::from(e.to_mysql_error()))?;
     executor.with_meta(context.as_ref(), |snapshot, _, _| {
-        let catalog = tidb_infoschema::cluster_catalog::load_info_schema(snapshot)?;
+        let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
         let safe_point = crate::cluster_ddl::recover_table::get_gc_safe_point(
             executor.scheduler.session_pool.as_ref(),
         )?;
@@ -1344,7 +1345,7 @@ pub(super) fn recover_schema<S: StoreClient>(
 ) -> Result<ClusterDdlReport, SqlQueryError> {
     let _ = current_db;
     executor.with_meta(context.as_ref(), |snapshot, _, _| {
-        let catalog = tidb_infoschema::cluster_catalog::load_info_schema(snapshot)?;
+        let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
         let safe_point = crate::cluster_ddl::recover_table::get_gc_safe_point(
             executor.scheduler.session_pool.as_ref(),
         )?;
@@ -1471,7 +1472,7 @@ pub fn update_table_replica_info<E: ExecutorStore>(
 ) -> Result<ClusterDdlReport, SqlQueryError> {
     let tiflash = || ExecutorStore::tiflash_store_count(executor);
     executor.with_meta(context, |snapshot, start_ts, upgrading| {
-        let catalog = tidb_infoschema::cluster_catalog::load_info_schema(snapshot)?;
+        let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
         let built = crate::cluster_ddl::alter_table::update_table_replica_info(
             snapshot, &catalog, &table_id, &available, context, false, &tiflash,
         )?;

@@ -30,7 +30,7 @@ pub fn truncate_table_by_name<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
     let (db_id, stored) = locate_table(&catalog, schema, table)?;
     let stored = stored.read();
     // A view or a sequence has no rows to truncate and reads as missing.

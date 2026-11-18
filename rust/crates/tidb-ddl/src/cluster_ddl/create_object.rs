@@ -38,7 +38,7 @@ pub fn create_view<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
     let mut warnings = Vec::new();
     let built = {
         let Some(database) = find_database(&catalog, schema) else {
@@ -96,7 +96,7 @@ pub fn create_sequence<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
     let mut warnings = Vec::new();
     let built = {
         let on_exist = if if_not_exists {
@@ -138,7 +138,7 @@ pub fn create_table_like<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
     let mut warnings = Vec::new();
     let built = {
         match build_create_table_like_info(
@@ -198,7 +198,7 @@ pub fn alter_sequence<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
     let mut warnings = Vec::new();
     let built =
         { build_alter_sequence_job(&catalog, schema, name, if_exists, options, job_context)? };
@@ -358,7 +358,7 @@ pub fn create_table_with_info<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
     let mut warnings = Vec::new();
     let built = create_table_with_info_job(
         snapshot,
@@ -395,7 +395,7 @@ pub fn batch_create_table_with_info<S: MetaSnapshot>(
     if entry_too_large {
         return Err(DdlPlanError::from(tidb_kv::kv_errors::ERR_ENTRY_TOO_LARGE.fast_gen_by_args(&[])));
     }
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
     let mut warnings = Vec::new();
     let mut job = session_job(job_context, ActionType::ACTION_NONE);
     job.session_vars = Some(GoShared::new(std::collections::BTreeMap::from([(

@@ -567,6 +567,11 @@ debug = "line-tables-only"
 # line tables, so OUR frames still carry file and line in a backtrace.
 [profile.dev.package."*"]
 debug = false
+# Third-party code is compiled once and cached, so optimizing it costs one
+# rebuild of the dependencies. The tests run it on every statement (tokio,
+# crossbeam, serde_json's reader, chrono, regex); measured in
+# `tidb-session`'s DDL-heavy suites.
+opt-level = 2
 
 [profile.release]
 lto = "thin"

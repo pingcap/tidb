@@ -161,6 +161,9 @@ pub struct SnapshotMetaSnapshot {
     snapshot: Box<dyn ClusterSnapshot>,
     /// The node's auto-ID service client.
     auto_ids: Option<std::sync::Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>>,
+    /// The node's latest schema image (see
+    /// [`MetaSnapshot::latest_info_schema`]).
+    latest: Option<std::sync::Arc<tidb_infoschema::SessionExtendedInfoSchema>>,
 }
 
 impl SnapshotMetaSnapshot {
@@ -175,7 +178,16 @@ impl SnapshotMetaSnapshot {
         Self {
             snapshot,
             auto_ids: None,
+            latest: None,
         }
+    }
+
+    /// Lets a DDL executor statement read the node's latest schema image when
+    /// it is at this snapshot's version.
+    #[must_use]
+    pub fn with_latest_info_schema(mut self, latest: std::sync::Arc<tidb_infoschema::SessionExtendedInfoSchema>) -> Self {
+        self.latest = Some(latest);
+        self
     }
 
     /// Lets a job reach the auto-ID service (see
@@ -194,6 +206,10 @@ impl MetaSnapshot for SnapshotMetaSnapshot {
     /// Go `Loader.LoadWithTS(startTS)`: the timestamp used by the schema load.
     fn start_ts(&self) -> u64 {
         self.snapshot.start_ts()
+    }
+
+    fn latest_info_schema(&self) -> Option<&std::sync::Arc<tidb_infoschema::SessionExtendedInfoSchema>> {
+        self.latest.as_ref()
     }
 
     fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {

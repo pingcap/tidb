@@ -1040,7 +1040,7 @@ pub(crate) fn alter_table_job<S: MetaSnapshot>(
     tiflash_stores: &dyn Fn() -> Result<u64, String>,
     has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
     let (schema, table) = split_name(&alter.name, default_schema, "table")?;
     let (_, stored) = locate_table(&catalog, &schema, &table)?;
     refuse_non_base_table(&stored.read(), &schema, &table)?;
@@ -1190,7 +1190,7 @@ pub(crate) fn add_materialized_view_log_columns<S: MetaSnapshot>(
     upgrading: bool,
     store_count: usize,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
     let position = after.map_or(tidb_ast::ColumnPosition::First, |after| tidb_ast::ColumnPosition::After(after.to_owned()));
     let (schema, mlog) = (schema.to_owned(), mlog.to_owned());
     let add = |snapshot: &mut S, base: &tidb_model::ColumnInfo| {

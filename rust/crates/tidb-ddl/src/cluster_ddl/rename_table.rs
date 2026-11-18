@@ -122,7 +122,7 @@ pub fn rename_tables<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_info_schema(snapshot)?;
+    let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
     let built = rename_tables_job(&catalog, pairs, is_alter, job_context)?;
     submit_built_job(snapshot, built, start_ts, upgrading)
 }

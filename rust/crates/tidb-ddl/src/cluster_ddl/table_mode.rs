@@ -52,7 +52,7 @@ pub fn alter_table_mode_by_id<S: MetaSnapshot>(
         job
     };
     let (job, args) = {
-        let catalog = load_info_schema(snapshot)?;
+        let catalog = tidb_infoschema::cluster_catalog::load_executor_info_schema(snapshot)?;
         let Some(schema) = catalog.schema_by_id(schema_id) else {
             return Err(DdlPlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
