@@ -44,6 +44,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestBinaryLiteralNumericAggregation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table bit_agg(a int)")
+	tk.MustExec("insert into bit_agg values(1),(1),(2)")
+	tk.MustQuery("select a,sum(b'101010'),avg(b'101010') from bit_agg group by a order by a").Check(testkit.Rows("1 84 42", "2 42 42"))
+	tk.MustQuery("select a,sum(x'31'),avg(x'31') from bit_agg group by a order by a").Check(testkit.Rows("1 98 49", "2 49 49"))
+	tk.MustQuery("select a,sum('1'),avg('1') from bit_agg group by a order by a").Check(testkit.Rows("1 2 1", "2 1 1"))
+	tk.MustQuery("select hex(min(b'101010')),hex(max(b'101010')),count(b'101010') from bit_agg").Check(testkit.Rows("2A 2A 3"))
+	tk.MustQuery("select sum(b'101010'),avg(b'101010') from bit_agg where a=3").Check(testkit.Rows("<nil> <nil>"))
+}
+
 func TestReverseExpressionSortNullableColumn(t *testing.T) {
 	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
 	tk.MustExec("use test")
@@ -2285,12 +2298,15 @@ func TestVirtualExprPushDown(t *testing.T) {
 			key idx_exp_lower ((lower(s)))
 		)`)
 		tk.MustExec("insert into t_bug(s) values ('B'),('a')")
+		// `g` and the hidden column behind idx_exp_lower both evaluate lower(s), so the index
+		// order already satisfies ORDER BY g and the limit is pushed to the build side. This is
+		// the same plan the equivalent index on `g` gets just below.
 		tk.MustQuery("explain format='plan_tree' select /* issue:67981 */ * from t_bug force index (idx_exp_lower) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows(
 			"Projection root  test.t_bug.id, test.t_bug.s, test.t_bug.g",
-			"└─TopN root  test.t_bug.g, offset:0, count:1",
-			"  └─IndexLookUp root  ",
-			"    ├─IndexRangeScan(Build) cop[tikv] table:t_bug, index:idx_exp_lower(lower(`s`)) range:[\"a\",+inf], keep order:false, stats:pseudo",
-			"    └─TableRowIDScan(Probe) cop[tikv] table:t_bug keep order:false, stats:pseudo"))
+			"└─IndexLookUp root  limit embedded(offset:0, count:1)",
+			"  ├─Limit(Build) cop[tikv]  offset:0, count:1",
+			"  │ └─IndexRangeScan cop[tikv] table:t_bug, index:idx_exp_lower(lower(`s`)) range:[\"a\",+inf], keep order:true, stats:pseudo",
+			"  └─TableRowIDScan(Probe) cop[tikv] table:t_bug keep order:false, stats:pseudo"))
 		tk.MustQuery("select /* issue:67981 */ * from t_bug force index (idx_exp_lower) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows("2 a a"))
 		tk.MustQuery("explain format='plan_tree' select /* issue:67981 */ * from t_bug force index (g) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows(
 			"Projection root  test.t_bug.id, test.t_bug.s, test.t_bug.g",

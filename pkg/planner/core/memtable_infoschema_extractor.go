@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"regexp"
 	"slices"
 	"sort"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -364,6 +364,8 @@ func (e *InfoSchemaTablesExtractor) HasTableSchema(name string) bool {
 // InfoSchemaDDLExtractor is the predicate extractor for information_schema.ddl_jobs.
 type InfoSchemaDDLExtractor struct {
 	InfoSchemaBaseExtractor
+	// MinJobID bounds descending history iteration. Zero means no bound.
+	MinJobID int64
 }
 
 // NewInfoSchemaDDLExtractor creates a new InfoSchemaDDLExtractor.
@@ -390,7 +392,45 @@ func (e *InfoSchemaDDLExtractor) Extract(
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	e.InfoSchemaBaseExtractor.Extract(ctx, schema, names, predicates)
+	e.MinJobID = 0
+	jobIDCols := e.findColumn(schema, names, "job_id")
+	for _, predicate := range predicates {
+		fn, ok := predicate.(*expression.ScalarFunction)
+		if !ok || fn.FuncName.L != ast.GE {
+			continue
+		}
+		args := fn.GetArgs()
+		col, ok := args[0].(*expression.Column)
+		if !ok || jobIDCols[col.UniqueID] == nil {
+			continue
+		}
+		bound, ok := args[1].(*expression.Constant)
+		if !ok || bound.DeferredExpr != nil || bound.ParamMarker != nil {
+			continue
+		}
+		// Avoid coercions that could round the bound up and exclude SQL matches.
+		switch bound.Value.Kind() {
+		case types.KindInt64:
+			e.MinJobID = max(e.MinJobID, bound.Value.GetInt64())
+		case types.KindUint64:
+			if value := bound.Value.GetUint64(); value <= math.MaxInt64 {
+				e.MinJobID = max(e.MinJobID, int64(value))
+			}
+		}
+	}
 	return predicates
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor.
+func (e *InfoSchemaDDLExtractor) ExplainInfo(p base.PhysicalPlan) string {
+	info := e.InfoSchemaBaseExtractor.ExplainInfo(p)
+	if e.MinJobID > 0 {
+		if info != "" {
+			info += ", "
+		}
+		info += fmt.Sprintf("min_job_id:%d", e.MinJobID)
+	}
+	return info
 }
 
 // InfoSchemaViewsExtractor is the predicate extractor for information_schema.views.
@@ -705,17 +745,12 @@ func findTableAndSchemaByName(
 		table  *model.TableInfo
 	}
 	schemaAndTbls := make([]schemaAndTable, 0, len(tableNames))
-	ctx = infoschema.WithRefillOption(ctx, false)
-	for _, n := range tableNames {
-		for _, s := range schemas {
-			tbl, err := is.TableByName(ctx, s, n)
-			if err != nil {
-				if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
-					continue
-				}
-				return nil, nil, errors.Trace(err)
-			}
-			tblInfo := tbl.Meta()
+	for _, s := range schemas {
+		tables, err := infoschema.TableInfosByNames(ctx, is, s, tableNames)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		for _, tblInfo := range tables {
 			if tblInfo.TempTableType == model.TempTableLocal {
 				continue
 			}

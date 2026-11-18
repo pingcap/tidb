@@ -82,7 +82,17 @@ func TestRestoreRefreshMaterializedViewStmtForSlowLog(t *testing.T) {
 		"IMPLEMENT FOR REFRESH MATERIALIZED VIEW `mv` COMPLETE IN PLACE USING TIMESTAMP",
 		restoreStmtTextForSlowLogWhenEmptySQL(stmt),
 	)
+	stmt.RefreshStmt = &ast.RefreshMaterializedViewStmt{
+		ViewName: &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("mv")},
+		Type:     ast.RefreshMaterializedViewTypeFast,
+	}
+	stmt.LastSuccessfulRefreshReadTSO = 123456789
+	require.Equal(t,
+		"IMPLEMENT FOR REFRESH MATERIALIZED VIEW `test`.`mv` FAST USING TIMESTAMP",
+		restoreStmtTextForSlowLogWhenEmptySQL(stmt),
+	)
 	require.Empty(t, restoreStmtTextForSlowLogWhenEmptySQL(&ast.RefreshMaterializedViewImplementStmt{}))
+	require.Empty(t, restoreStmtTextForSlowLogWhenEmptySQL(&ast.SelectStmt{}))
 }
 
 func TestBuildMVRefreshOutOfPlaceShadowTableInfoSetsSource(t *testing.T) {

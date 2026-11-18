@@ -18,55 +18,44 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/lfu"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/mapcache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/metrics"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-// NewStatsCache creates a new StatsCacheWrapper.
-func NewStatsCache() (*StatsCache, error) {
-	enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota
-	if enableQuota {
-		capacity := vardef.StatsCacheMemQuota.Load()
-		stats, err := lfu.NewLFU(capacity)
-		if err != nil {
-			return nil, err
-		}
-		return &StatsCache{
-			c: stats,
-		}, nil
+// newStatsCache creates a statsCache backed by an LFU cache sized by tidb_stats_cache_mem_quota.
+func newStatsCache() (*statsCache, error) {
+	capacity := vardef.StatsCacheMemQuota.Load()
+	stats, err := lfu.NewLFU(capacity)
+	if err != nil {
+		return nil, err
 	}
-
-	return &StatsCache{
-		c: mapcache.NewMapCache(),
+	return &statsCache{
+		c: stats,
 	}, nil
 }
 
-// StatsCache caches the tables in memory for Handle.
-// TODO: hide this structure or merge it into StatsCacheImpl.
-type StatsCache struct {
-	c internal.StatsCacheInner
+// statsCache caches the tables in memory for Handle.
+type statsCache struct {
+	c *lfu.LFU
 	// the max table stats version the cache has in its lifecycle.
 	maxTblStatsVer atomic.Uint64
 }
 
 // Len returns the number of tables in the cache.
-func (sc *StatsCache) Len() int {
+func (sc *statsCache) Len() int {
 	return sc.c.Len()
 }
 
 // Get returns the statistics of the specified Table ID.
-// The returned value should be read-only, if you update it, don't forget to use Put to put it back again, otherwise the memory trace can be inaccurate.
+// The returned value should be read-only, if you update it, don't forget to use put to put it back again, otherwise the memory trace can be inaccurate.
 //
-//	e.g. v := sc.Get(id); /* update the value */ v.Version = 123; sc.Put(id, v);
-func (sc *StatsCache) Get(id int64) (*statistics.Table, bool) {
+//	e.g. v := sc.Get(id); /* update the value */ v.Version = 123; sc.put(id, v);
+func (sc *statsCache) Get(id int64) (*statistics.Table, bool) {
 	result, ok := sc.c.Get(id)
 	if ok {
 		metrics.HitCounter.Add(1)
@@ -76,12 +65,7 @@ func (sc *StatsCache) Get(id int64) (*statistics.Table, bool) {
 	return result, ok
 }
 
-// Put puts the table statistics to the cache from query.
-func (sc *StatsCache) Put(id int64, t *statistics.Table) {
-	sc.put(id, t)
-}
-
-func (sc *StatsCache) putCache(id int64, t *statistics.Table) bool {
+func (sc *statsCache) putCache(id int64, t *statistics.Table) bool {
 	metrics.UpdateCounter.Inc()
 	intest.Assert(t.ColAndIdxExistenceMap != nil, "ColAndIdxExistenceMap should not be nil")
 	ok := sc.c.Put(id, t)
@@ -93,8 +77,8 @@ func (sc *StatsCache) putCache(id int64, t *statistics.Table) bool {
 	return ok
 }
 
-// Put puts the table statistics to the cache.
-func (sc *StatsCache) put(id int64, t *statistics.Table) {
+// put puts the table statistics to the cache and retries until the cache accepts them.
+func (sc *statsCache) put(id int64, t *statistics.Table) {
 	i := 1
 	for {
 		// retry if the cache is full
@@ -117,55 +101,34 @@ func (sc *StatsCache) put(id int64, t *statistics.Table) {
 }
 
 // Values returns all the cached statistics tables.
-func (sc *StatsCache) Values() []*statistics.Table {
+func (sc *statsCache) Values() []*statistics.Table {
 	return sc.c.Values()
 }
 
 // Cost returns the memory usage of the cache.
-func (sc *StatsCache) Cost() int64 {
+func (sc *statsCache) Cost() int64 {
 	return sc.c.Cost()
 }
 
 // SetCapacity sets the memory capacity of the cache.
-func (sc *StatsCache) SetCapacity(c int64) {
-	// metrics will be updated in the SetCapacity function of the StatsCacheInner.
+func (sc *statsCache) SetCapacity(c int64) {
+	// LFU.SetCapacity updates the capacity and cost metrics.
 	sc.c.SetCapacity(c)
 }
 
 // Close stops the cache.
-func (sc *StatsCache) Close() {
+func (sc *statsCache) Close() {
 	sc.c.Close()
 }
 
 // Version returns the version of the current cache, which is defined as
 // the max table stats version the cache has in its lifecycle.
-func (sc *StatsCache) Version() uint64 {
+func (sc *statsCache) Version() uint64 {
 	return sc.maxTblStatsVer.Load()
 }
 
-// CopyAndUpdate copies a new cache and updates the new statistics table cache. It is only used in the COW mode.
-func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int64) *StatsCache {
-	newCache := &StatsCache{c: sc.c.Copy()}
-	newCache.maxTblStatsVer.Store(sc.maxTblStatsVer.Load())
-	for _, tbl := range tables {
-		id := tbl.PhysicalID
-		newCache.c.Put(id, tbl)
-	}
-	for _, id := range deletedIDs {
-		newCache.c.Del(id)
-	}
-
-	// update the maxTblStatsVer
-	for _, t := range tables {
-		if t.Version > newCache.maxTblStatsVer.Load() {
-			newCache.maxTblStatsVer.Store(t.Version)
-		}
-	}
-	return newCache
-}
-
 // Update updates the new statistics table cache.
-func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, skipMoveForwardStatsCache bool) {
+func (sc *statsCache) Update(tables []*statistics.Table, deletedIDs []int64, skipMoveForwardStatsCache bool) {
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
 		metrics.UpdateCounter.Inc()
@@ -187,11 +150,11 @@ func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, ski
 }
 
 // TriggerEvict triggers the cache to evict some items.
-func (sc *StatsCache) TriggerEvict() {
+func (sc *statsCache) TriggerEvict() {
 	sc.c.TriggerEvict()
 }
 
 // WaitForAsyncUpdates blocks until buffered asynchronous cache writes are visible to later Get calls.
-func (sc *StatsCache) WaitForAsyncUpdates() {
+func (sc *statsCache) WaitForAsyncUpdates() {
 	sc.c.WaitForAsyncUpdates()
 }

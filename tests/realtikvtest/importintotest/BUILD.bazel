@@ -38,6 +38,7 @@ go_test(
         "//pkg/dxf/framework/taskexecutor",
         "//pkg/dxf/framework/testutil",
         "//pkg/dxf/importinto",
+        "//pkg/dxf/importinto/taskkey",
         "//pkg/executor/importer",
         "//pkg/importsdk",
         "//pkg/infoschema",

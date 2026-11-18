@@ -2656,3 +2656,63 @@ func TestTiDBMLogAutoAnalyzeRatio(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "20", val)
 }
+
+func TestRemovedFeatureVarsWarn(t *testing.T) {
+	// Variables of removed features are kept as no-op variables for compatibility
+	// and warn on a value that had an effect before.
+	for _, name := range []string{vardef.TiDBEnableHistoricalStats, vardef.TiDBEnableHistoricalStatsForCapture} {
+		sv := GetSysVar(name)
+		vars := NewSessionVars(nil)
+		val, err := sv.Validate(vars, "ON", vardef.ScopeGlobal)
+		require.NoError(t, err)
+		require.Equal(t, "ON", val)
+		warns := vars.StmtCtx.GetWarnings()
+		require.Len(t, warns, 1)
+		require.Contains(t, warns[0].Err.Error(), "the historical statistics feature has been removed")
+
+		// Turning the switch off must not warn.
+		vars = NewSessionVars(nil)
+		val, err = sv.Validate(vars, "OFF", vardef.ScopeGlobal)
+		require.NoError(t, err)
+		require.Equal(t, "OFF", val)
+		require.Len(t, vars.StmtCtx.GetWarnings(), 0)
+	}
+
+	// No retention value has an effect, because TiDB no longer deletes the legacy rows.
+	sv := GetSysVar(vardef.TiDBHistoricalStatsDuration)
+	vars := NewSessionVars(nil)
+	val, err := sv.Validate(vars, "24h", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "24h0m0s", val)
+	warns := vars.StmtCtx.GetWarnings()
+	require.Len(t, warns, 1)
+	require.Contains(t, warns[0].Err.Error(), "the historical statistics feature has been removed")
+
+	// The value is always ON, because TiDB now always merges asynchronously. Only OFF warns.
+	sv = GetSysVar(vardef.TiDBEnableAsyncMergeGlobalStats)
+	vars = NewSessionVars(nil)
+	val, err = sv.Validate(vars, "OFF", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+	warns = vars.StmtCtx.GetWarnings()
+	require.Len(t, warns, 1)
+	require.Contains(t, warns[0].Err.Error(), "global statistics are always merged asynchronously")
+	vars = NewSessionVars(nil)
+	val, err = sv.Validate(vars, "ON", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+	require.Len(t, vars.StmtCtx.GetWarnings(), 0)
+
+	// upgradeToVer177 persisted OFF on upgraded clusters, without Validation.
+	vars = NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	require.NoError(t, mock.SetGlobalSysVarOnly(context.Background(), vardef.TiDBEnableAsyncMergeGlobalStats, vardef.Off, false))
+	val, err = vars.GetGlobalSystemVar(context.Background(), vardef.TiDBEnableAsyncMergeGlobalStats)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBEnableAsyncMergeGlobalStats)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+}

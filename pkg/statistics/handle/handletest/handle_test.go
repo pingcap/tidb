@@ -17,22 +17,24 @@ package handletest
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -692,62 +694,6 @@ func TestFlushPendingStatsDeltaBeforeAnalyze(t *testing.T) {
 	))
 }
 
-func TestRecordHistoricalStatsToStorage(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 2")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b varchar(10))")
-	tk.MustExec("insert into t value(1, 'aaa'), (3, 'aab'), (5, 'bba'), (2, 'bbb'), (4, 'cca'), (6, 'ccc')")
-	// mark column stats as needed
-	tk.MustExec("select * from t where a = 3")
-	tk.MustExec("select * from t where b = 'bbb'")
-	tk.MustExec("alter table t add index single(a)")
-	tk.MustExec("alter table t add index multi(a, b)")
-	tk.MustExec("analyze table t with 2 topn")
-
-	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	version, err := dom.StatsHandle().RecordHistoricalStatsToStorage("t", tableInfo.Meta(), tableInfo.Meta().ID, false)
-	require.NoError(t, err)
-
-	rows := tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where version = '%d'", version)).Rows()
-	num, _ := strconv.Atoi(rows[0][0].(string))
-	require.GreaterOrEqual(t, num, 1)
-}
-
-func TestEvictedColumnLoadedStatus(t *testing.T) {
-	t.Skip("skip this test because it is useless")
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.EnableStatsCacheMemQuota = true
-	})
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	dom.StatsHandle().SetLease(0)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 2")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("analyze table test.t")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.Nil(t, err)
-	tblStats := domain.GetDomain(tk.Session()).StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
-	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		require.True(t, col.IsStatsInitialized())
-		return false
-	})
-
-	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
-	tblStats = domain.GetDomain(tk.Session()).StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
-	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		require.True(t, col.IsStatsInitialized())
-		return false
-	})
-}
-
 func TestUninitializedStatsStatus(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	dom.StatsHandle().SetLease(0)
@@ -1021,6 +967,13 @@ func TestStatsCacheUpdateTimeout(t *testing.T) {
 	globalStats := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.Equal(t, 6, int(globalStats.RealtimeCount))
 	require.Equal(t, 2, int(globalStats.ModifyCount))
+
+	// A panic in the per-table loop is returned as an error.
+	panicCache, err := cache.NewStatsCacheImpl(panicOnTableInfoByIDHandle{h})
+	require.NoError(t, err)
+	defer panicCache.Close()
+	require.ErrorContains(t, panicCache.Update(context.Background(), dom.InfoSchema()), "panic in StatsCacheImpl.Update")
+
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/util/ExecRowsTimeout", "return()"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/util/ExecRowsTimeout"))
@@ -1029,6 +982,15 @@ func TestStatsCacheUpdateTimeout(t *testing.T) {
 	globalStats2 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.Equal(t, 6, int(globalStats2.RealtimeCount))
 	require.Equal(t, 2, int(globalStats2.ModifyCount))
+}
+
+// panicOnTableInfoByIDHandle panics in the per-table loop of StatsCacheImpl.Update.
+type panicOnTableInfoByIDHandle struct {
+	statstypes.StatsHandle
+}
+
+func (panicOnTableInfoByIDHandle) TableInfoByID(infoschema.InfoSchema, int64) (table.Table, bool) {
+	panic("mock panic in TableInfoByID")
 }
 
 func TestLoadStatsForBitColumn(t *testing.T) {

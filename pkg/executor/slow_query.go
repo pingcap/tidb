@@ -32,6 +32,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -68,17 +69,18 @@ const slowLogTimeRangeInternalTolerance = time.Second
 
 // slowQueryRetriever is used to read slow log data.
 type slowQueryRetriever struct {
-	table                 *model.TableInfo
-	outputCols            []*model.ColumnInfo
-	initialized           bool
-	extractor             *plannercore.SlowQueryExtractor
-	limit                 uint64
-	files                 []logFile
-	fileIdx               int
-	fileLine              int
-	checker               *slowLogChecker
-	columnValueFactoryMap map[string]slowQueryColumnValueFactory
-	instanceFactory       func([]types.Datum)
+	table                      *model.TableInfo
+	outputCols                 []*model.ColumnInfo
+	initialized                bool
+	extractor                  *plannercore.SlowQueryExtractor
+	limit                      uint64
+	files                      []logFile
+	fileIdx                    int
+	fileLine                   int
+	checker                    *slowLogChecker
+	columnValueFactoryMap      map[string]slowQueryColumnValueFactory
+	instanceFactory            func([]types.Datum)
+	inMemoryOriginalQueryIndex int
 
 	taskList      chan slowLogTask
 	stats         *slowQueryRuntimeStats
@@ -108,7 +110,12 @@ func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Con
 	}
 	// initialize column value factories.
 	e.columnValueFactoryMap = make(map[string]slowQueryColumnValueFactory, len(e.outputCols))
+	e.inMemoryOriginalQueryIndex = -1
 	for idx, col := range e.outputCols {
+		if strings.EqualFold(col.Name.O, variable.SlowLogInMemoryOriginalQueryStr) {
+			e.inMemoryOriginalQueryIndex = idx
+			continue
+		}
 		if col.Name.O == metadef.ClusterTableInstanceColumnName {
 			e.instanceFactory, err = getInstanceColumnValueFactory(sctx, idx)
 			if err != nil {
@@ -169,6 +176,10 @@ func (e *slowQueryRetriever) close() error {
 
 type parsedSlowLog struct {
 	rows [][]types.Datum
+	// keys is the slow-query cache lookup for rows. keys[i] identifies rows[i]
+	// by Txn_start_ts, Query_time, and the digest prefix. parseLog appends them
+	// together, and a limit truncates both slices to the same length.
+	keys []slowQueryKey
 	err  error
 }
 
@@ -276,12 +287,39 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datu
 		if len(rows) == 0 {
 			continue
 		}
+
+		// parseLog already charged the pre-fill row size. Measure again after the
+		// plaintext and instance columns are filled so the next fetch releases
+		// the same number of bytes.
+		accounted := calculateDatumsSize(rows)
+
+		// Diagnostic mode does not read the cache; in_memory_original_query stays at the
+		// zero value set while parsing. Lookups do not consult tidb_redact_log.
+		// A nil result also leaves that zero value in place. A successful lookup
+		// returns one string per key, and parseLog keeps keys aligned with rows.
+		if !diagnosticmode.Enabled() && e.inMemoryOriginalQueryIndex >= 0 {
+			unredactedQueries, err := globalSlowQueryCache.getUnredactedQueries(ctx, result.keys)
+			if err != nil {
+				return nil, err
+			}
+
+			if unredactedQueries != nil {
+				for i := range rows {
+					rows[i][e.inMemoryOriginalQueryIndex] = types.NewStringDatum(unredactedQueries[i])
+				}
+			}
+		}
+
 		if e.instanceFactory != nil {
 			for i := range rows {
 				e.instanceFactory(rows[i])
 			}
 		}
-		e.lastFetchSize = calculateDatumsSize(rows)
+		updated := calculateDatumsSize(rows)
+		if delta := updated - accounted; delta != 0 {
+			e.memConsume(delta)
+		}
+		e.lastFetchSize = updated
 		return rows, nil
 	}
 }
@@ -685,7 +723,7 @@ func (e *slowQueryRetriever) parseSlowLogByBatchGetter(
 				return
 			case e.taskList <- t:
 			}
-			e.sendParsedSlowLogCh(t, parsedSlowLog{nil, err})
+			e.sendParsedSlowLogCh(t, parsedSlowLog{err: err})
 			return
 		}
 		if len(log) == 0 {
@@ -709,8 +747,8 @@ func (e *slowQueryRetriever) parseSlowLogByBatchGetter(
 		e.wg.Add(1)
 		go func(log []string, start offset, t slowLogTask) {
 			defer e.wg.Done()
-			result, err := e.parseLog(ctx, sctx, log, start)
-			e.sendParsedSlowLogCh(t, parsedSlowLog{result, err})
+			result, keys, err := e.parseLog(ctx, sctx, log, start)
+			e.sendParsedSlowLogCh(t, parsedSlowLog{rows: result, keys: keys, err: err})
 			<-ch
 		}(log, start, t)
 		if afterBatch != nil {
@@ -750,7 +788,7 @@ func (e *slowQueryRetriever) parseSlowLogByBatchGetterWithLimit(
 				return
 			case e.taskList <- t:
 			}
-			e.sendParsedSlowLogCh(t, parsedSlowLog{nil, err})
+			e.sendParsedSlowLogCh(t, parsedSlowLog{err: err})
 			return
 		}
 		if len(log) == 0 {
@@ -770,16 +808,17 @@ func (e *slowQueryRetriever) parseSlowLogByBatchGetterWithLimit(
 			return
 		case e.taskList <- t:
 		}
-		resultData, err := e.parseLog(ctx, sctx, log, start)
+		resultData, keys, err := e.parseLog(ctx, sctx, log, start)
 		if err != nil {
-			e.sendParsedSlowLogCh(t, parsedSlowLog{nil, err})
+			e.sendParsedSlowLogCh(t, parsedSlowLog{err: err})
 			return
 		}
 		if remaining < uint64(len(resultData)) {
 			resultData = resultData[:remaining]
+			keys = keys[:remaining]
 		}
 		produced += uint64(len(resultData))
-		e.sendParsedSlowLogCh(t, parsedSlowLog{resultData, nil})
+		e.sendParsedSlowLogCh(t, parsedSlowLog{rows: resultData, keys: keys, err: nil})
 		if afterBatch != nil {
 			afterBatch()
 		}
@@ -919,7 +958,7 @@ func splitByColon(line string) (fields []string, values []string) {
 	return fields, values
 }
 
-func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Context, log []string, offset offset) (data [][]types.Datum, err error) {
+func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Context, log []string, offset offset) (data [][]types.Datum, keys []slowQueryKey, err error) {
 	start := time.Now()
 	logSize := calculateLogSize(log)
 	defer e.memConsume(-logSize)
@@ -942,16 +981,18 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 		}
 	})
 	var row []types.Datum
+	var key slowQueryKey
 	user := ""
 	tz := sctx.GetSessionVars().Location()
 	startFlag := false
 	for index, line := range log {
 		if err2 := ctx.Err(); err2 != nil {
-			return nil, err2
+			return nil, nil, err2
 		}
 		fileLine := getLineIndex(offset, index)
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			row = make([]types.Datum, len(e.outputCols))
+			key = slowQueryKey{}
 			user = ""
 			valid := e.setColumnValue(sctx, row, tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], e.checker, fileLine)
 			if valid {
@@ -997,6 +1038,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 				} else {
 					fields, values := splitByColon(line)
 					for i := range fields {
+						updateSlowQueryKey(&key, fields[i], values[i])
 						valid := e.setColumnValue(sctx, row, tz, fields[i], values[i], e.checker, fileLine)
 						if !valid {
 							startFlag = false
@@ -1023,13 +1065,32 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 				e.setDefaultValue(row)
 				e.memConsume(types.EstimatedMemUsage(row, 1))
 				data = append(data, row)
+				keys = append(keys, key)
 				startFlag = false
 			} else {
 				startFlag = false
 			}
 		}
 	}
-	return data, nil
+	return data, keys, nil
+}
+
+func updateSlowQueryKey(key *slowQueryKey, field, value string) {
+	switch field {
+	case variable.SlowLogTxnStartTSStr:
+		if txnStartTS, err := strconv.ParseUint(value, 10, 64); err == nil {
+			key.txnStartTS = txnStartTS
+		}
+	case variable.SlowLogQueryTimeStr:
+		if queryTime, err := strconv.ParseFloat(value, 64); err == nil {
+			key.queryTime = queryTime
+		}
+	case variable.SlowLogDigestStr:
+		key.digest = value
+		if len(key.digest) > 10 {
+			key.digest = key.digest[:10]
+		}
+	}
 }
 
 func (e *slowQueryRetriever) setColumnValue(sctx sessionctx.Context, row []types.Datum, tz *time.Location, field, value string, checker *slowLogChecker, lineNum int) bool {
