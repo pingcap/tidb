@@ -683,18 +683,11 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		regionSplitKeys = append(regionSplitKeys, interiorRegionSplitKeys...)
 		regionSplitKeys = append(regionSplitKeys, endKey)
 		m := &BackfillSubTaskMeta{
-<<<<<<< HEAD
 			MetaGroups: []*external.SortedKVMeta{{
-				StartKey:    startKey,
-				EndKey:      endKey,
-				TotalKVSize: kvMeta.TotalKVSize / uint64(instanceCnt),
-=======
-			MetaGroups: []*globalsort.SortedKVMeta{{
 				StartKey: startKey,
 				EndKey:   endKey,
 				// A non-empty range must not be mistaken for an empty engine.
 				TotalKVSize: max(1, kvMeta.TotalKVSize/uint64(instanceCnt)),
->>>>>>> fbd695f684b (ddl: use task node count for global-sort ingest planning (#73382))
 			}},
 			DataFiles:      dataFiles,
 			StatFiles:      statFiles,

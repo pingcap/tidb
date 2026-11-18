@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -381,18 +382,18 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	extStore, err := objstore.NewLocalStorage(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(extStore.Close)
-	kvMeta := &globalsort.SortedKVMeta{}
-	writer := simplesst.NewWriterBuilder().SetMemorySizeLimit(1024).SetBlockSize(1024).
+	kvMeta := &external.SortedKVMeta{}
+	writer := external.NewWriterBuilder().SetMemorySizeLimit(1024).SetBlockSize(1024).
 		SetOnCloseFunc(kvMeta.MergeSummary).Build(extStore, "data", "writer")
 	require.NoError(t, writer.WriteRow(ctx, []byte("ta"), []byte(strings.Repeat("v", 40)), nil))
 	require.NoError(t, writer.Close(ctx))
 	require.Equal(t, uint64(42), kvMeta.TotalKVSize)
 	for i, s := range gotSubtasks {
-		group := &globalsort.SortedKVMeta{}
+		group := &external.SortedKVMeta{}
 		if i == 0 {
 			group = kvMeta
 		}
-		m := &ddl.BackfillSubTaskMeta{EleIDs: []int64{10}, MetaGroups: []*globalsort.SortedKVMeta{group}}
+		m := &ddl.BackfillSubTaskMeta{EleIDs: []int64{10}, MetaGroups: []*external.SortedKVMeta{group}}
 		raw, err := m.Marshal()
 		require.NoError(t, err)
 		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, raw))

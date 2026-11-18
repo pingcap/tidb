@@ -357,11 +357,7 @@ go_test(
         "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
-<<<<<<< HEAD
-=======
         "//pkg/objstore",
-        "//pkg/owner",
->>>>>>> fbd695f684b (ddl: use task node count for global-sort ingest planning (#73382))
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
