@@ -141,6 +141,10 @@ pub trait TxnAdvisable {
 pub trait TxnContext: isolation::ProviderSessionVars {
     /// Go `StmtCtx.RCCheckTS`.
     fn rc_check_ts(&self) -> bool;
+    /// Sets Go `StmtCtx.RCCheckTS` for the running statement.
+    fn set_rc_check_ts(&mut self);
+    /// Go `isolation.NeedSetRCCheckTSFlag(sctx, node)`.
+    fn need_set_rc_check_ts_flag(&self, node: &tidb_ast::Stmt) -> bool;
     /// Whether the statement is a locking read (`SELECT ... FOR UPDATE`):
     /// the snapshot handle takes it to route reads that lock in execution.
     fn locking_read(&self) -> bool;
@@ -191,7 +195,11 @@ pub trait TxnContextProvider: Send {
     /// # Errors
     ///
     /// The statement could not start in this transaction.
-    fn on_stmt_start(&mut self, _cx: &mut dyn TxnContext) -> Result<(), SqlQueryError> {
+    fn on_stmt_start(
+        &mut self,
+        _cx: &mut dyn TxnContext,
+        _node: Option<&tidb_ast::Stmt>,
+    ) -> Result<(), SqlQueryError> {
         Ok(())
     }
     /// Go `OnStmtRetry`: the statement re-executes. A pessimistic provider

@@ -1014,9 +1014,19 @@ impl StatementLifecycle<'_> {
         )
     }
 
-    /// Go `OnStmtStart`, or `OnStmtRetry` when `retry`, on the session
+    /// Go `OnStmtStart(node)`, or `OnStmtRetry` when `retry`, on the session
     /// transaction's provider, if one is entered.
     fn on_provider_stmt_event(&mut self, retry: bool) -> Result<(), SqlQueryError> {
+        self.on_provider_stmt(retry, None)
+    }
+
+    /// Go `TxnManager.OnStmtStart(ctx, node)` for a statement about to
+    /// compile.
+    pub fn on_provider_stmt_start(&mut self, node: &tidb_ast::Stmt) -> Result<(), SqlQueryError> {
+        self.on_provider_stmt(false, Some(node))
+    }
+
+    fn on_provider_stmt(&mut self, retry: bool, node: Option<&tidb_ast::Stmt>) -> Result<(), SqlQueryError> {
         let in_txn = self.session.in_transaction();
         let Some(provider) = self.txn.provider_mut() else {
             return Ok(());
@@ -1025,7 +1035,7 @@ impl StatementLifecycle<'_> {
         if retry {
             provider.on_stmt_retry(&mut cx)
         } else {
-            provider.on_stmt_start(&mut cx)
+            provider.on_stmt_start(&mut cx, node)
         }
     }
 

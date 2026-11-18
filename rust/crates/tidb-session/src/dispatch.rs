@@ -2689,17 +2689,14 @@ impl Session {
 
     /// Go `NeedSetRCCheckTSFlag`, which `PessimisticRCTxnContextProvider`
     /// asks at statement start: a user connection's read-only statement,
-    /// not a retry, inside a pessimistic READ-COMMITTED transaction, with
-    /// `tidb_rc_read_check_ts` on.
-    fn need_set_rc_check_ts_flag(&self, stmt: &Stmt) -> bool {
+    /// not a retry, inside a transaction, with `tidb_rc_read_check_ts` on.
+    pub(crate) fn need_set_rc_check_ts_flag(&self, stmt: &Stmt) -> bool {
         self.vars.connection_id.is_some_and(|id| id > 0)
             && self
                 .vars
                 .get_system(tidb_vardef::tidb_vars::TIDB_RC_READ_CHECK_TS)
                 .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value))
             && self.in_transaction()
-            && self.statement_txn_mode().is_pessimistic()
-            && self.is_read_committed()
             && !self.retrying
             && stmt.is_read_only(true)
     }
@@ -2708,7 +2705,8 @@ impl Session {
     /// made before the statement's snapshot is prepared: whether it reads
     /// with `RCCheckTS`.
     pub(crate) fn on_stmt_start(&mut self, stmt: &Stmt) {
-        self.stmt_rc_check_ts = self.need_set_rc_check_ts_flag(stmt);
+        // Go's fresh `StmtCtx`; the RC provider's `OnStmtStart` sets it.
+        self.stmt_rc_check_ts = false;
         self.stmt_weak_consistency = self.is_weak_consistency_read(stmt);
         self.stmt_is_read_only = stmt.is_read_only(true);
     }
@@ -2735,6 +2733,11 @@ impl Session {
     /// Go `StmtCtx.RCCheckTS` for the running statement.
     pub(crate) fn stmt_rc_check_ts(&self) -> bool {
         self.stmt_rc_check_ts
+    }
+
+    /// Go `StmtCtx.RCCheckTS = true` (the RC provider's `OnStmtStart`).
+    pub(crate) fn set_stmt_rc_check_ts(&mut self) {
+        self.stmt_rc_check_ts = true;
     }
 
     /// The Go provider whose `AdviseOptimizeWithPlan` this statement's plan

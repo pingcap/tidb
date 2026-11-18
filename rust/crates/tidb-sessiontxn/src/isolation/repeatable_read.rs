@@ -83,7 +83,11 @@ impl TxnContextProvider for PessimisticRRTxnContextProvider {
         })
     }
 
-    fn on_stmt_start(&mut self, _cx: &mut dyn TxnContext) -> Result<(), SqlQueryError> {
+    fn on_stmt_start(
+        &mut self,
+        _cx: &mut dyn TxnContext,
+        _node: Option<&tidb_ast::Stmt>,
+    ) -> Result<(), SqlQueryError> {
         self.retry_ts = None;
         Ok(())
     }

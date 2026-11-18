@@ -1905,6 +1905,7 @@ impl<'s> ClusterServerSession<'s> {
         // a query's record set is opened inside it and drained outside.
         let execute_stmt = tidb_tracing::begin_thread_region_scope("session.ExecuteStmt");
         self.session.on_stmt_start(stmt);
+        self.lifecycle().on_provider_stmt_start(stmt)?;
         self.begin_statement();
         let compiled = self.compile(sql, stmt);
         if compiled.is_err() {
@@ -2189,6 +2190,7 @@ impl<'s> ClusterServerSession<'s> {
                 // Go `executePlanCacheStmt`'s `ContextWithInitializedExecDetails`.
                 self.session.context_with_initialized_exec_details(&sql);
                 self.session.on_stmt_start(template);
+                self.lifecycle().on_provider_stmt_start(template)?;
             } else if is_write {
                 // Session finishes its scratch execution inside the durable
                 // storage attempt. Retain one observation until commit/retry
@@ -2891,7 +2893,7 @@ impl<'s> ClusterServerSession<'s> {
     }
 
     /// Go's `runStmt` for a statement that answers a result set.
-    fn open_query(self, sql: &str, stmt: &Stmt) -> Result<QueryResult<'s>, SqlQueryError> {
+    fn open_query(mut self, sql: &str, stmt: &Stmt) -> Result<QueryResult<'s>, SqlQueryError> {
         if let Stmt::Dml(dml) = stmt {
             if let tidb_ast::DmlStmt::Batch(batch) = dml.as_ref() {
                 return self.run_non_transactional_dml(batch);
@@ -2910,6 +2912,7 @@ impl<'s> ClusterServerSession<'s> {
         let resource_group = self.session.statement_resource_group(stmt).into_owned();
         let shape = self.session.statement_read_shape_bound(stmt);
         self.session.on_stmt_start(stmt);
+        self.lifecycle().on_provider_stmt_start(stmt)?;
         let telemetry = self.session.statement_telemetry();
         let result = self.open_statement_result(shape, &resource_group, |session| {
             session

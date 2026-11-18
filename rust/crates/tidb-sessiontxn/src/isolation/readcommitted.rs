@@ -88,7 +88,16 @@ impl TxnContextProvider for PessimisticRCTxnContextProvider {
         self.stmt_snapshot(cx)
     }
 
-    fn on_stmt_start(&mut self, _cx: &mut dyn TxnContext) -> Result<(), SqlQueryError> {
+    // Go: "Try to mark the `RCCheckTS` flag for the first time execution of
+    // in-transaction read requests using read-consistency isolation level."
+    fn on_stmt_start(
+        &mut self,
+        cx: &mut dyn TxnContext,
+        node: Option<&tidb_ast::Stmt>,
+    ) -> Result<(), SqlQueryError> {
+        if node.is_some_and(|node| cx.need_set_rc_check_ts_flag(node)) {
+            cx.set_rc_check_ts();
+        }
         self.retry_ts = None;
         Ok(())
     }

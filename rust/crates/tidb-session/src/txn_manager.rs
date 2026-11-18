@@ -97,7 +97,32 @@ impl CommitTxnRegions {
     }
 }
 
+/// The session's `SessionVars` as an optimistic provider reads them when its
+/// transaction activates; `in_txn` is Go's `InTxn()` at that moment.
+struct ActivationVars<'a> {
+    session: &'a Session,
+    in_txn: bool,
+}
+
 impl ProviderSessionVars for SessionTxnContext<'_> {
+    fn retry_limit(&self) -> i64 {
+        ActivationVars { session: self.session, in_txn: self.in_txn }.retry_limit()
+    }
+    fn snapshot_ts(&self) -> u64 {
+        self.session.vars().snapshot_ts()
+    }
+    fn in_txn(&self) -> bool {
+        self.in_txn
+    }
+    fn in_restricted_sql(&self) -> bool {
+        self.session.vars().restricted_sql
+    }
+    fn disable_txn_auto_retry(&self) -> bool {
+        ActivationVars { session: self.session, in_txn: self.in_txn }.disable_txn_auto_retry()
+    }
+}
+
+impl ProviderSessionVars for ActivationVars<'_> {
     fn retry_limit(&self) -> i64 {
         self.session
             .vars()
@@ -161,7 +186,7 @@ fn new_provider(txn: Box<dyn OpenClusterTransaction>, isolation: &str) -> Box<dy
 
 /// The session as Go's providers read `sctx` (see [`TxnContext`]).
 pub(crate) struct SessionTxnContext<'a> {
-    pub(crate) session: &'a Session,
+    pub(crate) session: &'a mut Session,
     /// Go `InTxn()` at the moment of the call.
     pub(crate) in_txn: bool,
     /// The statement is a `SELECT ... FOR UPDATE`.
@@ -171,6 +196,12 @@ pub(crate) struct SessionTxnContext<'a> {
 impl TxnContext for SessionTxnContext<'_> {
     fn rc_check_ts(&self) -> bool {
         self.session.stmt_rc_check_ts()
+    }
+    fn set_rc_check_ts(&mut self) {
+        self.session.set_stmt_rc_check_ts();
+    }
+    fn need_set_rc_check_ts_flag(&self, node: &tidb_ast::Stmt) -> bool {
+        self.session.need_set_rc_check_ts_flag(node)
     }
     fn locking_read(&self) -> bool {
         self.locking_read
@@ -249,7 +280,7 @@ impl TxnManager {
     pub(crate) fn decide_could_retry(&mut self, session: &Session, pessimistic: bool, tp: EnterNewTxnType, in_txn: bool) {
         self.could_retry = !pessimistic
             && is_optimistic_txn_retryable(
-                &SessionTxnContext { session, in_txn, locking_read: false },
+                &ActivationVars { session, in_txn },
                 tp,
                 false,
             );
