@@ -922,6 +922,37 @@ func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool) {
 	return nil, false
 }
 
+// IsNullForAllRows returns true when sf is a +, - or unary - expression that is
+// NULL for every row because one of its operands is an immutable NULL constant,
+// e.g. `NULL - col` or `-(col + NULL)`. Such a sort key never changes the order,
+// so it can be skipped when deriving the required sort property.
+//
+// Only ConstStrict constants count. Parameter markers and deferred expressions can
+// change value between executions of a cached plan.
+func (sf *ScalarFunction) IsNullForAllRows() bool {
+	switch sf.FuncName.L {
+	case ast.Plus, ast.Minus:
+		for _, arg := range sf.GetArgs() {
+			if isNullForAllRows(arg) {
+				return true
+			}
+		}
+	case ast.UnaryMinus:
+		return isNullForAllRows(sf.GetArgs()[0])
+	}
+	return false
+}
+
+func isNullForAllRows(expr Expression) bool {
+	switch x := expr.(type) {
+	case *Constant:
+		return x.ConstLevel() == ConstStrict && x.Value.IsNull()
+	case *ScalarFunction:
+		return x.IsNullForAllRows()
+	}
+	return false
+}
+
 // isNonNullConstant returns true if expr is an immutable constant whose value is non-NULL.
 // Parameter markers and deferred expressions are rejected: their value can change
 // between executions of a cached plan, e.g. `NULLIF(?, 0) - col` may become NULL.

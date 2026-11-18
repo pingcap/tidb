@@ -1010,6 +1010,55 @@ ORDER BY t1.a, t2.a, t3.a, var`
 		tk.MustQuery("execute s using @p").Check(testkit.Rows("1", "2", "3"))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	})
+
+	// issue-72560-order-by-null-constant-arithmetic-skips-constant-sort-key
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("create table t (id int primary key, c int not null, d int, key i(c))")
+		tk.MustExec("insert into t values (1, 30, 3), (2, 10, 1), (3, 20, 2)")
+		tk.MustExec("analyze table t")
+		// The first key is NULL for every row, so only the remaining keys matter
+		// and the order can come from the table or index without a Sort.
+		for _, tc := range []struct {
+			orderBy string // optional index hint and the ORDER BY clause
+			plan    []string
+			rows    []string
+		}{
+			{"order by null-c desc, id", []string{"keep order:true"}, []string{"1", "2", "3"}},
+			{"order by c+null, id desc", []string{"keep order:true, desc"}, []string{"3", "2", "1"}},
+			{"order by -(null-d), (d-null)+1 desc, id", []string{"keep order:true"}, []string{"1", "2", "3"}},
+			{"use index(i) order by null-d desc, c", []string{"index:i(c)", "keep order:true"}, []string{"2", "3", "1"}},
+			{"use index(i) order by c, null+d", []string{"index:i(c)", "keep order:true"}, []string{"2", "3", "1"}},
+			{"order by null-c, id", nil, []string{"1", "2", "3"}},
+		} {
+			query := "select /* issue:72560 */ id from t " + tc.orderBy
+			rows := make([][]any, 0, len(tc.rows))
+			for _, r := range tc.rows {
+				rows = append(rows, []any{r})
+			}
+			tk.MustQuery(query).Check(rows)
+			plan := tk.MustQuery("explain format = 'brief' " + query)
+			if len(tc.plan) > 0 {
+				plan.MultiCheckContain(tc.plan)
+			}
+			plan.CheckNotContain("Sort")
+		}
+		// A non-NULL constant key is still sorted on its column.
+		tk.MustQuery("select /* issue:72560 */ id from t ignore index(i) order by 1-d, id").Check(testkit.Rows("1", "3", "2"))
+
+		// A parameter can be NULL in one execution and non-NULL in the next one,
+		// so a cached plan must keep the Sort.
+		tk.MustExec("set @@tidb_enable_prepared_plan_cache = 1")
+		tk.MustExec("prepare s from 'select /* issue:72560 */ id from t order by nullif(?, 0) - d desc, id'")
+		tk.MustExec("set @p = 0")
+		tk.MustQuery("execute s using @p").Check(testkit.Rows("1", "2", "3"))
+		tk.MustExec("set @p = 1")
+		tk.MustQuery("execute s using @p").Check(testkit.Rows("2", "3", "1"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		tk.MustExec("set @p = 0")
+		tk.MustQuery("execute s using @p").Check(testkit.Rows("1", "2", "3"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	})
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
