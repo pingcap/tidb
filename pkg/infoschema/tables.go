@@ -248,6 +248,8 @@ const (
 	DataLockWaitsColumnSQLDigest = "SQL_DIGEST"
 	// DataLockWaitsColumnSQLDigestText is the name of the SQL_DIGEST_TEXT column of the DATA_LOCK_WAITS table.
 	DataLockWaitsColumnSQLDigestText = "SQL_DIGEST_TEXT"
+	// DataLockWaitsColumnRequestedLockMode is the requested lock mode reported by TiKV.
+	DataLockWaitsColumnRequestedLockMode = "REQUESTED_LOCK_MODE"
 )
 
 // The following variables will only be used when PD in the microservice mode.
@@ -1806,6 +1808,7 @@ var tableDataLockWaitsCols = []columnInfo{
 	{name: DataLockWaitsColumnCurrentHoldingTrxID, tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "The transaction that's holding the lock and blocks the current transaction"},
 	{name: DataLockWaitsColumnSQLDigest, tp: mysql.TypeVarchar, size: 64, comment: "Digest of the SQL that's trying to acquire the lock"},
 	{name: DataLockWaitsColumnSQLDigestText, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Digest of the SQL that's trying to acquire the lock"},
+	{name: DataLockWaitsColumnRequestedLockMode, tp: mysql.TypeVarchar, size: 4, comment: "Requested mode (S, X, or S->X); NULL when unavailable"},
 }
 
 var tableStatementsSummaryEvictedCols = []columnInfo{

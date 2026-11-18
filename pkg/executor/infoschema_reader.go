@@ -3351,6 +3351,17 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 					row = append(row, types.NewDatum(lockWait.Txn))
 				case infoschema.DataLockWaitsColumnCurrentHoldingTrxID:
 					row = append(row, types.NewDatum(lockWait.WaitForTxn))
+				case infoschema.DataLockWaitsColumnRequestedLockMode:
+					var mode any
+					switch lockWait.GetRequestedLockMode() {
+					case deadlock.RequestedLockMode_Shared:
+						mode = "S"
+					case deadlock.RequestedLockMode_Exclusive:
+						mode = "X"
+					case deadlock.RequestedLockMode_Upgrade:
+						mode = "S->X"
+					}
+					row = append(row, types.NewDatum(mode))
 				case infoschema.DataLockWaitsColumnSQLDigest:
 					digest := digests[rowIdx]
 					if len(digest) == 0 {
