@@ -3582,6 +3582,9 @@ pub struct PhysicalDmlRoot {
     pub base: BasePhysicalPlan,
     /// Go operator identity (`Insert`, `Update`, or `Delete`).
     pub go_operator: String,
+    /// The operator's `ExplainInfo` where Go's has one (Go master
+    /// `MViewCompleteDeltaApply`); `N/A` otherwise.
+    pub explain_info: Option<String>,
     /// The DML source plan, when present.
     pub select_plan: Option<Box<PhysicalPlan>>,
     /// Go `Update.OrderedList` expressions whose scalar subqueries inserted
@@ -6020,6 +6023,7 @@ impl PhysicalPlan {
             Self::Dml(op) => Self::Dml(PhysicalDmlRoot {
                 base: base_of(&op.base),
                 go_operator: op.go_operator.clone(),
+                explain_info: op.explain_info.clone(),
                 select_plan: op.select_plan.clone(),
                 update_expressions: op.update_expressions.clone(),
                 fk_triggers: op.fk_triggers.clone(),

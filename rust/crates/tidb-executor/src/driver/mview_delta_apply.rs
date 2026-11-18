@@ -79,6 +79,75 @@ pub fn values_differ(old: &Datum, new: &Datum) -> bool {
     }
 }
 
+/// Go `buildRefreshMaterializedViewImplement`: the diff source optimized
+/// with FULL OUTER JOIN enabled and the cascades planner off, its layout
+/// checked against the view's.
+fn diff_source_physical_plan(
+    plan: &MViewCompleteDeltaApply,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
+    let plan_ctx = ctx.clone().with_full_outer_join(true).with_cascades_planner(false);
+    let physical = super::planner_bridge::physical_select_plan(&plan.diff.diff_source_select, catalog, current_db, &plan_ctx)
+        .map_err(super::planner_error_to_driver)?;
+    let source_len = physical.schema().map_or(0, |schema| schema.columns.len());
+    plan.diff.validate_source_layout(source_len).map_err(plain)?;
+    Ok(physical)
+}
+
+/// Go master `formatMViewDeltaMergeOffsets`.
+fn format_offsets(offsets: &[usize]) -> String {
+    format!("[{}]", offsets.iter().map(usize::to_string).collect::<Vec<_>>().join(","))
+}
+
+/// Go master `MViewCompleteDeltaApply.ExplainInfo`.
+fn explain_info(diff: &tidb_planner::mview::CompleteDiffBuildResult) -> String {
+    let at = |offsets: &[usize], mv_offset: usize| offsets.get(mv_offset).map_or(-1, |&offset| offset as i64);
+    let at_all = |offsets: &[usize]| {
+        let picked: Vec<String> = diff.group_key_mv_offsets.iter().map(|&mv| at(offsets, mv).to_string()).collect();
+        format!("[{}]", picked.join(","))
+    };
+    let handle = match &diff.current_handle_cols {
+        DiffHandleCols::IntPk { source_offset } | DiffHandleCols::RowId { source_offset } => format_offsets(&[*source_offset]),
+        DiffHandleCols::Common { source_offsets } => format_offsets(source_offsets),
+    };
+    format!(
+        "op_offset:{}, current_marker_offset:{}, recomputed_marker_offset:{}, current_group_keys_offset:{}, recomputed_group_keys_offset:{}, current_handle_offset:{}, current_row_offset:{}, recomputed_row_offset:{}",
+        diff.op_col_offset,
+        at(&diff.current_row_offsets, diff.marker_mv_offset),
+        at(&diff.recomputed_row_offsets, diff.marker_mv_offset),
+        at_all(&diff.current_row_offsets),
+        at_all(&diff.recomputed_row_offsets),
+        handle,
+        format_offsets(&diff.current_row_offsets),
+        format_offsets(&diff.recomputed_row_offsets),
+    )
+}
+
+/// Go master's `MViewCompleteDeltaApply` physical plan: the operator over
+/// its optimized diff source, as EXPLAIN shows it.
+///
+/// # Errors
+///
+/// The diff source fails to plan, or its layout disagrees with the view.
+pub fn plan_mview_complete_delta_apply(
+    plan: &MViewCompleteDeltaApply,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
+    let source = diff_source_physical_plan(plan, catalog, current_db, ctx)?;
+    let plan_ids = tidb_planner_core_base::PlanIdAllocator::new();
+    Ok(tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(tidb_planner_core_operator_physicalop::PhysicalDmlRoot {
+        base: tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(&plan_ids, "MViewCompleteDeltaApply", 0),
+        go_operator: "MViewCompleteDeltaApply".to_owned(),
+        explain_info: Some(explain_info(&plan.diff)),
+        select_plan: Some(Box::new(source)),
+        ..Default::default()
+    }))
+}
+
 /// Go master `buildMViewCompleteDeltaApply` + `MViewCompleteDeltaApplyExec`:
 /// applies the view's diff rows and answers the write counts.
 ///
@@ -93,13 +162,7 @@ pub fn run_mview_complete_delta_apply(
     ctx: &crate::StmtContext,
 ) -> Result<DeltaApplyWriterStats, DriverError> {
     let diff = &plan.diff;
-    // Go `buildRefreshMaterializedViewImplement`: the diff source is
-    // optimized with FULL OUTER JOIN enabled and the cascades planner off.
-    let plan_ctx = ctx.clone().with_full_outer_join(true).with_cascades_planner(false);
-    let mut physical = super::planner_bridge::physical_select_plan(&diff.diff_source_select, catalog, current_db, &plan_ctx)
-        .map_err(super::planner_error_to_driver)?;
-    let source_len = physical.schema().map_or(0, |schema| schema.columns.len());
-    diff.validate_source_layout(source_len).map_err(plain)?;
+    let mut physical = diff_source_physical_plan(plan, catalog, current_db, ctx)?;
 
     // Go `buildMViewCompleteDeltaApply`'s checks over the target.
     let (public_len, writable_len, target_types) = match catalog.get_in(&plan.database, &plan.name) {

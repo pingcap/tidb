@@ -183,6 +183,12 @@ pub fn build_compare_materialized_view_schema() -> (Schema, Vec<FieldName>) {
     fixed_schema("", &[("compare result", FieldTypeCode::String, tidb_mysql::consts::MaxBlobWidth as i64)])
 }
 
+/// Go master `refreshObserveSchema`: REFRESH ... DRY RUN / WITH PROFILE's
+/// one `refresh steps` string.
+pub fn build_refresh_observe_schema() -> (Schema, Vec<FieldName>) {
+    fixed_schema("", &[("refresh steps", FieldTypeCode::String, tidb_mysql::consts::MaxBlobWidth as i64)])
+}
+
 pub fn build_table_regions_schema() -> (Schema, Vec<FieldName>) {
     use FieldTypeCode::{LongLong, Tiny, Varchar};
     fixed_schema(

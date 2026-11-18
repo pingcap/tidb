@@ -1271,8 +1271,9 @@ impl SessionVars {
     }
 
     /// Go `TiDBRedactLog`'s `SetGlobal` hook: the session that sets the
-    /// GLOBAL value takes it as its own.
-    pub(crate) fn set_enable_redact_log(&mut self, value: String) {
+    /// GLOBAL value takes it as its own; Go master's refresh observers set it
+    /// on their borrowed session (`setMVRefreshObserveRedaction`).
+    pub fn set_enable_redact_log(&mut self, value: String) {
         self.enable_redact_log = value;
     }
 

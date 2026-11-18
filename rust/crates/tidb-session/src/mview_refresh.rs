@@ -430,6 +430,15 @@ fn refresh_session_vars(
     user: &Session,
     info: &tidb_model::table::MaterializedViewInfo,
 ) -> Vec<(String, String)> {
+    let mut vars = refresh_execution_session_vars(user);
+    vars.extend(init_mview_session_vars(info));
+    vars
+}
+
+/// Go master `applyRefreshExecutionSessionVars(captureRefreshExecutionSessionVars(user))`:
+/// the user session's materialized view execution variables, by the names
+/// the maintenance session reads them under.
+pub(crate) fn refresh_execution_session_vars(user: &Session) -> Vec<(String, String)> {
     let execution = tidb_variable::mview_execution::MViewExecutionSessionVars::capture(|name| {
         user.vars.get_system(name).ok()
     });
@@ -442,7 +451,6 @@ fn refresh_session_vars(
         };
         vars.push((name.to_owned(), value));
     }
-    vars.extend(init_mview_session_vars(info));
     vars
 }
 
@@ -478,7 +486,7 @@ pub(crate) fn read_session_vars(session: &mut Session, names: &[String]) -> Resu
 
 /// Go master `validateRefreshMaterializedViewStmt`: the mode and the history
 /// row's `REFRESH_METHOD`.
-fn validate_refresh_materialized_view_stmt(s: &RefreshMaterializedViewStmt) -> Result<String, DriverError> {
+pub(crate) fn validate_refresh_materialized_view_stmt(s: &RefreshMaterializedViewStmt) -> Result<String, DriverError> {
     let method = match s.mode {
         RefreshMaterializedViewMode::Fast if s.as_of.is_some() => "bounded fast",
         RefreshMaterializedViewMode::Fast => "fast",
@@ -506,8 +514,11 @@ impl Session {
         sql: &str,
     ) -> Result<StmtOutput, DriverError> {
         let method = validate_refresh_materialized_view_stmt(s)?;
+        if s.observe_type == RefreshMaterializedViewObserveType::DryRun {
+            return self.refresh_materialized_view_dry_run(s);
+        }
         if s.observe_type != RefreshMaterializedViewObserveType::None {
-            return Err(DriverError::unsupported("REFRESH MATERIALIZED VIEW DRY RUN / WITH PROFILE on this node"));
+            return Err(DriverError::unsupported("REFRESH MATERIALIZED VIEW WITH PROFILE on this node"));
         }
         if !matches!(
             s.mode,
@@ -599,7 +610,7 @@ impl Session {
     }
 
     /// Go master `resolveRefreshMaterializedViewTarget`.
-    fn resolve_refresh_materialized_view_target(
+    pub(crate) fn resolve_refresh_materialized_view_target(
         &self,
         s: &RefreshMaterializedViewStmt,
     ) -> Result<(String, tidb_model::TableInfo), DriverError> {

@@ -913,6 +913,7 @@ fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
     let mut plan = PhysicalPlan::Dml(PhysicalDmlRoot {
         base,
         go_operator: operator.to_owned(),
+        explain_info: None,
         select_plan: select_plan.map(Box::new),
         update_expressions,
         fk_triggers,

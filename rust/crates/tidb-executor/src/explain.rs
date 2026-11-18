@@ -1698,7 +1698,7 @@ fn physical_operator_own_info(
             }
             text
         }
-        PhysicalPlan::Dml(_) => "N/A".to_owned(),
+        PhysicalPlan::Dml(root) => root.explain_info.clone().unwrap_or_else(|| "N/A".to_owned()),
         PhysicalPlan::TopN(topn) => topn_info(eval_ctx, topn),
         PhysicalPlan::HashAgg(aggregation) => aggregate_info(
             eval_ctx,
@@ -3939,6 +3939,21 @@ fn render_physical_query(
         analyze,
         &scalar_subqueries,
     )
+}
+
+/// Go master `Explain.RenderResult` over `MViewCompleteDeltaApply`, the
+/// plan of the internal `RefreshMaterializedViewImplementStmt`: the root
+/// with Go's `ExplainInfo` over the optimized diff source.
+pub fn explain_mview_complete_delta_apply(
+    plan: &tidb_planner::common_plans::MViewCompleteDeltaApply,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    format: ExplainFormat,
+) -> Result<SelectMeta, DriverError> {
+    let mut physical = crate::driver::mview_delta_apply::plan_mview_complete_delta_apply(plan, catalog, current_db, ctx)?;
+    crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
+    render_built_plan(ctx, &physical, catalog, format, &[])
 }
 
 /// Reports a plan the statement already has -- EXPLAIN FORMAT =

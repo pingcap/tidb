@@ -1657,3 +1657,12 @@ fn compare_materialized_view_refuses_a_read_tso_after_the_snapshot_as_go_master(
 fn compare_materialized_view_refusals_answer_as_go_master() {
     replay_go_master(include_str!("../../../../../testdata/mview_compare_errors_go.jsonl"));
 }
+
+/// Go master `RefreshMaterializedViewDryRunExec`: the refresh's steps, with
+/// the brief EXPLAIN of each data change (COMPLETE IN PLACE's DELETE and
+/// INSERT, OUT OF PLACE's load over the view, DELTA APPLY's internal
+/// implement plan), nothing executed.
+#[test]
+fn refresh_materialized_view_dry_run_answers_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/mview_refresh_dry_run_go.jsonl"));
+}
