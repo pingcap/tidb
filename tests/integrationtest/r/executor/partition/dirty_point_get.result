@@ -17,11 +17,10 @@ explain format = 'brief' select /*+ hash_join(p, t) */ p.* from p join t on p.a 
 id	estRows	task	access object	operator info
 Projection	1.00	root		executor__partition__dirty_point_get.p.a, executor__partition__dirty_point_get.p.b
 └─SelectLock	1.00	root		for update 0
-  └─Projection	1.00	root		executor__partition__dirty_point_get.p.a, executor__partition__dirty_point_get.p.b, executor__partition__dirty_point_get.p._tidb_tid, executor__partition__dirty_point_get.t.a
-    └─HashJoin	1.00	root		inner join, equal:[eq(executor__partition__dirty_point_get.t.a, executor__partition__dirty_point_get.p.a)]
-      ├─Point_Get(Build)	1.00	root	table:t	handle:2
-      └─UnionScan(Probe)	1.00	root		eq(executor__partition__dirty_point_get.p.a, 2)
-        └─Point_Get	1.00	root	table:p, partition:p2	handle:2
+  └─HashJoin	1.00	root		inner join, equal:[eq(executor__partition__dirty_point_get.p.a, executor__partition__dirty_point_get.t.a)]
+    ├─Point_Get(Build)	1.00	root	table:t	handle:2
+    └─UnionScan(Probe)	1.00	root		eq(executor__partition__dirty_point_get.p.a, 2)
+      └─Point_Get	1.00	root	table:p, partition:p2	handle:2
 select /*+ hash_join(p, t) */ p.* from p join t on p.a = t.a where p.a = 2 for update;
 a	b
 2	20

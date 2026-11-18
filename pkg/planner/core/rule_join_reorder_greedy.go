@@ -47,7 +47,7 @@ type joinReorderGreedySolver struct {
 // connect them, we make a bushy join tree to do the cartesian joins finally.
 func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan) (base.LogicalPlan, error) {
 	var err error
-	s.curJoinGroup, err = s.generateJoinOrderNode(joinNodePlans)
+	s.curJoinGroup, err = generateJoinOrderNode(joinNodePlans)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +55,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan) (base.
 	if s.leadingJoinGroup != nil {
 		// We have a leading hint to let some tables join first. The result is stored in the s.leadingJoinGroup.
 		// We generate jrNode separately for it.
-		leadingJoinNodes, err = s.generateJoinOrderNode([]base.LogicalPlan{s.leadingJoinGroup})
+		leadingJoinNodes, err = generateJoinOrderNode([]base.LogicalPlan{s.leadingJoinGroup})
 		if err != nil {
 			return nil, err
 		}

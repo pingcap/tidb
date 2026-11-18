@@ -643,8 +643,8 @@ func (s *baseSingleGroupJoinOrderSolver) connectJoinNodes(
 	return currentJoin, true
 }
 
-// generateJoinOrderNode used to derive the stats for the joinNodePlans and generate the jrNode groups based on the cost.
-func (s *baseSingleGroupJoinOrderSolver) generateJoinOrderNode(joinNodePlans []base.LogicalPlan) ([]*jrNode, error) {
+// generateJoinOrderNode derives stats and estimates the cost of each join group input.
+func generateJoinOrderNode(joinNodePlans []base.LogicalPlan) ([]*jrNode, error) {
 	joinGroup := make([]*jrNode, 0, len(joinNodePlans))
 	for _, node := range joinNodePlans {
 		_, _, err := node.RecursiveDeriveStats(nil)
