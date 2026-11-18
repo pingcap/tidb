@@ -917,10 +917,16 @@ func (b *executorBuilder) attachAdaptiveLimitController(
 	if indexLookup == nil {
 		return
 	}
-	controller := exec.NewAdaptiveLimitLookupController(b.buildAdaptiveLimitConfig(
-		limitPlan.Offset+limitPlan.Count,
-		indexLookup,
-	))
+	config := b.buildAdaptiveLimitConfig(limitPlan.Offset+limitPlan.Count, indexLookup)
+	if indexLookup.indexPaging {
+		vars := b.sctx.GetSessionVars()
+		batchFloor := min(uint64(vars.InitChunkSize), config.MaxLookupBatchSize)
+		if config.InitialLookupBatchSize < batchFloor {
+			config.NoOutputLookupBatchSize = batchFloor
+			config.NoOutputLookupWindow = batchFloor * uint64(vars.IndexLookupConcurrency())
+		}
+	}
+	controller := exec.NewAdaptiveLimitLookupController(config)
 	indexLookup.adaptiveLimitController = controller
 	indexLookup.reportAdaptiveLimitStats = true
 	limitExec.adaptiveLimitController = controller
