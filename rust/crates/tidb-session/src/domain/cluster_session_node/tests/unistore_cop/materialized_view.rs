@@ -503,3 +503,12 @@ fn alter_materialized_view_attributes_are_stored_as_go_master() {
     assert_eq!(info.refresh_method, "FAST");
     assert_eq!(info.refresh_next, "CAST(NULL AS DATETIME)");
 }
+
+/// REFRESH MATERIALIZED VIEW ... COMPLETE IN PLACE against a Go master
+/// `eca4674a6f` node's answers (`testdata/mview_refresh_in_place_go.jsonl`):
+/// the view recomputed, its history rows (success and failed), its refresh
+/// row's read TSO, the refusals, and the refresh-failed alert.
+#[test]
+fn refresh_materialized_view_complete_in_place_answers_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/mview_refresh_in_place_go.jsonl"));
+}

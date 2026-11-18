@@ -537,6 +537,8 @@ impl Session {
                 self.import_into_exec(plan, import).map(Some)
             }
             Plan::Ddl(_) => self.ddl_exec(stmt),
+            // Go master `RefreshMaterializedViewExec`.
+            Plan::RefreshMaterializedView(refresh) => self.refresh_materialized_view(refresh).map(Some),
             Plan::CompactTable(compact) => self.compact_table_tiflash_exec(compact).map(Some),
             // Go `AlterDDLJobExec`: the job's row rewritten, no result set.
             Plan::AlterDdlJob(alter) => {

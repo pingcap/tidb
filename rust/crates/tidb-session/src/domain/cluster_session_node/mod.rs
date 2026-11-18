@@ -734,6 +734,11 @@ impl<'s> ClusterServerSession<'s> {
         self.node.txn.explicit.as_ref().map(|transaction| transaction.start_ts())
     }
 
+    /// Go `store.CurrentVersion(kv.GlobalTxnScope).Ver`.
+    pub fn store_current_version(&self) -> Result<u64, String> {
+        self.node.transactions.fresh_timestamp()
+    }
+
     /// Go `StmtCommit` + `CommitTxn` (`pkg/ddl/session.Session.Commit`).
     pub fn commit_txn(&mut self) -> Result<(), SqlQueryError> {
         let commit = Stmt::Session(tidb_ast::NodeBox::new(tidb_ast::SessionStmt::Commit(

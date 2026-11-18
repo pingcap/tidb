@@ -9652,6 +9652,7 @@ dependencies = [
  "tidb-metadef",
  "tidb-metrics",
  "tidb-model",
+ "tidb-mviewutil",
  "tidb-mysql",
  "tidb-objstore",
  "tidb-owner",

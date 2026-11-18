@@ -1322,6 +1322,7 @@ fn new_time_seeded_rand() -> Arc<MysqlRng> {
 
 
 mod account;
+mod mview_refresh;
 mod account_password;
 use tidb_bindinfo::binding;
 mod binding_arm;

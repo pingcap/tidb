@@ -170,6 +170,9 @@ pub struct ImportInto {
 pub enum Plan {
     /// Go `ImportInto`.
     ImportInto(Box<ImportInto>),
+    /// Go master `RefreshMaterializedView` (and its `DryRun` / `Profile`
+    /// observers, by the statement's observe type).
+    RefreshMaterializedView(Box<tidb_ast::RefreshMaterializedViewStmt>),
     /// A logical operator tree (Go `base.LogicalPlan`).
     Logical(LogicalPlan),
     /// A physical operator tree (Go `base.PhysicalPlan`).

@@ -269,6 +269,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             | AdminStmt::AlterInstance(_)
             | AdminStmt::AlterRange(_)
             | AdminStmt::DropProcedure(_) => return self.build_simple(stmt),
+            AdminStmt::RefreshMaterializedView(refresh) => return self.build_refresh_materialized_view(refresh),
             _ => return self.build_admin(stmt, admin),
         })
     }
@@ -1418,6 +1419,39 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         };
         let mlog_name = tidb_model::table::materialized_view_log_table_name(&base_name);
         Ok((database, table, mlog_name))
+    }
+
+    /// Go master `buildRefreshMaterializedView`: OPERATE VIEW on the view,
+    /// and SHOW VIEW for DRY RUN / WITH PROFILE.
+    fn build_refresh_materialized_view(
+        &mut self,
+        refresh: &tidb_ast::RefreshMaterializedViewStmt,
+    ) -> Result<Plan, PlanError> {
+        let (database, table, original) = self.qualified(&refresh.view_name);
+        if database.is_empty() {
+            return Err(PlanError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])));
+        }
+        // Go master's preprocessor `handleTableName` on the target, except for
+        // COMPLETE OUT OF PLACE, which validates its target in the executor.
+        if refresh.mode != tidb_ast::RefreshMaterializedViewMode::CompleteOutOfPlace
+            && self.source.find_table(&database, &table).is_none()
+            && !matches!(self.source.try_find_view(&database, &table), Ok(Some(_)))
+            && self.source.find_sequence(&database, &table).is_none()
+        {
+            let written_db = match refresh.view_name.as_slice() {
+                [schema, _] => schema.clone(),
+                _ => self.source.current_database().to_owned(),
+            };
+            return Err(PlanError::from(
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                    .gen_with_stack_by_args(&[written_db.into(), original.into()]),
+            ));
+        }
+        self.visit_info.push(visit(tidb_mysql::OperateViewPriv, &database, &table, table_denied("OPERATE VIEW", &table)));
+        if refresh.observe_type != tidb_ast::RefreshMaterializedViewObserveType::None {
+            self.visit_info.push(visit(tidb_mysql::ShowViewPriv, &database, &table, table_denied("SHOW VIEW", &table)));
+        }
+        Ok(Plan::RefreshMaterializedView(Box::new(refresh.clone())))
     }
 
     /// A referenced table named relative to `owner_db`, as Go's

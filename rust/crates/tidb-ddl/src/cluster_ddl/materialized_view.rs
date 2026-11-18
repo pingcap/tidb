@@ -1066,7 +1066,7 @@ pub(super) fn on_alter_materialized_view_log_purge(
 }
 
 /// Go master `formatSQLMode`: every mode name the bits touch, sorted.
-fn format_sql_mode(mode: i64) -> String {
+pub fn format_sql_mode(mode: i64) -> String {
     let mut names: Vec<&str> = tidb_mysql::consts::SQL_MODE_NAMES
         .iter()
         .filter(|(_, bits)| mode & bits.0 != 0)
