@@ -1831,12 +1831,17 @@ func (m *Mutator) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 }
 
 // GetLastHistoryDDLJobsIteratorWithFilter returns a iterator for getting latest history ddl jobs.
-// This iterator will also filter jobs using given schemaNames and tableNames
+// It filters schema/table names and uses a positive minJobID as an inclusive KV scan lower bound.
 func (m *Mutator) GetLastHistoryDDLJobsIteratorWithFilter(
 	schemaNames set.StringSet,
 	tableNames set.StringSet,
+	minJobID int64,
 ) (LastJobIterator, error) {
-	iter, err := structure.NewHashReverseIter(m.txn, mDDLJobHistoryKey)
+	var lowerBound []byte
+	if minJobID > 0 {
+		lowerBound = m.jobIDKey(minJobID)
+	}
+	iter, err := structure.NewHashReverseIterWithLowerBound(m.txn, mDDLJobHistoryKey, lowerBound)
 	if err != nil {
 		return nil, err
 	}
