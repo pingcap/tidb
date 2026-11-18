@@ -317,6 +317,17 @@ func (l *LocalStorage) Create(_ context.Context, name string, option *storeapi.W
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if option != nil && option.DirectIO {
+		return newLocalDirectWriter(filename, option.PartSize)
+	}
+	var partSize int64
+	if option != nil {
+		partSize = option.PartSize
+	}
+	return newLocalBufferedWriter(filename, partSize)
+}
+
+func newLocalBufferedWriter(filename string, partSize int64) (objectio.Writer, error) {
 	file, err := os.Create(filename)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -324,8 +335,8 @@ func (l *LocalStorage) Create(_ context.Context, name string, option *storeapi.W
 	// Size the write buffer from PartSize when set, matching the object-store
 	// backends, so per-row streaming does not cost one syscall per write.
 	buf := bufio.NewWriter(file)
-	if option != nil && option.PartSize > 0 {
-		buf = bufio.NewWriterSize(file, int(option.PartSize))
+	if partSize > 0 {
+		buf = bufio.NewWriterSize(file, int(partSize))
 	}
 	return newFlushStorageWriter(buf, buf, file, nil), nil
 }
