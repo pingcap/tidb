@@ -2966,6 +2966,10 @@ func TestCompareBuiltin(t *testing.T) {
 		Check(testkit.Rows("1 1 1 1", "2 0 1 0"))
 	tk.MustQuery("select id, cast(c as time(6)) = cast(s as time(6)), c0 > cast(s as time) from nc2 order by id").
 		Check(testkit.Rows("1 1 0", "2 0 1"))
+	// <=> only returns 1 when both sides are NULL, also when the string isn't a valid TIME
+	tk.MustExec("insert into nc2 values (3, null, null, 'bad')")
+	tk.MustQuery("select c <=> s, s <=> c0, c <=> 'bad', 'bad' <=> c0, c <=> null, cast(null as time) <=> 'bad' from nc2 where id = 3").
+		Check(testkit.Rows("0 0 0 0 1 0"))
 }
 
 func TestTimeBuiltin(t *testing.T) {

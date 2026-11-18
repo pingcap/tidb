@@ -2006,8 +2006,30 @@ func (c *compareFunctionClass) getFunction(ctx BuildContext, rawArgs []Expressio
 		return nil, err
 	}
 	cmpType := GetAccurateCmpType(ctx.GetEvalCtx(), args[0], args[1])
+	if c.op == opcode.NullEQ && cmpType == types.ETDuration && keepStringCmpForNullEQ(ctx.GetEvalCtx(), args[0], args[1]) {
+		cmpType = types.ETString
+	}
 	sig, err = c.generateCmpSigs(ctx, args, cmpType)
 	return sig, err
+}
+
+// keepStringCmpForNullEQ reports whether `<=>` between a TIME and a string should stay a
+// string comparison. Casting an invalid string to TIME gives NULL, so a NULL TIME would
+// be NULL-safe equal to a non-NULL string like 'bad'. For a TIME column and a string
+// constant, handleDurationTypeComparisonForNullEq already avoids that. For the other
+// TIME/string pairs (a string column, or two constants), keep the string comparison
+// so `<=>` only returns 1 when both values are NULL.
+func keepStringCmpForNullEQ(ctx EvalContext, lhs, rhs Expression) bool {
+	lhsType, rhsType := lhs.GetType(ctx), rhs.GetType(ctx)
+	_, lhsIsCon := lhs.(*Constant)
+	_, rhsIsCon := rhs.(*Constant)
+	if isDurationAndString(lhsType, rhsType) {
+		return lhsIsCon || !rhsIsCon
+	}
+	if isDurationAndString(rhsType, lhsType) {
+		return rhsIsCon || !lhsIsCon
+	}
+	return false
 }
 
 // generateCmpSigs generates compare function signatures.
