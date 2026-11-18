@@ -324,16 +324,22 @@ func (w *worker) handleUpdateJobError(jobCtx *jobContext, job *model.Job, err er
 	if kv.ErrEntryTooLarge.Equal(err) {
 		jobCtx.logger.Warn("update DDL job failed", zap.String("job", job.String()), zap.Error(err))
 		w.sess.Rollback()
-		err1 := w.sess.Begin(w.workCtx)
-		if err1 != nil {
-			return errors.Trace(err1)
+		if beginErr := w.sess.Begin(w.workCtx); beginErr != nil {
+			return errors.Trace(beginErr)
 		}
-		// Reduce this txn entry size.
+		txn, txnErr := w.sess.Txn()
+		if txnErr != nil {
+			return errors.Trace(txnErr)
+		}
+		jobCtx.metaMut = meta.NewMutator(txn)
+		// Discard rolled-back schema metadata and reduce the history entry size.
 		job.BinlogInfo.Clean()
+		job.LastSchemaVersion = 0
 		job.Error = toTError(err)
 		job.ErrorCount++
 		job.SchemaState = model.StateNone
 		job.State = model.JobStateCancelled
+		deleteAffinityGroupsOfCancelledJob(jobCtx, job)
 		err = w.finishDDLJob(jobCtx, job)
 	}
 	return errors.Trace(err)
@@ -676,6 +682,39 @@ func (w *worker) accountJobRU(job *model.Job) error {
 	return nil
 }
 
+// snapshotJobStepState saves metadata progress that must match the transaction.
+// restoreKV leaves sub-job cancellation decisions intact. restoreAll also
+// restores the sub-jobs so the step can be retried from its persisted state.
+func snapshotJobStepState(job *model.Job) (restoreAll, restoreKV func()) {
+	schemaState := job.SchemaState
+	binlogInfo := job.BinlogInfo
+	if binlogInfo != nil {
+		saved := *binlogInfo
+		binlogInfo = &saved
+	}
+	resumeReason := job.ResumeReason
+	var subJobs []*model.SubJob
+	if job.MultiSchemaInfo != nil {
+		subJobs = make([]*model.SubJob, len(job.MultiSchemaInfo.SubJobs))
+		for i, sub := range job.MultiSchemaInfo.SubJobs {
+			subJobs[i] = sub.Clone()
+		}
+	}
+	restoreKV = func() {
+		job.SchemaState = schemaState
+		job.BinlogInfo = binlogInfo
+		job.ResumeReason = resumeReason
+		job.LastSchemaVersion = 0
+	}
+	restoreAll = func() {
+		restoreKV()
+		if job.MultiSchemaInfo != nil {
+			job.MultiSchemaInfo.SubJobs = subJobs
+		}
+	}
+	return restoreAll, restoreKV
+}
+
 // transitOneJobStep runs one step of the DDL job and persist the new job
 // information.
 //
@@ -717,6 +756,8 @@ func (w *worker) transitOneJobStep(
 				w.cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx, job)
 			case model.ActionTruncateTable:
 				cleanupTruncateTableAffinityGroupsAfterCommit(jobCtx, job)
+			case model.ActionAlterTableAffinity:
+				cleanupAlterTableAffinityGroupsAfterCommit(jobCtx, job)
 			}
 			job.State = model.JobStateSynced
 		}
@@ -750,6 +791,7 @@ func (w *worker) transitOneJobStep(
 	defer func() {
 		jobCtx.pendingReorgRU = 0
 	}()
+	restoreAll, restoreKV := snapshotJobStepState(job)
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job)
 	if restoreStorageClassTransitionStep != nil {
 		var stagingErr *storageClassTransitionStagingError
@@ -778,6 +820,14 @@ func (w *worker) transitOneJobStep(
 			// Discard all mutations from this job step, including related-table
 			// updates and ones made while the job is already rolling back.
 			w.sess.Rollback()
+			schemaVer = 0
+			if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
+				// Preserve the sub-job states selected for cancellation or rollback.
+				restoreKV()
+			} else {
+				restoreAll()
+				updateRawArgs = false
+			}
 			failpoint.InjectCall("afterRollbackTxnForMustRollbackTxnOnError", job)
 			txn, txnErr := w.prepareTxn(job)
 			if txnErr != nil {
@@ -792,13 +842,16 @@ func (w *worker) transitOneJobStep(
 				return 0, txnErr
 			}
 			jobCtx.metaMut = meta.NewMutator(txn)
-			schemaVer = 0
 		} else if !job.IsRollingback() && !job.IsRollbackDone() {
 			// If the running job meets an error and the job state is rolling back,
 			// the rollback path may have intentionally updated table info and the
 			// schema version. Keep those mutations unless the error explicitly
 			// requires the whole transaction to be rolled back.
 			w.sess.Reset()
+			if !job.IsCancelled() {
+				restoreAll()
+				updateRawArgs = false
+			}
 			// If error happens after updateSchemaVersion(), then the schemaVer is updated.
 			// Result in the retry duration is up to 2 * lease.
 			schemaVer = 0

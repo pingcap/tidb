@@ -55,6 +55,44 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
+func TestJobStepStateRestore(t *testing.T) {
+	job := &model.Job{
+		SchemaState: model.StateWriteReorganization,
+		BinlogInfo:  &model.HistoryInfo{SchemaVersion: 1},
+		ResumeReason: &model.JobResumeReason{
+			Type: model.JobResumeReasonKVDiskFull,
+		},
+		MultiSchemaInfo: &model.MultiSchemaInfo{SubJobs: []*model.SubJob{{
+			Type: model.ActionAddColumn, State: model.JobStateRunning, SchemaState: model.StateWriteReorganization,
+		}}},
+		ReorgMeta: &model.DDLReorgMeta{},
+	}
+	restoreAll, _ := snapshotJobStepState(job)
+	job.SchemaState = model.StatePublic
+	job.BinlogInfo.SchemaVersion = 2
+	job.BinlogInfo.TableInfo = &model.TableInfo{ID: 99}
+	job.ResumeReason = nil
+	job.LastSchemaVersion = 2
+	job.MultiSchemaInfo.SubJobs[0].State = model.JobStateDone
+	job.MultiSchemaInfo.SubJobs[0].SchemaState = model.StatePublic
+	job.State = model.JobStateCancelling
+	job.Error = toTError(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("retry"))
+	job.ErrorCount = 1
+	job.ReorgMeta.UseCloudStorage = true
+	restoreAll()
+	require.Equal(t, model.StateWriteReorganization, job.SchemaState)
+	require.EqualValues(t, 1, job.BinlogInfo.SchemaVersion)
+	require.Nil(t, job.BinlogInfo.TableInfo)
+	require.True(t, job.HasResumeReason(model.JobResumeReasonKVDiskFull))
+	require.Zero(t, job.LastSchemaVersion)
+	require.Equal(t, model.JobStateRunning, job.MultiSchemaInfo.SubJobs[0].State)
+	require.Equal(t, model.StateWriteReorganization, job.MultiSchemaInfo.SubJobs[0].SchemaState)
+	require.Equal(t, model.JobStateCancelling, job.State)
+	require.ErrorContains(t, job.Error, "retry")
+	require.EqualValues(t, 1, job.ErrorCount)
+	require.True(t, job.ReorgMeta.UseCloudStorage)
+}
+
 func TestDiagnosticModeDisallowsSwitchMDL(t *testing.T) {
 	t.Cleanup(diagnosticmode.SetForTest(true))
 

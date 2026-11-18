@@ -16,8 +16,10 @@ package affinity
 
 import (
 	"context"
+	"net/http"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
@@ -53,7 +55,45 @@ func CreateGroupsIfNotExists(ctx context.Context, groups map[string][]pdhttp.Aff
 	if len(groups) == 0 {
 		return nil
 	}
-	return manager.CreateAffinityGroupsIfNotExists(ctx, groups)
+	return retryTransientError(ctx, func() error {
+		return manager.CreateAffinityGroupsIfNotExists(ctx, groups)
+	}, isRetryableError)
+}
+
+// retryTransientError retries idempotent PD requests without holding up a
+// cancelled job step. maxRetryTimes counts retries after the first request.
+func retryTransientError(ctx context.Context, operation func() error, isRetryable func(error) bool) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for i := 0; ; i++ {
+		if err := ctx.Err(); err != nil {
+			return errors.Trace(err)
+		}
+		err := operation()
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return errors.Trace(ctx.Err())
+		}
+		if !isRetryable(err) || i == maxRetryTimes {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return errors.Trace(ctx.Err())
+		case <-time.After(retryInterval):
+		}
+	}
+}
+
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	code, ok := extractPDHTTPStatusCode(err)
+	return !ok || code >= http.StatusInternalServerError
 }
 
 // DeleteGroups removes affinity groups in PD with force=true.
@@ -67,6 +107,9 @@ func DeleteGroups(ctx context.Context, ids []string) error {
 // DeleteGroupsWithRetry deletes groups with retry logic.
 // This is a best-effort cleanup operation. Errors are logged on final failure.
 func DeleteGroupsWithRetry(ctx context.Context, ids []string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if len(ids) == 0 {
 		return nil
 	}

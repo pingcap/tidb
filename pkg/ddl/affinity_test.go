@@ -16,14 +16,17 @@ package ddl_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -32,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -49,9 +53,14 @@ type mockCodec struct {
 
 type truncateAffinityPDClient struct {
 	pdhttp.Client
-	manager           affinity.Manager
-	failCreate        atomic.Bool
-	failDelete        atomic.Bool
+	manager    affinity.Manager
+	failCreate atomic.Bool
+	failDelete atomic.Bool
+	// Cancellation tests exhaust all three lightweight retries after a partial
+	// commit or lost response, so they still exercise unused-group cleanup.
+	retryFailures     atomic.Int64
+	retryError        atomic.Value
+	fail503Once       atomic.Bool
 	failOnce          atomic.Bool
 	failAfterCreate   atomic.Bool
 	lastCreatedGroups atomic.Value
@@ -62,6 +71,22 @@ type truncateAffinityPDClient struct {
 	// labelRules maps a group ID to its key ranges. PD stores them in a label
 	// rule that is created and force-deleted together with the group.
 	labelRules sync.Map
+	// partialCreateLimit, when positive, makes a creation request commit at
+	// most that many of its groups and then fail, after partialCreateSkip
+	// requests have succeeded. partialCreatedIDs records the committed IDs.
+	partialCreateLimit atomic.Int64
+	partialCreateSkip  atomic.Int64
+	partialCreatedIDs  atomic.Value
+	// everCreated records every group ID PD has committed, including deleted ones.
+	everCreated sync.Map
+}
+
+func (c *truncateAffinityPDClient) requireEverCreated(t *testing.T, groups map[string][]pdhttp.AffinityGroupKeyRange) {
+	require.NotEmpty(t, groups)
+	for id := range groups {
+		_, ok := c.everCreated.Load(id)
+		require.True(t, ok, "group %s must have been created before the job was cancelled", id)
+	}
 }
 
 func (c *truncateAffinityPDClient) labelRule(id string) ([]pdhttp.AffinityGroupKeyRange, bool) {
@@ -77,24 +102,67 @@ func (c *truncateAffinityPDClient) CreateAffinityGroups(ctx context.Context, gro
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if c.retryFailures.Load() > 0 {
+		c.retryFailures.Add(-1)
+		return nil, c.retryError.Load().(error)
+	}
+	if c.fail503Once.Swap(false) {
+		c.createFailures.Add(1)
+		return nil, fmt.Errorf("request pd http api failed with status: '503 Service Unavailable', body: 'injected transient creation failure'")
+	}
 	if c.failCreate.Load() || c.failOnce.Swap(false) {
 		c.createFailures.Add(1)
 		return nil, fmt.Errorf("injected affinity creation failure")
+	}
+	if c.partialCreateLimit.Load() > 0 && c.partialCreateSkip.Add(-1) < 0 {
+		return nil, c.createPartially(ctx, groups, int(c.partialCreateLimit.Swap(0)))
 	}
 	err := c.manager.CreateAffinityGroupsIfNotExists(ctx, groups)
 	if err == nil {
 		for id, ranges := range groups {
 			c.labelRules.LoadOrStore(id, ranges)
+			c.everCreated.Store(id, struct{}{})
 		}
 		c.lastCreatedGroups.Store(groups)
 		if c.failAfterCreate.Swap(false) {
-			return nil, fmt.Errorf("injected response loss after affinity creation")
+			return nil, c.exhaustCreationRetries(fmt.Errorf("injected response loss after affinity creation"))
 		}
 		if c.afterCreate != nil {
 			return nil, c.afterCreate(ctx)
 		}
 	}
 	return nil, err
+}
+
+func (c *truncateAffinityPDClient) exhaustCreationRetries(err error) error {
+	c.retryError.Store(err)
+	c.retryFailures.Store(3)
+	return err
+}
+
+// createPartially commits the first limit groups in ID order and then fails.
+// PD does this when a request spans several etcd transactions and a later one
+// fails after the earlier ones have committed.
+func (c *truncateAffinityPDClient) createPartially(ctx context.Context, groups map[string][]pdhttp.AffinityGroupKeyRange, limit int) error {
+	ids := make([]string, 0, len(groups))
+	for id := range groups {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	committedIDs := ids[:min(limit, len(ids))]
+	committed := make(map[string][]pdhttp.AffinityGroupKeyRange, len(committedIDs))
+	for _, id := range committedIDs {
+		committed[id] = groups[id]
+	}
+	if err := c.manager.CreateAffinityGroupsIfNotExists(ctx, committed); err != nil {
+		return err
+	}
+	for id, ranges := range committed {
+		c.labelRules.LoadOrStore(id, ranges)
+		c.everCreated.Store(id, struct{}{})
+	}
+	c.partialCreatedIDs.Store(committedIDs)
+	return c.exhaustCreationRetries(fmt.Errorf("injected affinity creation failure after %d of %d groups", len(committedIDs), len(ids)))
 }
 
 func (c *truncateAffinityPDClient) BatchDeleteAffinityGroups(ctx context.Context, ids []string, _ bool) error {
@@ -166,6 +234,95 @@ func (s *affinityDDLTest) groupsOf(t *testing.T, info *model.TableInfo) map[stri
 	groups, err := ddl.BuildAffinityGroupDefinitionsForTest(s.store.GetCodec(), info, nil)
 	require.NoError(t, err)
 	return groups
+}
+
+func TestAffinityCancelledCreateOnEntryTooLarge(t *testing.T) {
+	for _, action := range []model.ActionType{model.ActionCreateTable, model.ActionCreateMaterializedViewShadow} {
+		t.Run(action.String(), func(t *testing.T) {
+			s := newAffinityDDLTest(t)
+			var created atomic.Pointer[model.TableInfo]
+			var jobID atomic.Int64
+			// Fail the job row update after CREATE has written table metadata and PD groups.
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable", func(job *model.Job, err *error) {
+				if job.Type == action && job.IsDone() {
+					created.Store(job.BinlogInfo.TableInfo.Clone())
+					jobID.Store(job.ID)
+					*err = kv.ErrEntryTooLarge
+				}
+			})
+
+			var err error
+			if action == model.ActionCreateTable {
+				err = s.tk.ExecToErr("create table oversized_job (a int) affinity='table'")
+			} else {
+				s.tk.MustExec("set tidb_mview_enable = on")
+				s.tk.MustExec("create table source (a int not null)")
+				s.tk.MustExec("create materialized view log on source (a)")
+				s.tk.MustExec("create materialized view mv (a, cnt) as select a, count(*) from source group by a")
+				mv := s.tableInfo(t, "mv")
+				name := ast.NewCIStr("__mv_shadow_oversized_job")
+				shadow, buildErr := ddl.BuildTableInfoWithLike(ast.Ident{Name: name}, mv, &ast.CreateTableStmt{})
+				require.NoError(t, buildErr)
+				shadow.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: mv.ID}
+				shadow.Affinity = &model.TableAffinityInfo{Level: ast.TableAffinityLevelTable}
+				err = s.dom.DDLExecutor().CreateMaterializedViewShadowTable(s.tk.Session(), s.schemaID, ast.NewCIStr("test"), shadow)
+			}
+			require.True(t, kv.ErrEntryTooLarge.Equal(err), "unexpected CREATE error: %v", err)
+			info := created.Load()
+			require.NotNil(t, info, "CREATE must reach the job row update")
+			require.Nil(t, s.persisted(t, info.ID))
+
+			rows := s.tk.MustQuery("select job_meta from mysql.tidb_ddl_history where job_id = ?", jobID.Load()).Rows()
+			require.Len(t, rows, 1)
+			var job model.Job
+			require.NoError(t, job.Decode([]byte(rows[0][0].(string))))
+			require.Equal(t, model.JobStateCancelled, job.State)
+			require.NotNil(t, job.BinlogInfo)
+			require.Zero(t, job.LastSchemaVersion)
+			require.Zero(t, job.BinlogInfo.SchemaVersion)
+			require.Nil(t, job.BinlogInfo.TableInfo)
+			groups := s.groupsOf(t, info)
+			s.cli.requireEverCreated(t, groups)
+			requireAffinityGroupsWithLabelRules(t, s.cli, groups, false, "oversized CREATE must clean up its PD groups")
+		})
+	}
+}
+
+func TestAffinityCancelledCreateAfterAsyncNotify(t *testing.T) {
+	var failedTableID atomic.Int64
+	mgr := &recordingExternalWorkloadManager{
+		role: config.RoleMaster,
+		registerErrFn: func(id int64) error {
+			failedTableID.Store(id)
+			return context.DeadlineExceeded
+		},
+	}
+	tk, store := createTTLExternalWorkloadTestKit(t, mgr)
+	dom := domain.GetDomain(tk.Session())
+	cli := &truncateAffinityPDClient{manager: affinity.NewMockManager()}
+	affinity.InitManager(cli)
+	t.Cleanup(func() { affinity.InitManager(nil) })
+	db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+
+	// TTL registration cancels CREATE after the notifier's internal SQL has
+	// flushed the StatePublic table metadata into the worker transaction.
+	require.ErrorContains(t, tk.ExecToErr(ttlTableSQL+" AFFINITY='table'"), context.DeadlineExceeded.Error())
+	id := failedTableID.Load()
+	require.NotZero(t, id)
+	groupID := ddl.GetTableAffinityGroupID(store.GetCodec(), id)
+	_, created := cli.everCreated.Load(groupID)
+	require.True(t, created)
+	persisted, err := meta.NewReader(store.GetSnapshot(kv.MaxVersion)).GetTable(db.ID, id)
+	require.NoError(t, err)
+	require.Nil(t, persisted, "cancelled CREATE must roll back the flushed table metadata")
+	groups, err := affinity.GetGroups(context.Background(), []string{groupID})
+	require.NoError(t, err)
+	require.Empty(t, groups)
+	_, labelExists := cli.labelRule(groupID)
+	require.False(t, labelExists)
+	require.NoError(t, dom.Reload())
+	tk.MustQuery("show tables like 't'").Check(testkit.Rows())
 }
 
 func TestAffinityTruncatePartitionCreateResponseLoss(t *testing.T) {
@@ -530,6 +687,260 @@ func TestAffinityTruncateTablePartitionGrowth(t *testing.T) {
 	}
 }
 
+func (s *affinityDDLTest) captureCreateJob(t *testing.T, tp model.ActionType) func() []*model.TableInfo {
+	t.Helper()
+	var captured atomic.Pointer[model.Job]
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		if job.Type == tp && job.SchemaName == "test" && captured.Load() == nil {
+			captured.Store(&model.Job{Type: tp, Version: job.Version, RawArgs: append([]byte(nil), job.RawArgs...)})
+		}
+	})
+	return func() []*model.TableInfo {
+		job := captured.Load()
+		require.NotNil(t, job, "the create job must have run")
+		if tp == model.ActionCreateTables {
+			args, err := model.GetBatchCreateTableArgs(job)
+			require.NoError(t, err)
+			infos := make([]*model.TableInfo, 0, len(args.Tables))
+			for _, a := range args.Tables {
+				infos = append(infos, a.TableInfo)
+			}
+			return infos
+		}
+		args, err := model.GetCreateTableArgs(job)
+		require.NoError(t, err)
+		return []*model.TableInfo{args.TableInfo}
+	}
+}
+
+// TestAffinityCancelledDDLGroupCleanup covers partial PD creation, a later
+// step failure followed by cancellation, and cancellation within the step.
+func TestAffinityCancelledDDLGroupCleanup(t *testing.T) {
+	s := newAffinityDDLTest(t)
+	const partitions = "partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)"
+	withAffinity := func(info *model.TableInfo, level string) *model.TableInfo {
+		info = info.Clone()
+		info.Affinity = &model.TableAffinityInfo{Level: level}
+		return info
+	}
+	failCreation := func(skip int64) {
+		s.cli.partialCreatedIDs.Store([]string(nil))
+		s.cli.partialCreateSkip.Store(skip)
+		s.cli.partialCreateLimit.Store(1)
+	}
+	requirePartiallyCreated := func(t *testing.T, groups map[string][]pdhttp.AffinityGroupKeyRange) {
+		require.Zero(t, s.cli.partialCreateLimit.Load(), "the partial creation failure must have been injected")
+		committed := s.cli.partialCreatedIDs.Load().([]string)
+		require.NotEmpty(t, committed)
+		for _, id := range committed {
+			require.Contains(t, groups, id)
+		}
+	}
+
+	for _, tc := range []struct {
+		level   string
+		delayed bool
+	}{
+		{level: ast.TableAffinityLevelTable},
+		{level: ast.TableAffinityLevelPartition},
+		{level: ast.TableAffinityLevelPartition, delayed: true},
+	} {
+		t.Run(fmt.Sprintf("create/%s/delayed=%v", tc.level, tc.delayed), func(t *testing.T) {
+			s.tk.MustExec("drop table if exists c")
+			createSQL := fmt.Sprintf("create table c(a int) affinity='%s'", tc.level)
+			if tc.level == ast.TableAffinityLevelPartition {
+				createSQL += " " + partitions
+			}
+			createdTables := s.captureCreateJob(t, model.ActionCreateTable)
+			run := func() error { return s.tk.ExecToErr(createSQL) }
+			if tc.delayed {
+				require.ErrorContains(t, s.failAndCancel(t, "beforeUpdateSchemaVersion", func(job *model.Job) bool {
+					return job.Type == model.ActionCreateTable
+				}, run), "injected schema version update failure")
+			} else {
+				failCreation(0)
+				require.ErrorContains(t, run(), "injected affinity creation failure after 1 of")
+			}
+			groups := s.groupsOf(t, createdTables()[0])
+			if tc.delayed {
+				s.cli.requireEverCreated(t, groups)
+			} else {
+				requirePartiallyCreated(t, groups)
+			}
+			require.Nil(t, s.persisted(t, createdTables()[0].ID))
+			require.ErrorContains(t, s.tk.ExecToErr("select * from c"), "doesn't exist")
+			requireAffinityGroupsWithLabelRules(t, s.cli, groups, false, "cancelled CREATE must delete unused groups")
+			if !tc.delayed {
+				s.tk.MustExec(createSQL)
+				checkAffinityGroupsInPD(t, s.dom, "test", "c", true)
+			}
+		})
+	}
+
+	s.tk.MustExec("create table src_t(a int) affinity='table'")
+	s.tk.MustExec("create table src_p(a int) affinity='partition' " + partitions)
+	for _, failure := range []string{"partial creation", "cancel after failure", "failing sequence"} {
+		t.Run("batch/"+failure, func(t *testing.T) {
+			s.tk.MustExec("drop table if exists b1, b2")
+			infos := make([]*model.TableInfo, 0, 2)
+			for _, names := range [][2]string{{"src_t", "b1"}, {"src_p", "b2"}} {
+				info, err := ddl.BuildTableInfoWithLike(ast.Ident{Name: ast.NewCIStr(names[1])}, s.tableInfo(t, names[0]), &ast.CreateTableStmt{})
+				require.NoError(t, err)
+				infos = append(infos, info)
+			}
+			if failure == "failing sequence" {
+				s.tk.MustExec("create sequence s0")
+				badSeq := s.tableInfo(t, "s0")
+				badSeq.ID, badSeq.Name, badSeq.State = 0, ast.NewCIStr("s_bad"), model.StateDeleteOnly
+				infos[1] = badSeq
+			}
+			createdTables := s.captureCreateJob(t, model.ActionCreateTables)
+			run := func() error {
+				// This API creates jobs without executing a SQL statement.
+				s.tk.Session().SetValue(sessionctx.QueryString, "skip")
+				return s.dom.DDLExecutor().BatchCreateTableWithInfo(s.tk.Session(), ast.NewCIStr("test"), infos, ddl.WithOnExist(ddl.OnExistError))
+			}
+			var err error
+			switch failure {
+			case "partial creation":
+				// b1 succeeds, then b2 commits one of its two groups and fails.
+				failCreation(1)
+				err = run()
+				require.ErrorContains(t, err, "injected affinity creation failure after 1 of 2")
+			case "cancel after failure":
+				err = s.failAndCancel(t, "beforeUpdateSchemaVersion", func(job *model.Job) bool {
+					return job.Type == model.ActionCreateTables
+				}, run)
+				require.ErrorContains(t, err, "injected schema version update failure")
+			default:
+				require.ErrorContains(t, run(), "sequence")
+			}
+			created := createdTables()
+			require.Len(t, created, 2)
+			for i, info := range created {
+				if info.Affinity == nil {
+					continue
+				}
+				groups := s.groupsOf(t, info)
+				if failure == "partial creation" && i == 1 {
+					requirePartiallyCreated(t, groups)
+				} else {
+					s.cli.requireEverCreated(t, groups)
+				}
+				require.Nil(t, s.persisted(t, info.ID))
+				require.ErrorContains(t, s.tk.ExecToErr("select * from "+info.Name.L), "doesn't exist")
+				requireAffinityGroupsWithLabelRules(t, s.cli, groups, false, "cancelled batch must delete groups of all its tables")
+			}
+			for _, name := range []string{"src_t", "src_p"} {
+				requireAffinityGroupsWithLabelRules(t, s.cli, s.groupsOf(t, s.tableInfo(t, name)), true, "source tables must keep their groups")
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name     string
+		oldLevel string
+		newLevel string
+	}{
+		{name: "none to partition", newLevel: ast.TableAffinityLevelPartition},
+		{name: "partition to none", oldLevel: ast.TableAffinityLevelPartition},
+		{name: "table to partition", oldLevel: ast.TableAffinityLevelTable, newLevel: ast.TableAffinityLevelPartition},
+		{name: "unchanged table", oldLevel: ast.TableAffinityLevelTable, newLevel: ast.TableAffinityLevelTable},
+		{name: "unchanged partition", oldLevel: ast.TableAffinityLevelPartition, newLevel: ast.TableAffinityLevelPartition},
+	} {
+		for _, delayed := range []bool{false, true} {
+			if (!delayed && tc.newLevel == "") || (delayed && tc.oldLevel == tc.newLevel) {
+				continue
+			}
+			t.Run(fmt.Sprintf("alter/%s/delayed=%v", tc.name, delayed), func(t *testing.T) {
+				s.tk.MustExec("drop table if exists a")
+				createSQL := "create table a(a int) " + partitions
+				if tc.newLevel == ast.TableAffinityLevelTable {
+					createSQL = "create table a(a int)"
+				}
+				s.tk.MustExec(createSQL)
+				before := s.tableInfo(t, "a")
+				if tc.oldLevel != "" {
+					// SQL rejects table affinity on a partitioned table; write the
+					// old level directly so the level-switch cleanup is exercised.
+					before = withAffinity(before, tc.oldLevel)
+					ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+					require.NoError(t, kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
+						return meta.NewMutator(txn).UpdateTable(s.schemaID, before)
+					}))
+					require.NoError(t, affinity.CreateGroupsIfNotExists(context.Background(), s.groupsOf(t, before)))
+				}
+				before = s.persisted(t, before.ID)
+				oldGroups := s.groupsOf(t, before)
+				var newGroups map[string][]pdhttp.AffinityGroupKeyRange
+				if tc.newLevel != "" {
+					newGroups = s.groupsOf(t, withAffinity(before, tc.newLevel))
+				}
+				alterSQL := fmt.Sprintf("alter table a affinity='%s'", tc.newLevel)
+				run := func() error { return s.tk.ExecToErr(alterSQL) }
+				if delayed {
+					err := s.failAndCancel(t, "beforeUpdateSchemaVersion", func(job *model.Job) bool {
+						return job.Type == model.ActionAlterTableAffinity && job.TableID == before.ID
+					}, run)
+					require.ErrorContains(t, err, "injected schema version update failure")
+					if newGroups != nil {
+						s.cli.requireEverCreated(t, newGroups)
+					}
+				} else {
+					failCreation(0)
+					require.ErrorContains(t, run(), "injected affinity creation failure after 1 of")
+					requirePartiallyCreated(t, newGroups)
+				}
+				require.Equal(t, before, s.persisted(t, before.ID), "cancelled ALTER must keep its metadata")
+				if len(oldGroups) > 0 {
+					requireAffinityGroupsWithLabelRules(t, s.cli, oldGroups, true, "cancelled ALTER must keep its original groups")
+				}
+				if newGroups != nil {
+					requireAffinityGroupsWithLabelRules(t, s.cli, newGroups, tc.oldLevel == tc.newLevel, "cancelled ALTER must delete only groups of a new level")
+				}
+				if tc.oldLevel != tc.newLevel {
+					s.tk.MustExec(alterSQL)
+					if newGroups != nil {
+						requireAffinityGroupsWithLabelRules(t, s.cli, newGroups, true, "committed ALTER must create the new groups")
+					}
+					if len(oldGroups) > 0 {
+						requireAffinityGroupsWithLabelRules(t, s.cli, oldGroups, false, "committed ALTER must delete the old groups")
+					}
+				}
+			})
+		}
+	}
+
+	t.Run("create with foreign key keeps persisted groups", func(t *testing.T) {
+		s.tk.MustExec("create table parent(a int primary key)")
+		var cancelled atomic.Bool
+		var tableID atomic.Int64
+		cancelDone := make(chan error, 1)
+		const beforeStep = "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep"
+		testfailpoint.EnableCall(t, beforeStep, func(job *model.Job) {
+			if job.Type == model.ActionCreateTable && job.TableName == "child" && job.SchemaState == model.StateDeleteOnly && cancelled.CompareAndSwap(false, true) {
+				tableID.Store(job.TableID)
+				errs, err := ddl.CancelJobs(context.Background(), s.tkCancel.Session(), []int64{job.ID})
+				if err == nil && len(errs) > 0 {
+					err = errs[0]
+				}
+				cancelDone <- err
+			}
+		})
+		err := s.tk.ExecToErr("create table child(a int, foreign key(a) references parent(a)) affinity='table'")
+		testfailpoint.Disable(t, beforeStep)
+		require.ErrorContains(t, err, "Cancelled DDL job")
+		require.True(t, cancelled.Load())
+		require.NoError(t, <-cancelDone)
+		info := s.persisted(t, tableID.Load())
+		require.NotNil(t, info, "the first FK CREATE step has already persisted the table")
+		require.Equal(t, model.StateDeleteOnly, info.State)
+		groups := s.groupsOf(t, info)
+		s.cli.requireEverCreated(t, groups)
+		requireAffinityGroupsWithLabelRules(t, s.cli, groups, true, "cancelled FK CREATE must keep groups used by persisted metadata")
+	})
+}
+
 func TestAffinityTruncatePartitionFailure(t *testing.T) {
 	s := newAffinityDDLTest(t)
 	store, dom, cli, tk := s.store, s.dom, s.cli, s.tk
@@ -561,7 +972,7 @@ func TestAffinityTruncatePartitionFailure(t *testing.T) {
 	tk.MustExec("alter table p truncate partition p0")
 	testfailpoint.Disable(t, beforeStep)
 	require.True(t, injected.Load())
-	require.Equal(t, int64(2), cli.createFailures.Load(), "one failure before replacement and one during finalization")
+	require.Equal(t, int64(5), cli.createFailures.Load(), "four exhausted attempts before replacement and one during finalization")
 	after, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("p"))
 	require.NoError(t, err)
 	require.NotEqual(t, beforeMeta.Partition.Definitions[0].ID, after.Meta().Partition.Definitions[0].ID)
@@ -606,7 +1017,12 @@ func TestAffinityTruncatePartitionFailure(t *testing.T) {
 				})
 			}
 			testfailpoint.EnableCall(t, beforeStep, func(job *model.Job) {
-				if job.TableID == beforeMeta.ID && job.Type == model.ActionTruncateTablePartition && job.SchemaState == model.StateWriteOnly && cancelOnce.CompareAndSwap(false, true) {
+				readyToCancel := job.SchemaState == model.StateWriteOnly
+				if scenario == "metadata not committed" {
+					// Restoration keeps SchemaState at StatePublic after the failed step resets.
+					readyToCancel = job.SchemaState == model.StatePublic && job.ErrorCount > 0
+				}
+				if job.TableID == beforeMeta.ID && job.Type == model.ActionTruncateTablePartition && readyToCancel && cancelOnce.CompareAndSwap(false, true) {
 					args, err := model.GetTruncateTableArgs(job)
 					if err != nil {
 						cancelDone <- err
@@ -1006,4 +1422,89 @@ func TestAffinityDropDatabase(t *testing.T) {
 	groups, err := affinity.GetGroups(ctx, groupIDs)
 	require.NoError(t, err)
 	require.Empty(t, groups, "all affinity groups should be deleted after dropping database")
+}
+
+func TestAffinityCreateTransient503(t *testing.T) {
+	s := newAffinityDDLTest(t)
+	s.cli.fail503Once.Store(true)
+	s.tk.MustExec("create table retry_create(a int) affinity='table'")
+	require.EqualValues(t, 1, s.cli.createFailures.Load())
+	require.EqualValues(t, 2, s.cli.createCalls.Load())
+	checkAffinityGroupsInPD(t, s.dom, "test", "retry_create", true)
+	s.tk.MustExec("create table retry_alter(a int)")
+	s.cli.fail503Once.Store(true)
+	s.tk.MustExec("alter table retry_alter affinity='table'")
+	require.EqualValues(t, 2, s.cli.createFailures.Load())
+	checkAffinityGroupsInPD(t, s.dom, "test", "retry_alter", true)
+}
+
+func TestAffinityPartitionRetryAfterAsyncNotify(t *testing.T) {
+	for _, action := range []model.ActionType{model.ActionDropTablePartition, model.ActionReorganizePartition} {
+		t.Run(action.String(), func(t *testing.T) {
+			s := newAffinityDDLTest(t)
+			s.tk.MustExec("set @@global.tidb_ddl_error_count_limit=3")
+			t.Cleanup(func() { s.tk.MustExec("set @@global.tidb_ddl_error_count_limit=512") })
+			s.tk.MustExec("create table p(a int primary key, b int, unique key idx(b) global) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20), partition p2 values less than maxvalue)")
+			s.tk.MustExec("insert into p values(1,1),(6,6),(11,11),(21,21)")
+			var injected, rolledBack atomic.Bool
+			var retries atomic.Int64
+			var previousArgs, retryArgs string
+			var previousState, retryState model.SchemaState
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+				if job.Type != action {
+					return
+				}
+				if !injected.Load() {
+					previousState = job.SchemaState
+					previousArgs = string(job.RawArgs)
+				} else if injected.Load() && retries.Load() == 1 {
+					retryState, retryArgs = job.SchemaState, string(job.RawArgs)
+				}
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterAsyncNotifyEvent", func(job *model.Job, err *error) {
+				if job.Type == action {
+					retries.Add(1)
+					if injected.CompareAndSwap(false, true) {
+						*err = errors.New("transient error after notifier publication")
+					}
+				}
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRollbackTxnForMustRollbackTxnOnError", func(job *model.Job) {
+				if job.Type == action {
+					rolledBack.Store(true)
+				}
+			})
+			if action == model.ActionDropTablePartition {
+				s.tk.MustExec("alter table p drop partition p0")
+				s.tk.MustQuery("select * from p order by a").Check(testkit.Rows("11 11", "21 21"))
+				s.tk.MustQuery("select * from p use index(idx) order by a").Check(testkit.Rows("11 11", "21 21"))
+			} else {
+				s.tk.MustExec("alter table p reorganize partition p0 into (partition p00 values less than(5), partition p01 values less than(10))")
+				s.tk.MustQuery("select * from p order by a").Check(testkit.Rows("1 1", "6 6", "11 11", "21 21"))
+				s.tk.MustQuery("select * from p use index(idx) order by a").Check(testkit.Rows("1 1", "6 6", "11 11", "21 21"))
+			}
+			require.True(t, injected.Load())
+			require.True(t, rolledBack.Load())
+			require.NotEqual(t, model.StateNone, previousState)
+			require.Equal(t, previousState, retryState)
+			require.Equal(t, previousArgs, retryArgs, "rolled-back arguments must not be persisted")
+			require.EqualValues(t, 2, retries.Load(), "the rolled-back notification must be republished")
+			after := s.tableInfo(t, "p")
+			require.Equal(t, after, s.persisted(t, after.ID).Clone())
+			require.Equal(t, model.StateNone, after.Partition.DDLState)
+			require.Equal(t, model.ActionNone, after.Partition.DDLAction)
+			require.Empty(t, after.Partition.AddingDefinitions)
+			require.Empty(t, after.Partition.DroppingDefinitions)
+			names := make([]string, 0, len(after.Partition.Definitions))
+			for _, def := range after.Partition.Definitions {
+				names = append(names, def.Name.L)
+			}
+			if action == model.ActionDropTablePartition {
+				require.Equal(t, []string{"p1", "p2"}, names)
+			} else {
+				require.Equal(t, []string{"p00", "p01", "p1", "p2"}, names)
+			}
+			s.tk.MustExec("admin check table p")
+		})
+	}
 }

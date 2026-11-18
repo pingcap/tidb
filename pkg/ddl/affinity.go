@@ -207,6 +207,9 @@ func batchDeleteTableAffinityGroups(jobCtx *jobContext, groupIDs map[string]stru
 	}
 
 	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = jobCtx.ctx
+	}
 	ids := make([]string, 0, len(groupIDs))
 	for id := range groupIDs {
 		ids = append(ids, id)

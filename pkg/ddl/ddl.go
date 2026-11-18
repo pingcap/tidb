@@ -715,6 +715,9 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 	if subJobID == noSubJob && job.MultiSchemaInfo != nil {
 		subJobID = int64(job.MultiSchemaInfo.Seq)
 	}
+	if sctx != nil {
+		jobCtx.mustRollbackTxnOnError = true
+	}
 	err := notifier.PubSchemeChangeToStore(
 		jobCtx.stepCtx,
 		sctx,
@@ -723,6 +726,7 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		e,
 		jobCtx.eventPublishStore,
 	)
+	failpoint.InjectCall("afterAsyncNotifyEvent", job, &err)
 	if err != nil {
 		logutil.DDLLogger().Error("Error publish schema change event",
 			zap.Int64("jobID", job.ID),
